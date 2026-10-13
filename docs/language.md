@@ -3357,6 +3357,8 @@ let status = vm.register_int32(engine, &name, host_add)
 | `vm.prepare_migration(handle, schema: UInt64, source: &String, method: &String) -> Int32` | 暂存新模块并构造独立迁移候选；成功 0，失败 1 |
 | `vm.begin_migration(handle, schema: UInt64, source: &String, start: &String, advance: &String) -> Int32` | 创建分步迁移候选；成功 0，失败 1 |
 | `vm.step_migration(handle, budget: UInt64) -> Int32` | 推进一个同步批次；0 已完成，1 仍需推进，-1 失败；budget 必须大于 0 |
+| `vm.begin_migration_batch(handle, source: &String) -> Int32` | 捕获该 Script 的完整域集合并暂存新模块；成功 0，失败 1 |
+| `vm.stage_migration(handle, start: &String, advance: &String) -> Int32` | 为 start 返回类型的全部域实例构造候选；advance 为空表示同步完成，否则指定分步函数；成功 0，失败 1 |
 | `vm.publish_migration(handle) -> Int32` | 校验后一起切换域根、类型和 Script 入口；成功 0，失败 1 |
 | `vm.cancel_migration(handle) -> Int32` | 释放尚未发布的候选；有效句柄即使没有候选也返回 0，非法句柄返回 1 |
 | `vm.error_code()` | 当前线程最近一次同步 VM 操作的状态：0 成功，1 失败 |
@@ -3385,7 +3387,7 @@ Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失�
 String、Array、Map、元组及无拥有载荷的枚举。只改变容器元素字段也算 schema 变化。
 编译器证明迁移同步、旧引用不逃逸、不修改旧图且不调用宿主；旧容器必须借用读取并逐项
 构造新容器，String 可显式 clone，不能从旧借用中搬走拥有者。借用、外部资源、用户 Drop、
-递归拥有图、拥有载荷枚举、多域迁移仍不支持。
+递归拥有图、拥有载荷枚举仍不支持；多域批次入口见下文。
 
 旧根名固定为 `PreviousState`。嵌套用户类型按声明名生成 `PreviousPlayer` 等旧视图；同名
 冲突时使用按遍历顺序分配的 `PreviousTypeN`。它们只保留旧字段/变体，不继承旧业务方法，
@@ -3422,11 +3424,43 @@ HR5-B2 可改用 `begin_migration`，新源码提供两个受证明的同步入�
 需要业务暂缓写入再重建。budget 是业务解释的工作量提示，不是时间片；编译、start、每次
 advance 及候选图扫描/回收仍同步执行。解释器指令限额按回调生效；JIT 不提供强制抢占。
 
-除 `cancel_migration` 外，这些接口要求当前执行器，并按 Script 模块归属选中恰好一个存活域；
+除 `cancel_migration` 外，这些接口要求当前执行器。单域接口按 Script 模块归属选中恰好一个存活域；
 零个或多个都拒绝，不影响其他 Script 的域。schema 身份是进程内不复用的非零令牌，不能作为
 持久化 schema 版本使用；迁回旧布局也获得新令牌。成功后域身份与目录注册保持不变，新代码
 可重新按新类型查找；旧布局调用被拒绝，旧快照/候选凭据失效，既有目标定时器终止为
 `InvalidAccess`，需显式重新登记。已启动的流程仍保留旧代码，状态访问继续接受契约检查。
+
+HR5-C 的批次接口与单域候选共享 VM 的唯一迁移槽。begin_migration_batch 在同一同步区间捕获该
+Script 所有存活域（1–256 个）的身份、修订、代码与 schema 凭据；顺序按域创建序号固定。
+它编译暂存新模块，尚不执行迁移构造。旧根按名生成 `PreviousRoom`、`PreviousLedger` 等
+只读视图，嵌套类型共用去重视图。根类型短名冲突、同名旧根存在不兼容布局，或业务重复声明
+生成名时拒绝整个批次；单域入口继续使用 `PreviousState`。
+
+新模块通过已证明的构造/域操作声明了同名同布局类型时，这类域自动作为保留原根的读取依赖；
+发布时更新其代码与 Type，修订、schema 与根地址不变。其余类型必须逐类 stage：
+`fn start(old: &PreviousRoom) -> Room` 的返回名选中批次内全部 Room，不能只遗漏其中某个实例。
+提供 advance 时要求 `fn(&mut Room, &PreviousRoom, UInt64) -> Bool`；空字符串表示 start
+已完成整个候选。同一类型重复 stage、目标不在批次内、旧视图不匹配或构造中途失败均拒绝。
+业务名称作为字符串传入，不需要命名约定或新关键字。
+
+所有类型 stage 后可用 `step_migration` 推进，每次最多执行一个未完成根的回调，按轮转顺序
+选择；0 表示整个批次就绪，1 表示仍有工作。未 stage 完就 step 或 publish 会失败。每次 stage、
+step 和最终 publish 都校验完整集合（包括保留原根的域）、集合成员及当前 Script 绑定。
+阶段校验或用户迁移失败后消费整批，之前成功构造的候选也一起释放；不会撤销期间正常业务
+写入。进入前的句柄/执行器/文本参数检查失败可能保留批次，可显式 cancel。
+
+最终发布先检查所有域的计数余量，再在不交错域操作的区间一起切换全部目标根、域代码和
+Script 当前入口；清理旧根、模块与失效定时器在区间外执行。变更布局的域获得新 schema 与
+递增修订，保留原根的域也递增代码版本。域身份/目录项保持不变，只有变更布局域的既有
+定时器失效；兼容域的定时器继续按新代码执行。用例见
+[批次旧源码](../tests/fixtures/migration_batch_old.jk) 与
+[批次新源码](../tests/fixtures/migration_batch_new.jk)：两个 Room、一个 Ledger 同批迁移，
+Rules 保留原根且参加冲突校验。
+
+批次目前限同一 VM 句柄拥有的完整域集合；不包含其他 Script 的域，不提供跨 Script 原子发布、
+显式子集选择、跨域聚合迁移函数、冻结/自动重试或旧版本快照。构造函数只读自己的旧根，所有
+候选基于同一次捕获且始终重新验证的域版本集合。按类型 stage 会同步构造该类型的所有骨架，
+step 中的单次回调、图扫描及回收也同步执行；不保证硬时间片。
 
 候选归 `vm.Handle` 所有，取消发起任务不会自动释放；必须显式 `cancel_migration` 或 `close`。
 旧根、候选及迁移中的临时分配同时计入状态预算。分步接口允许宿主在批次间让出执行权，

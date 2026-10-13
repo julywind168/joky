@@ -569,7 +569,6 @@ fn migration_cancellation(
     owned: bool,
     incremental: bool,
 ) {
-    use crate::runtime::executor::{HostExecutor, TaskGroup};
     let old = (if incremental {
         include_str!("../../../tests/fixtures/migration_incremental_old.jk")
     } else if owned {
@@ -621,9 +620,17 @@ fn main() @suspends ->Int32 {{
     0
 }}"#
     );
+    migration_cancellation_source(&source, boundaries, exhaustive);
+}
+fn migration_cancellation_source(
+    source: &str,
+    boundaries: impl Clone + IntoIterator<Item = usize>,
+    exhaustive: bool,
+) {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut host = VmEngine::with_mode(mode);
-        host.load_source(&source).unwrap();
+        host.load_source(source).unwrap();
         if mode == VmMode::Interpreter {
             host.set_interpreter_limits(crate::vm::InterpreterLimits {
                 poll_budget: Some(1),
@@ -724,4 +731,53 @@ fn migration_incremental_script_cancellation_releases_partial_candidates() {
 #[ignore = "exhaustive: cancel incremental migration at every host instruction"]
 fn exhaustive_migration_incremental_script_cancellation() {
     migration_cancellation(0..=8192, true, true, true);
+}
+
+fn batch_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive: bool) {
+    let old = include_str!("../../../tests/fixtures/migration_batch_old.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let next = include_str!("../../../tests/fixtures/migration_batch_new.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let source = format!(
+        r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+fn require(ok:Bool) {{let message="migration batch cancellation" check.require(ok,&message)}}
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty=""
+    require(vm.begin_migration_batch(h,&next)==0)
+    task.yield_now()
+    require(vm.stage_migration(h,&start,&advance)==0)
+    task.yield_now()
+    require(vm.stage_migration(h,&ledger,&empty)==0)
+    var status=vm.step_migration(h,2)
+    while status==1 {{task.yield_now() status=vm.step_migration(h,2)}}
+    require(status==0)
+    task.yield_now()
+    require(vm.publish_migration(h)==0)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==194)
+}}
+fn main() @suspends ->Int32 {{
+    let owner=domain.directory(4) let directory=owner.handle()
+    let h=vm.create_interpreter() let old={old:?}
+    require(vm.load_source(h,&old)==0)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    require(vm.close(h)==0)
+    0
+}}"#
+    );
+    migration_cancellation_source(&source, boundaries, exhaustive);
+}
+#[test]
+fn migration_batch_script_cancellation_releases_all_staged_roots() {
+    batch_cancellation(
+        [0, 1, 10, 50, 100, 200, 400, 800, 1600, 3200, 6400, 12800],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel batch migration at every host instruction"]
+fn exhaustive_migration_batch_script_cancellation() {
+    batch_cancellation(0..=16384, true);
 }

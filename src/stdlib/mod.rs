@@ -111,6 +111,24 @@ fn vm_bindings() -> Vec<NativeBinding> {
             vm::step_migration as *const u8,
         ),
         binding(
+            "vm.begin_migration_batch",
+            "joky_vm_begin_migration_batch_v1",
+            vec![handle.clone(), Type::reference(Type::String, false)],
+            Type::Int32,
+            vm::begin_migration_batch as *const u8,
+        ),
+        binding(
+            "vm.stage_migration",
+            "joky_vm_stage_migration_v1",
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                Type::reference(Type::String, false),
+            ],
+            Type::Int32,
+            vm::stage_migration as *const u8,
+        ),
+        binding(
             "vm.publish_migration",
             "joky_vm_publish_migration",
             vec![handle.clone()],

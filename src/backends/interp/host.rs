@@ -776,6 +776,16 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 abi::call_named_string_i32(entry, as_named(args[0])?, text)
             }?))
         },
+        ([Type::Named(_), Type::String, Type::String], Type::Int32) => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_named_strings_i32(
+                    entry,
+                    as_named(args[0])?,
+                    string_bytes(args[1])?,
+                    string_bytes(args[2])?,
+                )
+            }?))
+        },
         ([Type::Named(_), Type::String, Type::Int32], Type::Int32) => |entry, args| {
             let text = string_bytes(args[1])?;
             Ok(Value::Int32(unsafe {

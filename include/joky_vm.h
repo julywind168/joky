@@ -50,6 +50,16 @@ int32_t joky_vm_prepare_migration_v1(JokyVmHandle vm, uint64_t schema,
 int32_t joky_vm_begin_migration_v1(JokyVmHandle vm, uint64_t schema,
     const JokyText *source, const JokyText *start, const JokyText *advance);
 int32_t joky_vm_step_migration(JokyVmHandle vm, uint64_t budget);
+/* Batch begin captures every live domain owned by this Script (1..256).
+ * Stage constructs all instances of the start function's nominal return type.
+ * Empty advance selects synchronous construction. Compatible roots stay in place
+ * as validated read dependencies. Once candidate validation starts, stage/step
+ * errors discard the batch; earlier context/text errors may leave it pending.
+ * All types must be staged and all steps done before the shared publish call.
+ * begin/stage return 0 success, 1 error. One single or batch plan per handle. */
+int32_t joky_vm_begin_migration_batch_v1(JokyVmHandle vm, const JokyText *source);
+int32_t joky_vm_stage_migration_v1(JokyVmHandle vm, const JokyText *start,
+    const JokyText *advance);
 int32_t joky_vm_publish_migration(JokyVmHandle vm);
 int32_t joky_vm_cancel_migration(JokyVmHandle vm);
 int32_t joky_vm_call_int32_0_v2(JokyVmHandle vm, const JokyText *name);

@@ -1,0 +1,42 @@
+import joky/domain
+import joky/task
+import joky/check
+import joky/array.{type Array}
+struct Player { name:String, score:Int32 }
+struct Room { players:Array<Player>, score:Int32 }
+fn make(score:Int32)->Room {
+    var players=Array.new::<Player>()
+    var i:UInt64=0
+    while i<12 {players.push(Player{name:"玩家",score:score+int32(i)}) i=i+1}
+    Room{players:players,score:score}
+}
+fn read(room:&Room)->Int32 {room.score}
+fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value room.score}
+fn version()->Int32 {1}
+struct Ledger { text:String, total:Int32 }
+struct Rules { limit:Int32 }
+fn ledger(n:Int32)->Ledger {Ledger{text:"ledger",total:n}}
+fn rules(n:Int32)->Rules {Rules{limit:n}}
+fn ledger_read(s:&Ledger)->Int32 {s.total}
+fn rules_read(s:&Rules)->Int32 {s.limit}
+fn rules_add(s:&mut Rules,n:Int32)->Int32 {s.limit=s.limit+n s.limit}
+fn hold(directory:domain.DirectoryHandle) @suspends {
+    let a=domain.create(make,42) let b=domain.create(make,42)
+    let c=domain.create(ledger,100) let d=domain.create(rules,7)
+    let message="register migration batch"
+    check.require(directory.insert(1,a.handle()).is_ok(),&message)
+    check.require(directory.insert(2,b.handle()).is_ok(),&message)
+    check.require(directory.insert(3,c.handle()).is_ok(),&message)
+    check.require(directory.insert(4,d.handle()).is_ok(),&message)
+    task.sleep_ms(100000)
+}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    let a=match domain.lookup(directory,1,read) {Some(h)=>domain.read_from(h,read),None=>return -1}
+    let b=match domain.lookup(directory,2,read) {Some(h)=>domain.read_from(h,read),None=>return -1}
+    let c=match domain.lookup(directory,3,ledger_read) {Some(h)=>domain.read_from(h,ledger_read),None=>return -1}
+    let d=match domain.lookup(directory,4,rules_read) {Some(h)=>domain.read_from(h,rules_read),None=>return -1}
+    a+b+c+d
+}
+fn bump(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup_write(directory,4,rules_read) {Some(h)=>domain.write_to(h,rules_add,1),None=>-1}
+}

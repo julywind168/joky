@@ -6893,3 +6893,72 @@ fn main() @suspends {{
         work.assert_all_backends("incremental.jk", &[], b"", 0);
     }
 }
+
+#[test]
+fn script_migration_batch_is_atomic_across_types_and_read_dependencies() {
+    let old = include_str!("fixtures/migration_batch_old.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let next = include_str!("fixtures/migration_batch_new.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("batch.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+fn require(ok:Bool) {{let message="migration batch" check.require(ok,&message)}}
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty="" let version="version"
+    require(vm.domain_schema(h)==0)
+    require(vm.begin_migration_batch(h,&next)==0)
+    require(vm.begin_migration_batch(h,&next)==1)
+    require(vm.stage_migration(h,&start,&advance)==0)
+    require(vm.publish_migration(h)==1)
+    require(vm.step_migration(h,2)==-1)
+    require(vm.begin_migration_batch(h,&next)==0)
+    require(vm.stage_migration(h,&start,&advance)==0)
+    require(vm.stage_migration(h,&start,&advance)==1)
+    require(vm.publish_migration(h)==1)
+    require(vm.begin_migration_batch(h,&next)==0)
+    require(vm.stage_migration(h,&start,&advance)==0)
+    require(vm.stage_migration(h,&ledger,&empty)==0)
+    require(vm.step_migration(h,2)==1)
+    task.yield_now()
+    require(vm.cancel_migration(h)==0)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==191)
+    require(vm.begin_migration_batch(h,&next)==0)
+    require(vm.stage_migration(h,&start,&advance)==0)
+    require(vm.stage_migration(h,&ledger,&empty)==0)
+    require(vm.step_migration(h,2)==1)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==8)
+    require(vm.step_migration(h,2)==-1)
+    require(vm.publish_migration(h)==1)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
+    require(vm.begin_migration_batch(h,&next)==0)
+    require(vm.stage_migration(h,&start,&advance)==0)
+    require(vm.stage_migration(h,&ledger,&empty)==0)
+    var batch:Int32=0
+    while batch<12 {{
+        require(vm.step_migration(h,2)==(if batch==11 {{0}} else {{1}}))
+        require(vm.error_code()==0)
+        task.yield_now()
+        require(vm.call_int32(h,&version)==1)
+        require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
+        batch=batch+1
+    }}
+    require(vm.publish_migration(h)==0)
+    require(vm.call_int32(h,&version)==2)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==195)
+}}
+fn main() @suspends {{
+    let owner=domain.directory(4) let directory=owner.handle()
+    let h=vm.{create}() let old={old:?}
+    require(vm.load_source(h,&old)==0)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    require(vm.close(h)==0)
+}}
+"#));
+        work.assert_all_backends("batch.jk", &[], b"", 0);
+    }
+}

@@ -358,3 +358,68 @@ fn migration_invalidates_sleeping_and_queued_timers_without_running_old_code() {
         }
     }
 }
+
+#[test]
+fn migration_batch_invalidates_all_changed_timers_and_preserves_compatible_target() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (mut vm, clock, first, first_timer) = setup(mode);
+        // Retain the original module family across a compatible load.
+        let mut owners = vec![vm.script_code_owner().unwrap()];
+        let old=format!("{SOURCE}\nstruct Rules {{n:Int32}} fn rules(n:Int32)->Rules {{Rules{{n:n}}}} fn rules_tick(s:&mut Rules,n:Int32) {{s.n=s.n+n}}");
+        vm.load_source(&old).unwrap();
+        owners.push(vm.script_code_owner().unwrap());
+        let second = vm
+            .create_domain("make", &[InstanceValue::Int32(20)])
+            .unwrap();
+        let second_timer = create(&vm.domains).unwrap();
+        let rules = vm
+            .create_domain("rules", &[InstanceValue::Int32(1)])
+            .unwrap();
+        let rules_timer = create(&vm.domains).unwrap();
+        arm(&vm, &first, &first_timer, false, 0).unwrap();
+        arm(&vm, &second, &second_timer, false, 1000).unwrap();
+        start(
+            &vm.domains,
+            rules_timer.token,
+            Schedule {
+                target: rules.write_handle(),
+                module: vm.current.as_ref().unwrap(),
+                name: "rules_tick",
+                input: 2,
+                periodic: false,
+                milliseconds: 1000,
+                limits: Default::default(),
+            },
+        )
+        .unwrap();
+        vm.poll_tasks(1).unwrap();
+        let new = old
+            .replace(
+                "struct Room { value:Int32 }",
+                "struct Room { value:Int32, level:Int32 }",
+            )
+            .replace("Room{value:value}", "Room{value:value,level:1}");
+        let new = format!(
+            "{new}\nfn upgrade(old:&PreviousRoom)->Room {{Room{{value:old.value,level:1}}}}"
+        );
+        let registry = vm.domains.clone();
+        let mut batch = migration::batch::begin(&vm, &registry, &owners, &new).unwrap();
+        migration::batch::stage(&vm, &registry, &owners, &mut batch, "upgrade", "").unwrap();
+        migration::batch::publish(&mut vm, &registry, &owners, batch).unwrap();
+        for timer in [&first_timer, &second_timer] {
+            assert_eq!(timer.state.borrow().status, Status::InvalidAccess);
+            assert!(timer.state.borrow().job.is_none());
+        }
+        assert_eq!(rules_timer.state.borrow().status, Status::Active);
+        assert_eq!(value(&vm, &first), 10);
+        assert_eq!(value(&vm, &second), 20);
+        clock
+            .time
+            .set(clock.time.get() + Duration::from_millis(1001));
+        drive(&vm);
+        assert_eq!(rules_timer.state.borrow().status, Status::Completed);
+        assert_eq!(vm.domain_revision(rules.read_handle()).unwrap(), 1);
+        drop((first_timer, second_timer, rules_timer, first, second, rules));
+        assert_eq!(registry.borrow().usage(), (0, 0, 0, 0));
+    }
+}

@@ -103,7 +103,7 @@ pub(super) fn module_key(module: &LoadedModule) -> usize {
     }
 }
 
-fn state_types(module: &LoadedModule) -> HashMap<String, Type> {
+pub(super) fn state_types(module: &LoadedModule) -> HashMap<String, Type> {
     let names: Vec<String> = match module {
         LoadedModule::Jit(module) => module.instance_entries.keys().cloned().collect(),
         LoadedModule::Interpreter(module) => interp::instance_names(module),

@@ -300,3 +300,5 @@ mod tests;
 
 #[cfg(test)]
 mod incremental_tests;
+
+pub(crate) mod batch;

@@ -5,6 +5,7 @@ pub(super) struct View {
     pub imports: String,
     pub declarations: String,
     types: Vec<(Type, String)>,
+    roots: Vec<(Type, String)>,
     left: usize,
     arrays: String,
     maps: String,
@@ -13,6 +14,29 @@ pub(super) struct View {
 }
 impl View {
     pub fn new(ty: &Type, imports: &[crate::parser::ast::Import]) -> Result<Self, Error> {
+        Self::build(vec![(ty.clone(), "PreviousState".into())], imports)
+    }
+    pub fn many(types: &[Type], imports: &[crate::parser::ast::Import]) -> Result<Self, Error> {
+        let mut roots: Vec<(Type, String)> = Vec::new();
+        for ty in types {
+            let Type::Record(record) = ty else {
+                return Err(invalid("Migration root must be a record"));
+            };
+            let name = format!("Previous{}", record.name.rsplit('.').next().unwrap());
+            if let Some((old, _)) = roots.iter().find(|(_, n)| *n == name) {
+                if !code::compatible(old, ty) {
+                    return Err(invalid("Migration batch has ambiguous old root views"));
+                }
+            } else {
+                roots.push((ty.clone(), name));
+            }
+        }
+        Self::build(roots, imports)
+    }
+    fn build(
+        roots: Vec<(Type, String)>,
+        imports: &[crate::parser::ast::Import],
+    ) -> Result<Self, Error> {
         let alias = |path: &str| {
             imports.iter().find(|i| i.path == path).map(|i| {
                 i.alias
@@ -30,23 +54,37 @@ impl View {
             maps: maps.unwrap_or_else(|| "PreviousMaps".into()),
             declarations: String::new(),
             types: Vec::new(),
+            roots,
             left: 65_536,
         };
-        if !matches!(ty, Type::Record(_)) {
-            return Err(invalid("Migration root must be a record"));
+        for (ty, _) in view.roots.clone() {
+            if !matches!(ty, Type::Record(_)) {
+                return Err(invalid("Migration root must be a record"));
+            }
+            view.render(&ty, 0)?;
         }
-        view.render(ty, 0)?;
         Ok(view)
     }
     fn name(&self, nominal: &str) -> String {
         let base = format!("Previous{}", nominal.rsplit('.').next().unwrap());
-        if base != "PreviousState" && !self.types.iter().any(|(_, name)| *name == base) {
+        if base != "PreviousState"
+            && !self
+                .types
+                .iter()
+                .chain(&self.roots)
+                .any(|(_, name)| *name == base)
+        {
             base
         } else {
             let mut index = self.types.len();
             loop {
                 let name = format!("PreviousType{index}");
-                if !self.types.iter().any(|(_, used)| *used == name) {
+                if !self
+                    .types
+                    .iter()
+                    .chain(&self.roots)
+                    .any(|(_, used)| *used == name)
+                {
                     break name;
                 }
                 index += 1;
@@ -61,7 +99,7 @@ impl View {
         if instance::scalar(ty) || *ty == Type::String {
             return Ok(ty.to_string());
         }
-        if let Some((_, name)) = self.types.iter().find(|(t, _)| t == ty) {
+        if let Some((_, name)) = self.types.iter().find(|(t, _)| code::compatible(t, ty)) {
             return Ok(name.clone());
         }
         match ty {
@@ -96,11 +134,12 @@ impl View {
                 Ok(format!("{container}<{}>", arguments.join(",")))
             }
             Type::Record(r) if !r.indirect && r.closure.is_none() => {
-                let name = if self.types.is_empty() {
-                    "PreviousState".to_string()
-                } else {
-                    self.name(&r.name)
-                };
+                let name = self
+                    .roots
+                    .iter()
+                    .find(|(t, _)| code::compatible(t, ty))
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_else(|| self.name(&r.name));
                 self.types.push((ty.clone(), name.clone()));
                 let mut declaration = if r.repr_c {
                     format!("\n#repr(C)\nstruct {name} {{\n")
@@ -141,6 +180,9 @@ impl View {
 /// Names/ids intentionally differ. Compare every reachable layout and field,
 /// including buffer elements; nominal equality alone could hide a changed graph.
 pub(super) fn matches(old: &Type, view: &Type) -> bool {
+    matches_named(old, view, "PreviousState")
+}
+pub(super) fn matches_named(old: &Type, view: &Type, name: &str) -> bool {
     fn check(a: &Type, b: &Type, depth: usize, left: &mut usize) -> bool {
         if depth > 32 || *left == 0 {
             return false;
@@ -184,5 +226,5 @@ pub(super) fn matches(old: &Type, view: &Type) -> bool {
             _ => (instance::scalar(a) || *a == Type::String) && a == b,
         }
     }
-    matches!(view,Type::Record(r) if r.name=="PreviousState") && check(old, view, 0, &mut 65_536)
+    matches!(view,Type::Record(r) if r.name==name) && check(old, view, 0, &mut 65_536)
 }
