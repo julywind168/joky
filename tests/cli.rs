@@ -6757,3 +6757,61 @@ fn domain_timers_reject_unsafe_contracts_in_all_frontends() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn migration_script_staging_and_atomic_publication_run_in_all_backends() {
+    let source = include_str!("fixtures/migration_old.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let next = include_str!("fixtures/migration_new.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("migrate.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
+fn require(ok:Bool) {{let message="Script migration" check.require(ok,&message)}}
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    var attempts:Int32=0
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+        attempts=attempts+1 require(attempts<1000) task.yield_now()
+    }}
+    let schema=vm.domain_schema(h)
+    require(schema!=0)
+    let next={next:?}
+    let method="upgrade"
+    let version="version"
+    require(vm.prepare_migration(h,0,&next,&method)==1)
+    require(vm.prepare_migration(h,schema,&next,&method)==0)
+    require(vm.prepare_migration(h,schema,&next,&method)==1)
+    require(vm.call_int32(h,&version)==1)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    require(vm.cancel_migration(h)==0)
+    require(vm.publish_migration(h)==1)
+    require(vm.prepare_migration(h,schema,&next,&method)==0)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
+    require(vm.publish_migration(h)==1)
+    require(vm.domain_schema(h)==schema)
+    require(vm.call_int32(h,&version)==1)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
+    require(vm.prepare_migration(h,schema,&next,&method)==0)
+    task.yield_now()
+    require(vm.publish_migration(h)==0)
+    require(vm.domain_schema(h)!=schema)
+    require(vm.call_int32(h,&version)==2)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
+}}
+fn main() @suspends {{
+    let owner=domain.directory(1)
+    let directory=owner.handle()
+    let h=vm.{create}()
+    let source={source:?}
+    require(vm.load_source(h,&source)==0)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    require(vm.close(h)==0)
+}}
+"#));
+        work.assert_all_backends("migrate.jk", &[], b"", 0);
+    }
+}

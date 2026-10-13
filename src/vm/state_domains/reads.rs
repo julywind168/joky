@@ -24,6 +24,7 @@ pub(super) struct Version {
     pub(super) handle: DomainHandle,
     pub(super) revision: u64,
     pub(super) code: u64,
+    pub(super) schema: u64,
 }
 #[derive(Clone)]
 pub(super) struct ReadSet {
@@ -32,12 +33,13 @@ pub(super) struct ReadSet {
     extra: Option<Rc<Extra>>,
 }
 impl ReadSet {
-    pub(super) fn single(handle: DomainHandle, revision: u64, code: u64) -> Self {
+    pub(super) fn single(handle: DomainHandle, revision: u64, code: u64, schema: u64) -> Self {
         Self {
             first: Version {
                 handle,
                 revision,
                 code,
+                schema,
             },
             second: None,
             extra: None,
@@ -48,12 +50,14 @@ impl ReadSet {
             handles[0],
             domains.entries[&handles[0].sequence].revision,
             domains.entries[&handles[0].sequence].code,
+            domains.entries[&handles[0].sequence].schema,
         );
         if handles[0].sequence != handles[1].sequence {
             reads.second = Some(Version {
                 handle: handles[1],
                 revision: domains.entries[&handles[1].sequence].revision,
                 code: domains.entries[&handles[1].sequence].code,
+                schema: domains.entries[&handles[1].sequence].schema,
             });
         }
         reads
@@ -66,6 +70,7 @@ impl ReadSet {
             first,
             domains.get(first)?.revision,
             domains.get(first)?.code,
+            domains.get(first)?.schema,
         );
         if handles.len() == 2 {
             domains.get(handles[1])?;
@@ -86,6 +91,7 @@ impl ReadSet {
                     handle: *handle,
                     revision: domains.get(*handle)?.revision,
                     code: domains.get(*handle)?.code,
+                    schema: domains.get(*handle)?.schema,
                 });
             }
         }
@@ -143,7 +149,10 @@ impl ReadSet {
         }
         for version in self.iter() {
             let domain = &domains.entries[&version.handle.sequence];
-            if domain.revision != version.revision || domain.code != version.code {
+            if domain.revision != version.revision
+                || domain.code != version.code
+                || domain.schema != version.schema
+            {
                 return Err(Status::Conflict);
             }
         }

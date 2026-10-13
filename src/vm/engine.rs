@@ -568,6 +568,28 @@ impl VmEngine {
         Ok(())
     }
 
+    pub(super) fn stage_module(
+        &self,
+        ast: &parser::ast::Module,
+    ) -> Result<(LoadedModule, u64), Error> {
+        let mut staging = Self::with_mode_and_registry(self.mode, self.registry.clone());
+        staging.hosts = self.hosts.clone();
+        staging.types = self.types.clone();
+        staging.next_version = self.next_version;
+        staging.interpreter_limits = self.interpreter_limits;
+        staging.load_module(ast)?;
+        Ok((staging.current.take().unwrap(), staging.next_version))
+    }
+    // The caller has completed all fallible checks; retire the old owner later.
+    pub(super) fn install_staged(
+        &mut self,
+        module: LoadedModule,
+        next_version: u64,
+    ) -> Option<LoadedModule> {
+        self.next_version = next_version;
+        self.current.replace(module)
+    }
+
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, Error> {
         self.load_module(&parser::parse(source)?)

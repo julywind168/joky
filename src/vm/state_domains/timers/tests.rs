@@ -324,3 +324,37 @@ fn domain_timers_limits_refund_admission_and_queued_work() {
     domain.close();
     assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
 }
+
+#[test]
+fn migration_invalidates_sleeping_and_queued_timers_without_running_old_code() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for queued in [false, true] {
+            let (mut vm, _, domain, timer) = setup(mode);
+            let registry = vm.domains.clone();
+            arm(&vm, &domain, &timer, false, if queued { 0 } else { 1000 }).unwrap();
+            vm.poll_tasks(1).unwrap();
+            let owners = vec![vm.script_code_owner().unwrap()];
+            let new = SOURCE
+                .replace(
+                    "struct Room { value:Int32 }",
+                    "struct Room { value:Int32, level:Int32 }",
+                )
+                .replace("Room{value:value}", "Room{value:value,level:1}");
+            let new = format!(
+                "{new}\nfn upgrade(old:&PreviousState)->Room{{Room{{value:old.value,level:1}}}}"
+            );
+            let schema = migration::schema(&registry, &owners).unwrap();
+            let plan =
+                migration::prepare(&vm, &registry, &owners, schema, &new, "upgrade").unwrap();
+            migration::publish(&mut vm, &registry, &owners, plan).unwrap();
+            assert_eq!(timer.state.borrow().status, Status::InvalidAccess);
+            assert!(timer.state.borrow().job.is_none());
+            assert!(registry.borrow().requests.is_empty());
+            assert_eq!(value(&vm, &domain), 10);
+            assert_eq!(vm.domain_revision(domain.read_handle()).unwrap(), 1);
+            drop(timer);
+            domain.close();
+            assert_eq!(registry.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}

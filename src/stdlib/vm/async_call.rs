@@ -11,6 +11,7 @@ use std::{any::Any, cell::Cell, rc::Weak};
 pub(super) struct HandleState {
     pub(super) engine: RefCell<VmEngine>,
     session: RefCell<Option<Session>>,
+    migration: RefCell<Option<crate::vm::state_domains::migration::PreparedMigration>>,
 }
 struct Session {
     domains: Weak<RefCell<crate::vm::state_domains::Domains>>,
@@ -32,6 +33,7 @@ impl HandleState {
         Self {
             engine: RefCell::new(VmEngine::with_mode(mode)),
             session: RefCell::new(None),
+            migration: RefCell::new(None),
         }
     }
     pub(super) fn remember(&self, engine: &VmEngine) {
@@ -71,6 +73,8 @@ impl HandleState {
         Ok(())
     }
     pub(super) fn close(&self) {
+        let migration = self.migration.borrow_mut().take();
+        drop(migration);
         if let Some(session) = self.session.borrow().as_ref() {
             for call in session.calls.iter().filter_map(Weak::upgrade) {
                 // A call may close its own VM while being polled. Invalidate now;
@@ -109,6 +113,139 @@ pub(crate) extern "C" fn publish_domain_code(handle: u64) -> i32 {
         let count = engine.publish_script_code(&executor, &owners)?;
         // Domain limits bound the count well below Int32::MAX.
         Ok(count as i32)
+    })
+}
+
+struct MigrationContext {
+    state: Rc<HandleState>,
+    executor: HostExecutor,
+    owners: Vec<Rc<dyn Any>>,
+}
+fn migration_context(handle: u64) -> Result<MigrationContext, Error> {
+    let executor = current_executor().ok_or_else(|| {
+        runtime_error(
+            ErrorCode::InvalidState,
+            "Script migration requires an active executor",
+        )
+    })?;
+    let state = lookup(handle)?;
+    state.bind(&executor)?;
+    {
+        let engine = state.engine.try_borrow().map_err(|_| {
+            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
+        })?;
+        state.remember(&engine);
+    }
+    let owners = state
+        .session
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .modules
+        .iter()
+        .filter_map(Weak::upgrade)
+        .collect();
+    Ok(MigrationContext {
+        state,
+        executor,
+        owners,
+    })
+}
+#[export_name = "joky_vm_domain_schema"]
+pub(crate) extern "C" fn domain_schema(handle: u64) -> u64 {
+    operation(0, || {
+        let MigrationContext {
+            executor, owners, ..
+        } = migration_context(handle)?;
+        crate::vm::state_domains::migration::schema(&executor.domains(), &owners)
+    })
+}
+#[export_name = "joky_vm_prepare_migration_v1"]
+/// # Safety
+/// Both text descriptors must be aligned and borrow live immutable UTF-8 for this call.
+pub(crate) unsafe extern "C" fn prepare_migration(
+    handle: u64,
+    schema: u64,
+    source: *const u8,
+    method: *const u8,
+) -> i32 {
+    operation(1, || {
+        let source = borrow(source)?;
+        let method = borrow(method)?;
+        let MigrationContext {
+            state,
+            executor,
+            owners,
+        } = migration_context(handle)?;
+        if state.migration.borrow().is_some() {
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "A migration is already prepared",
+            ));
+        }
+        let engine = state.engine.try_borrow().map_err(|_| {
+            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
+        })?;
+        let plan = crate::vm::state_domains::migration::prepare(
+            &engine,
+            &executor.domains(),
+            &owners,
+            schema,
+            source,
+            method,
+        )?;
+        *state.migration.borrow_mut() = Some(plan);
+        Ok(0)
+    })
+}
+#[export_name = "joky_vm_publish_migration"]
+pub(crate) extern "C" fn publish_migration(handle: u64) -> i32 {
+    operation(1, || {
+        let MigrationContext {
+            state,
+            executor,
+            owners,
+        } = migration_context(handle)?;
+        let mut engine = state.engine.try_borrow_mut().map_err(|_| {
+            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
+        })?;
+        // Reserve bookkeeping before publication so remembering the new module
+        // cannot allocate after the state and entry have switched.
+        state
+            .session
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .modules
+            .try_reserve(1)
+            .map_err(|_| {
+                runtime_error(
+                    ErrorCode::ResourceLimit,
+                    "Migration module allocation failed",
+                )
+            })?;
+        let plan = state
+            .migration
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
+        crate::vm::state_domains::migration::publish(
+            &mut engine,
+            &executor.domains(),
+            &owners,
+            plan,
+        )?;
+        state.remember(&engine);
+        Ok(0)
+    })
+}
+#[export_name = "joky_vm_cancel_migration"]
+pub(crate) extern "C" fn cancel_migration(handle: u64) -> i32 {
+    operation(1, || {
+        let state = lookup(handle)?;
+        let plan = state.migration.borrow_mut().take();
+        drop(plan);
+        Ok(0)
     })
 }
 

@@ -40,6 +40,22 @@ pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
             .all(super::instance::scalar)
 }
 
+/// HR5-A admits only flat, non-generic scalar records across a migration bridge.
+pub(crate) fn scalar_record(ty: &Type) -> bool {
+    matches!(ty, Type::Record(r) if r.template.is_none() && r.parameters.is_empty()
+        && r.arguments.is_empty() && r.closure.is_none()
+        && r.fields.iter().all(|f| super::instance::scalar(&f.ty)))
+}
+pub(crate) fn migration_eligible(info: &FunctionInfo) -> bool {
+    !info.suspends
+        && info.parameter_noescape(0)
+        && info.signature.params.len() == 1
+        && info.signature.params[0]
+            .reference_type()
+            .is_some_and(|r| !r.mutable && scalar_record(&r.target))
+        && scalar_record(&info.signature.ret)
+}
+
 fn storage_op(op: &Op, body: &FunctionPlan) -> bool {
     match op {
         Op::Text { .. } | Op::Require { .. } | Op::ReadOwner { .. } | Op::StoreOwner { .. } => true,
@@ -121,8 +137,16 @@ pub(crate) fn infer(
                 .iter()
                 .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
         // Reuse the typed lane bridge, without changing persistent-instance eligibility.
-        info.instance_entry |= pair;
+        let migration = safe.contains(name)
+            && migration_eligible(info)
+            && state_root(&info.signature.ret, &bodies[name])
+            && state_root(
+                &info.signature.params[0].reference_type().unwrap().target,
+                &bodies[name],
+            );
+        info.instance_entry |= pair || migration;
         info.domain_entry = pair
+            || migration
             || safe.contains(name)
                 && ((super::instance::constructor(info)
                     && state_root(&info.signature.ret, &bodies[name]))

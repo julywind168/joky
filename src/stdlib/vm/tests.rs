@@ -562,3 +562,108 @@ fn script_flat_bridge_checks_contract_before_running_target() {
         }
     }
 }
+
+fn migration_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive: bool) {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    let old = include_str!("../../../tests/fixtures/migration_old.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let next = include_str!("../../../tests/fixtures/migration_new.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let source = format!(
+        r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+fn require(ok:Bool) {{let message="migration cancellation" check.require(ok,&message)}}
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    let next={next:?}
+    let method="upgrade"
+    require(vm.prepare_migration(h,vm.domain_schema(h),&next,&method)==0)
+    task.yield_now()
+    require(vm.publish_migration(h)==0)
+    task.yield_now()
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==43)
+}}
+fn main() @suspends ->Int32 {{
+    let owner=domain.directory(1)
+    let directory=owner.handle()
+    let h=vm.create_interpreter()
+    let source={old:?}
+    require(vm.load_source(h,&source)==0)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    require(vm.close(h)==0)
+    0
+}}"#
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut host = VmEngine::with_mode(mode);
+        host.load_source(&source).unwrap();
+        if mode == VmMode::Interpreter {
+            host.set_interpreter_limits(crate::vm::InterpreterLimits {
+                poll_budget: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+        let mut completed = false;
+        let mut saw_pending = false;
+        for boundary in boundaries.clone() {
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            executor
+                .spawn(&group, host.prepare_async("main", &[]).unwrap())
+                .unwrap();
+            let mut done = false;
+            for _ in 0..boundary {
+                for result in executor.poll(1).unwrap().completed {
+                    assert_eq!(
+                        result
+                            .result
+                            .unwrap_or_else(|e| panic!("{mode:?} boundary={boundary}: {e}")),
+                        0
+                    );
+                    done = true;
+                }
+                if done {
+                    break;
+                }
+            }
+            executor.cancel_group(&group);
+            saw_pending |= executor.domains().borrow().usage().3 != 0;
+            // vm.Handle explicitly owns the prepared candidate even when the
+            // requesting task is cancelled. Closing it releases the candidate.
+            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
+            for h in handles {
+                assert_eq!(close(h), 0);
+            }
+            assert_eq!(executor.task_count(), 0);
+            assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+            drop(executor);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+            if done {
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "{mode:?}: cancellation sweep missed completion");
+        if exhaustive {
+            assert!(
+                saw_pending,
+                "{mode:?}: cancellation sweep missed a prepared candidate"
+            );
+        }
+    }
+}
+#[test]
+fn migration_script_parent_cancellation_and_vm_close_release_candidates() {
+    migration_cancellation(
+        [0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800, 1600, 3200],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel migration preparation and publication at every host instruction"]
+fn exhaustive_migration_script_cancellation() {
+    migration_cancellation(0..=4096, true);
+}

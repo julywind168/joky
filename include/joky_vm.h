@@ -35,6 +35,16 @@ int32_t joky_vm_reload_source_v2(JokyVmHandle vm, const JokyText *source);
 /* Requires the Script handle's active executor. Returns rebound count or -1.
  * Only domains owned by modules loaded through this handle are selected. */
 int32_t joky_vm_publish_domain_code(JokyVmHandle vm);
+/* HR5-A requires exactly one live domain owned by this Script on the active
+ * executor. Schema is a nonzero, process-local identity; zero indicates error.
+ * Preparation generates PreviousState from the actual scalar schema. A handle
+ * owns at most one candidate; publish consumes it on success or validation failure.
+ * prepare/publish/cancel return 0 on success, 1 on error. Close drops a candidate. */
+uint64_t joky_vm_domain_schema(JokyVmHandle vm);
+int32_t joky_vm_prepare_migration_v1(JokyVmHandle vm, uint64_t schema,
+    const JokyText *source, const JokyText *method);
+int32_t joky_vm_publish_migration(JokyVmHandle vm);
+int32_t joky_vm_cancel_migration(JokyVmHandle vm);
 int32_t joky_vm_call_int32_0_v2(JokyVmHandle vm, const JokyText *name);
 int32_t joky_vm_call_int32_1_v2(JokyVmHandle vm, const JokyText *name, int32_t a);
 int32_t joky_vm_call_int32_2_v2(JokyVmHandle vm, const JokyText *name, int32_t a, int32_t b);

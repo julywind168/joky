@@ -22,6 +22,7 @@ mod admission;
 mod code;
 mod commits;
 mod directory;
+pub(crate) mod migration;
 mod outbox;
 mod pairs;
 mod reads;
@@ -220,6 +221,7 @@ struct Domain {
     /// Incremented whenever compatible code is published for this root.
     code: u64,
     revision: u64,
+    schema: u64,
     failure: Option<Error>,
     closing: bool,
     tasks: HashMap<TaskId, TaskGroup>,
@@ -740,6 +742,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
                     },
                     next,
                     domain.code,
+                    domain.schema,
                 ));
                 DomainOutcome::Value(value)
             }
@@ -878,6 +881,7 @@ fn create(
             ty: info.signature.ret,
             code: 0,
             revision: 0,
+            schema: source::next_token()?,
             failure: None,
             closing: false,
             tasks: HashMap::new(),

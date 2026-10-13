@@ -2703,8 +2703,8 @@ VM 销毁后尚未领取的 Request 返回 Closed，Owner 和 Request 不延长 
 之后的兼容单域调用执行新代码；已挂起的请求继续运行启动时的代码，其单域操作按调用方签名
 检查兼容，发布前已排队、签名已变化的单域调用以 `TypeMismatch` 失败而域保持可用。
 pair 登记、候选写域等路径仍有同模块约束。已排队 pair/access 的任一参与域切换代码时，
-执行前以 `InvalidCall` 拒绝，所有域仍健康且没有写入。单域与联合快照在执行时保存数据修订
-和代码版本；仅更新只读依赖代码也会使快照检查及旧候选提交返回 `Conflict`。候选写域自身
+执行前以 `InvalidCall` 拒绝，所有域仍健康且没有写入。单域与联合快照在执行时保存数据修订、代码版本
+和 schema 身份；仅更新只读依赖代码也会使快照检查及旧候选提交返回 `Conflict`。候选写域自身
 切换模块仍按原有同模块检查返回 `InvalidAccess`。代码版本耗尽时整批发布返回 `ResourceLimit`，
 不回绕。实现范围见[热更新计划 HR0](aot-script-hot-reload.md#34-hr0-版本校验)。
 
@@ -3353,6 +3353,10 @@ let status = vm.register_int32(engine, &name, host_add)
 | `vm.call_int32(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
 | `vm.call_async_int32(handle, name: String, input: Int32) @suspends -> Int32` | 以当前执行器推进 Script 子流程，目标严格为 `fn(Int32) @suspends -> Int32`；失败走当前任务的运行时错误通道 |
 | `vm.publish_domain_code(handle) -> Int32` | 在该句柄绑定的当前执行器上发布兼容域代码，返回切换数量；失败返回 -1 并设置错误 |
+| `vm.domain_schema(handle) -> UInt64` | 返回该 Script 唯一存活状态域的 schema 身份；失败返回 0 |
+| `vm.prepare_migration(handle, schema: UInt64, source: &String, method: &String) -> Int32` | 暂存新模块并构造独立迁移候选；成功 0，失败 1 |
+| `vm.publish_migration(handle) -> Int32` | 校验后一起切换域根、类型和 Script 入口；成功 0，失败 1 |
+| `vm.cancel_migration(handle) -> Int32` | 释放尚未发布的候选；有效句柄即使没有候选也返回 0，非法句柄返回 1 |
 | `vm.error_code()` | 当前线程最近一次同步 VM 操作的状态：0 成功，1 失败 |
 | `vm.print_error()` | 将最近一次错误写到 stderr |
 
@@ -3372,6 +3376,31 @@ Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失�
 语言侧 `publish_domain_code` 只选择该 VM 句柄曾加载且仍存活的模块所拥有的域，其他 Script
 或 AOT 宿主中同名状态不受影响；仅加载不发布不会替换域代码。跨版本布局与调用兼容规则同
 前述状态域接口。标量范围与验收见[热更新计划](aot-script-hot-reload.md#61-hr2-标量异步探针已实现)。
+
+HR5-A 的迁移入口是 `fn upgrade(old: &PreviousState) -> Room`。`PreviousState` 由运行时根据
+实际旧根的类型生成，再与新源码一起编译；业务源码不能重复声明该名字。新根必须与旧根同名，
+且 schema 确实变化；两者都限非泛型、无用户 Drop 的平面标量记录。编译器证明迁移同步、
+旧引用不逃逸、不修改旧状态且不调用宿主；String、Array、Map、嵌套拥有根与多域迁移尚不支持。
+新源码沿用 `load_source` 的单源码导入范围，不隐式搜索本地文件。
+
+使用顺序是取得 `domain_schema`，调用 `prepare_migration`，检查成功后再调用
+`publish_migration`。准备期间当前入口和旧根不变；最终发布检查域身份、存活状态、修订、代码
+版本、schema 身份及 Script 当前模块，任何冲突都拒绝发布，保留已完成的正常业务写入。
+进入发布校验后无论成功或失败都会消费候选；进入前的句柄或执行器检查失败可能保留候选，
+可显式取消。每个 VM 最多保存一个候选，再次准备会失败。准备后 `load_source` 改变当前模块
+会使原候选发布失败。
+
+除 `cancel_migration` 外，这些接口要求当前执行器，并按 Script 模块归属选中恰好一个存活域；
+零个或多个都拒绝，不影响其他 Script 的域。schema 身份是进程内不复用的非零令牌，不能作为
+持久化 schema 版本使用；迁回旧布局也获得新令牌。成功后域身份与目录注册保持不变，新代码
+可重新按新类型查找；旧布局调用被拒绝，旧快照/候选凭据失效，既有目标定时器终止为
+`InvalidAccess`，需显式重新登记。已启动的流程仍保留旧代码，状态访问继续接受契约检查。
+
+候选归 `vm.Handle` 所有，取消发起任务不会自动释放；必须显式 `cancel_migration` 或 `close`。
+旧根与候选同时计入状态预算。编译及迁移计算同步占用执行器，不提供后台迁移或强制超时；
+解释器沿用指令预算，JIT 计算不抢占。准备失败自动清理部分候选。三种宿主与两种 Script 后端的
+可执行验收见 `migration_script_staging_and_atomic_publication_run_in_all_backends`；
+[新版 fixture](../tests/fixtures/migration_new.jk) 依赖准备时注入的旧类型，不能单独加载。
 
 `@suspends` 函数可以用 `parallel` 并发等待多个 `Unit` 分支：
 

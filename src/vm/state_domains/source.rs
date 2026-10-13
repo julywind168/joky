@@ -687,7 +687,7 @@ mod tests {
             let error = adopt_snapshot(
                 &mut arena,
                 InstanceValue::Int32(7),
-                reads::ReadSet::single(handle, 0, 0),
+                reads::ReadSet::single(handle, 0, 0, 0),
             )
             .unwrap_err();
             assert_eq!(error.code(), ErrorCode::ResourceLimit);

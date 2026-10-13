@@ -635,3 +635,17 @@ pub(crate) unsafe fn call_unit_u16_2(entry: *const u8, a: u16, b: u16) -> Result
 c_reference_call!(call_c_i8, i8);
 c_reference_call!(call_c_i16, i16);
 c_reference_call!(call_c_u16, u16);
+
+/// # Safety
+/// Entry must match fn(u64, u64, *const u8, *const u8) -> i32. Text pointers
+/// reference live immutable JokyText descriptors for the duration of this call.
+pub(crate) unsafe fn call_named_u64_strings_i32(
+    entry: *const u8,
+    handle: u64,
+    schema: u64,
+    source: *const u8,
+    method: *const u8,
+) -> Result<i32, Error> {
+    let f: unsafe extern "C" fn(u64, u64, *const u8, *const u8) -> i32 = std::mem::transmute(entry);
+    super::error::checked(|| f(handle, schema, source, method))
+}

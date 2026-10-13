@@ -19,6 +19,7 @@ enum Status {
 pub(super) struct State {
     status: Status,
     generation: u64,
+    target: Option<DomainHandle>,
     job: Option<TaskId>,
     _charge: reads::Charge,
 }
@@ -52,6 +53,7 @@ fn create(registry: &Rc<RefCell<Domains>>) -> Result<Owner, Error> {
     let state = Rc::new(RefCell::new(State {
         status: Status::Idle,
         generation: 0,
+        target: None,
         job: None,
         _charge: charge,
     }));
@@ -87,6 +89,31 @@ pub(super) fn shutdown(registry: &Rc<RefCell<Domains>>) {
     let timers = std::mem::take(&mut registry.borrow_mut().timers);
     for state in timers.into_values().filter_map(|state| state.upgrade()) {
         cancel(registry, &state, Status::Closed);
+    }
+}
+pub(super) fn schema_dependents(
+    registry: &Rc<RefCell<Domains>>,
+    target: DomainHandle,
+) -> Result<Vec<Rc<RefCell<State>>>, Error> {
+    let domains = registry.borrow();
+    let mut timers = Vec::new();
+    for state in domains.timers.values().filter_map(Weak::upgrade) {
+        let selected = {
+            let s = state.borrow();
+            s.status == Status::Active && s.target == Some(target)
+        };
+        if selected {
+            timers
+                .try_reserve(1)
+                .map_err(|_| limited("Timer invalidation allocation failed"))?;
+            timers.push(state);
+        }
+    }
+    Ok(timers)
+}
+pub(super) fn invalidate_schema(registry: &Rc<RefCell<Domains>>, timers: Vec<Rc<RefCell<State>>>) {
+    for state in timers {
+        cancel(registry, &state, Status::InvalidAccess);
     }
 }
 struct Worker {
@@ -363,6 +390,7 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
         .tasks
         .insert(job, group);
     let mut state = state.borrow_mut();
+    state.target = Some(schedule.target);
     state.generation = generation;
     state.status = Status::Active;
     state.job = Some(job);

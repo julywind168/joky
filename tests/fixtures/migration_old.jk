@@ -1,0 +1,20 @@
+import joky/domain
+import joky/task
+import joky/check
+struct Room { score:Int32 }
+fn make(score:Int32)->Room { Room{score:score} }
+fn read(room:&Room)->Int32 {room.score}
+fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value room.score}
+fn version()->Int32 {1}
+fn hold(directory:domain.DirectoryHandle) @suspends {
+    let room=domain.create(make,42)
+    let message="register migration room"
+    check.require(directory.insert(7,room.handle()).is_ok(),&message)
+    task.sleep_ms(100000)
+}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup(directory,7,read) {Some(room)=>domain.read_from(room,read),None=>-1}
+}
+fn bump(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup_write(directory,7,read) {Some(room)=>domain.write_to(room,add,3),None=>-1}
+}

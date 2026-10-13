@@ -96,7 +96,7 @@ pub(super) fn admits(
     matches!((info(caller), info(current)), (Some(a), Some(b)) if compatible_entry(&a, &b))
 }
 
-fn module_key(module: &LoadedModule) -> usize {
+pub(super) fn module_key(module: &LoadedModule) -> usize {
     match module {
         LoadedModule::Jit(module) => Rc::as_ptr(module) as usize,
         LoadedModule::Interpreter(module) => Rc::as_ptr(module) as usize,
