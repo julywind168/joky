@@ -80,33 +80,16 @@ fn configured(mode: VmMode) -> VmEngine {
 #[test]
 fn swap_remove_preserves_cleanup_at_every_instruction_boundary() {
     let mut vm = configured(VmMode::Interpreter);
-    vm.set_interpreter_limits(super::InterpreterLimits {
-        poll_budget: Some(1),
-        ..Default::default()
-    })
-    .unwrap();
+    super::support::assert_cancellation(
+        &mut vm,
+        "remove_task",
+        2000,
+        super::support::CancellationSweep::EveryInstruction,
+        || EVENTS.with(|e| e.borrow_mut().clear()),
+        || EVENTS.with(|e| e.borrow().len()),
+        tracked,
+    );
     let mut complete = false;
-    for pause in 0..2000 {
-        EVENTS.with(|e| e.borrow_mut().clear());
-        let mut task = vm.call_async("remove_task", &[]).unwrap();
-        for _ in 0..pause {
-            if task.is_finished() {
-                break;
-            }
-            task.resume().unwrap();
-        }
-        complete = task.is_finished();
-        if complete {
-            assert_eq!(task.cps_result(), Some(42));
-        }
-        drop(task);
-        tracked();
-        if complete {
-            break;
-        }
-    }
-    assert!(complete);
-    complete = false;
     for budget in 1..2000 {
         EVENTS.with(|e| e.borrow_mut().clear());
         vm.set_interpreter_limits(super::InterpreterLimits {

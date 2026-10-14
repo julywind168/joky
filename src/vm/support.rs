@@ -28,8 +28,8 @@ pub(super) enum CancellationSweep {
 }
 
 /// Replay deterministic fixtures with synchronous hosts at selected instruction cuts.
-/// Daily checks include owner events, adjacent boundaries and periodic cuts; the stress
-/// Release check enumerates every cut. Prefixes need one poll, not repeated resumes.
+/// Resource-boundary sweeps include owner events, adjacent boundaries and periodic cuts;
+/// exhaustive sweeps enumerate every cut. Prefixes need one poll, not repeated resumes.
 pub(super) fn assert_cancellation<S: PartialEq>(
     vm: &mut VmEngine,
     entry: &str,
@@ -191,4 +191,51 @@ pub(super) fn call_unit(vm: &VmEngine, suspends: bool, name: &str) {
 
 pub(super) fn vm(source: &str) -> VmEngine {
     parity_vm(source, VmMode::Jit)
+}
+
+/// Static rejection matrices belong to the shared front end. Backend entry-point
+/// parity is checked separately below; no code generation is needed for these errors.
+#[track_caller]
+pub(super) fn frontend_error(source: &str, modules: &crate::ModuleSources) -> crate::Error {
+    let result = (|| {
+        let registry = crate::modules::ModuleRegistry::default();
+        let ast = crate::parser::parse(source)?;
+        let ast = registry.types().resolve_with_modules(&ast, modules)?;
+        let prepared = crate::core::prepared::PreparedModule::new(
+            &ast,
+            registry.types(),
+            registry.metadata(),
+        )?;
+        prepared.plan(&Default::default()).map(|_| ())
+    })();
+    result.expect_err(source)
+}
+
+#[test]
+fn shared_frontend_rejections_reach_all_backend_entry_points() {
+    for source in [
+        "fn broken( {",
+        "fn broken() -> Int32 { unknown }",
+        "fn broken() -> Int32 { true }",
+        "fn broken() { let n = 1; n = 2; }",
+        "struct Loop { next: Loop } fn broken() {}",
+        "trait Read { fn value(self) @noescape -> Int32; } fn unused(value: &dyn Read) {}",
+        "import joky/list.{type List} import joky/element as element fn broken(xs: &mut List<Int32>) { let view = xs.borrow(0); xs.clear(); element.read(view); }",
+        "import joky/set.{type Set} fn broken(xs: Set<Int32>) { xs.union(xs); }",
+    ] {
+        let expected = frontend_error(source, &crate::ModuleSources::new());
+        let check = |error: crate::Error| {
+            assert_eq!(error.code(), expected.code(), "{source}: {error}");
+            assert_eq!(error.message(), expected.message(), "{source}");
+            assert_eq!(error.span(), expected.span(), "{source}");
+        };
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            check(VmEngine::with_mode(mode).load_source(source).unwrap_err());
+        }
+        check(match crate::parser::parse(source) {
+            Ok(ast) => crate::aot::AotCompiler::new("frontend-rejection")
+                .unwrap().compile_module(&ast).unwrap_err(),
+            Err(error) => error.into(),
+        });
+    }
 }

@@ -1,4 +1,8 @@
 //! End-to-end checks of the installed-style command-line interface.
+//! Static diagnostic matrices use `build` once per source, retaining publication checks.
+//! The syntax, assignment, dependency and entry-point regressions separately cover
+//! diagnostic parity across CLI routes. Shared network fixtures get VM execution
+//! coverage in library tests and standalone AOT coverage here.
 #[cfg(unix)]
 #[path = "fixtures/map_stress_oracle.rs"]
 mod map_stress_oracle;
@@ -636,13 +640,7 @@ fn module_constant_aliases_resolve_in_their_defining_scopes() {
             "invalid.jk",
             &format!("type Alias = {ty} const UNUSED: Alias = 0 fn main() {{}}"),
         );
-        for args in [
-            vec!["run", "invalid.jk"],
-            vec!["run", "--interpreter", "invalid.jk"],
-            vec!["build", "invalid.jk"],
-        ] {
-            failure(&work.cli(&args), message);
-        }
+        failure(&work.cli(&["build", "invalid.jk"]), message);
     }
 }
 
@@ -1771,15 +1769,9 @@ fn records_run_and_build_with_nominal_type_diagnostics() {
         ),
     ] {
         work.write("invalid_record.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_record.jk"],
-            vec!["run", "--interpreter", "invalid_record.jk"],
-            vec!["build", "invalid_record.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_record.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
         assert!(!work.path().join("invalid_record").exists());
     }
     work.assert_no_build_files();
@@ -1812,15 +1804,9 @@ fn enums_run_and_build_with_nominal_type_diagnostics() {
         ),
     ] {
         work.write("invalid_enum.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_enum.jk"],
-            vec!["run", "--interpreter", "invalid_enum.jk"],
-            vec!["build", "invalid_enum.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_enum.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
         assert!(!work.path().join("invalid_enum").exists());
     }
     work.assert_no_build_files();
@@ -1848,15 +1834,9 @@ fn tuples_run_and_build_with_pattern_diagnostics() {
         ("fn main() { let (x y) = (1, 2) }", "Expected RParen"),
     ] {
         work.write("invalid_tuple.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_tuple.jk"],
-            vec!["run", "--interpreter", "invalid_tuple.jk"],
-            vec!["build", "invalid_tuple.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_tuple.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_tuple.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_tuple.jk:2:"));
         assert!(!work.path().join("invalid_tuple").exists());
     }
     work.assert_no_build_files();
@@ -1890,15 +1870,9 @@ fn int64_literals_output_and_failures_match_all_frontends() {
         ("fn main() -> Int64 { 1 }", "Entry point must be"),
     ] {
         work.write("invalid64.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid64.jk"],
-            vec!["run", "--interpreter", "invalid64.jk"],
-            vec!["build", "invalid64.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid64.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid64.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid64.jk:2:"));
         assert!(!work.path().join("invalid64").exists());
     }
     work.write("division64.jk", "import joky/io.{println} fn report_int64(value: Int64) { println(&value) } fn divide(n: Int64) -> Int64 { 3000000000 / n } fn main() { report_int64(divide(0)) }");
@@ -1954,15 +1928,9 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
         ),
     ] {
         work.write("invalid_unsigned.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_unsigned.jk"],
-            vec!["run", "--interpreter", "invalid_unsigned.jk"],
-            vec!["build", "invalid_unsigned.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_unsigned.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_unsigned.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_unsigned.jk:2:"));
         assert!(!work.path().join("invalid_unsigned").exists());
     }
     for (ty, print, max) in [
@@ -2015,15 +1983,9 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
         ),
     ] {
         work.write("invalid_bits.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_bits.jk"],
-            vec!["run", "--interpreter", "invalid_bits.jk"],
-            vec!["build", "invalid_bits.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_bits.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_bits.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_bits.jk:2:"));
         assert!(!work.path().join("invalid_bits").exists());
     }
     for (ty, op, count) in [
@@ -2078,15 +2040,9 @@ fn integer_conversion_output_diagnostics_and_operand_failures_match_frontends() 
         ),
     ] {
         work.write("invalid_conversion.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_conversion.jk"],
-            vec!["run", "--interpreter", "invalid_conversion.jk"],
-            vec!["build", "invalid_conversion.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_conversion.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_conversion.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_conversion.jk:2:"));
         assert!(!work.path().join("invalid_conversion").exists());
     }
     for (name, argument, message) in [
@@ -2178,15 +2134,9 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
         ),
     ] {
         work.write("invalid_generic.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_generic.jk"],
-            vec!["run", "--interpreter", "invalid_generic.jk"],
-            vec!["build", "invalid_generic.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_generic.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_generic.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_generic.jk:2:"));
         assert!(!work.path().join("invalid_generic").exists());
     }
     work.write("generic_failure.jk", "import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn fail<T>(x: T, n: Int32) -> T { 1 / n; x } fn main() { fail((1, true), 0); report_int32(99) }");
@@ -2262,15 +2212,9 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
         ),
     ] {
         work.write("invalid_enum.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_enum.jk"],
-            vec!["run", "--interpreter", "invalid_enum.jk"],
-            vec!["build", "invalid_enum.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_enum.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
         assert!(!work.path().join("invalid_enum").exists());
     }
     work.assert_no_build_files();
@@ -2333,15 +2277,9 @@ fn generic_aliases_run_build_and_report_template_errors() {
         ("type Bad<T> = Missing fn main() {}", "unknown_type"),
     ] {
         work.write("invalid_alias.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_alias.jk"],
-            vec!["run", "--interpreter", "invalid_alias.jk"],
-            vec!["build", "invalid_alias.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_alias.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_alias.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_alias.jk:2:"));
         assert!(!work.path().join("invalid_alias").exists());
     }
     work.assert_no_build_files();
@@ -2396,15 +2334,9 @@ fn option_result_methods_run_and_build_with_explicit_or_default_imports() {
         ),
     ] {
         work.write("invalid_std.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_std.jk"],
-            vec!["run", "--interpreter", "invalid_std.jk"],
-            vec!["build", "invalid_std.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_std.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_std.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_std.jk:2:"));
         assert!(!work.path().join("invalid_std").exists());
     }
     work.assert_no_build_files();
@@ -2467,11 +2399,9 @@ fn generic_methods_run_build_and_report_template_errors() {
         ("fn main() { Result.Ok::<Int32, Bool>(1).and(Result.Ok(\"text\")) }", "Return type mismatch"),
     ] {
         work.write("invalid_method.jk", &format!("// 🙂\n{source}"));
-        for args in [vec!["run", "invalid_method.jk"], vec!["run", "--interpreter", "invalid_method.jk"], vec!["build", "invalid_method.jk"]] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_method.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_method.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_method.jk:2:"));
         assert!(!work.path().join("invalid_method").exists());
     }
     work.assert_no_build_files();
@@ -2520,11 +2450,9 @@ fn generic_impls_run_build_and_report_template_errors() {
         ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "Return type mismatch"),
     ] {
         work.write("invalid_impl.jk", &format!("// 🙂\n{source}"));
-        for args in [vec!["run", "invalid_impl.jk"], vec!["run", "--interpreter", "invalid_impl.jk"], vec!["build", "invalid_impl.jk"]] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_impl.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_impl.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_impl.jk:2:"));
         assert!(!work.path().join("invalid_impl").exists());
     }
     work.assert_no_build_files();
@@ -2566,15 +2494,9 @@ fn generic_records_run_build_and_report_template_errors() {
         ),
     ] {
         work.write("invalid_record.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_record.jk"],
-            vec!["run", "--interpreter", "invalid_record.jk"],
-            vec!["build", "invalid_record.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid_record.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
         assert!(!work.path().join("invalid_record").exists());
     }
 }
@@ -2629,15 +2551,9 @@ fn integer_methods_run_build_and_report_invalid_members() {
         ),
     ] {
         work.write("invalid.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid.jk"],
-            vec!["run", "--interpreter", "invalid.jk"],
-            vec!["build", "invalid.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
-        }
+        let output = work.cli(&["build", "invalid.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
     }
     work.assert_no_build_files();
 }
@@ -2737,15 +2653,9 @@ fn borrowed_receiver_example_matches_all_frontends_and_reports_conflicts() {
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
     work.write("bad.jk", "struct Counter { value: Int32 } impl Counter { fn set(&mut self) { self.value = 1 } } fn main() { let c = Counter { value: 0 } c.set() }");
-    for args in [
-        vec!["run", "bad.jk"],
-        vec!["run", "--interpreter", "bad.jk"],
-        vec!["build", "bad.jk", "-o", "bad"],
-    ] {
-        let output = work.cli(&args);
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("var binding"));
-    }
+    let output = work.cli(&["build", "bad.jk", "-o", "bad"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("var binding"));
     assert!(!work.path().join("bad").exists());
 }
 
@@ -2781,15 +2691,9 @@ fn static_trait_example_matches_all_frontends_and_reports_bound_errors() {
         "bad.jk",
         "trait Mark {} fn need<T: Mark>(x: T) {} fn main() { need(42) }",
     );
-    for args in [
-        vec!["run", "bad.jk"],
-        vec!["run", "--interpreter", "bad.jk"],
-        vec!["build", "bad.jk", "-o", "bad"],
-    ] {
-        let output = work.cli(&args);
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("does not satisfy trait bound"));
-    }
+    let output = work.cli(&["build", "bad.jk", "-o", "bad"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("does not satisfy trait bound"));
     assert!(!work.path().join("bad").exists());
 }
 
@@ -2830,15 +2734,9 @@ fn function_value_example_matches_all_frontends_and_rejects_signature_mismatches
         "bad.jk",
         "fn id(x: Int32) -> Int32 { x } fn main() { let f = id f(true); }",
     );
-    for args in [
-        vec!["run", "bad.jk"],
-        vec!["run", "--interpreter", "bad.jk"],
-        vec!["build", "bad.jk", "-o", "bad"],
-    ] {
-        let output = work.cli(&args);
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Argument type mismatch"));
-    }
+    let output = work.cli(&["build", "bad.jk", "-o", "bad"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Argument type mismatch"));
     assert!(!work.path().join("bad").exists());
 }
 
@@ -3250,13 +3148,13 @@ fn owned_map_values_and_failures_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check"]
 fn exhaustive_owned_map_cli_value_matrix() {
     check_owned_map_cli_cases(true);
 }
 
 // VM tests cover the complete matrix daily. Keep representative CLI cases and
-// diagnostics here; additional CLI specializations run in the full Release check.
+// diagnostics here; additional CLI specializations run in the stress check.
 #[cfg(unix)]
 fn check_owned_map_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
@@ -3328,13 +3226,13 @@ fn generic_map_public_keys_values_and_examples_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check"]
 fn exhaustive_generic_map_cli_type_matrix() {
     check_generic_map_cli_cases(true);
 }
 
 // VM tests cover the complete matrix daily. Keep representative CLI cases and
-// diagnostics here; additional CLI specializations run in the full Release check.
+// diagnostics here; additional CLI specializations run in the stress check.
 #[cfg(unix)]
 fn check_generic_map_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
@@ -3411,13 +3309,13 @@ fn map_borrowing_and_shared_values_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check"]
 fn exhaustive_map_borrowing_cli_value_matrix() {
     check_map_borrowing_cli_cases(true);
 }
 
 // VM tests cover the complete matrix daily. Keep representative CLI cases and
-// diagnostics here; additional CLI specializations run in the full Release check.
+// diagnostics here; additional CLI specializations run in the stress check.
 #[cfg(unix)]
 fn check_map_borrowing_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
@@ -3518,13 +3416,13 @@ fn map_iteration_and_batches_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check"]
 fn exhaustive_map_iteration_cli_value_matrix() {
     check_map_iteration_cli_cases(true);
 }
 
 // VM tests cover the complete matrix daily. Keep representative CLI cases and
-// diagnostics here; additional CLI specializations run in the full Release check.
+// diagnostics here; additional CLI specializations run in the stress check.
 #[cfg(unix)]
 fn check_map_iteration_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
@@ -3589,7 +3487,7 @@ fn map_stress_matches_the_owner_ledger_in_standalone_aot() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: long AOT Map model matrix; run by the stress check in Release"]
+#[ignore = "exhaustive: long AOT Map model matrix; run by the stress check"]
 fn exhaustive_map_stress_matches_the_owner_ledger_in_standalone_aot() {
     check_map_stress_in_standalone_aot(map_stress_oracle::STEPS);
 }
@@ -3881,12 +3779,10 @@ fn automatic_shared_arguments_preserve_borrowing_boundaries() {
         "fn pair(value: &Int32, n: Int32) @noescape {} fn later() @suspends -> Int32 { 42 } fn main() @suspends { pair(7, later()) }",
     ] {
         work.write("contract.jk", source);
-        for args in [vec!["run", "contract.jk"], vec!["run", "--interpreter", "contract.jk"], vec!["build", "contract.jk"]] {
-            let output = work.cli(&args);
-            assert!(!output.status.success(), "{source}: {output:?}");
-            assert!(output.stdout.is_empty());
-            assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"), "{source}: {output:?}");
-        }
+        let output = work.cli(&["build", "contract.jk"]);
+        assert!(!output.status.success(), "{source}: {output:?}");
+        assert!(output.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"), "{source}: {output:?}");
     }
 }
 
@@ -3939,17 +3835,11 @@ fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
         (r#"fn main() { f"{42}" }"#, "remove the `f` prefix"),
     ] {
         work.write("invalid.jk", source);
-        for args in [
-            vec!["run", "invalid.jk"],
-            vec!["run", "--interpreter", "invalid.jk"],
-            vec!["build", "invalid.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(error.contains(message), "{error}");
-            assert!(error.contains("invalid.jk"), "{error}");
-        }
+        let output = work.cli(&["build", "invalid.jk"]);
+        failure(&output, message);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(message), "{error}");
+        assert!(error.contains("invalid.jk"), "{error}");
     }
     work.write("failure.jk", r#"
         import joky/show.{type Show}
@@ -4217,14 +4107,8 @@ fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
         ),
     ] {
         work.write("invalid_pattern.jk", &format!("// 🙂\n{source}"));
-        for args in [
-            vec!["run", "invalid_pattern.jk"],
-            vec!["run", "--interpreter", "invalid_pattern.jk"],
-            vec!["build", "invalid_pattern.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, message);
-        }
+        let output = work.cli(&["build", "invalid_pattern.jk"]);
+        failure(&output, message);
         assert!(!work.path().join("invalid_pattern").exists());
     }
     work.assert_no_build_files();
@@ -4256,13 +4140,7 @@ fn record_patterns_borrow_drop_payloads_without_moving_them() {
             .replace("value: &Entry", "value: Entry")
             .replace("inspect(&entry)", "inspect(entry)"),
     );
-    for args in [
-        vec!["run", "moved.jk"],
-        vec!["run", "--interpreter", "moved.jk"],
-        vec!["build", "moved.jk"],
-    ] {
-        failure(&work.cli(&args), "implementing Drop");
-    }
+    failure(&work.cli(&["build", "moved.jk"]), "implementing Drop");
 }
 
 #[test]
@@ -4909,13 +4787,14 @@ fn net4b_buffered_tcp_frame_resets_run_in_all_backends() {
 }
 
 #[test]
-fn net4c_buffered_tcp_messages_run_in_all_backends() {
+fn net4c_buffered_tcp_messages_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "buffered_tcp_messages.jk",
         include_str!("fixtures/buffered_tcp_messages.jk"),
     );
-    work.assert_all_backends("buffered_tcp_messages.jk", &[], b"", 0);
+    // VM wire/limit tests already run this exact main, including the 1 MiB boundary.
+    work.assert_native("buffered_tcp_messages.jk", &[], b"", 0);
 }
 
 #[test]
@@ -5045,7 +4924,7 @@ fn net5b_split_tcp_runs_in_all_backends() {
 }
 
 #[test]
-fn net5c_buffered_split_runs_in_all_backends() {
+fn net5c_buffered_split_native_execution_and_cli_resets() {
     mod matrix {
         include!("support/buffered_tcp_split.rs");
     }
@@ -5054,9 +4933,10 @@ fn net5c_buffered_split_runs_in_all_backends() {
         "buffered_split.jk",
         include_str!("fixtures/buffered_tcp_split.jk"),
     );
-    work.assert_all_backends("buffered_split.jk", &[], b"", 0);
+    // net5c_buffered_split_duplex_cache_framing_and_cancel covers both VM modes.
+    work.assert_native("buffered_split.jk", &[], b"", 0);
     work.write("split_frames.jk", &matrix::frames_source());
-    work.assert_all_backends("split_frames.jk", &[], b"", 0);
+    work.assert_native("split_frames.jk", &[], b"", 0);
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         mod endpoint {
@@ -5110,7 +4990,7 @@ fn json1a_recursive_owners_run_in_all_backends() {
 }
 
 #[test]
-fn json1a_inline_recursion_remains_rejected_in_all_backends() {
+fn json1a_inline_recursion_is_rejected_before_build() {
     let work = Workspace::new();
     for source in [
         "enum Value { Next(Value) }",
@@ -5119,13 +4999,7 @@ fn json1a_inline_recursion_remains_rejected_in_all_backends() {
         "struct First { next: Second } struct Second { next: First }",
     ] {
         work.write("recursive.jk", &format!("{source}\nfn main() {{}}"));
-        for args in [
-            vec!["run", "recursive.jk"],
-            vec!["run", "recursive.jk", "--interpreter"],
-            vec!["build", "recursive.jk"],
-        ] {
-            failure(&work.cli(&args), "recursive_");
-        }
+        failure(&work.cli(&["build", "recursive.jk"]), "recursive_");
         assert!(!work.path().join("recursive").exists());
     }
     work.assert_no_build_files();
@@ -5145,9 +5019,7 @@ fn json1a_expanding_types_and_live_owner_loans_remain_rejected() {
         ("import joky/array.{type Array} struct Borrowed { target: &Owner } struct Owner { values: Array<Int32> } fn bad(values: Array<Borrowed>) {} fn main() {}", "type_mismatch"),
     ] {
         work.write("invalid.jk", source);
-        for args in [vec!["run", "invalid.jk"], vec!["run", "invalid.jk", "--interpreter"], vec!["build", "invalid.jk"]] {
-            failure(&work.cli(&args), code);
-        }
+        failure(&work.cli(&["build", "invalid.jk"]), code);
         assert!(!work.path().join("invalid").exists());
     }
     work.assert_no_build_files();
@@ -5162,13 +5034,7 @@ fn json1b_general_numeric_from_text_remains_outside_public_api() {
         "fn main() { let text = \"1.25e2\"; Float64.from_text(&text); }",
     ] {
         work.write("number.jk", source);
-        for args in [
-            vec!["run", "number.jk"],
-            vec!["run", "number.jk", "--interpreter"],
-            vec!["build", "number.jk"],
-        ] {
-            failure(&work.cli(&args), "from_text");
-        }
+        failure(&work.cli(&["build", "number.jk"]), "from_text");
         assert!(!work.path().join("number").exists());
     }
     work.assert_no_build_files();
@@ -5191,9 +5057,7 @@ fn json1b_number_invariants_and_unique_value_ownership_are_enforced() {
         ("import joky/json.{type Value} import joky/array.{type Array} fn main() { let values = Array.new::<Value>() values.get(0) }", "type_mismatch"),
     ] {
         work.write("invalid.jk", source);
-        for args in [vec!["run", "invalid.jk"], vec!["run", "invalid.jk", "--interpreter"], vec!["build", "invalid.jk"]] {
-            failure(&work.cli(&args), diagnostic);
-        }
+        failure(&work.cli(&["build", "invalid.jk"]), diagnostic);
         assert!(!work.path().join("invalid").exists());
     }
     work.assert_no_build_files();
@@ -5228,45 +5092,36 @@ fn json3_loopback_example_runs_in_all_backends() {
 }
 
 #[test]
-fn json3_native_peer_fragmentation_errors_and_terminal_frames_run_in_all_backends() {
+fn json3_native_peer_fragmentation_errors_and_terminal_frames_in_standalone_aot() {
     mod endpoint {
         include!("support/json_tcp.rs");
     }
+    // json_tcp_tests covers every peer case in both VM modes, with owner ledgers.
     for case in 0..=3 {
-        for backend in 0..3 {
-            let peer = endpoint::peer(case);
-            let work = Workspace::new();
-            let entry = if case == 3 {
-                format!("pressure({})", peer.port)
-            } else {
-                format!("native({}, {})", peer.port, if case == 0 { 2 } else { -2 })
-            };
-            let source = endpoint::source().replace("extern fn sent()", "fn sent() {}");
-            work.write(
-                "session.jk",
-                &format!("{source}\nfn main() @suspends -> Int32 {{ ensure({entry} == 42) 0 }}"),
-            );
-            // The VM test holds this gate until writes really stall; CLI checks wire parity.
-            let mut peer = peer;
-            peer.release();
-            let output = match backend {
-                0 => work.cli(&["run", "session.jk"]),
-                1 => work.cli(&["run", "session.jk", "--interpreter"]),
-                _ => {
-                    success(&work.cli(&["build", "session.jk"]));
-                    std::process::Command::new(work.path().join("session"))
-                        .output()
-                        .unwrap()
-                }
-            };
-            success(&output);
-            assert!(
-                output.stdout.is_empty() && output.stderr.is_empty(),
-                "{output:?}"
-            );
-            assert_eq!(peer.finish(), if case == 3 { 512 } else { 0 });
-            work.assert_no_build_files();
-        }
+        let peer = endpoint::peer(case);
+        let work = Workspace::new();
+        let entry = if case == 3 {
+            format!("pressure({})", peer.port)
+        } else {
+            format!("native({}, {})", peer.port, if case == 0 { 2 } else { -2 })
+        };
+        let source = endpoint::source().replace("extern fn sent()", "fn sent() {}");
+        work.write(
+            "session.jk",
+            &format!("{source}\nfn main() @suspends -> Int32 {{ ensure({entry} == 42) 0 }}"),
+        );
+        // The VM test holds this gate until writes really stall; CLI checks wire parity.
+        let mut peer = peer;
+        peer.release();
+        success(&work.cli(&["build", "session.jk"]));
+        let output = Command::new(work.path().join("session")).output().unwrap();
+        success(&output);
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{output:?}"
+        );
+        assert_eq!(peer.finish(), if case == 3 { 512 } else { 0 });
+        work.assert_no_build_files();
     }
 }
 
@@ -5389,13 +5244,7 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
         "private.jk",
         "import model fn main() { let value = model.make() value.data; }",
     );
-    for args in [
-        vec!["run", "private.jk"],
-        vec!["run", "--interpreter", "private.jk"],
-        vec!["build", "private.jk"],
-    ] {
-        failure(&work.cli(&args), "private");
-    }
+    failure(&work.cli(&["build", "private.jk"]), "private");
 }
 
 #[test]
@@ -5526,19 +5375,13 @@ fn enum_same_name_members_reject_ambiguous_uses_and_invalid_definitions() {
         ),
     ] {
         work.write("bad.jk", &source);
-        for args in [
-            vec!["run", "bad.jk"],
-            vec!["run", "--interpreter", "bad.jk"],
-            vec!["build", "bad.jk", "-o", "bad"],
-        ] {
-            let output = work.cli(&args);
-            assert!(!output.status.success(), "{source}");
-            assert!(
-                String::from_utf8_lossy(&output.stderr).contains(message),
-                "{source}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        let output = work.cli(&["build", "bad.jk", "-o", "bad"]);
+        assert!(!output.status.success(), "{source}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{source}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     for body in ["Empty::<Int32>", "Item(1)"] {
         work.write(
@@ -5546,19 +5389,13 @@ fn enum_same_name_members_reject_ambiguous_uses_and_invalid_definitions() {
             &format!("{declarations} pub fn bad() {{ {body} }}"),
         );
         work.write("bad.jk", "import model fn main() { model.bad() }");
-        for args in [
-            vec!["run", "bad.jk"],
-            vec!["run", "--interpreter", "bad.jk"],
-            vec!["build", "bad.jk", "-o", "bad"],
-        ] {
-            let output = work.cli(&args);
-            assert!(!output.status.success());
-            assert!(
-                String::from_utf8_lossy(&output.stderr).contains("Ambiguous enum constructor"),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        let output = work.cli(&["build", "bad.jk", "-o", "bad"]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Ambiguous enum constructor"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
@@ -5661,18 +5498,16 @@ fn state_domains_snapshots_reject_forgery_and_unchecked_projections() {
         "fn main() @suspends { let factory=domain.snapshot_from::<State,Int32> }",
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
-        for args in [vec!["run", "rejected.jk"], vec!["run", "--interpreter", "rejected.jk"], vec!["build", "rejected.jk", "-o", "rejected"]] {
-            let output = work.cli(&args);
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(!output.status.success(), "accepted {case}");
-            assert!(!error.contains("panicked"), "{error}");
-            assert!(!error.contains("[parse"), "{error}");
-        }
+        let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "accepted {case}");
+        assert!(!error.contains("panicked"), "{error}");
+        assert!(!error.contains("[parse"), "{error}");
     }
 }
 
 #[test]
-fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_in_all_frontends() {
+fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
     let work = Workspace::new();
     let prefix = r#"
         import joky/domain
@@ -5692,18 +5527,12 @@ fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_in_all_frontends()
         ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, 2)); }", "scalar"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
-        for args in [
-            vec!["run", "rejected.jk"],
-            vec!["run", "--interpreter", "rejected.jk"],
-            vec!["build", "rejected.jk", "-o", "rejected"],
-        ] {
-            let output = work.cli(&args);
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(!output.status.success(), "accepted {case}");
-            assert!(error.contains(diagnostic), "{args:?}: {error}");
-            assert!(!error.contains("panicked"), "{error}");
-            assert!(output.stdout.is_empty());
-        }
+        let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "accepted {case}");
+        assert!(error.contains(diagnostic), "{case}: {error}");
+        assert!(!error.contains("panicked"), "{error}");
+        assert!(output.stdout.is_empty());
     }
 }
 
@@ -5798,13 +5627,11 @@ fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
         ("", "let candidate = domain.candidate_from(snapshot, make, 2) let receipt = domain.commit_to(handle, candidate) let storage = receipt.storage"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{extra}\nfn main() @suspends {{ {start} {body} }}"));
-        for args in [vec!["run", "rejected.jk"], vec!["run", "--interpreter", "rejected.jk"], vec!["build", "rejected.jk", "-o", "rejected"]] {
-            let output = work.cli(&args);
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(!output.status.success(), "accepted {body}");
-            assert!(!error.contains("panicked"), "{error}");
-            assert!(!error.contains("[parse"), "{error}");
-        }
+        let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "accepted {body}");
+        assert!(!error.contains("panicked"), "{error}");
+        assert!(!error.contains("[parse"), "{error}");
     }
 }
 
@@ -5828,14 +5655,12 @@ fn state_domains_owned_roots_reject_hooks_and_unsafe_graphs() {
         "import joky/array.{type Array} struct Node { children: Array<Node> } struct State { root: Node } fn make(n: Int32) -> State { State { root: Node { children: Array.new::<Node>() } } }",
     ] {
         work.write("rejected.jk", &format!("import joky/domain\n{definitions}\nfn main() @suspends {{ let owner = domain.create(make, 7) }}"));
-        for args in [vec!["run", "rejected.jk"], vec!["run", "--interpreter", "rejected.jk"], vec!["build", "rejected.jk", "-o", "rejected"]] {
-            let output = work.cli(&args);
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(!output.status.success(), "accepted {definitions}");
-            assert!(!error.contains("panicked"), "{error}");
-            assert!(!error.contains("[parse"), "{error}");
-            assert!(error.contains("proved synchronous"), "{error}");
-        }
+        let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "accepted {definitions}");
+        assert!(!error.contains("panicked"), "{error}");
+        assert!(!error.contains("[parse"), "{error}");
+        assert!(error.contains("proved synchronous"), "{error}");
     }
 }
 
@@ -5870,7 +5695,7 @@ fn state_domains_deadlines_reject_negative_durations_in_all_backends() {
 }
 
 #[test]
-fn state_domains_deadlines_reject_forgery_in_all_frontends() {
+fn state_domains_deadlines_reject_forgery_before_build() {
     let work = Workspace::new();
     for source in [
         "import joky/domain fn main() @suspends { let d = domain.CommitDeadline { storage: 1 } }",
@@ -5878,13 +5703,11 @@ fn state_domains_deadlines_reject_forgery_in_all_frontends() {
         "import joky/domain struct State { n: Int32 } fn make(n: Int32) -> State { State { n:n } } fn read(s: &State) -> Int32 { s.n } fn main() @suspends { let o=domain.create(make,1) let c=domain.candidate_from(domain.snapshot_from(o.read_handle(),read),make,2) let d=0 let r=domain.commit_before(o.handle(),c,&d) }",
     ] {
         work.write("forged.jk", source);
-        for args in [vec!["run", "forged.jk"], vec!["run", "--interpreter", "forged.jk"], vec!["build", "forged.jk"]] {
-            let output = work.cli(&args);
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(!output.status.success(), "{source}");
-            assert!(!error.contains("panicked"), "{error}");
-            assert!(!error.contains("[parse"), "{error}");
-        }
+        let output = work.cli(&["build", "forged.jk"]);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{source}");
+        assert!(!error.contains("panicked"), "{error}");
+        assert!(!error.contains("[parse"), "{error}");
     }
 }
 
@@ -6214,13 +6037,7 @@ fn match_arm_separators_and_ungrouped_bitwise_or_run_on_all_backends() {
             "invalid.jk",
             &format!("enum E {{ A, B }} fn main() {{ match E.A {{ {body} }} }}"),
         );
-        for args in [
-            vec!["run", "invalid.jk"],
-            vec!["run", "--interpreter", "invalid.jk"],
-            vec!["build", "invalid.jk"],
-        ] {
-            failure(&work.cli(&args), message);
-        }
+        failure(&work.cli(&["build", "invalid.jk"]), message);
     }
 }
 
@@ -6383,13 +6200,7 @@ fn tuple_members_run_on_all_backends() {
         ("import joky/array.{type Array} import joky/drop.{type Drop} struct R { values: Array<Int32> } impl Drop for R { fn drop(&mut self) {} } fn main() { let pair = (R { values: Array.new::<Int32>() },); let invalid = pair.0.values }", "implementing Drop"),
     ] {
         work.write("invalid_tuple_member.jk", source);
-        for args in [
-            vec!["run", "invalid_tuple_member.jk"],
-            vec!["run", "--interpreter", "invalid_tuple_member.jk"],
-            vec!["build", "invalid_tuple_member.jk"],
-        ] {
-            failure(&work.cli(&args), message);
-        }
+        failure(&work.cli(&["build", "invalid_tuple_member.jk"]), message);
     }
     work.assert_no_build_files();
 }
@@ -6489,7 +6300,7 @@ fn script_flat_bridge_preserves_reload_and_cancellation_in_all_backends() {
 }
 
 #[test]
-fn script_flat_bridge_rejects_unsupported_caller_contracts() {
+fn script_flat_bridge_rejects_unsupported_caller_contracts_before_build() {
     let work = Workspace::new();
     for (definitions, ty, value) in [
         ("", "String", "\"owned\""),
@@ -6506,16 +6317,10 @@ fn script_flat_bridge_rejects_unsupported_caller_contracts() {
         ),
     ] {
         work.write("rejected.jk", &format!("import joky/vm import joky/script {definitions} fn main() @suspends {{ let h=vm.create() script.call::<{ty}, Int32>(h, \"run\", {value}); }}"));
-        for args in [
-            vec!["run", "rejected.jk"],
-            vec!["run", "--interpreter", "rejected.jk"],
-            vec!["build", "rejected.jk", "-o", "rejected"],
-        ] {
-            let output = work.cli(&args);
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(!output.status.success());
-            assert!(error.contains("Script contracts require"), "{error}");
-        }
+        let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success());
+        assert!(error.contains("Script contracts require"), "{error}");
     }
 }
 
@@ -6556,13 +6361,10 @@ fn main() @suspends {{
             if count == 64 {
                 work.assert_all_backends("limit.jk", &[], b"", 0);
             } else {
-                for args in [
-                    vec!["run", "limit.jk"],
-                    vec!["run", "--interpreter", "limit.jk"],
-                    vec!["build", "limit.jk", "-o", "limit"],
-                ] {
-                    failure(&work.cli(&args), "Script contracts require");
-                }
+                failure(
+                    &work.cli(&["build", "limit.jk", "-o", "limit"]),
+                    "Script contracts require",
+                );
             }
         }
     }
@@ -7198,13 +7000,10 @@ fn main() @suspends {{
         if accepted {
             work.assert_all_backends("limit.jk", &[], b"", 0);
         } else {
-            for args in [
-                vec!["run", "limit.jk"],
-                vec!["run", "--interpreter", "limit.jk"],
-                vec!["build", "limit.jk"],
-            ] {
-                failure(&work.cli(&args), "Script contracts require");
-            }
+            failure(
+                &work.cli(&["build", "limit.jk"]),
+                "Script contracts require",
+            );
         }
     }
 }

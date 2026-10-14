@@ -58,26 +58,14 @@ fn reject_borrow(source: &str) {
 }
 
 fn reject_structured_borrow(source: &str) {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        let error = vm.load_source(source).expect_err(source);
-        assert_eq!(
-            error.code(),
-            crate::ErrorCode::InvalidAssignment,
-            "{mode:?}: {error}\n{source}"
-        );
-        assert!(error.to_string().contains("borrow"), "{error}\n{source}");
-        assert!(error.span().is_some(), "{error}");
-    }
-    let mut aot = crate::aot::AotCompiler::new("arena-scope-rejection").unwrap();
-    let ast = crate::parser::parse(source).unwrap();
-    let error = aot.compile_module(&ast).expect_err(source);
+    let error = frontend_error(source, &crate::ModuleSources::new());
     assert_eq!(
         error.code(),
         crate::ErrorCode::InvalidAssignment,
         "{error}\n{source}"
     );
-    assert!(error.to_string().contains("borrow"), "{error}\n{source}");
+    assert!(error.message().contains("borrow"), "{error}\n{source}");
+    assert!(error.span().is_some(), "{error}");
 }
 
 #[test]

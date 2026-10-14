@@ -87,34 +87,16 @@ impl Drop for RestoreLimit {
 #[test]
 fn borrowed_matches_keep_cleanup_at_interpreter_boundaries() {
     let mut vm = vm(VmMode::Interpreter);
-    vm.set_interpreter_limits(super::InterpreterLimits {
-        poll_budget: Some(1),
-        ..Default::default()
-    })
-    .unwrap();
+    super::support::assert_cancellation(
+        &mut vm,
+        "shared_match_task",
+        2000,
+        super::support::CancellationSweep::EveryInstruction,
+        || EVENTS.with(|e| e.borrow_mut().clear()),
+        || EVENTS.with(|e| e.borrow().len()),
+        || tracked("element borrow cancellation"),
+    );
     let mut completed = false;
-    for pause in 0..2000 {
-        EVENTS.with(|e| e.borrow_mut().clear());
-        let mut task = vm.call_async("shared_match_task", &[]).unwrap();
-        for _ in 0..pause {
-            if task.is_finished() {
-                break;
-            }
-            task.resume().unwrap();
-        }
-        completed = task.is_finished();
-        if completed {
-            assert_eq!(task.cps_result(), Some(42));
-        }
-        drop(task);
-        tracked(&format!("element borrow pause {pause}"));
-        if completed {
-            break;
-        }
-    }
-    assert!(completed);
-    vm.set_interpreter_limits(Default::default()).unwrap();
-    completed = false;
     for budget in 1..2000 {
         EVENTS.with(|e| e.borrow_mut().clear());
         vm.set_interpreter_limits(super::InterpreterLimits {

@@ -160,31 +160,15 @@ fn array_replace_preserves_ownership_under_allocation_failure() {
 #[test]
 fn array_replace_cancellation_keeps_old_next_and_array_owned() {
     let mut vm = configured(VmMode::Interpreter, SOURCE);
-    vm.set_interpreter_limits(super::InterpreterLimits {
-        poll_budget: Some(1),
-        ..Default::default()
-    })
-    .unwrap();
-    for pause in 0..2000 {
-        EVENTS.with(|e| e.borrow_mut().clear());
-        let mut task = vm.call_async("replace_task", &[]).unwrap();
-        for _ in 0..pause {
-            if task.is_finished() {
-                break;
-            }
-            task.resume().unwrap();
-        }
-        let complete = task.is_finished();
-        if complete {
-            assert_eq!(task.cps_result(), Some(42));
-        }
-        drop(task);
-        assert_cleaned();
-        if complete {
-            return;
-        }
-    }
-    panic!("replacement did not finish within cancellation sweep");
+    super::support::assert_cancellation(
+        &mut vm,
+        "replace_task",
+        2000,
+        super::support::CancellationSweep::EveryInstruction,
+        || EVENTS.with(|e| e.borrow_mut().clear()),
+        || EVENTS.with(|e| e.borrow().len()),
+        assert_cleaned,
+    );
 }
 
 #[test]

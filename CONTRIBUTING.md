@@ -114,7 +114,24 @@ cargo test exhaustive_ -- --ignored
 
 Keep a default regression for the same behavior when adding an exhaustive test.
 Compile shared fixture cases once per backend, then check results and reset host
-effects per call. Opt-in measurement and diagnostic tests stay separate from the
+effects per call. Keep registries with private invariant probes separate from
+production registries. Batch AOT cases into one object and harness when their host
+bindings are identical; reset runtime errors and the owner ledger before each call.
+
+Static rejection matrices can use the shared front-end test helper when the error
+occurs before backend selection. Keep focused entry-point parity regressions for
+error codes, messages and source spans; host ABI validation and execution failures
+still need their affected backends. CLI diagnostic matrices normally use `build`
+once per source, retaining source locations and output-preservation assertions.
+The CLI syntax, assignment, dependency and entry-point tests cover route parity.
+When an identical network fixture already runs in both VM modes with ownership
+assertions, its CLI test can cover standalone AOT only. Keep CLI routing smoke
+coverage separately; do not shrink message-size boundaries or remove real
+backpressure assertions to speed up checks.
+Reuse the cancellation harness to execute each selected prefix with one poll;
+keep a budget-one completion trace to exercise repeated resumes.
+
+Opt-in measurement and diagnostic tests stay separate from the
 `exhaustive_` group and are not enabled by any correctness check mode.
 
 These checks do not time workloads, write benchmark reports, require Lua, or assert

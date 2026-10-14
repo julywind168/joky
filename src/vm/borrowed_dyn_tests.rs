@@ -2,22 +2,12 @@
 use super::{VmEngine, VmMode};
 
 fn rejected(source: &str, expected: &str) {
-    let check = |error: crate::Error| {
-        assert!(
-            error.message().contains(expected),
-            "{expected}: {error}\n{source}"
-        );
-        assert!(error.span().is_some(), "{error}");
-    };
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        check(VmEngine::with_mode(mode).load_source(source).unwrap_err());
-    }
-    check(
-        crate::aot::AotCompiler::new("borrowed-dyn-rejection")
-            .unwrap()
-            .compile_module(&crate::parser::parse(source).unwrap())
-            .unwrap_err(),
+    let error = super::support::frontend_error(source, &crate::ModuleSources::new());
+    assert!(
+        error.message().contains(expected),
+        "{expected}: {error}\n{source}"
     );
+    assert!(error.span().is_some(), "{error}");
 }
 
 #[test]

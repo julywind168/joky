@@ -46,4 +46,7 @@ mod text_ffi;
 mod lists;
 
 #[cfg(unix)]
+mod collections;
+
+#[cfg(unix)]
 mod sets;

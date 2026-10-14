@@ -62,6 +62,19 @@ impl Workspace {
             let output = self.cli(&args);
             assert_execution(&output, expected_stdout, expected_status, &args);
         }
+        self.assert_native(file, flags, expected_stdout, expected_status);
+    }
+
+    /// Complete a fixture's backend coverage when VM tests already execute both modes.
+    #[cfg(unix)]
+    #[track_caller]
+    pub fn assert_native(
+        &self,
+        file: &str,
+        flags: &[&str],
+        expected_stdout: &[u8],
+        expected_status: i32,
+    ) {
         let mut args = vec!["build", file];
         args.extend_from_slice(flags);
         success(&self.cli(&args));

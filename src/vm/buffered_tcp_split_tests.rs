@@ -29,20 +29,10 @@ fn vm(mode: VmMode, source: &str) -> VmEngine {
 fn net5c_buffered_split_duplex_cache_framing_and_cancel() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode, SOURCE);
-        for (entry, expected) in [
-            ("duplex", 42),
-            ("sweep", 42),
-            ("cancel", 42),
-            ("limits", 42),
-            ("main", 0),
-        ] {
-            assert_eq!(
-                block_on(vm.prepare_async(entry, &[]).unwrap())
-                    .unwrap_or_else(|e| panic!("{mode:?} {entry}: {e}")),
-                expected
-            );
-            clean();
-        }
+        // main already asserts duplex, sweep, cancellation, limits, truncation,
+        // fragmentation and the maximum message size. Run each algorithm once.
+        assert_eq!(block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(), 0);
+        clean();
         let vm = self::vm(mode, &matrix::frames_source());
         assert_eq!(block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(), 0);
         clean();

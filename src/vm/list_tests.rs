@@ -182,6 +182,14 @@ pub(crate) fn fixture_source(entry: &str) -> String {
         include_str!("../../tests/fixtures/list.jk")
     )
 }
+/// Share generic specializations across independent calls in one compiled module.
+pub(crate) fn fixture_entries(entries: &[&str]) -> String {
+    let entries: Vec<_> = entries
+        .iter()
+        .map(|&entry| (format!("probe_{entry}"), entry))
+        .collect();
+    super::support::generic_fixture_entries(include_str!("../../tests/fixtures/list.jk"), &entries)
+}
 fn assert_owners() {
     EVENTS.with(|events| {
         let events = events.borrow();
@@ -207,14 +215,28 @@ fn assert_owners() {
 }
 #[test]
 fn list_executes_copy_owned_borrowed_and_bulk_apis() {
+    let entries: Vec<_> = CASES
+        .iter()
+        .map(|case| case.0)
+        .filter(|&entry| entry != "capacity_reuse")
+        .collect();
+    let source = fixture_entries(&entries);
     for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = configured(mode, &source, false);
         for &(entry, failure) in CASES {
-            let vm = configured(mode, &fixture_source(entry), entry == "capacity_reuse");
+            // This case alone uses private storage probes; keep that registry isolated.
+            let invariant_vm;
+            let (vm, name) = if entry == "capacity_reuse" {
+                invariant_vm = configured(mode, &fixture_source(entry), true);
+                (&invariant_vm, "probe".to_owned())
+            } else {
+                (&vm, format!("probe_{entry}"))
+            };
             reset();
             match failure {
-                None => assert_eq!(vm.call_int32_0("probe").unwrap(), 42, "{mode:?} {entry}"),
+                None => assert_eq!(vm.call_int32_0(&name).unwrap(), 42, "{mode:?} {entry}"),
                 Some(message) => {
-                    let error = vm.call_int32_0("probe").unwrap_err();
+                    let error = vm.call_int32_0(&name).unwrap_err();
                     assert_eq!(error.message(), message, "{mode:?} {entry}");
                     assert_eq!(
                         error.code(),
@@ -292,17 +314,18 @@ fn list_allocation_failures_clean_partial_construction_and_transfers() {
         }
     }
     let _restore = Restore;
+    let source = fixture_entries(&["transitions", "bulk"]);
     for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = configured(mode, &source, false);
         let mut sites = std::collections::BTreeSet::new();
         let mut failed_bulk_transfer = false;
         for entry in ["transitions", "bulk"] {
-            let vm = configured(mode, &fixture_source(entry), false);
             let mut completed = false;
             let mut partial = false;
             for budget in (0..65536).step_by(16) {
                 reset();
                 crate::runtime::arena::LIMIT.with(|n| n.set(budget));
-                let result = vm.call_int32_0("probe");
+                let result = vm.call_int32_0(&format!("probe_{entry}"));
                 crate::runtime::arena::LIMIT.with(|n| n.set(crate::runtime::arena::MAX_BYTES));
                 match result {
                     Ok(result) => {
@@ -445,22 +468,8 @@ fn view_modules() -> crate::ModuleSources {
 }
 fn rejected(body: &str, modules: &crate::ModuleSources) {
     let source = format!("import joky/list.{{type List}} import joky/array.{{type Array}} import joky/option.{{type Option, Some, None}} import joky/element as element import joky/string {body}");
-    let parsed = crate::parser::parse(&source).unwrap();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = VmEngine::with_mode(mode)
-            .load_source_with_modules(&source, modules)
-            .expect_err(body);
-        assert!(error.span().is_some(), "{mode:?}: {body}: {error}");
-    }
-    let result = crate::TypeRegistry::default()
-        .resolve_with_modules(&parsed, modules)
-        .and_then(|ast| {
-            crate::aot::AotCompiler::new("invalid-list")?
-                .compile_module(&ast)
-                .map(|_| ())
-        });
-    let error = result.expect_err(body);
-    assert!(error.span().is_some(), "AOT: {body}: {error}");
+    let error = super::support::frontend_error(&source, modules);
+    assert!(error.span().is_some(), "{body}: {error}");
 }
 #[test]
 fn list_rejects_copy_conflicts_escapes_private_storage_and_aliases() {

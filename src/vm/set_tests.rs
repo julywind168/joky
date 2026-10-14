@@ -80,6 +80,14 @@ pub(crate) fn fixture_source(entry: &str) -> String {
         include_str!("../../tests/fixtures/set.jk")
     )
 }
+/// Share generic specializations across independent calls in one compiled module.
+pub(crate) fn fixture_entries(entries: &[&str]) -> String {
+    let entries: Vec<_> = entries
+        .iter()
+        .map(|&entry| (format!("probe_{entry}"), entry))
+        .collect();
+    super::support::generic_fixture_entries(include_str!("../../tests/fixtures/set.jk"), &entries)
+}
 fn assert_owners() {
     EVENTS.with(|e| {
         let events = e.borrow();
@@ -103,20 +111,23 @@ fn assert_owners() {
 }
 #[test]
 fn set_executes_core_views_batches_algebra_and_failures() {
+    let entries: Vec<_> = CASES.iter().map(|case| case.0).collect();
+    let source = fixture_entries(&entries);
     for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = configured(mode, &source);
         for &(entry, error, drops) in CASES {
-            let vm = configured(mode, &fixture_source(entry));
+            let name = format!("probe_{entry}");
             reset();
             match error {
                 Some(message) => {
                     assert_eq!(
-                        vm.call_int32_0("probe").unwrap_err().message(),
+                        vm.call_int32_0(&name).unwrap_err().message(),
                         message,
                         "{mode:?} {entry}"
                     );
                     EVENTS.with(|e| assert!(!e.borrow().contains(&99)));
                 }
-                None => assert_eq!(vm.call_int32_0("probe").unwrap(), 42, "{mode:?} {entry}"),
+                None => assert_eq!(vm.call_int32_0(&name).unwrap(), 42, "{mode:?} {entry}"),
             }
             if drops.is_empty() {
                 assert_owners();
@@ -252,26 +263,8 @@ fn view_modules() -> crate::ModuleSources {
 }
 fn rejected(body: &str, message: &str) {
     let source=format!("import joky/set.{{type Set}} import joky/array.{{type Array}} import joky/slice as slices import joky/option.{{Some,None}} import joky/string import views {body}");
-    let parsed = crate::parser::parse(&source).unwrap();
-    let modules = view_modules();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = VmEngine::with_mode(mode)
-            .load_source_with_modules(&source, &modules)
-            .expect_err(body);
-        assert!(
-            error.message().contains(message),
-            "{mode:?}: {body}: {error}"
-        );
-    }
-    let error = crate::TypeRegistry::default()
-        .resolve_with_modules(&parsed, &modules)
-        .and_then(|ast| {
-            crate::aot::AotCompiler::new("invalid-set")?
-                .compile_module(&ast)
-                .map(|_| ())
-        })
-        .expect_err(body);
-    assert!(error.message().contains(message), "AOT: {body}: {error}");
+    let error = super::support::frontend_error(&source, &view_modules());
+    assert!(error.message().contains(message), "{body}: {error}");
 }
 #[test]
 fn set_rejects_invalid_keys_mutable_elements_escapes_and_consuming_aliases() {
@@ -345,16 +338,17 @@ fn set_allocation_failures_clean_partial_construction_and_algebra() {
         }
     }
     let _restore = Restore;
+    let source = fixture_entries(&OWNING_CASES);
     for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = configured(mode, &source);
         for entry in OWNING_CASES {
-            let vm = configured(mode, &fixture_source(entry));
             let mut completed = false;
             let mut partial = false;
             let mut transferred = false;
             for budget in (0..65536).step_by(16) {
                 reset();
                 crate::runtime::arena::LIMIT.with(|n| n.set(budget));
-                let result = vm.call_int32_0("probe");
+                let result = vm.call_int32_0(&format!("probe_{entry}"));
                 crate::runtime::arena::LIMIT.with(|n| n.set(crate::runtime::arena::MAX_BYTES));
                 match result {
                     Ok(value) => {
