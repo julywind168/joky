@@ -26,7 +26,7 @@ HR2 已完成标量与平面记录的类型化入口契约；HR3-A 出站信箱�
    由第一个域解析当前实现并检查全部参与域；已计算的候选仍必须重新验证读取凭据。
 3. 挂起流程（等待网络、数据库、定时器的 `@suspends` 代码）可以保存句柄、拥有值和快照，
    不持有域状态的借用；流程在启动时固定自己的代码，跑完后旧代码自然退役。不迁移挂起栈。
-   内联 `when` 块也属于流程代码，其版本约束见第 8 节，不能自动获得具名操作的晚绑定语义。
+   拟议 `when` 块将提取为带稳定身份及捕获契约的域操作，兼容时执行新版块体；设计见第 8 节。
 4. 流程的生命周期必须有界。长时间等待改用"状态中的到期时间 + 按名字触发的域操作"，
    不能用一个常驻循环或长时间 sleep 把旧代码钉住。
 5. AOT 主程序只放稳定内核：运行时、网络、调度、准入、域目录和性能敏感的库。
@@ -91,7 +91,7 @@ vm.publish_domain_code()    // 把结构兼容的现有域切到当前模块，�
   全部域仍须存活、健康、布局兼容且权限有效，修订余量也先检查。入口缺失、ABI 或布局
   不兼容以 `TypeMismatch` 拒绝整次调用，不修改任何根或修订，不隔离域。
 - 这一规则覆盖源码 `read_pair/update_pair/write_pair/snapshot_pair` 与 Rust 的 2–64 域
-  `queue_domain_access`，仍限普通标量记录根。尚未实现的内联 `when` 不因此获得晚绑定。
+  `queue_domain_access`，仍限普通标量记录根。`when` 的操作身份、捕获契约及晚绑定接线尚未实现，见[语法糖草案](state-domain-syntax.md)。
 - 候选计算与快照投影仍固定原版本：读取凭据的代码变化按 `Conflict` 处理；候选写域自身
   已换模块时仍由原有同模块检查返回 `InvalidAccess`。不能用晚绑定使旧计算继续提交。
 
@@ -430,160 +430,23 @@ API、返回结果与边界统一见[语言参考](language.md#域目录-jokydom
 
 ## 8 业务写法方向（未冻结）
 
-HR1–HR5 落地后，服务端业务围绕状态域组织：长期状态是 `#state` 记录，域操作写在其 `impl` 中，
-规则写成普通函数，流程是 `@suspends` 函数。下例是语法方向的示意，名称与拼写均未冻结，
-`text` 块不可执行。声明属性沿用 `#`，`@` 仍只用于签名中的效果标记。
+状态域语法糖统一见[专项草案](state-domain-syntax.md)。`when` 的目标是 1–64 域受检短操作，
+默认按稳定操作身份晚绑定，兼容发布后执行当前实现；不采用流程固定版本作为默认语义。
+首版建议通过显式标签标识操作，匿名形式的身份规则另行确定。块体、捕获和结果契约均需
+编译器生成并校验，单纯提取一个固定函数指针不足以实现该目标。
 
-除新提议的结构外，示例沿用现有语法：`while` 循环、`Result.Ok` / `Result.Err` 构造器、
-`match` 分支；当前没有 `?` 传播运算符，错误分支用 `match` 提前返回。
+旧流程继续按原版本推进并提供捕获值，新版操作处理这些值。发布改变算法但保持契约时，
+排队中的操作执行新版块体；操作缺失、捕获／返回／权限／状态契约不兼容时，在执行前拒绝。
+不重新运行捕获表达式，不自动重试。`when` 直接修改活状态，没有失败回滚；快照与候选仍
+遵守原有读取凭据，不因具名晚绑定而失效豁免。
 
-```text
-import joky/domain.{type Outbox, type Directory}
-import joky/net.{type Conn}
+`#state` 用于提前检查域根资格，不创建模块全局状态，也不是 `when` 的前置条件。
+句柄方法调用在统一操作契约之上补充；`#every`、迁移声明和候选编辑留作后续切片。
+流程错误、取消、拥有状态范围及阶段验收以专项草案为准；当前这些语法均未实现。
 
-// 声明处即检查域根资格，诊断定位到类型而不是首次使用处
-#state
-struct Room { id: Int64, frame: Int32, members: Array<Member>, cap: UInt64 }
-struct Member { player: Int64, conn: Conn, x: Int32, y: Int32 }
-
-#state
-struct Player { id: Int64, level: Int32, room: Option<Int64>, conn: Conn }
-
-enum RoomMsg { Frame(Int32), Joined(Int64), Left(Int64) }
-enum JoinError { NoPlayer, NoRoom, Full, AlreadyInRoom, Database }
-
-// #state 类型的 impl 方法即域操作：编译器证明同步、不逃逸、不调用宿主
-impl Room {
-    fn open(id: Int64, cap: UInt64) -> Room {
-        Room { id: id, frame: 0, members: Array.new::<Member>(), cap: cap }
-    }
-
-    // 运行时按周期调度；每次都是独立调用，发布后下一帧使用新代码
-    #every(50)
-    fn tick(&mut self, out: &mut Outbox<RoomMsg>) {
-        self.frame = self.frame + 1
-        step_physics(self)                                  // 普通函数
-        var i: UInt64 = 0
-        while i < self.members.len() {
-            match self.members.get(i) {
-            Some(m) => out.send(m.conn, RoomMsg.Frame(self.frame))   // 调用成功后才投递
-            None => {}
-            }
-            i = i + 1
-        }
-    }
-
-    fn full(&self) -> Bool { self.members.len() >= self.cap }
-    fn frame(&self) -> Int32 { self.frame }
-}
-
-fn step_physics(room: &mut Room) { ... }
-
-// 目录按 ID 查到句柄，不保活状态；模块级声明方式未定
-let rooms: Directory<Int64, Room> = Directory.new()
-let players: Directory<Int64, Player> = Directory.new()
-
-// 流程可保存句柄与拥有值；挂起等待期间不持有域状态借用
-fn join(pid: Int64, rid: Int64) @suspends -> Result<UInt64, JoinError> {
-    let player = match players.get(pid) { Some(h) => h, None => return Result.Err(JoinError.NoPlayer) }
-    let room = match rooms.get(rid) { Some(h) => h, None => return Result.Err(JoinError.NoRoom) }
-    let level = match db.load_level(pid) { Ok(n) => n, Err(_) => return Result.Err(JoinError.Database) }
-
-    // 块体固定在 join 的代码版本；参与域已切换时拒绝，错误出口的语法尚未冻结
-    // mut 表示写权限，省略为只读；块内同名变量变为对状态的引用
-    when (mut player, mut room) {
-        if room.full() { return Result.Err(JoinError.Full) }   // 先检查，此时尚未修改
-        if player.room.is_some() { return Result.Err(JoinError.AlreadyInRoom) }
-        room.members.push(Member { player: pid, conn: player.conn, x: 0, y: 0 })
-        player.room = Option.Some(room.id)
-        player.level = level                                    // 外层值复制或移动进块
-        Result.Ok(room.members.len())
-    }
-}
-
-// 单域访问可直接在句柄上调用方法；调用会挂起一轮，不需要 await
-fn frame_of(rid: Int64) @suspends -> Option<Int32> {
-    match rooms.get(rid) { Some(room) => Option.Some(room.frame()), None => Option.None }
-}
-
-// 状态结构变化：显式迁移，prev.Room 是编译器按归档旧 schema 生成的只读视图
-migrate Room from prev.Room {
-    Room { id: old.id, frame: old.frame, members: copy_members(old.members), cap: 8 }
-}
-```
-
-`copy_members` 表示按旧 schema 读取成员并构造独立新存储的迁移辅助函数，不能从只读旧根中
-移动拥有字段。`join` 中的内联块展示访问语法，不承诺跨发布继续执行；需要立即热修复的入房
-规则应优先写成具名多域操作，通过 HR6 的兼容晚绑定由流程调用。
-
-AOT 主程序只认识少量通用入口，业务消息由 Script 解码和分发。AOT 代码不参与热更新，
-其中的常驻管理循环不会钉住 Script 代码。下例 `game.entry` 必须表示稳定的入口路由句柄，
-每条新消息解析当前模块并启动流程，不能把某一版 Script 函数永久保存在连接服务中：
-
-```text
-import joky/script.{type Script}
-import joky/net
-
-fn main() @suspends {
-    let game = match script.load("game/") { Ok(s) => s, Err(e) => return fail(e) }
-    let server = match net.listen("0.0.0.0:7000") { Ok(l) => l, Err(e) => return fail(e) }
-    parallel {
-    | net.serve(server, game.entry("on_message"))   // 连接消息转给 Script 的通用入口
-    | admin_loop(&game)
-    }
-}
-
-fn admin_loop(game: &Script) @suspends {
-    while true {
-        match admin.next_command() {
-        Reload => reload(game)
-        Stop => return
-        }
-    }
-}
-
-fn reload(game: &Script) @suspends {
-    match script.load("game/") {
-    Ok(next) => log(game.publish(next))   // 兼容域切换代码；结构变化则执行 migrate
-    Err(error) => log(error)              // 编译或检查失败时保留旧版本
-    }
-}
-```
-
-每项写法都还原为已有或计划中的原语，不引入新的语义保证：
-
-| 写法 | 底层 | 现状 |
-| --- | --- | --- |
-| `#state` | 现有 `domain_entry` 根资格检查，提前到声明处 | 资格检查已有 |
-| `#state` 类型的 `impl` 方法 | 域操作 `fn(&S, ...)` / `fn(&mut S, ...)` | 已有，限单个标量输入 |
-| `handle.method(args)` | `domain.read_from` / `write_to`，多参数由编译器打包 | 单输入已有 |
-| `when (mut a, b) { }` | 固定版本的块体提取为同步函数，校验全部域绑定后执行 | 短操作原语已有，版本校验与块提取待做 |
-| `Outbox.send` | 出站信箱，调用成功后投递（HR3） | 待做 |
-| `#every(n)` | 运行时按名字调度的周期调用（HR4） | 显式 after/every 已实现，属性糖待做 |
-| `Directory` | ID 到句柄的目录（HR3） | 显式运行时目录已实现，泛型键与模块声明糖未实现 |
-| `migrate ... from ...` | 类型可变的候选与修订校验（HR5） | 待做 |
-| `script.load` / `publish` | 语言侧入口，底层为 `publish_domain_code`（HR2） | 发布原型已有 |
-
-`when` 的取向：
-
-- 名称取"拿到这些域之后执行"的含义，与 Behaviour-Oriented Concurrency 的 `when` 一致；
-  区别是本语言的 `when` 只出现在 `@suspends` 函数中，挂起直到块执行完并返回其值。
-  首选上下文关键字：仅在 `@suspends` 函数中以 `when (` 开头时识别，不进入保留字表。
-- `when` 提供独占访问，不提供回滚。块内返回前已写入的修改保留；块体运行时失败按现有规则
-  隔离被写的域。业务应先检查再修改；需要失败整体回滚时使用候选与提交，另设入口。
-- 块体同步、不调用宿主、不嵌套 `when`，`break` / `continue` 不跨出块。外层局部值按值复制
-  或移动进块，不能借用。块内 `return` 从外层函数返回，由编译器把提前返回编码为结果标签带回。
-- 首版设计采用流程固定版本：块体及捕获值布局属于调用流程的模块。准入和实际执行前都要
-  检查全部参与域仍绑定该流程的模块，并校验从准入到执行的代码版本未变；即使新旧布局相同，
-  跨发布时也拒绝，不自动换成新块体，也不自动重放。
-  拒绝结果如何与块体返回值组合、如何向外层传播，须在语法实现前确定，示例暂未表达该错误出口。
-  若以后支持内联块晚绑定，必须另行设计稳定操作标识、捕获值 ABI 和效果兼容检查，单纯提取
-  辅助函数不足以保证安全。
-- 访问列表写作 `mut player`，不写 `&mut player`：`player` 本身是句柄，借用记号会误读为借用句柄。
-
-其余未定项：对句柄的方法调用是否需要显式标记（倾向只靠句柄类型区分）、出站信箱采用显式参数
-还是隐式上下文（倾向显式参数，签名中可见副作用）。这些在 HR0 安全补齐、HR2 标量探针与
-HR1 类型扩展后用真实房间示例验证再定，语法糖不替代底层版本协议。
+AOT 主程序继续持有连接、目录、信箱和定时器，通过 Script 入口调用业务流程。可热更新的
+隐藏操作必须属于对应 Script 业务模块，AOT 中的块不会自动搬到 Script 中。
+高层 Script 资源包装与配置快照仍待设计；当前可运行的组合示例见第 11.1 节。
 
 ## 9 预算与诊断
 
@@ -640,11 +503,11 @@ HR6 之前多域操作遇到代码切换可安全拒绝，基本正确性不能�
 
 | 场景 | 必须观察到的行为 |
 | --- | --- |
-| 发布时有挂起流程 | 流程按原代码恢复；此后发出的兼容具名操作执行新代码；固定版本的内联块按版本规则拒绝 |
+| 发布时有挂起流程 | 流程按原代码恢复；此后发出的兼容具名操作执行新代码；拟议 when 沿用兼容晚绑定 |
 | 发布前已排队的单域调用 | 签名兼容时执行新代码；不兼容时只失败该调用，域保持健康 |
 | 发布前已排队的多域调用 | HR0 遇绑定变化先拒绝且无写入；HR6 已使兼容具名操作重绑定，不兼容仍整次拒绝 |
 | 只读第四域只更新代码 | 数据修订未变也使旧候选失效；整个提交集合无根替换 |
-| 内联块等待期间发布 | 不把旧捕获值交给新版块体；拒绝结果可被流程显式处理，无透明重放 |
+| 内联块等待期间发布 | 拟议 when 保留旧捕获值，完整契约兼容时执行新版块体，不兼容则执行前拒绝，无透明重放 |
 | 状态结构变化但没有迁移 | 发布被拒绝，所有域保持原代码与原数据 |
 | 迁移期间仍有写入或代码发布 | 完整凭据冲突则在最终发布前有界重建或放弃，不丢失正常写入 |
 | 后构造的迁移候选分配或校验失败 | 较早完成的候选也不发布；所有候选按初始化进度清理，无根或绑定部分替换 |
