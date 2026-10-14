@@ -1,10 +1,10 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/integer
 import joky/string
 import joky/task
 
-fn ensure(ok: Bool) { let message = "Duplex message session" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "Duplex message session" assert(ok, &message) }
 // Receive commands independently of the server's unsolicited pushes.
 fn commands(reader: &mut BufferedTcpReader) @suspends {
     var expected: Int32 = 1

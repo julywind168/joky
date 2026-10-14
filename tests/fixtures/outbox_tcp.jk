@@ -3,7 +3,7 @@ import joky/domain
 import joky/tcp.{type TcpStream, type TcpListener, type TcpWriter, type Address}
 import joky/array.{type Array}
 import joky/check
-fn require(ok:Bool) { let message="outbox TCP" check.require(ok,&message) }
+fn assert(ok:Bool) { let message="outbox TCP" check.assert(ok,&message) }
 struct State { n:Int32 }
 fn make(n:Int32)->State { State{n:n} }
 fn read(s:&State)->Int32 { s.n }
@@ -11,39 +11,39 @@ fn writer(queue:outbox.Mailbox, stream:TcpWriter) @suspends {
     var queue=queue
     var stream=stream
     let message=match queue.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }
-    require(message.len()==3)
-    require(stream.write_all(message).is_ok())
-    require(stream.shutdown().is_ok())
+    assert(message.len()==3)
+    assert(stream.write_all(message).is_ok())
+    assert(stream.shutdown().is_ok())
 }
 fn producer(handle:domain.WriteHandle<State>,target:outbox.Handle) @suspends {
     var bytes=Array.new::<UInt8>() bytes.push(0) bytes.push(255) bytes.push(42)
     var batch=outbox.batch(1,3)
-    require(outbox.stage(&mut batch,target,bytes).is_ok())
+    assert(outbox.stage(&mut batch,target,bytes).is_ok())
     let candidate=domain.with_outbox(domain.candidate_from(domain.snapshot_from(handle.read_only(),read),make,42),batch)
     var receipt=domain.commit_to(handle,candidate)
-    require(match receipt.wait() { Committed(_) => true, _ => false })
+    assert(match receipt.wait() { Committed(_) => true, _ => false })
 }
 fn peer(stream:TcpStream) @suspends {
     var stream=stream
     var received=Array.new::<UInt8>()
     while true {
-        let bytes=match stream.read(8) { Ok(bytes) => bytes, Err(_) => { require(false) return } }
+        let bytes=match stream.read(8) { Ok(bytes) => bytes, Err(_) => { assert(false) return } }
         if bytes.is_empty() { break }
         var i:UInt64=0
         while i<bytes.len() { received.push(bytes.get(i).unwrap_or(0)) i=i+1 }
     }
-    require(received.len()==3 && received.get(0).unwrap_or(1)==0 && received.get(1).unwrap_or(0)==255 && received.get(2).unwrap_or(0)==42)
+    assert(received.len()==3 && received.get(0).unwrap_or(1)==0 && received.get(1).unwrap_or(0)==255 && received.get(2).unwrap_or(0)==42)
 }
 fn main() @suspends {
-    var listener=match TcpListener.bind(Address.ipv4(0x7f000001,0)) { Ok(l)=>l, Err(_)=>{require(false) return} }
-    let address=match listener.local_addr() { Ok(a)=>a, Err(_)=>{require(false) return} }
-    let client=match TcpStream.connect(address) { Ok(c)=>c, Err(_)=>{require(false) return} }
-    let server=match listener.accept() { Ok(s)=>s, Err(_)=>{require(false) return} }
+    var listener=match TcpListener.bind(Address.ipv4(0x7f000001,0)) { Ok(l)=>l, Err(_)=>{assert(false) return} }
+    let address=match listener.local_addr() { Ok(a)=>a, Err(_)=>{assert(false) return} }
+    let client=match TcpStream.connect(address) { Ok(c)=>c, Err(_)=>{assert(false) return} }
+    let server=match listener.accept() { Ok(s)=>s, Err(_)=>{assert(false) return} }
     let (reader,stream)=client.split()
     let queue=outbox.create(1,3)
     let target=queue.handle()
     let state=domain.create(make,0)
     parallel { | writer(queue,stream) | producer(state.handle(),target) | peer(server) }
-    require(domain.read_from(state.read_handle(),read)==42)
+    assert(domain.read_from(state.read_handle(),read)==42)
     println("outbox TCP ok")
 }

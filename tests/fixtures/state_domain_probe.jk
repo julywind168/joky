@@ -41,16 +41,16 @@ fn replacement() @suspends -> Int32 {
     state.count = 2
     let candidate = prepare(copy)
     let message = "Snapshot must own independent storage across suspension"
-    check.require(candidate.values.get(0).unwrap_or(-1) == 7, &message)
-    check.require(candidate.text.byte_length() == 3, &message)
-    check.require(candidate.count == 1, &message)
+    check.assert(candidate.values.get(0).unwrap_or(-1) == 7, &message)
+    check.assert(candidate.text.byte_length() == 3, &message)
+    check.assert(candidate.count == 1, &message)
     let retired = mem.replace(&mut state, candidate)
     let message = "Replacing a root must preserve both ownership graphs"
-    check.require(retired.values.get(0).unwrap_or(-1) == 99, &message)
-    check.require(retired.text.byte_length() == 7, &message)
-    check.require(retired.count == 2, &message)
+    check.assert(retired.values.get(0).unwrap_or(-1) == 99, &message)
+    check.assert(retired.text.byte_length() == 7, &message)
+    check.assert(retired.count == 2, &message)
     mem.drop(retired)
-    check.require(state.values.get(0).unwrap_or(-1) == 7, &message)
+    check.assert(state.values.get(0).unwrap_or(-1) == 7, &message)
     42
 }
 
@@ -62,7 +62,7 @@ fn cancelled(candidate: State) @suspends {
     task.yield_now()
     task.yield_now()
     let message = "Cancelled candidate resumed past its lifetime"
-    check.require(candidate.count == -1, &message)
+    check.assert(candidate.count == -1, &message)
 }
 
 fn winner() @suspends { task.yield_now() }
@@ -70,7 +70,7 @@ fn winner() @suspends { task.yield_now() }
 fn main() @suspends {
     let pending = pending_candidate()
     let message = "Candidate result must survive repeated suspension"
-    check.require(pending == 1, &message)
+    check.assert(pending == 1, &message)
     let result = replacement()
     println(&result)
     race {

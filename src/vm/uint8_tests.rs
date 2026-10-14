@@ -141,19 +141,19 @@ fn uint8_pending_survives_reload_drop_and_cancellation() {
 #[test]
 fn rune_literals_validate_scalars_and_preserve_scalar_identity() {
     let source = r#"
-        import joky/check.{require}
+        import joky/check.{assert}
         fn rune_check() -> UInt32 {
             let ascii = 'a'
             let chinese = '中'
             let emoji = '\u{1F642}'
-            { let assertion_condition = ascii == 'a' let assertion_message = "ASCII rune" require(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0).is_some() let assertion_message = "NUL rune" require(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0x10ffff).is_some() let assertion_message = "Upper scalar" require(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0xd800).is_none() let assertion_message = "Surrogate rejected" require(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0x110000).is_none() let assertion_message = "Out of range rejected" require(assertion_condition, &assertion_message) }
-            { let assertion_condition = ascii.to_u32() == 97 let assertion_message = "Rune conversion" require(assertion_condition, &assertion_message) }
-            { let assertion_condition = chinese == '中' let assertion_message = "Unicode rune" require(assertion_condition, &assertion_message) }
-            { let assertion_condition = emoji == '\u{1F642}' let assertion_message = "Emoji rune" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = ascii == 'a' let assertion_message = "ASCII rune" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0).is_some() let assertion_message = "NUL rune" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0x10ffff).is_some() let assertion_message = "Upper scalar" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0xd800).is_none() let assertion_message = "Surrogate rejected" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0x110000).is_none() let assertion_message = "Out of range rejected" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = ascii.to_u32() == 97 let assertion_message = "Rune conversion" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = chinese == '中' let assertion_message = "Unicode rune" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = emoji == '\u{1F642}' let assertion_message = "Emoji rune" assert(assertion_condition, &assertion_message) }
             if ascii == 'a' { 97 } else { 0 }
         }
     "#;

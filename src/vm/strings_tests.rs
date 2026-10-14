@@ -471,10 +471,10 @@ fn owning_string_s2_budget_failures_clean_inputs_clones_and_pending_frames() {
         import joky/task
         fn echo(text: String) -> String { let next = text.clone() text.release() next }
         fn pending(text: String) @suspends -> String { let next = text.clone() task.yield_now() text.release() next }
-        fn failure() -> String { let message = "Primary text failure" require(false, &message) "unreachable" }
+        fn failure() -> String { let message = "Primary text failure" assert(false, &message) "unreachable" }
     "#;
-    // check is explicit; the default prelude intentionally does not import require.
-    let source = format!("import joky/check.{{require}} {source}");
+    // Keep the fixture independent of whether the VM enables the prelude.
+    let source = format!("import joky/check.{{assert}} {source}");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(&source, mode);
         let mut failed = false;
@@ -631,10 +631,10 @@ fn owning_string_s2_root_cleanup_failure_discards_text() {
     let source = r#"
         import joky/array.{type Array}
         import joky/drop.{type Drop}
-        import joky/check.{require}
+        import joky/check.{assert}
         struct Resource { data: Array<UInt8> }
         impl Drop for Resource {
-            fn drop(&mut self) { let message = "Text cleanup failure" require(false, &message) }
+            fn drop(&mut self) { let message = "Text cleanup failure" assert(false, &message) }
         }
         fn text() -> String { let resource = Resource { data: Array.new::<UInt8>() } "discarded" }
     "#;

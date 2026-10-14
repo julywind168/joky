@@ -1,36 +1,36 @@
 import joky/vm
 import joky/task
 import joky/check
-fn require(ok: Bool) { let message = "AOT Script scalar probe" check.require(ok, &message) }
+fn assert(ok: Bool) { let message = "AOT Script scalar probe" check.assert(ok, &message) }
 fn v1() -> String { "import joky/domain\nimport joky/task\nstruct Room {{ n: Int32 }}\nfn make(n: Int32) -> Room {{ Room {{ n: n }} }}\nfn phase(s: &Room) -> Int32 {{ 1 }}\nfn add(s: &mut Room, n: Int32) -> Int32 {{ s.n = s.n + n s.n }}\nfn session(n: Int32) @suspends -> Int32 {{\n    let version = 1\n    let room = domain.create(make, 0)\n    var i: Int32 = 0\n    while domain.read_from(room.read_handle(), phase) == 1 && i < 10000 {{\n        task.yield_now()\n        i = i + 1\n    }}\n    version * 100 + domain.write_to(room.handle(), add, n)\n}}\nfn waiting(n: Int32) @suspends -> Int32 {{\n    let room = domain.create(make, n)\n    task.sleep_ms(60000)\n    domain.read_from(room.read_handle(), phase)\n}}\nfn bad(n: Int32) @suspends -> Int32 {{ task.yield_now() 1 / n }}\nfn wrong(n: Int32) @suspends -> Bool {{ true }}\n" }
 fn v2() -> String { "import joky/domain\nimport joky/task\nstruct Room {{ n: Int32 }}\nfn make(n: Int32) -> Room {{ Room {{ n: n }} }}\nfn phase(s: &Room) -> Int32 {{ 2 }}\nfn add(s: &mut Room, n: Int32) -> Int32 {{ s.n = s.n + n * 10 s.n }}\nfn session(n: Int32) @suspends -> Int32 {{\n    let version = 2\n    let room = domain.create(make, 0)\n    var i: Int32 = 0\n    while domain.read_from(room.read_handle(), phase) == 1 && i < 10000 {{\n        task.yield_now()\n        i = i + 1\n    }}\n    version * 100 + domain.write_to(room.handle(), add, n)\n}}\nfn waiting(n: Int32) @suspends -> Int32 {{\n    let room = domain.create(make, n)\n    task.sleep_ms(60000)\n    domain.read_from(room.read_handle(), phase)\n}}\nfn bad(n: Int32) @suspends -> Int32 {{ task.yield_now() 1 / n }}\nfn wrong(n: Int32) @suspends -> Bool {{ true }}\n" }
-fn run(h: vm.Handle) @suspends { require(vm.call_async_int32(h, "session", 1) == 110) }
+fn run(h: vm.Handle) @suspends { assert(vm.call_async_int32(h, "session", 1) == 110) }
 fn upgrade(h: vm.Handle) @suspends {
     task.yield_now()
     let invalid = "fn broken("
-    require(vm.load_source(h, &invalid) == 1)
+    assert(vm.load_source(h, &invalid) == 1)
     let next = v2()
-    require(vm.load_source(h, &next) == 0)
+    assert(vm.load_source(h, &next) == 0)
     var count: Int32 = 0
     var attempts: Int32 = 0
     while count == 0 && attempts < 10000 {
         count = vm.publish_domain_code(h)
-        require(count >= 0)
+        assert(count >= 0)
         attempts = attempts + 1
         task.yield_now()
     }
-    require(count == 1)
+    assert(count == 1)
 }
 fn winner() @suspends { task.yield_now() task.yield_now() }
 fn waiting(h: vm.Handle) @suspends { vm.call_async_int32(h, "waiting", 1); }
 fn main() @suspends {
     let h = vm.create_interpreter()
     let source = v1()
-    require(vm.load_source(h, &source) == 0)
+    assert(vm.load_source(h, &source) == 0)
     parallel { | run(h) | upgrade(h) }
-    require(vm.call_async_int32(h, "session", 1) == 210)
+    assert(vm.call_async_int32(h, "session", 1) == 210)
     race { | waiting(h) | winner() }
-    require(vm.call_async_int32(h, "session", 1) == 210)
-    require(vm.close(h) == 0)
+    assert(vm.call_async_int32(h, "session", 1) == 210)
+    assert(vm.close(h) == 0)
     println("AOT Script scalar probe ok")
 }

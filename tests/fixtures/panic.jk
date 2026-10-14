@@ -1,4 +1,4 @@
-import joky/check.{panic, require}
+import joky/check.{panic, assert}
 import joky/option.{type Option, Some, None}
 import joky/drop.{type Drop}
 import joky/task
@@ -24,17 +24,17 @@ fn unwrap(value: Option<Int32>) -> Int32 {
 }
 fn text(ok: Bool) -> String { if ok { "owned result" } else { panic("text failure") } }
 fn panic_success() -> Int32 {
-    require(choose(true) == 18446744073709551615, "Wide branch")
-    require(choose_reverse(true) == 42, "Reverse branch")
-    require(choose_semicolon(true) == 18446744073709551615, "Semicolon branch")
-    require(unwrap(Some(42)) == 42, "Match branch")
+    assert(choose(true) == 18446744073709551615, "Wide branch")
+    assert(choose_reverse(true) == 42, "Reverse branch")
+    assert(choose_semicolon(true) == 18446744073709551615, "Semicolon branch")
+    assert(unwrap(Some(42)) == 42, "Match branch")
     let result = text(true)
-    require(result.byte_length() == 12, "Owned branch {42}")
-    require(true, result)
-    require(true, &result)
-    require(result.byte_length() == 12, "Borrow preserves input")
+    assert(result.byte_length() == 12, "Owned branch {42}")
+    assert(true, result)
+    assert(true, &result)
+    assert(result.byte_length() == 12, "Borrow preserves input")
     if false { let moved = result panic(moved) }
-    require(result.byte_length() == 12, "Diverging move")
+    assert(result.byte_length() == 12, "Diverging move")
     42
 }
 fn panic_cleanup() -> Int32 {

@@ -2,7 +2,7 @@ import joky/mem
 import joky/map as maps.{type Map}
 import joky/array.{type Array}
 import joky/slice as slices.{type Slice}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/drop.{type Drop}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
@@ -10,14 +10,14 @@ extern fn record_int(value: Int32)
 
 fn copy_views<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>()
-    { let assertion_condition = slices.is_empty(m.keys()) && slices.is_empty(m.values()) && slices.is_empty(m.values_mut()) let assertion_message = "Empty views" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = slices.is_empty(m.keys()) && slices.is_empty(m.values()) && slices.is_empty(m.values_mut()) let assertion_message = "Empty views" assert(assertion_condition, &assertion_message) }
     m.insert(1, 10) m.insert(2, 20) m.insert(3, 30) m.remove(2)
     let keys = maps.keys(&m)
     let values = maps.values(&m)
     var i: UInt64 = 0
     while i < slices.len(keys) {
         let key = slices.get(keys, i).unwrap_or(0)
-        { let assertion_condition = slices.get(values, i).unwrap_or(0) == key * 10 let assertion_message = "Paired views" require(assertion_condition, &assertion_message) }
+        { let assertion_condition = slices.get(values, i).unwrap_or(0) == key * 10 let assertion_message = "Paired views" assert(assertion_condition, &assertion_message) }
         i = i + 1
     }
     let edit = maps.values_mut(&mut m)
@@ -26,28 +26,28 @@ fn copy_views<Tag>() -> Int32 {
         let previous = slices.get(edit, i).unwrap_or(0)
         slices.set(edit, i, previous + 1) i = i + 1
     }
-    { let assertion_condition = m.get(1).unwrap_or(0) == 11 && m.get(3).unwrap_or(0) == 31 let assertion_message = "Value edits preserve keys" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.get(1).unwrap_or(0) == 11 && m.get(3).unwrap_or(0) == 31 let assertion_message = "Value edits preserve keys" assert(assertion_condition, &assertion_message) }
     m.get(1).unwrap_or(0) + m.get(3).unwrap_or(0)
 }
 fn consuming<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>()
-    { let assertion_condition = m.pop().is_none() let assertion_message = "Empty pop" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.pop().is_none() let assertion_message = "Empty pop" assert(assertion_condition, &assertion_message) }
     m.insert(1, 10) m.insert(2, 20) m.insert(3, 30) m.remove(2)
     var sum = 0
     while !m.is_empty() {
         match maps.pop(&mut m) {
-            Some((key, value)) => { { let assertion_condition = value == key * 10 && !m.contains_key(key) let assertion_message = "Popped entry" require(assertion_condition, &assertion_message) } sum = sum + value }
-            None => { { let assertion_condition = false let assertion_message = "Missing entry" require(assertion_condition, &assertion_message) } }
+            Some((key, value)) => { { let assertion_condition = value == key * 10 && !m.contains_key(key) let assertion_message = "Popped entry" assert(assertion_condition, &assertion_message) } sum = sum + value }
+            None => { { let assertion_condition = false let assertion_message = "Missing entry" assert(assertion_condition, &assertion_message) } }
         }
     }
-    { let assertion_condition = m.pop().is_none() let assertion_message = "Drained pop" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.pop().is_none() let assertion_message = "Drained pop" assert(assertion_condition, &assertion_message) }
     m.insert(4, 2)
     var entries = maps.into_entries(m)
-    { let assertion_condition = entries.len() == 1 let assertion_message = "Singleton export" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = entries.len() == 1 let assertion_message = "Singleton export" assert(assertion_condition, &assertion_message) }
     let (key, value) = entries.take_last()
-    { let assertion_condition = key == 4 let assertion_message = "Exported key" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = key == 4 let assertion_message = "Exported key" assert(assertion_condition, &assertion_message) }
     let empty = Map.new::<Int32, Int32>().into_entries()
-    { let assertion_condition = empty.is_empty() let assertion_message = "Empty export" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = empty.is_empty() let assertion_message = "Empty export" assert(assertion_condition, &assertion_message) }
     sum + value
 }
 struct Key { id: Int32, tag: Int32 }
@@ -62,23 +62,23 @@ fn batches<Tag>() -> Int32 {
     more.push((Key { id: 2, tag: 40 }, 21)) more.push((Key { id: 2, tag: 50 }, 22))
     maps.extend(&mut m, more)
     m.extend(Array.new::<(Key, Int32)>())
-    { let assertion_condition = m.len() == 2 let assertion_message = "Duplicate input" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.len() == 2 let assertion_message = "Duplicate input" assert(assertion_condition, &assertion_message) }
     let keys = m.keys()
     var i: UInt64 = 0
     while i < slices.len(keys) {
-        match slices.get(keys, i) { Some(k) => { { let assertion_condition = k.tag == k.id * 10 let assertion_message = "Original key retained" require(assertion_condition, &assertion_message) } }, None => {} }
+        match slices.get(keys, i) { Some(k) => { { let assertion_condition = k.tag == k.id * 10 let assertion_message = "Original key retained" assert(assertion_condition, &assertion_message) } }, None => {} }
         i = i + 1
     }
     var exported = m.into_entries()
     var result = 0
     while !exported.is_empty() { let (key, value) = exported.take_last() result = result + value }
     let empty = maps.from_entries(Array.new::<(Key, Int32)>())
-    { let assertion_condition = empty.is_empty() let assertion_message = "Empty import" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = empty.is_empty() let assertion_message = "Empty import" assert(assertion_condition, &assertion_message) }
     result
 }
 struct Resource { id: Int32, fail: Bool, data: Array<Int32> }
 impl Drop for Resource {
-    fn drop(&mut self) { record_int(self.id) { let assertion_condition = !self.fail let assertion_message = "Batch drop failure" require(assertion_condition, &assertion_message) } }
+    fn drop(&mut self) { record_int(self.id) { let assertion_condition = !self.fail let assertion_message = "Batch drop failure" assert(assertion_condition, &assertion_message) } }
 }
 fn resource(id: Int32, fail: Bool) -> Resource {
     var data = Array.new::<Int32>() data.push(id)
@@ -91,7 +91,7 @@ fn owned_pipeline<Tag>() -> Int32 {
     input.push((1, resource(1, false))) input.push((1, resource(2, false))) input.push((2, resource(3, false)))
     var m = maps.from_entries(input)
     let read = slices.borrow_ref(m.values(), 0)
-    { let assertion_condition = read.data.get(0).unwrap_or(0) == read.id let assertion_message = "Owned slice" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = read.data.get(0).unwrap_or(0) == read.id let assertion_message = "Owned slice" assert(assertion_condition, &assertion_message) }
     let edit = m.values_mut()
     {
         let value = slices.borrow_mut_ref(edit, 0)
@@ -100,18 +100,18 @@ fn owned_pipeline<Tag>() -> Int32 {
     }
     var total = 0
     match m.pop() {
-        Some((key, value)) => { { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Popped owner remains usable" require(assertion_condition, &assertion_message) } total = total + value.id }
-        None => { { let assertion_condition = false let assertion_message = "Missing owner" require(assertion_condition, &assertion_message) } }
+        Some((key, value)) => { { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Popped owner remains usable" assert(assertion_condition, &assertion_message) } total = total + value.id }
+        None => { { let assertion_condition = false let assertion_message = "Missing owner" assert(assertion_condition, &assertion_message) } }
     }
     record_int(900)
     var exported = m.into_entries()
     record_int(901)
     while !exported.is_empty() {
         let (key, value) = exported.take_last()
-        { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Exported owner remains usable" require(assertion_condition, &assertion_message) }
+        { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Exported owner remains usable" assert(assertion_condition, &assertion_message) }
         total = total + value.id
     }
-    { let assertion_condition = total == 7 let assertion_message = "All owners exported" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = total == 7 let assertion_message = "All owners exported" assert(assertion_condition, &assertion_message) }
     42
 }
 fn references<Tag>() -> Int32 {
@@ -123,7 +123,7 @@ fn references<Tag>() -> Int32 {
     var exported = m.into_entries()
     let (key, value) = exported.take_last()
     exported.release()
-    { let assertion_condition = key == 1 && (*value) == 42 let assertion_message = "Exported reference" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = key == 1 && (*value) == 42 let assertion_message = "Exported reference" assert(assertion_condition, &assertion_message) }
     match copied { Some(n) => (*n), None => 0 }
 }
 // These operations need no key protocols, even through generic helpers.

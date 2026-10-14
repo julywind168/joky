@@ -103,6 +103,15 @@ impl Parser {
     }
 
     pub(super) fn parse_fn_def(&mut self, start: usize) -> Result<FnDef, Diagnostic> {
+        self.parse_fn_with_intrinsic(start, None)
+            .map(|(function, _)| function)
+    }
+
+    pub(super) fn parse_fn_with_intrinsic(
+        &mut self,
+        start: usize,
+        mut intrinsic: Option<Box<IntrinsicAttribute>>,
+    ) -> Result<(FnDef, Option<Box<IntrinsicAttribute>>), Diagnostic> {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
         let type_params = self.parse_type_parameters(true)?;
@@ -136,29 +145,46 @@ impl Parser {
         let params = self.parse_params()?;
         let (suspends, noescape, noescape_params) = self.parse_fn_attrs()?;
         let ret_ty = self.parse_ret_ty()?;
-        let body = self.parse_block()?;
+        let body = if let Some(attribute) = &mut intrinsic {
+            attribute.has_body = self.peek() == &TokenKind::LBrace;
+            if attribute.has_body {
+                self.parse_block()?
+            } else {
+                let span = self.peek_span();
+                self.expect(&TokenKind::Semi)?;
+                Expr::Block {
+                    exprs: Vec::new(),
+                    span,
+                }
+            }
+        } else {
+            self.parse_block()?
+        };
         self.type_params = enclosing_parameters;
-        Ok(FnDef {
-            json_encode: false,
-            noescape: (noescape || !noescape_params.is_empty()).then(|| {
-                Box::new(NoEscape {
-                    all: noescape,
-                    params: noescape_params,
-                })
-            }),
-            public: false,
-            buffer_intrinsic: None,
-            compiler_intrinsic: None,
-            buffer_element: None,
-            scope: None,
-            name,
-            type_params,
-            params,
-            ret_ty,
-            suspends,
-            body,
-            span: self.span(start, self.last_span.end()),
-        })
+        Ok((
+            FnDef {
+                json_encode: false,
+                noescape: (noescape || !noescape_params.is_empty()).then(|| {
+                    Box::new(NoEscape {
+                        all: noescape,
+                        params: noescape_params,
+                    })
+                }),
+                public: false,
+                buffer_intrinsic: None,
+                compiler_intrinsic: None,
+                buffer_element: None,
+                scope: None,
+                name,
+                type_params,
+                params,
+                ret_ty,
+                suspends,
+                body,
+                span: self.span(start, self.last_span.end()),
+            },
+            intrinsic,
+        ))
     }
 
     fn parse_extern_fn(&mut self, start: usize, c_abi: bool) -> Result<ExternFnDecl, Diagnostic> {

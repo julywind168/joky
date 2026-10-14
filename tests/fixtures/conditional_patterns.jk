@@ -1,4 +1,4 @@
-import joky/check.{require}
+import joky/check.{assert}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record(x: Int32) -> Int32
@@ -11,7 +11,7 @@ enum Packet { Empty, Data((Option<Point>, Int32)) }
 enum Single { Value(Int32) }
 fn expect(ok: Bool) {
     let message = "Conditional pattern mismatch"
-    require(ok, &message)
+    assert(ok, &message)
 }
 fn owned(id: Int32) -> Owned { Owned { id: id, items: Array.new::<Int32>() } }
 fn choose(n: Int32) -> Option<Int32> { record(n); if n < 4 { Some(n) } else { None } }

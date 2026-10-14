@@ -2,10 +2,10 @@ import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTc
 import joky/array.{type Array}
 import joky/result.{type Result}
 import joky/integer
-import joky/check.{require}
+import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "Split buffered TCP preserves framing and independent directions" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "Split buffered TCP preserves framing and independent directions" assert(ok, &message) }
 fn pair() @suspends -> Result<(TcpStream, TcpStream), IoError> {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
     let address = match listener.local_addr() { Ok(value) => value, Err(error) => { return Result.Err(error) } }

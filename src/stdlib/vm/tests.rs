@@ -589,34 +589,34 @@ fn migration_cancellation(
     .replace('}', "}}");
     let prepare = if incremental {
         r#"let method="start" let advance="advance"
-    require(vm.begin_migration(h,vm.domain_schema(h),&next,&method,&advance)==0)
+    assert(vm.begin_migration(h,vm.domain_schema(h),&next,&method,&advance)==0)
     var status=vm.step_migration(h,2)
     while status==1 {task.yield_now() status=vm.step_migration(h,2)}
-    require(status==0)"#
+    assert(status==0)"#
     } else {
         r#"let method="upgrade"
-    require(vm.prepare_migration(h,vm.domain_schema(h),&next,&method)==0)"#
+    assert(vm.prepare_migration(h,vm.domain_schema(h),&next,&method)==0)"#
     };
     let source = format!(
         r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
-fn require(ok:Bool) {{let message="migration cancellation" check.require(ok,&message)}}
+fn assert(ok:Bool) {{let message="migration cancellation" check.assert(ok,&message)}}
 fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let next={next:?}
     {prepare}
     task.yield_now()
-    require(vm.publish_migration(h)==0)
+    assert(vm.publish_migration(h)==0)
     task.yield_now()
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==43)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==43)
 }}
 fn main() @suspends ->Int32 {{
     let owner=domain.directory(1)
     let directory=owner.handle()
     let h=vm.create_interpreter()
     let source={old:?}
-    require(vm.load_source(h,&source)==0)
+    assert(vm.load_source(h,&source)==0)
     race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    require(vm.close(h)==0)
+    assert(vm.close(h)==0)
     0
 }}"#
     );
@@ -742,28 +742,28 @@ fn batch_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhau
         .replace('}', "}}");
     let source = format!(
         r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
-fn require(ok:Bool) {{let message="migration batch cancellation" check.require(ok,&message)}}
+fn assert(ok:Bool) {{let message="migration batch cancellation" check.assert(ok,&message)}}
 fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty=""
-    require(vm.begin_migration_batch(h,&next)==0)
+    assert(vm.begin_migration_batch(h,&next)==0)
     task.yield_now()
-    require(vm.stage_migration(h,&start,&advance)==0)
+    assert(vm.stage_migration(h,&start,&advance)==0)
     task.yield_now()
-    require(vm.stage_migration(h,&ledger,&empty)==0)
+    assert(vm.stage_migration(h,&ledger,&empty)==0)
     var status=vm.step_migration(h,2)
     while status==1 {{task.yield_now() status=vm.step_migration(h,2)}}
-    require(status==0)
+    assert(status==0)
     task.yield_now()
-    require(vm.publish_migration(h)==0)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==194)
+    assert(vm.publish_migration(h)==0)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==194)
 }}
 fn main() @suspends ->Int32 {{
     let owner=domain.directory(4) let directory=owner.handle()
     let h=vm.create_interpreter() let old={old:?}
-    require(vm.load_source(h,&old)==0)
+    assert(vm.load_source(h,&old)==0)
     race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    require(vm.close(h)==0)
+    assert(vm.close(h)==0)
     0
 }}"#
     );

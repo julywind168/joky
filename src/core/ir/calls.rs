@@ -391,8 +391,8 @@ impl FunctionPlan {
             });
             return Ok(Flow::Diverged);
         }
-        if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::Require)) {
-            self.emit(Op::Require {
+        if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::Assert)) {
+            self.emit(Op::Assert {
                 condition: values[0].clone().unwrap(),
                 message: values[1].clone().unwrap(),
             });

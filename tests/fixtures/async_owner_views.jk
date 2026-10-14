@@ -2,7 +2,7 @@ import joky/array.{type Array}
 import joky/string.{type StringBuilder}
 import joky/task
 import joky/mem
-import joky/check.{require}
+import joky/check.{assert}
 
 struct Packet { bytes: Array<Int32>, tag: Int32 }
 fn identity<T>(value: &T) -> &T { value }
@@ -22,7 +22,7 @@ impl Packet {
         task.yield_now()
         let old = mem.replace(&mut self.bytes, Array.new::<Int32>())
         let message = "replaced owner survives the child call"
-        require(old.len() >= 3, &message)
+        assert(old.len() >= 3, &message)
         self.bytes.push(3)
     }
 }
@@ -32,13 +32,13 @@ fn exercise_views() @suspends -> Int32 {
     let view = identity(&packet)
     task.yield_now()
     let message = "stable whole object view"
-    require(inspect(view) == 42, &message)
+    assert(inspect(view) == 42, &message)
     packet.tag + packet.bytes.get(0).unwrap_or(0)
 }
 fn read(value: &Packet) @suspends {
     task.yield_now()
     let message = "shared branches see the same owner"
-    require(value.tag == 39 && value.bytes.get(0).unwrap_or(0) == 3, &message)
+    assert(value.tag == 39 && value.bytes.get(0).unwrap_or(0) == 3, &message)
 }
 fn hold(value: &mut Packet) @suspends {
     value.tag = 39
@@ -73,7 +73,7 @@ fn exercise_text() @suspends {
     let view = &text
     parallel { | instant() | task.yield_now() }
     let message = "whole String and StringBuilder views survive suspension"
-    require(view.byte_length() == 2 && query("owned", later()) == 42, &message)
+    assert(view.byte_length() == 2 && query("owned", later()) == 42, &message)
 }
 fn inspect_enum(value: &Option<Packet>) @suspends -> Int32 {
     task.yield_now()
@@ -92,7 +92,7 @@ fn exercise_aggregates() @suspends {
     replace_tuple(&mut pair)
     let (bytes, number) = pair
     let message = "owning enum and tuple storage survives suspension"
-    require(inspect_enum(&option) == 42 && number == 42 && bytes.len() == 0, &message)
+    assert(inspect_enum(&option) == 42 && number == 42 && bytes.len() == 0, &message)
 }
 fn exercise_all() @suspends -> Int32 {
     exercise_aggregates()

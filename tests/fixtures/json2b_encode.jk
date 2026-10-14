@@ -3,10 +3,10 @@ import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/string.{type StringBuilder}
 import joky/mem
-import joky/check.{require}
+import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "JSON2b encoder contract" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "JSON2b encoder contract" assert(ok, &message) }
 fn error_code(error: EncodeError) -> Int32 {
     match error { InvalidLimits => 1, OutputLimit => 2, DepthLimit => 3
         NodeLimit => 4, StringLimit => 5, NumberLimit => 6 }

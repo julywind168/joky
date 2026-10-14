@@ -2,7 +2,7 @@ import joky/domain
 import joky/task
 import joky/check
 import joky/array.{type Array}
-fn require(value: Bool) { let message = "SC2 scalar Array matrix" check.require(value, &message) }
+fn assert(value: Bool) { let message = "SC2 scalar Array matrix" check.assert(value, &message) }
 struct Matrix {
     count: Int32,
     units: Array<Unit>,
@@ -123,17 +123,17 @@ fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, 0)
     let handle = owner.handle()
     let reader = handle.read_only()
-    require(domain.read_from(reader, valid))
+    assert(domain.read_from(reader, valid))
     let candidate = domain.candidate_from(domain.snapshot_from(reader, count), make, 2)
     task.yield_now()
     var first = domain.commit_to(handle, candidate)
-    require(match first.wait() { Committed(n) => n == 1, _ => false })
-    require(domain.read_from(reader, valid))
+    assert(match first.wait() { Committed(n) => n == 1, _ => false })
+    assert(domain.read_from(reader, valid))
     domain.write_to(handle, clear, {})
-    require(domain.read_from(reader, valid))
+    assert(domain.read_from(reader, valid))
     var second = domain.commit_to(handle, domain.candidate_from(domain.snapshot_from(reader, count), make, 2))
-    require(match second.wait() { Committed(n) => n == 3, _ => false })
-    require(domain.read_from(reader, valid))
+    assert(match second.wait() { Committed(n) => n == 3, _ => false })
+    assert(domain.read_from(reader, valid))
     24
 }
-fn main() @suspends { require(lifecycle() == 24) println("SC2 scalar Arrays ok") }
+fn main() @suspends { assert(lifecycle() == 24) println("SC2 scalar Arrays ok") }

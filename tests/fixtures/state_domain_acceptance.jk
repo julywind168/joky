@@ -2,7 +2,7 @@ import joky/domain
 import joky/task
 import joky/check
 
-fn require(condition: Bool) { let message = "SC1 acceptance" check.require(condition, &message) }
+fn assert(condition: Bool) { let message = "SC1 acceptance" check.assert(condition, &message) }
 struct State { count: Int32, scale: Float64 }
 fn make(input: Bool) -> State { State { count: if input { 0 } else { 99 }, scale: 0.5 } }
 fn increment(state: &mut State, input: Int8) -> Bool {
@@ -21,16 +21,16 @@ fn work(input: UInt64) @suspends -> Bool {
 fn query(input: Unit) @suspends -> Float64 { task.yield_now() domain.read(scale) }
 fn broken(zero: Int32) @suspends -> UInt8 { let value = 1 / zero 0 }
 fn success(handle: domain.WriteHandle<State>) @suspends {
-    require(domain.request(handle, work, 18446744073709551615).unwrap_or(false))
+    assert(domain.request(handle, work, 18446744073709551615).unwrap_or(false))
 }
 fn failure(handle: domain.WriteHandle<State>) @suspends {
-    require(match domain.request(handle, broken, 0) {
+    assert(match domain.request(handle, broken, 0) {
         Err(domain.RequestError.Failed) => true
         _ => false
     })
 }
 fn independent(handle: domain.ReadHandle<State>) @suspends {
-    require(domain.request_read(handle, query, {}).unwrap_or(-1.0) == 0.5)
+    assert(domain.request_read(handle, query, {}).unwrap_or(-1.0) == 0.5)
 }
 fn scenario() @suspends -> Int32 {
     let owner = domain.create(make, true)
@@ -38,21 +38,21 @@ fn scenario() @suspends -> Int32 {
     let reader = handle.read_only()
     let other = domain.create(make, false)
     parallel { | success(handle) | failure(handle) | independent(other.read_handle()) }
-    require(domain.read_from(handle.read_only(), count) == 1)
-    require(domain.read_from(other.read_handle(), count) == 99)
-    require(domain.write_to(handle, reset, {}) == '中')
-    require(domain.read_from(handle.read_only(), count) == 0)
+    assert(domain.read_from(handle.read_only(), count) == 1)
+    assert(domain.read_from(other.read_handle(), count) == 99)
+    assert(domain.write_to(handle, reset, {}) == '中')
+    assert(domain.read_from(handle.read_only(), count) == 0)
     owner.close()
     let replacement = domain.create(make, true)
-    require(match domain.request_read(reader, query, {}) {
+    assert(match domain.request_read(reader, query, {}) {
         Err(domain.RequestError.Closed) => true
         _ => false
     })
-    require(domain.read_from(replacement.read_handle(), count) == 0)
+    assert(domain.read_from(replacement.read_handle(), count) == 0)
     42
 }
 fn main() @suspends {
     var cycle = 0
-    while cycle < 8 { require(scenario() == 42) cycle = cycle + 1 }
+    while cycle < 8 { assert(scenario() == 42) cycle = cycle + 1 }
     println("SC1 acceptance ok")
 }

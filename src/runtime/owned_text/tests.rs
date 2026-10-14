@@ -106,7 +106,7 @@ fn owned_text_v2_error_messages_survive_release_and_exhausted_task_budget() {
         error::checked(|| unsafe { from_view(&mut task, encoded.as_ptr(), 0, 1, 2) }).unwrap();
     arena::LIMIT.with(|limit| limit.set(0));
     let failure = error::checked(|| unsafe {
-        error::require_failed_v2(message, 0, 5, 8);
+        error::assert_failed_v2(message, 0, 5, 8);
         // Subsequent failing allocation must not replace the require message.
         assert!(clone(&mut task, message, 0, 10, 12).is_null());
         Buffer::release(&mut task, message).unwrap();
@@ -121,7 +121,7 @@ fn owned_text_v2_error_messages_survive_release_and_exhausted_task_budget() {
     let mut task = Arena::default();
     let failure = error::checked(|| unsafe {
         assert!(from_view(&mut task, encoded.as_ptr(), 0, 13, 17).is_null());
-        error::require_failed_v2(std::ptr::null(), 0, 20, 24);
+        error::assert_failed_v2(std::ptr::null(), 0, 20, 24);
     })
     .unwrap_err();
     assert_eq!(failure.code(), ErrorCode::ResourceLimit);

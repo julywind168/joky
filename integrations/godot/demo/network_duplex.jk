@@ -1,5 +1,5 @@
 import joky/tcp.{type Address, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/string
 import joky/integer
 import joky/task as clock
@@ -20,7 +20,7 @@ fn record_send(state: &mut State) { state.sent = state.sent + 1 }
 fn record_receive(state: &mut State) { state.received = state.received + 1 }
 fn finish(state: &mut State) { state.completed = state.completed + 1 }
 fn timeout(state: &mut State) { state.timed_out = state.timed_out + 1 }
-fn ensure(ok: Bool) { let message = "Godot duplex session" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "Godot duplex session" assert(ok, &message) }
 fn receive(reader: &mut BufferedTcpReader) @suspends {
     while true {
         let bytes = match reader.read_message(1) {

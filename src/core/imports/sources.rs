@@ -2,6 +2,7 @@
 use super::*;
 use std::collections::HashMap;
 
+mod intrinsics;
 #[cfg(test)]
 mod qualification_tests;
 #[cfg(test)]
@@ -322,181 +323,7 @@ impl StandardLibrary {
         if source.kind == SourceKind::BufferStorage {
             bind_buffer_definitions(&mut module)?;
         }
-        if source.kind == SourceKind::Domain {
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    use crate::parser::ast::CompilerIntrinsic::*;
-                    f.compiler_intrinsic = match f.name.as_str() {
-                        "read" => Some(DomainAccess(false)),
-                        "write" => Some(DomainAccess(true)),
-                        "module" => Some(DomainModule),
-                        "create" => Some(DomainCreate),
-                        "after" => Some(TimerStart(false)),
-                        "every" => Some(TimerStart(true)),
-                        "finish_timer" => Some(TimerFinish),
-                        "lookup" => Some(DirectoryLookup(false)),
-                        "lookup_write" => Some(DirectoryLookup(true)),
-                        "finish_lookup" => Some(DirectoryFinish(false)),
-                        "finish_lookup_write" => Some(DirectoryFinish(true)),
-                        "snapshot_from" => Some(DomainSnapshot),
-                        "snapshot_pair" => Some(DomainSnapshotPair),
-                        "read_snapshot" => Some(DomainSetRead),
-                        "candidate_set_from" => Some(DomainSetCandidate(false)),
-                        "candidate_set_add" => Some(DomainSetCandidate(true)),
-                        "finish_set_candidate" => Some(DomainSetFinish(false)),
-                        "finish_set_add" => Some(DomainSetFinish(true)),
-                        "candidate_from" => Some(DomainCandidate),
-                        "finish_candidate" => Some(DomainCandidateFinish),
-                        "candidate_pair_from" => Some(DomainCandidatePair),
-                        "finish_candidate_pair" => Some(DomainCandidatePairFinish),
-                        "read_from" => Some(DomainAt(false)),
-                        "write_to" => Some(DomainAt(true)),
-                        "read_pair" => Some(DomainPair(false)),
-                        "update_pair" | "write_pair" => Some(DomainPair(true)),
-                        "request" | "request_read" => Some(DomainRequest),
-                        "finish_request" => Some(DomainFinish),
-                        "pack" => Some(DomainPack),
-                        "unpack" => Some(DomainUnpack),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        if source.kind == SourceKind::Script {
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    use crate::parser::ast::CompilerIntrinsic::*;
-                    f.compiler_intrinsic = match f.name.as_str() {
-                        "schema" => Some(ScriptSchema(Type::Parameter(f.type_params[0].clone()))),
-                        "pack" => Some(ScriptPack),
-                        "unpack" => Some(ScriptUnpack),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        if source.kind == SourceKind::Mem {
-            use crate::parser::ast::CompilerIntrinsic;
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    f.compiler_intrinsic = match f.name.as_str() {
-                        "drop" => Some(CompilerIntrinsic::MemDrop),
-                        "replace" => Some(CompilerIntrinsic::MemReplace),
-                        "swap" => Some(CompilerIntrinsic::MemSwap),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        if source.kind == SourceKind::Check {
-            use crate::parser::ast::CompilerIntrinsic;
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    f.compiler_intrinsic = match f.name.as_str() {
-                        "require" => Some(CompilerIntrinsic::Require),
-                        "panic" => Some(CompilerIntrinsic::Panic),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        if source.kind == SourceKind::Text {
-            use crate::parser::ast::CompilerIntrinsic;
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    f.compiler_intrinsic = match f.name.as_str() {
-                        "copy_text" => Some(CompilerIntrinsic::TextClone),
-                        "freeze_utf8" => Some(CompilerIntrinsic::TextFreeze),
-                        "into_bytes" => Some(CompilerIntrinsic::TextIntoBytes),
-                        "bytes" => Some(CompilerIntrinsic::TextBytes),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        if source.kind == SourceKind::Integer {
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    if f.name == "rune_from_valid_u32" {
-                        f.compiler_intrinsic =
-                            Some(crate::parser::ast::CompilerIntrinsic::RuneFromValidU32);
-                    }
-                }
-            }
-        }
-        if source.kind == SourceKind::Json {
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    if f.name == "parse_float64" {
-                        f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::Float(
-                            crate::parser::ast::FloatKind::FromText,
-                        ));
-                    }
-                }
-            }
-        }
-        if source.kind == SourceKind::Float {
-            use crate::parser::ast::{CompilerIntrinsic, FloatKind};
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    f.compiler_intrinsic = match f.name.as_str() {
-                        "float64_sqrt" | "float32_sqrt" => {
-                            Some(CompilerIntrinsic::Float(FloatKind::Sqrt))
-                        }
-                        "float64_floor" | "float32_floor" => {
-                            Some(CompilerIntrinsic::Float(FloatKind::Floor))
-                        }
-                        "float64_ceil" | "float32_ceil" => {
-                            Some(CompilerIntrinsic::Float(FloatKind::Ceil))
-                        }
-                        "float64_trunc" | "float32_trunc" => {
-                            Some(CompilerIntrinsic::Float(FloatKind::Trunc))
-                        }
-                        "float64_round" | "float32_round" => {
-                            Some(CompilerIntrinsic::Float(FloatKind::RoundTiesEven))
-                        }
-                        "float64_to_bits" | "float32_to_bits" => {
-                            Some(CompilerIntrinsic::Float(FloatKind::ToBits))
-                        }
-                        "float64_from_bits" | "float32_from_bits" => {
-                            Some(CompilerIntrinsic::Float(FloatKind::FromBits))
-                        }
-                        "float64_to_text" | "float32_to_text" => {
-                            Some(CompilerIntrinsic::FloatToText)
-                        }
-                        "i8_from_valid_f64" | "i16_from_valid_f64" | "i32_from_valid_f64"
-                        | "i64_from_valid_f64" | "u8_from_valid_f64" | "u16_from_valid_f64"
-                        | "u32_from_valid_f64" | "u64_from_valid_f64" | "i8_from_valid_f32"
-                        | "i16_from_valid_f32" | "i32_from_valid_f32" | "i64_from_valid_f32"
-                        | "u8_from_valid_f32" | "u16_from_valid_f32" | "u32_from_valid_f32"
-                        | "u64_from_valid_f32" => Some(CompilerIntrinsic::IntFromFloat),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        if source.kind == SourceKind::TypeCheck {
-            for item in &mut module.items {
-                if let Item::FnDef(f) = item {
-                    let [parameter] = f.type_params.as_slice() else {
-                        return Err(error(
-                            f.span,
-                            ErrorCode::InvalidState,
-                            "Compiler type qualification requires one parameter",
-                        ));
-                    };
-                    f.compiler_intrinsic = Some(if f.name == "require_reference_free" {
-                        crate::parser::ast::CompilerIntrinsic::ReferenceFree(Type::Parameter(
-                            parameter.clone(),
-                        ))
-                    } else {
-                        crate::parser::ast::CompilerIntrinsic::PlainCopy(Type::Parameter(
-                            parameter.clone(),
-                        ))
-                    });
-                }
-            }
-        }
+        intrinsics::bind_functions(&mut module, source.kind)?;
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {
             self.load(&import.path, sources, registry, stack)?;
@@ -716,6 +543,7 @@ impl StandardLibrary {
         }
         // A bound scope suppresses expansion, including while this cache is built.
         let mut module = registry.resolve_aliases(&module)?;
+        intrinsics::validate_signatures(&module.items[..own_items])?;
         let definition_scope = Arc::new(DefinitionScope {
             lazy_functions: kind != SourceKind::User,
             records: module.records.iter().take(own.1).map(|r| r.id).collect(),
@@ -887,9 +715,8 @@ pub(super) fn record_imported_functions(module: &mut Module) {
     }
 }
 
-/// Install internal type/operation identities only on the trusted storage AST.
+/// Install internal buffer type identities only on the trusted storage AST.
 fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
-    use crate::parser::ast::BufferIntrinsic;
     for name in ["Buffer", "Element", "Slice"] {
         let alias = module
             .type_aliases
@@ -908,32 +735,6 @@ fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
             "Element" => Type::BufferElement(element),
             _ => Type::BufferSlice(element),
         };
-    }
-    for intrinsic in BufferIntrinsic::ALL {
-        let name = intrinsic.symbol().strip_prefix("__joky_buffer_").unwrap();
-        let function = module
-            .items
-            .iter_mut()
-            .find_map(|item| match item {
-                Item::FnDef(f) if f.name == name => Some(f),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                error(
-                    Span::empty(0),
-                    ErrorCode::InvalidState,
-                    "Missing compiler buffer primitive",
-                )
-            })?;
-        let [parameter] = function.type_params.as_slice() else {
-            return Err(error(
-                function.span,
-                ErrorCode::InvalidState,
-                "Compiler buffer primitives require one element parameter",
-            ));
-        };
-        function.buffer_intrinsic = Some(intrinsic);
-        function.buffer_element = Some(Box::new(Type::Parameter(parameter.clone())));
     }
     Ok(())
 }

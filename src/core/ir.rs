@@ -246,7 +246,7 @@ pub(crate) enum Op {
         dst: Slot,
         source: TextSource,
     },
-    Require {
+    Assert {
         condition: Slot,
         message: Slot,
     },
@@ -1040,7 +1040,7 @@ impl ModulePlan {
             for (name, body) in &bodies {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| match op {
-                        Op::Require { .. }
+                        Op::Assert { .. }
                         | Op::Panic { .. }
                         | Op::Alloc { .. }
                         | Op::Text { .. } => true,
@@ -1233,6 +1233,45 @@ impl FunctionPlan {
         if matches!(
             f.compiler_intrinsic,
             Some(
+                CompilerIntrinsic::DomainModule
+                    | CompilerIntrinsic::DomainPack
+                    | CompilerIntrinsic::DomainUnpack
+            )
+        ) {
+            let mut index = 0;
+            let values: Vec<_> = f
+                .params
+                .iter()
+                .map(|p| {
+                    let slot = (p.ty != Type::Unit).then(|| Slot {
+                        index,
+                        ty: p.ty.clone(),
+                    });
+                    index += p.ty.parameter_slots();
+                    slot
+                })
+                .collect();
+            let info = &functions[&f.name];
+            let Some(Flow::Value(result)) = plan.source_domain_call(domains::DomainCall {
+                info,
+                args: &[],
+                values: &values,
+                span: f.span,
+                vars: &mut HashMap::new(),
+                functions,
+                suspends: f.suspends,
+                types,
+            })?
+            else {
+                unreachable!()
+            };
+            plan.result = result;
+            plan.resolve_cleanups()?;
+            return Ok(plan);
+        }
+        if matches!(
+            f.compiler_intrinsic,
+            Some(
                 CompilerIntrinsic::ScriptSchema(_)
                     | CompilerIntrinsic::ScriptPack
                     | CompilerIntrinsic::ScriptUnpack
@@ -1312,7 +1351,7 @@ impl FunctionPlan {
         }
         if matches!(
             f.compiler_intrinsic,
-            Some(CompilerIntrinsic::Require | CompilerIntrinsic::Panic)
+            Some(CompilerIntrinsic::Assert | CompilerIntrinsic::Panic)
         ) {
             let panic = matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::Panic));
             let message_type = Type::reference(Type::String, false);
@@ -1335,7 +1374,7 @@ impl FunctionPlan {
             if panic {
                 plan.emit(Op::Panic { message });
             } else {
-                plan.emit(Op::Require {
+                plan.emit(Op::Assert {
                     condition: Slot {
                         index: 0,
                         ty: Type::Bool,

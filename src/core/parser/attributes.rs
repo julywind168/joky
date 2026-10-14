@@ -2,6 +2,40 @@
 use super::*;
 
 impl Parser {
+    pub(super) fn parse_intrinsic_attribute(
+        &self,
+        attributes: Vec<Attribute>,
+    ) -> Result<Option<Box<IntrinsicAttribute>>, Diagnostic> {
+        if attributes.is_empty() {
+            return Ok(None);
+        }
+        if attributes.len() != 1 {
+            return Err(self.error("Duplicate #intrinsic attribute".into()));
+        }
+        let attribute = &attributes[0];
+        let name = match attribute.arguments.as_deref() {
+            Some(
+                [AttributeArgument {
+                    name: None,
+                    value: AttributeValue::Literal(Literal::String(name)),
+                    ..
+                }],
+            ) => name,
+            _ => {
+                return Err(Diagnostic::at(
+                    self.peek_line(),
+                    attribute.span,
+                    "#intrinsic requires one positional string identifier",
+                ))
+            }
+        };
+        Ok(Some(Box::new(IntrinsicAttribute {
+            name: name.clone(),
+            has_body: false,
+            span: attribute.span,
+        })))
+    }
+
     pub(super) fn parse_attribute(&mut self, depth: usize) -> Result<Attribute, Diagnostic> {
         if depth >= 32 {
             return Err(self.error("Attribute nesting exceeds 32 levels".into()));

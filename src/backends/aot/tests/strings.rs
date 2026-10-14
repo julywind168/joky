@@ -150,7 +150,7 @@ fn owned_text_v2_runtime_helpers_link_with_relocatable_aot_literal_sources() {
         extern uint64_t __joky_buffer_len(const Buffer *);
         extern uint8_t *__joky_buffer_load(Buffer *, uint64_t, uint64_t, size_t, size_t);
         extern void __joky_buffer_release(Arena *, Buffer *, uint64_t, size_t, size_t);
-        extern void __joky_runtime_require_failed_v2(const Buffer *, uint64_t, size_t, size_t);
+        extern void __joky_runtime_assert_failed_v2(const Buffer *, uint64_t, size_t, size_t);
         static Arena *arena;
         static Buffer *saved;
         static const uint8_t expected[] = { 0xe4, 0xb8, 0xad, 0xf0, 0x9f, 0x99, 0x82, 0, 't', 'a', 'i', 'l' };
@@ -169,7 +169,7 @@ fn owned_text_v2_runtime_helpers_link_with_relocatable_aot_literal_sources() {
                 uint8_t *byte = __joky_buffer_load(copy, i, 0, 7, 8);
                 if (!byte || *byte != expected[i]) return 3;
             }
-            __joky_runtime_require_failed_v2(copy, 0, 9, 12);
+            __joky_runtime_assert_failed_v2(copy, 0, 9, 12);
             __joky_buffer_release(arena, copy, 0, 13, 15);
             __joky_arena_drop(arena);
             if (!joky_runtime_error_code() || joky_runtime_error_start() != 9 || joky_runtime_error_end() != 12) return 4;
@@ -343,7 +343,7 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_pending_descriptors() {
         extern fn delayed_echo(text: String) @suspends -> String
         fn echo(text: String) -> String { let copy = text.clone() text.release() copy }
         fn pending(text: String) @suspends -> String { delayed_echo(text) }
-        fn failure(text: String) -> String { let message = "Text root failure" check.require(false, &message) text }
+        fn failure(text: String) -> String { let message = "Text root failure" check.assert(false, &message) text }
         fn forward(text: String) @suspends -> String { task.yield_now() text }
         fn language(text: String) @suspends -> String { let step = forward step(text) }
         fn ready(text: String) @suspends { text.release() }

@@ -1,10 +1,10 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type Shutdown}
 import joky/array.{type Array}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/integer
 import joky/task
 
-fn ensure(ok: Bool) { let message = "bounded TCP buffering" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "bounded TCP buffering" assert(ok, &message) }
 fn send(address: Address) @suspends {
     var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { ensure(false) return } }
     var bytes = Array.new::<UInt8>()

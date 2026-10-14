@@ -2,7 +2,7 @@ import joky/domain
 import joky/task
 import joky/check
 
-fn require(condition: Bool) { let message = "versioned snapshot" check.require(condition, &message) }
+fn assert(condition: Bool) { let message = "versioned snapshot" check.assert(condition, &message) }
 struct State { count: Int32, wide: UInt64, fraction: Float64, flag: Bool, rune: Rune }
 fn make(count: Int32) -> State {
     State { count: count, wide: 18446744073709551615, fraction: Float64.from_bits(9221120237041090626), flag: true, rune: '中' }
@@ -29,33 +29,33 @@ fn lifecycle() @suspends -> Int32 {
     let boolean = domain.snapshot_from(reader, flag)
     let character = domain.snapshot_from(reader, rune)
     let empty = domain.snapshot_from(reader, unit)
-    require(current(saved.check()))
+    assert(current(saved.check()))
     task.yield_now()
-    require(saved.value() == 7)
-    require(large.value() == 18446744073709551615)
-    require(real.value().to_bits() == 9221120237041090626)
-    require(boolean.value())
-    require(character.value() == '中')
+    assert(saved.value() == 7)
+    assert(large.value() == 18446744073709551615)
+    assert(real.value().to_bits() == 9221120237041090626)
+    assert(boolean.value())
+    assert(character.value() == '中')
     empty.value()
     domain.read_from(reader, count)
-    require(current(saved.check()))
+    assert(current(saved.check()))
     domain.write_to(handle, add, 0)
-    require(conflict(saved.check()))
-    require(conflict(large.check()))
+    assert(conflict(saved.check()))
+    assert(conflict(large.check()))
     domain.write_to(handle, add, 5)
-    require(saved.value() == 7)
-    require(domain.read_from(reader, count) == 12)
+    assert(saved.value() == 7)
+    assert(domain.read_from(reader, count) == 12)
     let latest = domain.snapshot_from(reader, count)
-    require(current(latest.check()))
+    assert(current(latest.check()))
     owner.close()
     let replacement = domain.create(make, 100)
-    require(closed(saved.check()) && closed(latest.check()))
-    require(latest.value() == 12 && saved.value() == 7)
-    require(domain.read_from(replacement.read_handle(), count) == 100)
+    assert(closed(saved.check()) && closed(latest.check()))
+    assert(latest.value() == 12 && saved.value() == 7)
+    assert(domain.read_from(replacement.read_handle(), count) == 100)
     let doomed = domain.snapshot_from(replacement.read_handle(), count)
-    require(domain.request(replacement.handle(), poison, 0).is_err())
-    require(match doomed.check() { DomainFailed => true, _ => false })
-    require(doomed.value() == 100)
+    assert(domain.request(replacement.handle(), poison, 0).is_err())
+    assert(match doomed.check() { DomainFailed => true, _ => false })
+    assert(doomed.value() == 100)
     24
 }
-fn main() @suspends { require(lifecycle() == 24) println("snapshot domains ok") }
+fn main() @suspends { assert(lifecycle() == 24) println("snapshot domains ok") }

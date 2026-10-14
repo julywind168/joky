@@ -235,7 +235,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
         | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
         }
-        Instruction::Require { condition, message } => {
+        Instruction::Assert { condition, message } => {
             visit(condition);
             visit(message);
         }
@@ -339,7 +339,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
             }
         }
         Instruction::TaskScopeEnter | Instruction::TaskBranch { .. } | Instruction::TaskJoin => {}
-        Instruction::Require { .. }
+        Instruction::Assert { .. }
         | Instruction::Panic { .. }
         | Instruction::Branch { .. }
         | Instruction::BranchCompare { .. }

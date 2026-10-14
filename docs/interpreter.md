@@ -139,7 +139,7 @@ The instruction set mirrors the shared IR:
 | DomainBits | `DomainBits` packs or unpacks a checked scalar through a UInt64 lane without numeric conversion |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
-| Require / Panic | `Require` checks a condition; `Panic` fails unconditionally with no normal successor. Both copy the borrowed message into RuntimeError and use frame cleanup. |
+| Assert / Panic | `Assert` checks a condition; `Panic` fails unconditionally with no normal successor. Both copy the borrowed message into RuntimeError and use frame cleanup. |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
 | `parallel` / `race` | `Scope` with a Join / Race completion policy |
 | sequential `scope` / `branch` | `TaskScopeEnter` opens a dynamic scope record, `TaskBranch` registers a child entry with captured inputs, `TaskJoin` suspends on the scope's join |

@@ -252,15 +252,15 @@ M1 及 Map 替换只承诺不增长、不新建元素缓冲区，不能承诺零
 不把当前快照的分配次数变成永久 API。
 
 **P-error：补通用受检失败入口（已完成）。** 当前复现为 `fn main() { panic("Map key not found") }`，
-结果是 UnknownName，而非可执行的业务失败。建议独立目标提供 `joky/check.require(Bool, String)`：
+结果是 UnknownName，而非可执行的业务失败。建议独立目标提供 `joky/check.assert(Bool, String)`：
 true 正常返回 Unit，false 终止当前普通执行、发布 RuntimeError 并走现有清理；消息复制到错误对象，
-定位 require 的真实源码调用位置，并保留后端已有的调用轨迹，不虚构原生栈信息。
+定位 assert 的真实源码调用位置，并保留后端已有的调用轨迹，不虚构原生栈信息。
 Map 未命中借用使用 `Map key not found`；容量算术或布局上限失败使用 `Map capacity exceeds the supported limit`。
 检查后再取已确认存在的索引，失败不执行后续访问，因此无需先引入 never 类型。
 该目标必须覆盖三后端、清理、嵌入调用、析构中失败和参数求值顺序；不借助宿主自定义绑定
 或 Array 越界实现错误。完成前不能将 M2b/M5 的相应错误路径标为已完成。
 
-P-error 验收（2026-10-02）：已提供编译器绑定的 `joky/check.require(Bool, String)`。
+P-error 验收（2026-10-02）：已提供编译器绑定的 `joky/check.assert(Bool, String)`。
 最小缺口由 M0 的 UnknownName 复现证明；实现采用通用 IR 检查，不依赖 Map 或宿主注册。
 [行为用例](../tests/fixtures/checked_failure.jk)、[VM 测试](../src/vm/checked_failure_tests.rs)
 与 CLI 三后端测试覆盖成功、终止失败、顺序求值、参数求值失败、直接/别名/跨模块及函数值调用、
@@ -444,7 +444,7 @@ Map 移动/释放后已复制出的普通共享引用仍按原契约有效，原
 分配预算扫描、解释器逐指令取消及指令预算耗尽验证拥有值恰好清理一次、arena 全回收。
 
 四种未命中路径均报 Map key not found，并验证用户 Map 调用位置及驻留资源清理。
-最小诊断回归证明原生错误原先只有标准库 require 位置，因此增加通用同步调用失败的源码调用点记录：
+最小诊断回归证明原生错误原先只有标准库 assert 位置，因此增加通用同步调用失败的源码调用点记录：
 JIT 显示文件/行号，AOT 显示来源 ID/字节范围；不新增 Map 专用 ABI，也不伪造原生栈或解释器 PC。
 普通调用、函数值调用、首错保留、重载后诊断保活及 AOT/JIT 共享运行时桥接均有行为测试。
 

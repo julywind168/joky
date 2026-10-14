@@ -1,7 +1,7 @@
 import joky/domain
 import joky/task
 import joky/check
-fn require(condition: Bool) { let message = "atomic domain commit" check.require(condition, &message) }
+fn assert(condition: Bool) { let message = "atomic domain commit" check.assert(condition, &message) }
 struct State { count: Int32, wide: UInt64, fraction: Float64 }
 fn make(count: Int32) -> State {
     State { count: count, wide: 18446744073709551615, fraction: Float64.from_bits(9221120237041090626) }
@@ -23,36 +23,36 @@ fn lifecycle() @suspends -> Int32 {
     let value = snapshot.value()
     let candidate = domain.candidate_from(snapshot, make, value + 5)
     task.yield_now()
-    require(domain.read_from(reader, read) == 7)
+    assert(domain.read_from(reader, read) == 7)
     var receipt = domain.commit_to(handle, candidate)
-    require(committed(receipt.wait(), 1))
-    require(receipt.identity() != 0)
+    assert(committed(receipt.wait(), 1))
+    assert(receipt.identity() != 0)
     receipt.cancel()
-    require(committed(receipt.wait(), 1))
-    require(domain.read_from(reader, read) == 12 && domain.read_from(reader, valid))
+    assert(committed(receipt.wait(), 1))
+    assert(domain.read_from(reader, read) == 12 && domain.read_from(reader, valid))
     let old = domain.snapshot_from(reader, read)
     let stale = domain.candidate_from(old, make, 99)
     domain.write_to(handle, add, 1)
     var conflict = domain.commit_to(handle, stale)
-    require(match conflict.wait() { Conflict => true, _ => false })
-    require(domain.read_from(reader, read) == 13)
+    assert(match conflict.wait() { Conflict => true, _ => false })
+    assert(domain.read_from(reader, read) == 13)
     let wrong = domain.candidate_from(domain.snapshot_from(reader, read), make, 88)
     let other = domain.create(make, 100)
     var rejected = domain.commit_to(other.handle(), wrong)
-    require(match rejected.wait() { InvalidAccess => true, _ => false })
-    require(domain.read_from(reader, read) == 13)
-    require(domain.read_from(other.read_handle(), read) == 100)
+    assert(match rejected.wait() { InvalidAccess => true, _ => false })
+    assert(domain.read_from(reader, read) == 13)
+    assert(domain.read_from(other.read_handle(), read) == 100)
     let other_handle = other.handle()
     let marker = domain.snapshot_from(other_handle.read_only(), unit)
     let doomed = domain.candidate_from(marker, make, 200)
-    require(domain.request(other_handle, poison, 0).is_err())
+    assert(domain.request(other_handle, poison, 0).is_err())
     var failed = domain.commit_to(other_handle, doomed)
-    require(match failed.wait() { DomainFailed => true, _ => false })
+    assert(match failed.wait() { DomainFailed => true, _ => false })
     let abandoned = domain.candidate_from(domain.snapshot_from(reader, read), make, 90)
     owner.close()
     var closed = domain.commit_to(handle, abandoned)
-    require(match closed.wait() { Closed => true, _ => false })
-    require(committed(receipt.wait(), 1))
+    assert(match closed.wait() { Closed => true, _ => false })
+    assert(committed(receipt.wait(), 1))
     24
 }
-fn main() @suspends { require(lifecycle() == 24) println("domain commits ok") }
+fn main() @suspends { assert(lifecycle() == 24) println("domain commits ok") }

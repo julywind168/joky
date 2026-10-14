@@ -1280,6 +1280,13 @@ pub struct FnDef {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct IntrinsicAttribute {
+    pub name: String,
+    pub has_body: bool,
+    pub span: Span,
+}
+
 /// A source-level synchronous borrowing contract, inherited by trait impls.
 #[derive(Debug, Clone, Default)]
 pub struct NoEscape {
@@ -1336,7 +1343,7 @@ pub(crate) enum CompilerIntrinsic {
     MemDrop,
     MemReplace,
     MemSwap,
-    Require,
+    Assert,
     Panic,
     PlainCopy(Type),
     ReferenceFree(Type),
@@ -1480,6 +1487,8 @@ pub struct ModuleConst {
 /// Parsed source module.
 #[derive(Debug, Clone)]
 pub struct Module {
+    /// Item-indexed source annotations, consumed by the trusted library loader.
+    pub(crate) intrinsic_attributes: Vec<(usize, Box<IntrinsicAttribute>)>,
     pub(crate) sources: Arc<crate::SourceMap>,
     pub imports: Vec<Import>,
     /// Bound imports survive normalization without exposing private declarations.

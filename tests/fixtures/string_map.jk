@@ -4,7 +4,7 @@ import joky/array.{type Array}
 import joky/eq.{type BorrowEq}
 import joky/hash.{type BorrowHash}
 import joky/drop.{type Drop}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/string
 import joky/slice
 extern fn record_drop(id: Int32)
@@ -18,13 +18,13 @@ fn basic<Tag>() -> Int32 {
     m.insert(empty.clone(), 9)
     let absent = "absent"
     let message = "String key content and replacement"
-    require(m.len() == 2 && !m.contains_key_by_ref(&absent), &message)
-    require(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
-    require(m.get_by_ref(&empty).unwrap_or(0) == 9, &message)
+    assert(m.len() == 2 && !m.contains_key_by_ref(&absent), &message)
+    assert(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
+    assert(m.get_by_ref(&empty).unwrap_or(0) == 9, &message)
     let answer = old + m.remove_by_ref(&query).unwrap_or(0)
-    require(query.byte_length() == 8 && m.len() == 1, &message)
+    assert(query.byte_length() == 8 && m.len() == 1, &message)
     m.clear()
-    require(m.is_empty(), &message)
+    assert(m.is_empty(), &message)
     answer
 }
 fn query_lifetime<Tag>() -> Int32 {
@@ -34,12 +34,12 @@ fn query_lifetime<Tag>() -> Int32 {
     let value = m.value_ref(&query)
     query.release()
     let message = "Query borrow must end at the call"
-    require(value.byte_length() == 6, &message)
+    assert(value.byte_length() == 6, &message)
     let query2 = "key"
     let old = mem.replace(m.value_mut(&query2), "next")
     old.release() query2.release()
     let entries = m.into_entries()
-    require(entries.len() == 1, &message)
+    assert(entries.len() == 1, &message)
     42
 }
 struct Key { text: String, id: Int32, fail: Int32 }
@@ -51,14 +51,14 @@ fn key(id: Int32, text: String, fail: Int32) -> Key {
 impl BorrowEq for Key {
     fn eq_ref(&self, other: &Self) -> Bool {
         let message = "String key Eq failure"
-        require(self.fail != 2 && other.fail != 2, &message)
+        assert(self.fail != 2 && other.fail != 2, &message)
         self.text.equals(&other.text)
     }
 }
 impl BorrowHash for Key {
     fn hash_ref(&self) -> UInt64 {
         let message = "String key Hash failure"
-        require(self.fail != 1, &message)
+        assert(self.fail != 1, &message)
         7
     }
 }
@@ -66,7 +66,7 @@ impl Drop for Key {
     fn drop(&mut self) {
         record_drop(self.id)
         let message = "String key Drop failure"
-        require(self.fail != 3, &message)
+        assert(self.fail != 3, &message)
     }
 }
 fn collision_growth<Tag>() -> Int32 {
@@ -77,15 +77,15 @@ fn collision_growth<Tag>() -> Int32 {
     m.reserve(100)
     let query = key(4, "a", 0)
     let message = "Owned colliding keys"
-    require(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
+    assert(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
     let keys = m.keys()
-    require(slice.borrow_ref(keys, 0).id == 1, &message)
+    assert(slice.borrow_ref(keys, 0).id == 1, &message)
     let result = m.remove_by_ref(&query).unwrap_or(0)
-    require(m.len() == 1, &message)
+    assert(m.len() == 1, &message)
     let query2 = key(5, "b", 0)
-    require(m.get_by_ref(&query2).unwrap_or(0) == 2, &message)
+    assert(m.get_by_ref(&query2).unwrap_or(0) == 2, &message)
     m.pop()
-    require(m.is_empty(), &message)
+    assert(m.is_empty(), &message)
     result + 20
 }
 fn batch<Tag>() -> Int32 {
@@ -96,9 +96,9 @@ fn batch<Tag>() -> Int32 {
     let m = Map.from_entries(entries)
     let query = key(13, "a", 0)
     let message = "Batch duplicate keys"
-    require(m.value_ref(&query).byte_length() == 11, &message)
+    assert(m.value_ref(&query).byte_length() == 11, &message)
     let entries = m.into_entries()
-    require(entries.len() == 2, &message)
+    assert(entries.len() == 2, &message)
     42
 }
 fn hash_failure<Tag>() -> Int32 {

@@ -1,3 +1,5 @@
 // Compiler-owned, erased type qualification. No value or address is exposed.
-fn require_plain_copy<T>() {}
-fn require_reference_free<T>() {}
+#intrinsic("types.plain_copy")
+fn require_plain_copy<T>();
+#intrinsic("types.reference_free")
+fn require_reference_free<T>();

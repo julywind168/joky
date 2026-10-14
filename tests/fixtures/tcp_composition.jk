@@ -1,11 +1,11 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type IoError, type Shutdown}
 import joky/array.{type Array}
 import joky/result.{type Result}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/integer
 import joky/task
 
-fn checked(result: Result<Unit, IoError>) { let message = "TCP composition status" require(result.is_ok(), &message) }
+fn checked(result: Result<Unit, IoError>) { let message = "TCP composition status" assert(result.is_ok(), &message) }
 fn payload(length: UInt64) -> Array<UInt8> {
     var bytes = Array.with_capacity::<UInt8>(length)
     var i: UInt64 = 0
@@ -16,7 +16,7 @@ fn verify(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
     let message = "TCP stream order"
     var i: UInt64 = 0
     while i < bytes.len() {
-        require(bytes.get(i).unwrap_or(255) == ((offset + i) & 255).to_u8().unwrap_or(0), &message)
+        assert(bytes.get(i).unwrap_or(255) == ((offset + i) & 255).to_u8().unwrap_or(0), &message)
         i = i + 1
     }
     i
@@ -28,7 +28,7 @@ fn send(address: Address) @suspends {
     checked(stream.shutdown(Shutdown.Write))
     let message = "TCP write_all forwards I/O errors"
     let failed = match stream.write_all(payload(1)) { Err(error) => true, Ok(value) => false }
-    require(failed, &message)
+    assert(failed, &message)
 }
 fn receive(stream: &mut TcpStream) @suspends {
     var total: UInt64 = 0
@@ -40,7 +40,7 @@ fn receive(stream: &mut TcpStream) @suspends {
         task.yield_now()
     }
     let message = "TCP full write"
-    require(total == 32769, &message)
+    assert(total == 32769, &message)
 }
 fn server(listener: &mut TcpListener) @suspends {
     var index = 0
@@ -83,9 +83,9 @@ fn prefix(bytes: Array<UInt8>, marked: Bool) -> (UInt64, Bool) {
     var i: UInt64 = 0
     let message = "TCP cancelled prefix"
     while i < bytes.len() {
-        require(!marked, &message)
+        assert(!marked, &message)
         let byte = bytes.get(i).unwrap_or(0)
-        require(byte == 42 || byte == 255, &message)
+        assert(byte == 42 || byte == 255, &message)
         marked = byte == 255
         i = i + 1
     }
@@ -103,7 +103,7 @@ fn cancel_receiver(listener: &mut TcpListener) @suspends {
         total = total + count
     }
     let message = "TCP cancellation preserves a proper prefix and stream reuse"
-    require(total > 1 && total < 65537 && marked, &message)
+    assert(total > 1 && total < 65537 && marked, &message)
 }
 fn cancel_prefix() @suspends {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { checked(Result.Err(error)) return } }

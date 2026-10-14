@@ -6,7 +6,7 @@
 **S5 后审查修订（2026-10-03）：** 移除此前为兼容预留的全部 legacy 文本路径。
 宿主统一采用 `JokyText { data, byte_length }` 描述符和显式 `register_text_*` 注册；
 输入直接借用原载荷，CPS 描述符随帧保活，结果在有效期内校验并复制。
-旧注册 API、长度前缀格式、旧五个 C 查询及无版本 require 错误入口均删除，无兼容别名；
+旧注册 API、长度前缀格式、旧五个 C 查询及无版本 assert 错误入口均删除，无兼容别名；
 VM 文本 C 入口迁移到 `_v2` 符号，旧宿主与 AOT 对象需要重新编译。
 此决策覆盖下文 S0/S2 历史记录中的旧兼容承诺；S7 的 C 文本/NUL/外部释放适配使用独立协议，不恢复旧布局。
 同时修复 scope/race 活动文本借用漏检和 CPS 参数掩码的 64 位边界；具体 ABI 见
@@ -228,7 +228,7 @@ Rune/UInt8 的目标布局也须分别检查，不能把 u64 VM 槽宽等同于�
 
 **S0b：** 提交决策表，冻结：语言布局接入、私有原语、API 签名、符号版本、legacy 注册种类、
 根调用拥有结果提取，以及现有挂起 String 的迁移方式。列出需要修改的旧源码调用和二进制支持范围。
-证明错误消息在低预算下能保留首错并完成清理，不能因 `require` 消息分配失败递归构造错误文本。
+证明错误消息在低预算下能保留首错并完成清理，不能因 `assert` 消息分配失败递归构造错误文本。
 
 **验收：** 三后端执行最小构造/借用/返回/失败例，负例拒绝拥有者复制、视图逃逸及私有存储访问。
 尚缺能力记录最小复现与独立前置任务，不发布占位 API，不为使探针通过放宽类型检查。
@@ -251,7 +251,7 @@ S0 使用[存储探针](../tests/fixtures/string_storage_probe.jk)、
 | 正常/失败路径的资源记录 | 跟踪完成构造与 Drop，JIT/解释器核对 arena LIVE；CLI/AOT 核对相同资源输出及首错 |
 | arena 预算逐级扫描 | 覆盖构造/替换的失败直到成功；每次调用结束都完整清理 |
 | 转移的禁止分配窗口 | 只包围 finish/forward，不包围后续 Slice 创建；原生转移可复用载荷，解释器允许清理快照产生受控 ResourceLimit |
-| 禁止后续 arena 分配后的 require / 分配失败 | 主运行时错误或 ResourceLimit 保留，后续 Drop 的 require 不覆盖首错，原资源回收 |
+| 禁止后续 arena 分配后的 assert / 分配失败 | 主运行时错误或 ResourceLimit 保留，后续 Drop 的 assert 不覆盖首错，原资源回收 |
 | 重载/销毁 VM 后恢复与取消 | 解释器在同步 helper 的时间片持有资源，旧任务继续/取消均清理；这不等于拥有值已能跨语言挂起 |
 | 内建 String 引用、存储布局、Array<String>、记录字段 | 当前均不支持；负例固定缺口，不能把 Int32 包装的成功当作 String 支持 |
 | 拥有包装的挂起签名和旧 host ABI | 当前拒绝；分别需要 P-cps 和 P-abi，不自动开放通用容器 |
@@ -270,7 +270,7 @@ S1/S2 实施时应重新搜索，不把这张基线清单当作永久穷尽的�
 | --- | --- | --- |
 | `core/parser/{lexer,types,ast}.rs`、`core/integer.rs` | 字面量到 String，单个标量槽，String 不属于 buffer owner | 保留词法身份；UInt8/Rune 独立类型；String 新所有权叶分类 |
 | `core/types/{walk,layout,memory_layout,specialization}.rs`、`core/types.rs` | String 无地址布局，聚合/泛型/引用准入受限 | 同步更新字节布局、拥有路径、别名/实例化/借用，不能只改 is_owner |
-| `core/ir.rs`、`ir/{inference,constants}.rs` | Literal 是旧常量；require 的绑定签名固定 Bool/String | 新字面量构造有分配/失败效果，require 借用已拥有文本，常量折叠不能消掉必要资源效果 |
+| `core/ir.rs`、`ir/{inference,constants}.rs` | Literal 是旧常量；assert 的绑定签名固定 Bool/String | 新字面量构造有分配/失败效果，assert 借用已拥有文本，常量折叠不能消掉必要资源效果 |
 | `ir/{buffers,locals,records,enums,tuples,control_flow}.rs` | Array 所有权与视图、作用域退出、返回移动 | String 作为单一拥有叶参与同一套移动/清理和整体替换 |
 | `ir/{calls,function_values,graph,generics}.rs` | 直接/间接调用、效果传播、借用来源及泛型 | 分配能力、may_fail、根结果转移与引用来源跨所有调用形式一致 |
 | `backends/native/{mod,lower}.rs` | 模块输出旧长度前缀常量；机器值为指针 | 常量只作可重定位复制源；新增受检构造；直接/CPS 调用不能把句柄当旧字符地址 |
@@ -278,7 +278,7 @@ S1/S2 实施时应重新搜索，不把这张基线清单当作永久穷尽的�
 | `runtime/{string,buffer,arena,cleanup,error}.rs` | 旧 ABI 编解码、缓冲区释放、TLS 首错 | 保留旧符号；新存储复用 buffer；错误读取走独立版本适配 |
 | `runtime/{bindings,abi,cps,suspension}.rs`、`vm/engine.rs` | 宿主逻辑类型和 wire 类型未分离；continuation 结果主要为原始数值位 | 显式 legacy 标记、拥有返回的类型化提取、帧资源和 Pending 临时缓冲区保活 |
 | `modules/mod.rs`、`core/{resolver,ffi}.rs`、`stdlib/{mod,vm,string}.rs` | 注册/校验仍认为 String 是旧 scalar；string 模块当前为 native bindings | 新逻辑签名与物理 ABI 分离，String 源码模块和私有桥接按定义身份注册 |
-| `stdlib/check.jk`、`core/imports` | require 为可信源码内建；模块加载/可见性依赖身份 | 只更新可信定义；不按同名用户函数授予 String 构造权限 |
+| `stdlib/check.jk`、`core/imports` | assert 为可信源码内建；模块加载/可见性依赖身份 | 只更新可信定义；不按同名用户函数授予 String 构造权限 |
 | `include/joky_{vm,cps,runtime}.h`、安装脚本、AOT wrapper | C 名称/结构、runtime archive 与导出函数约定 | 新入口版本化，旧头文件结构保持；安装后独立 C/AOT 联编验证 |
 | `vm/strings_tests.rs`、AOT `tests/strings.rs`、字符串 CLI fixture、embedding 示例 | 字符串复用、返回、Pending、重载、NUL 已有覆盖 | 改为显式借用/clone 后保留同等行为；不得通过删用例避开迁移 |
 
@@ -295,7 +295,7 @@ S1/S2 实施时应重新搜索，不把这张基线清单当作永久穷尽的�
 - 字面量用独立的受检 IR 构造操作，运行时复制入口命名 `__joky_string_literal_v2`；
   复用 arena/Buffer 分配。freeze/into_bytes 是所有权转移，不要求再分配一份字节缓冲区。
   旧 `Constant::String` 数据源可保留，但执行构造不能再是纯指针常量或 Rc 克隆。
-- 新的 require 读取入口为 `__joky_runtime_require_failed_v2`，旧无后缀入口仍读取 legacy 视图。
+- 新的 assert 读取入口为 `__joky_runtime_assert_failed_v2`，旧无后缀入口仍读取 legacy 视图。
   两种错误入口都写同一个首错通道，不能再进入语言字符串分配路径。
 - UInt8 大小/对齐为 1/1；Rune 大小为 4，对齐使用目标 int32_align。
   两者参数/结果各占一个逻辑标量槽；u64 CPS 槽不改变对象大小，Rune 进入语言前校验有效性。
@@ -347,7 +347,7 @@ Unicode 转义在两种字面量中均为 `\u{H...}`，1–6 个十六进制数�
 | P-storage（S2a） | `fn f(s: &String) {}`、`struct Text { value: String }` 被拒绝；Type::String 没有 storage_layout | String 独立拥有叶、方法/引用准入、可信 buffer 转移、字面量失败效果；依赖 S1 的真实 UInt8 |
 | P-abi（S2b） | `register_fn` 当前把 Type::String 解释为旧裸指针；受检根调用只支持既有标量结果 | 新 legacy 标记、参数/结果适配、版本化导出、类型化根结果；不能靠 reinterpret cast |
 | P-cps（S2b） | `fn f(s: probe.TextProbe) @suspends {}` 被拒绝；旧 String 却已有跨 Pending 测试 | 在共享 IR 与帧清理中接入 String 专有拥有叶的移动/分支/返回；不开放未经验证的其他容器 |
-| P-error（S2a/S2b 共同门槛） | 当前 require 在 arena 耗尽后仍保留消息和首错；新字面量将有分配效果 | require 改借用、诊断与语言分配分离；消息构造本身先失败时报告 ResourceLimit，不能伪称 require 已执行 |
+| P-error（S2a/S2b 共同门槛） | 当前 assert 在 arena 耗尽后仍保留消息和首错；新字面量将有分配效果 | assert 改借用、诊断与语言分配分离；消息构造本身先失败时报告 ResourceLimit，不能伪称 assert 已执行 |
 
 S0 的完成不将这些门槛视为自动解决。实际内建 UTF-8 String 的构造、布局、CPS 和新的 ABI
 必须在 S1/S2 使用真实类型重新执行同等测试。已有旧 String 的返回/转义/Pending/重载与独立 AOT
@@ -413,7 +413,7 @@ UInt8 原测试只比较范围，未提供受检方法；现补齐全部整数�
 字面量使用可重定位常量作为复制源；JIT/AOT 都不能嵌入编译进程地址。
 迁移五个现有查询到第 3 节的新语言签名；支持 String 固有方法，
 旧 C 导出适配已在 S5 后审查中移除。
-同时更新 `check.require` 与 VM 标准库只读文本参数。补齐 String 作为拥有载荷的基础分类、
+同时更新 `check.assert` 与 VM 标准库只读文本参数。补齐 String 作为拥有载荷的基础分类、
 布局与清理，并以最小 Option/Result<String> 用例验证，为 S4 的 from_utf8 结果提供前置能力；
 通用嵌套聚合、用户泛型和容器的全面准入与验收留到 S5。
 
@@ -435,7 +435,7 @@ Pending 不重放与首错保留；不以删除旧挂起字符串测试消除回
 使用真实的一字节 Buffer 载荷并计入任务 arena；批量初始化只发布完整前缀。
 `__joky_string_literal_v2` 从可重定位的旧长度前缀常量复制 UTF-8，先拒绝超过任务预算的长度，
 再读取和验证载荷。`__joky_string_clone_v2` 分配独立控制块和载荷，失败不消费原值。
-`__joky_runtime_require_failed_v2` 在同一首错通道读取借用消息，不从语言 arena 分配错误文本；
+`__joky_runtime_assert_failed_v2` 在同一首错通道读取借用消息，不从语言 arena 分配错误文本；
 旧入口及旧语言/宿主 ABI 保持原行为。新入口已注册到 JIT 符号表并进入原生 runtime archive。
 
 验证覆盖空串、ASCII、中文、emoji、内部 NUL、组合标量、源常量失效后读取、clone 独立生存、
@@ -468,9 +468,9 @@ while/Map 基准正确性在两个 profile 覆盖三后端。包含上述 S1 修
 | P-storage | 真实 String 字面量、clone、共享查询、mem.replace、release；移动后复用/借用冲突/逃逸拒绝；最小 Option/Result<String> 的全部变体执行 |
 | P-abi | 显式 TextViewV2 注册及 owner/frame_slots 元数据；错误注册拒绝；版本化 AOT 导出与实际原型；Rust/C 根输入输出复制及配套释放 |
 | P-cps | 拥有输入在首次轮询前转移到子帧；语言函数值调用与返回、旧任务重载/VM 销毁后恢复、Pending 不重放、scope/race 含未轮询败方及取消清理 |
-| P-error | require 借用消息；预算扫描覆盖构造/clone/Pending 失败并核对 arena 归零；宿主错误先于返回地址解码；根退出清理失败时丢弃已复制文本 |
+| P-error | assert 借用消息；预算扫描覆盖构造/clone/Pending 失败并核对 arena 归零；宿主错误先于返回地址解码；根退出清理失败时丢弃已复制文本 |
 
-语言查询返回 UInt64 / Bool / Option<UInt64>，空 needle 为 Some(0)；旧 C 查询在审查修订中删除。`check.require` 的消息和 `joky/vm` 的名字/源码参数改为 &String，示例及旧回归
+语言查询返回 UInt64 / Bool / Option<UInt64>，空 needle 为 Some(0)；旧 C 查询在审查修订中删除。`check.assert` 的消息和 `joky/vm` 的名字/源码参数改为 &String，示例及旧回归
 按显式移动、clone 和命名临时量借用迁移。普通 register_fn 不再接受文本签名，必须使用
 `register_text_fn` 或对应 owned/CPS 入口；输入描述符直接借用原载荷并跨 Pending 保活，完成或取消后随帧释放。
 
@@ -559,7 +559,7 @@ from_utf8 失败消费输入且返回准确偏移，bytes 不能逃逸或写入�
 
 冻结错误拼写为 Copy 记录 `Utf8Error { code: Utf8ErrorCode, offset: UInt64 }`；
 InvalidSequence 表示已有字节非法，UnexpectedEnd 表示合法编码前缀被截断。
-偏移为第一个非法序列的起点，错误不拥有文本。next_rune 的非法偏移沿现有 check.require
+偏移为第一个非法序列的起点，错误不拥有文本。next_rune 的非法偏移沿现有 check.assert
 产生带源码位置的终止性 RuntimeError；末尾正常返回 None，不做宽松解码。
 四种整数的 to_string 方法定义在文本模块，依赖显式导入或 prelude，避免 integer→string 循环依赖。
 最小负数通过先加一再取负及无符号补一计算绝对值，不溢出；拼接沿 Array.reserve 检查组合长度。

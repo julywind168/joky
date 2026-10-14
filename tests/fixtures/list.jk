@@ -3,10 +3,10 @@ import joky/array.{type Array}
 import joky/element as element
 import joky/option.{type Option, Some, None}
 import joky/drop.{type Drop}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/mem
 import joky/string
-fn ensure(condition: Bool, message: String) { require(condition, &message) }
+fn ensure(condition: Bool, message: String) { assert(condition, &message) }
 extern fn record_int(value: Int32)
 struct Resource { id: Int32, data: String }
 impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }

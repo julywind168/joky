@@ -7,8 +7,8 @@ struct Room { value:Int32 }
 fn make(value:Int32)->Room { Room{value:value} }
 fn read(room:&Room)->Int32 { room.value }
 fn update(room:&mut Room,value:Int32)->Int32 { room.value=value value }
-fn witness(room:&Room)->Int32 { let message="lookup must not invoke witness" check.require(false,&message) room.value }
-fn require(ok:Bool) { let message="directory routing" check.require(ok,&message) }
+fn witness(room:&Room)->Int32 { let message="lookup must not invoke witness" check.assert(false,&message) room.value }
+fn assert(ok:Bool) { let message="directory routing" check.assert(ok,&message) }
 fn value(directory:domain.DirectoryHandle,key:UInt64) @suspends ->Int32 {
     match domain.lookup(directory,key,read) { Some(room)=>domain.read_from(room,read),None=>-1 }
 }
@@ -20,52 +20,52 @@ fn route() @suspends {
     let a=first.handle()
     let b=second.handle()
     let old=a.read_only()
-    require(domain.lookup(directory,7,read).is_none())
-    require(directory.insert(7,a).is_ok())
-    require(domain.lookup(directory,7,witness).is_some())
-    require(match directory.insert(7,b) { Err(Occupied)=>true,_=>false })
-    require(value(directory,7)==10)
-    require(directory.insert_read(9,b.read_only()).is_ok())
-    require(domain.lookup_write(directory,9,read).is_none())
-    require(match directory.insert(11,b) { Err(Full)=>true,_=>false })
-    require(match directory.replace(7,b.read_only(),b) { Err(Conflict)=>true,_=>false })
-    require(directory.replace(7,old,b).is_ok())
+    assert(domain.lookup(directory,7,read).is_none())
+    assert(directory.insert(7,a).is_ok())
+    assert(domain.lookup(directory,7,witness).is_some())
+    assert(match directory.insert(7,b) { Err(Occupied)=>true,_=>false })
+    assert(value(directory,7)==10)
+    assert(directory.insert_read(9,b.read_only()).is_ok())
+    assert(domain.lookup_write(directory,9,read).is_none())
+    assert(match directory.insert(11,b) { Err(Full)=>true,_=>false })
+    assert(match directory.replace(7,b.read_only(),b) { Err(Conflict)=>true,_=>false })
+    assert(directory.replace(7,old,b).is_ok())
     // A stale connection cleanup cannot remove the replacement room route.
-    require(!directory.remove(7,old))
-    require(value(directory,7)==20)
+    assert(!directory.remove(7,old))
+    assert(value(directory,7)==20)
     match domain.lookup_write(directory,7,read) {
-        Some(room)=>require(domain.write_to(room,update,42)==42)
-        None=>require(false)
+        Some(room)=>assert(domain.write_to(room,update,42)==42)
+        None=>assert(false)
     }
-    require(value(directory,9)==42)
-    require(directory.replace_read(7,b.read_only(),old).is_ok())
-    require(domain.lookup_write(directory,7,read).is_none())
-    require(directory.remove(7,old))
-    require(domain.lookup(directory,7,read).is_none())
+    assert(value(directory,9)==42)
+    assert(directory.replace_read(7,b.read_only(),old).is_ok())
+    assert(domain.lookup_write(directory,7,read).is_none())
+    assert(directory.remove(7,old))
+    assert(domain.lookup(directory,7,read).is_none())
     second.close()
-    require(domain.lookup(directory,9,read).is_none())
-    require(match directory.insert(12,b) { Err(InvalidTarget)=>true,_=>false })
+    assert(domain.lookup(directory,9,read).is_none())
+    assert(match directory.insert(12,b) { Err(InvalidTarget)=>true,_=>false })
     // Closed routes not explicitly looked up also release capacity on insertion.
     let third=domain.create(make,30)
-    require(directory.insert(5,third.handle()).is_ok())
-    require(directory.insert(6,third.handle()).is_ok())
+    assert(directory.insert(5,third.handle()).is_ok())
+    assert(directory.insert(6,third.handle()).is_ok())
     third.close()
-    require(directory.insert(8,a).is_ok())
+    assert(directory.insert(8,a).is_ok())
     table.close()
-    require(value(directory,8)==-1)
-    require(match directory.insert(8,a) { Err(Closed)=>true,_=>false })
-    require(!directory.remove(8,old))
-    require(domain.read_from(old,read)==10)
+    assert(value(directory,8)==-1)
+    assert(match directory.insert(8,a) { Err(Closed)=>true,_=>false })
+    assert(!directory.remove(8,old))
+    assert(domain.read_from(old,read)==10)
 }
 fn weak() @suspends {
     let table=domain.directory(1)
     let directory=table.handle()
-    { let room=domain.create(make,1) require(directory.insert(1,room.handle()).is_ok()) }
-    require(domain.lookup(directory,1,read).is_none())
+    { let room=domain.create(make,1) assert(directory.insert(1,room.handle()).is_ok()) }
+    assert(domain.lookup(directory,1,read).is_none())
     let room=domain.create(make,2)
-    let dangling={ let other=domain.directory(1) let h=other.handle() require(h.insert(1,room.handle()).is_ok()) h }
-    require(domain.lookup(dangling,1,read).is_none())
-    require(domain.read_from(room.read_handle(),read)==2)
+    let dangling={ let other=domain.directory(1) let h=other.handle() assert(h.insert(1,room.handle()).is_ok()) h }
+    assert(domain.lookup(dangling,1,read).is_none())
+    assert(domain.read_from(room.read_handle(),read)==2)
 }
 struct Catalog { values:Array<Int32> }
 fn catalog(value:Int32)->Catalog { var values=Array.new::<Int32>() values.push(value) Catalog{values:values} }
@@ -73,10 +73,10 @@ fn first(catalog:&Catalog)->Int32 { catalog.values.get(0).unwrap_or(-1) }
 fn owned() @suspends {
     let table=domain.directory(1)
     let state=domain.create(catalog,73)
-    require(table.handle().insert_read(1,state.read_handle()).is_ok())
+    assert(table.handle().insert_read(1,state.read_handle()).is_ok())
     match domain.lookup(table.handle(),1,first) {
-        Some(handle)=>require(domain.read_from(handle,first)==73)
-        None=>require(false)
+        Some(handle)=>assert(domain.read_from(handle,first)==73)
+        None=>assert(false)
     }
 }
 fn main() @suspends ->Int32 { route() task.yield_now() weak() owned() println("directory ok") 0 }

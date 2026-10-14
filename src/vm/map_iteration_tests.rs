@@ -270,7 +270,7 @@ fn map_iteration_allocation_failures_clean_imported_and_exported_owners() {
 fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
     let source = r#"
         import joky/map as maps.{type Map}
-        import joky/check.{require}
+        import joky/check.{assert}
         import joky/eq.{type Eq}
         import joky/hash.{type Hash}
         struct Key { id: Int32 }
@@ -283,21 +283,21 @@ fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
                 var i = 0
                 while i < 9 { m.insert(Key { id: i }, i * 10) i = i + 1 }
                 m.remove(Key { id: 4 })
-                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "Before pop" require(assertion_condition, &assertion_message) }
+                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "Before pop" assert(assertion_condition, &assertion_message) }
                 while !m.is_empty() {
                     match m.pop() {
                         Some((key, value)) => {
-                            { let assertion_condition = value == key.id * 10 && !m.contains_key(key) let assertion_message = "Popped contents" require(assertion_condition, &assertion_message) }
-                            { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After pop" require(assertion_condition, &assertion_message) }
+                            { let assertion_condition = value == key.id * 10 && !m.contains_key(key) let assertion_message = "Popped contents" assert(assertion_condition, &assertion_message) }
+                            { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After pop" assert(assertion_condition, &assertion_message) }
                         }
-                        None => { { let assertion_condition = false let assertion_message = "Unexpected empty map" require(assertion_condition, &assertion_message) } }
+                        None => { { let assertion_condition = false let assertion_message = "Unexpected empty map" assert(assertion_condition, &assertion_message) } }
                     }
                 }
-                { let assertion_condition = m.pop().is_none() && maps.test_invariant(&m) let assertion_message = "After draining" require(assertion_condition, &assertion_message) }
+                { let assertion_condition = m.pop().is_none() && maps.test_invariant(&m) let assertion_message = "After draining" assert(assertion_condition, &assertion_message) }
                 m.reserve(20)
-                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After rehash" require(assertion_condition, &assertion_message) }
+                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After rehash" assert(assertion_condition, &assertion_message) }
                 m.insert(Key { id: 10 }, 42) m.clear()
-                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After reuse" require(assertion_condition, &assertion_message) }
+                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After reuse" assert(assertion_condition, &assertion_message) }
                 round = round + 1
             }
             42

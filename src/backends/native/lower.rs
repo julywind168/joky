@@ -559,7 +559,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr],
         ),
         (
-            "__joky_runtime_require_failed_v2",
+            "__joky_runtime_assert_failed_v2",
             vec![ptr, types::I64, ptr, ptr],
             vec![],
         ),
@@ -2131,13 +2131,13 @@ fn lower_ops(
                 let start = builder.ins().iconst(ptr_ty, span.start() as i64);
                 let end = builder.ins().iconst(ptr_ty, span.end() as i64);
                 builder.ins().call(
-                    refs["__joky_runtime_require_failed_v2"],
+                    refs["__joky_runtime_assert_failed_v2"],
                     &[message, source, start, end],
                 );
                 failure_return(builder, refs, mode.frame(), mode.cleanup());
                 terminated = true;
             }
-            Op::Require { condition, message } => {
+            Op::Assert { condition, message } => {
                 let condition = slots.read(builder, condition);
                 let message = slots.read(builder, message);
                 let failed = builder.create_block();
@@ -2150,7 +2150,7 @@ fn lower_ops(
                 let start = builder.ins().iconst(ptr_ty, span.start() as i64);
                 let end = builder.ins().iconst(ptr_ty, span.end() as i64);
                 builder.ins().call(
-                    refs["__joky_runtime_require_failed_v2"],
+                    refs["__joky_runtime_assert_failed_v2"],
                     &[message, source, start, end],
                 );
                 failure_return(builder, refs, mode.frame(), mode.cleanup());

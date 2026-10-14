@@ -28,7 +28,7 @@ fn version()->Int32 {1}
 fn hold(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,42)
     let message="register owning migration room"
-    check.require(directory.insert(7,room.handle()).is_ok(),&message)
+    check.assert(directory.insert(7,room.handle()).is_ok(),&message)
     task.sleep_ms(100000)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {

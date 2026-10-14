@@ -2,7 +2,7 @@ import joky/array.{type Array}
 import joky/drop.{type Drop}
 import joky/option.{type Option}
 import joky/result.{type Result}
-import joky/check.{require}
+import joky/check.{assert}
 extern fn closure_event(value: Int32)
 struct Resource { id: Int32, data: Array<Int32> }
 impl Drop for Resource {
@@ -10,11 +10,11 @@ impl Drop for Resource {
         closure_event(self.id)
         if self.id == 4 {
             let message = "First closure drop failure"
-            require(false, &message)
+            assert(false, &message)
         }
         if self.id == 5 {
             let message = "Second closure drop failure"
-            require(false, &message)
+            assert(false, &message)
         }
     }
 }
@@ -57,7 +57,7 @@ fn failure() -> Int32 {
     let f = move || -> Int32 {
         let value = a.id + b.id
         let message = "Closure failure"
-        require(false, &message)
+        assert(false, &message)
         value
     }
     f()
@@ -83,7 +83,7 @@ fn consuming_failure() -> Int32 {
     let f = move || {
         let value = a.id + b.id
         let message = "Closure failure"
-        require(false, &message)
+        assert(false, &message)
         let transferred = c
         value + transferred.id
     }
@@ -100,7 +100,7 @@ fn failure_before_cleanup_failure() -> Int32 {
     let f = move || {
         let value = a.id + b.id + c.id
         let message = "Closure failure"
-        require(false, &message)
+        assert(false, &message)
         value
     }
     f()
@@ -114,7 +114,7 @@ fn argument_order() -> Int32 {
 }
 fn failed_argument() -> Int32 {
     let message = "Closure failure"
-    require(false, &message)
+    assert(false, &message)
     0
 }
 fn consuming_argument_failure() -> Int32 {

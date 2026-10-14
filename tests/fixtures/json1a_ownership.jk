@@ -3,7 +3,7 @@ import joky/map.{type Map}
 import joky/mem
 import joky/drop.{type Drop}
 import joky/option.{Some, None}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/task
 extern fn record_drop(value: Int32)
 
@@ -15,7 +15,7 @@ impl Drop for Owned {
         if self.fail { ensure(false) }
     }
 }
-fn ensure(ok: Bool) { let message = "recursive tree mismatch"; require(ok, &message) }
+fn ensure(ok: Bool) { let message = "recursive tree mismatch"; assert(ok, &message) }
 fn leaf(id: Int32) -> Tree {
     let owner = Owned { id: id, fail: false, children: Array.new::<Tree>() }
     record_drop(-id)

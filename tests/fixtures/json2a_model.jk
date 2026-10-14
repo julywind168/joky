@@ -3,7 +3,7 @@
 // order is ignored by the independent semantic fingerprints.
 import joky/json as json.{type Value}
 import joky/slice as slices
-import joky/check.{require}
+import joky/check.{assert}
 fn text_hash(text: &String) -> UInt64 {
     var hash: UInt64 = 14695981039346656037
     var index: UInt64 = 0
@@ -48,19 +48,19 @@ fn model(input: String, expected: UInt64, index: Int32) {
     let message = "JSON codec semantic model {index}"
     match json.decode(&input) {
         Ok(value) => {
-            require(fingerprint(&value) == expected, &message)
+            assert(fingerprint(&value) == expected, &message)
             match json.encode(&value) {
                 Ok(output) => {
-                    require(fingerprint(&value) == expected, &message)
+                    assert(fingerprint(&value) == expected, &message)
                     match json.decode(&output) {
-                        Ok(recovered) => { require(fingerprint(&recovered) == expected, &message) }
-                        Err(_) => { require(false, &message) }
+                        Ok(recovered) => { assert(fingerprint(&recovered) == expected, &message) }
+                        Err(_) => { assert(false, &message) }
                     }
                 }
-                Err(_) => { require(false, &message) }
+                Err(_) => { assert(false, &message) }
             }
         }
-        Err(_) => { require(false, &message) }
+        Err(_) => { assert(false, &message) }
     }
 }
 fn group_0() {

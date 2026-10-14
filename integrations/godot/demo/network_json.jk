@@ -3,13 +3,13 @@ import joky/json as json.{type Value, type Number, type Limits}
 import joky/array.{type Array}
 import joky/option.{type Option}
 import joky/mem
-import joky/check.{require}
+import joky/check.{assert}
 import joky/task as clock
 import godot/task
 import joky/string.{type StringBuilder}
 import joky/integer
 
-fn ensure(ok: Bool) { let message = "JSON message session" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "JSON message session" assert(ok, &message) }
 fn limits() -> Limits {
     var value = Limits.defaults()
     value.max_input_bytes = 65536 value.max_output_bytes = 65536

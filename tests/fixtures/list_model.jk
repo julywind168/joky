@@ -1,5 +1,5 @@
 import joky/list as lists.{type List}
-import joky/check.{require}
+import joky/check.{assert}
 extern fn record_int(value: Int32)
 fn model(seed: UInt32, steps: Int32) -> Int32 {
     var list = List.new::<Int32>()
@@ -33,7 +33,7 @@ fn model(seed: UInt32, steps: Int32) -> Int32 {
         if op >= 13 { let length = list.len() result = if list.insert(length, value) { 1 } else { 0 } }
         if list.len() > peak { peak = list.len() }
         let message = "List model invariant"
-        require(lists.test_invariant(&list) && lists.test_slot_count(&list) == peak, &message)
+        assert(lists.test_invariant(&list) && lists.test_slot_count(&list) == peak, &message)
         record_int(-2147483648) record_int(result) record_int(int32(list.len()))
         var i: UInt64 = 0
         while i < list.len() { record_int(list.get(i).unwrap_or(0)) i = i + 1 }

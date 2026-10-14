@@ -5,4 +5,4 @@ import joky/integer
 import joky/float
 import joky/string
 import joky/io.{print, println}
-import joky/check.{panic}
+import joky/check.{assert, panic}

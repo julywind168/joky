@@ -83,7 +83,7 @@ enum Instruction {
         dst: usize,
         source: TextSource,
     },
-    Require {
+    Assert {
         condition: usize,
         message: usize,
     },
@@ -468,7 +468,7 @@ fn lower_unoptimized(
                 // references before any lowering runs.
                 unreachable!("native function reference survived the callee scan")
             }
-            Op::Require { condition, message } => Instruction::Require {
+            Op::Assert { condition, message } => Instruction::Assert {
                 condition: condition.index,
                 message: message.index,
             },

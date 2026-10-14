@@ -3,7 +3,7 @@ import joky/array.{type Array}
 import joky/result.{type Result}
 import joky/integer
 import joky/task
-import joky/check.{require}
+import joky/check.{assert}
 
 fn connected() @suspends -> Result<(TcpStream, TcpStream), IoError> {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) {
@@ -26,9 +26,9 @@ fn send(stream: &mut TcpStream) @suspends {
     bytes.push(255)
     bytes.push(42)
     let message = "tuple sender succeeds"
-    require(stream.write_all(bytes).is_ok(), &message)
+    assert(stream.write_all(bytes).is_ok(), &message)
     task.yield_now()
-    require(stream.shutdown(Shutdown.Write).is_ok(), &message)
+    assert(stream.shutdown(Shutdown.Write).is_ok(), &message)
 }
 fn receive(stream: &mut TcpStream) @suspends {
     var count: UInt64 = 0
@@ -37,7 +37,7 @@ fn receive(stream: &mut TcpStream) @suspends {
     while true {
         let bytes = match stream.read(2) {
             Ok(value) => value
-            Err(_) => { require(false, &message) return }
+            Err(_) => { assert(false, &message) return }
         }
         if bytes.len() == 0 { break }
         var i: UInt64 = 0
@@ -47,13 +47,13 @@ fn receive(stream: &mut TcpStream) @suspends {
         }
         count = count + bytes.len()
     }
-    require(count == 3 && total == 297, &message)
+    assert(count == 3 && total == 297, &message)
 }
 fn main() @suspends -> Int32 {
     var (client, server) = match connected() { Ok(value) => value, Err(_) => return 1 }
     parallel { | receive(&mut server) | send(&mut client) }
     let message = "detached TCP owners close independently"
-    require(client.close().is_ok(), &message)
-    require(server.close().is_ok(), &message)
+    assert(client.close().is_ok(), &message)
+    assert(server.close().is_ok(), &message)
     0
 }

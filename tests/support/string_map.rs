@@ -35,7 +35,7 @@ pub fn groups() -> Vec<Group> {
 }
 
 fn model_group() -> Group {
-    let mut source = String::from("import joky/map.{type Map} import joky/check.{require} fn probe() -> Int32 { var m = Map.new::<String, Int32>() let message = \"String key model\"\n");
+    let mut source = String::from("import joky/map.{type Map} import joky/check.{assert} fn probe() -> Int32 { var m = Map.new::<String, Int32>() let message = \"String key model\"\n");
     let mut model = std::collections::BTreeMap::new();
     let mut seed = 31_u32;
     for step in 0..160 {
@@ -44,20 +44,20 @@ fn model_group() -> Group {
         let key = format!("key-{id}-中🙂");
         if step % 5 == 0 {
             let expected = model.remove(&key).unwrap_or(-1);
-            source.push_str(&format!("{{ let query = \"{key}\" require(m.remove_by_ref(&query).unwrap_or(-1) == {expected}, &message) }}\n"));
+            source.push_str(&format!("{{ let query = \"{key}\" assert(m.remove_by_ref(&query).unwrap_or(-1) == {expected}, &message) }}\n"));
         } else {
             let expected = model.insert(key.clone(), step).unwrap_or(-1);
             source.push_str(&format!(
-                "require(m.insert(\"{key}\", {step}).unwrap_or(-1) == {expected}, &message)\n"
+                "assert(m.insert(\"{key}\", {step}).unwrap_or(-1) == {expected}, &message)\n"
             ));
         }
-        source.push_str(&format!("require(m.len() == {}, &message)\n", model.len()));
+        source.push_str(&format!("assert(m.len() == {}, &message)\n", model.len()));
         if step % 19 == 0 {
             source.push_str("m.reserve(12)\n");
         }
     }
     for (key, value) in model {
-        source.push_str(&format!("{{ let query = \"{key}\" require(m.get_by_ref(&query).unwrap_or(-1) == {value}, &message) }}\n"));
+        source.push_str(&format!("{{ let query = \"{key}\" assert(m.get_by_ref(&query).unwrap_or(-1) == {value}, &message) }}\n"));
     }
     source.push_str("42 }");
     // Bound each function's reference-analysis work while preserving one table.
@@ -67,7 +67,7 @@ fn model_group() -> Group {
         .1
         .strip_suffix("42 }")
         .unwrap();
-    let mut split = String::from("import joky/map.{type Map} import joky/check.{require}\n");
+    let mut split = String::from("import joky/map.{type Map} import joky/check.{assert}\n");
     let lines: Vec<_> = statements.lines().collect();
     let mut calls = String::new();
     for (index, chunk) in lines.chunks(40).enumerate() {

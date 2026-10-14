@@ -4,7 +4,7 @@ import joky/json/typed as typed.{type ObjectKey, type ToJson, type FromJson, typ
 import joky/json as json.{type Value, type Number}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/integer
@@ -39,7 +39,7 @@ struct User { name: String, age: UInt8, nickname: Option<String> }
 #derive(ToJson, FromJson)
 struct Batch { value: Array<User> }
 
-fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value

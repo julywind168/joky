@@ -1762,20 +1762,21 @@ impl Drop for Resource {
 
 ## 导入与 prelude
 
-显式导入 `joky/check.{require}` 可调用 `require(condition: Bool, message: &String) -> Unit`。
-消息参数具有不逃逸契约，可直接写 `require(ok, "错误信息")`、`require(ok, message)` 或
-`require(ok, &message)`。自动借用不移动已有字符串，临时字符串保活到调用结束。
+默认 prelude 提供 `assert(condition: Bool, message: &String) -> Unit`；关闭 prelude 时
+显式导入 `joky/check.{assert}`。原来的 `require` 已改名为 `assert`，不保留旧别名。
+消息参数具有不逃逸契约，可直接写 `assert(ok, "错误信息")`、`assert(ok, message)` 或
+`assert(ok, &message)`。自动借用不移动已有字符串，临时字符串保活到调用结束。
 参数按从左到右的普通调用规则求值（condition 为 true 时仍求值 message）；true 正常返回，
 false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清理。错误拥有消息文本，
-直接调用定位到 require 的真实源码调用处，别名与跨模块调用保持来源；经函数值调用时定位到
+直接调用定位到 assert 的真实源码调用处，别名与跨模块调用保持来源；经函数值调用时定位到
 被调用函数定义。解释器保留已有调用轨迹；原生同步调用在失败传播时保留源码调用点，
 通过 `Error::native_call_sites()` 查询，CLI 渲染文件与行号；不提供字节码 PC 或原生栈。
-析构中失败继续必要清理并保留首个错误。消息构造先失败时报告 ResourceLimit，require 尚未执行。
-诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，未加入默认 prelude。
+析构中失败继续必要清理并保留首个错误。消息构造先失败时报告 ResourceLimit，assert 尚未执行。
+诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，Debug 和 Release 均执行检查。
 
 同模块的 `panic(message: &String)` 默认由 prelude 导入，可直接写 `panic("错误信息")`，
 也支持插值字符串与已有字符串的自动借用。关闭 prelude 时显式导入 `joky/check.{panic}`。
-它无条件产生终止性 RuntimeError，沿用 require 的消息保活、调用位置与资源清理规则，不负责 IO。
+它无条件产生终止性 RuntimeError，沿用 assert 的消息保活、调用位置与资源清理规则，不负责 IO。
 编译器将绑定到该内置函数的直接调用视为发散表达式，别名调用同样有效：
 
 ```joky
@@ -1791,6 +1792,18 @@ fn unwrap(value: Option<Int32>) -> Int32 {
 当前没有用户可声明的 `Never` 类型；普通包装函数及函数值调用仍按声明的返回类型检查。
 panic 的函数值签名为 `fn(&String) -> Unit`，间接调用需显式传引用。
 显式 `&"..."` 仍不支持：自动借用仅在受检查的调用边界创建临时绑定，不开放可逃逸的临时引用。
+
+内嵌标准库用 `#intrinsic("标识符")` 声明编译器提供的操作。例如字符串复制桥接声明为：
+
+```joky
+#intrinsic("text.clone")
+fn copy_text(text: &String) @noescape -> String;
+```
+
+这类声明以分号结束，没有占位函数体；函数名可改变，操作身份由注解标识符决定。
+部分 domain 调用适配函数带同类注解并保留实际源码函数体，编译器仍在调用点检查及捕获操作身份。
+该属性只允许受信任的内嵌标准库使用；普通文件或用户模块中的同名路径和属性不授予权限。
+未知标识符、跨模块权限、错误声明形式和不符合操作要求的签名均会被拒绝。
 
 源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/set`、`joky/map`、`joky/string`、`joky/json`、`joky/json/typed` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。

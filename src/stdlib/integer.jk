@@ -117,7 +117,8 @@ impl UInt64 {
 }
 
 // This private definition is bound by identity only in this embedded module.
-fn rune_from_valid_u32(value: UInt32) -> Rune { '\0' }
+#intrinsic("integer.rune_from_valid_u32")
+fn rune_from_valid_u32(value: UInt32) -> Rune;
 
 impl Rune {
     fn from_u32(value: UInt32) -> Option<Rune> {

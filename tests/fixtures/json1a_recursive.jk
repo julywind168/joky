@@ -1,7 +1,7 @@
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/mem
-import joky/check.{require}
+import joky/check.{assert}
 import joky/option.{type Option, Some, None}
 import joky/drop.{type Drop}
 import joky/task
@@ -15,7 +15,7 @@ enum MaybeTree { EndTree, NextTree(Array<Option<MaybeTree>>) }
 struct Tracked { id: Int32, children: Array<Tracked> }
 impl Drop for Tracked { fn drop(&mut self) { println(self.id) } }
 
-fn ensure(ok: Bool) { let message = "recursive tree mismatch"; require(ok, &message) }
+fn ensure(ok: Bool) { let message = "recursive tree mismatch"; assert(ok, &message) }
 fn depth(value: &Value) -> Int32 {
     let key = "leaf"
     match value {

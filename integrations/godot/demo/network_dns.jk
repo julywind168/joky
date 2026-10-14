@@ -1,5 +1,5 @@
 import joky/dns as dns
-import joky/check.{require}
+import joky/check.{assert}
 import godot/task
 
 struct State { completed: Int32, ticks: Int32 }
@@ -15,9 +15,9 @@ fn task_resolve(count: Int32) @suspends {
     while index < count {
         let addresses = match dns.lookup("localhost", 443) {
             Ok(addresses) => addresses
-            Err(_) => { require(false, &message) return }
+            Err(_) => { assert(false, &message) return }
         }
-        require(addresses.len() > 0, &message)
+        assert(addresses.len() > 0, &message)
         task.call(&method)
         task.next_frame()
         index = index + 1

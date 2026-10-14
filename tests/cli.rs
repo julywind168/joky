@@ -165,10 +165,10 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
                 let actual = relay("\u{{{scalar:X}}}")
                 let expected = "{ch}"
                 let message = "Unicode content mismatch"
-                check.require(actual.equals(&expected), &message)
+                check.assert(actual.equals(&expected), &message)
                 let padded = "\u{{{scalar:06x}}}"
                 let message = "Unicode length mismatch"
-                check.require(padded.byte_length() == {}, &message)
+                check.assert(padded.byte_length() == {}, &message)
             }}
             "#,
             ch.len_utf8(),
@@ -178,13 +178,13 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
         r#"
         let nul = "\u{0}Z" let expected = "\0Z"
         let message = "NUL must preserve following bytes"
-        check.require(nul.equals(&expected), &message)
+        check.assert(nul.equals(&expected), &message)
         let slash = "\u{5c}u{41}" let expected = "\\u{41}"
         let message = "Escape must decode once"
-        check.require(slash.equals(&expected), &message)
+        check.assert(slash.equals(&expected), &message)
         let newline = "\u{a}" let expected = "\n"
         let message = "Encoded newline is allowed"
-        check.require(newline.equals(&expected), &message)
+        check.assert(newline.equals(&expected), &message)
         report_int32(42)
     }"#,
     );
@@ -225,7 +225,7 @@ fn uint8_storage_arithmetic_and_failures_match_all_backends() {
     let work = Workspace::new();
     let mut source = String::from("import joky/io.{println}\n");
     source.push_str(include_str!("fixtures/uint8.jk"));
-    source.push_str("\nfn expect(condition: Bool) { if !condition { let message = \"Byte arithmetic mismatch\" require(false, &message) } }\nfn report_int32(value: Int32) { println(&value) }\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { { let assertion_condition = byte_check() == 42 let assertion_message = \"Byte fixture\" require(assertion_condition, &assertion_message) }\n");
+    source.push_str("\nfn expect(condition: Bool) { if !condition { let message = \"Byte arithmetic mismatch\" assert(false, &message) } }\nfn report_int32(value: Int32) { println(&value) }\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { { let assertion_condition = byte_check() == 42 let assertion_message = \"Byte fixture\" assert(assertion_condition, &assertion_message) }\n");
     for a in [0u8, 1, 3, 127, 128, 254, 255] {
         for b in [0u8, 1, 3, 127, 128, 254, 255] {
             for (name, expected) in [
@@ -3094,7 +3094,7 @@ fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(stderr.contains(message), "{stderr}");
             assert!(
-                stderr.contains("require") || stderr.contains("bytes"),
+                stderr.contains("assert") || stderr.contains("bytes"),
                 "{stderr}"
             );
         };
@@ -3151,6 +3151,45 @@ fn panic_divergence_and_cleanup_match_all_backends() {
         &Command::new(work.path().join("prelude")).output().unwrap(),
         "Prelude panic",
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn intrinsic_declarations_and_assert_prelude_match_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "intrinsics.jk",
+        r#"
+        fn main() {
+            assert(true, "Literal assertion")
+            let original = "copy={42}"
+            let copied = original.clone()
+            assert(copied.equals(original), "Text clone")
+            assert(original.byte_length() == 7, "Borrowed source stays live")
+            assert((4.0).sqrt() == 2.0, "Float primitive")
+            assert(Rune.from_u32(65).unwrap_or('Z') == 'A', "Rune primitive")
+            println(copied)
+        }
+    "#,
+    );
+    work.assert_all_backends("intrinsics.jk", &[], b"copy=42\n", 0);
+    work.write(
+        "explicit.jk",
+        "import joky/check.{assert} fn main() { assert(true, \"Explicit import\") }",
+    );
+    work.assert_all_backends("explicit.jk", &["--no-prelude"], b"", 0);
+    for source in [
+        r#"#intrinsic("text.clone") fn fake(text: &String) -> String; fn main() {}"#,
+        r#"#intrinsic("check.assert") fn fake(ok: Bool, text: &String); fn main() {}"#,
+    ] {
+        work.write("invalid.jk", source);
+        failure(&work.cli(&["build", "invalid.jk"]), "restricted to trusted");
+    }
+    work.write(
+        "old.jk",
+        "import joky/check fn main() { check.require(true, \"Removed name\") }",
+    );
+    failure(&work.cli(&["build", "old.jk"]), "require");
 }
 
 #[test]
@@ -5271,7 +5310,7 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
         r#"
         import model.{type Packet as Wire}
         import joky/json/typed as codec
-        import joky/check.{require}
+        import joky/check.{assert}
         trait ToJson { fn unrelated(&self) }
         struct Context {}
         fn main() {
@@ -5279,10 +5318,10 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
             let message = "derived dependency"
             match codec.encode(&value) {
                 Ok(text) => match codec.decode::<Wire<String>>(&text) {
-                    Ok(result) => { require(model.valid(&result), &message) }
-                    Err(_) => { require(false, &message) }
+                    Ok(result) => { assert(model.valid(&result), &message) }
+                    Err(_) => { assert(false, &message) }
                 }
-                Err(_) => { require(false, &message) }
+                Err(_) => { assert(false, &message) }
             }
         }
     "#,
@@ -6141,8 +6180,8 @@ fn conditional_patterns_run_on_all_backends() {
     let work = Workspace::new();
     let fixture = include_str!("fixtures/conditional_patterns.jk")
         .replace(
-            "import joky/check.{require}",
-            "import joky/check.{require}\nimport joky/io.{println}",
+            "import joky/check.{assert}",
+            "import joky/check.{assert}\nimport joky/io.{println}",
         )
         .replace(
             "extern fn record(x: Int32) -> Int32",
@@ -6400,7 +6439,7 @@ fn main() @suspends {{
     vm.load_source(h, &source)
     let p=script.call::<Packet, Packet>(h, "run", Packet {{ {values} }})
     let message="packet limit"
-    check.require(p.f63 == 63, &message)
+    check.assert(p.f63 == 63, &message)
     vm.close(h);
 }}
 "#
@@ -6458,12 +6497,12 @@ fn main() @suspends {{
     let h=vm.{create}()
     let source={target:?}
     let message="outbox Script"
-    check.require(vm.load_source(h,&source)==0,&message)
-    check.require(script.call::<outbox.Handle,Int32>(h,"send",queue.handle())==1,&message)
+    check.assert(vm.load_source(h,&source)==0,&message)
+    check.assert(script.call::<outbox.Handle,Int32>(h,"send",queue.handle())==1,&message)
     let next="fn newer()->Int32 {{{{ 2 }}}}"
-    check.require(vm.load_source(h,&next)==0,&message)
-    check.require(vm.close(h)==0,&message)
-    check.require(match queue.receive() {{ Some(bytes)=>bytes.len()==1 && bytes.get(0).unwrap_or(0)==255, None=>false }},&message)
+    check.assert(vm.load_source(h,&next)==0,&message)
+    check.assert(vm.close(h)==0,&message)
+    check.assert(match queue.receive() {{ Some(bytes)=>bytes.len()==1 && bytes.get(0).unwrap_or(0)==255, None=>false }},&message)
     println("outbox Script ok")
 }}
 "#));
@@ -6488,7 +6527,7 @@ fn read(room:&Room)->Int32 { room.value }
 fn hold(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,42)
     let message="directory register"
-    check.require(directory.insert(7,room.handle()).is_ok(),&message)
+    check.assert(directory.insert(7,room.handle()).is_ok(),&message)
     while domain.lookup(directory,7,read).is_some() { task.yield_now() }
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
@@ -6507,14 +6546,14 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     let message="directory reload"
     var attempts:Int32=0
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
-        attempts=attempts+1 check.require(attempts<1000,&message) task.yield_now()
+        attempts=attempts+1 check.assert(attempts<1000,&message) task.yield_now()
     }}
-    check.require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42,&message)
+    check.assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42,&message)
     let next={next:?}
-    check.require(vm.load_source(h,&next)==0,&message)
-    check.require(vm.publish_domain_code(h)==1,&message)
-    check.require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142,&message)
-    check.require(script.call::<domain.DirectoryHandle,Bool>(h,"remove",directory),&message)
+    check.assert(vm.load_source(h,&next)==0,&message)
+    check.assert(vm.publish_domain_code(h)==1,&message)
+    check.assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142,&message)
+    check.assert(script.call::<domain.DirectoryHandle,Bool>(h,"remove",directory),&message)
 }}
 fn main() @suspends {{
     let owner=domain.directory(2)
@@ -6522,10 +6561,10 @@ fn main() @suspends {{
     let h=vm.{create}()
     let source={source:?}
     let message="directory Script"
-    check.require(vm.load_source(h,&source)==0,&message)
+    check.assert(vm.load_source(h,&source)==0,&message)
     parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    check.require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1,&message)
-    check.require(vm.close(h)==0,&message)
+    check.assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1,&message)
+    check.assert(vm.close(h)==0,&message)
     owner.close()
     println("directory Script ok")
 }}
@@ -6553,13 +6592,13 @@ fn tick(room:&mut Room,amount:Int32) { room.value=room.value+amount }
 fn hold(timer:domain.TimerHandle) @suspends {
     let room=domain.create(make,10)
     let message="timer Script"
-    check.require(domain.after(timer,room.handle(),100000,tick,2).is_ok(),&message)
+    check.assert(domain.after(timer,room.handle(),100000,tick,2).is_ok(),&message)
     while match timer.status() { Active=>true,_=>false } { task.yield_now() }
-    check.require(match timer.status() { Cancelled=>true,_=>false },&message)
-    check.require(domain.after(timer,room.handle(),0,tick,2).is_ok(),&message)
+    check.assert(match timer.status() { Cancelled=>true,_=>false },&message)
+    check.assert(domain.after(timer,room.handle(),0,tick,2).is_ok(),&message)
     while match timer.status() { Active=>true,_=>false } { task.yield_now() }
-    check.require(match timer.status() { Completed=>true,_=>false },&message)
-    check.require(domain.read_from(room.read_handle(),read)==30,&message)
+    check.assert(match timer.status() { Completed=>true,_=>false },&message)
+    check.assert(domain.read_from(room.read_handle(),read)==30,&message)
 }"#;
     let next = source.replace("room.value+amount", "room.value+amount*10");
     let source = source.replace('{', "{{").replace('}', "}}");
@@ -6571,8 +6610,8 @@ fn control(h:vm.Handle,timer:domain.TimerHandle) @suspends {{
     let message="timer publication"
     while match timer.status() {{ Idle=>true,_=>false }} {{ task.yield_now() }}
     let next={next:?}
-    check.require(vm.load_source(h,&next)==0,&message)
-    check.require(vm.publish_domain_code(h)==1,&message)
+    check.assert(vm.load_source(h,&next)==0,&message)
+    check.assert(vm.publish_domain_code(h)==1,&message)
     timer.cancel()
 }}
 fn main() @suspends {{
@@ -6581,11 +6620,11 @@ fn main() @suspends {{
     let h=vm.{create}()
     let source={source:?}
     let message="timer host"
-    check.require(vm.load_source(h,&source)==0,&message)
+    check.assert(vm.load_source(h,&source)==0,&message)
     parallel {{ | script.call::<domain.TimerHandle,Unit>(h,"hold",timer) | control(h,timer) }};
-    check.require(vm.close(h)==0,&message)
+    check.assert(vm.close(h)==0,&message)
     owner.close()
-    check.require(match timer.status() {{ Closed=>true,_=>false }},&message)
+    check.assert(match timer.status() {{ Closed=>true,_=>false }},&message)
 }}
 "#));
         work.assert_all_backends("timer_script.jk", &[], b"", 0);
@@ -6636,46 +6675,46 @@ fn assert_script_migration(old: &str, next: &str) {
     for create in ["create", "create_interpreter"] {
         let work = Workspace::new();
         work.write("migrate.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
-fn require(ok:Bool) {{let message="Script migration" check.require(ok,&message)}}
+fn assert(ok:Bool) {{let message="Script migration" check.assert(ok,&message)}}
 fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     var attempts:Int32=0
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
-        attempts=attempts+1 require(attempts<1000) task.yield_now()
+        attempts=attempts+1 assert(attempts<1000) task.yield_now()
     }}
     let schema=vm.domain_schema(h)
-    require(schema!=0)
+    assert(schema!=0)
     let next={next:?}
     let method="upgrade"
     let version="version"
-    require(vm.prepare_migration(h,0,&next,&method)==1)
-    require(vm.prepare_migration(h,schema,&next,&method)==0)
-    require(vm.prepare_migration(h,schema,&next,&method)==1)
-    require(vm.call_int32(h,&version)==1)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
-    require(vm.cancel_migration(h)==0)
-    require(vm.publish_migration(h)==1)
-    require(vm.prepare_migration(h,schema,&next,&method)==0)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
-    require(vm.publish_migration(h)==1)
-    require(vm.domain_schema(h)==schema)
-    require(vm.call_int32(h,&version)==1)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
-    require(vm.prepare_migration(h,schema,&next,&method)==0)
+    assert(vm.prepare_migration(h,0,&next,&method)==1)
+    assert(vm.prepare_migration(h,schema,&next,&method)==0)
+    assert(vm.prepare_migration(h,schema,&next,&method)==1)
+    assert(vm.call_int32(h,&version)==1)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    assert(vm.cancel_migration(h)==0)
+    assert(vm.publish_migration(h)==1)
+    assert(vm.prepare_migration(h,schema,&next,&method)==0)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
+    assert(vm.publish_migration(h)==1)
+    assert(vm.domain_schema(h)==schema)
+    assert(vm.call_int32(h,&version)==1)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
+    assert(vm.prepare_migration(h,schema,&next,&method)==0)
     task.yield_now()
-    require(vm.publish_migration(h)==0)
-    require(vm.domain_schema(h)!=schema)
-    require(vm.call_int32(h,&version)==2)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
+    assert(vm.publish_migration(h)==0)
+    assert(vm.domain_schema(h)!=schema)
+    assert(vm.call_int32(h,&version)==2)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
 }}
 fn main() @suspends {{
     let owner=domain.directory(1)
     let directory=owner.handle()
     let h=vm.{create}()
     let source={source:?}
-    require(vm.load_source(h,&source)==0)
+    assert(vm.load_source(h,&source)==0)
     race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
-    require(vm.close(h)==0)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    assert(vm.close(h)==0)
 }}
 "#));
         work.assert_all_backends("migrate.jk", &[], b"", 0);
@@ -6693,56 +6732,56 @@ fn script_incremental_migration_yields_conflicts_cancels_and_publishes() {
     for create in ["create", "create_interpreter"] {
         let work = Workspace::new();
         work.write("incremental.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
-fn require(ok:Bool) {{let message="incremental migration" check.require(ok,&message)}}
+fn assert(ok:Bool) {{let message="incremental migration" check.assert(ok,&message)}}
 fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let schema=vm.domain_schema(h)
     let next={next:?} let start="start" let advance="advance" let version="version"
-    require(vm.begin_migration(h,0,&next,&start,&advance)==1)
-    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
-    require(vm.begin_migration(h,schema,&next,&start,&advance)==1)
-    require(vm.step_migration(h,2)==1)
-    require(vm.error_code()==0)
-    require(vm.publish_migration(h)==1)
-    require(vm.step_migration(h,2)==-1)
-    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
-    require(vm.step_migration(h,2)==1)
+    assert(vm.begin_migration(h,0,&next,&start,&advance)==1)
+    assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    assert(vm.begin_migration(h,schema,&next,&start,&advance)==1)
+    assert(vm.step_migration(h,2)==1)
+    assert(vm.error_code()==0)
+    assert(vm.publish_migration(h)==1)
+    assert(vm.step_migration(h,2)==-1)
+    assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    assert(vm.step_migration(h,2)==1)
     task.yield_now()
-    require(vm.cancel_migration(h)==0)
-    require(vm.step_migration(h,2)==-1)
-    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
-    require(vm.step_migration(h,0)==-1)
-    require(vm.publish_migration(h)==1)
-    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
-    require(vm.step_migration(h,2)==1)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
-    require(vm.step_migration(h,2)==-1)
-    require(vm.publish_migration(h)==1)
-    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    assert(vm.cancel_migration(h)==0)
+    assert(vm.step_migration(h,2)==-1)
+    assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    assert(vm.step_migration(h,0)==-1)
+    assert(vm.publish_migration(h)==1)
+    assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    assert(vm.step_migration(h,2)==1)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
+    assert(vm.step_migration(h,2)==-1)
+    assert(vm.publish_migration(h)==1)
+    assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
     var batch:Int32=0
     while batch<6 {{
         let status=vm.step_migration(h,2)
-        require(status==(if batch==5 {{0}} else {{1}}))
-        require(vm.error_code()==0)
+        assert(status==(if batch==5 {{0}} else {{1}}))
+        assert(vm.error_code()==0)
         task.yield_now()
-        require(vm.call_int32(h,&version)==1)
-        require(vm.domain_schema(h)==schema)
-        require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
+        assert(vm.call_int32(h,&version)==1)
+        assert(vm.domain_schema(h)==schema)
+        assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
         batch=batch+1
     }}
-    require(vm.step_migration(h,2)==0)
-    require(vm.publish_migration(h)==0)
-    require(vm.domain_schema(h)!=schema)
-    require(vm.call_int32(h,&version)==2)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
+    assert(vm.step_migration(h,2)==0)
+    assert(vm.publish_migration(h)==0)
+    assert(vm.domain_schema(h)!=schema)
+    assert(vm.call_int32(h,&version)==2)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
 }}
 fn main() @suspends {{
     let owner=domain.directory(1) let directory=owner.handle()
     let h=vm.{create}() let source={source:?}
-    require(vm.load_source(h,&source)==0)
+    assert(vm.load_source(h,&source)==0)
     race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
-    require(vm.close(h)==0)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    assert(vm.close(h)==0)
 }}
 "#));
         work.assert_all_backends("incremental.jk", &[], b"", 0);
@@ -6760,58 +6799,58 @@ fn script_migration_batch_is_atomic_across_types_and_read_dependencies() {
     for create in ["create", "create_interpreter"] {
         let work = Workspace::new();
         work.write("batch.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
-fn require(ok:Bool) {{let message="migration batch" check.require(ok,&message)}}
+fn assert(ok:Bool) {{let message="migration batch" check.assert(ok,&message)}}
 fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty="" let version="version"
-    require(vm.domain_schema(h)==0)
-    require(vm.begin_migration_batch(h,&next)==0)
-    require(vm.begin_migration_batch(h,&next)==1)
-    require(vm.stage_migration(h,&start,&advance)==0)
-    require(vm.publish_migration(h)==1)
-    require(vm.step_migration(h,2)==-1)
-    require(vm.begin_migration_batch(h,&next)==0)
-    require(vm.stage_migration(h,&start,&advance)==0)
-    require(vm.stage_migration(h,&start,&advance)==1)
-    require(vm.publish_migration(h)==1)
-    require(vm.begin_migration_batch(h,&next)==0)
-    require(vm.stage_migration(h,&start,&advance)==0)
-    require(vm.stage_migration(h,&ledger,&empty)==0)
-    require(vm.step_migration(h,2)==1)
+    assert(vm.domain_schema(h)==0)
+    assert(vm.begin_migration_batch(h,&next)==0)
+    assert(vm.begin_migration_batch(h,&next)==1)
+    assert(vm.stage_migration(h,&start,&advance)==0)
+    assert(vm.publish_migration(h)==1)
+    assert(vm.step_migration(h,2)==-1)
+    assert(vm.begin_migration_batch(h,&next)==0)
+    assert(vm.stage_migration(h,&start,&advance)==0)
+    assert(vm.stage_migration(h,&start,&advance)==1)
+    assert(vm.publish_migration(h)==1)
+    assert(vm.begin_migration_batch(h,&next)==0)
+    assert(vm.stage_migration(h,&start,&advance)==0)
+    assert(vm.stage_migration(h,&ledger,&empty)==0)
+    assert(vm.step_migration(h,2)==1)
     task.yield_now()
-    require(vm.cancel_migration(h)==0)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==191)
-    require(vm.begin_migration_batch(h,&next)==0)
-    require(vm.stage_migration(h,&start,&advance)==0)
-    require(vm.stage_migration(h,&ledger,&empty)==0)
-    require(vm.step_migration(h,2)==1)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==8)
-    require(vm.step_migration(h,2)==-1)
-    require(vm.publish_migration(h)==1)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
-    require(vm.begin_migration_batch(h,&next)==0)
-    require(vm.stage_migration(h,&start,&advance)==0)
-    require(vm.stage_migration(h,&ledger,&empty)==0)
+    assert(vm.cancel_migration(h)==0)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==191)
+    assert(vm.begin_migration_batch(h,&next)==0)
+    assert(vm.stage_migration(h,&start,&advance)==0)
+    assert(vm.stage_migration(h,&ledger,&empty)==0)
+    assert(vm.step_migration(h,2)==1)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==8)
+    assert(vm.step_migration(h,2)==-1)
+    assert(vm.publish_migration(h)==1)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
+    assert(vm.begin_migration_batch(h,&next)==0)
+    assert(vm.stage_migration(h,&start,&advance)==0)
+    assert(vm.stage_migration(h,&ledger,&empty)==0)
     var batch:Int32=0
     while batch<12 {{
-        require(vm.step_migration(h,2)==(if batch==11 {{0}} else {{1}}))
-        require(vm.error_code()==0)
+        assert(vm.step_migration(h,2)==(if batch==11 {{0}} else {{1}}))
+        assert(vm.error_code()==0)
         task.yield_now()
-        require(vm.call_int32(h,&version)==1)
-        require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
+        assert(vm.call_int32(h,&version)==1)
+        assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
         batch=batch+1
     }}
-    require(vm.publish_migration(h)==0)
-    require(vm.call_int32(h,&version)==2)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==195)
+    assert(vm.publish_migration(h)==0)
+    assert(vm.call_int32(h,&version)==2)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==195)
 }}
 fn main() @suspends {{
     let owner=domain.directory(4) let directory=owner.handle()
     let h=vm.{create}() let old={old:?}
-    require(vm.load_source(h,&old)==0)
+    assert(vm.load_source(h,&old)==0)
     race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
-    require(vm.close(h)==0)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    assert(vm.close(h)==0)
 }}
 "#));
         work.assert_all_backends("batch.jk", &[], b"", 0);
@@ -6831,34 +6870,34 @@ fn script_multi_domain_late_binding_and_module_diagnostics_run_in_all_backends()
     for create in ["create", "create_interpreter"] {
         let work = Workspace::new();
         work.write("late_binding.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
-fn require(ok:Bool) {{let message="late binding host" check.require(ok,&message)}}
+fn assert(ok:Bool) {{let message="late binding host" check.assert(ok,&message)}}
 fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
-        attempts=attempts+1 require(attempts<1000) task.yield_now()
+        attempts=attempts+1 assert(attempts<1000) task.yield_now()
     }}
     let next={new:?}
-    require(vm.load_source(h,&next)==0)
+    assert(vm.load_source(h,&next)==0)
     // A new caller before publication still runs the first domain's old code.
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
-    require(vm.module_count(h)==2)
-    require(vm.publish_domain_code(h)==2)
-    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142)
-    require(vm.print_modules(h)==2)
-    require(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    assert(vm.module_count(h)==2)
+    assert(vm.publish_domain_code(h)==2)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142)
+    assert(vm.print_modules(h)==2)
+    assert(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
 }}
 fn main() @suspends {{
     let h=vm.{create}()
-    require(vm.module_count(h)==0)
+    assert(vm.module_count(h)==0)
     let source={old:?}
-    require(vm.load_source(h,&source)==0)
+    assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2)
     let directory=owner.handle()
     parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    require(vm.module_count(h)==1)
-    require(vm.close(h)==0)
-    require(vm.module_count(h)==-1)
-    require(vm.error_code()==1)
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
+    assert(vm.module_count(h)==-1)
+    assert(vm.error_code()==1)
     println("late binding ok")
 }}"#));
         let mut outputs = vec![
@@ -6917,9 +6956,9 @@ fn script_nested_bridge_preserves_lanes_and_rejects_changed_inner_contracts() {
 fn main() @suspends {{
     let h=vm.{create}() let source={source}
     let message="nested Script lanes"
-    check.require(vm.load_source(h,&source)==0,&message)
+    check.assert(vm.load_source(h,&source)==0,&message)
     let reply=script.call::<Packet,Packet>(h,"run",{input})
-    check.require(reply.bits.high==18446744073709551615 && reply.bits.low == -128 && reply.bits.flag && reply.bits.real.to_bits()==9221120237041090626,&message)
+    check.assert(reply.bits.high==18446744073709551615 && reply.bits.low == -128 && reply.bits.flag && reply.bits.real.to_bits()==9221120237041090626,&message)
     vm.close(h);
 }}"#,
             source = quote(&target)
@@ -7038,9 +7077,9 @@ fn script_nested_bridge_bounds_total_fields_and_depth() {
 {definitions}
 fn main() @suspends {{
     let h=vm.create_interpreter() let source={target:?} let message="nested limits"
-    check.require(vm.load_source(h,&source)==0,&message)
+    check.assert(vm.load_source(h,&source)==0,&message)
     let p=script.call::<{ty},{ty}>(h,"run",{value})
-    check.require({assertion},&message)
+    check.assert({assertion},&message)
     vm.close(h);
 }}"#
             ),

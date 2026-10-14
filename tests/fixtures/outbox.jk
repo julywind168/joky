@@ -5,7 +5,7 @@ import joky/check
 import joky/task
 import joky/mem
 
-fn require(ok:Bool) { let message="outbox" check.require(ok,&message) }
+fn assert(ok:Bool) { let message="outbox" check.assert(ok,&message) }
 struct State { value:Int32 }
 fn make(n:Int32)->State { State{value:n} }
 fn read(s:&State)->Int32 { s.value }
@@ -13,19 +13,19 @@ fn change(s:&mut State,n:Int32)->Int32 { s.value=n n }
 fn bytes(n:UInt8)->Array<UInt8> { var bytes=Array.new::<UInt8>() bytes.push(n) bytes.push(0) bytes.push(255) bytes }
 fn staged(h:outbox.Handle,n:UInt8) @suspends ->outbox.Batch {
     var batch=outbox.batch(2,6)
-    require(match outbox.stage(&mut batch,h,bytes(n)) { Ok(_) => true, _ => false })
+    assert(match outbox.stage(&mut batch,h,bytes(n)) { Ok(_) => true, _ => false })
     batch
 }
 fn consume(queue:&mut outbox.Mailbox,h:domain.ReadHandle<State>) @suspends {
     let message=match queue.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }
-    require(message.len()==3 && message.get(0).unwrap_or(0)==7 && message.get(2).unwrap_or(0)==255)
-    require(domain.read_from(h,read)==7)
+    assert(message.len()==3 && message.get(0).unwrap_or(0)==7 && message.get(2).unwrap_or(0)==255)
+    assert(domain.read_from(h,read)==7)
 }
 fn publish(h:domain.WriteHandle<State>,target:outbox.Handle) @suspends {
     let candidate=domain.with_outbox(domain.candidate_from(domain.snapshot_from(h.read_only(),read),make,7),staged(target,7))
     task.yield_now()
     var receipt=domain.commit_to(h,candidate)
-    require(match receipt.wait() { Committed(_) => true, _ => false })
+    assert(match receipt.wait() { Committed(_) => true, _ => false })
 }
 fn main() @suspends {
     let owner=domain.create(make,1)
@@ -37,28 +37,28 @@ fn main() @suspends {
     let stale=domain.with_outbox(domain.candidate_from(domain.snapshot_from(handle.read_only(),read),make,99),staged(target,99))
     domain.write_to(handle,change,8)
     var conflict=domain.commit_to(handle,stale)
-    require(match conflict.wait() { Conflict => true, _ => false })
+    assert(match conflict.wait() { Conflict => true, _ => false })
     var receipt=domain.commit_to(handle,domain.with_outbox(domain.candidate_from(domain.snapshot_from(handle.read_only(),read),make,9),staged(target,9)))
-    require(match receipt.wait() { Committed(_) => true, _ => false })
+    assert(match receipt.wait() { Committed(_) => true, _ => false })
     // A full queue rejects the root replacement too.
     var full=domain.commit_to(handle,domain.with_outbox(domain.candidate_from(domain.snapshot_from(handle.read_only(),read),make,10),staged(target,10)))
-    require(match full.wait() { OutboxFull => true, _ => false })
-    require(domain.read_from(handle.read_only(),read)==9)
+    assert(match full.wait() { OutboxFull => true, _ => false })
+    assert(domain.read_from(handle.read_only(),read)==9)
     let received=match queue.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }
-    require(received.get(0).unwrap_or(0)==9)
+    assert(received.get(0).unwrap_or(0)==9)
     // An ignored staging failure poisons the entire batch, never publishing a prefix.
     var batch=outbox.batch(1,3)
     outbox.stage(&mut batch,target,bytes(11));
-    require(match outbox.stage(&mut batch,target,bytes(12)) { Err(Full) => true, _ => false })
+    assert(match outbox.stage(&mut batch,target,bytes(12)) { Err(Full) => true, _ => false })
     var poisoned=domain.commit_to(handle,domain.with_outbox(domain.candidate_from(domain.snapshot_from(handle.read_only(),read),make,11),batch))
-    require(match poisoned.wait() { OutboxFull => true, _ => false })
-    require(domain.read_from(handle.read_only(),read)==9)
+    assert(match poisoned.wait() { OutboxFull => true, _ => false })
+    assert(domain.read_from(handle.read_only(),read)==9)
     let pending=domain.with_outbox(domain.candidate_from(domain.snapshot_from(handle.read_only(),read),make,12),staged(target,12))
     outbox.close(target)
     var closed=domain.commit_to(handle,pending)
-    require(match closed.wait() { OutboxClosed => true, _ => false })
-    require(match queue.receive() { None => true, _ => false })
-    require(domain.read_from(handle.read_only(),read)==9)
+    assert(match closed.wait() { OutboxClosed => true, _ => false })
+    assert(match queue.receive() { None => true, _ => false })
+    assert(domain.read_from(handle.read_only(),read)==9)
     owner.close()
     many()
     pairs()
@@ -85,8 +85,8 @@ fn many() @suspends {
     outbox.stage(&mut messages,rh,bytes(20));
     // The second target's byte capacity rejects the entire three-domain commit.
     var rejected=domain.commit_set(domain.set_with_outbox(set,messages))
-    require(match rejected.wait() { OutboxFull => true, _ => false })
-    require(domain.read_from(a.read_handle(),read)==1 && domain.read_from(b.read_handle(),read)==2 && domain.read_from(c.read_handle(),read)==3)
+    assert(match rejected.wait() { OutboxFull => true, _ => false })
+    assert(domain.read_from(a.read_handle(),read)==1 && domain.read_from(b.read_handle(),read)==2 && domain.read_from(c.read_handle(),read)==3)
     var access=domain.access_set()
     access.include(a.read_handle()) access.include(b.read_handle()) access.include(c.read_handle())
     let snapshot=domain.snapshot_set(access)
@@ -96,10 +96,10 @@ fn many() @suspends {
     var messages=staged(lh,11)
     outbox.stage(&mut messages,rh,Array.new::<UInt8>());
     var accepted=domain.commit_set(domain.set_with_outbox(set,messages))
-    require(match accepted.wait() { Committed => true, _ => false })
+    assert(match accepted.wait() { Committed => true, _ => false })
     let received=match left.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }
-    require(received.get(0).unwrap_or(0)==11)
-    require(match right.receive() { Some(bytes) => bytes.is_empty(), None => false })
+    assert(received.get(0).unwrap_or(0)==11)
+    assert(match right.receive() { Some(bytes) => bytes.is_empty(), None => false })
     outbox.close(lh) outbox.close(rh)
 }
 fn pairs() @suspends {
@@ -115,17 +115,17 @@ fn pairs() @suspends {
     let first=domain.with_outbox(first,staged(lh,12))
     let pair=domain.candidate_pair_from(first,make,22)
     var pair_receipt=domain.commit_pair_to(a.handle(),b.handle(),pair)
-    require(match pair_receipt.wait() { Committed(_) => true, _ => false })
+    assert(match pair_receipt.wait() { Committed(_) => true, _ => false })
     let received=match left.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }
-    require(received.get(0).unwrap_or(0)==12)
-    require(domain.read_from(a.read_handle(),read)==12 && domain.read_from(b.read_handle(),read)==22)
+    assert(received.get(0).unwrap_or(0)==12)
+    assert(domain.read_from(a.read_handle(),read)==12 && domain.read_from(b.read_handle(),read)==22)
     // Aggregate capacity includes all messages addressed to the same queue.
     let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total)
     let pair=domain.candidate_pair_from(domain.candidate_from(snapshot,make,13),make,23)
     var messages=staged(rh,13)
     var pair_rejected=domain.commit_pair_to(a.handle(),b.handle(),domain.pair_with_outbox(pair,messages))
-    require(match pair_rejected.wait() { OutboxFull => true, _ => false })
-    require(domain.read_from(a.read_handle(),read)==12 && domain.read_from(b.read_handle(),read)==22)
+    assert(match pair_rejected.wait() { OutboxFull => true, _ => false })
+    assert(domain.read_from(a.read_handle(),read)==12 && domain.read_from(b.read_handle(),read)==22)
     outbox.close(lh) outbox.close(rh)
 }
 
@@ -138,22 +138,22 @@ fn cancelled_and_expired() @suspends {
     var cancelled=domain.commit_to(h,next)
     cancelled.cancel()
     // Instruction slicing can let publication win before cancel executes.
-    let published=match cancelled.wait() { Cancelled=>false, Committed(_)=>true, _=>{require(false) false} }
+    let published=match cancelled.wait() { Cancelled=>false, Committed(_)=>true, _=>{assert(false) false} }
     if published {
         let received=match queue.receive() { Some(bytes)=>bytes, None=>Array.new::<UInt8>() }
-        require(received.get(0).unwrap_or(0)==7)
+        assert(received.get(0).unwrap_or(0)==7)
     }
     let next=domain.with_outbox(domain.candidate_from(domain.snapshot_from(h.read_only(),read),make,8),staged(target,8))
     let deadline=domain.deadline_after(0)
     var expired=domain.commit_before(h,next,&deadline)
-    require(match expired.wait() { Expired=>true, _=>false })
-    require(domain.read_from(h.read_only(),read)==if published { 7 } else { 0 })
+    assert(match expired.wait() { Expired=>true, _=>false })
+    assert(domain.read_from(h.read_only(),read)==if published { 7 } else { 0 })
     let next=domain.with_outbox(domain.candidate_from(domain.snapshot_from(h.read_only(),read),make,9),staged(target,9))
     var committed=domain.commit_to(h,next)
-    require(match committed.wait() { Committed(_)=>true, _=>false })
+    assert(match committed.wait() { Committed(_)=>true, _=>false })
     committed.cancel()
-    require(match committed.wait() { Committed(_)=>true, _=>false })
+    assert(match committed.wait() { Committed(_)=>true, _=>false })
     let received=match queue.receive() { Some(bytes)=>bytes, None=>Array.new::<UInt8>() }
-    require(received.get(0).unwrap_or(0)==9)
+    assert(received.get(0).unwrap_or(0)==9)
     outbox.close(target)
 }

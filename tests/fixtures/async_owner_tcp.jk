@@ -1,6 +1,6 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type Shutdown}
 import joky/array.{type Array}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/integer
 import joky/mem
 
@@ -38,7 +38,7 @@ fn receive(listener: &mut TcpListener) @suspends {
     let third = buffered.next()
     let end = buffered.next()
     let message = "buffered receiver retains fields through real TCP suspension"
-    require(first == 10 && second == 12 && third == 20 && end == -1, &message)
+    assert(first == 10 && second == 12 && third == 20 && end == -1, &message)
 }
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }

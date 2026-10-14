@@ -1,5 +1,5 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/string
 
 // A finite loopback echo service. Both sides use the same bounded message format.
@@ -11,27 +11,27 @@ fn serve(listener: &mut TcpListener) @suspends {
         let message = match connection.read_message(4096) {
             Ok(Some(message)) => message
             Ok(None) => { break }
-            Err(_) => { require(false, &status) return }
+            Err(_) => { assert(false, &status) return }
         }
-        require(connection.write_message(message, 4096).is_ok(), &status)
+        assert(connection.write_message(message, 4096).is_ok(), &status)
     }
-    require(connection.close().is_ok(), &status)
+    assert(connection.close().is_ok(), &status)
 }
 fn exchange(connection: &mut BufferedTcp, text: String) @suspends {
     let status = "Message client I/O"
-    require(connection.write_message(text.into_bytes(), 4096).is_ok(), &status)
-    let message = match connection.read_message(4096) { Ok(Some(message)) => message, _ => { require(false, &status) return } }
-    let response = match String.from_utf8(message) { Ok(text) => text, _ => { require(false, &status) return } }
+    assert(connection.write_message(text.into_bytes(), 4096).is_ok(), &status)
+    let message = match connection.read_message(4096) { Ok(Some(message)) => message, _ => { assert(false, &status) return } }
+    let response = match String.from_utf8(message) { Ok(text) => text, _ => { assert(false, &status) return } }
     println(response)
 }
 fn client(address: Address) @suspends {
     let status = "Message client connection"
-    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { require(false, &status) return } }
+    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { assert(false, &status) return } }
     var connection = BufferedTcp.new(stream)
     exchange(&mut connection, "hello")
     exchange(&mut connection, "你好")
     exchange(&mut connection, "")
-    require(connection.close().is_ok(), &status)
+    assert(connection.close().is_ok(), &status)
 }
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, _ => { return 1 } }

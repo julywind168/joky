@@ -280,7 +280,7 @@ fn domain_timers_failure_quarantines_target_and_stops_periodic_work() {
         let (mut vm, clock, domain, timer) = setup(mode);
         vm.load_source(&SOURCE.replace(
             "room.value=room.value+amount",
-            "let message=\"tick failed\" check.require(false,&message) room.value=amount",
+            "let message=\"tick failed\" check.assert(false,&message) room.value=amount",
         ))
         .unwrap();
         vm.publish_domain_code().unwrap();

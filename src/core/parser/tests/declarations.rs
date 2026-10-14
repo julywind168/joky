@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn intrinsic_declarations_parse_without_placeholder_bodies() {
+    let module =
+        parse(r#"#intrinsic("text.clone") pub fn duplicate(text: &String) @noescape -> String;"#)
+            .unwrap();
+    let Item::FnDef(f) = &module.items[0] else {
+        unreachable!()
+    };
+    assert!(f.public);
+    assert!(f.noescape.as_ref().unwrap().all);
+    let (index, attribute) = &module.intrinsic_attributes[0];
+    assert_eq!(*index, 0);
+    assert_eq!(attribute.name, "text.clone");
+    assert!(!attribute.has_body);
+    assert!(f.compiler_intrinsic.is_none());
+    for source in [
+        "#intrinsic fn f();",
+        "#intrinsic(42) fn f();",
+        "#intrinsic(name: \"text.clone\") fn f();",
+        "#intrinsic(\"a\", \"b\") fn f();",
+        "#intrinsic(\"a\") #intrinsic(\"b\") fn f();",
+        "fn f();",
+        "#intrinsic(\"text.clone\") fn f()",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn enums_and_match_preserve_spans_and_sequence_boundaries() {
     let source = "// 🙂\nenum Choice { Empty, Value(Int32,), } fn f(e: Choice) -> Int32 { match e { Choice.Empty => 0, Value(n,) => n; n + 1 } }";
     let module = parse(source).unwrap();

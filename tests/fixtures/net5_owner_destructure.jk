@@ -2,7 +2,7 @@ import joky/array.{type Array}
 import joky/result.{type Result}
 import joky/option.{type Option}
 import joky/task
-import joky/check.{require}
+import joky/check.{assert}
 
 type Pair = (Array<Int32>, Array<Int32>)
 struct Buckets { left: Array<Int32>, right: Array<Int32> }
@@ -59,11 +59,11 @@ fn references() -> Int32 {
 }
 fn exercise() @suspends -> Int32 {
     let message = "detachment preserves element reference dependencies"
-    require(references() == 42, &message)
+    assert(references() == 42, &message)
     var (left, right) = relay(pair())
     parallel { | append(&mut left, 1) | append(&mut right, 3) }
     let message = "detached tuple owners are independent"
-    require(left.get(1).unwrap_or(0) == 2 && right.get(1).unwrap_or(0) == 4, &message)
+    assert(left.get(1).unwrap_or(0) == 2 && right.get(1).unwrap_or(0) == 4, &message)
     var i = 0
     while i < 2 {
         var (a, b) = match wrapped() { Ok(value) => value, Err(_) => return 1 }
@@ -74,21 +74,21 @@ fn exercise() @suspends -> Int32 {
             branch { append(second, i + 1) }
         }
         let message = "Result owners survive scoped tasks and loops"
-        require(a.len() == 2 && b.len() == 2, &message)
+        assert(a.len() == 2 && b.len() == 2, &message)
         i = i + 1
     }
     var (a, b) = unpack(buckets())
     race { | hold(&mut a) | instant() }
     parallel { | append(&mut a, 5) | append(&mut b, 7) }
     let message = "record owners remain independent after cancellation"
-    require(a.len() == 3 && b.len() == 2, &message)
+    assert(a.len() == 3 && b.len() == 2, &message)
     match nested() {
         Some(((a, b), extra)) => {
             var first = a
             var second = b
             parallel { | update(&mut first) | update(&mut second) }
             let message = "nested owning records retain independent storage"
-            require(first.tag == 11 && second.tag == 12 && extra.len() == 0, &message)
+            assert(first.tag == 11 && second.tag == 12 && extra.len() == 0, &message)
         }
         None => return 2
     }

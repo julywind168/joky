@@ -1,41 +1,72 @@
 import joky/option.{type Option, Some, None}
 
 // Backend-shared IEEE primitives. These private definitions are bound by
-// identity in this embedded module; the compiler rewrites their bodies, so
-// the literal placeholders below never execute.
-fn float64_sqrt(v: Float64) -> Float64 { 0.0 }
-fn float64_floor(v: Float64) -> Float64 { 0.0 }
-fn float64_ceil(v: Float64) -> Float64 { 0.0 }
-fn float64_trunc(v: Float64) -> Float64 { 0.0 }
-fn float64_round(v: Float64) -> Float64 { 0.0 }
-fn float64_to_bits(v: Float64) -> UInt64 { 0 }
-fn float64_from_bits(bits: UInt64) -> Float64 { 0.0 }
-fn float64_to_text(v: Float64) -> String { "" }
-fn i8_from_valid_f64(v: Float64) -> Int8 { 0 }
-fn i16_from_valid_f64(v: Float64) -> Int16 { 0 }
-fn i32_from_valid_f64(v: Float64) -> Int32 { 0 }
-fn i64_from_valid_f64(v: Float64) -> Int64 { 0 }
-fn u8_from_valid_f64(v: Float64) -> UInt8 { 0 }
-fn u16_from_valid_f64(v: Float64) -> UInt16 { 0 }
-fn u32_from_valid_f64(v: Float64) -> UInt32 { 0 }
-fn u64_from_valid_f64(v: Float64) -> UInt64 { 0 }
+// annotation in this embedded module; the compiler supplies their implementation.
+#intrinsic("float.sqrt")
+fn float64_sqrt(v: Float64) -> Float64;
+#intrinsic("float.floor")
+fn float64_floor(v: Float64) -> Float64;
+#intrinsic("float.ceil")
+fn float64_ceil(v: Float64) -> Float64;
+#intrinsic("float.trunc")
+fn float64_trunc(v: Float64) -> Float64;
+#intrinsic("float.round_ties_even")
+fn float64_round(v: Float64) -> Float64;
+#intrinsic("float.to_bits")
+fn float64_to_bits(v: Float64) -> UInt64;
+#intrinsic("float.from_bits")
+fn float64_from_bits(bits: UInt64) -> Float64;
+#intrinsic("float.to_text")
+fn float64_to_text(v: Float64) -> String;
+#intrinsic("float.int_from_valid")
+fn i8_from_valid_f64(v: Float64) -> Int8;
+#intrinsic("float.int_from_valid")
+fn i16_from_valid_f64(v: Float64) -> Int16;
+#intrinsic("float.int_from_valid")
+fn i32_from_valid_f64(v: Float64) -> Int32;
+#intrinsic("float.int_from_valid")
+fn i64_from_valid_f64(v: Float64) -> Int64;
+#intrinsic("float.int_from_valid")
+fn u8_from_valid_f64(v: Float64) -> UInt8;
+#intrinsic("float.int_from_valid")
+fn u16_from_valid_f64(v: Float64) -> UInt16;
+#intrinsic("float.int_from_valid")
+fn u32_from_valid_f64(v: Float64) -> UInt32;
+#intrinsic("float.int_from_valid")
+fn u64_from_valid_f64(v: Float64) -> UInt64;
 
-fn float32_sqrt(v: Float32) -> Float32 { 0.0 }
-fn float32_floor(v: Float32) -> Float32 { 0.0 }
-fn float32_ceil(v: Float32) -> Float32 { 0.0 }
-fn float32_trunc(v: Float32) -> Float32 { 0.0 }
-fn float32_round(v: Float32) -> Float32 { 0.0 }
-fn float32_to_bits(v: Float32) -> UInt32 { 0 }
-fn float32_from_bits(bits: UInt32) -> Float32 { 0.0 }
-fn float32_to_text(v: Float32) -> String { "" }
-fn i8_from_valid_f32(v: Float32) -> Int8 { 0 }
-fn i16_from_valid_f32(v: Float32) -> Int16 { 0 }
-fn i32_from_valid_f32(v: Float32) -> Int32 { 0 }
-fn i64_from_valid_f32(v: Float32) -> Int64 { 0 }
-fn u8_from_valid_f32(v: Float32) -> UInt8 { 0 }
-fn u16_from_valid_f32(v: Float32) -> UInt16 { 0 }
-fn u32_from_valid_f32(v: Float32) -> UInt32 { 0 }
-fn u64_from_valid_f32(v: Float32) -> UInt64 { 0 }
+#intrinsic("float.sqrt")
+fn float32_sqrt(v: Float32) -> Float32;
+#intrinsic("float.floor")
+fn float32_floor(v: Float32) -> Float32;
+#intrinsic("float.ceil")
+fn float32_ceil(v: Float32) -> Float32;
+#intrinsic("float.trunc")
+fn float32_trunc(v: Float32) -> Float32;
+#intrinsic("float.round_ties_even")
+fn float32_round(v: Float32) -> Float32;
+#intrinsic("float.to_bits")
+fn float32_to_bits(v: Float32) -> UInt32;
+#intrinsic("float.from_bits")
+fn float32_from_bits(bits: UInt32) -> Float32;
+#intrinsic("float.to_text")
+fn float32_to_text(v: Float32) -> String;
+#intrinsic("float.int_from_valid")
+fn i8_from_valid_f32(v: Float32) -> Int8;
+#intrinsic("float.int_from_valid")
+fn i16_from_valid_f32(v: Float32) -> Int16;
+#intrinsic("float.int_from_valid")
+fn i32_from_valid_f32(v: Float32) -> Int32;
+#intrinsic("float.int_from_valid")
+fn i64_from_valid_f32(v: Float32) -> Int64;
+#intrinsic("float.int_from_valid")
+fn u8_from_valid_f32(v: Float32) -> UInt8;
+#intrinsic("float.int_from_valid")
+fn u16_from_valid_f32(v: Float32) -> UInt16;
+#intrinsic("float.int_from_valid")
+fn u32_from_valid_f32(v: Float32) -> UInt32;
+#intrinsic("float.int_from_valid")
+fn u64_from_valid_f32(v: Float32) -> UInt64;
 
 // Checked bounds are exact powers of two, so a float comparison decides
 // precisely even where an integer limit is not representable; NaN and the

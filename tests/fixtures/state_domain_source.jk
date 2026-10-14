@@ -3,7 +3,7 @@ import joky/task
 import joky/check
 import joky/array.{type Array}
 
-fn require(condition: Bool, message: String) { check.require(condition, &message) }
+fn assert(condition: Bool, message: String) { check.assert(condition, &message) }
 
 fn status(result: Result<Int32, domain.RequestError>) -> Int32 {
     match result {
@@ -37,12 +37,12 @@ fn poison(zero: Int32) @suspends -> Int32 { domain.write(fail_write, zero) }
 fn echo(value: Int32) @suspends -> Int32 { value }
 fn delayed(delta: Int32) @suspends -> Int32 { task.sleep_ms(10000) domain.write(add, delta) }
 fn launch(handle: domain.WriteHandle<State>, delta: Int32) @suspends {
-    require(domain.request(handle, work, delta).is_ok(), "request completed")
+    assert(domain.request(handle, work, delta).is_ok(), "request completed")
 }
 fn wait_for_close(handle: domain.WriteHandle<State>) @suspends {
     match domain.request(handle, delayed, 100) {
         Err(domain.RequestError.Closed) => {}
-        _ => { require(false, "close joined the request") }
+        _ => { assert(false, "close joined the request") }
     }
 }
 fn close_owner(owner: domain.Owner<State>) @suspends { owner.close() }
@@ -63,27 +63,27 @@ fn main() @suspends {
     var readers = Array.new::<domain.ReadHandle<State>>()
     readers.push(reader)
     let stored = readers.get(0).unwrap_or(reader)
-    require(domain.read_from(stored, read) == 10, "copy handles in owned storage")
+    assert(domain.read_from(stored, read) == 10, "copy handles in owned storage")
     parallel { | launch(handle, 2) | launch(handle, 3) }
-    require(domain.read_from(reader, read) == 15, "serialized writes")
-    require(status(domain.request(handle, broken, 0)) == 1, "request failure is isolated")
-    require(status(domain.request_read(reader, work, 5)) == 5, "read grant cannot write")
-    require(status(domain.request(handle, wrong_request, 0)) == 5, "nominal state mismatch")
-    require(domain.read_from(reader, read) == 15, "failure preserved state")
-    require(domain.request(handle, echo, -2147483648).unwrap_or(0) == -2147483648, "minimum scalar result")
-    require(domain.request(handle, echo, 2147483647).unwrap_or(0) == 2147483647, "maximum scalar result")
+    assert(domain.read_from(reader, read) == 15, "serialized writes")
+    assert(status(domain.request(handle, broken, 0)) == 1, "request failure is isolated")
+    assert(status(domain.request_read(reader, work, 5)) == 5, "read grant cannot write")
+    assert(status(domain.request(handle, wrong_request, 0)) == 5, "nominal state mismatch")
+    assert(domain.read_from(reader, read) == 15, "failure preserved state")
+    assert(domain.request(handle, echo, -2147483648).unwrap_or(0) == -2147483648, "minimum scalar result")
+    assert(domain.request(handle, echo, 2147483647).unwrap_or(0) == 2147483647, "maximum scalar result")
     race { | slow(handle) | ready() }
-    require(domain.read_from(reader, read) == 15, "race cancelled pending work")
+    assert(domain.read_from(reader, read) == 15, "race cancelled pending work")
     parallel { | wait_for_close(handle) | close_owner(owner) }
-    require(status(domain.request(handle, work, 1)) == 3, "closed handles stay invalid")
+    assert(status(domain.request(handle, work, 1)) == 3, "closed handles stay invalid")
     let stale = { let temporary = domain.create(make, 1) temporary.handle() }
-    require(status(domain.request(stale, work, 1)) == 3, "drop closes state")
+    assert(status(domain.request(stale, work, 1)) == 3, "drop closes state")
     let other = domain.create(make, 7)
     let poisoned = domain.create(make, 5)
     let poison_handle = poisoned.handle()
-    require(status(domain.request(poison_handle, poison, 0)) == 6, "write failure isolates domain")
-    require(status(domain.request(poison_handle, work, 1)) == 6, "failed domain remains distinct from closed")
-    require(domain.read_from(other.read_handle(), read) == 7, "unrelated domain survives")
-    require(lifecycle() == 24, "source lifecycle")
+    assert(status(domain.request(poison_handle, poison, 0)) == 6, "write failure isolates domain")
+    assert(status(domain.request(poison_handle, work, 1)) == 6, "failed domain remains distinct from closed")
+    assert(domain.read_from(other.read_handle(), read) == 7, "unrelated domain survives")
+    assert(lifecycle() == 24, "source lifecycle")
     println("source domains ok")
 }

@@ -2,7 +2,7 @@ import joky/json/typed as typed.{type ToJson, type FromJson, type Context, type 
 import joky/json as json.{type Value, type Number}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/integer
@@ -42,7 +42,7 @@ impl FromJson for SmallRecord {
         Ok(SmallRecord { value: value })
     }
 }
-fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value

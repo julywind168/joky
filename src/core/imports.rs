@@ -125,6 +125,13 @@ fn bind(
     libraries: &BTreeMap<String, sources::SourceModule>,
     buffer_access: bool,
 ) -> Result<(ImportScope, BTreeSet<String>), Error> {
+    if let Some((_, attribute)) = module.intrinsic_attributes.first() {
+        return Err(error(
+            attribute.span,
+            ErrorCode::InvalidImport,
+            "#intrinsic is restricted to trusted embedded standard-library definitions",
+        ));
+    }
     let mut scope = ImportScope::default();
     let mut required = BTreeSet::new();
     let mut seen_paths = BTreeSet::new();

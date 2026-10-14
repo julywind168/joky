@@ -1,13 +1,13 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type IoError, type ErrorKind, type Shutdown}
 import joky/array.{type Array}
 import joky/result.{type Result}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/task
-fn assert_ok(result: Result<Unit, IoError>) { let message = "TCP status" require(result.is_ok(), &message) }
+fn assert_ok(result: Result<Unit, IoError>) { let message = "TCP status" assert(result.is_ok(), &message) }
 fn check_bytes(bytes: Array<UInt8>, expected: UInt64) {
     let message = "TCP bytes"
-    require(bytes.len() == expected, &message)
-    if expected > 0 { require(bytes.get(0).unwrap_or(99) == 0, &message) }
+    assert(bytes.len() == expected, &message)
+    if expected > 0 { assert(bytes.get(0).unwrap_or(99) == 0, &message) }
 }
 fn server(listener: &mut TcpListener) @suspends -> Int32 {
     var stream = match listener.accept() { Ok(stream) => stream, Err(error) => { return 1 } }
@@ -25,11 +25,11 @@ fn server(listener: &mut TcpListener) @suspends -> Int32 {
 }
 fn check_tail(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
     let message = "TCP non-UTF8 tail"
-    require(bytes.len() > 0, &message)
+    assert(bytes.len() > 0, &message)
     var i: UInt64 = 0
     while i < bytes.len() {
         let expected: UInt8 = if offset + i == 0 { 128 } else { if offset + i == 1 { 255 } else { 42 } }
-        require(bytes.get(i).unwrap_or(0) == expected, &message)
+        assert(bytes.get(i).unwrap_or(0) == expected, &message)
         i = i + 1
     }
     i
@@ -39,19 +39,19 @@ fn client(address: Address) @suspends -> Int32 {
     var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { return 5 } }
     let peer = match stream.peer_addr() { Ok(peer) => peer, Err(error) => { return 6 } }
     let message = "TCP endpoints"
-    require(peer.port() == address.port() && peer.is_ipv6() == address.is_ipv6() && peer.low() == address.low(), &message)
+    assert(peer.port() == address.port() && peer.is_ipv6() == address.is_ipv6() && peer.low() == address.low(), &message)
     let local = match stream.local_addr() { Ok(local) => local, Err(error) => { return 7 } }
-    require(local.port() != 0, &message)
-    require(match stream.read(0) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
-    require(match stream.read(1048577) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
+    assert(local.port() != 0, &message)
+    assert(match stream.read(0) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
+    assert(match stream.read(1048577) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
     let empty = match stream.write(Array.new::<UInt8>()) { Ok(count) => count, Err(error) => { return 8 } }
-    require(empty == 0, &message)
+    assert(empty == 0, &message)
     let count = match stream.write(payload()) { Ok(count) => count, Err(error) => { return 9 } }
-    require(count == 4, &message)
+    assert(count == 4, &message)
     assert_ok(stream.shutdown(Shutdown.Write))
     // A shutdown writer must report Err, without confusing the reader's EOF.
     let rejected = match stream.write(payload()) { Err(error) => true, Ok(count) => false }
-    require(rejected, &message)
+    assert(rejected, &message)
     assert_ok(stream.close())
     42
 }
@@ -68,7 +68,7 @@ fn errors() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
     let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 2 } }
     let message = "TCP bind collision"
-    require(match TcpListener.bind(bound) { Err(error) => match error.kind() { AddrInUse => error.os_code() != 0, _ => false }, Ok(other) => false }, &message)
+    assert(match TcpListener.bind(bound) { Err(error) => match error.kind() { AddrInUse => error.os_code() != 0, _ => false }, Ok(other) => false }, &message)
     assert_ok(listener.close())
 
     42
@@ -87,7 +87,7 @@ fn reuse() @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 { addresses() if ipv4() != 42 {return 1} if ipv6() != 42 {return 2} if errors() != 42 {return 3} if reuse() != 42 {return 4} if all() != 42 {return 5} 0 }
 
-fn assert_value(value: Int32) { let message = "TCP roundtrip" require(value == 42, &message) }
+fn assert_value(value: Int32) { let message = "TCP roundtrip" assert(value == 42, &message) }
 fn serve(listener: &mut TcpListener) @suspends { assert_value(server(listener)) }
 fn send(address: Address) @suspends { assert_value(client(address)) }
 fn wait_accept(listener: &mut TcpListener) @suspends { listener.accept(); }
@@ -95,7 +95,7 @@ fn wait_accept(listener: &mut TcpListener) @suspends { listener.accept(); }
 fn addresses() {
     let endpoint = Address.ipv6(0xfe80000000000000, 1, 443).with_scope(42)
     let message = "TCP numeric address"
-    require(endpoint.scope_id() == 42 && endpoint.port() == 443 && endpoint.high() == 0xfe80000000000000 && endpoint.low() == 1 && endpoint.is_ipv6(), &message)
+    assert(endpoint.scope_id() == 42 && endpoint.port() == 443 && endpoint.high() == 0xfe80000000000000 && endpoint.low() == 1 && endpoint.is_ipv6(), &message)
 }
 
 fn send_all(address: Address) @suspends {

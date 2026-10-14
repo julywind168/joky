@@ -7,44 +7,44 @@ import joky/check
 import joky/array.{type Array}
 import joky/tcp.{type TcpStream,type TcpListener,type TcpReader,type TcpWriter,type Address,type Shutdown}
 struct Context { directory:domain.DirectoryHandle, output:outbox.Handle, timer:domain.TimerHandle }
-fn require(ok:Bool) {let message="reload server host" check.require(ok,&message)}
+fn assert(ok:Bool) {let message="reload server host" check.assert(ok,&message)}
 fn checkpoint(phase:Int32) @suspends {task.yield_now()}
 fn wait_tick(h:vm.Handle,ctx:Context,version:Int32) @suspends {
     var attempts=0
     while script.call::<Context,Int32>(h,"tick_version",ctx)!=version {
-        attempts=attempts+1 require(attempts<1000) task.sleep_ms(1)
+        attempts=attempts+1 assert(attempts<1000) task.sleep_ms(1)
     }
 }
 fn stage(h:vm.Handle) {
     let next=__MIGRATED__
     let start="start" let advance="advance" let upgrade="upgrade_ledger" let empty=""
-    require(vm.begin_migration_batch(h,&next)==0)
-    require(vm.stage_migration(h,&start,&advance)==0)
-    require(vm.stage_migration(h,&upgrade,&empty)==0)
-    require(vm.step_migration(h,1)==1)
+    assert(vm.begin_migration_batch(h,&next)==0)
+    assert(vm.stage_migration(h,&start,&advance)==0)
+    assert(vm.stage_migration(h,&upgrade,&empty)==0)
+    assert(vm.step_migration(h,1)==1)
 }
 fn writer(queue:outbox.Mailbox,stream:TcpWriter) @suspends {
     var queue=queue var stream=stream var sent=0
     while sent<6 {
-        let bytes=match queue.receive() {Some(b)=>b,None=>{require(false) return}}
-        require(bytes.len()==1)
-        require(stream.write_all(bytes).is_ok())
+        let bytes=match queue.receive() {Some(b)=>b,None=>{assert(false) return}}
+        assert(bytes.len()==1)
+        assert(stream.write_all(bytes).is_ok())
         sent=sent+1
     }
-    require(stream.shutdown().is_ok())
+    assert(stream.shutdown().is_ok())
 }
 fn server(h:vm.Handle,ctx:Context,stream:TcpReader) @suspends {
     var stream=stream var requests=0
     while true {
-        let bytes=match stream.read(1) {Ok(b)=>b,Err(_)=>{require(false) return}}
+        let bytes=match stream.read(1) {Ok(b)=>b,Err(_)=>{assert(false) return}}
         if bytes.is_empty() {break}
         let command=bytes.get(0).unwrap_or(0)
         if command==2 || command==3 {
             let source=if command==2 {__PATCH2__} else {__PATCH3__}
-            require(vm.load_source(h,&source)==0)
-            require(vm.publish_domain_code(h)==3)
+            assert(vm.load_source(h,&source)==0)
+            assert(vm.publish_domain_code(h)==3)
             wait_tick(h,ctx,if command==2 {2} else {3})
-            require(vm.module_count(h)==2)
+            assert(vm.module_count(h)==2)
             checkpoint(if command==2 {2} else {3})
         }
         if command==4 {
@@ -53,33 +53,33 @@ fn server(h:vm.Handle,ctx:Context,stream:TcpReader) @suspends {
             stage(h)
             checkpoint(4)
             // The same connection still admits a real request while candidates exist.
-            let incoming=match stream.read(1) {Ok(b)=>b,Err(_)=>{require(false) return}}
-            require(incoming.len()==1 && incoming.get(0).unwrap_or(0)==1)
-            require(script.call::<Context,Int32>(h,"request",ctx)==9)
+            let incoming=match stream.read(1) {Ok(b)=>b,Err(_)=>{assert(false) return}}
+            assert(incoming.len()==1 && incoming.get(0).unwrap_or(0)==1)
+            assert(script.call::<Context,Int32>(h,"request",ctx)==9)
             requests=requests+1
-            require(vm.step_migration(h,1)==-1)
-            require(vm.publish_migration(h)==1)
-            require(script.call::<Context,Int32>(h,"probe",ctx)==9)
+            assert(vm.step_migration(h,1)==-1)
+            assert(vm.publish_migration(h)==1)
+            assert(script.call::<Context,Int32>(h,"probe",ctx)==9)
             stage(h)
             checkpoint(5)
             var status=1 var steps=0
             while status==1 {
                 task.yield_now()
                 status=vm.step_migration(h,1)
-                steps=steps+1 require(steps<=3)
+                steps=steps+1 assert(steps<=3)
             }
-            require(status==0 && steps==3)
-            require(vm.publish_migration(h)==0)
-            require(script.call::<Context,Int32>(h,"probe",ctx)==9)
-            require(script.call::<Context,Bool>(h,"start_tick",ctx))
+            assert(status==0 && steps==3)
+            assert(vm.publish_migration(h)==0)
+            assert(script.call::<Context,Int32>(h,"probe",ctx)==9)
+            assert(script.call::<Context,Bool>(h,"start_tick",ctx))
             wait_tick(h,ctx,4)
             checkpoint(6)
-        } else {require(command>=1 && command<=5)}
-        require(script.call::<Context,Int32>(h,"request",ctx)>0)
+        } else {assert(command>=1 && command<=5)}
+        assert(script.call::<Context,Int32>(h,"request",ctx)>0)
         requests=requests+1
     }
-    require(requests==6)
-    require(script.call::<Context,Int32>(h,"probe",ctx)==17)
+    assert(requests==6)
+    assert(script.call::<Context,Int32>(h,"probe",ctx)==17)
     ctx.timer.cancel()
 }
 fn peer(stream:TcpStream) @suspends {
@@ -88,31 +88,31 @@ fn peer(stream:TcpStream) @suspends {
         var bytes=Array.new::<UInt8>() bytes.push(command)
         // Pipeline a request behind the migration command; no reconnect or retry.
         if command==4 {bytes.push(1)}
-        require(stream.write_all(bytes).is_ok())
+        assert(stream.write_all(bytes).is_ok())
         var remaining=if command==4 {2} else {1}
         while remaining>0 {
-            let result=match stream.read(1) {Ok(b)=>b,Err(_)=>{require(false) return}}
+            let result=match stream.read(1) {Ok(b)=>b,Err(_)=>{assert(false) return}}
             let expected=if replies==0 {1} else if replies==1 {3} else if replies==2 {6} else if replies==3 {9} else if replies==4 {13} else {17}
-            require(result.len()==1 && result.get(0).unwrap_or(0).to_i32().unwrap_or(0)==expected)
+            assert(result.len()==1 && result.get(0).unwrap_or(0).to_i32().unwrap_or(0)==expected)
             replies=replies+1 remaining=remaining-1
         }
         command=command+1
     }
-    require(stream.shutdown(Shutdown.Write).is_ok())
-    let eof=match stream.read(1) {Ok(b)=>b,Err(_)=>{require(false) return}}
-    require(eof.is_empty() && replies==6)
+    assert(stream.shutdown(Shutdown.Write).is_ok())
+    let eof=match stream.read(1) {Ok(b)=>b,Err(_)=>{assert(false) return}}
+    assert(eof.is_empty() && replies==6)
 }
 fn connection(h:vm.Handle,ctx:Context,queue:outbox.Mailbox) @suspends {
     var attempts=0
     while script.call::<Context,Int32>(h,"probe",ctx)==-1 || script.call::<Context,Int32>(h,"tick_version",ctx)==-1 {
-        attempts=attempts+1 require(attempts<1000) task.yield_now()
+        attempts=attempts+1 assert(attempts<1000) task.yield_now()
     }
-    require(script.call::<Context,Bool>(h,"start_tick",ctx))
+    assert(script.call::<Context,Bool>(h,"start_tick",ctx))
     wait_tick(h,ctx,1)
-    var listener=match TcpListener.bind(Address.ipv4(0x7f000001,0)) {Ok(l)=>l,Err(_)=>{require(false) return}}
-    let address=match listener.local_addr() {Ok(a)=>a,Err(_)=>{require(false) return}}
-    let client=match TcpStream.connect(address) {Ok(s)=>s,Err(_)=>{require(false) return}}
-    let accepted=match listener.accept() {Ok(s)=>s,Err(_)=>{require(false) return}}
+    var listener=match TcpListener.bind(Address.ipv4(0x7f000001,0)) {Ok(l)=>l,Err(_)=>{assert(false) return}}
+    let address=match listener.local_addr() {Ok(a)=>a,Err(_)=>{assert(false) return}}
+    let client=match TcpStream.connect(address) {Ok(s)=>s,Err(_)=>{assert(false) return}}
+    let accepted=match listener.accept() {Ok(s)=>s,Err(_)=>{assert(false) return}}
     listener.close()
     let (reader,output)=accepted.split()
     checkpoint(1)
@@ -121,14 +121,14 @@ fn connection(h:vm.Handle,ctx:Context,queue:outbox.Mailbox) @suspends {
 fn run() @suspends {
     let h=vm.__CREATE__()
     let old=__OLD__
-    require(vm.load_source(h,&old)==0)
+    assert(vm.load_source(h,&old)==0)
     let directory=domain.directory(3) let timer=domain.timer() let queue=outbox.create(4,4)
     let ctx=Context{directory:directory.handle(),output:queue.handle(),timer:timer.handle()}
     race { | script.call::<Context,Unit>(h,"hold",ctx) | connection(h,ctx,queue) };
-    require(script.call::<Context,Int32>(h,"probe",ctx)==-1)
-    require(vm.module_count(h)==1)
-    require(vm.close(h)==0)
+    assert(script.call::<Context,Int32>(h,"probe",ctx)==-1)
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
     timer.close() directory.close()
 }
-fn watchdog() @suspends {task.sleep_ms(30000) require(false)}
+fn watchdog() @suspends {task.sleep_ms(30000) assert(false)}
 fn main() @suspends ->Int32 {race { | run() | watchdog() }; 0}

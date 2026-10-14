@@ -1,7 +1,7 @@
 import joky/tcp.{type Address, type TcpStream, type IoError}
 import joky/array.{type Array}
 import joky/result.{type Result}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/integer
 import joky/task as clock
 import godot/task
@@ -12,7 +12,7 @@ fn completed(state: &State) -> Int32 { state.completed }
 fn timed_out(state: &State) -> Int32 { state.timed_out }
 fn finish(state: &mut State) { state.completed = state.completed + 1 }
 fn timeout(state: &mut State) { state.timed_out = state.timed_out + 1 }
-fn checked(result: Result<Unit, IoError>) { let message = "Godot TCP status" require(result.is_ok(), &message) }
+fn checked(result: Result<Unit, IoError>) { let message = "Godot TCP status" assert(result.is_ok(), &message) }
 fn bytes() -> Array<UInt8> {
     var bytes = Array.new::<UInt8>()
     bytes.push(0) bytes.push(128) bytes.push(255) bytes.push(42)
@@ -20,11 +20,11 @@ fn bytes() -> Array<UInt8> {
 }
 fn verify(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
     let message = "Godot TCP bytes"
-    require(bytes.len() > 0, &message)
+    assert(bytes.len() > 0, &message)
     var i: UInt64 = 0
     while i < bytes.len() {
         let value: UInt8 = if offset + i == 0 { 0 } else { if offset + i == 1 { 128 } else { if offset + i == 2 { 255 } else { 42 } } }
-        require(bytes.get(i).unwrap_or(99) == value, &message)
+        assert(bytes.get(i).unwrap_or(99) == value, &message)
         i = i + 1
     }
     i
@@ -50,7 +50,7 @@ fn task_exchange(port: Int32) @suspends {
 fn unexpected_read(stream: &mut TcpStream) @suspends {
     stream.read(16);
     let message = "TCP read should remain pending"
-    require(false, &message)
+    assert(false, &message)
 }
 fn task_timeout(port: Int32) @suspends {
     var stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) {

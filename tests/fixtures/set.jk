@@ -5,11 +5,11 @@ import joky/drop.{type Drop}
 import joky/option.{type Option, Some, None}
 import joky/eq.{type BorrowEq}
 import joky/hash.{type BorrowHash}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/mem
 import joky/string
 extern fn record_int(value: Int32)
-fn ensure(condition: Bool, message: String) { require(condition, &message) }
+fn ensure(condition: Bool, message: String) { assert(condition, &message) }
 struct Key { id: Int32, group: Int32, data: String }
 impl Drop for Key { fn drop(&mut self) { record_int(self.id) } }
 impl BorrowEq for Key { fn eq_ref(&self, other: &Self) -> Bool { self.group == other.group } }

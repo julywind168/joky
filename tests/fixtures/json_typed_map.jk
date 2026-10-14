@@ -1,11 +1,11 @@
 import joky/json/typed as typed.{type ToJson, type FromJson}
 import joky/result.{Ok, Err}
 import joky/option.{type Option}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/array.{type Array}
 import joky/map.{type Map}
 
-fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value

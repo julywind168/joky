@@ -1,10 +1,10 @@
-import joky/check.{require}
+import joky/check.{assert}
 import joky/io.{println}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 import joky/mem as mem
 
-fn expect(ok: Bool) { let message = "Tuple member mismatch"; require(ok, &message) }
+fn expect(ok: Bool) { let message = "Tuple member mismatch"; assert(ok, &message) }
 
 struct Leaf { value: Int32 }
 impl Leaf { fn bump(&mut self) { self.value += 2 } }

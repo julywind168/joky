@@ -1,5 +1,5 @@
 import godot/task as task
-import joky/check.{require}
+import joky/check.{assert}
 // Handles belong to the issuing program and never contain engine addresses.
 pub struct Node { token: Int32 }
 pub struct Vector2 { pub x: Float64, pub y: Float64 }
@@ -17,36 +17,36 @@ extern fn godot_node_host_position(token: Int32, x: Float64, y: Float64) -> Int3
 pub fn none() -> Node { Node { token: 0 } }
 pub fn self() -> Node {
     let token = godot_node_host_self()
-    if !(token != 0) { let message = "Godot owner is unavailable" require(false, &message) }
+    if !(token != 0) { let message = "Godot owner is unavailable" assert(false, &message) }
     Node { token: token }
 }
 pub fn is_valid(node: Node) -> Bool { godot_node_host_valid(node.token) != 0 }
 pub fn get_node(node: Node, path: &String) @noescape -> Node {
-    if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
+    if !(is_valid(node)) { let message = "Godot Node handle is invalid" assert(false, &message) }
     let token = godot_node_host_child(node.token, path)
-    if !(token != 0) { let message = "Godot child Node was not found" require(false, &message) }
+    if !(token != 0) { let message = "Godot child Node was not found" assert(false, &message) }
     Node { token: token }
 }
 pub fn name(node: Node) -> String {
-    if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
+    if !(is_valid(node)) { let message = "Godot Node handle is invalid" assert(false, &message) }
     godot_node_host_name(node.token)
 }
 pub fn set_name(node: Node, name: &String) @noescape {
-    if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
-    if !(godot_node_host_rename(node.token, name) != 0) { let message = "Godot Node rename failed" require(false, &message) }
+    if !(is_valid(node)) { let message = "Godot Node handle is invalid" assert(false, &message) }
+    if !(godot_node_host_rename(node.token, name) != 0) { let message = "Godot Node rename failed" assert(false, &message) }
 }
 pub fn queue_free(node: Node) {
-    if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
-    if !(godot_node_host_free(node.token) != 0) { let message = "Godot Node deletion failed" require(false, &message) }
+    if !(is_valid(node)) { let message = "Godot Node handle is invalid" assert(false, &message) }
+    if !(godot_node_host_free(node.token) != 0) { let message = "Godot Node deletion failed" assert(false, &message) }
 }
 pub fn position(node: Node) -> Vector2 {
-    if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
-    if !(godot_node_host_kind(node.token) != 0) { let message = "Godot position requires Node2D" require(false, &message) }
+    if !(is_valid(node)) { let message = "Godot Node handle is invalid" assert(false, &message) }
+    if !(godot_node_host_kind(node.token) != 0) { let message = "Godot position requires Node2D" assert(false, &message) }
     Vector2 { x: godot_node_host_x(node.token), y: godot_node_host_y(node.token) }
 }
 pub fn set_position(node: Node, position: Vector2) {
-    if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
-    if !(godot_node_host_position(node.token, position.x, position.y) != 0) { let message = "Godot position requires a Node2D and finite vector components in engine range" require(false, &message) }
+    if !(is_valid(node)) { let message = "Godot Node handle is invalid" assert(false, &message) }
+    if !(godot_node_host_position(node.token, position.x, position.y) != 0) { let message = "Godot position requires a Node2D and finite vector components in engine range" assert(false, &message) }
 }
 pub fn translate(node: Node, delta: Vector2) {
     let current = position(node)
@@ -58,7 +58,7 @@ pub struct Signal { token: Int32 }
 extern fn godot_node_host_signal(token: Int32, name: &String) -> Int32
 pub fn signal(node: Node, name: &String) @noescape -> Signal {
     let token = godot_node_host_signal(node.token, name)
-    if !(token != 0) { let message = "Godot signal was not found" require(false, &message) }
+    if !(token != 0) { let message = "Godot signal was not found" assert(false, &message) }
     Signal { token: token }
 }
 pub fn wait_signal(signal: Signal) @suspends {

@@ -4,9 +4,9 @@ import joky/map.{type Map}
 import joky/string.{type StringBuilder}
 import joky/mem
 import joky/task
-import joky/check.{require}
+import joky/check.{assert}
 
-fn ensure(ok: Bool) { let message = "JSON1b value contract" require(ok, &message) }
+fn ensure(ok: Bool) { let message = "JSON1b value contract" assert(ok, &message) }
 fn number(text: String) -> Number {
     match Number.from_text(&text) {
         Ok(value) => value

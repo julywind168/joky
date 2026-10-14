@@ -7,10 +7,14 @@ import joky/integer
 import joky/result.{type Result, Ok, Err}
 import joky/check
 
-fn copy_text(text: &String) -> String { "" }
-fn freeze_utf8(bytes: Array<UInt8>) -> String { "" }
-pub fn into_bytes(text: String) -> Array<UInt8> { Array.new::<UInt8>() }
-pub fn bytes(text: &String) -> &Slice<UInt8> { storage.subslice::<UInt8>(bytes(text), 0, 0) }
+#intrinsic("text.clone")
+fn copy_text(text: &String) @noescape -> String;
+#intrinsic("text.freeze_utf8")
+fn freeze_utf8(bytes: Array<UInt8>) -> String;
+#intrinsic("text.into_bytes")
+pub fn into_bytes(text: String) -> Array<UInt8>;
+#intrinsic("text.bytes")
+pub fn bytes(text: &String) -> &Slice<UInt8>;
 
 pub enum Utf8ErrorCode { InvalidSequence, UnexpectedEnd }
 pub struct Utf8Error { pub code: Utf8ErrorCode, pub offset: UInt64 }
@@ -80,11 +84,11 @@ pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
     let length = slices.len(source)
     if offset > length {
         let message = "String.next_rune offset is out of bounds"
-        check.require(false, &message)
+        check.assert(false, &message)
     }
     if !boundary(source, offset) {
         let message = "String.next_rune offset is not a UTF-8 boundary"
-        check.require(false, &message)
+        check.assert(false, &message)
     }
     if offset == length { return None }
     match decode(source, offset) { Ok(value) => Some(value), Err(_) => None }

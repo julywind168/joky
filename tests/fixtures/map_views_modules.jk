@@ -1,5 +1,5 @@
 import joky/slice as slices
-import joky/check.{require}
+import joky/check.{assert}
 import map_views_library as views.{type Dictionary}
 import joky/map.{type Map}
 import joky/array.{type Array}
@@ -31,14 +31,14 @@ fn iteration<Tag>() -> Int32 {
     var next = Array.new::<(Int32, &Int32)>() next.push((1, (&*(alloc(20))))) next.push((2, (&*(alloc(22)))))
     views.extend(&mut m, next)
     let keys = views.keys(&m)
-    { let assertion_condition = slices.len(keys) == 2 let assertion_message = "Imported keys" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = slices.len(keys) == 2 let assertion_message = "Imported keys" assert(assertion_condition, &assertion_message) }
     let copy = slices.get(views.values(&m), 0)
     slices.set(views.values_mut(&mut m), 0, (&*(alloc(20))))
     let popped = views.pop(&mut m)
     var output = views.export(m)
     let (key, value) = output.take_last()
     output.release()
-    match copy { Some(n) => { { let assertion_condition = (*n) == 20 let assertion_message = "Copied reference after export" require(assertion_condition, &assertion_message) } }, None => {} }
+    match copy { Some(n) => { { let assertion_condition = (*n) == 20 let assertion_message = "Copied reference after export" assert(assertion_condition, &assertion_message) } }, None => {} }
     match popped { Some((k, v)) => (*v) + (*value), None => 0 }
 }
 fn main() { record_int(copies::<Unit>()) }

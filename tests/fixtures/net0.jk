@@ -3,7 +3,7 @@ import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
 import joky/drop.{type Drop}
 import joky/task
-import joky/check.{require}
+import joky/check.{assert}
 
 #repr(C) struct NetRequest {
     marker: Int32, mode: Int32, limit: Int32, received: Int32,
@@ -11,7 +11,7 @@ import joky/check.{require}
 }
 extern fn net0_read(request: &mut NetRequest) @suspends -> Int32
 extern fn net0_event(value: Int32)
-fn ensure(condition: Bool) { let message = "NET0 contract violation" require(condition, &message) }
+fn ensure(condition: Bool) { let message = "NET0 contract violation" assert(condition, &message) }
 struct Packet { bytes: Array<UInt8> }
 impl Drop for Packet { fn drop(&mut self) { net0_event(20) } }
 struct PendingBytes { bytes: Array<UInt8> }
@@ -81,7 +81,7 @@ fn timeout() @suspends -> Int32 {
 }
 fn fail_now() {
     let message = "NET0 parent failure"
-    require(false, &message)
+    assert(false, &message)
 }
 fn fail_later() @suspends { task.sleep_ms(10) fail_now() }
 fn sibling_failure() @suspends -> Int32 {

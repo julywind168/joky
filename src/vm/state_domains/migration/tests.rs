@@ -98,7 +98,7 @@ fn migration_conflicts_failures_cancellation_and_schema_identity_preserve_old_ro
         assert!(prepare(&vm, &registry, &owners, 0, NEW, "upgrade").is_err());
         for source in [
             NEW.replace("int64(old.score)","int64(old.missing)"),
-            NEW.replace("fn upgrade(old:&PreviousState)->Room {", "fn upgrade(old:&PreviousState)->Room {let message=\"failed migration\" check.require(false,&message) ").replace("import joky/domain","import joky/domain import joky/check"),
+            NEW.replace("fn upgrade(old:&PreviousState)->Room {", "fn upgrade(old:&PreviousState)->Room {let message=\"failed migration\" check.assert(false,&message) ").replace("import joky/domain","import joky/domain import joky/check"),
             format!("{NEW}\nstruct PreviousState {{score:Int32}}"),
             NEW.replace("old:&PreviousState","old:&mut PreviousState"),
         ] {
@@ -355,7 +355,7 @@ fn migration_owned_failures_and_intervening_writes_preserve_the_old_graph() {
         let owners = vec![vm.script_code_owner().unwrap()];
         let registry = vm.domains.clone();
         let before = registry.borrow().usage();
-        let failing=OWNED_NEW.replace("import joky/domain","import joky/domain import joky/check").replace("    let mode=", "    let reason=\"migration failed after allocation\" check.require(false,&reason)\n    let mode=");
+        let failing=OWNED_NEW.replace("import joky/domain","import joky/domain import joky/check").replace("    let mode=", "    let reason=\"migration failed after allocation\" check.assert(false,&reason)\n    let mode=");
         assert!(prepare_new(&vm, &owners, &failing).is_err());
         assert_eq!(registry.borrow().usage(), before);
         let plan = prepare_new(&vm, &owners, OWNED_NEW).unwrap();

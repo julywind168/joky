@@ -1,3 +1,5 @@
 // The compiler binds this checked operation and preserves its call location.
-fn require(condition: Bool, message: &String) @noescape {}
-fn panic(message: &String) @noescape {}
+#intrinsic("check.assert")
+fn assert(condition: Bool, message: &String) @noescape;
+#intrinsic("check.panic")
+fn panic(message: &String) @noescape;

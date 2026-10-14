@@ -1,7 +1,7 @@
 import joky/domain
 import joky/task
 import joky/check
-fn require(value: Bool) { let message = "domain pair" check.require(value, &message) }
+fn assert(value: Bool) { let message = "domain pair" check.assert(value, &message) }
 struct Wallet { count: Int32 }
 struct Rules { maximum: Int32 }
 fn make(count: Int32) -> Wallet { Wallet { count: count } }
@@ -41,24 +41,24 @@ fn lifecycle() @suspends -> Int32 {
     let old_a = domain.snapshot_from(a.read_only(), read)
     let old_b = domain.snapshot_from(b.read_only(), read)
     let old_rule = domain.snapshot_from(rule.read_handle(), limit)
-    require(domain.read_pair(a.read_only(), b.read_only(), sum) == 30)
-    require(domain.read_pair(a.read_only(), a.read_only(), sum) == 20)
+    assert(domain.read_pair(a.read_only(), b.read_only(), sum) == 30)
+    assert(domain.read_pair(a.read_only(), a.read_only(), sum) == 20)
     task.yield_now()
-    require(domain.write_pair(a, b, transfer, 3) == 7)
-    require(match old_a.check() { Conflict => true, _ => false })
-    require(match old_b.check() { Conflict => true, _ => false })
-    require(domain.update_pair(rule.read_handle(), a, apply, 5))
+    assert(domain.write_pair(a, b, transfer, 3) == 7)
+    assert(match old_a.check() { Conflict => true, _ => false })
+    assert(match old_b.check() { Conflict => true, _ => false })
+    assert(domain.update_pair(rule.read_handle(), a, apply, 5))
     let saved = domain.snapshot_from(a.read_only(), read)
-    require(!domain.update_pair(rule.read_handle(), a, apply, 100))
-    require(match saved.check() { Conflict => true, _ => false })
-    require(match old_rule.check() { Current => true, _ => false })
-    require(domain.read_pair(a.read_only(), b.read_only(), sum) == 35)
+    assert(!domain.update_pair(rule.read_handle(), a, apply, 100))
+    assert(match saved.check() { Conflict => true, _ => false })
+    assert(match old_rule.check() { Current => true, _ => false })
+    assert(domain.read_pair(a.read_only(), b.read_only(), sum) == 35)
     let high = domain.create(wide, 18446744073709551615)
     let low = domain.create(wide, 0)
-    require(domain.read_pair(high.read_handle(), low.read_handle(), bits) == 18446744073709551615)
-    require(domain.read_pair(high.read_handle(), low.read_handle(), real).to_bits() == 9221120237041090626)
+    assert(domain.read_pair(high.read_handle(), low.read_handle(), bits) == 18446744073709551615)
+    assert(domain.read_pair(high.read_handle(), low.read_handle(), real).to_bits() == 9221120237041090626)
     domain.write_pair(low.handle(), high.handle(), unit, {})
-    require(domain.read_pair(low.read_handle(), high.read_handle(), bits) == 18446744073709551615)
+    assert(domain.read_pair(low.read_handle(), high.read_handle(), bits) == 18446744073709551615)
     24
 }
-fn main() @suspends { require(lifecycle() == 24) println("domain pairs ok") }
+fn main() @suspends { assert(lifecycle() == 24) println("domain pairs ok") }

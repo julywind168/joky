@@ -245,6 +245,131 @@ fn registry(sources: &[SourceDefinition]) -> TypeRegistry {
 }
 
 #[test]
+fn intrinsic_annotations_bind_renamed_definitions_and_keep_error_locations() {
+    use crate::vm::{VmEngine, VmMode};
+    const TEXT: &str = r#"#intrinsic("text.clone")
+        pub fn duplicate(input: &String) @noescape -> String;"#;
+    const CHECK: &str = r#"#intrinsic("check.assert")
+        fn verify(ok: Bool, message: &String) @noescape;
+        #intrinsic("check.panic")
+        fn stop(message: &String) @noescape;"#;
+    let types = registry(&[
+        SourceDefinition {
+            kind: SourceKind::Text,
+            path: "joky/string",
+            source: TEXT,
+            reexport_imports: false,
+            implicit: ImplicitImports::None,
+        },
+        SourceDefinition {
+            kind: SourceKind::Check,
+            path: "joky/check",
+            source: CHECK,
+            reexport_imports: false,
+            implicit: ImplicitImports::None,
+        },
+    ]);
+    let source = r#"import joky/string.{duplicate}
+        import joky/check.{verify, stop}
+        fn copy() -> String { duplicate("copied once") }
+        fn success() -> Int32 { verify(true, "Unused error") 42 }
+        fn failure() -> Int32 { stop("Renamed panic") }"#;
+    let file = crate::SourceFile::new("consumer.jk", source);
+    let mut parsed = crate::parser::parse_with_source(source, file.id()).unwrap();
+    Arc::make_mut(&mut parsed.sources).insert(file);
+    let module = types.resolve_aliases(&parsed).unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_module(&module).unwrap();
+        assert_eq!(vm.call_string_0("copy").unwrap(), "copied once");
+        assert_eq!(vm.call_int32_0("success").unwrap(), 42);
+        let error = vm.call_int32_0("failure").unwrap_err();
+        assert_eq!(error.message(), "Renamed panic");
+        let span = error.span().unwrap();
+        assert_eq!(
+            span.slice(error.sources().get(span.source_id()).unwrap().text()),
+            Some("stop(\"Renamed panic\")")
+        );
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+#[test]
+fn intrinsic_annotations_reject_unknown_ids_untrusted_sources_and_placeholder_bodies() {
+    for (kind, source, code, message) in [
+        (
+            SourceKind::Text,
+            r#"#intrinsic("text.typo") fn f(text: &String) -> String;"#,
+            ErrorCode::InvalidImport,
+            "Unknown or unauthorized",
+        ),
+        (
+            SourceKind::Check,
+            r#"#intrinsic("text.clone") fn f(text: &String) -> String;"#,
+            ErrorCode::InvalidImport,
+            "Unknown or unauthorized",
+        ),
+        (
+            SourceKind::Embedded,
+            r#"#intrinsic("check.assert") fn f(ok: Bool, text: &String);"#,
+            ErrorCode::InvalidImport,
+            "Unknown or unauthorized",
+        ),
+        (
+            SourceKind::Text,
+            r#"#intrinsic("text.clone") fn f(text: &String) -> String { "" }"#,
+            ErrorCode::InvalidCall,
+            "have no body",
+        ),
+        (
+            SourceKind::Domain,
+            r#"#intrinsic("domain.read") fn f() @suspends;"#,
+            ErrorCode::InvalidCall,
+            "adapter body",
+        ),
+        (
+            SourceKind::Text,
+            r#"#intrinsic("text.clone") fn f(text: Int32) -> Int32;"#,
+            ErrorCode::InvalidCall,
+            "intrinsic signature",
+        ),
+        (
+            SourceKind::Check,
+            r#"#intrinsic("check.assert") fn f(ok: Bool, text: String);"#,
+            ErrorCode::InvalidCall,
+            "intrinsic signature",
+        ),
+        (
+            SourceKind::Float,
+            r#"#intrinsic("float.to_bits") fn f(value: Float32) -> UInt64;"#,
+            ErrorCode::InvalidCall,
+            "intrinsic signature",
+        ),
+    ] {
+        let error = StandardLibrary::from_sources(&[SourceDefinition {
+            kind,
+            path: "joky/test",
+            source,
+            reexport_imports: false,
+            implicit: ImplicitImports::None,
+        }])
+        .unwrap_err();
+        assert_eq!(error.code(), code, "{source}");
+        assert!(error.message().contains(message), "{error}");
+    }
+    for source in [
+        r#"#intrinsic("check.assert") fn f(ok: Bool, text: &String);"#,
+        r#"#intrinsic("text.clone") fn f(text: &String) -> String { "" }"#,
+    ] {
+        let mut vm = crate::vm::VmEngine::new();
+        let error = vm.load_source(source).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidImport);
+        assert!(error.message().contains("restricted to trusted"));
+    }
+}
+
+#[test]
 fn cached_modules_keep_identity_scopes_and_source_ids() {
     let types = TypeRegistry::new().with_prelude(false);
     let source = "// first\nimport joky/integer fn check() -> Int32 { 42 }";
@@ -361,7 +486,13 @@ fn dependency_graph_rejects_cycles_missing_modules_and_implicit_prelude() {
         assert!(error.message().contains(message), "{error}");
     }
     let error = StandardLibrary::from_sources(&[
-        definition("joky/mem", include_str!("../../../stdlib/mem.jk")),
+        SourceDefinition {
+            kind: SourceKind::Mem,
+            path: "joky/mem",
+            source: include_str!("../../../stdlib/mem.jk"),
+            reexport_imports: false,
+            implicit: ImplicitImports::None,
+        },
         definition("joky/option", include_str!("../../../stdlib/option.jk")),
         definition(
             "joky/integer",

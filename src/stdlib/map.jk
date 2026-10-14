@@ -5,7 +5,7 @@ import joky/element.{type Element}
 import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer as storage
-import joky/check.{require}
+import joky/check.{assert}
 import joky/eq.{type Eq, type BorrowEq}
 import joky/hash.{type Hash, type BorrowHash}
 import joky/internal/types as types
@@ -120,10 +120,10 @@ pub fn capacity<K, V>(table: &Map<K, V>) -> UInt64 {
 // No unchecked arithmetic produces a buffer capacity or a probe bound.
 fn bucket_count(required: UInt64, limit: UInt64) -> UInt64 {
     if required == 0 { return 0 }
-    if !(limit >= 8) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
+    if !(limit >= 8) { let message = "Map capacity exceeds the supported limit" assert(false, &message) }
     var count: UInt64 = 8
     while required > load_limit(count) {
-        if !(count <= limit / 2) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
+        if !(count <= limit / 2) { let message = "Map capacity exceeds the supported limit" assert(false, &message) }
         count = count + count
     }
     count
@@ -150,17 +150,17 @@ fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
 }
 pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
     let length = len(table)
-    if !(additional <= 18446744073709551615 - length) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
+    if !(additional <= 18446744073709551615 - length) { let message = "Map capacity exceeds the supported limit" assert(false, &message) }
     let required = length + additional
     let payload_limit = minimum(storage.capacity_limit::<K>(), storage.capacity_limit::<V>())
     let limit = minimum(payload_limit, storage.capacity_limit::<UInt64>())
-    if !(required <= limit) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
+    if !(required <= limit) { let message = "Map capacity exceeds the supported limit" assert(false, &message) }
     let count = table.buckets.len()
     let target = bucket_count(required, storage.capacity_limit::<Bucket>())
     table.keys.reserve(additional)
     table.values.reserve(additional)
     table.hashes.reserve(additional)
-    if !(table.deleted <= 18446744073709551615 - required) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
+    if !(table.deleted <= 18446744073709551615 - required) { let message = "Map capacity exceeds the supported limit" assert(false, &message) }
     if target > count {
         rehash(table, target, required)
     } else {
@@ -199,7 +199,7 @@ pub fn get<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Option<V> {
 fn require_entry<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> UInt64 {
     match find(table, key, BorrowHash.hash_ref(key)) {
         Some(i) => i
-        None => { if !(false) { let message = "Map key not found" require(false, &message) } 0 }
+        None => { if !(false) { let message = "Map key not found" assert(false, &message) } 0 }
     }
 }
 pub fn borrow<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> &Element<V> {
@@ -249,7 +249,7 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UIn
         position = (position + 1) & mask
         probes = probes + 1
     }
-    if !(false) { let message = "Map index has no free bucket" require(false, &message) }
+    if !(false) { let message = "Map index has no free bucket" assert(false, &message) }
     0
 }
 pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {

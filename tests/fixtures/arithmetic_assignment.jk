@@ -1,12 +1,12 @@
 // Shared direct/CPS fixture for remainder and compound assignment.
-import joky/check.{require}
+import joky/check.{assert}
 const REM: Int32 = 17 % 5
 struct Point { x: Int32, y: Int32 }
 struct Pair { point: Point }
 struct Cell<T> { value: T }
 fn same(value: &mut Int32) -> &mut Int32 { value }
 fn expect(ok: Bool) {
-    if !ok { let message = "Arithmetic assignment mismatch"; require(false, &message) }
+    if !ok { let message = "Arithmetic assignment mismatch"; assert(false, &message) }
 }
 fn compute() -> Int32 {
     var x = 7

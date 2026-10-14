@@ -1,8 +1,8 @@
 import joky/set.{type Set}
 import joky/slice as slices
-import joky/check.{require}
+import joky/check.{assert}
 extern fn record_int(value: Int32)
-fn ensure(condition: Bool, message: String) { require(condition, &message) }
+fn ensure(condition: Bool, message: String) { assert(condition, &message) }
 fn from_mask(mask: UInt32) -> Set<Int32> {
     var set = Set.new::<Int32>()
     var i = 0

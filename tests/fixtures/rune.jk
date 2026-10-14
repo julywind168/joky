@@ -1,5 +1,5 @@
 import joky/array.{type Array}
-import joky/check.{require}
+import joky/check.{assert}
 
 struct Scalars { first: Rune, second: Rune }
 enum ScalarChoice { Empty, Value(Rune) }
@@ -12,20 +12,20 @@ fn relay(value: Rune) -> Rune { value }
 fn invoke(f: fn(Rune) -> Rune, value: Rune) -> Rune { f(value) }
 fn task(value: Rune) @suspends -> Rune { relay(value) }
 fn rune_check() -> Int32 {
-    { let assertion_condition = Scalars.SAME && Scalars.DIFFERENT let assertion_message = "Rune constant comparison" require(assertion_condition, &assertion_message) }
-    { let assertion_condition = '\"' == '"' && '\'' == '\u{27}' let assertion_message = "Character quote escapes" require(assertion_condition, &assertion_message) }
-    { let assertion_condition = '\0'.to_u32() == 0 && '\u{10ffff}'.to_u32() == 0x10ffff let assertion_message = "Scalar endpoints" require(assertion_condition, &assertion_message) }
-    { let assertion_condition = Rune.from_u32(0xd800).is_none() && Rune.from_u32(0xdfff).is_none() let assertion_message = "Surrogate endpoints" require(assertion_condition, &assertion_message) }
-    { let assertion_condition = Rune.from_u32(0x110000).is_none() && Rune.from_u32(UInt32.MAX).is_none() let assertion_message = "Scalar upper limit" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = Scalars.SAME && Scalars.DIFFERENT let assertion_message = "Rune constant comparison" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = '\"' == '"' && '\'' == '\u{27}' let assertion_message = "Character quote escapes" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = '\0'.to_u32() == 0 && '\u{10ffff}'.to_u32() == 0x10ffff let assertion_message = "Scalar endpoints" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Rune.from_u32(0xd800).is_none() && Rune.from_u32(0xdfff).is_none() let assertion_message = "Surrogate endpoints" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Rune.from_u32(0x110000).is_none() && Rune.from_u32(UInt32.MAX).is_none() let assertion_message = "Scalar upper limit" assert(assertion_condition, &assertion_message) }
     var values = Array.new::<Rune>()
     values.push('中')
     values.push('🙂')
     let pair = Scalars { first: values.get(0).unwrap_or('\0'), second: values.get(1).unwrap_or('\0') }
-    { let assertion_condition = pair.first == '中' && pair.second == '🙂' let assertion_message = "Four-byte Rune storage" require(assertion_condition, &assertion_message) }
-    { let assertion_condition = values.set(0, '\u{d7ff}') let assertion_message = "Rune store" require(assertion_condition, &assertion_message) }
-    { let assertion_condition = values.get(0).unwrap_or('\0').to_u32() == 0xd7ff let assertion_message = "Rune load" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = pair.first == '中' && pair.second == '🙂' let assertion_message = "Four-byte Rune storage" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = values.set(0, '\u{d7ff}') let assertion_message = "Rune store" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = values.get(0).unwrap_or('\0').to_u32() == 0xd7ff let assertion_message = "Rune load" assert(assertion_condition, &assertion_message) }
     let choice = ScalarChoice.Value(identity::<Rune>(invoke(relay, '🙂')))
     let value = match choice { ScalarChoice.Empty => '\0', ScalarChoice.Value(value) => value }
-    { let assertion_condition = value == '🙂' let assertion_message = "Rune aggregate and indirect calls" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = value == '🙂' let assertion_message = "Rune aggregate and indirect calls" assert(assertion_condition, &assertion_message) }
     42
 }

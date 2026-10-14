@@ -72,7 +72,7 @@ pub(crate) fn migration_step_eligible(info: &FunctionInfo) -> bool {
 fn storage_op(op: &Op, body: &FunctionPlan) -> bool {
     match op {
         Op::Text { .. }
-        | Op::Require { .. }
+        | Op::Assert { .. }
         | Op::Panic { .. }
         | Op::ReadOwner { .. }
         | Op::StoreOwner { .. } => true,

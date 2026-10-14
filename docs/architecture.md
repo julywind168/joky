@@ -282,6 +282,11 @@ runtime::arena 管理独立、对齐且不移动的分配，正常返回及失�
 含这些类型的函数只能是内部同步函数；分配能力仍可传播给只接收普通结果的挂起调用者。
 
 `core::imports::sources::SourceKind` 给受信任的源码定义分配权限，普通导入入口不能选择它。
+`#intrinsic("...")` 在解析时仅保存声明元数据；受信任的标准库加载器按 SourceKind 和稳定操作 ID
+将其绑定到 `CompilerIntrinsic` / `BufferIntrinsic`，不再按源码函数名选择操作。绑定成功后消费
+属性元数据；普通模块残留该属性时在导入绑定阶段拒绝，模块路径本身不授予权限。
+完整由编译器实现的原语以分号结束，禁止占位函数体；带调用点处理的 domain 适配器保留源码函数体。
+存储类型身份仍由 BufferStorage 安装，并要求每条 buffer 原语恰好声明一次；各 IR 规划器继续校验签名。
 仅 BufferStorage 定义将 Buffer/Element/Slice 别名和 `FnDef::buffer_intrinsic` / `buffer_element` 绑定到编译器身份；
 仅 BufferLibrary 定义能导入私有存储模块。这些权限不从模块路径、文件名、用户属性或同名 extern 推导。
 公开数组、元素及切片模块不重导出私有导入，规范化函数保留定义作用域。
@@ -1146,7 +1151,7 @@ String 与临时存储的同时存活峰值也计费。外部分配由外部 API
 有效或阻止任意 C 越界写；真实原型、可读范围、分配器与同步有效期属于 unsafe 注册契约。
 公开 C 布局见 [joky_text_ffi.h](../include/joky_text_ffi.h)。
 
-旧长度前缀 ABI、JokyString、五个旧 `joky_string_*` 查询和旧 require 错误入口已删除，无兼容别名。
+旧长度前缀 ABI、JokyString、五个旧 `joky_string_*` 查询和旧 assert 错误入口已删除，无兼容别名。
 VM 的文本 C 入口改名为 `joky_vm_load_source_v2`、`joky_vm_reload_source_v2`、
 `joky_vm_call_int32_0_v2` / `1_v2` / `2_v2`，接受 `const JokyText *`；
 语言 VM 函数注册的 `joky_vm_register_int32_0_v2` / `1_v2` / `2_v2` 也使用同一名称描述符。
@@ -1167,7 +1172,7 @@ C 使用不透明 JokyCpsFrame、`joky_cps_set_text_input_v2` 和 `joky_cps_take
 raw numeric result 不暴露文本句柄。结果初始化为零，失败保持零；成功的非空缓冲区由
 `joky_string_result_free_v2` 配对释放并清零。空串结果允许 data=NULL、byte_length=0。
 释放 frame 或 VM 后已提取的宿主文本仍有效；清理失败、失败任务和取消任务不能发布结果。
-诊断通道复制借用 require 消息，不依赖语言 arena 的后续分配；消息构造先失败则为 ResourceLimit。
+诊断通道复制借用 assert 消息，不依赖语言 arena 的后续分配；消息构造先失败则为 ResourceLimit。
 更多约束见 [VM 头文件](../include/joky_vm.h) 和 [CPS 头文件](../include/joky_cps.h)。
 
 标准 VM 句柄来自不复用的全局递增编号，但只在创建线程可用。
@@ -1486,9 +1491,9 @@ vm.register_int32 仍指向公开包装入口。AOT 使用函数符号重定位�
 `Op::Closure` 标记在后端生成前擦除。禁止环境返回、聚合/容器存储、宿主 ABI 或 CPS 帧；
 同步 helper 的不逃逸效果自动推导，原有模块/continuation 继续保活隐藏入口。
 
-`joky/check.require` 和 `panic` 的身份只绑定在编译器内嵌 Check 定义上，源码同名函数和文件名不获得权限。
+`joky/check.assert` 和 `panic` 的身份只绑定在编译器内嵌 Check 定义上，源码同名函数和文件名不获得权限。
 两个入口的共享消息参数均有不逃逸契约，复用调用实参的自动借用与临时拥有值清理。
-直接调用在参数检查及顺序求值后产生 `Op::Require` 或 `Op::Panic`，携带实际调用 Span；函数值调用使用
+直接调用在参数检查及顺序求值后产生 `Op::Assert` 或 `Op::Panic`，携带实际调用 Span；函数值调用使用
 绑定定义中的同一 IR 操作。原生 JIT/AOT 共用失败分支与现有 cleanup 路径，运行时立即复制
 借用 String 消息并保留首个错误；解释器产生同类 RuntimeError 并走既有帧/arena 清理。
 `Op::Panic` 没有正常后继，借用与闭包分析均终止该路径；直接调用产生 `Flow::Diverged`，
@@ -1548,7 +1553,7 @@ Array/Slice 的直接引用同时支持无引用 Copy 元素，其指针指向�
 原生同步调用的失败分支在清理调用者之前，通过通用 `__joky_runtime_call_failed` 记录
 当前调用 Span。`Error::native_call_sites()` 按由内向外顺序保存这些真实源码调用点；
 错误主 Span 和首个消息不变，不伪造解释器 PC 或原生栈。已附加的源码快照随错误保留，
-独立 AOT 的运行时打印来源 ID 和字节范围。该机制使源码容器内部 require 失败也有用户调用位置，
+独立 AOT 的运行时打印来源 ID 和字节范围。该机制使源码容器内部 assert 失败也有用户调用位置，
 同时适用于普通函数和函数值调用；解释器继续使用已有完整 activation 轨迹。
 
 Map 切片视图直接转发到私有载荷 Array 的完整范围，借用来源仍是整个 Map，不导出可变 key。

@@ -6,11 +6,15 @@ extern fn __domain_read_scalar(method: String) @suspends -> UInt64
 extern fn __domain_write_scalar(method: String, input: UInt64) @suspends -> UInt64
 
 // Only trusted call-site lowering can encode or decode a checked scalar type.
-fn pack<A>(value: A) -> UInt64 { 0 }
-fn unpack<R>(bits: UInt64) -> R { unpack::<R>(bits) }
+#intrinsic("domain.pack")
+fn pack<A>(value: A) -> UInt64;
+#intrinsic("domain.unpack")
+fn unpack<R>(bits: UInt64) -> R;
+#intrinsic("domain.read")
 pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> R {
     unpack::<R>(__domain_read_scalar(""))
 }
+#intrinsic("domain.write")
 pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
     unpack::<R>(__domain_write_scalar("", pack(input)))
 }
@@ -26,7 +30,8 @@ extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: 
 extern fn __domain_snapshot(module: domain.Module, handle: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
 extern fn __domain_snapshot_value(snapshot: &domain.SnapshotOwner) @suspends -> UInt64
 extern fn __domain_snapshot_check(snapshot: &domain.SnapshotOwner) @suspends -> Int32
-fn module() -> domain.Module { __domain_module() }
+#intrinsic("domain.module")
+fn module() -> domain.Module;
 pub struct Owner<S> { value: domain.StateOwner }
 pub struct ReadHandle<S> { token: domain.Handle }
 pub struct WriteHandle<S> { token: domain.Handle }
@@ -43,6 +48,7 @@ impl<S, R> Snapshot<S, R> {
         SnapshotStatus.InvalidAccess
     }
 }
+#intrinsic("domain.snapshot_from")
 pub fn snapshot_from<S, R>(handle: ReadHandle<S>, projection: fn(&S) -> R) @suspends -> Snapshot<S, R> {
     Snapshot::<S, R> { storage: __domain_snapshot(module(), handle.token, "") }
 }
@@ -55,15 +61,19 @@ impl<S> Owner<S> {
 impl<S> WriteHandle<S> {
     pub fn read_only(self) @suspends -> ReadHandle<S> { ReadHandle::<S> { token: __domain_readonly(self.token) } }
 }
+#intrinsic("domain.create")
 pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
     Owner::<S> { value: __domain_create(module(), "", pack(input)) }
 }
+#intrinsic("domain.read_from")
 pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> R {
     unpack::<R>(__domain_read_at(module(), handle.token, ""))
 }
+#intrinsic("domain.write_to")
 pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
     unpack::<R>(__domain_write_at(module(), handle.token, "", pack(input)))
 }
+#intrinsic("domain.finish_request")
 fn finish_request<R>(module: domain.Module, token: domain.Handle, name: String, input: UInt64) @suspends -> Result<R, RequestError> {
     let (status, bits) = __domain_request(module, token, name, input)
     if status == 0 { return Result.Ok(unpack::<R>(bits)) }
@@ -74,9 +84,11 @@ fn finish_request<R>(module: domain.Module, token: domain.Handle, name: String, 
     if status == 5 { return Result.Err(RequestError.InvalidAccess) }
     Result.Err(RequestError.DomainFailed)
 }
+#intrinsic("domain.request")
 pub fn request<S, A, R>(handle: WriteHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
     finish_request::<R>(module(), handle.token, "", pack(input))
 }
+#intrinsic("domain.request_read")
 pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
     finish_request::<R>(module(), handle.token, "", pack(input))
 }
@@ -98,9 +110,11 @@ pub fn deadline_after(milliseconds: Int32) @suspends -> CommitDeadline {
     CommitDeadline { storage: __domain_deadline_after(milliseconds) }
 }
 pub enum CommitOutcome { Committed(UInt64), Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
+#intrinsic("domain.finish_candidate")
 fn finish_candidate<S, R>(module: domain.Module, snapshot: Snapshot<S, R>, name: String, input: UInt64) @suspends -> Candidate<S> {
     Candidate::<S> { storage: __domain_candidate(module, &snapshot.storage, name, input) }
 }
+#intrinsic("domain.candidate_from")
 pub fn candidate_from<S, R, A>(snapshot: Snapshot<S, R>, constructor: fn(A) -> S, input: A) @suspends -> Candidate<S> {
     finish_candidate::<S, R>(module(), snapshot, "", pack(input))
 }
@@ -132,18 +146,22 @@ impl CommitReceipt {
 
 // Pair operations acquire their entire access set in one synchronous turn.
 extern fn __domain_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String, input: UInt64) @suspends -> UInt64
+#intrinsic("domain.read_pair")
 pub fn read_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T) -> R) @suspends -> R {
     unpack::<R>(__domain_pair(module(), first.token, second.token, "", 0))
 }
+#intrinsic("domain.update_pair")
 pub fn update_pair<S, T, A, R>(first: ReadHandle<S>, second: WriteHandle<T>, operation: fn(&S, &mut T, A) -> R, input: A) @suspends -> R {
     unpack::<R>(__domain_pair(module(), first.token, second.token, "", pack(input)))
 }
+#intrinsic("domain.write_pair")
 pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, operation: fn(&mut S, &mut T, A) -> R, input: A) @suspends -> R {
     unpack::<R>(__domain_pair(module(), first.token, second.token, "", pack(input)))
 }
 
 // The first domain is the candidate target; both read dependencies stay opaque.
 extern fn __domain_snapshot_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
+#intrinsic("domain.snapshot_pair")
 pub fn snapshot_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S, &T) -> R) @suspends -> Snapshot<S, R> {
     Snapshot::<S, R> { storage: __domain_snapshot_pair(module(), first.token, second.token, "") }
 }
@@ -156,10 +174,12 @@ extern fn __domain_commit_second_revision(receipt: &domain.CommitOwner) @suspend
 pub struct CandidatePair<S, T> { storage: domain.CandidatePairOwner }
 pub struct PairCommitReceipt { storage: domain.CommitOwner }
 pub enum PairCommitOutcome { Committed((UInt64, UInt64)), Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
+#intrinsic("domain.finish_candidate_pair")
 fn finish_candidate_pair<S, T>(module: domain.Module, first: Candidate<S>, name: String, input: UInt64) @suspends -> CandidatePair<S, T> {
     var storage = first.storage
     CandidatePair::<S, T> { storage: __domain_candidate_pair(module, &mut storage, name, input) }
 }
+#intrinsic("domain.candidate_pair_from")
 pub fn candidate_pair_from<S, T, A>(first: Candidate<S>, constructor: fn(A) -> T, input: A) @suspends -> CandidatePair<S, T> {
     finish_candidate_pair::<S, T>(module(), first, "", pack(input))
 }
@@ -215,6 +235,7 @@ pub fn snapshot_set(set:AccessSet) @suspends -> SnapshotSet {
 }
 fn include_handle(set:&mut AccessSet,handle:domain.Handle) @suspends { __domain_access_include(&mut set.storage,handle) }
 fn read_snapshot_bits(snapshot:&SnapshotSet,handle:domain.Handle) @suspends -> UInt64 { __domain_set_read(module(),&snapshot.storage,handle,"") }
+#intrinsic("domain.read_snapshot")
 pub fn read_snapshot<S,R>(snapshot:&SnapshotSet,handle:ReadHandle<S>,projection:fn(&S)->R) @suspends -> R {
     unpack::<R>(read_snapshot_bits(snapshot,handle.token))
 }
@@ -228,17 +249,21 @@ impl SnapshotSet {
         SnapshotStatus.InvalidAccess
     }
 }
+#intrinsic("domain.finish_set_candidate")
 fn finish_set_candidate(module:domain.Module,snapshot:SnapshotSet,handle:domain.Handle,name:String,input:UInt64) @suspends -> CandidateSet {
     var storage=snapshot.storage
     CandidateSet{storage:__domain_set_candidate(module,&mut storage,handle,name,input)}
 }
+#intrinsic("domain.finish_set_add")
 fn finish_set_add(module:domain.Module,set:CandidateSet,handle:domain.Handle,name:String,input:UInt64) @suspends -> CandidateSet {
     var storage=set.storage
     CandidateSet{storage:__domain_set_add(module,&mut storage,handle,name,input)}
 }
+#intrinsic("domain.candidate_set_from")
 pub fn candidate_set_from<S,A>(snapshot:SnapshotSet,handle:WriteHandle<S>,constructor:fn(A)->S,input:A) @suspends -> CandidateSet {
     finish_set_candidate(module(),snapshot,handle.token,"",pack(input))
 }
+#intrinsic("domain.candidate_set_add")
 pub fn candidate_set_add<S,A>(set:CandidateSet,handle:WriteHandle<S>,constructor:fn(A)->S,input:A) @suspends -> CandidateSet {
     finish_set_add(module(),set,handle.token,"",pack(input))
 }
@@ -344,16 +369,20 @@ impl DirectoryHandle {
     }
 }
 // The named projection is a type witness, never invoked by lookup.
+#intrinsic("domain.lookup")
 pub fn lookup<S,R>(directory:DirectoryHandle, key:UInt64, projection:fn(&S)->R) @suspends -> Option<ReadHandle<S>> {
     finish_lookup::<S>(module(),directory.identity,key,"")
 }
+#intrinsic("domain.lookup_write")
 pub fn lookup_write<S,R>(directory:DirectoryHandle, key:UInt64, projection:fn(&S)->R) @suspends -> Option<WriteHandle<S>> {
     finish_lookup_write::<S>(module(),directory.identity,key,"")
 }
+#intrinsic("domain.finish_lookup")
 fn finish_lookup<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<ReadHandle<S>> {
     let token=__directory_lookup(module,directory,key,operation,false)
     if __directory_found(token) { Option.Some(ReadHandle::<S>{token:token}) } else { Option.None }
 }
+#intrinsic("domain.finish_lookup_write")
 fn finish_lookup_write<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<WriteHandle<S>> {
     let token=__directory_lookup(module,directory,key,operation,true)
     if __directory_found(token) { Option.Some(WriteHandle::<S>{token:token}) } else { Option.None }
@@ -389,6 +418,7 @@ impl TimerHandle {
         TimerStatus.Failed
     }
 }
+#intrinsic("domain.finish_timer")
 fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, milliseconds:Int32, operation:String, input:UInt64, periodic:Bool) @suspends -> Result<Unit,TimerError> {
     let status=__timer_start(module,timer,target,milliseconds,operation,input,periodic)
     if status==0 { return Result.Ok({}) }
@@ -398,9 +428,11 @@ fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, millis
     if status==4 { return Result.Err(TimerError.InvalidAccess) }
     Result.Err(TimerError.ResourceLimit)
 }
+#intrinsic("domain.after")
 pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
     finish_timer(module(),timer.identity,target.token,milliseconds,"",pack(input),false)
 }
+#intrinsic("domain.every")
 pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
     finish_timer(module(),timer.identity,target.token,milliseconds,"",pack(input),true)
 }

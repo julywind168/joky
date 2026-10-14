@@ -3,7 +3,7 @@ import joky/mem
 import joky/array.{type Array}
 import joky/slice as slices.{type Slice}
 import joky/drop.{type Drop}
-import joky/check.{require}
+import joky/check.{assert}
 extern fn record_int(value: Int32)
 pub fn report(value: Int32) { record_int(value) }
 
@@ -35,9 +35,9 @@ fn tracked(id: Int32) -> Tracked {
 pub fn success() -> Int32 {
     var text = forward(finish(builder()))
     let borrowed = view(&text)
-    { let assertion_condition = slices.get(borrowed, 0).unwrap_or(0) == 20 let assertion_message = "Probe borrowed content" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = slices.get(borrowed, 0).unwrap_or(0) == 20 let assertion_message = "Probe borrowed content" assert(assertion_condition, &assertion_message) }
     let old = take(&mut text, finish(builder()))
-    { let assertion_condition = sum(&old) == 42 && sum(&text) == 42 let assertion_message = "Probe replacement" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = sum(&old) == 42 && sum(&text) == 42 let assertion_message = "Probe replacement" assert(assertion_condition, &assertion_message) }
     release(old)
     release(text)
     let owner = tracked(1)
@@ -45,8 +45,8 @@ pub fn success() -> Int32 {
 }
 pub fn failure() -> Int32 {
     let owner = tracked(2)
-    { let assertion_condition = sum(&owner.text) == 42 let assertion_message = "Probe content" require(assertion_condition, &assertion_message) }
-    { let assertion_condition = false let assertion_message = "Storage probe failure" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = sum(&owner.text) == 42 let assertion_message = "Probe content" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = false let assertion_message = "Storage probe failure" assert(assertion_condition, &assertion_message) }
     0
 }
 pub fn transfer() -> Int32 {
@@ -60,7 +60,7 @@ struct Failing { data: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) {
         record_int(3)
-        { let assertion_condition = false let assertion_message = "Secondary probe failure" require(assertion_condition, &assertion_message) }
+        { let assertion_condition = false let assertion_message = "Secondary probe failure" assert(assertion_condition, &assertion_message) }
     }
 }
 pub fn tight_failure() -> Int32 {
@@ -68,7 +68,7 @@ pub fn tight_failure() -> Int32 {
     let guard = Failing { data: Array.with_capacity::<Int32>(2) }
     record_int(-3)
     record_int(902)
-    require(false, &primary_message)
+    assert(false, &primary_message)
     0
 }
 pub fn tight_allocation() -> Int32 {

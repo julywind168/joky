@@ -4,7 +4,7 @@ import joky/check
 import joky/mem
 import joky/array.{type Array}
 
-fn require(condition: Bool) { let message = "owned domain" check.require(condition, &message) }
+fn assert(condition: Bool) { let message = "owned domain" check.assert(condition, &message) }
 struct State { title: String, players: Array<Int32>, flags: Array<Bool>, value: Int32 }
 fn make(value: Int32) -> State {
     var players = Array.new::<Int32>()
@@ -39,25 +39,25 @@ fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, 7)
     let handle = owner.handle()
     let reader = handle.read_only()
-    require(domain.read_from(reader, inspect))
+    assert(domain.read_from(reader, inspect))
     let snapshot = domain.snapshot_from(reader, read)
     let candidate = domain.candidate_from(snapshot, make, 12)
     task.yield_now()
-    require(domain.read_from(reader, read) == 7)
+    assert(domain.read_from(reader, read) == 7)
     var receipt = domain.commit_to(handle, candidate)
-    require(match receipt.wait() { Committed(version) => version == 1, _ => false })
-    require(domain.read_from(reader, read) == 12 && domain.read_from(reader, inspect))
+    assert(match receipt.wait() { Committed(version) => version == 1, _ => false })
+    assert(domain.read_from(reader, read) == 12 && domain.read_from(reader, inspect))
     let stale = domain.candidate_from(domain.snapshot_from(reader, read), make, 99)
     domain.write_to(handle, change, 15)
     var conflict = domain.commit_to(handle, stale)
-    require(match conflict.wait() { Conflict => true, _ => false })
-    require(domain.read_from(reader, read) == 15 && domain.read_from(reader, inspect))
+    assert(match conflict.wait() { Conflict => true, _ => false })
+    assert(domain.read_from(reader, read) == 15 && domain.read_from(reader, inspect))
     let single = domain.create(text, 1)
     var published = domain.commit_to(single.handle(), domain.candidate_from(domain.snapshot_from(single.read_handle(), text_ok), text, 2))
-    require(match published.wait() { Committed(_) => true, _ => false })
-    require(domain.read_from(single.read_handle(), text_ok))
+    assert(match published.wait() { Committed(_) => true, _ => false })
+    assert(domain.read_from(single.read_handle(), text_ok))
     owner.close()
-    require(match receipt.wait() { Committed(version) => version == 1, _ => false })
+    assert(match receipt.wait() { Committed(version) => version == 1, _ => false })
     24
 }
-fn main() @suspends { require(lifecycle() == 24) println("owned domains ok") }
+fn main() @suspends { assert(lifecycle() == 24) println("owned domains ok") }

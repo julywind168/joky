@@ -2,16 +2,16 @@ import joky/map as maps.{type Map}
 import joky/array.{type Array}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
 
 fn integer32<Tag>() -> Int32 {
     var m = maps.new::<Int32, Int32>()
     maps.insert(&mut m, Int32.MIN, 20) m.insert(Int32.MAX, 22)
-    { let assertion_condition = maps.len(&m) == 2 && maps.contains_key(&m, Int32.MIN) let assertion_message = "Module functions" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = maps.len(&m) == 2 && maps.contains_key(&m, Int32.MIN) let assertion_message = "Module functions" assert(assertion_condition, &assertion_message) }
     let result = maps.get(&m, Int32.MIN).unwrap_or(0) + m.remove(Int32.MAX).unwrap_or(0)
-    maps.clear(&mut m) { let assertion_condition = maps.is_empty(&m) let assertion_message = "Module clear" require(assertion_condition, &assertion_message) } maps.release(m)
+    maps.clear(&mut m) { let assertion_condition = maps.is_empty(&m) let assertion_message = "Module clear" assert(assertion_condition, &assertion_message) } maps.release(m)
     result
 }
 fn integer64<Tag>() -> Int32 {
@@ -31,9 +31,9 @@ fn booleans<Tag>() -> Int32 {
     m.get(false).unwrap_or(0) + m.remove(true).unwrap_or(0)
 }
 fn units<Tag>() -> Int32 {
-    var m = Map.new::<Unit, Int32>() { let assertion_condition = m.insert({}, 20).is_none() let assertion_message = "Unit insertion" require(assertion_condition, &assertion_message) }
+    var m = Map.new::<Unit, Int32>() { let assertion_condition = m.insert({}, 20).is_none() let assertion_message = "Unit insertion" assert(assertion_condition, &assertion_message) }
     let old = m.insert({}, 22).unwrap_or(0)
-    { let assertion_condition = m.len() == 1 let assertion_message = "Unit replacement" require(assertion_condition, &assertion_message) } old + m.remove({}).unwrap_or(0)
+    { let assertion_condition = m.len() == 1 let assertion_message = "Unit replacement" assert(assertion_condition, &assertion_message) } old + m.remove({}).unwrap_or(0)
 }
 
 struct Collision { n: Int32 }
@@ -45,16 +45,16 @@ fn collisions<Tag>() -> Int32 {
     while i < 40 { m.insert(Collision { n: i }, i + 10) i = i + 1 }
     i = 0
     while i < 40 {
-        { let assertion_condition = m.get(Collision { n: i }).unwrap_or(0) == i + 10 let assertion_message = "Constant hash lookup" require(assertion_condition, &assertion_message) }
+        { let assertion_condition = m.get(Collision { n: i }).unwrap_or(0) == i + 10 let assertion_message = "Constant hash lookup" assert(assertion_condition, &assertion_message) }
         i = i + 1
     }
     m.remove(Collision { n: 0 }) m.remove(Collision { n: 17 }) m.remove(Collision { n: 39 })
-    { let assertion_condition = m.insert(Collision { n: 18 }, 42).unwrap_or(0) == 28 && m.len() == 37 let assertion_message = "Collision replacement" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.insert(Collision { n: 18 }, 42).unwrap_or(0) == 28 && m.len() == 37 let assertion_message = "Collision replacement" assert(assertion_condition, &assertion_message) }
     m.reserve(20)
     i = 40
     while i < 60 { m.insert(Collision { n: i }, i) i = i + 1 }
-    { let assertion_condition = m.get(Collision { n: 18 }).unwrap_or(0) == 42 && m.len() == 57 let assertion_message = "Collision growth" require(assertion_condition, &assertion_message) }
-    m.clear() { let assertion_condition = m.is_empty() let assertion_message = "Collision clear" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.get(Collision { n: 18 }).unwrap_or(0) == 42 && m.len() == 57 let assertion_message = "Collision growth" assert(assertion_condition, &assertion_message) }
+    m.clear() { let assertion_condition = m.is_empty() let assertion_message = "Collision clear" assert(assertion_condition, &assertion_message) }
     42
 }
 enum Choice { Zero, Number(Int32) }
@@ -69,7 +69,7 @@ impl Eq for Choice {
 impl Hash for Choice { fn hash(self) -> UInt64 { match self { Choice.Zero => 0, Choice.Number(n) => Hash.hash(n) } } }
 fn enums<Tag>() -> Int32 {
     var m = Map.new::<Choice, Int32>() m.insert(Choice.Zero, 20) m.insert(Choice.Number(0), 22)
-    { let assertion_condition = m.len() == 2 && !m.contains_key(Choice.Number(1)) let assertion_message = "Enum collision variants" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.len() == 2 && !m.contains_key(Choice.Number(1)) let assertion_message = "Enum collision variants" assert(assertion_condition, &assertion_message) }
     m.remove(Choice.Zero).unwrap_or(0) + m.get(Choice.Number(0)).unwrap_or(0)
 }
 
@@ -82,13 +82,13 @@ fn retained_key<Tag>() -> Int32 {
     var m = Map.new::<Retained, Int32>()
     m.insert(Retained { identity: 1, representation: 11 }, 20)
     let old = m.insert(Retained { identity: 1, representation: 22 }, 22)
-    { let assertion_condition = m.contains_key(Retained { identity: 1, representation: 33 }) let assertion_message = "Retained original key" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.contains_key(Retained { identity: 1, representation: 33 }) let assertion_message = "Retained original key" assert(assertion_condition, &assertion_message) }
     old.unwrap_or(0) + m.remove(Retained { identity: 1, representation: 44 }).unwrap_or(0)
 }
 struct NoProtocols { n: Int32 }
 fn lifecycle<Tag>() -> Int32 {
     var m = Map.with_capacity::<NoProtocols, Int32>(2)
-    m.reserve(3) { let assertion_condition = m.capacity() >= 3 && m.is_empty() let assertion_message = "Unconstrained lifecycle" require(assertion_condition, &assertion_message) }
+    m.reserve(3) { let assertion_condition = m.capacity() >= 3 && m.is_empty() let assertion_message = "Unconstrained lifecycle" assert(assertion_condition, &assertion_message) }
     m.clear() m.release()
     42
 }
@@ -124,10 +124,10 @@ impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
 fn resource(id: Int32) -> Resource { var values = Array.new::<Int32>() values.push(id) Resource { id: id, values: values } }
 struct Fallible { n: Int32, mode: Int32 }
 impl Hash for Fallible {
-    fn hash(self) -> UInt64 { { let assertion_condition = self.mode != 1 let assertion_message = "Map Hash failure" require(assertion_condition, &assertion_message) } 7 }
+    fn hash(self) -> UInt64 { { let assertion_condition = self.mode != 1 let assertion_message = "Map Hash failure" assert(assertion_condition, &assertion_message) } 7 }
 }
 impl Eq for Fallible {
-    fn eq(self, other: Self) -> Bool { { let assertion_condition = other.mode != 2 let assertion_message = "Map Eq failure" require(assertion_condition, &assertion_message) } self.n == other.n }
+    fn eq(self, other: Self) -> Bool { { let assertion_condition = other.mode != 2 let assertion_message = "Map Eq failure" assert(assertion_condition, &assertion_message) } self.n == other.n }
 }
 fn hash_failure<Tag>() -> Int32 {
     var m = Map.new::<Fallible, Resource>() m.insert(Fallible { n: 1, mode: 0 }, resource(1))

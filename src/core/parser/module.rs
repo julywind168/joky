@@ -4,6 +4,7 @@ use super::*;
 impl Parser {
     pub(super) fn parse_module(&mut self) -> Result<Module, Diagnostic> {
         let mut module = Module {
+            intrinsic_attributes: Vec::new(),
             sources: Default::default(),
             scope: None,
             imports: Vec::new(),
@@ -33,7 +34,11 @@ impl Parser {
             if public {
                 self.advance();
             }
-            if !attributes.is_empty() && self.peek() != &TokenKind::Struct {
+            if !attributes.is_empty()
+                && self.peek() != &TokenKind::Struct
+                && !(self.peek() == &TokenKind::Fn
+                    && attributes.iter().all(|a| a.path == "intrinsic"))
+            {
                 return Err(self.error("Declaration attributes currently require a struct".into()));
             }
             if public
@@ -61,6 +66,19 @@ impl Parser {
             }
             declarations_started = true;
             match self.peek() {
+                TokenKind::Fn => {
+                    let intrinsic = self.parse_intrinsic_attribute(attributes)?;
+                    self.advance();
+                    let (mut function, intrinsic) =
+                        self.parse_fn_with_intrinsic(start, intrinsic)?;
+                    if let Some(attribute) = intrinsic {
+                        module
+                            .intrinsic_attributes
+                            .push((module.items.len(), attribute));
+                    }
+                    function.public = public;
+                    module.items.push(Item::FnDef(function));
+                }
                 TokenKind::Impl => module.implementations.push(self.parse_impl()?),
                 TokenKind::Enum => module.enums.push(self.parse_enum(public)?),
                 TokenKind::Trait => module.traits.push(self.parse_trait(public)?),

@@ -1,11 +1,11 @@
 import joky/tcp.{type Address, type TcpStream, type BufferedTcp}
 import joky/array.{type Array}
-import joky/check.{require}
+import joky/check.{assert}
 import joky/task
 import joky/integer
 extern fn sent(count: Int32)
 
-fn checked(ok: Bool) { let status = "Bounded message send" require(ok, &status) }
+fn checked(ok: Bool) { let status = "Bounded message send" assert(ok, &status) }
 fn payload(index: UInt8) -> Array<UInt8> {
     var bytes = Array.with_capacity::<UInt8>(65536)
     bytes.push(index)
