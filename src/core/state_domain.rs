@@ -71,7 +71,11 @@ pub(crate) fn migration_step_eligible(info: &FunctionInfo) -> bool {
 
 fn storage_op(op: &Op, body: &FunctionPlan) -> bool {
     match op {
-        Op::Text { .. } | Op::Require { .. } | Op::ReadOwner { .. } | Op::StoreOwner { .. } => true,
+        Op::Text { .. }
+        | Op::Require { .. }
+        | Op::Panic { .. }
+        | Op::ReadOwner { .. }
+        | Op::StoreOwner { .. } => true,
         Op::Alloc { target, .. } => super::instance::scalar(target),
         Op::Cleanup(CleanupOp::Register {
             hooks, elements, ..

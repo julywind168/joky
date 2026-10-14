@@ -1,2 +1,3 @@
 // The compiler binds this checked operation and preserves its call location.
-fn require(condition: Bool, message: &String) {}
+fn require(condition: Bool, message: &String) @noescape {}
+fn panic(message: &String) @noescape {}

@@ -1142,6 +1142,7 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
             }
         }
         let successors = match &plan.ops[pc] {
+            Op::Panic { .. } => vec![],
             Op::Jump(label) => vec![labels[*label]],
             Op::Branch {
                 then_label,

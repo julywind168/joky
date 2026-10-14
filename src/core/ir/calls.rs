@@ -385,6 +385,12 @@ impl FunctionPlan {
         })? {
             return Ok(flow);
         }
+        if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::Panic)) {
+            self.emit(Op::Panic {
+                message: values[0].clone().unwrap(),
+            });
+            return Ok(Flow::Diverged);
+        }
         if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::Require)) {
             self.emit(Op::Require {
                 condition: values[0].clone().unwrap(),

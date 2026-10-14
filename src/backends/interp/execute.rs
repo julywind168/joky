@@ -1652,11 +1652,16 @@ fn run_frame(
                 };
                 frame.pc += 1;
             }
-            Instruction::Require { condition, message } => {
-                let Value::Bool(condition) = frame.slots[*condition] else {
-                    unreachable!()
+            Instruction::Require { message, .. } | Instruction::Panic { message } => {
+                let passed = if let Instruction::Require { condition, .. } = instruction {
+                    let Value::Bool(condition) = frame.slots[*condition] else {
+                        unreachable!()
+                    };
+                    condition
+                } else {
+                    false
                 };
-                if !condition {
+                if !passed {
                     let Value::Reference(owner) = frame.slots[*message] else {
                         unreachable!()
                     };

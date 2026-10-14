@@ -435,7 +435,7 @@ fn empty() -> opt.Option<Int32> { Maybe.None }
 `type Option as Maybe` 保留该能力。只导入 `Some` 不会引入裸类型名 Option。
 模块别名下的 `opt.Some` 与 `opt.Option.Some` 指向同一构造器。
 
-默认 prelude 提供 Option / Result、Some / None / Ok / Err、状态判断 / 默认值 / 组合方法、整数受检转换方法与边界常量，以及 print / println。
+默认 prelude 提供 Option / Result、Some / None / Ok / Err、状态判断 / 默认值 / 组合方法、整数受检转换方法与边界常量，以及 print / println / panic。
 Option / Result 的状态查询通过 `&self` 借用；`unwrap_or_else` 按需执行同步回调，其余普通默认值和备选值会急切求值，完整表见[基础方法](language.md#option-与-result-基础方法)。
 因此通常无需 import 就能写 `Some(42)`、`None::<Int32>` 和 `n.to_u64()`。
 `--no-prelude` 或嵌入 API 可关闭默认导入；`joky/vm` 始终显式导入。

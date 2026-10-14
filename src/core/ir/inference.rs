@@ -218,7 +218,11 @@ impl FunctionPlan {
                             .map(|(_, signature)| signature.ret)
                     } else {
                         self.function_name(callee)
-                            .and_then(|name| functions.get(&name).map(|f| f.signature.ret.clone()))
+                            .and_then(|name| functions.get(&name))
+                            .filter(|f| {
+                                !matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::Panic))
+                            })
+                            .map(|f| f.signature.ret.clone())
                     }
                 })
                 .or_else(|| {
@@ -323,7 +327,6 @@ impl FunctionPlan {
             | Expr::FieldAssign { .. }
             | Expr::While { .. }
             | Expr::Scope { .. }
-            | Expr::Sequence { trailing: true, .. }
             | Expr::If {
                 else_branch: None, ..
             } => Some(Type::Unit),
@@ -367,17 +370,21 @@ impl FunctionPlan {
             Expr::Graph { exprs, .. } => self.graph_hint(exprs, vars, functions, types, default),
             Expr::Unsafe { exprs, .. }
             | Expr::Block { exprs, .. }
-            | Expr::Sequence {
-                exprs,
-                trailing: false,
-                ..
-            } => {
+            | Expr::Sequence { exprs, .. } => {
                 let mut local = vars.clone();
                 for expr in exprs.iter().take(exprs.len().saturating_sub(1)) {
                     self.hint_bindings(expr, &mut local, functions, types);
                 }
                 exprs.last().map_or(Some(Type::Unit), |e| {
-                    self.hint(e, &local, functions, types, default)
+                    // A semicolon discards a value, but cannot make a panic
+                    // produce Unit and constrain another branch's type.
+                    self.hint(e, &local, functions, types, default).map(|ty| {
+                        if matches!(expr, Expr::Sequence { trailing: true, .. }) {
+                            Type::Unit
+                        } else {
+                            ty
+                        }
+                    })
                 })
             }
             _ => None,

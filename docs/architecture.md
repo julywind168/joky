@@ -1486,10 +1486,13 @@ vm.register_int32 仍指向公开包装入口。AOT 使用函数符号重定位�
 `Op::Closure` 标记在后端生成前擦除。禁止环境返回、聚合/容器存储、宿主 ABI 或 CPS 帧；
 同步 helper 的不逃逸效果自动推导，原有模块/continuation 继续保活隐藏入口。
 
-`joky/check.require` 的身份只绑定在编译器内嵌 Check 定义上，源码同名函数和文件名不获得权限。
-直接调用在参数检查及顺序求值后产生 `Op::Require`，携带实际调用 Span；函数值调用使用
+`joky/check.require` 和 `panic` 的身份只绑定在编译器内嵌 Check 定义上，源码同名函数和文件名不获得权限。
+两个入口的共享消息参数均有不逃逸契约，复用调用实参的自动借用与临时拥有值清理。
+直接调用在参数检查及顺序求值后产生 `Op::Require` 或 `Op::Panic`，携带实际调用 Span；函数值调用使用
 绑定定义中的同一 IR 操作。原生 JIT/AOT 共用失败分支与现有 cleanup 路径，运行时立即复制
 借用 String 消息并保留首个错误；解释器产生同类 RuntimeError 并走既有帧/arena 清理。
+`Op::Panic` 没有正常后继，借用与闭包分析均终止该路径；直接调用产生 `Flow::Diverged`，
+类型提示不以其函数值的 Unit 返回类型约束其他分支。尚未向函数类型系统引入 Never。
 这是通用源码检查入口，不包含 Map 的索引、容量或容器算法。
 
 内嵌 `joky/internal/types.require_plain_copy<T>()` 是通用存储类型资格检查，身份由 TypeCheck

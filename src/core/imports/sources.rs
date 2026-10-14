@@ -389,9 +389,14 @@ impl StandardLibrary {
             }
         }
         if source.kind == SourceKind::Check {
+            use crate::parser::ast::CompilerIntrinsic;
             for item in &mut module.items {
                 if let Item::FnDef(f) = item {
-                    f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::Require);
+                    f.compiler_intrinsic = match f.name.as_str() {
+                        "require" => Some(CompilerIntrinsic::Require),
+                        "panic" => Some(CompilerIntrinsic::Panic),
+                        _ => None,
+                    };
                 }
             }
         }

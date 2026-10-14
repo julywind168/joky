@@ -46,6 +46,9 @@ fn block_boundaries(code: &[Instruction]) -> Vec<bool> {
     boundaries[0] = true;
     for (pc, instruction) in code.iter().enumerate() {
         match instruction {
+            Instruction::Panic { .. } => {
+                boundaries[pc + 1] = true;
+            }
             Instruction::Jump(target) => {
                 boundaries[*target] = true;
                 boundaries[pc + 1] = true;
@@ -236,6 +239,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
             visit(condition);
             visit(message);
         }
+        Instruction::Panic { message } => visit(message),
         Instruction::Float { src, .. } | Instruction::DomainBits { src, .. } => visit(src),
         Instruction::Copy { src, .. } => visit(src),
         Instruction::DynCopy { lanes } => {
@@ -336,6 +340,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         }
         Instruction::TaskScopeEnter | Instruction::TaskBranch { .. } | Instruction::TaskJoin => {}
         Instruction::Require { .. }
+        | Instruction::Panic { .. }
         | Instruction::Branch { .. }
         | Instruction::BranchCompare { .. }
         | Instruction::BranchCompareImm { .. }

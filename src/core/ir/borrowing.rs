@@ -133,6 +133,7 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
+        Op::Require { message, .. } | Op::Panic { message } => (refs(message), vec![]),
         Op::Closure(op) => match op.as_ref() {
             closures::ClosureOp::BorrowCapture { dst, reference } => (refs(reference), refs(dst)),
             closures::ClosureOp::Access(slot)
@@ -711,6 +712,7 @@ fn analyze(
         .iter()
         .enumerate()
         .map(|(pc, op)| match op {
+            Op::Panic { .. } => vec![],
             Op::Jump(label) => vec![labels[*label]],
             Op::Branch {
                 then_label,

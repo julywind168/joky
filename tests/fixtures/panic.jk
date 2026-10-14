@@ -1,0 +1,61 @@
+import joky/check.{panic, require}
+import joky/option.{type Option, Some, None}
+import joky/drop.{type Drop}
+import joky/task
+
+extern fn record_int(value: Int32)
+
+struct Resource { text: String, id: Int32, fail: Bool }
+impl Drop for Resource {
+    fn drop(&mut self) {
+        record_int(self.id)
+        if self.fail { panic("Secondary cleanup failure") }
+    }
+}
+
+fn mark(n: Int32) -> Int32 { record_int(n) n }
+fn add(a: Int32, b: Int32) -> Int32 { a + b }
+fn message() -> String { record_int(10) "Primary panic {42}" }
+fn choose(ok: Bool) -> UInt64 { if ok { 18446744073709551615 } else { panic("if failure") } }
+fn choose_reverse(ok: Bool) -> Int32 { if !ok { panic("reverse failure") } else { 42 } }
+fn choose_semicolon(ok: Bool) -> UInt64 { if ok { 18446744073709551615 } else { panic("semicolon failure"); } }
+fn unwrap(value: Option<Int32>) -> Int32 {
+    match value { None => panic("Missing value"), Some(n) => n }
+}
+fn text(ok: Bool) -> String { if ok { "owned result" } else { panic("text failure") } }
+fn panic_success() -> Int32 {
+    require(choose(true) == 18446744073709551615, "Wide branch")
+    require(choose_reverse(true) == 42, "Reverse branch")
+    require(choose_semicolon(true) == 18446744073709551615, "Semicolon branch")
+    require(unwrap(Some(42)) == 42, "Match branch")
+    let result = text(true)
+    require(result.byte_length() == 12, "Owned branch {42}")
+    require(true, result)
+    require(true, &result)
+    require(result.byte_length() == 12, "Borrow preserves input")
+    if false { let moved = result panic(moved) }
+    require(result.byte_length() == 12, "Diverging move")
+    42
+}
+fn panic_cleanup() -> Int32 {
+    let first = Resource { text: "first", id: 1, fail: false }
+    let second = Resource { text: "second", id: 2, fail: true }
+    panic(message())
+}
+fn panic_argument() -> Int32 { add(mark(11), panic("Argument failure")) }
+fn panic_match() -> Int32 { unwrap(None) }
+fn panic_both() -> Int32 {
+    if true { panic("Both branches") } else { panic("Other branch") }
+}
+fn panic_return() -> Int32 { return panic("Return operand") }
+fn panic_indirect() -> Int32 {
+    let fail = panic
+    let message = "Indirect panic"
+    fail(&message)
+    42
+}
+fn panic_task() @suspends -> Int32 {
+    let resource = Resource { text: "task", id: 3, fail: false }
+    task.yield_now()
+    panic("Task panic")
+}

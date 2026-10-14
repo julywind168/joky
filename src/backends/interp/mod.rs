@@ -87,6 +87,9 @@ enum Instruction {
         condition: usize,
         message: usize,
     },
+    Panic {
+        message: usize,
+    },
     Cleanup {
         value: crate::core::ir::Slot,
         place: Option<usize>,
@@ -467,6 +470,9 @@ fn lower_unoptimized(
             }
             Op::Require { condition, message } => Instruction::Require {
                 condition: condition.index,
+                message: message.index,
+            },
+            Op::Panic { message } => Instruction::Panic {
                 message: message.index,
             },
             Op::Binary(dst, op, lhs, rhs) => Instruction::Binary {

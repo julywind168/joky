@@ -3107,6 +3107,54 @@ fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn panic_divergence_and_cleanup_match_all_backends() {
+    let work = Workspace::new();
+    let source = recording_cli_source(include_str!("fixtures/panic.jk"));
+    work.write(
+        "panic.jk",
+        &(source.clone() + "\nfn main() { record_int(panic_success()) }"),
+    );
+    work.assert_all_backends("panic.jk", &["--no-prelude"], b"42\n", 0);
+    for (name, message, events, suspends) in [
+        ("panic_cleanup", "Primary panic 42", "10\n2\n1\n", false),
+        ("panic_argument", "Argument failure", "11\n", false),
+        ("panic_match", "Missing value", "", false),
+        ("panic_both", "Both branches", "", false),
+        ("panic_return", "Return operand", "", false),
+        ("panic_indirect", "Indirect panic", "", false),
+        ("panic_task", "Task panic", "3\n", true),
+    ] {
+        let effect = if suspends { "@suspends" } else { "" };
+        work.write(
+            "panic.jk",
+            &(source.clone() + &format!("\nfn main() {effect} {{ {name}(); }}")),
+        );
+        let check = |output: std::process::Output| {
+            assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
+            assert_eq!(output.stdout, events.as_bytes(), "{name}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(message), "{name}: {stderr}");
+        };
+        check(work.cli(&["run", "panic.jk"]));
+        check(work.cli(&["run", "--interpreter", "panic.jk"]));
+        success(&work.cli(&["build", "panic.jk"]));
+        check(Command::new(work.path().join("panic")).output().unwrap());
+    }
+    work.write("prelude.jk", "fn main() { panic(\"Prelude panic\") }");
+    failure(&work.cli(&["run", "prelude.jk"]), "Prelude panic");
+    failure(
+        &work.cli(&["run", "--interpreter", "prelude.jk"]),
+        "Prelude panic",
+    );
+    success(&work.cli(&["build", "prelude.jk"]));
+    failure(
+        &Command::new(work.path().join("prelude")).output().unwrap(),
+        "Prelude panic",
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn int_map_public_operations_match_all_backends() {
     let work = Workspace::new();
     // Internal index checks run in VM and native test registries.

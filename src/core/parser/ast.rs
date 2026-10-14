@@ -1337,6 +1337,7 @@ pub(crate) enum CompilerIntrinsic {
     MemReplace,
     MemSwap,
     Require,
+    Panic,
     PlainCopy(Type),
     ReferenceFree(Type),
     /// Only the trusted Rune.from_u32 implementation can construct this scalar.

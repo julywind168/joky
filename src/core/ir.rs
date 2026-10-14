@@ -250,6 +250,10 @@ pub(crate) enum Op {
         condition: Slot,
         message: Slot,
     },
+    /// Report failure and leave through cleanup; there is no normal successor.
+    Panic {
+        message: Slot,
+    },
     Cleanup(CleanupOp),
     /// Explicit non-Copy ownership and temporary control-block borrowing.
     Buffer(BufferOp),
@@ -1036,7 +1040,10 @@ impl ModulePlan {
             for (name, body) in &bodies {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| match op {
-                        Op::Require { .. } | Op::Alloc { .. } | Op::Text { .. } => true,
+                        Op::Require { .. }
+                        | Op::Panic { .. }
+                        | Op::Alloc { .. }
+                        | Op::Text { .. } => true,
                         Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
                         Op::Binary(_, op, lhs, _) if op.can_fail() && !lhs.ty.is_float() => true,
                         Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
@@ -1303,31 +1310,39 @@ impl FunctionPlan {
             }
             return Ok(plan);
         }
-        if matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::Require)) {
-            if f.suspends
-                || f.ret_ty != Type::Unit
-                || !f
-                    .params
-                    .iter()
-                    .map(|p| &p.ty)
-                    .eq([&Type::Bool, &Type::reference(Type::String, false)])
-            {
+        if matches!(
+            f.compiler_intrinsic,
+            Some(CompilerIntrinsic::Require | CompilerIntrinsic::Panic)
+        ) {
+            let panic = matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::Panic));
+            let message_type = Type::reference(Type::String, false);
+            let params = if panic {
+                vec![&message_type]
+            } else {
+                vec![&Type::Bool, &message_type]
+            };
+            if f.suspends || f.ret_ty != Type::Unit || !f.params.iter().map(|p| &p.ty).eq(params) {
                 return Err(type_error(
                     &f.span,
                     ErrorCode::InvalidCall,
-                    "Invalid compiler require signature",
+                    "Invalid compiler check signature",
                 ));
             }
-            plan.emit(Op::Require {
-                condition: Slot {
-                    index: 0,
-                    ty: Type::Bool,
-                },
-                message: Slot {
-                    index: 1,
-                    ty: Type::reference(Type::String, false),
-                },
-            });
+            let message = Slot {
+                index: usize::from(!panic),
+                ty: message_type,
+            };
+            if panic {
+                plan.emit(Op::Panic { message });
+            } else {
+                plan.emit(Op::Require {
+                    condition: Slot {
+                        index: 0,
+                        ty: Type::Bool,
+                    },
+                    message,
+                });
+            }
             return Ok(plan);
         }
         if let Some(CompilerIntrinsic::PlainCopy(ty) | CompilerIntrinsic::ReferenceFree(ty)) =

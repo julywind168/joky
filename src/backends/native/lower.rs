@@ -2123,6 +2123,20 @@ fn lower_ops(
                     },
                 );
             }
+            Op::Panic { message } => {
+                let message = slots.read(builder, message);
+                let source = builder
+                    .ins()
+                    .iconst(types::I64, span.source_id().raw() as i64);
+                let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                builder.ins().call(
+                    refs["__joky_runtime_require_failed_v2"],
+                    &[message, source, start, end],
+                );
+                failure_return(builder, refs, mode.frame(), mode.cleanup());
+                terminated = true;
+            }
             Op::Require { condition, message } => {
                 let condition = slots.read(builder, condition);
                 let message = slots.read(builder, message);
