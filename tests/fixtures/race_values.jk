@@ -1,0 +1,176 @@
+import joky/task
+import joky/drop.{type Drop}
+import joky/array.{type Array}
+import joky/result.{type Result, Ok, Err}
+import joky/check.{assert}
+extern fn record(value: Int32) -> Int32
+extern fn delayed_value(value: Int32) @suspends -> Int32
+
+fn ensure(value: Bool) { let message = "race value contract" assert(value, &message) }
+struct Tracked { id: Int32, text: String }
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        record(self.id);
+        if self.id == 9 { ensure(false) }
+    }
+}
+fn make(id: Int32) -> Tracked {
+    let value = Tracked { id: id, text: "payload" }
+    record(-id);
+    value
+}
+fn relay<T>(value: T, polls: Int32) @suspends -> T {
+    var n = 0
+    while n < polls { task.yield_now() n = n + 1 }
+    value
+}
+fn scalar() @suspends -> Int32 {
+    let value = race { | relay(record(11), 2) | relay(record(42), 1) }
+    ensure(value == 42)
+    42
+}
+fn host_scalar() @suspends -> Int32 {
+    race { | delayed_value(41) | delayed_value(99) }
+}
+fn widths() @suspends -> Int32 {
+    let signed = race { | relay::<Int8>(-128, 0) | relay::<Int8>(127, 1) }
+    let wide = race { | relay::<UInt64>(18446744073709551615, 1) | relay::<UInt64>(0, 2) }
+    let real = race { | relay::<Float64>(-0.0, 1) | relay::<Float64>(1.0, 2) }
+    let flag = race { | relay(true, 1) | relay(false, 2) }
+    ensure(signed == -128 && wide == 18446744073709551615 && real == 0.0 && flag)
+    42
+}
+struct Pair { small: Int8, wide: UInt64, real: Float64, flag: Bool }
+fn copy_aggregate() @suspends -> Int32 {
+    let a = Pair { small: -128, wide: 18446744073709551615, real: 1.5, flag: true }
+    let b = Pair { small: 0, wide: 0, real: 0.0, flag: false }
+    let result = race { | relay(a, 2) | relay(b, 3) }
+    ensure(result.small == -128 && result.wide == 18446744073709551615 && result.real == 1.5 && result.flag)
+    let pair = race { | relay((40, 2), 1) | relay((0, 0), 2) }
+    let (left, right) = pair
+    left + right
+}
+struct Empty {}
+fn zero_slots() @suspends -> Int32 {
+    let empty = race { | relay(Empty {}, 1) | relay(Empty {}, 2) }
+    42
+}
+fn string_value() @suspends -> Int32 {
+    let text = race { | relay("payload", 1) | relay("other", 2) }
+    task.yield_now()
+    ensure(text.byte_length() == 7)
+    42
+}
+fn owned() @suspends -> Int32 {
+    let value = race { | relay(make(1), 2) | relay(make(2), 1) }
+    record(100);
+    task.yield_now()
+    ensure(value.id == 2 && value.text.byte_length() == 7)
+    42
+}
+fn unpolled() @suspends -> Int32 {
+    let value = race { | relay(make(1), 0) | relay(make(2), 2) }
+    ensure(value.id == 1)
+    42
+}
+fn discard() @suspends -> Int32 {
+    race { | relay(make(1), 1) | relay(make(2), 2) };
+    record(100);
+    42
+}
+fn pair_owned() @suspends -> Int32 {
+    let result = race { | relay((make(1), make(2)), 2) | relay((make(3), make(4)), 1) }
+    let (a, b) = result
+    ensure(a.id == 3 && b.id == 4)
+    42
+}
+fn array_value(id: Int32) -> Array<Tracked> {
+    var values = Array.new::<Tracked>()
+    values.push(make(id))
+    values
+}
+fn arrays() @suspends -> Int32 {
+    var values = race { | relay(array_value(1), 1) | relay(array_value(2), 2) }
+    values.push(make(3))
+    ensure(values.len() == 2)
+    42
+}
+fn results() @suspends -> Int32 {
+    let a: Result<Tracked, Tracked> = Ok(make(1))
+    let b: Result<Tracked, Tracked> = Err(make(2))
+    let value = race { | relay(a, 2) | relay(b, 1) }
+    match value { Ok(_) => 0, Err(owner) => { ensure(owner.id == 2) 42 } }
+}
+fn nested_value() @suspends -> Tracked {
+    scope { branch { task.yield_now() record(200); } }
+    race { | relay(make(1), 1) | relay(make(2), 2) }
+}
+fn nested() @suspends -> Int32 {
+    let value = race { | nested_value() | relay(make(3), 8) }
+    ensure(value.id == 1)
+    42
+}
+fn relay_owned(value: Tracked, polls: Int32) @suspends -> Tracked { relay(value, polls) }
+fn indirect() @suspends -> Int32 {
+    let f = relay_owned
+    let value = race { | f(make(1), 1) | f(make(2), 2) }
+    ensure(value.id == 1)
+    42
+}
+struct Worker { id: Int32 }
+impl Worker { fn work(self) @suspends -> Int32 { task.yield_now() self.id } }
+fn members() @suspends -> Int32 {
+    let a = Worker { id: 42 }
+    let b = Worker { id: 0 }
+    race { | a.work() | b.work() }
+}
+fn repeat() @suspends -> Int32 {
+    var n = 0
+    while n < 4 {
+        let value = race { | relay(make(1), 1) | relay(make(2), 2) }
+        ensure(value.id == 1)
+        n = n + 1
+    }
+    42
+}
+fn cleanup_failure() @suspends -> Int32 {
+    let value = race { | relay(make(1), 1) | relay(make(9), 2) }
+    record(100);
+    ensure(value.id == 1)
+    42
+}
+fn fail_return() @suspends -> Tracked {
+    let bad = make(9)
+    task.yield_now()
+    make(1)
+}
+fn winner_failure() @suspends -> Int32 {
+    let value = race { | fail_return() | relay(make(2), 3) }
+    record(100);
+    42
+}
+fn fail_branch() @suspends -> Tracked { task.yield_now() ensure(false) make(1) }
+fn branch_failure() @suspends -> Int32 {
+    let value = race { | fail_branch() | relay(make(2), 3) }
+    record(100);
+    42
+}
+
+fn choose<T>(left: T, right: T) @suspends -> T {
+    race { | relay(left, 1) | relay(right, 2) }
+}
+fn generic_context() @suspends -> Int32 {
+    let total = 1 + race { | relay::<Int64>(41, 1) | relay::<Int64>(0, 2) }
+    ensure(total == 42)
+    let owner = choose(make(1), make(2))
+    ensure(owner.id == 1)
+    42
+}
+
+fn unit_fast() @suspends { task.yield_now() }
+fn unit_slow(value: Tracked) @suspends { task.yield_now() task.yield_now() }
+fn cleanup_failure_unit() @suspends -> Int32 {
+    race { | unit_fast() | unit_slow(make(9)) }
+    record(100);
+    42
+}

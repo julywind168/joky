@@ -141,7 +141,7 @@ The instruction set mirrors the shared IR:
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | Assert / Panic | `Assert` checks a condition; `Panic` fails unconditionally with no normal successor. Both copy the borrowed message into RuntimeError and use frame cleanup. |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
-| `parallel` / `race` | `Scope` with a Join / Race completion policy |
+| `parallel` / `race` | `Scope` with a Join / Race completion policy and optional result destinations; `ScopeFinish` cleans children after result registration |
 | sequential `scope` / `branch` | `TaskScopeEnter` opens a dynamic scope record, `TaskBranch` registers a child entry with captured inputs, `TaskJoin` suspends on the scope's join |
 | Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
 | Project | `Memory::Project`, adding a validated inline field byte offset to a local pointer |
@@ -364,8 +364,13 @@ nested-frame destruction are iterative as well. Native callback internals still
 obey the native ABI and may have their own stack/allocation behavior.
 
 Race uses the same instruction and pending branch representation with a distinct
-completion policy. The first observed completion cancels all remaining branch
-subtrees before parent instructions resume; the first observed failure fails the
+completion policy. All branches return the same reference-free type. Scalar and
+flattened aggregate destinations receive the winner using the ordinary CPS return
+protocol, including transfer of owning cleanup entries. The completed pending
+scope retains its losing children while result cleanup registration runs;
+`ScopeFinish` then cancels them before source continuation code resumes. A slice
+or cancellation at this boundary still sees both result and child ownership.
+Cleanup failures propagate and release the received result. The first observed failure fails the
 whole task. Source-order polling breaks ties and can leave later branches unpolled.
 All arguments are still prepared before any branch starts. Cancellation walks
 only the losing subtrees iteratively and returns their frame capacity immediately,

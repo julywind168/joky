@@ -22,6 +22,7 @@ fn snapshot_barrier(instruction: &Instruction) -> bool {
             | Instruction::IndirectCall(_)
             | Instruction::AggregateCall(_)
             | Instruction::Scope { .. }
+            | Instruction::ScopeFinish
             | Instruction::TaskBranch { .. }
             | Instruction::TaskJoin
     )
@@ -288,7 +289,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
                 visit(slot);
             }
         }
-        Instruction::TaskScopeEnter | Instruction::TaskJoin => {}
+        Instruction::ScopeFinish | Instruction::TaskScopeEnter | Instruction::TaskJoin => {}
         Instruction::Const { .. } | Instruction::Jump(_) => {}
     }
 }
@@ -333,12 +334,23 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
                 visit(*result);
             }
         }
-        Instruction::Scope { branches, .. } => {
+        Instruction::Scope {
+            branches,
+            result,
+            results,
+            ..
+        } => {
+            for &slot in result.iter().chain(results) {
+                visit(slot);
+            }
             for branch in branches {
                 visit(branch.done);
             }
         }
-        Instruction::TaskScopeEnter | Instruction::TaskBranch { .. } | Instruction::TaskJoin => {}
+        Instruction::ScopeFinish
+        | Instruction::TaskScopeEnter
+        | Instruction::TaskBranch { .. }
+        | Instruction::TaskJoin => {}
         Instruction::Assert { .. }
         | Instruction::Panic { .. }
         | Instruction::Branch { .. }
@@ -389,7 +401,15 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
                     *slot = remap[*slot];
                 }
             }
-            Instruction::Scope { branches, .. } => {
+            Instruction::Scope {
+                branches,
+                result,
+                results,
+                ..
+            } => {
+                for slot in result.iter_mut().chain(results) {
+                    *slot = remap[*slot];
+                }
                 for branch in branches {
                     branch.done = remap[branch.done];
                 }

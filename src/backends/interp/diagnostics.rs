@@ -85,14 +85,23 @@ fn describe(instruction: &Instruction) -> String {
         }
         Instruction::AggregateCall(call) => format!("AggregateCall #{}", call.target),
         Instruction::Call { target, .. } => format!("Call #{target}"),
-        Instruction::Scope { kind, branches } => {
+        Instruction::Scope {
+            kind,
+            branches,
+            result,
+            results,
+        } => {
             let name = if *kind == ScopeKind::Race {
                 "Race"
             } else {
                 "Scope"
             };
-            format!("{name} {} branches", branches.len())
+            format!(
+                "{name} {} branches -> {result:?} {results:?}",
+                branches.len()
+            )
         }
+        Instruction::ScopeFinish => "ScopeFinish".into(),
         Instruction::TaskScopeEnter => "TaskScopeEnter".into(),
         Instruction::TaskBranch { target, args } => {
             let inputs: Vec<_> = args

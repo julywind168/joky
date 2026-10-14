@@ -132,7 +132,7 @@ fn net0_records_current_external_owner_and_buffer_abi_gaps() {
         ("struct Holder { socket: Socket }", "Record fields and enum payloads require a Copy value or an owner"),
         ("import joky/array.{type Array} extern fn read(bytes: &mut Array<UInt8>) @suspends -> Int32", "Buffer owners and views are not supported by the host ABI"),
         ("import joky/slice.{type Slice} extern fn read(bytes: &mut Slice<UInt8>) @suspends -> Int32", "Buffer owners and views are not supported by the host ABI"),
-        ("fn value() @suspends -> Int32 { 1 } fn run() @suspends { race { | value() } }", "returning Unit"),
+        ("fn value() @suspends -> Int32 { 1 } fn run() @suspends { parallel { | value() } }", "returning Unit"),
     ] {
         for mode in [VmMode::Jit,VmMode::Interpreter] {
             let mut vm=VmEngine::with_mode(mode);

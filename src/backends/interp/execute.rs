@@ -330,6 +330,8 @@ enum Pending {
         branches: Vec<Branch>,
         next: usize,
         pending: bool,
+        complete: bool,
+        result: Option<usize>,
     },
     /// Joining the innermost open dynamic task scope; the record stays on
     /// the frame's scope stack until every registered child has finished.
@@ -383,6 +385,7 @@ enum Step {
         result: Option<usize>,
     },
     Scope,
+    ScopeFinish,
     TaskBranch,
     TaskJoin,
     Complete(Value),
@@ -518,7 +521,7 @@ impl Execution {
 
     fn release(&mut self) {
         if self.live != 0 {
-            self.release_subtrees(vec![0]);
+            let _ = self.release_subtrees(vec![0]);
         }
         self.nodes = Vec::new();
         self.free = Vec::new();
@@ -699,6 +702,7 @@ impl Execution {
             let results = match &parent.function.code[parent.pc] {
                 Instruction::AggregateCall(call) => &call.results,
                 Instruction::IndirectCall(call) => &call.results,
+                Instruction::Scope { results, .. } => results,
                 _ => unreachable!("byte request result"),
             };
             debug_assert_eq!(results.len(), value.iter().flatten().count());
@@ -723,6 +727,7 @@ impl Execution {
         let results = match &parent.function.code[parent.pc] {
             Instruction::AggregateCall(call) => &call.results,
             Instruction::IndirectCall(call) => &call.results,
+            Instruction::Scope { results, .. } => results,
             _ => unreachable!(),
         };
         debug_assert_eq!(results.len(), child.function.aggregate_result.len());
@@ -748,10 +753,17 @@ impl Execution {
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
             unreachable!()
         };
-        let Instruction::Scope { kind, branches } = &frame.function.code[frame.pc] else {
+        let Instruction::Scope {
+            kind,
+            branches,
+            result,
+            ..
+        } = &frame.function.code[frame.pc]
+        else {
             unreachable!()
         };
         let kind = *kind;
+        let result = *result;
         self.frame_capacity(branches.len())?;
         // Construct all owned argument snapshots before polling any branch.
         let children: Vec<_> = branches
@@ -800,17 +812,20 @@ impl Execution {
             branches,
             next: 0,
             pending: false,
+            complete: false,
+            result,
         });
         Ok(())
     }
 
     /// Drop just the losing subtrees, preserving ancestors, unrelated siblings,
     /// and the task arena. Walk indices so cancellation uses no Rust recursion.
-    fn cancel_branches(&mut self, branches: Vec<Branch>) {
-        self.release_subtrees(branches.into_iter().filter_map(|b| b.child).collect());
+    fn cancel_branches(&mut self, branches: Vec<Branch>) -> Result<(), Error> {
+        self.release_subtrees(branches.into_iter().filter_map(|b| b.child).collect())
     }
 
-    fn release_subtrees(&mut self, roots: Vec<usize>) {
+    fn release_subtrees(&mut self, roots: Vec<usize>) -> Result<(), Error> {
+        let mut error = None;
         // Reused node indices do not encode nesting. Keep parents alive until
         // child callbacks have finished using their borrowed local storage.
         let mut pending: Vec<_> = roots.into_iter().map(|id| (id, false)).collect();
@@ -842,17 +857,17 @@ impl Execution {
                 continue;
             }
             let mut node = self.nodes[id].take().expect("live cancelled branch");
-            match &mut node.activation {
-                Activation::User(frame) => {
-                    let _ = unsafe { frame.cleanups.finish(&mut self.arena) };
-                }
-                Activation::Host(host) => {
-                    let _ = host.finish(&mut self.arena);
-                }
+            let result = match &mut node.activation {
+                Activation::User(frame) => unsafe { frame.cleanups.finish(&mut self.arena) },
+                Activation::Host(host) => host.finish(&mut self.arena),
+            };
+            if let Err(next) = result {
+                error.get_or_insert(next);
             }
             self.free.push(id);
             self.live -= 1;
         }
+        error.map_or(Ok(()), Err)
     }
 
     /// Select the next dynamic child to poll for this scheduling round:
@@ -1101,6 +1116,8 @@ impl Execution {
                     branches,
                     next,
                     pending,
+                    complete: finished,
+                    result,
                 } => {
                     let branch = &mut branches[*next];
                     debug_assert_eq!(branch.child, Some(id));
@@ -1112,11 +1129,14 @@ impl Execution {
                     }
                     *next += 1;
                     if complete && *kind == ScopeKind::Race {
-                        let Some(Pending::Scope { branches, .. }) = frame.pending.take() else {
-                            unreachable!()
-                        };
+                        if let Some(slot) = result {
+                            frame.slots[*slot] = value.take().unwrap();
+                            if let Some(entry) = owner {
+                                frame.cleanups.insert(*slot, entry);
+                            }
+                        }
+                        *finished = true;
                         frame.pc += 1;
-                        self.cancel_branches(branches);
                     }
                     return None;
                 }
@@ -1156,10 +1176,12 @@ impl Execution {
                         self.current = *child;
                         continue;
                     }
+                    Some(Pending::Scope { complete: true, .. }) => {}
                     Some(Pending::Scope {
                         branches,
                         next,
                         pending,
+                        complete,
                         ..
                     }) => {
                         while *next < branches.len() && branches[*next].child.is_none() {
@@ -1176,7 +1198,7 @@ impl Execution {
                                 return poll;
                             }
                         } else {
-                            frame.pending = None;
+                            *complete = true;
                             frame.pc += 1;
                         }
                         continue;
@@ -1269,6 +1291,21 @@ impl Execution {
                     if let Err(error) = self.start_scope(module) {
                         return self.fail(error);
                     }
+                }
+                Step::ScopeFinish => {
+                    let frame = self.frame_mut(self.current);
+                    let Some(Pending::Scope {
+                        branches,
+                        complete: true,
+                        ..
+                    }) = frame.pending.take()
+                    else {
+                        unreachable!("scope result must be delivered before cleanup")
+                    };
+                    if let Err(error) = self.cancel_branches(branches) {
+                        return self.fail(error);
+                    }
+                    self.frame_mut(self.current).pc += 1;
                 }
                 Step::TaskBranch => {
                     if let Err(error) = self.start_task_branch(module) {
@@ -1911,6 +1948,7 @@ fn run_frame(
                 }
             }
             Instruction::Scope { .. } => return Step::Scope,
+            Instruction::ScopeFinish => return Step::ScopeFinish,
             Instruction::TaskScopeEnter => {
                 frame.task_scopes.push(Default::default());
                 frame.pc += 1;

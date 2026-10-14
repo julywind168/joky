@@ -320,6 +320,13 @@ impl FunctionPlan {
                 self.binary_hint(lhs, rhs, vars, functions, types)
                     .or_else(from_operands)
             }
+            Expr::Scope {
+                kind: ScopeKind::Race,
+                branches,
+                ..
+            } => branches
+                .first()
+                .and_then(|branch| self.hint(branch, vars, functions, types, default)),
             Expr::Let { .. }
             | Expr::Var { .. }
             | Expr::Destructure { .. }

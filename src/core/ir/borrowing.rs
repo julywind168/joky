@@ -237,13 +237,15 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             args.iter().flatten().flat_map(refs).collect(),
             result.iter().flat_map(refs).collect(),
         ),
-        Op::Scope { branches, .. } => (
+        Op::Scope {
+            branches, result, ..
+        } => (
             branches
                 .iter()
                 .flat_map(|branch| branch.args.iter().flatten())
                 .flat_map(refs)
                 .collect(),
-            vec![],
+            result.iter().flat_map(refs).collect(),
         ),
         Op::TaskBranch { captures, .. } => {
             (captures.iter().flatten().flat_map(refs).collect(), vec![])
@@ -683,7 +685,7 @@ fn analyze(
     }
     for (pc, op) in plan.ops.iter().enumerate() {
         if matches!(op, Op::Text { .. })
-            || matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
+            || matches!(op, Op::Call { result: Some(dst), .. } | Op::Scope { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
             || matches!(op, Op::Buffer(super::BufferOp::Swap { .. }))
             || matches!(op, Op::Buffer(super::BufferOp::Detach { .. }))
         {
@@ -1603,7 +1605,9 @@ fn analyze(
                         .or_insert_with(|| contents.clone());
                 }
             }
-            Op::Scope { branches, .. } => {
+            Op::Scope {
+                branches, result, ..
+            } => {
                 for branch in branches {
                     record_child_escapes(&branch.name, &branch.args);
                 }
@@ -1669,6 +1673,27 @@ fn analyze(
                         value,
                         arg.ty.reference_type().unwrap().mutable,
                     );
+                }
+                // Reference-free results own fresh storage or consumed inputs.
+                for dst in result.iter().flat_map(refs) {
+                    let mut value = Reference {
+                        origins: BTreeSet::from([Origin::new(loan)]),
+                        loans: Set::from([loan]),
+                        storage: true,
+                        ..Default::default()
+                    };
+                    for arg in branches
+                        .iter()
+                        .flat_map(|b| b.args.iter().flatten())
+                        .flat_map(refs)
+                        .filter(|s| s.ty.is_buffer())
+                    {
+                        let source = &state[&arg.index];
+                        value.origins.extend(source.origins.iter().cloned());
+                        value.ancestors.extend(&source.ancestors);
+                        value.ancestors.extend(&source.loans);
+                    }
+                    state.insert(dst.index, value);
                 }
                 for arg in branches
                     .iter()

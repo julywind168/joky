@@ -161,9 +161,12 @@ enum Instruction {
     },
     AggregateCall(Box<AggregateCall>),
     Scope {
+        result: Option<usize>,
+        results: Vec<usize>,
         kind: ScopeKind,
         branches: Vec<BytecodeBranch>,
     },
+    ScopeFinish,
     /// Open a dynamic task scope on the current frame.
     TaskScopeEnter,
     /// Register a child task entry with captured inputs; the child runs when
@@ -534,7 +537,20 @@ fn lower_unoptimized(
                     }
                 }
             }
-            Op::Scope { kind, branches, .. } => Instruction::Scope {
+            Op::Scope {
+                kind,
+                branches,
+                result,
+                ..
+            } => Instruction::Scope {
+                result: result
+                    .as_ref()
+                    .filter(|s| !s.ty.is_aggregate())
+                    .map(|s| s.index),
+                results: result
+                    .as_ref()
+                    .filter(|s| s.ty.is_aggregate())
+                    .map_or_else(Vec::new, |s| s.scalars().map(|s| s.index).collect()),
                 kind: *kind,
                 branches: branches
                     .iter()
@@ -550,6 +566,7 @@ fn lower_unoptimized(
                     })
                     .collect(),
             },
+            Op::ScopeFinish => Instruction::ScopeFinish,
             Op::TaskScopeEnter => Instruction::TaskScopeEnter,
             Op::TaskBranch {
                 entry, captures, ..

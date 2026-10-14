@@ -458,10 +458,11 @@ impl FunctionPlan {
             ));
         }
         let mut planned = Vec::with_capacity(branches.len());
+        let mut result_type = None;
         for (branch_index, source_branch) in branches.iter().enumerate() {
             let resolved = self.member_call(source_branch, vars, functions, types)?;
             let branch = resolved.as_ref().unwrap_or(source_branch);
-            let (name, params, callee, args, branch_span, indirect) = match branch {
+            let (name, params, ret, callee, args, branch_span, indirect) = match branch {
                 Expr::Invoke { callee, args, span } => {
                     let Flow::Value(value) = self.expr(callee, vars, functions, suspends, types)?
                     else {
@@ -485,19 +486,35 @@ impl FunctionPlan {
                             "The callee is not a function value",
                         ));
                     };
-                    if !signature.suspends || signature.signature.ret != Type::Unit {
+                    if !signature.suspends
+                        || (*kind == ScopeKind::Join && signature.signature.ret != Type::Unit)
+                    {
                         return Err(type_error(
                             span,
                             ErrorCode::InvalidCall,
                             format!(
-                                "{keyword} branches must be @suspends functions returning Unit"
+                                "{keyword} branches must be @suspends functions{}",
+                                if *kind == ScopeKind::Join {
+                                    " returning Unit"
+                                } else {
+                                    ""
+                                }
                             ),
                         ));
                     }
                     let name = self.indirect_contract(signature);
                     let params = signature.signature.params.clone();
+                    let ret = signature.signature.ret.clone();
                     let target = self.snapshot(&Some(value))?.unwrap();
-                    (name, params, "function value", args, span, Some(target))
+                    (
+                        name,
+                        params,
+                        ret,
+                        "function value",
+                        args,
+                        span,
+                        Some(target),
+                    )
                 }
                 Expr::Call {
                     callee,
@@ -513,18 +530,36 @@ impl FunctionPlan {
                             branch_span,
                             ErrorCode::InvalidCall,
                             format!(
-                                "{keyword} branches must be @suspends functions returning Unit"
+                                "{keyword} branches must be @suspends functions{}",
+                                if *kind == ScopeKind::Join {
+                                    " returning Unit"
+                                } else {
+                                    ""
+                                }
                             ),
                         ));
                     }
                     let (name, info) = self.resolve_callee(branch, vars, functions, types)?;
-                    if !info.suspends || info.signature.ret != Type::Unit {
-                        return Err(type_error(branch_span, ErrorCode::InvalidCall,
-                            format!("{keyword} branch {callee} must be an @suspends function returning Unit")));
+                    if !info.suspends
+                        || (*kind == ScopeKind::Join && info.signature.ret != Type::Unit)
+                    {
+                        return Err(type_error(
+                            branch_span,
+                            ErrorCode::InvalidCall,
+                            format!(
+                                "{keyword} branch {callee} must be an @suspends function{}",
+                                if *kind == ScopeKind::Join {
+                                    " returning Unit"
+                                } else {
+                                    ""
+                                }
+                            ),
+                        ));
                     }
                     (
                         name,
                         info.signature.params,
+                        info.signature.ret,
                         callee.as_str(),
                         args,
                         branch_span,
@@ -539,6 +574,22 @@ impl FunctionPlan {
                     ))
                 }
             };
+            if *kind == ScopeKind::Race {
+                if ret.contains_references() || (ret.is_owner() && !ret.is_suspend_safe_owner()) {
+                    return Err(type_error(
+                        branch_span,
+                        ErrorCode::InvalidCall,
+                        "race results must not contain references",
+                    ));
+                }
+                if let Some(expected) = &result_type {
+                    if expected != &ret {
+                        return Err(type_error(branch_span, ErrorCode::TypeMismatch,
+                            format!("race branches must return the same type: expected {expected}, got {ret}")));
+                    }
+                }
+                result_type = Some(ret);
+            }
             let Some(values) = self.checked_arguments(
                 callee,
                 args,
@@ -567,11 +618,17 @@ impl FunctionPlan {
         }
         let state = self.state_count;
         self.state_count += 1;
+        let result = match result_type {
+            Some(ty) if ty != Type::Unit => Some(self.slot(ty)?),
+            _ => None,
+        };
         self.emit(Op::Scope {
+            result: result.clone(),
             kind: *kind,
             branches: planned,
             state,
         });
-        Ok(Flow::Value(None))
+        self.emit(Op::ScopeFinish);
+        Ok(Flow::Value(result))
     }
 }

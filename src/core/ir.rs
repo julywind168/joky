@@ -354,11 +354,15 @@ pub(crate) enum Op {
         table: Slot,
         method: usize,
     },
+    /// Deliver a branch result before ScopeFinish cancels remaining children.
     Scope {
+        result: Option<Slot>,
         kind: ScopeKind,
         branches: Vec<ScopeBranch>,
         state: u32,
     },
+    /// Run after result ownership registration, before any source continuation.
+    ScopeFinish,
     Binary(Slot, BinOp, Slot, Slot),
     Unary(Slot, UnaryOp, Slot),
     /// Wrapping integer conversion or already-range-checked float truncation;
@@ -1630,6 +1634,9 @@ impl FunctionPlan {
         }
         let owner = match &op {
             Op::Call {
+                result: Some(dst), ..
+            }
+            | Op::Scope {
                 result: Some(dst), ..
             }
             | Op::ReadOwner { dst: Some(dst), .. }

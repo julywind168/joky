@@ -862,6 +862,7 @@ fn child_at(
 }
 
 struct ScopeContext<'a> {
+    result: Option<&'a Slot>,
     kind: ScopeKind,
     branches: &'a [ScopeBranch],
     scope_state: u32,
@@ -876,6 +877,7 @@ struct ScopeContext<'a> {
 
 fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     let ScopeContext {
+        result,
         kind,
         branches,
         scope_state,
@@ -981,6 +983,28 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         builder.ins().return_(&[status]);
 
         builder.switch_to_block(complete);
+        if let Some(dst) = result {
+            if dst.ty.is_aggregate() {
+                let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+                let source = Slot {
+                    index: functions[&branch.name].aggregate_result_offset(),
+                    ty: dst.ty.clone(),
+                };
+                for (dst, src) in dst.scalars().zip(source.scalars()) {
+                    let value = load(builder, child_slots, &src);
+                    store(builder, slots, &dst, value);
+                }
+            } else {
+                let value = builder.ins().load(
+                    types::I64,
+                    MemFlagsData::new(),
+                    child,
+                    std::mem::offset_of!(CpsFrame, result) as i32,
+                );
+                let value = unpack(builder, native_type(&dst.ty).unwrap(), value);
+                store(builder, slots, dst, value);
+            }
+        }
         let one = builder.ins().iconst(types::I8, 1);
         store(builder, slots, &branch.done, one);
         builder.ins().jump(
@@ -1011,10 +1035,8 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         builder.ins().jump(pending, &[]);
     }
     builder.switch_to_block(finished);
-    // Also cancels pending losers and their descendants before parent code runs.
-    builder
-        .ins()
-        .call(refs["__joky_cps_release_children"], &[frame]);
+    // ScopeFinish releases children after the caller registers the result.
+    // No source continuation can run between these two IR operations.
     builder.ins().jump(continuation, &[]);
     builder.switch_to_block(pending);
     let pending_status = builder.ins().iconst(types::I32, 1);
@@ -2097,6 +2119,7 @@ fn lower_ops(
                 slots.write(builder, dst, value);
             }
             Op::Scope {
+                result,
                 kind,
                 branches,
                 state,
@@ -2116,6 +2139,7 @@ fn lower_ops(
                 lower_scope(
                     builder,
                     ScopeContext {
+                        result: result.as_ref(),
                         kind: *kind,
                         branches,
                         scope_state: *state,
@@ -2128,6 +2152,13 @@ fn lower_ops(
                         states,
                     },
                 );
+            }
+            Op::ScopeFinish => {
+                let frame = mode.frame().expect("structured scope requires CPS");
+                builder
+                    .ins()
+                    .call(refs["__joky_cps_release_children"], &[frame]);
+                check_call(builder, refs, Some(frame), None);
             }
             Op::Panic { message } => {
                 let message = slots.read(builder, message);
