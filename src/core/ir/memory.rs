@@ -671,19 +671,23 @@ pub(super) fn check_module(
                 changed = true;
             }
             if !functions[name].uses_arena
-                && body.ops.iter().any(|op| match op {
-                    Op::Call { name, .. } => functions[name].uses_arena,
-                    Op::Cleanup(CleanupOp::Register {
-                        hooks, elements, ..
-                    }) => hooks
-                        .iter()
-                        .chain(elements.iter().flat_map(|e| &e.hooks))
-                        .any(|hook| functions[&hook.name].uses_arena),
-                    Op::Scope { branches, .. } => branches
-                        .iter()
-                        .any(|branch| functions[&branch.name].uses_arena),
-                    Op::TaskBranch { entry, .. } => functions[entry].uses_arena,
-                    _ => false,
+                && body.ops.iter().any(|op| {
+                    op.cleanups().any(|cleanup| {
+                        let CleanupOp::Register {
+                            hooks, elements, ..
+                        } = cleanup;
+                        hooks
+                            .iter()
+                            .chain(elements.iter().flat_map(|e| &e.hooks))
+                            .any(|hook| functions[&hook.name].uses_arena)
+                    }) || match op {
+                        Op::Call { name, .. } => functions[name].uses_arena,
+                        Op::Scope { branches, .. } => branches
+                            .iter()
+                            .any(|branch| functions[&branch.name].uses_arena),
+                        Op::TaskBranch { entry, .. } => functions[entry].uses_arena,
+                        _ => false,
+                    }
                 })
             {
                 functions.get_mut(name).unwrap().uses_arena = true;
@@ -808,15 +812,12 @@ pub(super) fn check_module(
                     ..
                 } if target.is_closure_value() => None,
                 Op::Local { target, .. } => Some(target),
-                Op::Cleanup(CleanupOp::Register {
-                    value,
-                    place: None,
-                    hooks,
-                    ..
-                }) if !hooks.is_empty() => Some(&value.ty),
                 _ => None,
             };
-            if let Some(target) = storage {
+            for target in storage
+                .into_iter()
+                .chain(op.cleanup_storage().map(|(_, ty)| ty))
+            {
                 if info.suspends && !target.is_copy_value() && !target.is_suspend_safe_owner() {
                     return Err(type_error(
                         span,

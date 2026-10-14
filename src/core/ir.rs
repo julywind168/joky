@@ -232,6 +232,10 @@ struct Binding {
 }
 
 pub(crate) struct ScopeBranch {
+    /// Join accepts each result independently before polling another child.
+    pub(crate) result: Option<Slot>,
+    /// Register owning results atomically with acceptance, including partial joins.
+    pub(crate) cleanup: Option<CleanupOp>,
     pub(crate) indirect: Option<Slot>,
     pub(crate) name: String,
     pub(crate) args: Vec<Option<Slot>>,
@@ -1043,25 +1047,32 @@ impl ModulePlan {
             let mut changed = false;
             for (name, body) in &bodies {
                 if !functions[name].may_fail
-                    && body.ops.iter().any(|op| match op {
-                        Op::Assert { .. }
-                        | Op::Panic { .. }
-                        | Op::Alloc { .. }
-                        | Op::Text { .. } => true,
-                        Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
-                        Op::Binary(_, op, lhs, _) if op.can_fail() && !lhs.ty.is_float() => true,
-                        Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
-                            hooks.iter().any(|hook| functions[&hook.name].may_fail)
+                    && body.ops.iter().any(|op| {
+                        op.cleanups().any(|cleanup| {
+                            let CleanupOp::Register {
+                                hooks, elements, ..
+                            } = cleanup;
+                            !elements.is_empty()
+                                || hooks.iter().any(|hook| functions[&hook.name].may_fail)
+                        }) || match op {
+                            Op::Assert { .. }
+                            | Op::Panic { .. }
+                            | Op::Alloc { .. }
+                            | Op::Text { .. } => true,
+                            Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
+                            Op::Binary(_, op, lhs, _) if op.can_fail() && !lhs.ty.is_float() => {
+                                true
+                            }
+                            Op::Buffer(BufferOp::End(_)) => true,
+                            Op::Call { name, .. } => functions[name].may_fail,
+                            Op::Scope { branches, .. } => branches
+                                .iter()
+                                .any(|branch| functions[&branch.name].may_fail),
+                            // Registration can fail on capacity limits; joins
+                            // observe child failure and cancellation.
+                            Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
+                            _ => false,
                         }
-                        Op::Buffer(BufferOp::End(_)) => true,
-                        Op::Call { name, .. } => functions[name].may_fail,
-                        Op::Scope { branches, .. } => branches
-                            .iter()
-                            .any(|branch| functions[&branch.name].may_fail),
-                        // Registration can fail on capacity limits; joins
-                        // observe child failure and cancellation.
-                        Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
-                        _ => false,
                     })
                 {
                     functions.get_mut(name).unwrap().may_fail = true;
@@ -2298,7 +2309,9 @@ impl FunctionPlan {
             }
             Expr::Call { .. } => self.call_expr(expr, vars, functions, suspends, types),
             Expr::Scope { .. } => self.scope_expr(expr, vars, functions, suspends, types),
-            Expr::TaskScope { .. } => self.task_scope_expr(expr, vars, functions, suspends, types),
+            Expr::TaskScope { .. } => {
+                self.task_scope_expr(expr, vars, functions, suspends, types, expected)
+            }
             Expr::Branch { .. } => self.branch_expr(expr, vars, functions, suspends, types),
         }
     }
@@ -2408,6 +2421,18 @@ fn collect_plan_dependencies(
     while let Some(plan) = pending.pop() {
         pending.extend(plan.nested.iter().map(|task| &task.plan));
         for op in &plan.ops {
+            for CleanupOp::Register {
+                hooks, elements, ..
+            } in op.cleanups()
+            {
+                dependencies.extend(
+                    hooks
+                        .iter()
+                        .chain(elements.iter().flat_map(|e| &e.hooks))
+                        .map(|hook| hook.name.clone()),
+                );
+            }
+
             match op {
                 Op::Call { name, .. } | Op::FunctionRef(_, name) => {
                     dependencies.insert(name.clone());
@@ -2417,16 +2442,6 @@ fn collect_plan_dependencies(
                 }
                 Op::TaskBranch { entry, .. } => {
                     dependencies.insert(entry.clone());
-                }
-                Op::Cleanup(CleanupOp::Register {
-                    hooks, elements, ..
-                }) => {
-                    dependencies.extend(
-                        hooks
-                            .iter()
-                            .chain(elements.iter().flat_map(|element| &element.hooks))
-                            .map(|hook| hook.name.clone()),
-                    );
                 }
                 _ => {}
             }

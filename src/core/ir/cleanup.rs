@@ -29,6 +29,41 @@ pub(crate) enum CleanupOp {
     },
 }
 
+impl Op {
+    /// Include registrations performed when individual structured children finish.
+    pub(crate) fn cleanups(&self) -> impl Iterator<Item = &CleanupOp> {
+        let (own, branches) = match self {
+            Op::Cleanup(cleanup) => (Some(cleanup), &[][..]),
+            Op::Scope { branches, .. } => (None, branches.as_slice()),
+            _ => (None, &[][..]),
+        };
+        own.into_iter()
+            .chain(branches.iter().filter_map(|b| b.cleanup.as_ref()))
+    }
+
+    fn cleanups_mut(&mut self) -> impl Iterator<Item = &mut CleanupOp> {
+        let (own, branches) = match self {
+            Op::Cleanup(cleanup) => (Some(cleanup), &mut [][..]),
+            Op::Scope { branches, .. } => (None, branches.as_mut_slice()),
+            _ => (None, &mut [][..]),
+        };
+        own.into_iter()
+            .chain(branches.iter_mut().filter_map(|b| b.cleanup.as_mut()))
+    }
+
+    pub(super) fn cleanup_storage(&self) -> impl Iterator<Item = (usize, &Type)> {
+        self.cleanups().filter_map(|cleanup| match cleanup {
+            CleanupOp::Register {
+                value,
+                place: None,
+                hooks,
+                ..
+            } if !hooks.is_empty() => Some((value.index, &value.ty)),
+            _ => None,
+        })
+    }
+}
+
 impl FunctionPlan {
     /// Prove the complete storage graph, including definitions behind buffers.
     /// Bound expansion also rejects recursive graphs, whose metadata cannot yet
@@ -85,10 +120,13 @@ impl FunctionPlan {
     }
 
     pub(crate) fn has_cleanups(&self) -> bool {
-        self.ops.iter().any(|op| match op {
-            Op::Cleanup(_) | Op::Buffer(BufferOp::Move { .. } | BufferOp::End(_)) => true,
-            Op::Buffer(BufferOp::Storage { dst: Some(dst), .. }) => dst.ty.is_buffer(),
-            _ => false,
+        self.ops.iter().any(|op| {
+            op.cleanups().next().is_some()
+                || match op {
+                    Op::Buffer(BufferOp::Move { .. } | BufferOp::End(_)) => true,
+                    Op::Buffer(BufferOp::Storage { dst: Some(dst), .. }) => dst.ty.is_buffer(),
+                    _ => false,
+                }
         })
     }
 
@@ -164,11 +202,11 @@ impl FunctionPlan {
     pub(super) fn resolve_cleanups(&mut self) -> Result<(), Error> {
         let mut pending = Vec::new();
         for (index, op) in self.ops.iter().enumerate() {
-            if let Op::Cleanup(CleanupOp::Register { value, .. }) = op {
-                pending.push((index, value.ty.clone()));
+            for (cleanup_index, CleanupOp::Register { value, .. }) in op.cleanups().enumerate() {
+                pending.push((index, cleanup_index, value.ty.clone()));
             }
         }
-        for (index, ty) in pending {
+        for (index, cleanup_index, ty) in pending {
             let span = self.op_spans[index];
             let hooks = self.owner_hooks(ty.clone(), span)?;
             let mut elements = Vec::new();
@@ -198,14 +236,11 @@ impl FunctionPlan {
                     hooks: self.owner_hooks(element.clone(), span)?,
                 });
             }
-            let Op::Cleanup(CleanupOp::Register {
+            let CleanupOp::Register {
                 hooks: target,
                 elements: target_elements,
                 ..
-            }) = &mut self.ops[index]
-            else {
-                unreachable!()
-            };
+            } = self.ops[index].cleanups_mut().nth(cleanup_index).unwrap();
             *target = hooks;
             *target_elements = elements;
         }

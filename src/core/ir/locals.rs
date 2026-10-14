@@ -185,35 +185,31 @@ impl FunctionPlan {
     /// A frame's slot allocation is stable across polls; loop entries reuse it.
     pub(super) fn reserve_cps_locals(&mut self) -> Result<(), Error> {
         for (op, span) in self.ops.iter().zip(&self.op_spans) {
-            let (key, target) = match op {
-                Op::Local { dst, target, .. } => (dst.index, target),
-                Op::Cleanup(CleanupOp::Register {
-                    value,
-                    place: None,
-                    hooks,
-                    ..
-                }) if !hooks.is_empty() => (value.index, &value.ty),
-                _ => continue,
+            let local = match op {
+                Op::Local { dst, target, .. } => Some((dst.index, target)),
+                _ => None,
             };
-            let layout = target
-                .storage_layout()
-                .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
-            if layout.align > std::mem::align_of::<u64>() {
-                return Err(type_error(
-                    span,
-                    ErrorCode::InvalidState,
-                    "CPS local alignment exceeds frame alignment",
-                ));
+            for (key, target) in local.into_iter().chain(op.cleanup_storage()) {
+                let layout = target
+                    .storage_layout()
+                    .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
+                if layout.align > std::mem::align_of::<u64>() {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidState,
+                        "CPS local alignment exceeds frame alignment",
+                    ));
+                }
+                let end = self
+                    .slot_count
+                    .checked_add(layout.size.max(1).div_ceil(8))
+                    .filter(|&end| end < i32::MAX as usize / 8)
+                    .ok_or_else(|| {
+                        type_error(span, ErrorCode::ResourceLimit, "CPS frame is too large")
+                    })?;
+                self.cps_local_slots.insert(key, self.slot_count);
+                self.slot_count = end;
             }
-            let end = self
-                .slot_count
-                .checked_add(layout.size.max(1).div_ceil(8))
-                .filter(|&end| end < i32::MAX as usize / 8)
-                .ok_or_else(|| {
-                    type_error(span, ErrorCode::ResourceLimit, "CPS frame is too large")
-                })?;
-            self.cps_local_slots.insert(key, self.slot_count);
-            self.slot_count = end;
         }
         Ok(())
     }

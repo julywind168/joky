@@ -193,6 +193,8 @@ struct AggregateCall {
 }
 
 struct BytecodeBranch {
+    result: Option<usize>,
+    results: Vec<usize>,
     indirect: Option<usize>,
     target: Option<usize>,
     args: Vec<Option<usize>>,
@@ -555,6 +557,18 @@ fn lower_unoptimized(
                 branches: branches
                     .iter()
                     .map(|branch| BytecodeBranch {
+                        result: branch
+                            .result
+                            .as_ref()
+                            .or(result.as_ref())
+                            .filter(|s| !s.ty.is_aggregate())
+                            .map(|s| s.index),
+                        results: branch
+                            .result
+                            .as_ref()
+                            .or(result.as_ref())
+                            .filter(|s| s.ty.is_aggregate())
+                            .map_or_else(Vec::new, |s| s.scalars().map(|s| s.index).collect()),
                         indirect: branch.indirect.as_ref().map(|s| s.index),
                         target: branch.indirect.is_none().then(|| ids[&branch.name]),
                         args: branch

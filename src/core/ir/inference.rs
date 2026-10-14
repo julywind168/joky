@@ -327,13 +327,24 @@ impl FunctionPlan {
             } => branches
                 .first()
                 .and_then(|branch| self.hint(branch, vars, functions, types, default)),
+            Expr::TaskScope { body, .. } => self.hint(body, vars, functions, types, default),
+            Expr::Scope { branches, .. } => {
+                let values = branches
+                    .iter()
+                    .map(|b| self.hint(b, vars, functions, types, default))
+                    .collect::<Option<Vec<_>>>()?;
+                if values.iter().all(|ty| *ty == Type::Unit) {
+                    Some(Type::Unit)
+                } else {
+                    crate::core::types::tuple_type(values, types).ok()
+                }
+            }
             Expr::Let { .. }
             | Expr::Var { .. }
             | Expr::Destructure { .. }
             | Expr::Assign { .. }
             | Expr::FieldAssign { .. }
             | Expr::While { .. }
-            | Expr::Scope { .. }
             | Expr::If {
                 else_branch: None, ..
             } => Some(Type::Unit),

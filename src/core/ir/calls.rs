@@ -486,20 +486,11 @@ impl FunctionPlan {
                             "The callee is not a function value",
                         ));
                     };
-                    if !signature.suspends
-                        || (*kind == ScopeKind::Join && signature.signature.ret != Type::Unit)
-                    {
+                    if !signature.suspends {
                         return Err(type_error(
                             span,
                             ErrorCode::InvalidCall,
-                            format!(
-                                "{keyword} branches must be @suspends functions{}",
-                                if *kind == ScopeKind::Join {
-                                    " returning Unit"
-                                } else {
-                                    ""
-                                }
-                            ),
+                            format!("{keyword} branches must be @suspends functions"),
                         ));
                     }
                     let name = self.indirect_contract(signature);
@@ -529,31 +520,15 @@ impl FunctionPlan {
                         return Err(type_error(
                             branch_span,
                             ErrorCode::InvalidCall,
-                            format!(
-                                "{keyword} branches must be @suspends functions{}",
-                                if *kind == ScopeKind::Join {
-                                    " returning Unit"
-                                } else {
-                                    ""
-                                }
-                            ),
+                            format!("{keyword} branches must be @suspends functions"),
                         ));
                     }
                     let (name, info) = self.resolve_callee(branch, vars, functions, types)?;
-                    if !info.suspends
-                        || (*kind == ScopeKind::Join && info.signature.ret != Type::Unit)
-                    {
+                    if !info.suspends {
                         return Err(type_error(
                             branch_span,
                             ErrorCode::InvalidCall,
-                            format!(
-                                "{keyword} branch {callee} must be an @suspends function{}",
-                                if *kind == ScopeKind::Join {
-                                    " returning Unit"
-                                } else {
-                                    ""
-                                }
-                            ),
+                            format!("{keyword} branch {callee} must be an @suspends function"),
                         ));
                     }
                     (
@@ -574,21 +549,25 @@ impl FunctionPlan {
                     ))
                 }
             };
+            if ret.contains_references()
+                || ret.contains_functions()
+                || ret.is_closure_value()
+                || (ret.is_owner() && !ret.is_suspend_safe_owner())
+            {
+                return Err(type_error(
+                    branch_span,
+                    ErrorCode::InvalidCall,
+                    format!("{keyword} results must not contain references or function values"),
+                ));
+            }
             if *kind == ScopeKind::Race {
-                if ret.contains_references() || (ret.is_owner() && !ret.is_suspend_safe_owner()) {
-                    return Err(type_error(
-                        branch_span,
-                        ErrorCode::InvalidCall,
-                        "race results must not contain references",
-                    ));
-                }
                 if let Some(expected) = &result_type {
                     if expected != &ret {
                         return Err(type_error(branch_span, ErrorCode::TypeMismatch,
                             format!("race branches must return the same type: expected {expected}, got {ret}")));
                     }
                 }
-                result_type = Some(ret);
+                result_type = Some(ret.clone());
             }
             let Some(values) = self.checked_arguments(
                 callee,
@@ -609,7 +588,24 @@ impl FunctionPlan {
                 return Ok(Flow::Diverged);
             };
             let done = self.slot(Type::Bool)?;
+            let result = if *kind == ScopeKind::Join && ret != Type::Unit {
+                Some(self.slot(ret)?)
+            } else {
+                None
+            };
+            let cleanup =
+                result
+                    .as_ref()
+                    .filter(|s| s.ty.is_owner())
+                    .map(|value| CleanupOp::Register {
+                        value: value.clone(),
+                        place: None,
+                        hooks: vec![],
+                        elements: vec![],
+                    });
             planned.push(ScopeBranch {
+                result,
+                cleanup,
                 indirect,
                 name,
                 args: values,
@@ -622,6 +618,7 @@ impl FunctionPlan {
             Some(ty) if ty != Type::Unit => Some(self.slot(ty)?),
             _ => None,
         };
+        let values: Vec<_> = planned.iter().map(|b| b.result.clone()).collect();
         self.emit(Op::Scope {
             result: result.clone(),
             kind: *kind,
@@ -629,6 +626,10 @@ impl FunctionPlan {
             state,
         });
         self.emit(Op::ScopeFinish);
-        Ok(Flow::Value(result))
+        if *kind == ScopeKind::Join && values.iter().any(Option::is_some) {
+            self.tuple_values(values, types, *span)
+        } else {
+            Ok(Flow::Value(result))
+        }
     }
 }

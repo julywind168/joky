@@ -345,6 +345,9 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
             }
             for branch in branches {
                 visit(branch.done);
+                for &slot in branch.result.iter().chain(&branch.results) {
+                    visit(slot);
+                }
             }
         }
         Instruction::ScopeFinish
@@ -412,6 +415,9 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
                 }
                 for branch in branches {
                     branch.done = remap[branch.done];
+                    for slot in branch.result.iter_mut().chain(&mut branch.results) {
+                        *slot = remap[*slot];
+                    }
                 }
             }
             _ => {}

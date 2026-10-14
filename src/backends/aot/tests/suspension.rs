@@ -440,3 +440,94 @@ fn race_values_execute_and_clean_up_in_standalone_native_code() {
         },
     );
 }
+
+#[test]
+fn structured_values_execute_and_clean_up_in_standalone_native_code() {
+    check_arena_cps_fixture(
+        "structured-values",
+        include_str!("../../../../tests/fixtures/structured_values.jk"),
+        &[("host_scalar", "19, 21", 2)],
+        |compiler| {
+            let mut harness = String::new();
+            for (name, failure) in [
+                ("scope_scalar", false),
+                ("scope_owned", false),
+                ("scope_return", false),
+                ("mixed", false),
+                ("aggregates", false),
+                ("host_scalar", false),
+                ("owned", false),
+                ("discard", false),
+                ("arrays", false),
+                ("results", false),
+                ("nested", false),
+                ("indirect", false),
+                ("repeat", false),
+                ("generic_context", false),
+                ("scope_control_flow", false),
+                ("members", false),
+                ("scope_failure", true),
+                ("branch_failure", true),
+                ("cleanup_failure", true),
+            ] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                let failure = i32::from(failure);
+                harness.push_str(&format!(r#"
+                    {{
+                        extern int32_t {name}(JokyCpsFrame *);
+                        ready = 1; count = 0; joky_runtime_error_clear();
+                        JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                        int status = JOKY_CPS_PENDING;
+                        for (int i = 0; i < 1000 && status == JOKY_CPS_PENDING; ++i) status = {name}(frame);
+                        if ({failure} != !!joky_runtime_error_code()) return 40;
+                        if (!{failure} && (status != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42)) return 41;
+                        if ({failure} && status != JOKY_CPS_RUNTIME_ERROR) return 42;
+                        for (int id = 1; id <= 9; ++id) {{
+                            int created = 0, dropped = 0;
+                            for (int i = 0; i < count; ++i) {{
+                                created += events[i] == -id;
+                                dropped += events[i] == id;
+                                if ({failure} && events[i] == 100) return 43;
+                            }}
+                            if (created != dropped) return 44;
+                        }}
+                        joky_cps_frame_free(frame);
+                        joky_runtime_error_clear();
+                    }}
+                "#));
+            }
+            for name in [
+                "owned",
+                "scope_owned",
+                "scope_return",
+                "arrays",
+                "results",
+                "nested",
+                "indirect",
+            ] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                harness.push_str(&format!(
+                    r#"
+                    {{
+                        extern int32_t {name}(JokyCpsFrame *);
+                        ready = 0; count = 0;
+                        JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                        if ({name}(frame) != JOKY_CPS_PENDING) return 45;
+                        joky_cps_frame_free(frame);
+                        for (int id = 1; id <= 4; ++id) {{
+                            int created = 0, dropped = 0;
+                            for (int i = 0; i < count; ++i) {{
+                                created += events[i] == -id;
+                                dropped += events[i] == id;
+                            }}
+                            if (created != dropped || dropped > 1) return 46;
+                        }}
+                        if (joky_runtime_error_code()) return 47;
+                    }}
+                "#
+                ));
+            }
+            harness
+        },
+    );
+}

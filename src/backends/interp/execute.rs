@@ -331,7 +331,6 @@ enum Pending {
         next: usize,
         pending: bool,
         complete: bool,
-        result: Option<usize>,
     },
     /// Joining the innermost open dynamic task scope; the record stays on
     /// the frame's scope stack until every registered child has finished.
@@ -339,6 +338,7 @@ enum Pending {
 }
 
 struct Branch {
+    result: Option<usize>,
     child: Option<usize>,
     done_slot: usize,
 }
@@ -702,7 +702,12 @@ impl Execution {
             let results = match &parent.function.code[parent.pc] {
                 Instruction::AggregateCall(call) => &call.results,
                 Instruction::IndirectCall(call) => &call.results,
-                Instruction::Scope { results, .. } => results,
+                Instruction::Scope { branches, .. } => {
+                    let Some(Pending::Scope { next, .. }) = &parent.pending else {
+                        unreachable!()
+                    };
+                    &branches[*next].results
+                }
                 _ => unreachable!("byte request result"),
             };
             debug_assert_eq!(results.len(), value.iter().flatten().count());
@@ -727,7 +732,12 @@ impl Execution {
         let results = match &parent.function.code[parent.pc] {
             Instruction::AggregateCall(call) => &call.results,
             Instruction::IndirectCall(call) => &call.results,
-            Instruction::Scope { results, .. } => results,
+            Instruction::Scope { branches, .. } => {
+                let Some(Pending::Scope { next, .. }) = &parent.pending else {
+                    unreachable!()
+                };
+                &branches[*next].results
+            }
             _ => unreachable!(),
         };
         debug_assert_eq!(results.len(), child.function.aggregate_result.len());
@@ -753,17 +763,10 @@ impl Execution {
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
             unreachable!()
         };
-        let Instruction::Scope {
-            kind,
-            branches,
-            result,
-            ..
-        } = &frame.function.code[frame.pc]
-        else {
+        let Instruction::Scope { kind, branches, .. } = &frame.function.code[frame.pc] else {
             unreachable!()
         };
         let kind = *kind;
-        let result = *result;
         self.frame_capacity(branches.len())?;
         // Construct all owned argument snapshots before polling any branch.
         let children: Vec<_> = branches
@@ -785,6 +788,7 @@ impl Execution {
                     (
                         child,
                         branch.done,
+                        branch.result,
                         Self::owned_arguments(module, target, &branch.args),
                     )
                 })
@@ -792,7 +796,7 @@ impl Execution {
             .collect::<Result<_, _>>()?;
         let branches = children
             .into_iter()
-            .map(|(mut child, done_slot, owned)| {
+            .map(|(mut child, done_slot, result, owned)| {
                 for (dst, src) in owned {
                     if let Some(entry) = self.frame_mut(id).cleanups.take(src) {
                         match &mut child {
@@ -802,6 +806,7 @@ impl Execution {
                     }
                 }
                 Branch {
+                    result,
                     child: Some(self.insert(child, id)),
                     done_slot,
                 }
@@ -813,7 +818,6 @@ impl Execution {
             next: 0,
             pending: false,
             complete: false,
-            result,
         });
         Ok(())
     }
@@ -1117,11 +1121,16 @@ impl Execution {
                     next,
                     pending,
                     complete: finished,
-                    result,
                 } => {
                     let branch = &mut branches[*next];
                     debug_assert_eq!(branch.child, Some(id));
                     if complete {
+                        if let Some(slot) = branch.result {
+                            frame.slots[slot] = value.take().unwrap();
+                            if let Some(entry) = owner {
+                                frame.cleanups.insert(slot, entry);
+                            }
+                        }
                         branch.child = None;
                         frame.slots[branch.done_slot] = Value::Bool(true);
                     } else {
@@ -1129,12 +1138,6 @@ impl Execution {
                     }
                     *next += 1;
                     if complete && *kind == ScopeKind::Race {
-                        if let Some(slot) = result {
-                            frame.slots[*slot] = value.take().unwrap();
-                            if let Some(entry) = owner {
-                                frame.cleanups.insert(*slot, entry);
-                            }
-                        }
                         *finished = true;
                         frame.pc += 1;
                     }

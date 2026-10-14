@@ -50,21 +50,23 @@ pub(crate) fn compile<M: Module>(
         };
         let mut dependencies = Vec::new();
         for op in &body.ops {
+            for crate::core::ir::CleanupOp::Register {
+                hooks, elements, ..
+            } in op.cleanups()
+            {
+                dependencies.extend(
+                    hooks
+                        .iter()
+                        .chain(elements.iter().flat_map(|e| &e.hooks))
+                        .map(|h| &h.name),
+                );
+            }
+
             match op {
                 Op::Call { name, .. } | Op::FunctionRef(_, name) => dependencies.push(name),
                 Op::DynTable { table, .. } => dependencies.extend(&table.methods),
                 Op::Scope { branches, .. } => dependencies.extend(branches.iter().map(|b| &b.name)),
                 Op::TaskBranch { entry, .. } => dependencies.push(entry),
-                Op::Cleanup(crate::core::ir::CleanupOp::Register {
-                    hooks, elements, ..
-                }) => {
-                    dependencies.extend(hooks.iter().map(|h| &h.name));
-                    dependencies.extend(
-                        elements
-                            .iter()
-                            .flat_map(|e| e.hooks.iter().map(|h| &h.name)),
-                    );
-                }
                 _ => {}
             }
         }

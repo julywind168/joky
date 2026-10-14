@@ -85,7 +85,7 @@ fn scope_polls_all_branches_and_waits_for_each_completion() {
 }
 
 #[test]
-fn scope_requires_suspending_unit_function_branches() {
+fn scope_requires_suspending_function_branches() {
     let mut vm = VmEngine::new();
     for (source, message) in [
         (
@@ -94,11 +94,7 @@ fn scope_requires_suspending_unit_function_branches() {
         ),
         (
             "fn branch_task() {} fn f() @suspends { parallel { | branch_task() } }",
-            "must be an @suspends function returning Unit",
-        ),
-        (
-            "fn branch_task() @suspends -> Int32 { 1 } fn f() @suspends { parallel { | branch_task() } }",
-            "must be an @suspends function returning Unit",
+            "must be an @suspends function",
         ),
         (
             "fn f() @suspends { parallel { } }",

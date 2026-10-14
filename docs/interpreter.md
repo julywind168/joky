@@ -358,6 +358,12 @@ Scope branches use the same activation representation as ordinary calls, so
 both direct native CPS imports and Joky functions are valid branches. Each parallel
 round polls incomplete branches in source order and skips completed branches.
 Repeated Pending does not rebuild arguments or replay earlier side effects.
+Each branch carries scalar or flattened aggregate result destinations. On completion,
+its owning cleanup entry transfers to the parent immediately, retaining stable snapshot
+storage even after the child activation is removed. Once all branches complete,
+ordinary tuple construction moves these values in source order, preserving Unit
+positions; an all-Unit parallel remains Unit. Pending, failure and cancellation
+therefore retain cleanup responsibility for partially collected results.
 Failure immediately releases the entire arena, including siblings and locals,
 even if the failed continuation remains in a scheduler. Cancellation and deep
 nested-frame destruction are iterative as well. Native callback internals still
@@ -382,6 +388,10 @@ callback or permission to retain Joky references across Pending.
 Loop conditions and bodies can both suspend. Re-entering a call, parallel or race on the
 next iteration creates fresh children. By default loops do not implicitly yield;
 embedders can enable cooperative instruction slices as described below.
+
+A dynamic scope snapshots its body result before joining and exposes it only after
+all children complete. The parent owns the saved result throughout the join, including
+failure and cancellation. Branch entry functions still return Unit.
 
 Dynamic task scopes add one scheduling layer. Each frame keeps a stack of open
 scope records: registered children in creation order (`None` once finished), a

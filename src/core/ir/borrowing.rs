@@ -245,7 +245,11 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
                 .flat_map(|branch| branch.args.iter().flatten())
                 .flat_map(refs)
                 .collect(),
-            result.iter().flat_map(refs).collect(),
+            result
+                .iter()
+                .chain(branches.iter().filter_map(|b| b.result.as_ref()))
+                .flat_map(refs)
+                .collect(),
         ),
         Op::TaskBranch { captures, .. } => {
             (captures.iter().flatten().flat_map(refs).collect(), vec![])
@@ -684,6 +688,16 @@ fn analyze(
         }
     }
     for (pc, op) in plan.ops.iter().enumerate() {
+        if let Op::Scope { branches, .. } = op {
+            for dst in branches
+                .iter()
+                .filter_map(|b| b.result.as_ref())
+                .filter(|s| s.ty.is_owner())
+            {
+                owner_roots.insert(plan.slot_count + n + dst.index);
+            }
+        }
+
         if matches!(op, Op::Text { .. })
             || matches!(op, Op::Call { result: Some(dst), .. } | Op::Scope { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
             || matches!(op, Op::Buffer(super::BufferOp::Swap { .. }))
@@ -1694,6 +1708,30 @@ fn analyze(
                         value.ancestors.extend(&source.loans);
                     }
                     state.insert(dst.index, value);
+                }
+                for branch in branches {
+                    for dst in branch.result.iter().flat_map(refs) {
+                        let origin = plan.slot_count + n + branch.result.as_ref().unwrap().index;
+                        let mut value = Reference {
+                            origins: BTreeSet::from([Origin::new(origin)]),
+                            loans: Set::from([origin]),
+                            storage: true,
+                            ..Default::default()
+                        };
+                        for arg in branch
+                            .args
+                            .iter()
+                            .flatten()
+                            .flat_map(refs)
+                            .filter(|s| s.ty.is_buffer())
+                        {
+                            let source = &state[&arg.index];
+                            value.origins.extend(source.origins.iter().cloned());
+                            value.ancestors.extend(&source.ancestors);
+                            value.ancestors.extend(&source.loans);
+                        }
+                        state.insert(dst.index, value);
+                    }
                 }
                 for arg in branches
                     .iter()

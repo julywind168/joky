@@ -480,11 +480,11 @@ fn main() @suspends {{
 }
 
 #[test]
-fn scope_bodies_and_branch_results_stay_unit() {
+fn branch_results_stay_unit() {
     let value_body = format!(
         "{HOSTS}
 fn main() @suspends {{
-    let result = scope {{ delayed_value(1) 42 }}
+    scope {{ branch {{ delayed_value(1) 42 }} }}
 }}
 "
     );

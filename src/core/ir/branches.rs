@@ -32,6 +32,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         let Expr::TaskScope { body, span } = expr else {
             unreachable!()
@@ -51,19 +52,27 @@ impl FunctionPlan {
         });
         self.emit(Op::TaskScopeEnter);
         self.local_scopes.push(Vec::new());
-        let flow = self.expr_expected(body, vars, functions, suspends, types, Some(&Type::Unit))?;
-        if let Flow::Value(value) = &flow {
-            if slot_type(value) != Type::Unit {
-                return Err(type_error(
-                    span,
-                    ErrorCode::TypeMismatch,
-                    format!(
-                        "A task scope body must end with Unit, got {}",
-                        slot_type(value)
-                    ),
-                ));
+        let flow = self.expr_expected(body, vars, functions, suspends, types, expected)?;
+        let flow = match flow {
+            Flow::Value(value) => {
+                let ty = slot_type(&value);
+                if ty.contains_references()
+                    || ty.is_closure_value()
+                    || ty.contains_functions()
+                    || (ty.is_owner() && !ty.is_suspend_safe_owner())
+                {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "scope results must be reference-free values",
+                    ));
+                }
+                // Snapshot before joining: a child may mutate a captured local.
+                Flow::Value(self.snapshot(&value)?)
             }
-        }
+            flow => flow,
+        };
+        self.escape_owner(&flow);
         let frame = self.task_scopes.pop().unwrap();
         // The scope-body locals stay live until the join: child tasks may hold
         // captures resolved from them, and their storage must not end early.
@@ -86,14 +95,11 @@ impl FunctionPlan {
             self.end_locals_from(exit.depth);
             self.emit(Op::Jump(exit.next));
         }
-        self.end_local_scope();
         if let Some(end_label) = end_label {
             self.emit(Op::Label(end_label));
         }
-        Ok(match flow {
-            Flow::Value(_) => Flow::Value(None),
-            flow => flow,
-        })
+        self.end_local_scope();
+        Ok(flow)
     }
 
     pub(super) fn branch_expr(

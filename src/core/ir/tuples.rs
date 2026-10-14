@@ -4,6 +4,30 @@ use crate::parser::ast::BindingPattern;
 use std::collections::HashSet;
 
 impl FunctionPlan {
+    pub(super) fn tuple_values(
+        &mut self,
+        values: Vec<Option<Slot>>,
+        types: &TypeRegistry,
+        span: Span,
+    ) -> Result<Flow, Error> {
+        let ty = crate::core::types::tuple_type(values.iter().map(slot_type).collect(), types)
+            .map_err(|error| error.with_span(span))?;
+        let result = self.slot(ty)?;
+        let mut offset = 0;
+        for value in values.into_iter().flatten() {
+            let dst = Slot {
+                index: result.index + offset,
+                ty: value.ty.clone(),
+            };
+            offset += value.ty.scalar_types().len();
+            self.emit(Op::Copy(dst, value));
+        }
+        if result.ty.is_owner() {
+            self.register_owner(result.clone(), None);
+        }
+        Ok(Flow::Value(Some(result)))
+    }
+
     pub(super) fn tuple_expr(
         &mut self,
         expr: &Expr,
@@ -36,23 +60,7 @@ impl FunctionPlan {
                     };
                     values.push(value);
                 }
-                let ty =
-                    crate::core::types::tuple_type(values.iter().map(slot_type).collect(), types)
-                        .map_err(|error| error.with_span(*span))?;
-                let result = self.slot(ty)?;
-                let mut offset = 0;
-                for value in values.into_iter().flatten() {
-                    let dst = Slot {
-                        index: result.index + offset,
-                        ty: value.ty.clone(),
-                    };
-                    offset += value.ty.scalar_types().len();
-                    self.emit(Op::Copy(dst, value));
-                }
-                if result.ty.is_owner() {
-                    self.register_owner(result.clone(), None);
-                }
-                Ok(Flow::Value(Some(result)))
+                self.tuple_values(values, types, *span)
             }
             Expr::Destructure {
                 pattern,

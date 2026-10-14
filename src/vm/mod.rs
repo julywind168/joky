@@ -77,6 +77,8 @@ mod string_storage_tests;
 #[cfg(test)]
 mod strings_tests;
 #[cfg(test)]
+mod structured_value_tests;
+#[cfg(test)]
 mod support;
 #[cfg(test)]
 mod task_scope_tests;
