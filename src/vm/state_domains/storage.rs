@@ -105,6 +105,19 @@ impl Root {
         words: &mut [u64],
         limits: InterpreterLimits,
     ) -> Result<InstanceValue, Error> {
+        let words = self.invoke_values(module, ty, method, info, words, limits)?;
+        InstanceValue::from_bits(&info.signature.ret, words.first().copied().unwrap_or(0))
+            .ok_or_else(|| invalid("Invalid domain scalar result"))
+    }
+    pub(super) fn invoke_values(
+        &mut self,
+        module: &LoadedModule,
+        ty: &Type,
+        method: &str,
+        info: &FunctionInfo,
+        words: &mut [u64],
+        limits: InterpreterLimits,
+    ) -> Result<Vec<u64>, Error> {
         let mutable = info.signature.params[0].reference_type().unwrap().mutable;
         // A read cannot change the graph. Prepare its live set before entering
         // user code so even an allocation failure can reclaim all temporaries.
@@ -116,10 +129,7 @@ impl Root {
         words[0] = self.borrow_pointer(ty);
         let result = module
             .invoke_instance(method, words, limits, &mut self.arena)
-            .and_then(|words| {
-                InstanceValue::from_bits(&info.signature.ret, words.first().copied().unwrap_or(0))
-                    .ok_or_else(|| invalid("Invalid domain scalar result"))
-            });
+            .and_then(|words| values::result_words(&info.signature.ret, words));
         if let Some(live) = before {
             unsafe {
                 self.arena.retain_allocations(&live);

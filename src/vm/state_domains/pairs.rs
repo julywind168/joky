@@ -8,6 +8,7 @@ pub(super) struct Pair {
     info: FunctionInfo,
     words: Vec<u64>,
     limits: InterpreterLimits,
+    pub(super) output: Option<Rc<RefCell<Vec<u64>>>>,
 }
 impl VmEngine {
     /// Queue one synchronous operation over two scalar state records. The first
@@ -81,6 +82,38 @@ pub(super) fn submit(
         ));
     }
     let count = crate::core::state_domain::access_count(&info);
+    let inputs = arguments(&info.signature.params[count..], args)?;
+    submit_words(registry, handles, method, info, inputs, limits, None)
+}
+
+pub(super) fn submit_values(
+    registry: &Rc<RefCell<Domains>>,
+    handles: &[DomainHandle],
+    module: &LoadedModule,
+    method: &str,
+    input: Vec<u64>,
+    output: Rc<RefCell<Vec<u64>>>,
+    limits: InterpreterLimits,
+) -> Result<DomainRequest, Error> {
+    let info = module.instance_info(method)?;
+    if !info.domain_entry || !crate::core::state_domain::value_eligible(&info) {
+        return Err(invalid(
+            "Domain operation requires a proved bounded value signature",
+        ));
+    }
+    submit_words(registry, handles, method, info, input, limits, Some(output))
+}
+
+fn submit_words(
+    registry: &Rc<RefCell<Domains>>,
+    handles: &[DomainHandle],
+    method: &str,
+    info: FunctionInfo,
+    inputs: Vec<u64>,
+    limits: InterpreterLimits,
+    output: Option<Rc<RefCell<Vec<u64>>>>,
+) -> Result<DomainRequest, Error> {
+    let count = crate::core::state_domain::access_count(&info);
     if count != handles.len() {
         return Err(invalid(
             "Domain access count does not match entry references",
@@ -108,7 +141,6 @@ pub(super) fn submit(
         }
     }
     let module = resolve(&registry.borrow(), handles, method, &info)?;
-    let inputs = arguments(&info.signature.params[count..], args)?;
     let mut words = Vec::new();
     words
         .try_reserve_exact(inputs.len() + count)
@@ -121,6 +153,13 @@ pub(super) fn submit(
         .checked_mul(std::mem::size_of::<u64>())
         .and_then(|n| n.checked_add(method.len()))
         .and_then(|n| n.checked_add(count * std::mem::size_of::<DomainHandle>()))
+        .and_then(|n| {
+            n.checked_add(output.as_ref().map_or(0, |v| {
+                std::mem::size_of::<RefCell<Vec<u64>>>()
+                    + 2 * std::mem::size_of::<usize>()
+                    + v.borrow().len() * 8
+            }))
+        })
         .ok_or_else(|| limited("Domain pair size overflow"))?;
     enqueue(
         registry,
@@ -132,6 +171,7 @@ pub(super) fn submit(
             info,
             words,
             limits,
+            output,
         }),
         extra,
     )
@@ -154,7 +194,8 @@ fn resolve(
     };
     let current = module.instance_info(method).map_err(|_| mismatch())?;
     if !current.domain_entry
-        || !crate::core::state_domain::pair_eligible(&current)
+        || !(crate::core::state_domain::pair_eligible(&current)
+            || crate::core::state_domain::value_eligible(&current))
         || !code::compatible_entry(caller, &current)
     {
         return Err(mismatch());
@@ -201,26 +242,42 @@ pub(super) fn execute(
         };
         revisions[index] = next;
     }
-    for (index, handle) in pair.handles.iter().enumerate() {
-        pair.words[index] = domains.entries[&handle.sequence]
-            .root
-            .as_ref()
-            .unwrap()
-            .scalar_pointer();
+    let result = if count == 1 {
+        let domain = domains.entries.get_mut(&pair.handles[0].sequence).unwrap();
+        domain.root.as_mut().unwrap().invoke_values(
+            &module,
+            &domain.ty,
+            &pair.method,
+            &pair.info,
+            &mut pair.words,
+            pair.limits,
+        )
+    } else {
+        for (index, handle) in pair.handles.iter().enumerate() {
+            pair.words[index] = domains.entries[&handle.sequence]
+                .root
+                .as_ref()
+                .unwrap()
+                .scalar_pointer();
+        }
+        // Multi-domain roots remain scalar and cannot retain invocation storage.
+        let mut arena = Arena::with_budget(domains.budget.clone(), None);
+        module.invoke_instance(&pair.method, &pair.words, pair.limits, &mut arena)
     }
-    // Scalar roots cannot retain invocation storage or move owners between arenas.
-    let mut arena = Arena::with_budget(domains.budget.clone(), None);
-    let result = module
-        .invoke_instance(&pair.method, &pair.words, pair.limits, &mut arena)
-        .and_then(|words| {
+    .and_then(|words| {
+        if let Some(output) = &pair.output {
+            let words = values::result_words(&pair.info.signature.ret, words)?;
+            output.borrow_mut().copy_from_slice(&words);
+            Ok(InstanceValue::Unit)
+        } else {
             InstanceValue::from_bits(
                 &pair.info.signature.ret,
                 words.first().copied().unwrap_or(0),
             )
             .ok_or_else(|| invalid("Invalid domain pair scalar result"))
-        });
+        }
+    });
     pair.words[..count].fill(0);
-    drop(arena);
     let mut jobs = Vec::new();
     let mut groups = Vec::new();
     let outcome = match result {

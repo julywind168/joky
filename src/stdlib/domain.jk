@@ -1,9 +1,31 @@
+import joky/internal/buffer.{type Buffer}
 import joky/option.{type Option}
 import joky/outbox.{type Batch}
 import joky/result.{type Result}
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
 extern fn __domain_read_scalar(method: String) @suspends -> UInt64
 extern fn __domain_write_scalar(method: String, input: UInt64) @suspends -> UInt64
+
+struct ValuePacket { storage: Buffer<UInt64> }
+#intrinsic("domain.value_pack")
+fn pack_value<A>(value:A) -> ValuePacket;
+#intrinsic("domain.value_unpack")
+fn unpack_value<R>(packet:&ValuePacket) -> R;
+extern fn __domain_values(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,packet:&mut Buffer<UInt64>) @suspends
+#intrinsic("domain.finish_value")
+fn finish_value<A,R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:A) @suspends -> R {
+    var packet=pack_value(input)
+    __domain_values(module,first,second,count,name,&mut packet.storage)
+    unpack_value::<R>(&packet)
+}
+
+extern fn __domain_current_values(name:String,packet:&mut Buffer<UInt64>) @suspends
+#intrinsic("domain.finish_current_value")
+fn finish_current_value<A,R>(name:String,input:A) @suspends -> R {
+    var packet=pack_value(input)
+    __domain_current_values(name,&mut packet.storage)
+    unpack_value::<R>(&packet)
+}
 
 // Only trusted call-site lowering can encode or decode a checked scalar type.
 #intrinsic("domain.pack")
@@ -12,11 +34,11 @@ fn pack<A>(value: A) -> UInt64;
 fn unpack<R>(bits: UInt64) -> R;
 #intrinsic("domain.read")
 pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> R {
-    unpack::<R>(__domain_read_scalar(""))
+    finish_current_value::<Unit,R>("",{})
 }
 #intrinsic("domain.write")
 pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
-    unpack::<R>(__domain_write_scalar("", pack(input)))
+    finish_current_value::<A,R>("",input)
 }
 
 extern fn __domain_module() -> domain.Module
@@ -67,11 +89,11 @@ pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
 }
 #intrinsic("domain.read_from")
 pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> R {
-    unpack::<R>(__domain_read_at(module(), handle.token, ""))
+    finish_value::<Unit,R>(module(),handle.token,handle.token,1,"",{})
 }
 #intrinsic("domain.write_to")
 pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
-    unpack::<R>(__domain_write_at(module(), handle.token, "", pack(input)))
+    finish_value::<A,R>(module(),handle.token,handle.token,1,"",input)
 }
 #intrinsic("domain.finish_request")
 fn finish_request<R>(module: domain.Module, token: domain.Handle, name: String, input: UInt64) @suspends -> Result<R, RequestError> {
@@ -148,15 +170,15 @@ impl CommitReceipt {
 extern fn __domain_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String, input: UInt64) @suspends -> UInt64
 #intrinsic("domain.read_pair")
 pub fn read_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T) -> R) @suspends -> R {
-    unpack::<R>(__domain_pair(module(), first.token, second.token, "", 0))
+    finish_value::<Unit,R>(module(),first.token,second.token,2,"",{})
 }
 #intrinsic("domain.update_pair")
 pub fn update_pair<S, T, A, R>(first: ReadHandle<S>, second: WriteHandle<T>, operation: fn(&S, &mut T, A) -> R, input: A) @suspends -> R {
-    unpack::<R>(__domain_pair(module(), first.token, second.token, "", pack(input)))
+    finish_value::<A,R>(module(),first.token,second.token,2,"",input)
 }
 #intrinsic("domain.write_pair")
 pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, operation: fn(&mut S, &mut T, A) -> R, input: A) @suspends -> R {
-    unpack::<R>(__domain_pair(module(), first.token, second.token, "", pack(input)))
+    finish_value::<A,R>(module(),first.token,second.token,2,"",input)
 }
 
 // The first domain is the candidate target; both read dependencies stay opaque.

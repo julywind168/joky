@@ -119,7 +119,10 @@ pub(super) fn state_types(module: &LoadedModule) -> HashMap<String, Type> {
         let ty = if instance::constructor(&info) {
             Some(&info.signature.ret)
         } else {
-            instance::receiver(&info)
+            instance::receiver(&info).or_else(|| {
+                crate::core::state_domain::value_eligible(&info)
+                    .then(|| &info.signature.params[0].reference_type().unwrap().target)
+            })
         };
         if let Some(Type::Record(record)) = ty {
             types

@@ -102,6 +102,21 @@ fn current_access() -> Result<Access, Error> {
     Ok(access)
 }
 
+pub(super) fn value_context(
+    registry: &Rc<RefCell<Domains>>,
+) -> Result<(DomainHandle, LoadedModule), Error> {
+    let access = current_access()?;
+    let domains = access
+        .domains
+        .upgrade()
+        .ok_or_else(|| invalid("Domain VM is closed"))?;
+    if !Rc::ptr_eq(&domains, registry) {
+        return Err(invalid("Domain value call belongs to another executor"));
+    }
+    domains.borrow().get(access.handle)?;
+    Ok((access.handle, access.code))
+}
+
 /// Submit from a suspending host adapter in a domain-owned request. The caller
 /// must retain the returned token in frame-owned cleanup and register its waiter.
 /// No receiver borrow is held between polls; access cannot exceed the root's grant.

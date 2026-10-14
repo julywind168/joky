@@ -1,0 +1,36 @@
+import joky/domain
+import joky/task
+import joky/check
+struct Room { n:Int32 }
+struct Input { pub amount:Int32, tag:UInt64 }
+struct Reply { pub value:Int32, tag:UInt64 }
+fn assert(ok:Bool) { let message="late binding Script" check.assert(ok,&message) }
+fn make(n:Int32)->Room { Room{n:n} }
+fn read(room:&Room)->Int32 {room.n}
+fn sum(a:&Room,b:&Room)->Reply {Reply{value:a.n+b.n,tag:18446744073709551615}}
+fn transfer(a:&mut Room,b:&mut Room,input:Input)->Reply {
+    a.n=a.n-input.amount
+    b.n=b.n+input.amount
+    Reply{value:a.n,tag:input.tag}
+}
+fn hold(directory:domain.DirectoryHandle) @suspends {
+    let a=domain.create(make,40)
+    let b=domain.create(make,2)
+    assert(directory.insert(1,a.handle()).is_ok())
+    assert(directory.insert(2,b.handle()).is_ok())
+    while domain.lookup(directory,1,read).is_some() {task.yield_now()}
+    // This v1 flow must resolve the v2 operation with its original signature.
+    let reply=domain.write_pair(a.handle(),b.handle(),transfer,Input{amount:2,tag:18446744073709551615})
+    assert(reply.value==20 && reply.tag==18446744073709551615)
+    assert(domain.read_pair(a.read_handle(),b.read_handle(),sum).value==142)
+}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup(directory,1,read) {
+        Some(a)=>match domain.lookup(directory,2,read) {
+            Some(b)=>domain.read_pair(a,b,sum).value, None=>-1
+        }, None=>-1
+    }
+}
+fn release(directory:domain.DirectoryHandle) @suspends ->Bool {
+    match domain.lookup(directory,1,read) {Some(a)=>directory.remove(1,a),None=>false}
+}

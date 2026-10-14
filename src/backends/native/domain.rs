@@ -89,7 +89,7 @@ pub(super) fn metadata<M: Module>(
         .define_data(table_id, &table)
         .map_err(|e| compile_error(e.to_string()))?;
     let mut bytes = vec![0; 3 * width];
-    put(&mut bytes, 0, 2);
+    put(&mut bytes, 0, 3);
     put(&mut bytes, width, selected.len());
     let mut header = DataDescription::new();
     header.define(bytes.into_boxed_slice());

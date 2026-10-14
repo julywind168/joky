@@ -29,6 +29,7 @@ mod pairs;
 mod reads;
 mod storage;
 mod timers;
+mod values;
 use storage::Root;
 pub(crate) mod source;
 mod tasks;
@@ -659,7 +660,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         return;
     }
     if let Work::Pair(pair) = &mut request.work {
-        let reads = if pair.readonly() {
+        let reads = if pair.readonly() && pair.output.is_none() {
             reads::ReadSet::capture_many(&domains, &pair.handles).map(Some)
         } else {
             Ok(None)

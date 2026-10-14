@@ -1200,3 +1200,23 @@ fn exhaustive_state_domains_nested_graph_instruction_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_value_packet_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_values.jk"),
+        [
+            0, 1, 2, 3, 5, 10, 30, 60, 120, 240, 480, 960, 1920, 4096, 8192,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel pure domain packets at every poll/instruction"]
+fn exhaustive_state_domains_value_packet_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_values.jk"),
+        0..=8192,
+        true,
+    );
+}

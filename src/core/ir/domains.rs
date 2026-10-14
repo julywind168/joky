@@ -1,4 +1,4 @@
-//! Call-site captures contain checked entry identities and scalar inputs only.
+//! Call-site captures contain checked entry identities and bounded value inputs.
 use super::*;
 pub(super) struct DomainCall<'a> {
     pub info: &'a FunctionInfo,
@@ -341,15 +341,22 @@ impl FunctionPlan {
         } else {
             usize::from(!request && !create)
         }..];
+        let value_call = matches!(kind, DomainAt(_) | DomainPair(_) | DomainAccess(_));
+        let value_type =
+            |ty: &Type| scalar(ty) || (value_call && crate::core::script::schema(ty).is_some());
         if inputs.len() != usize::from(request || create || write)
-            || !inputs.iter().all(scalar)
-            || (!create && !scalar(&target.signature.ret))
+            || !inputs.iter().all(value_type)
+            || (!create && !value_type(&target.signature.ret))
             || target.suspends != request
         {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                "Domain operation requires a checked scalar signature",
+                if value_call {
+                    "Domain operation requires a synchronous bounded pure-value signature (64 fields, 8 record levels)"
+                } else {
+                    "Domain operation requires a checked scalar signature"
+                },
             ));
         }
         if !request {
@@ -396,6 +403,82 @@ impl FunctionPlan {
             unreachable!()
         };
         captures.push(text);
+        if value_call
+            && !checking
+            && (inputs.iter().any(|ty| !scalar(ty)) || !scalar(&target.signature.ret))
+        {
+            let input_type = inputs.first().cloned().unwrap_or(Type::Unit);
+            let result_type = target.signature.ret.clone();
+            let name = {
+                let mut context = self.generics.borrow_mut();
+                let name = context
+                    .templates
+                    .iter()
+                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainValueFinish(flag)) if flag == ambient))
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| {
+                        type_error(
+                            &span,
+                            ErrorCode::InvalidCall,
+                            "Missing domain value adapter",
+                        )
+                    })?;
+                context.instantiate(
+                    &name,
+                    vec![input_type.clone(), result_type.clone()],
+                    crate::FunctionSignature::new(
+                        if ambient {
+                            vec![Type::String, input_type]
+                        } else {
+                            vec![
+                                crate::runtime::domain::module_type(),
+                                crate::runtime::domain::handle_type(),
+                                crate::runtime::domain::handle_type(),
+                                Type::UInt64,
+                                Type::String,
+                                input_type,
+                            ]
+                        },
+                        result_type.clone(),
+                    ),
+                    self.instantiation_depth + 1,
+                    span,
+                )?
+            };
+            if !pair && !ambient {
+                captures.insert(2, captures[1].clone());
+            }
+            if !ambient {
+                let count = self.slot(Type::UInt64)?;
+                self.emit(Op::Literal(
+                    count.clone(),
+                    Constant::UInt64(if pair { 2 } else { 1 }),
+                ));
+                captures.insert(3, Some(count));
+            }
+            // checked_arguments already flattens aggregates, including empty
+            // records (zero lanes). The named function occupies one lane.
+            if inputs.is_empty() {
+                captures.push(None);
+            } else {
+                captures.extend_from_slice(&values[index + 1..]);
+            }
+            let result = if result_type == Type::Unit {
+                None
+            } else {
+                Some(self.slot(result_type)?)
+            };
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::Call {
+                indirect: None,
+                name,
+                args: captures,
+                result: result.clone(),
+                state: Some(state),
+            });
+            return Ok(Some(Flow::Value(result)));
+        }
         if !inputs.is_empty() {
             captures.push(Some(self.pack_domain_scalar(values[index + 1].clone())?));
         }

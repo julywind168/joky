@@ -7094,3 +7094,165 @@ fn main() @suspends {{
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn domain_value_packets_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("values.jk", include_str!("fixtures/state_domain_values.jk"));
+    work.assert_all_backends("values.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_value_packets_keep_old_flows_and_bind_new_script_operations_in_all_backends() {
+    let old = include_str!("fixtures/late_binding_values.jk");
+    let new = old
+        .replace("a.n-input.amount", "a.n-input.amount*10")
+        .replace("b.n+input.amount", "b.n+input.amount*10")
+        .replace("value:a.n+b.n,", "value:a.n+b.n+100,");
+    let old = old.replace('{', "{{").replace('}', "}}");
+    let new = new.replace('{', "{{").replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("values_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+fn assert(ok:Bool) {{let message="domain values reload" check.assert(ok,&message)}}
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    var attempts=0
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+    }}
+    let next={new:?}
+    assert(vm.load_source(h,&next)==0)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    assert(vm.publish_domain_code(h)==2)
+    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142)
+    assert(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
+}}
+fn main() @suspends {{
+    let h=vm.{create}() let source={old:?}
+    assert(vm.load_source(h,&source)==0)
+    let owner=domain.directory(2) let directory=owner.handle()
+    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
+}}"#));
+        work.assert_all_backends("values_reload.jk", &[], b"", 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_value_packets_bound_fields_depth_and_zero_lane_records() {
+    let mut cases = Vec::new();
+    for fields in [64, 65] {
+        for empty in [false, true] {
+            let ty = if empty { "Empty" } else { "Int32" };
+            let names = (0..fields)
+                .map(|i| format!("n{i}:{ty}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let values = (0..fields)
+                .map(|i| {
+                    format!(
+                        "n{i}:{}",
+                        if empty {
+                            "Empty{}".to_owned()
+                        } else {
+                            i.to_string()
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            cases.push((
+                format!("struct Empty {{}} struct Packet {{{names}}}"),
+                "Packet".to_owned(),
+                format!("Packet{{{values}}}"),
+                if empty {
+                    "true".to_owned()
+                } else {
+                    "p.n0==0 && p.n63==63".to_owned()
+                },
+                fields == 64,
+            ));
+        }
+    }
+    for depth in [8, 9] {
+        let mut definitions = "struct N0 {n:Int32}".to_owned();
+        let mut value = "N0{n:42}".to_owned();
+        let mut access = "p".to_owned();
+        for i in 1..depth {
+            definitions.push_str(&format!(" struct N{i} {{inner:N{}}}", i - 1));
+            value = format!("N{i}{{inner:{value}}}");
+            access.push_str(".inner");
+        }
+        cases.push((
+            definitions,
+            format!("N{}", depth - 1),
+            value,
+            format!("{access}.n==42"),
+            depth == 8,
+        ));
+    }
+    for (definitions, ty, value, assertion, accepted) in cases {
+        let work = Workspace::new();
+        work.write(
+            "bound.jk",
+            &format!(
+                r#"import joky/domain import joky/check
+{definitions}
+struct State {{n:Int32}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+fn turn(s:&mut State,p:{ty})->{ty} {{s.n=s.n+1 p}}
+fn read(s:&State)->Int32 {{s.n}}
+fn main() @suspends {{
+    let owner=domain.create(make,0)
+    let p=domain.write_to(owner.handle(),turn,{value})
+    let message="domain value bounds"
+    check.assert({assertion},&message)
+    check.assert(domain.read_from(owner.read_handle(),read)==1,&message)
+}}"#
+            ),
+        );
+        if accepted {
+            work.assert_all_backends("bound.jk", &[], b"", 0);
+        } else {
+            failure(
+                &work.cli(&["build", "bound.jk"]),
+                "bounded pure-value signature",
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_value_packets_reject_owning_inputs_and_results() {
+    let work = Workspace::new();
+    for (name, operation, invocation) in [
+        (
+            "input",
+            "fn turn(s:&mut State,p:Packet)->Int32 {s.n}",
+            "domain.write_to(owner.handle(),turn,Packet{text:\"owned\"})",
+        ),
+        (
+            "result",
+            "fn turn(s:&State)->Packet {Packet{text:\"owned\"}}",
+            "domain.read_from(owner.read_handle(),turn)",
+        ),
+    ] {
+        let file = format!("{name}.jk");
+        work.write(
+            &file,
+            &format!(
+                r#"import joky/domain
+struct State {{n:Int32}} struct Packet {{text:String}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+{operation}
+fn main() @suspends {{let owner=domain.create(make,1) {invocation};}}"#
+            ),
+        );
+        failure(&work.cli(&["build", &file]), "bounded pure-value signature");
+    }
+}

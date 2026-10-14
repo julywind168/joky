@@ -1,4 +1,4 @@
-//! Internal domain module ABI v2. All addresses are relocations owned by the caller.
+//! Internal domain module ABI v3. All addresses are relocations owned by the caller.
 use crate::{
     core::{
         ir::FunctionInfo,
@@ -9,13 +9,13 @@ use crate::{
 use std::{collections::HashMap, sync::Arc};
 
 #[repr(C)]
-pub(crate) struct ModuleV2 {
+pub(crate) struct ModuleV3 {
     pub version: usize,
     pub count: usize,
-    pub entries: *const EntryV2,
+    pub entries: *const EntryV3,
 }
 #[repr(C)]
-pub(crate) struct EntryV2 {
+pub(crate) struct EntryV3 {
     pub name: *const u8,
     pub name_len: usize,
     pub signature: *const u8,
@@ -28,7 +28,7 @@ fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Runtime,
         ErrorCode::AbiError,
-        "Invalid domain module descriptor v2",
+        "Invalid domain module descriptor v3",
     )
 }
 fn scalar(code: u8) -> Option<Type> {
@@ -108,6 +108,7 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
             put_u64(out, r.fields.len() as u64);
             for field in &r.fields {
                 put_text(out, &field.name);
+                out.push(u8::from(field.private));
                 encode_type(out, &field.ty);
             }
         }
@@ -256,6 +257,11 @@ impl Reader<'_> {
         let mut scalars = Vec::new();
         for _ in 0..n {
             let name = self.text()?;
+            let private = match self.byte()? {
+                0 => false,
+                1 => true,
+                _ => return Err(invalid()),
+            };
             let ty = self.ty_at(depth + 1)?;
             if !crate::core::instance::scalar(&ty)
                 && ty != Type::String
@@ -269,7 +275,7 @@ impl Reader<'_> {
             let offset = scalars.len();
             scalars.extend(ty.scalar_types().iter().cloned());
             fields.push(RecordField {
-                private: true,
+                private,
                 name,
                 ty,
                 offset,
@@ -313,7 +319,7 @@ impl Reader<'_> {
 /// Its code and immutable data must remain live until every derived root stops;
 /// raw C callers retain them explicitly rather than supplying a Rust code owner.
 pub(crate) unsafe fn decode(
-    entry: &EntryV2,
+    entry: &EntryV3,
     records: &mut HashMap<(u64, Vec<u8>), Type>,
 ) -> Result<(String, FunctionInfo), Error> {
     if entry.name_len > 1048576

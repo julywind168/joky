@@ -67,9 +67,23 @@ pub(crate) fn call_instance(
     if !(crate::core::instance::eligible(&function.info)
         || function.info.domain_entry
             && (crate::core::state_domain::pair_eligible(&function.info)
+                || crate::core::state_domain::value_eligible(&function.info)
                 || crate::core::state_domain::migration_eligible(&function.info)
                 || crate::core::state_domain::migration_step_eligible(&function.info)))
-        || bits.len() != function.info.signature.params.len()
+        || bits.len()
+            != function
+                .info
+                .signature
+                .params
+                .iter()
+                .map(|ty| {
+                    if *ty == Type::Unit {
+                        1
+                    } else {
+                        ty.scalar_types().len()
+                    }
+                })
+                .sum::<usize>()
     {
         return Err(abi_error("Invalid persistent instance entry"));
     }
@@ -79,8 +93,15 @@ pub(crate) fn call_instance(
         .signature
         .params
         .iter()
+        .flat_map(|ty| {
+            if *ty == Type::Unit {
+                vec![Type::Unit]
+            } else {
+                ty.scalar_types().to_vec()
+            }
+        })
         .zip(bits)
-        .map(|(ty, &bits)| Value::from_instance_bits(ty, bits))
+        .map(|(ty, &bits)| Value::from_instance_bits(&ty, bits))
         .collect::<Result<Vec<_>, _>>()?;
     let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, false);
     execution.cleanup_mode = true;

@@ -368,8 +368,13 @@ pub(super) fn instance_entry(builder: &mut FunctionBuilder, body: FuncRef, info:
     let input = builder.block_params(entry)[0];
     let output = builder.block_params(entry)[1];
     let mut args = Vec::new();
-    for (index, ty) in info.signature.params.iter().enumerate() {
-        if *ty != Type::Unit {
+    let mut index = 0;
+    for ty in &info.signature.params {
+        if *ty == Type::Unit {
+            index += 1;
+            continue;
+        }
+        for ty in ty.scalar_types() {
             let value = load(
                 builder,
                 input,
@@ -379,6 +384,7 @@ pub(super) fn instance_entry(builder: &mut FunctionBuilder, body: FuncRef, info:
                 },
             );
             args.push(widen_lane(builder, ty, value));
+            index += 1;
         }
     }
     if info.signature.ret.is_aggregate() {

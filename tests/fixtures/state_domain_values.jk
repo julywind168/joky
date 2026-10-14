@@ -1,0 +1,67 @@
+import joky/domain
+import joky/check
+import joky/string
+struct Wallet { balance:Int32 }
+struct Bits { pub high:UInt64, low:Int8, real:Float64 }
+struct Input { amount:Int32, bits:Bits }
+struct Reply { accepted:Bool, remaining:Int32, bits:Bits }
+struct Empty {}
+struct Owned { label:String, balance:Int32 }
+fn require(ok:Bool) {let message="domain values" check.assert(ok,&message)}
+fn make(n:Int32)->Wallet {Wallet{balance:n}}
+fn owned(n:Int32)->Owned {Owned{label:"owned",balance:n}}
+fn bits()->Bits {Bits{high:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626)}}
+fn reply(n:Int32,b:Bits)->Reply {Reply{accepted:true,remaining:n,bits:b}}
+fn read(w:&Wallet)->Reply {reply(w.balance,bits())}
+fn add(w:&mut Wallet,input:Input)->Reply {w.balance=w.balance+input.amount reply(w.balance,input.bits)}
+fn scalar_input(w:&mut Wallet,n:Int32)->Reply {reply(w.balance+n,bits())}
+fn scalar_result(w:&mut Wallet,input:Input)->Int32 {w.balance+input.amount}
+fn unit_input(w:&mut Wallet,input:Unit)->Reply {reply(w.balance,bits())}
+fn transfer(a:&mut Wallet,b:&mut Wallet,input:Input)->Reply {
+    a.balance=a.balance-input.amount b.balance=b.balance+input.amount
+    reply(a.balance,input.bits)
+}
+fn update(a:&Wallet,b:&mut Wallet,input:Input)->Reply {b.balance=a.balance+input.amount reply(b.balance,input.bits)}
+fn sum(a:&Wallet,b:&Wallet)->Reply {reply(a.balance+b.balance,bits())}
+fn change_owned(w:&mut Owned,input:Input)->Reply {w.balance=w.balance+input.amount reply(w.balance,input.bits)}
+fn read_owned(w:&Owned)->Reply {reply(w.balance+int32(w.label.byte_length()),bits())}
+fn empty(w:&mut Wallet,input:Empty)->Empty {w.balance=w.balance+1 Empty{}}
+fn unit(w:&mut Wallet,input:Unit) {w.balance=w.balance+1}
+fn read_empty(w:&Wallet)->Empty {Empty{}}
+fn read_unit(w:&Wallet) {}
+fn request(delta:Int32) @suspends ->Int32 {
+    let result=domain.write(add,Input{amount:delta,bits:bits()})
+    let readback=domain.read(read)
+    require(readback.remaining==result.remaining)
+    result.remaining
+}
+fn verify(r:Reply,n:Int32) {
+    require(r.accepted && r.remaining==n && r.bits.high==18446744073709551615 && r.bits.low == -128)
+    require(r.bits.real.to_bits()==9221120237041090626)
+}
+fn lifecycle() @suspends ->Int32 {
+    let a=domain.create(make,20) let b=domain.create(make,5)
+    let input=Input{amount:3,bits:bits()}
+    verify(domain.write_to(a.handle(),add,input),23)
+    verify(domain.read_from(a.read_handle(),read),23)
+    verify(domain.write_pair(a.handle(),b.handle(),transfer,input),20)
+    verify(domain.read_pair(a.read_handle(),b.read_handle(),sum),28)
+    verify(domain.update_pair(a.read_handle(),b.handle(),update,input),23)
+    verify(domain.read_pair(a.read_handle(),a.read_handle(),sum),40)
+    domain.write_to(a.handle(),empty,Empty{});
+    domain.write_to(a.handle(),unit,{});
+    domain.read_from(a.read_handle(),read_empty);
+    domain.read_from(a.read_handle(),read_unit);
+    verify(domain.read_from(a.read_handle(),read),22)
+    require(domain.request(a.handle(),request,2).unwrap_or(-1)==24)
+    verify(domain.write_to(a.handle(),scalar_input,0),24)
+    require(domain.write_to(a.handle(),scalar_result,Input{amount:0,bits:bits()})==24)
+    verify(domain.write_to(a.handle(),unit_input,{}),24)
+    let c=domain.create(owned,1)
+    verify(domain.write_to(c.handle(),change_owned,input),4)
+    verify(domain.read_from(c.read_handle(),read_owned),9)
+    c.close() b.close() a.close()
+    24
+}
+
+fn main() @suspends {require(lifecycle()==24)}
