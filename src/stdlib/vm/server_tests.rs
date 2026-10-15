@@ -23,7 +23,7 @@ extern "C" fn record_phase(phase: i32) {
 #[test]
 fn server_reload_lifecycle_boundaries_release_tcp_domains_tasks_and_modules() {
     for host_mode in [VmMode::Jit, VmMode::Interpreter] {
-        for create in ["create", "create_interpreter"] {
+        for create in ["new", "interpreter"] {
             let mut host = VmEngine::with_mode(host_mode);
             unsafe {
                 host.register_fn(
@@ -90,12 +90,7 @@ fn server_reload_lifecycle_boundaries_release_tcp_domains_tasks_and_modules() {
                 assert_eq!(finished, cut == 7, "{host_mode:?}/{create}, cut={cut}");
                 assert!(crate::runtime::tcp::LIVE.with(Cell::get) > sockets || finished);
                 executor.cancel_group(&group);
-                // VM handles own prepared migration plans independently of the
-                // cancelled caller. Explicit close is part of host shutdown.
-                let handles = VMS.with(|vms| vms.borrow().keys().copied().collect::<Vec<_>>());
-                for handle in handles {
-                    assert_eq!(close(handle), 0);
-                }
+                VMS.with(|vms| assert!(vms.borrow().is_empty()));
                 assert_eq!(executor.task_count(), 0);
                 assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
                 REACTOR.with(|reactor| {

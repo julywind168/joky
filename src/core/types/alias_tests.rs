@@ -143,13 +143,13 @@ fn generic_alias_cache_distinguishes_targets_and_allows_fixed_noncopy_targets() 
         function(&normalized, 0).ret_ty,
         function(&normalized, 1).ret_ty
     );
-    let module = crate::parser::parse("type Text<T> = String type Handle<T> = vm.Handle fn text() -> Text<Bool> { \"text\" } extern fn handle() -> Handle<Int32>").unwrap();
+    let module = crate::parser::parse("type Text<T> = String type Handle<T> = vm.Function fn text() -> Text<Bool> { \"text\" } extern fn handle() -> Handle<Int32>").unwrap();
     let resolved = registry.resolve_aliases(&module).unwrap();
     assert_eq!(function(&resolved, 0).ret_ty, Type::String);
     let Item::ExternFn(f) = &resolved.items[1] else {
         panic!()
     };
-    assert_eq!(f.ret_ty, Type::Named("vm.Handle".into()));
+    assert_eq!(f.ret_ty, Type::Named("vm.Function".into()));
 }
 
 #[test]

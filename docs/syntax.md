@@ -142,7 +142,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 `suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)` 与 `#derive(ToJson, FromJson)`，
 不开放通用属性或用户属性宏；后续语法方向见 [Arena 设计 §2.5](arena-borrowing-ffi.md#25-后续属性系统的语法方向)。
 函数名、参数名和局部名称是单个标识符；`vm.call_int32` 是限定调用名，
-`vm.Handle` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。
+`vm.Vm` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。
 局部值遮蔽模块或类型前缀时按值的方法查找，找不到即报错。
 宿主 opaque 类型名继续使用当前注册器接受的 ASCII 标识符段，段间用 `.` 连接。
 运行时函数名前缀 `__joky_cps_`、`joky_cps_`、`joky_vm_`、`__joky_runtime_`、
@@ -920,8 +920,8 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 String 语言内部使用拥有存储，宿主参数使用显式 JokyText 指针/长度描述符；
 根结果使用版本化拥有文本出口。旧长度前缀 ABI 已删除，宿主绑定需要迁移和重新编译。
-当前 `vm.Handle` 是线程绑定、显式 close 的 opaque 值，也不能仅靠名称自动升级成拥有型资源；
-需要另行提供拥有包装与借用接口，并保持旧接口的关闭、重载与旧代码保活语义。
+`vm.Vm` 已由源码记录包装私有 Resource `vm.Owner`，操作借用、close 消费拥有者，退出自动释放。
+线程绑定、热重载与旧代码保活语义保留；Rust/C 数值句柄仍采用显式关闭协议。
 新的 Rune、元组、泛型、借用或 dyn 类型不会自动成为合法的 extern 参数；
 须先定义对应 ABI 与宿主适配器，无法验证的裸入口仍需 unsafe 契约。
 

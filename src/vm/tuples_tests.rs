@@ -129,17 +129,17 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Undefined variable",
         ),
         (
-            "fn f(h: vm.Handle) { let _ = (h,) }",
+            "fn f(h: vm.Function) { let _ = (h,) }",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
         (
-            "fn f(h: vm.Handle) { let _ = (h,) }",
+            "fn f(h: vm.Function) { let _ = (h,) }",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
         (
-            "fn f(p: (vm.Handle,)) {}",
+            "fn f(p: (vm.Function,)) {}",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
@@ -149,7 +149,7 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Unknown type",
         ),
         (
-            "type Bad = (vm.Handle,)",
+            "type Bad = (vm.Function,)",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
@@ -176,12 +176,12 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Infinite inline",
         ),
         (
-            "struct R { pair: (vm.Handle,) }",
+            "struct R { pair: (vm.Function,) }",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
         (
-            "enum E { Value((vm.Handle,)) }",
+            "enum E { Value((vm.Function,)) }",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
@@ -347,9 +347,9 @@ fn tuple_elements_and_destructured_initializers_resolve_imported_calls() {
         import joky/vm
         type Count = Int32
         fn run() -> Int32 {
-            let h = vm.create()
+            let h = vm.Vm.new()
             { let vm_text = "fn f() -> Int32 {{ 21 }}" vm.load_source(h, &vm_text) }
-            let (a, (b,)): (Count, (Count,)) = ({ let vm_text = "f" vm.call_int32(h, &vm_text) }, ({ let vm_text = "f" vm.call_int32(h, &vm_text) },))
+            let (a, (b,)): (Count, (Count,)) = ({ let vm_text = "f" vm.call_int32_0(h, &vm_text) }, ({ let vm_text = "f" vm.call_int32_0(h, &vm_text) },))
             vm.close(h)
             a + b
         }

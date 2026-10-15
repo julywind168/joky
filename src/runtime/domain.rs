@@ -286,7 +286,7 @@ impl Operation {
             ),
             Self::ScriptCall => (
                 vec![
-                    Type::Named("vm.Handle".into()),
+                    Type::reference(Type::Resource("vm.Owner".into()), false),
                     text.clone(),
                     text.clone(),
                     text,

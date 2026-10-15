@@ -8,11 +8,11 @@ fn conditional_builtin_calls_and_opaque_results_resolve_and_execute() {
     let source = r#"
         import joky/vm
         fn compute(x: Int32) -> Int32 {
-            let engine = if x == 0 { vm.create_interpreter() } else { vm.create() }
+            let engine = if x == 0 { vm.Vm.interpreter() } else { vm.Vm.new() }
             { let vm_text = "fn value() -> Int32 {{ 42 }}" vm.load_source(engine, &vm_text) }
-            let result = if { let vm_text = "value" vm.call_int32(engine, &vm_text) } == 42 && { let vm_text = "value" vm.call_int32(engine, &vm_text) } != 0 {
-                { let vm_text = "value" vm.call_int32(engine, &vm_text) }
-            } else { { let vm_text = "value" vm.call_int32(engine, &vm_text) } + 1 }
+            let result = if { let vm_text = "value" vm.call_int32_0(engine, &vm_text) } == 42 && { let vm_text = "value" vm.call_int32_0(engine, &vm_text) } != 0 {
+                { let vm_text = "value" vm.call_int32_0(engine, &vm_text) }
+            } else { { let vm_text = "value" vm.call_int32_0(engine, &vm_text) } + 1 }
             vm.close(engine)
             result
         }
@@ -30,9 +30,9 @@ fn builtin_calls_inside_sequences_resolve_and_execute() {
     let source = r#"
         import joky/vm;
         fn compute() -> Int32 {
-            let engine = vm.create_interpreter();
+            let engine = vm.Vm.interpreter();
             let result = ({ let vm_text = "fn value() -> Int32 {{ 42 }}" vm.load_source(engine, &vm_text) };
-                          -{ let vm_text = "value" vm.call_int32(engine, &vm_text) });
+                          -{ let vm_text = "value" vm.call_int32_0(engine, &vm_text) });
             vm.close(engine);
             result
         };
@@ -50,19 +50,18 @@ fn builtin_calls_resolve_inside_mutable_initializers_assignments_and_loops() {
     let source = r#"
         import joky/vm
         fn compute() -> Int32 {
-            var engine: vm.Handle = vm.create_interpreter()
+            var engine: vm.Vm = vm.Vm.interpreter()
             vm.close(engine)
-            engine = vm.create_interpreter()
+            engine = vm.Vm.interpreter()
             var source = "fn value() -> Int32 {{ 7 }}"
             var i = 0
             var total = 0
             while i < 2 {
                 var status = vm.reload_source(engine, &source)
-                total = total + { let vm_text = "value" vm.call_int32(engine, &vm_text) } + status
+                total = total + { let vm_text = "value" vm.call_int32_0(engine, &vm_text) } + status
                 source = "fn value() -> Int32 {{ 9 }}"
                 i = i + 1
             }
-            while vm.error_code() != 0 { vm.close(engine) }
             vm.close(engine)
             total
         }

@@ -1,0 +1,79 @@
+// A VM owns its registry entry; shared borrows allow calls during hot reload.
+import joky/internal/buffer as storage.{type Buffer}
+extern fn __vm_create(mode: UInt64) -> vm.Owner
+extern fn __vm_close(owner: &vm.Owner) -> Int32
+extern fn __vm_error_code() -> Int32
+extern fn __vm_print_error()
+pub type Function = vm.Function
+pub struct Vm { owner: vm.Owner }
+impl Vm {
+    pub fn new() -> Self { Vm { owner: __vm_create(0) } }
+    pub fn interpreter() -> Self { Vm { owner: __vm_create(1) } }
+    pub fn close(self) -> Int32 { __vm_close(&self.owner) }
+}
+pub fn close(value: Vm) -> Int32 { value.close() }
+pub fn error_code() -> Int32 { __vm_error_code() }
+pub fn print_error() { __vm_print_error() }
+extern fn __vm_domain_schema(owner: &vm.Owner) -> UInt64
+pub fn domain_schema(value: &Vm) -> UInt64 { __vm_domain_schema(&value.owner) }
+extern fn __vm_prepare_migration(owner: &vm.Owner, schema: UInt64, source: &String, method: &String) -> Int32
+pub fn prepare_migration(value: &Vm, schema: UInt64, source: &String, method: &String) -> Int32 { __vm_prepare_migration(&value.owner, schema, source, method) }
+extern fn __vm_begin_migration(owner: &vm.Owner, schema: UInt64, source: &String, start: &String, advance: &String) -> Int32
+pub fn begin_migration(value: &Vm, schema: UInt64, source: &String, start: &String, advance: &String) -> Int32 { __vm_begin_migration(&value.owner, schema, source, start, advance) }
+extern fn __vm_step_migration(owner: &vm.Owner, budget: UInt64) -> Int32
+pub fn step_migration(value: &Vm, budget: UInt64) -> Int32 { __vm_step_migration(&value.owner, budget) }
+extern fn __vm_begin_migration_batch(owner: &vm.Owner, source: &String) -> Int32
+pub fn begin_migration_batch(value: &Vm, source: &String) -> Int32 { __vm_begin_migration_batch(&value.owner, source) }
+extern fn __vm_stage_migration(owner: &vm.Owner, start: &String, advance: &String) -> Int32
+pub fn stage_migration(value: &Vm, start: &String, advance: &String) -> Int32 { __vm_stage_migration(&value.owner, start, advance) }
+extern fn __vm_publish_migration(owner: &vm.Owner) -> Int32
+pub fn publish_migration(value: &Vm) -> Int32 { __vm_publish_migration(&value.owner) }
+extern fn __vm_cancel_migration(owner: &vm.Owner) -> Int32
+pub fn cancel_migration(value: &Vm) -> Int32 { __vm_cancel_migration(&value.owner) }
+extern fn __vm_module_count(owner: &vm.Owner) -> Int32
+pub fn module_count(value: &Vm) -> Int32 { __vm_module_count(&value.owner) }
+extern fn __vm_print_modules(owner: &vm.Owner) -> Int32
+pub fn print_modules(value: &Vm) -> Int32 { __vm_print_modules(&value.owner) }
+extern fn __vm_publish_domain_code(owner: &vm.Owner) -> Int32
+pub fn publish_domain_code(value: &Vm) -> Int32 { __vm_publish_domain_code(&value.owner) }
+extern fn __vm_load_source(owner: &vm.Owner, source: &String) -> Int32
+pub fn load_source(value: &Vm, source: &String) -> Int32 { __vm_load_source(&value.owner, source) }
+extern fn __vm_reload_source(owner: &vm.Owner, source: &String) -> Int32
+pub fn reload_source(value: &Vm, source: &String) -> Int32 { __vm_reload_source(&value.owner, source) }
+extern fn __vm_register_int32_0(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
+pub fn register_int32_0(value: &Vm, name: &String, function: vm.Function) -> Int32 { __vm_register_int32_0(&value.owner, name, function) }
+extern fn __vm_register_int32_1(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
+pub fn register_int32_1(value: &Vm, name: &String, function: vm.Function) -> Int32 { __vm_register_int32_1(&value.owner, name, function) }
+extern fn __vm_register_int32_2(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
+pub fn register_int32_2(value: &Vm, name: &String, function: vm.Function) -> Int32 { __vm_register_int32_2(&value.owner, name, function) }
+extern fn __vm_call_int32_0(owner: &vm.Owner, name: &String) -> Int32
+pub fn call_int32_0(value: &Vm, name: &String) -> Int32 { __vm_call_int32_0(&value.owner, name) }
+extern fn __vm_call_int32_1(owner: &vm.Owner, name: &String, arg0: Int32) -> Int32
+pub fn call_int32_1(value: &Vm, name: &String, arg0: Int32) -> Int32 { __vm_call_int32_1(&value.owner, name, arg0) }
+extern fn __vm_call_int32_2(owner: &vm.Owner, name: &String, arg0: Int32, arg1: Int32) -> Int32
+pub fn call_int32_2(value: &Vm, name: &String, arg0: Int32, arg1: Int32) -> Int32 { __vm_call_int32_2(&value.owner, name, arg0, arg1) }
+extern fn __vm_call_float64_0(owner: &vm.Owner, name: &String) -> Float64
+pub fn call_float64_0(value: &Vm, name: &String) -> Float64 { __vm_call_float64_0(&value.owner, name) }
+extern fn __vm_call_float64_1(owner: &vm.Owner, name: &String, arg0: Float64) -> Float64
+pub fn call_float64_1(value: &Vm, name: &String, arg0: Float64) -> Float64 { __vm_call_float64_1(&value.owner, name, arg0) }
+extern fn __vm_call_float64_2(owner: &vm.Owner, name: &String, arg0: Float64, arg1: Float64) -> Float64
+pub fn call_float64_2(value: &Vm, name: &String, arg0: Float64, arg1: Float64) -> Float64 { __vm_call_float64_2(&value.owner, name, arg0, arg1) }
+extern fn __vm_call_async_int32(owner: &vm.Owner, name: String, input: Int32) @suspends -> Int32
+pub fn call_async_int32(value: &Vm, name: String, input: Int32) @suspends -> Int32 {
+    __vm_call_async_int32(&value.owner, name, input)
+}
+struct Packet { storage: Buffer<UInt64> }
+#intrinsic("script.schema")
+fn schema<T>() -> String;
+#intrinsic("script.pack")
+fn pack<T>(value: T) -> Packet;
+#intrinsic("script.unpack")
+fn unpack<T>(packet: &Packet) -> T;
+extern fn __script_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>) @suspends
+impl Vm {
+    pub fn call<A, R>(&self, name: String, input: A) @suspends -> R {
+        var packet = pack(input)
+        __script_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage)
+        unpack::<R>(&packet)
+    }
+}

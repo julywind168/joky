@@ -61,12 +61,12 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "Unknown type",
         ),
         (
-            "enum E { A(vm.Handle) }",
+            "enum E { A(vm.Function) }",
             ErrorCode::TypeMismatch,
             "Copy value",
         ),
         (
-            "enum E { A(vm.Handle) }",
+            "enum E { A(vm.Function) }",
             ErrorCode::TypeMismatch,
             "Copy value",
         ),
@@ -384,10 +384,10 @@ fn enum_constructors_and_match_bodies_respect_import_resolution() {
         type Count = Int32
         enum E { Empty, Value(Count) }
         fn run() -> Int32 {
-            let h = vm.create()
+            let h = vm.Vm.new()
             { let vm_text = "fn f() -> Int32 {{ 42 }}" vm.load_source(h, &vm_text) }
-            let result = match E.Value({ let vm_text = "f" vm.call_int32(h, &vm_text) }) {
-                Value(n) => { let x: Count = { let vm_text = "f" vm.call_int32(h, &vm_text) } n + x }
+            let result = match E.Value({ let vm_text = "f" vm.call_int32_0(h, &vm_text) }) {
+                Value(n) => { let x: Count = { let vm_text = "f" vm.call_int32_0(h, &vm_text) } n + x }
                 _ => 0
             }
             vm.close(h)

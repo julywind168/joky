@@ -39,6 +39,13 @@ impl BoundHost {
                             }
                         }
                     }
+                    for ty in &mut wire.params {
+                        if let Some(r) = ty.reference_type().filter(|r| !r.mutable) {
+                            if let Type::Resource(name) = &r.target {
+                                *ty = Type::Named(name.to_string());
+                            }
+                        }
+                    }
                     direct_adapter(&wire)
                 };
                 Some(adapter.ok_or_else(|| {
@@ -143,6 +150,14 @@ impl BoundHost {
                     crate::runtime::owned_text::view(owner.cast(), &mut views[index]);
                 })?;
                 Value::HostText(views[index].as_ptr())
+            } else if ty
+                .reference_type()
+                .is_some_and(|r| matches!(r.target, Type::Resource(_)))
+            {
+                let Value::Reference(owner) = value else {
+                    return Err(abi_error("Invalid resource argument"));
+                };
+                Value::Named(*owner as usize as u64)
             } else {
                 value.clone()
             };
@@ -221,6 +236,14 @@ impl HostPending {
                     return Err(abi_error("Borrowing host requires reference arguments"));
                 };
                 *pointer as usize as u64
+            } else if ty
+                .reference_type()
+                .is_some_and(|r| matches!(r.target, Type::Resource(_)))
+            {
+                let Value::Reference(owner) = value else {
+                    return Err(abi_error("Invalid resource argument"));
+                };
+                *owner as usize as u64
             } else if *ty == Type::String {
                 let Value::Reference(owner) = value else {
                     return Err(abi_error("Invalid owning text argument"));

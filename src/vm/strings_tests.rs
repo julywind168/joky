@@ -123,7 +123,7 @@ fn returned_strings_and_opaque_values_survive_suspension_and_reload() {
             if flag { return (delayed_value(1); "héllo") }
             return "no"
         }
-        fn engine() -> vm.Handle { return vm.create_interpreter() }
+        fn engine() -> vm.Vm { return vm.Vm.interpreter() }
         fn compute() @suspends -> Int32 {
             let handle = engine()
             let saved = text(true)

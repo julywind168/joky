@@ -97,7 +97,7 @@ fn registration_rejects_invalid_entries_and_builtin_collisions() {
     unsafe {
         assert_eq!(
             vm.register_fn(
-                "vm.error_code",
+                "__vm_error_code",
                 FunctionSignature::new(vec![], Type::Int32),
                 host as *const u8
             )

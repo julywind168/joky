@@ -37,21 +37,28 @@ fn interpreter_handle_runs_source_without_jit() {
 
 #[test]
 fn registered_jit_function_outlives_its_vm_in_both_target_modes() {
-    for constructor in ["vm.create", "vm.create_interpreter"] {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    for constructor in ["vm.Vm.new", "vm.Vm.interpreter"] {
         let mut host = VmEngine::new();
         host.load_source(&format!(
             r#"
             import joky/vm
+            import joky/task
             fn add(a: Int32, b: Int32) -> Int32 {{ a + b }}
-            fn prepare() {{
+            fn prepare() @suspends {{
                 let child = {constructor}()
-                {{ let vm_text = "add" vm.register_int32(child, &vm_text, add) }}
-                {{ let vm_text = "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{{{ add(20, 22) }}}}" vm.load_source(child, &vm_text) }};
+                {{ let vm_text = "add" vm.register_int32_2(child, &vm_text, add) }}
+                {{ let vm_text = "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{{{ add(20, 22) }}}}" vm.load_source(child, &vm_text) }}
+                task.sleep_ms(60000)
             }}
         "#
-        ))
-        .unwrap();
-        host.call_unit_0("prepare").unwrap();
+        )).unwrap();
+        let executor = HostExecutor::default();
+        let group = TaskGroup::new();
+        executor
+            .spawn(&group, host.prepare_async("prepare", &[]).unwrap())
+            .unwrap();
+        assert!(executor.poll(10).unwrap().completed.is_empty());
         assert_eq!(error_code(), 0);
         let child = VMS.with(|vms| {
             let vms = vms.borrow();
@@ -62,7 +69,7 @@ fn registered_jit_function_outlives_its_vm_in_both_target_modes() {
         drop(host);
         assert_eq!(unsafe { call_int32_0(child, text("answer").as_ptr()) }, 42);
         assert_eq!(error_code(), 0);
-        assert_eq!(close(child), 0);
+        executor.cancel_group(&group);
         VMS.with(|vms| assert!(vms.borrow().is_empty()));
     }
 }
@@ -121,7 +128,7 @@ fn nested_vm_calls_release_the_registry_borrow_before_execution() {
                 text(
                     r#"
             import joky/vm
-            fn f() -> Int32 { let child = vm.create() vm.close(child) }
+            fn f() -> Int32 { let child = vm.Vm.new() vm.close(child) }
         "#
                 )
                 .as_ptr()
@@ -137,7 +144,7 @@ fn nested_vm_calls_release_the_registry_borrow_before_execution() {
 
 #[test]
 fn handled_nested_vm_failure_does_not_escape_as_the_outer_error() {
-    for constructor in ["vm.create", "vm.create_interpreter"] {
+    for constructor in ["vm.Vm.new", "vm.Vm.interpreter"] {
         let handle = create();
         unsafe {
             assert_eq!(
@@ -148,9 +155,11 @@ fn handled_nested_vm_failure_does_not_escape_as_the_outer_error() {
             import joky/vm
             fn handled() -> Int32 {{
                 let child = {constructor}()
+                let invalid = "fn broken("
+                vm.load_source(child, &invalid)
+                let status = vm.error_code()
                 vm.close(child)
-                vm.close(child)
-                vm.error_code() - 1
+                status - 1
             }}
         "#
                     ))
@@ -172,7 +181,7 @@ fn handled_nested_vm_failure_does_not_escape_as_the_outer_error() {
 #[test]
 fn handled_nested_division_does_not_poison_outer_or_later_calls() {
     for constructor in [create, create_interpreter] {
-        for nested in ["vm.create", "vm.create_interpreter"] {
+        for nested in ["vm.Vm.new", "vm.Vm.interpreter"] {
             let handle = constructor();
             let source = format!(
                 r#"
@@ -180,7 +189,7 @@ fn handled_nested_division_does_not_poison_outer_or_later_calls() {
                 fn handled() -> Int32 {{
                     let child = {nested}()
                     {{ let vm_text = "fn bad() -> Int32 {{{{ 7 / 0 }}}}" vm.load_source(child, &vm_text) }}
-                    {{ let vm_text = "bad" vm.call_int32(child, &vm_text) }}
+                    {{ let vm_text = "bad" vm.call_int32_0(child, &vm_text) }}
                     let failed = vm.error_code()
                     vm.close(child)
                     failed + 41
@@ -226,12 +235,12 @@ fn busy_vm_reports_an_error_without_panicking() {
 fn script_scalar_bridge_runs_reload_and_cancel_on_shared_executor() {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     for host_mode in [VmMode::Jit, VmMode::Interpreter] {
-        for script in ["vm.create_interpreter()", "vm.create()"] {
+        for script in ["vm.Vm.interpreter()", "vm.Vm.new()"] {
             let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
             let mut host = VmEngine::with_mode(host_mode);
             host.load_source(
                 &include_str!("../../../tests/fixtures/aot_script_scalar.jk")
-                    .replace("vm.create_interpreter()", script),
+                    .replace("vm.Vm.interpreter()", script),
             )
             .unwrap();
             let executor = HostExecutor::default();
@@ -270,17 +279,17 @@ fn script_call_source(script: &str, mode: VmMode, function: &str) -> String {
         .replace('{', "{{")
         .replace('}', "}}");
     let create = if mode == VmMode::Jit {
-        "create"
+        "new"
     } else {
-        "create_interpreter"
+        "interpreter"
     };
     format!(
         r#"import joky/vm
 fn main() @suspends -> Int32 {{
-    let h = vm.{create}()
+    let h = vm.Vm.{create}()
     let code = "{literal}"
     vm.load_source(h, &code)
-    vm.call_async_int32(h, "{function}", 0)
+    vm.call_async_int32(&h, "{function}", 0)
 }}"#
     )
 }
@@ -328,11 +337,11 @@ fn wrong(n: Int32) @suspends -> Bool { true }
                     }
                 }
             }
-            let h = VMS.with(|vms| {
-                assert_eq!(vms.borrow().len(), 1);
-                *vms.borrow().keys().next().unwrap()
-            });
             if action == "close" {
+                let h = VMS.with(|vms| {
+                    assert_eq!(vms.borrow().len(), 1);
+                    *vms.borrow().keys().next().unwrap()
+                });
                 assert!(failure.is_none());
                 assert_eq!(close(h), 0);
                 for _ in 0..10 {
@@ -346,7 +355,6 @@ fn wrong(n: Int32) @suspends -> Bool { true }
             } else if action == "cancel" {
                 assert!(failure.is_none());
                 executor.cancel_group(&group);
-                assert_eq!(close(h), 0);
             } else {
                 let error = failure.unwrap();
                 assert_eq!(
@@ -357,8 +365,8 @@ fn wrong(n: Int32) @suspends -> Bool { true }
                         _ => ErrorCode::RuntimeError,
                     }
                 );
-                assert_eq!(close(h), 0);
             }
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
             assert_eq!(executor.task_count(), 0);
             assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
             drop(executor);
@@ -399,7 +407,7 @@ fn script_bridge_cancellation(
                 );
             script_call_source(&script, mode, "work")
                 .replace("import joky/vm", "import joky/vm import joky/script struct Message { n:Int32 }")
-                .replace("vm.call_async_int32(h, \"work\", 0)", "let reply = script.call::<Message, Message>(h, \"work\", Message { n:0 }) reply.n")
+                .replace("vm.call_async_int32(&h, \"work\", 0)", "let reply = script.call::<Message, Message>(&h, \"work\", Message { n:0 }) reply.n")
         } else {
             script_call_source(script, mode, "work")
         };
@@ -432,11 +440,7 @@ fn script_bridge_cancellation(
                 }
             }
             executor.cancel_group(&group);
-            // Existing vm.Handle is manually closed; cancellation owns only the call.
-            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
-            for h in handles {
-                assert_eq!(close(h), 0);
-            }
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
             assert_eq!(executor.task_count(), 0, "{mode:?} boundary {boundary}");
             assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
             drop(executor);
@@ -498,10 +502,7 @@ fn script_scalar_bridge_uses_host_clock_without_polling_early() {
             let report = executor.poll(10).unwrap();
             assert_eq!(report.completed.len(), 1);
             assert_eq!(*report.completed[0].result.as_ref().unwrap(), 42);
-            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
-            for h in handles {
-                assert_eq!(close(h), 0);
-            }
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
             assert_eq!(executor.task_count(), 0);
         }
     }
@@ -533,9 +534,9 @@ fn script_flat_bridge_checks_contract_before_running_target() {
             "struct Message { other:Int32 } fn work(n:Message) @suspends ->Message { let fail=1/0 n }",
         ] {
             let mut source = script_call_source(target, mode, "work").replace("import joky/vm", "import joky/vm import joky/script struct Message { n:Int32 }");
-            source = source.replace("vm.call_async_int32(h, \"work\", 0)", if target.contains("struct Message") {
-                "let reply = script.call::<Message, Message>(h, \"work\", Message { n:0 }) reply.n"
-            } else { "script.call::<Int32, Int32>(h, \"work\", 0)" });
+            source = source.replace("vm.call_async_int32(&h, \"work\", 0)", if target.contains("struct Message") {
+                "let reply = script.call::<Message, Message>(&h, \"work\", Message { n:0 }) reply.n"
+            } else { "script.call::<Int32, Int32>(&h, \"work\", 0)" });
             let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
             let mut host = VmEngine::with_mode(mode);
             host.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
@@ -553,8 +554,7 @@ fn script_flat_bridge_checks_contract_before_running_target() {
                 if failed { break; }
             }
             assert!(failed);
-            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
-            for h in handles { assert_eq!(close(h), 0); }
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
             assert_eq!(executor.task_count(), 0);
             assert_eq!(executor.domains().borrow().usage(), (0,0,0,0));
             drop(executor); drop(host);
@@ -600,7 +600,7 @@ fn migration_cancellation(
     let source = format!(
         r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
 fn assert(ok:Bool) {{let message="migration cancellation" check.assert(ok,&message)}}
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let next={next:?}
     {prepare}
@@ -612,10 +612,10 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
 fn main() @suspends ->Int32 {{
     let owner=domain.directory(1)
     let directory=owner.handle()
-    let h=vm.create_interpreter()
+    let h=vm.Vm.interpreter()
     let source={old:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
     assert(vm.close(h)==0)
     0
 }}"#
@@ -662,14 +662,9 @@ fn migration_cancellation_source(
                     break;
                 }
             }
-            executor.cancel_group(&group);
             saw_pending |= executor.domains().borrow().usage().3 != 0;
-            // vm.Handle explicitly owns the prepared candidate even when the
-            // requesting task is cancelled. Closing it releases the candidate.
-            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
-            for h in handles {
-                assert_eq!(close(h), 0);
-            }
+            executor.cancel_group(&group);
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
             assert_eq!(executor.task_count(), 0);
             assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
             drop(executor);
@@ -743,7 +738,7 @@ fn batch_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhau
     let source = format!(
         r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
 fn assert(ok:Bool) {{let message="migration batch cancellation" check.assert(ok,&message)}}
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty=""
     assert(vm.begin_migration_batch(h,&next)==0)
@@ -760,9 +755,9 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
 }}
 fn main() @suspends ->Int32 {{
     let owner=domain.directory(4) let directory=owner.handle()
-    let h=vm.create_interpreter() let old={old:?}
+    let h=vm.Vm.interpreter() let old={old:?}
     assert(vm.load_source(h,&old)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
     assert(vm.close(h)==0)
     0
 }}"#
@@ -780,4 +775,110 @@ fn migration_batch_script_cancellation_releases_all_staged_roots() {
 #[ignore = "exhaustive: cancel batch migration at every host instruction"]
 fn exhaustive_migration_batch_script_cancellation() {
     batch_cancellation(0..=16384, true);
+}
+
+#[test]
+fn vm_resources_move_return_and_drop_on_success_or_failure() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+        let mut host = VmEngine::with_mode(mode);
+        host.load_source(
+            r#"
+            import joky/vm
+            struct Engine { value: vm.Vm }
+            fn make() -> Engine { Engine { value: vm.Vm.interpreter() } }
+            fn run(fail: Int32) -> Int32 {
+                let first = make()
+                let moved = first
+                let source = "fn answer() -> Int32 {{ 42 }}"
+                let name = "answer"
+                vm.load_source(moved.value, &source)
+                vm.call_int32_0(moved.value, &name) / fail
+            }
+            fn early() -> Int32 { let engine = make() return 42 }
+            fn close() -> Int32 { let engine = vm.Vm.new() engine.close() }
+            fn status() -> Int32 {
+                { let engine = make() let invalid = "fn broken(" vm.load_source(engine.value, &invalid) }
+                vm.error_code()
+            }
+        "#,
+        )
+        .unwrap();
+        assert_eq!(host.call_int32_1("run", 1).unwrap(), 42);
+        VMS.with(|vms| assert!(vms.borrow().is_empty()));
+        assert!(host.call_int32_1("run", 0).is_err());
+        VMS.with(|vms| assert!(vms.borrow().is_empty()));
+        assert_eq!(host.call_int32_0("status").unwrap(), 1);
+        VMS.with(|vms| assert!(vms.borrow().is_empty()));
+        assert_eq!(host.call_int32_0("early").unwrap(), 42);
+        assert_eq!(host.call_int32_0("close").unwrap(), 0);
+        VMS.with(|vms| assert!(vms.borrow().is_empty()));
+        drop(host);
+        assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+    }
+}
+
+#[test]
+fn vm_resource_factory_rolls_back_when_owner_allocation_fails() {
+    use crate::runtime::{
+        arena::{Arena, Budget},
+        resource,
+    };
+    let budget = Rc::new(Budget {
+        limit: std::cell::Cell::new(0),
+        ..Default::default()
+    });
+    let mut arena = Arena::with_budget(budget.clone(), None);
+    for mode in [0, 1] {
+        assert!(unsafe { resource::invoke(&mut arena, &managed::FACTORY, mode) }.is_err());
+        VMS.with(|vms| assert!(vms.borrow().is_empty()));
+        assert_eq!(budget.bytes.get(), 0);
+    }
+}
+
+#[test]
+fn vm_resource_rejects_copy_double_close_and_close_during_borrow() {
+    for body in [
+        "let h = vm.Vm.new() let moved = h vm.module_count(h)",
+        "let h = vm.Vm.new() h.close() h.close()",
+        "let h = vm.Vm.new() parallel { | h.call::<Int32,Int32>(\"run\",0) | h.close() };",
+        "let h = vm.Vm.new() let raw = h.owner",
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut host = VmEngine::with_mode(mode);
+            let source = format!("import joky/vm fn main() @suspends {{ {body}; }}");
+            assert!(host.load_source(&source).is_err(), "{source}");
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
+        }
+    }
+}
+
+#[test]
+fn vm_native_registration_rejects_source_module_internal_entries() {
+    let mut modules = crate::ModuleSources::new();
+    modules.insert("engine", r#"
+        import joky/vm as runtime.{type Vm as Engine, register_int32_1 as register}
+        fn increment(n: Int32) -> Int32 { n + 1 }
+        pub fn answer() -> Int32 {
+            let engine = Engine.interpreter()
+            let name = "increment"
+            register(engine, &name, increment)
+            let code = "extern fn increment(n: Int32) -> Int32 fn answer() -> Int32 {{ increment(41) }}"
+            runtime.load_source(engine, &code)
+            let entry = "answer"
+            runtime.call_int32_0(engine, &entry)
+        }
+    "#).unwrap();
+    let mut host = VmEngine::new();
+    let error = host
+        .load_source_with_modules(
+            "import engine fn answer() -> Int32 { engine.answer() }",
+            &modules,
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), ErrorCode::InvalidCall);
+    assert!(error
+        .message()
+        .contains("Function reference `engine.increment`"));
+    VMS.with(|vms| assert!(vms.borrow().is_empty()));
 }

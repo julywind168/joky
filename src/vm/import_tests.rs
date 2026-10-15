@@ -183,16 +183,16 @@ fn constructors_and_module_aliases_obey_local_shadowing_without_capturing_other_
 #[test]
 fn host_module_aliases_and_selected_call_forms_keep_canonical_abi_bindings() {
     let source = r#"
-        import joky/vm as engine.{type Handle as Engine, create as new, call_int32 as invoke, register_int32 as register, close}
+        import joky/vm as engine.{type Vm as Engine, call_int32_0 as invoke, register_int32_1 as register, close}
         fn next(n: Int32) -> Int32 { n + 1 }
         fn check() -> Int32 {
             let vm = 99
-            let h: Engine = new()
-            let same: engine.Handle = h
+            let h: Engine = Engine.new()
+            let same: &engine.Vm = &h
             let name = "next" register(same, &name, next)
             let code = "extern fn next(n: Int32) -> Int32 fn value() -> Int32 {{ next(41) }}" engine.load_source(h, &code)
             let entry = "value" let a = invoke(h, &entry)
-            let b = engine.call_int32(h, &entry)
+            let b = engine.call_int32_0(h, &entry)
             close(h)
             a + b - 42
         }
@@ -303,7 +303,7 @@ fn import_errors_are_located_and_do_not_publish_partial_modules() {
         ),
         (
             true,
-            "import joky/vm as v fn f() { vm.create() }",
+            "import joky/vm as v fn f() { vm.Vm.new() }",
             ErrorCode::UnknownName,
         ),
         (
@@ -318,7 +318,7 @@ fn import_errors_are_located_and_do_not_publish_partial_modules() {
         ),
         (
             true,
-            "import joky/vm.{create as new} fn f() { let new = 1 new() }",
+            "import joky/vm.{close as new} fn f() { let new = 1 new() }",
             ErrorCode::InvalidCall,
         ),
         (
@@ -331,7 +331,7 @@ fn import_errors_are_located_and_do_not_publish_partial_modules() {
             "fn id<T>(n: T) -> T { n } fn f() { id::<Int32> }",
             ErrorCode::TypeMismatch,
         ),
-        (true, "fn f() { vm.create() }", ErrorCode::UnknownName),
+        (true, "fn f() { vm.Vm.new() }", ErrorCode::UnknownName),
     ] {
         let source = format!("// 🙂\n{source}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

@@ -681,7 +681,7 @@ JIT 模块拥有导出入口、元数据、可执行内存及外部代码依赖�
 再标记调用失效并唤醒；不会在重入的子流程栈上强行析构 continuation。生命周期、限制与
 入口能力见[热更新开发计划](aot-script-hot-reload.md#62-hr2-类型化入口已实现)。
 
-`vm.Handle` 的迁移槽保存至多一个单域 `PreparedMigration` 或多域 `Batch`。单域准备先按
+`vm.Vm` 拥有的 VM 迁移槽保存至多一个单域 `PreparedMigration` 或多域 `Batch`。单域准备先按
 会话模块归属选中唯一存活域，
 捕获 ReadSet 和当前入口模块，用旧根的不可变 Type 生成 `PreviousState`，在临时 VmEngine
 内编译新模块。schema 使用全局不复用的非零进程内令牌；它不代表持久化结构指纹。
@@ -1070,8 +1070,15 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 同名自定义注册只影响后续编译；内置绑定名会被拒绝，避免注册成功但永远不生效。
 旧宿主签名中的合法命名类型自动登记；AOT 可显式注册 opaque 类型。注册入口、类型名和 CPS 帧大小
 会在修改宿主表前完成校验。
-默认已有 `vm.Handle` 和 `vm.Function`，未声明为记录/枚举/别名且未登记为 opaque 的类型在 IR 阶段拒绝；
+默认已有 Resource 类型 `vm.Owner` 和 opaque 类型 `vm.Function`，未声明为记录/枚举/别名且未登记为 opaque 的类型在 IR 阶段拒绝；
 别名指向未知类型时在别名解析阶段拒绝。宿主注册仍使用实际类型，源码别名不属于注册 API。
+
+`joky/vm` 的公开声明来自 `src/stdlib/vm.jk`：`Vm` 包含私有 `vm.Owner`，
+创建通过 ResourceFactoryV1，释放回调注销 VM 并关闭挂起调用及迁移候选。
+`src/core/vm.rs` 统一私有原语的签名，源码校验与运行时注册共用；JIT、解释器、AOT
+使用相同资源协议。操作接受共享资源借用，适配器只在读取内部身份时短暂持有 lease，
+进入 VM 或挂起前释放 lease。语言借用检查保证拥有者存活，多个调用和重载可交错执行。
+Rust/C 数值句柄 ABI 保持独立，继续由宿主显式关闭；资源析构不清除最近同步错误。
 
 同步 C 导入是独立 ABI 种类，不能与旧 direct/CPS 注册互换。共享 core::ir 验证 unsafe 调用和
 参数边界，原有借用数据流仍检查别名与生命周期；native lowering 与解释器都传入真实稳定对象地址，

@@ -8,21 +8,21 @@ struct Widths { a: UInt8, b: UInt16, c: UInt32, d: Int16, e: Int32, f: Float32 }
 struct Empty {}
 fn source() -> String { "import joky/task\nstruct Input {{ high: UInt64, low: Int8, flag: Bool, rune: Rune, unit: Unit }}\nstruct Reply {{ high: UInt64, low: Int8, flag: Bool, rune: Rune, scale: Float64 }}\nfn run(input: Input) @suspends -> Reply {{\n    task.yield_now()\n    Reply {{ high: input.high, low: input.low, flag: input.flag, rune: input.rune, scale: 0.5 }}\n}}\nfn empty(input: Unit) @suspends -> Unit {{ task.yield_now() }}\nstruct Widths {{ a: UInt8, b: UInt16, c: UInt32, d: Int16, e: Int32, f: Float32 }}\nstruct Empty {{}}\nfn widths(input: Widths) @suspends -> Widths {{ task.yield_now() input }}\nfn zero(input: Empty) @suspends -> Empty {{ task.yield_now() input }}\nfn float(input: Float32) @suspends -> Float32 {{ task.yield_now() input }}\nfn scalar(input: Int64) @suspends -> Int64 {{ task.yield_now() input }}\n" }
 fn main() @suspends {
-    let h = vm.create_interpreter()
+    let h = vm.Vm.interpreter()
     let code = source()
     assert(vm.load_source(h, &code) == 0)
     let input = Input { high: 18446744073709551615, low: -128, flag: true, rune: '中', unit: {} }
-    let reply = script.call::<Input, Reply>(h, "run", input)
+    let reply = h.call::<Input, Reply>("run", input)
     assert(reply.high == 18446744073709551615 && reply.low == -128 && reply.flag && reply.rune == '中' && reply.scale == 0.5)
-    script.call::<Unit, Unit>(h, "empty", {})
-    assert(script.call::<Int64, Int64>(h, "scalar", -9223372036854775808) == -9223372036854775808)
-    let widths = script.call::<Widths, Widths>(h, "widths", Widths { a:255, b:65535, c:4294967295, d:-32768, e:-2147483648, f:0.25 })
+    script.call::<Unit, Unit>(&h, "empty", {})
+    assert(script.call::<Int64, Int64>(&h, "scalar", -9223372036854775808) == -9223372036854775808)
+    let widths = script.call::<Widths, Widths>(&h, "widths", Widths { a:255, b:65535, c:4294967295, d:-32768, e:-2147483648, f:0.25 })
     assert(widths.a == 255 && widths.b == 65535 && widths.c == 4294967295 && widths.d == -32768 && widths.e == -2147483648 && widths.f == 0.25)
-    script.call::<Empty, Empty>(h, "zero", Empty {})
-    assert(script.call::<Float32, Float32>(h, "float", -0.25) == -0.25)
+    script.call::<Empty, Empty>(&h, "zero", Empty {})
+    assert(script.call::<Float32, Float32>(&h, "float", -0.25) == -0.25)
     let invalid = "fn broken("
     assert(vm.load_source(h, &invalid) == 1)
-    assert(script.call::<Int64, Int64>(h, "scalar", 42) == 42)
-    assert(vm.close(h) == 0)
+    assert(script.call::<Int64, Int64>(&h, "scalar", 42) == 42)
+    assert(h.close() == 0)
     println("Script flat contracts ok")
 }

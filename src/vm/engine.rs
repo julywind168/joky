@@ -614,19 +614,20 @@ impl VmEngine {
     /// Compile a parsed or resolved module, publishing only after all checks pass.
     pub fn load_module(&mut self, ast: &parser::ast::Module) -> Result<Vec<String>, Error> {
         let mut types = self.types.clone();
-        types.resource_factories = self
-            .hosts
-            .iter()
-            .filter(|(_, host)| {
-                matches!(
-                    host.entry,
-                    HostEntry::ResourceFactory(_)
-                        | HostEntry::ResourceFactoryCps(_)
-                        | HostEntry::ResourceIo { .. }
-                )
-            })
-            .map(|(name, host)| (name.clone(), host.signature.clone()))
-            .collect();
+        types.resource_factories.extend(
+            self.hosts
+                .iter()
+                .filter(|(_, host)| {
+                    matches!(
+                        host.entry,
+                        HostEntry::ResourceFactory(_)
+                            | HostEntry::ResourceFactoryCps(_)
+                            | HostEntry::ResourceIo { .. }
+                    )
+                })
+                .map(|(name, host)| (name.clone(), host.signature.clone()))
+                .collect::<HashMap<_, _>>(),
+        );
         types.resource_async = self
             .hosts
             .iter()
@@ -780,6 +781,7 @@ impl VmEngine {
                 .with_span(f.span));
             }
             let borrowing = crate::core::ffi::is_borrowing_import(f)
+                && crate::core::vm::binding(&f.name).is_none()
                 && !matches!(host.entry, HostEntry::ResourceIo { .. });
             if borrowing != matches!(host.entry, HostEntry::BorrowingCps(_)) {
                 return Err(abi_error(

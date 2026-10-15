@@ -50,7 +50,7 @@ fn arena_rejects_aliasing_moves_and_escapes_in_all_backends() {
         "type R = &Point; type Nested = &R; fn f(p: Nested) {}",
         "fn f(p: &&Point) {}",
         "fn f() { let p = alloc(\"text\"); }",
-        "fn f(p: &vm.Handle) {}",
+        "fn f(p: &vm.Function) {}",
         "fn f() { let p = make(); let xs = (p,); }",
         "fn f() { let p = make(); let maybe = Some(p); }",
         "extern fn host(p: &Point) fn f() { let p = make(); host(p); }",

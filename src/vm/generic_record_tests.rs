@@ -39,7 +39,10 @@ fn generic_record_errors_leave_the_previous_module_published() {
     let declarations =
         "struct Pair<T> { left: T, right: T } struct Cell<T> { value: T } struct Marker<T> {} ";
     for (body, code) in [
-        ("struct Bad<T> { text: vm.Handle }", ErrorCode::TypeMismatch),
+        (
+            "struct Bad<T> { text: vm.Function }",
+            ErrorCode::TypeMismatch,
+        ),
         ("struct Bad<T> { value: Unknown }", ErrorCode::UnknownType),
         (
             "struct Bad<T> { value: T, value: T }",
@@ -68,8 +71,8 @@ fn generic_record_errors_leave_the_previous_module_published() {
         ),
         ("fn f(x: Pair) {}", ErrorCode::TypeMismatch),
         ("fn f(x: Pair<Int32, Bool>) {}", ErrorCode::TypeMismatch),
-        ("fn f(x: Marker<vm.Handle>) {}", ErrorCode::TypeMismatch),
-        ("fn f(x: Pair<vm.Handle>) {}", ErrorCode::TypeMismatch),
+        ("fn f(x: Marker<vm.Function>) {}", ErrorCode::TypeMismatch),
+        ("fn f(x: Pair<vm.Function>) {}", ErrorCode::TypeMismatch),
         ("fn f(x: Pair<Missing>) {}", ErrorCode::UnknownType),
         (
             "type Alias = Pair<Int32> fn f(x: Alias<Bool>) {}",
@@ -93,7 +96,7 @@ fn generic_record_errors_leave_the_previous_module_published() {
             ErrorCode::InvalidCall,
         ),
         (
-            "fn f() { let p = Marker::<vm.Handle> {} }",
+            "fn f() { let p = Marker::<vm.Function> {} }",
             ErrorCode::TypeMismatch,
         ),
         (

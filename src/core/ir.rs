@@ -535,6 +535,7 @@ impl ModulePlan {
                 *item_span(item),
             )?;
             let borrowing_host = matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f))
+                && super::vm::binding(name).is_none()
                 && !types.resource_io.contains_key(name)
                 && (crate::runtime::tcp::operation(name).is_none()
                     && !crate::runtime::dns::is_lookup(name)
@@ -558,6 +559,7 @@ impl ModulePlan {
                 if matches!(item, Item::ExternFn(_))
                     && ty.contains_buffers()
                     && !types.resource_factories.contains_key(name)
+                    && super::vm::binding(name).is_none()
                     && (crate::runtime::tcp::operation(name).is_none()
                         && !crate::runtime::dns::is_lookup(name)
                         && crate::runtime::domain::operation(name).is_none())
@@ -575,6 +577,7 @@ impl ModulePlan {
                     .with_span(*item_span(item)));
                 }
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
+                    && super::vm::binding(name).is_none()
                     && !types.resource_io.contains_key(name)
                     && (crate::runtime::tcp::operation(name).is_none()
                         && !crate::runtime::dns::is_lookup(name)
@@ -596,6 +599,7 @@ impl ModulePlan {
                 }
                 if matches!(item, Item::ExternFn(_))
                     && ty.is_aggregate()
+                    && super::vm::binding(name).is_none()
                     && !types.resource_io.contains_key(name)
                     && (crate::runtime::tcp::operation(name).is_none()
                         && !crate::runtime::dns::is_lookup(name)
@@ -664,9 +668,10 @@ impl ModulePlan {
             }
             let info = FunctionInfo {
                 closure_entry: false,
-                noescape: (crate::runtime::tcp::operation(name).is_some()
-                    || crate::runtime::dns::is_lookup(name)
-                    || crate::runtime::domain::operation(name).is_some())
+                noescape: super::vm::binding(name).is_some()
+                    || (crate::runtime::tcp::operation(name).is_some()
+                        || crate::runtime::dns::is_lookup(name)
+                        || crate::runtime::domain::operation(name).is_some())
                     || types.resource_io.contains_key(name)
                     || matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
                 noescape_params: if let Item::FnDef(f) = item {
@@ -783,6 +788,17 @@ impl ModulePlan {
                     },
                 span: *item_span(item),
             };
+            if super::vm::binding(name).is_some() {
+                if !matches!(item, Item::ExternFn(_)) {
+                    return Err(type_error(
+                        item_span(item),
+                        ErrorCode::ReservedName,
+                        "VM runtime names require checked extern declarations",
+                    ));
+                }
+                super::vm::validate(name, &info.signature, suspends, info.c_abi)
+                    .map_err(|e| e.with_span(info.span))?;
+            }
             if let Some(op) = crate::runtime::domain::operation(name) {
                 op.validate(&info.signature, suspends)
                     .map_err(|e| e.with_span(info.span))?;

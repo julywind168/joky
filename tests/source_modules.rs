@@ -203,7 +203,7 @@ fn generic_alias_imports_reject_private_names_constructors_and_foreign_nominals(
         "import a fn bad() { a.Maybe.Some::<Int32>(1) }",
         "import a fn bad(x: a.Value) {}",
         "import a fn bad(x: a.Value<Int32, Bool>) {}",
-        "import a fn bad(x: a.Value<vm.Handle>) {}",
+        "import a fn bad(x: a.Value<vm.Function>) {}",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             assert!(
@@ -479,9 +479,9 @@ fn host_imports_keep_the_defining_modules_alias_and_binding() {
         r#"
         import joky/vm as host
         pub fn value() -> Int32 {
-            let h = host.create_interpreter()
+            let h = host.Vm.interpreter()
             { let vm_text = "fn answer() -> Int32 {{ 42 }}" host.load_source(h, &vm_text) }
-            let result = { let vm_text = "answer" host.call_int32(h, &vm_text) }
+            let result = { let vm_text = "answer" host.call_int32_0(h, &vm_text) }
             host.close(h)
             result
         }

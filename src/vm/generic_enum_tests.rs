@@ -37,7 +37,7 @@ fn generic_enums_preserve_inference_layouts_and_matching_across_backends() {
 fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
     let prelude = "enum Option<T> { None, Some(T) } enum Result<T, E> { Ok(T), Err(E) } ";
     for (body, code) in [
-        ("enum Bad<T> { Value(vm.Handle) }", ErrorCode::TypeMismatch),
+        ("enum Bad<T> { Value(vm.Function) }", ErrorCode::TypeMismatch),
         ("enum Bad<T> { Value(Unknown) }", ErrorCode::UnknownType),
         ("enum Bad<T> { A, A(T) }", ErrorCode::DuplicateDefinition),
         ("enum Bad<T> {}", ErrorCode::InvalidPattern),
@@ -48,8 +48,8 @@ fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
         ("enum Bad<T> { Next(Alias) } type Alias = Bad<Int32>", ErrorCode::RecursiveType),
         ("fn f(x: Option) {}", ErrorCode::TypeMismatch),
         ("fn f(x: Option<Int32, Bool>) {}", ErrorCode::TypeMismatch),
-        ("fn f(x: Option<vm.Handle>) {}", ErrorCode::TypeMismatch),
-        ("fn f(x: Option<vm.Handle>) {}", ErrorCode::TypeMismatch),
+        ("fn f(x: Option<vm.Function>) {}", ErrorCode::TypeMismatch),
+        ("fn f(x: Option<vm.Function>) {}", ErrorCode::TypeMismatch),
         ("fn f(x: Option<Unknown>) {}", ErrorCode::UnknownType),
         ("struct Pair {} fn f(x: Pair<Int32>) {}", ErrorCode::UnknownType),
         ("type Alias = Option<Int32> fn f(x: Alias<Bool>) {}", ErrorCode::UnknownType),
@@ -57,7 +57,7 @@ fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
         ("fn f() { Option.None }", ErrorCode::TypeMismatch),
         ("fn f() { Result.Ok(42) }", ErrorCode::TypeMismatch),
         ("fn f() { Option.Some(\"text\") }", ErrorCode::TypeMismatch),
-        ("fn f() { Option.None::<vm.Handle> }", ErrorCode::TypeMismatch),
+        ("fn f() { Option.None::<vm.Function> }", ErrorCode::TypeMismatch),
         ("fn f() { Option.Some::<Int32, Bool>(1) }", ErrorCode::InvalidCall),
         ("fn f() { let x: Option<Bool> = Option.Some(42) }", ErrorCode::TypeMismatch),
         ("fn f() { let x: Option<Int32> = Option.None::<Bool> }", ErrorCode::TypeMismatch),

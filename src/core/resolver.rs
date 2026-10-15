@@ -216,11 +216,6 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                     .insert(binding.name.clone(), binding.name.clone());
             }
         }
-        if import.path == "joky/vm" {
-            for form in ["call_int32", "register_int32"] {
-                call_forms.insert(format!("{root}.{form}"), format!("vm.{form}"));
-            }
-        }
         for member in &import.members {
             if member.kind == ImportMemberKind::Type {
                 continue;
@@ -237,35 +232,33 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                 ));
             }
             super::integer::IntegerType::check_declaration(name, member.span)?;
-            if import.path == "joky/vm"
-                && matches!(member.name.as_str(), "call_int32" | "register_int32")
-            {
-                call_forms.insert(name.to_owned(), format!("vm.{}", member.name));
-            } else {
-                let binding = bindings
-                    .iter()
-                    .find(|b| b.name.rsplit('.').next() == Some(member.name.as_str()))
-                    .ok_or_else(|| {
-                        resolve_error_code(
-                            Some(&member.span),
-                            ErrorCode::InvalidImport,
-                            format!(
-                                "Module '{}' does not export value '{}'",
-                                import.path, member.name
-                            ),
-                        )
-                    })?;
-                scope
-                    .functions
-                    .insert(name.to_owned(), binding.name.clone());
-            }
+            let binding = bindings
+                .iter()
+                .find(|b| b.name.rsplit('.').next() == Some(member.name.as_str()))
+                .ok_or_else(|| {
+                    resolve_error_code(
+                        Some(&member.span),
+                        ErrorCode::InvalidImport,
+                        format!(
+                            "Module '{}' does not export value '{}'",
+                            import.path, member.name
+                        ),
+                    )
+                })?;
+            scope
+                .functions
+                .insert(name.to_owned(), binding.name.clone());
             scope.constructors.remove(name);
         }
         imported_bindings.extend(bindings.iter().map(|binding| (binding, import.span)));
     }
-    // These are the call forms of the VM module, not global language syntax.
-    if imported_paths.contains("joky/vm") {
-        let functions: HashMap<_, _> = resolved
+    for (local, canonical) in &scope.functions {
+        if canonical.starts_with("joky/vm.register_int32_") {
+            call_forms.insert(local.clone(), canonical.clone());
+        }
+    }
+    if !call_forms.is_empty() {
+        let mut functions: HashMap<_, _> = resolved
             .items
             .iter()
             .filter_map(|item| match item {
@@ -281,11 +274,17 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                             function.ret_ty.clone(),
                         ),
                         function.suspends,
+                        function.name.clone(),
                     ),
                 )),
                 _ => None,
             })
             .collect();
+        for (local, canonical) in &scope.functions {
+            if let Some(function) = functions.get(canonical).cloned() {
+                functions.insert(local.clone(), function);
+            }
+        }
         let member_roots: HashSet<String> = resolved
             .enums
             .iter()
@@ -393,13 +392,6 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
             }));
         }
     }
-    for binding in &scope.imported_functions {
-        if binding.starts_with("vm.call_int32_") || binding.starts_with("vm.register_int32_") {
-            scope
-                .functions
-                .insert(format!("joky/{binding}"), binding.clone());
-        }
-    }
     resolved.scope = Some(Arc::new(scope));
     resolved.imports.clear();
 
@@ -408,7 +400,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
 
 fn resolve_calls(
     expr: &mut Expr,
-    functions: &HashMap<String, (FunctionSignature, bool)>,
+    functions: &HashMap<String, (FunctionSignature, bool, String)>,
     member_roots: &HashSet<String>,
     call_forms: &HashMap<String, String>,
     locals: &mut HashSet<String>,
@@ -508,20 +500,11 @@ fn resolve_calls(
                     "VM call forms do not accept type arguments",
                 ));
             }
-            if form.is_some_and(|f| f == "vm.call_int32") {
-                if !(2..=4).contains(&args.len()) {
-                    return Err(resolve_error(
-                        Some(span),
-                        "vm.call_int32 expects a handle, function name and zero to two Int32 arguments",
-                    ));
-                }
-                *callee = format!("joky/vm.call_int32_{}", args.len() - 2);
-            }
-            if form.is_some_and(|f| f == "vm.register_int32") {
+            if let Some(form) = form {
                 if args.len() != 3 {
                     return Err(resolve_error(
                         Some(span),
-                        "vm.register_int32 expects a handle, function name and function reference",
+                        "vm.register_int32_N expects a VM borrow, function name and function reference",
                     ));
                 }
                 let Expr::Ident {
@@ -531,14 +514,14 @@ fn resolve_calls(
                 else {
                     return Err(resolve_error(
                         Some(span),
-                        "vm.register_int32 expects a function name as its third argument",
+                        "vm.register_int32_N expects a function name as its third argument",
                     ));
                 };
-                let Some((signature, suspends)) = functions.get(name) else {
+                let Some((signature, suspends, canonical)) = functions.get(name) else {
                     return Err(resolve_error(
                         Some(function_span),
                         format!(
-                            "vm.register_int32 function `{name}` is not defined in this module"
+                            "vm.register_int32_N function `{name}` is not defined in this module"
                         ),
                     ));
                 };
@@ -549,12 +532,17 @@ fn resolve_calls(
                 {
                     return Err(resolve_error(
                         Some(function_span),
-                        format!("vm.register_int32 function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments"),
+                        format!("vm.register_int32_N function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments"),
                     ));
                 }
-                *callee = format!("joky/vm.register_int32_{}", signature.params.len());
+                if !form.ends_with(&format!("_{}", signature.params.len())) {
+                    return Err(resolve_error(
+                        Some(function_span),
+                        "VM callback arity does not match the registration function",
+                    ));
+                }
                 args[2] = Expr::FunctionRef {
-                    name: name.clone(),
+                    name: canonical.clone(),
                     span: *function_span,
                 };
             }
@@ -723,62 +711,6 @@ mod tests {
             assert!(registry.module("user/conversions").is_none());
             assert!(registry.binding(name).is_none());
         }
-    }
-
-    #[test]
-    fn rewrites_builtin_calls_without_stdlib_ast_logic() {
-        let module =
-            crate::parser::parse("import joky/vm fn main() { vm.call_int32(1, \"value\", 42) }")
-                .unwrap();
-        let mut registry = BindingRegistry::default();
-        registry
-            .register_module(
-                "joky/vm",
-                [BindingSpec {
-                    name: "vm.call_int32_1".into(),
-                    signature: FunctionSignature::new(
-                        vec![Type::Named("vm.Handle".into()), Type::String, Type::Int32],
-                        Type::Int32,
-                    ),
-                    symbol: None,
-                    suspends: false,
-                }],
-            )
-            .unwrap();
-        let resolved = resolve(&module, &registry).unwrap();
-        assert!(resolved.imports.is_empty());
-        let Item::FnDef(function) = &resolved.items[0] else {
-            panic!("expected function definition");
-        };
-        let Expr::Block {
-            exprs: expressions, ..
-        } = &function.body
-        else {
-            panic!("expected function block");
-        };
-        let Expr::Call { callee, .. } = &expressions[0] else {
-            panic!("expected call expression");
-        };
-        assert_eq!(callee, "joky/vm.call_int32_1");
-        assert_eq!(resolved.items.len(), 2);
-    }
-
-    #[test]
-    fn reports_builtin_call_errors_at_the_call_expression() {
-        let source = "import joky/vm fn main() { vm.call_int32(1) }";
-        let module = crate::parser::parse(source).unwrap();
-        let mut registry = BindingRegistry::default();
-        registry.register_module("joky/vm", []).unwrap();
-        let error = resolve(&module, &registry).unwrap_err();
-        let start = source.find("vm.call_int32").unwrap();
-        let end = source[start..].find(')').unwrap() + start + 1;
-        assert_eq!(error.phase(), ErrorPhase::Resolve);
-        assert_eq!(error.code(), ErrorCode::InvalidCall);
-        assert_eq!(error.span(), Some(Span::new(start, end)));
-        assert_eq!(
-            error.span().unwrap().slice(source),
-            Some("vm.call_int32(1)")
-        );
     }
 
     #[test]

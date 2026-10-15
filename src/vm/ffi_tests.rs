@@ -421,7 +421,7 @@ fn ffi_c_imports_cannot_be_exported_as_safe_function_references() {
     let source = r#"
         import joky/vm
         unsafe extern "C" fn c_zero() -> Int32
-        fn f(handle: vm.Handle) { { let vm_text = "unsafe" vm.register_int32(handle, &vm_text, c_zero) }; }
+        fn f(handle: &vm.Vm) { { let vm_text = "unsafe" vm.register_int32_0(handle, &vm_text, c_zero) }; }
     "#;
     let ast = crate::parser::parse(source).unwrap();
     let error = crate::aot::AotCompiler::new("ffi-function-ref")

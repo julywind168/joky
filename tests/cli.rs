@@ -363,7 +363,7 @@ fn float_hosts_and_vm_float_calls_match_all_backends() {
         r#"
         import joky/vm as host
         fn main() -> Int32 {
-            let h = host.create_interpreter()
+            let h = host.Vm.interpreter()
             { let vm_text = "fn twice(v: Float64) -> Float64 {{ v * 2.0 }}" host.load_source(h, &vm_text) }
             let result = { let vm_text = "twice" host.call_float64_1(h, &vm_text, 2.5) }
             host.close(h)
@@ -717,9 +717,9 @@ fn user_files_share_host_imports_including_aot() {
         r#"
         import joky/vm as host
         pub fn value() -> Int32 {
-            let h = host.create_interpreter()
+            let h = host.Vm.interpreter()
             { let vm_text = "fn answer() -> Int32 {{ 42 }}" host.load_source(h, &vm_text) }
-            let result = { let vm_text = "answer" host.call_int32(h, &vm_text) }
+            let result = { let vm_text = "answer" host.call_int32_0(h, &vm_text) }
             host.close(h)
             result
         }
@@ -825,14 +825,14 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
         import joky/vm
         import joky/io.{println}
         type Count = Int32
-        type Handle = vm.Handle
+        type Handle = vm.Vm
         fn report_int32(value: Count) { println(&value) }
         fn next(value: Count) -> Count { value + 1 }
         fn main() {
-            let engine: Handle = vm.create()
-            { let vm_text = "next" vm.register_int32(engine, &vm_text, next) }
+            let engine: Handle = vm.Vm.new()
+            { let vm_text = "next" vm.register_int32_1(engine, &vm_text, next) }
             { let vm_text = "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count {{ next(41) }}" vm.load_source(engine, &vm_text) }
-            report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
+            report_int32({ let vm_text = "value" vm.call_int32_0(engine, &vm_text) })
             vm.close(engine);
         }
     "#);
@@ -1393,14 +1393,14 @@ fn resolver_diagnostics_render_source_context() {
     let work = Workspace::new();
     work.write(
         "resolve.jk",
-        "import joky/vm fn main() { vm.call_int32() }\n",
+        "import joky/vm fn main() { vm.call_int32_0() }\n",
     );
     let output = work.cli(&["run", "resolve.jk"]);
-    failure(&output, "vm.call_int32 expects");
+    failure(&output, "Argument count mismatch");
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("resolve.jk:1:28"), "{error}");
     assert!(
-        error.contains("1 │ import joky/vm fn main() { vm.call_int32() }"),
+        error.contains("1 │ import joky/vm fn main() { vm.call_int32_0() }"),
         "{error}"
     );
 }
@@ -1555,26 +1555,25 @@ fn standard_library_reports_failures_and_keeps_the_previous_module() {
         fn source() -> String { "fn value() -> Int32 {{ 42 }}" }
         fn identity(text: String) -> String { text }
         fn main() -> Int32 {
-            let engine = vm.create()
+            let engine = vm.Vm.new()
             report_int32({ let vm_text = identity(source()) vm.load_source(engine, &vm_text) })
-            report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
+            report_int32({ let vm_text = "value" vm.call_int32_0(engine, &vm_text) })
             report_int32({ let vm_text = "fn value() -> Bool {{ 42 }}" vm.reload_source(engine, &vm_text) })
             report_int32(vm.error_code())
             vm.print_error()
-            report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
-            report_int32({ let vm_text = "missing" vm.call_int32(engine, &vm_text) })
+            report_int32({ let vm_text = "value" vm.call_int32_0(engine, &vm_text) })
+            report_int32({ let vm_text = "missing" vm.call_int32_0(engine, &vm_text) })
             report_int32(vm.error_code())
             vm.print_error()
-            report_int32({ let vm_text = "import joky/vm fn nested() -> Int32 {{ let child = vm.create() vm.close(child) }}" vm.load_source(engine, &vm_text) })
-            report_int32({ let vm_text = "nested" vm.call_int32(engine, &vm_text) })
-            report_int32(vm.close(engine))
+            report_int32({ let vm_text = "import joky/vm fn nested() -> Int32 {{ let child = vm.Vm.new() vm.close(child) }}" vm.load_source(engine, &vm_text) })
+            report_int32({ let vm_text = "nested" vm.call_int32_0(engine, &vm_text) })
             report_int32(vm.close(engine))
             vm.error_code()
         }
     "#);
     let jit = work.cli(&["run", "errors.jk"]);
-    assert_eq!(jit.status.code(), Some(1));
-    assert_eq!(jit.stdout, b"0\n42\n1\n1\n42\n0\n1\n0\n0\n0\n1\n");
+    assert_eq!(jit.status.code(), Some(0));
+    assert_eq!(jit.stdout, b"0\n42\n1\n1\n42\n0\n1\n0\n0\n0\n");
     let stderr = String::from_utf8_lossy(&jit.stderr);
     assert!(
         stderr.contains("Return type mismatch") && stderr.contains("not found"),
@@ -1606,13 +1605,13 @@ fn imports_and_standard_library_calls_are_checked_before_execution() {
             "import joky/vm import joky/vm fn main() {}",
             "Duplicate import",
         ),
-        ("fn main() { let h = vm.create() }", "Undeclared function"),
+        ("fn main() { let h = vm.Vm.new() }", "Undeclared function"),
         (
             "import joky/vm fn main() { vm.unknown() }",
             "Undeclared function",
         ),
         (
-            "import joky/vm fn main() { let h = vm.create() vm.load_source(h, 42) }",
+            "import joky/vm fn main() { let h = vm.Vm.new() vm.load_source(h, 42) }",
             "Argument type mismatch",
         ),
         (
@@ -1620,15 +1619,15 @@ fn imports_and_standard_library_calls_are_checked_before_execution() {
             "Argument type mismatch",
         ),
         (
-            "import joky/vm fn main() { vm.call_int32() }",
-            "zero to two Int32 arguments",
+            "import joky/vm fn main() { vm.call_int32_0() }",
+            "Argument count mismatch",
         ),
         (
-            "import joky/vm fn main() { let h = vm.create() { let vm_text = \"missing\" vm.register_int32(h, &vm_text, missing) } }",
+            "import joky/vm fn main() { let h = vm.Vm.new() { let vm_text = \"missing\" vm.register_int32_0(h, &vm_text, missing) } }",
             "not defined in this module",
         ),
         (
-            "import joky/vm fn host(value: String) -> Int32 { 1 } fn main() { let h = vm.create() { let vm_text = \"host\" vm.register_int32(h, &vm_text, host) } }",
+            "import joky/vm fn host(value: String) -> Int32 { 1 } fn main() { let h = vm.Vm.new() { let vm_text = \"host\" vm.register_int32_1(h, &vm_text, host) } }",
             "must be a synchronous Int32 function",
         ),
         (
@@ -2195,7 +2194,7 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
             "recursive_type",
         ),
         (
-            "enum Bad<T> { Value(vm.Handle) } fn main() {}",
+            "enum Bad<T> { Value(vm.Function) } fn main() {}",
             "Copy value",
         ),
         (
@@ -2266,7 +2265,7 @@ fn generic_aliases_run_build_and_report_template_errors() {
             "requires type arguments",
         ),
         (
-            "type Drop<T> = Int32 type Bad = Drop<vm.Handle> fn main() {}",
+            "type Drop<T> = Int32 type Bad = Drop<vm.Function> fn main() {}",
             "must be a Copy type",
         ),
         ("type Loop<T> = Loop<T> fn main() {}", "cyclic_type_alias"),
@@ -2489,7 +2488,7 @@ fn generic_records_run_build_and_report_template_errors() {
             "Duplicate or reserved type parameter",
         ),
         (
-            "struct Bad<T> { value: vm.Handle } fn main() {}",
+            "struct Bad<T> { value: vm.Function } fn main() {}",
             "Copy value",
         ),
     ] {
@@ -2604,7 +2603,7 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
         } else {
             "let code = \"fn answer() -> Int32 {{ 42 }}\" v.load_source(h, &code)"
         };
-        let source = format!("import joky/vm as v.{{type Handle as Engine, create as new, register_int32 as register, call_int32 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7 let h: Engine = new() {initialization} let entry = \"answer\" let answer = invoke(h, &entry) close(h) answer }}");
+        let source = format!("import joky/vm as v.{{type Vm as Engine, register_int32_1 as register, call_int32_0 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7 let h: Engine = Engine.new() {initialization} let entry = \"answer\" let answer = invoke(h, &entry) close(h) answer }}");
         work.write("host_alias.jk", &source);
         let output = work.cli(&["run", "host_alias.jk"]);
         assert_eq!(output.status.code(), Some(42), "{output:?}");
@@ -6295,12 +6294,11 @@ fn tuple_members_run_on_all_backends() {
 #[test]
 #[cfg(unix)]
 fn script_scalar_bridge_runs_in_all_host_and_script_backends() {
-    for create in ["vm.create_interpreter()", "vm.create()"] {
+    for create in ["vm.Vm.interpreter()", "vm.Vm.new()"] {
         let work = Workspace::new();
         work.write(
             "script.jk",
-            &include_str!("fixtures/aot_script_scalar.jk")
-                .replace("vm.create_interpreter()", create),
+            &include_str!("fixtures/aot_script_scalar.jk").replace("vm.Vm.interpreter()", create),
         );
         work.assert_all_backends("script.jk", &[], b"AOT Script scalar probe ok\n", 0);
         std::fs::remove_file(work.path().join("script.jk")).unwrap();
@@ -6353,8 +6351,7 @@ fn script_flat_bridge_runs_in_all_host_and_script_backends() {
     let work = Workspace::new();
     for source in [
         include_str!("fixtures/aot_script_flat.jk").to_owned(),
-        include_str!("fixtures/aot_script_flat.jk")
-            .replace("vm.create_interpreter()", "vm.create()"),
+        include_str!("fixtures/aot_script_flat.jk").replace("vm.Vm.interpreter()", "vm.Vm.new()"),
     ] {
         work.write("flat.jk", &source);
         work.assert_all_backends("flat.jk", &[], b"Script flat contracts ok\n", 0);
@@ -6379,7 +6376,7 @@ fn script_flat_bridge_preserves_reload_and_cancellation_in_all_backends() {
         .replace("vm.call_async_int32", "script.call::<Int32, Int32>");
     for source in [
         source.clone(),
-        source.replace("vm.create_interpreter()", "vm.create()"),
+        source.replace("vm.Vm.interpreter()", "vm.Vm.new()"),
     ] {
         work.write("reload.jk", &source);
         work.assert_all_backends("reload.jk", &[], b"AOT Script scalar probe ok\n", 0);
@@ -6403,7 +6400,7 @@ fn script_flat_bridge_rejects_unsupported_caller_contracts_before_build() {
             "Input { inner:Inner{n:\"owned\"} }",
         ),
     ] {
-        work.write("rejected.jk", &format!("import joky/vm import joky/script {definitions} fn main() @suspends {{ let h=vm.create() script.call::<{ty}, Int32>(h, \"run\", {value}); }}"));
+        work.write("rejected.jk", &format!("import joky/vm import joky/script {definitions} fn main() @suspends {{ let h=vm.Vm.new() script.call::<{ty}, Int32>(&h, \"run\", {value}); }}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success());
@@ -6426,7 +6423,7 @@ fn script_flat_bridge_enforces_record_field_limit() {
         let definition = format!("struct Packet {{ {fields} }}");
         let target = format!("import joky/task {definition} fn run(p:Packet) @suspends ->Packet {{ task.yield_now() p }}")
             .replace('{', "{{").replace('}', "}}");
-        for create in ["create", "create_interpreter"] {
+        for create in ["new", "interpreter"] {
             let work = Workspace::new();
             work.write(
                 "limit.jk",
@@ -6434,10 +6431,10 @@ fn script_flat_bridge_enforces_record_field_limit() {
                     r#"import joky/vm import joky/script import joky/check
 {definition}
 fn main() @suspends {{
-    let h=vm.{create}()
+    let h=vm.Vm.{create}()
     let source={target:?}
     vm.load_source(h, &source)
-    let p=script.call::<Packet, Packet>(h, "run", Packet {{ {values} }})
+    let p=script.call::<Packet, Packet>(&h, "run", Packet {{ {values} }})
     let message="packet limit"
     check.assert(p.f63 == 63, &message)
     vm.close(h);
@@ -6489,16 +6486,16 @@ fn send(target:outbox.Handle) @suspends ->Int32 {
     var receipt=domain.commit_to(state.handle(),candidate)
     match receipt.wait() { Committed(_) => 1, _ => 0 }
 }"#.replace('{', "{{").replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("script.jk", &format!(r#"import joky/vm import joky/script import joky/outbox import joky/check
 fn main() @suspends {{
     var queue=outbox.create(1,1)
-    let h=vm.{create}()
+    let h=vm.Vm.{create}()
     let source={target:?}
     let message="outbox Script"
     check.assert(vm.load_source(h,&source)==0,&message)
-    check.assert(script.call::<outbox.Handle,Int32>(h,"send",queue.handle())==1,&message)
+    check.assert(script.call::<outbox.Handle,Int32>(&h,"send",queue.handle())==1,&message)
     let next="fn newer()->Int32 {{{{ 2 }}}}"
     check.assert(vm.load_source(h,&next)==0,&message)
     check.assert(vm.close(h)==0,&message)
@@ -6539,10 +6536,10 @@ fn remove(directory:domain.DirectoryHandle) @suspends ->Bool {
     let next = source.replace("{ room.value }", "{ room.value + 100 }");
     let source = source.replace('{', "{{").replace('}', "}}");
     let next = next.replace('{', "{{").replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("directory_script.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     let message="directory reload"
     var attempts:Int32=0
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
@@ -6558,12 +6555,12 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
 fn main() @suspends {{
     let owner=domain.directory(2)
     let directory=owner.handle()
-    let h=vm.{create}()
+    let h=vm.Vm.{create}()
     let source={source:?}
     let message="directory Script"
     check.assert(vm.load_source(h,&source)==0,&message)
-    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    check.assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1,&message)
+    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    check.assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1,&message)
     check.assert(vm.close(h)==0,&message)
     owner.close()
     println("directory Script ok")
@@ -6603,10 +6600,10 @@ fn hold(timer:domain.TimerHandle) @suspends {
     let next = source.replace("room.value+amount", "room.value+amount*10");
     let source = source.replace('{', "{{").replace('}', "}}");
     let next = next.replace('{', "{{").replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("timer_script.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
-fn control(h:vm.Handle,timer:domain.TimerHandle) @suspends {{
+fn control(h:&vm.Vm,timer:domain.TimerHandle) @suspends {{
     let message="timer publication"
     while match timer.status() {{ Idle=>true,_=>false }} {{ task.yield_now() }}
     let next={next:?}
@@ -6617,11 +6614,11 @@ fn control(h:vm.Handle,timer:domain.TimerHandle) @suspends {{
 fn main() @suspends {{
     let owner=domain.timer()
     let timer=owner.handle()
-    let h=vm.{create}()
+    let h=vm.Vm.{create}()
     let source={source:?}
     let message="timer host"
     check.assert(vm.load_source(h,&source)==0,&message)
-    parallel {{ | script.call::<domain.TimerHandle,Unit>(h,"hold",timer) | control(h,timer) }};
+    parallel {{ | script.call::<domain.TimerHandle,Unit>(&h,"hold",timer) | control(&h,timer) }};
     check.assert(vm.close(h)==0,&message)
     owner.close()
     check.assert(match timer.status() {{ Closed=>true,_=>false }},&message)
@@ -6672,11 +6669,11 @@ fn migration_owned_graph_runs_in_all_host_and_script_backends() {
 fn assert_script_migration(old: &str, next: &str) {
     let source = old.replace('{', "{{").replace('}', "}}");
     let next = next.replace('{', "{{").replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("migrate.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
 fn assert(ok:Bool) {{let message="Script migration" check.assert(ok,&message)}}
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts:Int32=0
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
@@ -6689,7 +6686,7 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     assert(vm.prepare_migration(h,0,&next,&method)==1)
     assert(vm.prepare_migration(h,schema,&next,&method)==0)
     assert(vm.prepare_migration(h,schema,&next,&method)==1)
-    assert(vm.call_int32(h,&version)==1)
+    assert(vm.call_int32_0(h,&version)==1)
     assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
     assert(vm.cancel_migration(h)==0)
     assert(vm.publish_migration(h)==1)
@@ -6697,23 +6694,23 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     assert(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
     assert(vm.publish_migration(h)==1)
     assert(vm.domain_schema(h)==schema)
-    assert(vm.call_int32(h,&version)==1)
+    assert(vm.call_int32_0(h,&version)==1)
     assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
     assert(vm.prepare_migration(h,schema,&next,&method)==0)
     task.yield_now()
     assert(vm.publish_migration(h)==0)
     assert(vm.domain_schema(h)!=schema)
-    assert(vm.call_int32(h,&version)==2)
+    assert(vm.call_int32_0(h,&version)==2)
     assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
 }}
 fn main() @suspends {{
     let owner=domain.directory(1)
     let directory=owner.handle()
-    let h=vm.{create}()
+    let h=vm.Vm.{create}()
     let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
 "#));
@@ -6729,11 +6726,11 @@ fn script_incremental_migration_yields_conflicts_cancels_and_publishes() {
     let next = include_str!("fixtures/migration_incremental_new.jk")
         .replace('{', "{{")
         .replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("incremental.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
 fn assert(ok:Bool) {{let message="incremental migration" check.assert(ok,&message)}}
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let schema=vm.domain_schema(h)
     let next={next:?} let start="start" let advance="advance" let version="version"
@@ -6764,7 +6761,7 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
         assert(status==(if batch==5 {{0}} else {{1}}))
         assert(vm.error_code()==0)
         task.yield_now()
-        assert(vm.call_int32(h,&version)==1)
+        assert(vm.call_int32_0(h,&version)==1)
         assert(vm.domain_schema(h)==schema)
         assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
         batch=batch+1
@@ -6772,15 +6769,15 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     assert(vm.step_migration(h,2)==0)
     assert(vm.publish_migration(h)==0)
     assert(vm.domain_schema(h)!=schema)
-    assert(vm.call_int32(h,&version)==2)
+    assert(vm.call_int32_0(h,&version)==2)
     assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
 }}
 fn main() @suspends {{
     let owner=domain.directory(1) let directory=owner.handle()
-    let h=vm.{create}() let source={source:?}
+    let h=vm.Vm.{create}() let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
 "#));
@@ -6796,11 +6793,11 @@ fn script_migration_batch_is_atomic_across_types_and_read_dependencies() {
     let next = include_str!("fixtures/migration_batch_new.jk")
         .replace('{', "{{")
         .replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("batch.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
 fn assert(ok:Bool) {{let message="migration batch" check.assert(ok,&message)}}
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty="" let version="version"
     assert(vm.domain_schema(h)==0)
@@ -6836,20 +6833,20 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
         assert(vm.step_migration(h,2)==(if batch==11 {{0}} else {{1}}))
         assert(vm.error_code()==0)
         task.yield_now()
-        assert(vm.call_int32(h,&version)==1)
+        assert(vm.call_int32_0(h,&version)==1)
         assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
         batch=batch+1
     }}
     assert(vm.publish_migration(h)==0)
-    assert(vm.call_int32(h,&version)==2)
+    assert(vm.call_int32_0(h,&version)==2)
     assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==195)
 }}
 fn main() @suspends {{
     let owner=domain.directory(4) let directory=owner.handle()
-    let h=vm.{create}() let old={old:?}
+    let h=vm.Vm.{create}() let old={old:?}
     assert(vm.load_source(h,&old)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
 "#));
@@ -6867,11 +6864,11 @@ fn script_multi_domain_late_binding_and_module_diagnostics_run_in_all_backends()
         .replace("{a.n+b.n}", "{a.n+b.n+100}");
     let old = old.replace('{', "{{").replace('}', "}}");
     let new = new.replace('{', "{{").replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("late_binding.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
 fn assert(ok:Bool) {{let message="late binding host" check.assert(ok,&message)}}
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
@@ -6887,17 +6884,16 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     assert(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
 }}
 fn main() @suspends {{
-    let h=vm.{create}()
+    let h=vm.Vm.{create}()
     assert(vm.module_count(h)==0)
     let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2)
     let directory=owner.handle()
-    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
-    assert(vm.module_count(h)==-1)
-    assert(vm.error_code()==1)
+    assert(vm.error_code()==0)
     println("late binding ok")
 }}"#));
         let mut outputs = vec![
@@ -6932,7 +6928,7 @@ mod server_reload;
 #[test]
 #[cfg(unix)]
 fn server_reload_keeps_tcp_tick_and_atomic_replies_in_all_backends() {
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("server.jk", &server_reload::source(create));
         work.assert_all_backends("server.jk", &[], b"", 0);
@@ -6947,17 +6943,17 @@ fn script_nested_bridge_preserves_lanes_and_rejects_changed_inner_contracts() {
         "import joky/task {definitions} fn run(p:Packet) @suspends ->Packet {{task.yield_now() p}}"
     );
     let input = "Packet{bits:Bits{high:18446744073709551615,low:-128,flag:true,real:Float64.from_bits(9221120237041090626)},empty:Empty{},unit:{}}";
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
         let source = format!(
             r#"import joky/vm import joky/script import joky/check
 {definitions}
 fn main() @suspends {{
-    let h=vm.{create}() let source={source}
+    let h=vm.Vm.{create}() let source={source}
     let message="nested Script lanes"
     check.assert(vm.load_source(h,&source)==0,&message)
-    let reply=script.call::<Packet,Packet>(h,"run",{input})
+    let reply=script.call::<Packet,Packet>(&h,"run",{input})
     check.assert(reply.bits.high==18446744073709551615 && reply.bits.low == -128 && reply.bits.flag && reply.bits.real.to_bits()==9221120237041090626,&message)
     vm.close(h);
 }}"#,
@@ -6990,8 +6986,8 @@ fn main() @suspends {{
         let result_source = source
             .replace(&quote(&target), &quote(&result_target))
             .replace(
-                &format!("script.call::<Packet,Packet>(h,\"run\",{input})"),
-                "script.call::<Unit,Packet>(h,\"result\",{})",
+                &format!("script.call::<Packet,Packet>(&h,\"run\",{input})"),
+                "script.call::<Unit,Packet>(&h,\"result\",{})",
             );
         work.write("result.jk", &result_source);
         for args in [
@@ -7076,9 +7072,9 @@ fn script_nested_bridge_bounds_total_fields_and_depth() {
                 r#"import joky/vm import joky/script import joky/check
 {definitions}
 fn main() @suspends {{
-    let h=vm.create_interpreter() let source={target:?} let message="nested limits"
+    let h=vm.Vm.interpreter() let source={target:?} let message="nested limits"
     check.assert(vm.load_source(h,&source)==0,&message)
-    let p=script.call::<{ty},{ty}>(h,"run",{value})
+    let p=script.call::<{ty},{ty}>(&h,"run",{value})
     check.assert({assertion},&message)
     vm.close(h);
 }}"#
@@ -7113,11 +7109,11 @@ fn domain_value_packets_keep_old_flows_and_bind_new_script_operations_in_all_bac
         .replace("value:a.n+b.n,", "value:a.n+b.n+100,");
     let old = old.replace('{', "{{").replace('}', "}}");
     let new = new.replace('{', "{{").replace('}', "}}");
-    for create in ["create", "create_interpreter"] {
+    for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("values_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
 fn assert(ok:Bool) {{let message="domain values reload" check.assert(ok,&message)}}
-fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
@@ -7130,10 +7126,10 @@ fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     assert(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
 }}
 fn main() @suspends {{
-    let h=vm.{create}() let source={old:?}
+    let h=vm.Vm.{create}() let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2) let directory=owner.handle()
-    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#));

@@ -405,7 +405,7 @@ unsafe extern "C" fn stop(frame: *mut CpsFrame, _: u32) {
     (*frame).wake = None;
 }
 
-unsafe fn poll(frame: &mut CpsFrame, flat: bool) -> Result<i32, Error> {
+unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, Error> {
     if frame.state == 0 {
         let executor = current_executor().ok_or_else(|| {
             runtime_error(
@@ -413,7 +413,12 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool) -> Result<i32, Error> {
                 "Script call requires an active executor",
             )
         })?;
-        let state = lookup(frame.slots[0])?;
+        let handle = if managed {
+            super::managed::handle(frame.slots[0])?
+        } else {
+            frame.slots[0]
+        };
+        let state = lookup(handle)?;
         state.bind(&executor)?;
         let engine = state.engine.try_borrow().map_err(|_| {
             runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
@@ -524,12 +529,23 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool) -> Result<i32, Error> {
 /// The name is read only on the first poll; no borrowed input pointer is retained.
 #[export_name = "joky_vm_call_async_int32_v2"]
 pub(crate) unsafe extern "C" fn call_async_int32(frame: *mut CpsFrame) -> i32 {
-    let result = catch_unwind(AssertUnwindSafe(|| poll(&mut *frame, false))).unwrap_or_else(|_| {
-        Err(runtime_error(
-            ErrorCode::Panic,
-            "Script async call panicked",
-        ))
-    });
+    poll_scalar(frame, false)
+}
+
+/// # Safety
+/// Same frame contract as call_async_int32, with a borrowed VM resource in slot zero.
+pub(super) unsafe fn call_managed(frame: *mut CpsFrame) -> i32 {
+    poll_scalar(frame, true)
+}
+
+unsafe fn poll_scalar(frame: *mut CpsFrame, managed: bool) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(|| poll(&mut *frame, false, managed)))
+        .unwrap_or_else(|_| {
+            Err(runtime_error(
+                ErrorCode::Panic,
+                "Script async call panicked",
+            ))
+        });
     match result {
         Ok(status) => status,
         Err(error) => {
@@ -543,7 +559,7 @@ pub(crate) unsafe extern "C" fn call_async_int32(frame: *mut CpsFrame) -> i32 {
 /// Private compiler adapter: three owning Strings and a borrowed UInt64 packet
 /// remain alive in the caller's frame until this operation completes or stops.
 pub(crate) unsafe fn script_poll(frame: &mut CpsFrame) -> Result<Option<u64>, Error> {
-    let result = catch_unwind(AssertUnwindSafe(|| poll(frame, true)))
+    let result = catch_unwind(AssertUnwindSafe(|| poll(frame, true, true)))
         .unwrap_or_else(|_| Err(runtime_error(ErrorCode::Panic, "Script call panicked")));
     match result {
         Ok(0) => Ok(Some(0)),

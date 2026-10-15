@@ -15,6 +15,7 @@ pub(crate) mod signature;
 pub mod span;
 pub(crate) mod state_domain;
 pub mod types;
+pub(crate) mod vm;
 
 pub use error::{Error, ErrorCode, ErrorPhase, RuntimeFrame};
 pub use parser::ast::Type;

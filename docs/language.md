@@ -1018,7 +1018,7 @@ fn example() -> Int64 {
   同型递归与互递归可用。每个函数最多 64 个类型参数；每次模块编译的泛型实例与隐藏闭包入口
   合计最多 4096 个，同一次编译中导入的标准库实例也计入。新实例依赖链最多 32 层；缓存命中不增加实例或层数。
   数量超限分别报告已用泛型实例、闭包入口及本次请求数；深度超限报告请求深度，均在编译期报 `resource_limit`。
-- 泛型模板及内部实例不公开导出，也不能直接经 `VmEngine` 或 `vm.register_int32` 调用 / 注册。
+- 泛型模板及内部实例不公开导出，也不能直接经 `VmEngine` 或 `vm.register_int32_0/1/2` 调用 / 注册。
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
   `__joky_generic_`、`__joky_closure_`、`__joky_callable_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
@@ -1184,7 +1184,7 @@ fn example() -> Int64 {
   这些入口均检查精确签名。跨语言边界的窄整型参数与返回以 I32 符号值传递，C 侧的窄参数与
   窄返回函数与此完全兼容；异步结果槽仍为零扩展位模式，Int64 调用者用 `as i64` 解读。
 - `joky/io.println` 通过 Show 支持全部整数类型；
-  main 仍限 Unit / Int32，`joky/vm` 的 `call_int32` / `register_int32` 保持 Int32 契约。
+  main 仍限 Unit / Int32，`joky/vm` 的 `call_int32_0/1/2` / `register_int32_0/1/2` 保持 Int32 契约。
   示例见 [int64.jk](../examples/int64.jk)、[unsigned.jk](../examples/unsigned.jk)。
 
 ### 进制与分隔符
@@ -1757,7 +1757,7 @@ impl Drop for Resource {
   替换只析构旧字段并保持记录完整；旧字段析构失败时，其他字段和右侧新值仍各自清理。
   元数据更新与字段重借用仍可用，借用检查保守地覆盖整个记录。
 - 拥有型数组元素的整体移动与 Drop 已开放；无引用拥有记录、枚举、元组及容器可跨普通语言挂起，
-  参数、返回值和分支捕获均保留恰好一次清理；容器借用操作可直接写在挂起函数中；整个无引用拥有对象可跨挂起借用，元素/Slice 视图仍限同步片段。Ptr 和 vm.Handle 的显式释放协议不变。
+  参数、返回值和分支捕获均保留恰好一次清理；容器借用操作可直接写在挂起函数中；整个无引用拥有对象可跨挂起借用，元素/Slice 视图仍限同步片段。Ptr 的显式释放协议不变；`vm.Vm` 使用同一资源所有权与自动清理机制。
   普通共享引用的任务期保留规则不因数组提前析构而缩短。Drop 不由 prelude 隐式导入。
 完整可运行示例见 [static_traits.jk](../examples/static_traits.jk)。
 
@@ -1828,9 +1828,9 @@ fn read(value: Maybe<Int32>) -> Int32 {
   裸 `Some(42)` 由单独选择的构造器或 prelude 提供；仅选择 `Some` 不会顺带引入裸类型名 Option。
   `None::<Int32>`、`Missing::<Int32>` 可显式指定无载荷构造器的类型参数，不加调用括号。
 - 宿主模块也支持别名及选择性导入，例如
-  `import joky/vm as engine.{type Handle as Engine, create as new, call_int32 as invoke}`。
+  `import joky/vm as engine.{type Vm as Engine, call_int32_0 as invoke}`。
   `engine.Handle` / `Engine` 保留原 opaque 身份，`engine.create()` / `new()` 绑定原宿主入口。
-  `call_int32` / `register_int32` 的别名保留原有参数及 ABI 限制。
+  `call_int32_0/1/2` / `register_int32_0/1/2` 的别名保留原有参数及 ABI 限制。
 - 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err` 及上述基础方法，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
   四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
   prelude 还引入 `print` / `println`，不引入数组或 VM。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
@@ -1967,7 +1967,7 @@ fn add(a: Count, b: Count) -> Total {
 ```
 
 别名可前向引用其他别名，最终目标必须是支持的基础类型、共享/独占引用、模块内记录、枚举、Copy 或拥有型元组或已注册的
-宿主 opaque 类型，例如 `type Handle = vm.Handle`。别名不创建新类型、构造函数或运行时值，
+宿主 opaque 类型，例如 `type Function = vm.Function`。别名不创建新类型、构造函数或运行时值，
 `Count` 和 `Int32` 完全等价；不同 opaque 类型的身份仍然不同。
 参数、返回值、局部注解、CLI 入口及 extern 签名均按展开后的类型检查，挂起约定不受影响。
 
@@ -1999,7 +1999,7 @@ fn first<T>(values: PairOf<T>) -> T {
 - 每次引用都必须给出完整类型实参，如 `PairOf<Int64>`；别名可以嵌套应用，也可用于函数、
   记录字段、枚举载荷、元组和显式泛型调用实参。函数推导按展开后的结构进行。
 - 实参遵循现有 Copy / 拥有者规则，包括 String；拥有者仍按值移动。
-  即使 `type Ignore<T> = Int32` 不使用 T，`Ignore<vm.Handle>` 也会报错。
+  即使 `type Ignore<T> = Int32` 不使用 T，`Ignore<vm.Function>` 也会报错。
   固定目标仍可为 String 或已注册的 opaque 类型；限制针对类型实参。
 - 别名完全透明：`PairOf<Int32>` 与 `(Int32, Int32)` 相同，不增加名义身份、构造函数或成员命名空间。
   `MaybePair<Int64>` 的值仍用 `Some(Pair { ... })` 构造；别名不能用于声明 impl。
@@ -3329,7 +3329,7 @@ JIT、解释器和 AOT 共用执行器。Rust AOT 宿主可用 unsafe `Continuat
 
 ## 类型化 Script 入口 `joky/script`
 
-`script.call<A, R>(handle: vm.Handle, name: String, input: A) @suspends -> R`
+`script.call<A, R>(handle: &vm.Vm, name: String, input: A) @suspends -> R`
 在当前执行器上调用最近成功加载模块中的 `fn(A) @suspends -> R`。加载、兼容域代码发布和
 显式关闭仍使用 `joky/vm`；不需要在业务侧编写 Rust 宿主。
 
@@ -3340,7 +3340,7 @@ import joky/script
 struct Request { player: UInt64, action: Int32 }
 struct Reply { accepted: Bool, revision: UInt64 }
 
-fn dispatch(h: vm.Handle, request: Request) @suspends -> Reply {
+fn dispatch(h: &vm.Vm, request: Request) @suspends -> Reply {
     script.call::<Request, Reply>(h, "handle_message", request)
 }
 ```
@@ -3360,7 +3360,8 @@ repr(C) 属性，嵌套记录逐层比较。跨加载的内部名义 ID 不参�
 
 执行器归属、模块保活、关闭、取消和显式发布规则与 `vm.call_async_int32` 相同：挂起调用
 继续使用启动模块，新调用使用当前模块。结果在子流程清理后交付，取消同时回收桥接包；
-取消不自动关闭共享句柄。加载编译仍为同步操作，拥有型消息与高层 Script 资源 API 尚未开放。
+取消借用它的子调用不关闭外层拥有者；拥有者所在任务被取消时自动关闭 VM。
+同一类型化入口也可写为 `engine.call::<A, R>(name, input)`。加载编译仍为同步操作，拥有型消息尚未开放。
 
 ## 内置标准库 `joky/vm`
 
@@ -3372,28 +3373,28 @@ import joky/io.{println}
 import joky/vm
 
 fn main() -> Int32 {
-    let engine: vm.Handle = vm.create()
-    let source = "fn add(x: Int32, y: Int32) -> Int32 { x + y }"
+    let engine: vm.Vm = vm.Vm.new()
+    let source = "fn add(x: Int32, y: Int32) -> Int32 {{ x + y }}"
     let name = "add"
     vm.load_source(engine, &source)
-    { let displayed: Int32 = vm.call_int32(engine, &name, 20, 22) println(&displayed) }
+    { let displayed: Int32 = vm.call_int32_2(engine, &name, 20, 22) println(&displayed) }
     vm.close(engine)
 }
 ```
 
-`vm.load_source` / `reload_source` 的源码、`register_int32` / `call_int32` 的名称均使用 `&String`。
-`vm.call_int32` 接收句柄、借用函数名和零到两个 Int32 参数。目标函数必须同步返回 Int32，
-调用前检查完整签名。字符串中的花括号是普通文本，源码字符串不做插值。
-`vm.create_interpreter()` 创建不生成机器码的解释器 VM；构建时的依赖仍见架构说明。
+`vm.load_source` / `reload_source` 的源码、`register_int32_N` / `call_int32_N` 的名称均使用 `&String`。
+`vm.call_int32_0/1/2` 分别接收 VM 借用、借用函数名和零到两个 Int32 参数。目标函数必须同步返回 Int32，
+调用前检查完整签名。源码字符串中的字面花括号使用 `{{` / `}}` 转义。
+`vm.Vm.interpreter()` 创建不生成机器码的解释器 VM；构建时的依赖仍见架构说明。
 当前原生模块中的同步 Int32 函数可以作为宿主函数注册：
 
 ```joky
 fn host_add(a: Int32, b: Int32) -> Int32 { a + b }
 let name = "host_add"
-let status = vm.register_int32(engine, &name, host_add)
+let status = vm.register_int32_2(engine, &name, host_add)
 ```
 
-`vm.register_int32` 支持零到两个 `Int32` 参数；被加载的源码用同名 `extern fn` 声明即可调用。
+`vm.register_int32_0/1/2` 分别支持零到两个 `Int32` 参数；被加载的源码用同名 `extern fn` 声明即可调用。
 此特殊注册语法的函数名必须来自 JIT/AOT 原生代码；解释器函数不能转换成原生指针。
 它与语言内函数值分开：后者支持三个后端，但不能传给此原生注册接口。
 目标 VM 可以使用 JIT 或解释器，Rust 宿主也可以向两者注册受支持的原生函数。
@@ -3402,13 +3403,13 @@ let status = vm.register_int32(engine, &name, host_add)
 
 | 接口 | 返回值与行为 |
 |------|--------------|
-| `vm.create()` | 创建默认 JIT `vm.Handle` |
-| `vm.create_interpreter()` | 创建解释器 `vm.Handle` |
-| `vm.close(handle)` | 释放句柄并使未结束的 Script 调用失效、唤醒；成功返回 0，失败返回 1 |
+| `vm.Vm.new()` | 创建默认 JIT `vm.Vm` |
+| `vm.Vm.interpreter()` | 创建解释器 `vm.Vm` |
+| `vm.close(value)` / `value.close()` | 消费 `Vm` 并提前关闭，正常返回 0；关闭后使用在编译期拒绝 |
 | `vm.load_source(handle, source)` | 加载源码，成功返回 0，失败返回 1 |
 | `vm.reload_source(handle, source)` | 替换模块，失败保留旧代码，状态码同上 |
-| `vm.register_int32(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
-| `vm.call_int32(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
+| `vm.register_int32_0/1/2(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
+| `vm.call_int32_0/1/2(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
 | `vm.call_async_int32(handle, name: String, input: Int32) @suspends -> Int32` | 以当前执行器推进 Script 子流程，目标严格为 `fn(Int32) @suspends -> Int32`；失败走当前任务的运行时错误通道 |
 | `vm.module_count(handle) -> Int32` | 当前入口及仍被持有的历史已加载模块数量；未加载为 0，失败 -1 并设置错误 |
 | `vm.print_modules(handle) -> Int32` | 向 stderr 按版本输出模块及已识别持有者，返回模块数；失败 -1 并设置错误 |
@@ -3427,14 +3428,18 @@ let status = vm.register_int32(engine, &name, host_add)
 同步操作开始前清除上次错误，两个错误查询接口不清除错误；异步调用的失败沿 CPS 传播，
 不通过线程级 `vm.error_code()` 交付结果。
 同步调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次同步操作前查询。
-句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
+`vm.Vm` 是源码库声明的拥有型记录，内部 `vm.Owner` 与 TCP owner 共用 Resource 存储。
+它不能复制，移动转移所有权；作用域退出、提前返回、运行失败与任务取消都会自动关闭。
+除消费型 close 外，各操作接受 `&vm.Vm`；同步函数允许隐式借用，挂起的自由函数调用需显式 `&engine`。
+多个共享借用允许挂起调用与加载/重载并行；借用存活期间不能移动或关闭拥有者。
+底层 VM 仍绑定创建线程，Rust/C 的数值句柄接口保持原有显式关闭协议。
 模块与成员别名见[导入与 prelude](#导入与-prelude)。Joky 内的 `vm.load_source` 不隐式搜索文件，
-显式多源码加载使用 Rust API；同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
+显式多源码加载使用 Rust API；同步 `Int32` 宿主函数可通过 `vm.register_int32_0/1/2` 注册。
 
 `call_async_int32` 的名称是拥有型 String，不跨模块保留业务借用。首次异步调用或发布将句柄
 绑定当前执行器，此后从另一执行器或原执行器销毁后调用均拒绝；不创建额外事件循环。
 Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失败或取消时清理子 continuation。
-关闭 VM 后挂起调用在下一次推进或取消时清理；取消某次调用不会自动关闭共享的 VM 句柄。
+关闭 VM 后挂起调用在下一次推进或取消时清理；取消某次借用调用不会关闭外层 VM 拥有者。
 已有流程保留启动模块，新调用使用最近成功加载的模块。加载和编译仍是同步操作。
 
 模块诊断不需要正在执行的任务，也不会首次绑定执行器。`module_count` 与 `print_modules`
@@ -3529,7 +3534,8 @@ Rules 保留原根且参加冲突校验。
 候选基于同一次捕获且始终重新验证的域版本集合。按类型 stage 会同步构造该类型的所有骨架，
 step 中的单次回调、图扫描及回收也同步执行；不保证硬时间片。
 
-候选归 `vm.Handle` 所有，取消发起任务不会自动释放；必须显式 `cancel_migration` 或 `close`。
+候选归 `vm.Vm` 所有。取消借用 VM 的子任务时，外层拥有者仍保留候选；可用 `cancel_migration` 放弃。
+拥有者退出或其任务取消时，自动关闭 VM 并释放未发布候选；也可消费型 `close` 提前关闭。
 旧根、候选及迁移中的临时分配同时计入状态预算。分步接口允许宿主在批次间让出执行权，
 编译及单批计算仍同步占用执行器，不提供后台编译或强制超时；
 解释器沿用指令预算，JIT 计算不抢占。准备失败自动清理部分候选。三种宿主与两种 Script 后端的

@@ -42,7 +42,7 @@ struct AliasInstance {
     target: Type,
 }
 
-const VM_HANDLE: &str = "vm.Handle";
+const VM_OWNER: &str = "vm.Owner";
 const VM_FUNCTION: &str = "vm.Function";
 
 #[derive(Clone, Debug)]
@@ -161,6 +161,7 @@ impl TypeRegistry {
     /// Whether a declaration resolves to a built-in host or checked runtime adapter.
     pub fn is_builtin_host(&self, name: &str) -> bool {
         self.host_function_signature(name).is_some()
+            || super::vm::binding(name).is_some()
             || (crate::runtime::tcp::operation(name).is_some()
                 || crate::runtime::dns::is_lookup(name)
                 || crate::runtime::domain::operation(name).is_some())
@@ -421,9 +422,24 @@ impl TypeRegistry {
                     )
                     .with_span(function.span));
                 }
+                super::vm::validate(
+                    &function.name,
+                    &crate::FunctionSignature::new(
+                        function
+                            .params
+                            .iter()
+                            .map(|p| p.ty.clone())
+                            .collect::<Vec<_>>(),
+                        function.ret_ty.clone(),
+                    ),
+                    function.suspends,
+                    function.c_abi,
+                )
+                .map_err(|e| e.with_span(function.span))?;
                 let unsupported_buffer = |ty: &Type| {
                     ty.contains_buffers()
                         && !registry.resource_factories.contains_key(&function.name)
+                        && super::vm::binding(&function.name).is_none()
                         && (crate::runtime::tcp::operation(&function.name).is_none()
                             && !crate::runtime::dns::is_lookup(&function.name)
                             && crate::runtime::domain::operation(&function.name).is_none())
@@ -1314,6 +1330,7 @@ impl Default for TypeRegistry {
             hosts: Default::default(),
             text_ffi: Default::default(),
             resources: BTreeSet::from([
+                VM_OWNER.into(),
                 "domain.TimerOwner".into(),
                 "domain.DirectoryOwner".into(),
                 "outbox.QueueOwner".into(),
@@ -1335,12 +1352,15 @@ impl Default for TypeRegistry {
                 "tcp.ReaderOwner".into(),
                 "tcp.WriterOwner".into(),
             ]),
-            resource_factories: Default::default(),
+            resource_factories: HashMap::from([(
+                "__vm_create".into(),
+                super::vm::binding("__vm_create").unwrap().signature,
+            )]),
             resource_async: Default::default(),
             resource_io: Default::default(),
             standard: Default::default(),
             named: BTreeSet::from([
-                VM_HANDLE.into(),
+                VM_OWNER.into(),
                 VM_FUNCTION.into(),
                 "admission.Token".into(),
                 "domain.Handle".into(),
@@ -1367,9 +1387,9 @@ impl Default for TypeRegistry {
                 "tcp.WriterOwner".into(),
             ]),
             module_types: BTreeMap::from([(
-                "joky/vm".into(),
+                "joky/internal/vm".into(),
                 BTreeMap::from([
-                    ("Handle".into(), VM_HANDLE.into()),
+                    ("Owner".into(), VM_OWNER.into()),
                     ("Function".into(), VM_FUNCTION.into()),
                 ]),
             )]),
@@ -1877,20 +1897,20 @@ mod tests {
         for i in 0..10_000 {
             source.push_str(&format!("type T{i} = T{}\n", i + 1));
         }
-        source.push_str("type T10000 = vm.Handle fn f(x: T0) -> T10000 { x }");
+        source.push_str("type T10000 = vm.Function fn f(x: T0) -> T10000 { x }");
         let module = crate::parser::parse(&source).unwrap();
         let resolved = TypeRegistry::default().resolve_aliases(&module).unwrap();
         let Item::FnDef(function) = &resolved.items[0] else {
             panic!()
         };
-        assert_eq!(function.params[0].ty, Type::Named("vm.Handle".into()));
+        assert_eq!(function.params[0].ty, Type::Named("vm.Function".into()));
         assert_eq!(function.params[0].ty, function.ret_ty);
     }
 
     #[test]
     fn builtins_and_custom_opaque_types_are_registered_explicitly() {
         let mut types = TypeRegistry::new();
-        assert!(types.contains(VM_HANDLE));
+        assert!(types.contains(VM_OWNER));
         assert!(types.contains(VM_FUNCTION));
         assert!(!types.contains("Host.Context"));
         types.register_opaque("Host.Context").unwrap();

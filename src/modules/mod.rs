@@ -92,7 +92,33 @@ impl ModuleRegistry {
                     _ => {}
                 }
             }
-            validate_text_host_types(&mut types, &spec.signature, spec.suspends)?;
+            let mut wire = spec.signature.clone();
+            if crate::core::vm::binding(&spec.name).is_some() {
+                crate::core::vm::validate(&spec.name, &spec.signature, spec.suspends, false)?;
+                for ty in &mut wire.params {
+                    if let Some(r) = ty.reference_type().filter(|r| !r.mutable) {
+                        if let Type::Resource(name) = &r.target {
+                            types.resource_type(name)?;
+                            *ty = Type::Named(name.to_string());
+                        }
+                    }
+                }
+            }
+            if matches!(binding.entry, Some(HostEntry::ResourceFactory(_))) {
+                let Type::Resource(name) = &spec.signature.ret else {
+                    return Err(abi_error(
+                        "Resource factory must return a registered resource",
+                    ));
+                };
+                types.resource_type(name)?;
+                if spec.signature.params != [Type::UInt64] || spec.suspends {
+                    return Err(abi_error("Resource factory requires UInt64 -> Resource"));
+                }
+                types
+                    .resource_factories
+                    .insert(spec.name.clone(), spec.signature.clone());
+            }
+            validate_text_host_types(&mut types, &wire, spec.suspends)?;
             for name in spec
                 .signature
                 .params

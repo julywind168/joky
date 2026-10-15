@@ -131,7 +131,7 @@ fn records_parse_fields_places_and_condition_boundaries() {
 
 #[test]
 fn type_aliases_keep_source_spans_and_allow_forward_declarations() {
-    let source = "// 🙂\nimport joky/vm; type 数 = Later\nfn f(x: 数,) -> Later { let y: 数 = x y } type Later = Int32; type Handle = vm.Handle";
+    let source = "// 🙂\nimport joky/vm; type 数 = Later\nfn f(x: 数,) -> Later { let y: 数 = x y } type Later = Int32; type Handle = vm.Function";
     let module = parse(source).unwrap();
     assert_eq!(module.imports.len(), 1);
     assert_eq!(module.items.len(), 1);
@@ -152,8 +152,8 @@ fn type_aliases_keep_source_spans_and_allow_forward_declarations() {
         (
             &module.type_aliases[2],
             "Handle",
-            Type::Named("vm.Handle".into()),
-            "type Handle = vm.Handle",
+            Type::Named("vm.Function".into()),
+            "type Handle = vm.Function",
         ),
     ] {
         assert_eq!(alias.name, name);

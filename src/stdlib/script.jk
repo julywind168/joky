@@ -1,17 +1,5 @@
-// The compiler checks and copies every lane; no domain reference crosses this boundary.
-import joky/internal/buffer as storage.{type Buffer}
-
-struct Packet { storage: Buffer<UInt64> }
-#intrinsic("script.schema")
-fn schema<T>() -> String;
-#intrinsic("script.pack")
-fn pack<T>(value: T) -> Packet;
-#intrinsic("script.unpack")
-fn unpack<T>(packet: &Packet) -> T;
-extern fn __script_call(handle: vm.Handle, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>) @suspends
-
-pub fn call<A, R>(handle: vm.Handle, name: String, input: A) @suspends -> R {
-    var packet = pack(input)
-    __script_call(handle, name, schema::<A>(), schema::<R>(), &mut packet.storage)
-    unpack::<R>(&packet)
+// Typed calls share the VM resource for the entire suspended operation.
+import joky/vm.{type Vm}
+pub fn call<A, R>(value: &Vm, name: String, input: A) @suspends -> R {
+    value.call::<A, R>(name, input)
 }

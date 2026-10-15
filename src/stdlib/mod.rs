@@ -51,261 +51,79 @@ fn binding(
     }
 }
 
-/// The single source of the `joky/vm` binding surface: resolution injects every
-/// row as an extern declaration and native linking consumes the same metadata.
+/// Implementations of the signatures shared with standalone source validation.
 fn vm_bindings() -> Vec<NativeBinding> {
-    let handle = Type::Named("vm.Handle".into());
-    let function = Type::Named("vm.Function".into());
-    let mut async_spec = BindingSpec::with_symbol(
-        "vm.call_async_int32",
-        FunctionSignature::new(vec![handle.clone(), Type::String, Type::Int32], Type::Int32),
-        "joky_vm_call_async_int32_v2",
-    );
-    async_spec.suspends = true;
-    vec![
-        NativeBinding {
-            spec: async_spec,
-            entry: Some(HostEntry::Cps {
-                entry: vm::call_async_int32,
-                frame_slots: Some(3),
-            }),
-            owner: None,
-        },
-        binding(
-            "vm.domain_schema",
-            "joky_vm_domain_schema",
-            vec![handle.clone()],
-            Type::UInt64,
-            vm::domain_schema as *const u8,
-        ),
-        binding(
-            "vm.prepare_migration",
-            "joky_vm_prepare_migration_v1",
-            vec![
-                handle.clone(),
-                Type::UInt64,
-                Type::reference(Type::String, false),
-                Type::reference(Type::String, false),
-            ],
-            Type::Int32,
-            vm::prepare_migration as *const u8,
-        ),
-        binding(
-            "vm.begin_migration",
-            "joky_vm_begin_migration_v1",
-            vec![
-                handle.clone(),
-                Type::UInt64,
-                Type::reference(Type::String, false),
-                Type::reference(Type::String, false),
-                Type::reference(Type::String, false),
-            ],
-            Type::Int32,
-            vm::begin_migration as *const u8,
-        ),
-        binding(
-            "vm.step_migration",
-            "joky_vm_step_migration",
-            vec![handle.clone(), Type::UInt64],
-            Type::Int32,
-            vm::step_migration as *const u8,
-        ),
-        binding(
-            "vm.begin_migration_batch",
-            "joky_vm_begin_migration_batch_v1",
-            vec![handle.clone(), Type::reference(Type::String, false)],
-            Type::Int32,
-            vm::begin_migration_batch as *const u8,
-        ),
-        binding(
-            "vm.stage_migration",
-            "joky_vm_stage_migration_v1",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                Type::reference(Type::String, false),
-            ],
-            Type::Int32,
-            vm::stage_migration as *const u8,
-        ),
-        binding(
-            "vm.publish_migration",
-            "joky_vm_publish_migration",
-            vec![handle.clone()],
-            Type::Int32,
-            vm::publish_migration as *const u8,
-        ),
-        binding(
-            "vm.cancel_migration",
-            "joky_vm_cancel_migration",
-            vec![handle.clone()],
-            Type::Int32,
-            vm::cancel_migration as *const u8,
-        ),
-        binding(
-            "vm.module_count",
-            "joky_vm_module_count",
-            vec![handle.clone()],
-            Type::Int32,
-            vm::module_count as *const u8,
-        ),
-        binding(
-            "vm.print_modules",
-            "joky_vm_print_modules",
-            vec![handle.clone()],
-            Type::Int32,
-            vm::print_modules as *const u8,
-        ),
-        binding(
-            "vm.publish_domain_code",
-            "joky_vm_publish_domain_code",
-            vec![handle.clone()],
-            Type::Int32,
-            vm::publish_domain_code as *const u8,
-        ),
-        binding(
-            "vm.create",
-            "joky_vm_create",
-            vec![],
-            handle.clone(),
-            vm::create as *const u8,
-        ),
-        binding(
-            "vm.create_interpreter",
-            "joky_vm_create_interpreter",
-            vec![],
-            handle.clone(),
-            vm::create_interpreter as *const u8,
-        ),
-        binding(
-            "vm.close",
-            "joky_vm_close",
-            vec![handle.clone()],
-            Type::Int32,
-            vm::close as *const u8,
-        ),
-        binding(
-            "vm.load_source",
-            "joky_vm_load_source_v2",
-            vec![handle.clone(), Type::reference(Type::String, false)],
-            Type::Int32,
-            vm::load_source as *const u8,
-        ),
-        binding(
-            "vm.reload_source",
-            "joky_vm_reload_source_v2",
-            vec![handle.clone(), Type::reference(Type::String, false)],
-            Type::Int32,
-            vm::reload_source as *const u8,
-        ),
-        binding(
-            "vm.register_int32_0",
-            "joky_vm_register_int32_0_v2",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                function.clone(),
-            ],
-            Type::Int32,
-            vm::register_int32_0 as *const u8,
-        ),
-        binding(
-            "vm.register_int32_1",
-            "joky_vm_register_int32_1_v2",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                function.clone(),
-            ],
-            Type::Int32,
-            vm::register_int32_1 as *const u8,
-        ),
-        binding(
-            "vm.register_int32_2",
-            "joky_vm_register_int32_2_v2",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                function,
-            ],
-            Type::Int32,
-            vm::register_int32_2 as *const u8,
-        ),
-        binding(
-            "vm.call_int32_0",
-            "joky_vm_call_int32_0_v2",
-            vec![handle.clone(), Type::reference(Type::String, false)],
-            Type::Int32,
-            vm::call_int32_0 as *const u8,
-        ),
-        binding(
-            "vm.call_int32_1",
-            "joky_vm_call_int32_1_v2",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                Type::Int32,
-            ],
-            Type::Int32,
-            vm::call_int32_1 as *const u8,
-        ),
-        binding(
-            "vm.call_int32_2",
-            "joky_vm_call_int32_2_v2",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                Type::Int32,
-                Type::Int32,
-            ],
-            Type::Int32,
-            vm::call_int32_2 as *const u8,
-        ),
-        binding(
-            "vm.call_float64_0",
-            "joky_vm_call_float64_0_v2",
-            vec![handle.clone(), Type::reference(Type::String, false)],
-            Type::Float64,
-            vm::call_float64_0 as *const u8,
-        ),
-        binding(
-            "vm.call_float64_1",
-            "joky_vm_call_float64_1_v2",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                Type::Float64,
-            ],
-            Type::Float64,
-            vm::call_float64_1 as *const u8,
-        ),
-        binding(
-            "vm.call_float64_2",
-            "joky_vm_call_float64_2_v2",
-            vec![
-                handle.clone(),
-                Type::reference(Type::String, false),
-                Type::Float64,
-                Type::Float64,
-            ],
-            Type::Float64,
-            vm::call_float64_2 as *const u8,
-        ),
-        binding(
-            "vm.error_code",
-            "joky_vm_error_code",
-            vec![],
-            Type::Int32,
-            vm::error_code as *const u8,
-        ),
-        binding(
-            "vm.print_error",
-            "joky_vm_print_error",
-            vec![],
-            Type::Unit,
-            vm::print_error as *const u8,
-        ),
-    ]
+    crate::core::vm::NAMES
+        .iter()
+        .map(|&name| {
+            let entry = match name {
+                "__vm_create" => HostEntry::ResourceFactory(Rc::new(vm::managed::FACTORY)),
+                "__vm_call_async_int32" => HostEntry::Cps {
+                    entry: vm::managed::call_async_int32,
+                    frame_slots: Some(3),
+                },
+                "__vm_close" => HostEntry::Direct(vm::managed::close as *const u8),
+                "__vm_error_code" => HostEntry::Direct(vm::managed::error_code as *const u8),
+                "__vm_print_error" => HostEntry::Direct(vm::managed::print_error as *const u8),
+                "__vm_domain_schema" => HostEntry::Direct(vm::managed::domain_schema as *const u8),
+                "__vm_prepare_migration" => {
+                    HostEntry::Direct(vm::managed::prepare_migration as *const u8)
+                }
+                "__vm_begin_migration" => {
+                    HostEntry::Direct(vm::managed::begin_migration as *const u8)
+                }
+                "__vm_step_migration" => {
+                    HostEntry::Direct(vm::managed::step_migration as *const u8)
+                }
+                "__vm_begin_migration_batch" => {
+                    HostEntry::Direct(vm::managed::begin_migration_batch as *const u8)
+                }
+                "__vm_stage_migration" => {
+                    HostEntry::Direct(vm::managed::stage_migration as *const u8)
+                }
+                "__vm_publish_migration" => {
+                    HostEntry::Direct(vm::managed::publish_migration as *const u8)
+                }
+                "__vm_cancel_migration" => {
+                    HostEntry::Direct(vm::managed::cancel_migration as *const u8)
+                }
+                "__vm_module_count" => HostEntry::Direct(vm::managed::module_count as *const u8),
+                "__vm_print_modules" => HostEntry::Direct(vm::managed::print_modules as *const u8),
+                "__vm_publish_domain_code" => {
+                    HostEntry::Direct(vm::managed::publish_domain_code as *const u8)
+                }
+                "__vm_load_source" => HostEntry::Direct(vm::managed::load_source as *const u8),
+                "__vm_reload_source" => HostEntry::Direct(vm::managed::reload_source as *const u8),
+                "__vm_register_int32_0" => {
+                    HostEntry::Direct(vm::managed::register_int32_0 as *const u8)
+                }
+                "__vm_register_int32_1" => {
+                    HostEntry::Direct(vm::managed::register_int32_1 as *const u8)
+                }
+                "__vm_register_int32_2" => {
+                    HostEntry::Direct(vm::managed::register_int32_2 as *const u8)
+                }
+                "__vm_call_int32_0" => HostEntry::Direct(vm::managed::call_int32_0 as *const u8),
+                "__vm_call_int32_1" => HostEntry::Direct(vm::managed::call_int32_1 as *const u8),
+                "__vm_call_int32_2" => HostEntry::Direct(vm::managed::call_int32_2 as *const u8),
+                "__vm_call_float64_0" => {
+                    HostEntry::Direct(vm::managed::call_float64_0 as *const u8)
+                }
+                "__vm_call_float64_1" => {
+                    HostEntry::Direct(vm::managed::call_float64_1 as *const u8)
+                }
+                "__vm_call_float64_2" => {
+                    HostEntry::Direct(vm::managed::call_float64_2 as *const u8)
+                }
+                _ => unreachable!("checked VM binding"),
+            };
+            NativeBinding {
+                spec: crate::core::vm::binding(name).unwrap(),
+                entry: Some(entry),
+                owner: None,
+            }
+        })
+        .collect()
 }
 
 fn build_registry() -> ModuleRegistry {
@@ -324,7 +142,7 @@ fn build_registry() -> ModuleRegistry {
     }
     .expect("Stdout binding must be valid");
     // These static C ABI functions implement the exact signatures listed above.
-    unsafe { registry.register_module("joky/vm", vm_bindings()) }
+    unsafe { registry.register_module("joky/internal/vm", vm_bindings()) }
         .expect("standard library bindings must be valid");
     let tasks = [
         (

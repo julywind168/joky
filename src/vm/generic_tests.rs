@@ -155,8 +155,8 @@ fn generic_call_errors_reject_ambiguity_noncopy_values_and_mismatches() {
         ("fn f() { tag() }", ErrorCode::TypeMismatch),
         ("fn f() { id(\"text\") }", ErrorCode::TypeMismatch),
         ("fn f() { tag::<String>() }", ErrorCode::TypeMismatch),
-        ("fn f(n: vm.Handle) { id(n) }", ErrorCode::TypeMismatch),
-        ("fn f() { tag::<vm.Handle>() }", ErrorCode::TypeMismatch),
+        ("fn f(n: vm.Function) { id(n) }", ErrorCode::TypeMismatch),
+        ("fn f() { tag::<vm.Function>() }", ErrorCode::TypeMismatch),
         ("fn f() { tag::<Unknown>() }", ErrorCode::UnknownType),
         ("fn f() { same(1, true) }", ErrorCode::TypeMismatch),
         ("fn f(n: Int64) { id::<Int32>(n) }", ErrorCode::TypeMismatch),
@@ -465,7 +465,7 @@ fn generic_aggregate_recursion_preserves_poll_and_resource_limits() {
 #[test]
 fn generic_templates_need_concrete_wrappers_at_native_function_boundaries() {
     let invalid = "import joky/vm fn id<T>(x: T) -> T { x }
-        fn run() { let child = vm.create() vm.register_int32(child, \"id\", id) }";
+        fn run() { let child = vm.Vm.new() vm.register_int32_1(child, \"id\", id) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         assert!(VmEngine::with_mode(mode).load_source(invalid).is_err());
     }
@@ -480,10 +480,10 @@ fn generic_templates_need_concrete_wrappers_at_native_function_boundaries() {
         fn id<T>(x: T) -> T { x }
         fn concrete(x: Int32) -> Int32 { id(x) }
         fn run() -> Int32 {
-            let child = vm.create_interpreter()
-            { let vm_text = "id" vm.register_int32(child, &vm_text, concrete) }
+            let child = vm.Vm.interpreter()
+            { let vm_text = "id" vm.register_int32_1(child, &vm_text, concrete) }
             { let vm_text = "extern fn id(x: Int32) -> Int32 fn run() -> Int32 {{ id(42) }}" vm.load_source(child, &vm_text) }
-            let result = { let vm_text = "run" vm.call_int32(child, &vm_text) }
+            let result = { let vm_text = "run" vm.call_int32_0(child, &vm_text) }
             vm.close(child)
             result
         }

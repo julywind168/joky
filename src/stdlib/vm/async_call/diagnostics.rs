@@ -102,9 +102,9 @@ mod tests {
     fn script_module_diagnostics_observe_calls_domains_and_retirement_without_pinning() {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let create = if mode == VmMode::Jit {
-                "create"
+                "new"
             } else {
-                "create_interpreter"
+                "interpreter"
             };
             let script = "import joky/domain import joky/task struct Room { n:Int32 } fn make(n:Int32)->Room {Room{n:n}} fn work(n:Int32) @suspends ->Int32 {let room=domain.create(make,n) task.sleep_ms(100000) 42}";
             let escaped = script.replace('{', "{{").replace('}', "}}");
@@ -112,10 +112,10 @@ mod tests {
             host.load_source(&format!(
                 r#"import joky/vm
 fn main() @suspends ->Int32 {{
-    let h=vm.{create}()
+    let h=vm.Vm.{create}()
     let source={escaped:?}
     vm.load_source(h,&source)
-    vm.call_async_int32(h,"work",1)
+    vm.call_async_int32(&h,"work",1)
 }}"#
             ))
             .unwrap();
@@ -172,14 +172,14 @@ fn main() @suspends ->Int32 {{
             assert_eq!(copied[0].references, references);
             assert_eq!(old.strong_count(), references);
             executor.cancel_group(&group);
-            assert_eq!(module_count(handle), 1);
+            assert_eq!(module_count(handle), -1);
             assert_eq!(
                 old.strong_count(),
                 0,
                 "retained reports must not pin old code"
             );
             assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
-            assert_eq!(close(handle), 0);
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
             assert_eq!(module_count(handle), -1);
             drop(state);
             drop(executor);

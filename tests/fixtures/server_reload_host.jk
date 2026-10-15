@@ -9,13 +9,13 @@ import joky/tcp.{type TcpStream,type TcpListener,type TcpReader,type TcpWriter,t
 struct Context { directory:domain.DirectoryHandle, output:outbox.Handle, timer:domain.TimerHandle }
 fn assert(ok:Bool) {let message="reload server host" check.assert(ok,&message)}
 fn checkpoint(phase:Int32) @suspends {task.yield_now()}
-fn wait_tick(h:vm.Handle,ctx:Context,version:Int32) @suspends {
+fn wait_tick(h:&vm.Vm,ctx:Context,version:Int32) @suspends {
     var attempts=0
     while script.call::<Context,Int32>(h,"tick_version",ctx)!=version {
         attempts=attempts+1 assert(attempts<1000) task.sleep_ms(1)
     }
 }
-fn stage(h:vm.Handle) {
+fn stage(h:&vm.Vm) {
     let next=__MIGRATED__
     let start="start" let advance="advance" let upgrade="upgrade_ledger" let empty=""
     assert(vm.begin_migration_batch(h,&next)==0)
@@ -33,7 +33,7 @@ fn writer(queue:outbox.Mailbox,stream:TcpWriter) @suspends {
     }
     assert(stream.shutdown().is_ok())
 }
-fn server(h:vm.Handle,ctx:Context,stream:TcpReader) @suspends {
+fn server(h:&vm.Vm,ctx:Context,stream:TcpReader) @suspends {
     var stream=stream var requests=0
     while true {
         let bytes=match stream.read(1) {Ok(b)=>b,Err(_)=>{assert(false) return}}
@@ -102,7 +102,7 @@ fn peer(stream:TcpStream) @suspends {
     let eof=match stream.read(1) {Ok(b)=>b,Err(_)=>{assert(false) return}}
     assert(eof.is_empty() && replies==6)
 }
-fn connection(h:vm.Handle,ctx:Context,queue:outbox.Mailbox) @suspends {
+fn connection(h:&vm.Vm,ctx:Context,queue:outbox.Mailbox) @suspends {
     var attempts=0
     while script.call::<Context,Int32>(h,"probe",ctx)==-1 || script.call::<Context,Int32>(h,"tick_version",ctx)==-1 {
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
@@ -119,13 +119,13 @@ fn connection(h:vm.Handle,ctx:Context,queue:outbox.Mailbox) @suspends {
     parallel { | server(h,ctx,reader) | writer(queue,output) | peer(client) }
 }
 fn run() @suspends {
-    let h=vm.__CREATE__()
+    let h=vm.Vm.__CREATE__()
     let old=__OLD__
     assert(vm.load_source(h,&old)==0)
     let directory=domain.directory(3) let timer=domain.timer() let queue=outbox.create(4,4)
     let ctx=Context{directory:directory.handle(),output:queue.handle(),timer:timer.handle()}
-    race { | script.call::<Context,Unit>(h,"hold",ctx) | connection(h,ctx,queue) };
-    assert(script.call::<Context,Int32>(h,"probe",ctx)==-1)
+    race { | script.call::<Context,Unit>(&h,"hold",ctx) | connection(&h,ctx,queue) };
+    assert(script.call::<Context,Int32>(&h,"probe",ctx)==-1)
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
     timer.close() directory.close()

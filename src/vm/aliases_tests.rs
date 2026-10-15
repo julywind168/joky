@@ -53,7 +53,7 @@ fn aliases_match_canonical_types_in_direct_and_cps_execution() {
             mode,
         );
         assert_eq!(vm.call_int32_0("Count").unwrap(), 42);
-        let vm = parity_vm("import joky/vm type Handle = vm.Handle fn compute() -> Int32 { let h: Handle = vm.create_interpreter() vm.close(h) }", mode);
+        let vm = parity_vm("import joky/vm type Handle = vm.Vm fn compute() -> Int32 { let h: Handle = vm.Vm.interpreter() vm.close(h) }", mode);
         assert_eq!(vm.call_int32_0("compute").unwrap(), 0);
     }
 }
@@ -80,7 +80,7 @@ fn alias_errors_match_across_backends_and_preserve_source_ranges() {
             ErrorCode::TypeMismatch,
         ),
         (
-            "type Handle = vm.Handle type Callback = vm.Function fn f(h: Handle) -> Callback { h }",
+            "type Handle = vm.Function type Callback = domain.Handle fn f(h: Handle) -> Callback { h }",
             "fn f(h: Handle) -> Callback { h }",
             ErrorCode::TypeMismatch,
         ),
