@@ -1,5 +1,6 @@
 //! Embedding API with immutable compiled exports and checked host declarations.
 use super::InterpreterLimits;
+use crate::core::builtins::{Builtin, ExternAbi};
 use crate::{
     backends::{
         interp,
@@ -676,72 +677,40 @@ impl VmEngine {
         };
         for item in &ast.items {
             let Item::ExternFn(f) = item else { continue };
+            let builtin = Builtin::lookup(&f.name);
             if ast
                 .scope
                 .as_ref()
                 .is_some_and(|scope| scope.lazy_hosts.contains(&f.name))
-                && (crate::runtime::tcp::operation(&f.name).is_none()
-                    && !crate::runtime::dns::is_lookup(&f.name)
-                    && crate::runtime::domain::operation(&f.name).is_none())
+                && !builtin.as_ref().is_some_and(Builtin::needs_adapter)
                 && self.registry.binding(&f.name).is_none()
                 && !self.hosts.contains_key(&f.name)
             {
                 missing_lazy_hosts.push(f);
                 continue;
             }
-            if let Some(op) = crate::runtime::domain::operation(&f.name) {
+            if let Some(builtin) = builtin.as_ref().filter(|op| op.needs_adapter()) {
+                builtin.validate_declaration(item)?;
                 let signature = FunctionSignature::new(
                     f.params.iter().map(|p| p.ty.clone()).collect(),
                     f.ret_ty.clone(),
                 );
-                op.validate(&signature, f.suspends)?;
+                let entry = match builtin {
+                    Builtin::Domain(op) => HostEntry::Domain(*op),
+                    Builtin::Tcp(op) => HostEntry::Tcp(*op),
+                    Builtin::Dns => {
+                        crate::runtime::dns::initialize()?;
+                        HostEntry::Dns
+                    }
+                    Builtin::Vm(_) => unreachable!(),
+                };
                 if self.mode == VmMode::Interpreter {
                     interpreter_hosts.insert(
                         f.name.clone(),
                         HostBinding {
                             abi: HostAbiKind::Scalar,
                             signature,
-                            entry: HostEntry::Domain(op),
-                            owner: None,
-                        },
-                    );
-                }
-                continue;
-            }
-            if crate::runtime::dns::is_lookup(&f.name) {
-                let signature = FunctionSignature::new(
-                    f.params.iter().map(|p| p.ty.clone()).collect(),
-                    f.ret_ty.clone(),
-                );
-                crate::runtime::dns::validate(&signature, f.suspends)?;
-                crate::runtime::dns::initialize()?;
-                if self.mode == VmMode::Interpreter {
-                    interpreter_hosts.insert(
-                        f.name.clone(),
-                        HostBinding {
-                            abi: HostAbiKind::Scalar,
-                            signature,
-                            entry: HostEntry::Dns,
-                            owner: None,
-                        },
-                    );
-                }
-                continue;
-            }
-            let tcp = crate::runtime::tcp::operation(&f.name);
-            if let Some(op) = tcp {
-                let signature = FunctionSignature::new(
-                    f.params.iter().map(|p| p.ty.clone()).collect(),
-                    f.ret_ty.clone(),
-                );
-                op.validate(&signature, f.suspends)?;
-                if self.mode == VmMode::Interpreter {
-                    interpreter_hosts.insert(
-                        f.name.clone(),
-                        HostBinding {
-                            abi: HostAbiKind::Scalar,
-                            signature,
-                            entry: HostEntry::Tcp(op),
+                            entry,
                             owner: None,
                         },
                     );
@@ -780,9 +749,8 @@ impl VmEngine {
                 )
                 .with_span(f.span));
             }
-            let borrowing = crate::core::ffi::is_borrowing_import(f)
-                && crate::core::vm::binding(&f.name).is_none()
-                && !matches!(host.entry, HostEntry::ResourceIo { .. });
+            let borrowing =
+                ExternAbi::classify(f, prepared.types(), builtin.as_ref()) == ExternAbi::Borrowing;
             if borrowing != matches!(host.entry, HostEntry::BorrowingCps(_)) {
                 return Err(abi_error(
                     ErrorCode::AbiError,
@@ -974,9 +942,7 @@ impl VmEngine {
                 "Managed runtime names are reserved",
             ));
         }
-        if (crate::runtime::tcp::operation(name).is_some()
-            || crate::runtime::dns::is_lookup(name)
-            || crate::runtime::domain::operation(name).is_some())
+        if Builtin::lookup(name).is_some()
             || self.registry.binding(name).is_some()
             || matches!(name, "Ptr.null" | "Ptr.is_null")
             || crate::core::integer::IntegerType::conversion(name).is_some()

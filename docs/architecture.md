@@ -37,6 +37,12 @@ JIT 和 AOT 共享 `backends::native`，解释器直接消费 `core::ir`。内�
 两者的区别是数据边界，不是两套解析器。resolver 直接接收同一份声明快照；没有仅作转发的
 provider trait。标准库每线程初始化一次 registry，以 `Rc` 共享，裸指针和 owner 不要求 Send/Sync。
 
+`core::builtins` 集中识别 VM、TCP、DNS 与 domain 等受检运行时操作，统一签名与挂起约定校验入口、
+结果槽数及借用权限所需的分类；各操作族继续维护具体签名规则。`FunctionInfo` 保存 `Builtin` 与
+`ExternAbi`，原生后端直接消费已确认的分类，不再按函数名重新识别。外部 ABI 区分标量、文本视图、
+文本 FFI、资源工厂、字节 I/O、同步 C 与挂起借用调用；它与内置操作身份独立，例如 `__vm_create`
+同时具有 VM 契约和资源工厂 ABI。`suspends`、`may_fail`、`uses_arena` 与 `needs_arena` 仍是独立能力。
+
 ## 语义与代码生成
 
 `core::parser` 根模块保存公共入口、诊断和共享 token 游标；`module` 负责导入顺序与顶层分派，

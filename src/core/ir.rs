@@ -36,6 +36,7 @@ mod scripts;
 mod text;
 mod traits;
 mod tuples;
+use super::builtins::{Builtin, ExternAbi};
 use super::integer::IntegerType;
 use super::types::validate_nominal_type;
 #[cfg(test)]
@@ -78,14 +79,8 @@ pub(crate) struct FunctionInfo {
     /// A returned reference may point into relocatable container storage.
     pub returns_interior: bool,
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
-    pub host_text: bool,
-    pub text_ffi: bool,
-    pub resource_factory: bool,
-    pub tcp: Option<crate::runtime::tcp::Operation>,
-    pub dns: bool,
-    pub byte_io: Option<crate::runtime::byte_request::ByteIoKind>,
-    pub c_abi: bool,
-    pub borrowing_host: bool,
+    pub builtin: Option<Builtin>,
+    pub extern_abi: ExternAbi,
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
     /// Arithmetic/allocation failures or calls propagating a native runtime error.
@@ -120,14 +115,8 @@ impl FunctionInfo {
             returns_interior: true,
             compiler_intrinsic: None,
             signature,
-            host_text: false,
-            text_ffi: false,
-            resource_factory: false,
-            byte_io: None,
-            tcp: None,
-            dns: false,
-            c_abi: false,
-            borrowing_host: false,
+            builtin: None,
+            extern_abi: ExternAbi::Scalar,
             suspends,
             may_fail: true,
             uses_arena: true,
@@ -534,12 +523,12 @@ impl ModulePlan {
                 matches!(item, Item::ExternFn(_)),
                 *item_span(item),
             )?;
-            let borrowing_host = matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f))
-                && super::vm::binding(name).is_none()
-                && !types.resource_io.contains_key(name)
-                && (crate::runtime::tcp::operation(name).is_none()
-                    && !crate::runtime::dns::is_lookup(name)
-                    && crate::runtime::domain::operation(name).is_none());
+            let builtin = Builtin::lookup(name);
+            let extern_abi = match item {
+                Item::ExternFn(f) => ExternAbi::classify(f, types, builtin.as_ref()),
+                Item::FnDef(_) => ExternAbi::Scalar,
+            };
+            let borrowing_host = extern_abi == ExternAbi::Borrowing;
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
                 if matches!(item, Item::ExternFn(_)) && *ty == Type::Rune {
@@ -559,10 +548,7 @@ impl ModulePlan {
                 if matches!(item, Item::ExternFn(_))
                     && ty.contains_buffers()
                     && !types.resource_factories.contains_key(name)
-                    && super::vm::binding(name).is_none()
-                    && (crate::runtime::tcp::operation(name).is_none()
-                        && !crate::runtime::dns::is_lookup(name)
-                        && crate::runtime::domain::operation(name).is_none())
+                    && builtin.is_none()
                     && !matches!(ty, Type::String)
                     && !(!suspends
                         && ty
@@ -577,11 +563,8 @@ impl ModulePlan {
                     .with_span(*item_span(item)));
                 }
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
-                    && super::vm::binding(name).is_none()
                     && !types.resource_io.contains_key(name)
-                    && (crate::runtime::tcp::operation(name).is_none()
-                        && !crate::runtime::dns::is_lookup(name)
-                        && crate::runtime::domain::operation(name).is_none())
+                    && builtin.is_none()
                     && ((!borrowing_host
                         && ty.reference_type().is_some()
                         && !(!suspends
@@ -599,11 +582,8 @@ impl ModulePlan {
                 }
                 if matches!(item, Item::ExternFn(_))
                     && ty.is_aggregate()
-                    && super::vm::binding(name).is_none()
                     && !types.resource_io.contains_key(name)
-                    && (crate::runtime::tcp::operation(name).is_none()
-                        && !crate::runtime::dns::is_lookup(name)
-                        && crate::runtime::domain::operation(name).is_none())
+                    && builtin.is_none()
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -656,22 +636,12 @@ impl ModulePlan {
                     format!("Reserved runtime function name `{name}`"),
                 ));
             }
-            if (crate::runtime::tcp::operation(name).is_some()
-                || crate::runtime::dns::is_lookup(name)
-                || crate::runtime::domain::operation(name).is_some())
-                && !matches!(item, Item::ExternFn(f) if !f.c_abi)
-            {
-                return Err(super::ffi::error(
-                    *item_span(item),
-                    "TCP runtime names require checked extern declarations",
-                ));
+            if let Some(builtin) = &builtin {
+                builtin.validate_declaration(item)?;
             }
             let info = FunctionInfo {
                 closure_entry: false,
-                noescape: super::vm::binding(name).is_some()
-                    || (crate::runtime::tcp::operation(name).is_some()
-                        || crate::runtime::dns::is_lookup(name)
-                        || crate::runtime::domain::operation(name).is_some())
+                noescape: builtin.is_some()
                     || types.resource_io.contains_key(name)
                     || matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
                 noescape_params: if let Item::FnDef(f) = item {
@@ -707,17 +677,7 @@ impl ModulePlan {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),
                     _ => None,
                 },
-                text_ffi: matches!(item, Item::ExternFn(_)) && types.text_ffi.contains_key(name),
-                byte_io: types.resource_io.get(name).copied(),
-                tcp: crate::runtime::tcp::operation(name),
-                dns: crate::runtime::dns::is_lookup(name),
-                resource_factory: matches!(item, Item::ExternFn(_))
-                    && types.resource_factories.contains_key(name),
-                host_text: crate::runtime::domain::operation(name).is_none()
-                    && !crate::runtime::dns::is_lookup(name)
-                    && matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
-                c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
-                borrowing_host,
+                extern_abi,
                 instance_entry: false,
                 domain_entry: false,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
@@ -736,9 +696,7 @@ impl ModulePlan {
                 // Concrete instances are replanned against actual impl functions.
                 may_fail: matches!(item, Item::ExternFn(_))
                     || members.traits.requirements.contains(name),
-                uses_arena: (crate::runtime::tcp::operation(name).is_some()
-                    || crate::runtime::dns::is_lookup(name)
-                    || crate::runtime::domain::operation(name).is_some())
+                uses_arena: builtin.as_ref().is_some_and(Builtin::needs_adapter)
                     || types.resource_factories.contains_key(name)
                     || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
@@ -753,9 +711,7 @@ impl ModulePlan {
                                         .reference_type()
                                         .is_some_and(|r| r.target == Type::String)
                             }),
-                needs_arena: (crate::runtime::tcp::operation(name).is_some()
-                    || crate::runtime::dns::is_lookup(name)
-                    || crate::runtime::domain::operation(name).is_some())
+                needs_arena: builtin.as_ref().is_some_and(Builtin::needs_adapter)
                     || types.resource_factories.contains_key(name)
                     || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
@@ -771,78 +727,20 @@ impl ModulePlan {
                                         .is_some_and(|r| r.target == Type::String)
                             }),
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum::<usize>()
-                    + if crate::runtime::domain::operation(name)
-                        == Some(crate::runtime::domain::Operation::Request)
-                    {
-                        2
-                    } else if crate::runtime::domain::operation(name)
-                        == Some(crate::runtime::domain::Operation::OutboxMessageBytes)
-                        || crate::runtime::tcp::operation(name).is_some_and(|op| op.is_read())
-                        || crate::runtime::dns::is_lookup(name)
-                        || types.resource_io.get(name)
-                            == Some(&crate::runtime::byte_request::ByteIoKind::Read)
-                    {
-                        1
-                    } else {
-                        0
-                    },
+                    + builtin.as_ref().map_or_else(
+                        || {
+                            usize::from(
+                                extern_abi.byte_io()
+                                    == Some(crate::runtime::byte_request::ByteIoKind::Read),
+                            )
+                        },
+                        Builtin::result_slots,
+                    ),
+                builtin,
                 span: *item_span(item),
             };
-            if super::vm::binding(name).is_some() {
-                if !matches!(item, Item::ExternFn(_)) {
-                    return Err(type_error(
-                        item_span(item),
-                        ErrorCode::ReservedName,
-                        "VM runtime names require checked extern declarations",
-                    ));
-                }
-                super::vm::validate(name, &info.signature, suspends, info.c_abi)
-                    .map_err(|e| e.with_span(info.span))?;
-            }
-            if let Some(op) = crate::runtime::domain::operation(name) {
-                op.validate(&info.signature, suspends)
-                    .map_err(|e| e.with_span(info.span))?;
-            }
-            if info.dns {
-                crate::runtime::dns::validate(&info.signature, suspends)
-                    .map_err(|e| e.with_span(info.span))?;
-            }
-            if let Some(op) = info.tcp {
-                op.validate(&info.signature, suspends)
-                    .map_err(|e| e.with_span(info.span))?;
-            }
-            if info.resource_factory
-                && (info.suspends != types.resource_async.contains(name)
-                    || info.c_abi
-                    || types.resource_factories.get(name) != Some(&info.signature))
-            {
-                return Err(super::ffi::error(
-                    info.span,
-                    "Resource factory requires its registered signature and suspension convention",
-                ));
-            }
-            if info.text_ffi {
-                crate::core::ffi::validate_text_signature(&info.signature)?;
-                if info.suspends || info.c_abi || types.text_ffi.get(name) != Some(&info.signature)
-                {
-                    return Err(super::ffi::error(info.span, "Text FFI registration requires a matching synchronous extern fn declaration"));
-                }
-            }
-            if info.borrowing_host {
-                super::ffi::validate_borrowing_signature(
-                    &info.signature,
-                    &nominals,
-                    types,
-                    info.span,
-                )?;
-            } else if info.c_abi {
-                super::ffi::validate_signature(
-                    &info.signature,
-                    suspends,
-                    &nominals,
-                    types,
-                    info.span,
-                )?;
+            if let Item::ExternFn(f) = item {
+                extern_abi.validate(f, &info.signature, &nominals, types)?;
             }
             if functions.insert(name.clone(), info).is_some() {
                 return Err(type_error(
@@ -861,7 +759,7 @@ impl ModulePlan {
                 )
             })?;
             if !info.suspends
-                || info.borrowing_host
+                || info.extern_abi == ExternAbi::Borrowing
                 || module
                     .items
                     .iter()
@@ -2018,7 +1916,7 @@ impl FunctionPlan {
                     )
                 })?;
                 if function.internal
-                    || function.c_abi
+                    || function.extern_abi == ExternAbi::C
                     || function.suspends
                     || function.signature.ret != Type::Int32
                     || function.signature.params.len() > 2

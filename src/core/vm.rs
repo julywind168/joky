@@ -1,6 +1,6 @@
 //! Checked signatures for the source VM library's private runtime boundary.
 use super::resolver::BindingSpec;
-use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
+use crate::{FunctionSignature, Type};
 
 pub(crate) const NAMES: &[&str] = &[
     "__vm_create",
@@ -113,22 +113,4 @@ pub(crate) fn binding(name: &str) -> Option<BindingSpec> {
     let mut spec = BindingSpec::with_symbol(name, FunctionSignature::new(params, ret), symbol);
     spec.suspends = operation == "call_async_int32";
     Some(spec)
-}
-
-pub(crate) fn validate(
-    name: &str,
-    signature: &FunctionSignature,
-    suspends: bool,
-    c_abi: bool,
-) -> Result<(), Error> {
-    if let Some(spec) = binding(name) {
-        if c_abi || spec.signature != *signature || spec.suspends != suspends {
-            return Err(Error::new_with_code(
-                ErrorPhase::Abi,
-                ErrorCode::AbiError,
-                "VM runtime adapter requires its registered signature and suspension convention",
-            ));
-        }
-    }
-    Ok(())
 }

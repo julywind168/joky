@@ -940,7 +940,7 @@ fn analyze(
         };
         let record_child_escapes = |name: &str, args: &[Option<Slot>]| {
             let callee = &functions[name];
-            if !callee.host_text {
+            if !callee.extern_abi.has_text() {
                 for (index, arg) in call_arguments(callee, name, args) {
                     if index.map_or(!callee.noescape, |i| callee.parameter_retained(i)) {
                         for slot in arg.iter().flat_map(refs) {
@@ -1025,7 +1025,7 @@ fn analyze(
         // retains them only until synchronous stop, before parent-place cleanup.
         let checked_output = |index: &usize| {
             matches!(&plan.ops[pc], Op::Call { name, args, .. }
-            if (functions[name].tcp.is_some() || functions[name].dns) && args.iter().flatten().any(|arg| arg.index == *index)
+            if functions[name].builtin.as_ref().is_some_and(crate::core::builtins::Builtin::pins_outputs) && args.iter().flatten().any(|arg| arg.index == *index)
             && types[index].reference_type().is_some_and(|r| r.mutable && r.target == Type::UInt64))
         };
         if suspending
@@ -1878,7 +1878,7 @@ fn analyze(
                 // Returning a view and saving one are distinct effects. Unknown
                 // host/indirect calls remain conservative, including wrappers
                 // that never request an arena. Text views have a checked ABI.
-                if !functions[name].host_text {
+                if !functions[name].extern_abi.has_text() {
                     for arg in args.iter().flatten().flat_map(refs) {
                         if retained_inputs.contains(&arg.index) {
                             record_escape(state.get(&arg.index), false);

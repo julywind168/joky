@@ -93,8 +93,10 @@ impl ModuleRegistry {
                 }
             }
             let mut wire = spec.signature.clone();
-            if crate::core::vm::binding(&spec.name).is_some() {
-                crate::core::vm::validate(&spec.name, &spec.signature, spec.suspends, false)?;
+            if let Some(builtin @ crate::core::builtins::Builtin::Vm(_)) =
+                crate::core::builtins::Builtin::lookup(&spec.name)
+            {
+                builtin.validate(&spec.signature, spec.suspends, false)?;
                 for ty in &mut wire.params {
                     if let Some(r) = ty.reference_type().filter(|r| !r.mutable) {
                         if let Type::Resource(name) = &r.target {

@@ -5487,6 +5487,96 @@ fn enum_same_name_members_reject_ambiguous_uses_and_invalid_definitions() {
 
 #[test]
 #[cfg(unix)]
+fn checked_runtime_bindings_compose_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "bindings.jk",
+        r#"
+        import joky/vm
+        import joky/domain
+        import joky/dns
+        import joky/tcp.{type Address, type TcpListener}
+        import joky/check.{assert}
+        import joky/io.{println}
+        struct State { value: Int32 }
+        fn make(value: Int32) -> State { State { value: value } }
+        fn read(state: &State) -> Int32 { state.value }
+        fn main() @suspends -> Int32 {
+            let message = "Checked runtime contracts compose"
+            let child = vm.Vm.interpreter()
+            let source = "fn next(value: Int32) @suspends -> Int32 {{ value + 1 }}"
+            assert(vm.load_source(child, &source) == 0, &message)
+            let first = child.call::<Int32, Int32>("next", 40)
+            let second = vm.call_async_int32(&child, "next", first)
+            let state = domain.create(make, second)
+            assert(domain.read_from(state.read_handle(), read) == 42, &message)
+            var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) {
+                Ok(listener) => listener, Err(_) => { return 1 }
+            }
+            let address = match listener.local_addr() {
+                Ok(address) => address, Err(_) => { return 2 }
+            }
+            let addresses = match dns.lookup("127.0.0.1", address.port()) {
+                Ok(addresses) => addresses, Err(_) => { return 3 }
+            }
+            assert(addresses.len() == 1, &message)
+            assert(addresses.get(0).unwrap_or(Address.ipv4(0, 0)).port() == address.port(), &message)
+            assert(listener.close().is_ok(), &message)
+            state.close()
+            assert(child.close() == 0, &message)
+            println(&second)
+            0
+        }
+        "#,
+    );
+    work.assert_all_backends("bindings.jk", &[], b"42\n", 0);
+}
+
+#[test]
+fn checked_runtime_bindings_reject_incompatible_declarations() {
+    let work = Workspace::new();
+    for (declaration, message) in [
+        (
+            "extern fn __vm_error_code() -> UInt64",
+            "VM runtime adapter requires",
+        ),
+        (
+            "extern fn __vm_error_code() @suspends -> Int32",
+            "VM runtime adapter requires",
+        ),
+        ("extern fn __tcp_bind() @suspends", "TCP operation requires"),
+        ("extern fn __dns_lookup() @suspends", "DNS lookup requires"),
+        (
+            "extern fn __timer_create() @suspends -> UInt64",
+            "Domain operation requires",
+        ),
+        (
+            "fn __vm_error_code() -> Int32 { 0 }",
+            "VM runtime names require",
+        ),
+        ("fn __tcp_bind() {}", "runtime names require checked extern"),
+        (
+            "fn __dns_lookup() {}",
+            "runtime names require checked extern",
+        ),
+        (
+            "fn __timer_create() {}",
+            "runtime names require checked extern",
+        ),
+    ] {
+        work.write(
+            "invalid_binding.jk",
+            &format!("{declaration}\nfn main() {{}}"),
+        );
+        let output = work.cli(&["build", "invalid_binding.jk"]);
+        failure(&output, message);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_binding.jk:1:"));
+        assert!(!work.path().join("invalid_binding").exists());
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn net6_dns_public_module_runs_in_all_backends() {
     let work = Workspace::new();
     work.write("dns.jk", include_str!("fixtures/dns.jk"));

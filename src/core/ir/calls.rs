@@ -344,7 +344,7 @@ impl FunctionPlan {
             );
         }
         self.check_drop_call(&name, *span)?;
-        if info.c_abi && !self.unsafe_context {
+        if info.extern_abi == crate::core::builtins::ExternAbi::C && !self.unsafe_context {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,

@@ -3,6 +3,7 @@ mod domain;
 mod float_env;
 mod lower;
 
+use crate::core::builtins::{Builtin, ExternAbi};
 use crate::{
     core::{
         ir::{FunctionInfo, ModulePlan, Op, TextSource},
@@ -107,23 +108,23 @@ pub(crate) fn compile<M: Module>(
             None
         }
         .unwrap_or_else(|| {
-            if plan.functions[name].c_abi {
+            if plan.functions[name].extern_abi == ExternAbi::C {
                 name.to_owned()
             } else {
                 format!("{symbol_prefix}{name}")
             }
         });
-        if crate::runtime::domain::operation(name).is_some() {
+        if matches!(plan.functions[name].builtin, Some(Builtin::Domain(_))) {
             linkage = Linkage::Local;
             symbol = format!("__joky_domain_adapter_{symbol}");
-        } else if plan.functions[name].dns {
+        } else if matches!(plan.functions[name].builtin, Some(Builtin::Dns)) {
             linkage = Linkage::Local;
             symbol = format!("__joky_dns_adapter_{symbol}");
-        } else if plan.functions[name].tcp.is_some() {
+        } else if matches!(plan.functions[name].builtin, Some(Builtin::Tcp(_))) {
             linkage = Linkage::Local;
             symbol = format!("__joky_tcp_adapter_{symbol}");
-        } else if plan.functions[name].resource_factory {
-            let descriptor_symbol = if plan.functions[name].byte_io.is_some() {
+        } else if plan.functions[name].extern_abi.is_resource() {
+            let descriptor_symbol = if plan.functions[name].extern_abi.byte_io().is_some() {
                 crate::runtime::byte_request::symbol(&symbol)
             } else if plan.functions[name].suspends {
                 crate::runtime::resource::cps_symbol(&symbol)
@@ -139,7 +140,7 @@ pub(crate) fn compile<M: Module>(
             resource_factories.insert(name.clone(), descriptor);
             linkage = Linkage::Local;
             symbol = format!("__joky_resource_adapter_{symbol}");
-        } else if plan.functions[name].text_ffi {
+        } else if plan.functions[name].extern_abi == ExternAbi::TextFfi {
             let descriptor_symbol = crate::runtime::text_ffi::symbol(&symbol);
             if !declared_symbols.insert(descriptor_symbol.clone()) {
                 return Err(compile_error(format!(
@@ -152,7 +153,7 @@ pub(crate) fn compile<M: Module>(
             text_ffi_hosts.insert(name.clone(), descriptor);
             linkage = Linkage::Local;
             symbol = format!("__joky_text_ffi_adapter_{symbol}");
-        } else if plan.functions[name].host_text {
+        } else if plan.functions[name].extern_abi == ExternAbi::TextView {
             let mut wire_info = plan.functions[name].clone();
             wire_info.needs_arena = false;
             let wire = module
@@ -167,7 +168,7 @@ pub(crate) fn compile<M: Module>(
             linkage = Linkage::Local;
             symbol = format!("__joky_host_text_adapter_{symbol}");
         }
-        if plan.functions[name].borrowing_host {
+        if plan.functions[name].extern_abi == ExternAbi::Borrowing {
             let descriptor_symbol = crate::core::ffi::borrowing_symbol(&symbol);
             if !declared_symbols.insert(descriptor_symbol.clone()) {
                 return Err(compile_error(format!(
@@ -332,7 +333,11 @@ pub(crate) fn compile<M: Module>(
     }
     for name in &names {
         let name = *name;
-        if plan.functions[name].dns {
+        if let Some(builtin) = plan.functions[name]
+            .builtin
+            .as_ref()
+            .filter(|op| op.needs_adapter())
+        {
             ctx.clear();
             ctx.func.signature = lower::signature(module, &plan.functions[name]);
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
@@ -340,41 +345,12 @@ pub(crate) fn compile<M: Module>(
                 .iter()
                 .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
                 .collect();
-            lower::dns_entry(&mut builder, &refs);
-            builder.finalize(module.target_config());
-            float_env::instrument(module, &mut ctx.func, &ids);
-            module
-                .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(format!("{e:?}")))?;
-            requires_runtime = true;
-            continue;
-        }
-        if let Some(op) = crate::runtime::domain::operation(name) {
-            ctx.clear();
-            ctx.func.signature = lower::signature(module, &plan.functions[name]);
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-            let refs = ids
-                .iter()
-                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
-                .collect();
-            lower::domain_entry(&mut builder, op, &refs);
-            builder.finalize(module.target_config());
-            float_env::instrument(module, &mut ctx.func, &ids);
-            module
-                .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(e.to_string()))?;
-            requires_runtime = true;
-            continue;
-        }
-        if let Some(op) = plan.functions[name].tcp {
-            ctx.clear();
-            ctx.func.signature = lower::signature(module, &plan.functions[name]);
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-            let refs = ids
-                .iter()
-                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
-                .collect();
-            lower::tcp_entry(&mut builder, op, &refs);
+            match builtin {
+                Builtin::Dns => lower::dns_entry(&mut builder, &refs),
+                Builtin::Domain(op) => lower::domain_entry(&mut builder, *op, &refs),
+                Builtin::Tcp(op) => lower::tcp_entry(&mut builder, *op, &refs),
+                Builtin::Vm(_) => unreachable!(),
+            }
             builder.finalize(module.target_config());
             float_env::instrument(module, &mut ctx.func, &ids);
             module
@@ -395,7 +371,7 @@ pub(crate) fn compile<M: Module>(
             lower::resource_factory_entry(
                 &mut builder,
                 plan.functions[name].suspends,
-                plan.functions[name].byte_io,
+                plan.functions[name].extern_abi.byte_io(),
                 data,
                 &refs,
                 module.target_config().pointer_type(),

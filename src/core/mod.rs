@@ -1,4 +1,5 @@
 //! Core language representation and shared compilation pipeline.
+pub(crate) mod builtins;
 pub mod error;
 pub mod ffi;
 pub(crate) mod float;

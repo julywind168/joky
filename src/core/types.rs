@@ -161,10 +161,7 @@ impl TypeRegistry {
     /// Whether a declaration resolves to a built-in host or checked runtime adapter.
     pub fn is_builtin_host(&self, name: &str) -> bool {
         self.host_function_signature(name).is_some()
-            || super::vm::binding(name).is_some()
-            || (crate::runtime::tcp::operation(name).is_some()
-                || crate::runtime::dns::is_lookup(name)
-                || crate::runtime::domain::operation(name).is_some())
+            || super::builtins::Builtin::lookup(name).is_some()
     }
 
     pub fn host_function_signature(&self, name: &str) -> Option<crate::FunctionSignature> {
@@ -422,27 +419,14 @@ impl TypeRegistry {
                     )
                     .with_span(function.span));
                 }
-                super::vm::validate(
-                    &function.name,
-                    &crate::FunctionSignature::new(
-                        function
-                            .params
-                            .iter()
-                            .map(|p| p.ty.clone())
-                            .collect::<Vec<_>>(),
-                        function.ret_ty.clone(),
-                    ),
-                    function.suspends,
-                    function.c_abi,
-                )
-                .map_err(|e| e.with_span(function.span))?;
+                let builtin = super::builtins::Builtin::lookup(&function.name);
+                if let Some(builtin @ super::builtins::Builtin::Vm(_)) = &builtin {
+                    builtin.validate_extern(function)?;
+                }
                 let unsupported_buffer = |ty: &Type| {
                     ty.contains_buffers()
                         && !registry.resource_factories.contains_key(&function.name)
-                        && super::vm::binding(&function.name).is_none()
-                        && (crate::runtime::tcp::operation(&function.name).is_none()
-                            && !crate::runtime::dns::is_lookup(&function.name)
-                            && crate::runtime::domain::operation(&function.name).is_none())
+                        && builtin.is_none()
                         && !(!function.c_abi
                             && (*ty == Type::String
                                 || !function.suspends
@@ -461,9 +445,7 @@ impl TypeRegistry {
                     .with_span(function.span));
                 }
                 if !registry.resource_io.contains_key(&function.name)
-                    && (crate::runtime::tcp::operation(&function.name).is_none()
-                        && !crate::runtime::dns::is_lookup(&function.name)
-                        && crate::runtime::domain::operation(&function.name).is_none())
+                    && builtin.is_none()
                     && (function.params.iter().any(|p| p.ty.is_aggregate())
                         || function.ret_ty.is_aggregate())
                 {
