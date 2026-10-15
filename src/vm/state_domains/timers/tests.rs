@@ -21,6 +21,9 @@ impl Clock for ManualClock {
     }
 }
 fn setup(mode: VmMode) -> (VmEngine, Rc<ManualClock>, DomainOwner, Owner) {
+    setup_source(mode, SOURCE)
+}
+fn setup_source(mode: VmMode, source: &str) -> (VmEngine, Rc<ManualClock>, DomainOwner, Owner) {
     let mut vm = VmEngine::with_mode(mode);
     let clock = Rc::new(ManualClock {
         time: Cell::new(Instant::now()),
@@ -28,7 +31,7 @@ fn setup(mode: VmMode) -> (VmEngine, Rc<ManualClock>, DomainOwner, Owner) {
         skip: Cell::new(0),
     });
     vm.configure_tasks(clock.clone(), 64).unwrap();
-    vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+    vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
     let domain = vm
         .create_domain("make", &[InstanceValue::Int32(10)])
         .unwrap();
@@ -49,7 +52,7 @@ fn arm(
             target: domain.write_handle(),
             module: vm.current.as_ref().unwrap(),
             name: "tick",
-            input: 2,
+            input: Input::Scalar(2),
             periodic,
             milliseconds,
             limits: Default::default(),
@@ -173,10 +176,14 @@ fn domain_timers_recheck_cancellation_after_reentrant_clock() {
         }
     }
 }
-fn cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive: bool) {
+fn cancellation(
+    source: &str,
+    boundaries: impl Clone + IntoIterator<Item = usize>,
+    exhaustive: bool,
+) {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
         if mode == VmMode::Interpreter {
             vm.set_interpreter_limits(InterpreterLimits {
                 poll_budget: Some(1),
@@ -227,6 +234,7 @@ fn cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive:
 #[test]
 fn domain_timers_generated_lifetimes_and_cancellation() {
     cancellation(
+        SOURCE,
         [
             0, 1, 2, 3, 10, 20, 50, 100, 200, 500, 1000, 2000, 4000, 8000,
         ],
@@ -236,7 +244,7 @@ fn domain_timers_generated_lifetimes_and_cancellation() {
 #[test]
 #[ignore = "exhaustive: cancel timer ownership and queued turns at every interpreter instruction"]
 fn exhaustive_domain_timers_cancellation() {
-    cancellation(0..=16384, true);
+    cancellation(SOURCE, 0..=16384, true);
 }
 
 #[test]
@@ -385,7 +393,7 @@ fn migration_batch_invalidates_all_changed_timers_and_preserves_compatible_targe
                 target: rules.write_handle(),
                 module: vm.current.as_ref().unwrap(),
                 name: "rules_tick",
-                input: 2,
+                input: Input::Scalar(2),
                 periodic: false,
                 milliseconds: 1000,
                 limits: Default::default(),
@@ -421,5 +429,262 @@ fn migration_batch_invalidates_all_changed_timers_and_preserves_compatible_targe
         assert_eq!(vm.domain_revision(rules.read_handle()).unwrap(), 1);
         drop((first_timer, second_timer, rules_timer, first, second, rules));
         assert_eq!(registry.borrow().usage(), (0, 0, 0, 0));
+    }
+}
+
+const VALUES: &str = include_str!("../../../../tests/fixtures/domain_timer_values.jk");
+fn payload() -> Vec<u64> {
+    vec![
+        2,
+        u64::MAX,
+        InstanceValue::Int8(-128).bits(),
+        9221120237041090626,
+        1,
+        '界' as u64,
+    ]
+}
+fn arm_values(
+    vm: &VmEngine,
+    domain: &DomainOwner,
+    timer: &Owner,
+    periodic: bool,
+    milliseconds: i32,
+) -> Result<(), u64> {
+    start(
+        &vm.domains,
+        timer.token,
+        Schedule {
+            target: domain.write_handle(),
+            module: vm.current.as_ref().unwrap(),
+            name: "tick",
+            input: Input::Values(payload()),
+            periodic,
+            milliseconds,
+            limits: Default::default(),
+        },
+    )
+}
+#[test]
+fn domain_timer_values_cancellation_reclaims_storage() {
+    cancellation(
+        VALUES,
+        [
+            0, 1, 2, 3, 10, 20, 50, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel timer record input and queued turns at every instruction"]
+fn exhaustive_domain_timer_values_cancellation() {
+    cancellation(VALUES, 0..=32768, true);
+}
+#[test]
+fn domain_timer_values_repeat_rebind_and_release_code() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (mut vm, clock, domain, timer) = setup_source(mode, VALUES);
+        let baseline = vm.domains.borrow().budget.bytes.get();
+        arm_values(&vm, &domain, &timer, true, 10).unwrap();
+        drive(&vm);
+        clock.time.set(clock.time.get() + Duration::from_millis(35));
+        vm.poll_tasks(1).unwrap();
+        assert_eq!(vm.domains.borrow().requests.len(), 1);
+        let old = match vm.current.as_ref().unwrap() {
+            LoadedModule::Jit(m) => Rc::downgrade(&(m.clone() as Rc<dyn std::any::Any>)),
+            LoadedModule::Interpreter(m) => Rc::downgrade(&(m.clone() as Rc<dyn std::any::Any>)),
+        };
+        vm.load_source(&VALUES.replace("room.value+p.amount", "room.value+p.amount*10"))
+            .unwrap();
+        assert_eq!(vm.publish_domain_code().unwrap(), 1);
+        assert!(old.upgrade().is_none(), "timer pinned old code");
+        drive(&vm);
+        assert_eq!(value(&vm, &domain), 30);
+        clock.time.set(clock.time.get() + Duration::from_millis(4));
+        drive(&vm);
+        assert_eq!(value(&vm, &domain), 30);
+        clock.time.set(clock.time.get() + Duration::from_millis(1));
+        drive(&vm);
+        assert_eq!(value(&vm, &domain), 50);
+        cancel(&vm.domains, &timer.state, Status::Cancelled);
+        assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+        arm_values(&vm, &domain, &timer, false, 0).unwrap();
+        drive(&vm);
+        assert_eq!(value(&vm, &domain), 70);
+        assert_eq!(timer.state.borrow().status, Status::Completed);
+        assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+        drop(timer);
+        domain.close();
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}
+#[test]
+fn domain_timer_values_reject_changed_contracts_before_and_after_queueing() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for queued in [false, true] {
+            for (from, to) in [
+                ("amount:Int32,bits", "pub amount:Int32,bits"),
+                (
+                    "struct Bits {wide:UInt64,tiny:Int8",
+                    "struct Bits {tiny:Int8,wide:UInt64",
+                ),
+                ("fn tick(", "fn replacement("),
+            ] {
+                let (mut vm, _, domain, timer) = setup_source(mode, VALUES);
+                arm_values(&vm, &domain, &timer, false, 0).unwrap();
+                if queued {
+                    vm.poll_tasks(1).unwrap();
+                }
+                let mut source = VALUES.replace(from, to);
+                if from == "fn tick(" {
+                    source = source.replace(",tick,", ",replacement,");
+                }
+                vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+                vm.publish_domain_code().unwrap();
+                drive(&vm);
+                assert_eq!(timer.state.borrow().status, Status::InvalidAccess);
+                assert_eq!(value(&vm, &domain), 10);
+                assert_eq!(vm.domain_revision(domain.read_handle()).unwrap(), 0);
+                drop(timer);
+                domain.close();
+                assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            }
+        }
+    }
+}
+
+#[test]
+fn domain_timer_values_refund_admission_and_queued_budgets() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (vm, _, domain, timer) = setup_source(mode, VALUES);
+        let budget = vm.domains.borrow().budget.clone();
+        let baseline = budget.bytes.get();
+        arm_values(&vm, &domain, &timer, true, 100).unwrap();
+        let charge = budget.bytes.get() - baseline;
+        assert!(charge >= payload().len() * 8);
+        cancel(&vm.domains, &timer.state, Status::Cancelled);
+        for extra in (0..=charge + 16).step_by(16) {
+            budget.limit.set(baseline + extra);
+            let before = timer.state.borrow().status;
+            let result = arm_values(&vm, &domain, &timer, true, 100);
+            if extra < charge {
+                assert_eq!(result, Err(5));
+                assert_eq!(timer.state.borrow().status, before);
+            } else {
+                result.unwrap();
+                cancel(&vm.domains, &timer.state, Status::Cancelled);
+            }
+            assert_eq!(budget.bytes.get(), baseline);
+            assert_eq!(vm.task_count(), 0);
+        }
+        budget.limit.set(usize::MAX);
+        for bytes in [false, true] {
+            vm.domains.borrow_mut().limits = DomainLimits {
+                max_requests: if bytes { 4096 } else { 0 },
+                max_request_bytes: if bytes { 1 } else { 4 * 1024 * 1024 },
+                ..Default::default()
+            };
+            arm_values(&vm, &domain, &timer, false, 0).unwrap();
+            drive(&vm);
+            assert_eq!(timer.state.borrow().status, Status::ResourceLimit);
+            assert_eq!(budget.bytes.get(), baseline);
+            assert_eq!(vm.task_count(), 0);
+            assert!(vm.domains.borrow().requests.is_empty());
+            vm.domains.borrow_mut().limits = DomainLimits::default();
+            assert_eq!(value(&vm, &domain), 10);
+        }
+        drop(timer);
+        domain.close();
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}
+#[test]
+fn domain_timer_values_cancel_close_and_quarantine_failures() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for queued in [false, true] {
+            let (vm, _, domain, timer) = setup_source(mode, VALUES);
+            arm_values(&vm, &domain, &timer, false, 0).unwrap();
+            if queued {
+                vm.poll_tasks(1).unwrap();
+            }
+            cancel(&vm.domains, &timer.state, Status::Cancelled);
+            drive(&vm);
+            assert_eq!(value(&vm, &domain), 10);
+            arm_values(&vm, &domain, &timer, false, 0).unwrap();
+            if queued {
+                vm.poll_tasks(1).unwrap();
+            }
+            domain.close();
+            assert_eq!(timer.state.borrow().status, Status::Closed);
+            drop(timer);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+        let source = VALUES.replace(
+            "room.value=room.value+p.amount",
+            "room.value=99 room.value=room.value/(p.amount-p.amount)",
+        );
+        let (vm, clock, domain, timer) = setup_source(mode, &source);
+        arm_values(&vm, &domain, &timer, true, 1).unwrap();
+        clock.time.set(clock.time.get() + Duration::from_millis(1));
+        drive(&vm);
+        assert_eq!(timer.state.borrow().status, Status::Failed);
+        assert!(vm.domains.borrow().entries[&domain.handle.sequence]
+            .failure
+            .is_some());
+        assert!(vm.domains.borrow().requests.is_empty());
+        assert_eq!(vm.task_count(), 0);
+        drop(timer);
+        domain.close();
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}
+#[test]
+fn domain_timer_values_restore_caller_budget() {
+    use crate::runtime::arena;
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            arena::LIMIT.with(|v| v.set(self.0));
+        }
+    }
+    let _restore = Restore(arena::LIMIT.with(Cell::get));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(VALUES).unwrap();
+        let baseline = arena::LIVE.with(Cell::get);
+        let mut successes = 0;
+        let mut failures = 0;
+        for limit in (0..=8192).step_by(128) {
+            arena::LIMIT.with(|v| v.set(limit));
+            let group = TaskGroup::new();
+            let result = (|| {
+                let id = vm
+                    .executor
+                    .spawn(&group, vm.prepare_async("budget", &[])?)?;
+                for _ in 0..1000 {
+                    for done in vm.poll_tasks(1)?.completed {
+                        if done.id == id {
+                            return done.result;
+                        }
+                    }
+                }
+                panic!("timer budget case stalled");
+            })();
+            match result {
+                Ok(12) => successes += 1,
+                Ok(4) => failures += 1,
+                Err(e) => {
+                    assert_eq!(e.code(), ErrorCode::ResourceLimit, "{e}");
+                    failures += 1;
+                }
+                other => panic!("{other:?}"),
+            }
+            vm.executor.cancel_group(&group);
+            assert_eq!(vm.task_count(), 0);
+            assert!(vm.domains.borrow().timers.is_empty());
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            assert_eq!(arena::LIVE.with(Cell::get), baseline);
+        }
+        assert!(successes > 0 && failures > 0);
+        arena::LIMIT.with(|v| v.set(arena::MAX_BYTES));
     }
 }

@@ -1332,6 +1332,7 @@ pub(crate) enum CompilerIntrinsic {
     DomainCreateFinish,
     TimerStart(bool),
     TimerFinish,
+    TimerValueFinish,
     DirectoryType(Type),
     DirectoryWitness,
     DomainSnapshot,

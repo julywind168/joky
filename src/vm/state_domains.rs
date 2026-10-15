@@ -739,7 +739,12 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         match domain.module.instance_info(method) {
             Ok(current)
                 if current.domain_entry
-                    && instance::receiver(&current) == Some(&domain.ty)
+                    && (instance::receiver(&current) == Some(&domain.ty)
+                        || (crate::core::state_domain::value_eligible(&current)
+                            && instance::scalar(&current.signature.ret)
+                            && current.signature.params[0]
+                                .reference_type()
+                                .is_some_and(|r| r.target == domain.ty)))
                     && code::compatible_entry(info, &current) =>
             {
                 *info = current;

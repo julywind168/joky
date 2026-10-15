@@ -554,11 +554,23 @@ fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, millis
     if status==4 { return Result.Err(TimerError.InvalidAccess) }
     Result.Err(TimerError.ResourceLimit)
 }
+extern fn __timer_start_values(module:domain.Module,timer:UInt64,target:domain.Handle,milliseconds:Int32,operation:String,input:&Buffer<UInt64>,periodic:Bool) @suspends -> Int32
+#intrinsic("domain.finish_timer_value")
+fn finish_timer_value<A>(module:domain.Module,timer:UInt64,target:domain.Handle,milliseconds:Int32,operation:String,input:A,periodic:Bool) @suspends -> Result<Unit,TimerError> {
+    let packet=pack_value(input)
+    let status=__timer_start_values(module,timer,target,milliseconds,operation,&packet.storage,periodic)
+    if status==0 { return Result.Ok({}) }
+    if status==1 { return Result.Err(TimerError.Closed) }
+    if status==2 { return Result.Err(TimerError.Busy) }
+    if status==3 { return Result.Err(TimerError.InvalidDelay) }
+    if status==4 { return Result.Err(TimerError.InvalidAccess) }
+    Result.Err(TimerError.ResourceLimit)
+}
 #intrinsic("domain.after")
 pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
-    finish_timer(module(),timer.identity,target.token,milliseconds,"",pack(input),false)
+    finish_timer_value::<A>(module(),timer.identity,target.token,milliseconds,"",input,false)
 }
 #intrinsic("domain.every")
 pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
-    finish_timer(module(),timer.identity,target.token,milliseconds,"",pack(input),true)
+    finish_timer_value::<A>(module(),timer.identity,target.token,milliseconds,"",input,true)
 }

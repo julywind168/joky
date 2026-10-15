@@ -700,7 +700,8 @@ pub(crate) unsafe fn poll(
         | Operation::TimerClose
         | Operation::TimerCancel
         | Operation::TimerStatus
-        | Operation::TimerStart => super::timers::poll(arena, frame, &registry, op)?,
+        | Operation::TimerStart
+        | Operation::TimerStartValues => super::timers::poll(arena, frame, &registry, op)?,
         Operation::DirectoryCreate
         | Operation::DirectoryHandle
         | Operation::DirectoryClose

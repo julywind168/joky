@@ -7454,6 +7454,29 @@ fn main() @suspends {{
             }
         }
 
+        let timer_work = Workspace::new();
+        timer_work.write("timer_bound.jk",&format!(r#"import joky/domain import joky/check import joky/task
+{definitions}
+struct State {{n:Int32}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+fn read(s:&State)->Int32 {{s.n}}
+fn tick(s:&mut State,p:{ty}) {{let message="timer bounds" check.assert({assertion},&message) s.n=s.n+1}}
+fn main() @suspends {{
+    let o=domain.create(make,0) let timer=domain.timer() let t=timer.handle()
+    domain.after(t,o.handle(),0,tick,{value}).unwrap()
+    while match t.status() {{Active=>true,_=>false}} {{task.yield_now()}}
+    let message="timer completion" check.assert(domain.read_from(o.read_handle(),read).unwrap()==1,&message)
+    domain.every(t,o.handle(),100000,tick,{value}).unwrap() t.cancel()
+}}"#));
+        if accepted {
+            timer_work.assert_all_backends("timer_bound.jk", &[], b"", 0);
+        } else {
+            failure(
+                &timer_work.cli(&["build", "timer_bound.jk"]),
+                "bounded pure-value input",
+            );
+        }
+
         for (projection, body) in [
             ("fn project(a:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_from(a.read_handle(),project) let p=saved.value()"),
             ("fn project(a:&State,b:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let p=saved.value()"),
@@ -8035,6 +8058,124 @@ fn main() @suspends {{
     assert(vm.close(h)==0)
 }}"#));
             work.assert_all_backends("request_reload.jk", &[], b"", 0);
+        }
+    }
+}
+
+#[test]
+fn domain_timer_values_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "timer_values.jk",
+        include_str!("fixtures/domain_timer_values.jk"),
+    );
+    work.assert_all_backends("timer_values.jk", &[], b"", 0);
+}
+
+#[test]
+fn domain_timer_values_reject_invalid_inputs_and_effects() {
+    let work = Workspace::new();
+    for (decl, ty, value, body, effect) in [
+        ("struct P{text:String}", "P", "P{text:\"owned\"}", "", ""),
+        ("struct P<T>{n:T}", "P<Int32>", "P{n:1}", "", ""),
+        ("enum P{Some(Int32)}", "P", "P.Some(1)", "", ""),
+        ("", "(Int32,Int32)", "(1,2)", "", ""),
+        (
+            "struct P{n:Int32}",
+            "P",
+            "P{n:1}",
+            "task.yield_now()",
+            "@suspends",
+        ),
+        (
+            "struct P{n:Int32}",
+            "P",
+            "P{n:1}",
+            "let text=\"timer\" io.print(&text)",
+            "",
+        ),
+    ] {
+        work.write("rejected_timer.jk",&format!(r#"import joky/domain import joky/task import joky/io
+{decl}
+struct State {{n:Int32}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+fn tick(s:&mut State,p:{ty}) {effect} {{{body}}}
+fn main() @suspends {{let o=domain.create(make,0) let t=domain.timer() domain.after(t.handle(),o.handle(),0,tick,{value});}}"#));
+        let output = work.cli(&["build", "rejected_timer.jk"]);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !error.contains("panicked") && !error.contains("[parse"),
+            "{error}"
+        );
+    }
+    work.write("generic_timer_effect.jk",r#"import joky/domain import joky/io
+struct State {n:Int32} struct P {n:Int32}
+fn make(n:Int32)->State {State{n:n}}
+fn tick<T>(s:&mut State,p:T) {let text="timer" io.print(&text)}
+fn arm<T>(t:domain.TimerHandle,h:domain.WriteHandle<State>,p:T) @suspends {domain.after(t,h,0,tick::<T>,p);}
+fn main() @suspends {let o=domain.create(make,0) let t=domain.timer() arm(t.handle(),o.handle(),P{n:1});}
+"#);
+    failure(
+        &work.cli(&["build", "generic_timer_effect.jk"]),
+        "Domain operation must be a proved",
+    );
+}
+
+#[test]
+fn domain_timer_values_script_calls_rebind_and_reject_changed_fields() {
+    let template = r#"import joky/domain import joky/task import joky/check
+struct Room {value:Int32}
+struct Payload {pub step:Int32,tag:UInt64}
+fn make(value:Int32)->Room {Room{value:value}}
+fn read(room:&Room)->Int32 {room.value}
+fn tick(room:&mut Room,p:Payload) {room.value=room.value+p.step}
+fn assert(ok:Bool) {let message="timer record publication" check.assert(ok,&message)}
+fn hold(t:domain.TimerHandle) @suspends {
+    let room=domain.create(make,10) let h=room.handle()
+    var p=Payload{step:2,tag:18446744073709551615}
+    assert(domain.after(t,h,100000,tick,p).is_ok())
+    while match t.status(){Active=>true,_=>false} {task.yield_now()}
+    assert(match t.status(){Cancelled=>true,_=>false})
+    let result=domain.after(t,h,0,tick,p)
+    p.step=99
+    if INCOMPATIBLE {
+        assert(match result {Err(InvalidAccess)=>true,_=>false})
+        assert(domain.read_from(room.read_handle(),read).unwrap()==10)
+    } else {
+        assert(result.is_ok())
+        while match t.status(){Active=>true,_=>false} {task.yield_now()}
+        assert(match t.status(){Completed=>true,_=>false})
+        assert(domain.read_from(room.read_handle(),read).unwrap()==30)
+    }
+}"#;
+    for incompatible in [false, true] {
+        let source = template.replace("INCOMPATIBLE", if incompatible { "true" } else { "false" });
+        let next = source.replace("room.value+p.step", "room.value+p.step*10");
+        let next = if incompatible {
+            next.replace("pub step:Int32", "step:Int32")
+        } else {
+            next
+        };
+        let source = source.replace('{', "{{").replace('}', "}}");
+        let next = next.replace('{', "{{").replace('}', "}}");
+        for create in ["new", "interpreter"] {
+            let work = Workspace::new();
+            work.write("timer_reload.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+fn assert(ok:Bool) {{let message="timer host" check.assert(ok,&message)}}
+fn control(h:&vm.Vm,t:domain.TimerHandle) @suspends {{
+    while match t.status(){{Idle=>true,_=>false}} {{task.yield_now()}}
+    let next={next:?} assert(vm.load_source(h,&next)==0) assert(vm.publish_domain_code(h)==1) t.cancel()
+}}
+fn main() @suspends {{
+    let timer=domain.timer() let t=timer.handle()
+    let h=vm.Vm.{create}() let source={source:?}
+    assert(vm.load_source(h,&source)==0)
+    parallel {{ | h.call::<domain.TimerHandle,Unit>("hold",t) | control(&h,t) }};
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
+}}"#));
+            work.assert_all_backends("timer_reload.jk", &[], b"", 0);
         }
     }
 }

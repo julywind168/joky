@@ -102,13 +102,16 @@ impl FunctionPlan {
             if target.suspends
                 || target.signature.params.len() != 2
                 || !matches!(&target.signature.params[0], Type::Reference(r) if r.mutable)
-                || !scalar(&target.signature.params[1])
+                || !(scalar(&target.signature.params[1])
+                    || crate::core::script::schema(&target.signature.params[1]).is_some())
                 || target.signature.ret != Type::Unit
             {
                 return Err(type_error(&span, ErrorCode::InvalidCall,
-                    "Timer requires a synchronous mutable domain operation with scalar input and Unit result"));
+                    "Timer requires a synchronous mutable domain operation with bounded pure-value input (64 fields, 8 record levels) and Unit result"));
             }
-            self.domain_calls.push((operation.clone(), args[3].span()));
+            if !checking {
+                self.domain_calls.push((operation.clone(), args[3].span()));
+            }
             let module = self.slot(crate::runtime::domain::module_type())?;
             self.emit(Op::DomainModule(module.clone()));
             let Flow::Value(text) = self.expr(
@@ -124,37 +127,72 @@ impl FunctionPlan {
             else {
                 unreachable!()
             };
-            let input = self.pack_domain_scalar(values[4].clone())?;
+            let value_input = checking || !scalar(&target.signature.params[1]);
             let flag = self.slot(Type::Bool)?;
             self.emit(Op::Literal(flag.clone(), Constant::Bool(*periodic)));
-            let name = functions
-                .iter()
-                .find(|(_, f)| matches!(f.compiler_intrinsic, Some(TimerFinish)))
-                .map(|(name, _)| name.clone())
-                .ok_or_else(|| {
-                    type_error(&span, ErrorCode::InvalidCall, "Missing timer adapter")
-                })?;
+            let name = if value_input {
+                let mut context = self.generics.borrow_mut();
+                let name = context
+                    .templates
+                    .iter()
+                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(TimerValueFinish)))
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| {
+                        type_error(&span, ErrorCode::InvalidCall, "Missing timer value adapter")
+                    })?;
+                context.instantiate(
+                    &name,
+                    vec![target.signature.params[1].clone()],
+                    crate::FunctionSignature::new(
+                        vec![
+                            crate::runtime::domain::module_type(),
+                            Type::UInt64,
+                            crate::runtime::domain::handle_type(),
+                            Type::Int32,
+                            Type::String,
+                            target.signature.params[1].clone(),
+                            Type::Bool,
+                        ],
+                        info.signature.ret.clone(),
+                    ),
+                    self.instantiation_depth + 1,
+                    span,
+                )?
+            } else {
+                functions
+                    .iter()
+                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(TimerFinish)))
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| {
+                        type_error(&span, ErrorCode::InvalidCall, "Missing timer adapter")
+                    })?
+            };
+            let mut captures = vec![
+                Some(module),
+                Some(Slot {
+                    index: values[0].as_ref().unwrap().index,
+                    ty: Type::UInt64,
+                }),
+                Some(Slot {
+                    index: values[1].as_ref().unwrap().index,
+                    ty: crate::runtime::domain::handle_type(),
+                }),
+                values[2].clone(),
+                text,
+            ];
+            if value_input {
+                captures.extend_from_slice(&values[4..]);
+            } else {
+                captures.push(Some(self.pack_domain_scalar(values[4].clone())?));
+            }
+            captures.push(Some(flag));
             let result = self.slot(info.signature.ret.clone())?;
             let state = self.state_count;
             self.state_count += 1;
             self.emit(Op::Call {
                 indirect: None,
                 name,
-                args: vec![
-                    Some(module),
-                    Some(Slot {
-                        index: values[0].as_ref().unwrap().index,
-                        ty: Type::UInt64,
-                    }),
-                    Some(Slot {
-                        index: values[1].as_ref().unwrap().index,
-                        ty: crate::runtime::domain::handle_type(),
-                    }),
-                    values[2].clone(),
-                    text,
-                    Some(input),
-                    Some(flag),
-                ],
+                args: captures,
                 result: Some(result.clone()),
                 state: Some(state),
             });

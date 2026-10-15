@@ -2801,7 +2801,7 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 | `snapshot_from` | 受检拥有图 | 投影结果支持标量／纯值记录 |
 | `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果和候选构造输入均支持标量／纯值记录 |
 | `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果支持标量／纯值记录 |
-| `after/every` | 所属域沿用单域根资格 | 操作输入为标量，结果为 Unit |
+| `after/every` | 所属域沿用单域根资格 | 操作输入支持标量／纯值记录，结果为 Unit |
 | `lookup::<S>/lookup_write::<S>` | 受检拥有图 | 显式指定状态类型，无投影参数 |
 
 | RequestError | 含义 |
@@ -2915,7 +2915,8 @@ fn main() @suspends {
 返回 `RequestError.ResourceLimit`。可执行示例见
 [state_domain_request_values.jk](../tests/fixtures/state_domain_request_values.jk)。
 
-这些载荷扩展尚未加入 `when`。Timer 输入仍限标量；Rust `InstanceValue` 公共入口也保持标量。
+Timer 的输入也支持上述纯值记录契约，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
+这些载荷扩展尚未加入 `when`；Rust `InstanceValue` 公共入口保持标量。
 
 ### 纯值投影快照
 
@@ -3254,7 +3255,7 @@ DirectoryHandle 允许持有者修改整个目录，宜按业务权限拆分目�
 
 `Timer` 唯一拥有一个执行器内定时器，`TimerHandle` 是可复制、不保活所有者的平面记录。
 AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只捕获目标域、具名入口、受检
-签名及标量输入，不捕获闭包、域根或 Script 模块。所有者退出作用域即取消。
+签名及标量／有界纯值记录输入，不捕获闭包、域根或 Script 模块。所有者退出作用域即取消。
 
 | API（均为 `@suspends`） | 行为 |
 | --- | --- |
@@ -3266,8 +3267,10 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 | `TimerHandle.cancel(self)` | 取消尚未开始的调用，Active 变为 Cancelled；其他终态不变 |
 | `TimerHandle.status(self) -> TimerStatus` | 观察 Idle / Active / Completed / Cancelled / Closed / InvalidAccess / ResourceLimit / Failed |
 
-操作必须是编译器受检的同步域写入口，A 为标量，结果为 Unit；不允许宿主调用、闭包或挂起。
-输入值每次原样传入，不自动计算实际经过时间。业务需要 dt 时自行选择固定步长或显式建模时间。
+操作必须是编译器受检的同步域写入口，A 支持标量和上述 64 字段／8 层纯值记录，结果为 Unit；
+不允许宿主调用、闭包或挂起。空记录与嵌套 Unit 也遵循同一资格及计数限制。
+输入表达式只求值一次，登记时逐值复制，之后修改调用方记录不会影响定时器。
+每次调用使用同一份保存值，不保留操作内对输入副本的修改，也不自动计算实际经过时间。业务需要 dt 时自行选择固定步长或显式建模时间。
 时钟是登记所在执行器的单调 Clock：普通运行使用真实单调时间，嵌入宿主可用模拟时钟控制暂停。
 不提供每个定时器单独选择时钟、持久化、重启恢复或 `#every` 语法糖。
 
@@ -3287,7 +3290,11 @@ TimerError 包含 Closed、Busy、InvalidDelay、InvalidAccess、ResourceLimit�
 
 Timer 登记/取消即时生效，不参与候选事务。tick 是普通短域写操作，不自动附带出站消息；
 需要状态与消息一起发布时，业务仍须通过候选与出站信箱提交。执行器 task 数、共享状态预算和
-每次到期的请求数/字节额度共同约束资源。完整示例见[定时器测试](../tests/fixtures/domain_timers.jk)。
+每次到期的请求数/字节额度共同约束资源。保存的记录位槽计入共享状态预算，排队副本另计入请求字节额度；
+完成、取消、关闭和失败均释放保存值与排队副本。调用方值包分配失败沿任务错误通道传播，
+登记预算不足返回 `TimerError.ResourceLimit`，到期时请求准入不足则终止为 `TimerStatus.ResourceLimit`。
+完整示例见[标量定时器测试](../tests/fixtures/domain_timers.jk)和
+[记录定时器测试](../tests/fixtures/domain_timer_values.jk)。
 
 ## 提交式出站信箱 `joky/outbox`
 

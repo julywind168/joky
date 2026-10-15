@@ -116,6 +116,14 @@ pub(super) fn invalidate_schema(registry: &Rc<RefCell<Domains>>, timers: Vec<Rc<
         cancel(registry, &state, Status::InvalidAccess);
     }
 }
+enum Input {
+    Scalar(u64),
+    Values(Vec<u64>),
+}
+enum Payload {
+    Scalar(InstanceValue),
+    Values(Vec<u64>),
+}
 struct Worker {
     registry: Weak<RefCell<Domains>>,
     state: Rc<RefCell<State>>,
@@ -123,7 +131,7 @@ struct Worker {
     target: DomainHandle,
     name: String,
     signature: crate::FunctionSignature,
-    input: InstanceValue,
+    input: Payload,
     limits: InterpreterLimits,
     due: Instant,
     period: Option<Duration>,
@@ -193,13 +201,18 @@ impl Worker {
                 return Err(Status::InvalidAccess);
             }
         }
-        let request = submit(
-            &registry,
-            self.target,
-            &self.name,
-            std::slice::from_ref(&self.input),
-            self.limits,
-        )
+        let request = match &self.input {
+            Payload::Scalar(input) => submit(
+                &registry,
+                self.target,
+                &self.name,
+                std::slice::from_ref(input),
+                self.limits,
+            ),
+            Payload::Values(words) => {
+                submit_values(&registry, self.target, &self.name, words, self.limits)
+            }
+        }
         .map_err(|e| status_error(&e))?;
         request
             .register_current_wait()
@@ -208,6 +221,39 @@ impl Worker {
         Ok(None)
     }
 }
+// Keep only signature metadata and lanes in the FIFO, so queued timers do not
+// retain the module that happened to be current when they became due.
+fn submit_values(
+    registry: &Rc<RefCell<Domains>>,
+    target: DomainHandle,
+    method: &str,
+    input: &[u64],
+    limits: InterpreterLimits,
+) -> Result<DomainRequest, Error> {
+    let domains = registry.borrow();
+    let domain = domains.get(target)?;
+    let info = domain.module.instance_info(method)?;
+    if !target.writable || !matches_contract(&info, &info.signature, &domain.ty) {
+        return Err(error(ErrorCode::InvalidCall, "Invalid timer value entry"));
+    }
+    let mut words = Vec::new();
+    words
+        .try_reserve_exact(input.len() + 1)
+        .map_err(|_| limited("Timer input allocation failed"))?;
+    words.push(0);
+    words.extend_from_slice(input);
+    let extra = words.len() * std::mem::size_of::<u64>() + method.len();
+    let work = Work::Turn {
+        method: method.to_owned(),
+        info,
+        code: domain.code,
+        words,
+        limits,
+    };
+    drop(domains);
+    enqueue(registry, target.sequence, work, extra)
+}
+
 fn target_status(domains: &Domains, target: DomainHandle) -> Status {
     if domains
         .entries
@@ -230,8 +276,12 @@ fn status_error(error: &Error) -> Status {
 }
 fn matches_contract(info: &FunctionInfo, signature: &crate::FunctionSignature, ty: &Type) -> bool {
     info.domain_entry
-        && !info.suspends
-        && instance::receiver(info).is_some_and(|receiver| code::compatible(receiver, ty))
+        && crate::core::state_domain::value_eligible(info)
+        && info.signature.params.len() == 2
+        && info.signature.ret == Type::Unit
+        && info.signature.params[0]
+            .reference_type()
+            .is_some_and(|r| r.mutable && code::compatible(&r.target, ty))
         && info.signature.params.len() == signature.params.len()
         && info
             .signature
@@ -298,7 +348,7 @@ struct Schedule<'a> {
     target: DomainHandle,
     module: &'a LoadedModule,
     name: &'a str,
-    input: u64,
+    input: Input,
     milliseconds: i32,
     periodic: bool,
     limits: InterpreterLimits,
@@ -333,7 +383,31 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
     if !schedule.target.writable || info.signature.ret != Type::Unit {
         return Err(4);
     }
-    let input = source::turn_arguments(&info, Some(schedule.input), true).map_err(|_| 4u64)?;
+    let input = match schedule.input {
+        Input::Scalar(bits) => {
+            Payload::Scalar(source::turn_arguments(&info, Some(bits), true).map_err(|_| 4u64)?[0])
+        }
+        Input::Values(words) => {
+            if !crate::core::state_domain::value_eligible(&info)
+                || info.signature.params.len() != 2
+                || info.signature.params[0]
+                    .reference_type()
+                    .is_none_or(|r| !r.mutable)
+            {
+                return Err(4);
+            }
+            let mut words =
+                values::result_words(&info.signature.params[1], words).map_err(|_| 4u64)?;
+            if info.signature.params[1] == Type::Unit {
+                words.push(0);
+            }
+            Payload::Values(words)
+        }
+    };
+    let input_bytes = match &input {
+        Payload::Scalar(_) => 0,
+        Payload::Values(words) => words.capacity() * std::mem::size_of::<u64>(),
+    };
     let charge = {
         let mut domains = registry.borrow_mut();
         let domain = domains.get(schedule.target).map_err(|_| 1u64)?;
@@ -344,7 +418,8 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
         if !info.domain_entry || !matches_contract(&current, &info.signature, &domain.ty) {
             return Err(4);
         }
-        let bytes = std::mem::size_of::<Worker>()
+        let bytes = input_bytes
+            + std::mem::size_of::<Worker>()
             + std::mem::size_of::<CpsFrame>()
             + schedule.name.len()
             + info.signature.params.len() * std::mem::size_of::<Type>();
@@ -367,7 +442,7 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
         target: schedule.target,
         name: schedule.name.into(),
         signature: info.signature,
-        input: input[0],
+        input,
         limits: schedule.limits,
         due,
         period: schedule.periodic.then_some(delay),
@@ -432,12 +507,35 @@ pub(super) unsafe fn poll(
         Operation::TimerStatus => {
             Ok(state(registry, slots[0]).map_or(Status::Closed, |s| s.borrow().status) as u64)
         }
-        Operation::TimerStart => {
+        Operation::TimerStart | Operation::TimerStartValues => {
             let Ok(target) = source::handle(registry, slots[2]) else {
                 return Ok(1);
             };
             let (module, _) = source::module(registry, slots[0])?;
             let name = crate::runtime::owned_text::borrow(slots[4] as *const Buffer)?;
+            let input = if op == Operation::TimerStartValues {
+                let info = module.instance_info(name)?;
+                if !info.domain_entry
+                    || !crate::core::state_domain::value_eligible(&info)
+                    || info.signature.params.len() != 2
+                    || info.signature.ret != Type::Unit
+                {
+                    return Ok(4);
+                }
+                let packet = &*(slots[5] as *const Buffer);
+                match values::input_words(&info.signature.params[1..], packet) {
+                    Ok(words) => Input::Values(words),
+                    Err(error) => {
+                        return Ok(if error.code() == ErrorCode::ResourceLimit {
+                            5
+                        } else {
+                            4
+                        })
+                    }
+                }
+            } else {
+                Input::Scalar(slots[5])
+            };
             Ok(start(
                 registry,
                 slots[1],
@@ -445,7 +543,7 @@ pub(super) unsafe fn poll(
                     target,
                     module: &module,
                     name,
-                    input: slots[5],
+                    input,
                     milliseconds: slots[3] as i32,
                     periodic: slots[6] != 0,
                     limits: crate::runtime::suspension::current_limits(),

@@ -84,6 +84,7 @@ pub(crate) enum Operation {
     SnapshotReadValues,
     SetReadValues,
     RequestValues,
+    TimerStartValues,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +121,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__timer_cancel" => Operation::TimerCancel,
         "__timer_status" => Operation::TimerStatus,
         "__timer_start" => Operation::TimerStart,
+        "__timer_start_values" => Operation::TimerStartValues,
         "__directory_create" => Operation::DirectoryCreate,
         "__directory_handle" => Operation::DirectoryHandle,
         "__directory_close" => Operation::DirectoryClose,
@@ -290,6 +292,18 @@ impl Operation {
             ),
             Self::TimerClose | Self::TimerCancel => (vec![i], Type::Unit),
             Self::TimerStatus => (vec![i], Type::Int32),
+            Self::TimerStartValues => (
+                vec![
+                    m,
+                    i,
+                    token,
+                    Type::Int32,
+                    text,
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), false),
+                    Type::Bool,
+                ],
+                Type::Int32,
+            ),
             Self::TimerStart => (
                 vec![m, i.clone(), token, Type::Int32, text, i, Type::Bool],
                 Type::Int32,
@@ -618,6 +632,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         79 => Operation::SnapshotReadValues,
         80 => Operation::SetReadValues,
         81 => Operation::RequestValues,
+        82 => Operation::TimerStartValues,
 
         _ => {
             super::error::record_error(Error::new_with_code(
