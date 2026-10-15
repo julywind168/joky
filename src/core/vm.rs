@@ -29,7 +29,6 @@ pub(crate) const NAMES: &[&str] = &[
     "__vm_call_float64_0",
     "__vm_call_float64_1",
     "__vm_call_float64_2",
-    "__vm_call_async_int32",
 ];
 
 pub(crate) fn binding(name: &str) -> Option<BindingSpec> {
@@ -99,10 +98,6 @@ pub(crate) fn binding(name: &str) -> Option<BindingSpec> {
             params.extend(std::iter::repeat_n(ret.clone(), arity as usize));
             "_v2"
         }
-        "call_async_int32" => {
-            params.extend([Type::String, Type::Int32]);
-            "_v2"
-        }
         _ => return None,
     };
     let symbol = match operation {
@@ -110,7 +105,23 @@ pub(crate) fn binding(name: &str) -> Option<BindingSpec> {
         "error_code" | "print_error" => format!("joky_vm_{operation}"),
         _ => format!("__joky_vm_managed_{operation}{suffix}"),
     };
-    let mut spec = BindingSpec::with_symbol(name, FunctionSignature::new(params, ret), symbol);
-    spec.suspends = operation == "call_async_int32";
-    Some(spec)
+    Some(BindingSpec::with_symbol(
+        name,
+        FunctionSignature::new(params, ret),
+        symbol,
+    ))
+}
+
+/// The typed VM bridge uses owned text and a caller-owned packet, not host text views.
+pub(crate) fn call_signature() -> FunctionSignature {
+    FunctionSignature::new(
+        vec![
+            Type::reference(Type::Resource("vm.Owner".into()), false),
+            Type::String,
+            Type::String,
+            Type::String,
+            Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+        ],
+        Type::Unit,
+    )
 }

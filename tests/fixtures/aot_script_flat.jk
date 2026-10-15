@@ -1,5 +1,4 @@
 import joky/vm
-import joky/script
 import joky/check
 fn assert(ok: Bool) { let message = "Script flat contracts" check.assert(ok, &message) }
 struct Input { high: UInt64, low: Int8, flag: Bool, rune: Rune, unit: Unit }
@@ -14,15 +13,15 @@ fn main() @suspends {
     let input = Input { high: 18446744073709551615, low: -128, flag: true, rune: '中', unit: {} }
     let reply = h.call::<Input, Reply>("run", input)
     assert(reply.high == 18446744073709551615 && reply.low == -128 && reply.flag && reply.rune == '中' && reply.scale == 0.5)
-    script.call::<Unit, Unit>(&h, "empty", {})
-    assert(script.call::<Int64, Int64>(&h, "scalar", -9223372036854775808) == -9223372036854775808)
-    let widths = script.call::<Widths, Widths>(&h, "widths", Widths { a:255, b:65535, c:4294967295, d:-32768, e:-2147483648, f:0.25 })
+    h.call::<Unit, Unit>("empty", {})
+    assert(h.call::<Int64, Int64>("scalar", -9223372036854775808) == -9223372036854775808)
+    let widths = h.call::<Widths, Widths>("widths", Widths { a:255, b:65535, c:4294967295, d:-32768, e:-2147483648, f:0.25 })
     assert(widths.a == 255 && widths.b == 65535 && widths.c == 4294967295 && widths.d == -32768 && widths.e == -2147483648 && widths.f == 0.25)
-    script.call::<Empty, Empty>(&h, "zero", Empty {})
-    assert(script.call::<Float32, Float32>(&h, "float", -0.25) == -0.25)
+    h.call::<Empty, Empty>("zero", Empty {})
+    assert(h.call::<Float32, Float32>("float", -0.25) == -0.25)
     let invalid = "fn broken("
     assert(vm.load_source(h, &invalid) == 1)
-    assert(script.call::<Int64, Int64>(&h, "scalar", 42) == 42)
+    assert(h.call::<Int64, Int64>("scalar", 42) == 42)
     assert(h.close() == 0)
     println("Script flat contracts ok")
 }

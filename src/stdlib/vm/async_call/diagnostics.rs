@@ -115,7 +115,7 @@ fn main() @suspends ->Int32 {{
     let h=vm.Vm.{create}()
     let source={escaped:?}
     vm.load_source(h,&source)
-    vm.call_async_int32(&h,"work",1)
+    h.call::<Int32, Int32>("work",1)
 }}"#
             ))
             .unwrap();

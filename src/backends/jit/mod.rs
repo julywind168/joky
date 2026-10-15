@@ -119,6 +119,10 @@ pub(crate) fn compile(
             "__joky_dns_poll",
             crate::runtime::dns::poll_native as *const u8,
         )])
+        .chain([(
+            "__joky_vm_call",
+            crate::stdlib::call_poll_native as *const u8,
+        )])
         .chain(crate::runtime::float_env::symbols())
         .chain([(
             "__joky_domain_poll_v2",

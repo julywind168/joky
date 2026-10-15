@@ -696,6 +696,7 @@ impl VmEngine {
                     f.ret_ty.clone(),
                 );
                 let entry = match builtin {
+                    Builtin::VmCall => HostEntry::VmCall,
                     Builtin::Domain(op) => HostEntry::Domain(*op),
                     Builtin::Tcp(op) => HostEntry::Tcp(*op),
                     Builtin::Dns => {
@@ -809,7 +810,7 @@ impl VmEngine {
             }
             let mut symbol = symbol.to_owned();
             let entry_ptr = match &host.entry {
-                HostEntry::Domain(_) | HostEntry::Tcp(_) | HostEntry::Dns => {
+                HostEntry::Domain(_) | HostEntry::Tcp(_) | HostEntry::Dns | HostEntry::VmCall => {
                     unreachable!("Network runtime adapter")
                 }
                 HostEntry::Direct(ptr) | HostEntry::C(ptr) => {
@@ -930,6 +931,7 @@ impl VmEngine {
         }
         if name.starts_with("__joky_dns_")
             || name.starts_with("joky_dns_")
+            || name.starts_with("__joky_vm_")
             || name.starts_with("__joky_resource_")
             || name.starts_with("joky_byte_request_")
             || name.starts_with("__joky_text_ffi_")
@@ -1557,32 +1559,7 @@ impl VmEngine {
         })
     }
 
-    pub(crate) fn prepare_script_int32(
-        &self,
-        name: &str,
-        input: i32,
-    ) -> Result<Continuation, Error> {
-        let module = self
-            .current
-            .as_ref()
-            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?;
-        let info = match module {
-            LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
-            LoadedModule::Interpreter(module) => interp::function_info(module, name),
-        }
-        .ok_or_else(|| {
-            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
-        })?;
-        if info.signature.ret != Type::Int32 {
-            return Err(runtime_error(
-                ErrorCode::InvalidCall,
-                "Script async entry must return Int32",
-            ));
-        }
-        self.prepare_async(name, &[super::InstanceValue::Int32(input)])
-    }
-
-    pub(crate) fn prepare_script_flat(
+    pub(crate) fn prepare_script_call(
         &self,
         name: &str,
         input_schema: &str,

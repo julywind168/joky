@@ -305,14 +305,14 @@ API 与状态机见[语言参考](language.md#定时域调用-jokydomain)，所�
 - 入口参数与结果先限定为标量和平面记录，拥有型载荷随域根类型扩展逐类开放。
   不接受裸指针、私有根引用、闭包或跨模块挂起的借用。
 - HR2 标量探针复用 `joky/vm`，已把异步调用和按 Script 模块归属的发布接入同一执行器；
-  类型化入口契约与平面记录桥接现由 `joky/script.call<A, R>` 提供。
+  类型化入口契约与平面记录桥接现由 `Vm.call<A, R>` 提供。
 - HR2 先做标量异步探针：AOT 启动 Script 流程，流程挂起时另一任务继续推进，加载并发布 v2，
   旧流程按原代码恢复后通过兼容的具名域操作调用新实现。取消与结果清理也必须跨边界闭合。
   此探针不依赖 HR1 的复杂拥有类型，应在 HR0 安全补齐后优先验证。
 
 ### 6.1 HR2 标量异步探针（已实现）
 
-已提供 `vm.call_async_int32(handle, name: String, input: Int32) @suspends -> Int32`，
+已提供 `handle.call::<Int32, Int32>(name, input) @suspends -> Int32`，
 目标必须是 `fn(Int32) @suspends -> Int32`；名称按值传入，目标签名在执行用户代码前校验。
 `vm.publish_domain_code(handle)` 在该句柄绑定的当前执行器上发布，只选取该句柄所加载模块
 拥有的域，返回切换数量，失败返回 -1。详细错误约定见[语言参考](language.md#内置标准库-jokyvm)。
@@ -338,11 +338,11 @@ AOT 分别调用两种 Script 后端；AOT 在删除源码、清空 PATH 后仍�
 
 ### 6.2 HR2 类型化入口（已实现）
 
-`joky/script.call<A, R>(handle, name, input) @suspends -> R` 提供一个输入和一个结果的
+`handle.call::<A, R>(name, input) @suspends -> R` 提供一个输入和一个结果的
 稳定入口；HR2 首先支持标量与平面记录，HR7 联合验收扩展为有界嵌套纯值记录，
 整棵树最多 64 个字段、8 层记录，包括 Unit 和空记录。
 当前业务可使用 AOT 侧声明的请求/响应记录调用 Script 中同名同字段契约，不依赖两次编译
-产生相同的内部类型 ID。完整支持范围和用法见[语言参考](language.md#类型化-script-入口-jokyscript)。
+产生相同的内部类型 ID。完整支持范围和用法见[语言参考](language.md#类型化-script-调用-vmcalla-r)。
 
 调用方先检查类型资格，运行时再比较目标的挂起属性、参数数量和输入/输出 schema；记录名、
 字段名、顺序、类型、可见性及 repr(C) 属性均参与校验。缺失或不兼容入口在执行任何目标
@@ -551,7 +551,7 @@ Script 持有 Room、Ledger 和 Clock 三个域；每个请求联合读取前两
 组合 Context 所需的嵌套纯值契约沿用现有逐槽复制与清理链，不放宽拥有载荷或引用边界。
 补充用例验证整数边界、浮点位模式、Unit/空记录、嵌套名称／字段顺序／类型不匹配，
 以及总字段数 64/65、记录深度 8/9 和零数据槽树的限制。完整规则见
-[语言参考](language.md#类型化-script-入口-jokyscript)。
+[语言参考](language.md#类型化-script-调用-vmcalla-r)。
 
 2026-10-14 验证通过：针对性联合功能、生命周期及嵌套契约测试；默认 Debug
 `./scripts/check.sh`（格式、Clippy、1325 项库测试、218 项 CLI 测试、19＋23 项模块测试，

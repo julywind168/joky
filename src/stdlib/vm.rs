@@ -264,9 +264,9 @@ mod tests;
 mod async_call;
 pub(super) mod managed;
 pub(crate) use async_call::{
-    begin_migration, begin_migration_batch, cancel_migration, domain_schema, module_count,
-    prepare_migration, print_modules, publish_domain_code, publish_migration, script_poll,
-    stage_migration, step_migration,
+    begin_migration, begin_migration_batch, call_poll, call_poll_native, cancel_migration,
+    domain_schema, module_count, prepare_migration, print_modules, publish_domain_code,
+    publish_migration, stage_migration, step_migration,
 };
 
 #[cfg(test)]

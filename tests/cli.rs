@@ -5507,7 +5507,7 @@ fn checked_runtime_bindings_compose_in_all_backends() {
             let source = "fn next(value: Int32) @suspends -> Int32 {{ value + 1 }}"
             assert(vm.load_source(child, &source) == 0, &message)
             let first = child.call::<Int32, Int32>("next", 40)
-            let second = vm.call_async_int32(&child, "next", first)
+            let second = child.call::<Int32, Int32>("next", first)
             let state = domain.create(make, second)
             assert(domain.read_from(state.read_handle(), read) == 42, &message)
             var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) {
@@ -5530,6 +5530,21 @@ fn checked_runtime_bindings_compose_in_all_backends() {
         "#,
     );
     work.assert_all_backends("bindings.jk", &[], b"42\n", 0);
+}
+
+#[test]
+fn vm_call_rejects_invalid_private_contracts_and_removed_scalar_entry() {
+    let work = Workspace::new();
+    for (source, message) in [
+        ("extern fn __vm_call() @suspends fn main() {}", "VM call requires its exact"),
+        ("fn __vm_call() {} fn main() {}", "VM runtime names require"),
+        ("fn __joky_vm_call() {} fn main() {}", "Reserved runtime function name"),
+        ("import joky/vm fn main() @suspends { let h = vm.Vm.new() vm.call_async_int32(&h, \"run\", 0) }", "Undeclared function"),
+    ] {
+        work.write("invalid_vm_call.jk", source);
+        failure(&work.cli(&["build", "invalid_vm_call.jk"]), message);
+        assert!(!work.path().join("invalid_vm_call").exists());
+    }
 }
 
 #[test]
@@ -6458,22 +6473,6 @@ fn script_flat_bridge_runs_in_all_host_and_script_backends() {
 }
 
 #[test]
-#[cfg(unix)]
-fn script_flat_bridge_preserves_reload_and_cancellation_in_all_backends() {
-    let work = Workspace::new();
-    let source = include_str!("fixtures/aot_script_scalar.jk")
-        .replace("import joky/vm", "import joky/vm\nimport joky/script")
-        .replace("vm.call_async_int32", "script.call::<Int32, Int32>");
-    for source in [
-        source.clone(),
-        source.replace("vm.Vm.interpreter()", "vm.Vm.new()"),
-    ] {
-        work.write("reload.jk", &source);
-        work.assert_all_backends("reload.jk", &[], b"AOT Script scalar probe ok\n", 0);
-    }
-}
-
-#[test]
 fn script_flat_bridge_rejects_unsupported_caller_contracts_before_build() {
     let work = Workspace::new();
     for (definitions, ty, value) in [
@@ -6490,7 +6489,7 @@ fn script_flat_bridge_rejects_unsupported_caller_contracts_before_build() {
             "Input { inner:Inner{n:\"owned\"} }",
         ),
     ] {
-        work.write("rejected.jk", &format!("import joky/vm import joky/script {definitions} fn main() @suspends {{ let h=vm.Vm.new() script.call::<{ty}, Int32>(&h, \"run\", {value}); }}"));
+        work.write("rejected.jk", &format!("import joky/vm {definitions} fn main() @suspends {{ let h=vm.Vm.new() h.call::<{ty}, Int32>(\"run\", {value}); }}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success());
@@ -6518,13 +6517,13 @@ fn script_flat_bridge_enforces_record_field_limit() {
             work.write(
                 "limit.jk",
                 &format!(
-                    r#"import joky/vm import joky/script import joky/check
+                    r#"import joky/vm import joky/check
 {definition}
 fn main() @suspends {{
     let h=vm.Vm.{create}()
     let source={target:?}
     vm.load_source(h, &source)
-    let p=script.call::<Packet, Packet>(&h, "run", Packet {{ {values} }})
+    let p=h.call::<Packet, Packet>("run", Packet {{ {values} }})
     let message="packet limit"
     check.assert(p.f63 == 63, &message)
     vm.close(h);
@@ -6578,14 +6577,14 @@ fn send(target:outbox.Handle) @suspends ->Int32 {
 }"#.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("script.jk", &format!(r#"import joky/vm import joky/script import joky/outbox import joky/check
+        work.write("script.jk", &format!(r#"import joky/vm import joky/outbox import joky/check
 fn main() @suspends {{
     var queue=outbox.create(1,1)
     let h=vm.Vm.{create}()
     let source={target:?}
     let message="outbox Script"
     check.assert(vm.load_source(h,&source)==0,&message)
-    check.assert(script.call::<outbox.Handle,Int32>(&h,"send",queue.handle())==1,&message)
+    check.assert(h.call::<outbox.Handle,Int32>("send",queue.handle())==1,&message)
     let next="fn newer()->Int32 {{{{ 2 }}}}"
     check.assert(vm.load_source(h,&next)==0,&message)
     check.assert(vm.close(h)==0,&message)
@@ -6628,19 +6627,19 @@ fn remove(directory:domain.DirectoryHandle) @suspends ->Bool {
     let next = next.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("directory_script.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+        work.write("directory_script.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     let message="directory reload"
     var attempts:Int32=0
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
         attempts=attempts+1 check.assert(attempts<1000,&message) task.yield_now()
     }}
-    check.assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42,&message)
+    check.assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42,&message)
     let next={next:?}
     check.assert(vm.load_source(h,&next)==0,&message)
     check.assert(vm.publish_domain_code(h)==1,&message)
-    check.assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142,&message)
-    check.assert(script.call::<domain.DirectoryHandle,Bool>(h,"remove",directory),&message)
+    check.assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==142,&message)
+    check.assert(h.call::<domain.DirectoryHandle,Bool>("remove",directory),&message)
 }}
 fn main() @suspends {{
     let owner=domain.directory(2)
@@ -6649,8 +6648,8 @@ fn main() @suspends {{
     let source={source:?}
     let message="directory Script"
     check.assert(vm.load_source(h,&source)==0,&message)
-    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
-    check.assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1,&message)
+    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    check.assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1,&message)
     check.assert(vm.close(h)==0,&message)
     owner.close()
     println("directory Script ok")
@@ -6692,7 +6691,10 @@ fn hold(timer:domain.TimerHandle) @suspends {
     let next = next.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("timer_script.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+        work.write(
+            "timer_script.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/task import joky/check
 fn control(h:&vm.Vm,timer:domain.TimerHandle) @suspends {{
     let message="timer publication"
     while match timer.status() {{ Idle=>true,_=>false }} {{ task.yield_now() }}
@@ -6708,12 +6710,14 @@ fn main() @suspends {{
     let source={source:?}
     let message="timer host"
     check.assert(vm.load_source(h,&source)==0,&message)
-    parallel {{ | script.call::<domain.TimerHandle,Unit>(&h,"hold",timer) | control(&h,timer) }};
+    parallel {{ | h.call::<domain.TimerHandle,Unit>("hold",timer) | control(&h,timer) }};
     check.assert(vm.close(h)==0,&message)
     owner.close()
     check.assert(match timer.status() {{ Closed=>true,_=>false }},&message)
 }}
-"#));
+"#
+            ),
+        );
         work.assert_all_backends("timer_script.jk", &[], b"", 0);
     }
 }
@@ -6761,11 +6765,14 @@ fn assert_script_migration(old: &str, next: &str) {
     let next = next.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("migrate.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
+        work.write(
+            "migrate.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/check import joky/task
 fn assert(ok:Bool) {{let message="Script migration" check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts:Int32=0
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
     }}
     let schema=vm.domain_schema(h)
@@ -6777,21 +6784,21 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(vm.prepare_migration(h,schema,&next,&method)==0)
     assert(vm.prepare_migration(h,schema,&next,&method)==1)
     assert(vm.call_int32_0(h,&version)==1)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42)
     assert(vm.cancel_migration(h)==0)
     assert(vm.publish_migration(h)==1)
     assert(vm.prepare_migration(h,schema,&next,&method)==0)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
+    assert(h.call::<domain.DirectoryHandle,Int32>("bump",directory)==45)
     assert(vm.publish_migration(h)==1)
     assert(vm.domain_schema(h)==schema)
     assert(vm.call_int32_0(h,&version)==1)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==45)
     assert(vm.prepare_migration(h,schema,&next,&method)==0)
     task.yield_now()
     assert(vm.publish_migration(h)==0)
     assert(vm.domain_schema(h)!=schema)
     assert(vm.call_int32_0(h,&version)==2)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==46)
 }}
 fn main() @suspends {{
     let owner=domain.directory(1)
@@ -6799,11 +6806,13 @@ fn main() @suspends {{
     let h=vm.Vm.{create}()
     let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
-    assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1)
+    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
-"#));
+"#
+            ),
+        );
         work.assert_all_backends("migrate.jk", &[], b"", 0);
     }
 }
@@ -6818,10 +6827,13 @@ fn script_incremental_migration_yields_conflicts_cancels_and_publishes() {
         .replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("incremental.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
+        work.write(
+            "incremental.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/check import joky/task
 fn assert(ok:Bool) {{let message="incremental migration" check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
     let schema=vm.domain_schema(h)
     let next={next:?} let start="start" let advance="advance" let version="version"
     assert(vm.begin_migration(h,0,&next,&start,&advance)==1)
@@ -6841,7 +6853,7 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(vm.publish_migration(h)==1)
     assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
     assert(vm.step_migration(h,2)==1)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
+    assert(h.call::<domain.DirectoryHandle,Int32>("bump",directory)==45)
     assert(vm.step_migration(h,2)==-1)
     assert(vm.publish_migration(h)==1)
     assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
@@ -6853,24 +6865,26 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
         task.yield_now()
         assert(vm.call_int32_0(h,&version)==1)
         assert(vm.domain_schema(h)==schema)
-        assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
+        assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==45)
         batch=batch+1
     }}
     assert(vm.step_migration(h,2)==0)
     assert(vm.publish_migration(h)==0)
     assert(vm.domain_schema(h)!=schema)
     assert(vm.call_int32_0(h,&version)==2)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==46)
 }}
 fn main() @suspends {{
     let owner=domain.directory(1) let directory=owner.handle()
     let h=vm.Vm.{create}() let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
-    assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1)
+    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
-"#));
+"#
+            ),
+        );
         work.assert_all_backends("incremental.jk", &[], b"", 0);
     }
 }
@@ -6885,10 +6899,10 @@ fn script_migration_batch_is_atomic_across_types_and_read_dependencies() {
         .replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("batch.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+        work.write("batch.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="migration batch" check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
     let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty="" let version="version"
     assert(vm.domain_schema(h)==0)
     assert(vm.begin_migration_batch(h,&next)==0)
@@ -6906,15 +6920,15 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(vm.step_migration(h,2)==1)
     task.yield_now()
     assert(vm.cancel_migration(h)==0)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==191)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==191)
     assert(vm.begin_migration_batch(h,&next)==0)
     assert(vm.stage_migration(h,&start,&advance)==0)
     assert(vm.stage_migration(h,&ledger,&empty)==0)
     assert(vm.step_migration(h,2)==1)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==8)
+    assert(h.call::<domain.DirectoryHandle,Int32>("bump",directory)==8)
     assert(vm.step_migration(h,2)==-1)
     assert(vm.publish_migration(h)==1)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==192)
     assert(vm.begin_migration_batch(h,&next)==0)
     assert(vm.stage_migration(h,&start,&advance)==0)
     assert(vm.stage_migration(h,&ledger,&empty)==0)
@@ -6924,19 +6938,19 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
         assert(vm.error_code()==0)
         task.yield_now()
         assert(vm.call_int32_0(h,&version)==1)
-        assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==192)
+        assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==192)
         batch=batch+1
     }}
     assert(vm.publish_migration(h)==0)
     assert(vm.call_int32_0(h,&version)==2)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==195)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==195)
 }}
 fn main() @suspends {{
     let owner=domain.directory(4) let directory=owner.handle()
     let h=vm.Vm.{create}() let old={old:?}
     assert(vm.load_source(h,&old)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
-    assert(script.call::<domain.DirectoryHandle,Int32>(&h,"probe",directory)==-1)
+    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
 "#));
@@ -6956,22 +6970,22 @@ fn script_multi_domain_late_binding_and_module_diagnostics_run_in_all_backends()
     let new = new.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("late_binding.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+        work.write("late_binding.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="late binding host" check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
     }}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
     // A new caller before publication still runs the first domain's old code.
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42)
     assert(vm.module_count(h)==2)
     assert(vm.publish_domain_code(h)==2)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==142)
     assert(vm.print_modules(h)==2)
-    assert(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
+    assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
 }}
 fn main() @suspends {{
     let h=vm.Vm.{create}()
@@ -6980,7 +6994,7 @@ fn main() @suspends {{
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2)
     let directory=owner.handle()
-    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
     assert(vm.error_code()==0)
@@ -7037,13 +7051,13 @@ fn script_nested_bridge_preserves_lanes_and_rejects_changed_inner_contracts() {
         let work = Workspace::new();
         let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
         let source = format!(
-            r#"import joky/vm import joky/script import joky/check
+            r#"import joky/vm import joky/check
 {definitions}
 fn main() @suspends {{
     let h=vm.Vm.{create}() let source={source}
     let message="nested Script lanes"
     check.assert(vm.load_source(h,&source)==0,&message)
-    let reply=script.call::<Packet,Packet>(&h,"run",{input})
+    let reply=h.call::<Packet,Packet>("run",{input})
     check.assert(reply.bits.high==18446744073709551615 && reply.bits.low == -128 && reply.bits.flag && reply.bits.real.to_bits()==9221120237041090626,&message)
     vm.close(h);
 }}"#,
@@ -7076,8 +7090,8 @@ fn main() @suspends {{
         let result_source = source
             .replace(&quote(&target), &quote(&result_target))
             .replace(
-                &format!("script.call::<Packet,Packet>(&h,\"run\",{input})"),
-                "script.call::<Unit,Packet>(&h,\"result\",{})",
+                &format!("h.call::<Packet,Packet>(\"run\",{input})"),
+                "h.call::<Unit,Packet>(\"result\",{})",
             );
         work.write("result.jk", &result_source);
         for args in [
@@ -7159,12 +7173,12 @@ fn script_nested_bridge_bounds_total_fields_and_depth() {
         work.write(
             "limit.jk",
             &format!(
-                r#"import joky/vm import joky/script import joky/check
+                r#"import joky/vm import joky/check
 {definitions}
 fn main() @suspends {{
     let h=vm.Vm.interpreter() let source={target:?} let message="nested limits"
     check.assert(vm.load_source(h,&source)==0,&message)
-    let p=script.call::<{ty},{ty}>(&h,"run",{value})
+    let p=h.call::<{ty},{ty}>("run",{value})
     check.assert({assertion},&message)
     vm.close(h);
 }}"#
@@ -7201,25 +7215,25 @@ fn domain_value_packets_keep_old_flows_and_bind_new_script_operations_in_all_bac
     let new = new.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("values_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+        work.write("values_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="domain values reload" check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
     }}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42)
     assert(vm.publish_domain_code(h)==2)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142)
-    assert(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==142)
+    assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
 }}
 fn main() @suspends {{
     let h=vm.Vm.{create}() let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2) let directory=owner.handle()
-    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#));

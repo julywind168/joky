@@ -58,10 +58,6 @@ fn vm_bindings() -> Vec<NativeBinding> {
         .map(|&name| {
             let entry = match name {
                 "__vm_create" => HostEntry::ResourceFactory(Rc::new(vm::managed::FACTORY)),
-                "__vm_call_async_int32" => HostEntry::Cps {
-                    entry: vm::managed::call_async_int32,
-                    frame_slots: Some(3),
-                },
                 "__vm_close" => HostEntry::Direct(vm::managed::close as *const u8),
                 "__vm_error_code" => HostEntry::Direct(vm::managed::error_code as *const u8),
                 "__vm_print_error" => HostEntry::Direct(vm::managed::print_error as *const u8),
@@ -252,4 +248,4 @@ pub(crate) fn module_registry() -> Rc<ModuleRegistry> {
     REGISTRY.with(Rc::clone)
 }
 
-pub(crate) use vm::script_poll;
+pub(crate) use vm::{call_poll, call_poll_native};

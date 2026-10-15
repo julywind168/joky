@@ -1,5 +1,4 @@
 import joky/vm
-import joky/script
 import joky/domain
 import joky/outbox
 import joky/task
@@ -11,7 +10,7 @@ fn assert(ok:Bool) {let message="reload server host" check.assert(ok,&message)}
 fn checkpoint(phase:Int32) @suspends {task.yield_now()}
 fn wait_tick(h:&vm.Vm,ctx:Context,version:Int32) @suspends {
     var attempts=0
-    while script.call::<Context,Int32>(h,"tick_version",ctx)!=version {
+    while h.call::<Context,Int32>("tick_version",ctx)!=version {
         attempts=attempts+1 assert(attempts<1000) task.sleep_ms(1)
     }
 }
@@ -55,11 +54,11 @@ fn server(h:&vm.Vm,ctx:Context,stream:TcpReader) @suspends {
             // The same connection still admits a real request while candidates exist.
             let incoming=match stream.read(1) {Ok(b)=>b,Err(_)=>{assert(false) return}}
             assert(incoming.len()==1 && incoming.get(0).unwrap_or(0)==1)
-            assert(script.call::<Context,Int32>(h,"request",ctx)==9)
+            assert(h.call::<Context,Int32>("request",ctx)==9)
             requests=requests+1
             assert(vm.step_migration(h,1)==-1)
             assert(vm.publish_migration(h)==1)
-            assert(script.call::<Context,Int32>(h,"probe",ctx)==9)
+            assert(h.call::<Context,Int32>("probe",ctx)==9)
             stage(h)
             checkpoint(5)
             var status=1 var steps=0
@@ -70,16 +69,16 @@ fn server(h:&vm.Vm,ctx:Context,stream:TcpReader) @suspends {
             }
             assert(status==0 && steps==3)
             assert(vm.publish_migration(h)==0)
-            assert(script.call::<Context,Int32>(h,"probe",ctx)==9)
-            assert(script.call::<Context,Bool>(h,"start_tick",ctx))
+            assert(h.call::<Context,Int32>("probe",ctx)==9)
+            assert(h.call::<Context,Bool>("start_tick",ctx))
             wait_tick(h,ctx,4)
             checkpoint(6)
         } else {assert(command>=1 && command<=5)}
-        assert(script.call::<Context,Int32>(h,"request",ctx)>0)
+        assert(h.call::<Context,Int32>("request",ctx)>0)
         requests=requests+1
     }
     assert(requests==6)
-    assert(script.call::<Context,Int32>(h,"probe",ctx)==17)
+    assert(h.call::<Context,Int32>("probe",ctx)==17)
     ctx.timer.cancel()
 }
 fn peer(stream:TcpStream) @suspends {
@@ -104,10 +103,10 @@ fn peer(stream:TcpStream) @suspends {
 }
 fn connection(h:&vm.Vm,ctx:Context,queue:outbox.Mailbox) @suspends {
     var attempts=0
-    while script.call::<Context,Int32>(h,"probe",ctx)==-1 || script.call::<Context,Int32>(h,"tick_version",ctx)==-1 {
+    while h.call::<Context,Int32>("probe",ctx)==-1 || h.call::<Context,Int32>("tick_version",ctx)==-1 {
         attempts=attempts+1 assert(attempts<1000) task.yield_now()
     }
-    assert(script.call::<Context,Bool>(h,"start_tick",ctx))
+    assert(h.call::<Context,Bool>("start_tick",ctx))
     wait_tick(h,ctx,1)
     var listener=match TcpListener.bind(Address.ipv4(0x7f000001,0)) {Ok(l)=>l,Err(_)=>{assert(false) return}}
     let address=match listener.local_addr() {Ok(a)=>a,Err(_)=>{assert(false) return}}
@@ -124,8 +123,8 @@ fn run() @suspends {
     assert(vm.load_source(h,&old)==0)
     let directory=domain.directory(3) let timer=domain.timer() let queue=outbox.create(4,4)
     let ctx=Context{directory:directory.handle(),output:queue.handle(),timer:timer.handle()}
-    race { | script.call::<Context,Unit>(&h,"hold",ctx) | connection(&h,ctx,queue) };
-    assert(script.call::<Context,Int32>(&h,"probe",ctx)==-1)
+    race { | h.call::<Context,Unit>("hold",ctx) | connection(&h,ctx,queue) };
+    assert(h.call::<Context,Int32>("probe",ctx)==-1)
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
     timer.close() directory.close()

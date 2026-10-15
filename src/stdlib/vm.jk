@@ -58,22 +58,18 @@ extern fn __vm_call_float64_1(owner: &vm.Owner, name: &String, arg0: Float64) ->
 pub fn call_float64_1(value: &Vm, name: &String, arg0: Float64) -> Float64 { __vm_call_float64_1(&value.owner, name, arg0) }
 extern fn __vm_call_float64_2(owner: &vm.Owner, name: &String, arg0: Float64, arg1: Float64) -> Float64
 pub fn call_float64_2(value: &Vm, name: &String, arg0: Float64, arg1: Float64) -> Float64 { __vm_call_float64_2(&value.owner, name, arg0, arg1) }
-extern fn __vm_call_async_int32(owner: &vm.Owner, name: String, input: Int32) @suspends -> Int32
-pub fn call_async_int32(value: &Vm, name: String, input: Int32) @suspends -> Int32 {
-    __vm_call_async_int32(&value.owner, name, input)
-}
 struct Packet { storage: Buffer<UInt64> }
-#intrinsic("script.schema")
+#intrinsic("vm.schema")
 fn schema<T>() -> String;
-#intrinsic("script.pack")
+#intrinsic("vm.pack")
 fn pack<T>(value: T) -> Packet;
-#intrinsic("script.unpack")
+#intrinsic("vm.unpack")
 fn unpack<T>(packet: &Packet) -> T;
-extern fn __script_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>) @suspends
+extern fn __vm_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>) @suspends
 impl Vm {
     pub fn call<A, R>(&self, name: String, input: A) @suspends -> R {
         var packet = pack(input)
-        __script_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage)
+        __vm_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage)
         unpack::<R>(&packet)
     }
 }

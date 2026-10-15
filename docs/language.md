@@ -3110,7 +3110,7 @@ AcquireError 包含 Full、Closed、WaitLimit；容量非法、整数溢出或�
 ## 域目录 `joky/domain`
 
 域目录按 `UInt64` 业务 ID 查找状态域。`Directory` 唯一拥有目录存储，`DirectoryHandle`
-是可复制、可通过 `script.call` 平面记录契约传递的访问能力。模块不因此获得可变全局状态；
+是可复制、可通过 `Vm.call` 平面记录契约传递的访问能力。模块不因此获得可变全局状态；
 AOT 服务作用域持有 Directory，把句柄传给 Script 或业务上下文即可。
 目录既不保活目标域，也不保活 Script 模块。它可以包含不同状态类型，但查找必须给出
 受编译器检查的具名只读投影 `fn(&S) -> R`，其中 R 是标量；投影只用于确定 S，查找不执行它。
@@ -3327,21 +3327,20 @@ JIT、解释器和 AOT 共用执行器。Rust AOT 宿主可用 unsafe `Continuat
 目前未提供 C 执行器封装；Godot 的帧、信号和游戏/真实时间适配见
 [Godot G2 用法](../integrations/godot/README.md#g2-异步任务)。
 
-## 类型化 Script 入口 `joky/script`
+## 类型化 Script 调用 `Vm.call<A, R>`
 
-`script.call<A, R>(handle: &vm.Vm, name: String, input: A) @suspends -> R`
+`Vm.call<A, R>(&self, name: String, input: A) @suspends -> R`
 在当前执行器上调用最近成功加载模块中的 `fn(A) @suspends -> R`。加载、兼容域代码发布和
 显式关闭仍使用 `joky/vm`；不需要在业务侧编写 Rust 宿主。
 
 ```joky
 import joky/vm
-import joky/script
 
 struct Request { player: UInt64, action: Int32 }
 struct Reply { accepted: Bool, revision: UInt64 }
 
 fn dispatch(h: &vm.Vm, request: Request) @suspends -> Reply {
-    script.call::<Request, Reply>(h, "handle_message", request)
+    h.call::<Request, Reply>("handle_message", request)
 }
 ```
 
@@ -3358,10 +3357,11 @@ repr(C) 属性，嵌套记录逐层比较。跨加载的内部名义 ID 不参�
 输入与结果逐标量复制，不传递记录地址。签名不符为 InvalidCall、入口缺失为 NotFound，
 通过当前任务的运行时错误通道传播。
 
-执行器归属、模块保活、关闭、取消和显式发布规则与 `vm.call_async_int32` 相同：挂起调用
+挂起调用
 继续使用启动模块，新调用使用当前模块。结果在子流程清理后交付，取消同时回收桥接包；
 取消借用它的子调用不关闭外层拥有者；拥有者所在任务被取消时自动关闭 VM。
-同一类型化入口也可写为 `engine.call::<A, R>(name, input)`。加载编译仍为同步操作，拥有型消息尚未开放。
+加载编译仍为同步操作，拥有型消息尚未开放。语言侧调用统一使用该方法，原 `joky/script` 模块和
+`vm.call_async_int32` 自由函数已移除。
 
 ## 内置标准库 `joky/vm`
 
@@ -3410,7 +3410,7 @@ let status = vm.register_int32_2(engine, &name, host_add)
 | `vm.reload_source(handle, source)` | 替换模块，失败保留旧代码，状态码同上 |
 | `vm.register_int32_0/1/2(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
 | `vm.call_int32_0/1/2(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
-| `vm.call_async_int32(handle, name: String, input: Int32) @suspends -> Int32` | 以当前执行器推进 Script 子流程，目标严格为 `fn(Int32) @suspends -> Int32`；失败走当前任务的运行时错误通道 |
+| `handle.call::<A, R>(name: String, input: A) @suspends -> R` | 以当前执行器推进 `fn(A) @suspends -> R` 子流程，支持上述标量与纯值记录契约；失败走当前任务的运行时错误通道 |
 | `vm.module_count(handle) -> Int32` | 当前入口及仍被持有的历史已加载模块数量；未加载为 0，失败 -1 并设置错误 |
 | `vm.print_modules(handle) -> Int32` | 向 stderr 按版本输出模块及已识别持有者，返回模块数；失败 -1 并设置错误 |
 | `vm.publish_domain_code(handle) -> Int32` | 在该句柄绑定的当前执行器上发布兼容域代码，返回切换数量；失败返回 -1 并设置错误 |
@@ -3430,13 +3430,13 @@ let status = vm.register_int32_2(engine, &name, host_add)
 同步调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次同步操作前查询。
 `vm.Vm` 是源码库声明的拥有型记录，内部 `vm.Owner` 与 TCP owner 共用 Resource 存储。
 它不能复制，移动转移所有权；作用域退出、提前返回、运行失败与任务取消都会自动关闭。
-除消费型 close 外，各操作接受 `&vm.Vm`；同步函数允许隐式借用，挂起的自由函数调用需显式 `&engine`。
+除消费型 close 外，各操作接受 `&vm.Vm`；同步函数允许隐式借用，`Vm.call` 使用共享方法接收者。
 多个共享借用允许挂起调用与加载/重载并行；借用存活期间不能移动或关闭拥有者。
 底层 VM 仍绑定创建线程，Rust/C 的数值句柄接口保持原有显式关闭协议。
 模块与成员别名见[导入与 prelude](#导入与-prelude)。Joky 内的 `vm.load_source` 不隐式搜索文件，
 显式多源码加载使用 Rust API；同步 `Int32` 宿主函数可通过 `vm.register_int32_0/1/2` 注册。
 
-`call_async_int32` 的名称是拥有型 String，不跨模块保留业务借用。首次异步调用或发布将句柄
+`Vm.call` 的名称是拥有型 String，不跨模块保留业务借用。首次异步调用或发布将句柄
 绑定当前执行器，此后从另一执行器或原执行器销毁后调用均拒绝；不创建额外事件循环。
 Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失败或取消时清理子 continuation。
 关闭 VM 后挂起调用在下一次推进或取消时清理；取消某次借用调用不会关闭外层 VM 拥有者。

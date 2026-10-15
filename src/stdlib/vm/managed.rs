@@ -109,9 +109,3 @@ adapters! {
     call_float64_1(name: *const u8, arg0: f64) -> f64 = 0.0, "__joky_vm_managed_call_float64_1_v2";
     call_float64_2(name: *const u8, arg0: f64, arg1: f64) -> f64 = 0.0, "__joky_vm_managed_call_float64_2_v2";
 }
-/// # Safety
-/// The frame contains a live borrowed VM resource, text descriptor and Int32 input.
-#[export_name = "__joky_vm_managed_call_async_int32_v2"]
-pub(crate) unsafe extern "C" fn call_async_int32(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
-    super::async_call::call_managed(frame)
-}

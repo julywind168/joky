@@ -1,5 +1,0 @@
-// Typed calls share the VM resource for the entire suspended operation.
-import joky/vm.{type Vm}
-pub fn call<A, R>(value: &Vm, name: String, input: A) @suspends -> R {
-    value.call::<A, R>(name, input)
-}

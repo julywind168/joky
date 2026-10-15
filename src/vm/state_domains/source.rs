@@ -550,7 +550,6 @@ pub(crate) unsafe fn poll(
         Operation::Values | Operation::CurrentValues => {
             return super::values::poll(arena, frame, &registry, op == Operation::CurrentValues)
         }
-        Operation::ScriptCall => return crate::stdlib::script_poll(frame),
         Operation::AdmissionCreate
         | Operation::AdmissionHandle
         | Operation::AdmissionClose

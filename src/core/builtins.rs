@@ -7,10 +7,11 @@ use crate::{
 };
 
 /// Fixed runtime operations are recognized once, before backend selection.
-/// VM operations still use their registered host entry; the others need adapters.
+/// Registered VM operations use host entries; typed calls and other families need adapters.
 #[derive(Clone, Debug)]
 pub(crate) enum Builtin {
     Vm(Box<BindingSpec>),
+    VmCall,
     Tcp(tcp::Operation),
     Dns,
     Domain(domain::Operation),
@@ -18,7 +19,9 @@ pub(crate) enum Builtin {
 
 impl Builtin {
     pub(crate) fn lookup(name: &str) -> Option<Self> {
-        if let Some(op) = tcp::operation(name) {
+        if name == "__vm_call" {
+            Some(Self::VmCall)
+        } else if let Some(op) = tcp::operation(name) {
             Some(Self::Tcp(op))
         } else if crate::runtime::dns::is_lookup(name) {
             Some(Self::Dns)
@@ -40,6 +43,13 @@ impl Builtin {
         c_abi: bool,
     ) -> Result<(), Error> {
         match self {
+            Self::VmCall => {
+                if c_abi || !suspends || *signature != super::vm::call_signature() {
+                    return Err(Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError,
+                        "VM call requires its exact compiler-owned signature and suspension convention"));
+                }
+                Ok(())
+            }
             Self::Vm(spec) => {
                 if c_abi || spec.signature != *signature || spec.suspends != suspends {
                     return Err(Error::new_with_code(
@@ -64,7 +74,7 @@ impl Builtin {
         let Item::ExternFn(f) = item else {
             let Item::FnDef(f) = item else { unreachable!() };
             return Err(match self {
-                Self::Vm(_) => Error::new_with_code(
+                Self::Vm(_) | Self::VmCall => Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::ReservedName,
                     "VM runtime names require checked extern declarations",

@@ -40,7 +40,7 @@ pub(super) enum SourceKind {
     Json,
     Mem,
     Domain,
-    Script,
+    Vm,
 }
 
 pub(super) struct SourceDefinition {
@@ -53,7 +53,7 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
-        kind: SourceKind::Script,
+        kind: SourceKind::Vm,
         path: "joky/vm",
         source: include_str!("../../stdlib/vm.jk"),
         reexport_imports: false,
@@ -63,13 +63,6 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         kind: SourceKind::BufferLibrary,
         path: "joky/outbox",
         source: include_str!("../../stdlib/outbox.jk"),
-        reexport_imports: false,
-        implicit: ImplicitImports::None,
-    },
-    SourceDefinition {
-        kind: SourceKind::Script,
-        path: "joky/script",
-        source: include_str!("../../stdlib/script.jk"),
         reexport_imports: false,
         implicit: ImplicitImports::None,
     },
@@ -364,7 +357,7 @@ impl StandardLibrary {
                 | SourceKind::Text
                 | SourceKind::Json
                 | SourceKind::Domain
-                | SourceKind::Script
+                | SourceKind::Vm
         );
         let (mut scope, required) = bind(
             &module,
@@ -376,7 +369,7 @@ impl StandardLibrary {
                     | SourceKind::Text
                     | SourceKind::Json
                     | SourceKind::Domain
-                    | SourceKind::Script
+                    | SourceKind::Vm
             ),
         )?;
         let mut exports = ImportScope::default();

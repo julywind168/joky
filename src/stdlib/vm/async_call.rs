@@ -405,7 +405,7 @@ unsafe extern "C" fn stop(frame: *mut CpsFrame, _: u32) {
     (*frame).wake = None;
 }
 
-unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, Error> {
+unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
     if frame.state == 0 {
         let executor = current_executor().ok_or_else(|| {
             runtime_error(
@@ -413,7 +413,7 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, E
                 "Script call requires an active executor",
             )
         })?;
-        let handle = if managed {
+        let handle = if typed {
             super::managed::handle(frame.slots[0])?
         } else {
             frame.slots[0]
@@ -423,7 +423,7 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, E
         let engine = state.engine.try_borrow().map_err(|_| {
             runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
         })?;
-        let (task, layout) = if flat {
+        let (task, layout) = if typed {
             let name = crate::runtime::owned_text::borrow(
                 frame.slots[1] as *const crate::runtime::buffer::Buffer,
             )?;
@@ -443,13 +443,11 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, E
             let words = (0..packet.len())
                 .map(|i| packet.load(i).map(|p| p.cast::<u64>().read()))
                 .collect::<Result<Vec<_>, _>>()?;
-            engine.prepare_script_flat(name, input, output, &words)?
+            engine.prepare_script_call(name, input, output, &words)?
         } else {
             let name = borrow(frame.slots[1] as *const u8)?;
-            (
-                engine.prepare_script_int32(name, frame.slots[2] as i32)?,
-                None,
-            )
+            let schema = crate::core::script::schema(&crate::Type::Int32).unwrap();
+            engine.prepare_script_call(name, &schema, &schema, &[frame.slots[2] as u32 as u64])?
         };
         state.remember(&engine);
         let control = Rc::new(Control {
@@ -502,7 +500,7 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, E
     }
     if let Some(values) = call.task.flat_result(call.layout) {
         let value = values.first().copied().unwrap_or(0);
-        if flat {
+        if typed {
             let packet = &mut *(frame.slots[4] as *mut crate::runtime::buffer::Buffer);
             packet.truncate_owned(&mut *cps::arena(frame), 0)?;
             for value in values {
@@ -514,7 +512,7 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, E
         crate::runtime::error::checked(|| {
             stop(frame, crate::runtime::borrowed_host::STOP_COMPLETED)
         })?;
-        frame.result = if flat { 0 } else { value };
+        frame.result = if typed { 0 } else { value };
         frame.state = DONE;
         Ok(0)
     } else {
@@ -529,23 +527,16 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool, managed: bool) -> Result<i32, E
 /// The name is read only on the first poll; no borrowed input pointer is retained.
 #[export_name = "joky_vm_call_async_int32_v2"]
 pub(crate) unsafe extern "C" fn call_async_int32(frame: *mut CpsFrame) -> i32 {
-    poll_scalar(frame, false)
+    poll_native(frame, false)
 }
 
-/// # Safety
-/// Same frame contract as call_async_int32, with a borrowed VM resource in slot zero.
-pub(super) unsafe fn call_managed(frame: *mut CpsFrame) -> i32 {
-    poll_scalar(frame, true)
-}
-
-unsafe fn poll_scalar(frame: *mut CpsFrame, managed: bool) -> i32 {
-    let result = catch_unwind(AssertUnwindSafe(|| poll(&mut *frame, false, managed)))
-        .unwrap_or_else(|_| {
-            Err(runtime_error(
-                ErrorCode::Panic,
-                "Script async call panicked",
-            ))
-        });
+unsafe fn poll_native(frame: *mut CpsFrame, typed: bool) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(|| poll(&mut *frame, typed))).unwrap_or_else(|_| {
+        Err(runtime_error(
+            ErrorCode::Panic,
+            "Script async call panicked",
+        ))
+    });
     match result {
         Ok(status) => status,
         Err(error) => {
@@ -556,10 +547,18 @@ unsafe fn poll_scalar(frame: *mut CpsFrame, managed: bool) -> i32 {
     }
 }
 
+/// # Safety
+/// Five live slots match core::vm::call_signature, with an attached arena.
+/// The caller owns the VM borrow, three Strings and packet through completion/stop.
+#[export_name = "__joky_vm_call"]
+pub(crate) unsafe extern "C" fn call_poll_native(frame: *mut CpsFrame) -> i32 {
+    poll_native(frame, true)
+}
+
 /// Private compiler adapter: three owning Strings and a borrowed UInt64 packet
 /// remain alive in the caller's frame until this operation completes or stops.
-pub(crate) unsafe fn script_poll(frame: &mut CpsFrame) -> Result<Option<u64>, Error> {
-    let result = catch_unwind(AssertUnwindSafe(|| poll(frame, true, true)))
+pub(crate) unsafe fn call_poll(frame: &mut CpsFrame) -> Result<Option<u64>, Error> {
+    let result = catch_unwind(AssertUnwindSafe(|| poll(frame, true)))
         .unwrap_or_else(|_| Err(runtime_error(ErrorCode::Panic, "Script call panicked")));
     match result {
         Ok(0) => Ok(Some(0)),
@@ -575,6 +574,60 @@ pub(crate) unsafe fn script_poll(frame: &mut CpsFrame) -> Result<Option<u64>, Er
 mod tests {
     use super::*;
     use crate::runtime::{executor::TaskGroup, string::JokyText};
+
+    #[test]
+    fn c_scalar_adapter_preserves_signed_results_and_checks_contracts() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+            let handle = create_with_mode(mode);
+            let source = JokyText::new(
+                r#"
+                import joky/task
+                fn run(n: Int32) @suspends -> Int32 { task.yield_now() n + 1 }
+                fn wrong(n: UInt32) @suspends -> Int32 { 1 / 0 }
+                fn result(n: Int32) @suspends -> Bool { let bad = 1 / 0 true }
+                fn sync(n: Int32) -> Int32 { 1 / 0 }
+            "#,
+            );
+            assert_eq!(unsafe { load_source(handle, source.as_ptr()) }, 0);
+            let executor = HostExecutor::default();
+            for (entry, input, expected) in [
+                ("run", 41i32, Some(42i32)),
+                ("run", -43, Some(-42)),
+                ("wrong", 0, None),
+                ("result", 0, None),
+                ("sync", 0, None),
+            ] {
+                let group = TaskGroup::new();
+                let name = Rc::new(JokyText::new(entry));
+                let mut frame = CpsFrame::new(3);
+                frame.slots.copy_from_slice(&[
+                    handle,
+                    name.as_ptr() as usize as u64,
+                    input as u32 as u64,
+                ]);
+                let task = unsafe { Continuation::from_native(call_async_int32, frame, name) };
+                executor.spawn(&group, task).unwrap();
+                let mut result = None;
+                for _ in 0..50 {
+                    let report = executor.poll(1).unwrap();
+                    if let Some(done) = report.completed.into_iter().next() {
+                        result = Some(done.result);
+                        break;
+                    }
+                }
+                let result = result.expect("C scalar adapter must complete");
+                match expected {
+                    Some(value) => assert_eq!(result.unwrap() as i32, value),
+                    None => assert_eq!(result.unwrap_err().code(), ErrorCode::InvalidCall),
+                }
+                assert_eq!(executor.task_count(), 0);
+            }
+            assert_eq!(close(handle), 0);
+            drop(executor);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+        }
+    }
 
     #[test]
     fn script_scalar_bridge_rejects_cross_executor_reuse() {

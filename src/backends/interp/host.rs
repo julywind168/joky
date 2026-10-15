@@ -55,7 +55,8 @@ impl BoundHost {
                     ))
                 })?)
             }
-            HostEntry::Domain(_)
+            HostEntry::VmCall
+            | HostEntry::Domain(_)
             | HostEntry::Dns
             | HostEntry::Tcp(_)
             | HostEntry::Cps { .. }
@@ -75,7 +76,8 @@ impl BoundHost {
     pub fn suspends(&self) -> bool {
         matches!(
             self.binding.entry,
-            HostEntry::Domain(_)
+            HostEntry::VmCall
+                | HostEntry::Domain(_)
                 | HostEntry::Dns
                 | HostEntry::Tcp(_)
                 | HostEntry::Cps { .. }
@@ -193,7 +195,8 @@ impl HostPending {
     ) -> Result<Self, Error> {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
-            HostEntry::Domain(_)
+            HostEntry::VmCall
+            | HostEntry::Domain(_)
             | HostEntry::Dns
             | HostEntry::Tcp(_)
             | HostEntry::BorrowingCps(_)
@@ -225,7 +228,8 @@ impl HostPending {
         for (index, (value, ty)) in args.zip(&host.binding.signature.params).enumerate() {
             frame.slots[index] = if matches!(
                 host.binding.entry,
-                HostEntry::Domain(_)
+                HostEntry::VmCall
+                    | HostEntry::Domain(_)
                     | HostEntry::Dns
                     | HostEntry::Tcp(_)
                     | HostEntry::BorrowingCps(_)
@@ -307,6 +311,10 @@ impl HostPending {
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
         self.notification = crate::runtime::executor::current_waker().map(|w| w.observe());
+        if matches!(self.host.binding.entry, HostEntry::VmCall) {
+            return unsafe { crate::stdlib::call_poll(&mut self.frame) }
+                .map(|value| value.map(|_| Value::Unit));
+        }
         if let HostEntry::Domain(op) = self.host.binding.entry {
             return unsafe { crate::runtime::domain::poll(arena, &mut self.frame, op) }.and_then(
                 |value| {

@@ -612,6 +612,7 @@ impl ModulePlan {
             if source_name.starts_with("__joky_dns_")
                 || source_name.starts_with("joky_dns_")
                 || source_name.starts_with("__joky_tcp_")
+                || source_name.starts_with("__joky_vm_")
                 || source_name.starts_with("__joky_resource_")
                 || source_name.starts_with("joky_byte_request_")
                 || source_name.starts_with("__joky_arena_")

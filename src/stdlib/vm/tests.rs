@@ -289,12 +289,13 @@ fn main() @suspends -> Int32 {{
     let h = vm.Vm.{create}()
     let code = "{literal}"
     vm.load_source(h, &code)
-    vm.call_async_int32(&h, "{function}", 0)
+    h.call::<Int32, Int32>("{function}", 0)
 }}"#
     )
 }
 
-fn script_bridge_failure_close_and_parent_cancel(flat: bool) {
+#[test]
+fn vm_call_failure_close_and_parent_cancel_release_children() {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     let script = r#"import joky/task
 import joky/domain
@@ -317,12 +318,7 @@ fn wrong(n: Int32) @suspends -> Bool { true }
             } else {
                 action
             };
-            let mut source = script_call_source(script, mode, entry);
-            if flat {
-                source = source
-                    .replace("import joky/vm", "import joky/vm import joky/script")
-                    .replace("vm.call_async_int32", "script.call::<Int32, Int32>");
-            }
+            let source = script_call_source(script, mode, entry);
             host.load_source(&source).unwrap();
             let executor = HostExecutor::default();
             let group = TaskGroup::new();
@@ -376,16 +372,6 @@ fn wrong(n: Int32) @suspends -> Bool { true }
     }
 }
 
-#[test]
-fn script_scalar_bridge_failure_close_and_parent_cancel_release_children() {
-    script_bridge_failure_close_and_parent_cancel(false);
-}
-
-#[test]
-fn script_flat_bridge_failure_close_and_parent_cancel_release_children() {
-    script_bridge_failure_close_and_parent_cancel(true);
-}
-
 fn script_bridge_cancellation(
     boundaries: impl Clone + IntoIterator<Item = usize>,
     exhaustive: bool,
@@ -406,8 +392,14 @@ fn script_bridge_cancellation(
                     "task.yield_now() Message { n:domain.read_from(s.read_handle(),read) }",
                 );
             script_call_source(&script, mode, "work")
-                .replace("import joky/vm", "import joky/vm import joky/script struct Message { n:Int32 }")
-                .replace("vm.call_async_int32(&h, \"work\", 0)", "let reply = script.call::<Message, Message>(&h, \"work\", Message { n:0 }) reply.n")
+                .replace(
+                    "import joky/vm",
+                    "import joky/vm struct Message { n:Int32 }",
+                )
+                .replace(
+                    "h.call::<Int32, Int32>(\"work\", 0)",
+                    "let reply = h.call::<Message, Message>(\"work\", Message { n:0 }) reply.n",
+                )
         } else {
             script_call_source(script, mode, "work")
         };
@@ -533,10 +525,10 @@ fn script_flat_bridge_checks_contract_before_running_target() {
             "fn work(n:Int32, other:Int32) @suspends ->Int32 { 1/0 }",
             "struct Message { other:Int32 } fn work(n:Message) @suspends ->Message { let fail=1/0 n }",
         ] {
-            let mut source = script_call_source(target, mode, "work").replace("import joky/vm", "import joky/vm import joky/script struct Message { n:Int32 }");
-            source = source.replace("vm.call_async_int32(&h, \"work\", 0)", if target.contains("struct Message") {
-                "let reply = script.call::<Message, Message>(&h, \"work\", Message { n:0 }) reply.n"
-            } else { "script.call::<Int32, Int32>(&h, \"work\", 0)" });
+            let mut source = script_call_source(target, mode, "work").replace("import joky/vm", "import joky/vm struct Message { n:Int32 }");
+            source = source.replace("h.call::<Int32, Int32>(\"work\", 0)", if target.contains("struct Message") {
+                "let reply = h.call::<Message, Message>(\"work\", Message { n:0 }) reply.n"
+            } else { "h.call::<Int32, Int32>(\"work\", 0)" });
             let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
             let mut host = VmEngine::with_mode(mode);
             host.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
@@ -598,16 +590,16 @@ fn migration_cancellation(
     assert(vm.prepare_migration(h,vm.domain_schema(h),&next,&method)==0)"#
     };
     let source = format!(
-        r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+        r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="migration cancellation" check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
     let next={next:?}
     {prepare}
     task.yield_now()
     assert(vm.publish_migration(h)==0)
     task.yield_now()
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==43)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==43)
 }}
 fn main() @suspends ->Int32 {{
     let owner=domain.directory(1)
@@ -615,7 +607,7 @@ fn main() @suspends ->Int32 {{
     let h=vm.Vm.interpreter()
     let source={old:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.close(h)==0)
     0
 }}"#
@@ -736,10 +728,10 @@ fn batch_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhau
         .replace('{', "{{")
         .replace('}', "}}");
     let source = format!(
-        r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+        r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="migration batch cancellation" check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
-    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
     let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty=""
     assert(vm.begin_migration_batch(h,&next)==0)
     task.yield_now()
@@ -751,13 +743,13 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(status==0)
     task.yield_now()
     assert(vm.publish_migration(h)==0)
-    assert(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==194)
+    assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==194)
 }}
 fn main() @suspends ->Int32 {{
     let owner=domain.directory(4) let directory=owner.handle()
     let h=vm.Vm.interpreter() let old={old:?}
     assert(vm.load_source(h,&old)==0)
-    race {{ | script.call::<domain.DirectoryHandle,Unit>(&h,"hold",directory) | control(&h,directory) }};
+    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.close(h)==0)
     0
 }}"#

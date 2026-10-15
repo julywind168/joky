@@ -461,6 +461,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_resource_poll_v1", vec![ptr, ptr], vec![types::I32]),
         ("__joky_dns_poll", vec![ptr], vec![types::I32]),
+        ("__joky_vm_call", vec![ptr], vec![types::I32]),
         ("__joky_tcp_poll", vec![ptr, types::I32], vec![types::I32]),
         (
             "__joky_domain_poll_v2",
@@ -3142,13 +3143,17 @@ pub(super) fn tcp_entry(
     builder.seal_all_blocks();
 }
 
-pub(super) fn dns_entry(builder: &mut FunctionBuilder, refs: &HashMap<String, FuncRef>) {
+pub(super) fn runtime_entry(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    symbol: &str,
+) {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
     let frame = builder.block_params(entry)[0];
-    let status = helper(builder, refs, "__joky_dns_poll", &[frame]);
+    let status = helper(builder, refs, symbol, &[frame]);
     builder.ins().return_(&[status]);
     builder.seal_all_blocks();
 }
