@@ -254,7 +254,7 @@ fn version() -> Int32 { 1 }
 fn session(step: Int32) @suspends -> Int32 {
     let code = version()
     task.yield_now()
-    domain.write(tick, step)
+    domain.write(tick, step).unwrap()
     code
 }
 "#;
@@ -378,7 +378,10 @@ fn session(step: Int32) @suspends -> Int32 {
                 &ROOM
                     .replace("step: Int32) @noescape", "step: Bool) @noescape")
                     .replace("room.ticks + step", "room.ticks + if step { 1 } else { 0 }")
-                    .replace("domain.write(tick, step)", "domain.write(tick, step > 0)"),
+                    .replace(
+                        "domain.write(tick, step).unwrap()",
+                        "domain.write(tick, step > 0).unwrap()",
+                    ),
             )
             .unwrap();
             assert_eq!(vm.publish_domain_code().unwrap(), 1);
@@ -769,9 +772,9 @@ fn probe(n: Int32) @suspends -> Int32 {{
     {pause}
     var receipt = {commit}
     let status = match receipt.wait() {{ {result}, Conflict => 2, _ => 9 }}
-    let x = domain.read_from(a.read_handle(), read)
-    let y = domain.read_from(b.read_handle(), read)
-    let z = domain.read_from(c.read_handle(), read)
+    let x = domain.read_from(a.read_handle(), read).unwrap()
+    let y = domain.read_from(b.read_handle(), read).unwrap()
+    let z = domain.read_from(c.read_handle(), read).unwrap()
     status * 10000 + x * 100 + y * 10 + z
 }}
 "#

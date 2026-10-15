@@ -6,7 +6,7 @@ fn make(score:Int32)->Room { Room{score:score} }
 fn read(room:&Room)->Int32 {room.score}
 fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value room.score}
 fn version()->Int32 {1}
-fn wire() @suspends { let room=domain.create(make,10) domain.read_from(room.read_handle(),read); domain.write_to(room.handle(),add,1); }
+fn wire() @suspends { let room=domain.create(make,10) domain.read_from(room.read_handle(),read).unwrap(); domain.write_to(room.handle(),add,1).unwrap(); }
 "#;
 const NEW: &str = r#"import joky/domain
 struct Room { score:Int64, level:Int32 }
@@ -14,7 +14,7 @@ fn upgrade(old:&PreviousState)->Room {Room{score:int64(old.score),level:1}}
 fn read(room:&Room)->Int64 {room.score}
 fn level(room:&Room)->Int32 {room.level}
 fn version()->Int32 {2}
-fn wire(room:domain.ReadHandle<Room>) @suspends { domain.read_from(room,read); domain.read_from(room,level); }
+fn wire(room:domain.ReadHandle<Room>) @suspends { domain.read_from(room,read).unwrap(); domain.read_from(room,level).unwrap(); }
 "#;
 fn setup(mode: VmMode) -> (VmEngine, DomainOwner, Vec<Rc<dyn Any>>) {
     let mut vm = VmEngine::with_mode(mode);

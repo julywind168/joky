@@ -1,3 +1,4 @@
+import joky/string
 import joky/option as opt.{type Option as Maybe}
 import joky/result as res.{type Result as Outcome}
 
@@ -67,5 +68,9 @@ fn check() -> Int32 {
     var outcome = good
     let kept = outcome.or::<Unit>({ outcome = bad Outcome.Err({}) })
     if snapshot.unwrap_or(0) != 42 || !receiver.is_none() || kept.unwrap_or(0) != 42 || outcome.err().unwrap_or(0) != 7 { return 14 }
+    if good.unwrap() != 42 || from_result.unwrap().wide != wide() { return 15 }
+    empty.unwrap();
+    let owned: Outcome<String,String> = Outcome.Ok("owned")
+    if owned.unwrap().byte_length() != 5 { return 16 }
     42
 }

@@ -27,10 +27,10 @@ fn hold(ctx:Context) @suspends {
 fn probe(ctx:Context) @suspends ->Int32 {
     let a=match domain.lookup::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}
     let b=match domain.lookup::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return -1}
-    domain.read_pair(a,b,balance)
+    domain.read_pair(a,b,balance).unwrap()
 }
 fn tick_version(ctx:Context) @suspends ->Int32 {
-    match domain.lookup::<Clock>(ctx.directory,3) {Some(h)=>domain.read_from(h,read_clock),None=>-1}
+    match domain.lookup::<Clock>(ctx.directory,3) {Some(h)=>domain.read_from(h,read_clock).unwrap(),None=>-1}
 }
 fn start_tick(ctx:Context) @suspends ->Bool {
     match domain.lookup_write::<Clock>(ctx.directory,3) {

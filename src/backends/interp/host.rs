@@ -211,7 +211,7 @@ impl HostPending {
             args.len()
                 + if matches!(
                     host.binding.entry,
-                    HostEntry::Domain(crate::runtime::domain::Operation::Request)
+                    HostEntry::Domain(op) if op.status_payload()
                 ) {
                     2
                 } else {
@@ -271,11 +271,12 @@ impl HostPending {
     pub(super) fn aggregate_result(&self) -> Option<[Option<Value>; 2]> {
         if matches!(
             self.host.binding.entry,
-            HostEntry::Domain(crate::runtime::domain::Operation::Request)
+            HostEntry::Domain(op) if op.status_payload()
         ) {
+            let offset = self.host.binding.signature.params.len();
             return Some([
-                Some(Value::Int32(self.frame.slots[4] as i32)),
-                Some(Value::UInt64(self.frame.slots[5])),
+                Some(Value::Int32(self.frame.slots[offset] as i32)),
+                Some(Value::UInt64(self.frame.slots[offset + 1])),
             ]);
         }
         (matches!(
@@ -321,7 +322,7 @@ impl HostPending {
                     value
                         .map(|bits| {
                             self.frame.result = bits;
-                            if op == crate::runtime::domain::Operation::Request {
+                            if op.status_payload() {
                                 Ok(Value::Unit)
                             } else if matches!(
                                 op,

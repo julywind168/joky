@@ -44,6 +44,6 @@ fn main() @suspends {
     let target=queue.handle()
     let state=domain.create(make,0)
     parallel { | writer(queue,stream) | producer(state.handle(),target) | peer(server) }
-    assert(domain.read_from(state.read_handle(),read)==42)
+    assert(domain.read_from(state.read_handle(),read).unwrap()==42)
     println("outbox TCP ok")
 }

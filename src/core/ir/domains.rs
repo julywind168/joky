@@ -372,44 +372,51 @@ impl FunctionPlan {
             unreachable!()
         };
         captures.push(text);
-        if value_call
-            && !checking
-            && (inputs.iter().any(|ty| !scalar(ty)) || !scalar(&target.signature.ret))
-        {
+        if value_call {
+            let scalar_call =
+                !checking && inputs.iter().all(scalar) && scalar(&target.signature.ret);
             let input_type = inputs.first().cloned().unwrap_or(Type::Unit);
             let result_type = target.signature.ret.clone();
+            let adapter_input = if scalar_call {
+                Type::UInt64
+            } else {
+                input_type.clone()
+            };
             let name = {
                 let mut context = self.generics.borrow_mut();
-                let name = context
-                    .templates
-                    .iter()
-                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainValueFinish(flag)) if flag == ambient))
+                let name = context.templates.iter()
+                    .find(|(_, f)| {
+                        if scalar_call {
+                            matches!(f.compiler_intrinsic, Some(DomainScalarFinish(flag)) if flag == ambient)
+                        } else {
+                            matches!(f.compiler_intrinsic, Some(DomainValueFinish(flag)) if flag == ambient)
+                        }
+                    })
                     .map(|(name, _)| name.clone())
-                    .ok_or_else(|| {
-                        type_error(
-                            &span,
-                            ErrorCode::InvalidCall,
-                            "Missing domain value adapter",
-                        )
-                    })?;
+                    .ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, "Missing domain access adapter"))?;
+                let mut params = if ambient {
+                    vec![Type::String, adapter_input]
+                } else {
+                    vec![
+                        crate::runtime::domain::module_type(),
+                        crate::runtime::domain::handle_type(),
+                        crate::runtime::domain::handle_type(),
+                        Type::UInt64,
+                        Type::String,
+                        adapter_input,
+                    ]
+                };
+                if scalar_call {
+                    params.push(Type::Bool);
+                }
                 context.instantiate(
                     &name,
-                    vec![input_type.clone(), result_type.clone()],
-                    crate::FunctionSignature::new(
-                        if ambient {
-                            vec![Type::String, input_type]
-                        } else {
-                            vec![
-                                crate::runtime::domain::module_type(),
-                                crate::runtime::domain::handle_type(),
-                                crate::runtime::domain::handle_type(),
-                                Type::UInt64,
-                                Type::String,
-                                input_type,
-                            ]
-                        },
-                        result_type.clone(),
-                    ),
+                    if scalar_call {
+                        vec![result_type]
+                    } else {
+                        vec![input_type, result_type]
+                    },
+                    crate::FunctionSignature::new(params, info.signature.ret.clone()),
                     self.instantiation_depth + 1,
                     span,
                 )?
@@ -425,18 +432,23 @@ impl FunctionPlan {
                 ));
                 captures.insert(3, Some(count));
             }
-            // checked_arguments already flattens aggregates, including empty
-            // records (zero lanes). The named function occupies one lane.
-            if inputs.is_empty() {
+            // Checked arguments flatten records, including zero-lane empty records.
+            if scalar_call {
+                let input = if inputs.is_empty() {
+                    None
+                } else {
+                    values[index + 1].clone()
+                };
+                captures.push(Some(self.pack_domain_scalar(input)?));
+                let flag = self.slot(Type::Bool)?;
+                self.emit(Op::Literal(flag.clone(), Constant::Bool(write)));
+                captures.push(Some(flag));
+            } else if inputs.is_empty() {
                 captures.push(None);
             } else {
                 captures.extend_from_slice(&values[index + 1..]);
             }
-            let result = if result_type == Type::Unit {
-                None
-            } else {
-                Some(self.slot(result_type)?)
-            };
+            let result = Some(self.slot(info.signature.ret.clone())?);
             let state = self.state_count;
             self.state_count += 1;
             self.emit(Op::Call {
@@ -451,18 +463,10 @@ impl FunctionPlan {
         if !inputs.is_empty() {
             captures.push(Some(self.pack_domain_scalar(values[index + 1].clone())?));
         }
-        if pair && !snapshot && inputs.is_empty() {
-            captures.push(Some(self.pack_domain_scalar(None)?));
-        }
         let name = match kind {
             DomainCreate => "__domain_create".to_owned(),
-            DomainPair(_) => "__domain_pair".to_owned(),
             DomainSnapshot => "__domain_snapshot".to_owned(),
             DomainSnapshotPair => "__domain_snapshot_pair".to_owned(),
-            DomainAt(false) => "__domain_read_at".to_owned(),
-            DomainAt(true) => "__domain_write_at".to_owned(),
-            DomainAccess(false) => "__domain_read_scalar".to_owned(),
-            DomainAccess(true) => "__domain_write_scalar".to_owned(),
             DomainCandidate | DomainCandidatePair => {
                 let mut context = self.generics.borrow_mut();
                 let name = context
@@ -535,11 +539,7 @@ impl FunctionPlan {
             }
             _ => unreachable!(),
         };
-        let result = self.slot(if create || request || snapshot {
-            info.signature.ret.clone()
-        } else {
-            Type::UInt64
-        })?;
+        let result = self.slot(info.signature.ret.clone())?;
         let output = if (create && !candidate) || snapshot {
             Slot {
                 index: result.index,
@@ -564,13 +564,7 @@ impl FunctionPlan {
         if create || snapshot {
             self.register_owner(result.clone(), None);
         }
-        if create || request || snapshot {
-            Ok(Some(Flow::Value(Some(result))))
-        } else {
-            Ok(Some(Flow::Value(
-                self.unpack_domain_scalar(result, &info.signature.ret)?,
-            )))
-        }
+        Ok(Some(Flow::Value(Some(result))))
     }
     fn pack_domain_scalar(&mut self, value: Option<Slot>) -> Result<Slot, Error> {
         let dst = self.slot(Type::UInt64)?;

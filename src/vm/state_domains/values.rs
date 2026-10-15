@@ -45,6 +45,7 @@ pub(super) unsafe fn poll(
     ambient: bool,
 ) -> Result<Option<u64>, Error> {
     let packet_slot = if ambient { 1 } else { 5 };
+    let initial = frame.state == 0;
     let result = (|| {
         if frame.state == 0 {
             let (handles, module, name_slot) = if ambient {
@@ -116,10 +117,13 @@ pub(super) unsafe fn poll(
             return Err(invalid("Invalid domain value wait state"));
         }
         let wait = &mut *frame.host_context.cast::<Wait>();
-        let Some(outcome) = wait.request.take_result() else {
+        let Some((outcome, rejection)) = wait.request.take_access_result() else {
             wait.request.register_current_wait()?;
             return Ok(None);
         };
+        if let Some(rejection) = rejection {
+            return Ok(Some(rejection as u64));
+        }
         match outcome {
             DomainOutcome::Value(InstanceValue::Unit) => {
                 let packet = &mut *(frame.slots[packet_slot] as *mut Buffer);
@@ -137,5 +141,17 @@ pub(super) unsafe fn poll(
     if !matches!(result, Ok(None)) {
         stop(frame, 0);
     }
-    result
+    match result {
+        Err(error) if initial => {
+            let op = if ambient {
+                crate::runtime::domain::Operation::CurrentValues
+            } else {
+                crate::runtime::domain::Operation::Values
+            };
+            Ok(Some(
+                access::source_rejection(registry, frame, op, &error) as u64
+            ))
+        }
+        result => result,
+    }
 }

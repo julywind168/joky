@@ -3,28 +3,54 @@ import joky/option.{type Option}
 import joky/outbox.{type Batch}
 import joky/result.{type Result}
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
-extern fn __domain_read_scalar(method: String) @suspends -> UInt64
-extern fn __domain_write_scalar(method: String, input: UInt64) @suspends -> UInt64
+extern fn __domain_read_scalar(method: String) @suspends -> (Int32, UInt64)
+extern fn __domain_write_scalar(method: String, input: UInt64) @suspends -> (Int32, UInt64)
 
 struct ValuePacket { storage: Buffer<UInt64> }
 #intrinsic("domain.value_pack")
 fn pack_value<A>(value:A) -> ValuePacket;
 #intrinsic("domain.value_unpack")
 fn unpack_value<R>(packet:&ValuePacket) -> R;
-extern fn __domain_values(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,packet:&mut Buffer<UInt64>) @suspends
+extern fn __domain_values(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,packet:&mut Buffer<UInt64>) @suspends -> Int32
 #intrinsic("domain.finish_value")
-fn finish_value<A,R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:A) @suspends -> R {
+fn finish_value<A,R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:A) @suspends -> Result<R,DomainAccessError> {
     var packet=pack_value(input)
-    __domain_values(module,first,second,count,name,&mut packet.storage)
-    unpack_value::<R>(&packet)
+    let status=__domain_values(module,first,second,count,name,&mut packet.storage)
+    if status != 0 { return Result.Err(access_error(status)) }
+    Result.Ok(unpack_value::<R>(&packet))
 }
 
-extern fn __domain_current_values(name:String,packet:&mut Buffer<UInt64>) @suspends
+extern fn __domain_current_values(name:String,packet:&mut Buffer<UInt64>) @suspends -> Int32
 #intrinsic("domain.finish_current_value")
-fn finish_current_value<A,R>(name:String,input:A) @suspends -> R {
+fn finish_current_value<A,R>(name:String,input:A) @suspends -> Result<R,DomainAccessError> {
     var packet=pack_value(input)
-    __domain_current_values(name,&mut packet.storage)
-    unpack_value::<R>(&packet)
+    let status=__domain_current_values(name,&mut packet.storage)
+    if status != 0 { return Result.Err(access_error(status)) }
+    Result.Ok(unpack_value::<R>(&packet))
+}
+
+// Access errors are rejections before the operation body starts.
+pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit }
+fn access_error(status:Int32) -> DomainAccessError {
+    if status == 1 { return DomainAccessError.Closed }
+    if status == 2 { return DomainAccessError.DomainFailed }
+    if status == 3 { return DomainAccessError.InvalidAccess }
+    if status == 4 { return DomainAccessError.Incompatible }
+    DomainAccessError.ResourceLimit
+}
+#intrinsic("domain.finish_scalar")
+fn finish_scalar<R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:UInt64,write:Bool) @suspends -> Result<R,DomainAccessError> {
+    let (status,bits) = if count == 2 { __domain_pair(module,first,second,name,input) }
+        else if write { __domain_write_at(module,first,name,input) }
+        else { __domain_read_at(module,first,name) }
+    if status != 0 { return Result.Err(access_error(status)) }
+    Result.Ok(unpack::<R>(bits))
+}
+#intrinsic("domain.finish_current_scalar")
+fn finish_current_scalar<R>(name:String,input:UInt64,write:Bool) @suspends -> Result<R,DomainAccessError> {
+    let (status,bits) = if write { __domain_write_scalar(name,input) } else { __domain_read_scalar(name) }
+    if status != 0 { return Result.Err(access_error(status)) }
+    Result.Ok(unpack::<R>(bits))
 }
 
 // Only trusted call-site lowering can encode or decode a checked scalar type.
@@ -33,11 +59,11 @@ fn pack<A>(value: A) -> UInt64;
 #intrinsic("domain.unpack")
 fn unpack<R>(bits: UInt64) -> R;
 #intrinsic("domain.read")
-pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> R {
+pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_current_value::<Unit,R>("",{})
 }
 #intrinsic("domain.write")
-pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
+pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
     finish_current_value::<A,R>("",input)
 }
 
@@ -47,8 +73,8 @@ extern fn __domain_handle(owner: &domain.StateOwner) @suspends -> domain.Handle
 extern fn __domain_readonly(handle: domain.Handle) @suspends -> domain.Handle
 extern fn __domain_close(owner: &mut domain.StateOwner) @suspends
 extern fn __domain_request(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
-extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> UInt64
-extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> UInt64
+extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> (Int32, UInt64)
+extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_snapshot(module: domain.Module, handle: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
 extern fn __domain_snapshot_value(snapshot: &domain.SnapshotOwner) @suspends -> UInt64
 extern fn __domain_snapshot_check(snapshot: &domain.SnapshotOwner) @suspends -> Int32
@@ -88,11 +114,11 @@ pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
     Owner::<S> { value: __domain_create(module(), "", pack(input)) }
 }
 #intrinsic("domain.read_from")
-pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> R {
+pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_value::<Unit,R>(module(),handle.token,handle.token,1,"",{})
 }
 #intrinsic("domain.write_to")
-pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
+pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
     finish_value::<A,R>(module(),handle.token,handle.token,1,"",input)
 }
 #intrinsic("domain.finish_request")
@@ -167,17 +193,17 @@ impl CommitReceipt {
 }
 
 // Pair operations acquire their entire access set in one synchronous turn.
-extern fn __domain_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String, input: UInt64) @suspends -> UInt64
+extern fn __domain_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 #intrinsic("domain.read_pair")
-pub fn read_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T) -> R) @suspends -> R {
+pub fn read_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_value::<Unit,R>(module(),first.token,second.token,2,"",{})
 }
 #intrinsic("domain.update_pair")
-pub fn update_pair<S, T, A, R>(first: ReadHandle<S>, second: WriteHandle<T>, operation: fn(&S, &mut T, A) -> R, input: A) @suspends -> R {
+pub fn update_pair<S, T, A, R>(first: ReadHandle<S>, second: WriteHandle<T>, operation: fn(&S, &mut T, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
     finish_value::<A,R>(module(),first.token,second.token,2,"",input)
 }
 #intrinsic("domain.write_pair")
-pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, operation: fn(&mut S, &mut T, A) -> R, input: A) @suspends -> R {
+pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, operation: fn(&mut S, &mut T, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
     finish_value::<A,R>(module(),first.token,second.token,2,"",input)
 }
 

@@ -77,7 +77,7 @@ vm.publish_domain_code()    // 把结构兼容的现有域切到当前模块，�
 
 - 调用方用自己模块中的签名编码输入、解码结果。源码 `domain.read/write/request` 在准入时
   检查调用方签名与域当前代码的签名兼容，然后执行域当前的代码；不兼容时直接调用返回
-  `TypeMismatch`，`request` 返回 `InvalidAccess`。
+  `DomainAccessError.Incompatible`，`request` 返回 `InvalidAccess`。
 - 请求任务记录自己运行的模块。旧流程在发布后调用 `domain.write(op, x)`，会用旧签名
   对新实现做兼容检查，兼容则执行新实现。
 - 发布前已经排队的单域调用，执行时若发现代码版本变化，会重新解析操作并核对签名；
@@ -89,11 +89,11 @@ vm.publish_domain_code()    // 把结构兼容的现有域切到当前模块，�
 - 准入及出队执行前都核对调用方和当前入口的完整签名：参数数目、顺序、名义类型与递归布局、
   引用可变性、标量输入和返回类型；当前入口还须通过同步、无宿主调用和无逃逸证明。
   全部域仍须存活、健康、布局兼容且权限有效，修订余量也先检查。入口缺失、ABI 或布局
-  不兼容以 `TypeMismatch` 拒绝整次调用，不修改任何根或修订，不隔离域。
+  不兼容时源码短操作返回 `DomainAccessError.Incompatible`（Rust 队列入口保留 `TypeMismatch`），拒绝整次调用，不修改任何根或修订，不隔离域。
 - 这一规则覆盖源码 `read_pair/update_pair/write_pair/snapshot_pair` 与 Rust 的 2–64 域
   `queue_domain_access`，仍限普通标量记录根。`when` 的操作身份、捕获契约及晚绑定接线尚未实现，见[语法糖草案](state-domain-syntax.md)。
 - 候选计算与快照投影仍固定原版本：读取凭据的代码变化按 `Conflict` 处理；候选写域自身
-  已换模块时仍由原有同模块检查返回 `InvalidAccess`。不能用晚绑定使旧计算继续提交。
+  已换模块时同样返回 `Conflict`。不能用晚绑定使旧计算继续提交。
 
 ### 3.4 HR0 版本校验
 

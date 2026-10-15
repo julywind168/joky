@@ -14,7 +14,7 @@ fn nan(a:&State,b:&Rules)->Float64 { Float64.from_bits(9221120237041090626) }
 fn read(a:&State)->Int32 { a.n }
 fn change(b:&mut Rules,n:Int32) { b.limit=n }
 fn fail(b:&mut Rules,n:Int32)->Int32 { b.limit=99 1/n }
-fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n) }
+fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n).unwrap() }
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,7)
     let b=domain.create(rules,10)
@@ -25,11 +25,11 @@ fn lifecycle() @suspends ->Int32 {
     assert(match saved.check() { Current=>true, _=>false })
     task.yield_now()
     let c=domain.candidate_from(saved,make,17)
-    domain.write_to(bh,change,10)
+    domain.write_to(bh,change,10).unwrap()
     let r=domain.commit_to(ah,c)
     var receipt=r
     assert(match receipt.wait() { Conflict=>true, _=>false })
-    assert(domain.read_from(ah.read_only(),read)==7)
+    assert(domain.read_from(ah.read_only(),read).unwrap()==7)
     let fresh=domain.snapshot_pair(ah.read_only(),bh.read_only(),project)
     let next=fresh.value()
     let candidate=domain.candidate_from(fresh,make,next)
@@ -61,7 +61,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(match doomed.check() { DomainFailed=>true, _=>false })
     var failed=domain.commit_to(ah,poisoned)
     assert(match failed.wait() { DomainFailed=>true, _=>false })
-    assert(domain.read_from(ah.read_only(),read)==18)
+    assert(domain.read_from(ah.read_only(),read).unwrap()==18)
     a.close()
     assert(large.value()==18446744073709551615)
     24

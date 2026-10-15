@@ -13,12 +13,12 @@ fn count(state: &State) -> Int32 { state.count }
 fn scale(state: &State) -> Float64 { state.scale }
 fn reset(state: &mut State, input: Unit) -> Rune { state.count = 0 '中' }
 fn work(input: UInt64) @suspends -> Bool {
-    let accepted = domain.write(increment, 7)
+    let accepted = domain.write(increment, 7).unwrap()
     task.yield_now()
     task.yield_now()
-    accepted && input == 18446744073709551615 && domain.read(count) == 1
+    accepted && input == 18446744073709551615 && domain.read(count).unwrap() == 1
 }
-fn query(input: Unit) @suspends -> Float64 { task.yield_now() domain.read(scale) }
+fn query(input: Unit) @suspends -> Float64 { task.yield_now() domain.read(scale).unwrap() }
 fn broken(zero: Int32) @suspends -> UInt8 { let value = 1 / zero 0 }
 fn success(handle: domain.WriteHandle<State>) @suspends {
     assert(domain.request(handle, work, 18446744073709551615).unwrap_or(false))
@@ -38,17 +38,17 @@ fn scenario() @suspends -> Int32 {
     let reader = handle.read_only()
     let other = domain.create(make, false)
     parallel { | success(handle) | failure(handle) | independent(other.read_handle()) }
-    assert(domain.read_from(handle.read_only(), count) == 1)
-    assert(domain.read_from(other.read_handle(), count) == 99)
-    assert(domain.write_to(handle, reset, {}) == '中')
-    assert(domain.read_from(handle.read_only(), count) == 0)
+    assert(domain.read_from(handle.read_only(), count).unwrap() == 1)
+    assert(domain.read_from(other.read_handle(), count).unwrap() == 99)
+    assert(domain.write_to(handle, reset, {}).unwrap() == '中')
+    assert(domain.read_from(handle.read_only(), count).unwrap() == 0)
     owner.close()
     let replacement = domain.create(make, true)
     assert(match domain.request_read(reader, query, {}) {
         Err(domain.RequestError.Closed) => true
         _ => false
     })
-    assert(domain.read_from(replacement.read_handle(), count) == 0)
+    assert(domain.read_from(replacement.read_handle(), count).unwrap() == 0)
     42
 }
 fn main() @suspends {

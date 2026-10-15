@@ -213,8 +213,8 @@ fn run() @suspends ->Int32 {
     let next=domain.with_outbox(domain.candidate_from(domain.snapshot_from(state.read_handle(),read),make,99),batch)
     outbox_test_ready(); task.yield_now()
     var receipt=domain.commit_to(state.handle(),next)
-    if match receipt.wait() { InvalidAccess=>true, _=>false } {
-        if domain.read_from(state.read_handle(),read)==7 { return 42 }
+    if match receipt.wait() { Conflict=>true, _=>false } {
+        if domain.read_from(state.read_handle(),read).unwrap()==7 { return 42 }
     }
     0
 }"#;

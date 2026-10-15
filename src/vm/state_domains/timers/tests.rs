@@ -246,7 +246,7 @@ fn domain_timers_reject_changed_contracts_without_mutation() {
             for replacement in [
                 r#"fn unused(){}"#,
                 r#"fn tick(room:&mut Room,amount:UInt64) {room.value=999}
-fn wire(owner:domain.WriteHandle<Room>) @suspends {let amount:UInt64=1 domain.write_to(owner,tick,amount)}"#,
+fn wire(owner:domain.WriteHandle<Room>) @suspends {let amount:UInt64=1 domain.write_to(owner,tick,amount).unwrap()}"#,
             ] {
                 let (mut vm, _, domain, timer) = setup(mode);
                 arm(&vm, &domain, &timer, false, 0).unwrap();
@@ -258,7 +258,7 @@ fn wire(owner:domain.WriteHandle<Room>) @suspends {let amount:UInt64=1 domain.wr
 struct Room {{value:Int32}}
 fn make(value:Int32)->Room {{Room{{value:value}}}}
 fn read(room:&Room)->Int32 {{room.value}}
-fn main() @suspends {{ let room=domain.create(make,0) domain.read_from(room.read_handle(),read); }}
+fn main() @suspends {{ let room=domain.create(make,0) domain.read_from(room.read_handle(),read).unwrap(); }}
 {replacement}"#
                 ))
                 .unwrap_or_else(|e| panic!("{e}"));

@@ -1517,6 +1517,9 @@ fn example() {
 
 `Result<T, E>`：
 
+`unwrap() -> T` 消费 Result 并取出 Ok 载荷；Err 分支触发任务失败并清理错误载荷。
+需要处理预期错误时使用 match 或 `unwrap_or_else`，不要用 unwrap 代替错误分支。
+
 | 方法 | 语义 |
 | --- | --- |
 | `is_ok(&self) -> Bool` / `is_err(&self) -> Bool` | 共享借用，判断当前变体 |
@@ -2742,8 +2745,8 @@ VM 销毁后尚未领取的 Request 返回 Closed，Owner 和 Request 不延长 
 准入及执行前都检查完整参数／返回签名、引用读写模式、同步无宿主无逃逸证明，以及全部域的当前布局与权限。
 入口缺失或签名／布局不兼容时以 `TypeMismatch` 拒绝整次调用，不写入、不推进修订、不隔离域。
 单域与联合快照在执行时保存数据修订、代码版本
-和 schema 身份；仅更新只读依赖代码也会使快照检查及旧候选提交返回 `Conflict`。候选写域自身
-切换模块仍按原有同模块检查返回 `InvalidAccess`。代码版本耗尽时整批发布返回 `ResourceLimit`，
+和 schema 身份；写目标或只读依赖的数据、代码、schema 变化都会使旧候选提交返回
+`Conflict`，不因参与域的读写角色改变分类。代码版本耗尽时整批发布返回 `ResourceLimit`，
 不回绕。具名晚绑定不适用于已经完成的候选计算，也不透明重放流程；实现范围见[热更新调用规则](aot-script-hot-reload.md#33-调用侧规则)。
 
 `spawn_domain_task(handle, name, args)` 在状态当前绑定的模块中创建未启动的标量请求根；它继承句柄
@@ -2776,8 +2779,8 @@ S 必须是普通非泛型记录。单域根支持上节所述受检嵌套记录
 | `owner.handle() -> WriteHandle<S>` | 取得可复制的写句柄 |
 | `owner.read_handle()` / `handle.read_only() -> ReadHandle<S>` | 取得或降级为读句柄 |
 | `owner.close()` | 消费唯一 Owner，取消关联工作并等待关闭完成 |
-| `read_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> R` | 排队执行同步只读短操作 |
-| `write_to<S, A, R>(WriteHandle<S>, fn(&mut S, A) -> R, A) -> R` | 排队执行同步独占短操作 |
+| `read_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Result<R, DomainAccessError>` | 排队执行同步只读短操作 |
+| `write_to<S, A, R>(WriteHandle<S>, fn(&mut S, A) -> R, A) -> Result<R, DomainAccessError>` | 排队执行同步独占短操作 |
 | `request<S, A, R>(WriteHandle<S>, fn(A) @suspends -> R, A)` | 启动独立请求并等待其结果 |
 | `request_read<S, A, R>(ReadHandle<S>, fn(A) @suspends -> R, A)` | 同上，请求只获得读权限 |
 
@@ -2809,13 +2812,31 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 | `DomainFailed` | 受检写操作运行时失败，域已被隔离；后续请求仍能区别于关闭 |
 
 域关闭或失败导致请求终止时，优先报告该域的终态；已经发布的结果不被随后关闭覆盖。
-创建和直接读写的错误仍终止当前任务，详细诊断保留在宿主错误通路；这里不携带错误文本
-或用户自定义的业务错误载荷。
+创建错误仍终止当前任务。异步请求的 RequestError 与下面的短操作访问错误独立；
+这里不携带错误文本或用户自定义的业务错误载荷。
 
 请求具有独立根 arena 和失败组。结果在请求清理完毕后才交给调用者；调用者被取消时
 同步撤销请求，域关闭也会取消请求。API 不提供脱离调用者的启动；并发启动使用既有
 `parallel`、`race` 或 `branch`。普通请求失败不会关闭状态；写短操作运行时失败会隔离该域，
 取消关联请求，已发生的写入不回滚。请求回执和短操作共同占用有界请求数量与字节额度。
+
+单域 `read/write`、`read_from/write_to` 与双域 `read_pair/update_pair/write_pair` 均返回
+`Result<R, DomainAccessError>`；成功值保留完整标量位模式或纯值记录。`Err` 保证操作体未执行：
+
+| DomainAccessError | 执行前拒绝原因 |
+| --- | --- |
+| `Closed` | 域正在关闭、已关闭，或源码句柄在当前执行器中不可用 |
+| `DomainFailed` | 域已因之前的写操作失败而隔离 |
+| `InvalidAccess` | 没有所属请求上下文、权限不足或存在可写别名 |
+| `Incompatible` | 入口、输入／结果契约或状态 schema 与当前代码不兼容 |
+| `ResourceLimit` | 请求／任务准入额度、请求字节预算或修订余量不足 |
+
+源码句柄不携带执行器身份；其他执行器的 token 与已关闭 token 同样返回 Closed。
+Rust 宿主仍沿用 `DomainRequest` / `DomainOutcome` 错误通路，可区别错误执行器身份。
+执行前拒绝的分类在确定时记录，后续关闭或发布不会改写已确定的结果。调用方实参求值、
+值包准备和操作体内的运行时失败仍沿任务失败通道传播；操作体失败不会变成可捕获的访问 Err，
+失败写操作仍隔离全部声明可写的域。可显式匹配 Err；若拒绝应视为任务失败，可调用
+`Result.unwrap()`。取消等待撤销排队项或丢弃已完成结果，不自动重试操作。
 
 请求内部可用 `read<S, R>(fn(&S) -> R)` 和
 `write<S, A, R>(fn(&mut S, A) -> R, A)` 访问启动时授予的域；
@@ -2832,15 +2853,15 @@ fn add(room: &mut Room, delta: Int32) -> Int32 {
 }
 fn count(room: &Room) -> Int32 { room.count }
 fn request(delta: Int32) @suspends -> Int32 {
-    domain.write(add, delta)
+    domain.write(add, delta).unwrap()
     task.yield_now()
-    domain.read(count)
+    domain.read(count).unwrap()
 }
 fn main() @suspends {
     let room = domain.create(make, 10)
     let handle = room.handle()
     domain.request(handle, request, 2).unwrap_or(-1)
-    domain.read_from(handle.read_only(), count)
+    domain.read_from(handle.read_only(), count).unwrap()
     room.close()
 }
 ```
@@ -2963,9 +2984,9 @@ SC3 的首个切片提供同一执行器内的两个域访问，JIT、解释器�
 
 | 入口（均为 `@suspends`） | 权限与输入 |
 | --- | --- |
-| `read_pair<S,T,R>(ReadHandle<S>, ReadHandle<T>, fn(&S,&T)->R) -> R` | 两个只读参数，无额外输入 |
-| `update_pair<S,T,A,R>(ReadHandle<S>, WriteHandle<T>, fn(&S,&mut T,A)->R, A) -> R` | 第一个只读、第二个可写 |
-| `write_pair<S,T,A,R>(WriteHandle<S>, WriteHandle<T>, fn(&mut S,&mut T,A)->R, A) -> R` | 两个可写参数 |
+| `read_pair<S,T,R>(ReadHandle<S>, ReadHandle<T>, fn(&S,&T)->R) -> Result<R, DomainAccessError>` | 两个只读参数，无额外输入 |
+| `update_pair<S,T,A,R>(ReadHandle<S>, WriteHandle<T>, fn(&S,&mut T,A)->R, A) -> Result<R, DomainAccessError>` | 第一个只读、第二个可写 |
+| `write_pair<S,T,A,R>(WriteHandle<S>, WriteHandle<T>, fn(&mut S,&mut T,A)->R, A) -> Result<R, DomainAccessError>` | 两个可写参数 |
 
 A、R 支持上述标量和有界纯值记录；操作必须是命名、同步、无宿主调用、状态借用不逃逸的受检入口，不能用
 普通闭包、函数变量或 `@noescape` 声明绕过证明。输入在排队前独立保存，状态地址到执行时
@@ -2980,13 +3001,14 @@ A、R 支持上述标量和有界纯值记录；操作必须是命名、同步�
 不执行操作体。正常返回后每个可写域推进一次修订，包括返回 false 或没有实际修改；只读域
 修订不变。短操作没有失败回滚：运行时失败隔离全部声明可写的域并释放其根，终结涉及它们
 的排队申请和所属请求任务；只读参与域和无关域继续可用。任一域在执行前关闭会终结整份
-申请，取消/丢弃申请也一次移除全部依赖。错误沿当前调用失败路径传播，不返回提交回执。
+申请，取消/丢弃申请也一次移除全部依赖。执行前拒绝返回 DomainAccessError；操作体失败
+沿任务失败通道传播，不返回提交回执。
 
 Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回已有 `DomainRequest`。
 方法前两个引用参数决定读写模式，余参和返回值为标量；宿主允许标量参数列表。
 生命周期和限额沿用单域 Request，尚未收取的结果继续占用请求额度。
 
-可执行示例见 [state_domain_pairs.jk](../tests/fixtures/state_domain_pairs.jk)。这些入口返回普通
+可执行示例见 [state_domain_pairs.jk](../tests/fixtures/state_domain_pairs.jk)。这些入口的成功分支返回
 纯值结果，不产生版本凭据或候选提交；需要凭据时使用下述联合快照。三域及以上使用后述有界访问集合；
 拥有字段的联合访问仍未开放；双候选原子发布见下节。
 
@@ -3170,7 +3192,7 @@ fn main() @suspends {
     let room = domain.create(open, 3)
     directory.insert(1001, room.handle());
     match domain.lookup::<Room>(directory, 1001) {
-        Some(handle) => { println(domain.read_from(handle, count)) }
+        Some(handle) => { println(domain.read_from(handle, count).unwrap()) }
         None => { println("room unavailable") }
     }
 }

@@ -1,0 +1,38 @@
+import joky/domain
+import joky/check
+struct State { n:Int32 }
+struct Packet { n:Int32 }
+fn require(ok:Bool) { let message="domain access errors" check.assert(ok,&message) }
+fn make(n:Int32)->State {State{n:n}}
+fn read(s:&State)->Int32 {s.n}
+fn read_packet(s:&State)->Packet {Packet{n:s.n}}
+fn write(s:&mut State,n:Int32)->Int32 {s.n=n n}
+fn write_packet(s:&mut State,p:Packet)->Packet {s.n=p.n p}
+fn pair(a:&mut State,b:&mut State,n:Int32)->Int32 {a.n=n b.n=n n}
+fn pair_packet(a:&mut State,b:&mut State,p:Packet)->Packet {a.n=p.n b.n=p.n p}
+fn poison(s:&mut State,n:Int32)->Int32 {s.n=99 s.n/n}
+fn failing(n:Int32) @suspends ->Int32 {
+    // A body failure must never become a catchable access Err.
+    match domain.write(poison,n) { Ok(value)=>value, Err(_)=>100 }
+}
+fn readonly(n:Int32) @suspends ->Int32 {
+    require(match domain.write(write,n) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    require(match domain.write(write_packet,Packet{n:n}) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    domain.read(read).unwrap()
+}
+fn main() @suspends {
+    require(match domain.read(read) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    require(match domain.read(read_packet) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    let owner=domain.create(make,7) let handle=owner.handle() let reader=handle.read_only()
+    require(match domain.write_pair(handle,handle,pair,99) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    require(match domain.write_pair(handle,handle,pair_packet,Packet{n:99}) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    require(domain.request_read(reader,readonly,99).unwrap()==7)
+    require(domain.read_from(reader,read).unwrap()==7)
+    require(domain.read_from(reader,read_packet).unwrap().n==7)
+    require(match domain.request(handle,failing,0) {Err(domain.RequestError.DomainFailed)=>true,_=>false})
+    require(match domain.read_from(reader,read) {Err(domain.DomainAccessError.DomainFailed)=>true,_=>false})
+    require(match domain.read_from(reader,read_packet) {Err(domain.DomainAccessError.DomainFailed)=>true,_=>false})
+    owner.close()
+    require(match domain.read_from(reader,read) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
+    require(match domain.write_to(handle,write_packet,Packet{n:99}) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
+}

@@ -13,7 +13,7 @@ fn lifecycle() @suspends -> Int32 {
     task.yield_now()
     var rejected = domain.commit_before(owner.handle(), candidate, &expired)
     assert(match rejected.wait() { Expired => true, _ => false })
-    assert(domain.read_from(reader, read) == 7)
+    assert(domain.read_from(reader, read).unwrap() == 7)
     let snapshot = domain.snapshot_from(reader, read)
     assert(match snapshot.check() { Current => true, _ => false })
     // The deadline is created before preparation and remains independent of it.
@@ -22,7 +22,7 @@ fn lifecycle() @suspends -> Int32 {
     task.yield_now()
     var committed = domain.commit_before(owner.handle(), next, &later)
     assert(match committed.wait() { Committed(version) => version == 1, _ => false })
-    assert(domain.read_from(reader, read) == 12)
+    assert(domain.read_from(reader, read).unwrap() == 12)
     // Reusing a deadline neither resets nor extends it.
     var again = domain.commit_before(owner.handle(), domain.candidate_from(domain.snapshot_from(reader, read), make, 88), &expired)
     assert(match again.wait() { Expired => true, _ => false })

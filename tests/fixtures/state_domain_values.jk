@@ -30,8 +30,8 @@ fn unit(w:&mut Wallet,input:Unit) {w.balance=w.balance+1}
 fn read_empty(w:&Wallet)->Empty {Empty{}}
 fn read_unit(w:&Wallet) {}
 fn request(delta:Int32) @suspends ->Int32 {
-    let result=domain.write(add,Input{amount:delta,bits:bits()})
-    let readback=domain.read(read)
+    let result=domain.write(add,Input{amount:delta,bits:bits()}).unwrap()
+    let readback=domain.read(read).unwrap()
     require(readback.remaining==result.remaining)
     result.remaining
 }
@@ -42,24 +42,24 @@ fn verify(r:Reply,n:Int32) {
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,20) let b=domain.create(make,5)
     let input=Input{amount:3,bits:bits()}
-    verify(domain.write_to(a.handle(),add,input),23)
-    verify(domain.read_from(a.read_handle(),read),23)
-    verify(domain.write_pair(a.handle(),b.handle(),transfer,input),20)
-    verify(domain.read_pair(a.read_handle(),b.read_handle(),sum),28)
-    verify(domain.update_pair(a.read_handle(),b.handle(),update,input),23)
-    verify(domain.read_pair(a.read_handle(),a.read_handle(),sum),40)
-    domain.write_to(a.handle(),empty,Empty{});
-    domain.write_to(a.handle(),unit,{});
-    domain.read_from(a.read_handle(),read_empty);
-    domain.read_from(a.read_handle(),read_unit);
-    verify(domain.read_from(a.read_handle(),read),22)
+    verify(domain.write_to(a.handle(),add,input).unwrap(),23)
+    verify(domain.read_from(a.read_handle(),read).unwrap(),23)
+    verify(domain.write_pair(a.handle(),b.handle(),transfer,input).unwrap(),20)
+    verify(domain.read_pair(a.read_handle(),b.read_handle(),sum).unwrap(),28)
+    verify(domain.update_pair(a.read_handle(),b.handle(),update,input).unwrap(),23)
+    verify(domain.read_pair(a.read_handle(),a.read_handle(),sum).unwrap(),40)
+    domain.write_to(a.handle(),empty,Empty{}).unwrap();
+    domain.write_to(a.handle(),unit,{}).unwrap();
+    domain.read_from(a.read_handle(),read_empty).unwrap();
+    domain.read_from(a.read_handle(),read_unit).unwrap();
+    verify(domain.read_from(a.read_handle(),read).unwrap(),22)
     require(domain.request(a.handle(),request,2).unwrap_or(-1)==24)
-    verify(domain.write_to(a.handle(),scalar_input,0),24)
-    require(domain.write_to(a.handle(),scalar_result,Input{amount:0,bits:bits()})==24)
-    verify(domain.write_to(a.handle(),unit_input,{}),24)
+    verify(domain.write_to(a.handle(),scalar_input,0).unwrap(),24)
+    require(domain.write_to(a.handle(),scalar_result,Input{amount:0,bits:bits()}).unwrap()==24)
+    verify(domain.write_to(a.handle(),unit_input,{}).unwrap(),24)
     let c=domain.create(owned,1)
-    verify(domain.write_to(c.handle(),change_owned,input),4)
-    verify(domain.read_from(c.read_handle(),read_owned),9)
+    verify(domain.write_to(c.handle(),change_owned,input).unwrap(),4)
+    verify(domain.read_from(c.read_handle(),read_owned).unwrap(),9)
     c.close() b.close() a.close()
     24
 }

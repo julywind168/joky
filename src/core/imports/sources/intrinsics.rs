@@ -83,6 +83,8 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.update_pair" | "domain.write_pair" => DomainPair(true),
                     "domain.request" | "domain.request_read" => DomainRequest,
                     "domain.finish_request" => DomainFinish,
+                    "domain.finish_scalar" => DomainScalarFinish(false),
+                    "domain.finish_current_scalar" => DomainScalarFinish(true),
                     "domain.finish_value" => DomainValueFinish(false),
                     "domain.finish_current_value" => DomainValueFinish(true),
                     _ => return Err(unknown(&attribute)),

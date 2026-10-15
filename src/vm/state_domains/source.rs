@@ -486,14 +486,18 @@ unsafe fn wait(
             }
         }
         Wait::Turn(request) => {
-            let Some(outcome) = request.take_result() else {
+            let Some((outcome, rejection)) = request.take_access_result() else {
                 request.register_current_wait()?;
                 return Ok(None);
             };
-            match outcome {
-                DomainOutcome::Value(value) => Ok(value.bits()),
-                DomainOutcome::Failed(e) => Err(e),
-                _ => Err(invalid("Domain operation was cancelled or closed")),
+            if let Some(rejection) = rejection {
+                Ok(access::reply(frame, op, rejection as u64, 0))
+            } else {
+                match outcome {
+                    DomainOutcome::Value(value) => Ok(access::reply(frame, op, 0, value.bits())),
+                    DomainOutcome::Failed(e) => Err(e),
+                    _ => Err(invalid("Domain operation was cancelled")),
+                }
             }
         }
         Wait::Request { result, .. } => {
@@ -516,6 +520,23 @@ pub(crate) unsafe fn poll(
     let executor = crate::runtime::executor::current_executor()
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
+    if op.access() && op.status_payload() {
+        let initial = frame.state == 0;
+        let result = match wait(arena, frame, &registry, op) {
+            Err(error) if initial => {
+                let rejection = access::source_rejection(&registry, frame, op, &error);
+                Ok(Some(access::reply(frame, op, rejection as u64, 0)))
+            }
+            result => result,
+        };
+        if !matches!(result, Ok(None)) {
+            stop(frame, 0);
+        }
+        if matches!(result, Ok(Some(_))) {
+            frame.state = DONE;
+        }
+        return result;
+    }
     let result = match op {
         Operation::TimerCreate
         | Operation::TimerHandle

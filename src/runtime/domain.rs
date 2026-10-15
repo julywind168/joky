@@ -205,6 +205,22 @@ pub(crate) fn deadline_type() -> Type {
     Type::Resource("domain.DeadlineOwner".into())
 }
 impl Operation {
+    pub(crate) fn access(self) -> bool {
+        matches!(
+            self,
+            Self::Read
+                | Self::Write
+                | Self::CurrentRead
+                | Self::CurrentWrite
+                | Self::Pair
+                | Self::Values
+                | Self::CurrentValues
+        )
+    }
+    pub(crate) fn status_payload(self) -> bool {
+        self == Self::Request
+            || (self.access() && !matches!(self, Self::Values | Self::CurrentValues))
+    }
     pub(crate) fn signature(self) -> FunctionSignature {
         let token = handle_type();
         let text = Type::String;
@@ -225,7 +241,7 @@ impl Operation {
                     text,
                     Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
                 ],
-                Type::Unit,
+                Type::Int32,
             ),
             Self::Values => (
                 vec![
@@ -236,7 +252,7 @@ impl Operation {
                     text,
                     Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
                 ],
-                Type::Unit,
+                Type::Int32,
             ),
             Self::TimerCreate => (vec![], Type::Resource("domain.TimerOwner".into())),
             Self::TimerHandle => (
@@ -335,10 +351,19 @@ impl Operation {
                 vec![m, token, text, i],
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
-            Self::CurrentRead => (vec![text], i),
-            Self::CurrentWrite => (vec![text, i.clone()], i),
-            Self::Read => (vec![m, token, text], i),
-            Self::Write => (vec![m, token, text, i.clone()], i),
+            Self::CurrentRead => (vec![text], Type::tuple(vec![Type::Int32, Type::UInt64])),
+            Self::CurrentWrite => (
+                vec![text, i.clone()],
+                Type::tuple(vec![Type::Int32, Type::UInt64]),
+            ),
+            Self::Read => (
+                vec![m, token, text],
+                Type::tuple(vec![Type::Int32, Type::UInt64]),
+            ),
+            Self::Write => (
+                vec![m, token, text, i.clone()],
+                Type::tuple(vec![Type::Int32, Type::UInt64]),
+            ),
             Self::Snapshot => (vec![m, token, text], snapshot_type()),
             Self::SnapshotValue => (vec![Type::reference(snapshot_type(), false)], i),
             Self::SnapshotCheck => (vec![Type::reference(snapshot_type(), false)], Type::Int32),
@@ -371,7 +396,10 @@ impl Operation {
                 vec![token, Type::reference(candidate_type(), true)],
                 commit_type(),
             ),
-            Self::Pair => (vec![m, token.clone(), token, text, i.clone()], i),
+            Self::Pair => (
+                vec![m, token.clone(), token, text, i.clone()],
+                Type::tuple(vec![Type::Int32, Type::UInt64]),
+            ),
             Self::SnapshotPair => (vec![m, token.clone(), token, text], snapshot_type()),
             Self::DeadlineAfter => (vec![Type::Int32], deadline_type()),
             Self::CommitBefore => (
@@ -422,7 +450,7 @@ pub(crate) mod metadata;
 pub(crate) extern "C" fn module_placeholder() -> u64 {
     0
 }
-#[export_name = "__joky_domain_poll_v2"]
+#[export_name = "__joky_domain_poll_v3"]
 /// # Safety
 /// `frame` must be a live, uniquely polled CPS frame with an attached arena and
 /// slots matching `kind`'s exact compiler-owned signature. Code and borrowed

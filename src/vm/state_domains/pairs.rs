@@ -215,6 +215,7 @@ fn resolve(
 pub(super) fn execute(
     domains: &mut Domains,
     pair: &mut Pair,
+    rejection: &mut Option<access::Rejection>,
 ) -> (DomainOutcome, Vec<TaskId>, Vec<TaskGroup>) {
     let count = pair.handles.len();
     let mut mutable = [false; 64];
@@ -225,15 +226,22 @@ pub(super) fn execute(
     // root address is exposed or any user instruction can modify either state.
     let module = match resolve(domains, &pair.handles, &pair.method, &pair.info) {
         Ok(module) => module,
-        Err(error) => return (DomainOutcome::Failed(error), Vec::new(), Vec::new()),
+        Err(error) => {
+            *rejection = Some(access::classify(domains, &pair.handles, &error));
+            return (DomainOutcome::Failed(error), Vec::new(), Vec::new());
+        }
     };
     let mut revisions = [0; 64];
     for (index, handle) in pair.handles.iter().enumerate() {
         let domain = match domains.get(*handle) {
             Ok(domain) => domain,
-            Err(error) => return (DomainOutcome::Failed(error), Vec::new(), Vec::new()),
+            Err(error) => {
+                *rejection = Some(access::classify(domains, &pair.handles, &error));
+                return (DomainOutcome::Failed(error), Vec::new(), Vec::new());
+            }
         };
         let Some(next) = domain.revision.checked_add(u64::from(mutable[index])) else {
+            *rejection = Some(access::Rejection::ResourceLimit);
             return (
                 DomainOutcome::Failed(limited("State domain revision exhausted")),
                 Vec::new(),

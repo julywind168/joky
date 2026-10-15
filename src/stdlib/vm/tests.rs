@@ -378,7 +378,7 @@ fn script_bridge_cancellation(
     flat: bool,
 ) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
-    let script = "import joky/domain import joky/task struct S { n: Int32 } fn make(n:Int32)->S { S{n:n} } fn read(s:&S)->Int32{s.n} fn work(n:Int32) @suspends ->Int32 { let s=domain.create(make,42) task.yield_now() domain.read_from(s.read_handle(),read) }";
+    let script = "import joky/domain import joky/task struct S { n: Int32 } fn make(n:Int32)->S { S{n:n} } fn read(s:&S)->Int32{s.n} fn work(n:Int32) @suspends ->Int32 { let s=domain.create(make,42) task.yield_now() domain.read_from(s.read_handle(),read).unwrap() }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut host = VmEngine::with_mode(mode);
         let source = if flat {
@@ -388,8 +388,8 @@ fn script_bridge_cancellation(
                     "struct Message { n:Int32 } fn work(n:Message) @suspends ->Message",
                 )
                 .replace(
-                    "task.yield_now() domain.read_from(s.read_handle(),read)",
-                    "task.yield_now() Message { n:domain.read_from(s.read_handle(),read) }",
+                    "task.yield_now() domain.read_from(s.read_handle(),read).unwrap()",
+                    "task.yield_now() Message { n:domain.read_from(s.read_handle(),read).unwrap() }",
                 );
             script_call_source(&script, mode, "work")
                 .replace(

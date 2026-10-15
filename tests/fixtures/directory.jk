@@ -10,7 +10,7 @@ fn read(room:&Room)->Int32 { room.value }
 fn update(room:&mut Room,value:Int32)->Int32 { room.value=value value }
 fn assert(ok:Bool) { let message="directory routing" check.assert(ok,&message) }
 fn value(directory:domain.DirectoryHandle,key:UInt64) @suspends ->Int32 {
-    match domain.lookup::<Room>(directory,key) { Some(room)=>domain.read_from(room,read),None=>-1 }
+    match domain.lookup::<Room>(directory,key) { Some(room)=>domain.read_from(room,read).unwrap(),None=>-1 }
 }
 fn route() @suspends {
     let table=domain.directory(2)
@@ -34,7 +34,7 @@ fn route() @suspends {
     assert(!directory.remove(7,old))
     assert(value(directory,7)==20)
     match domain.lookup_write::<Room>(directory,7) {
-        Some(room)=>assert(domain.write_to(room,update,42)==42)
+        Some(room)=>assert(domain.write_to(room,update,42).unwrap()==42)
         None=>assert(false)
     }
     assert(value(directory,9)==42)
@@ -55,7 +55,7 @@ fn route() @suspends {
     assert(value(directory,8)==-1)
     assert(match directory.insert(8,a) { Err(Closed)=>true,_=>false })
     assert(!directory.remove(8,old))
-    assert(domain.read_from(old,read)==10)
+    assert(domain.read_from(old,read).unwrap()==10)
 }
 fn weak() @suspends {
     let table=domain.directory(1)
@@ -65,7 +65,7 @@ fn weak() @suspends {
     let room=domain.create(make,2)
     let dangling={ let other=domain.directory(1) let h=other.handle() assert(h.insert(1,room.handle()).is_ok()) h }
     assert(domain.lookup::<Room>(dangling,1).is_none())
-    assert(domain.read_from(room.read_handle(),read)==2)
+    assert(domain.read_from(room.read_handle(),read).unwrap()==2)
 }
 struct Catalog { values:Array<Int32> }
 fn catalog(value:Int32)->Catalog { var values=Array.new::<Int32>() values.push(value) Catalog{values:values} }
@@ -75,7 +75,7 @@ fn owned() @suspends {
     let state=domain.create(catalog,73)
     assert(table.handle().insert_read(1,state.read_handle()).is_ok())
     match domain.lookup::<Catalog>(table.handle(),1) {
-        Some(handle)=>assert(domain.read_from(handle,first)==73)
+        Some(handle)=>assert(domain.read_from(handle,first).unwrap()==73)
         None=>assert(false)
     }
 }

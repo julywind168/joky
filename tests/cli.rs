@@ -5509,7 +5509,7 @@ fn checked_runtime_bindings_compose_in_all_backends() {
             let first = child.call::<Int32, Int32>("next", 40)
             let second = child.call::<Int32, Int32>("next", first)
             let state = domain.create(make, second)
-            assert(domain.read_from(state.read_handle(), read) == 42, &message)
+            assert(domain.read_from(state.read_handle(), read).unwrap() == 42, &message)
             var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) {
                 Ok(listener) => listener, Err(_) => { return 1 }
             }
@@ -5602,7 +5602,18 @@ fn net6_dns_public_module_runs_in_all_backends() {
 
 #[cfg(unix)]
 #[test]
-fn state_domains_require_supervised_requests_in_standalone_programs() {
+fn state_domains_access_rejections_are_values_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "access.jk",
+        include_str!("fixtures/state_domain_access_errors.jk"),
+    );
+    work.assert_all_backends("access.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_unwrap_rejected_access_fails_the_calling_task() {
     let work = Workspace::new();
     work.write(
         "domain.jk",
@@ -5610,14 +5621,14 @@ fn state_domains_require_supervised_requests_in_standalone_programs() {
         import joky/domain
         struct State { count: Int32 }
         fn read(state: &State) -> Int32 { state.count }
-        fn main() @suspends { domain.read(read); }
+        fn main() @suspends { domain.read(read).unwrap(); }
     "#,
     );
     let check = |output: std::process::Output| {
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         let error = String::from_utf8_lossy(&output.stderr);
-        assert!(error.contains("No active domain request"), "{error}");
+        assert!(error.contains("Called Result.unwrap on Err"), "{error}");
         assert!(!error.contains("panicked"), "{error}");
     };
     check(work.cli(&["run", "domain.jk"]));
@@ -5712,8 +5723,8 @@ fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
         }
     "#;
     for (case, diagnostic) in [
-        ("fn bad(s: &State) -> Int32 { let f = identity f(s.count) } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad); }", "Domain operation must be a proved"),
-        ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count) s.count } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad); }", "Domain operation must be a proved"),
+        ("fn bad(s: &State) -> Int32 { let f = identity f(s.count) } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
+        ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count) s.count } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), \"owned\"); }", "Copy type arguments"),
         ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, 2)); }", "scalar"),
     ] {
@@ -5745,7 +5756,7 @@ fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
         pub fn read(state: &State) -> Int32 { state.count }
         pub fn work(delta: Int32) @suspends -> Int32 {
             task.sleep_ms(1)
-            domain.write(add, delta)
+            domain.write(add, delta).unwrap()
         }
         "#,
     );
@@ -5759,7 +5770,7 @@ fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
             let owner = domain.create(room.make, 10)
             let result = domain.request(owner.handle(), room.work, 2).unwrap_or(-1)
             io.println(result)
-            let value = domain.read_from(owner.read_handle(), room.read)
+            let value = domain.read_from(owner.read_handle(), room.read).unwrap()
             io.println(value)
             owner.close()
         }
@@ -5934,15 +5945,15 @@ fn state_domains_pairs_reject_unproved_entries_and_capability_mismatches() {
     let work = Workspace::new();
     let prefix = "import joky/domain struct S { n:Int32 } fn make(n:Int32)->S { S { n:n } } fn read(a:&S,b:&S)->Int32 { a.n+b.n } fn write(a:&mut S,b:&mut S,n:Int32)->Int32 { a.n=n b.n=n n }";
     for (extra, body) in [
-        ("", "domain.write_pair(a.read_handle(),b.handle(),write,1);"),
-        ("", "domain.read_pair(a.read_handle(),b.read_handle(),write);"),
-        ("", "let f=read domain.read_pair(a.read_handle(),b.read_handle(),f);"),
+        ("", "domain.write_pair(a.read_handle(),b.handle(),write,1).unwrap();"),
+        ("", "domain.read_pair(a.read_handle(),b.read_handle(),write).unwrap();"),
+        ("", "let f=read domain.read_pair(a.read_handle(),b.read_handle(),f).unwrap();"),
         ("", "let f=domain.read_pair::<S,S,Int32>"),
-        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),noisy);"),
-        ("fn pending(a:&S,b:&S) @suspends -> Int32 { a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),pending);"),
-        ("fn escape(a:&S,b:&S)->&S { a }", "domain.read_pair(a.read_handle(),b.read_handle(),escape);"),
-        ("struct Owned { s:String } fn owned(n:Int32)->Owned { Owned { s:\"text\" } } fn owning(a:&Owned,b:&Owned)->Int32 { 1 }", "let x=domain.create(owned,1) domain.read_pair(x.read_handle(),x.read_handle(),owning);"),
-        ("import joky/drop.{type Drop} struct Hook { n:Int32 } impl Drop for Hook { fn drop(&mut self) {} } fn hook(a:&S,b:&S)->Int32 { let x=Hook{n:1} a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),hook);"),
+        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),noisy).unwrap();"),
+        ("fn pending(a:&S,b:&S) @suspends -> Int32 { a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),pending).unwrap();"),
+        ("fn escape(a:&S,b:&S)->&S { a }", "domain.read_pair(a.read_handle(),b.read_handle(),escape).unwrap();"),
+        ("struct Owned { s:String } fn owned(n:Int32)->Owned { Owned { s:\"text\" } } fn owning(a:&Owned,b:&Owned)->Int32 { 1 }", "let x=domain.create(owned,1) domain.read_pair(x.read_handle(),x.read_handle(),owning).unwrap();"),
+        ("import joky/drop.{type Drop} struct Hook { n:Int32 } impl Drop for Hook { fn drop(&mut self) {} } fn hook(a:&S,b:&S)->Int32 { let x=Hook{n:1} a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),hook).unwrap();"),
     ] {
         work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
         for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
@@ -5968,16 +5979,8 @@ fn state_domains_pair_aliases_fail_before_execution_in_all_backends() {
             "domain.update_pair(a.read_handle(),a.handle(),mutate,0)",
         ),
     ] {
-        work.write("alias.jk", &format!("import joky/domain struct S {{ n:Int32 }} fn make(n:Int32)->S {{ S{{n:n}} }} {operation} fn main() @suspends {{ let a=domain.create(make,3) {call}; }}"));
-        let rejected = |output: std::process::Output| {
-            assert!(!output.status.success());
-            assert!(String::from_utf8_lossy(&output.stderr)
-                .contains("cannot alias a writable state reference"));
-        };
-        rejected(work.cli(&["run", "alias.jk"]));
-        rejected(work.cli(&["run", "--interpreter", "alias.jk"]));
-        success(&work.cli(&["build", "alias.jk"]));
-        rejected(Command::new(work.path().join("alias")).output().unwrap());
+        work.write("alias.jk", &format!("import joky/domain import joky/check struct S {{ n:Int32 }} fn make(n:Int32)->S {{ S{{n:n}} }} fn read(s:&S)->Int32 {{s.n}} {operation} fn main() @suspends {{ let a=domain.create(make,3) let message=\"alias rejection\" check.assert(match {call} {{ Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false }},&message) check.assert(domain.read_from(a.read_handle(),read).unwrap()==3,&message) }}"));
+        work.assert_all_backends("alias.jk", &[], b"", 0);
     }
 }
 
@@ -6698,7 +6701,7 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     while domain.lookup::<Room>(directory,7).is_some() { task.yield_now() }
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup::<Room>(directory,7) { Some(room)=>domain.read_from(room,read),None=>-1 }
+    match domain.lookup::<Room>(directory,7) { Some(room)=>domain.read_from(room,read).unwrap(),None=>-1 }
 }
 fn remove(directory:domain.DirectoryHandle) @suspends ->Bool {
     match domain.lookup::<Room>(directory,7) { Some(room)=>directory.remove(7,room),None=>false }
@@ -6765,7 +6768,7 @@ fn hold(timer:domain.TimerHandle) @suspends {
     check.assert(domain.after(timer,room.handle(),0,tick,2).is_ok(),&message)
     while match timer.status() { Active=>true,_=>false } { task.yield_now() }
     check.assert(match timer.status() { Completed=>true,_=>false },&message)
-    check.assert(domain.read_from(room.read_handle(),read)==30,&message)
+    check.assert(domain.read_from(room.read_handle(),read).unwrap()==30,&message)
 }"#;
     let next = source.replace("room.value+amount", "room.value+amount*10");
     let source = source.replace('{', "{{").replace('}', "}}");
@@ -7389,10 +7392,10 @@ fn turn(s:&mut State,p:{ty})->{ty} {{s.n=s.n+1 p}}
 fn read(s:&State)->Int32 {{s.n}}
 fn main() @suspends {{
     let owner=domain.create(make,0)
-    let p=domain.write_to(owner.handle(),turn,{value})
+    let p=domain.write_to(owner.handle(),turn,{value}).unwrap()
     let message="domain value bounds"
     check.assert({assertion},&message)
-    check.assert(domain.read_from(owner.read_handle(),read)==1,&message)
+    check.assert(domain.read_from(owner.read_handle(),read).unwrap()==1,&message)
 }}"#
             ),
         );
@@ -7415,12 +7418,12 @@ fn domain_value_packets_reject_owning_inputs_and_results() {
         (
             "input",
             "fn turn(s:&mut State,p:Packet)->Int32 {s.n}",
-            "domain.write_to(owner.handle(),turn,Packet{text:\"owned\"})",
+            "domain.write_to(owner.handle(),turn,Packet{text:\"owned\"}).unwrap()",
         ),
         (
             "result",
             "fn turn(s:&State)->Packet {Packet{text:\"owned\"}}",
-            "domain.read_from(owner.read_handle(),turn)",
+            "domain.read_from(owner.read_handle(),turn).unwrap()",
         ),
     ] {
         let file = format!("{name}.jk");

@@ -104,7 +104,7 @@ impl Builtin {
     /// Extra result lanes beyond the parameter portion of an adapter frame.
     pub(crate) fn result_slots(&self) -> usize {
         match self {
-            Self::Domain(domain::Operation::Request) => 2,
+            Self::Domain(op) if op.status_payload() => 2,
             Self::Domain(domain::Operation::OutboxMessageBytes) | Self::Dns => 1,
             Self::Tcp(op) if op.is_read() => 1,
             _ => 0,

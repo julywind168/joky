@@ -1,9 +1,18 @@
 // The standard fallible value. Either payload may own resources.
 import joky/option.{type Option}
+import joky/check
 
 enum Result<T, E> { Ok(T), Err(E) }
 
 impl<T, E> Result<T, E> {
+    // An explicit assertion for callers that consider rejection a task failure.
+    fn unwrap(self) -> T {
+        match self {
+            Ok(value) => value
+            Err(_) => { let message = "Called Result.unwrap on Err" check.panic(&message) }
+        }
+    }
+
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Result<U, E> {
         match self { Ok(value) => Result.Ok(transform(value)), Err(error) => Result.Err(error) }
     }

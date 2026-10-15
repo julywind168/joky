@@ -159,9 +159,6 @@ fn validate(domains: &Domains, candidate: &Candidate, now: Option<Instant>) -> R
     if domain.failure.is_some() {
         return Err(Status::DomainFailed);
     }
-    if domain.ty != candidate.ty || !source::same_module(&domain.module, &candidate.module) {
-        return Err(Status::InvalidAccess);
-    }
     if let Some(deadline) = candidate.deadline {
         if deadline.registry != domains.identity {
             return Err(Status::InvalidAccess);
@@ -171,6 +168,9 @@ fn validate(domains: &Domains, candidate: &Candidate, now: Option<Instant>) -> R
         }
     }
     candidate.reads.validate(domains)?;
+    if domain.ty != candidate.ty || !source::same_module(&domain.module, &candidate.module) {
+        return Err(Status::Conflict);
+    }
     domain.revision.checked_add(1).ok_or(Status::ResourceLimit)
 }
 pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<Instant>) {
@@ -1080,7 +1080,7 @@ mod tests {
             assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
             let receipt = admit(&vm.domains, token(&vm, &owner), stale);
             vm.poll_tasks(100).unwrap();
-            assert_eq!(receipt.result(), Some((Status::InvalidAccess, 0)));
+            assert_eq!(receipt.result(), Some((Status::Conflict, 0)));
             drop(receipt);
             read(&mut vm, &owner, 107);
             let mut inspection = vm
@@ -1210,6 +1210,49 @@ mod tests {
             assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
         }
     }
+    #[test]
+    fn state_domains_candidate_versions_conflict_for_targets_and_readonly_dependencies() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for target in [false, true] {
+                for version in ["data", "code", "schema"] {
+                    let (mut vm, a, b) = joint_vm(mode);
+                    let next = joint_candidate(&mut vm, &a, &b);
+                    let receipt = admit(&vm.domains, token(&vm, &a), next);
+                    {
+                        // Independently exercise each credential without changing
+                        // the root: publication/migration have their own tests.
+                        let mut domains = vm.domains.borrow_mut();
+                        let domain = domains
+                            .entries
+                            .get_mut(&if target {
+                                a.handle.sequence
+                            } else {
+                                b.handle.sequence
+                            })
+                            .unwrap();
+                        match version {
+                            "data" => domain.revision += 1,
+                            "code" => domain.code += 1,
+                            _ => domain.schema += 1,
+                        }
+                    }
+                    vm.poll_tasks(100).unwrap();
+                    assert_eq!(
+                        receipt.result(),
+                        Some((Status::Conflict, 0)),
+                        "{mode:?}, target={target}, {version}"
+                    );
+                    read(&mut vm, &a, 7);
+                    a.close();
+                    b.close();
+                    assert_eq!(receipt.result(), Some((Status::Conflict, 0)));
+                    drop(receipt);
+                    assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+                }
+            }
+        }
+    }
+
     #[test]
     fn state_domains_joint_snapshot_complete_dependencies_control_pending_commits() {
         for mode in [VmMode::Jit, VmMode::Interpreter] {

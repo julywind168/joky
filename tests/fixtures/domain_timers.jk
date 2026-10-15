@@ -16,14 +16,14 @@ fn main() @suspends ->Int32 {
     assert(domain.after(timer,room.handle(),0,tick,7).is_ok())
     while match timer.status() { Active=>true,_=>false } { task.yield_now() }
     assert(match timer.status() { Completed=>true,_=>false })
-    assert(domain.read_from(room.read_handle(),read)==17)
+    assert(domain.read_from(room.read_handle(),read).unwrap()==17)
     assert(domain.every(timer,room.handle(),100000,tick,3).is_ok())
     assert(match domain.after(timer,room.handle(),0,tick,1) { Err(Busy)=>true,_=>false })
     timer.cancel()
     assert(match timer.status() { Cancelled=>true,_=>false })
     assert(domain.after(timer,room.handle(),0,tick,2).is_ok())
     while match timer.status() { Active=>true,_=>false } { task.yield_now() }
-    assert(domain.read_from(room.read_handle(),read)==19)
+    assert(domain.read_from(room.read_handle(),read).unwrap()==19)
     assert(domain.every(timer,room.handle(),100000,tick,1).is_ok())
     room.close()
     assert(match timer.status() { Closed=>true,_=>false })
@@ -32,6 +32,6 @@ fn main() @suspends ->Int32 {
     let other=domain.create(make,1)
     let dangling={ let owner=domain.timer() let h=owner.handle() assert(domain.after(h,other.handle(),100000,tick,1).is_ok()) h }
     assert(match dangling.status() { Closed=>true,_=>false })
-    assert(domain.read_from(other.read_handle(),read)==1)
+    assert(domain.read_from(other.read_handle(),read).unwrap()==1)
     0
 }

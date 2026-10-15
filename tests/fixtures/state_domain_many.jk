@@ -13,7 +13,7 @@ fn count(r:&Room)->Int32 { r.count }
 fn allowed(r:&Rules)->Int32 { r.allowed }
 fn change(r:&mut Rules,n:Int32) { r.allowed=n }
 fn fail(r:&mut Rules,n:Int32)->Int32 { r.allowed=99 1/n }
-fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n) }
+fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n).unwrap() }
 fn capture(p:domain.ReadHandle<Player>,a:domain.ReadHandle<Room>,b:domain.ReadHandle<Room>,r:domain.ReadHandle<Rules>) @suspends -> domain.SnapshotSet {
     var set=domain.access_set()
     set.include(r)
@@ -51,7 +51,7 @@ fn lifecycle() @suspends ->Int32 {
     let before_a=domain.snapshot_from(ar,count)
     let before_b=domain.snapshot_from(br,count)
     let candidates=transfer(capture(pr,ar,br,rr),ph,ah,bh)
-    domain.write_to(rh,change,0)
+    domain.write_to(rh,change,0).unwrap()
     assert(domain.read_snapshot(&old,rr,allowed)==1)
     var rejected=domain.commit_set(candidates)
     assert(match rejected.wait() { Conflict=>true, _=>false })
@@ -59,7 +59,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(match before_p.check() { Current=>true, _=>false })
     assert(match before_a.check() { Current=>true, _=>false })
     assert(match before_b.check() { Current=>true, _=>false })
-    domain.write_to(rh,change,1)
+    domain.write_to(rh,change,1).unwrap()
     let unchanged=domain.snapshot_from(rr,allowed)
     let fresh=capture(pr,ar,br,rr)
     assert(domain.read_snapshot(&fresh,rr,allowed)==1)
@@ -70,8 +70,8 @@ fn lifecycle() @suspends ->Int32 {
     assert(committed.revision(pr)==1 && committed.revision(ar)==1 && committed.revision(br)==1)
     assert(committed.revision(rr)==0)
     assert(match unchanged.check() { Current=>true, _=>false })
-    assert(domain.read_from(pr,location)==2)
-    assert(domain.read_from(ar,count)==0 && domain.read_from(br,count)==1)
+    assert(domain.read_from(pr,location).unwrap()==2)
+    assert(domain.read_from(ar,count).unwrap()==0 && domain.read_from(br,count).unwrap()==1)
     assert(domain.read_snapshot(&old,pr,location)==1)
     let late=transfer(capture(pr,ar,br,rr),ph,ah,bh)
     r.close()
@@ -85,7 +85,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(domain.request(oh,poison,0).is_err())
     var failed=domain.commit_set(doomed)
     assert(match failed.wait() { DomainFailed=>true, _=>false })
-    assert(domain.read_from(ar,count)==0 && domain.read_from(br,count)==1)
+    assert(domain.read_from(ar,count).unwrap()==0 && domain.read_from(br,count).unwrap()==1)
     p.close()
     a.close()
     b.close()

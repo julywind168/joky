@@ -32,9 +32,9 @@ fn upgrade_ledger(old:&PreviousLedger)->Ledger {Ledger{text:old.text.clone(),tot
 fn ledger_read(s:&Ledger)->Int32 {let text="ledger" if s.text.equals(&text) {int32(s.total)+s.generation} else {-100}}
 fn rules_read(s:&Rules)->Int32 {s.limit}
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    let a=match domain.lookup::<Room>(directory,1) {Some(h)=>domain.read_from(h,read),None=>return -1}
-    let b=match domain.lookup::<Room>(directory,2) {Some(h)=>domain.read_from(h,read),None=>return -1}
-    let c=match domain.lookup::<Ledger>(directory,3) {Some(h)=>domain.read_from(h,ledger_read),None=>return -1}
-    let d=match domain.lookup::<Rules>(directory,4) {Some(h)=>domain.read_from(h,rules_read),None=>return -1}
+    let a=match domain.lookup::<Room>(directory,1) {Some(h)=>domain.read_from(h,read).unwrap(),None=>return -1}
+    let b=match domain.lookup::<Room>(directory,2) {Some(h)=>domain.read_from(h,read).unwrap(),None=>return -1}
+    let c=match domain.lookup::<Ledger>(directory,3) {Some(h)=>domain.read_from(h,ledger_read).unwrap(),None=>return -1}
+    let d=match domain.lookup::<Rules>(directory,4) {Some(h)=>domain.read_from(h,rules_read).unwrap(),None=>return -1}
     a+b+c+d
 }

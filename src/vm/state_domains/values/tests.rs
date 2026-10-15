@@ -101,7 +101,7 @@ fn domain_value_packets_rebind_queued_operations_and_reject_changed_contracts() 
                 read(&mut vm, b.read_handle(), 23);
             } else {
                 assert!(
-                    matches!(request.take_result(),Some(DomainOutcome::Failed(e)) if e.code()==ErrorCode::TypeMismatch),
+                    matches!(request.take_access_result(),Some((DomainOutcome::Failed(e), Some(access::Rejection::Incompatible))) if e.code()==ErrorCode::TypeMismatch),
                     "{change}"
                 );
                 assert_eq!(*output.borrow(), [0, 0]);

@@ -12,7 +12,7 @@ fn append(s:&mut Order,n:Int32) { s.value=s.value*10+n }
 fn read(s:&Order)->Int32 { s.value }
 fn worker(h:admission.Handle,s:domain.WriteHandle<Order>,n:Int32) @suspends {
     let permit=take(h)
-    domain.write_to(s,append,n)
+    domain.write_to(s,append,n).unwrap()
     task.yield_now()
     permit.release()
 }
@@ -37,7 +37,7 @@ fn lifecycle() @suspends ->Int32 {
         task.yield_now()
         a.release()
     }
-    assert(domain.read_from(sh.read_only(),read)==23)
+    assert(domain.read_from(sh.read_only(),read).unwrap()==23)
     let held=take(h)
     // The losing acquisition must remove its bounded wait registration.
     race { | wait_cancel(h) | win_cancel() }

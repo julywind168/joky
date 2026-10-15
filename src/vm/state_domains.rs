@@ -18,6 +18,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+mod access;
 mod admission;
 mod code;
 mod commits;
@@ -182,6 +183,23 @@ impl DomainRequest {
     pub fn take_result(&mut self) -> Option<DomainOutcome> {
         self.take_observed_result().map(|(outcome, _)| outcome)
     }
+    fn take_access_result(&mut self) -> Option<(DomainOutcome, Option<access::Rejection>)> {
+        let rejection = self.domains.upgrade().and_then(|domains| {
+            domains
+                .borrow()
+                .requests
+                .get(&self.sequence?)
+                .and_then(|r| r.access_error)
+        });
+        self.take_result().map(|outcome| {
+            let rejection = if matches!(outcome, DomainOutcome::Closed) {
+                Some(access::Rejection::Closed)
+            } else {
+                rejection
+            };
+            (outcome, rejection)
+        })
+    }
     // The revision is captured with the value by execute(), never when collected.
     fn take_observed_result(&mut self) -> Option<(DomainOutcome, u64)> {
         self.take_snapshot_result()
@@ -236,6 +254,7 @@ struct Request {
     domain: u64,
     work: Work,
     commit_status: Option<commits::Status>,
+    access_error: Option<access::Rejection>,
     charge: usize,
     outcome: Option<DomainOutcome>,
     observed_revision: u64,
@@ -405,6 +424,11 @@ impl Domains {
                 if !request.touches(domain) || request.outcome.is_some() {
                     return None;
                 }
+                request.access_error = match outcome {
+                    DomainOutcome::Closed => Some(access::Rejection::Closed),
+                    DomainOutcome::Failed(_) => Some(access::Rejection::DomainFailed),
+                    _ => None,
+                };
                 request.finish(outcome.clone());
                 request.job.take()
             })
@@ -573,6 +597,7 @@ fn enqueue(
             domain,
             work,
             commit_status: None,
+            access_error: None,
             charge,
             outcome: None,
             observed_revision: 0,
@@ -667,13 +692,16 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         };
         let (outcome, jobs, groups) = match reads {
             Ok(reads) => {
-                let result = pairs::execute(&mut domains, pair);
+                let result = pairs::execute(&mut domains, pair, &mut request.access_error);
                 if matches!(result.0, DomainOutcome::Value(_)) {
                     request.observed_reads = reads;
                 }
                 result
             }
-            Err(error) => (DomainOutcome::Failed(error), Vec::new(), Vec::new()),
+            Err(error) => {
+                request.access_error = Some(access::classify(&domains, &pair.handles, &error));
+                (DomainOutcome::Failed(error), Vec::new(), Vec::new())
+            }
         };
         request.job = None;
         request.finish(outcome);
@@ -726,6 +754,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     let mutable = info.signature.params[0].reference_type().unwrap().mutable;
     let next = domain.revision.checked_add(u64::from(mutable));
     let outcome = if let Err(error) = rebound {
+        request.access_error = Some(access::Rejection::Incompatible);
         DomainOutcome::Failed(error)
     } else if let Some(next) = next {
         let result = domain.root.as_mut().unwrap().invoke(
@@ -761,6 +790,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
             }
         }
     } else {
+        request.access_error = Some(access::Rejection::ResourceLimit);
         DomainOutcome::Failed(limited("State domain revision exhausted"))
     };
     let failed = domain.failure.is_some();

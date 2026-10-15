@@ -102,6 +102,16 @@ fn current_access() -> Result<Access, Error> {
     Ok(access)
 }
 
+pub(super) fn access_rejection(
+    registry: &Rc<RefCell<Domains>>,
+    error: &Error,
+) -> access::Rejection {
+    match current_access() {
+        Ok(current) => access::classify(&registry.borrow(), &[current.handle], error),
+        Err(_) => access::Rejection::InvalidAccess,
+    }
+}
+
 pub(super) fn value_context(
     registry: &Rc<RefCell<Domains>>,
 ) -> Result<(DomainHandle, LoadedModule), Error> {
