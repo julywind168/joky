@@ -2762,10 +2762,12 @@ Rust 自定义挂起适配器可用 `queue_current_domain_call` 提交所属域�
 ## 内置域访问 `joky/domain`
 
 `joky/domain` 在 JIT、解释器及独立 AOT 中使用同一执行器、状态注册表和关闭协议。
-S 必须是普通非泛型记录，字段限标量；拥有字段和嵌套状态留待后续阶段。
-输入 A 与结果 R 支持 Int8/16/32/64、UInt8/16/32/64、Float32/64、Bool、Rune 和 Unit。
+S 必须是普通非泛型记录。单域根支持上节所述受检嵌套记录和 String、Array/Map 拥有图；
+双域与集合操作仍限标量记录根，不能把单域资格直接用于联合访问。
+标量输入 A 与结果 R 支持 Int8/16/32/64、UInt8/16/32/64、Float32/64、Bool、Rune 和 Unit；
+具名短操作另支持有界嵌套纯值记录，具体范围见下述能力表。
 构造、写入及请求仍各接收一个输入，用 `Unit` 表示无数据输入；该实参表达式仍只求值一次。
-不接受元组、记录、容器、借用、函数或资源作为输入/结果，也不支持可变参数。
+不接受元组、容器、借用、函数或资源作为输入/结果，也不支持可变参数。
 以下入口均为 `@suspends`：
 
 | 入口 | 行为 |
@@ -2783,6 +2785,19 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 不能从整数构造，也不能提升权限。关闭后旧句柄永久失效。
 `request` 与 `request_read` 返回 `Result<R, RequestError>`。成功载荷保留完整标量位模式，
 包括 UInt64 最大值、浮点负零和 NaN 载荷，不占用成功值作为错误哨兵。
+
+当前入口能力如下；表中“纯值记录”采用下节的 64 字段、8 层限制，不能携带拥有字段：
+
+| 入口 | 状态根 | 输入／结果 |
+| --- | --- | --- |
+| `create`、单域候选构造 | 受检拥有图 | 构造输入为标量；返回完整状态根 |
+| 单域 `read/write`、`read_from/write_to` | 受检拥有图 | 写输入和操作结果支持标量／纯值记录；读操作无额外输入 |
+| 双域短操作 | 标量记录 | 写输入和操作结果支持标量／纯值记录；双读无额外输入 |
+| `snapshot_from` | 受检拥有图 | 投影结果为标量 |
+| `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果、候选构造输入为标量 |
+| `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果为标量 |
+| `after/every` | 所属域沿用单域根资格 | 操作输入为标量，结果为 Unit |
+| `lookup::<S>/lookup_write::<S>` | 受检拥有图 | 显式指定状态类型，无投影参数 |
 
 | RequestError | 含义 |
 | --- | --- |
@@ -2851,7 +2866,7 @@ fn main() @suspends {
 算法变化且契约兼容时，旧流程及排队项执行当前发布的实现，不兼容则在操作体运行前拒绝。
 执行前取消不写状态；执行完成后取消只丢弃结果，已完成的写入不会回滚。
 
-这是具名短操作的载荷扩展，尚未加入 `when`。构造器、候选输入、快照投影、目录查找投影、
+这是具名短操作的载荷扩展，尚未加入 `when`。构造器、候选输入、快照投影、
 Timer 输入及异步 `request` 的输入与结果仍限标量；Rust `InstanceValue` 公共入口也保持标量。
 
 ### 标量投影快照
@@ -2861,9 +2876,9 @@ SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、�
 
 | 入口 | 行为 |
 | --- | --- |
-| `snapshot_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Snapshot<S, R>` | 排队执行受检只读投影，在同一次访问中保存标量值和域修订 |
+| `snapshot_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Snapshot<S, R>` | 排队执行受检只读投影，在同一次访问中保存标量值、域修订、代码版本和 schema 身份 |
 | `snapshot.value() -> R` | 从快照复制标量值，不重新读取状态 |
-| `snapshot.check() -> SnapshotStatus` | 检查所属执行器、域身份、生命周期与修订 |
+| `snapshot.check() -> SnapshotStatus` | 检查所属执行器、域身份、生命周期、数据修订、代码版本与 schema 身份 |
 
 投影沿用同步、不逃逸和效果检查，但 R 仍限上述标量类型。快照不是整个状态的隐式副本，
 也不携带状态借用；它可跨挂起保存，关闭原域后仍可读取保存的值。凭据封装在不可复制的
@@ -2906,7 +2921,8 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 仍限标�
 不复制载荷，也不重复计费。拒绝、关闭及替换后的旧根只执行受信任的存储释放。
 
 `CommitOutcome` 为 `Committed(UInt64)`（新修订）、`Conflict`、`Closed`、`DomainFailed`、
-`InvalidAccess`、`Cancelled`、`ResourceLimit` 或 `Expired`。提交和短操作共享受理队列；发布前验证
+`InvalidAccess`、`Cancelled`、`ResourceLimit`、`Expired`、`OutboxFull` 或 `OutboxClosed`。
+后两者用于附带出站消息的提交，详见出站信箱一节。提交和短操作共享受理队列；发布前验证
 完整单域凭据、生命周期与修订余量，再于无挂起、无分配、无用户代码的区间替换根并记录结果。
 拒绝会销毁候选，旧状态保持不变；没有自动重试。构造候选或分配回执资源失败仍终止当前任务，
 发生在提交准入之前。排队额度或执行器任务额度不足通过回执返回 `ResourceLimit`。
@@ -2941,8 +2957,9 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 仍限标�
 ### 双域短操作
 
 SC3 的首个切片提供同一执行器内的两个域访问，JIT、解释器、独立 AOT 均可使用。
-当前两个根都必须是普通非泛型、仅含标量字段的记录；两者可以是不同名义类型，但必须来自
-同一加载模块版本。单域 API 已支持的 String/Array 字段尚不能参与双域短操作。
+当前两个根都必须是普通非泛型、仅含标量字段的记录；两者可以是不同名义类型，也可以绑定
+不同模块版本。操作由第一个域的当前模块解析，其余域须与对应参数的状态布局兼容；
+参数顺序决定实现归属，调度不能改变该顺序。单域 API 已支持的拥有字段尚不能参与双域短操作。
 
 | 入口（均为 `@suspends`） | 权限与输入 |
 | --- | --- |
@@ -2976,8 +2993,9 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 ### 联合快照与完整读取凭据
 
 `domain.snapshot_pair<S,T,R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S,&T)->R)`
-为 `@suspends` 入口，返回 `Snapshot<S,R>`。根类型、模块版本及投影资格与 `read_pair` 相同：
-两个普通标量记录、同一执行器和加载模块版本、受检同步只读函数、标量结果。允许同域重复读。
+为 `@suspends` 入口，返回 `Snapshot<S,R>`。根类型和实现归属与 `read_pair` 相同：
+两个普通标量记录、同一执行器、首域当前模块提供受检同步只读投影，其余域布局须兼容；
+投影结果仍限标量。允许同域重复读。捕获完成后保存原投影结果与版本凭据，不晚绑定重算。
 
 投影值与两个域的修订在同一次 FIFO 短操作中捕获；稍后收取结果时不重新读取修订。
 第一个域是未来候选的目标，第二个域是只读依赖，类型参数 S 表达候选目标类型。即使两个域
@@ -2991,8 +3009,9 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 提交成功后只替换第一个域的根并推进它的修订；之后依赖关闭不会改写已提交回执。
 
 读取集合为有界的不透明运行时数据，保存在快照、候选及排队结果中，随相应资源计费和释放；
-它不保活状态根，也不阻止域关闭。当前没有合并分时快照、拆分依赖或任意域集合 API，
-也不自动追踪快照之外的业务数据。单目标发布与下述双候选原子发布使用同一完整读取验证。
+它不保活状态根，也不阻止域关闭。当前没有合并分时快照或拆分依赖的 API，
+更多域使用后述有界访问集合，也不自动追踪快照之外的业务数据。
+单目标发布与下述双候选原子发布使用同一完整读取验证。
 三后端可执行流程见 [state_domain_joint_snapshots.jk](../tests/fixtures/state_domain_joint_snapshots.jk)。
 
 ### 双候选原子发布
@@ -3021,7 +3040,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 `PairCommitReceipt.wait()` 返回 `PairCommitOutcome`：成功为 `Committed((first_revision,
 second_revision))`；其他结果为 Conflict、Closed、DomainFailed、InvalidAccess、Cancelled、
-ResourceLimit、Expired。`identity()` 和 `cancel()` 与单域回执一致；成功后再次等待、取消或
+ResourceLimit、Expired、OutboxFull、OutboxClosed。`identity()` 和 `cancel()` 与单域回执一致；成功后再次等待、取消或
 关闭任一域都不会改写原有修订对。回执仍存活时继续占用请求配额。
 
 三后端完整示例见 [state_domain_pair_commits.jk](../tests/fixtures/state_domain_pair_commits.jk)。
@@ -3057,7 +3076,7 @@ ResourceLimit、Expired。`identity()` 和 `cancel()` 与单域回执一致；�
 后释放旧根；只读成员的修订不变。不自动重试，也不自动发现未登记的业务依赖。
 
 `SetCommitReceipt.wait()` 返回 `SetCommitOutcome`：Committed、Conflict、Closed、DomainFailed、
-InvalidAccess、Cancelled、ResourceLimit 或 Expired。成功后 `revision(ReadHandle<S>)` 返回该写目标
+InvalidAccess、Cancelled、ResourceLimit、Expired、OutboxFull 或 OutboxClosed。成功后 `revision(ReadHandle<S>)` 返回该写目标
 的新修订；未完成、未提交或句柄不在写集合时返回 0。`identity()` / `cancel()` 沿用已有回执规则；
 发布后的取消、域关闭不会改写成功事实或保存的修订，回执存活期间仍占请求配额。
 
@@ -3127,15 +3146,16 @@ AOT 服务作用域持有 Directory，把句柄传给 Script 或业务上下文�
 | `DirectoryHandle.replace(key, expected: ReadHandle<S>, target: WriteHandle<T>)` | 仅在当前条目指向 expected 域时替换，否则 Conflict |
 | `DirectoryHandle.replace_read(key, expected: ReadHandle<S>, target: ReadHandle<T>)` | 条件替换为只读域 |
 | `DirectoryHandle.remove(key, expected: ReadHandle<S>) -> Bool` | 仅删除仍指向 expected 域的条目，避免旧路由清理误删另一个域的新路由 |
-| `domain.lookup(directory, key, projection) -> Option<ReadHandle<S>>` | 检查存活与状态布局兼容性，返回只读句柄 |
-| `domain.lookup_write(directory, key, projection) -> Option<WriteHandle<S>>` | 同上，且要求注册的目标具有写权限 |
+| `domain.lookup::<S>(directory, key) -> Option<ReadHandle<S>>` | 检查存活与状态布局兼容性，返回只读句柄 |
+| `domain.lookup_write::<S>(directory, key) -> Option<WriteHandle<S>>` | 同上，且要求注册的目标具有写权限 |
 
 插入和替换返回 `Result<Unit, DirectoryError>`，错误有 `Closed`、`Full`、`Occupied`、
 `InvalidTarget`、`Conflict`。关闭或来自其他执行器的目录视为 Closed；目标必须属于当前执行器且
 存活、健康。关闭/失效域的旧条目在查找时移除，插入前也会统一清理，以回收未再查找条目的容量。
 
 查找在目录关闭、跨执行器、键不存在、域关闭/隔离或缺少写权限时返回 None；目标存在但与
-投影声明的 S 不兼容时产生 `TypeMismatch` 运行时错误，不返回错误类型的句柄。
+显式指定的 S 不兼容时产生 `TypeMismatch` 运行时错误，不返回错误类型的句柄。
+S 必须满足单域状态根资格；查找不执行用户操作，不读取字段，也不要求声明投影函数。
 兼容判断沿用域代码发布的记录名称、字段、布局和类型规则；代码热更新不改变目录身份和路由。
 返回的域句柄仍受后续域操作的存活、类型、权限及代码版本检查，查找不延长其有效期。
 
@@ -3149,7 +3169,7 @@ fn main() @suspends {
     let directory = rooms.handle()
     let room = domain.create(open, 3)
     directory.insert(1001, room.handle());
-    match domain.lookup(directory, 1001, count) {
+    match domain.lookup::<Room>(directory, 1001) {
         Some(handle) => { println(domain.read_from(handle, count)) }
         None => { println("room unavailable") }
     }

@@ -6604,6 +6604,87 @@ fn directory_routes_run_in_all_backends() {
 }
 
 #[test]
+fn directory_lookup_rejects_unsupported_types_and_private_witnesses() {
+    let work = Workspace::new();
+    for (definitions, state) in [
+        ("", "Int32"),
+        ("struct Bad { pointer:Ptr }", "Bad"),
+        ("struct Bad { reference:&Int32 }", "Bad"),
+        ("struct Generic<T> { value:T }", "Generic<Int32>"),
+        (
+            "import joky/drop.{type Drop} struct Bad { text:String } impl Drop for Bad { fn drop(&mut self) {} }",
+            "Bad",
+        ),
+        (
+            "import joky/array.{type Array} struct Element { pointer:Ptr } struct Bad { values:Array<Element> }",
+            "Bad",
+        ),
+    ] {
+        for operation in ["lookup", "lookup_write"] {
+            work.write("invalid.jk", &format!("import joky/domain {definitions} fn main() @suspends {{ let table=domain.directory(1) domain.{operation}::<{state}>(table.handle(),1); }}"));
+            failure(
+                &work.cli(&["build", "invalid.jk"]),
+                "Directory lookup requires a supported non-generic state record",
+            );
+        }
+    }
+    for operation in ["lookup_type::<Room>()", "lookup_witness::<Room>"] {
+        work.write("private.jk", &format!("import joky/domain struct Room {{ value:Int32 }} fn main() {{ domain.{operation}; }}"));
+        let output = work.cli(&["build", "private.jk"]);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !error.contains("panicked") && !error.contains("[parse"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn directory_lookup_checks_imported_state_types_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "model.jk",
+        "pub struct Room { pub value:Int32 } pub fn make(value:Int32)->Room { Room{value:value} }",
+    );
+    work.write(
+        "imported.jk",
+        r#"import joky/domain import model import joky/check
+fn main() @suspends {
+    let table=domain.directory(1)
+    let owner=domain.create(model.make,42)
+    table.handle().insert(1,owner.handle());
+    let message="imported directory type"
+    check.assert(domain.lookup::<model.Room>(table.handle(),1).is_some(),&message)
+}"#,
+    );
+    work.assert_all_backends("imported.jk", &[], b"", 0);
+    work.write(
+        "mismatch.jk",
+        r#"import joky/domain import model
+struct Player { value:Int32 }
+fn main() @suspends {
+    let table=domain.directory(1)
+    let owner=domain.create(model.make,42)
+    table.handle().insert(1,owner.handle());
+    domain.lookup::<Player>(table.handle(),1);
+}"#,
+    );
+    success(&work.cli(&["build", "mismatch.jk"]));
+    for output in [
+        work.cli(&["run", "mismatch.jk"]),
+        work.cli(&["run", "--interpreter", "mismatch.jk"]),
+        Command::new(work.path().join("mismatch")).output().unwrap(),
+    ] {
+        failure(
+            &output,
+            "Directory target does not match the checked state type",
+        );
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn directory_script_routing_survives_code_publication_in_all_backends() {
     let source = r#"import joky/domain import joky/task import joky/check
@@ -6614,13 +6695,13 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,42)
     let message="directory register"
     check.assert(directory.insert(7,room.handle()).is_ok(),&message)
-    while domain.lookup(directory,7,read).is_some() { task.yield_now() }
+    while domain.lookup::<Room>(directory,7).is_some() { task.yield_now() }
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup(directory,7,read) { Some(room)=>domain.read_from(room,read),None=>-1 }
+    match domain.lookup::<Room>(directory,7) { Some(room)=>domain.read_from(room,read),None=>-1 }
 }
 fn remove(directory:domain.DirectoryHandle) @suspends ->Bool {
-    match domain.lookup(directory,7,read) { Some(room)=>directory.remove(7,room),None=>false }
+    match domain.lookup::<Room>(directory,7) { Some(room)=>directory.remove(7,room),None=>false }
 }"#;
     let next = source.replace("{ room.value }", "{ room.value + 100 }");
     let source = source.replace('{', "{{").replace('}', "}}");

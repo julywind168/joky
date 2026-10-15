@@ -168,7 +168,8 @@ impl GenericContext {
         if let Some(
             CompilerIntrinsic::PlainCopy(ty)
             | CompilerIntrinsic::ReferenceFree(ty)
-            | CompilerIntrinsic::ScriptSchema(ty),
+            | CompilerIntrinsic::ScriptSchema(ty)
+            | CompilerIntrinsic::DirectoryType(ty),
         ) = &mut definition.compiler_intrinsic
         {
             *ty =

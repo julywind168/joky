@@ -60,8 +60,8 @@ impl FunctionPlan {
                     | CompilerIntrinsic::DomainModule
                     | CompilerIntrinsic::TimerStart(_)
                     | CompilerIntrinsic::TimerFinish
-                    | CompilerIntrinsic::DirectoryLookup(_)
-                    | CompilerIntrinsic::DirectoryFinish(_)
+                    | CompilerIntrinsic::DirectoryType(_)
+                    | CompilerIntrinsic::DirectoryWitness
                     | CompilerIntrinsic::DomainCreate
                     | CompilerIntrinsic::DomainSnapshot
                     | CompilerIntrinsic::DomainSnapshotPair

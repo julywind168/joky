@@ -52,6 +52,7 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::Vm, "vm.unpack") => ScriptUnpack,
             (SourceKind::Domain, "domain.value_pack") => ScriptPack,
             (SourceKind::Domain, "domain.value_unpack") => ScriptUnpack,
+            (SourceKind::Domain, "domain.lookup_type") => DirectoryType(parameter(f)?),
             (SourceKind::Domain, "domain.module") => DomainModule,
             (SourceKind::Domain, "domain.pack") => DomainPack,
             (SourceKind::Domain, "domain.unpack") => DomainUnpack,
@@ -64,10 +65,7 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.after" => TimerStart(false),
                     "domain.every" => TimerStart(true),
                     "domain.finish_timer" => TimerFinish,
-                    "domain.lookup" => DirectoryLookup(false),
-                    "domain.lookup_write" => DirectoryLookup(true),
-                    "domain.finish_lookup" => DirectoryFinish(false),
-                    "domain.finish_lookup_write" => DirectoryFinish(true),
+                    "domain.lookup_witness" => DirectoryWitness,
                     "domain.snapshot_from" => DomainSnapshot,
                     "domain.snapshot_pair" => DomainSnapshotPair,
                     "domain.read_snapshot" => DomainSetRead,
@@ -220,7 +218,7 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
                         Type::Unit,
                     ))
                 }
-                Some(ScriptSchema(_)) => {
+                Some(ScriptSchema(_) | DirectoryType(_)) => {
                     parameter(f)?;
                     Some(crate::FunctionSignature::new(vec![], Type::String))
                 }
@@ -294,6 +292,7 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
                         | MemReplace
                         | MemSwap
                         | ScriptSchema(_)
+                        | DirectoryType(_)
                         | ScriptPack
                         | ScriptUnpack
                         | PlainCopy(_)

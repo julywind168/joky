@@ -31,12 +31,12 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     task.sleep_ms(100000)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    let a=match domain.lookup(directory,1,read) {Some(h)=>domain.read_from(h,read),None=>return -1}
-    let b=match domain.lookup(directory,2,read) {Some(h)=>domain.read_from(h,read),None=>return -1}
-    let c=match domain.lookup(directory,3,ledger_read) {Some(h)=>domain.read_from(h,ledger_read),None=>return -1}
-    let d=match domain.lookup(directory,4,rules_read) {Some(h)=>domain.read_from(h,rules_read),None=>return -1}
+    let a=match domain.lookup::<Room>(directory,1) {Some(h)=>domain.read_from(h,read),None=>return -1}
+    let b=match domain.lookup::<Room>(directory,2) {Some(h)=>domain.read_from(h,read),None=>return -1}
+    let c=match domain.lookup::<Ledger>(directory,3) {Some(h)=>domain.read_from(h,ledger_read),None=>return -1}
+    let d=match domain.lookup::<Rules>(directory,4) {Some(h)=>domain.read_from(h,rules_read),None=>return -1}
     a+b+c+d
 }
 fn bump(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup_write(directory,4,rules_read) {Some(h)=>domain.write_to(h,rules_add,1),None=>-1}
+    match domain.lookup_write::<Rules>(directory,4) {Some(h)=>domain.write_to(h,rules_add,1),None=>-1}
 }

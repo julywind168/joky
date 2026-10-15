@@ -1,5 +1,6 @@
 import joky/domain
 import joky/array.{type Array}
+import joky/option.{type Option}
 import joky/check
 import joky/task
 
@@ -7,10 +8,9 @@ struct Room { value:Int32 }
 fn make(value:Int32)->Room { Room{value:value} }
 fn read(room:&Room)->Int32 { room.value }
 fn update(room:&mut Room,value:Int32)->Int32 { room.value=value value }
-fn witness(room:&Room)->Int32 { let message="lookup must not invoke witness" check.assert(false,&message) room.value }
 fn assert(ok:Bool) { let message="directory routing" check.assert(ok,&message) }
 fn value(directory:domain.DirectoryHandle,key:UInt64) @suspends ->Int32 {
-    match domain.lookup(directory,key,read) { Some(room)=>domain.read_from(room,read),None=>-1 }
+    match domain.lookup::<Room>(directory,key) { Some(room)=>domain.read_from(room,read),None=>-1 }
 }
 fn route() @suspends {
     let table=domain.directory(2)
@@ -20,30 +20,30 @@ fn route() @suspends {
     let a=first.handle()
     let b=second.handle()
     let old=a.read_only()
-    assert(domain.lookup(directory,7,read).is_none())
+    assert(domain.lookup::<Room>(directory,7).is_none())
     assert(directory.insert(7,a).is_ok())
-    assert(domain.lookup(directory,7,witness).is_some())
+    assert(domain.lookup::<Room>(directory,7).is_some())
     assert(match directory.insert(7,b) { Err(Occupied)=>true,_=>false })
     assert(value(directory,7)==10)
     assert(directory.insert_read(9,b.read_only()).is_ok())
-    assert(domain.lookup_write(directory,9,read).is_none())
+    assert(domain.lookup_write::<Room>(directory,9).is_none())
     assert(match directory.insert(11,b) { Err(Full)=>true,_=>false })
     assert(match directory.replace(7,b.read_only(),b) { Err(Conflict)=>true,_=>false })
     assert(directory.replace(7,old,b).is_ok())
     // A stale connection cleanup cannot remove the replacement room route.
     assert(!directory.remove(7,old))
     assert(value(directory,7)==20)
-    match domain.lookup_write(directory,7,read) {
+    match domain.lookup_write::<Room>(directory,7) {
         Some(room)=>assert(domain.write_to(room,update,42)==42)
         None=>assert(false)
     }
     assert(value(directory,9)==42)
     assert(directory.replace_read(7,b.read_only(),old).is_ok())
-    assert(domain.lookup_write(directory,7,read).is_none())
+    assert(domain.lookup_write::<Room>(directory,7).is_none())
     assert(directory.remove(7,old))
-    assert(domain.lookup(directory,7,read).is_none())
+    assert(domain.lookup::<Room>(directory,7).is_none())
     second.close()
-    assert(domain.lookup(directory,9,read).is_none())
+    assert(domain.lookup::<Room>(directory,9).is_none())
     assert(match directory.insert(12,b) { Err(InvalidTarget)=>true,_=>false })
     // Closed routes not explicitly looked up also release capacity on insertion.
     let third=domain.create(make,30)
@@ -61,10 +61,10 @@ fn weak() @suspends {
     let table=domain.directory(1)
     let directory=table.handle()
     { let room=domain.create(make,1) assert(directory.insert(1,room.handle()).is_ok()) }
-    assert(domain.lookup(directory,1,read).is_none())
+    assert(domain.lookup::<Room>(directory,1).is_none())
     let room=domain.create(make,2)
     let dangling={ let other=domain.directory(1) let h=other.handle() assert(h.insert(1,room.handle()).is_ok()) h }
-    assert(domain.lookup(dangling,1,read).is_none())
+    assert(domain.lookup::<Room>(dangling,1).is_none())
     assert(domain.read_from(room.read_handle(),read)==2)
 }
 struct Catalog { values:Array<Int32> }
@@ -74,9 +74,37 @@ fn owned() @suspends {
     let table=domain.directory(1)
     let state=domain.create(catalog,73)
     assert(table.handle().insert_read(1,state.read_handle()).is_ok())
-    match domain.lookup(table.handle(),1,first) {
+    match domain.lookup::<Catalog>(table.handle(),1) {
         Some(handle)=>assert(domain.read_from(handle,first)==73)
         None=>assert(false)
     }
 }
-fn main() @suspends ->Int32 { route() task.yield_now() weak() owned() println("directory ok") 0 }
+// Neither state has a user projection. The generic wrapper must preserve S,
+// including owned fields, while one directory routes heterogeneous roots.
+struct Profile { label:String, values:Array<Int32> }
+fn profile(n:Int32)->Profile {
+    var values=Array.new::<Int32>()
+    values.push(n)
+    Profile{label:"profile",values:values}
+}
+struct Empty {}
+fn empty(unused:Unit)->Empty { Empty{} }
+fn find<S>(directory:domain.DirectoryHandle,key:UInt64) @suspends -> Option<domain.ReadHandle<S>> {
+    domain.lookup::<S>(directory,key)
+}
+fn typed_only() @suspends {
+    let table=domain.directory(2)
+    let directory=table.handle()
+    let p=domain.create(profile,42)
+    let e=domain.create(empty,{})
+    assert(directory.insert(1,p.handle()).is_ok())
+    assert(directory.insert_read(2,e.read_handle()).is_ok())
+    assert(find::<Profile>(directory,1).is_some())
+    assert(domain.lookup_write::<Profile>(directory,1).is_some())
+    assert(find::<Empty>(directory,2).is_some())
+    assert(domain.lookup_write::<Empty>(directory,2).is_none())
+    assert(domain.lookup::<Profile>(directory,3).is_none())
+    p.close()
+    assert(find::<Profile>(directory,1).is_none())
+}
+fn main() @suspends ->Int32 { route() task.yield_now() weak() owned() typed_only() println("directory ok") 0 }

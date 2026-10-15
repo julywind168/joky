@@ -11,6 +11,59 @@ pub(super) struct DomainCall<'a> {
     pub types: &'a TypeRegistry,
 }
 impl FunctionPlan {
+    /// Emit a module-local metadata key, never a callable user projection.
+    pub(super) fn directory_type(&mut self, ty: &Type, span: Span) -> Result<Slot, Error> {
+        let operation = if self.generics.borrow().checking {
+            String::new()
+        } else {
+            let root = self.pointee(ty, &self.type_registry)?;
+            if !matches!(&root, Type::Record(record) if record.template.is_none()
+                && record.parameters.is_empty() && record.arguments.is_empty())
+                || !self.domain_storage(&root)
+            {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidCall,
+                    "Directory lookup requires a supported non-generic state record",
+                ));
+            }
+            let mut context = self.generics.borrow_mut();
+            let witness = context
+                .templates
+                .iter()
+                .find(|(_, f)| {
+                    matches!(
+                        f.compiler_intrinsic,
+                        Some(CompilerIntrinsic::DirectoryWitness)
+                    )
+                })
+                .map(|(name, _)| name.clone())
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::InvalidCall,
+                        "Missing directory type witness",
+                    )
+                })?;
+            let name = context.instantiate(
+                &witness,
+                vec![ty.clone()],
+                crate::FunctionSignature::new(vec![Type::reference(ty.clone(), false)], Type::Unit),
+                self.instantiation_depth + 1,
+                span,
+            )?;
+            self.domain_calls.push((name.clone(), span));
+            name
+        };
+        let result = self.slot(Type::String)?;
+        self.emit(Op::Text {
+            dst: result.clone(),
+            source: TextSource::Literal(operation),
+        });
+        self.register_owner(result.clone(), None);
+        Ok(result)
+    }
+
     pub(super) fn source_domain_call(
         &mut self,
         call: DomainCall<'_>,
@@ -100,90 +153,6 @@ impl FunctionPlan {
                     text,
                     Some(input),
                     Some(flag),
-                ],
-                result: Some(result.clone()),
-                state: Some(state),
-            });
-            return Ok(Some(Flow::Value(Some(result))));
-        }
-        if let DirectoryLookup(writable) = kind {
-            let (operation, target) = self
-                .function_value_info(&args[2], vars, functions, types, true)?
-                .ok_or_else(|| {
-                    type_error(
-                        &span,
-                        ErrorCode::InvalidCall,
-                        "Directory lookup requires a named domain projection",
-                    )
-                })?;
-            if target.suspends
-                || target.signature.params.len() != 1
-                || !matches!(&target.signature.params[0], Type::Reference(r) if !r.mutable)
-                || !scalar(&target.signature.ret)
-            {
-                return Err(type_error(
-                    &span,
-                    ErrorCode::InvalidCall,
-                    "Directory lookup requires a synchronous scalar projection",
-                ));
-            }
-            self.domain_calls.push((operation.clone(), args[2].span()));
-            let module = self.slot(crate::runtime::domain::module_type())?;
-            self.emit(Op::DomainModule(module.clone()));
-            let Flow::Value(text) = self.expr(
-                &Expr::Literal {
-                    literal: Literal::String(operation),
-                    span,
-                },
-                vars,
-                functions,
-                suspends,
-                types,
-            )?
-            else {
-                unreachable!()
-            };
-            let Type::Reference(receiver) = &target.signature.params[0] else {
-                unreachable!()
-            };
-            let receiver = receiver.target.clone();
-            let name = {
-                let mut context = self.generics.borrow_mut();
-                let name = context.templates.iter()
-                    .find(|(_,f)| matches!(f.compiler_intrinsic, Some(DirectoryFinish(flag)) if flag == *writable))
-                    .map(|(name,_)| name.clone())
-                    .ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, "Missing directory lookup adapter"))?;
-                context.instantiate(
-                    &name,
-                    vec![receiver],
-                    crate::FunctionSignature::new(
-                        vec![
-                            crate::runtime::domain::module_type(),
-                            Type::UInt64,
-                            Type::UInt64,
-                            Type::String,
-                        ],
-                        info.signature.ret.clone(),
-                    ),
-                    self.instantiation_depth + 1,
-                    span,
-                )?
-            };
-            let directory = values[0].as_ref().unwrap();
-            let result = self.slot(info.signature.ret.clone())?;
-            let state = self.state_count;
-            self.state_count += 1;
-            self.emit(Op::Call {
-                indirect: None,
-                name,
-                args: vec![
-                    Some(module),
-                    Some(Slot {
-                        index: directory.index,
-                        ty: Type::UInt64,
-                    }),
-                    values[1].clone(),
-                    text,
                 ],
                 result: Some(result.clone()),
                 state: Some(state),

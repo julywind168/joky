@@ -91,7 +91,7 @@ fn directory_budgets_executor_identity_and_shutdown() {
 }
 
 #[test]
-fn directory_rejects_wrong_state_types_without_executing_projection() {
+fn directory_rejects_wrong_state_types_without_user_projection() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(
@@ -99,13 +99,12 @@ fn directory_rejects_wrong_state_types_without_executing_projection() {
 struct Room { value:Int32 }
 struct Player { value:Int32 }
 fn make(value:Int32)->Room { Room{value:value} }
-fn wrong(player:&Player)->Int32 { player.value }
 fn main() @suspends ->Int32 {
     let room=domain.create(make,42)
     let owner=domain.directory(1)
     let directory=owner.handle()
     directory.insert(1,room.handle());
-    match domain.lookup(directory,1,wrong) { Some(_)=>1,None=>0 }
+    match domain.lookup::<Player>(directory,1) { Some(_)=>1,None=>0 }
 }"#,
         )
         .unwrap_or_else(|e| panic!("{e}"));

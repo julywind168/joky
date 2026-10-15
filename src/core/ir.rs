@@ -1160,6 +1160,11 @@ impl FunctionPlan {
             label_count: 0,
             span: f.span,
         };
+        if let Some(CompilerIntrinsic::DirectoryType(ty)) = &f.compiler_intrinsic {
+            plan.result = Some(plan.directory_type(ty, f.span)?);
+            plan.resolve_cleanups()?;
+            return Ok(plan);
+        }
         if matches!(
             f.compiler_intrinsic,
             Some(

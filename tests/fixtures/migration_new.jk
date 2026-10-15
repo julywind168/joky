@@ -4,5 +4,5 @@ fn upgrade(old:&PreviousState)->Room { Room{score:int64(old.score),level:1} }
 fn read(room:&Room)->Int32 {int32(room.score)+room.level}
 fn version()->Int32 {2}
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup(directory,7,read) {Some(room)=>domain.read_from(room,read),None=>-1}
+    match domain.lookup::<Room>(directory,7) {Some(room)=>domain.read_from(room,read),None=>-1}
 }

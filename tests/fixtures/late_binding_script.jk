@@ -16,18 +16,18 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     let b=domain.create(make,2)
     assert(directory.insert(1,a.handle()).is_ok())
     assert(directory.insert(2,b.handle()).is_ok())
-    while domain.lookup(directory,1,read).is_some() {task.yield_now()}
+    while domain.lookup::<Room>(directory,1).is_some() {task.yield_now()}
     // This v1 flow must resolve the v2 operation with its original signature.
     assert(domain.write_pair(a.handle(),b.handle(),transfer,2)==20)
     assert(domain.read_pair(a.read_handle(),b.read_handle(),sum)==142)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup(directory,1,read) {
-        Some(a)=>match domain.lookup(directory,2,read) {
+    match domain.lookup::<Room>(directory,1) {
+        Some(a)=>match domain.lookup::<Room>(directory,2) {
             Some(b)=>domain.read_pair(a,b,sum), None=>-1
         }, None=>-1
     }
 }
 fn release(directory:domain.DirectoryHandle) @suspends ->Bool {
-    match domain.lookup(directory,1,read) {Some(a)=>directory.remove(1,a),None=>false}
+    match domain.lookup::<Room>(directory,1) {Some(a)=>directory.remove(1,a),None=>false}
 }

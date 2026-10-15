@@ -27,5 +27,5 @@ fn read(room:&Room)->Int32 {
 }
 fn version()->Int32 {2}
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup(directory,7,read) {Some(room)=>domain.read_from(room,read),None=>-1}
+    match domain.lookup::<Room>(directory,7) {Some(room)=>domain.read_from(room,read),None=>-1}
 }

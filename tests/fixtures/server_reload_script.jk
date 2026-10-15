@@ -25,21 +25,21 @@ fn hold(ctx:Context) @suspends {
     task.sleep_ms(100000)
 }
 fn probe(ctx:Context) @suspends ->Int32 {
-    let a=match domain.lookup(ctx.directory,1,read_room) {Some(h)=>h,None=>return -1}
-    let b=match domain.lookup(ctx.directory,2,read_ledger) {Some(h)=>h,None=>return -1}
+    let a=match domain.lookup::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}
+    let b=match domain.lookup::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return -1}
     domain.read_pair(a,b,balance)
 }
 fn tick_version(ctx:Context) @suspends ->Int32 {
-    match domain.lookup(ctx.directory,3,read_clock) {Some(h)=>domain.read_from(h,read_clock),None=>-1}
+    match domain.lookup::<Clock>(ctx.directory,3) {Some(h)=>domain.read_from(h,read_clock),None=>-1}
 }
 fn start_tick(ctx:Context) @suspends ->Bool {
-    match domain.lookup_write(ctx.directory,3,read_clock) {
+    match domain.lookup_write::<Clock>(ctx.directory,3) {
         Some(h)=>domain.every(ctx.timer,h,1,tick,1).is_ok(),None=>false
     }
 }
 fn request(ctx:Context) @suspends ->Int32 {
-    let a=match domain.lookup_write(ctx.directory,1,read_room) {Some(h)=>h,None=>return -1}
-    let b=match domain.lookup_write(ctx.directory,2,read_ledger) {Some(h)=>h,None=>return -1}
+    let a=match domain.lookup_write::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}
+    let b=match domain.lookup_write::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return -1}
     let snapshot=domain.snapshot_pair(a.read_only(),b.read_only(),balance)
     let value=snapshot.value()+version()
     assert(value>0 && value<256)

@@ -390,21 +390,22 @@ impl DirectoryHandle {
         __directory_remove(self.identity,key,expected.token)
     }
 }
-// The named projection is a type witness, never invoked by lookup.
-#intrinsic("domain.lookup")
-pub fn lookup<S,R>(directory:DirectoryHandle, key:UInt64, projection:fn(&S)->R) @suspends -> Option<ReadHandle<S>> {
-    finish_lookup::<S>(module(),directory.identity,key,"")
+// Specialization supplies checked state metadata without a user operation.
+// The private witness is never invoked and does not borrow a live root.
+#intrinsic("domain.lookup_type")
+fn lookup_type<S>() -> String;
+#intrinsic("domain.lookup_witness")
+fn lookup_witness<S>(state: &S) {}
+pub fn lookup<S>(directory:DirectoryHandle, key:UInt64) @suspends -> Option<ReadHandle<S>> {
+    finish_lookup::<S>(module(),directory.identity,key,lookup_type::<S>())
 }
-#intrinsic("domain.lookup_write")
-pub fn lookup_write<S,R>(directory:DirectoryHandle, key:UInt64, projection:fn(&S)->R) @suspends -> Option<WriteHandle<S>> {
-    finish_lookup_write::<S>(module(),directory.identity,key,"")
+pub fn lookup_write<S>(directory:DirectoryHandle, key:UInt64) @suspends -> Option<WriteHandle<S>> {
+    finish_lookup_write::<S>(module(),directory.identity,key,lookup_type::<S>())
 }
-#intrinsic("domain.finish_lookup")
 fn finish_lookup<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<ReadHandle<S>> {
     let token=__directory_lookup(module,directory,key,operation,false)
     if __directory_found(token) { Option.Some(ReadHandle::<S>{token:token}) } else { Option.None }
 }
-#intrinsic("domain.finish_lookup_write")
 fn finish_lookup_write<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<WriteHandle<S>> {
     let token=__directory_lookup(module,directory,key,operation,true)
     if __directory_found(token) { Option.Some(WriteHandle::<S>{token:token}) } else { Option.None }

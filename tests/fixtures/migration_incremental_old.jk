@@ -20,8 +20,8 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     task.sleep_ms(100000)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup(directory,7,read) {Some(room)=>domain.read_from(room,read),None=>-1}
+    match domain.lookup::<Room>(directory,7) {Some(room)=>domain.read_from(room,read),None=>-1}
 }
 fn bump(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup_write(directory,7,read) {Some(room)=>domain.write_to(room,add,3),None=>-1}
+    match domain.lookup_write::<Room>(directory,7) {Some(room)=>domain.write_to(room,add,3),None=>-1}
 }
