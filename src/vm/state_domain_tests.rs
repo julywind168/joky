@@ -1223,3 +1223,21 @@ fn exhaustive_state_domains_value_packet_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_queries_cancellation_reclaims_resources() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_queries.jk"),
+        [0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel scalar and packet queries at every instruction"]
+fn exhaustive_state_domains_queries_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_queries.jk"),
+        0..=8192,
+        true,
+    );
+}

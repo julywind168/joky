@@ -186,6 +186,7 @@ fn admit(access: &Access, domain: &Domain, method: &str) -> Result<(), Error> {
 pub(super) fn queue_current_scalar_call(
     method: &str,
     input: Option<u64>,
+    write: bool,
 ) -> Result<DomainRequest, Error> {
     let access = current_access()?;
     let registry = access
@@ -196,7 +197,7 @@ pub(super) fn queue_current_scalar_call(
         let domains = registry.borrow();
         admit(&access, domains.get(access.handle)?, method)?;
         let info = access.code.instance_info(method)?;
-        super::source::turn_arguments(&info, input)?
+        super::source::turn_arguments(&info, input, write)?
     };
     submit(&registry, access.handle, method, &args, access.limits)
 }

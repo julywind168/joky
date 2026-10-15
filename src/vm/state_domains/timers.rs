@@ -333,7 +333,7 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
     if !schedule.target.writable || info.signature.ret != Type::Unit {
         return Err(4);
     }
-    let input = source::turn_arguments(&info, Some(schedule.input)).map_err(|_| 4u64)?;
+    let input = source::turn_arguments(&info, Some(schedule.input), true).map_err(|_| 4u64)?;
     let charge = {
         let mut domains = registry.borrow_mut();
         let domain = domains.get(schedule.target).map_err(|_| 1u64)?;

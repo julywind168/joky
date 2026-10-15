@@ -855,11 +855,14 @@ continuation 根身份；宿主嵌套运行的其他根不能继承权限，即�
 排队项及关联组；group.running 归零且执行器不再持有根后才移除状态并报告 Closed。
 VM 销毁先禁止新的域工作并执行同一关闭协议。
 
-源码 `domain.read/write` 由可信库身份绑定为编译器 intrinsic，只接受命名同步操作。
+源码 `domain.read/query/write` 由可信库身份绑定为编译器 intrinsic，只接受命名同步操作。
 共享 IR 在 noescape 和效果不动点之后检查 domain_entry；排队捕获只含操作身份和独立
 纯值输入，不含可逃逸接收者或通用闭包。文本 CPS 适配器在帧中唯一拥有 DomainRequest，
 通过 host_stop 取消或丢弃结果；终态先清除 stop/context 再释放，避免重复取消。适配器在准入前
 再次验证返回类型及读写模式，私有入口也不能绕过状态类型、权限和效果检查。
+输入存在性与接收者可写性分别校验；`query/query_from` 的标量路径使用新增的
+CurrentQuery/Query 操作，双读查询复用 Pair，记录查询复用 Values/CurrentValues。
+这些查询只要求读权限，不推进数据修订；输入、结果及取消仍遵循同一请求存储协议。
 
 具名短操作的公开返回值为 `Result<R, DomainAccessError>`。标量私有入口返回独立的
 `(Int32 status, UInt64 bits)`，元组槽放在参数槽之后；Values/CurrentValues 返回 Int32 状态，

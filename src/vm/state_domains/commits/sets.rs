@@ -426,7 +426,7 @@ unsafe fn poll_inner(
                 "Snapshot projection requires a proved entry for the exact state type",
             ));
         }
-        source::turn_arguments(&info, None)?;
+        source::turn_arguments(&info, None, false)?;
         let mut words = [frozen.root.scalar_pointer()];
         return frozen
             .root

@@ -2769,7 +2769,7 @@ S 必须是普通非泛型记录。单域根支持上节所述受检嵌套记录
 双域与集合操作仍限标量记录根，不能把单域资格直接用于联合访问。
 标量输入 A 与结果 R 支持 Int8/16/32/64、UInt8/16/32/64、Float32/64、Bool、Rune 和 Unit；
 具名短操作另支持有界嵌套纯值记录，具体范围见下述能力表。
-构造、写入及请求仍各接收一个输入，用 `Unit` 表示无数据输入；该实参表达式仍只求值一次。
+构造、带参查询、写入及请求各接收一个输入，用 `Unit` 表示无数据输入；该实参表达式仍只求值一次。
 不接受元组、容器、借用、函数或资源作为输入/结果，也不支持可变参数。
 以下入口均为 `@suspends`：
 
@@ -2780,6 +2780,7 @@ S 必须是普通非泛型记录。单域根支持上节所述受检嵌套记录
 | `owner.read_handle()` / `handle.read_only() -> ReadHandle<S>` | 取得或降级为读句柄 |
 | `owner.close()` | 消费唯一 Owner，取消关联工作并等待关闭完成 |
 | `read_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Result<R, DomainAccessError>` | 排队执行同步只读短操作 |
+| `query_from<S, A, R>(ReadHandle<S>, fn(&S, A) -> R, A) -> Result<R, DomainAccessError>` | 排队执行带独立输入的同步只读查询 |
 | `write_to<S, A, R>(WriteHandle<S>, fn(&mut S, A) -> R, A) -> Result<R, DomainAccessError>` | 排队执行同步独占短操作 |
 | `request<S, A, R>(WriteHandle<S>, fn(A) @suspends -> R, A)` | 启动独立请求并等待其结果 |
 | `request_read<S, A, R>(ReadHandle<S>, fn(A) @suspends -> R, A)` | 同上，请求只获得读权限 |
@@ -2794,8 +2795,8 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 | 入口 | 状态根 | 输入／结果 |
 | --- | --- | --- |
 | `create`、单域候选构造 | 受检拥有图 | 构造输入为标量；返回完整状态根 |
-| 单域 `read/write`、`read_from/write_to` | 受检拥有图 | 写输入和操作结果支持标量／纯值记录；读操作无额外输入 |
-| 双域短操作 | 标量记录 | 写输入和操作结果支持标量／纯值记录；双读无额外输入 |
+| 单域 `read/query/write`、`read_from/query_from/write_to` | 受检拥有图 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read*` 无额外输入 |
+| 双域短操作 | 标量记录 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read_pair` 无额外输入 |
 | `snapshot_from` | 受检拥有图 | 投影结果为标量 |
 | `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果、候选构造输入为标量 |
 | `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果为标量 |
@@ -2820,7 +2821,8 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 `parallel`、`race` 或 `branch`。普通请求失败不会关闭状态；写短操作运行时失败会隔离该域，
 取消关联请求，已发生的写入不回滚。请求回执和短操作共同占用有界请求数量与字节额度。
 
-单域 `read/write`、`read_from/write_to` 与双域 `read_pair/update_pair/write_pair` 均返回
+单域 `read/query/write`、`read_from/query_from/write_to` 与双域
+`read_pair/query_pair/update_pair/write_pair` 均返回
 `Result<R, DomainAccessError>`；成功值保留完整标量位模式或纯值记录。`Err` 保证操作体未执行：
 
 | DomainAccessError | 执行前拒绝原因 |
@@ -2838,8 +2840,8 @@ Rust 宿主仍沿用 `DomainRequest` / `DomainOutcome` 错误通路，可区别�
 失败写操作仍隔离全部声明可写的域。可显式匹配 Err；若拒绝应视为任务失败，可调用
 `Result.unwrap()`。取消等待撤销排队项或丢弃已完成结果，不自动重试操作。
 
-请求内部可用 `read<S, R>(fn(&S) -> R)` 和
-`write<S, A, R>(fn(&mut S, A) -> R, A)` 访问启动时授予的域；
+请求内部可用 `read<S, R>(fn(&S) -> R)`、
+`query<S, A, R>(fn(&S, A) -> R, A)` 和 `write<S, A, R>(fn(&mut S, A) -> R, A)` 访问启动时授予的域；
 Rust `spawn_domain_task` 也提供同一上下文。下面是无需 Rust 宿主的完整程序：
 
 ```jk
@@ -2875,12 +2877,18 @@ fn main() @suspends {
 
 ### 短操作的纯值记录输入与结果
 
-`read_from/write_to`、请求内的 `read/write` 与 `read_pair/update_pair/write_pair` 支持标量，
+`read_from/query_from/write_to`、请求内的 `read/query/write` 与
+`read_pair/query_pair/update_pair/write_pair` 支持标量，
 以及由标量和普通非泛型记录嵌套组成的纯值输入 A、结果 R。每个包分别最多 64 个字段、
 8 层记录；所有层的字段累计计数，Unit 和空记录字段也占字段额度。允许空记录和 Unit，
 不接受 String、容器、引用、指针、函数、资源、用户 Drop、枚举、元组和泛型记录载荷。
 单域根仍可持有受检拥有图；双域根仍限标量记录。可执行示例见
-[state_domain_values.jk](../tests/fixtures/state_domain_values.jk)。
+[state_domain_values.jk](../tests/fixtures/state_domain_values.jk) 和
+[state_domain_queries.jk](../tests/fixtures/state_domain_queries.jk)。
+
+`query_from` 与请求内 `query` 接收 `fn(&S, A) -> R`，`query_pair` 接收
+`fn(&S, &T, A) -> R`。带输入不授予写权限，`request_read` 内也能使用 `query`；
+查询不推进任何参与域的数据修订。无输入查询继续使用 `read`、`read_from`、`read_pair`。
 
 输入在入队前逐值复制，结果存储预先分配并计入请求字节额度，未收取结果继续占用额度。
 晚绑定比较完整输入与结果契约，包括嵌套名义类型、字段名、顺序、可见性和类型；
@@ -2985,6 +2993,7 @@ SC3 的首个切片提供同一执行器内的两个域访问，JIT、解释器�
 | 入口（均为 `@suspends`） | 权限与输入 |
 | --- | --- |
 | `read_pair<S,T,R>(ReadHandle<S>, ReadHandle<T>, fn(&S,&T)->R) -> Result<R, DomainAccessError>` | 两个只读参数，无额外输入 |
+| `query_pair<S,T,A,R>(ReadHandle<S>, ReadHandle<T>, fn(&S,&T,A)->R, A) -> Result<R, DomainAccessError>` | 两个只读参数，接收独立查询输入 |
 | `update_pair<S,T,A,R>(ReadHandle<S>, WriteHandle<T>, fn(&S,&mut T,A)->R, A) -> Result<R, DomainAccessError>` | 第一个只读、第二个可写 |
 | `write_pair<S,T,A,R>(WriteHandle<S>, WriteHandle<T>, fn(&mut S,&mut T,A)->R, A) -> Result<R, DomainAccessError>` | 两个可写参数 |
 

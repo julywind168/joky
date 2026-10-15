@@ -1312,13 +1312,21 @@ pub(crate) enum FloatKind {
     FromBits,
 }
 
+/// Read access may carry an input independently of its mutation capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DomainAccessKind {
+    Read,
+    Query,
+    Write,
+}
+
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
     ScriptSchema(Type),
     ScriptPack,
     ScriptUnpack,
-    DomainAccess(bool),
+    DomainAccess(DomainAccessKind),
     DomainModule,
     DomainCreate,
     TimerStart(bool),
@@ -1334,8 +1342,8 @@ pub(crate) enum CompilerIntrinsic {
     DomainSetRead,
     DomainSetCandidate(bool),
     DomainSetFinish(bool),
-    DomainAt(bool),
-    DomainPair(bool),
+    DomainAt(DomainAccessKind),
+    DomainPair(DomainAccessKind),
     DomainRequest,
     DomainFinish,
     DomainValueFinish(bool),

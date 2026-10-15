@@ -253,6 +253,7 @@ pub(super) fn scalar_argument(params: &[Type], bits: u64) -> Result<InstanceValu
 pub(super) fn turn_arguments(
     info: &crate::core::ir::FunctionInfo,
     input: Option<u64>,
+    write: bool,
 ) -> Result<Vec<InstanceValue>, Error> {
     if !instance::scalar(&info.signature.ret)
         || info
@@ -260,7 +261,7 @@ pub(super) fn turn_arguments(
             .params
             .first()
             .and_then(Type::reference_type)
-            .is_none_or(|r| r.mutable != input.is_some())
+            .is_none_or(|r| r.mutable != write)
         || info.signature.params.len() != 1 + usize::from(input.is_some())
     {
         return Err(Error::new_with_code(
@@ -355,10 +356,17 @@ unsafe fn wait(
             } else {
                 Wait::Turn(request)
             }
-        } else if matches!(op, Operation::CurrentRead | Operation::CurrentWrite) {
+        } else if matches!(
+            op,
+            Operation::CurrentRead | Operation::CurrentWrite | Operation::CurrentQuery
+        ) {
             let name = crate::runtime::owned_text::borrow(frame.slots[0] as *const Buffer)?;
-            let input = (op == Operation::CurrentWrite).then(|| frame.slots[1]);
-            let request = super::tasks::queue_current_scalar_call(name, input)?;
+            let input = (op != Operation::CurrentRead).then(|| frame.slots[1]);
+            let request = super::tasks::queue_current_scalar_call(
+                name,
+                input,
+                op == Operation::CurrentWrite,
+            )?;
             request.register_current_wait()?;
             Wait::Turn(request)
         } else {
@@ -444,7 +452,11 @@ unsafe fn wait(
                 }
             } else {
                 let info = module.instance_info(name)?;
-                let args = turn_arguments(&info, (op == Operation::Write).then(|| frame.slots[3]))?;
+                let args = turn_arguments(
+                    &info,
+                    matches!(op, Operation::Write | Operation::Query).then(|| frame.slots[3]),
+                    op == Operation::Write,
+                )?;
                 let request = submit(
                     registry,
                     handle,
@@ -677,7 +689,9 @@ pub(crate) unsafe fn poll(
         | Operation::Read
         | Operation::Write
         | Operation::CurrentRead
-        | Operation::CurrentWrite => match wait(arena, frame, &registry, op) {
+        | Operation::CurrentWrite
+        | Operation::Query
+        | Operation::CurrentQuery => match wait(arena, frame, &registry, op) {
             Ok(Some(value)) => value,
             Ok(None) => return Ok(None),
             Err(e) => {

@@ -4,6 +4,7 @@ import joky/outbox.{type Batch}
 import joky/result.{type Result}
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
 extern fn __domain_read_scalar(method: String) @suspends -> (Int32, UInt64)
+extern fn __domain_query_scalar(method: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_write_scalar(method: String, input: UInt64) @suspends -> (Int32, UInt64)
 
 struct ValuePacket { storage: Buffer<UInt64> }
@@ -39,16 +40,18 @@ fn access_error(status:Int32) -> DomainAccessError {
     DomainAccessError.ResourceLimit
 }
 #intrinsic("domain.finish_scalar")
-fn finish_scalar<R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:UInt64,write:Bool) @suspends -> Result<R,DomainAccessError> {
+fn finish_scalar<R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:UInt64,write:Bool,query:Bool) @suspends -> Result<R,DomainAccessError> {
     let (status,bits) = if count == 2 { __domain_pair(module,first,second,name,input) }
+        else if query { __domain_query_at(module,first,name,input) }
         else if write { __domain_write_at(module,first,name,input) }
         else { __domain_read_at(module,first,name) }
     if status != 0 { return Result.Err(access_error(status)) }
     Result.Ok(unpack::<R>(bits))
 }
 #intrinsic("domain.finish_current_scalar")
-fn finish_current_scalar<R>(name:String,input:UInt64,write:Bool) @suspends -> Result<R,DomainAccessError> {
-    let (status,bits) = if write { __domain_write_scalar(name,input) } else { __domain_read_scalar(name) }
+fn finish_current_scalar<R>(name:String,input:UInt64,write:Bool,query:Bool) @suspends -> Result<R,DomainAccessError> {
+    let (status,bits) = if query { __domain_query_scalar(name,input) }
+        else if write { __domain_write_scalar(name,input) } else { __domain_read_scalar(name) }
     if status != 0 { return Result.Err(access_error(status)) }
     Result.Ok(unpack::<R>(bits))
 }
@@ -62,6 +65,10 @@ fn unpack<R>(bits: UInt64) -> R;
 pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_current_value::<Unit,R>("",{})
 }
+#intrinsic("domain.query")
+pub fn query<S, A, R>(operation: fn(&S, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
+    finish_current_value::<A,R>("",input)
+}
 #intrinsic("domain.write")
 pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
     finish_current_value::<A,R>("",input)
@@ -74,6 +81,7 @@ extern fn __domain_readonly(handle: domain.Handle) @suspends -> domain.Handle
 extern fn __domain_close(owner: &mut domain.StateOwner) @suspends
 extern fn __domain_request(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> (Int32, UInt64)
+extern fn __domain_query_at(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_snapshot(module: domain.Module, handle: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
 extern fn __domain_snapshot_value(snapshot: &domain.SnapshotOwner) @suspends -> UInt64
@@ -116,6 +124,10 @@ pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
 #intrinsic("domain.read_from")
 pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_value::<Unit,R>(module(),handle.token,handle.token,1,"",{})
+}
+#intrinsic("domain.query_from")
+pub fn query_from<S, A, R>(handle: ReadHandle<S>, operation: fn(&S, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
+    finish_value::<A,R>(module(),handle.token,handle.token,1,"",input)
 }
 #intrinsic("domain.write_to")
 pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
@@ -197,6 +209,10 @@ extern fn __domain_pair(module: domain.Module, first: domain.Handle, second: dom
 #intrinsic("domain.read_pair")
 pub fn read_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_value::<Unit,R>(module(),first.token,second.token,2,"",{})
+}
+#intrinsic("domain.query_pair")
+pub fn query_pair<S, T, A, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {
+    finish_value::<A,R>(module(),first.token,second.token,2,"",input)
 }
 #intrinsic("domain.update_pair")
 pub fn update_pair<S, T, A, R>(first: ReadHandle<S>, second: WriteHandle<T>, operation: fn(&S, &mut T, A) -> R, input: A) @suspends -> Result<R,DomainAccessError> {

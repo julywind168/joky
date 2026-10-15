@@ -1,0 +1,83 @@
+import joky/domain
+import joky/check
+import joky/string
+import joky/task
+struct State { n:Int32 }
+struct Bits { high:UInt64, low:Int8, real:Float64 }
+struct Input { amount:Int32, bits:Bits }
+struct Reply { value:Int32, bits:Bits }
+struct Empty {}
+struct Owned { text:String, n:Int32 }
+fn require(ok:Bool) {let message="domain queries" check.assert(ok,&message)}
+fn make(n:Int32)->State {State{n:n}}
+fn owned(n:Int32)->Owned {Owned{text:"owned",n:n}}
+fn bits()->Bits {Bits{high:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626)}}
+fn read(s:&State)->Int32 {s.n}
+fn scalar(s:&State,n:Int32)->Int32 {s.n+n}
+fn high(s:&State,n:UInt64)->UInt64 {n}
+fn real(s:&State,n:Float64)->Float64 {n}
+fn packet(s:&State,p:Input)->Reply {Reply{value:s.n+p.amount,bits:p.bits}}
+fn mixed(s:&State,n:Int32)->Reply {Reply{value:s.n+n,bits:bits()}}
+fn packed_scalar(s:&State,p:Input)->Int32 {s.n+p.amount}
+fn pair(a:&State,b:&State,n:Int32)->Int32 {a.n+b.n+n}
+fn pair_packet(a:&State,b:&State,p:Input)->Reply {Reply{value:a.n+b.n+p.amount,bits:p.bits}}
+fn query_owned(s:&Owned,p:Input)->Reply {Reply{value:s.n+int32(s.text.byte_length())+p.amount,bits:p.bits}}
+fn unit(s:&State,n:Unit) {}
+fn empty(s:&State,n:Empty)->Empty {Empty{}}
+fn verify(r:Reply,n:Int32) {
+    require(r.value==n && r.bits.high==18446744073709551615 && r.bits.low == -128)
+    require(r.bits.real.to_bits()==9221120237041090626)
+}
+fn echo<A>(s:&State,input:A)->A {input}
+fn request(n:Int32) @suspends ->Int32 {
+    verify(domain.query(packet,Input{amount:n,bits:bits()}).unwrap(),24)
+    verify(domain.query(mixed,n).unwrap(),24)
+    require(domain.query(packed_scalar,Input{amount:n,bits:bits()}).unwrap()==24)
+    domain.query(unit,{}).unwrap();
+    domain.query(empty,Empty{}).unwrap();
+    domain.query(scalar,n).unwrap()
+}
+fn failing(s:&State,n:Int32)->Int32 {s.n/n}
+fn failing_packet(s:&State,p:Input)->Reply {Reply{value:s.n/p.amount,bits:p.bits}}
+fn fail_scalar(n:Int32) @suspends ->Int32 {domain.query(failing,n).unwrap()}
+fn fail_packet(n:Int32) @suspends ->Int32 {domain.query(failing_packet,Input{amount:n,bits:bits()}).unwrap().value}
+fn lifecycle() @suspends ->Int32 {
+    let a=domain.create(make,20) let b=domain.create(make,1)
+    let ar=a.read_handle() let br=b.read_handle()
+    let snap=domain.snapshot_pair(ar,br,sum)
+    let input=Input{amount:3,bits:bits()}
+    require(domain.query_from(ar,scalar,3).unwrap()==23)
+    require(domain.query_from(ar,high,18446744073709551615).unwrap()==18446744073709551615)
+    require(domain.query_from(ar,real,bits().real).unwrap().to_bits()==9221120237041090626)
+    verify(domain.query_from(ar,packet,input).unwrap(),23)
+    verify(domain.query_from(ar,mixed,3).unwrap(),23)
+    require(domain.query_from(ar,packed_scalar,input).unwrap()==23)
+    require(domain.query_pair(ar,br,pair,3).unwrap()==24)
+    verify(domain.query_pair(ar,br,pair_packet,input).unwrap(),24)
+    require(domain.query_pair(ar,ar,pair,3).unwrap()==43)
+    verify(domain.query_pair(ar,ar,pair_packet,input).unwrap(),43)
+    var count=0
+    require(domain.query_from(ar,scalar,{task.yield_now() count=count+1 count}).unwrap()==21)
+    domain.query_from(ar,unit,{task.yield_now() count=count+1}).unwrap();
+    require(count==2)
+    domain.query_from(ar,empty,Empty{}).unwrap();
+    require(domain.query_from(ar,echo::<Int32>,42).unwrap()==42)
+    require(domain.query_from(ar,echo::<Input>,input).unwrap().amount==3)
+    require(domain.request_read(ar,request,4).unwrap_or(-1)==24)
+    require(match domain.request_read(ar,fail_scalar,0) {Err(domain.RequestError.Failed)=>true,_=>false})
+    require(match domain.request_read(ar,fail_packet,0) {Err(domain.RequestError.Failed)=>true,_=>false})
+    require(match snap.check() {domain.SnapshotStatus.Current=>true,_=>false})
+    require(domain.read_from(ar,read).unwrap()==20)
+    let c=domain.create(owned,2)
+    verify(domain.query_from(c.read_handle(),query_owned,input).unwrap(),10)
+    c.close() b.close() a.close()
+    require(match domain.query_from(ar,scalar,3) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
+    require(match domain.query_from(ar,packet,input) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
+    require(match domain.query_pair(ar,br,pair,3) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
+    require(match domain.query_pair(ar,br,pair_packet,input) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
+    require(match domain.query(scalar,3) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    require(match domain.query(packet,input) {Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false})
+    24
+}
+fn sum(a:&State,b:&State)->Int32 {a.n+b.n}
+fn main() @suspends {require(lifecycle()==24)}

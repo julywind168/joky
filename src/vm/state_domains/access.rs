@@ -48,7 +48,10 @@ pub(super) fn source_rejection(
 ) -> Rejection {
     if matches!(
         op,
-        Operation::CurrentRead | Operation::CurrentWrite | Operation::CurrentValues
+        Operation::CurrentRead
+            | Operation::CurrentWrite
+            | Operation::CurrentQuery
+            | Operation::CurrentValues
     ) {
         return tasks::access_rejection(registry, error);
     }
@@ -76,9 +79,9 @@ pub(super) fn source_rejection(
 pub(super) fn reply(frame: &mut CpsFrame, op: Operation, status: u64, bits: u64) -> u64 {
     let offset = match op {
         Operation::CurrentRead => 1,
-        Operation::CurrentWrite => 2,
+        Operation::CurrentWrite | Operation::CurrentQuery => 2,
         Operation::Read => 3,
-        Operation::Write => 4,
+        Operation::Write | Operation::Query => 4,
         Operation::Pair => 5,
         _ => unreachable!("Only scalar access operations return status and payload slots"),
     };

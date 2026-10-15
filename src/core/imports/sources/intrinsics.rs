@@ -13,7 +13,7 @@ fn parameter(f: &FnDef) -> Result<Type, Error> {
 }
 
 pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<(), Error> {
-    use crate::parser::ast::{BufferIntrinsic, CompilerIntrinsic::*, FloatKind};
+    use crate::parser::ast::{BufferIntrinsic, CompilerIntrinsic::*, DomainAccessKind, FloatKind};
     for (index, attribute) in std::mem::take(&mut module.intrinsic_attributes) {
         let Some(Item::FnDef(f)) = module.items.get_mut(index) else {
             return Err(error(
@@ -59,8 +59,9 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::Domain, id) => {
                 adapter = true;
                 match id {
-                    "domain.read" => DomainAccess(false),
-                    "domain.write" => DomainAccess(true),
+                    "domain.query" => DomainAccess(DomainAccessKind::Query),
+                    "domain.read" => DomainAccess(DomainAccessKind::Read),
+                    "domain.write" => DomainAccess(DomainAccessKind::Write),
                     "domain.create" => DomainCreate,
                     "domain.after" => TimerStart(false),
                     "domain.every" => TimerStart(true),
@@ -77,10 +78,14 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.finish_candidate" => DomainCandidateFinish,
                     "domain.candidate_pair_from" => DomainCandidatePair,
                     "domain.finish_candidate_pair" => DomainCandidatePairFinish,
-                    "domain.read_from" => DomainAt(false),
-                    "domain.write_to" => DomainAt(true),
-                    "domain.read_pair" => DomainPair(false),
-                    "domain.update_pair" | "domain.write_pair" => DomainPair(true),
+                    "domain.query_from" => DomainAt(DomainAccessKind::Query),
+                    "domain.read_from" => DomainAt(DomainAccessKind::Read),
+                    "domain.write_to" => DomainAt(DomainAccessKind::Write),
+                    "domain.query_pair" => DomainPair(DomainAccessKind::Query),
+                    "domain.read_pair" => DomainPair(DomainAccessKind::Read),
+                    "domain.update_pair" | "domain.write_pair" => {
+                        DomainPair(DomainAccessKind::Write)
+                    }
                     "domain.request" | "domain.request_read" => DomainRequest,
                     "domain.finish_request" => DomainFinish,
                     "domain.finish_scalar" => DomainScalarFinish(false),

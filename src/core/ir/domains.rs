@@ -78,6 +78,7 @@ impl FunctionPlan {
             suspends,
             types,
         } = call;
+        use crate::parser::ast::DomainAccessKind;
         use CompilerIntrinsic::*;
         // Rigid template checks defer this capability; concrete instances must
         // satisfy it before any bits operation reaches a backend.
@@ -304,7 +305,12 @@ impl FunctionPlan {
         let candidate = matches!(kind, DomainCandidate | DomainCandidatePair);
         let create = matches!(kind, DomainCreate) || candidate;
         let snapshot = matches!(kind, DomainSnapshot | DomainSnapshotPair);
-        let write = matches!(kind, DomainAt(true) | DomainAccess(true) | DomainPair(true));
+        let access = match kind {
+            DomainAt(access) | DomainAccess(access) | DomainPair(access) => Some(*access),
+            _ => None,
+        };
+        let write = access == Some(DomainAccessKind::Write);
+        let query = access == Some(DomainAccessKind::Query);
         let inputs = &target.signature.params[if pair {
             2
         } else {
@@ -313,7 +319,7 @@ impl FunctionPlan {
         let value_call = matches!(kind, DomainAt(_) | DomainPair(_) | DomainAccess(_));
         let value_type =
             |ty: &Type| scalar(ty) || (value_call && crate::core::script::schema(ty).is_some());
-        if inputs.len() != usize::from(request || create || write)
+        if inputs.len() != usize::from(request || create || write || query)
             || !inputs.iter().all(value_type)
             || (!create && !value_type(&target.signature.ret))
             || target.suspends != request
@@ -407,7 +413,7 @@ impl FunctionPlan {
                     ]
                 };
                 if scalar_call {
-                    params.push(Type::Bool);
+                    params.extend([Type::Bool, Type::Bool]);
                 }
                 context.instantiate(
                     &name,
@@ -442,6 +448,9 @@ impl FunctionPlan {
                 captures.push(Some(self.pack_domain_scalar(input)?));
                 let flag = self.slot(Type::Bool)?;
                 self.emit(Op::Literal(flag.clone(), Constant::Bool(write)));
+                captures.push(Some(flag));
+                let flag = self.slot(Type::Bool)?;
+                self.emit(Op::Literal(flag.clone(), Constant::Bool(query)));
                 captures.push(Some(flag));
             } else if inputs.is_empty() {
                 captures.push(None);

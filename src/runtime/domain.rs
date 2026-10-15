@@ -72,6 +72,8 @@ pub(crate) enum Operation {
     TimerStart,
     Values,
     CurrentValues,
+    Query,
+    CurrentQuery,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +100,8 @@ impl RequestStatus {
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
+        "__domain_query_at" => Operation::Query,
+        "__domain_query_scalar" => Operation::CurrentQuery,
         "__domain_values" => Operation::Values,
         "__domain_current_values" => Operation::CurrentValues,
         "__timer_create" => Operation::TimerCreate,
@@ -215,6 +219,8 @@ impl Operation {
                 | Self::Pair
                 | Self::Values
                 | Self::CurrentValues
+                | Self::Query
+                | Self::CurrentQuery
         )
     }
     pub(crate) fn status_payload(self) -> bool {
@@ -352,7 +358,7 @@ impl Operation {
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
             Self::CurrentRead => (vec![text], Type::tuple(vec![Type::Int32, Type::UInt64])),
-            Self::CurrentWrite => (
+            Self::CurrentWrite | Self::CurrentQuery => (
                 vec![text, i.clone()],
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
@@ -360,7 +366,7 @@ impl Operation {
                 vec![m, token, text],
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
-            Self::Write => (
+            Self::Write | Self::Query => (
                 vec![m, token, text, i.clone()],
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
@@ -528,6 +534,8 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         67 => Operation::TimerStart,
         68 => Operation::Values,
         69 => Operation::CurrentValues,
+        70 => Operation::Query,
+        71 => Operation::CurrentQuery,
 
         _ => {
             super::error::record_error(Error::new_with_code(

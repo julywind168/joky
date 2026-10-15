@@ -7293,8 +7293,15 @@ fn domain_value_packets_keep_old_flows_and_bind_new_script_operations_in_all_bac
     let old = include_str!("fixtures/late_binding_values.jk");
     let new = old
         .replace("a.n-input.amount", "a.n-input.amount*10")
-        .replace("b.n+input.amount", "b.n+input.amount*10")
-        .replace("value:a.n+b.n,", "value:a.n+b.n+100,");
+        .replace("b.n=b.n+input.amount", "b.n=b.n+input.amount*10")
+        .replace("value:a.n+b.n,", "value:a.n+b.n+100,")
+        .replace("{a.n+n}", "{a.n+n+100}")
+        .replace("{a.n+b.n+n}", "{a.n+b.n+n+100}")
+        .replace("value:a.n+input.amount,", "value:a.n+input.amount+100,")
+        .replace(
+            "value:a.n+b.n+input.amount,",
+            "value:a.n+b.n+input.amount+100,",
+        );
     let old = old.replace('{', "{{").replace('}', "}}");
     let new = new.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
@@ -7380,32 +7387,37 @@ fn domain_value_packets_bound_fields_depth_and_zero_lane_records() {
         ));
     }
     for (definitions, ty, value, assertion, accepted) in cases {
-        let work = Workspace::new();
-        work.write(
-            "bound.jk",
-            &format!(
-                r#"import joky/domain import joky/check
+        for (access, receiver, body, expected) in [
+            ("write_to(owner.handle()", "&mut State", "s.n=s.n+1 p", 1),
+            ("query_from(owner.read_handle()", "&State", "p", 0),
+        ] {
+            let work = Workspace::new();
+            work.write(
+                "bound.jk",
+                &format!(
+                    r#"import joky/domain import joky/check
 {definitions}
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
-fn turn(s:&mut State,p:{ty})->{ty} {{s.n=s.n+1 p}}
+fn turn(s:{receiver},p:{ty})->{ty} {{{body}}}
 fn read(s:&State)->Int32 {{s.n}}
 fn main() @suspends {{
     let owner=domain.create(make,0)
-    let p=domain.write_to(owner.handle(),turn,{value}).unwrap()
+    let p=domain.{access},turn,{value}).unwrap()
     let message="domain value bounds"
     check.assert({assertion},&message)
-    check.assert(domain.read_from(owner.read_handle(),read).unwrap()==1,&message)
+    check.assert(domain.read_from(owner.read_handle(),read).unwrap()=={expected},&message)
 }}"#
-            ),
-        );
-        if accepted {
-            work.assert_all_backends("bound.jk", &[], b"", 0);
-        } else {
-            failure(
-                &work.cli(&["build", "bound.jk"]),
-                "bounded pure-value signature",
+                ),
             );
+            if accepted {
+                work.assert_all_backends("bound.jk", &[], b"", 0);
+            } else {
+                failure(
+                    &work.cli(&["build", "bound.jk"]),
+                    "bounded pure-value signature",
+                );
+            }
         }
     }
 }
@@ -7438,5 +7450,71 @@ fn main() @suspends {{let owner=domain.create(make,1) {invocation};}}"#
             ),
         );
         failure(&work.cli(&["build", &file]), "bounded pure-value signature");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_queries_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "queries.jk",
+        include_str!("fixtures/state_domain_queries.jk"),
+    );
+    work.assert_all_backends("queries.jk", &[], b"", 0);
+}
+
+#[test]
+fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
+    let work = Workspace::new();
+    for (name, operation, invocation) in [
+        (
+            "mutable",
+            "fn query(s:&mut State,n:Int32)->Int32{s.n=n n}",
+            "domain.query_from(h,query,1)",
+        ),
+        (
+            "owning",
+            "fn query(s:&State,p:Packet)->Int32{s.n}",
+            "domain.query_from(h,query,Packet{text:\"owned\"})",
+        ),
+        (
+            "async",
+            "fn query(s:&State,n:Int32) @suspends ->Int32{s.n+n}",
+            "domain.query_from(h,query,1)",
+        ),
+        (
+            "dynamic",
+            "fn query(s:&State,n:Int32)->Int32{s.n+n}",
+            "{let operation=query domain.query_from(h,operation,1)}",
+        ),
+        (
+            "intrinsic_value",
+            "fn query(s:&State,n:Int32)->Int32{s.n+n}",
+            "{let q=domain.query_from::<State,Int32,Int32> q(h,query,1)}",
+        ),
+        (
+            "pair_mutable",
+            "fn query(a:&State,b:&mut State,n:Int32)->Int32{b.n=n a.n}",
+            "domain.query_pair(h,h,query,1)",
+        ),
+    ] {
+        let file = format!("query_{name}.jk");
+        work.write(
+            &file,
+            &format!(
+                r#"import joky/domain
+struct State {{n:Int32}} struct Packet {{text:String}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+{operation}
+fn main() @suspends {{let owner=domain.create(make,1) let h=owner.read_handle() {invocation};}}"#
+            ),
+        );
+        let output = work.cli(&["build", &file]);
+        assert!(!output.status.success(), "accepted {name}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("error:"),
+            "{output:?}"
+        );
     }
 }

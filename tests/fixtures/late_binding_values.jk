@@ -13,12 +13,32 @@ fn transfer(a:&mut Room,b:&mut Room,input:Input)->Reply {
     b.n=b.n+input.amount
     Reply{value:a.n,tag:input.tag}
 }
+fn query_scalar(a:&Room,n:Int32)->Int32 {a.n+n}
+fn query_packet(a:&Room,input:Input)->Reply {Reply{value:a.n+input.amount,tag:input.tag}}
+fn query_pair_scalar(a:&Room,b:&Room,n:Int32)->Int32 {a.n+b.n+n}
+fn query_pair_packet(a:&Room,b:&Room,input:Input)->Reply {Reply{value:a.n+b.n+input.amount,tag:input.tag}}
+fn query_current(n:Int32) @suspends ->Int32 {
+    let p=domain.query(query_packet,Input{amount:n,tag:18446744073709551615}).unwrap()
+    assert(p.tag==18446744073709551615)
+    assert(p.value==domain.query(query_scalar,n).unwrap())
+    p.value
+}
+fn queries(a:domain.ReadHandle<Room>,b:domain.ReadHandle<Room>,extra:Int32) @suspends {
+    assert(domain.query_from(a,query_scalar,3).unwrap()==43+extra)
+    let p=domain.query_from(a,query_packet,Input{amount:3,tag:18446744073709551615}).unwrap()
+    assert(p.value==43+extra && p.tag==18446744073709551615)
+    assert(domain.request_read(a,query_current,3).unwrap_or(-1)==43+extra)
+    assert(domain.query_pair(a,b,query_pair_scalar,3).unwrap()==45+extra)
+    let q=domain.query_pair(a,b,query_pair_packet,Input{amount:3,tag:18446744073709551615}).unwrap()
+    assert(q.value==45+extra && q.tag==18446744073709551615)
+}
 fn hold(directory:domain.DirectoryHandle) @suspends {
     let a=domain.create(make,40)
     let b=domain.create(make,2)
     assert(directory.insert(1,a.handle()).is_ok())
     assert(directory.insert(2,b.handle()).is_ok())
     while domain.lookup::<Room>(directory,1).is_some() {task.yield_now()}
+    queries(a.read_handle(),b.read_handle(),100)
     // This v1 flow must resolve the v2 operation with its original signature.
     let reply=domain.write_pair(a.handle(),b.handle(),transfer,Input{amount:2,tag:18446744073709551615}).unwrap()
     assert(reply.value==20 && reply.tag==18446744073709551615)
@@ -27,7 +47,11 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
     match domain.lookup::<Room>(directory,1) {
         Some(a)=>match domain.lookup::<Room>(directory,2) {
-            Some(b)=>domain.read_pair(a,b,sum).unwrap().value, None=>-1
+            Some(b)=>{
+                let result=domain.read_pair(a,b,sum).unwrap().value
+                queries(a,b,result-42)
+                result
+            }, None=>-1
         }, None=>-1
     }
 }
