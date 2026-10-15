@@ -1,0 +1,34 @@
+import joky/domain
+import joky/task
+import joky/check
+struct State {phase:Int32,n:Int32}
+struct Packet {pub n:Int32,tag:UInt64}
+fn assert(ok:Bool) {let message="request record versions" check.assert(ok,&message)}
+fn make(n:Int32)->State {State{phase:0,n:n}}
+fn phase(s:&State)->Int32 {s.phase}
+fn mark(s:&mut State,n:Int32)->Int32 {s.phase=n n}
+fn read(s:&State)->Int32 {s.n+0}
+fn version()->Int32 {1}
+fn packet(n:Int32)->Packet {Packet{n:n,tag:18446744073709551615}}
+fn work(p:Packet) @suspends ->Packet {
+    let v=version()
+    domain.write(mark,1).unwrap();
+    while domain.read(phase).unwrap()==1 {task.yield_now()}
+    packet(p.n+v+domain.read(read).unwrap())
+}
+fn echo(p:Packet) @suspends ->Packet {task.yield_now() packet(p.n+version())}
+fn hold(directory:domain.DirectoryHandle) @suspends {
+    let o=domain.create(make,10) let h=o.handle()
+    assert(directory.insert(1,h).is_ok())
+    let p=domain.request(h,work,packet(7)).unwrap()
+    assert(p.n==118 && p.tag==18446744073709551615)
+    let fresh=domain.request_read(h.read_only(),echo,packet(7))
+    assert(fresh.unwrap().n==9)
+    assert(directory.remove(1,h.read_only()))
+}
+fn ready(directory:domain.DirectoryHandle) @suspends ->Bool {
+    match domain.lookup::<State>(directory,1) {Some(h)=>domain.read_from(h,phase).unwrap()==1,None=>false}
+}
+fn release(directory:domain.DirectoryHandle) @suspends ->Bool {
+    match domain.lookup_write::<State>(directory,1) {Some(h)=>domain.write_to(h,mark,2).unwrap()==2,None=>false}
+}

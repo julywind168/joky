@@ -394,7 +394,7 @@ impl FunctionPlan {
             usize::from(!request && !create)
         }..];
         let value_call = matches!(kind, DomainAt(_) | DomainPair(_) | DomainAccess(_));
-        let value_input = value_call || create || snapshot;
+        let value_input = value_call || create || snapshot || request;
         let value_type =
             |ty: &Type| scalar(ty) || (value_input && crate::core::script::schema(ty).is_some());
         if inputs.len() != usize::from(request || create || write || query)
@@ -405,7 +405,9 @@ impl FunctionPlan {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                if value_input {
+                if request {
+                    "Domain request requires a suspending bounded pure-value signature (64 fields, 8 record levels)"
+                } else if value_input {
                     "Domain operation requires a synchronous bounded pure-value signature (64 fields, 8 record levels)"
                 } else {
                     "Domain operation requires a checked scalar signature"
@@ -593,7 +595,9 @@ impl FunctionPlan {
             return Ok(Some(Flow::Value(result)));
         }
         let value_candidate = candidate && (checking || !inputs.iter().all(scalar));
-        if value_candidate {
+        let value_request =
+            request && (checking || !inputs.iter().all(scalar) || !scalar(&target.signature.ret));
+        if value_candidate || value_request {
             captures.extend_from_slice(&values[index + 1..]);
         } else if !inputs.is_empty() {
             captures.push(Some(self.pack_domain_scalar(values[index + 1].clone())?));
@@ -673,7 +677,13 @@ impl FunctionPlan {
                 let name = context
                     .templates
                     .iter()
-                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainFinish)))
+                    .find(|(_, f)| {
+                        if value_request {
+                            matches!(f.compiler_intrinsic, Some(DomainRequestValueFinish))
+                        } else {
+                            matches!(f.compiler_intrinsic, Some(DomainFinish))
+                        }
+                    })
                     .map(|(name, _)| name.clone())
                     .ok_or_else(|| {
                         type_error(
@@ -684,11 +694,24 @@ impl FunctionPlan {
                     })?;
                 context.instantiate(
                     &name,
-                    vec![target.signature.ret.clone()],
+                    if value_request {
+                        vec![inputs[0].clone(), target.signature.ret.clone()]
+                    } else {
+                        vec![target.signature.ret.clone()]
+                    },
                     crate::FunctionSignature::new(
-                        crate::runtime::domain::Operation::Request
-                            .signature()
-                            .params,
+                        if value_request {
+                            vec![
+                                crate::runtime::domain::module_type(),
+                                crate::runtime::domain::handle_type(),
+                                Type::String,
+                                inputs[0].clone(),
+                            ]
+                        } else {
+                            crate::runtime::domain::Operation::Request
+                                .signature()
+                                .params
+                        },
                         info.signature.ret.clone(),
                     ),
                     self.instantiation_depth + 1,

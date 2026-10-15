@@ -1570,60 +1570,23 @@ impl VmEngine {
             .current
             .as_ref()
             .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?;
-        let info = match module {
-            LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
-            LoadedModule::Interpreter(module) => interp::function_info(module, name),
-        }
-        .ok_or_else(|| {
-            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
-        })?;
-        if !info.suspends
-            || info.signature.params.len() != 1
-            || crate::core::script::schema(&info.signature.params[0]).as_deref()
-                != Some(input_schema)
-            || crate::core::script::schema(&info.signature.ret).as_deref() != Some(result_schema)
-            || info.signature.params[0].scalar_types().len() != bits.len()
-        {
-            return Err(runtime_error(
-                ErrorCode::InvalidCall,
-                "Script entry contract mismatch",
-            ));
-        }
-        for (ty, &word) in info.signature.params[0].scalar_types().iter().zip(bits) {
-            if super::InstanceValue::from_bits(ty, word).is_none() {
+        // Script names are public lookups; compiler-addressed domain requests
+        // may also target private imported or specialized language functions.
+        if let LoadedModule::Interpreter(module) = module {
+            if interp::function_info(module, name).is_none() {
                 return Err(runtime_error(
-                    ErrorCode::InvalidCall,
-                    "Invalid Script input lane",
+                    ErrorCode::NotFound,
+                    format!("Function `{name}` not found"),
                 ));
             }
         }
-        let layout = (info.signature.ret.is_aggregate() || info.signature.ret == Type::Unit)
-            .then_some((
-                info.aggregate_result_offset(),
-                info.signature.ret.scalar_types().len(),
-            ));
-        let task = match module {
-            LoadedModule::Interpreter(module) => Continuation::new_interpreted(
-                interp::prepare_script(module.clone(), name, bits, self.interpreter_limits)?,
-                module.version,
-                module.clone(),
-            ),
-            LoadedModule::Jit(module) => {
-                let function = &module.exports[name];
-                let mut frame = CpsFrame::new(info.frame_slots);
-                frame.slots[..bits.len()].copy_from_slice(bits);
-                unsafe {
-                    Continuation::new(
-                        crate::runtime::abi::as_cps_entry(function.entry),
-                        frame,
-                        module.version,
-                        module.clone(),
-                    )
-                }
-                .with_sources(module.sources.clone())
-            }
-        };
-        Ok((task, layout))
+        module.prepare_script_call(
+            name,
+            input_schema,
+            result_schema,
+            bits,
+            self.interpreter_limits,
+        )
     }
 
     /// Run to the first pending poll or completion. Int32 arguments and an
@@ -1894,6 +1857,70 @@ fn abi_error(code: ErrorCode, message: impl Into<String>) -> Error {
 }
 
 impl LoadedModule {
+    pub(super) fn prepare_script_call(
+        &self,
+        name: &str,
+        input_schema: &str,
+        result_schema: &str,
+        bits: &[u64],
+        limits: InterpreterLimits,
+    ) -> Result<(Continuation, Option<(usize, usize)>), Error> {
+        let module = self;
+        let info = match module {
+            LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
+            LoadedModule::Interpreter(module) => interp::request_info(module, name),
+        }
+        .ok_or_else(|| {
+            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+        })?;
+        if !info.suspends
+            || info.signature.params.len() != 1
+            || crate::core::script::schema(&info.signature.params[0]).as_deref()
+                != Some(input_schema)
+            || crate::core::script::schema(&info.signature.ret).as_deref() != Some(result_schema)
+            || info.signature.params[0].scalar_types().len() != bits.len()
+        {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Script entry contract mismatch",
+            ));
+        }
+        for (ty, &word) in info.signature.params[0].scalar_types().iter().zip(bits) {
+            if super::InstanceValue::from_bits(ty, word).is_none() {
+                return Err(runtime_error(
+                    ErrorCode::InvalidCall,
+                    "Invalid Script input lane",
+                ));
+            }
+        }
+        let layout = (info.signature.ret.is_aggregate() || info.signature.ret == Type::Unit)
+            .then_some((
+                info.aggregate_result_offset(),
+                info.signature.ret.scalar_types().len(),
+            ));
+        let task = match module {
+            LoadedModule::Interpreter(module) => Continuation::new_interpreted(
+                interp::prepare_script(module.clone(), name, bits, limits)?,
+                module.version,
+                module.clone(),
+            ),
+            LoadedModule::Jit(module) => {
+                let function = &module.exports[name];
+                let mut frame = CpsFrame::new(info.frame_slots);
+                frame.slots[..bits.len()].copy_from_slice(bits);
+                unsafe {
+                    Continuation::new(
+                        crate::runtime::abi::as_cps_entry(function.entry),
+                        frame,
+                        module.version,
+                        module.clone(),
+                    )
+                }
+                .with_sources(module.sources.clone())
+            }
+        };
+        Ok((task, layout))
+    }
     pub(super) fn prepare_async(
         &self,
         name: &str,

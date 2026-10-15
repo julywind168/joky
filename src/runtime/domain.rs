@@ -83,6 +83,7 @@ pub(crate) enum Operation {
     SnapshotPairValues,
     SnapshotReadValues,
     SetReadValues,
+    RequestValues,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +146,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_readonly" => Operation::ReadOnly,
         "__domain_close" => Operation::Close,
         "__domain_request" => Operation::Request,
+        "__domain_request_values" => Operation::RequestValues,
         "__domain_read_at" => Operation::Read,
         "__domain_write_at" => Operation::Write,
         "__domain_read_scalar" => Operation::CurrentRead,
@@ -395,6 +397,15 @@ impl Operation {
             Self::Handle => (vec![Type::reference(owner, false)], token),
             Self::ReadOnly => (vec![token.clone()], token),
             Self::Close => (vec![Type::reference(owner, true)], Type::Unit),
+            Self::RequestValues => (
+                vec![
+                    m,
+                    token,
+                    text,
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+                ],
+                Type::Int32,
+            ),
             Self::Request => (
                 vec![m, token, text, i],
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
@@ -606,6 +617,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         78 => Operation::SnapshotPairValues,
         79 => Operation::SnapshotReadValues,
         80 => Operation::SetReadValues,
+        81 => Operation::RequestValues,
 
         _ => {
             super::error::record_error(Error::new_with_code(

@@ -43,13 +43,22 @@ impl TaskEnvironment for Access {
         let _guard = self.enter();
         // This request's failure closes only its own executor group. State becomes
         // failed only when a checked exclusive turn fails inside execute().
-        let result = task.resume().map_err(Error::from);
-        if let Some(completion) = &self.completion {
-            if let Err(error) = &result {
-                completion.borrow_mut().result = Some((RequestStatus::from_error(error), 0));
-            } else if let Some(value) = task.cps_result() {
-                completion.borrow_mut().result = Some((RequestStatus::Completed, value));
+        let result = task.resume().map_err(Error::from).and_then(|()| {
+            if let (Some(completion), Some(value)) = (&self.completion, task.cps_result()) {
+                let mut completion = completion.borrow_mut();
+                if let Some(output) = &mut completion.output {
+                    let words = task
+                        .flat_result(output.layout)
+                        .ok_or_else(|| invalid("Missing domain request value result"))?;
+                    let words = super::values::result_words(&output.ty, words)?;
+                    output.words.copy_from_slice(&words);
+                }
+                completion.result = Some((RequestStatus::Completed, value));
             }
+            Ok(())
+        });
+        if let (Some(completion), Err(error)) = (&self.completion, &result) {
+            completion.borrow_mut().result = Some((RequestStatus::from_error(error), 0));
         }
         result
     }
@@ -271,6 +280,41 @@ pub(super) fn spawn(
     limits: InterpreterLimits,
     completion: Option<Rc<RefCell<super::source::Completion>>>,
 ) -> Result<TaskId, Error> {
+    spawn_with(registry, handle, limits, completion, |module| {
+        Ok((module.prepare_async(name, args, limits)?, None))
+    })
+}
+
+pub(super) fn spawn_values(
+    registry: &Rc<RefCell<Domains>>,
+    handle: DomainHandle,
+    name: &str,
+    words: &[u64],
+    limits: InterpreterLimits,
+    completion: Rc<RefCell<super::source::Completion>>,
+) -> Result<TaskId, Error> {
+    spawn_with(registry, handle, limits, Some(completion), |module| {
+        let info = super::source::request_info(module, name)
+            .ok_or_else(|| invalid("Unknown domain request entry"))?;
+        let input = info
+            .signature
+            .params
+            .first()
+            .and_then(crate::core::script::schema)
+            .ok_or_else(|| invalid("Invalid domain request input contract"))?;
+        let output = crate::core::script::schema(&info.signature.ret)
+            .ok_or_else(|| invalid("Invalid domain request result contract"))?;
+        module.prepare_script_call(name, &input, &output, words, limits)
+    })
+}
+
+fn spawn_with(
+    registry: &Rc<RefCell<Domains>>,
+    handle: DomainHandle,
+    limits: InterpreterLimits,
+    completion: Option<Rc<RefCell<super::source::Completion>>>,
+    prepare: impl FnOnce(&LoadedModule) -> Result<(Continuation, Option<(usize, usize)>), Error>,
+) -> Result<TaskId, Error> {
     reap(registry);
     let module = {
         let mut domains = registry.borrow_mut();
@@ -289,7 +333,12 @@ pub(super) fn spawn(
         .executor
         .upgrade()
         .ok_or_else(|| invalid("Domain executor is closed"))?;
-    let task = module.prepare_async(name, args, limits)?;
+    let (task, layout) = prepare(&module)?;
+    if let Some(completion) = &completion {
+        if let Some(output) = &mut completion.borrow_mut().output {
+            output.layout = layout;
+        }
+    }
     let group = TaskGroup::new();
     let root = task.root_identity();
     let key = code::module_key(&module);

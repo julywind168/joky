@@ -1,0 +1,78 @@
+import joky/domain
+import joky/task
+import joky/check
+fn assert(ok:Bool) { let message="domain request values" check.assert(ok,&message) }
+struct Empty {}
+struct Bits { wide:UInt64, small:Int8, nan:Float64, flag:Bool, rune:Rune }
+struct Packet { n:Int32, bits:Bits, empty:Empty, unit:Unit }
+struct State { n:Int32, text:String }
+fn make(n:Int32)->State { State{n:n,text:"owned state"} }
+fn packet(n:Int32)->Packet { Packet{n:n,bits:Bits{wide:18446744073709551615,small:-128,nan:Float64.from_bits(9221120237041090626),flag:true,rune:'界'},empty:Empty{},unit:{}} }
+fn verify(p:Packet) { assert(p.bits.wide==18446744073709551615) assert(p.bits.small == -128) assert(p.bits.nan.to_bits()==9221120237041090626) assert(p.bits.flag) assert(p.bits.rune=='界') }
+fn read(s:&State)->Int32 {s.n}
+fn add(s:&mut State,p:Packet)->Packet {s.n=s.n+p.n packet(s.n)}
+fn work(p:Packet) @suspends -> Packet {
+    verify(p)
+    task.yield_now()
+    let result=domain.write(add,p).unwrap()
+    task.yield_now()
+    result
+}
+fn echo(p:Packet) @suspends -> Packet { task.yield_now() verify(p) p }
+fn inspect(p:Packet) @suspends -> Packet {task.yield_now() packet(domain.read(read).unwrap()+p.n)}
+fn from_scalar(n:Int32) @suspends -> Packet {task.yield_now() packet(n)}
+fn to_scalar(p:Packet) @suspends -> Int32 {task.yield_now() verify(p) p.n}
+fn empty(p:Empty) @suspends -> Empty {task.yield_now() p}
+fn unit(p:Packet) @suspends {task.yield_now() verify(p)}
+fn from_unit(p:Unit) @suspends -> Packet {task.yield_now() packet(13)}
+fn generic_echo<T>(value:T) @suspends -> T {task.yield_now() value}
+fn forward<S,A>(h:domain.WriteHandle<S>,a:A) @suspends -> Result<A,domain.RequestError> {domain.request(h,generic_echo::<A>,a)}
+fn broken(p:Packet) @suspends -> Packet {task.yield_now() packet(1/p.n)}
+fn fail_write(s:&mut State,p:Packet)->Packet {s.n=99 packet(1/p.n)}
+fn poison(p:Packet) @suspends -> Packet {domain.write(fail_write,p).unwrap()}
+fn slow(p:Packet) @suspends -> Packet { task.sleep_ms(10000) domain.write(add,p).unwrap() }
+fn waiting(h:domain.WriteHandle<State>) @suspends {domain.request(h,slow,packet(100));}
+fn ready() @suspends {task.yield_now()}
+fn closing(h:domain.WriteHandle<State>) @suspends {
+    match domain.request(h,slow,packet(100)) {Err(domain.RequestError.Closed)=>{},_=>{assert(false)}}
+}
+fn close(o:domain.Owner<State>) @suspends {o.close()}
+fn next(n:&mut Int32)->Packet {(*(n)=(*n)+1); packet(*n)}
+fn lifecycle() @suspends -> Int32 {
+    let o=domain.create(make,10)
+    let p=domain.request(o.handle(),work,packet(2)).unwrap()
+    verify(p)
+    p.n+domain.read_from(o.read_handle(),read).unwrap()
+}
+fn cancelled() @suspends -> Int32 {
+    let o=domain.create(make,10)
+    match domain.request(o.handle(),slow,packet(100)) {Err(domain.RequestError.Cancelled)=>2,_=>99}
+}
+fn budget() @suspends -> Int32 {
+    let o=domain.create(make,10)
+    match domain.request(o.handle(),echo,packet(24)) {Ok(p)=>p.n,Err(domain.RequestError.ResourceLimit)=>4,_=>99}
+}
+fn main() @suspends {
+    assert(lifecycle()==24)
+    let o=domain.create(make,10) let h=o.handle() let r=o.read_handle()
+    var n=0
+    var p=forward(h,next(&mut n)).unwrap()
+    assert(n==1) assert(p.n==1) p.n=99
+    let q=domain.request_read(r,inspect,packet(3)).unwrap()
+    verify(q) assert(q.n==13)
+    assert(domain.request(h,from_scalar,7).unwrap().n==7)
+    assert(domain.request_read(r,to_scalar,packet(8)).unwrap()==8)
+    domain.request(h,empty,Empty{}).unwrap();
+    domain.request_read(r,unit,packet(0)).unwrap();
+    assert(domain.request(h,from_unit,{}).unwrap().n==13)
+    match domain.request_read(r,work,packet(5)) {Err(domain.RequestError.Failed)=>{},_=>{assert(false)}}
+    match domain.request(h,broken,packet(0)) {Err(domain.RequestError.Failed)=>{},_=>{assert(false)}}
+    assert(domain.read_from(r,read).unwrap()==10)
+    race {| waiting(h) | ready()};
+    assert(domain.read_from(r,read).unwrap()==10)
+    parallel {| closing(h) | close(o)};
+    match domain.request(h,echo,packet(1)) {Err(domain.RequestError.Closed)=>{},_=>{assert(false)}}
+    let failed=domain.create(make,1) let f=failed.handle()
+    match domain.request(f,poison,packet(0)) {Err(domain.RequestError.DomainFailed)=>{},_=>{assert(false)}}
+    match domain.request(f,echo,packet(1)) {Err(domain.RequestError.DomainFailed)=>{},_=>{assert(false)}}
+}

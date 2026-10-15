@@ -158,13 +158,26 @@ fn finish_request<R>(module: domain.Module, token: domain.Handle, name: String, 
     if status == 5 { return Result.Err(RequestError.InvalidAccess) }
     Result.Err(RequestError.DomainFailed)
 }
+extern fn __domain_request_values(module:domain.Module,token:domain.Handle,name:String,packet:&mut Buffer<UInt64>) @suspends -> Int32
+#intrinsic("domain.finish_request_value")
+fn finish_request_value<A,R>(module:domain.Module,token:domain.Handle,name:String,input:A) @suspends -> Result<R,RequestError> {
+    var packet=pack_value(input)
+    let status=__domain_request_values(module,token,name,&mut packet.storage)
+    if status == 0 { return Result.Ok(unpack_value::<R>(&packet)) }
+    if status == 1 { return Result.Err(RequestError.Failed) }
+    if status == 2 { return Result.Err(RequestError.Cancelled) }
+    if status == 3 { return Result.Err(RequestError.Closed) }
+    if status == 4 { return Result.Err(RequestError.ResourceLimit) }
+    if status == 5 { return Result.Err(RequestError.InvalidAccess) }
+    Result.Err(RequestError.DomainFailed)
+}
 #intrinsic("domain.request")
 pub fn request<S, A, R>(handle: WriteHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
-    finish_request::<R>(module(), handle.token, "", pack(input))
+    finish_request_value::<A,R>(module(), handle.token, "", input)
 }
 #intrinsic("domain.request_read")
 pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
-    finish_request::<R>(module(), handle.token, "", pack(input))
+    finish_request_value::<A,R>(module(), handle.token, "", input)
 }
 
 // Candidate construction consumes the snapshot and its complete, opaque read set.

@@ -178,7 +178,13 @@ unsafe fn owner(frame: &CpsFrame) -> Result<crate::runtime::resource::ResourceLe
         .ok_or_else(|| invalid("Null domain owner"))?;
     pointer.resource_mut()?.lease()
 }
+pub(super) struct RequestOutput {
+    pub layout: Option<(usize, usize)>,
+    pub ty: Type,
+    pub words: Vec<u64>,
+}
 pub(super) struct Completion {
+    pub output: Option<RequestOutput>,
     pub result: Option<(RequestStatus, u64)>,
     pub published: bool,
     pub waiter: TaskWaker,
@@ -188,9 +194,9 @@ struct Receipt {
     charge: usize,
 }
 impl Receipt {
-    fn reserve(registry: &Rc<RefCell<Domains>>) -> Result<Self, Error> {
+    fn reserve(registry: &Rc<RefCell<Domains>>, extra: usize) -> Result<Self, Error> {
         let mut domains = registry.borrow_mut();
-        let charge = std::mem::size_of::<Wait>() + std::mem::size_of::<Completion>();
+        let charge = std::mem::size_of::<Wait>() + std::mem::size_of::<Completion>() + extra;
         let bytes = domains
             .request_bytes
             .checked_add(charge)
@@ -290,6 +296,13 @@ pub(super) fn turn_arguments(
         .map(|bits| scalar_argument(&info.signature.params[1..], bits))
         .transpose()
         .map(|value| value.into_iter().collect())
+}
+fn request_reply(frame: &mut CpsFrame, op: Operation, status: RequestStatus, bits: u64) -> u64 {
+    if op == Operation::RequestValues {
+        status as u64
+    } else {
+        reply(frame, status, bits)
+    }
 }
 fn reply(frame: &mut CpsFrame, status: RequestStatus, bits: u64) -> u64 {
     // The private adapter has four parameter lanes followed by the tuple result.
@@ -439,7 +452,7 @@ unsafe fn wait(
             let handle = match handle(registry, frame.slots[1]) {
                 Ok(h) => h,
                 Err(e) => {
-                    if op == Operation::Request {
+                    if matches!(op, Operation::Request | Operation::RequestValues) {
                         let domains = registry.borrow();
                         let failed = domains.entries.values().any(|d| {
                             d.source_token == frame.slots[1] / 2
@@ -447,8 +460,9 @@ unsafe fn wait(
                                 && !d.closing
                                 && !domains.shutting_down
                         });
-                        return Ok(Some(reply(
+                        return Ok(Some(request_reply(
                             frame,
+                            op,
                             if failed {
                                 RequestStatus::DomainFailed
                             } else {
@@ -462,7 +476,7 @@ unsafe fn wait(
             };
             let (module, _) = module(registry, frame.slots[0])?;
             let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
-            let request = op == Operation::Request;
+            let request = matches!(op, Operation::Request | Operation::RequestValues);
             if !super::code::admits(
                 &module,
                 &registry.borrow().get(handle)?.module,
@@ -470,7 +484,12 @@ unsafe fn wait(
                 request,
             ) {
                 if request {
-                    return Ok(Some(reply(frame, RequestStatus::InvalidAccess, 0)));
+                    return Ok(Some(request_reply(
+                        frame,
+                        op,
+                        RequestStatus::InvalidAccess,
+                        0,
+                    )));
                 }
                 return Err(Error::new_with_code(
                     crate::ErrorPhase::Runtime,
@@ -479,35 +498,78 @@ unsafe fn wait(
                 ));
             }
             if request {
-                let receipt = match Receipt::reserve(registry) {
-                    Ok(receipt) => receipt,
+                let value_request = op == Operation::RequestValues;
+                let prepared = (|| {
+                    let info = request_info(&module, name)
+                        .ok_or_else(|| invalid("Unknown domain request entry"))?;
+                    let (input, output, extra) = if value_request {
+                        if !info.suspends
+                            || info.signature.params.len() != 1
+                            || crate::core::script::schema(&info.signature.params[0]).is_none()
+                            || crate::core::script::schema(&info.signature.ret).is_none()
+                        {
+                            return Err(invalid("Invalid domain request value contract"));
+                        }
+                        let count = info.signature.ret.scalar_types().len();
+                        // Reserve the retained result and the bounded extraction copy.
+                        let extra = (info.signature.params[0].scalar_types().len()
+                            + usize::from(info.signature.params == [Type::Unit])
+                            + 2 * count)
+                            * std::mem::size_of::<u64>();
+                        (None, Some((info.signature.ret.clone(), count)), extra)
+                    } else {
+                        (Some(request_input(&module, name, frame.slots[3])?), None, 0)
+                    };
+                    let receipt = Receipt::reserve(registry, extra)?;
+                    let output = output.map(|(ty, count)| RequestOutput {
+                        layout: None,
+                        ty,
+                        words: vec![0; count],
+                    });
+                    let completion = Rc::new(RefCell::new(Completion {
+                        output,
+                        result: None,
+                        published: false,
+                        waiter: current_waker()
+                            .ok_or_else(|| invalid("Domain request requires an executor task"))?,
+                    }));
+                    let limits = crate::runtime::suspension::current_limits();
+                    let task = if value_request {
+                        let packet = &*(frame.slots[3] as *const Buffer);
+                        let mut words = super::values::input_words(&info.signature.params, packet)?;
+                        // Script frames encode Unit with zero packet lanes.
+                        if info.signature.params == [Type::Unit] {
+                            words.clear();
+                        }
+                        super::tasks::spawn_values(
+                            registry,
+                            handle,
+                            name,
+                            &words,
+                            limits,
+                            completion.clone(),
+                        )?
+                    } else {
+                        super::tasks::spawn(
+                            registry,
+                            handle,
+                            name,
+                            &[input.unwrap()],
+                            limits,
+                            Some(completion.clone()),
+                        )?
+                    };
+                    Ok::<_, Error>((receipt, completion, task))
+                })();
+                let (receipt, completion, task) = match prepared {
+                    Ok(value) => value,
                     Err(error) => {
-                        return Ok(Some(reply(frame, RequestStatus::from_error(&error), 0)))
-                    }
-                };
-                let completion = Rc::new(RefCell::new(Completion {
-                    result: None,
-                    published: false,
-                    waiter: current_waker()
-                        .ok_or_else(|| invalid("Domain request requires an executor task"))?,
-                }));
-                let input = match request_input(&module, name, frame.slots[3]) {
-                    Ok(input) => input,
-                    Err(error) => {
-                        return Ok(Some(reply(frame, RequestStatus::from_error(&error), 0)))
-                    }
-                };
-                let task = match super::tasks::spawn(
-                    registry,
-                    handle,
-                    name,
-                    &[input],
-                    crate::runtime::suspension::current_limits(),
-                    Some(completion.clone()),
-                ) {
-                    Ok(task) => task,
-                    Err(error) => {
-                        return Ok(Some(reply(frame, RequestStatus::from_error(&error), 0)))
+                        return Ok(Some(request_reply(
+                            frame,
+                            op,
+                            RequestStatus::from_error(&error),
+                            0,
+                        )))
                     }
                 };
                 Wait::Request {
@@ -592,7 +654,16 @@ unsafe fn wait(
                 return Ok(None);
             }
             let (code, value) = result.result.unwrap();
-            Ok(reply(frame, code, value))
+            if code == RequestStatus::Completed {
+                if let Some(output) = &result.output {
+                    super::values::write_packet(
+                        arena,
+                        &mut *(frame.slots[3] as *mut Buffer),
+                        &output.words,
+                    )?;
+                }
+            }
+            Ok(request_reply(frame, op, code, value))
         }
     };
     stop(frame, 0);
@@ -776,6 +847,7 @@ pub(crate) unsafe fn poll(
             }
         }
         Operation::Request
+        | Operation::RequestValues
         | Operation::Pair
         | Operation::SnapshotPair
         | Operation::Snapshot

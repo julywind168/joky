@@ -31,8 +31,8 @@ pub(super) fn metadata<M: Module>(
                         .signature
                         .params
                         .iter()
-                        .all(crate::core::instance::scalar)
-                    && crate::core::instance::scalar(&info.signature.ret))
+                        .all(|ty| crate::core::script::schema(ty).is_some())
+                    && crate::core::script::schema(&info.signature.ret).is_some())
         })
         .collect();
     let endian = module.isa().endianness();

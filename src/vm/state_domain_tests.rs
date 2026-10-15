@@ -1502,3 +1502,135 @@ fn exhaustive_state_domains_snapshot_values_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_request_values_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_request_values.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel record request input, child task and result delivery at every instruction"]
+fn exhaustive_state_domains_request_values_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_request_values.jk"),
+        0..=32768,
+        true,
+    );
+}
+
+#[test]
+fn state_domains_request_values_cancel_after_admission() {
+    use crate::runtime::executor::TaskGroup;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../tests/fixtures/state_domain_request_values.jk"
+        ))
+        .unwrap();
+        let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+        let id = vm
+            .executor
+            .spawn(
+                &TaskGroup::new(),
+                vm.prepare_async("cancelled", &[]).unwrap(),
+            )
+            .unwrap();
+        let mut child = None;
+        for _ in 0..100 {
+            vm.poll_tasks(1).unwrap();
+            child = vm.domains.borrow().request_tasks().first().copied();
+            if child.is_some() {
+                break;
+            }
+        }
+        assert!(vm.cancel_domain_task(child.expect("request admitted")));
+        let mut result = None;
+        for _ in 0..100 {
+            for done in vm.poll_tasks(1).unwrap().completed {
+                if done.id == id {
+                    result = Some(done.result.unwrap());
+                }
+            }
+            if result.is_some() {
+                break;
+            }
+        }
+        assert_eq!(result, Some(2));
+        assert_eq!(vm.task_count(), 0);
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+    }
+}
+
+#[test]
+fn state_domains_request_values_refund_budget_failures() {
+    use crate::runtime::{arena, executor::TaskGroup};
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            arena::LIMIT.with(|n| n.set(self.0));
+        }
+    }
+    let _restore = Restore(arena::LIMIT.with(|n| n.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../tests/fixtures/state_domain_request_values.jk"
+        ))
+        .unwrap();
+        let baseline = arena::LIVE.with(|n| n.get());
+        let mut successes = 0;
+        let mut failures = 0;
+        for (task_limit, count_limit, byte_limit) in (0..=8192)
+            .step_by(128)
+            .map(|n| (n, 4096, 4 * 1024 * 1024))
+            .chain((1..=2049).step_by(64).map(|n| (arena::MAX_BYTES, 4096, n)))
+        {
+            arena::LIMIT.with(|n| n.set(task_limit));
+            vm.set_domain_limits(DomainLimits {
+                max_requests: count_limit,
+                max_request_bytes: byte_limit,
+                ..Default::default()
+            })
+            .unwrap();
+            let group = TaskGroup::new();
+            let result = (|| {
+                let id = vm
+                    .executor
+                    .spawn(&group, vm.prepare_async("budget", &[])?)?;
+                for _ in 0..1000 {
+                    for done in vm.poll_tasks(1)?.completed {
+                        if done.id == id {
+                            return done.result;
+                        }
+                    }
+                }
+                panic!("request stalled");
+            })();
+            match result {
+                Ok(24) => successes += 1,
+                Ok(4) => failures += 1,
+                Err(e) => {
+                    assert_eq!(e.code(), crate::ErrorCode::ResourceLimit, "{mode:?}: {e}");
+                    failures += 1;
+                }
+                other => panic!("unexpected request budget result: {other:?}"),
+            }
+            vm.executor.cancel_group(&group);
+            assert_eq!(vm.task_count(), 0);
+            assert_eq!(
+                vm.domains.borrow().usage(),
+                (0, 0, 0, 0),
+                "{mode:?} {task_limit} {byte_limit}"
+            );
+            assert_eq!(arena::LIVE.with(|n| n.get()), baseline);
+        }
+        assert!(successes > 0 && failures > 0);
+        arena::LIMIT.with(|n| n.set(arena::MAX_BYTES));
+    }
+}

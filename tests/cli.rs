@@ -5726,7 +5726,7 @@ fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
         ("fn bad(s: &State) -> Int32 { let f = identity f(s.count) } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count) s.count } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), \"owned\"); }", "Copy type arguments"),
-        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, 2)); }", "scalar"),
+        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, 2)); }", "bounded pure-value"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
@@ -7415,6 +7415,45 @@ fn main() @suspends {{
             );
         }
 
+        for (input_type, input_value, result_type, result_body, check) in [
+            (ty.as_str(), value.as_str(), "Int32", "42", "p==42"),
+            (
+                "Int32",
+                "0",
+                ty.as_str(),
+                value.as_str(),
+                assertion.as_str(),
+            ),
+        ] {
+            let work = Workspace::new();
+            work.write(
+                "request_bound.jk",
+                &format!(
+                    r#"import joky/domain import joky/task import joky/check
+{definitions}
+struct State {{n:Int32}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+fn echo(input:{input_type}) @suspends -> {result_type} {{task.yield_now() {result_body}}}
+fn main() @suspends {{
+    let owner=domain.create(make,0)
+    let message="request bounds"
+    let p=domain.request(owner.handle(),echo,{input_value}).unwrap()
+    check.assert({check},&message)
+    let p=domain.request_read(owner.read_handle(),echo,{input_value}).unwrap()
+    check.assert({check},&message)
+}}"#
+                ),
+            );
+            if accepted {
+                work.assert_all_backends("request_bound.jk", &[], b"", 0);
+            } else {
+                failure(
+                    &work.cli(&["build", "request_bound.jk"]),
+                    "bounded pure-value signature",
+                );
+            }
+        }
+
         for (projection, body) in [
             ("fn project(a:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_from(a.read_handle(),project) let p=saved.value()"),
             ("fn project(a:&State,b:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let p=saved.value()"),
@@ -7905,5 +7944,97 @@ fn main() @suspends {{
     assert(vm.close(h)==0)
 }}"#));
         work.assert_all_backends("snapshot_reload.jk", &[], b"", 0);
+    }
+}
+
+#[test]
+fn domain_request_values_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "request_values.jk",
+        include_str!("fixtures/state_domain_request_values.jk"),
+    );
+    work.assert_all_backends("request_values.jk", &[], b"", 0);
+}
+
+#[test]
+fn domain_request_values_reject_invalid_contracts() {
+    let work = Workspace::new();
+    for (definition, ty, value) in [
+        ("struct P {text:String}", "P", "P{text:\"owned\"}"),
+        ("struct P<T> {n:T}", "P<Int32>", "P{n:1}"),
+        ("enum P {A(Int32)}", "P", "P.A(1)"),
+        ("", "(Int32,Int32)", "(1,2)"),
+    ] {
+        for result in [false, true] {
+            let (input, output, argument, body) = if result {
+                ("Int32", ty, "0", value)
+            } else {
+                (ty, "Int32", value, "0")
+            };
+            work.write("rejected_request.jk", &format!(r#"import joky/domain
+{definition}
+struct State {{n:Int32}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+fn work(input:{input}) @suspends -> {output} {{{body}}}
+fn main() @suspends {{let owner=domain.create(make,0) domain.request(owner.handle(),work,{argument});}}
+"#));
+            let output = work.cli(&["build", "rejected_request.jk"]);
+            assert!(!output.status.success());
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !error.contains("panicked") && !error.contains("[parse"),
+                "{error}"
+            );
+            assert!(
+                error.contains("bounded pure-value") || error.contains("Copy type arguments"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn domain_request_values_pin_started_tasks_and_check_new_contracts() {
+    let original = include_str!("fixtures/late_binding_request_values.jk");
+    for incompatible in [false, true] {
+        let old = if incompatible {
+            original.replace(
+                "assert(fresh.unwrap().n==9)",
+                "assert(match fresh {Err(domain.RequestError.InvalidAccess)=>true,_=>false})",
+            )
+        } else {
+            original.to_owned()
+        };
+        let new = old.replace("{1}", "{2}").replace("s.n+0", "s.n+100");
+        let new = if incompatible {
+            new.replace("pub n:Int32,tag", "n:Int32,tag")
+        } else {
+            new
+        };
+        let old = old.replace('{', "{{").replace('}', "}}");
+        let new = new.replace('{', "{{").replace('}', "}}");
+        for create in ["new", "interpreter"] {
+            let work = Workspace::new();
+            work.write("request_reload.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+fn assert(ok:Bool) {{let message="request publication" check.assert(ok,&message)}}
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
+    var attempts=0
+    while !h.call::<domain.DirectoryHandle,Bool>("ready",directory) {{attempts=attempts+1 assert(attempts<1000) task.yield_now()}}
+    let next={new:?}
+    assert(vm.load_source(h,&next)==0)
+    assert(vm.publish_domain_code(h)==1)
+    assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
+}}
+fn main() @suspends {{
+    let h=vm.Vm.{create}() let source={old:?}
+    assert(vm.load_source(h,&source)==0)
+    let owner=domain.directory(1) let directory=owner.handle()
+    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
+}}"#));
+            work.assert_all_backends("request_reload.jk", &[], b"", 0);
+        }
     }
 }
