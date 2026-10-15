@@ -7415,6 +7415,27 @@ fn main() @suspends {{
             );
         }
 
+        for (projection, body) in [
+            ("fn project(a:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_from(a.read_handle(),project) let p=saved.value()"),
+            ("fn project(a:&State,b:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let p=saved.value()"),
+            ("fn project(a:&State)->PAYLOAD {VALUE}", "var access=domain.access_set() access.include(a.read_handle()) let saved=domain.snapshot_set(access) let p=domain.read_snapshot(&saved,a.read_handle(),project)"),
+        ] {
+            let work=Workspace::new();
+            let projection=projection.replace("PAYLOAD",&ty).replace("VALUE",&value);
+            work.write("snapshot_bound.jk",&format!(r#"import joky/domain import joky/check
+{definitions}
+struct State {{n:Int32}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+{projection}
+fn main() @suspends {{
+    let a=domain.create(make,0) let b=domain.create(make,0)
+    {body}
+    let message="snapshot result bounds" check.assert({assertion},&message)
+}}"#));
+            if accepted {work.assert_all_backends("snapshot_bound.jk",&[],b"",0);}
+            else {failure(&work.cli(&["build","snapshot_bound.jk"]),"bounded pure-value signature");}
+        }
+
         let candidate_calls = [
             "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read),make,VALUE) var receipt=domain.commit_to(a.handle(),next) check.assert(match receipt.wait(){Committed(_)=>true,_=>false},&message)",
             "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),seed,0) let next=domain.candidate_pair_from(first,make,VALUE) var receipt=domain.commit_pair_to(a.handle(),b.handle(),next) check.assert(match receipt.wait(){Committed(_)=>true,_=>false},&message)",
@@ -7775,5 +7796,114 @@ fn main() @suspends {{
     assert(vm.close(h)==0)
 }}"#));
         work.assert_all_backends("candidate_reload.jk", &[], b"", 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_snapshot_values_run_and_fail_in_all_backends() {
+    let source = include_str!("fixtures/state_domain_snapshot_values.jk");
+    let work = Workspace::new();
+    work.write("snapshots.jk", source);
+    work.assert_all_backends("snapshots.jk", &[], b"", 0);
+    for (entry, from, to) in [
+        ("construct_single", ",inspect)", ",broken)"),
+        ("construct_pair", ",pair)", ",broken_pair)"),
+        ("construct_set", ",inspect)", ",broken)"),
+    ] {
+        work.write(
+            "snapshot_failure.jk",
+            &source
+                .replace("assert(lifecycle()==24)", &format!("{entry}();"))
+                .replace(from, to),
+        );
+        success(&work.cli(&["build", "snapshot_failure.jk"]));
+        for output in [
+            work.cli(&["run", "snapshot_failure.jk"]),
+            work.cli(&["run", "--interpreter", "snapshot_failure.jk"]),
+            Command::new(work.path().join("snapshot_failure"))
+                .output()
+                .unwrap(),
+        ] {
+            failure(&output, "Division by zero");
+            assert!(output.stdout.is_empty());
+        }
+    }
+}
+
+#[test]
+fn domain_snapshot_values_reject_invalid_results_and_projections() {
+    let work = Workspace::new();
+    for (definitions, ty, value) in [
+        (
+            "struct Payload{text:String}",
+            "Payload",
+            "Payload{text:\"owned\"}",
+        ),
+        ("", "(Int32,Int32)", "(1,2)"),
+        (
+            "struct Payload<T>{n:T}",
+            "Payload<Int32>",
+            "Payload::<Int32>{n:1}",
+        ),
+    ] {
+        for (params,body) in [
+            ("a:&State","let s=domain.snapshot_from(a.read_handle(),project)"),
+            ("a:&State,b:&State","let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project)"),
+            ("a:&State","var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,a.read_handle(),project);"),
+        ] {
+            work.write("invalid_snapshot.jk",&format!("import joky/domain {definitions} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params})->{ty}{{{value}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+            failure(&work.cli(&["build","invalid_snapshot.jk"]),"bounded pure-value signature");
+        }
+    }
+    for (modifier, receiver, extra, expected) in [
+        ("", "&mut State", "a.n=5", "type mismatch"),
+        ("@suspends", "&State", "", "type mismatch"),
+        ("", "&State", "println(a.n)", "proved synchronous"),
+    ] {
+        for (params,body) in [
+            (format!("a:{receiver}"),"let s=domain.snapshot_from(a.read_handle(),project)"),
+            (format!("a:&State,b:{receiver}"),"let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project)"),
+            (format!("a:{receiver}"),"var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,a.read_handle(),project);"),
+        ] {
+            let extra=if params.contains("b:&mut") {"b.n=5"} else {extra};
+            work.write("invalid_snapshot.jk",&format!("import joky/domain struct Payload{{n:Int32}} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params}) {modifier} ->Payload{{{extra} Payload{{n:a.n}}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+            failure(&work.cli(&["build","invalid_snapshot.jk"]),expected);
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_snapshot_values_keep_frozen_results_across_publication() {
+    let old = include_str!("fixtures/late_binding_snapshots.jk");
+    let new = old
+        .replace("n:s.n,", "n:s.n+100,")
+        .replace("n:a.n+b.n,", "n:a.n+b.n+100,");
+    let old = old.replace('{', "{{").replace('}', "}}");
+    let new = new.replace('{', "{{").replace('}', "}}");
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write("snapshot_reload.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+fn assert(ok:Bool) {{let message="snapshot versions" check.assert(ok,&message)}}
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
+    var attempts=0
+    while !h.call::<domain.DirectoryHandle,Bool>("ready",directory) {{
+        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+    }}
+    let next={new:?}
+    assert(vm.load_source(h,&next)==0)
+    assert(vm.publish_domain_code(h)==2)
+    assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
+}}
+fn main() @suspends {{
+    let h=vm.Vm.{create}() let source={old:?}
+    assert(vm.load_source(h,&source)==0)
+    let owner=domain.directory(1) let directory=owner.handle()
+    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
+}}"#));
+        work.assert_all_backends("snapshot_reload.jk", &[], b"", 0);
     }
 }

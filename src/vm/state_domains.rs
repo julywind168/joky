@@ -685,7 +685,8 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         return;
     }
     if let Work::Pair(pair) = &mut request.work {
-        let reads = if pair.readonly() && pair.output.is_none() {
+        let reads = if pair.readonly() && pair.output.as_ref().is_none_or(|output| output.snapshot)
+        {
             reads::ReadSet::capture_many(&domains, &pair.handles).map(Some)
         } else {
             Ok(None)

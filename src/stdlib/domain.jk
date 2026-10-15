@@ -85,6 +85,14 @@ extern fn __domain_query_at(module: domain.Module, handle: domain.Handle, name: 
 extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_snapshot(module: domain.Module, handle: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
 extern fn __domain_snapshot_value(snapshot: &domain.SnapshotOwner) @suspends -> UInt64
+extern fn __domain_snapshot_values(module:domain.Module,handle:domain.Handle,name:String) @suspends -> domain.SnapshotOwner
+extern fn __domain_snapshot_read_values(snapshot:&domain.SnapshotOwner,packet:&mut Buffer<UInt64>) @suspends
+#intrinsic("domain.snapshot_value")
+fn snapshot_value<R>(snapshot:&domain.SnapshotOwner) @suspends -> R {
+    var packet=pack_value({})
+    __domain_snapshot_read_values(snapshot,&mut packet.storage)
+    unpack_value::<R>(&packet)
+}
 extern fn __domain_snapshot_check(snapshot: &domain.SnapshotOwner) @suspends -> Int32
 #intrinsic("domain.module")
 fn module() -> domain.Module;
@@ -94,7 +102,7 @@ pub struct WriteHandle<S> { token: domain.Handle }
 pub struct Snapshot<S, R> { storage: domain.SnapshotOwner }
 pub enum SnapshotStatus { Current, Conflict, Closed, DomainFailed, InvalidAccess }
 impl<S, R> Snapshot<S, R> {
-    pub fn value(&self) @suspends -> R { unpack::<R>(__domain_snapshot_value(&self.storage)) }
+    pub fn value(&self) @suspends -> R { snapshot_value::<R>(&self.storage) }
     pub fn check(&self) @suspends -> SnapshotStatus {
         let status = __domain_snapshot_check(&self.storage)
         if status == 0 { return SnapshotStatus.Current }
@@ -237,6 +245,7 @@ pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, ope
 
 // The first domain is the candidate target; both read dependencies stay opaque.
 extern fn __domain_snapshot_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
+extern fn __domain_snapshot_pair_values(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
 #intrinsic("domain.snapshot_pair")
 pub fn snapshot_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S, &T) -> R) @suspends -> Snapshot<S, R> {
     Snapshot::<S, R> { storage: __domain_snapshot_pair(module(), first.token, second.token, "") }
@@ -319,10 +328,16 @@ pub fn snapshot_set(set:AccessSet) @suspends -> SnapshotSet {
     SnapshotSet{storage:__domain_snapshot_set(&mut storage)}
 }
 fn include_handle(set:&mut AccessSet,handle:domain.Handle) @suspends { __domain_access_include(&mut set.storage,handle) }
-fn read_snapshot_bits(snapshot:&SnapshotSet,handle:domain.Handle) @suspends -> UInt64 { __domain_set_read(module(),&snapshot.storage,handle,"") }
+extern fn __domain_set_read_values(module:domain.Module,snapshot:&domain.SnapshotSetOwner,handle:domain.Handle,name:String,packet:&mut Buffer<UInt64>) @suspends
+#intrinsic("domain.finish_snapshot_read")
+fn finish_snapshot_read<R>(module:domain.Module,snapshot:&domain.SnapshotSetOwner,handle:domain.Handle,name:String) @suspends -> R {
+    var packet=pack_value({})
+    __domain_set_read_values(module,snapshot,handle,name,&mut packet.storage)
+    unpack_value::<R>(&packet)
+}
 #intrinsic("domain.read_snapshot")
 pub fn read_snapshot<S,R>(snapshot:&SnapshotSet,handle:ReadHandle<S>,projection:fn(&S)->R) @suspends -> R {
-    unpack::<R>(read_snapshot_bits(snapshot,handle.token))
+    finish_snapshot_read::<R>(module(),&snapshot.storage,handle.token,"")
 }
 impl SnapshotSet {
     pub fn check(&self) @suspends -> SnapshotStatus {

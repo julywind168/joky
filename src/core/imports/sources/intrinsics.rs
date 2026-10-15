@@ -70,6 +70,8 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.lookup_witness" => DirectoryWitness,
                     "domain.snapshot_from" => DomainSnapshot,
                     "domain.snapshot_pair" => DomainSnapshotPair,
+                    "domain.snapshot_value" => DomainSnapshotValue,
+                    "domain.finish_snapshot_read" => DomainSetReadFinish,
                     "domain.read_snapshot" => DomainSetRead,
                     "domain.candidate_set_from" => DomainSetCandidate(false),
                     "domain.candidate_set_add" => DomainSetCandidate(true),

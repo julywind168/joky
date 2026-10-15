@@ -8,7 +8,11 @@ pub(super) struct Pair {
     info: FunctionInfo,
     words: Vec<u64>,
     limits: InterpreterLimits,
-    pub(super) output: Option<Rc<RefCell<Vec<u64>>>>,
+    pub(super) output: Option<ValueOutput>,
+}
+pub(super) struct ValueOutput {
+    pub(super) words: Rc<RefCell<Vec<u64>>>,
+    pub(super) snapshot: bool,
 }
 impl VmEngine {
     /// Queue one synchronous operation over two scalar state records. The first
@@ -92,13 +96,25 @@ pub(super) fn submit_values(
     module: &LoadedModule,
     method: &str,
     input: Vec<u64>,
-    output: Rc<RefCell<Vec<u64>>>,
+    output: ValueOutput,
     limits: InterpreterLimits,
 ) -> Result<DomainRequest, Error> {
     let info = module.instance_info(method)?;
     if !info.domain_entry || !crate::core::state_domain::value_eligible(&info) {
         return Err(invalid(
             "Domain operation requires a proved bounded value signature",
+        ));
+    }
+    if output.snapshot
+        && (info.signature.params.len() != handles.len()
+            || info
+                .signature
+                .params
+                .iter()
+                .any(|ty| ty.reference_type().is_none_or(|r| r.mutable)))
+    {
+        return Err(invalid(
+            "Snapshot projection requires only shared state references",
         ));
     }
     submit_words(registry, handles, method, info, input, limits, Some(output))
@@ -111,7 +127,7 @@ fn submit_words(
     info: FunctionInfo,
     inputs: Vec<u64>,
     limits: InterpreterLimits,
-    output: Option<Rc<RefCell<Vec<u64>>>>,
+    output: Option<ValueOutput>,
 ) -> Result<DomainRequest, Error> {
     let count = crate::core::state_domain::access_count(&info);
     if count != handles.len() {
@@ -157,7 +173,7 @@ fn submit_words(
             n.checked_add(output.as_ref().map_or(0, |v| {
                 std::mem::size_of::<RefCell<Vec<u64>>>()
                     + 2 * std::mem::size_of::<usize>()
-                    + v.borrow().len() * 8
+                    + v.words.borrow().len() * 8
             }))
         })
         .ok_or_else(|| limited("Domain pair size overflow"))?;
@@ -275,7 +291,7 @@ pub(super) fn execute(
     .and_then(|words| {
         if let Some(output) = &pair.output {
             let words = values::result_words(&pair.info.signature.ret, words)?;
-            output.borrow_mut().copy_from_slice(&words);
+            output.words.borrow_mut().copy_from_slice(&words);
             Ok(InstanceValue::Unit)
         } else {
             InstanceValue::from_bits(

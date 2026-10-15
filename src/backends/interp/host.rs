@@ -339,6 +339,8 @@ impl HostPending {
                                     | crate::runtime::domain::Operation::CreateValues
                                     | crate::runtime::domain::Operation::Snapshot
                                     | crate::runtime::domain::Operation::SnapshotPair
+                                    | crate::runtime::domain::Operation::SnapshotValues
+                                    | crate::runtime::domain::Operation::SnapshotPairValues
                                     | crate::runtime::domain::Operation::Candidate
                                     | crate::runtime::domain::Operation::CandidateValues
                                     | crate::runtime::domain::Operation::CandidatePair

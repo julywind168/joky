@@ -2798,8 +2798,8 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 | 单域候选构造 | 受检拥有图 | 构造输入支持标量／纯值记录；返回完整状态根 |
 | 单域 `read/query/write`、`read_from/query_from/write_to` | 受检拥有图 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read*` 无额外输入 |
 | 双域短操作 | 标量记录 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read_pair` 无额外输入 |
-| `snapshot_from` | 受检拥有图 | 投影结果为标量 |
-| `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果为标量；候选构造输入支持标量／纯值记录 |
+| `snapshot_from` | 受检拥有图 | 投影结果支持标量／纯值记录 |
+| `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果和候选构造输入均支持标量／纯值记录 |
 | `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果为标量 |
 | `after/every` | 所属域沿用单域根资格 | 操作输入为标量，结果为 Unit |
 | `lookup::<S>/lookup_write::<S>` | 受检拥有图 | 显式指定状态类型，无投影参数 |
@@ -2903,21 +2903,21 @@ fn main() @suspends {
 构造器绑定调用流程的模块版本；热更新不会把旧流程中的构造调用重定向到新模块。
 可执行示例见 [state_domain_create_values.jk](../tests/fixtures/state_domain_create_values.jk)。
 
-这些载荷扩展尚未加入 `when`。快照投影、Timer 输入及异步 `request` 的输入与结果
+这些载荷扩展尚未加入 `when`。Timer 输入及异步 `request` 的输入与结果
 仍限标量；Rust `InstanceValue` 公共入口也保持标量。
 
-### 标量投影快照
+### 纯值投影快照
 
-SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、解释器与独立 AOT 均支持。
+单域投影快照支持标量与有界纯值记录结果，并携带不透明版本凭据；JIT、解释器与独立 AOT 均支持。
 以下入口均为 `@suspends`：
 
 | 入口 | 行为 |
 | --- | --- |
-| `snapshot_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Snapshot<S, R>` | 排队执行受检只读投影，在同一次访问中保存标量值、域修订、代码版本和 schema 身份 |
-| `snapshot.value() -> R` | 从快照复制标量值，不重新读取状态 |
+| `snapshot_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Snapshot<S, R>` | 排队执行受检只读投影，在同一次访问中保存纯值结果、域修订、代码版本和 schema 身份 |
+| `snapshot.value() -> R` | 从快照复制标量或记录结果，不重新读取状态 |
 | `snapshot.check() -> SnapshotStatus` | 检查所属执行器、域身份、生命周期、数据修订、代码版本与 schema 身份 |
 
-投影沿用同步、不逃逸和效果检查，但 R 仍限上述标量类型。快照不是整个状态的隐式副本，
+投影沿用同步、不逃逸和效果检查，R 支持上述标量与 64 字段／8 层纯值记录。快照不是整个状态的隐式副本，
 也不携带状态借用；它可跨挂起保存，关闭原域后仍可读取保存的值。凭据封装在不可复制的
 快照资源中，不能从整数或用户记录构造、修改或拆出版本。快照不保活原状态。
 快照退出作用域或任务取消时释放自身存储，其存储计入调用任务的 arena 预算。
@@ -2929,7 +2929,13 @@ SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、�
 
 `Current` 只表示检查发生时版本仍一致，不预留权限，也不能与后续普通写入组合成原子提交。
 单域提交使用下述候选入口消费完整快照，并在发布时重新验证版本。
-可执行行为示例见 [state_domain_snapshots.jk](../tests/fixtures/state_domain_snapshots.jk)。
+可执行行为示例见 [state_domain_snapshots.jk](../tests/fixtures/state_domain_snapshots.jk) 与
+[state_domain_snapshot_values.jk](../tests/fixtures/state_domain_snapshot_values.jk)。
+
+记录结果的每次 `value()` 都独立复制字段，修改返回记录不会改变快照。纯值结果与完整
+读取凭据在同一次执行中捕获，领取时不刷新版本；记录结果在执行前预留并计入请求额度，
+交付快照后计入调用任务预算。构造候选可消费记录快照并使用其投影结果，仍保留全部依赖。
+捕获前的兼容代码发布可改变实际投影实现；捕获后的值固定，不因后续发布重新计算。
 
 ### 候选根与单域原子提交
 
@@ -2948,7 +2954,7 @@ SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、�
 `Candidate<S>` 与 `CommitReceipt` 都是不可复制的拥有值，内部存储不向用户开放。
 S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标量与上述有界纯值记录；候选构造器
 遵守与 `create` 相同的无挂起、无宿主调用和无用户 Drop 资格。
-投影可以只包含业务所需标量，构造器必须显式生成完整 S；运行时不会从投影隐式补齐其余字段。
+投影可以只包含业务所需的纯值字段，构造器必须显式生成完整 S；运行时不会从投影隐式补齐其余字段。
 候选绑定快照原域的身份、类型、代码版本与修订；提交还必须提供该域的写句柄。
 
 `candidate_from`、`candidate_pair_from`、`candidate_set_from` 与 `candidate_set_add` 的输入
@@ -2994,7 +3000,7 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标�
 可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk) 与
 [String/Array 示例](../tests/fixtures/state_domain_owned.jk)、
 [嵌套记录与 Map 示例](../tests/fixtures/state_domain_nested.jk)、[有效期示例](../tests/fixtures/state_domain_deadlines.jk)。
-候选构造输入支持标量与有界纯值记录，快照投影结果仍限标量；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
+候选构造输入和快照投影结果均支持标量与有界纯值记录；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
 当前私有 AOT 模块描述格式为 v3，保留记录字段可见性；旧 v1/v2 描述对象须重新编译，公共 CPS 帧和调用桥不变。
 
 ### 双域短操作
@@ -3040,7 +3046,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 `domain.snapshot_pair<S,T,R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S,&T)->R)`
 为 `@suspends` 入口，返回 `Snapshot<S,R>`。根类型和实现归属与 `read_pair` 相同：
 两个普通标量记录、同一执行器、首域当前模块提供受检同步只读投影，其余域布局须兼容；
-投影结果仍限标量。允许同域重复读。捕获完成后保存原投影结果与版本凭据，不晚绑定重算。
+投影结果支持标量与有界纯值记录。允许同域重复读。捕获完成后保存原投影结果与版本凭据，不晚绑定重算。
 
 投影值与两个域的修订在同一次 FIFO 短操作中捕获；稍后收取结果时不重新读取修订。
 第一个域是未来候选的目标，第二个域是只读依赖，类型参数 S 表达候选目标类型。即使两个域
@@ -3101,7 +3107,7 @@ ResourceLimit、Expired、OutboxFull、OutboxClosed。`identity()` 和 `cancel()
 | `access_set() -> AccessSet` | 创建独占的有界访问集合 |
 | `AccessSet.include<S>(&mut self, ReadHandle<S>)` | 登记只读成员；不读取状态、不持有借用 |
 | `snapshot_set(AccessSet) -> SnapshotSet` | 消费访问集合，一次 FIFO 操作复制全部标量根并捕获完整修订集合 |
-| `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为标量 |
+| `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为标量或有界纯值记录 |
 | `SnapshotSet.check() -> SnapshotStatus` | 检查全部成员的当前身份、生命周期与修订；不授予提交权限 |
 | `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为标量或有界纯值记录 |
 | `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；A 为标量或有界纯值记录，失败释放整包 |
@@ -3113,6 +3119,9 @@ ResourceLimit、Expired、OutboxFull、OutboxClosed。`identity()` 和 `cancel()
 函数变量、宿主回调、可挂起操作或用户析构。投影须与对应成员具有相同加载模块版本和精确
 状态类型；候选构造器同样须匹配目标域。冻结副本保留原模块，原域关闭后仍可读取旧值。
 副本与动态元数据计入状态字节预算，不能靠快照绕过存储上限。
+`read_snapshot` 的记录结果按字段独立复制到调用方值包，不引用冻结根；结果包计入调用
+任务预算。投影始终使用冻结副本保留的模块，原域写入、代码发布或关闭不会改变投影来源；
+投影失败不修改冻结根或在线状态，错误仍沿任务失败通道传播。
 
 写目标可以是快照中的任意成员，与 include 顺序无关；必须提供该域的写能力，不能重复写
 同一个域，也不能扩展到快照之外。每个候选保留原始完整读取集合，未写入的第四、第五域

@@ -79,6 +79,10 @@ pub(crate) enum Operation {
     CandidatePairValues,
     SetCandidateValues,
     SetAddValues,
+    SnapshotValues,
+    SnapshotPairValues,
+    SnapshotReadValues,
+    SetReadValues,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +149,10 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_write_at" => Operation::Write,
         "__domain_read_scalar" => Operation::CurrentRead,
         "__domain_write_scalar" => Operation::CurrentWrite,
+        "__domain_snapshot_values" => Operation::SnapshotValues,
+        "__domain_snapshot_pair_values" => Operation::SnapshotPairValues,
+        "__domain_snapshot_read_values" => Operation::SnapshotReadValues,
+        "__domain_set_read_values" => Operation::SetReadValues,
         "__domain_snapshot" => Operation::Snapshot,
         "__domain_snapshot_value" => Operation::SnapshotValue,
         "__domain_snapshot_check" => Operation::SnapshotCheck,
@@ -404,7 +412,24 @@ impl Operation {
                 vec![m, token, text, i.clone()],
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
-            Self::Snapshot => (vec![m, token, text], snapshot_type()),
+            Self::SnapshotReadValues => (
+                vec![
+                    Type::reference(snapshot_type(), false),
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+                ],
+                Type::Unit,
+            ),
+            Self::SetReadValues => (
+                vec![
+                    m,
+                    Type::reference(snapshot_set_type(), false),
+                    token,
+                    text,
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+                ],
+                Type::Unit,
+            ),
+            Self::Snapshot | Self::SnapshotValues => (vec![m, token, text], snapshot_type()),
             Self::SnapshotValue => (vec![Type::reference(snapshot_type(), false)], i),
             Self::SnapshotCheck => (vec![Type::reference(snapshot_type(), false)], Type::Int32),
             Self::Candidate => (
@@ -440,7 +465,9 @@ impl Operation {
                 vec![m, token.clone(), token, text, i.clone()],
                 Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
-            Self::SnapshotPair => (vec![m, token.clone(), token, text], snapshot_type()),
+            Self::SnapshotPair | Self::SnapshotPairValues => {
+                (vec![m, token.clone(), token, text], snapshot_type())
+            }
             Self::DeadlineAfter => (vec![Type::Int32], deadline_type()),
             Self::CommitBefore => (
                 vec![
@@ -575,6 +602,10 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         74 => Operation::CandidatePairValues,
         75 => Operation::SetCandidateValues,
         76 => Operation::SetAddValues,
+        77 => Operation::SnapshotValues,
+        78 => Operation::SnapshotPairValues,
+        79 => Operation::SnapshotReadValues,
+        80 => Operation::SetReadValues,
 
         _ => {
             super::error::record_error(Error::new_with_code(

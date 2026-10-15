@@ -1336,6 +1336,8 @@ pub(crate) enum CompilerIntrinsic {
     DirectoryWitness,
     DomainSnapshot,
     DomainSnapshotPair,
+    DomainSnapshotValue,
+    DomainSetReadFinish,
     DomainCandidate,
     DomainCandidateFinish,
     DomainCandidateValueFinish,

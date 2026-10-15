@@ -1401,6 +1401,17 @@ fn exhaustive_state_domains_candidate_values_cancellation() {
 
 #[test]
 fn state_domains_candidate_values_restore_task_and_state_budgets() {
+    source_value_budget_boundaries(include_str!(
+        "../../tests/fixtures/state_domain_candidate_values.jk"
+    ));
+}
+#[test]
+fn state_domains_snapshot_values_restore_task_and_state_budgets() {
+    source_value_budget_boundaries(include_str!(
+        "../../tests/fixtures/state_domain_snapshot_values.jk"
+    ));
+}
+fn source_value_budget_boundaries(source: &str) {
     use crate::runtime::{arena, executor::TaskGroup};
     struct Restore(usize);
     impl Drop for Restore {
@@ -1411,10 +1422,7 @@ fn state_domains_candidate_values_restore_task_and_state_budgets() {
     let _restore = Restore(arena::LIMIT.with(|limit| limit.get()));
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(include_str!(
-            "../../tests/fixtures/state_domain_candidate_values.jk"
-        ))
-        .unwrap();
+        vm.load_source(source).unwrap();
         let baseline = arena::LIVE.with(|n| n.get());
         for entry in ["construct_single", "construct_pair", "construct_set"] {
             let mut failures = 0;
@@ -1440,7 +1448,7 @@ fn state_domains_candidate_values_restore_task_and_state_budgets() {
                             }
                         }
                     }
-                    panic!("candidate construction stalled");
+                    panic!("domain operation stalled");
                 })();
                 match result {
                     Ok(value) => {
@@ -1473,4 +1481,24 @@ fn state_domains_candidate_values_restore_task_and_state_budgets() {
             arena::LIMIT.with(|limit| limit.set(arena::MAX_BYTES));
         }
     }
+}
+
+#[test]
+fn state_domains_snapshot_values_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_snapshot_values.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel snapshot result packets and credentials at every instruction"]
+fn exhaustive_state_domains_snapshot_values_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_snapshot_values.jk"),
+        0..=32768,
+        true,
+    );
 }

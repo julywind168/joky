@@ -165,6 +165,21 @@ impl FunctionPlan {
             self.emit(Op::DomainModule(slot.clone()));
             return Ok(Some(Flow::Value(Some(slot))));
         }
+        if matches!(kind, DomainSnapshotValue) && !checking && scalar(&info.signature.ret) {
+            let result = self.slot(Type::UInt64)?;
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::Call {
+                indirect: None,
+                name: "__domain_snapshot_value".into(),
+                args: values.to_vec(),
+                result: Some(result.clone()),
+                state: Some(state),
+            });
+            return Ok(Some(Flow::Value(
+                self.unpack_domain_scalar(result, &info.signature.ret)?,
+            )));
+        }
         if matches!(kind, DomainPack | DomainUnpack) {
             let ty = if matches!(kind, DomainPack) {
                 &info.signature.params[0]
@@ -202,16 +217,14 @@ impl FunctionPlan {
                 || !inputs.iter().all(|ty| {
                     scalar(ty) || (candidate && crate::core::script::schema(ty).is_some())
                 })
-                || (!candidate && !scalar(&target.signature.ret))
+                || (!candidate
+                    && !scalar(&target.signature.ret)
+                    && crate::core::script::schema(&target.signature.ret).is_none())
             {
                 return Err(type_error(
                     &span,
                     ErrorCode::InvalidCall,
-                    if candidate {
-                        "Domain constructor requires a synchronous bounded pure-value signature (64 fields, 8 record levels)"
-                    } else {
-                        "Domain set requires a checked scalar signature"
-                    },
+                    "Domain operation requires a synchronous bounded pure-value signature (64 fields, 8 record levels)",
                 ));
             }
             self.domain_calls.push((operation.clone(), args[2].span()));
@@ -246,7 +259,37 @@ impl FunctionPlan {
             } else if candidate {
                 captures.push(Some(self.pack_domain_scalar(values[3].clone())?));
             }
-            let name = if value_candidate {
+            let value_read = !candidate && (checking || !scalar(&target.signature.ret));
+            let name = if value_read {
+                let mut context = self.generics.borrow_mut();
+                let name = context
+                    .templates
+                    .iter()
+                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainSetReadFinish)))
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| {
+                        type_error(
+                            &span,
+                            ErrorCode::InvalidCall,
+                            "Missing snapshot projection adapter",
+                        )
+                    })?;
+                context.instantiate(
+                    &name,
+                    vec![target.signature.ret.clone()],
+                    crate::FunctionSignature::new(
+                        vec![
+                            crate::runtime::domain::module_type(),
+                            Type::reference(crate::runtime::domain::snapshot_set_type(), false),
+                            crate::runtime::domain::handle_type(),
+                            Type::String,
+                        ],
+                        target.signature.ret.clone(),
+                    ),
+                    self.instantiation_depth + 1,
+                    span,
+                )?
+            } else if value_candidate {
                 let adding = matches!(kind, DomainSetCandidate(true));
                 let mut context = self.generics.borrow_mut();
                 let name = context.templates.iter()
@@ -276,7 +319,7 @@ impl FunctionPlan {
             } else {
                 "__domain_set_read".into()
             };
-            let result = self.slot(if candidate {
+            let result = self.slot(if candidate || value_read {
                 info.signature.ret.clone()
             } else {
                 Type::UInt64
@@ -299,9 +342,11 @@ impl FunctionPlan {
                 self.register_owner(result.clone(), None);
                 return Ok(Some(Flow::Value(Some(result))));
             }
-            return Ok(Some(Flow::Value(
-                self.unpack_domain_scalar(result, &info.signature.ret)?,
-            )));
+            return Ok(Some(Flow::Value(if value_read {
+                Some(result)
+            } else {
+                self.unpack_domain_scalar(result, &info.signature.ret)?
+            })));
         }
         if !matches!(
             kind,
@@ -349,7 +394,7 @@ impl FunctionPlan {
             usize::from(!request && !create)
         }..];
         let value_call = matches!(kind, DomainAt(_) | DomainPair(_) | DomainAccess(_));
-        let value_input = value_call || create;
+        let value_input = value_call || create || snapshot;
         let value_type =
             |ty: &Type| scalar(ty) || (value_input && crate::core::script::schema(ty).is_some());
         if inputs.len() != usize::from(request || create || write || query)
@@ -555,8 +600,15 @@ impl FunctionPlan {
         }
         let name = match kind {
             DomainCreate => "__domain_create".to_owned(),
-            DomainSnapshot => "__domain_snapshot".to_owned(),
-            DomainSnapshotPair => "__domain_snapshot_pair".to_owned(),
+            DomainSnapshot | DomainSnapshotPair => {
+                match (pair, !checking && scalar(&target.signature.ret)) {
+                    (false, true) => "__domain_snapshot",
+                    (true, true) => "__domain_snapshot_pair",
+                    (false, false) => "__domain_snapshot_values",
+                    (true, false) => "__domain_snapshot_pair_values",
+                }
+                .to_owned()
+            }
             DomainCandidate | DomainCandidatePair => {
                 let mut context = self.generics.borrow_mut();
                 let name = context

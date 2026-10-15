@@ -388,8 +388,11 @@ unsafe fn poll_inner(
             _ => Err(invalid("Snapshot set was cancelled or closed")),
         };
     }
-    if matches!(op, Operation::SetRead | Operation::SetCheck) {
-        let bits = frame.slots[usize::from(op == Operation::SetRead)];
+    if matches!(
+        op,
+        Operation::SetRead | Operation::SetReadValues | Operation::SetCheck
+    ) {
+        let bits = frame.slots[usize::from(op != Operation::SetCheck)];
         let lease = lease(bits)?;
         let stored = &*lease.token().cast::<Stored<Option<Snapshot>>>();
         let mut snapshot = stored.value.borrow_mut();
@@ -421,6 +424,29 @@ unsafe fn poll_inner(
         }
         let name = crate::runtime::owned_text::borrow(frame.slots[3] as *const Buffer)?;
         let info = frozen.module.instance_info(name)?;
+        if op == Operation::SetReadValues {
+            if !info.domain_entry
+                || !crate::core::state_domain::value_eligible(&info)
+                || info.signature.params.len() != 1
+                || info.signature.params[0]
+                    .reference_type()
+                    .is_none_or(|r| r.mutable || r.target != frozen.ty)
+            {
+                return Err(invalid("Snapshot projection requires a proved shared entry with a bounded pure-value result for the exact state type"));
+            }
+            let mut input = [frozen.root.scalar_pointer()];
+            let words = frozen.root.invoke_values(
+                &frozen.module,
+                &frozen.ty,
+                name,
+                &info,
+                &mut input,
+                crate::runtime::suspension::current_limits(),
+            )?;
+            let words = values::result_words(&info.signature.ret, words)?;
+            values::write_packet(arena, &mut *(frame.slots[4] as *mut Buffer), &words)?;
+            return Ok(Some(0));
+        }
         if !info.domain_entry || instance::receiver(&info) != Some(&frozen.ty) {
             return Err(invalid(
                 "Snapshot projection requires a proved entry for the exact state type",

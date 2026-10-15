@@ -27,7 +27,10 @@ fn enqueue_value(
         vm.current.as_ref().unwrap(),
         "turn",
         vec![2, 3],
-        output.clone(),
+        pairs::ValueOutput {
+            words: output.clone(),
+            snapshot: false,
+        },
         vm.interpreter_limits(),
     )
     .unwrap();
@@ -174,7 +177,10 @@ fn domain_value_packets_reject_preflight_failures_and_isolate_only_writes_on_bod
                 vm.current.as_ref().unwrap(),
                 "turn",
                 vec![2, 3],
-                Rc::new(RefCell::new(vec![0; 2])),
+                pairs::ValueOutput {
+                    words: Rc::new(RefCell::new(vec![0; 2])),
+                    snapshot: false
+                },
                 vm.interpreter_limits()
             )
             .is_err());
@@ -195,7 +201,10 @@ fn domain_value_packets_reject_preflight_failures_and_isolate_only_writes_on_bod
             vm.current.as_ref().unwrap(),
             "turn",
             vec![2, 3],
-            Rc::new(RefCell::new(vec![0; 2])),
+            pairs::ValueOutput {
+                words: Rc::new(RefCell::new(vec![0; 2])),
+                snapshot: false
+            },
             vm.interpreter_limits()
         )
         .is_err());
@@ -220,5 +229,108 @@ fn domain_value_packets_reject_preflight_failures_and_isolate_only_writes_on_bod
         a.close();
         b.close();
         assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}
+
+#[test]
+fn domain_snapshot_values_capture_at_execution_and_freeze_before_collection() {
+    let source = r#"
+struct State {n:Int32}
+struct Reply {pub n:Int32,wide:UInt64}
+fn make(n:Int32)->State {State{n:n}}
+fn read(s:&State)->Int32{s.n}
+fn set(s:&mut State,n:Int32){s.n=n}
+fn one(s:&State)->Reply {Reply{n:s.n,wide:18446744073709551615}}
+fn two(a:&State,b:&State)->Reply {Reply{n:a.n+b.n,wide:18446744073709551615}}
+fn broken(s:&State)->Reply {Reply{n:1/(s.n-7),wide:0}}
+"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for pair in [false, true] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(source).unwrap();
+            let a = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let b = vm
+                .create_domain("make", &[InstanceValue::Int32(10)])
+                .unwrap();
+            let handles = if pair {
+                vec![a.read_handle(), b.read_handle()]
+            } else {
+                vec![a.read_handle()]
+            };
+            let output = Rc::new(RefCell::new(vec![0; 2]));
+            let mut snapshot = pairs::submit_values(
+                &vm.domains,
+                &handles,
+                vm.current.as_ref().unwrap(),
+                if pair { "two" } else { "one" },
+                vec![],
+                pairs::ValueOutput {
+                    words: output.clone(),
+                    snapshot: true,
+                },
+                vm.interpreter_limits(),
+            )
+            .unwrap();
+            vm.load_source(
+                &source
+                    .replace("n:s.n,", "n:s.n+100,")
+                    .replace("n:a.n+b.n,", "n:a.n+b.n+100,"),
+            )
+            .unwrap();
+            assert_eq!(vm.publish_domain_code().unwrap(), 2);
+            let mut write = vm
+                .queue_domain_call(a.write_handle(), "set", &[InstanceValue::Int32(99)])
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            assert!(matches!(write.take_result(), Some(DomainOutcome::Value(_))));
+            let (result, _, reads) = snapshot.take_snapshot_result().unwrap();
+            assert!(matches!(result, DomainOutcome::Value(InstanceValue::Unit)));
+            let reads = reads.unwrap();
+            assert_eq!(reads.first.revision, 0);
+            assert_eq!(reads.first.code, 1);
+            assert_eq!(
+                reads.validate(&vm.domains.borrow()),
+                Err(commits::Status::Conflict)
+            );
+            assert_eq!(&*output.borrow(), &[if pair { 117 } else { 107 }, u64::MAX]);
+            if pair {
+                assert_eq!(reads.second().unwrap().revision, 0);
+            }
+            read(&mut vm, a.read_handle(), 99);
+            a.close();
+            b.close();
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let a = vm
+            .create_domain("make", &[InstanceValue::Int32(7)])
+            .unwrap();
+        let baseline = vm.domains.borrow().usage();
+        let output = Rc::new(RefCell::new(vec![0; 2]));
+        let mut snapshot = pairs::submit_values(
+            &vm.domains,
+            &[a.read_handle()],
+            vm.current.as_ref().unwrap(),
+            "broken",
+            vec![],
+            pairs::ValueOutput {
+                words: output,
+                snapshot: true,
+            },
+            vm.interpreter_limits(),
+        )
+        .unwrap();
+        vm.poll_tasks(100).unwrap();
+        let (result, _, reads) = snapshot.take_snapshot_result().unwrap();
+        assert!(
+            matches!(result,DomainOutcome::Failed(error) if error.message().contains("Division by zero"))
+        );
+        assert!(reads.is_none());
+        assert_eq!(vm.domains.borrow().usage(), baseline);
+        read(&mut vm, a.read_handle(), 7);
+        assert_eq!(vm.domain_revision(a.read_handle()).unwrap(), 0);
     }
 }

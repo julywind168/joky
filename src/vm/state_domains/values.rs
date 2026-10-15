@@ -51,6 +51,22 @@ pub(super) unsafe fn input_words(params: &[Type], packet: &Buffer) -> Result<Vec
     Ok(input)
 }
 
+/// Copy checked result lanes into a caller-owned output packet.
+/// # Safety
+/// The packet is a live UInt64 buffer with at least MAX_LANES capacity.
+pub(super) unsafe fn write_packet(
+    arena: &mut Arena,
+    packet: &mut Buffer,
+    words: &[u64],
+) -> Result<(), Error> {
+    packet.truncate_owned(arena, 0)?;
+    for &word in words {
+        packet.initialize_next()?.cast::<u64>().write(word);
+        packet.commit_next();
+    }
+    Ok(())
+}
+
 struct Wait {
     request: DomainRequest,
     output: Rc<RefCell<Vec<u64>>>,
@@ -112,7 +128,10 @@ pub(super) unsafe fn poll(
                 &module,
                 name,
                 input,
-                output.clone(),
+                pairs::ValueOutput {
+                    words: output.clone(),
+                    snapshot: false,
+                },
                 crate::runtime::suspension::current_limits(),
             )?;
             request.register_current_wait()?;
@@ -136,11 +155,7 @@ pub(super) unsafe fn poll(
         match outcome {
             DomainOutcome::Value(InstanceValue::Unit) => {
                 let packet = &mut *(frame.slots[packet_slot] as *mut Buffer);
-                packet.truncate_owned(arena, 0)?;
-                for &word in wait.output.borrow().iter() {
-                    packet.initialize_next()?.cast::<u64>().write(word);
-                    packet.commit_next();
-                }
+                write_packet(arena, packet, &wait.output.borrow())?;
                 Ok(Some(0))
             }
             DomainOutcome::Failed(error) => Err(error),

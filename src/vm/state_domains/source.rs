@@ -18,11 +18,15 @@ struct Owner {
     domain: DomainOwner,
     _charge: ExternalCharge,
 }
-// A scalar snapshot owns its value and an opaque version, never the state root.
+// A snapshot owns copied result lanes and opaque versions, never the state root.
 pub(super) struct Snapshot {
     pub(super) reads: reads::ReadSet,
-    value: u64,
+    value: SnapshotValue,
     _charge: ExternalCharge,
+}
+enum SnapshotValue {
+    Scalar(u64),
+    Values(Vec<u64>),
 }
 unsafe extern "C" fn release_snapshot(token: *mut c_void) {
     drop(Box::from_raw(token.cast::<Snapshot>()));
@@ -32,11 +36,22 @@ fn adopt_snapshot(
     value: InstanceValue,
     reads: reads::ReadSet,
 ) -> Result<u64, Error> {
-    let charge = arena.reserve_external(std::mem::size_of::<Snapshot>())?;
+    adopt_snapshot_value(arena, SnapshotValue::Scalar(value.bits()), reads)
+}
+fn adopt_snapshot_value(
+    arena: &mut Arena,
+    value: SnapshotValue,
+    reads: reads::ReadSet,
+) -> Result<u64, Error> {
+    let extra = match &value {
+        SnapshotValue::Scalar(_) => 0,
+        SnapshotValue::Values(words) => words.capacity() * std::mem::size_of::<u64>(),
+    };
+    let charge = arena.reserve_external(std::mem::size_of::<Snapshot>() + extra)?;
     let token = NonNull::new(
         Box::into_raw(Box::new(Snapshot {
             reads,
-            value: value.bits(),
+            value,
             _charge: charge,
         }))
         .cast(),
@@ -205,6 +220,7 @@ enum Wait {
     Turn(DomainRequest),
     Snapshot {
         request: DomainRequest,
+        output: Option<Rc<RefCell<Vec<u64>>>>,
     },
     Request {
         _receipt: Receipt,
@@ -312,7 +328,54 @@ unsafe fn wait(
     op: Operation,
 ) -> Result<Option<u64>, Error> {
     if frame.state == 0 {
-        let wait = if matches!(op, Operation::Pair | Operation::SnapshotPair) {
+        let wait = if matches!(
+            op,
+            Operation::SnapshotValues | Operation::SnapshotPairValues
+        ) {
+            let count = if op == Operation::SnapshotValues {
+                1
+            } else {
+                2
+            };
+            let handles = (0..count)
+                .map(|i| handle(registry, frame.slots[1 + i]))
+                .collect::<Result<Vec<_>, _>>()?;
+            let (module, _) = module(registry, frame.slots[0])?;
+            let name = crate::runtime::owned_text::borrow(frame.slots[1 + count] as *const Buffer)?;
+            let info = module.instance_info(name)?;
+            if !info.domain_entry
+                || !crate::core::state_domain::value_eligible(&info)
+                || info.signature.params.len() != count
+                || info
+                    .signature
+                    .params
+                    .iter()
+                    .any(|ty| ty.reference_type().is_none_or(|r| r.mutable))
+            {
+                return Err(invalid("Snapshot projection requires shared state references and a bounded pure-value result"));
+            }
+            let output = Rc::new(RefCell::new(vec![
+                0;
+                info.signature.ret.scalar_types().len()
+            ]));
+            let request = super::pairs::submit_values(
+                registry,
+                &handles,
+                &module,
+                name,
+                Vec::new(),
+                super::pairs::ValueOutput {
+                    words: output.clone(),
+                    snapshot: true,
+                },
+                crate::runtime::suspension::current_limits(),
+            )?;
+            request.register_current_wait()?;
+            Wait::Snapshot {
+                request,
+                output: Some(output),
+            }
+        } else if matches!(op, Operation::Pair | Operation::SnapshotPair) {
             let handles = [
                 handle(registry, frame.slots[1])?,
                 handle(registry, frame.slots[2])?,
@@ -352,7 +415,10 @@ unsafe fn wait(
             )?;
             request.register_current_wait()?;
             if op == Operation::SnapshotPair {
-                Wait::Snapshot { request }
+                Wait::Snapshot {
+                    request,
+                    output: None,
+                }
             } else {
                 Wait::Turn(request)
             }
@@ -466,7 +532,10 @@ unsafe fn wait(
                 )?;
                 request.register_current_wait()?;
                 if op == Operation::Snapshot {
-                    Wait::Snapshot { request }
+                    Wait::Snapshot {
+                        request,
+                        output: None,
+                    }
                 } else {
                     Wait::Turn(request)
                 }
@@ -482,7 +551,7 @@ unsafe fn wait(
         return Err(invalid("Invalid source domain wait state"));
     }
     let outcome = match &mut *frame.host_context.cast::<Wait>() {
-        Wait::Snapshot { request } => {
+        Wait::Snapshot { request, output } => {
             let Some((outcome, _, reads)) = request.take_snapshot_result() else {
                 request.register_current_wait()?;
                 return Ok(None);
@@ -491,7 +560,12 @@ unsafe fn wait(
                 DomainOutcome::Value(value) => {
                     let reads = reads
                         .ok_or_else(|| invalid("Domain snapshot is missing read credentials"))?;
-                    adopt_snapshot(arena, value, reads)
+                    if let Some(output) = output {
+                        let words = std::mem::take(&mut *output.borrow_mut());
+                        adopt_snapshot_value(arena, SnapshotValue::Values(words), reads)
+                    } else {
+                        adopt_snapshot(arena, value, reads)
+                    }
                 }
                 DomainOutcome::Failed(error) => Err(error),
                 _ => Err(invalid("Domain snapshot was cancelled or closed")),
@@ -598,6 +672,7 @@ pub(crate) unsafe fn poll(
         | Operation::AccessInclude
         | Operation::SnapshotSet
         | Operation::SetRead
+        | Operation::SetReadValues
         | Operation::SetCheck
         | Operation::SetCandidate
         | Operation::SetCandidateValues
@@ -672,11 +747,23 @@ pub(crate) unsafe fn poll(
             }
             0
         }
+        Operation::SnapshotReadValues => {
+            let lease = owner(frame)?;
+            let snapshot = &*lease.token().cast::<Snapshot>();
+            let SnapshotValue::Values(words) = &snapshot.value else {
+                return Err(invalid("Snapshot does not contain a value packet"));
+            };
+            super::values::write_packet(arena, &mut *(frame.slots[1] as *mut Buffer), words)?;
+            0
+        }
         Operation::SnapshotValue | Operation::SnapshotCheck => {
             let lease = owner(frame)?;
             let snapshot = &*lease.token().cast::<Snapshot>();
             if op == Operation::SnapshotValue {
-                snapshot.value
+                let SnapshotValue::Scalar(value) = snapshot.value else {
+                    return Err(invalid("Snapshot does not contain a scalar"));
+                };
+                value
             } else {
                 let domains = registry.borrow();
                 match snapshot.reads.validate(&domains) {
@@ -692,6 +779,8 @@ pub(crate) unsafe fn poll(
         | Operation::Pair
         | Operation::SnapshotPair
         | Operation::Snapshot
+        | Operation::SnapshotValues
+        | Operation::SnapshotPairValues
         | Operation::Read
         | Operation::Write
         | Operation::CurrentRead
@@ -716,26 +805,38 @@ mod tests {
 
     #[test]
     fn state_domains_snapshot_allocation_failures_refund_partial_adoption() {
-        for limit in [0, std::mem::size_of::<Snapshot>()] {
-            let budget = Rc::new(Budget {
-                limit: Cell::new(limit),
-                ..Default::default()
-            });
-            let mut arena = Arena::with_budget(budget.clone(), None);
-            let handle = DomainHandle {
-                registry: 1,
-                sequence: 1,
-                writable: false,
+        for record in [false, true] {
+            let extra = if record {
+                64 * std::mem::size_of::<u64>()
+            } else {
+                0
             };
-            let error = adopt_snapshot(
-                &mut arena,
-                InstanceValue::Int32(7),
-                reads::ReadSet::single(handle, 0, 0, 0),
-            )
-            .unwrap_err();
-            assert_eq!(error.code(), ErrorCode::ResourceLimit);
-            assert_eq!(arena.bytes(), 0);
-            assert_eq!(budget.bytes.get(), 0);
+            for limit in [0, std::mem::size_of::<Snapshot>() + extra] {
+                let budget = Rc::new(Budget {
+                    limit: Cell::new(limit),
+                    ..Default::default()
+                });
+                let mut arena = Arena::with_budget(budget.clone(), None);
+                let handle = DomainHandle {
+                    registry: 1,
+                    sequence: 1,
+                    writable: false,
+                };
+                let value = if record {
+                    SnapshotValue::Values(vec![7; 64])
+                } else {
+                    SnapshotValue::Scalar(7)
+                };
+                let error = adopt_snapshot_value(
+                    &mut arena,
+                    value,
+                    reads::ReadSet::single(handle, 0, 0, 0),
+                )
+                .unwrap_err();
+                assert_eq!(error.code(), ErrorCode::ResourceLimit);
+                assert_eq!(arena.bytes(), 0);
+                assert_eq!(budget.bytes.get(), 0);
+            }
         }
     }
 }

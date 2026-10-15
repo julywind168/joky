@@ -1,0 +1,100 @@
+import joky/domain
+import joky/check
+import joky/task
+import joky/array.{type Array}
+struct Empty {}
+struct Bits { pub wide:UInt64, low:Int8, real:Float64, flag:Bool, rune:Rune }
+struct Reply { pub n:Int32, bits:Bits, empty:Empty, unit:Unit }
+struct State {n:Int32}
+struct Owned {n:Int32, text:String, items:Array<Int32>}
+fn assert(ok:Bool) {let message="snapshot value records" check.assert(ok,&message)}
+fn reply(n:Int32)->Reply {Reply{n:n,bits:Bits{wide:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626),flag:true,rune:'中'},empty:Empty{},unit:{}}}
+fn make(n:Int32)->State {State{n:n}}
+fn from_reply(p:Reply)->State {State{n:p.n}}
+fn owned(n:Int32)->Owned {var items=Array.new::<Int32>() items.push(n) Owned{n:n,text:"owned",items:items}}
+fn inspect(s:&State)->Reply {reply(s.n)}
+fn inspect_owned(s:&Owned)->Reply {reply(s.n+s.items.get(0).unwrap_or(0))}
+fn pair(a:&State,b:&State)->Reply {reply(a.n+b.n)}
+fn read(s:&State)->Int32 {s.n}
+fn write(s:&mut State,n:Int32) {s.n=n}
+fn empty(s:&State)->Empty {Empty{}}
+fn empty_pair(a:&State,b:&State)->Empty {Empty{}}
+fn unit(s:&State) {}
+fn verify(p:Reply,n:Int32) {
+    assert(p.n==n && p.bits.wide==18446744073709551615 && p.bits.low == -128)
+    assert(p.bits.real.to_bits()==9221120237041090626 && p.bits.flag && p.bits.rune=='中')
+}
+fn capture(a:domain.ReadHandle<State>,b:domain.ReadHandle<State>) @suspends ->domain.SnapshotSet {
+    var access=domain.access_set() access.include(b) access.include(a)
+    domain.snapshot_set(access)
+}
+fn lifecycle() @suspends ->Int32 {
+    let a=domain.create(make,7) let b=domain.create(make,10)
+    let ah=a.handle() let bh=b.handle()
+    let ar=ah.read_only() let br=bh.read_only()
+    let own=domain.create(owned,5)
+    let saved_owned=domain.snapshot_from(own.read_handle(),inspect_owned)
+    own.close()
+    verify(saved_owned.value(),10)
+    assert(match saved_owned.check(){Closed=>true,_=>false})
+    let single=domain.snapshot_from(ar,inspect)
+    let joint=domain.snapshot_pair(ar,br,pair)
+    let duplicate=domain.snapshot_pair(ar,ar,pair)
+    let set=capture(ar,br)
+    var p=single.value() p.n=99
+    verify(single.value(),7)
+    verify(joint.value(),17)
+    verify(duplicate.value(),14)
+    verify(domain.read_snapshot(&set,ar,inspect),7)
+    let saved_empty=domain.snapshot_from(ar,empty) saved_empty.value();
+    let joint_empty=domain.snapshot_pair(ar,br,empty_pair) joint_empty.value();
+    domain.read_snapshot(&set,ar,empty);
+    let saved_unit=domain.snapshot_from(ar,unit) saved_unit.value();
+    domain.read_snapshot(&set,ar,unit);
+    assert(match single.check(){Current=>true,_=>false})
+    assert(match joint.check(){Current=>true,_=>false})
+    assert(match set.check(){Current=>true,_=>false})
+    task.yield_now()
+    domain.write_to(bh,write,11).unwrap()
+    assert(match single.check(){Current=>true,_=>false})
+    assert(match joint.check(){Conflict=>true,_=>false})
+    assert(match set.check(){Conflict=>true,_=>false})
+    verify(joint.value(),17)
+    verify(domain.read_snapshot(&set,br,inspect),10)
+    let candidate=domain.candidate_from(joint,from_reply,reply(100))
+    var receipt=domain.commit_to(ah,candidate)
+    assert(match receipt.wait(){Conflict=>true,_=>false})
+    let value=single.value()
+    let candidate=domain.candidate_from(single,from_reply,reply(value.n+1))
+    var receipt2=domain.commit_to(ah,candidate)
+    assert(match receipt2.wait(){Committed(n)=>n==1,_=>false})
+    assert(domain.read_from(ar,read).unwrap()==8)
+    let latest=domain.snapshot_from(ar,inspect)
+    a.close() b.close()
+    verify(latest.value(),8)
+    verify(domain.read_snapshot(&set,ar,inspect),7)
+    verify(domain.read_snapshot(&set,br,inspect),10)
+    assert(match set.check(){Closed=>true,_=>false})
+    24
+}
+fn broken(s:&State)->Reply {reply(1/(s.n-7))}
+fn broken_pair(a:&State,b:&State)->Reply {reply(1/(a.n-7))}
+fn construct_single() @suspends ->Int32 {
+    let a=domain.create(make,7)
+    let snapshot=domain.snapshot_from(a.read_handle(),inspect)
+    verify(snapshot.value(),7)
+    24
+}
+fn construct_pair() @suspends ->Int32 {
+    let a=domain.create(make,7) let b=domain.create(make,10)
+    let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),pair)
+    verify(snapshot.value(),17)
+    24
+}
+fn construct_set() @suspends ->Int32 {
+    let a=domain.create(make,7) let b=domain.create(make,10)
+    let snapshot=capture(a.read_handle(),b.read_handle())
+    verify(domain.read_snapshot(&snapshot,a.read_handle(),inspect),7)
+    24
+}
+fn main() @suspends {assert(lifecycle()==24)}
