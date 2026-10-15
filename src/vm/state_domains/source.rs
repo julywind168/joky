@@ -600,7 +600,9 @@ pub(crate) unsafe fn poll(
         | Operation::SetRead
         | Operation::SetCheck
         | Operation::SetCandidate
+        | Operation::SetCandidateValues
         | Operation::SetAdd
+        | Operation::SetAddValues
         | Operation::CommitSet
         | Operation::CommitSetBefore
         | Operation::SetRevision => {
@@ -610,7 +612,9 @@ pub(crate) unsafe fn poll(
             }
         }
         Operation::Candidate
+        | Operation::CandidateValues
         | Operation::CandidatePair
+        | Operation::CandidatePairValues
         | Operation::CommitPair
         | Operation::CommitPairBefore
         | Operation::CommitSecondRevision

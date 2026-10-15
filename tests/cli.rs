@@ -7415,6 +7415,44 @@ fn main() @suspends {{
             );
         }
 
+        let candidate_calls = [
+            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read),make,VALUE) var receipt=domain.commit_to(a.handle(),next) check.assert(match receipt.wait(){Committed(_)=>true,_=>false},&message)",
+            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),seed,0) let next=domain.candidate_pair_from(first,make,VALUE) var receipt=domain.commit_pair_to(a.handle(),b.handle(),next) check.assert(match receipt.wait(){Committed(_)=>true,_=>false},&message)",
+            "var access=domain.access_set() access.include(a.read_handle()) let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Committed=>true,_=>false},&message)",
+            "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Committed=>true,_=>false},&message)",
+        ];
+        for (index, call) in candidate_calls.iter().enumerate() {
+            let work = Workspace::new();
+            let target = if index == 1 || index == 3 { "b" } else { "a" };
+            let call = call.replace("VALUE", &value);
+            work.write(
+                "candidate_bound.jk",
+                &format!(
+                    r#"import joky/domain import joky/check
+{definitions}
+struct State {{ok:Bool}}
+fn seed(n:Int32)->State {{State{{ok:false}}}}
+fn make(p:{ty})->State {{State{{ok:{assertion}}}}}
+fn read(s:&State)->Bool {{s.ok}}
+fn total(a:&State,b:&State)->Bool {{a.ok && b.ok}}
+fn main() @suspends {{
+    let a=domain.create(seed,0) let b=domain.create(seed,0)
+    let message="candidate input bounds"
+    {call}
+    check.assert(domain.read_from({target}.read_handle(),read).unwrap(),&message)
+}}"#
+                ),
+            );
+            if accepted {
+                work.assert_all_backends("candidate_bound.jk", &[], b"", 0);
+            } else {
+                failure(
+                    &work.cli(&["build", "candidate_bound.jk"]),
+                    "bounded pure-value signature",
+                );
+            }
+        }
+
         for (access, receiver, body, expected) in [
             ("write_to(owner.handle()", "&mut State", "s.n=s.n+1 p", 1),
             ("query_from(owner.read_handle()", "&State", "p", 0),
@@ -7614,5 +7652,128 @@ fn domain_create_values_reject_owning_payloads_and_unproved_constructors() {
         let file = format!("create_{name}.jk");
         work.write(&file, &format!("import joky/domain\nstruct State {{n:Int32}}\n{definitions}\n{constructor}\nfn main() @suspends {{let owner=domain.create(make,{input})}}"));
         failure(&work.cli(&["build", &file]), expected);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_candidate_values_run_and_fail_in_all_backends() {
+    let source = include_str!("fixtures/state_domain_candidate_values.jk");
+    let work = Workspace::new();
+    work.write("candidate_values.jk", source);
+    work.assert_all_backends("candidate_values.jk", &[], b"", 0);
+    for (entry, from, to) in [
+        ("construct_single", ",make,input(24)", ",fail_make,input(0)"),
+        (
+            "construct_pair",
+            ",make_scalar,input(24)",
+            ",fail_scalar,input(0)",
+        ),
+        ("construct_set", ",make,input(24)", ",fail_make,input(0)"),
+        (
+            "construct_set",
+            ",make_scalar,input(24)",
+            ",fail_scalar,input(0)",
+        ),
+    ] {
+        work.write(
+            "candidate_failure.jk",
+            &source
+                .replace("require(lifecycle()==24)", &format!("{entry}();"))
+                .replace(from, to),
+        );
+        success(&work.cli(&["build", "candidate_failure.jk"]));
+        for output in [
+            work.cli(&["run", "candidate_failure.jk"]),
+            work.cli(&["run", "--interpreter", "candidate_failure.jk"]),
+            Command::new(work.path().join("candidate_failure"))
+                .output()
+                .unwrap(),
+        ] {
+            failure(&output, "Division by zero");
+            assert!(output.stdout.is_empty());
+        }
+    }
+}
+
+#[test]
+fn domain_candidate_values_reject_unproved_and_non_value_inputs() {
+    let work = Workspace::new();
+    for (definition, input, constructor, expected) in [
+        (
+            "struct Init{text:String}",
+            "Init{text:\"owned\"}",
+            "fn make(p:Init)->State{State{n:1}}",
+            "bounded pure-value signature",
+        ),
+        (
+            "",
+            "(1,2)",
+            "fn make(p:(Int32,Int32))->State{State{n:1}}",
+            "bounded pure-value signature",
+        ),
+        (
+            "struct Init<T>{n:T}",
+            "Init::<Int32>{n:1}",
+            "fn make(p:Init<Int32>)->State{State{n:p.n}}",
+            "bounded pure-value signature",
+        ),
+        (
+            "struct Init{n:Int32}",
+            "Init{n:1}",
+            "fn make(p:Init) @suspends ->State{State{n:p.n}}",
+            "type mismatch",
+        ),
+        (
+            "struct Init{n:Int32}",
+            "Init{n:1}",
+            "fn make(p:Init)->State{println(p.n) State{n:p.n}}",
+            "proved synchronous",
+        ),
+    ] {
+        for body in [
+            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read),make,INPUT)",
+            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),seed,0) let next=domain.candidate_pair_from(first,make,INPUT)",
+            "var access=domain.access_set() access.include(a.read_handle()) let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,INPUT)",
+            "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,INPUT)",
+        ] {
+            let body=body.replace("INPUT",input);
+            work.write("candidate_invalid.jk", &format!("import joky/domain struct State{{n:Int32}} {definition} {constructor} fn seed(n:Int32)->State{{State{{n:n}}}} fn read(s:&State)->Int32{{s.n}} fn total(a:&State,b:&State)->Int32{{a.n+b.n}} fn main() @suspends {{let a=domain.create(seed,0) let b=domain.create(seed,0) {body}}}"));
+            failure(&work.cli(&["build","candidate_invalid.jk"]),expected);
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_candidate_values_pin_modules_and_conflict_after_publication() {
+    let old = include_str!("fixtures/late_binding_candidates.jk");
+    let new = old.replace("State{n:p.n}", "State{n:p.n+1000}");
+    let old = old.replace('{', "{{").replace('}', "}}");
+    let new = new.replace('{', "{{").replace('}', "}}");
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write("candidate_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+fn assert(ok:Bool) {{let message="candidate versions" check.assert(ok,&message)}}
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
+    var attempts=0
+    while !h.call::<domain.DirectoryHandle,Bool>("ready",directory) {{
+        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+    }}
+    let next={new:?}
+    assert(vm.load_source(h,&next)==0)
+    assert(h.call::<Int32,Int32>("probe",7)==1008)
+    assert(vm.publish_domain_code(h)==3)
+    assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
+}}
+fn main() @suspends {{
+    let h=vm.Vm.{create}() let source={old:?}
+    assert(vm.load_source(h,&source)==0)
+    let owner=domain.directory(1) let directory=owner.handle()
+    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
+}}"#));
+        work.assert_all_backends("candidate_reload.jk", &[], b"", 0);
     }
 }

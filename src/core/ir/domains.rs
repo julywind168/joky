@@ -199,13 +199,19 @@ impl FunctionPlan {
             let inputs = &target.signature.params[usize::from(!candidate)..];
             if target.suspends
                 || inputs.len() != usize::from(candidate)
-                || !inputs.iter().all(scalar)
+                || !inputs.iter().all(|ty| {
+                    scalar(ty) || (candidate && crate::core::script::schema(ty).is_some())
+                })
                 || (!candidate && !scalar(&target.signature.ret))
             {
                 return Err(type_error(
                     &span,
                     ErrorCode::InvalidCall,
-                    "Domain set requires a checked scalar signature",
+                    if candidate {
+                        "Domain constructor requires a synchronous bounded pure-value signature (64 fields, 8 record levels)"
+                    } else {
+                        "Domain set requires a checked scalar signature"
+                    },
                 ));
             }
             self.domain_calls.push((operation.clone(), args[2].span()));
@@ -234,10 +240,36 @@ impl FunctionPlan {
                 unreachable!()
             };
             captures.push(text);
-            if candidate {
+            let value_candidate = candidate && (checking || !inputs.iter().all(scalar));
+            if value_candidate {
+                captures.extend_from_slice(&values[3..]);
+            } else if candidate {
                 captures.push(Some(self.pack_domain_scalar(values[3].clone())?));
             }
-            let name = if candidate {
+            let name = if value_candidate {
+                let adding = matches!(kind, DomainSetCandidate(true));
+                let mut context = self.generics.borrow_mut();
+                let name = context.templates.iter()
+                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainSetValueFinish(flag)) if flag == adding))
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, "Missing domain set value adapter"))?;
+                context.instantiate(
+                    &name,
+                    vec![inputs[0].clone()],
+                    crate::FunctionSignature::new(
+                        vec![
+                            crate::runtime::domain::module_type(),
+                            info.signature.params[0].clone(),
+                            crate::runtime::domain::handle_type(),
+                            Type::String,
+                            inputs[0].clone(),
+                        ],
+                        info.signature.ret.clone(),
+                    ),
+                    self.instantiation_depth + 1,
+                    span,
+                )?
+            } else if candidate {
                 let adding = matches!(kind, DomainSetCandidate(true));
                 functions.iter().find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainSetFinish(flag)) if flag == adding))
                     .map(|(name,_)| name.clone()).ok_or_else(|| type_error(&span,ErrorCode::InvalidCall,"Missing domain set adapter"))?
@@ -317,7 +349,7 @@ impl FunctionPlan {
             usize::from(!request && !create)
         }..];
         let value_call = matches!(kind, DomainAt(_) | DomainPair(_) | DomainAccess(_));
-        let value_input = value_call || matches!(kind, DomainCreate);
+        let value_input = value_call || create;
         let value_type =
             |ty: &Type| scalar(ty) || (value_input && crate::core::script::schema(ty).is_some());
         if inputs.len() != usize::from(request || create || write || query)
@@ -515,7 +547,10 @@ impl FunctionPlan {
             });
             return Ok(Some(Flow::Value(result)));
         }
-        if !inputs.is_empty() {
+        let value_candidate = candidate && (checking || !inputs.iter().all(scalar));
+        if value_candidate {
+            captures.extend_from_slice(&values[index + 1..]);
+        } else if !inputs.is_empty() {
             captures.push(Some(self.pack_domain_scalar(values[index + 1].clone())?));
         }
         let name = match kind {
@@ -527,13 +562,22 @@ impl FunctionPlan {
                 let name = context
                     .templates
                     .iter()
-                    .find(|(_, f)| {
-                        if matches!(kind, DomainCandidatePair) {
-                            matches!(f.compiler_intrinsic, Some(DomainCandidatePairFinish))
-                        } else {
-                            matches!(f.compiler_intrinsic, Some(DomainCandidateFinish))
-                        }
-                    })
+                    .find(
+                        |(_, f)| match (matches!(kind, DomainCandidatePair), value_candidate) {
+                            (true, true) => {
+                                matches!(f.compiler_intrinsic, Some(DomainCandidatePairValueFinish))
+                            }
+                            (false, true) => {
+                                matches!(f.compiler_intrinsic, Some(DomainCandidateValueFinish))
+                            }
+                            (true, false) => {
+                                matches!(f.compiler_intrinsic, Some(DomainCandidatePairFinish))
+                            }
+                            (false, false) => {
+                                matches!(f.compiler_intrinsic, Some(DomainCandidateFinish))
+                            }
+                        },
+                    )
                     .map(|(name, _)| name.clone())
                     .ok_or_else(|| {
                         type_error(
@@ -549,15 +593,22 @@ impl FunctionPlan {
                 }) else {
                     unreachable!()
                 };
+                let mut arguments = snapshot.arguments.clone();
+                let input_type = if value_candidate {
+                    arguments.push(inputs[0].clone());
+                    inputs[0].clone()
+                } else {
+                    Type::UInt64
+                };
                 context.instantiate(
                     &name,
-                    snapshot.arguments.clone(),
+                    arguments,
                     crate::FunctionSignature::new(
                         vec![
                             crate::runtime::domain::module_type(),
                             info.signature.params[0].clone(),
                             Type::String,
-                            Type::UInt64,
+                            input_type,
                         ],
                         info.signature.ret.clone(),
                     ),

@@ -75,6 +75,10 @@ pub(crate) enum Operation {
     Query,
     CurrentQuery,
     CreateValues,
+    CandidateValues,
+    CandidatePairValues,
+    SetCandidateValues,
+    SetAddValues,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,6 +148,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_snapshot" => Operation::Snapshot,
         "__domain_snapshot_value" => Operation::SnapshotValue,
         "__domain_snapshot_check" => Operation::SnapshotCheck,
+        "__domain_candidate_values" => Operation::CandidateValues,
         "__domain_candidate" => Operation::Candidate,
         "__domain_commit" => Operation::Commit,
         "__domain_commit_wait" => Operation::CommitWait,
@@ -154,6 +159,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_commit_before" => Operation::CommitBefore,
         "__domain_pair" => Operation::Pair,
         "__domain_snapshot_pair" => Operation::SnapshotPair,
+        "__domain_candidate_pair_values" => Operation::CandidatePairValues,
         "__domain_candidate_pair" => Operation::CandidatePair,
         "__domain_commit_pair" => Operation::CommitPair,
         "__domain_commit_pair_before" => Operation::CommitPairBefore,
@@ -163,7 +169,9 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_snapshot_set" => Operation::SnapshotSet,
         "__domain_set_read" => Operation::SetRead,
         "__domain_set_check" => Operation::SetCheck,
+        "__domain_set_candidate_values" => Operation::SetCandidateValues,
         "__domain_set_candidate" => Operation::SetCandidate,
+        "__domain_set_add_values" => Operation::SetAddValues,
         "__domain_set_add" => Operation::SetAdd,
         "__domain_commit_set" => Operation::CommitSet,
         "__domain_commit_set_before" => Operation::CommitSetBefore,
@@ -352,6 +360,22 @@ impl Operation {
             ),
             Self::SetRevision => (vec![Type::reference(commit_type(), false), token], i),
             Self::Create => (vec![m, text, i], owner),
+            Self::CandidateValues
+            | Self::CandidatePairValues
+            | Self::SetCandidateValues
+            | Self::SetAddValues => {
+                let scalar = match self {
+                    Self::CandidateValues => Self::Candidate,
+                    Self::CandidatePairValues => Self::CandidatePair,
+                    Self::SetCandidateValues => Self::SetCandidate,
+                    Self::SetAddValues => Self::SetAdd,
+                    _ => unreachable!(),
+                };
+                let mut signature = scalar.signature();
+                *signature.params.last_mut().unwrap() =
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), false);
+                return signature;
+            }
             Self::CreateValues => (
                 vec![
                     m,
@@ -547,6 +571,10 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         70 => Operation::Query,
         71 => Operation::CurrentQuery,
         72 => Operation::CreateValues,
+        73 => Operation::CandidateValues,
+        74 => Operation::CandidatePairValues,
+        75 => Operation::SetCandidateValues,
+        76 => Operation::SetAddValues,
 
         _ => {
             super::error::record_error(Error::new_with_code(

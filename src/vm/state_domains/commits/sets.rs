@@ -170,7 +170,7 @@ fn add(
     token: u64,
     module: LoadedModule,
     name: &str,
-    input: InstanceValue,
+    input: impl Into<ConstructorInput>,
     limits: InterpreterLimits,
 ) -> Result<(), Error> {
     let handle = source::handle(registry, token)?;
@@ -440,9 +440,15 @@ unsafe fn poll_inner(
             )
             .map(|v| Some(v.bits()));
     }
-    if matches!(op, Operation::SetCandidate | Operation::SetAdd) {
+    if matches!(
+        op,
+        Operation::SetCandidate
+            | Operation::SetAdd
+            | Operation::SetCandidateValues
+            | Operation::SetAddValues
+    ) {
         let lease = lease(frame.slots[1])?;
-        let mut set = if op == Operation::SetCandidate {
+        let mut set = if matches!(op, Operation::SetCandidate | Operation::SetCandidateValues) {
             let stored = &*lease.token().cast::<Stored<Option<Snapshot>>>();
             let snapshot = stored
                 .value
@@ -460,10 +466,7 @@ unsafe fn poll_inner(
         };
         let (module, _) = source::module(registry, frame.slots[0])?;
         let name = crate::runtime::owned_text::borrow(frame.slots[3] as *const Buffer)?;
-        let input = source::scalar_argument(
-            &module.instance_info(name)?.signature.params,
-            frame.slots[4],
-        )?;
+        let input = constructor_input(&module, name, frame.slots[4], op)?;
         add(
             registry,
             &mut set,

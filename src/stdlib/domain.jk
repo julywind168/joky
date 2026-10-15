@@ -161,6 +161,7 @@ pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -
 
 // Candidate construction consumes the snapshot and its complete, opaque read set.
 extern fn __domain_candidate(module: domain.Module, snapshot: &domain.SnapshotOwner, name: String, input: UInt64) @suspends -> domain.CandidateOwner
+extern fn __domain_candidate_values(module: domain.Module, snapshot: &domain.SnapshotOwner, name: String, input: &Buffer<UInt64>) @suspends -> domain.CandidateOwner
 extern fn __domain_commit(handle: domain.Handle, candidate: &mut domain.CandidateOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_wait(receipt: &mut domain.CommitOwner) @suspends -> Int32
 extern fn __domain_commit_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
@@ -180,9 +181,14 @@ pub enum CommitOutcome { Committed(UInt64), Conflict, Closed, DomainFailed, Inva
 fn finish_candidate<S, R>(module: domain.Module, snapshot: Snapshot<S, R>, name: String, input: UInt64) @suspends -> Candidate<S> {
     Candidate::<S> { storage: __domain_candidate(module, &snapshot.storage, name, input) }
 }
+#intrinsic("domain.finish_candidate_values")
+fn finish_candidate_values<S,R,A>(module:domain.Module,snapshot:Snapshot<S,R>,name:String,input:A) @suspends -> Candidate<S> {
+    let packet=pack_value(input)
+    Candidate::<S>{storage:__domain_candidate_values(module,&snapshot.storage,name,&packet.storage)}
+}
 #intrinsic("domain.candidate_from")
 pub fn candidate_from<S, R, A>(snapshot: Snapshot<S, R>, constructor: fn(A) -> S, input: A) @suspends -> Candidate<S> {
-    finish_candidate::<S, R>(module(), snapshot, "", pack(input))
+    finish_candidate_values::<S, R, A>(module(), snapshot, "", input)
 }
 pub fn commit_to<S>(handle: WriteHandle<S>, candidate: Candidate<S>) @suspends -> CommitReceipt {
     var storage = candidate.storage
@@ -238,6 +244,7 @@ pub fn snapshot_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, proje
 
 // Extending a candidate consumes it and uses the second domain of its joint read set.
 extern fn __domain_candidate_pair(module: domain.Module, first: &mut domain.CandidateOwner, name: String, input: UInt64) @suspends -> domain.CandidatePairOwner
+extern fn __domain_candidate_pair_values(module: domain.Module, first: &mut domain.CandidateOwner, name: String, input: &Buffer<UInt64>) @suspends -> domain.CandidatePairOwner
 extern fn __domain_commit_pair(first: domain.Handle, second: domain.Handle, candidates: &mut domain.CandidatePairOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_pair_before(first: domain.Handle, second: domain.Handle, candidates: &mut domain.CandidatePairOwner, deadline: &domain.DeadlineOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_second_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
@@ -249,9 +256,15 @@ fn finish_candidate_pair<S, T>(module: domain.Module, first: Candidate<S>, name:
     var storage = first.storage
     CandidatePair::<S, T> { storage: __domain_candidate_pair(module, &mut storage, name, input) }
 }
+#intrinsic("domain.finish_candidate_pair_values")
+fn finish_candidate_pair_values<S,T,A>(module:domain.Module,first:Candidate<S>,name:String,input:A) @suspends -> CandidatePair<S,T> {
+    let packet=pack_value(input)
+    var storage=first.storage
+    CandidatePair::<S,T>{storage:__domain_candidate_pair_values(module,&mut storage,name,&packet.storage)}
+}
 #intrinsic("domain.candidate_pair_from")
 pub fn candidate_pair_from<S, T, A>(first: Candidate<S>, constructor: fn(A) -> T, input: A) @suspends -> CandidatePair<S, T> {
-    finish_candidate_pair::<S, T>(module(), first, "", pack(input))
+    finish_candidate_pair_values::<S, T, A>(module(), first, "", input)
 }
 pub fn commit_pair_to<S, T>(first: WriteHandle<S>, second: WriteHandle<T>, candidates: CandidatePair<S, T>) @suspends -> PairCommitReceipt {
     var storage = candidates.storage
@@ -286,7 +299,9 @@ extern fn __domain_snapshot_set(set:&mut domain.AccessSetOwner) @suspends -> dom
 extern fn __domain_set_read(module:domain.Module,snapshot:&domain.SnapshotSetOwner,handle:domain.Handle,name:String) @suspends -> UInt64
 extern fn __domain_set_check(snapshot:&domain.SnapshotSetOwner) @suspends -> Int32
 extern fn __domain_set_candidate(module:domain.Module,snapshot:&mut domain.SnapshotSetOwner,handle:domain.Handle,name:String,input:UInt64) @suspends -> domain.CandidateSetOwner
+extern fn __domain_set_candidate_values(module:domain.Module,snapshot:&mut domain.SnapshotSetOwner,handle:domain.Handle,name:String,input:&Buffer<UInt64>) @suspends -> domain.CandidateSetOwner
 extern fn __domain_set_add(module:domain.Module,set:&mut domain.CandidateSetOwner,handle:domain.Handle,name:String,input:UInt64) @suspends -> domain.CandidateSetOwner
+extern fn __domain_set_add_values(module:domain.Module,set:&mut domain.CandidateSetOwner,handle:domain.Handle,name:String,input:&Buffer<UInt64>) @suspends -> domain.CandidateSetOwner
 extern fn __domain_commit_set(set:&mut domain.CandidateSetOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_set_before(set:&mut domain.CandidateSetOwner,deadline:&domain.DeadlineOwner) @suspends -> domain.CommitOwner
 extern fn __domain_set_revision(receipt:&domain.CommitOwner,handle:domain.Handle) @suspends -> UInt64
@@ -329,13 +344,25 @@ fn finish_set_add(module:domain.Module,set:CandidateSet,handle:domain.Handle,nam
     var storage=set.storage
     CandidateSet{storage:__domain_set_add(module,&mut storage,handle,name,input)}
 }
+#intrinsic("domain.finish_set_candidate_values")
+fn finish_set_candidate_values<A>(module:domain.Module,snapshot:SnapshotSet,handle:domain.Handle,name:String,input:A) @suspends -> CandidateSet {
+    let packet=pack_value(input)
+    var storage=snapshot.storage
+    CandidateSet{storage:__domain_set_candidate_values(module,&mut storage,handle,name,&packet.storage)}
+}
 #intrinsic("domain.candidate_set_from")
 pub fn candidate_set_from<S,A>(snapshot:SnapshotSet,handle:WriteHandle<S>,constructor:fn(A)->S,input:A) @suspends -> CandidateSet {
-    finish_set_candidate(module(),snapshot,handle.token,"",pack(input))
+    finish_set_candidate_values::<A>(module(),snapshot,handle.token,"",input)
+}
+#intrinsic("domain.finish_set_add_values")
+fn finish_set_add_values<A>(module:domain.Module,set:CandidateSet,handle:domain.Handle,name:String,input:A) @suspends -> CandidateSet {
+    let packet=pack_value(input)
+    var storage=set.storage
+    CandidateSet{storage:__domain_set_add_values(module,&mut storage,handle,name,&packet.storage)}
 }
 #intrinsic("domain.candidate_set_add")
 pub fn candidate_set_add<S,A>(set:CandidateSet,handle:WriteHandle<S>,constructor:fn(A)->S,input:A) @suspends -> CandidateSet {
-    finish_set_add(module(),set,handle.token,"",pack(input))
+    finish_set_add_values::<A>(module(),set,handle.token,"",input)
 }
 pub fn commit_set(set:CandidateSet) @suspends -> SetCommitReceipt {
     var storage=set.storage

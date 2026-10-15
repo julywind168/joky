@@ -1378,3 +1378,99 @@ fn hold() @suspends {
         assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
     }
 }
+
+#[test]
+fn state_domains_candidate_values_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_candidate_values.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel candidate value packets, roots and receipts at every instruction"]
+fn exhaustive_state_domains_candidate_values_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_candidate_values.jk"),
+        0..=32768,
+        true,
+    );
+}
+
+#[test]
+fn state_domains_candidate_values_restore_task_and_state_budgets() {
+    use crate::runtime::{arena, executor::TaskGroup};
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            arena::LIMIT.with(|limit| limit.set(self.0));
+        }
+    }
+    let _restore = Restore(arena::LIMIT.with(|limit| limit.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../tests/fixtures/state_domain_candidate_values.jk"
+        ))
+        .unwrap();
+        let baseline = arena::LIVE.with(|n| n.get());
+        for entry in ["construct_single", "construct_pair", "construct_set"] {
+            let mut failures = 0;
+            let mut successes = 0;
+            for (task_limit, state_limit) in (0..=8192)
+                .step_by(128)
+                .map(|n| (n, usize::MAX))
+                .chain((1..=8193).step_by(128).map(|n| (arena::MAX_BYTES, n)))
+            {
+                vm.set_domain_limits(DomainLimits {
+                    max_state_bytes: state_limit,
+                    ..Default::default()
+                })
+                .unwrap();
+                arena::LIMIT.with(|limit| limit.set(task_limit));
+                let group = TaskGroup::new();
+                let result = (|| {
+                    let id = vm.executor.spawn(&group, vm.prepare_async(entry, &[])?)?;
+                    for _ in 0..1000 {
+                        for done in vm.poll_tasks(1)?.completed {
+                            if done.id == id {
+                                return done.result;
+                            }
+                        }
+                    }
+                    panic!("candidate construction stalled");
+                })();
+                match result {
+                    Ok(value) => {
+                        assert_eq!(value, 24);
+                        successes += 1;
+                    }
+                    Err(error) => {
+                        assert_eq!(
+                            error.code(),
+                            crate::ErrorCode::ResourceLimit,
+                            "{mode:?} {entry}: {error}"
+                        );
+                        failures += 1;
+                    }
+                }
+                vm.executor.cancel_group(&group);
+                assert_eq!(vm.task_count(), 0);
+                assert_eq!(
+                    vm.domains.borrow().usage(),
+                    (0, 0, 0, 0),
+                    "{mode:?} {entry} {task_limit} {state_limit}"
+                );
+                assert_eq!(
+                    arena::LIVE.with(|n| n.get()),
+                    baseline,
+                    "{mode:?} {entry} {task_limit} {state_limit}"
+                );
+            }
+            assert!(failures > 0 && successes > 0, "{mode:?} {entry}");
+            arena::LIMIT.with(|limit| limit.set(arena::MAX_BYTES));
+        }
+    }
+}

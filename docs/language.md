@@ -2795,11 +2795,11 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 | 入口 | 状态根 | 输入／结果 |
 | --- | --- | --- |
 | `create` | 受检拥有图 | 构造输入支持标量／纯值记录；返回完整状态根 |
-| 单域候选构造 | 受检拥有图 | 构造输入为标量；返回完整状态根 |
+| 单域候选构造 | 受检拥有图 | 构造输入支持标量／纯值记录；返回完整状态根 |
 | 单域 `read/query/write`、`read_from/query_from/write_to` | 受检拥有图 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read*` 无额外输入 |
 | 双域短操作 | 标量记录 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read_pair` 无额外输入 |
 | `snapshot_from` | 受检拥有图 | 投影结果为标量 |
-| `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果、候选构造输入为标量 |
+| `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果为标量；候选构造输入支持标量／纯值记录 |
 | `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果为标量 |
 | `after/every` | 所属域沿用单域根资格 | 操作输入为标量，结果为 Unit |
 | `lookup::<S>/lookup_write::<S>` | 受检拥有图 | 显式指定状态类型，无投影参数 |
@@ -2903,7 +2903,7 @@ fn main() @suspends {
 构造器绑定调用流程的模块版本；热更新不会把旧流程中的构造调用重定向到新模块。
 可执行示例见 [state_domain_create_values.jk](../tests/fixtures/state_domain_create_values.jk)。
 
-这些载荷扩展尚未加入 `when`。候选输入、快照投影、Timer 输入及异步 `request` 的输入与结果
+这些载荷扩展尚未加入 `when`。快照投影、Timer 输入及异步 `request` 的输入与结果
 仍限标量；Rust `InstanceValue` 公共入口也保持标量。
 
 ### 标量投影快照
@@ -2946,10 +2946,16 @@ SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、�
 | `receipt.identity(&self) -> UInt64` | 返回执行器内唯一的受理序号；未能准入时为 0，不是域句柄 |
 
 `Candidate<S>` 与 `CommitReceipt` 都是不可复制的拥有值，内部存储不向用户开放。
-S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 仍限标量；候选构造器
+S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标量与上述有界纯值记录；候选构造器
 遵守与 `create` 相同的无挂起、无宿主调用和无用户 Drop 资格。
 投影可以只包含业务所需标量，构造器必须显式生成完整 S；运行时不会从投影隐式补齐其余字段。
 候选绑定快照原域的身份、类型、代码版本与修订；提交还必须提供该域的写句柄。
+
+`candidate_from`、`candidate_pair_from`、`candidate_set_from` 与 `candidate_set_add` 的输入
+沿用 64 字段／8 层纯值限制，包含空记录和嵌套 Unit。输入表达式只求值一次，记录逐值复制
+到调用方值包，构造同步执行且保留完整原始读取凭据。构造器仍绑定调用流程模块，须与
+目标域的模块和状态类型精确匹配；不会按新代码重新解释旧输入或刷新原快照版本。
+示例见 [state_domain_candidate_values.jk](../tests/fixtures/state_domain_candidate_values.jk)。
 
 候选构造不传入活状态地址；异常、预算失败和取消只释放候选存储，不修改旧根或隔离原域。
 候选使用独立 arena，和旧根、构造临时存储共同计入 `max_state_bytes` 峰值；根的拥有槽
@@ -2988,7 +2994,7 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 仍限标�
 可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk) 与
 [String/Array 示例](../tests/fixtures/state_domain_owned.jk)、
 [嵌套记录与 Map 示例](../tests/fixtures/state_domain_nested.jk)、[有效期示例](../tests/fixtures/state_domain_deadlines.jk)。
-候选构造输入和快照投影结果仍限标量；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
+候选构造输入支持标量与有界纯值记录，快照投影结果仍限标量；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
 当前私有 AOT 模块描述格式为 v3，保留记录字段可见性；旧 v1/v2 描述对象须重新编译，公共 CPS 帧和调用桥不变。
 
 ### 双域短操作
@@ -3063,7 +3069,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 | 入口（均为 `@suspends`） | 结果与约束 |
 | --- | --- |
-| `candidate_pair_from<S,T,A>(Candidate<S>, fn(A)->T, A)` | 返回 `CandidatePair<S,T>`；A 为标量，使用原联合快照的第二个域，保留完整读取凭据 |
+| `candidate_pair_from<S,T,A>(Candidate<S>, fn(A)->T, A)` | 返回 `CandidatePair<S,T>`；A 为标量或有界纯值记录，使用原联合快照的第二个域，保留完整读取凭据 |
 | `commit_pair_to<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>)` | 消费整包，返回 `PairCommitReceipt`；两个句柄须依次对应两个确切域身份 |
 | `commit_pair_before<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>, &CommitDeadline)` | 同上，发布前检查执行器时钟截止时间 |
 
@@ -3097,8 +3103,8 @@ ResourceLimit、Expired、OutboxFull、OutboxClosed。`identity()` 和 `cancel()
 | `snapshot_set(AccessSet) -> SnapshotSet` | 消费访问集合，一次 FIFO 操作复制全部标量根并捕获完整修订集合 |
 | `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为标量 |
 | `SnapshotSet.check() -> SnapshotStatus` | 检查全部成员的当前身份、生命周期与修订；不授予提交权限 |
-| `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为标量 |
-| `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；失败释放整包 |
+| `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为标量或有界纯值记录 |
+| `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；A 为标量或有界纯值记录，失败释放整包 |
 | `commit_set(CandidateSet) -> SetCommitReceipt` | 消费整包并申请原子发布 |
 | `commit_set_before(CandidateSet, &CommitDeadline) -> SetCommitReceipt` | 同上，发布前检查执行器截止时间 |
 

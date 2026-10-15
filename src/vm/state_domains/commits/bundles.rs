@@ -20,7 +20,7 @@ fn extend(
     first: Candidate,
     module: LoadedModule,
     name: &str,
-    input: InstanceValue,
+    input: impl Into<ConstructorInput>,
     limits: InterpreterLimits,
 ) -> Result<Bundle, Error> {
     let version = first.reads.second().ok_or_else(|| {
@@ -129,7 +129,10 @@ pub(super) unsafe fn poll(
     registry: &Rc<RefCell<Domains>>,
     op: Operation,
 ) -> Result<Option<u64>, Error> {
-    if op == Operation::CandidatePair {
+    if matches!(
+        op,
+        Operation::CandidatePair | Operation::CandidatePairValues
+    ) {
         let candidate_lease = lease(frame.slots[1])?;
         let stored = &*candidate_lease.token().cast::<Stored<Option<Candidate>>>();
         let first = stored
@@ -139,10 +142,7 @@ pub(super) unsafe fn poll(
             .ok_or_else(|| invalid("Candidate was already consumed"))?;
         let (module, _) = source::module(registry, frame.slots[0])?;
         let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
-        let input = source::scalar_argument(
-            &module.instance_info(name)?.signature.params,
-            frame.slots[3],
-        )?;
+        let input = constructor_input(&module, name, frame.slots[3], op)?;
         let bundle = extend(
             registry,
             first,

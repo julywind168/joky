@@ -108,13 +108,54 @@ pub(super) unsafe fn lease(bits: u64) -> Result<crate::runtime::resource::Resour
         .resource_mut()?
         .lease()
 }
+enum ConstructorInput {
+    Scalar(InstanceValue),
+    Values(Vec<u64>),
+}
+impl From<InstanceValue> for ConstructorInput {
+    fn from(value: InstanceValue) -> Self {
+        Self::Scalar(value)
+    }
+}
+/// # Safety
+/// For a value operation, bits points to a live compiler-owned UInt64 buffer.
+unsafe fn constructor_input(
+    module: &LoadedModule,
+    name: &str,
+    bits: u64,
+    op: Operation,
+) -> Result<ConstructorInput, Error> {
+    let info = module.instance_info(name)?;
+    if matches!(
+        op,
+        Operation::CandidateValues
+            | Operation::CandidatePairValues
+            | Operation::SetCandidateValues
+            | Operation::SetAddValues
+    ) {
+        if !info.domain_entry || !crate::core::state_domain::constructor_eligible(&info) {
+            return Err(invalid(
+                "Candidate requires a proved bounded pure-value constructor",
+            ));
+        }
+        let packet = (bits as *const Buffer)
+            .as_ref()
+            .ok_or_else(|| invalid("Missing candidate input packet"))?;
+        Ok(ConstructorInput::Values(values::input_words(
+            &info.signature.params,
+            packet,
+        )?))
+    } else {
+        source::scalar_argument(&info.signature.params, bits).map(ConstructorInput::Scalar)
+    }
+}
 fn construct(
     registry: &Rc<RefCell<Domains>>,
     module: LoadedModule,
     base: DomainHandle,
     revision: u64,
     name: &str,
-    input: InstanceValue,
+    input: impl Into<ConstructorInput>,
     limits: InterpreterLimits,
 ) -> Result<Candidate, Error> {
     let info = module.instance_info(name)?;
@@ -124,13 +165,16 @@ fn construct(
         if !source::same_module(&module, &domain.module)
             || info.signature.ret != domain.ty
             || !info.domain_entry
-            || !instance::constructor(&info)
+            || !crate::core::state_domain::constructor_eligible(&info)
         {
             return Err(invalid("Candidate requires a proved constructor for the snapshot's exact module and state type"));
         }
         (domains.budget.clone(), domain.code, domain.schema)
     };
-    let words = arguments(&info.signature.params, &[input])?;
+    let words = match input.into() {
+        ConstructorInput::Scalar(input) => arguments(&info.signature.params, &[input])?,
+        ConstructorInput::Values(words) => words,
+    };
     let root = Root::construct(&module, &info, name, &words, limits, budget)?;
     Ok(Candidate {
         outbox: None,
@@ -288,22 +332,22 @@ pub(super) unsafe fn poll(
 ) -> Result<Option<u64>, Error> {
     if matches!(
         op,
-        Operation::CandidatePair | Operation::CommitPair | Operation::CommitPairBefore
+        Operation::CandidatePair
+            | Operation::CandidatePairValues
+            | Operation::CommitPair
+            | Operation::CommitPairBefore
     ) {
         return bundles::poll(arena, frame, registry, op);
     }
     if op == Operation::DeadlineAfter {
         return adopt(arena, deadline_after(registry, frame.slots[0] as i32)?).map(Some);
     }
-    if op == Operation::Candidate {
+    if matches!(op, Operation::Candidate | Operation::CandidateValues) {
         let snapshot_lease = lease(frame.slots[1])?;
         let snapshot = &*snapshot_lease.token().cast::<source::Snapshot>();
         let (module, _) = source::module(registry, frame.slots[0])?;
         let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
-        let input = source::scalar_argument(
-            &module.instance_info(name)?.signature.params,
-            frame.slots[3],
-        )?;
+        let input = constructor_input(&module, name, frame.slots[3], op)?;
         let mut candidate = construct(
             registry,
             module,
@@ -1027,6 +1071,66 @@ mod tests {
         }
     }
     #[test]
+    fn state_domains_candidate_values_failures_leave_live_root_usable() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(&format!("{OWNED} struct Input {{n:Int32,zero:Int32}} fn from_value(p:Input)->State{{make(p.n)}} fn broken_value(p:Input)->State{{let temporary=make(p.n) make(1/p.zero)}}")).unwrap();
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let baseline = vm.domains.borrow().budget.bytes.get();
+            let live = crate::runtime::arena::LIVE.with(|n| n.get());
+            let mut succeeded = false;
+            for allowance in [0, 1, 64, 128, 256, 512, 1024, 2048, 4096] {
+                vm.set_domain_limits(DomainLimits {
+                    max_state_bytes: baseline + allowance,
+                    ..Default::default()
+                })
+                .unwrap();
+                let result = construct(
+                    &vm.domains,
+                    vm.current.clone().unwrap(),
+                    owner.read_handle(),
+                    0,
+                    "from_value",
+                    ConstructorInput::Values(vec![24, 0]),
+                    InterpreterLimits::default(),
+                );
+                match result {
+                    Ok(candidate) => {
+                        succeeded = true;
+                        drop(candidate);
+                    }
+                    Err(error) => assert_eq!(error.code(), ErrorCode::ResourceLimit),
+                }
+                assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+                assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), live);
+                assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+            }
+            assert!(succeeded);
+            vm.set_domain_limits(Default::default()).unwrap();
+            let error = construct(
+                &vm.domains,
+                vm.current.clone().unwrap(),
+                owner.read_handle(),
+                0,
+                "broken_value",
+                ConstructorInput::Values(vec![24, 0]),
+                InterpreterLimits::default(),
+            )
+            .err()
+            .unwrap();
+            assert!(error.message().contains("Division by zero"));
+            assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), live);
+            read(&mut vm, &owner, 7);
+            assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+            owner.close();
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+
+    #[test]
     fn state_domains_owned_candidate_budget_boundaries_preserve_old_state() {
         owned_candidate_budgets(OWNED, [0, 1, 64, 128, 256, 512, 768, 1024, 2048, 4096]);
     }
@@ -1215,8 +1319,27 @@ mod tests {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             for target in [false, true] {
                 for version in ["data", "code", "schema"] {
-                    let (mut vm, a, b) = joint_vm(mode);
-                    let next = joint_candidate(&mut vm, &a, &b);
+                    let mut vm = VmEngine::with_mode(mode);
+                    vm.load_source(&format!("{SOURCE} struct Input {{n:Int32}} fn from_value(p:Input)->State{{make(p.n)}} fn total(a:&State,b:&State)->Int32{{a.count+b.count}}" )).unwrap();
+                    let a = vm
+                        .create_domain("make", &[InstanceValue::Int32(7)])
+                        .unwrap();
+                    let b = vm
+                        .create_domain("make", &[InstanceValue::Int32(10)])
+                        .unwrap();
+                    let original = joint_candidate(&mut vm, &a, &b);
+                    let mut next = construct(
+                        &vm.domains,
+                        vm.current.clone().unwrap(),
+                        a.read_handle(),
+                        0,
+                        "from_value",
+                        ConstructorInput::Values(vec![99]),
+                        InterpreterLimits::default(),
+                    )
+                    .unwrap();
+                    next.reads = original.reads.clone();
+                    drop(original);
                     let receipt = admit(&vm.domains, token(&vm, &a), next);
                     {
                         // Independently exercise each credential without changing
