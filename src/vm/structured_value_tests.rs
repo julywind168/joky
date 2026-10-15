@@ -22,6 +22,7 @@ const ENTRIES: &[&str] = &[
     "generic_context",
     "scope_control_flow",
     "members",
+    "call_shapes",
 ];
 fn reset() {
     EVENTS.with(|v| v.borrow_mut().clear());
@@ -62,6 +63,9 @@ fn structured_values_execute_in_both_vm_backends() {
             cleaned();
             if entry == "scope_owned" {
                 EVENTS.with(|v| assert_eq!(*v.borrow(), [-1, 10, 100, 1]));
+            }
+            if entry == "call_shapes" {
+                EVENTS.with(|v| assert_eq!(*v.borrow(), [-1, 1]));
             }
         }
         reset();

@@ -466,12 +466,14 @@ fn structured_values_execute_and_clean_up_in_standalone_native_code() {
                 ("generic_context", false),
                 ("scope_control_flow", false),
                 ("members", false),
+                ("call_shapes", false),
                 ("scope_failure", true),
                 ("branch_failure", true),
                 ("cleanup_failure", true),
             ] {
                 let slots = compiler.cps_frame_slots(name).unwrap();
                 let failure = i32::from(failure);
+                let check_trace = i32::from(name == "call_shapes");
                 harness.push_str(&format!(r#"
                     {{
                         extern int32_t {name}(JokyCpsFrame *);
@@ -482,6 +484,7 @@ fn structured_values_execute_and_clean_up_in_standalone_native_code() {
                         if ({failure} != !!joky_runtime_error_code()) return 40;
                         if (!{failure} && (status != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42)) return 41;
                         if ({failure} && status != JOKY_CPS_RUNTIME_ERROR) return 42;
+                        if ({check_trace} && (count != 2 || events[0] != -1 || events[1] != 1)) return 48;
                         for (int id = 1; id <= 9; ++id) {{
                             int created = 0, dropped = 0;
                             for (int i = 0; i < count; ++i) {{

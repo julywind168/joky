@@ -179,3 +179,28 @@ fn members() @suspends -> Int32 {
     let (a, b) = parallel { | a.work() | b.work() }
     a + b
 }
+
+fn padded<T>(before: Unit, value: T, after: Unit, polls: Int32) @suspends -> T {
+    relay(value, polls)
+}
+fn padded_pair(before: Unit, value: Pair, after: Unit, polls: Int32) @suspends -> Pair {
+    padded(before, value, after, polls)
+}
+fn call_shapes() @suspends -> Int32 {
+    let empty = unit()
+    padded(empty, empty, empty, 1)
+    let narrow = padded::<Int8>(empty, -128, empty, 2)
+    let original = padded(empty, Pair { small: narrow, wide: 18446744073709551615 }, empty, 2)
+    let f = padded_pair
+    let (pair, owner) = parallel {
+        | f(empty, original, empty, 2)
+        | padded(empty, make(1), empty, 0)
+    }
+    let winner = race {
+        | f(empty, pair, empty, 2)
+        | f(empty, Pair { small: 0, wide: 0 }, empty, 4)
+    }
+    ensure(winner.small == -128 && winner.wide == 18446744073709551615)
+    ensure(owner.id == 1 && owner.text.byte_length() == 7)
+    42
+}

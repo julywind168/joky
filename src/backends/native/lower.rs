@@ -10,8 +10,8 @@ use crate::{
 };
 use cranelift_codegen::ir::{
     condcodes::{FloatCC, IntCC},
-    types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, StackSlotData,
-    StackSlotKind, Value,
+    types, AbiParam, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature,
+    StackSlotData, StackSlotKind, Value,
 };
 use cranelift_frontend::{FunctionBuilder, Switch, Variable};
 use cranelift_module::{FuncId, Linkage, Module};
@@ -1017,6 +1017,102 @@ fn lower_cleanup(
     }
 }
 
+/// Copy arguments before the first poll, retaining Unit placeholders in slot indices.
+fn lower_cps_arguments(
+    builder: &mut FunctionBuilder,
+    slots: &mut SlotAccess<'_>,
+    args: &[Option<Slot>],
+    refs: &HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
+    frame: Value,
+    child: Value,
+) {
+    let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(arg) = arg {
+            let value = slots.read(builder, arg);
+            store(
+                builder,
+                child_slots,
+                &Slot {
+                    index,
+                    ty: arg.ty.clone(),
+                },
+                value,
+            );
+        }
+    }
+    for (to, arg) in args.iter().enumerate().filter_map(|(to, arg)| {
+        arg.as_ref()
+            .filter(|s| s.ty.is_suspend_safe_owner())
+            .map(|s| (to, s))
+    }) {
+        let from = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
+        let to = builder.ins().iconst(ptr_ty, to as i64);
+        builder.ins().call(
+            refs["__joky_cps_transfer_owner_v2"],
+            &[frame, child, from, to],
+        );
+    }
+}
+
+/// Both calls and structured branches propagate every non-pending failure status.
+fn branch_cps_status(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Value,
+    status: Value,
+    complete: Block,
+    pending: Block,
+) {
+    let check_pending = builder.create_block();
+    let failure = builder.create_block();
+    let zero = builder.ins().iconst(types::I32, 0);
+    let completed = builder.ins().icmp(IntCC::Equal, status, zero);
+    builder
+        .ins()
+        .brif(completed, complete, &[], check_pending, &[]);
+    builder.switch_to_block(check_pending);
+    let one = builder.ins().iconst(types::I32, 1);
+    let is_pending = builder.ins().icmp(IntCC::Equal, status, one);
+    builder.ins().brif(is_pending, pending, &[], failure, &[]);
+    builder.switch_to_block(failure);
+    builder.ins().call(refs["__joky_cps_finish"], &[frame]);
+    builder.ins().return_(&[status]);
+}
+
+/// Read completed results before the caller registers ownership and releases children.
+fn lower_cps_result(
+    builder: &mut FunctionBuilder,
+    slots: &mut SlotAccess<'_>,
+    result: Option<&Slot>,
+    info: &FunctionInfo,
+    refs: &HashMap<String, FuncRef>,
+    child: Value,
+) {
+    let Some(dst) = result else { return };
+    if dst.ty.is_aggregate() {
+        let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+        let source = Slot {
+            index: info.aggregate_result_offset(),
+            ty: dst.ty.clone(),
+        };
+        for (dst, src) in dst.scalars().zip(source.scalars()) {
+            let value = load(builder, child_slots, &src);
+            slots.write(builder, &dst, value);
+        }
+    } else {
+        let value = builder.ins().load(
+            types::I64,
+            MemFlagsData::new(),
+            child,
+            std::mem::offset_of!(CpsFrame, result) as i32,
+        );
+        let value = unpack(builder, native_type(&dst.ty).unwrap(), value);
+        slots.write(builder, dst, value);
+    }
+}
+
 struct ScopeContext<'a> {
     plan: &'a FunctionPlan,
     mode: ExecMode<'a>,
@@ -1058,33 +1154,15 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
             .map(|target| load(builder, slots, target));
         let count = cps_slot_count(builder, &functions[&branch.name], descriptor, ptr_ty);
         let child = child_at(builder, refs, frame, index, count, ptr_ty);
-        let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
-        for (slot_index, arg) in branch.args.iter().enumerate() {
-            if let Some(arg) = arg {
-                let value = load(builder, slots, arg);
-                store(
-                    builder,
-                    child_slots,
-                    &Slot {
-                        index: slot_index,
-                        ty: arg.ty.clone(),
-                    },
-                    value,
-                );
-            }
-        }
-        for (to, arg) in branch.args.iter().enumerate().filter_map(|(to, arg)| {
-            arg.as_ref()
-                .filter(|s| s.ty.is_suspend_safe_owner())
-                .map(|s| (to, s))
-        }) {
-            let from = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
-            let to = builder.ins().iconst(ptr_ty, to as i64);
-            builder.ins().call(
-                refs["__joky_cps_transfer_owner_v2"],
-                &[frame, child, from, to],
-            );
-        }
+        lower_cps_arguments(
+            builder,
+            &mut SlotAccess::Frames { slots },
+            &branch.args,
+            refs,
+            ptr_ty,
+            frame,
+            child,
+        );
         let pending = builder.ins().iconst(types::I8, 0);
         store(builder, slots, &branch.done, pending);
     }
@@ -1103,8 +1181,6 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         let poll = builder.create_block();
         let after = builder.create_block();
         let complete = builder.create_block();
-        let status_check = builder.create_block();
-        let failure = builder.create_block();
         let done = load(builder, slots, &branch.done);
         let one = builder.ins().iconst(types::I8, 1);
         let is_done = builder.ins().icmp(IntCC::Equal, done, one);
@@ -1127,44 +1203,16 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         if functions[&branch.name].may_fail {
             check_call(builder, refs, Some(frame), None);
         }
-        let zero = builder.ins().iconst(types::I32, 0);
-        let completed = builder.ins().icmp(IntCC::Equal, status, zero);
-        builder
-            .ins()
-            .brif(completed, complete, &[], status_check, &[]);
-
-        builder.switch_to_block(status_check);
-        let pending = builder.ins().iconst(types::I32, 1);
-        let is_pending = builder.ins().icmp(IntCC::Equal, status, pending);
-        builder.ins().brif(is_pending, after, &[], failure, &[]);
-
-        builder.switch_to_block(failure);
-        builder.ins().call(refs["__joky_cps_finish"], &[frame]);
-        builder.ins().return_(&[status]);
-
+        branch_cps_status(builder, refs, frame, status, complete, after);
         builder.switch_to_block(complete);
-        if let Some(dst) = branch.result.as_ref().or(result) {
-            if dst.ty.is_aggregate() {
-                let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
-                let source = Slot {
-                    index: functions[&branch.name].aggregate_result_offset(),
-                    ty: dst.ty.clone(),
-                };
-                for (dst, src) in dst.scalars().zip(source.scalars()) {
-                    let value = load(builder, child_slots, &src);
-                    store(builder, slots, &dst, value);
-                }
-            } else {
-                let value = builder.ins().load(
-                    types::I64,
-                    MemFlagsData::new(),
-                    child,
-                    std::mem::offset_of!(CpsFrame, result) as i32,
-                );
-                let value = unpack(builder, native_type(&dst.ty).unwrap(), value);
-                store(builder, slots, dst, value);
-            }
-        }
+        lower_cps_result(
+            builder,
+            &mut SlotAccess::Frames { slots },
+            branch.result.as_ref().or(result),
+            &functions[&branch.name],
+            refs,
+            child,
+        );
         if let Some(cleanup) = &branch.cleanup {
             lower_cleanup(
                 builder,
@@ -1191,7 +1239,6 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     }
 
     let pending = builder.create_block();
-    let continuation = builder.create_block();
     if kind == ScopeKind::Join {
         for branch in branches {
             let next = builder.create_block();
@@ -1205,14 +1252,12 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     } else {
         builder.ins().jump(pending, &[]);
     }
-    builder.switch_to_block(finished);
-    // ScopeFinish releases children after the caller registers the result.
-    // No source continuation can run between these two IR operations.
-    builder.ins().jump(continuation, &[]);
     builder.switch_to_block(pending);
     let pending_status = builder.ins().iconst(types::I32, 1);
     builder.ins().return_(&[pending_status]);
-    builder.switch_to_block(continuation);
+    // ScopeFinish releases children after the caller registers the result.
+    // No source continuation can run between these two IR operations.
+    builder.switch_to_block(finished);
 }
 
 /// Where a function's IR slots live. Suspending functions address a CPS
@@ -1444,37 +1489,10 @@ fn lower_suspending_call(
     states: &[cranelift_codegen::ir::Block],
     state_offset: i32,
 ) {
-    let result_offset = std::mem::offset_of!(CpsFrame, result) as i32;
     let descriptor = indirect.as_ref().map(|target| slots.read(builder, target));
     let count = cps_slot_count(builder, &functions[name], descriptor, ptr_ty);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
-    let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
-    for (index, arg) in args.iter().enumerate() {
-        if let Some(arg) = arg {
-            let value = slots.read(builder, arg);
-            store(
-                builder,
-                child_slots,
-                &Slot {
-                    index,
-                    ty: arg.ty.clone(),
-                },
-                value,
-            );
-        }
-    }
-    for (to, arg) in args.iter().enumerate().filter_map(|(to, arg)| {
-        arg.as_ref()
-            .filter(|s| s.ty.is_suspend_safe_owner())
-            .map(|s| (to, s))
-    }) {
-        let from = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
-        let to = builder.ins().iconst(ptr_ty, to as i64);
-        builder.ins().call(
-            refs["__joky_cps_transfer_owner_v2"],
-            &[frame, child, from, to],
-        );
-    }
+    lower_cps_arguments(builder, slots, args, refs, ptr_ty, frame, child);
     let saved = builder.ins().iconst(types::I32, i64::from(state));
     builder
         .ins()
@@ -1492,42 +1510,18 @@ fn lower_suspending_call(
     }
     let pending = builder.create_block();
     let ready = builder.create_block();
-    let failure = builder.create_block();
-    let zero = builder.ins().iconst(types::I32, 0);
-    let completed = builder.ins().icmp(IntCC::Equal, status, zero);
-    let check_pending = builder.create_block();
-    builder
-        .ins()
-        .brif(completed, ready, &[], check_pending, &[]);
-    builder.switch_to_block(check_pending);
-    let one = builder.ins().iconst(types::I32, 1);
-    let is_pending = builder.ins().icmp(IntCC::Equal, status, one);
-    builder.ins().brif(is_pending, pending, &[], failure, &[]);
+    branch_cps_status(builder, refs, frame, status, ready, pending);
     builder.switch_to_block(pending);
     builder.ins().return_(&[status]);
-    builder.switch_to_block(failure);
-    builder.ins().call(refs["__joky_cps_finish"], &[frame]);
-    builder.ins().return_(&[status]);
     builder.switch_to_block(ready);
-    if let Some(dst) = result {
-        if dst.ty.is_aggregate() {
-            let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
-            let source = Slot {
-                index: functions[name].aggregate_result_offset(),
-                ty: dst.ty.clone(),
-            };
-            for (dst, src) in dst.scalars().zip(source.scalars()) {
-                let value = load(builder, child_slots, &src);
-                slots.write(builder, &dst, value);
-            }
-        } else {
-            let value = builder
-                .ins()
-                .load(types::I64, MemFlagsData::new(), child, result_offset);
-            let value = unpack(builder, native_type(&dst.ty).unwrap(), value);
-            slots.write(builder, dst, value);
-        }
-    }
+    lower_cps_result(
+        builder,
+        slots,
+        result.as_ref(),
+        &functions[name],
+        refs,
+        child,
+    );
     builder
         .ins()
         .call(refs["__joky_cps_release_child"], &[frame]);
