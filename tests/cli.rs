@@ -7292,6 +7292,7 @@ fn domain_value_packets_run_in_all_backends() {
 fn domain_value_packets_keep_old_flows_and_bind_new_script_operations_in_all_backends() {
     let old = include_str!("fixtures/late_binding_values.jk");
     let new = old
+        .replace("Room{n:input.amount}", "Room{n:input.amount+1000}")
         .replace("a.n-input.amount", "a.n-input.amount*10")
         .replace("b.n=b.n+input.amount", "b.n=b.n+input.amount*10")
         .replace("value:a.n+b.n,", "value:a.n+b.n+100,")
@@ -7315,6 +7316,7 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     }}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
+    assert(h.call::<Int32,Int32>("construct_probe",7)==1007)
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42)
     assert(vm.publish_domain_code(h)==2)
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==142)
@@ -7387,6 +7389,32 @@ fn domain_value_packets_bound_fields_depth_and_zero_lane_records() {
         ));
     }
     for (definitions, ty, value, assertion, accepted) in cases {
+        let work = Workspace::new();
+        work.write(
+            "create_bound.jk",
+            &format!(
+                r#"import joky/domain import joky/check
+{definitions}
+struct State {{initial:{ty}}}
+fn make(p:{ty})->State {{State{{initial:p}}}}
+fn read(s:&State)->{ty} {{s.initial}}
+fn main() @suspends {{
+    let owner=domain.create(make,{value})
+    let p=domain.read_from(owner.read_handle(),read).unwrap()
+    let message="domain constructor bounds"
+    check.assert({assertion},&message)
+}}"#
+            ),
+        );
+        if accepted {
+            work.assert_all_backends("create_bound.jk", &[], b"", 0);
+        } else {
+            failure(
+                &work.cli(&["build", "create_bound.jk"]),
+                "bounded pure-value signature",
+            );
+        }
+
         for (access, receiver, body, expected) in [
             ("write_to(owner.handle()", "&mut State", "s.n=s.n+1 p", 1),
             ("query_from(owner.read_handle()", "&State", "p", 0),
@@ -7516,5 +7544,75 @@ fn main() @suspends {{let owner=domain.create(make,1) let h=owner.read_handle() 
             String::from_utf8_lossy(&output.stderr).contains("error:"),
             "{output:?}"
         );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_create_values_run_and_fail_in_all_backends() {
+    let source = include_str!("fixtures/state_domain_create_values.jk");
+    let work = Workspace::new();
+    work.write("create_values.jk", source);
+    work.assert_all_backends("create_values.jk", &[], b"", 0);
+    work.write(
+        "create_failure.jk",
+        &source.replace("require(lifecycle()==24)", "failure();"),
+    );
+    success(&work.cli(&["build", "create_failure.jk"]));
+    for output in [
+        work.cli(&["run", "create_failure.jk"]),
+        work.cli(&["run", "--interpreter", "create_failure.jk"]),
+        Command::new(work.path().join("create_failure"))
+            .output()
+            .unwrap(),
+    ] {
+        failure(&output, "Division by zero");
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn domain_create_values_reject_owning_payloads_and_unproved_constructors() {
+    let work = Workspace::new();
+    for (name, definitions, input, constructor, expected) in [
+        (
+            "owning",
+            "struct Init {text:String}",
+            "Init{text:\"owned\"}",
+            "fn make(p:Init)->State{State{n:1}}",
+            "bounded pure-value signature",
+        ),
+        (
+            "tuple",
+            "",
+            "(1,2)",
+            "fn make(p:(Int32,Int32))->State{State{n:1}}",
+            "bounded pure-value signature",
+        ),
+        (
+            "generic",
+            "struct Init<T>{n:T}",
+            "Init::<Int32>{n:1}",
+            "fn make(p:Init<Int32>)->State{State{n:p.n}}",
+            "bounded pure-value signature",
+        ),
+        (
+            "async",
+            "struct Init{n:Int32}",
+            "Init{n:1}",
+            "fn make(p:Init) @suspends ->State{State{n:p.n}}",
+            "type mismatch",
+        ),
+        (
+            "host",
+            "struct Init{n:Int32}",
+            "Init{n:1}",
+            "fn make(p:Init)->State{println(\"host\") State{n:p.n}}",
+            "proved synchronous",
+        ),
+    ] {
+        let file = format!("create_{name}.jk");
+        work.write(&file, &format!("import joky/domain\nstruct State {{n:Int32}}\n{definitions}\n{constructor}\nfn main() @suspends {{let owner=domain.create(make,{input})}}"));
+        failure(&work.cli(&["build", &file]), expected);
     }
 }

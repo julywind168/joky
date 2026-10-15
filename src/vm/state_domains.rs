@@ -892,6 +892,22 @@ fn create(
         ));
     }
     let words = arguments(&info.signature.params, args)?;
+    create_words(registry, module, constructor, info, &words, limits)
+}
+
+fn create_words(
+    registry: &Rc<RefCell<Domains>>,
+    module: LoadedModule,
+    constructor: &str,
+    info: FunctionInfo,
+    words: &[u64],
+    limits: InterpreterLimits,
+) -> Result<DomainOwner, Error> {
+    if !info.domain_entry
+        || !(instance::constructor(&info) || crate::core::state_domain::constructor_eligible(&info))
+    {
+        return Err(invalid("Domain constructor requires a proved state entry"));
+    }
     let mut domains = registry.borrow_mut();
     if domains.shutting_down {
         return Err(invalid("Domain VM is shutting down"));
@@ -911,7 +927,7 @@ fn create(
         &module,
         &info,
         constructor,
-        &words,
+        words,
         limits,
         domains.budget.clone(),
     )?;

@@ -22,6 +22,35 @@ pub(super) fn result_words(ty: &Type, mut words: Vec<u64>) -> Result<Vec<u64>, E
     Ok(words)
 }
 
+/// Copy a checked pure-value packet into the private typed trampoline lanes.
+///
+/// # Safety
+/// The packet must point to a live compiler-owned UInt64 buffer.
+pub(super) unsafe fn input_words(params: &[Type], packet: &Buffer) -> Result<Vec<u64>, Error> {
+    if packet.len() > crate::core::script::MAX_LANES as u64 {
+        return Err(limited("Domain value packet exceeds lane limit"));
+    }
+    let types = params
+        .iter()
+        .flat_map(Type::scalar_types)
+        .collect::<Vec<_>>();
+    if types.len() as u64 != packet.len() {
+        return Err(invalid("Domain value input length mismatch"));
+    }
+    let mut input = Vec::with_capacity(types.len() + usize::from(params == [Type::Unit]));
+    for (i, ty) in types.iter().enumerate() {
+        let word = packet.load(i as u64)?.cast::<u64>().read();
+        if InstanceValue::from_bits(ty, word).is_none() {
+            return Err(invalid("Invalid domain value input"));
+        }
+        input.push(word);
+    }
+    if params == [Type::Unit] {
+        input.push(0);
+    }
+    Ok(input)
+}
+
 struct Wait {
     request: DomainRequest,
     output: Rc<RefCell<Vec<u64>>>,
@@ -72,27 +101,7 @@ pub(super) unsafe fn poll(
                 return Err(invalid("Invalid domain value entry"));
             }
             let packet = &*(frame.slots[packet_slot] as *const Buffer);
-            if packet.len() > crate::core::script::MAX_LANES as u64 {
-                return Err(limited("Domain value packet exceeds lane limit"));
-            }
-            let types = info.signature.params[count..]
-                .iter()
-                .flat_map(Type::scalar_types)
-                .collect::<Vec<_>>();
-            if types.len() as u64 != packet.len() {
-                return Err(invalid("Domain value input length mismatch"));
-            }
-            let mut input = Vec::with_capacity(types.len());
-            for (i, ty) in types.iter().enumerate() {
-                let word = packet.load(i as u64)?.cast::<u64>().read();
-                if InstanceValue::from_bits(ty, word).is_none() {
-                    return Err(invalid("Invalid domain value input"));
-                }
-                input.push(word);
-            }
-            if info.signature.params.get(count) == Some(&Type::Unit) {
-                input.push(0);
-            }
+            let input = input_words(&info.signature.params[count..], packet)?;
             let output = Rc::new(RefCell::new(vec![
                 0;
                 info.signature.ret.scalar_types().len()

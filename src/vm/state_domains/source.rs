@@ -624,20 +624,22 @@ pub(crate) unsafe fn poll(
             Some(value) => value,
             None => return Ok(None),
         },
-        Operation::Create => {
+        Operation::Create | Operation::CreateValues => {
             let (module, key) = module(&registry, frame.slots[0])?;
             let name = crate::runtime::owned_text::borrow(frame.slots[1] as *const Buffer)?;
-            let input = scalar_argument(
-                &module.instance_info(name)?.signature.params,
-                frame.slots[2],
-            )?;
-            let domain = create(
-                &registry,
-                module,
-                name,
-                &[input],
-                crate::runtime::suspension::current_limits(),
-            )?;
+            let info = module.instance_info(name)?;
+            let limits = crate::runtime::suspension::current_limits();
+            let domain = if op == Operation::CreateValues {
+                if !info.domain_entry || !crate::core::state_domain::constructor_eligible(&info) {
+                    return Err(invalid("Invalid domain value constructor"));
+                }
+                let packet = &*(frame.slots[2] as *const Buffer);
+                let words = super::values::input_words(&info.signature.params, packet)?;
+                create_words(&registry, module, name, info, &words, limits)?
+            } else {
+                let input = scalar_argument(&info.signature.params, frame.slots[2])?;
+                create(&registry, module, name, &[input], limits)?
+            };
             registry
                 .borrow_mut()
                 .entries

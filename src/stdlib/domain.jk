@@ -119,7 +119,13 @@ impl<S> WriteHandle<S> {
 }
 #intrinsic("domain.create")
 pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
-    Owner::<S> { value: __domain_create(module(), "", pack(input)) }
+    finish_create::<S,A>(module(),"",input)
+}
+extern fn __domain_create_values(module:domain.Module,name:String,packet:&Buffer<UInt64>) @suspends -> domain.StateOwner
+#intrinsic("domain.finish_create")
+fn finish_create<S,A>(module:domain.Module,name:String,input:A) @suspends -> Owner<S> {
+    let packet=pack_value(input)
+    Owner::<S>{value:__domain_create_values(module,name,&packet.storage)}
 }
 #intrinsic("domain.read_from")
 pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> Result<R,DomainAccessError> {

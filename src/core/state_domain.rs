@@ -63,6 +63,15 @@ pub(crate) fn value_eligible(info: &FunctionInfo) -> bool {
             })
 }
 
+/// Domain-only constructors accept one bounded pure-value packet.
+/// The persistent-instance API retains its scalar argument contract.
+pub(crate) fn constructor_eligible(info: &FunctionInfo) -> bool {
+    !info.suspends
+        && matches!(info.signature.ret, Type::Record(_))
+        && info.signature.params.len() == 1
+        && super::script::schema(&info.signature.params[0]).is_some()
+}
+
 /// Storage hooks and the entire owning graph are checked by `infer`.
 fn migration_record(ty: &Type) -> bool {
     matches!(ty, Type::Record(r) if r.template.is_none() && r.parameters.is_empty()
@@ -194,8 +203,12 @@ pub(crate) fn infer(
             && info.signature.params[..2]
                 .iter()
                 .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
-        info.instance_entry |= pair || migration || step || values;
-        info.domain_entry = values
+        let constructor = safe.contains(name)
+            && constructor_eligible(info)
+            && state_root(&info.signature.ret, &bodies[name]);
+        info.instance_entry |= pair || migration || step || values || constructor;
+        info.domain_entry = constructor
+            || values
             || step
             || pair
             || migration

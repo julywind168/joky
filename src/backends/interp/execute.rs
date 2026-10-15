@@ -66,7 +66,8 @@ pub(crate) fn call_instance(
         .ok_or_else(|| abi_error("Unknown instance entry"))?;
     if !(crate::core::instance::eligible(&function.info)
         || function.info.domain_entry
-            && (crate::core::state_domain::pair_eligible(&function.info)
+            && (crate::core::state_domain::constructor_eligible(&function.info)
+                || crate::core::state_domain::pair_eligible(&function.info)
                 || crate::core::state_domain::value_eligible(&function.info)
                 || crate::core::state_domain::migration_eligible(&function.info)
                 || crate::core::state_domain::migration_step_eligible(&function.info)))

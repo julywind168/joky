@@ -317,8 +317,9 @@ impl FunctionPlan {
             usize::from(!request && !create)
         }..];
         let value_call = matches!(kind, DomainAt(_) | DomainPair(_) | DomainAccess(_));
+        let value_input = value_call || matches!(kind, DomainCreate);
         let value_type =
-            |ty: &Type| scalar(ty) || (value_call && crate::core::script::schema(ty).is_some());
+            |ty: &Type| scalar(ty) || (value_input && crate::core::script::schema(ty).is_some());
         if inputs.len() != usize::from(request || create || write || query)
             || !inputs.iter().all(value_type)
             || (!create && !value_type(&target.signature.ret))
@@ -327,7 +328,7 @@ impl FunctionPlan {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                if value_call {
+                if value_input {
                     "Domain operation requires a synchronous bounded pure-value signature (64 fields, 8 record levels)"
                 } else {
                     "Domain operation requires a checked scalar signature"
@@ -378,6 +379,51 @@ impl FunctionPlan {
             unreachable!()
         };
         captures.push(text);
+        if matches!(kind, DomainCreate) && (checking || !inputs.iter().all(scalar)) {
+            let input_type = inputs[0].clone();
+            let name = {
+                let mut context = self.generics.borrow_mut();
+                let name = context
+                    .templates
+                    .iter()
+                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainCreateFinish)))
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| {
+                        type_error(
+                            &span,
+                            ErrorCode::InvalidCall,
+                            "Missing domain constructor adapter",
+                        )
+                    })?;
+                context.instantiate(
+                    &name,
+                    vec![target.signature.ret.clone(), input_type.clone()],
+                    crate::FunctionSignature::new(
+                        vec![
+                            crate::runtime::domain::module_type(),
+                            Type::String,
+                            input_type,
+                        ],
+                        info.signature.ret.clone(),
+                    ),
+                    self.instantiation_depth + 1,
+                    span,
+                )?
+            };
+            captures.extend_from_slice(&values[index + 1..]);
+            let result = self.slot(info.signature.ret.clone())?;
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::Call {
+                indirect: None,
+                name,
+                args: captures,
+                result: Some(result.clone()),
+                state: Some(state),
+            });
+            self.register_owner(result.clone(), None);
+            return Ok(Some(Flow::Value(Some(result))));
+        }
         if value_call {
             let scalar_call =
                 !checking && inputs.iter().all(scalar) && scalar(&target.signature.ret);

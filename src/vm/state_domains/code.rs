@@ -116,7 +116,9 @@ pub(super) fn state_types(module: &LoadedModule) -> HashMap<String, Type> {
         if !info.domain_entry {
             continue;
         }
-        let ty = if instance::constructor(&info) {
+        let ty = if instance::constructor(&info)
+            || crate::core::state_domain::constructor_eligible(&info)
+        {
             Some(&info.signature.ret)
         } else {
             instance::receiver(&info).or_else(|| {

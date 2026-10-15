@@ -63,6 +63,7 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.read" => DomainAccess(DomainAccessKind::Read),
                     "domain.write" => DomainAccess(DomainAccessKind::Write),
                     "domain.create" => DomainCreate,
+                    "domain.finish_create" => DomainCreateFinish,
                     "domain.after" => TimerStart(false),
                     "domain.every" => TimerStart(true),
                     "domain.finish_timer" => TimerFinish,

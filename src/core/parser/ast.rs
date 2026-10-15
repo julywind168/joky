@@ -1329,6 +1329,7 @@ pub(crate) enum CompilerIntrinsic {
     DomainAccess(DomainAccessKind),
     DomainModule,
     DomainCreate,
+    DomainCreateFinish,
     TimerStart(bool),
     TimerFinish,
     DirectoryType(Type),

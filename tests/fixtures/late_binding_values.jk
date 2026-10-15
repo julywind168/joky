@@ -5,7 +5,7 @@ struct Room { n:Int32 }
 struct Input { pub amount:Int32, tag:UInt64 }
 struct Reply { pub value:Int32, tag:UInt64 }
 fn assert(ok:Bool) { let message="late binding Script" check.assert(ok,&message) }
-fn make(n:Int32)->Room { Room{n:n} }
+fn make(input:Input)->Room { Room{n:input.amount} }
 fn read(room:&Room)->Int32 {room.n}
 fn sum(a:&Room,b:&Room)->Reply {Reply{value:a.n+b.n,tag:18446744073709551615}}
 fn transfer(a:&mut Room,b:&mut Room,input:Input)->Reply {
@@ -33,11 +33,13 @@ fn queries(a:domain.ReadHandle<Room>,b:domain.ReadHandle<Room>,extra:Int32) @sus
     assert(q.value==45+extra && q.tag==18446744073709551615)
 }
 fn hold(directory:domain.DirectoryHandle) @suspends {
-    let a=domain.create(make,40)
-    let b=domain.create(make,2)
+    let a=domain.create(make,Input{amount:40,tag:0})
+    let b=domain.create(make,Input{amount:2,tag:0})
     assert(directory.insert(1,a.handle()).is_ok())
     assert(directory.insert(2,b.handle()).is_ok())
     while domain.lookup::<Room>(directory,1).is_some() {task.yield_now()}
+    // Construction remains bound to this flow's module after publication.
+    assert(construct_probe(7)==7)
     queries(a.read_handle(),b.read_handle(),100)
     // This v1 flow must resolve the v2 operation with its original signature.
     let reply=domain.write_pair(a.handle(),b.handle(),transfer,Input{amount:2,tag:18446744073709551615}).unwrap()
@@ -57,4 +59,9 @@ fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
 }
 fn release(directory:domain.DirectoryHandle) @suspends ->Bool {
     match domain.lookup::<Room>(directory,1) {Some(a)=>directory.remove(1,a),None=>false}
+}
+
+fn construct_probe(n:Int32) @suspends ->Int32 {
+    let owner=domain.create(make,Input{amount:n,tag:0})
+    domain.read_from(owner.read_handle(),read).unwrap()
 }

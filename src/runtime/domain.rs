@@ -74,6 +74,7 @@ pub(crate) enum Operation {
     CurrentValues,
     Query,
     CurrentQuery,
+    CreateValues,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,6 +132,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__outbox_attach_pair" => Operation::OutboxAttachPair,
         "__outbox_attach_set" => Operation::OutboxAttachSet,
         "__domain_create" => Operation::Create,
+        "__domain_create_values" => Operation::CreateValues,
         "__domain_handle" => Operation::Handle,
         "__domain_readonly" => Operation::ReadOnly,
         "__domain_close" => Operation::Close,
@@ -350,6 +352,14 @@ impl Operation {
             ),
             Self::SetRevision => (vec![Type::reference(commit_type(), false), token], i),
             Self::Create => (vec![m, text, i], owner),
+            Self::CreateValues => (
+                vec![
+                    m,
+                    text,
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), false),
+                ],
+                owner,
+            ),
             Self::Handle => (vec![Type::reference(owner, false)], token),
             Self::ReadOnly => (vec![token.clone()], token),
             Self::Close => (vec![Type::reference(owner, true)], Type::Unit),
@@ -536,6 +546,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         69 => Operation::CurrentValues,
         70 => Operation::Query,
         71 => Operation::CurrentQuery,
+        72 => Operation::CreateValues,
 
         _ => {
             super::error::record_error(Error::new_with_code(

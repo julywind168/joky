@@ -1241,3 +1241,140 @@ fn exhaustive_state_domains_queries_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_create_values_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_create_values.jk"),
+        [0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel value constructor packets and owning roots at every instruction"]
+fn exhaustive_state_domains_create_values_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_create_values.jk"),
+        0..=8192,
+        true,
+    );
+}
+
+#[test]
+fn state_domains_create_values_failures_restore_budgets_and_registry() {
+    use crate::runtime::{arena, executor::TaskGroup};
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            arena::LIMIT.with(|limit| limit.set(self.0));
+        }
+    }
+    let _restore = Restore(arena::LIMIT.with(|limit| limit.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../tests/fixtures/state_domain_create_values.jk"
+        ))
+        .unwrap();
+        let baseline = arena::LIVE.with(|n| n.get());
+        // The host InstanceValue API intentionally remains scalar-only.
+        assert!(vm
+            .create_domain("make", &[InstanceValue::Int32(24)])
+            .is_err());
+        let mut failures = 0;
+        let mut successes = 0;
+        for (entry, domain_limit, arena_limit) in (0..=4096)
+            .step_by(32)
+            .map(|n| ("construct", usize::MAX, n))
+            .chain([
+                ("construct", 1, arena::MAX_BYTES),
+                ("failure", usize::MAX, arena::MAX_BYTES),
+            ])
+        {
+            vm.set_domain_limits(DomainLimits {
+                max_state_bytes: domain_limit,
+                ..Default::default()
+            })
+            .unwrap();
+            arena::LIMIT.with(|limit| limit.set(arena_limit));
+            let group = TaskGroup::new();
+            let result = (|| {
+                let id = vm.executor.spawn(&group, vm.prepare_async(entry, &[])?)?;
+                for _ in 0..1000 {
+                    for done in vm.poll_tasks(1)?.completed {
+                        if done.id == id {
+                            return done.result;
+                        }
+                    }
+                }
+                panic!("constructor stalled");
+            })();
+            match result {
+                Ok(value) => {
+                    assert_eq!(value, 24);
+                    successes += 1;
+                }
+                Err(error) => {
+                    if entry == "construct" {
+                        assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+                    } else {
+                        assert!(error.message().contains("Division by zero"), "{error}");
+                    }
+                    failures += 1;
+                }
+            }
+            vm.executor.cancel_group(&group);
+            assert_eq!(vm.task_count(), 0);
+            assert_eq!(
+                vm.domains.borrow().usage(),
+                (0, 0, 0, 0),
+                "{mode:?} {entry} {arena_limit}"
+            );
+            assert_eq!(
+                arena::LIVE.with(|n| n.get()),
+                baseline,
+                "{mode:?} {entry} {arena_limit}"
+            );
+        }
+        assert!(failures > 0 && successes > 0);
+        arena::LIMIT.with(|limit| limit.set(arena::MAX_BYTES));
+    }
+}
+
+#[test]
+fn state_domains_create_values_publish_constructor_only_state_schemas() {
+    use crate::runtime::executor::TaskGroup;
+    let source = r#"import joky/domain import joky/task
+struct Init {n:Int32} struct State {n:Int32}
+fn make(p:Init)->State {State{n:p.n}}
+fn hold() @suspends {
+    let owner=domain.create(make,Init{n:7})
+    while true {task.yield_now()}
+}"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let group = TaskGroup::new();
+        vm.executor
+            .spawn(&group, vm.prepare_async("hold", &[]).unwrap())
+            .unwrap();
+        for _ in 0..1000 {
+            vm.poll_tasks(1).unwrap();
+            if vm.domains.borrow().usage().0 == 1 {
+                break;
+            }
+        }
+        assert_eq!(vm.domains.borrow().usage().0, 1);
+        // Constructor input changes do not change an existing root's schema.
+        vm.load_source("struct Init {extra:Int32,n:Int32} struct State {n:Int32} fn make(p:Init)->State{State{n:p.n+1}}") .unwrap();
+        assert_eq!(vm.publish_domain_code().unwrap(), 1);
+        vm.load_source(
+            "struct Init {n:Int64} struct State {n:Int64} fn make(p:Init)->State{State{n:p.n}}",
+        )
+        .unwrap();
+        assert!(vm.publish_domain_code().is_err());
+        vm.executor.cancel_group(&group);
+        assert_eq!(vm.task_count(), 0);
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}
