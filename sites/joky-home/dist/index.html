@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f4">
+  <meta name="description" content="认识 Joky：一门由 Rust 实现的小型语言，拥有 JIT、AOT 与字节码解释器。用一点代码，探索大大的可能。">
+  <title>Joky · 小小的语言，大大的可能</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script src="./main.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="#" aria-label="Joky 首页"><span class="brand-face" aria-hidden="true">{<i>··</i>}</span>joky<span class="brand-dot">.</span></a>
+      <nav aria-label="主导航"><a href="#about">认识 Joky</a><a href="#examples">代码一瞥</a><a href="#start">开始探索 <span aria-hidden="true">↗</span></a></nav>
+      <span class="status"><span></span> 正在生长中</span>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span aria-hidden="true">✳</span> A LITTLE LANGUAGE, A LOT TO EXPLORE.</p>
+          <h1 id="hero-title">小小的语言，<br><span>大大的可能。</span><svg class="underline" viewBox="0 0 400 18" aria-hidden="true"><path d="M4 11 Q180 -3 395 9 M65 16 Q230 6 358 14"/></svg></h1>
+          <p class="hero-description">你好，我是 Joky。<br>一门用 Rust 打造的小型语言，<br>陪你从第一行代码，探索到自己的运行时。</p>
+          <div class="hero-actions"><a class="button primary" href="#start">从这里开始 <span aria-hidden="true">↗</span></a><a class="text-link" href="#examples">先看一小段代码 <span aria-hidden="true">→</span></a></div>
+          <p class="hero-note"><span aria-hidden="true">♡</span> 为语言实现与嵌入实验而生</p>
+        </div>
+        <div class="hero-art" aria-label="两个可爱的 Joky 小角色陪伴着代码卡片" role="img">
+          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+          <span class="art-spark spark-one">✳</span><span class="art-spark spark-two">✧</span>
+          <span class="hand-note">say hello to possibility!</span>
+          <svg class="mascots" viewBox="0 0 520 330" aria-hidden="true">
+            <ellipse cx="274" cy="302" rx="165" ry="13" fill="#e9e7db"/>
+            <g class="green-friend"><path d="M332 145 C318 112 328 74 347 70 C362 66 370 102 374 116 C397 104 409 110 415 123 C435 103 450 96 458 107 C471 123 450 151 450 151 C480 185 479 242 447 269 C421 292 349 286 330 263 C306 234 313 179 332 145Z" fill="#bdcbb3" stroke="#536b56" stroke-width="2.4"/><path d="M354 182v9m43-12v9" stroke="#354235" stroke-width="6" stroke-linecap="round"/><path d="M369 198q10 10 18-2" fill="none" stroke="#354235" stroke-width="2.5" stroke-linecap="round"/><ellipse cx="344" cy="202" rx="9" ry="5" fill="#e4a990"/><ellipse cx="411" cy="196" rx="9" ry="5" fill="#e4a990"/><path d="M332 258q-20 17-28 6m123 10 8 16" fill="none" stroke="#536b56" stroke-width="3" stroke-linecap="round"/></g>
+            <g class="orange-friend"><path d="M116 155 C101 139 104 113 120 109 C135 105 149 123 154 136 C180 119 213 121 238 139 C251 124 271 122 278 134 C286 148 273 167 265 174 C288 206 278 259 248 277 C214 298 155 291 129 267 C101 241 101 189 116 155Z" fill="#ee946f" stroke="#ae5b40" stroke-width="2.4"/><path d="M160 202v10m46-10v10" stroke="#583c2f" stroke-width="6" stroke-linecap="round"/><path d="M178 222q10 10 19-1" fill="none" stroke="#583c2f" stroke-width="2.5" stroke-linecap="round"/><ellipse cx="148" cy="220" rx="10" ry="6" fill="#e4785e"/><ellipse cx="222" cy="220" rx="10" ry="6" fill="#e4785e"/><path d="m145 278-10 14m99-12 9 12M113 227q-17 5-23-9" fill="none" stroke="#ae5b40" stroke-width="3" stroke-linecap="round"/></g>
+          </svg>
+          <div class="hello-card"><div class="window-bar"><span class="window-dots"><i></i><i></i><i></i></span><span>hello.jk</span><span class="little-flower">✳</span></div><pre><code><span class="keyword">fn</span> <span class="function">main</span>() {
+    <span class="function">println</span>(<span class="number">42</span>)
+}</code></pre><div class="card-output"><span aria-hidden="true">↳</span> 42 <span class="output-note">一切，从这里开始。</span></div></div>
+          <div class="sticker">small &amp; curious <span>♡</span></div>
+        </div>
+      </section>
+
+      <section class="about" id="about" aria-labelledby="about-title">
+        <div class="section-label"><span>01 / MEET JOKY</span><span>保持小巧，认真探索。</span></div>
+        <h2 class="sr-only" id="about-title">认识 Joky 的三个特点</h2>
+        <div class="features">
+          <article><span class="feature-icon coral" aria-hidden="true">{ }</span><h3>写起来，轻一点。</h3><p>熟悉的函数与类型，清晰的表达式。<br>从一个 <code>main</code> 开始，让想法慢慢长大。</p><span class="feature-caption">简洁语法 · 静态类型 · 泛型</span></article>
+          <article><span class="feature-icon green" aria-hidden="true">↗</span><h3>一份代码，三种出发。</h3><p>即时编译、原生构建，或字节码解释。<br>同一套语言语义，选择合适的执行方式。</p><span class="feature-caption">JIT · AOT · Interpreter</span></article>
+          <article><span class="feature-icon yellow" aria-hidden="true">⌘</span><h3>也能住进你的应用。</h3><p>通过 Rust 与 C 接口嵌入宿主，<br>探索脚本、任务与运行时之间的连接。</p><span class="feature-caption">Rust 实现 · 可嵌入 · CPS 运行时</span></article>
+        </div>
+      </section>
+
+      <section class="examples" id="examples" aria-labelledby="examples-title">
+        <div class="example-intro"><p class="eyebrow">02 / A TINY TASTE</p><h2 id="examples-title">读得懂的代码，<br>是个好开始<span class="coral-text">。</span></h2><p>不妨先打个招呼，再试试循环。<br>一点点，就能认识 Joky 的样子。</p><div class="sample-tabs" role="tablist" aria-label="代码示例"><button id="hello-tab" role="tab" aria-selected="true" aria-controls="sample-panel" data-sample="hello">你好，Joky</button><button id="loop-tab" role="tab" aria-selected="false" aria-controls="sample-panel" data-sample="loop" tabindex="-1">一个小循环</button></div><p class="sample-note">真实语法示例 · 输出为示例展示</p></div>
+        <div class="sample-card" id="sample-panel" role="tabpanel" aria-labelledby="hello-tab" tabindex="0"><div class="sample-toolbar"><span id="sample-filename">hello.jk</span><button class="copy-button" id="copy-code" aria-label="复制示例代码"><span aria-hidden="true">⧉</span> 复制代码</button></div><pre class="sample-code"><code id="sample-code"></code></pre><div class="sample-result"><span>OUTPUT</span><samp id="sample-output">42</samp><span class="result-check" aria-hidden="true">✓</span></div></div>
+      </section>
+
+      <section class="start" id="start" aria-labelledby="start-title"><div><p class="eyebrow">03 / LET’S MAKE SOMETHING</p><h2 id="start-title">下一行，交给你。</h2><p>在 Joky 源码目录里，运行你的第一个示例。</p></div><div class="start-command"><div><code>cargo run -- run examples/hello.jk</code><button id="copy-command" class="copy-icon" aria-label="复制运行命令">⧉</button></div><p><span class="tiny-dot"></span> 需要 Rust 1.97+ <span class="command-divider">/</span> 默认以 JIT 执行</p></div></section>
+      <div class="development-note"><span aria-hidden="true">✿</span><p>Joky 还在生长。目前适合语言实现与嵌入实验，尚无包管理或多线程调度。<br class="desktop-break">欢迎带着好奇心，从一个小小的想法开始。</p></div>
+    </main>
+    <footer><a class="brand footer-brand" href="#" aria-label="回到 Joky 首页">joky<span class="brand-dot">.</span></a><span>A little language. A curious journey.</span><span>Made with Rust &amp; curiosity <span class="coral-text">♡</span></span></footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

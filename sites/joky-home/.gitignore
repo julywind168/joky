@@ -1,0 +1,10 @@
+.DS_Store
+.openai/local/
+.sites-runtime/
+.sites-checkout/
+.sites-checkout-*/
+node_modules/
+.env
+.env.*
+!.env.example
+*.tar.gz

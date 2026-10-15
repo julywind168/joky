@@ -1,0 +1,4 @@
+# Local publishing checkouts and generated review/deployment artifacts.
+/.local/
+/*-deploy.tar.gz
+/*-preview.jpg
