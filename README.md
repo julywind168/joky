@@ -70,6 +70,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 挂起 | 无引用拥有值及整个对象的共享/独占借用跨挂起、`@suspends`、`parallel` / `race` 分支轮询、race 同类型无引用结果、parallel 按序结果元组、scope 主体末值与 `branch` 动态子任务、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册（含浮点与混合标量签名）、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
 | Godot 原型 | G0–G2：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API、帧回调、所属任务与引擎等待；TCP 双向收发、背压与消息生命周期已联合验收；[构建和示例](integrations/godot/README.md) |
+| 文件 | `joky/fs`：异步 open/read/write/seek/sync_all/close、二进制字节与显式 UTF-8 转换；CLI 提供本机服务，嵌入默认 Unsupported；[文件示例](examples/files.jk)与 [Godot 可选适配](integrations/godot/README.md#可选文件服务) |
 | 网络 | 共享 I/O reactor、IPv4/IPv6 TCP、独立读写端与缓冲拆分、完整写入、有界接收缓冲、读满/分隔符/UTF-8 行、四字节大端长度前缀消息；CLI/JIT/解释器/AOT 验证，Godot 已验收双向收发、背压与消息生命周期 |
 | 标准库 | 默认 prelude、option/result/integer/float/array/list/set/map/string/show/io/eq/hash/check 源码库、模块及成员别名；`joky/vm` 源码库、拥有型 `Vm` 与自动释放、加载、整数与浮点调用、重载、关闭和错误查询 |
 
@@ -94,6 +95,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0–G2 已接入 Node 的解释器脚本、基础属性、受检 Node API、帧回调与所属异步任务/引擎等待，示例见 [async.tscn](integrations/godot/demo/async.tscn)；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
 - [List / Set 开发计划](docs/list-set-storage-ownership.md)：基于 Array 的可变双向链表与基于 Map 的哈希集合；LS0、List L1–L4、Set S1–S3 与联合开发验收已完成；[List 示例](examples/lists.jk)覆盖位置增删、反转和保持顺序的批量转移；[Set 示例](examples/sets.jk)覆盖去重、借用查询、并集与导出。
+- [文件运行时开发计划](docs/file-runtime.md)：FS0–FS5 已提供独立文件资源、有界后台服务、可选宿主描述符、CLI 本机实现及 Godot 显式 FileAccess；平台与支持限制见验收记录。
 - [网络运行时开发计划](docs/network-runtime.md)：NET0–NET5 已提供共享驱动、`joky/tcp` 公共模块、write_all、连接额度、有界 BufferedTcp 接收缓冲、独立读写端及缓存交接、读满/分隔符/UTF-8 行与长度前缀消息；真实背压、协议取消和 Godot 联合验收已完成。[消息回声示例](examples/tcp_messages.jk)以有限回环服务展示空消息、UTF-8 与 EOF；[双向会话示例](examples/tcp_duplex.jk)同时接收推送和发送命令。[NET6 DNS](docs/network-runtime.md#16-net6-非阻塞域名解析开发计划)已提供 `joky/dns.lookup`，通过有界线程池调用系统解析器；[有限解析示例](examples/dns_lookup.jk)使用 localhost，不依赖公网。
 - [Struct JSON 自动派生](examples/json_derive.jk)：`#derive(ToJson, FromJson)` 支持普通及泛型 struct，复用 `joky/json/typed` 的字段路径错误和映射限额；也可[手写实现](examples/json_struct.jk)。用法见[类型化 JSON](docs/language.md#struct-与类型化-json)。
 - [JSON 编解码开发计划](docs/json-codec.md)：JSON0–JSON3 已完成，`joky/json` 提供拥有值树、保留拼写的 Number 和带限额的严格编解码；[JSON TCP 示例](examples/tcp_json.jk)与 Godot 任务已验收请求/回复/推送、错误恢复、背压和生命周期。

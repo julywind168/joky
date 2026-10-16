@@ -1,0 +1,92 @@
+import joky/task
+import joky/fs
+import joky/array.{type Array}
+fn run() @suspends -> Int32 {
+    var options = fs.OpenOptions.new()
+    options.write = true
+    options.create = true
+    options.truncate = true
+    var file = match fs.open("bytes.bin", options) { Ok(value) => value, Err(error) => { return 1 } }
+    var bytes = Array.new::<UInt8>()
+    bytes.push(0)
+    bytes.push(255)
+    bytes.push(42)
+    match file.write(bytes) { Ok(n) => { if n != 3 { return 2 } }, Err(error) => { return 3 } }
+    match file.seek(fs.SeekFrom.Start(0)) { Ok(n) => { if n != 0 { return 4 } }, Err(error) => { return 5 } }
+    let data = match file.read(10) { Ok(value) => value, Err(error) => { return 6 } }
+    if data.len() != 3 { return 7 }
+    match data.get(1) { Some(value) => { if value != 255 { return 8 } }, None => { return 8 } }
+    let eof = match file.read(1) { Ok(value) => value, Err(error) => { return 9 } }
+    if eof.len() != 0 { return 10 }
+    match file.sync_all() { Ok(value) => {}, Err(error) => { return 11 } }
+    match file.close() { Ok(value) => {}, Err(error) => { return 12 } }
+    42
+}
+fn malformed() @suspends -> Int32 {
+    match fs.open("bad", fs.OpenOptions.new()) {
+        Ok(file) => { let ignored = file.close() 0 }
+        Err(error) => match error.kind { fs.ErrorKind.SystemFailure => 42, _ => 1 }
+    }
+}
+fn error_code(error: fs.IoError) -> Int32 {
+    match error.kind {
+        fs.ErrorKind.Unsupported => 1, fs.ErrorKind.PermissionDenied => 2,
+        fs.ErrorKind.NotFound => 3, fs.ErrorKind.AlreadyExists => 4,
+        fs.ErrorKind.InvalidInput => 5, fs.ErrorKind.Busy => 6,
+        fs.ErrorKind.Closed => 7, fs.ErrorKind.LimitExceeded => 8,
+        fs.ErrorKind.WriteZero => 9, fs.ErrorKind.SystemFailure => 10
+    }
+}
+fn flags(value: UInt64) @suspends -> Int32 {
+    let options = fs.OpenOptions { read: (value & 1) != 0, write: (value & 2) != 0,
+        append: (value & 4) != 0, create: (value & 8) != 0,
+        create_new: (value & 16) != 0, truncate: (value & 32) != 0 }
+    match fs.open("matrix.bin", options) {
+        Ok(file) => match file.close() { Ok(_) => 0, Err(e) => error_code(e) }
+        Err(e) => error_code(e)
+    }
+}
+fn boundaries() @suspends -> Int32 {
+    match fs.open("", fs.OpenOptions.new()) { Err(e) => { if error_code(e) != 5 { return 1 } }, Ok(_) => { return 2 } }
+    match fs.open("nul\0path", fs.OpenOptions.new()) { Err(e) => { if error_code(e) != 5 { return 3 } }, Ok(_) => { return 4 } }
+    var options = fs.OpenOptions.new()
+    options.write = true
+    options.create = true
+    options.truncate = true
+    var file = match fs.open("limits.bin", options) { Ok(f) => f, Err(_) => { return 5 } }
+    match file.read(0) { Err(e) => { if error_code(e) != 5 { return 6 } }, Ok(_) => { return 7 } }
+    match file.read(1048577) { Err(e) => { if error_code(e) != 8 { return 8 } }, Ok(_) => { return 9 } }
+    match file.write(Array.new::<UInt8>()) { Ok(n) => { if n != 0 { return 10 } }, Err(_) => { return 11 } }
+    let text = "你好，Joky🙂"
+    let length = text.byte_length()
+    match file.write(text.into_bytes()) { Ok(n) => { if n != length { return 12 } }, Err(_) => { return 13 } }
+    match file.seek(fs.SeekFrom.End(-4)) { Ok(n) => { if n != length - 4 { return 14 } }, Err(_) => { return 15 } }
+    match file.seek(fs.SeekFrom.Current(-1)) { Ok(n) => { if n != length - 5 { return 16 } }, Err(_) => { return 17 } }
+    match file.seek(fs.SeekFrom.Start(0)) { Ok(_) => {}, Err(_) => { return 18 } }
+    let bytes = match file.read(1048576) { Ok(b) => b, Err(_) => { return 19 } }
+    let text = match String.from_utf8(bytes) { Ok(t) => t, Err(_) => { return 20 } }
+    if text.byte_length() != length { return 21 }
+    match file.close() { Ok(_) => {}, Err(_) => { return 22 } }
+    options.truncate = false
+    options.write = false
+    options.append = true
+    var file = match fs.open("limits.bin", options) { Ok(f) => f, Err(_) => { return 23 } }
+    match file.seek(fs.SeekFrom.Start(0)) { Ok(_) => {}, Err(_) => { return 24 } }
+    match file.write("!".into_bytes()) { Ok(n) => { if n != 1 { return 25 } }, Err(_) => { return 26 } }
+    match file.close() { Ok(_) => {}, Err(_) => { return 27 } }
+    42
+}
+
+fn pending_read(file: &mut fs.File) @suspends { let ignored = file.read(8) }
+fn after_cancel(expected: Int32) @suspends -> Int32 {
+    var file = match fs.open("cancel", fs.OpenOptions.new()) { Ok(f) => f, Err(_) => { return 1 } }
+    race { | pending_read(&mut file) | task.yield_now() }
+    match file.read(0) { Err(e) => { if error_code(e) != expected { return 2 } }, Ok(_) => { return 3 } }
+    match file.write(Array.new::<UInt8>()) {
+        Err(e) => { if expected != 7 || error_code(e) != 7 { return 4 } }
+        Ok(n) => { if expected == 7 || n != 0 { return 5 } }
+    }
+    42
+}
+fn cancel_started() @suspends -> Int32 { after_cancel(7) }
+fn cancel_queued() @suspends -> Int32 { after_cancel(5) }

@@ -1,0 +1,16 @@
+import joky/fs
+import joky/check.{assert}
+import godot/task
+struct State { completed: Int32 }
+fn create() -> State { State { completed: 0 } }
+fn completed(state: &State) -> Int32 { state.completed }
+fn record(state: &mut State) { state.completed = state.completed + 1 }
+fn task_missing() @suspends {
+    let message = "Godot file capability is optional"
+    match fs.open("res://files_payload.txt", fs.OpenOptions.new()) {
+        Err(e) => match e.kind { fs.ErrorKind.Unsupported => {}, _ => assert(false, &message) }
+        Ok(f) => { let ignored = f.close() assert(false, &message) }
+    }
+    let method = "record"
+    task.call(&method)
+}

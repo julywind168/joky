@@ -60,12 +60,12 @@ fn async_main(entry: &EntryPoint, main_slots: Option<usize>) -> Result<String, E
          extern JokyCpsFrame *joky_cps_frame_new(size_t);\n\
          extern void joky_cps_frame_free(JokyCpsFrame *);\n\
          extern uint64_t joky_cps_result(const JokyCpsFrame *);\n\
-         extern int32_t joky_cps_block_on(int32_t (*)(JokyCpsFrame *), JokyCpsFrame *);\n\
+         extern int32_t joky_fs_block_on_native(int32_t (*)(JokyCpsFrame *), JokyCpsFrame *);\n\
          extern int32_t __joky_user_main(JokyCpsFrame *);\n\
          int main(void) {{\n\
              joky_runtime_error_clear();\n\
              JokyCpsFrame *frame = joky_cps_frame_new({slots});\n\
-             int32_t status = joky_cps_block_on(__joky_user_main, frame);\n\
+             int32_t status = joky_fs_block_on_native(__joky_user_main, frame);\n\
              int result = 1;\n\
              if (status == 0 && !joky_runtime_error_code()) result = {result};\n\
              joky_cps_frame_free(frame);\n\

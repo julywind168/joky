@@ -260,3 +260,29 @@ deadline 从连接建立并拆分后开始，以真实单调时间计时。
 不使用其浮点表示证明 Joky 的大整数精度。大数字原始拼写与 NUL 由主仓库原生对端核对字节。
 真实引擎场景覆盖两实例、分片/合包、错误恢复、背压下推送及解除后的完整输出、暂停截止时间、
 重载快照、三类生命周期取消、旧连接迟到数据隔离与计数归零，已接入 check.sh。
+
+
+## 可选文件服务
+
+默认不提供文件能力：`joky/fs` 仍能导入，合法 open 返回 Unsupported。通过
+`JokyLanguage.enable_file_access(true)` 显式开启引擎实现，再加载/重载需要文件的脚本；
+传 false 只影响以后编译的快照，既有实例/任务继续保留原服务。不同快照可共享同一服务额度。
+配置调用属于引擎主线程的初始化/管理操作，不应每帧调用。
+
+路径必须以 `res://` 或 `user://` 开头。res:// 仅只读，使用引擎 FileAccess 解析路径；
+user:// 支持只读、已有文件的 write/read+write，以及 create+truncate 的 write/read+write。
+其余合法模式（尤其 append、create_new、保留已有内容的 create）返回 Unsupported，
+不以“先检查存在再打开”模拟排他创建。无效语言选项仍返回 InvalidInput。
+FileAccess::flush 没有 OS fsync 的持久性保证，所以 `sync_all` 返回 Unsupported。
+关闭按引擎 void close 接口完成，不能报告引擎没有暴露的关闭错误。
+
+服务只有一个 worker。Gd<FileAccess> 在该线程创建、使用、关闭并保存在 TLS 表中，
+任务线程只交接复制字节、数字身份与完成通知，不接触后台的引擎对象。普通取消、节点删除、
+脚本卸载不等待 I/O；扩展退出时显式 drain 服务，确保引擎 API 失效前关闭全部 FileAccess。
+这个退出步骤可能等待未结束的文件调用；扩展本身仍禁止动态重载。
+
+[files.jk](demo/files.jk) 与 [files.gd](demo/tests/files.gd) 验收缺省能力、res:// 读取、
+user:// 字节往返、定位、不支持的同步语义、帧推进、配置快照、取消、实例删除和脚本重载。
+[files_shutdown.gd](demo/tests/files_shutdown.gd) 另行覆盖带活跃文件任务的引擎退出。
+首轮使用 macOS/aarch64、Godot 4.7.2、godot-rust 0.5.5（experimental-threads）。
+其他桌面平台、导出包内资源和移动/Web 平台尚未验证。

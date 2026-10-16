@@ -1,0 +1,90 @@
+// File capabilities are supplied explicitly by the embedding host.
+import joky/array.{type Array}
+import joky/result.{type Result, Ok, Err}
+import joky/integer
+
+pub enum ErrorKind { Unsupported, PermissionDenied, NotFound, AlreadyExists, InvalidInput, Busy, Closed, LimitExceeded, WriteZero, SystemFailure }
+pub struct IoError { pub kind: ErrorKind, pub message: String }
+pub struct OpenOptions { pub read: Bool, pub write: Bool, pub append: Bool, pub create: Bool, pub create_new: Bool, pub truncate: Bool }
+impl OpenOptions {
+    pub fn new() -> Self { OpenOptions { read: true, write: false, append: false, create: false, create_new: false, truncate: false } }
+}
+pub enum SeekFrom { Start(UInt64), Current(Int64), End(Int64) }
+pub struct File { owner: fs.FileOwner }
+extern fn __fs_open(path: String, flags: UInt64) @suspends -> fs.OutcomeOwner
+extern fn __fs_read(file: &mut fs.FileOwner, limit: UInt64) @suspends -> fs.OutcomeOwner
+extern fn __fs_write(file: &mut fs.FileOwner, bytes: Array<UInt8>) @suspends -> fs.OutcomeOwner
+extern fn __fs_seek(file: &mut fs.FileOwner, origin: UInt64, offset: UInt64) @suspends -> fs.OutcomeOwner
+extern fn __fs_sync(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
+extern fn __fs_close(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
+extern fn __fs_code(result: &mut fs.OutcomeOwner) @suspends -> UInt64
+extern fn __fs_message(result: &mut fs.OutcomeOwner) @suspends -> String
+extern fn __fs_file(result: &mut fs.OutcomeOwner) @suspends -> fs.FileOwner
+extern fn __fs_bytes(result: &mut fs.OutcomeOwner) @suspends -> Array<UInt8>
+extern fn __fs_count(result: &mut fs.OutcomeOwner) @suspends -> UInt64
+fn error_kind(code: UInt64) -> ErrorKind {
+    if code == 1 { return ErrorKind.Unsupported }
+    if code == 2 { return ErrorKind.PermissionDenied }
+    if code == 3 { return ErrorKind.NotFound }
+    if code == 4 { return ErrorKind.AlreadyExists }
+    if code == 5 { return ErrorKind.InvalidInput }
+    if code == 6 { return ErrorKind.Busy }
+    if code == 7 { return ErrorKind.Closed }
+    if code == 8 { return ErrorKind.LimitExceeded }
+    if code == 9 { return ErrorKind.WriteZero }
+    ErrorKind.SystemFailure
+}
+fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
+    IoError { kind: error_kind(code), message: __fs_message(result) }
+}
+pub fn open(path: String, options: OpenOptions) @suspends -> Result<File, IoError> {
+    var flags: UInt64 = 0
+    if options.read { flags = flags | 1 }
+    if options.write { flags = flags | 2 }
+    if options.append { flags = flags | 4 }
+    if options.create { flags = flags | 8 }
+    if options.create_new { flags = flags | 16 }
+    if options.truncate { flags = flags | 32 }
+    var result = __fs_open(path, flags)
+    let code = __fs_code(&mut result)
+    if code != 0 { return Err(error(&mut result, code)) }
+    Ok(File { owner: __fs_file(&mut result) })
+}
+impl File {
+    pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
+        var result = __fs_read(&mut self.owner, limit)
+        let code = __fs_code(&mut result)
+        if code != 0 { return Err(error(&mut result, code)) }
+        Ok(__fs_bytes(&mut result))
+    }
+    pub fn write(&mut self, bytes: Array<UInt8>) @suspends -> Result<UInt64, IoError> {
+        var result = __fs_write(&mut self.owner, bytes)
+        let code = __fs_code(&mut result)
+        if code != 0 { return Err(error(&mut result, code)) }
+        Ok(__fs_count(&mut result))
+    }
+    pub fn seek(&mut self, from: SeekFrom) @suspends -> Result<UInt64, IoError> {
+        let (origin, offset): (UInt64, UInt64) = match from {
+            SeekFrom.Start(value) => (0, value)
+            SeekFrom.Current(value) => (1, uint64(value))
+            SeekFrom.End(value) => (2, uint64(value))
+        }
+        var result = __fs_seek(&mut self.owner, origin, offset)
+        let code = __fs_code(&mut result)
+        if code != 0 { return Err(error(&mut result, code)) }
+        Ok(__fs_count(&mut result))
+    }
+    pub fn sync_all(&mut self) @suspends -> Result<Unit, IoError> {
+        var result = __fs_sync(&mut self.owner)
+        let code = __fs_code(&mut result)
+        if code != 0 { return Err(error(&mut result, code)) }
+        Ok({})
+    }
+    pub fn close(self) @suspends -> Result<Unit, IoError> {
+        var owner = self.owner
+        var result = __fs_close(&mut owner)
+        let code = __fs_code(&mut result)
+        if code != 0 { return Err(error(&mut result, code)) }
+        Ok({})
+    }
+}

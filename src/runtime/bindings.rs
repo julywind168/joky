@@ -9,6 +9,7 @@ pub(crate) enum HostEntry {
     Direct(*const u8),
     Tcp(super::tcp::Operation),
     Dns,
+    Fs(super::fs::Operation),
     VmCall,
     Domain(super::domain::Operation),
     ResourceFactory(Rc<super::resource::ResourceFactoryV1>),

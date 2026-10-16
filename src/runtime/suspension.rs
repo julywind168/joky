@@ -48,6 +48,7 @@ pub struct Continuation {
     module_version: ModuleId,
     status: ContinuationStatus,
     started: bool,
+    files: Option<super::fs::FileService>,
     _code_owner: Rc<dyn Any>,
     sources: std::sync::Arc<crate::SourceMap>,
 }
@@ -96,6 +97,14 @@ impl Continuation {
             module_version,
             status: ContinuationStatus::Pending,
             started: false,
+            files: owner
+                .downcast_ref::<crate::backends::jit::CompiledModule>()
+                .and_then(|m| m.files.clone())
+                .or_else(|| {
+                    owner
+                        .downcast_ref::<crate::backends::interp::BytecodeModule>()
+                        .and_then(|m| m.files.clone())
+                }),
             _code_owner: owner,
             sources: Default::default(),
         }
@@ -111,9 +120,30 @@ impl Continuation {
             module_version,
             status: ContinuationStatus::Pending,
             started: false,
+            files: owner
+                .downcast_ref::<crate::backends::jit::CompiledModule>()
+                .and_then(|m| m.files.clone())
+                .or_else(|| {
+                    owner
+                        .downcast_ref::<crate::backends::interp::BytecodeModule>()
+                        .and_then(|m| m.files.clone())
+                }),
             _code_owner: owner,
             sources: Default::default(),
         }
+    }
+
+    /// Attach an explicitly granted capability to a native embedded task.
+    pub fn with_file_service(mut self, service: super::fs::FileService) -> Result<Self, Error> {
+        if self.started {
+            return Err(Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::InvalidState,
+                "Configure file service before starting a continuation",
+            ));
+        }
+        self.files = Some(service);
+        Ok(self)
     }
 
     pub(crate) fn with_sources(mut self, sources: std::sync::Arc<crate::SourceMap>) -> Self {
@@ -201,6 +231,7 @@ impl Continuation {
                 })
             }),
         );
+        let _files = super::fs::enter(self.files.clone());
         self.started = true;
         let result = match &mut self.inner {
             ContinuationInner::Native(task) => {

@@ -190,6 +190,12 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
                 VmMode::Jit
             },
         );
+        if matches!(command, Command::Run { .. }) {
+            vm.set_file_service(joky::runtime::fs::FileService::native(
+                ".",
+                Default::default(),
+            )?)?;
+        }
         vm.set_prelude_enabled(prelude);
         let ast = vm.type_registry().resolve_file(path)?;
         let result = (|| {

@@ -1,12 +1,12 @@
 # 文件运行时设计与开发计划
 
-状态：设计草案，2026-10-17。FS0–FS5 均未开始；本文的模块、接口、配置和错误名称
-是拟议契约，不表示已经实现。首版以有界后台文件操作为目标，不要求同时完成全部文件系统 API。
+状态：FS0–FS5 首版实现于 2026-10-17；正式模块为 `joky/fs`。
+契约与 FS0 探针见第 10 节，实现、验收证据及平台限制见第 11 节。首版不包含全部文件系统 API。
 
 当前实现语义以 [language.md](language.md) 为准；已有资源与线程边界见
 [architecture.md](architecture.md)，DNS 的实施经验见
 [网络运行时计划](network-runtime.md)。本文记录文件专项的设计选择、实施顺序和验收门槛；
-实现后将稳定的用户接口归入 language.md，将 ABI 与生命周期不变量归入 architecture.md，
+稳定的用户接口已归入 language.md，ABI 与生命周期不变量归入 architecture.md，
 这里保留阶段与验收记录，不复制两份长期规范。
 
 ## 1. 目标与现状
@@ -15,7 +15,7 @@ Joky 脚本应能通过统一的 `joky/fs.File` 使用文件。CLI 可以提供�
 嵌入宿主可以提供自己的文件服务，也可以完全不提供文件能力。文件操作不能在语言
 调度线程中执行阻塞 I/O；JIT、解释器与独立 AOT 使用相同的资源、错误和取消语义。
 
-| 已有基础 | 文件专项仍需实现 |
+| 开发前基础 | 本次文件专项 |
 | --- | --- |
 | `Type::Resource`、`OwnedResource`、资源工厂与唯一释放责任 | `fs.FileOwner` 的类型绑定、文件操作适配器与宿主实现选择 |
 | `tcp.StreamOwner` 和公开记录包装 | `File` 及 `Result` 文件 API，不复用 TCP 类型身份 |
@@ -50,11 +50,11 @@ Joky 脚本应能通过统一的 `joky/fs.File` 使用文件。CLI 可以提供�
 `Err(Unsupported)`，不构造空句柄或伪造成功结果。仅导入模块、声明含 File 的类型，
 或者加载包含可选文件分支的程序，不应因为缺少文件能力失败。
 
-| 运行环境 | 拟议默认行为 |
+| 运行环境 | 默认行为 |
 | --- | --- |
 | Joky CLI、CLI 生成的独立程序 | 显式安装本机文件实现 |
 | Rust/C 嵌入 VM 或嵌入 AOT | 默认缺省实现，宿主显式安装文件服务 |
-| Godot | 默认缺省实现；引擎文件适配器单独交付，不能因运行在桌面而自动开放本机文件系统 |
+| Godot | 默认缺省实现；显式开启引擎 FileAccess，不能因运行在桌面而自动开放本机文件系统 |
 | 测试 | 安装内存、可控阻塞或故障注入实现 |
 
 能力选择属于执行上下文，不使用可变的进程全局“当前文件实现”。多个 VM/执行器可以
@@ -79,9 +79,9 @@ Joky 脚本应能通过统一的 `joky/fs.File` 使用文件。CLI 可以提供�
 不依赖其他线程改变进程工作目录。引擎路径规则由引擎适配器另行定义与验证。
 本机路径基准不是安全沙箱；限制目录权限需要独立设计，不能用字符串前缀检查宣称完成隔离。
 
-## 3. 拟议语言接口
+## 3. 首版语言接口契约
 
-以下为签名规格，不是当前可执行的 Joky 示例。具体声明在 FS0 冻结后实现。
+以下保留 FS0 的接口规格；可执行声明见 [fs.jk](../src/stdlib/fs.jk)，用法见 [language.md](language.md#内置文件模块-jokyfs)。
 模块为 `joky/fs`，类型为 `File`、`OpenOptions`、`SeekFrom`、`IoError`、`ErrorKind`。
 
 | 操作 | 输入与结果 | 语义 |
@@ -96,17 +96,17 @@ Joky 脚本应能通过统一的 `joky/fs.File` 使用文件。CLI 可以提供�
 以上操作全部为 `@suspends`；缺省实现或内存实现可以立即完成，但调用约定保持一致。
 `@suspends` 只允许挂起，不能自动把宿主阻塞函数变成非阻塞函数。
 
-OpenOptions 包括读、写、追加、创建、排他创建及截断意图；FS0 冻结合法组合表，
+OpenOptions 包括读、写、追加、创建、排他创建及截断意图；合法组合表见第 10.1 节，
 互相冲突的选项在发起副作用前返回 `InvalidInput`。不以先查询存在性再创建模拟排他创建。
 SeekFrom 区分从起点的 UInt64 位置和从当前位置/末尾的 Int64 偏移，负结果及超出实现
 可表示范围的定位必须报错，不静默截断。
 
-首版单次字节请求建议上限为 1 MiB，与既有字节请求边界一致；零读取上限返回
+首版单次字节请求硬上限为 1 MiB，与既有字节请求边界一致；零读取上限返回
 `InvalidInput`，空写入返回 0，非空写入零进度返回 `WriteZero`。写入输入按值消费并复制
 为宿主快照，失败时也不隐式还原输入数组。有限 read/write 不承诺读满或写满。
 普通 I/O 失败也不承诺没有副作用；将来增加 write_all 时须另定部分进度与重试规则。
 
-拟议业务错误包括 `Unsupported`、`PermissionDenied`、`NotFound`、`AlreadyExists`、
+首版业务错误包括 `Unsupported`、`PermissionDenied`、`NotFound`、`AlreadyExists`、
 `InvalidInput`、`Busy`、`Closed`、`LimitExceeded`、`WriteZero` 和 `SystemFailure`。
 错误消息必须有长度上限；未知宿主错误映射为 SystemFailure，不能映射成 EOF。
 任务预算耗尽、协议错误和运行时不变量破坏继续使用终止性错误通道。
@@ -157,13 +157,13 @@ open 取得句柄后立即归操作守卫所有，语言接管成功前的任何
 宿主状态额外检查活动请求身份。身份不直接采用可复用 fd；迟到完成不能命中新文件。
 既有语言 ResourceLease 只保护任务侧包装，不能代替后台文件状态的独立保活和访问控制。
 
-### 5.2 首版取消建议：在途取消使文件逻辑关闭
+### 5.2 首版取消契约：在途取消使文件逻辑关闭
 
 文件读取也会改变游标，写入可能已部分生效。仅在取消时释放语言借用、随后允许下一个
-操作直接开始，会造成游标竞争和不确定的重试。首版建议采用以下保守规则，FS0 必须用
-可控探针验证并冻结；这不是现有 Joky 行为。
+操作直接开始，会造成游标竞争和不确定的重试。FS0 的可控探针验证并冻结以下规则；
+这是文件服务独立的取消契约，不改变现有 TCP 或其他资源的取消语义。
 
-| 取消时状态 | 建议处理 |
+| 取消时状态 | 首版处理 |
 | --- | --- |
 | 未提交或仍在排队，成功阻止工作开始 | 撤销请求，不执行副作用；已有 File 保持可用 |
 | open 已开始或成功结果尚未交接 | 撤销交付；若取得句柄，由后台关闭，不创建语言 File |
@@ -194,7 +194,7 @@ stop 同步撤销结果交付与对语言内存的访问，解除任务侧请求
 
 文件服务分别限制工作线程、普通排队请求、未回收请求、打开/正在打开的文件数、
 宿主缓冲字节、路径及错误消息长度。未回收计数包括执行中、完成未领取、取消后仍在执行
-以及等待最终关闭的状态。具体默认值在 FS0 冻结；宿主可在初始化时配置，运行中不热改。
+以及等待最终关闭的状态。FS0 冻结的默认值见第 10.2 节；宿主可在初始化时配置，运行中不热改。
 
 普通队列满或瞬时准入不足返回 Busy，不在调度线程等待空位；单项输入超过硬上限返回
 LimitExceeded。输入快照、读取存储和完成包在提交前预留额度，禁止先分配大块再记账。
@@ -205,8 +205,8 @@ LimitExceeded。输入快照、读取存储和完成包在提交前预留额度�
 
 关闭不能与普通 I/O 争抢唯一的满队列空位。每次 open 准入时必须同时预留句柄名额、
 可供打开失败/取消/析构使用的清理记录和关闭准入；预留失败则不执行 open。
-建议使用预分配的每文件清理记录与独立关闭队列，普通请求饱和时仍可非阻塞移交关闭责任。
-关闭工作优先级与公平策略须避免普通工作饥饿；工作线程全被阻塞时允许回收延迟，
+首版使用预分配的每文件清理记录与独立关闭队列，普通请求饱和时仍可非阻塞移交关闭责任。
+关闭队列与普通队列均有工作时交替取件，空队列不占轮次；工作线程全被阻塞时允许回收延迟，
 但保留额度并拒绝新准入，不能无限积压。
 
 服务关闭按以下顺序进行：
@@ -228,8 +228,8 @@ JIT/解释器/AOT 必须共享操作语义和 poll/stop 核心，不能在解释
 独立 AOT 使用可重定位符号及运行时上下文，不嵌入编译进程的服务指针。
 
 可借鉴现有资源工厂及 ResourceIoV1，但不能直接宣称它们已经覆盖路径 String 输入、
-文件错误结果、seek/sync/close 和取消后后台保活。FS0 先确定内部操作布局，再决定
-是否需要新的版本化宿主描述符；不放宽普通 extern 聚合 ABI 或跨挂起视图规则。
+文件错误结果、seek/sync/close 和取消后后台保活。FS0 决定新增独立的 FileServiceV1
+描述符及受检文件操作布局，见第 10.3 节；不放宽普通 extern 聚合 ABI 或跨挂起视图规则。
 
 宿主描述符必须说明版本、签名、上下文所有权、线程亲和性、请求/资源释放责任、
 结果发布顺序及关闭条件。缺省、本机和测试实现共用同一契约；错误注册必须可诊断。
@@ -252,7 +252,9 @@ Godot 首先验证缺省实现与每帧非阻塞驱动，再单独实现引擎�
 
 FS1/FS2 可以用确定性内存宿主推进，但不能跳过 FS3 的真实文件操作。
 FS4 中“Godot 缺省行为可用”和“引擎文件适配可用”分别记录，不合并为一次通过。
-首版本机操作系统支持范围与 Godot 目标平台在 FS0 列明，单平台验证不扩写为跨平台保证。
+首版开发验收目标为 macOS/aarch64；Linux、Windows 和其他 Godot 导出平台不在本次
+已验证范围内。Godot 首轮目标为 macOS 桌面解释器嵌入，FS4 单独记录引擎版本与实际场景；
+单平台验证不扩写为跨平台保证。
 
 ## 9. 验收矩阵与验证范围
 
@@ -278,5 +280,224 @@ FS4 中“Godot 缺省行为可用”和“引擎文件适配可用”分别记�
 改动先跑针对性行为测试，再运行 `./scripts/check.sh`，并补相关 Debug 穷举。
 只有用户明确要求发布验收、性能测量或优化构建问题时才扩大到 Release。
 
-本次仅创建设计文档：验证文档内容、本地链接与 `git diff --check`，不运行 Cargo 或检查脚本。
-后续各阶段记录实际执行的检查、平台、结果与未验证项，不把计划中的验收矩阵记为通过。
+初始文档提交仅检查内容、链接与差异格式。FS0 新增独立探针及 fixture，按测试改动范围
+运行三后端探针、Rust 格式与 Clippy；具体记录见下文。后续各阶段记录实际执行的检查、
+平台、结果与未验证项，不把计划中的验收矩阵记为通过。
+
+
+## 10. FS0 契约冻结与探针记录
+
+### 10.1 API、字节与文本
+
+第 3 节的六项操作为首版范围；字节类型固定使用 `Array<UInt8>`，不增加 Bytes 类型。
+路径使用 String，文件内容不隐式解码或编码。文本便利接口留待后续：有界整文件读取后
+严格校验 UTF-8；文本写入按 UTF-8 处理完整输入并明确覆盖/追加策略；分块及按行读取
+必须保留跨块的 UTF-8 状态。不能把每次 read 的结果独立转成字符串。
+这些便利接口的函数名与组合错误尚未纳入首版 API，不阻塞 FS0 冻结。
+
+OpenOptions 是六个公开 Bool 字段的 Copy 记录，依次为 `read`、`write`、`append`、
+`create`、`create_new`、`truncate`。`OpenOptions.new()` 返回 read=true、其他=false。
+内部 flags 按上述顺序占用位 0–5，其他位非零为 InvalidInput。
+
+| 访问组合 | 合法的创建/截断组合 |
+| --- | --- |
+| 仅 read | 全 false |
+| 仅 write，或 read + write | 全 false；仅 create；仅 create_new；仅 truncate；create + truncate |
+| 仅 append，或 read + append | 全 false；仅 create；仅 create_new |
+
+其余组合全部返回 InvalidInput：无访问权限、write 与 append 同时启用、create 与
+create_new 同时启用、只读创建/截断、追加截断及 create_new + truncate 均拒绝。
+共有 17 个合法位组合。append 自带写权限，每次写入请求追加；不承诺跨多个 write 的
+原子性。create 不隐式截断，create_new 要求宿主提供排他创建，否则 Unsupported。
+
+SeekFrom 为 `Start(UInt64)`、`Current(Int64)`、`End(Int64)`。内部分别编码为
+origin=0/1/2；signed offset 保留 Int64 位表示，Start 使用 UInt64 原值。
+IoError 拥有 `kind: ErrorKind` 和 `message: String`。错误编号依次冻结为：
+1 Unsupported、2 PermissionDenied、3 NotFound、4 AlreadyExists、5 InvalidInput、
+6 Busy、7 Closed、8 LimitExceeded、9 WriteZero、10 SystemFailure；0 仅表示成功。
+错误编号是文件服务契约，不复用现有 TCP/DNS 的编号。
+
+入口先校验路径、选项及单项硬上限，再选择服务；合法请求在缺省服务上返回 Unsupported。
+已有文件先校验逻辑关闭状态，再处理零长度等快捷分支，因此空写也不能绕过 Closed。
+宿主队列 Busy 表示未开始操作，可由调用方决定稍后重试；系统错误不保证零副作用。
+
+### 10.2 首版服务额度
+
+| 项目 | 默认值 | 约束 |
+| --- | --- | --- |
+| 本机工作线程 | 2 | 初始化时创建，独立于 DNS |
+| 普通排队请求 | 64 | 不包括已经取出的工作及独立关闭记录 |
+| 未回收普通请求 | 128 | 包含取消后在途与完成未交接请求 |
+| 文件名额 | 256 | 覆盖正在打开、已打开、逻辑关闭及物理关闭未结束 |
+| 宿主请求存储预算 | 16 MiB | 包括快照、结果、请求记录与计入的描述符存储，按实际容量计费 |
+| 单次字节请求 | 1 MiB | 固定硬上限，宿主可配置更小的服务限制 |
+| 路径 UTF-8 字节数 | 4096 | 固定硬上限；长度超限为 LimitExceeded，空路径/NUL 为 InvalidInput |
+| 错误消息 UTF-8 字节数 | 1024 | 宿主有界生成并在字符边界截断，非法 UTF-8 为协议错误 |
+| 清理记录 | 每文件名额 1 个 | 预分配关闭状态及有界错误存储，独立于普通请求额度，保留到物理关闭及结果回收结束 |
+
+初始化配置中线程/请求/文件数必须为正，排队数不得大于未回收请求数；所有容量计算
+检查整数溢出并在初始化完成前分配固定清理存储。初始化失败不发布半成品服务。
+文件控制记录及其清理槽使用独立的文件名额预算，不能被普通请求耗尽。
+固定服务开销、工作线程栈及内核缓存单独报告为宿主开销，不声称包含在任务 arena 限额中。
+
+### 10.3 独立文件服务描述符与内部结果
+
+FS0 发现 [ResourceIoV1](../src/runtime/byte_request.rs) 明确要求 stop 撤销访问并 join
+相关 worker；它的读写回调也没有文件业务错误和路径/定位参数。不能把仍在运行的文件
+请求塞入旧接口并重新解释其安全约定。正式实现新增 `FileServiceV1`，旧接口保持不变。
+
+以下为 FS0 冻结并在 FS1–FS5 实现的字段与协议；C 声明见 [joky_fs.h](../include/joky_fs.h)。
+采用 repr(C) 定宽整数、显式指针和长度；`abi_version=1`、`struct_size` 与保留位在注册时
+校验。没有可选回调：不支持某个操作时由完整实现返回 Unsupported。
+
+| 描述符成员 | 责任 |
+| --- | --- |
+| context + retain/release | 不透明服务上下文；线程安全保活引用覆盖任务、文件、结果包和后台工作；最后释放不得在任务线程隐式 join 或关闭文件 |
+| submit(context, input, wake, out_operation, out_result) | 非阻塞校验/准入并创建独立操作；返回前复制所有输入视图，不能保存 input 或其载荷地址 |
+| poll(context, operation, out_result) | 非阻塞查询；Pending 不写结果，Ready 恰好转交一次完整结果 |
+| stop(context, operation, reason) | 完成/失败/取消各路径恰好一次；撤销交付并释放任务侧 operation，后台副本可继续运行；不 join |
+| release_result(context, result_token) | 释放已交出的消息/字节存储；不再拥有已交出的 file_token |
+| release_file(context, file_token) | 逻辑关闭及非阻塞回收移交；已安排的物理关闭不重复执行 |
+| shutdown(context) / is_quiescent(context) | 关闭准入并查询全体拥有者、请求与清理是否结束，不等待活跃线程 |
+
+submit 的 input 字段固定为 operation_code、file_token、path 指针/字节数、flags、
+bytes 指针/字节数、limit、origin、offset_bits；无关字段必须清零。operation_code/origin
+为 UInt32，flags/limit/offset_bits 及所有长度为 UInt64，载荷指针为只读字节指针，
+token/context 为不透明指针；长度转换为平台 usize 前必须验证可表示范围。
+operation_code 固定为 1 Open、2 Read、3 Write、4 Seek、5 SyncAll、6 Close。
+Open 使用 path/flags，Read 使用 file_token/limit，Write 使用 file_token/bytes，
+Seek 使用 file_token/origin/offset_bits，SyncAll/Close 只使用 file_token。
+file_token 是宿主不透明身份，任务线程只转交，不解释或跨线程解引用。
+外部宿主拥有排队/执行中的取消阶段与逻辑关闭状态，因此文件操作参数可能包含无效的
+read limit、超限 write 长度或非法 origin。submit 必须先检查 Closed，再按首版上限验证，
+无效请求不得复制载荷或产生副作用；否则运行时的本地空写/参数快捷路径会隐藏宿主的关闭
+状态。Open 的路径和 flags 仍在选择服务前由运行时验证。
+
+submit 返回 0 Accepted、1 Rejected 或 2 ProtocolFailure；只有 Accepted 可以产生非空 operation。
+out_operation/out_result 在调用前清零，Accepted 必须返回 operation 且不同时交付结果。
+Rejected 带有有界业务错误结果且无副作用；所有非空输出的回收责任都必须立即由运行时
+守卫接管，即使同时出现协议错误。poll 返回 0 Ready、1 Pending 或 2 ProtocolFailure。
+stop 的 reason 为 0 Completed、1 Failed、2 Cancelled；shutdown 无返回值，
+is_quiescent 返回 UInt32 的 0/1。回调不得 unwind 或重入 Joky。
+Ready 结果字段为 result_token、error_code、message 指针/长度、file_token、bytes 指针/长度、
+count；error_code 为 UInt32，count 为 UInt64。Open 成功只交文件，Read 成功只交字节，
+Write/Seek 成功只交 count，其他成功为空。
+错误结果不交文件或字节；运行时仍须回收违约实现产生的非空拥有输出。
+结果内的消息/字节内存由 result_token 保活；非空 file_token 在输出时独立转交唯一关闭责任，
+由运行时结果守卫持有，release_result 不再关闭它。语言提取文件时从结果守卫移走该责任，
+未提取则由守卫调用 release_file。release_result 是有界非阻塞的释放，不能暗中执行最终物理 close。
+
+wake 采用独立保活、可失效的通知对象；工作线程只发布自己的结果并调用通知，不写 Joky
+地址。stop 与结果交付的竞争由宿主同步；返回后不再访问 operation 的任务侧包装。
+后台副本持有自身的 context 和结果，取消后的迟到成功自行回收，不回调已经释放的指针。
+描述符的函数代码必须随 context 保活；C 宿主承担相同义务。
+
+编译器私有操作统一返回内部非 Copy `fs.OutcomeOwner`，其存储承载结果守卫；
+语言包装通过受信任的即时 CPS 提取操作取得 kind/message、文件、字节或 count，再构造 Result。
+FS1 将同步提取调整为首次 poll 即完成的 CPS 适配器，以共用三后端的受检资源交接路径；提取不启动 I/O。
+只有成功结果允许提取对应拥有值，提取转移责任，重复或错类型提取为运行时协议错误。
+OutcomeOwner 退出时回收未取走的结果，因此语言分配失败和交接取消均保留连续释放责任。
+错误文本复制成语言 String 后才释放宿主结果；复制峰值计入任务预算。
+该内部结果叶不对普通源码开放构造或宿主注册，不放宽普通 extern 的聚合返回规则。
+
+私有操作的源码级参数采用第 3 节类型：Open 的 OpenOptions 编码成 UInt64 flags；
+Read/Write/Seek/SyncAll 借用 FileOwner，Seek 的 origin/offset 使用两个 UInt64；
+Close 的公开包装消费 File，但私有入口借用 owner，结果返回或取消时由包装清理 owner。
+所有私有操作返回 OutcomeOwner，均为 @suspends。完成后不再由后台直接写任何错误引用槽。
+这些受检绑定及三后端结果收养在 FS1/FS2 独立实现，现有资源工厂接口不因此开放该布局。
+
+Close 是两阶段责任：submit 时逻辑关闭，文件仍由原 owner 保活；完成结果提供关闭状态。
+Close 的请求与完成存储使用文件预留清理记录，不占普通请求额度，不因普通队列已满
+返回 Busy。每文件只有一个关闭等待者；已有关闭工作时接入其结果，不重复物理关闭。
+物理关闭失败不自动重试裸句柄，
+实现须终结该 token 并保留错误，避免复用后的句柄被重复关闭。自动析构只保留计数/诊断，
+不新增可能无限增长的错误消息队列。
+
+### 10.4 可控探针的证据范围
+
+探针文件： [共享宿主模型](../tests/fixtures/fs0_host.rs)、
+[Joky 程序](../tests/fixtures/fs0.jk)、[三后端入口](../tests/fs0.rs)。
+宿主模型只有一个工作线程、一个普通排队位置、两个未回收请求和三个文件槽，
+使用固定四字节快照及完成闸门缩小容量边界；不访问真实磁盘。
+
+生成代码使用既有资源工厂创建 ProbeFile/ProbeRequest，由请求资源的析构撤销交付；
+标量 CPS 等待回调只访问宿主状态，不保留 frame 或语言引用。测试中的整数 ID 仅用于
+控制路由，不是正式文件能力或公开句柄方案。它验证资源析构与调度的可行性，
+不证明新的 FileServiceV1 或内部 OutcomeOwner 已实现。
+
+共同场景覆盖：后台被闸门保持阻塞时独立任务和虚拟时钟定时器完成；正常结果仅交付一次；
+提交后修改来源不改变后台快照；普通队列满时第三个请求被拒绝但析构仍可提交关闭；
+排队取消不启动副作用，保留 File 并允许新请求取得新身份；在途及完成未领取取消使 File
+逻辑关闭；取消后后台额度保持，迟到结果不恢复旧任务或新任务；关闭只在工作线程执行且
+每文件恰好一次；关闭服务准入后仍可等待后台退出，调用方不在语言取消路径中 join。
+
+模型通过后台持有的数据类型和资源账本检查隔离，不把它当作内存安全工具的替代品。
+真实 open/read/write/seek/sync/close、错误映射、生产计费、结果分配失败、动态库卸载、
+公开描述符和 Godot 引擎场景的正式验收见第 11 节。旧 ResourceIoV1 的协议不作任何修改。
+
+### 10.5 验证记录
+
+2026-10-17，macOS / aarch64，FS0 开发验证完成：
+
+- `cargo test --test fs0`：2 项测试通过。第一项执行 JIT 和解释器，第二项编译并运行
+  独立 AOT 可执行程序；三后端共用上述 6 组受控生命周期场景。
+- `cargo fmt --check` 及 `rustfmt --edition 2021 --check tests/fixtures/fs0_host.rs` 通过。
+  include 的共享 fixture 单独检查格式。
+- `cargo clippy --all-targets -- -D warnings` 通过。
+- 本文 10 个本地链接和 `git diff --check` 通过；新增未跟踪文件另行检查差异格式。
+
+范围为独立测试/fixture 和文档，不改生产代码；按 AGENTS.md 未运行全套检查脚本、
+无关穷举或 Release。没有验证真实磁盘或引擎文件服务，不声明其他平台可用。
+以上记录仅为 FS0 的契约与可行性验证；正式实现的证据如下。
+
+
+## 11. FS1–FS5 实现与验收
+
+| 阶段 | 实现与证据 |
+| --- | --- |
+| FS1 | fs.FileOwner / fs.OutcomeOwner、公开 File 和 Result API、精确内置签名、缺省 Unsupported；`tests/fs.rs` 覆盖三后端及非法声明/伪造拒绝 |
+| FS2 | 独立工作池、请求/存储/文件额度、预留关闭队列、输入快照、任务复制峰值计费；`src/runtime/fs/worker_tests.rs` 使用闸门覆盖排队/执行/待领取取消、满队列关闭和 shutdown |
+| FS3 | 本机 open/read/write/seek/sync_all/close；真实临时目录的 JIT/解释器/CLI/AOT 往返、选项及 UTF-8/字节边界；C 布局和独立嵌入缺省服务测试；安装脚本包含 joky_fs.h |
+| FS4 | Rust 阻塞宿主 trait 与非阻塞 FileServiceV1、显式共享与快照保活、嵌套 VM 隔离；宿主错误输出拥有者回收；Godot 缺省与 FileAccess 服务分别进行实际引擎验收 |
+| FS5 | 语言/架构/Godot 文档及 files.jk 示例；逐指令取消穷举和默认 Debug 检查，执行记录见下文 |
+
+当前实现选择：Rust 阻塞宿主复用有界工作池；异步宿主通过独立 FileServiceV1 接入，
+自身负责同等的额度和关闭协议。所有非空返回 token 都先纳入守卫，再验证字段与长度；
+非法结果按 SystemFailure 交给语言，指针有效性仍是 unsafe 注册契约。
+内部提取由同步调用改为即时 CPS，不增加 I/O 等待；这一调整避免另造一套资源聚合返回 ABI。
+
+Godot 支持范围：只有 res:// 只读及 user:// 的五种可精确映射打开模式；append、create_new、
+不截断的 create 和 sync_all 明确返回 Unsupported。完整语言 API 在这些宿主仍存在。
+Scene 退出显式等待引擎文件对象全部关闭，普通任务 poll/stop 和实例关闭不 join。
+
+首轮平台为 macOS/aarch64、Godot 4.7.2。Linux、Windows、移动/Web、Godot 导出包内的
+res:// 文件未在本次环境执行；Windows CloseHandle 仅有条件编译实现，不宣称验证通过。
+目录/删除/重命名、元数据、文件监听、映射、句柄复制、读写拆分、read_all/write_all、
+文本流便利接口和性能/实时性保证仍未实现，不计入 FS0–FS5 的首版交付。
+
+### 验证记录
+
+正式实现的针对性用例：`cargo test --test fs`、`cargo test --test fs0`、
+`cargo test runtime::fs::worker::tests --lib`。FS0 可控宿主继续覆盖三个后端的慢操作与
+调度并存；正式 worker 用例直接观察队列、请求与物理关闭账本，避免磁盘速度相关断言。
+`tests/fs.rs` 使用独立进程执行静态链接 AOT，验证真实文件、宿主描述符与 C 布局，
+同一宿主 fixture 在 JIT/解释器/AOT 验证成功和违约输出的恰好一次回收。
+
+本次实际通过：
+
+- `./scripts/check.sh`：默认 Debug 格式、Clippy、单元/集成测试和三后端短输入基准正确性。
+  完成收尾调整后重跑受影响的文件行为、worker、格式与 Clippy 检查。
+- `cargo test --test fs --test fs0`：正式文件接口、描述符、C 布局/入口、安装布局、示例，
+  以及 FS0 可控宿主的 JIT/解释器/独立 AOT 行为。
+- `cargo test runtime::fs::worker::tests --lib`：10 个确定性状态/额度/失败回收用例。
+- `cargo test --test fs exhaustive_filesystem_cancel_every_instruction -- --ignored`：
+  正常结果与错误结果的逐指令取消。
+- `cargo test exhaustive_resource_handoff_cancel_and_exhaust_at_every_instruction --lib -- --ignored`：
+  共用资源交接与耗尽路径的 Debug 穷举。
+- `integrations/godot/check.sh`：格式、Clippy、9 个 Rust 测试、Debug 扩展构建及全部实际
+  引擎场景，包含 FS GODOT PASS。收尾重建后另行重跑文件场景与新增的
+  FS SHUTDOWN PASS，覆盖带活跃文件任务的扩展退出。验收发现并修复 NET5 动态 fixture
+  中两处过时 match 分隔符。
+- `git diff --check` 和新增文档相对链接核对。
+
+没有运行 Release、完整 stress、性能计时或非本机平台验收。

@@ -36,6 +36,7 @@ pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunc
 
 pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
     let module = BytecodeModule {
+        files: None,
         sources: Default::default(),
         version: crate::runtime::suspension::ModuleId(0),
         functions: HashMap::new(),
@@ -183,6 +184,7 @@ fn unary_assignments_preserve_in_place_operands_and_wrapping() {
         for value in [false, true] {
             let frame = Frame::new(function.clone(), [Value::Bool(value)].iter()).unwrap();
             let module = BytecodeModule {
+                files: None,
                 sources: Default::default(),
                 version: crate::runtime::suspension::ModuleId(0),
                 functions: HashMap::new(),
@@ -550,6 +552,7 @@ fn slot_compaction_preserves_parameter_positions_and_string_constants() {
     assert_eq!(function.code.len(), function.spans.len());
     let frame = Frame::new(function, [Value::Unit, Value::Int32(4)].iter()).unwrap();
     let module = BytecodeModule {
+        files: None,
         sources: Default::default(),
         version: crate::runtime::suspension::ModuleId(0),
         functions: HashMap::new(),
@@ -600,6 +603,7 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
             callees: names
@@ -662,6 +666,7 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
             callees: names
@@ -724,6 +729,7 @@ fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
             callees: names
@@ -793,6 +799,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
                 })
                 .collect();
             let module = BytecodeModule {
+                files: None,
                 sources: Default::default(),
                 version: crate::runtime::suspension::ModuleId(0),
                 callees: names
@@ -876,6 +883,7 @@ fn method_receivers_and_constant_values_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
             callees: names

@@ -1501,6 +1501,53 @@ Godot 适配器保持 `reloadable = false`，初始化时用 libloading 额外�
 扩展代码与静态服务占用因此保留到进程退出；扩展卸载后重新加载不受支持，脚本重载仍可使用。
 这是 Godot 适配器的具体保活策略，其他嵌入宿主须遵守上述显式关闭契约。
 
+### 文件服务能力与后台生命周期
+
+`runtime::fs::FileService` 是显式可共享的能力，`VmEngine::set_file_service` 必须在首次
+加载前调用。`FileService::native(base, FileLimits)` 提供本机实现；`new(Arc<dyn FileSystem>,
+limits)` 让 Rust 宿主将阻塞操作放入同一有界工作池。FileSystem/FileHandle 只在 worker
+执行，输入快照和结果是 Send 数据，不能保留语言视图。panic 转为 SystemFailure 并关闭
+对应文件；宿主内部自行分配的缓存、线程栈不属于语言 arena 预算。
+
+不可变编译模块和 continuation 保留服务快照；每次 resume 以作用域恢复所属能力。
+没有服务的嵌套 VM 明确恢复空能力，不继承外层 TLS。FileOwner、结果和活跃请求各自保活
+原服务；模块重载、VM 销毁或任务取消不改变回收实现。外部 AOT 任务可用
+`Continuation::with_file_service` 显式授权。动态宿主必须让服务上下文保活回调代码。
+
+文件内部原语通过精确签名识别，使用独立非 Copy `fs.OutcomeOwner` 返回守卫；错误文本、
+FileOwner、字节和计数由受检提取操作交给语言 Result。提取也走 CPS 适配器，但在首次 poll
+立即完成，不启动 I/O。这样三后端共用资源交接与分配失败清理；不开放一般 extern 聚合 ABI，
+不改变旧 ResourceIoV1 的 stop/join 契约。错误或重复提取拒绝，未提取文件由结果守卫关闭。
+
+原生服务的准入顺序是队列/请求/存储/文件额度，再复制输入。后台只访问独立 Mutex 状态、
+主机堆字节和 TaskWaker；系统调用时不持队列/文件锁。完成包保留请求额度直到语言交接或
+丢弃；任务 ExternalCharge 覆盖输入、结果、拥有包装和交接复制峰值。取消释放任务计费，
+后台副本仍计服务额度。每文件预留关闭队列位置，普通工作与关闭轮流推进；关闭不因满队列
+失败。执行中的 close/read/write 无法强制中止，取消后的物理清理由 worker 完成。
+
+`shutdown()` 关闭准入并撤销排队工作，立即返回；`is_quiescent()` 只回收已退出线程，不等待
+活跃工作，且要求全部文件和请求额度归零。shutdown 后物理关闭不等待结果被领取；
+已经完成的结果仍可领取，但其中的 File 已逻辑关闭。最后一个服务包装析构只触发 shutdown，不 join。
+卸载前先销毁任务/文件，再 shutdown，持续驱动宿主并查询 quiescent，释放全部服务/回调拥有者
+后才能卸载代码。系统文件调用可能无限阻塞，因此不保证有界卸载。Unix close 只调用一次，
+包括 EINTR 也不重试；Windows 使用 CloseHandle，首轮验证平台仅 macOS/aarch64。
+
+外部异步宿主使用 `unsafe FileService::from_descriptor(FileServiceV1)`。该 repr(C) 描述符
+校验版本、大小、保留字段和全部必需回调；submit/poll/stop/release 均非阻塞，宿主独立负责
+有限准入、close 预留、线程安全与代码保活。输入在 submit 返回前复制，Ready 恰好转交结果，
+file_token 独立转交唯一回收责任。运行时先接管所有非空输出，再检查错误/载荷/计数/UTF-8；
+违约输出仍释放，调用得到 SystemFailure。指针有效性与回调安全是注册方的 unsafe 义务。
+外部宿主掌握取消阶段，故须自行在参数校验/空写快捷路径之前检查 Closed；无效大小的
+文件请求也可能到达 submit，必须在复制与 I/O 前拒绝。运行时仅对本机工作池使用本地空写快捷路径。
+详细字段见 [FileServiceV1](file-runtime.md#103-独立文件服务描述符与内部结果)和
+[C 头文件](../include/joky_fs.h)。C AOT 使用 `joky_fs_block_on_v1` 显式传描述符；
+`joky_cps_block_on` 不提供文件能力；CLI 专用 `joky_fs_block_on_native` 安装本机服务。
+
+Godot 的显式 FileAccess 服务仅有一个 worker，Gd<FileAccess> 保存在该线程的 TLS 表中，
+跨线程状态仅携带数字身份，避免移动引擎对象。脚本任务取消/实例关闭仍非阻塞。扩展 Scene
+退出是显式 drain 边界：先关闭所有实例，再等待文件服务完全退出，之后才释放引擎 API；
+这可能延长引擎退出，但不阻塞运行中的任务调度器。扩展动态库保留策略与 DNS 相同。
+
 ## 整数转换内建函数
 
 `core::integer::IntegerType` 集中维护四个转换名称及整数位宽/符号元数据。

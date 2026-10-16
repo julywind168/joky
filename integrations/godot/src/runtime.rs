@@ -93,6 +93,10 @@ impl Program {
     pub fn compile(path: &str, source: &str) -> Result<Self, Diagnostic> {
         let ast = parser::parse(source).map_err(|e| Diagnostic::error(path, source, &e.into()))?;
         let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+        if let Some(service) = crate::files::current() {
+            vm.set_file_service(service)
+                .map_err(|e| Diagnostic::error(path, source, &e))?;
+        }
         vm.set_interpreter_limits(InterpreterLimits {
             max_frames: 256,
             instruction_budget: Some(100_000),

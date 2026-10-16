@@ -14,6 +14,7 @@ pub(crate) enum Builtin {
     VmCall,
     Tcp(tcp::Operation),
     Dns,
+    Fs(crate::runtime::fs::Operation),
     Domain(domain::Operation),
 }
 
@@ -23,6 +24,8 @@ impl Builtin {
             Some(Self::VmCall)
         } else if let Some(op) = tcp::operation(name) {
             Some(Self::Tcp(op))
+        } else if let Some(op) = crate::runtime::fs::operation(name) {
+            Some(Self::Fs(op))
         } else if crate::runtime::dns::is_lookup(name) {
             Some(Self::Dns)
         } else if let Some(op) = domain::operation(name) {
@@ -66,6 +69,7 @@ impl Builtin {
             )),
             Self::Tcp(op) => op.validate(signature, suspends),
             Self::Dns => crate::runtime::dns::validate(signature, suspends),
+            Self::Fs(op) => op.validate(signature, suspends),
             Self::Domain(op) => op.validate(signature, suspends),
         }
     }
@@ -107,6 +111,7 @@ impl Builtin {
             Self::Domain(op) if op.status_payload() => 2,
             Self::Domain(domain::Operation::OutboxMessageBytes) | Self::Dns => 1,
             Self::Tcp(op) if op.is_read() => 1,
+            Self::Fs(op) if op.returns_bytes() => 1,
             _ => 0,
         }
     }

@@ -19,6 +19,7 @@ pub(crate) struct CompiledFunction {
 /// Contains code and export metadata, never compilation contexts or source ASTs.
 pub(crate) struct CompiledModule {
     pub version: ModuleId,
+    pub files: Option<crate::runtime::fs::FileService>,
     pub sources: std::sync::Arc<crate::SourceMap>,
     pub exports: HashMap<String, CompiledFunction>,
     pub instance_entries: HashMap<String, CompiledFunction>,
@@ -41,6 +42,7 @@ impl CompiledModule {
         owner: Rc<dyn Any>,
     ) -> Self {
         Self {
+            files: None,
             version: ModuleId(1),
             sources,
             exports: HashMap::new(),
@@ -59,6 +61,7 @@ impl CompiledModule {
         owner: Rc<dyn Any>,
     ) -> Self {
         Self {
+            files: None,
             version: ModuleId(0),
             sources: Default::default(),
             exports,
@@ -111,6 +114,10 @@ pub(crate) fn compile(
         .chain(crate::runtime::cleanup::symbols())
         .chain(crate::runtime::resource::symbols())
         .chain(crate::runtime::byte_request::symbols())
+        .chain([(
+            "__joky_fs_poll",
+            crate::runtime::fs::poll_native as *const u8,
+        )])
         .chain([(
             "__joky_tcp_poll",
             crate::runtime::tcp::poll_native as *const u8,
@@ -189,6 +196,7 @@ pub(crate) fn compile(
                 )
             })
             .collect(),
+        files: None,
         sources: prepared.ast().sources.clone(),
         version,
         exports,

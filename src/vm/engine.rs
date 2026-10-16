@@ -33,6 +33,7 @@ pub(super) enum LoadedModule {
 
 pub struct VmEngine {
     mode: VmMode,
+    files: Option<crate::runtime::fs::FileService>,
     pub(super) current: Option<LoadedModule>,
     pub(super) instances: Rc<super::instances::Instances>,
     pub(super) domains: Rc<std::cell::RefCell<super::state_domains::Domains>>,
@@ -80,6 +81,7 @@ impl VmEngine {
         let domains = executor.domains();
         Self {
             mode,
+            files: None,
             current: None,
             instances: Default::default(),
             domains,
@@ -90,6 +92,21 @@ impl VmEngine {
             registry,
             interpreter_limits: InterpreterLimits::default(),
         }
+    }
+
+    /// Configure the capability before loading code; compiled snapshots retain it.
+    pub fn set_file_service(
+        &mut self,
+        service: crate::runtime::fs::FileService,
+    ) -> Result<(), Error> {
+        if self.current.is_some() {
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "Configure file service before loading a module",
+            ));
+        }
+        self.files = Some(service);
+        Ok(())
     }
 
     pub fn new_interpreter() -> Self {
@@ -699,6 +716,7 @@ impl VmEngine {
                     Builtin::VmCall => HostEntry::VmCall,
                     Builtin::Domain(op) => HostEntry::Domain(*op),
                     Builtin::Tcp(op) => HostEntry::Tcp(*op),
+                    Builtin::Fs(op) => HostEntry::Fs(*op),
                     Builtin::Dns => {
                         crate::runtime::dns::initialize()?;
                         HostEntry::Dns
@@ -810,7 +828,11 @@ impl VmEngine {
             }
             let mut symbol = symbol.to_owned();
             let entry_ptr = match &host.entry {
-                HostEntry::Domain(_) | HostEntry::Tcp(_) | HostEntry::Dns | HostEntry::VmCall => {
+                HostEntry::Domain(_)
+                | HostEntry::Tcp(_)
+                | HostEntry::Fs(_)
+                | HostEntry::Dns
+                | HostEntry::VmCall => {
                     unreachable!("Network runtime adapter")
                 }
                 HostEntry::Direct(ptr) | HostEntry::C(ptr) => {
@@ -891,7 +913,7 @@ impl VmEngine {
         let version = ModuleId(self.next_version);
         let loaded = match self.mode {
             VmMode::Jit => {
-                let compiled = jit::compile(
+                let mut compiled = jit::compile(
                     prepared,
                     &symbols
                         .iter()
@@ -901,16 +923,16 @@ impl VmEngine {
                     dependencies,
                     version,
                 )?;
+                compiled.files = self.files.clone();
                 let compiled = Rc::new(compiled);
                 crate::stdlib::track_module(&compiled);
                 LoadedModule::Jit(compiled)
             }
-            VmMode::Interpreter => LoadedModule::Interpreter(Rc::new(interp::compile(
-                prepared,
-                &layouts,
-                interpreter_hosts,
-                version,
-            )?)),
+            VmMode::Interpreter => {
+                let mut compiled = interp::compile(prepared, &layouts, interpreter_hosts, version)?;
+                compiled.files = self.files.clone();
+                LoadedModule::Interpreter(Rc::new(compiled))
+            }
         };
         let mut names: Vec<_> = match &loaded {
             LoadedModule::Jit(module) => module.exports.keys().cloned().collect(),

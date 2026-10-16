@@ -4418,6 +4418,53 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 组合消息/行读取；[真实引擎对端](../integrations/godot/demo/tests/network_messages.gd)验证分片与生命周期。
 
 
+## 内置文件模块 joky/fs
+
+显式 `import joky/fs`。`File` 是非 Copy 的拥有型记录，私有字段为内部资源
+`fs.FileOwner`；移动、返回、Result/记录/State 保存与自动清理遵循普通拥有值规则。
+
+| 接口 | 结果 |
+| --- | --- |
+| `fs.open(path: String, options: fs.OpenOptions) @suspends` | `Result<File, IoError>` |
+| `file.read(&mut self, limit: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
+| `file.write(&mut self, bytes: Array<UInt8>) @suspends` | `Result<UInt64, IoError>` |
+| `file.seek(&mut self, from: fs.SeekFrom) @suspends` | `Result<UInt64, IoError>` |
+| `file.sync_all(&mut self) @suspends` | `Result<Unit, IoError>` |
+| `file.close(self) @suspends` | `Result<Unit, IoError>` |
+
+`OpenOptions.new()` 仅启用 read。六个公开 Bool 字段为 read、write、append、create、
+create_new、truncate。访问模式只能是 read、write、read+write、append、read+append；
+write 与 append 不可同时启用。只读不能创建或截断；create 与 create_new 互斥；
+truncate 仅可用于 write，不能与 create_new 同用。create 不隐式截断；create_new
+要求排他创建；append 每次写入追加，不承诺多次 write 合为原子操作。
+
+`SeekFrom` 为 `Start(UInt64)`、`Current(Int64)`、`End(Int64)`。定位返回绝对字节位置。
+路径是非空 UTF-8 String，最多 4096 字节，拒绝 NUL。read 上限为 1–1048576；
+返回空数组表示 EOF，允许短读。write 消费输入数组，最多 1 MiB，允许部分写入；
+空写返回 0，非空零进度返回 WriteZero。失败也不还原输入，不保证没有部分副作用。
+close 消费 File；自动清理仅安排后台关闭，需要观察错误时显式 close。
+
+`IoError` 拥有 `kind: ErrorKind` 和 `message: String`。ErrorKind 包括 Unsupported、
+PermissionDenied、NotFound、AlreadyExists、InvalidInput、Busy、Closed、LimitExceeded、
+WriteZero、SystemFailure；消息最多 1024 UTF-8 字节。没有宿主服务时仍可导入/编译/加载，
+合法 open 返回 Unsupported；输入校验先于服务选择。Busy 表示服务未准入该请求。
+
+文件内容是字节；用 `text.into_bytes()` 写入文本，用 `String.from_utf8(bytes)` 显式验证和
+转为 String，转换失败得到 Utf8Error。单次 read 可能截在 UTF-8 字符中间；多块读取时
+应先拼接或由调用方维护跨块状态。首版没有 read_text/write_text/read_all/write_all。
+[可执行示例](../examples/files.jk)演示有限 UTF-8 文件往返。
+
+CLI 的 JIT/解释器与 `joky build` 生成的程序安装本机服务，相对路径以服务启动时的工作
+目录为基准，支持绝对路径；该基准不是安全沙箱。嵌入 VM/AOT 默认没有文件服务，
+宿主在加载前显式配置，嵌套 VM 不继承。Godot 默认也不开放文件；显式引擎服务支持
+res:// 只读和 user:// 的部分打开模式，详见 [Godot 文档](../integrations/godot/README.md#可选文件服务)。
+
+文件服务使用独立有界工作池，不占 DNS 的线程池，不在调度器 poll/stop 中调用阻塞文件 API。
+默认 2 个 worker、64 个排队请求、128 个未回收请求、256 个文件和 16 MiB 请求存储。
+取消尚在队列中的操作不关闭既有 File；取消已经开始或完成待领取的操作会逻辑关闭 File，
+后台完成后回收。取消不回滚文件效果，也不保证系统调用马上结束。关闭使用打开时预留的
+清理位置，不受普通队列已满影响。宿主配置、保活与卸载见[架构说明](architecture.md#文件服务能力与后台生命周期)。
+
 ## 内置 DNS 模块 joky/dns
 
 显式导入 `joky/dns as dns.{type ResolveError, type ErrorKind}`；地址类型从

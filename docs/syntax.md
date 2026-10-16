@@ -15,7 +15,8 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 见[实例用法](language.md#rust-嵌入持久实例)和[Godot 适配器](../integrations/godot/README.md)。
 不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S6 已完成验收；StringBuilder、UTF-8 转换、子串、Rune 遍历、同步文本聚合与容器、join/split、String Map key 与借用协议已实现，新的直接文本 FFI 属后续阶段。
 文件资源、可选宿主文件服务、后台 I/O 与取消回收见[文件运行时设计与开发计划](file-runtime.md)；
-该专项仍为设计草案，尚未提供 `joky/fs`。
+FS0–FS5 已提供 `joky/fs`、可选宿主描述符、有界文件工作池和 Godot 显式 FileAccess 适配；
+已实现接口及平台限制见 [language.md](language.md#内置文件模块-jokyfs)。
 
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
 [核心文法](#11-核心语法ebnf)、[实施顺序](#12-实施顺序与验收)。

@@ -215,6 +215,7 @@ struct BytecodeFunction {
 #[derive(Clone)]
 pub(crate) struct BytecodeModule {
     pub(crate) version: ModuleId,
+    pub(crate) files: Option<crate::runtime::fs::FileService>,
     sources: std::sync::Arc<crate::SourceMap>,
     functions: HashMap<String, Rc<BytecodeFunction>>,
     callees: Vec<Callee>,
@@ -305,6 +306,7 @@ pub(crate) fn compile(
         })
         .collect();
     Ok(BytecodeModule {
+        files: None,
         sources: prepared.ast().sources.clone(),
         version,
         functions,

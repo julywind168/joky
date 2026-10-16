@@ -463,6 +463,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_dns_poll", vec![ptr], vec![types::I32]),
         ("__joky_vm_call", vec![ptr], vec![types::I32]),
         ("__joky_tcp_poll", vec![ptr, types::I32], vec![types::I32]),
+        ("__joky_fs_poll", vec![ptr, types::I32], vec![types::I32]),
         (
             "__joky_domain_poll_v3",
             vec![ptr, types::I32],
@@ -3170,6 +3171,21 @@ pub(super) fn domain_entry(
     let frame = builder.block_params(entry)[0];
     let kind = builder.ins().iconst(types::I32, op as i64);
     let status = helper(builder, refs, "__joky_domain_poll_v3", &[frame, kind]);
+    builder.ins().return_(&[status]);
+    builder.seal_all_blocks();
+}
+pub(super) fn fs_entry(
+    builder: &mut FunctionBuilder,
+    op: crate::runtime::fs::Operation,
+    refs: &HashMap<String, FuncRef>,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let frame = builder.block_params(entry)[0];
+    let kind = builder.ins().iconst(types::I32, op as i64);
+    let status = helper(builder, refs, "__joky_fs_poll", &[frame, kind]);
     builder.ins().return_(&[status]);
     builder.seal_all_blocks();
 }
