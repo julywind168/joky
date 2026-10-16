@@ -1,6 +1,6 @@
 # 文件运行时设计与开发计划
 
-状态：FS0–FS5 首版实现于 2026-10-17；正式模块为 `joky/fs`。
+状态：FS0–FS5 首版实现于 2026-10-17；正式模块为 `joky/fs`。FS6 便利 API 见第 12 节。
 契约与 FS0 探针见第 10 节，实现、验收证据及平台限制见第 11 节。首版不包含全部文件系统 API。
 
 当前实现语义以 [language.md](language.md) 为准；已有资源与线程边界见
@@ -30,7 +30,7 @@ Joky 脚本应能通过统一的 `joky/fs.File` 使用文件。CLI 可以提供�
 [DNS 线程边界与关闭](architecture.md#dns-线程边界与关闭)。
 
 首版包括打开、有限字节读取、部分写入、定位、显式同步与关闭。目录遍历、文件删除和重命名、
-元数据、文件监听、映射文件、句柄复制、读写拆分、原子替换写入及文本便利接口留待后续。
+元数据、文件监听、映射文件、句柄复制、读写拆分及原子替换写入留待后续；文本便利接口由 FS6 补充。
 不新增语言关键字，不开放普通语言引用跨线程，不承诺硬实时或阻塞系统调用的有界终止。
 
 ## 2. 类型与宿主能力分层
@@ -104,7 +104,7 @@ SeekFrom 区分从起点的 UInt64 位置和从当前位置/末尾的 Int64 偏�
 首版单次字节请求硬上限为 1 MiB，与既有字节请求边界一致；零读取上限返回
 `InvalidInput`，空写入返回 0，非空写入零进度返回 `WriteZero`。写入输入按值消费并复制
 为宿主快照，失败时也不隐式还原输入数组。有限 read/write 不承诺读满或写满。
-普通 I/O 失败也不承诺没有副作用；将来增加 write_all 时须另定部分进度与重试规则。
+普通 I/O 失败也不承诺没有副作用；FS6 的 write_all 部分进度与重试规则见第 12 节。
 
 首版业务错误包括 `Unsupported`、`PermissionDenied`、`NotFound`、`AlreadyExists`、
 `InvalidInput`、`Busy`、`Closed`、`LimitExceeded`、`WriteZero` 和 `SystemFailure`。
@@ -249,6 +249,7 @@ Godot 首先验证缺省实现与每帧非阻塞驱动，再单独实现引擎�
 | FS3：本机文件 API | 接入 open/read/write/seek/sync_all/close 与 CLI/AOT 安装 | 三后端执行真实临时文件读写、错误和取消；独立 AOT 等待与安装布局验证 |
 | FS4：嵌入与 Godot | 公开宿主配置、共享服务隔离、Godot 缺省及引擎实现 | 实际引擎场景保持帧推进；未提供/已提供实现均验证；实例关闭、重载与后台保活验证 |
 | FS5：收尾与文档 | 受影响 Debug 穷举、示例、稳定接口文档和平台记录 | 逐项记录证据与未验证平台，更新 language/architecture；未实现能力继续保留设计状态 |
+| FS6：字节与文本便利 API | 有界 read_all、完整 write_all、严格 UTF-8 read_text/write_text；具体契约见第 12 节 | 三后端短读/短写、超限、解码与部分进度；取消穷举及真实 Godot 场景 |
 
 FS1/FS2 可以用确定性内存宿主推进，但不能跳过 FS3 的真实文件操作。
 FS4 中“Godot 缺省行为可用”和“引擎文件适配可用”分别记录，不合并为一次通过。
@@ -290,10 +291,10 @@ FS4 中“Godot 缺省行为可用”和“引擎文件适配可用”分别记�
 ### 10.1 API、字节与文本
 
 第 3 节的六项操作为首版范围；字节类型固定使用 `Array<UInt8>`，不增加 Bytes 类型。
-路径使用 String，文件内容不隐式解码或编码。文本便利接口留待后续：有界整文件读取后
+路径使用 String，文件内容不隐式解码或编码。FS0 预留的文本便利接口要求：有界整文件读取后
 严格校验 UTF-8；文本写入按 UTF-8 处理完整输入并明确覆盖/追加策略；分块及按行读取
 必须保留跨块的 UTF-8 状态。不能把每次 read 的结果独立转成字符串。
-这些便利接口的函数名与组合错误尚未纳入首版 API，不阻塞 FS0 冻结。
+这些便利接口的函数名与组合错误未纳入 FS0 的首版 API；现由第 12 节 FS6 定义。
 
 OpenOptions 是六个公开 Bool 字段的 Copy 记录，依次为 `read`、`write`、`append`、
 `create`、`create_new`、`truncate`。`OpenOptions.new()` 返回 read=true、其他=false。
@@ -472,8 +473,9 @@ Scene 退出显式等待引擎文件对象全部关闭，普通任务 poll/stop 
 
 首轮平台为 macOS/aarch64、Godot 4.7.2。Linux、Windows、移动/Web、Godot 导出包内的
 res:// 文件未在本次环境执行；Windows CloseHandle 仅有条件编译实现，不宣称验证通过。
-目录/删除/重命名、元数据、文件监听、映射、句柄复制、读写拆分、read_all/write_all、
-文本流便利接口和性能/实时性保证仍未实现，不计入 FS0–FS5 的首版交付。
+目录/删除/重命名、元数据、文件监听、映射、句柄复制、读写拆分、
+文本流便利接口和性能/实时性保证仍未实现。read_all/write_all 与完整文本读写由 FS6 补充，
+不计入 FS0–FS5 的首版交付。
 
 ### 验证记录
 
@@ -501,3 +503,86 @@ res:// 文件未在本次环境执行；Windows CloseHandle 仅有条件编译�
 - `git diff --check` 和新增文档相对链接核对。
 
 没有运行 Release、完整 stress、性能计时或非本机平台验收。
+
+## 12. FS6：有界字节与文本便利 API
+
+状态：2026-10-17 已实现并通过本机验收。此阶段仅组合既有异步操作，不增加内部资源类型、工作池或宿主 ABI。
+正式接口放在 `File` 上，均借用 `&mut self` 且标记 `@suspends`：
+
+| 接口 | 结果 |
+| --- | --- |
+| `read_all(max_bytes: UInt64)` | `Result<Array<UInt8>, IoError>` |
+| `write_all(bytes: Array<UInt8>)` | `Result<Unit, WriteError>` |
+| `read_text(max_bytes: UInt64)` | `Result<String, ReadTextError>` |
+| `write_text(text: String)` | `Result<Unit, WriteError>` |
+
+`WriteError` 的公开字段为 `written: UInt64` 与 `error: IoError`；written 是此前成功
+write 返回的字节数之和，不计失败请求中无法获知的副作用，不是可安全重试的偏移保证。
+`ReadTextError` 为 `Io(IoError)` 或 `Utf8(joky/string.Utf8Error)`，保留解码原因与字节偏移。
+
+### 12.1 读取与存储上限
+
+read_all 从当前游标开始，不隐式 seek、不依赖元数据、不建立文件快照。
+每次最多请求 64 KiB，短读继续，只有空结果表示 EOF。max_bytes 是返回内容的字节上限，
+允许 0；读到上限后再读 1 字节，空结果表示恰好 EOF，否则返回 LimitExceeded。
+因此超限失败可能推进游标 max_bytes + 1 字节；不退回探测字节，也不返回部分内容。
+I/O 失败同样丢弃累积内容，不回滚游标。文件并发增长时也受这个内容上限约束。
+算法先减剩余额度，不对 UInt64.MAX 执行加一。
+
+不按 max_bytes 预分配；Array 随实际内容增长，其扩容容量、暂时的新旧缓冲区和当前块
+仍计入任务内存预算。max_bytes 不是总内存额度，较大值不保证能够分配；分配或任务预算
+失败保持现有运行时错误语义。read_text 先完成有界字节读取，再整体严格验证 UTF-8，
+支持字符跨读块，保留 BOM、NUL 与换行，不做替换或规范化；超限/I/O 失败优先于解码。
+UTF-8 错误偏移相对于本次读取开始处，而非文件绝对位置。
+
+### 12.2 完整写入与部分成功
+
+write_all 消费输入，按最多 64 KiB 的拥有型块调用 write；成功短写后继续未写入的后缀。
+后续块大小收缩到短写返回的数量，避免持续微小短写时反复复制大后缀。
+非空零进度为 WriteZero；任何错误立即返回，不自动重试 Busy 或其他失败。
+空输入仍调用一次底层空 write，保留 Closed 与宿主能力检查，不绕过文件状态。
+write_text 将整个 String 作为 UTF-8 字节交给 write_all；written 始终按字节计数。
+
+两者均从现有游标/追加模式写入，不自动创建、截断、定位、sync 或 close；覆盖和追加
+由 open 选项决定。成功只表示所有输入字节已由 write 确认，不保证持久化或多块原子性。
+追加模式下，多次写入之间允许其他写入者插入。失败消费输入，调用方需要重试时应自行
+保留原始数据，并处理失败请求可能已产生的副作用。
+
+### 12.3 取消与验收
+
+组合方法持有普通语言拥有值，逐次复用既有请求。取消不产生 WriteError，不返回进度，
+按当前底层请求的阶段适用 FS0–FS5 规则；在请求间取消不会撤销已完成的读写，外层若仍
+保有 File，其游标停在已发生效果之后。取消整条任务仍自动释放文件与所有累积缓冲区。
+
+验收覆盖 JIT、解释器、独立 AOT：空文件、零上限、恰好上限、超限探测、短读直到 EOF、
+大于单次 read/write 上限的输入、任意二进制、多字节 UTF-8 跨块、非法/截断 UTF-8、
+短写成功、零进度、部分成功后的错误、错误进度与实际宿主副作用、缺省宿主和真实文件。
+可控宿主还应验证取消后的服务额度归零，解释器保留逐指令取消穷举。
+本阶段不包含路径便利函数、文本流/按行读取、目录/元数据或原子替换写入。
+
+
+### 12.4 实现与验收记录
+
+实现位于 [fs.jk](../src/stdlib/fs.jk)。[文件示例](../examples/files.jk)使用完整文本读写；
+[Godot 文件脚本](../integrations/godot/demo/files.jk)验证 res:// 文本读取、user:// 完整写入与有界字节回读。
+
+2026-10-17，macOS/aarch64，Debug：
+
+- `cargo test --test fs_convenience`：JIT、解释器及独立 AOT 共用
+  [可控宿主](../tests/fixtures/fs_convenience_host.rs)与[语言用例](../tests/fixtures/fs_convenience.jk)，
+  两项测试通过；覆盖 1 MiB 以上的二进制往返、64 KiB 边界上的 UTF-8、UInt64.MAX 内容上限、
+  非零起点、短读/短写、零进度、Busy 不重试及失败请求的未知外部副作用；关闭后服务额度归零。
+- `cargo test --test fs`：14 项通过、1 项穷举默认忽略。既有三后端描述符用例扩展为
+  read_text 的排队/执行中取消，并验证取消后空 write_text 的 Closed 优先级；
+  文件示例在 CLI JIT、解释器和独立 AOT 中读写真实文件。
+- `cargo test --test fs exhaustive_filesystem_cancel_every_instruction -- --ignored`：通过。
+  在既有探针之外新增完整文本读写的逐指令取消，检查文件、请求及结果拥有者计数全部归零。
+- `./scripts/check.sh`：默认 quick Debug 通过，包含 fmt、Clippy、默认测试和 while/Map
+  三后端短输入正确性。测试补充后另跑 fmt、Clippy 及受影响用例和取消穷举，均通过。
+- `integrations/godot/build.sh` 后使用 Godot 4.7.2 实际执行 `tests/files.gd` 与
+  `tests/files_shutdown.gd`：分别输出 `FS GODOT PASS` 与 `FS SHUTDOWN PASS`，无错误诊断。
+  覆盖文件任务与帧推进、禁用后的能力快照、取消、重载及带活跃任务的退出；本轮未重跑无关引擎场景。
+- `git diff --check` 与相关文档相对链接目标检查通过。
+
+本轮未运行 Release、完整 stress、性能测量、其他操作系统或 Godot 导出包验收；
+FS0–FS5 已记录的平台和 Godot 能力限制继续适用。

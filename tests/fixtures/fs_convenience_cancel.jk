@@ -1,0 +1,13 @@
+// Appended to fs.jk so both cancellation probes share the same host bindings.
+fn convenience() @suspends -> Int32 {
+    var options = fs.OpenOptions.new()
+    options.write = true
+    var file = fs.open("convenience", options).unwrap()
+    file.write_text("Hi🙂").unwrap()
+    file.seek(fs.SeekFrom.Start(0)).unwrap()
+    let text = file.read_text(6).unwrap()
+    let expected = "Hi🙂"
+    if !text.equals(&expected) { return 1 }
+    file.close().unwrap()
+    42
+}

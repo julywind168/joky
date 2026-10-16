@@ -208,7 +208,7 @@ fn descriptor_cancellation(exhaustive: bool) {
         vm::InterpreterLimits,
     };
     use std::sync::{atomic::Ordering, Arc};
-    for mode in [0, 2] {
+    for (mode, entry) in [(0, "run"), (2, "malformed"), (0, "convenience")] {
         let stats = Arc::new(descriptor_host::Stats {
             mode,
             ..Default::default()
@@ -222,8 +222,12 @@ fn descriptor_cancellation(exhaustive: bool) {
             ..Default::default()
         })
         .unwrap();
-        vm.load_source(include_str!("fixtures/fs.jk")).unwrap();
-        let entry = if mode == 0 { "run" } else { "malformed" };
+        vm.load_source(&format!(
+            "{}\n{}",
+            include_str!("fixtures/fs.jk"),
+            include_str!("fixtures/fs_convenience_cancel.jk")
+        ))
+        .unwrap();
         let execute = |cut: usize| {
             let executor = HostExecutor::default();
             let group = TaskGroup::new();

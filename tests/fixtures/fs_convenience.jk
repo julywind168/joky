@@ -1,0 +1,137 @@
+import joky/fs
+import joky/array.{type Array}
+import joky/check
+import joky/string.{type Utf8ErrorCode}
+
+fn expect(value: Bool) { let message = "File convenience assertion failed" check.assert(value, &message) }
+fn readable(path: String) @suspends -> fs.File { fs.open(path, fs.OpenOptions.new()).unwrap() }
+fn writable(path: String) @suspends -> fs.File {
+    var options = fs.OpenOptions.new()
+    options.write = true
+    fs.open(path, options).unwrap()
+}
+fn limited(path: String, limit: UInt64, position: UInt64) @suspends {
+    var file = readable(path)
+    match file.read_all(limit) {
+        Ok(_) => { expect(false) }
+        Err(error) => { expect(match error.kind { fs.ErrorKind.LimitExceeded => true, _ => false }) }
+    }
+    expect(file.seek(fs.SeekFrom.Current(0)).unwrap() == position)
+    file.close().unwrap()
+}
+fn write_failure(path: String, code: Int32) @suspends {
+    var file = writable(path)
+    match file.write_text("你好🙂") {
+        Ok(_) => { expect(false) }
+        Err(failure) => {
+            expect(failure.written == 3)
+            expect(match failure.error.kind {
+                fs.ErrorKind.WriteZero => code == 9
+                fs.ErrorKind.Busy => code == 6
+                fs.ErrorKind.SystemFailure => code == 10
+                _ => false
+            })
+        }
+    }
+    // A reported error need not identify all externally visible progress.
+    let actual: UInt64 = if code == 10 { 4 } else { 3 }
+    expect(file.seek(fs.SeekFrom.Current(0)).unwrap() == actual)
+    file.close().unwrap()
+}
+fn read_boundaries() @suspends {
+    var empty = readable("empty")
+    expect(empty.read_all(0).unwrap().is_empty())
+    expect(empty.read_text(0).unwrap().byte_length() == 0)
+    empty.close().unwrap()
+    limited("binary", 0, 1)
+    limited("binary", 2, 3)
+    var exact = readable("binary")
+    let bytes = exact.read_all(3).unwrap()
+    expect(bytes.len() == 3 && bytes.get(0).unwrap_or(1) == 0 && bytes.get(1).unwrap_or(0) == 255)
+    expect(exact.read_all(18446744073709551615).unwrap().is_empty())
+    exact.seek(fs.SeekFrom.Start(1)).unwrap()
+    let remainder = exact.read_all(18446744073709551615).unwrap()
+    expect(remainder.len() == 2 && remainder.get(0).unwrap_or(0) == 255)
+    exact.close().unwrap()
+
+}
+fn read_valid_text() @suspends {
+    var short = readable("short_read")
+    let text = short.read_text(100).unwrap()
+    let expected = "你好🙂\0\r\n"
+    expect(text.equals(&expected))
+    short.close().unwrap()
+    var cross = readable("cross_block")
+    let text = cross.read_text(65541).unwrap()
+    expect(text.byte_length() == 65541)
+    let suffix = text.substring(65535, 65541).unwrap_or("")
+    let expected = "你好"
+    expect(suffix.equals(&expected))
+    cross.close().unwrap()
+
+}
+fn read_invalid_text() @suspends {
+    var invalid = readable("invalid")
+    invalid.seek(fs.SeekFrom.Start(1)).unwrap()
+    match invalid.read_text(10) {
+        Err(fs.ReadTextError.Utf8(error)) => {
+            expect(error.offset == 0)
+            expect(match error.code { Utf8ErrorCode.InvalidSequence => true, _ => false })
+        }
+        _ => { expect(false) }
+    }
+    expect(invalid.seek(fs.SeekFrom.Current(0)).unwrap() == 2)
+    invalid.close().unwrap()
+    var truncated = readable("truncated")
+    match truncated.read_text(3) {
+        Err(fs.ReadTextError.Utf8(error)) => {
+            expect(error.offset == 1)
+            expect(match error.code { Utf8ErrorCode.UnexpectedEnd => true, _ => false })
+        }
+        _ => { expect(false) }
+    }
+    truncated.close().unwrap()
+    var limit_first = readable("invalid")
+    match limit_first.read_text(1) {
+        Err(fs.ReadTextError.Io(error)) => { expect(match error.kind { fs.ErrorKind.LimitExceeded => true, _ => false }) }
+        _ => { expect(false) }
+    }
+    limit_first.close().unwrap()
+    var error_first = readable("read_error")
+    match error_first.read_text(10) {
+        Err(fs.ReadTextError.Io(error)) => { expect(match error.kind { fs.ErrorKind.SystemFailure => true, _ => false }) }
+        _ => { expect(false) }
+    }
+    error_first.close().unwrap()
+
+}
+fn writes() @suspends {
+    var output = writable("write_short")
+    output.write_text("你好🙂\0\r\n").unwrap()
+    output.close().unwrap()
+    write_failure("write_zero", 9)
+    write_failure("write_error", 10)
+    write_failure("write_busy", 6)
+    var empty_write = writable("write_empty")
+    empty_write.write_all(Array.new::<UInt8>()).unwrap()
+    empty_write.write_text("").unwrap()
+    empty_write.close().unwrap()
+
+}
+fn large_roundtrip() @suspends {
+    var large = readable("large")
+    let data = large.read_all(1048583).unwrap()
+    expect(data.len() == 1048583)
+    large.close().unwrap()
+    var output = writable("write_large")
+    output.write_all(data).unwrap()
+    output.close().unwrap()
+}
+fn run() @suspends -> Int32 {
+    read_boundaries()
+    read_valid_text()
+    read_invalid_text()
+    writes()
+    large_roundtrip()
+    42
+}

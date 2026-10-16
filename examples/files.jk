@@ -11,22 +11,18 @@ fn main() @suspends -> Int32 {
         Err(error) => { println(&error.message) return 1 }
     }
     let text = "Hello, Joky 文件！\n"
-    let size = text.byte_length()
-    match file.write(text.into_bytes()) {
-        Ok(count) => { if count != size { return 2 } }
-        Err(error) => { println(&error.message) return 1 }
+    match file.write_text(text) {
+        Ok(_) => {}
+        Err(failure) => { println(&failure.error.message) return 1 }
     }
     match file.seek(fs.SeekFrom.Start(0)) {
         Ok(_) => {}
         Err(error) => { println(&error.message) return 1 }
     }
-    let bytes = match file.read(1024) {
-        Ok(bytes) => bytes
-        Err(error) => { println(&error.message) return 1 }
-    }
-    let text = match String.from_utf8(bytes) {
+    let text = match file.read_text(1024) {
         Ok(text) => text
-        Err(_) => { return 3 }
+        Err(fs.ReadTextError.Io(error)) => { println(&error.message) return 1 }
+        Err(fs.ReadTextError.Utf8(_)) => { return 3 }
     }
     println(&text)
     match file.close() {
