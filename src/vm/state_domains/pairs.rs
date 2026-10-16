@@ -15,7 +15,7 @@ pub(super) struct ValueOutput {
     pub(super) snapshot: bool,
 }
 impl VmEngine {
-    /// Queue one synchronous operation over two scalar state records. The first
+    /// Queue one synchronous operation over two hook-free owning state records. The first
     /// two parameters declare read/write access; remaining inputs are scalars.
     /// Duplicate shared reads are allowed; any alias involving a write is rejected.
     pub fn queue_domain_pair(
@@ -82,7 +82,7 @@ pub(super) fn submit(
     let info = module.instance_info(method)?;
     if !info.domain_entry || !crate::core::state_domain::pair_eligible(&info) {
         return Err(invalid(
-            "Domain pair requires a proved synchronous scalar-record entry",
+            "Domain pair requires a proved synchronous state entry",
         ));
     }
     let count = crate::core::state_domain::access_count(&info);
@@ -277,16 +277,15 @@ pub(super) fn execute(
             pair.limits,
         )
     } else {
-        for (index, handle) in pair.handles.iter().enumerate() {
-            pair.words[index] = domains.entries[&handle.sequence]
-                .root
-                .as_ref()
-                .unwrap()
-                .scalar_pointer();
-        }
-        // Multi-domain roots remain scalar and cannot retain invocation storage.
-        let mut arena = Arena::with_budget(domains.budget.clone(), None);
-        module.invoke_instance(&pair.method, &pair.words, pair.limits, &mut arena)
+        Root::invoke_many(
+            domains,
+            &pair.handles,
+            &module,
+            &pair.method,
+            &mut pair.words,
+            &mutable[..count],
+            pair.limits,
+        )
     }
     .and_then(|words| {
         if let Some(output) = &pair.output {

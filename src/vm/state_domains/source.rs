@@ -740,7 +740,9 @@ pub(crate) unsafe fn poll(
                 None => return Ok(None),
             }
         }
-        Operation::AccessSet
+        Operation::SetEditSnapshot
+        | Operation::SetEditCandidate
+        | Operation::AccessSet
         | Operation::AccessInclude
         | Operation::SnapshotSet
         | Operation::SetRead

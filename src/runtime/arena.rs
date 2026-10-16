@@ -117,7 +117,7 @@ impl Arena {
             }
         }
         let charge = self.selected_bytes(pointers)?;
-        let bytes = to
+        let _bytes = to
             .bytes
             .checked_add(charge)
             .filter(|&n| n <= limit)
@@ -127,17 +127,36 @@ impl Arena {
             .try_reserve(pointers.len())
             .map_err(|_| allocation_error())?;
         transfer_checkpoint()?;
+        self.transfer_reserved(to, pointers);
+        Ok(())
+    }
+    /// Reserve a destination for a subsequent allocation-free transfer.
+    pub(crate) fn reserve_transfer(&mut self, count: usize) -> Result<(), Error> {
+        transfer_checkpoint()?;
+        self.allocations
+            .try_reserve(count)
+            .map_err(|_| allocation_error())
+    }
+    /// Move validated registrations without failure, including rollback after
+    /// partial import. Source and destination must share a budget; destination
+    /// capacity must already suffice and pointers must be distinct source entries.
+    pub(crate) fn transfer_reserved(&mut self, to: &mut Self, pointers: &[NonNull<u8>]) {
+        debug_assert_eq!(self.budget_pointer(), to.budget_pointer());
+        debug_assert!(to.allocations.capacity() - to.allocations.len() >= pointers.len());
+        let mut charge = 0;
         for p in pointers {
             let index = self.allocations.iter().position(|(q, _)| q == p).unwrap();
-            to.allocations.push(self.allocations.swap_remove(index));
+            let allocation = self.allocations.swap_remove(index);
+            charge +=
+                allocation.1.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>();
+            to.allocations.push(allocation);
         }
         if let (Some(from), Some(target)) = (&self.account, &to.account) {
             from.refund(charge);
             target.bytes.set(target.bytes.get() + charge);
         }
         self.bytes -= charge;
-        to.bytes = bytes;
-        Ok(())
+        to.bytes += charge;
     }
     /// Discard dead invocation allocations without allocating during cleanup.
     ///

@@ -17,7 +17,7 @@ struct Frozen {
     module: LoadedModule,
     module_key: usize,
     ty: Type,
-    root: Root,
+    root: Option<Root>,
 }
 pub(crate) struct Snapshot {
     reads: reads::ReadSet,
@@ -26,6 +26,7 @@ pub(crate) struct Snapshot {
 }
 pub(crate) struct Proposal {
     outbox: Option<Box<outbox::Batch>>,
+    frozen: Option<Snapshot>,
     reads: reads::ReadSet,
     candidates: Vec<Candidate>,
     tokens: Vec<u64>,
@@ -74,10 +75,7 @@ fn include(
     if set.registry != domains.identity {
         return Err(invalid("Access set belongs to another executor"));
     }
-    let domain = domains.get(handle)?;
-    if !matches!(&domain.ty,Type::Record(r) if r.fields.iter().all(|f| instance::scalar(&f.ty))) {
-        return Err(invalid("Access sets require scalar record roots"));
-    }
+    domains.get(handle)?;
     if set.touches(handle.sequence) {
         return Ok(());
     }
@@ -120,11 +118,13 @@ fn capture(domains: &Domains, set: &Accesses) -> Result<Snapshot, Error> {
             module: domain.module.clone(),
             module_key: domain.source_module,
             ty: domain.ty.clone(),
-            root: domain
-                .root
-                .as_ref()
-                .unwrap()
-                .snapshot_scalar(&domain.ty, domains.budget.clone())?,
+            root: Some(
+                domain
+                    .root
+                    .as_ref()
+                    .unwrap()
+                    .snapshot(&domain.ty, domains.budget.clone())?,
+            ),
         });
     }
     Ok(Snapshot {
@@ -157,6 +157,7 @@ fn proposal(registry: &Rc<RefCell<Domains>>, reads: reads::ReadSet) -> Result<Pr
     )?;
     Ok(Proposal {
         outbox: None,
+        frozen: None,
         reads,
         candidates,
         tokens,
@@ -205,6 +206,99 @@ fn add(
     set.tokens.push(token);
     Ok(())
 }
+/// # Safety
+/// The packet must be a live compiler-packed UInt64 buffer on the current
+/// task thread. Its initialized lanes are validated against the editor schema.
+unsafe fn edit(
+    registry: &Rc<RefCell<Domains>>,
+    set: &mut Proposal,
+    token: u64,
+    module_key: usize,
+    name: &str,
+    packet: &Buffer,
+    limits: InterpreterLimits,
+) -> Result<(), Error> {
+    let version = target_version(registry, &set.reads, token)?;
+    let index = if let Some(index) = set
+        .candidates
+        .iter()
+        .position(|c| c.base.sequence == version.handle.sequence)
+    {
+        index
+    } else {
+        let frozen = set
+            .frozen
+            .as_mut()
+            .and_then(|s| s.roots.iter_mut().find(|f| f.token / 2 == token / 2))
+            .ok_or_else(|| invalid("Candidate target has no retained frozen state"))?;
+        if frozen.module_key != module_key {
+            return Err(invalid(
+                "Candidate editor belongs to another module version",
+            ));
+        }
+        let root = frozen
+            .root
+            .take()
+            .ok_or_else(|| invalid("Frozen root was consumed"))?;
+        set.candidates.push(Candidate {
+            outbox: None,
+            root,
+            module: frozen.module.clone(),
+            ty: frozen.ty.clone(),
+            base: DomainHandle {
+                writable: true,
+                ..version.handle
+            },
+            reads: set.reads.clone(),
+            deadline: None,
+        });
+        set.tokens.push(token);
+        set.candidates.len() - 1
+    };
+    let frozen = set
+        .frozen
+        .as_ref()
+        .and_then(|s| s.roots.iter().find(|f| f.token / 2 == token / 2))
+        .ok_or_else(|| invalid("Candidate editor requires a frozen candidate"))?;
+    if frozen.module_key != module_key {
+        return Err(invalid(
+            "Candidate editor belongs to another module version",
+        ));
+    }
+    let candidate = &mut set.candidates[index];
+    if !source::same_module(&candidate.module, &frozen.module) || candidate.ty != frozen.ty {
+        return Err(invalid(
+            "Candidate editor requires the frozen module and state type",
+        ));
+    }
+    let info = candidate.module.instance_info(name)?;
+    if !info.domain_entry
+        || !crate::core::state_domain::value_eligible(&info)
+        || info.signature.params.len() != 2
+        || info.signature.ret != Type::Unit
+        || info.signature.params[0]
+            .reference_type()
+            .is_none_or(|r| !r.mutable || r.target != candidate.ty)
+    {
+        return Err(invalid("Candidate editor requires a proved synchronous mutable entry with pure-value input and Unit result"));
+    }
+    let input = values::input_words(&info.signature.params[1..], packet)?;
+    let mut words = Vec::new();
+    words
+        .try_reserve_exact(input.len() + 1)
+        .map_err(|_| limited("Candidate input allocation failed"))?;
+    words.push(0);
+    words.extend(input);
+    candidate.root.invoke_values(
+        &candidate.module,
+        &candidate.ty,
+        name,
+        &info,
+        &mut words,
+        limits,
+    )?;
+    Ok(())
+}
 fn admit(registry: &Rc<RefCell<Domains>>, mut set: Proposal) -> Receipt {
     let accepted = (|| {
         let domains = registry.borrow();
@@ -217,6 +311,7 @@ fn admit(registry: &Rc<RefCell<Domains>>, mut set: Proposal) -> Receipt {
         }
         Ok(())
     })();
+    set.frozen = None;
     let result = accepted.and_then(|()| {
         let bytes = std::mem::size_of::<Proposal>()
             + set.candidates.capacity() * std::mem::size_of::<Candidate>()
@@ -436,8 +531,8 @@ unsafe fn poll_inner(
             {
                 return Err(invalid("Snapshot projection requires a proved shared entry with a bounded pure-value result for the exact state type"));
             }
-            let mut input = [frozen.root.scalar_pointer()];
-            let words = frozen.root.invoke_values(
+            let mut input = [frozen.root.as_ref().unwrap().scalar_pointer()];
+            let words = frozen.root.as_mut().unwrap().invoke_values(
                 &frozen.module,
                 &frozen.ty,
                 name,
@@ -455,9 +550,11 @@ unsafe fn poll_inner(
             ));
         }
         source::turn_arguments(&info, None, false)?;
-        let mut words = [frozen.root.scalar_pointer()];
+        let mut words = [frozen.root.as_ref().unwrap().scalar_pointer()];
         return frozen
             .root
+            .as_mut()
+            .unwrap()
             .invoke(
                 &frozen.module,
                 &frozen.ty,
@@ -467,6 +564,42 @@ unsafe fn poll_inner(
                 crate::runtime::suspension::current_limits(),
             )
             .map(|v| Some(v.bits()));
+    }
+    if matches!(op, Operation::SetEditSnapshot | Operation::SetEditCandidate) {
+        let lease = lease(frame.slots[1])?;
+        let mut set = if op == Operation::SetEditSnapshot {
+            let stored = &*lease.token().cast::<Stored<Option<Snapshot>>>();
+            let snapshot = stored
+                .value
+                .borrow_mut()
+                .take()
+                .ok_or_else(|| invalid("Snapshot set was consumed"))?;
+            let mut set = proposal(registry, snapshot.reads.clone())?;
+            set.frozen = Some(snapshot);
+            set
+        } else {
+            let stored = &*lease.token().cast::<Stored<Option<Proposal>>>();
+            stored
+                .value
+                .borrow_mut()
+                .take()
+                .ok_or_else(|| invalid("Candidate set was consumed"))?
+        };
+        let (_, key) = source::module(registry, frame.slots[0])?;
+        let name = crate::runtime::owned_text::borrow(frame.slots[3] as *const Buffer)?;
+        let packet = (frame.slots[4] as *const Buffer)
+            .as_ref()
+            .ok_or_else(|| invalid("Missing candidate input packet"))?;
+        edit(
+            registry,
+            &mut set,
+            frame.slots[2],
+            key,
+            name,
+            packet,
+            crate::runtime::suspension::current_limits(),
+        )?;
+        return adopt(arena, Some(set)).map(Some);
     }
     if matches!(
         op,
@@ -563,6 +696,7 @@ unsafe fn poll_inner(
 impl Proposal {
     pub(crate) fn holds_module(&self, key: usize) -> bool {
         self.candidates.iter().any(|c| c.holds_module(key))
+            || self.frozen.as_ref().is_some_and(|s| s.holds_module(key))
     }
 }
 
@@ -634,6 +768,171 @@ mod tests {
         assert!(
             matches!(request.take_result(),Some(DomainOutcome::Value(InstanceValue::Int32(n))) if n==expected)
         );
+    }
+    #[test]
+    fn state_domains_storage_frozen_edits_pin_code_and_move_roots_without_copying() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let source = include_str!("../../../../tests/fixtures/state_domain_storage.jk");
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
+            let owners: Vec<_> = (1..=3)
+                .map(|n| {
+                    vm.create_domain("make", &[InstanceValue::Int32(n)])
+                        .unwrap()
+                })
+                .collect();
+            for domain in vm.domains.borrow_mut().entries.values_mut() {
+                domain.source_module = code::module_key(&domain.module);
+            }
+            let snapshot = snapshot(&mut vm, &owners);
+            let key = snapshot.roots[0].module_key;
+            let original = snapshot
+                .roots
+                .iter()
+                .find(|f| f.token / 2 == token(&vm, &owners[0]) / 2)
+                .unwrap()
+                .root
+                .as_ref()
+                .unwrap()
+                .scalar_pointer();
+            let mut set = proposal(&vm.domains, snapshot.reads.clone()).unwrap();
+            set.frozen = Some(snapshot);
+            let mut arena = Arena::default();
+            let mut packet = Buffer::allocate(&mut arena, 2, 8, 8).unwrap();
+            unsafe {
+                for value in [7u64, 0] {
+                    packet
+                        .as_mut()
+                        .initialize_next()
+                        .unwrap()
+                        .cast::<u64>()
+                        .write(value);
+                    packet.as_mut().commit_next();
+                }
+                edit(
+                    &vm.domains,
+                    &mut set,
+                    token(&vm, &owners[0]),
+                    key,
+                    "update",
+                    packet.as_ref(),
+                    Default::default(),
+                )
+                .unwrap();
+            }
+            assert_eq!(set.candidates[0].root.scalar_pointer(), original);
+            vm.load_source(
+                &source.replace("edit(state,input.value)", "edit(state,input.value+100)"),
+            )
+            .unwrap();
+            assert_eq!(vm.publish_domain_code().unwrap(), 3);
+            let new_key = vm.domains.borrow().entries[&owners[0].handle.sequence].source_module;
+            assert_ne!(key, new_key);
+            unsafe {
+                assert!(edit(
+                    &vm.domains,
+                    &mut set,
+                    token(&vm, &owners[0]),
+                    new_key,
+                    "update",
+                    packet.as_ref(),
+                    Default::default()
+                )
+                .is_err());
+                edit(
+                    &vm.domains,
+                    &mut set,
+                    token(&vm, &owners[0]),
+                    key,
+                    "update",
+                    packet.as_ref(),
+                    Default::default(),
+                )
+                .unwrap();
+            }
+            let candidate = &mut set.candidates[0];
+            let info = candidate.module.instance_info("read").unwrap();
+            assert!(matches!(
+                candidate
+                    .root
+                    .invoke(
+                        &candidate.module,
+                        &candidate.ty,
+                        "read",
+                        &info,
+                        &mut [0],
+                        Default::default()
+                    )
+                    .unwrap(),
+                InstanceValue::Int32(7)
+            ));
+            let mut receipt = admit(&vm.domains, set);
+            vm.poll_tasks(100).unwrap();
+            let sequence = receipt.request.as_mut().unwrap().sequence.take().unwrap();
+            let record = vm.domains.borrow_mut().remove_request(sequence).unwrap();
+            assert_eq!(record.commit_status, Some(Status::Conflict));
+            drop(record);
+            drop(receipt);
+            for (i, owner) in owners.iter().enumerate() {
+                read(&mut vm, owner, i as i32 + 1);
+            }
+            unsafe {
+                Buffer::release(&mut arena, packet.as_ptr()).unwrap();
+            }
+            for owner in owners {
+                owner.close();
+            }
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+    #[test]
+    fn state_domains_storage_snapshot_sets_release_partial_copies_and_bound_members() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(
+                "struct S{text:String,n:Int32} fn make(n:Int32)->S{S{text:\"frozen\",n:n}}",
+            )
+            .unwrap();
+            let owners: Vec<_> = (0..65)
+                .map(|n| {
+                    vm.create_domain("make", &[InstanceValue::Int32(n)])
+                        .unwrap()
+                })
+                .collect();
+            for count in [1, 2, 3, 64] {
+                let mut set = accesses(&vm.domains).unwrap();
+                for owner in &owners[..count] {
+                    include(&vm.domains, &mut set, owner.read_handle()).unwrap();
+                }
+                if count == 64 {
+                    assert!(include(&vm.domains, &mut set, owners[64].read_handle()).is_err());
+                }
+                let domains = vm.domains.borrow();
+                let baseline = domains.budget.bytes.get();
+                let live = crate::runtime::arena::LIVE.with(Cell::get);
+                let mut completed = false;
+                for extra in (0..100_000).step_by(257) {
+                    domains.budget.limit.set(baseline + extra);
+                    let result = capture(&domains, &set);
+                    completed = result.is_ok();
+                    drop(result);
+                    assert_eq!(domains.budget.bytes.get(), baseline);
+                    assert_eq!(crate::runtime::arena::LIVE.with(Cell::get), live);
+                    if completed {
+                        break;
+                    }
+                }
+                assert!(completed);
+                domains
+                    .budget
+                    .limit
+                    .set(DomainLimits::default().max_state_bytes);
+            }
+            for owner in owners {
+                owner.close();
+            }
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
     }
     fn query_revision(
         arena: &mut Arena,

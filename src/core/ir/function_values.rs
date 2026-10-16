@@ -57,6 +57,7 @@ impl FunctionPlan {
                     | CompilerIntrinsic::ScriptPack
                     | CompilerIntrinsic::ScriptUnpack
                     | CompilerIntrinsic::DomainAccess(_)
+                    | CompilerIntrinsic::DomainReadOnly
                     | CompilerIntrinsic::DomainModule
                     | CompilerIntrinsic::TimerStart(_)
                     | CompilerIntrinsic::TimerValueFinish
@@ -67,6 +68,8 @@ impl FunctionPlan {
                     | CompilerIntrinsic::DomainSnapshot
                     | CompilerIntrinsic::DomainSnapshotPair
                     | CompilerIntrinsic::DomainSetRead
+                    | CompilerIntrinsic::DomainSetEdit(_)
+                    | CompilerIntrinsic::DomainSetEditFinish(_)
                     | CompilerIntrinsic::DomainSetCandidate(_)
                     | CompilerIntrinsic::DomainSetFinish(_)
                     | CompilerIntrinsic::DomainCandidate

@@ -54,6 +54,7 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::Domain, "domain.value_unpack") => ScriptUnpack,
             (SourceKind::Domain, "domain.lookup_type") => DirectoryType(parameter(f)?),
             (SourceKind::Domain, "domain.module") => DomainModule,
+            (SourceKind::Domain, "domain.readonly") => DomainReadOnly,
             (SourceKind::Domain, "domain.pack") => DomainPack,
             (SourceKind::Domain, "domain.unpack") => DomainUnpack,
             (SourceKind::Domain, id) => {
@@ -74,6 +75,10 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.snapshot_value" => DomainSnapshotValue,
                     "domain.finish_snapshot_read" => DomainSetReadFinish,
                     "domain.read_snapshot" => DomainSetRead,
+                    "domain.edit_snapshot" => DomainSetEdit(false),
+                    "domain.edit_candidate" => DomainSetEdit(true),
+                    "domain.finish_edit_snapshot" => DomainSetEditFinish(false),
+                    "domain.finish_edit_candidate" => DomainSetEditFinish(true),
                     "domain.candidate_set_from" => DomainSetCandidate(false),
                     "domain.candidate_set_add" => DomainSetCandidate(true),
                     "domain.finish_set_candidate_values" => DomainSetValueFinish(false),

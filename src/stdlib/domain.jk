@@ -77,7 +77,8 @@ pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> Resu
 extern fn __domain_module() -> domain.Module
 extern fn __domain_create(module: domain.Module, name: String, input: UInt64) @suspends -> domain.StateOwner
 extern fn __domain_handle(owner: &domain.StateOwner) @suspends -> domain.Handle
-extern fn __domain_readonly(handle: domain.Handle) @suspends -> domain.Handle
+#intrinsic("domain.readonly")
+fn readonly(handle: domain.Handle) -> domain.Handle;
 extern fn __domain_close(owner: &mut domain.StateOwner) @suspends
 extern fn __domain_request(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> (Int32, UInt64)
@@ -123,7 +124,7 @@ impl<S> Owner<S> {
     pub fn close(self) @suspends { var value = self.value __domain_close(&mut value) }
 }
 impl<S> WriteHandle<S> {
-    pub fn read_only(self) @suspends -> ReadHandle<S> { ReadHandle::<S> { token: __domain_readonly(self.token) } }
+    pub fn read_only(self) -> ReadHandle<S> { ReadHandle::<S> { token: readonly(self.token) } }
 }
 #intrinsic("domain.create")
 pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
@@ -309,7 +310,7 @@ impl PairCommitReceipt {
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
 }
 
-// A bounded read set captures independent scalar roots in one executor turn.
+// A bounded read set captures independent hook-free owning roots in one executor turn.
 extern fn __domain_access_set() @suspends -> domain.AccessSetOwner
 extern fn __domain_access_include(set:&mut domain.AccessSetOwner,handle:domain.Handle) @suspends
 extern fn __domain_snapshot_set(set:&mut domain.AccessSetOwner) @suspends -> domain.SnapshotSetOwner
@@ -385,6 +386,28 @@ fn finish_set_add_values<A>(module:domain.Module,set:CandidateSet,handle:domain.
 #intrinsic("domain.candidate_set_add")
 pub fn candidate_set_add<S,A>(set:CandidateSet,handle:WriteHandle<S>,constructor:fn(A)->S,input:A) @suspends -> CandidateSet {
     finish_set_add_values::<A>(module(),set,handle.token,"",input)
+}
+extern fn __domain_set_edit_snapshot(module:domain.Module,snapshot:&mut domain.SnapshotSetOwner,handle:domain.Handle,name:String,input:&Buffer<UInt64>) @suspends -> domain.CandidateSetOwner
+extern fn __domain_set_edit_candidate(module:domain.Module,set:&mut domain.CandidateSetOwner,handle:domain.Handle,name:String,input:&Buffer<UInt64>) @suspends -> domain.CandidateSetOwner
+#intrinsic("domain.finish_edit_snapshot")
+fn finish_edit_snapshot<A>(module:domain.Module,snapshot:SnapshotSet,handle:domain.Handle,name:String,input:A) @suspends -> CandidateSet {
+    let packet=pack_value(input)
+    var storage=snapshot.storage
+    CandidateSet{storage:__domain_set_edit_snapshot(module,&mut storage,handle,name,&packet.storage)}
+}
+#intrinsic("domain.edit_snapshot")
+pub fn edit_snapshot<S,A>(snapshot:SnapshotSet,handle:WriteHandle<S>,editor:fn(&mut S,A)->Unit,input:A) @suspends -> CandidateSet {
+    finish_edit_snapshot::<A>(module(),snapshot,handle.token,"",input)
+}
+#intrinsic("domain.finish_edit_candidate")
+fn finish_edit_candidate<A>(module:domain.Module,set:CandidateSet,handle:domain.Handle,name:String,input:A) @suspends -> CandidateSet {
+    let packet=pack_value(input)
+    var storage=set.storage
+    CandidateSet{storage:__domain_set_edit_candidate(module,&mut storage,handle,name,&packet.storage)}
+}
+#intrinsic("domain.edit_candidate")
+pub fn edit_candidate<S,A>(set:CandidateSet,handle:WriteHandle<S>,editor:fn(&mut S,A)->Unit,input:A) @suspends -> CandidateSet {
+    finish_edit_candidate::<A>(module(),set,handle.token,"",input)
 }
 pub fn commit_set(set:CandidateSet) @suspends -> SetCommitReceipt {
     var storage=set.storage

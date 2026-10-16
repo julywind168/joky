@@ -90,6 +90,8 @@ pub(crate) enum Operation {
     CandidateAtValues,
     CandidatePairAtValues,
     SetRevisionChecked,
+    SetEditSnapshot,
+    SetEditCandidate,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,6 +152,8 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_create" => Operation::Create,
         "__domain_create_values" => Operation::CreateValues,
         "__domain_handle" => Operation::Handle,
+        "__domain_set_edit_snapshot" => Operation::SetEditSnapshot,
+        "__domain_set_edit_candidate" => Operation::SetEditCandidate,
         "__domain_readonly" => Operation::ReadOnly,
         "__domain_close" => Operation::Close,
         "__domain_request" => Operation::Request,
@@ -392,6 +396,8 @@ impl Operation {
                 ],
                 commit_type(),
             ),
+            Self::SetEditSnapshot => return Self::SetCandidateValues.signature(),
+            Self::SetEditCandidate => return Self::SetAddValues.signature(),
             Self::SetRevisionChecked => (
                 vec![Type::reference(commit_type(), false), token],
                 Type::tuple(vec![Type::Int32, i]),
@@ -667,6 +673,8 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         85 => Operation::CandidateAtValues,
         86 => Operation::CandidatePairAtValues,
         87 => Operation::SetRevisionChecked,
+        88 => Operation::SetEditSnapshot,
+        89 => Operation::SetEditCandidate,
 
         _ => {
             super::error::record_error(Error::new_with_code(

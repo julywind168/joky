@@ -647,6 +647,135 @@ impl Buffer {
         })
     }
 
+    /// Deep-copy a validated hook-free graph, preserving capacity and descriptors.
+    /// No destination owner refers to source storage, even on partial failure.
+    ///
+    /// # Safety
+    /// Roots must be live, uniquely owned buffers registered in `source`. Both
+    /// arenas and their budget accounts must remain live throughout the copy.
+    pub(crate) unsafe fn copy_owners(
+        source: &Arena,
+        roots: &[*mut Self],
+        destination: &mut Arena,
+    ) -> Result<Vec<*mut Self>, Error> {
+        let graph = Self::owning_allocations(source, roots.iter().copied())?;
+        let _scratch = destination.reserve_external(
+            graph.allocations.capacity() * std::mem::size_of::<NonNull<u8>>()
+                + graph.buffers.capacity() * std::mem::size_of::<NonNull<Self>>()
+                + (graph.buffers.len() + roots.len()) * std::mem::size_of::<*mut Self>(),
+        )?;
+        let mut copies: Vec<*mut Self> = Vec::new();
+        copies
+            .try_reserve_exact(graph.buffers.len())
+            .map_err(|_| capacity_error())?;
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(roots.len())
+            .map_err(|_| capacity_error())?;
+        let copied = (|| {
+            for original in &graph.buffers {
+                let original = original.as_ref();
+                if original.resource.is_some()
+                    || original.failed_store.is_some()
+                    || original.failed_descriptor
+                    || original.release_active
+                    || original
+                        .cleanup
+                        .as_ref()
+                        .is_some_and(|c| !c.hooks.is_empty())
+                {
+                    return Err(bounds_error(
+                        "Snapshot requires a live hook-free owning graph",
+                    ));
+                }
+                let copy = Self::allocate(
+                    destination,
+                    original.capacity as u64,
+                    original.element.size(),
+                    original.element.align(),
+                )?
+                .as_ptr();
+                copies.push(copy);
+                if let Some(cleanup) = &original.cleanup {
+                    let mut owners = Vec::new();
+                    owners
+                        .try_reserve_exact(cleanup.owners.len())
+                        .map_err(|_| capacity_error())?;
+                    owners.extend_from_slice(&cleanup.owners);
+                    (*copy).configure(ElementCleanup {
+                        owners,
+                        hooks: Vec::new(),
+                    })?;
+                }
+                if original.element.size() != 0 {
+                    std::ptr::copy_nonoverlapping(
+                        original.data.as_ptr(),
+                        (*copy).data.as_ptr(),
+                        original.len * original.element.size(),
+                    );
+                }
+                // Until every allocation succeeds, each copied header cleans up
+                // only itself. Never follow an original child during unwinding.
+                if let Some(cleanup) = &original.cleanup {
+                    for index in 0..original.len {
+                        for &offset in &cleanup.owners {
+                            if offset != usize::MAX {
+                                (*copy)
+                                    .address(index)
+                                    .add(offset)
+                                    .cast::<*mut Self>()
+                                    .write_unaligned(std::ptr::null_mut());
+                            }
+                        }
+                    }
+                }
+                (*copy).len = original.len;
+            }
+            Ok::<_, Error>(())
+        })();
+        if let Err(error) = copied {
+            for copy in copies {
+                let _ = Self::release(destination, copy);
+            }
+            return Err(error);
+        }
+        let translated = |pointer: *mut Self| {
+            if pointer.is_null() {
+                pointer
+            } else {
+                copies[graph
+                    .buffers
+                    .iter()
+                    .position(|p| p.as_ptr() == pointer)
+                    .unwrap()]
+            }
+        };
+        // Linking cannot fail. All ownership lanes were validated by discovery.
+        for (original, &copy) in graph.buffers.iter().zip(&copies) {
+            let original = original.as_ref();
+            if let Some(cleanup) = &original.cleanup {
+                for index in 0..original.len {
+                    for &offset in &cleanup.owners {
+                        if offset != usize::MAX {
+                            let child = original
+                                .address(index)
+                                .add(offset)
+                                .cast::<*mut Self>()
+                                .read_unaligned();
+                            (*copy)
+                                .address(index)
+                                .add(offset)
+                                .cast::<*mut Self>()
+                                .write_unaligned(translated(child));
+                        }
+                    }
+                }
+            }
+        }
+        result.extend(roots.iter().map(|&root| translated(root)));
+        Ok(result)
+    }
+
     /// Consume an unborrowed owner. Stored references still point at independent
     /// arena objects; their task-long shared loans are not released here.
     pub(crate) unsafe fn release(arena: &mut Arena, owner: *mut Self) -> Result<(), Error> {

@@ -351,6 +351,8 @@ impl HostPending {
                                     | crate::runtime::domain::Operation::CandidatePairValues
                                     | crate::runtime::domain::Operation::AccessSet
                                     | crate::runtime::domain::Operation::SnapshotSet
+                                    | crate::runtime::domain::Operation::SetEditSnapshot
+                                    | crate::runtime::domain::Operation::SetEditCandidate
                                     | crate::runtime::domain::Operation::SetCandidate
                                     | crate::runtime::domain::Operation::SetCandidateValues
                                     | crate::runtime::domain::Operation::SetAdd

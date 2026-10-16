@@ -46,23 +46,58 @@ impl Root {
         }
         Ok(root)
     }
-    pub(super) fn snapshot_scalar(&self, ty: &Type, budget: Rc<Budget>) -> Result<Self, Error> {
-        if !matches!(ty, Type::Record(r) if r.fields.iter().all(|f| instance::scalar(&f.ty))) {
-            return Err(invalid("Access sets require scalar record roots"));
-        }
+    pub(super) fn snapshot(&self, ty: &Type, budget: Rc<Budget>) -> Result<Self, Error> {
         let mut arena = Arena::with_budget(budget, None);
         let layout = ty.storage_layout().map_err(|e| invalid(&e.to_string()))?;
+        let charge = arena.reserve_external(self.owners.len() * std::mem::size_of::<usize>())?;
+        let mut owners = Vec::new();
+        owners
+            .try_reserve_exact(self.owners.len())
+            .map_err(|_| limited("Root descriptor allocation failed"))?;
+        owners.extend_from_slice(&self.owners);
         let pointer = arena.allocate(layout.size, layout.align)?;
         unsafe {
             std::ptr::copy_nonoverlapping(self.pointer.as_ptr(), pointer.as_ptr(), layout.size);
+            for &offset in &owners {
+                pointer
+                    .as_ptr()
+                    .add(offset)
+                    .cast::<*mut Buffer>()
+                    .write(std::ptr::null_mut());
+            }
         }
-        let charge = arena.reserve_external(0)?;
-        Ok(Self {
+        let mut root = Self {
             _charge: charge,
             arena,
             pointer,
-            owners: Vec::new(),
-        })
+            owners,
+        };
+        let originals = self.owner_pointers()?;
+        let copies = unsafe { Buffer::copy_owners(&self.arena, &originals, &mut root.arena)? };
+        for (&offset, copy) in root.owners.iter().zip(copies) {
+            unsafe {
+                root.pointer
+                    .as_ptr()
+                    .add(offset)
+                    .cast::<*mut Buffer>()
+                    .write(copy);
+            }
+        }
+        Ok(root)
+    }
+    fn owner_pointers(&self) -> Result<Vec<*mut Buffer>, Error> {
+        let mut owners = Vec::new();
+        owners
+            .try_reserve_exact(self.owners.len())
+            .map_err(|_| limited("Root graph allocation failed"))?;
+        owners.extend(self.owners.iter().map(|&offset| unsafe {
+            self.pointer
+                .as_ptr()
+                .add(offset)
+                .cast::<*mut Buffer>()
+                .read()
+        }));
+        Ok(owners)
     }
     // One-field owning wrappers borrow the buffer capability; mixed aggregates
     // borrow their inline root storage. Both remain owned by this Root.
@@ -95,6 +130,166 @@ impl Root {
             .map_err(|_| limited("Domain root graph allocation failed"))?;
         graph.allocations.push(self.pointer);
         Ok(graph.allocations)
+    }
+    /// Import all distinct owning graphs for one synchronous multi-root turn.
+    /// Read-only graphs are prepared before entry so they can always be restored,
+    /// even when graph discovery or export reservation fails after a write.
+    pub(super) fn invoke_many(
+        domains: &mut Domains,
+        handles: &[DomainHandle],
+        module: &LoadedModule,
+        method: &str,
+        words: &mut [u64],
+        mutable: &[bool],
+        limits: InterpreterLimits,
+    ) -> Result<Vec<u64>, Error> {
+        let mut arena = Arena::with_budget(domains.budget.clone(), None);
+        let mut graphs = Vec::new();
+        graphs
+            .try_reserve_exact(handles.len())
+            .map_err(|_| limited("Domain graph allocation failed"))?;
+        let mut members = Vec::new();
+        members
+            .try_reserve_exact(handles.len())
+            .map_err(|_| limited("Domain graph allocation failed"))?;
+        for (index, handle) in handles.iter().enumerate() {
+            let domain = &domains.entries[&handle.sequence];
+            let root = domain.root.as_ref().unwrap();
+            words[index] = root.borrow_pointer(&domain.ty);
+            if members
+                .iter()
+                .any(|&i: &usize| handles[i].sequence == handle.sequence)
+            {
+                continue;
+            }
+            let graph = unsafe { Buffer::owning_allocations(&root.arena, root.owner_pointers()?)? };
+            members.push(index);
+            graphs.push(graph);
+        }
+        let scratch_bytes = graphs
+            .iter()
+            .map(|g| {
+                g.allocations.capacity() * std::mem::size_of::<NonNull<u8>>()
+                    + g.buffers.capacity() * std::mem::size_of::<NonNull<Buffer>>()
+            })
+            .sum::<usize>();
+        let _scratch = arena.reserve_external(scratch_bytes)?;
+        arena.reserve_transfer(graphs.iter().map(|g| g.allocations.len()).sum())?;
+        for (&index, graph) in members.iter().zip(&graphs) {
+            let root = domains
+                .entries
+                .get_mut(&handles[index].sequence)
+                .unwrap()
+                .root
+                .as_mut()
+                .unwrap();
+            root.arena.transfer_reserved(&mut arena, &graph.allocations);
+            unsafe {
+                Buffer::migrate_metadata(&graph.buffers, &arena);
+            }
+        }
+        let mut result = module.invoke_instance(method, words, limits, &mut arena);
+        let mut after = Vec::new();
+        let prepared = (|| {
+            if result.is_err() {
+                return Ok(None);
+            }
+            after
+                .try_reserve_exact(members.len())
+                .map_err(|_| limited("Domain graph allocation failed"))?;
+            for &index in &members {
+                let root = domains
+                    .entries
+                    .get_mut(&handles[index].sequence)
+                    .unwrap()
+                    .root
+                    .as_mut()
+                    .unwrap();
+                let graph = unsafe { Buffer::owning_allocations(&arena, root.owner_pointers()?)? };
+                if after.iter().any(|g: &crate::runtime::buffer::OwningGraph| {
+                    g.buffers
+                        .iter()
+                        .any(|buffer| graph.buffers.contains(buffer))
+                }) {
+                    return Err(invalid("Aliased domain owning graphs"));
+                }
+                root.arena.reserve_transfer(graph.allocations.len())?;
+                after.push(graph);
+            }
+            let bytes = after
+                .iter()
+                .map(|g| {
+                    g.allocations.capacity() * std::mem::size_of::<NonNull<u8>>()
+                        + g.buffers.capacity() * std::mem::size_of::<NonNull<Buffer>>()
+                })
+                .sum();
+            Ok::<_, Error>(Some(arena.reserve_external(bytes)?))
+        })();
+        let _export_charge = match prepared {
+            Ok(charge) => charge,
+            Err(error) => {
+                result = Err(error);
+                None
+            }
+        };
+        if result.is_ok() {
+            for (&index, graph) in members.iter().zip(&after) {
+                let root = domains
+                    .entries
+                    .get_mut(&handles[index].sequence)
+                    .unwrap()
+                    .root
+                    .as_mut()
+                    .unwrap();
+                arena.transfer_reserved(&mut root.arena, &graph.allocations);
+                unsafe {
+                    Buffer::migrate_metadata(&graph.buffers, &root.arena);
+                }
+            }
+        } else {
+            // Shared graphs cannot change, and their original arena capacities
+            // survived import. Restoration cannot allocate or fail.
+            for (&index, graph) in members.iter().zip(&graphs) {
+                let root = domains
+                    .entries
+                    .get_mut(&handles[index].sequence)
+                    .unwrap()
+                    .root
+                    .as_mut()
+                    .unwrap();
+                if !mutable[index] {
+                    arena.transfer_reserved(&mut root.arena, &graph.allocations);
+                    unsafe {
+                        Buffer::migrate_metadata(&graph.buffers, &root.arena);
+                    }
+                }
+            }
+            for &index in &members {
+                if mutable[index] {
+                    let root = domains
+                        .entries
+                        .get_mut(&handles[index].sequence)
+                        .unwrap()
+                        .root
+                        .as_mut()
+                        .unwrap();
+                    root.release_owners(&mut arena);
+                }
+            }
+        }
+        result
+    }
+    fn release_owners(&mut self, arena: &mut Arena) {
+        for &offset in &self.owners {
+            unsafe {
+                let lane = self.pointer.as_ptr().add(offset).cast::<*mut Buffer>();
+                let owner = lane.read();
+                lane.write(std::ptr::null_mut());
+                if !owner.is_null() {
+                    let _ = Buffer::release(arena, owner);
+                }
+            }
+        }
     }
     pub(super) fn invoke(
         &mut self,
@@ -162,3 +357,6 @@ impl Drop for Root {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

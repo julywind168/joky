@@ -5952,7 +5952,6 @@ fn state_domains_pairs_reject_unproved_entries_and_capability_mismatches() {
         ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),noisy).unwrap();"),
         ("fn pending(a:&S,b:&S) @suspends -> Int32 { a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),pending).unwrap();"),
         ("fn escape(a:&S,b:&S)->&S { a }", "domain.read_pair(a.read_handle(),b.read_handle(),escape).unwrap();"),
-        ("struct Owned { s:String } fn owned(n:Int32)->Owned { Owned { s:\"text\" } } fn owning(a:&Owned,b:&Owned)->Int32 { 1 }", "let x=domain.create(owned,1) domain.read_pair(x.read_handle(),x.read_handle(),owning).unwrap();"),
         ("import joky/drop.{type Drop} struct Hook { n:Int32 } impl Drop for Hook { fn drop(&mut self) {} } fn hook(a:&S,b:&S)->Int32 { let x=Hook{n:1} a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),hook).unwrap();"),
     ] {
         work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
@@ -6123,7 +6122,6 @@ fn state_domains_many_reject_missing_or_duplicate_members_in_all_backends() {
         ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,b.read_handle(),read);", "Projection domain is absent"),
         ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) let c=domain.candidate_set_from(s,b.handle(),make,3)", "Candidate target is absent"),
         ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) let c=domain.candidate_set_from(s,a.handle(),make,3) let d=domain.candidate_set_add(c,a.handle(),make,4)", "cannot repeat a writable domain"),
-        ("let owned=domain.create(make_owned,1) var access=domain.access_set() access.include(owned.read_handle())", "Access sets require scalar record roots"),
     ] {
         work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(s:&S)->Int32{{s.n}} struct Owned{{s:String}} fn make_owned(n:Int32)->Owned{{Owned{{s:\"text\"}}}} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
         let rejected = |output: std::process::Output| {
@@ -8293,5 +8291,90 @@ let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total) {candid
             "{error}"
         );
         assert!(error.contains("type_mismatch"), "{error}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_storage_owning_graphs_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "storage.jk",
+        include_str!("fixtures/state_domain_storage.jk"),
+    );
+    work.assert_all_backends("storage.jk", &[], b"", 0);
+}
+
+#[test]
+fn state_domains_storage_editors_reject_invalid_contracts() {
+    let work = Workspace::new();
+    let prefix = "import joky/domain struct S{n:Int32} fn make(n:Int32)->S{S{n:n}} fn edit(s:&mut S,n:Int32){s.n=n}";
+    for (extra, body) in [
+        (
+            "",
+            "domain.edit_snapshot(snapshot,owner.read_handle(),edit,2);",
+        ),
+        (
+            "fn readonly(s:&S,n:Int32){}",
+            "domain.edit_snapshot(snapshot,owner.handle(),readonly,2);",
+        ),
+        (
+            "fn result(s:&mut S,n:Int32)->Int32{n}",
+            "domain.edit_snapshot(snapshot,owner.handle(),result,2);",
+        ),
+        (
+            "fn pending(s:&mut S,n:Int32) @suspends {}",
+            "domain.edit_snapshot(snapshot,owner.handle(),pending,2);",
+        ),
+        (
+            "fn noisy(s:&mut S,n:Int32){println(n)}",
+            "domain.edit_snapshot(snapshot,owner.handle(),noisy,2);",
+        ),
+        (
+            "fn owned(s:&mut S,n:String){}",
+            "domain.edit_snapshot(snapshot,owner.handle(),owned,\"input\");",
+        ),
+        (
+            "",
+            "let f=edit domain.edit_snapshot(snapshot,owner.handle(),f,2);",
+        ),
+        (
+            "",
+            "let c=domain.edit_snapshot(snapshot,owner.handle(),edit,2) snapshot.check();",
+        ),
+    ] {
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{let owner=domain.create(make,1) var set=domain.access_set() set.include(owner.read_handle()) let snapshot=domain.snapshot_set(set) {body}}}"));
+        let output = work.cli(&["build", "invalid.jk"]);
+        assert!(!output.status.success(), "{body}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !error.contains("panicked") && !error.contains("[parse"),
+            "{error}"
+        );
+    }
+}
+#[test]
+#[cfg(unix)]
+fn state_domains_storage_editor_and_multi_failures_run_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/state_domain_storage.jk")
+        .split("fn lifecycle()")
+        .next()
+        .unwrap();
+    for body in [
+        "domain.write_pair(a.handle(),b.handle(),fail_swap,0).unwrap();",
+        "domain.update_pair(a.read_handle(),b.handle(),fail_mixed,0).unwrap();",
+        "let candidate=domain.edit_snapshot(capture(a.read_handle(),b.read_handle(),b.read_handle()),a.handle(),broken,0)",
+    ] {
+        work.write("failure.jk", &format!("{source} fn broken(s:&mut State,n:Int32){{edit(s,1/n);}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+        let rejected=|output:std::process::Output| {
+            assert!(!output.status.success());
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains("Division by zero") && !error.contains("panicked"),"{error}");
+        };
+        rejected(work.cli(&["run","failure.jk"]));
+        rejected(work.cli(&["run","--interpreter","failure.jk"]));
+        success(&work.cli(&["build","failure.jk"]));
+        rejected(Command::new(work.path().join("failure")).output().unwrap());
     }
 }

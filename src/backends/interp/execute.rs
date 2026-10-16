@@ -1833,8 +1833,15 @@ fn run_frame(
                 target,
                 decode,
             } => {
-                let value = frame.slots[*src].instance_bits().and_then(|bits| {
-                    if *decode {
+                // Only trusted domain intrinsics can reinterpret capabilities.
+                let bits = match &frame.slots[*src] {
+                    Value::Named(bits) if !decode => Ok(*bits),
+                    value => value.instance_bits(),
+                };
+                let value = bits.and_then(|bits| {
+                    if *decode && target.is_domain_capability() {
+                        Ok(Value::Named(bits))
+                    } else if *decode {
                         Value::from_instance_bits(target, bits)
                     } else {
                         Ok(Value::UInt64(bits))

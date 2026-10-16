@@ -2765,19 +2765,18 @@ Rust 自定义挂起适配器可用 `queue_current_domain_call` 提交所属域�
 ## 内置域访问 `joky/domain`
 
 `joky/domain` 在 JIT、解释器及独立 AOT 中使用同一执行器、状态注册表和关闭协议。
-S 必须是普通非泛型记录。单域根支持上节所述受检嵌套记录和 String、Array/Map 拥有图；
-双域与集合操作仍限标量记录根，不能把单域资格直接用于联合访问。
+S 必须是普通非泛型记录。单域、双域及集合均支持上节所述受检嵌套记录和 String、Array/Map 拥有图。
 标量输入 A 与结果 R 支持 Int8/16/32/64、UInt8/16/32/64、Float32/64、Bool、Rune 和 Unit；
 `create` 的输入、具名短操作及异步请求的输入／结果另支持有界嵌套纯值记录，具体范围见下述能力表。
 构造、带参查询、写入及请求各接收一个输入，用 `Unit` 表示无数据输入；该实参表达式仍只求值一次。
 不接受元组、容器、借用、函数或资源作为输入/结果，也不支持可变参数。
-以下入口均为 `@suspends`：
+以下入口除 `handle.read_only()` 外均为 `@suspends`：
 
 | 入口 | 行为 |
 | --- | --- |
 | `create<S, A>(fn(A) -> S, A) -> Owner<S>` | 调用受检构造函数，建立独立根 arena |
 | `owner.handle() -> WriteHandle<S>` | 取得可复制的写句柄 |
-| `owner.read_handle()` / `handle.read_only() -> ReadHandle<S>` | 取得或降级为读句柄 |
+| `owner.read_handle()` / `handle.read_only() -> ReadHandle<S>` | 取得读句柄；后者同步收窄权限，不访问执行器或活状态 |
 | `owner.close()` | 消费唯一 Owner，取消关联工作并等待关闭完成 |
 | `read_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Result<R, DomainAccessError>` | 排队执行同步只读短操作 |
 | `query_from<S, A, R>(ReadHandle<S>, fn(&S, A) -> R, A) -> Result<R, DomainAccessError>` | 排队执行带独立输入的同步只读查询 |
@@ -2786,7 +2785,7 @@ S 必须是普通非泛型记录。单域根支持上节所述受检嵌套记录
 | `request_read<S, A, R>(ReadHandle<S>, fn(A) @suspends -> R, A)` | 同上，请求只获得读权限 |
 
 Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不保活状态，可传递或存入容器，
-不能从整数构造，也不能提升权限。关闭后旧句柄永久失效。
+不能从整数构造，也不能提升权限。关闭后旧句柄永久失效；仍可同步调用 `read_only()`，实际访问时检查关闭、失败及执行器归属。
 `request` 与 `request_read` 返回 `Result<R, RequestError>`。成功载荷支持标量与有界纯值记录，保留完整标量位模式，
 包括 UInt64 最大值、浮点负零和 NaN 载荷，不占用成功值作为错误哨兵。
 
@@ -2797,9 +2796,9 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 | `create` | 受检拥有图 | 构造输入支持标量／纯值记录；返回完整状态根 |
 | 单域候选构造 | 受检拥有图 | 构造输入支持标量／纯值记录；返回完整状态根 |
 | 单域 `read/query/write`、`read_from/query_from/write_to` | 受检拥有图 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read*` 无额外输入 |
-| 双域短操作 | 标量记录 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read_pair` 无额外输入 |
+| 双域短操作 | 受检拥有图 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read_pair` 无额外输入 |
 | `snapshot_from` | 受检拥有图 | 投影结果支持标量／纯值记录 |
-| `snapshot_pair`、集合快照和候选 | 标量记录 | 投影结果和候选构造输入均支持标量／纯值记录 |
+| `snapshot_pair`、集合快照和候选 | 受检拥有图 | 投影结果和候选构造输入均支持标量／纯值记录 |
 | `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果支持标量／纯值记录 |
 | `after/every` | 所属域沿用单域根资格 | 操作输入支持标量／纯值记录，结果为 Unit |
 | `lookup::<S>/lookup_write::<S>` | 受检拥有图 | 显式指定状态类型，无投影参数 |
@@ -2883,7 +2882,7 @@ fn main() @suspends {
 以及由标量和普通非泛型记录嵌套组成的纯值输入 A、结果 R。每个包分别最多 64 个字段、
 8 层记录；所有层的字段累计计数，Unit 和空记录字段也占字段额度。允许空记录和 Unit，
 不接受 String、容器、引用、指针、函数、资源、用户 Drop、枚举、元组和泛型记录载荷。
-单域根仍可持有受检拥有图；双域根仍限标量记录。可执行示例见
+单域与双域根均可持有受检拥有图。可执行示例见
 [state_domain_values.jk](../tests/fixtures/state_domain_values.jk) 和
 [state_domain_queries.jk](../tests/fixtures/state_domain_queries.jk)。
 
@@ -3059,7 +3058,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 `domain.snapshot_pair<S,T,R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S,&T)->R)`
 为 `@suspends` 入口，返回 `Snapshot<S,R>`。根类型和实现归属与 `read_pair` 相同：
-两个普通标量记录、同一执行器、首域当前模块提供受检同步只读投影，其余域布局须兼容；
+两个普通受检状态记录、同一执行器、首域当前模块提供受检同步只读投影，其余域布局须兼容；
 投影结果支持标量与有界纯值记录。允许同域重复读。捕获完成后保存原投影结果与版本凭据，不晚绑定重算。
 
 投影值与两个域的修订在同一次 FIFO 短操作中捕获；稍后收取结果时不重新读取修订。
@@ -3094,7 +3093,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 | `commit_pair_before<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>, &CommitDeadline)` | 同上，发布前检查执行器时钟截止时间 |
 
 不接受单域快照、同域重复读快照扩展出的双写包；不提供拼接独立候选、拆包、提交时交换已绑定目标或删除
-读取依赖的接口。此双域接口继承 `snapshot_pair` 的标量记录限制；更多域使用下述有界访问集合。
+读取依赖的接口。此双域接口沿用 `snapshot_pair` 的根资格；更多域使用下述有界访问集合。
 构造与提交之间可以任意等待，任一域修订变化均使整个提交 Conflict，不自动重试。
 
 一包只占一份有界队列申请。发布前完成全部身份、权限、模块、类型、生命周期、读取修订、
@@ -3111,7 +3110,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 ### 有界多域访问集合
 
-`joky/domain` 提供动态、异构访问集合，最多包含 **64 个不同域**，域根均须为普通标量记录。
+`joky/domain` 提供动态、异构访问集合，最多包含 **64 个不同域**，域根均须为普通非泛型的受检状态记录。
 `AccessSet.include` 保存域身份，重复读归一化；空集合拒绝捕获，第 65 个不同成员受控拒绝。
 集合不能拼接不同时刻的快照，也不能删除读取依赖。单域、双域接口继续可用。
 
@@ -3119,11 +3118,13 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 | --- | --- |
 | `access_set() -> AccessSet` | 创建独占的有界访问集合 |
 | `AccessSet.include<S>(&mut self, ReadHandle<S>)` | 登记只读成员；不读取状态、不持有借用 |
-| `snapshot_set(AccessSet) -> SnapshotSet` | 消费访问集合，一次 FIFO 操作复制全部标量根并捕获完整修订集合 |
+| `snapshot_set(AccessSet) -> SnapshotSet` | 消费访问集合，一次 FIFO 操作深复制全部拥有根并捕获完整修订集合 |
 | `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为标量或有界纯值记录 |
 | `SnapshotSet.check() -> SnapshotStatus` | 检查全部成员的当前身份、生命周期与修订；不授予提交权限 |
 | `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为标量或有界纯值记录 |
 | `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；A 为标量或有界纯值记录，失败释放整包 |
+| `edit_snapshot<S,A>(SnapshotSet, WriteHandle<S>, fn(&mut S,A)->Unit, A) -> CandidateSet` | 消费冻结快照，移动指定冻结根到候选并局部编辑；保留其余冻结根与完整依赖 |
+| `edit_candidate<S,A>(CandidateSet, WriteHandle<S>, fn(&mut S,A)->Unit, A) -> CandidateSet` | 消费冻结派生的整包，继续编辑已选目标或加入另一个冻结目标；A 为标量或纯值记录 |
 | `commit_set(CandidateSet) -> SetCommitReceipt` | 消费整包并申请原子发布 |
 | `commit_set_before(CandidateSet, &CommitDeadline) -> SetCommitReceipt` | 同上，发布前检查执行器截止时间 |
 
@@ -3136,11 +3137,27 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 任务预算。投影始终使用冻结副本保留的模块，原域写入、代码发布或关闭不会改变投影来源；
 投影失败不修改冻结根或在线状态，错误仍沿任务失败通道传播。
 
-写目标可以是快照中的任意成员，与 include 顺序无关；必须提供该域的写能力，不能重复写
-同一个域，也不能扩展到快照之外。每个候选保留原始完整读取集合，未写入的第四、第五域
+写目标可以是快照中的任意成员，与 include 顺序无关；必须提供该域的写能力。构造入口不能重复添加
+同一个域；编辑入口允许多次编辑同一个候选，但只登记一次写目标。两者均不能扩展到快照之外。每个候选保留原始完整读取集合，未写入的第四、第五域
 同样参与冲突、关闭与失败检查。构造及等待期间不改动活根；发布前预检全体候选，任何失败
 都保持所有旧根和修订。成功后在同一次操作中替换全部写根，各推进一次修订，记录完整回执
 后释放旧根；只读成员的修订不变。不自动重试，也不自动发现未登记的业务依赖。
+
+冻结采用保留容器容量和清理描述的深复制，不调用用户 Clone／Drop，也不使用写时复制。
+状态预算覆盖活根、所有冻结根、候选、复制与调用临时存储的同时峰值；复制失败清理所有部分副本。
+投影快照 `snapshot_from`／`snapshot_pair` 只保存结果与凭据，不复制根。
+
+`edit_snapshot`／`edit_candidate` 使用捕获时的代码、精确类型及受检同步可写入口，编辑结果须为 Unit。
+选中冻结根的所有权直接移动，派生和后续编辑不再复制整个根；其余冻结根保留到包被丢弃或提交，
+用于后续选择目标。提交时释放未选中的冻结存储，但其读取版本仍参与验证。编辑可跨任务挂起分步调用，
+每次编辑本身同步完成，不开放 HR5 的迁移能力。不同模块版本的编辑入口拒绝执行；旧编辑仍可用其保留代码
+修改候选，但代码发布使后续提交冲突。目标关闭、权限、类型或输入契约错误通过任务失败通道报告；
+编辑运行时失败或预算耗尽清理整包，均不改变活根。编辑 API 用于冻结派生的包，构造候选继续使用
+`candidate_set_from`／`candidate_set_add`。投影结果仍限纯值，不开放拥有型结果。
+
+`Snapshot.value()` 等保存值读取继续为 `@suspends`：需要检查托管资源租借并按任务预算分配结果包，
+不因数据已保存而绕过资源访问协议。拥有型冻结、跨根移动及分步编辑示例见
+[state_domain_storage.jk](../tests/fixtures/state_domain_storage.jk)。
 
 `SetCommitReceipt.wait()` 返回 `Result<Unit,CommitError>`。
 `revision(ReadHandle<S>) -> Result<Option<UInt64>,RevisionError>` 查询本次提交保存的修订：
@@ -3154,6 +3171,8 @@ Rust 宿主另可使用 `queue_domain_access(&[DomainHandle], method, args)` 对
 其余参与域须与该入口的对应引用类型结构兼容，
 拒绝任意位置的可写别名。读取、候选发布与单域工作共用现有单线程 FIFO，没有部分持权等待、
 并行读或绕行调度。源语言使用集合快照与候选 API 表达多域协调，不提供可变长度引用回调。
+直接联合操作允许在可写根之间用受检移动／交换转移拥有值，调用结束后按实际拥有图归还各根。
+只读图不可转出拥有值；失败恢复只读域，隔离并清理全部可写域，不提供写操作回滚。
 
 三后端可执行换房示例见 [state_domain_many.jk](../tests/fixtures/state_domain_many.jk)：
 同时写玩家、旧房间、新房间，房间规则作为只读第四域；规则变化使三份候选整体冲突。

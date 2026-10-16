@@ -198,6 +198,21 @@ impl FunctionPlan {
             });
             return Ok(Some(Flow::Value(Some(result))));
         }
+        if matches!(kind, DomainReadOnly) {
+            let bits = self.pack_domain_scalar(values[0].clone())?;
+            let mask = self.slot(Type::UInt64)?;
+            self.emit(Op::Literal(mask.clone(), Constant::UInt64(!1)));
+            let result = self.slot(Type::UInt64)?;
+            self.emit(Op::Binary(
+                result.clone(),
+                crate::parser::ast::BinOp::BitAnd,
+                bits,
+                mask,
+            ));
+            return Ok(Some(Flow::Value(
+                self.unpack_domain_scalar(result, &info.signature.ret)?,
+            )));
+        }
         if matches!(kind, DomainModule) {
             let slot = self.slot(crate::runtime::domain::module_type())?;
             self.emit(Op::DomainModule(slot.clone()));
@@ -238,7 +253,10 @@ impl FunctionPlan {
             };
             return Ok(Some(Flow::Value(value)));
         }
-        if matches!(kind, DomainSetRead | DomainSetCandidate(_)) {
+        if matches!(
+            kind,
+            DomainSetRead | DomainSetCandidate(_) | DomainSetEdit(_)
+        ) {
             let (operation, target) = self
                 .function_value_info(&args[2], vars, functions, types, true)?
                 .ok_or_else(|| {
@@ -248,8 +266,22 @@ impl FunctionPlan {
                         "Domain set requires a named language operation",
                     )
                 })?;
-            let candidate = matches!(kind, DomainSetCandidate(_));
-            let inputs = &target.signature.params[usize::from(!candidate)..];
+            let editing = matches!(kind, DomainSetEdit(_));
+            let candidate = matches!(kind, DomainSetCandidate(_) | DomainSetEdit(_));
+            if editing
+                && (target.signature.params.len() != 2
+                    || target.signature.ret != Type::Unit
+                    || target.signature.params[0]
+                        .reference_type()
+                        .is_none_or(|r| !r.mutable))
+            {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidCall,
+                    "Candidate editor requires a mutable state reference and Unit result",
+                ));
+            }
+            let inputs = &target.signature.params[usize::from(!candidate || editing)..];
             if target.suspends
                 || inputs.len() != usize::from(candidate)
                 || !inputs.iter().all(|ty| {
@@ -291,7 +323,7 @@ impl FunctionPlan {
                 unreachable!()
             };
             captures.push(text);
-            let value_candidate = candidate && (checking || !inputs.iter().all(scalar));
+            let value_candidate = candidate && (editing || checking || !inputs.iter().all(scalar));
             if value_candidate {
                 captures.extend_from_slice(&values[3..]);
             } else if candidate {
@@ -328,10 +360,10 @@ impl FunctionPlan {
                     span,
                 )?
             } else if value_candidate {
-                let adding = matches!(kind, DomainSetCandidate(true));
+                let adding = matches!(kind, DomainSetCandidate(true) | DomainSetEdit(true));
                 let mut context = self.generics.borrow_mut();
                 let name = context.templates.iter()
-                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainSetValueFinish(flag)) if flag == adding))
+                    .find(|(_, f)| if editing { matches!(f.compiler_intrinsic, Some(DomainSetEditFinish(flag)) if flag == adding) } else { matches!(f.compiler_intrinsic, Some(DomainSetValueFinish(flag)) if flag == adding) })
                     .map(|(name, _)| name.clone())
                     .ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, "Missing domain set value adapter"))?;
                 context.instantiate(

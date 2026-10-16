@@ -1654,3 +1654,23 @@ fn exhaustive_state_domains_submission_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_storage_cancellation_reclaims_frozen_and_moved_graphs() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_storage.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000, 32768,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel owning snapshots, local edits and cross-root transfers at every instruction"]
+fn exhaustive_state_domains_storage_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_storage.jk"),
+        0..=65536,
+        true,
+    );
+}

@@ -17,7 +17,7 @@ pub(crate) fn access_count(info: &FunctionInfo) -> usize {
         .take_while(|ty| ty.reference_type().is_some())
         .count()
 }
-/// Synchronous access to independently stored scalar records.
+/// Synchronous access to independently owned, compiler-checked state records.
 pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
     let count = access_count(info);
     !info.suspends
@@ -30,9 +30,9 @@ pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
                 info.parameter_noescape(i)
                     && ty.reference_type().is_some_and(|r| {
                         matches!(&r.target, Type::Record(record)
-                    if record.template.is_none() && record.parameters.is_empty()
-                    && record.arguments.is_empty() && record.closure.is_none()
-                    && record.fields.iter().all(|f| super::instance::scalar(&f.ty)))
+                        if record.template.is_none() && record.parameters.is_empty()
+                        && record.arguments.is_empty() && record.closure.is_none()
+                        )
                     })
             })
         && info.signature.params[count..]
@@ -58,7 +58,7 @@ pub(crate) fn value_eligible(info: &FunctionInfo) -> bool {
                     && ty.reference_type().is_some_and(|r| {
                         matches!(&r.target, Type::Record(record) if record.template.is_none()
                     && record.parameters.is_empty() && record.arguments.is_empty()
-                    && (count == 1 || record.fields.iter().all(|f| super::instance::scalar(&f.ty))))
+                    && record.closure.is_none())
                     })
             })
 }

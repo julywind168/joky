@@ -1168,7 +1168,8 @@ impl FunctionPlan {
         if matches!(
             f.compiler_intrinsic,
             Some(
-                CompilerIntrinsic::DomainModule
+                CompilerIntrinsic::DomainReadOnly
+                    | CompilerIntrinsic::DomainModule
                     | CompilerIntrinsic::DomainPack
                     | CompilerIntrinsic::DomainUnpack
             )
