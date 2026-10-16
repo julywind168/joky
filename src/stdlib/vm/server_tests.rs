@@ -1,4 +1,4 @@
-//! HR7 functional composition and cleanup at real server lifecycle boundaries.
+//! HR7/W5 functional composition and cleanup at real server lifecycle boundaries.
 use super::*;
 use crate::runtime::{
     executor::{current_reactor, HostExecutor, TaskGroup},
@@ -38,7 +38,7 @@ fn server_reload_lifecycle_boundaries_release_tcp_domains_tasks_and_modules() {
                 "extern fn record_phase(phase:Int32) fn checkpoint(phase:Int32) @suspends {record_phase(phase) task.yield_now()}",
             );
             host.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
-            for cut in 1..=7 {
+            for cut in 1..=9 {
                 PHASE.with(|p| p.set(0));
                 REACTOR.with(|r| *r.borrow_mut() = None);
                 let arenas = crate::runtime::arena::LIVE.with(Cell::get);
@@ -87,7 +87,7 @@ fn server_reload_lifecycle_boundaries_release_tcp_domains_tasks_and_modules() {
                         executor.wait().unwrap();
                     }
                 }
-                assert_eq!(finished, cut == 7, "{host_mode:?}/{create}, cut={cut}");
+                assert_eq!(finished, cut == 9, "{host_mode:?}/{create}, cut={cut}");
                 assert!(crate::runtime::tcp::LIVE.with(Cell::get) > sockets || finished);
                 executor.cancel_group(&group);
                 VMS.with(|vms| assert!(vms.borrow().is_empty()));

@@ -4,17 +4,22 @@ import joky/task
 import joky/check
 import joky/array.{type Array}
 struct Context { directory:domain.DirectoryHandle, output:outbox.Handle, timer:domain.TimerHandle }
+#state
 struct Room { score:Int32 }
+#state
 struct Ledger { total:Int32 }
-struct Clock { ticks:Int32, last:Int32 }
+#state
+struct Clock { ticks:Int32, last:Int32, waiting:Int32 }
 fn assert(ok:Bool) {let message="reload server Script" check.assert(ok,&message)}
 fn version()->Int32 {1}
 fn room(score:Int32)->Room {Room{score:score}}
 fn ledger(total:Int32)->Ledger {Ledger{total:total}}
-fn clock(n:Int32)->Clock {Clock{ticks:n,last:0}}
-fn read_room(s:&Room)->Int32 {s.score}
-fn read_ledger(s:&Ledger)->Int32 {s.total}
-fn read_clock(s:&Clock)->Int32 {s.last}
+fn clock(n:Int32)->Clock {Clock{ticks:n,last:0,waiting:0}}
+impl Clock {
+    fn current(&self)->Int32 {self.last}
+    fn awaiting(&self)->Int32 {self.waiting}
+    fn wait_for_publish(&mut self,previous:Int32) {self.waiting=previous}
+}
 fn balance(a:&Room,b:&Ledger)->Int32 {if b.total==a.score*2 {a.score} else {-100}}
 fn tick(s:&mut Clock,n:Int32) {s.ticks=s.ticks+n s.last=version()}
 fn hold(ctx:Context) @suspends {
@@ -27,10 +32,33 @@ fn hold(ctx:Context) @suspends {
 fn probe(ctx:Context) @suspends ->Int32 {
     let a=match domain.lookup::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}
     let b=match domain.lookup::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return -1}
-    domain.read_pair(a,b,balance).unwrap()
+    when "balance" (a,b) {balance(a,b)}.unwrap()
 }
 fn tick_version(ctx:Context) @suspends ->Int32 {
-    match domain.lookup::<Clock>(ctx.directory,3) {Some(h)=>domain.read_from(h,read_clock).unwrap(),None=>-1}
+    match domain.lookup::<Clock>(ctx.directory,3) {Some(h)=>h.current().unwrap(),None=>-1}
+}
+fn awaiting(ctx:Context) @suspends ->Int32 {
+    match domain.lookup::<Clock>(ctx.directory,3) {Some(h)=>h.awaiting().unwrap(),None=>-1}
+}
+// This old flow retains its input, but the named block resolves after publication.
+fn award(ctx:Context) @suspends ->Int32 {
+    let a=match domain.lookup_write::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}
+    let b=match domain.lookup_write::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return -1}
+    let c=match domain.lookup_write::<Clock>(ctx.directory,3) {Some(h)=>h,None=>return -1}
+    let previous=c.current().unwrap()
+    let amount=version()
+    c.wait_for_publish(previous).unwrap()
+    while c.current().unwrap()==previous {task.yield_now()}
+    match when "award" (mut a,mut b) {
+        let increment=amount*version()
+        a.score+=increment
+        b.total+=increment*2
+        increment
+    } {
+        Ok(value)=>value,
+        Err(Incompatible)=>-2,
+        Err(_)=>-3
+    }
 }
 fn start_tick(ctx:Context) @suspends ->Bool {
     match domain.lookup_write::<Clock>(ctx.directory,3) {
@@ -40,6 +68,7 @@ fn start_tick(ctx:Context) @suspends ->Bool {
 fn request(ctx:Context) @suspends ->Int32 {
     let a=match domain.lookup_write::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}
     let b=match domain.lookup_write::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return -1}
+    // State and reply must publish together: keep the candidate/outbox protocol.
     let snapshot=domain.snapshot_pair(a.read_only(),b.read_only(),balance)
     let value=snapshot.value()+version()
     assert(value>0 && value<256)

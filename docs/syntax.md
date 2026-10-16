@@ -429,6 +429,8 @@ HR2 标量异步链路已提供 `Vm.call<Int32, Int32>` 与 `vm.publish_domain_c
 W0–W4 已实现 1–64 域 `when`、可选字符串标签、独立纯值捕获和结果、拥有图联合访问、
 `#state` 与句柄方法调用。具名块按稳定身份兼容晚绑定，匿名块只匹配原模块编译版本，替换后拒绝。
 首版限具名非泛型 `@suspends` 函数，访问项为绑定名；正式规则见[语言参考](language.md#when-状态域操作)。
+W5 已将两种写法接入服务端联合示例，验证跨发布旧流程、入口不兼容拒绝、候选信箱与等待期间取消，
+见[业务验收](aot-script-hot-reload.md#111-hr7-服务器联合功能验收已实现)。
 周期声明、迁移声明及候选编辑语法糖另设切片。
 
 当前支持宿主模块 `joky/vm` 和源码库 `joky/option`、`joky/result`、`joky/integer`、`joky/prelude`。

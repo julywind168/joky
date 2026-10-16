@@ -2,7 +2,9 @@
 pub fn source(create: &str) -> String {
     let old = include_str!("../fixtures/server_reload_script.jk");
     let patch2 = old.replace("fn version()->Int32 {1}", "fn version()->Int32 {2}");
-    let patch3 = old.replace("fn version()->Int32 {1}", "fn version()->Int32 {3}");
+    let patch3 = old
+        .replace("fn version()->Int32 {1}", "fn version()->Int32 {3}")
+        .replace("when \"award\"", "when \"award-v2\"");
     let migrated = old
         .replace("fn version()->Int32 {1}", "fn version()->Int32 {4}")
         .replace(
@@ -18,8 +20,8 @@ pub fn source(create: &str) -> String {
             "Ledger{total:total}",
             "Ledger{total:int64(total),generation:1}",
         )
-        .replace("{s.score}", "{int32(s.score)}")
-        .replace("{s.total}", "{int32(s.total)}")
+        .replace("a.score+=increment", "a.score+=int64(increment)")
+        .replace("b.total+=increment*2", "b.total+=int64(increment)*2")
         .replace(
             "if b.total==a.score*2 {a.score}",
             "if b.total==a.score*2 && a.copied==4 && b.generation==1 {int32(a.score)}",
