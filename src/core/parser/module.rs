@@ -4,6 +4,7 @@ use super::*;
 impl Parser {
     pub(super) fn parse_module(&mut self) -> Result<Module, Diagnostic> {
         let mut module = Module {
+            logical_name: "main".into(),
             intrinsic_attributes: Vec::new(),
             sources: Default::default(),
             scope: None,

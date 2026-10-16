@@ -55,7 +55,6 @@ pub(super) fn source_rejection(
     ) {
         return tasks::access_rejection(registry, error);
     }
-    let domains = registry.borrow();
     let count = if op == Operation::Pair {
         2
     } else if op == Operation::Values {
@@ -63,7 +62,15 @@ pub(super) fn source_rejection(
     } else {
         1
     };
-    for token in &frame.slots[1..1 + count] {
+    source_tokens(registry, &frame.slots[1..1 + count], error)
+}
+pub(super) fn source_tokens(
+    registry: &Rc<RefCell<Domains>>,
+    tokens: &[u64],
+    error: &Error,
+) -> Rejection {
+    let domains = registry.borrow();
+    for token in tokens {
         // Source capabilities intentionally carry no registry identity. Unknown
         // tokens (including a different executor's) are unavailable here: Closed.
         let domain = domains

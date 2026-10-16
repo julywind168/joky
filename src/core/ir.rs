@@ -15,6 +15,7 @@ mod cleanup;
 mod closures;
 mod domain_schema;
 mod domains;
+mod when;
 pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;
 mod control_flow;
@@ -426,6 +427,7 @@ pub(crate) struct DynErasure {
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
     source_function: String,
+    when_function: String,
     callable_modes: HashMap<usize, crate::parser::ast::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
     captured_fields: HashMap<usize, (Slot, Vec<String>)>,
@@ -784,7 +786,9 @@ impl ModulePlan {
         let generics = std::rc::Rc::new(std::cell::RefCell::new(generics::GenericContext::new(
             module,
         )));
+        crate::core::source::validate_module_path(&module.logical_name)?;
         generics.borrow_mut().members = members.clone();
+        when::validate_states(module, &functions, types, &nominals, generics.clone())?;
         constants::validate_all(&members, &functions, types, &nominals, generics.clone())?;
         let mut template_bodies = HashMap::new();
         // Check every template using rigid parameters, including unused templates.
@@ -1087,6 +1091,7 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
+        when::validate_blocks(f)?;
         let prepared = super::json_derive::prepare_encoding(f);
         let f = prepared.as_ref();
         // Specialization and synthesized branch entries can expose dyn types
@@ -1109,8 +1114,15 @@ impl FunctionPlan {
                     && f.name
                         .contains(&format!("joky/impl/{}/", d.self_parameter.id))
             });
+        let when_function = generics
+            .borrow()
+            .when_parents
+            .get(&f.name)
+            .cloned()
+            .unwrap_or_else(|| f.name.clone());
         let mut plan = Self {
             dyn_erasures: Vec::new(),
+            when_function,
             source_function: f.name.clone(),
             callable_modes: Default::default(),
             captured_owners: Default::default(),
@@ -1791,6 +1803,7 @@ impl FunctionPlan {
             }
         }
         match expr {
+            Expr::When(block) => self.when_expr(block, vars, functions, suspends, types),
             Expr::AnonymousFunction(function) => {
                 self.anonymous_function(function, vars, functions, suspends, types, expected)
             }

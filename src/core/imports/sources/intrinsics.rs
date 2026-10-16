@@ -104,6 +104,7 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.finish_request_value" => DomainRequestValueFinish,
                     "domain.finish_scalar" => DomainScalarFinish(false),
                     "domain.finish_current_scalar" => DomainScalarFinish(true),
+                    "domain.finish_when" => DomainWhenFinish,
                     "domain.finish_value" => DomainValueFinish(false),
                     "domain.finish_current_value" => DomainValueFinish(true),
                     _ => return Err(unknown(&attribute)),

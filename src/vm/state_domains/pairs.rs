@@ -3,6 +3,7 @@ use super::*;
 
 pub(super) struct Pair {
     pub(super) handles: Vec<DomainHandle>,
+    anonymous_module: Option<usize>,
     module: LoadedModule,
     method: String,
     info: FunctionInfo,
@@ -87,7 +88,18 @@ pub(super) fn submit(
     }
     let count = crate::core::state_domain::access_count(&info);
     let inputs = arguments(&info.signature.params[count..], args)?;
-    submit_words(registry, handles, method, info, inputs, limits, None)
+    submit_words(
+        registry,
+        handles,
+        method,
+        CallContract {
+            info,
+            anonymous_module: None,
+        },
+        inputs,
+        limits,
+        None,
+    )
 }
 
 pub(super) fn submit_values(
@@ -117,18 +129,41 @@ pub(super) fn submit_values(
             "Snapshot projection requires only shared state references",
         ));
     }
-    submit_words(registry, handles, method, info, input, limits, Some(output))
+    let anonymous_module = method
+        .starts_with("$when/anon/")
+        .then(|| code::module_key(module));
+    submit_words(
+        registry,
+        handles,
+        method,
+        CallContract {
+            info,
+            anonymous_module,
+        },
+        input,
+        limits,
+        Some(output),
+    )
+}
+
+struct CallContract {
+    info: FunctionInfo,
+    anonymous_module: Option<usize>,
 }
 
 fn submit_words(
     registry: &Rc<RefCell<Domains>>,
     handles: &[DomainHandle],
     method: &str,
-    info: FunctionInfo,
+    contract: CallContract,
     inputs: Vec<u64>,
     limits: InterpreterLimits,
     output: Option<ValueOutput>,
 ) -> Result<DomainRequest, Error> {
+    let CallContract {
+        info,
+        anonymous_module,
+    } = contract;
     let count = crate::core::state_domain::access_count(&info);
     if count != handles.len() {
         return Err(invalid(
@@ -157,6 +192,12 @@ fn submit_words(
         }
     }
     let module = resolve(&registry.borrow(), handles, method, &info)?;
+    if anonymous_module.is_some_and(|key| key != code::module_key(&module)) {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            "Anonymous when belongs to another module generation",
+        ));
+    }
     let mut words = Vec::new();
     words
         .try_reserve_exact(inputs.len() + count)
@@ -181,6 +222,7 @@ fn submit_words(
         registry,
         handles[0].sequence,
         Work::Pair(Pair {
+            anonymous_module,
             handles: handles.to_vec(),
             module,
             method: method.to_owned(),
@@ -247,6 +289,20 @@ pub(super) fn execute(
             return (DomainOutcome::Failed(error), Vec::new(), Vec::new());
         }
     };
+    if pair
+        .anonymous_module
+        .is_some_and(|key| key != code::module_key(&module))
+    {
+        *rejection = Some(access::Rejection::Incompatible);
+        return (
+            DomainOutcome::Failed(error(
+                ErrorCode::TypeMismatch,
+                "Anonymous when module was replaced",
+            )),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
     let mut revisions = [0; 64];
     for (index, handle) in pair.handles.iter().enumerate() {
         let domain = match domains.get(*handle) {
@@ -266,6 +322,7 @@ pub(super) fn execute(
         };
         revisions[index] = next;
     }
+    let mut entered = count == 1;
     let result = if count == 1 {
         let domain = domains.entries.get_mut(&pair.handles[0].sequence).unwrap();
         domain.root.as_mut().unwrap().invoke_values(
@@ -283,7 +340,7 @@ pub(super) fn execute(
             &module,
             &pair.method,
             &mut pair.words,
-            &mutable[..count],
+            (&mutable[..count], &mut entered),
             pair.limits,
         )
     }
@@ -311,6 +368,10 @@ pub(super) fn execute(
                 }
             }
             DomainOutcome::Value(value)
+        }
+        Err(error) if !entered => {
+            *rejection = Some(access::classify(domains, &pair.handles, &error));
+            DomainOutcome::Failed(error)
         }
         Err(error) => {
             // A failed short operation is not rollback. Every writable participant

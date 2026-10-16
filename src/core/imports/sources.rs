@@ -10,6 +10,7 @@ mod tests;
 
 #[derive(Clone, Debug)]
 pub(crate) struct DefinitionScope {
+    pub module_name: String,
     pub lazy_functions: bool,
     pub imports: Arc<ImportScope>,
     pub nominals: Arc<HashMap<String, Type>>,
@@ -545,6 +546,7 @@ impl StandardLibrary {
         let mut module = registry.resolve_aliases(&module)?;
         intrinsics::validate_signatures(&module.items[..own_items])?;
         let definition_scope = Arc::new(DefinitionScope {
+            module_name: path.into(),
             lazy_functions: kind != SourceKind::User,
             records: module.records.iter().take(own.1).map(|r| r.id).collect(),
             imports: module.scope.clone().unwrap(),

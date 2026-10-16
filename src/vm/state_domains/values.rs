@@ -87,15 +87,34 @@ pub(super) unsafe fn poll(
     arena: &mut Arena,
     frame: &mut CpsFrame,
     registry: &Rc<RefCell<Domains>>,
-    ambient: bool,
+    op: crate::runtime::domain::Operation,
 ) -> Result<Option<u64>, Error> {
-    let packet_slot = if ambient { 1 } else { 5 };
+    use crate::runtime::domain::Operation;
+    let ambient = op == Operation::CurrentValues;
+    let many = op == Operation::When;
+    let packet_slot = if ambient {
+        1
+    } else if many {
+        3
+    } else {
+        5
+    };
     let initial = frame.state == 0;
     let result = (|| {
         if frame.state == 0 {
             let (handles, module, name_slot) = if ambient {
                 let (handle, module) = tasks::value_context(registry)?;
                 (vec![handle], module, 0)
+            } else if many {
+                let packet = &*(frame.slots[2] as *const Buffer);
+                if !(1..=64).contains(&packet.len()) {
+                    return Err(invalid("Invalid when access count"));
+                }
+                let handles = (0..packet.len())
+                    .map(|i| source::handle(registry, packet.load(i)?.cast::<u64>().read()))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let (module, _) = source::module(registry, frame.slots[0])?;
+                (handles, module, 1)
             } else {
                 let count = frame.slots[3] as usize;
                 if !(1..=2).contains(&count) {
@@ -167,11 +186,13 @@ pub(super) unsafe fn poll(
     }
     match result {
         Err(error) if initial => {
-            let op = if ambient {
-                crate::runtime::domain::Operation::CurrentValues
-            } else {
-                crate::runtime::domain::Operation::Values
-            };
+            if many {
+                let packet = &*(frame.slots[2] as *const Buffer);
+                let tokens = (0..packet.len().min(64))
+                    .map(|i| Ok(packet.load(i)?.cast::<u64>().read()))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                return Ok(Some(access::source_tokens(registry, &tokens, &error) as u64));
+            }
             Ok(Some(
                 access::source_rejection(registry, frame, op, &error) as u64
             ))

@@ -642,6 +642,8 @@ pub enum Literal {
 /// Expression
 #[derive(Debug, Clone)]
 pub enum Expr {
+    /// An independently queued, compiler-checked state operation.
+    When(Box<When>),
     /// A synchronous anonymous function with declaration-local capture identity.
     AnonymousFunction(Box<AnonymousFunction>),
     Literal {
@@ -832,6 +834,16 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone)]
+pub struct When {
+    /// Set only by checked handle-method lowering, never parsed.
+    pub(crate) method: Option<String>,
+    pub label: Option<String>,
+    pub accesses: Vec<(String, bool)>,
+    pub body: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct AnonymousFunction {
     pub moving: bool,
     pub params: Vec<ClosureParameter>,
@@ -873,6 +885,7 @@ pub(crate) struct ClosureInfo {
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
+            Self::When(block) => block.span,
             Self::AnonymousFunction(function) => function.span,
             Self::GenericName(name) => name.span,
             Self::MethodCall(call) => call.span,
@@ -910,6 +923,10 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::When(mut block) => {
+                block.span = span;
+                Self::When(block)
+            }
             Self::AnonymousFunction(mut function) => {
                 function.span = span;
                 Self::AnonymousFunction(function)
@@ -1328,6 +1345,7 @@ pub(crate) enum CompilerIntrinsic {
     ScriptUnpack,
     DomainAccess(DomainAccessKind),
     DomainModule,
+    DomainWhenFinish,
     DomainReadOnly,
     DomainCreate,
     DomainCreateFinish,
@@ -1508,6 +1526,8 @@ pub struct ModuleConst {
 /// Parsed source module.
 #[derive(Debug, Clone)]
 pub struct Module {
+    /// Stable publication namespace, independent of source file locations.
+    pub logical_name: String,
     /// Item-indexed source annotations, consumed by the trusted library loader.
     pub(crate) intrinsic_attributes: Vec<(usize, Box<IntrinsicAttribute>)>,
     pub(crate) sources: Arc<crate::SourceMap>,

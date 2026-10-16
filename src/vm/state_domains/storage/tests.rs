@@ -110,12 +110,16 @@ fn state_domains_storage_multi_failure_restores_readers_and_isolates_all_writers
                     success,
                     "{mode:?} {method} {fault:?}: {outcome:?}"
                 );
-                if mutable_a {
+                if fault == Some(0) {
+                    read(&mut vm, &a, 7);
+                } else if mutable_a {
                     assert!(vm.queue_domain_call(a.read_handle(), "read", &[]).is_err());
                 } else {
                     read(&mut vm, &a, 7);
                 }
-                if success {
+                if fault == Some(0) {
+                    read(&mut vm, &b, 8);
+                } else if success {
                     read(&mut vm, &b, 11);
                 } else {
                     assert!(vm.queue_domain_call(b.read_handle(), "read", &[]).is_err());

@@ -43,15 +43,28 @@ pub(crate) fn error(span: Span, message: impl Into<String>) -> Error {
 }
 
 pub(crate) fn validate_attributes(record: &RecordDef) -> Result<(), Error> {
-    for (index, attribute) in record.attributes.iter().enumerate() {
+    let mut seen = std::collections::HashSet::new();
+    for attribute in &record.attributes {
+        if !seen.insert(&attribute.path) {
+            return Err(error(
+                attribute.span,
+                format!("Duplicate #{} attribute", attribute.path),
+            ));
+        }
+        if attribute.path == "state" {
+            if attribute.arguments.is_some() || !record.type_params.is_empty() {
+                return Err(error(
+                    attribute.span,
+                    "#state requires a nongeneric struct and accepts no arguments",
+                ));
+            }
+            continue;
+        }
         if attribute.path != "repr" {
             return Err(error(
                 attribute.span,
                 format!("Unknown declaration attribute #{}", attribute.path),
             ));
-        }
-        if index != 0 {
-            return Err(error(attribute.span, "Duplicate #repr attribute"));
         }
         let valid = attribute.arguments.as_deref().is_some_and(|args| matches!(args,
             [AttributeArgument { name: None, value: AttributeValue::Name(Attribute { path, arguments: None, .. }), .. }] if path == "C"));

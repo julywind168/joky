@@ -186,6 +186,10 @@ impl FunctionPlan {
             domain_entry: false,
             span: *span,
         };
+        self.generics
+            .borrow_mut()
+            .when_parents
+            .insert(task_def.name.clone(), self.when_function.clone());
         let plan = FunctionPlan::new(
             &task_def,
             functions,
@@ -281,6 +285,14 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
     }
     fn visit(expr: &Expr, scopes: &mut Vec<std::collections::HashSet<String>>, walk: &mut Walk) {
         match expr {
+            Expr::When(w) => {
+                for (name, _) in &w.accesses {
+                    walk.capture(name, scopes);
+                }
+                scopes.push(w.accesses.iter().map(|(name, _)| name.clone()).collect());
+                visit(&w.body, scopes, walk);
+                scopes.pop();
+            }
             Expr::AnonymousFunction(f) => {
                 scopes.push(f.params.iter().map(|p| p.name.clone()).collect());
                 visit(&f.body, scopes, walk);

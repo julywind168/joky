@@ -194,6 +194,7 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
+            TokenKind::Ident(ref name) if name == "when" && self.starts_when() => self.parse_when(),
             TokenKind::Ident(name) => {
                 self.advance();
                 let self_application = (name == "Self")

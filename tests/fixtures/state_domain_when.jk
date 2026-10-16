@@ -1,0 +1,65 @@
+import joky/check
+import joky/domain
+import joky/mem
+import joky/array.{type Array}
+
+fn assert(ok:Bool) { check.assert(ok,"when") }
+
+#state
+struct State { n:Int32, text:String, values:Array<Int32> }
+struct Input { n:Int32 }
+struct Output { first:Int32, second:Int32 }
+fn make(n:Int32)->State {
+    var values=Array.new::<Int32>()
+    values.push(n)
+    State{n:n,text:"state",values:values}
+}
+impl State {
+    fn add(&mut self, a:Int32, b:Input)->Int32 {self.n+=a+b.n; self.n}
+    fn value(&self)->Int32 {self.n}
+    fn read_only(&self)->Int32 {self.n}
+}
+fn when(n:Int32)->Int32 {n}
+fn lifecycle() @suspends ->Int32 {
+    let a=domain.create(make,1)
+    let b=domain.create(make,2)
+    let c=domain.create(make,3)
+    let x=a.handle()
+    let y=b.handle()
+    let z=c.read_handle()
+    var amount=4
+    let extra=Input{n:2}
+    let result=when "transfer" (mut x,mut y,z) {
+        amount+=extra.n
+        mem.swap(&mut x.text,&mut y.text)
+        mem.swap(&mut x.values,&mut y.values)
+        x.n+=amount
+        y.n+=z.n
+        Output{first:x.n,second:y.n}
+    }
+    assert(amount==4)
+    match result {Ok(r)=>{assert(r.first==7 && r.second==5)},Err(_)=>{assert(false)}}
+    let same=x.read_only()
+    assert(when (x) {x.read_only()}.unwrap()==7)
+    let duplicate=when (x,same) {x.n+same.n}
+    match duplicate {Ok(n)=>{assert(n==14)},Err(_)=>{assert(false)}}
+    let updated=x.add(1,Input{n:2})
+    match updated {Ok(n)=>{assert(n==10)},Err(_)=>{assert(false)}}
+    match same.value() {Ok(n)=>{assert(n==10)},Err(_)=>{assert(false)}}
+    let alias=x
+    match when (mut x,alias) {x.n+=1} {Err(InvalidAccess)=>{},_=>{assert(false)}}
+    let unit=when (mut y) {
+        var i=0
+        while i<3 {i+=1 if i==1 {continue} if i==3 {break} y.n+=1}
+    }
+    match unit {Ok(_)=>{},Err(_)=>{assert(false)}}
+    scope { branch {when "读取\u{0}状态" (x) {x.n};} branch {when "another read" (y) {y.n};} }
+    assert(!when (mut x) {x.n=11; false}.unwrap())
+    assert(same.value().unwrap()==11)
+    a.close()
+    match when (x) {x.n} {Err(Closed)=>{},_=>{assert(false)}}
+    b.close()
+    c.close()
+    when(24)
+}
+fn main() @suspends { assert(lifecycle()==24) }

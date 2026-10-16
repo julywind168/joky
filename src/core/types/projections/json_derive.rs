@@ -76,6 +76,7 @@ impl TypeRegistry {
                 scope
             } else {
                 DefinitionScope {
+                    module_name: String::new(),
                     lazy_functions: false,
                     imports: Arc::new(imports),
                     nominals: Arc::new(

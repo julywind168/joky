@@ -90,8 +90,11 @@ vm.publish_domain_code()    // 把结构兼容的现有域切到当前模块，�
   引用可变性、标量输入和返回类型；当前入口还须通过同步、无宿主调用和无逃逸证明。
   全部域仍须存活、健康、布局兼容且权限有效，修订余量也先检查。入口缺失、ABI 或布局
   不兼容时源码短操作返回 `DomainAccessError.Incompatible`（Rust 队列入口保留 `TypeMismatch`），拒绝整次调用，不修改任何根或修订，不隔离域。
-- 这一规则覆盖源码 `read_pair/update_pair/write_pair/snapshot_pair` 与 Rust 的 2–64 域
-  `queue_domain_access`，仍限普通标量记录根。`when` 的操作身份、捕获契约及晚绑定接线尚未实现，见[语法糖草案](state-domain-syntax.md)。
+- 这一规则覆盖源码 `read_pair/update_pair/write_pair/snapshot_pair`、Rust 的 2–64 域
+  `queue_domain_access`，以及 1–64 域 `when`。A4 已将受检拥有状态图接入多域访问；
+  W0–W4 进一步接通具名 `when` 的稳定身份、纯值捕获契约和句柄方法晚绑定。
+  匿名 `when` 固定调用方模块版本，版本变化时返回 `Incompatible`。
+  具体边界见[状态域语法](state-domain-syntax.md)。
 - 候选计算与快照投影仍固定原版本：读取凭据的代码变化按 `Conflict` 处理；候选写域自身
   已换模块时同样返回 `Conflict`。不能用晚绑定使旧计算继续提交。
 

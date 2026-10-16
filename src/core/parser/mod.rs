@@ -14,6 +14,7 @@ mod patterns;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod types;
+mod when;
 
 use self::ast::*;
 use self::lexer::{Lexer, Token, TokenKind};

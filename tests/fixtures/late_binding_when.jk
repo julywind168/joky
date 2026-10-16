@@ -1,0 +1,34 @@
+import joky/domain
+import joky/task
+import joky/check
+struct Room { n:Int32 }
+struct Reply { value:Int32, tag:UInt64 }
+fn assert(ok:Bool) {check.assert(ok,"when reload")}
+fn make(n:Int32)->Room {Room{n:n}}
+impl Room { fn value(&self)->Int32 {self.n} }
+fn hold(directory:domain.DirectoryHandle) @suspends {
+    let a=domain.create(make,40)
+    let b=domain.create(make,2)
+    let x=a.handle()
+    let y=b.handle()
+    let amount=2
+    let tag:UInt64=18446744073709551615
+    assert(directory.insert(1,x).is_ok())
+    assert(directory.insert(2,y).is_ok())
+    while domain.lookup::<Room>(directory,1).is_some() {task.yield_now()}
+    let reply=when "transfer" (mut x,mut y) {
+        x.n-=amount
+        y.n+=amount
+        Reply{value:x.n,tag:tag}
+    }.unwrap()
+    assert(reply.value == -160 && reply.tag==18446744073709551615)
+    assert(x.value().unwrap()==-160)
+    assert(y.value().unwrap()==202)
+    match when (x) {x.n} {Err(Incompatible)=>{},_=>{assert(false)}}
+}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup::<Room>(directory,1) {Some(a)=>a.value().unwrap(),None=>-1}
+}
+fn release(directory:domain.DirectoryHandle) @suspends ->Bool {
+    match domain.lookup::<Room>(directory,1) {Some(a)=>directory.remove(1,a),None=>false}
+}

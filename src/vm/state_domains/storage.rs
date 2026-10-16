@@ -140,9 +140,10 @@ impl Root {
         module: &LoadedModule,
         method: &str,
         words: &mut [u64],
-        mutable: &[bool],
+        access: (&[bool], &mut bool),
         limits: InterpreterLimits,
     ) -> Result<Vec<u64>, Error> {
+        let (mutable, entered) = access;
         let mut arena = Arena::with_budget(domains.budget.clone(), None);
         let mut graphs = Vec::new();
         graphs
@@ -188,6 +189,7 @@ impl Root {
                 Buffer::migrate_metadata(&graph.buffers, &arena);
             }
         }
+        *entered = true;
         let mut result = module.invoke_instance(method, words, limits, &mut arena);
         let mut after = Vec::new();
         let prepared = (|| {

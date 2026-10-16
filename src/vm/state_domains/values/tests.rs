@@ -334,3 +334,6 @@ fn broken(s:&State)->Reply {Reply{n:1/(s.n-7),wide:0}}
         assert_eq!(vm.domain_revision(a.read_handle()).unwrap(), 0);
     }
 }
+
+#[path = "when_tests.rs"]
+mod when_tests;

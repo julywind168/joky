@@ -25,6 +25,7 @@ pub(super) struct ClosureDefinition {
 /// Visit expression children in source order. Declaration scopes are handled by callers.
 pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
     match expr {
+        Expr::When(w) => vec![&w.body],
         Expr::AnonymousFunction(f) => vec![&f.body],
         Expr::Invoke { callee, args, .. } => std::iter::once(callee.as_ref()).chain(args).collect(),
         Expr::MethodCall(c) => std::iter::once(&c.receiver).chain(&c.args).collect(),
@@ -175,7 +176,7 @@ fn walk_free(
     visit(&function.body, &mut bound, &mut inspect, 0, &mut 1_000_000)
 }
 
-fn free_names(
+pub(super) fn free_names(
     function: &AnonymousFunction,
     outer: &HashMap<String, Binding>,
 ) -> Result<Vec<String>, Error> {

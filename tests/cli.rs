@@ -8378,3 +8378,225 @@ fn state_domains_storage_editor_and_multi_failures_run_in_all_backends() {
         rejected(Command::new(work.path().join("failure")).output().unwrap());
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_when_syntax_and_methods_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("when.jk", include_str!("fixtures/state_domain_when.jk"));
+    work.assert_all_backends("when.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_when_access_boundaries_run_in_all_backends() {
+    let mut source = String::from("import joky/domain import joky/mem import joky/check import joky/array.{type Array} struct S{n:Int32,text:String} fn make(n:Int32)->S{S{n:n,text:\"owned\"}} fn assert(ok:Bool){check.assert(ok,\"when boundary\")} ");
+    source.push_str("fn push(owners:&mut Array<domain.Owner<S>>,n:Int32) @suspends ->domain.WriteHandle<S>{let o=domain.create(make,n) let h=o.handle() owners.push(o) h} ");
+    for count in [1, 2, 3, 8, 64] {
+        source.push_str(&format!(
+            "fn run{count}() @suspends {{var owners=Array.new::<domain.Owner<S>>() "
+        ));
+        for i in 0..count {
+            source.push_str(&format!("let h{i}=push(&mut owners,{i}) "));
+        }
+        let accesses = (0..count)
+            .map(|i| format!("mut h{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        source.push_str(&format!("let r=when ({accesses}) {{"));
+        for i in 0..count {
+            source.push_str(&format!("h{i}.n+=1 "));
+            if i > 0 {
+                source.push_str(&format!("mem.swap(&mut h0.text,&mut h{i}.text) "));
+            }
+        }
+        source.push_str("h0.n} assert(r.unwrap()==1) ");
+
+        source.push_str("} ");
+    }
+    source.push_str("fn main() @suspends {run1() run2() run3() run8() run64()}");
+    let work = Workspace::new();
+    work.write("many_when.jk", &source);
+    work.assert_all_backends("many_when.jk", &[], b"", 0);
+}
+
+#[test]
+fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
+    let work = Workspace::new();
+    let prefix = "import joky/domain struct S{n:Int32} fn make(n:Int32)->S{S{n:n}}";
+    for (extra, body, expected) in [
+        ("", "when \"\" (h) {h.n};", "must not be empty"),
+        ("", "when () {};", "1 to 64"),
+        ("", "when (h,h) {};", "Duplicate binding"),
+        ("", "when (o.handle()) {};", "Expected"),
+        (
+            "",
+            "when \"same\" (h) {}; when \"same\" (h) {};",
+            "Duplicate when label",
+        ),
+        (
+            "",
+            "if true { when \"same\" (h) {}; } else { when \"same\" (h) {}; }",
+            "Duplicate when label",
+        ),
+        ("", "when (h) {return 1};", "cannot contain return"),
+        ("", "while true {when (h) {break};}", "break"),
+        ("", "when (h) {when (h) {}};", "cannot be nested"),
+        ("", "let ro=h.read_only() when (mut ro) {};", "WriteHandle"),
+        ("", "when (h) {h.n=2};", "shared"),
+        ("", "when (mut h) {println(1)};", "proved synchronous"),
+        (
+            "",
+            "let text=\"owned\" when (h) {text};",
+            "pure-value packet",
+        ),
+        (
+            "",
+            "let text=\"owned\" when (h) {text.len()};",
+            "pure-value packet",
+        ),
+        ("", "var n=1 let r=&n when (h) {*r};", "pure-value packet"),
+        (
+            "fn get(n:Int32)->Int32{n}",
+            "let f=get when (h) {f(h.n)};",
+            "pure-value packet",
+        ),
+        ("", "when (h) {&h.n};", "pure value"),
+        (
+            "impl S {fn add(&mut self,n:Int32){self.n+=n}}",
+            "let ro=h.read_only() ro.add(2);",
+            "WriteHandle",
+        ),
+        (
+            "impl S {fn generic<T>(&self,n:T)->T{n}}",
+            "h.generic(2);",
+            "Generic domain handle methods",
+        ),
+        (
+            "impl S {fn take(self)->Int32{self.n}}",
+            "h.take();",
+            "borrowed state receiver",
+        ),
+        (
+            "impl S {fn noisy(&self){println(1)}}",
+            "h.noisy();",
+            "proved synchronous",
+        ),
+        ("#state struct Bad{f:fn()->Int32}", "", "#state requires"),
+        ("#state struct Bad<T>{n:T}", "", "nongeneric"),
+        ("#state(1) struct Bad{n:Int32}", "", "accepts no arguments"),
+        ("#state #state struct Bad{n:Int32}", "", "Duplicate #state"),
+        (
+            "fn generic<T>(h:domain.ReadHandle<S>,v:T) @suspends {when(h){h.n};}",
+            "",
+            "nongeneric",
+        ),
+    ] {
+        work.write("invalid_when.jk", &format!("{prefix} {extra} fn main() @suspends {{let o=domain.create(make,1) let h=o.handle() {body}}}"));
+        let output = work.cli(&["build", "invalid_when.jk"]);
+        assert!(!output.status.success(), "{body} {extra}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !error.contains("panicked") && error.contains(expected),
+            "{body} {extra}: {error}"
+        );
+    }
+    let bindings = (0..65)
+        .map(|i| format!("let h{i}=o.handle() "))
+        .collect::<String>();
+    let accesses = (0..65)
+        .map(|i| format!("h{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    work.write("too_many_when.jk", &format!("{prefix} fn main() @suspends {{let o=domain.create(make,1) {bindings} when({accesses}){{}};}}"));
+    failure(&work.cli(&["build", "too_many_when.jk"]), "1 to 64");
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_when_old_flows_bind_latest_script_blocks_in_all_backends() {
+    let old = include_str!("fixtures/late_binding_when.jk");
+    let second = old
+        .replace("x.n-=amount", "x.n-=amount*10")
+        .replace("y.n+=amount", "y.n+=amount*10");
+    let third = old
+        .replace("x.n-=amount", "x.n-=amount*100")
+        .replace("y.n+=amount", "y.n+=amount*100");
+    let escape = |s: &str| s.replace('{', "{{").replace('}', "}}");
+    let (old, second, third) = (escape(old), escape(&second), escape(&third));
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write("when_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+fn assert(ok:Bool) {{check.assert(ok,"when Script")}}
+fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
+    var attempts=0
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
+        attempts+=1 assert(attempts<1000) task.yield_now()
+    }}
+    let second={second:?} assert(vm.load_source(h,&second)==0) assert(vm.publish_domain_code(h)==2)
+    let third={third:?} assert(vm.load_source(h,&third)==0) assert(vm.publish_domain_code(h)==2)
+    assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
+}}
+fn main() @suspends {{
+    let h=vm.Vm.{create}() let source={old:?} assert(vm.load_source(h,&source)==0)
+    let owner=domain.directory(2) let directory=owner.handle()
+    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    assert(vm.module_count(h)==1) assert(vm.close(h)==0)
+}}"#));
+        work.assert_all_backends("when_reload.jk", &[], b"", 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_when_capture_limits_include_the_outer_packet() {
+    let work = Workspace::new();
+    let mut accepted = String::from("import joky/domain import joky/check struct S{n:Int32} fn make(n:Int32)->S{S{n:n}} fn assert(ok:Bool){check.assert(ok,\"capture limits\")} ");
+    for (index, fields) in [63, 64].into_iter().enumerate() {
+        let names = (0..fields)
+            .map(|i| format!("f{i}:Int32"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let values = (0..fields)
+            .map(|i| format!("f{i}:1"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let code = format!("struct P{index}{{{names}}} fn run{index}() @suspends {{let o=domain.create(make,1) let h=o.handle() let p=P{index}{{{values}}} let r=when(h){{p.f0+h.n}} assert(r.unwrap()==2)}}");
+        if fields == 63 {
+            accepted.push_str(&code);
+        } else {
+            work.write("invalid_packet.jk",&format!("import joky/domain import joky/check struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn assert(ok:Bool){{check.assert(ok,\"limit\")}} {code} fn main() @suspends {{run{index}()}}"));
+            failure(&work.cli(&["build", "invalid_packet.jk"]), "64 fields");
+        }
+    }
+    accepted.push_str("fn main() @suspends {run0()}");
+    work.write("capture_limits.jk", &accepted);
+    work.assert_all_backends("capture_limits.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_when_imported_blocks_and_body_failures_match_backends() {
+    let work = Workspace::new();
+    work.write("room.jk", r#"import joky/domain
+#state pub struct S{pub n:Int32}
+pub fn make(n:Int32)->S{S{n:n}}
+impl S {pub fn value(&self)->Int32{self.n}}
+pub fn probe(h:domain.ReadHandle<S>) @suspends ->Int32{h.value().unwrap()}
+pub fn update(h:domain.WriteHandle<S>,n:Int32) @suspends ->Int32 {when "更新"(mut h){h.n+=n;h.n}.unwrap()}
+"#);
+    work.write("imports.jk", "import room import joky/domain fn main() @suspends ->Int32 {let o=domain.create(room.make,1) room.update(o.handle(),2); room.probe(o.read_handle())+o.read_handle().value().unwrap()}");
+    work.assert_all_backends("imports.jk", &[], b"", 6);
+    work.write("failure.jk", "import room import joky/domain fn main() @suspends {let a=domain.create(room.make,1) let b=domain.create(room.make,2) let x=a.handle() let y=b.handle() let zero=0 when(mut x,mut y){x.n=10 y.n=20 x.n/zero};}");
+    for args in [
+        ["run", "failure.jk"].as_slice(),
+        ["run", "--interpreter", "failure.jk"].as_slice(),
+    ] {
+        failure(&work.cli(args), "Division by zero");
+    }
+    success(&work.cli(&["build", "failure.jk"]));
+    failure(
+        &Command::new(work.path().join("failure")).output().unwrap(),
+        "Division by zero",
+    );
+}

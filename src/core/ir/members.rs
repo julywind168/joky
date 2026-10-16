@@ -553,6 +553,85 @@ impl FunctionPlan {
         } else {
             None
         };
+        if inherent.is_none()
+            && associated.is_none()
+            && selected_trait.is_none()
+            && matches!(&ty, Type::Record(r) if matches!(r.name.as_str(), "joky/domain.ReadHandle" | "joky/domain.WriteHandle"))
+            && context
+                .members
+                .trait_method(&ty, name, selected_trait, &self.scope, span)?
+                .is_none()
+        {
+            if let Type::Record(handle) = &ty {
+                if matches!(
+                    handle.name.as_str(),
+                    "joky/domain.ReadHandle" | "joky/domain.WriteHandle"
+                ) {
+                    let state = &handle.arguments[0];
+                    if let Some(method) = context
+                        .members
+                        .method(state, name)
+                        .filter(|_| self.member_visible(state, name))
+                    {
+                        let Some(Receiver::Borrowed { mutable }) = method.receiver else {
+                            return Err(type_error(
+                                &span,
+                                ErrorCode::InvalidCall,
+                                "Domain handle methods require a borrowed state receiver",
+                            ));
+                        };
+                        if method.method_parameters != 0 || !type_args.is_empty() {
+                            return Err(type_error(
+                                &span,
+                                ErrorCode::InvalidCall,
+                                "Generic domain handle methods are not supported",
+                            ));
+                        }
+                        let info = &functions[&method.function];
+                        if info.suspends || info.signature.params.len() != args.len() + 1 {
+                            return Err(type_error(
+                                &span,
+                                ErrorCode::InvalidCall,
+                                "Domain handle method requires a synchronous matching signature",
+                            ));
+                        }
+                        let mut exprs = vec![Expr::Let {
+                            name: "$when_receiver".into(),
+                            annotation: None,
+                            value: Box::new(receiver.clone()),
+                            span,
+                        }];
+                        let mut arguments = vec![Expr::Ident {
+                            name: "$when_receiver".into(),
+                            span,
+                        }];
+                        for (index, arg) in args.iter().enumerate() {
+                            let name = format!("$when_arg{index}");
+                            exprs.push(Expr::Let {
+                                name: name.clone(),
+                                annotation: Some(info.signature.params[index + 1].clone()),
+                                value: Box::new(arg.clone()),
+                                span,
+                            });
+                            arguments.push(Expr::Ident { name, span });
+                        }
+                        exprs.push(Expr::When(Box::new(crate::parser::ast::When {
+                            method: Some(method.function.clone()),
+                            label: None,
+                            accesses: vec![("$when_receiver".into(), mutable)],
+                            body: Expr::Call {
+                                callee: format!("joky/member/{}", method.function),
+                                type_args: vec![],
+                                args: arguments,
+                                span,
+                            },
+                            span,
+                        })));
+                        return Ok(Some(Expr::Block { exprs, span }));
+                    }
+                }
+            }
+        }
         let method = match inherent {
             Some(method) => method,
             None => context

@@ -92,6 +92,7 @@ pub(crate) enum Operation {
     SetRevisionChecked,
     SetEditSnapshot,
     SetEditCandidate,
+    When,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +121,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
         "__domain_query_at" => Operation::Query,
         "__domain_query_scalar" => Operation::CurrentQuery,
+        "__domain_when" => Operation::When,
         "__domain_values" => Operation::Values,
         "__domain_current_values" => Operation::CurrentValues,
         "__timer_create" => Operation::TimerCreate,
@@ -253,6 +255,7 @@ impl Operation {
                 | Self::CurrentRead
                 | Self::CurrentWrite
                 | Self::Pair
+                | Self::When
                 | Self::Values
                 | Self::CurrentValues
                 | Self::Query
@@ -261,7 +264,7 @@ impl Operation {
     }
     pub(crate) fn status_payload(self) -> bool {
         matches!(self, Self::Request | Self::SetRevisionChecked)
-            || (self.access() && !matches!(self, Self::Values | Self::CurrentValues))
+            || (self.access() && !matches!(self, Self::Values | Self::CurrentValues | Self::When))
     }
     pub(crate) fn signature(self) -> FunctionSignature {
         let token = handle_type();
@@ -278,6 +281,15 @@ impl Operation {
         let bytes = Type::Buffer(std::sync::Arc::new(Type::UInt8));
         let directory = Type::Resource("domain.DirectoryOwner".into());
         let (params, ret) = match self {
+            Self::When => (
+                vec![
+                    m,
+                    text,
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), false),
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+                ],
+                Type::Int32,
+            ),
             Self::CurrentValues => (
                 vec![
                     text,
@@ -675,6 +687,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         87 => Operation::SetRevisionChecked,
         88 => Operation::SetEditSnapshot,
         89 => Operation::SetEditCandidate,
+        90 => Operation::When,
 
         _ => {
             super::error::record_error(Error::new_with_code(

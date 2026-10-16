@@ -29,6 +29,11 @@ pub(super) struct ClosureInstance {
 }
 
 pub(super) struct GenericContext {
+    /// Declaring modules keep handle-method identity independent of the caller.
+    pub when_modules: HashMap<String, String>,
+    pub when_parents: HashMap<String, String>,
+    pub module_name: String,
+    pub when_sites: Vec<(String, Span, String)>,
     pub scope: Arc<crate::core::imports::ImportScope>,
     pub templates: HashMap<String, FnDef>,
     pub instances: Vec<Instance>,
@@ -48,6 +53,23 @@ pub(super) struct GenericContext {
 impl GenericContext {
     pub fn new(module: &AstModule) -> Self {
         Self {
+            when_modules: module
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::FnDef(f) => Some((
+                        f.name.clone(),
+                        f.scope.as_ref().map_or_else(
+                            || module.logical_name.clone(),
+                            |scope| scope.module_name.clone(),
+                        ),
+                    )),
+                    _ => None,
+                })
+                .collect(),
+            when_parents: HashMap::new(),
+            module_name: module.logical_name.clone(),
+            when_sites: Vec::new(),
             scope: module.scope.clone().unwrap_or_default(),
             templates: module
                 .items

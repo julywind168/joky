@@ -1038,6 +1038,7 @@ pub(crate) fn resolve_pattern_heads(
         let mut pending = vec![expr];
         while let Some(expr) = pending.pop() {
             match expr {
+                Expr::When(w) => pending.push(&mut w.body),
                 Expr::AnonymousFunction(f) => pending.push(&mut f.body),
                 Expr::Destructure { pattern, value, .. } => {
                     walk_binding(pattern, aliases, registry)?;
@@ -1141,6 +1142,7 @@ pub(crate) fn map_annotations(
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::When(block) => map_annotations(&mut block.body, map)?,
         Expr::AnonymousFunction(function) => {
             for param in &mut function.params {
                 if let Some(ty) = &mut param.ty {
@@ -1432,7 +1434,8 @@ pub(crate) fn validate_nominal_type(
     for ty in TypeWalk::new(ty, TypeEdges::Arguments) {
         if let Some((name, _)) = ty.nominal() {
             let belongs = match (ty, nominals.get(name)) {
-                (Type::Record(a), _) if a.closure.is_some() => true,
+                // `$` cannot occur in a source type name; these records are compiler packets.
+                (Type::Record(a), _) if a.closure.is_some() || a.name.starts_with("$when.") => true,
                 (Type::Enum(a), Some(Type::Enum(b))) => a.id == b.id,
                 (Type::Record(a), Some(Type::Record(b))) => a.id == b.id,
                 (_, Some(other)) => ty == other,

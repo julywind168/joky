@@ -180,6 +180,7 @@ impl FunctionPlan {
                 Literal::Bool(_) => Some(Type::Bool),
                 Literal::String(_) => Some(Type::String),
             },
+            Expr::When(block) => self.when_hint(block, vars, functions, types),
             Expr::AnonymousFunction(function) => {
                 let mut local = vars.clone();
                 let params = function

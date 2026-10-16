@@ -596,3 +596,14 @@ pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, 
 pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
     finish_timer_value::<A>(module(),timer.identity,target.token,milliseconds,"",input,true)
 }
+
+// Compiler-generated when and handle-method calls use a variable-size access packet.
+extern fn __domain_when(module:domain.Module,name:String,handles:&Buffer<UInt64>,packet:&mut Buffer<UInt64>) @suspends -> Int32
+#intrinsic("domain.finish_when")
+fn finish_when<H,A,R>(module:domain.Module,name:String,handles:H,input:A) @suspends -> Result<R,DomainAccessError> {
+    let access=pack_value(handles)
+    var packet=pack_value(input)
+    let status=__domain_when(module,name,&access.storage,&mut packet.storage)
+    if status != 0 { return Result.Err(access_error(status)) }
+    Result.Ok(unpack_value::<R>(&packet))
+}

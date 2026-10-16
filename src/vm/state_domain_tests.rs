@@ -1674,3 +1674,23 @@ fn exhaustive_state_domains_storage_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_when_cancellation_releases_packets_and_owning_roots() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_when.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel when captures, multi-root execution and result collection at every instruction"]
+fn exhaustive_state_domains_when_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_when.jk"),
+        0..=32768,
+        true,
+    );
+}

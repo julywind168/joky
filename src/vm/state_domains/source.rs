@@ -726,8 +726,8 @@ pub(crate) unsafe fn poll(
                 None => return Ok(None),
             }
         }
-        Operation::Values | Operation::CurrentValues => {
-            return super::values::poll(arena, frame, &registry, op == Operation::CurrentValues)
+        Operation::Values | Operation::CurrentValues | Operation::When => {
+            return super::values::poll(arena, frame, &registry, op)
         }
         Operation::AdmissionCreate
         | Operation::AdmissionHandle

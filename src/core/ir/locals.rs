@@ -80,6 +80,7 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
     let mut pending = vec![body];
     while let Some(expr) = pending.pop() {
         match expr {
+            Expr::When(_) => {}
             Expr::AnonymousFunction(function) => {
                 let mut captures = vec![&function.body];
                 while let Some(expr) = captures.pop() {

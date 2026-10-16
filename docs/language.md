@@ -2695,6 +2695,83 @@ Failed 身份占数量，安全出口清理后不占活根字节，需关闭才�
 VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_report()`，销毁后通过
 `report.error()` 检查首个根清理错误。`instance_cleanup_error()` 可在 VM 存活时查询同一报告。
 
+## when 状态域操作
+
+`when` 在具名、非泛型 `@suspends` 函数中访问 1–64 个域；需要导入 `joky/domain`。
+访问列表只接受已经绑定的句柄名。外层名字表示句柄，块内同名名字表示状态引用：
+
+```joky
+import joky/domain
+
+#state
+struct Counter { value: Int32 }
+fn make(value: Int32) -> Counter { Counter { value: value } }
+impl Counter {
+    fn add(&mut self, first: Int32, second: Int32) -> Int32 {
+        self.value += first + second
+        self.value
+    }
+}
+fn main() @suspends -> Int32 {
+    let owner = domain.create(make, 10)
+    let counter = owner.handle()
+    let amount = 2
+    let result = when "increment" (mut counter) {
+        counter.value += amount
+        counter.value
+    }
+    result.unwrap() + counter.add(1, 2).unwrap()
+}
+```
+
+- `when (counter) { counter.value }` 是匿名形式；`when "increment" (...) { ... }` 是具名形式。
+  标签为非空普通字符串字面量，不支持插值。按解码后的内容区分大小写，同一所属函数内唯一，
+  包括不同分支和嵌套作用域；循环反复执行同一个块不算重复。不同函数可以使用相同标签。
+- `mut counter` 需要 `WriteHandle<S>`，块内获得 `&mut S`；不写 `mut` 时，读／写句柄都只授予 `&S`。
+  访问列表最多 64 个绑定位置。不同绑定可以指向同一只读域，任何涉及写入的别名在执行前拒绝。
+- 块体同步执行，复用完整可达调用链的域操作证明。不能挂起、调用宿主或网络效果、嵌套 `when`、
+  捕获函数值或让状态引用逃逸。首版不支持块内闭包及 `return`；`break`、`continue` 只能作用于块内循环。
+  `scope { branch { ... } }` 中的块仍归属于外层具名函数。`parallel`／`race` 的分支仍须为函数调用，
+  可通过具名辅助函数包含 `when`。
+- 其他外层局部变量按名称排序，复制成独立捕获包，在入队前固定。可变局部变量在块内是独立副本，
+  赋值不修改外层变量。捕获包及块末尾结果只允许标量或有界嵌套纯值记录，不含拥有值、引用、句柄或函数。
+  多个捕获共同计入 64 个字段、8 层记录的限制，编译器生成的外层捕获记录也计入；Unit／空记录字段同样计数。
+- 表达式结果是 `Result<R, domain.DomainAccessError>`，其中 R 为块末尾表达式类型。
+  关闭、域隔离、非法访问、入口不兼容及调度准入资源不足使用已有错误分类；拒绝时不执行块体。
+  调用流程的参数／捕获包准备失败仍走任务失败通道；多域拥有图在进入块体前准备失败不会隔离域。
+  块体运行时失败会隔离全部声明可写域，保留只读域和无关域。正常返回 false 不回滚修改。
+- 所有声明可写域在正常完成后推进修订。取消等待者会撤销尚未执行的申请；已经执行的修改不撤销。
+  `when` 不创建冻结快照，也不提供回滚事务；需要先计算再原子发布时使用快照与候选 API。
+
+`when` 是上下文关键字：`when (...) { ... }` 或 `when "标签" (...) { ... }` 才识别为状态操作。
+普通标识符／函数仍可叫 `when`；条件中的普通调用紧邻 `{` 时，使用 `(when(...))` 消除歧义。
+
+### when 身份与热更新
+
+具名块的稳定身份由逻辑模块名、所属函数限定名和标签组成，独立于行号、块顺序和编译进程地址。
+参数捕获字段名／顺序／类型、域顺序／权限／布局、结果类型另作兼容契约检查。
+移动代码或插入其他块不改变具名身份；改名、删除或不兼容契约会返回 `Incompatible`，不退回旧块体。
+兼容更新后，旧流程仍使用原捕获值，由第一个参与域当时绑定的最新实现执行。
+
+入口模块的逻辑名默认 `main`，表示当前发布入口，与物理文件名无关；Rust 宿主可在解析后设置
+`parser::ast::Module.logical_name`，再交给 `load_module` 或对象编译入口。逻辑名须满足用户模块路径规则。
+导入模块使用规范 import 路径。临时文件路径、源码展示名称都不参与操作身份。
+匿名块仅在同一次模块编译中匹配；提供实现的模块发生替换后，旧匿名请求返回 `Incompatible`。
+AOT 中两种形式均可用；AOT 中的块不会自动成为另一个 Script 模块的实现，应由 Script 自己声明业务块。
+
+### #state 与句柄方法
+
+`#state` 可标在非泛型 struct 上，声明时检查整个状态存储图：允许合格的 String、Array、Map、
+嵌套记录等拥有存储，禁止引用、资源、函数和用户清理钩子。不自动创建域；未标注但合格的旧记录仍可使用。
+属性不表示所有方法都合格，作为域操作调用的方法仍须通过效果及不逃逸证明。
+
+`handle.method(arg1, arg2)` 可调用状态类型的非泛型固有方法，接收者必须为 `&self` 或 `&mut self`。
+它在 `@suspends` 流程中等待，返回同样的访问 Result。参数在调用方按顺序求值，再合成有界纯值包；
+读句柄不能调用可写方法。方法按模块／类型／方法身份匹配当前实现，旧独立函数 API 保持可用。
+句柄本身已有的固有方法和可见 trait 方法优先，例如 `read_only()`；发生名称遮蔽时用 `when`
+访问状态方法。首版不通过句柄转发状态 trait 方法、泛型方法或按值消耗状态的方法。
+普通状态值及 `when` 内的状态引用仍使用普通同步方法调用。
+
 ## Rust 宿主状态域
 
 SC1 提供 Rust 状态域所有者、独立请求任务，以及下节的源码 `joky/domain` 生命周期入口。
@@ -2915,7 +2992,7 @@ fn main() @suspends {
 [state_domain_request_values.jk](../tests/fixtures/state_domain_request_values.jk)。
 
 Timer 的输入也支持上述纯值记录契约，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
-这些载荷扩展尚未加入 `when`；Rust `InstanceValue` 公共入口保持标量。
+`when` 使用同一纯值载荷资格；Rust `InstanceValue` 公共入口保持标量。
 
 ### 纯值投影快照
 
