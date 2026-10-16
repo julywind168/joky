@@ -3,6 +3,8 @@ import joky/outbox
 import joky/task
 import joky/check
 import joky/array.{type Array}
+import joky/result.{type Result}
+enum AwardError { Missing, Changed, Unavailable }
 struct Context { directory:domain.DirectoryHandle, output:outbox.Handle, timer:domain.TimerHandle }
 #state
 struct Room { score:Int32 }
@@ -41,10 +43,10 @@ fn awaiting(ctx:Context) @suspends ->Int32 {
     match domain.lookup::<Clock>(ctx.directory,3) {Some(h)=>h.awaiting().unwrap(),None=>-1}
 }
 // This old flow retains its input, but the named block resolves after publication.
-fn award(ctx:Context) @suspends ->Int32 {
-    let a=match domain.lookup_write::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}
-    let b=match domain.lookup_write::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return -1}
-    let c=match domain.lookup_write::<Clock>(ctx.directory,3) {Some(h)=>h,None=>return -1}
+fn award(ctx:Context) @suspends ->Result<Int32,AwardError> {
+    let a=match domain.lookup_write::<Room>(ctx.directory,1) {Some(h)=>h,None=>return Result.Err(AwardError.Missing)}
+    let b=match domain.lookup_write::<Ledger>(ctx.directory,2) {Some(h)=>h,None=>return Result.Err(AwardError.Missing)}
+    let c=match domain.lookup_write::<Clock>(ctx.directory,3) {Some(h)=>h,None=>return Result.Err(AwardError.Missing)}
     let previous=c.current().unwrap()
     let amount=version()
     c.wait_for_publish(previous).unwrap()
@@ -55,9 +57,9 @@ fn award(ctx:Context) @suspends ->Int32 {
         b.total+=increment*2
         increment
     } {
-        Ok(value)=>value,
-        Err(Incompatible)=>-2,
-        Err(_)=>-3
+        Ok(value)=>Result.Ok(value),
+        Err(Incompatible)=>Result.Err(AwardError.Changed),
+        Err(_)=>Result.Err(AwardError.Unavailable)
     }
 }
 fn start_tick(ctx:Context) @suspends ->Bool {

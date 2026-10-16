@@ -33,6 +33,7 @@ struct Control {
 struct Call {
     task: Continuation,
     layout: Option<(usize, usize)>,
+    result_type: crate::Type,
     control: Rc<Control>,
     _charge: ExternalCharge,
 }
@@ -423,7 +424,7 @@ unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
         let engine = state.engine.try_borrow().map_err(|_| {
             runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
         })?;
-        let (task, layout) = if typed {
+        let (task, layout, result_type) = if typed {
             let name = crate::runtime::owned_text::borrow(
                 frame.slots[1] as *const crate::runtime::buffer::Buffer,
             )?;
@@ -443,11 +444,27 @@ unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
             let words = (0..packet.len())
                 .map(|i| packet.load(i).map(|p| p.cast::<u64>().read()))
                 .collect::<Result<Vec<_>, _>>()?;
-            engine.prepare_script_call(name, input, output, &words)?
+            let (task, layout) = engine.prepare_script_call(name, input, output, &words)?;
+            (
+                task,
+                layout,
+                engine
+                    .function_signature(name)
+                    .ok_or_else(|| {
+                        runtime_error(ErrorCode::NotFound, "Script result signature missing")
+                    })?
+                    .ret,
+            )
         } else {
             let name = borrow(frame.slots[1] as *const u8)?;
             let schema = crate::core::script::schema(&crate::Type::Int32).unwrap();
-            engine.prepare_script_call(name, &schema, &schema, &[frame.slots[2] as u32 as u64])?
+            let (task, layout) = engine.prepare_script_call(
+                name,
+                &schema,
+                &schema,
+                &[frame.slots[2] as u32 as u64],
+            )?;
+            (task, layout, crate::Type::Int32)
         };
         state.remember(&engine);
         let control = Rc::new(Control {
@@ -471,6 +488,7 @@ unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
         frame.host_context = Box::into_raw(Box::new(Call {
             task,
             layout,
+            result_type,
             control,
             _charge: charge,
         }))
@@ -499,6 +517,12 @@ unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
         ));
     }
     if let Some(values) = call.task.flat_result(call.layout) {
+        if !crate::core::script::valid_words(&call.result_type, &values) {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Invalid Script result value",
+            ));
+        }
         let value = values.first().copied().unwrap_or(0);
         if typed {
             let packet = &mut *(frame.slots[4] as *mut crate::runtime::buffer::Buffer);

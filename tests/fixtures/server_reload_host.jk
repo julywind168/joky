@@ -4,7 +4,9 @@ import joky/outbox
 import joky/task
 import joky/check
 import joky/array.{type Array}
+import joky/result.{type Result}
 import joky/tcp.{type TcpStream,type TcpListener,type TcpReader,type TcpWriter,type Address,type Shutdown}
+enum AwardError { Missing, Changed, Unavailable }
 struct Context { directory:domain.DirectoryHandle, output:outbox.Handle, timer:domain.TimerHandle }
 fn assert(ok:Bool) {let message="reload server host" check.assert(ok,&message)}
 fn checkpoint(phase:Int32) @suspends {task.yield_now()}
@@ -42,8 +44,11 @@ fn hotfix(h:&vm.Vm,ctx:Context,command:UInt8) @suspends {
     wait_tick(h,ctx,if command==2 {2} else {3})
 }
 fn award(h:&vm.Vm,ctx:Context,command:UInt8) @suspends {
-    let result=h.call::<Context,Int32>("award",ctx)
-    assert(result==if command==2 {2} else {-2})
+    match h.call::<Context,Result<Int32,AwardError>>("award",ctx) {
+        Ok(value)=>assert(command==2 && value==2),
+        Err(Changed)=>assert(command==3),
+        _=>assert(false)
+    }
 }
 fn server(h:&vm.Vm,ctx:Context,stream:TcpReader) @suspends {
     var stream=stream var requests=0

@@ -1694,3 +1694,23 @@ fn exhaustive_state_domains_when_cancellation() {
         true,
     );
 }
+
+#[test]
+fn pure_enum_domain_cancellation_releases_packets() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_enum_values.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel enum captures, requests, snapshots and candidate edits at every instruction"]
+fn exhaustive_pure_enum_domain_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_enum_values.jk"),
+        0..=32768,
+        true,
+    );
+}

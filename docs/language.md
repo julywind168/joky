@@ -2734,8 +2734,9 @@ fn main() @suspends -> Int32 {
   `scope { branch { ... } }` 中的块仍归属于外层具名函数。`parallel`／`race` 的分支仍须为函数调用，
   可通过具名辅助函数包含 `when`。
 - 其他外层局部变量按名称排序，复制成独立捕获包，在入队前固定。可变局部变量在块内是独立副本，
-  赋值不修改外层变量。捕获包及块末尾结果只允许标量或有界嵌套纯值记录，不含拥有值、引用、句柄或函数。
-  多个捕获共同计入 64 个字段、8 层记录的限制，编译器生成的外层捕获记录也计入；Unit／空记录字段同样计数。
+  赋值不修改外层变量。捕获包及块末尾结果只允许符合下述契约的纯值，不含拥有值、引用、句柄或函数。
+  多个捕获共同计入下述 64 个结构项、64 槽、8 层聚合限制，编译器生成的外层捕获记录也计入。
+  纯值枚举允许 `Option<T>`、`Result<T,E>` 等具体实例，所有分支载荷和类型参数都须符合纯值资格。
 - 表达式结果是 `Result<R, domain.DomainAccessError>`，其中 R 为块末尾表达式类型。
   关闭、域隔离、非法访问、入口不兼容及调度准入资源不足使用已有错误分类；拒绝时不执行块体。
   调用流程的参数／捕获包准备失败仍走任务失败通道；多域拥有图在进入块体前准备失败不会隔离域。
@@ -2789,7 +2790,7 @@ AOT 中两种形式均可用；AOT 中的块不会自动成为另一个 Script �
 ## Rust 宿主状态域
 
 SC1 提供 Rust 状态域所有者、独立请求任务，以及下节的源码 `joky/domain` 生命周期入口。
-源码短操作支持单个标量或有界纯值记录输入与结果（见下节）；Rust 宿主入口保持下述标量参数列表。
+源码短操作支持单个有界纯值输入与结果（见下节）；Rust 宿主入口保持下述标量参数列表。
 `joky::vm` 导出 `DomainOwner`、`DomainHandle`、`DomainRequest`、`DomainOutcome` 和 `DomainLimits`。
 JIT 与 Interpreter 可使用 Rust 接口；源码生命周期同时支持独立 AOT，尚未开放 C 状态域 API。
 
@@ -2858,7 +2859,7 @@ Rust 自定义挂起适配器可用 `queue_current_domain_call` 提交所属域�
 `joky/domain` 在 JIT、解释器及独立 AOT 中使用同一执行器、状态注册表和关闭协议。
 S 必须是普通非泛型记录。单域、双域及集合均支持上节所述受检嵌套记录和 String、Array/Map 拥有图。
 标量输入 A 与结果 R 支持 Int8/16/32/64、UInt8/16/32/64、Float32/64、Bool、Rune 和 Unit；
-`create` 的输入、具名短操作及异步请求的输入／结果另支持有界嵌套纯值记录，具体范围见下述能力表。
+`create` 的输入、具名短操作及异步请求的输入／结果另支持有界嵌套纯值，具体范围见下述能力表。
 构造、带参查询、写入及请求各接收一个输入，用 `Unit` 表示无数据输入；该实参表达式仍只求值一次。
 不接受元组、容器、借用、函数或资源作为输入/结果，也不支持可变参数。
 以下入口除 `handle.read_only()` 外均为 `@suspends`：
@@ -2877,21 +2878,21 @@ S 必须是普通非泛型记录。单域、双域及集合均支持上节所述
 
 Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不保活状态，可传递或存入容器，
 不能从整数构造，也不能提升权限。关闭后旧句柄永久失效；仍可同步调用 `read_only()`，实际访问时检查关闭、失败及执行器归属。
-`request` 与 `request_read` 返回 `Result<R, RequestError>`。成功载荷支持标量与有界纯值记录，保留完整标量位模式，
+`request` 与 `request_read` 返回 `Result<R, RequestError>`。成功载荷支持有界纯值，保留完整标量位模式，
 包括 UInt64 最大值、浮点负零和 NaN 载荷，不占用成功值作为错误哨兵。
 
-当前入口能力如下；表中“纯值记录”采用下节的 64 字段、8 层限制，不能携带拥有字段：
+当前入口能力如下；表中“纯值”采用下节的统一资格与上限，不能携带拥有字段：
 
 | 入口 | 状态根 | 输入／结果 |
 | --- | --- | --- |
-| `create` | 受检拥有图 | 构造输入支持标量／纯值记录；返回完整状态根 |
-| 单域候选构造 | 受检拥有图 | 构造输入支持标量／纯值记录；返回完整状态根 |
-| 单域 `read/query/write`、`read_from/query_from/write_to` | 受检拥有图 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read*` 无额外输入 |
-| 双域短操作 | 受检拥有图 | 查询、写入的输入和所有操作的结果支持标量／纯值记录；`read_pair` 无额外输入 |
-| `snapshot_from` | 受检拥有图 | 投影结果支持标量／纯值记录 |
-| `snapshot_pair`、集合快照和候选 | 受检拥有图 | 投影结果和候选构造输入均支持标量／纯值记录 |
-| `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果支持标量／纯值记录 |
-| `after/every` | 所属域沿用单域根资格 | 操作输入支持标量／纯值记录，结果为 Unit |
+| `create` | 受检拥有图 | 构造输入支持纯值；返回完整状态根 |
+| 单域候选构造 | 受检拥有图 | 构造输入支持纯值；返回完整状态根 |
+| 单域 `read/query/write`、`read_from/query_from/write_to` | 受检拥有图 | 查询、写入的输入和所有操作的结果支持纯值；`read*` 无额外输入 |
+| 双域短操作 | 受检拥有图 | 查询、写入的输入和所有操作的结果支持纯值；`read_pair` 无额外输入 |
+| `snapshot_from` | 受检拥有图 | 投影结果支持纯值 |
+| `snapshot_pair`、集合快照和候选 | 受检拥有图 | 投影结果和候选构造输入均支持纯值 |
+| `request/request_read` | 所属域沿用单域根资格 | 异步入口输入与结果支持纯值 |
+| `after/every` | 所属域沿用单域根资格 | 操作输入支持纯值，结果为 Unit |
 | `lookup::<S>/lookup_write::<S>` | 受检拥有图 | 显式指定状态类型，无投影参数 |
 
 | RequestError | 含义 |
@@ -2914,7 +2915,7 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 
 单域 `read/query/write`、`read_from/query_from/write_to` 与双域
 `read_pair/query_pair/update_pair/write_pair` 均返回
-`Result<R, DomainAccessError>`；成功值保留完整标量位模式或纯值记录。`Err` 保证操作体未执行：
+`Result<R, DomainAccessError>`；成功值保留完整标量位模式或纯值。`Err` 保证操作体未执行：
 
 | DomainAccessError | 执行前拒绝原因 |
 | --- | --- |
@@ -2966,34 +2967,43 @@ fn main() @suspends {
 请求的环境权限与操作名义类型在运行时再次检查；重载后，旧域和请求继续使用旧代码与类型，
 直到宿主发布结构兼容的新代码（见 Rust 宿主状态域一节）。
 
-### 构造与短操作的纯值记录载荷
+### 构造与短操作的纯值载荷
 
 `read_from/query_from/write_to`、请求内的 `read/query/write` 与
 `read_pair/query_pair/update_pair/write_pair` 支持标量，
-以及由标量和普通非泛型记录嵌套组成的纯值输入 A、结果 R。每个包分别最多 64 个字段、
-8 层记录；所有层的字段累计计数，Unit 和空记录字段也占字段额度。允许空记录和 Unit，
-不接受 String、容器、引用、指针、函数、资源、用户 Drop、枚举、元组和泛型记录载荷。
+以及由标量、普通非泛型记录与纯值枚举嵌套组成的输入 A、结果 R。枚举可以是无载荷枚举，
+或所有分支载荷均为纯值的具体实例，包括 `Option<Int32>`、`Result<Reply, BusinessError>` 和自定义泛型枚举。
+所有具体类型参数也须满足资格，即使参数没有出现在载荷中；不能用 `Phantom<String>` 绕过限制。
+
+每个包分别最多 64 个结构项、64 个标量槽、8 层聚合（记录／枚举，最外层为第 1 层）。
+记录的每个字段计一项；枚举的标签、每个分支和每个具体类型参数各计一项，再递归累计
+参数契约和分支载荷中的结构项。同一类型在参数与载荷处出现时分别计数；Unit／空记录字段、
+无载荷分支也计数。只使用某一个分支不会免除其他分支的检查或计费，纯记录原有 64 字段边界不变。
+不接受 String、容器、引用、指针、函数、资源、用户 Drop、元组、泛型记录或未实例化类型参数。
+`Option<String>` 即使实际值为 `None` 也拒绝。
 单域与双域根均可持有受检拥有图。可执行示例见
 [state_domain_values.jk](../tests/fixtures/state_domain_values.jk) 和
-[state_domain_queries.jk](../tests/fixtures/state_domain_queries.jk)。
+[state_domain_queries.jk](../tests/fixtures/state_domain_queries.jk)；枚举覆盖见
+[state_domain_enum_values.jk](../tests/fixtures/state_domain_enum_values.jk)。
 
 `query_from` 与请求内 `query` 接收 `fn(&S, A) -> R`，`query_pair` 接收
 `fn(&S, &T, A) -> R`。带输入不授予写权限，`request_read` 内也能使用 `query`；
 查询不推进任何参与域的数据修订。无输入查询继续使用 `read`、`read_from`、`read_pair`。
 
 输入在入队前逐值复制，结果存储预先分配并计入请求字节额度，未收取结果继续占用额度。
-晚绑定比较完整输入与结果契约，包括嵌套名义类型、字段名、顺序、可见性和类型；
+晚绑定比较完整输入与结果契约，包括嵌套名义类型、字段名、顺序、可见性和类型，
+以及枚举名、具体类型参数、分支名／顺序和每个分支的载荷类型；
 算法变化且契约兼容时，旧流程及排队项执行当前发布的实现，不兼容则在操作体运行前拒绝。
 执行前取消不写状态；执行完成后取消只丢弃结果，已完成的写入不会回滚。
 
-`create(fn(A) -> S, A)` 的输入 A 也支持上述纯值记录，完整状态根 S 仍可包含受检拥有图。
+`create(fn(A) -> S, A)` 的输入 A 也支持上述纯值，完整状态根 S 仍可包含受检拥有图。
 输入表达式只求值一次，构造前复制到调用方拥有的值包；构造在一次 poll 内同步完成，成功后
 才登记新域并交付 Owner。值包占用调用方 arena，根与构造临时分配占用状态预算；构造、预算
 或 Owner 交接失败均清理已分配资源，沿任务错误通道传播，不返回 DomainAccessError。
 构造器绑定调用流程的模块版本；热更新不会把旧流程中的构造调用重定向到新模块。
 可执行示例见 [state_domain_create_values.jk](../tests/fixtures/state_domain_create_values.jk)。
 
-`request` / `request_read` 的输入 A 和结果 R 支持同一纯值记录契约，可分别与标量组合，
+`request` / `request_read` 的输入 A 和结果 R 支持同一纯值契约，可分别与标量组合，
 包括空记录与 Unit。输入表达式只求值一次，在启动子任务前逐值复制；跨挂起期间不借用调用方记录。
 结果存储在准入时预留并计入请求字节额度，子任务及其 arena 清理完成后才交付 `Result`。
 取消等待者会取消子任务并释放输入、结果和回执；已经完成的域写入不会回滚。
@@ -3005,12 +3015,18 @@ fn main() @suspends {
 返回 `RequestError.ResourceLimit`。可执行示例见
 [state_domain_request_values.jk](../tests/fixtures/state_domain_request_values.jk)。
 
-Timer 的输入也支持上述纯值记录契约，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
+业务枚举不改变访问协议。块返回 `Result<T,E>` 时，`when` 的类型是
+`Result<Result<T,E>, domain.DomainAccessError>`：外层 `Err` 表示没有执行块体，
+`Ok(Err(e))` 表示块已执行并返回业务错误，不回滚已发生的修改；`Ok(Ok(value))` 表示业务成功。
+块返回 `Option<T>` 时同样保留外层访问 Result。只构造 `None` 或 `Err` 等无法推导全部参数的分支时，
+使用显式类型参数、带类型的局部变量或有完整返回类型的辅助函数。
+
+Timer 的输入也支持上述纯值契约，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
 `when` 使用同一纯值载荷资格；Rust `InstanceValue` 公共入口保持标量。
 
 ### 纯值投影快照
 
-单域投影快照支持标量与有界纯值记录结果，并携带不透明版本凭据；JIT、解释器与独立 AOT 均支持。
+单域投影快照支持有界纯值结果，并携带不透明版本凭据；JIT、解释器与独立 AOT 均支持。
 以下入口均为 `@suspends`：
 
 | 入口 | 行为 |
@@ -3019,7 +3035,7 @@ Timer 的输入也支持上述纯值记录契约，具体生命周期见[定时�
 | `snapshot.value() -> R` | 从快照复制标量或记录结果，不重新读取状态 |
 | `snapshot.check() -> SnapshotStatus` | 检查所属执行器、域身份、生命周期、数据修订、代码版本与 schema 身份 |
 
-投影沿用同步、不逃逸和效果检查，R 支持上述标量与 64 字段／8 层纯值记录。快照不是整个状态的隐式副本，
+投影沿用同步、不逃逸和效果检查，R 支持上述有界纯值。快照不是整个状态的隐式副本，
 也不携带状态借用；它可跨挂起保存，关闭原域后仍可读取保存的值。凭据封装在不可复制的
 快照资源中，不能从整数或用户记录构造、修改或拆出版本。快照不保活原状态。
 快照退出作用域或任务取消时释放自身存储，其存储计入调用任务的 arena 预算。
@@ -3054,14 +3070,14 @@ Timer 的输入也支持上述纯值记录契约，具体生命周期见[定时�
 | `receipt.identity(&self) -> UInt64` | 返回执行器内唯一的受理序号；未能准入时为 0，不是域句柄 |
 
 `Candidate<S>` 与 `CommitReceipt` 都是不可复制的拥有值，内部存储不向用户开放。
-S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标量与上述有界纯值记录；候选构造器
+S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标量与上述有界纯值；候选构造器
 遵守与 `create` 相同的无挂起、无宿主调用和无用户 Drop 资格。
 投影可以只包含业务所需的纯值字段，构造器必须显式生成完整 S；运行时不会从投影隐式补齐其余字段。
 候选构造时必须显式提供写句柄，目标须在原快照的完整读取集合中。候选绑定所选域的身份、类型、代码版本与修订；提交还必须提供该域的写句柄。
 目标缺失、重复写目标、错误执行器或类型／模块不匹配均在构造器执行前拒绝；这些构造错误沿任务错误通道传播。
 
 `candidate_from`、`candidate_pair_from`、`candidate_set_from` 与 `candidate_set_add` 的输入
-沿用 64 字段／8 层纯值限制，包含空记录和嵌套 Unit。输入表达式只求值一次，记录逐值复制
+沿用上述有界纯值限制，包含空记录和嵌套 Unit。输入表达式只求值一次，记录逐值复制
 到调用方值包，构造同步执行且保留完整原始读取凭据。构造器仍绑定调用流程模块，须与
 目标域的模块和状态类型精确匹配；不会按新代码重新解释旧输入或刷新原快照版本。
 示例见 [state_domain_candidate_values.jk](../tests/fixtures/state_domain_candidate_values.jk)。
@@ -3104,7 +3120,7 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标�
 可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk) 与
 [String/Array 示例](../tests/fixtures/state_domain_owned.jk)、
 [嵌套记录与 Map 示例](../tests/fixtures/state_domain_nested.jk)、[有效期示例](../tests/fixtures/state_domain_deadlines.jk)。
-候选构造输入和快照投影结果均支持标量与有界纯值记录；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
+候选构造输入和快照投影结果均支持有界纯值；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
 当前私有 AOT 模块描述格式为 v3，保留记录字段可见性；旧 v1/v2 描述对象须重新编译，公共 CPS 帧和调用桥不变。
 
 ### 双域短操作
@@ -3121,7 +3137,7 @@ SC3 的首个切片提供同一执行器内的两个域访问，JIT、解释器�
 | `update_pair<S,T,A,R>(ReadHandle<S>, WriteHandle<T>, fn(&S,&mut T,A)->R, A) -> Result<R, DomainAccessError>` | 第一个只读、第二个可写 |
 | `write_pair<S,T,A,R>(WriteHandle<S>, WriteHandle<T>, fn(&mut S,&mut T,A)->R, A) -> Result<R, DomainAccessError>` | 两个可写参数 |
 
-A、R 支持上述标量和有界纯值记录；操作必须是命名、同步、无宿主调用、状态借用不逃逸的受检入口，不能用
+A、R 支持上述纯值；操作必须是命名、同步、无宿主调用、状态借用不逃逸的受检入口，不能用
 普通闭包、函数变量或 `@noescape` 声明绕过证明。输入在排队前独立保存，状态地址到执行时
 才解析，操作中不能挂起或追加域访问。可使用受检临时存储，计入状态峰值并在调用后回收。
 
@@ -3150,7 +3166,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 `domain.snapshot_pair<S,T,R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S,&T)->R)`
 为 `@suspends` 入口，返回 `Snapshot<S,R>`。根类型和实现归属与 `read_pair` 相同：
 两个普通受检状态记录、同一执行器、首域当前模块提供受检同步只读投影，其余域布局须兼容；
-投影结果支持标量与有界纯值记录。允许同域重复读。捕获完成后保存原投影结果与版本凭据，不晚绑定重算。
+投影结果支持有界纯值。允许同域重复读。捕获完成后保存原投影结果与版本凭据，不晚绑定重算。
 
 投影值与两个域的修订在同一次 FIFO 短操作中捕获；稍后收取结果时不重新读取修订。
 类型参数 S 保留首域的类型信息，不限定候选写目标；构造时可显式选择任一参与域，
@@ -3179,7 +3195,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 | 入口（均为 `@suspends`） | 结果与约束 |
 | --- | --- |
-| `candidate_pair_from<S,T,A>(Candidate<S>, WriteHandle<T>, fn(A)->T, A)` | 返回 `CandidatePair<S,T>`；A 为标量或有界纯值记录，显式选择原读取集合中尚未写入的域，保留完整读取凭据 |
+| `candidate_pair_from<S,T,A>(Candidate<S>, WriteHandle<T>, fn(A)->T, A)` | 返回 `CandidatePair<S,T>`；A 为有界纯值，显式选择原读取集合中尚未写入的域，保留完整读取凭据 |
 | `commit_pair_to<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>)` | 消费整包，返回 `PairCommitReceipt`；两个句柄须依次对应两个确切域身份 |
 | `commit_pair_before<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>, &CommitDeadline)` | 同上，发布前检查执行器时钟截止时间 |
 
@@ -3210,12 +3226,12 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 | `access_set() -> AccessSet` | 创建独占的有界访问集合 |
 | `AccessSet.include<S>(&mut self, ReadHandle<S>)` | 登记只读成员；不读取状态、不持有借用 |
 | `snapshot_set(AccessSet) -> SnapshotSet` | 消费访问集合，一次 FIFO 操作深复制全部拥有根并捕获完整修订集合 |
-| `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为标量或有界纯值记录 |
+| `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为有界纯值 |
 | `SnapshotSet.check() -> SnapshotStatus` | 检查全部成员的当前身份、生命周期与修订；不授予提交权限 |
-| `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为标量或有界纯值记录 |
-| `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；A 为标量或有界纯值记录，失败释放整包 |
+| `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为有界纯值 |
+| `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；A 为有界纯值，失败释放整包 |
 | `edit_snapshot<S,A>(SnapshotSet, WriteHandle<S>, fn(&mut S,A)->Unit, A) -> CandidateSet` | 消费冻结快照，移动指定冻结根到候选并局部编辑；保留其余冻结根与完整依赖 |
-| `edit_candidate<S,A>(CandidateSet, WriteHandle<S>, fn(&mut S,A)->Unit, A) -> CandidateSet` | 消费冻结派生的整包，继续编辑已选目标或加入另一个冻结目标；A 为标量或纯值记录 |
+| `edit_candidate<S,A>(CandidateSet, WriteHandle<S>, fn(&mut S,A)->Unit, A) -> CandidateSet` | 消费冻结派生的整包，继续编辑已选目标或加入另一个冻结目标；A 为标量或纯值 |
 | `commit_set(CandidateSet) -> SetCommitReceipt` | 消费整包并申请原子发布 |
 | `commit_set_before(CandidateSet, &CommitDeadline) -> SetCommitReceipt` | 同上，发布前检查执行器截止时间 |
 
@@ -3368,7 +3384,7 @@ DirectoryHandle 允许持有者修改整个目录，宜按业务权限拆分目�
 
 `Timer` 唯一拥有一个执行器内定时器，`TimerHandle` 是可复制、不保活所有者的平面记录。
 AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只捕获目标域、具名入口、受检
-签名及标量／有界纯值记录输入，不捕获闭包、域根或 Script 模块。所有者退出作用域即取消。
+签名及有界纯值输入，不捕获闭包、域根或 Script 模块。所有者退出作用域即取消。
 
 | API（均为 `@suspends`） | 行为 |
 | --- | --- |
@@ -3380,7 +3396,7 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 | `TimerHandle.cancel(self)` | 取消尚未开始的调用，Active 变为 Cancelled；其他终态不变 |
 | `TimerHandle.status(self) -> TimerStatus` | 观察 Idle / Active / Completed / Cancelled / Closed / InvalidAccess / ResourceLimit / Failed |
 
-操作必须是编译器受检的同步域写入口，A 支持标量和上述 64 字段／8 层纯值记录，结果为 Unit；
+操作必须是编译器受检的同步域写入口，A 支持上述有界纯值，结果为 Unit；
 不允许宿主调用、闭包或挂起。空记录与嵌套 Unit 也遵循同一资格及计数限制。
 输入表达式只求值一次，登记时逐值复制，之后修改调用方记录不会影响定时器。
 每次调用使用同一份保存值，不保留操作内对输入副本的修改，也不自动计算实际经过时间。业务需要 dt 时自行选择固定步长或显式建模时间。
@@ -3550,15 +3566,16 @@ fn dispatch(h: &vm.Vm, request: Request) @suspends -> Reply {
 ```
 
 Script 应声明同名、同字段契约的 Request/Reply，以及 `handle_message` 入口。A/R 分别支持
-全部整数宽度、Float32/Float64、Bool、Rune、Unit，或由这些标量与非泛型记录嵌套组成的纯值记录。
-整棵记录树最多 64 个字段、8 层记录（最外层为第 1 层）；包含子记录的字段、Unit 和空记录
-字段也计数，允许零字段记录。不接受 String、Array/Map、元组、枚举、指针、引用、闭包、
-资源或用户 Drop，嵌套字段也遵守这些限制。普通 `Context` 记录可组合目录、信箱与定时器
+全部整数宽度、Float32/Float64、Bool、Rune、Unit，以及由这些标量、非泛型记录和具体纯值枚举
+嵌套组成的值，包括 `Option<T>` 和业务 `Result<T,E>`。资格和 64 结构项／64 槽／8 层限制与
+[域操作纯值载荷](#构造与短操作的纯值载荷)一致；所有分支和具体类型参数都要检查。
+普通 `Context` 记录可组合目录、信箱与定时器
 的复制句柄；这些句柄仍不保活对应资源，资源由宿主持有。
 
 调用方编译时检查可桥接类型，运行时在执行目标代码前比较完整入口契约：一个输入、
 `@suspends`、输入/输出类型；记录还比较类型名、字段名及顺序、每个字段的类型、可见性与
-repr(C) 属性，嵌套记录逐层比较。跨加载的内部名义 ID 不参与比较，布局相同但名称或字段类型不同仍拒绝。
+repr(C) 属性；枚举比较名义名称、具体参数、分支名称／顺序和载荷契约，嵌套逐层比较。
+跨加载的内部名义 ID 不参与比较，布局相同但名称、分支顺序或载荷类型不同仍拒绝。
 输入与结果逐标量复制，不传递记录地址。签名不符为 InvalidCall、入口缺失为 NotFound，
 通过当前任务的运行时错误通道传播。
 
@@ -3615,7 +3632,7 @@ let status = vm.register_int32_2(engine, &name, host_add)
 | `vm.reload_source(handle, source)` | 替换模块，失败保留旧代码，状态码同上 |
 | `vm.register_int32_0/1/2(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
 | `vm.call_int32_0/1/2(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
-| `handle.call::<A, R>(name: String, input: A) @suspends -> R` | 以当前执行器推进 `fn(A) @suspends -> R` 子流程，支持上述标量与纯值记录契约；失败走当前任务的运行时错误通道 |
+| `handle.call::<A, R>(name: String, input: A) @suspends -> R` | 以当前执行器推进 `fn(A) @suspends -> R` 子流程，支持上述纯值契约；失败走当前任务的运行时错误通道 |
 | `vm.module_count(handle) -> Int32` | 当前入口及仍被持有的历史已加载模块数量；未加载为 0，失败 -1 并设置错误 |
 | `vm.print_modules(handle) -> Int32` | 向 stderr 按版本输出模块及已识别持有者，返回模块数；失败 -1 并设置错误 |
 | `vm.publish_domain_code(handle) -> Int32` | 在该句柄绑定的当前执行器上发布兼容域代码，返回切换数量；失败返回 -1 并设置错误 |

@@ -874,3 +874,72 @@ fn vm_native_registration_rejects_source_module_internal_entries() {
         .contains("Function reference `engine.increment`"));
     VMS.with(|vms| assert!(vms.borrow().is_empty()));
 }
+
+#[path = "../../../tests/support/enum_values.rs"]
+mod enum_values;
+
+fn enum_bridge_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive: bool) {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for create in ["new", "interpreter"] {
+            let mut host = VmEngine::with_mode(mode);
+            host.load_source(&enum_values::source(create)).unwrap();
+            if mode == VmMode::Interpreter {
+                host.set_interpreter_limits(crate::vm::InterpreterLimits {
+                    poll_budget: Some(1),
+                    ..Default::default()
+                })
+                .unwrap();
+            }
+            let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+            let mut completed = false;
+            for boundary in boundaries.clone() {
+                let executor = HostExecutor::default();
+                let group = TaskGroup::new();
+                let id = executor
+                    .spawn(&group, host.prepare_async("main", &[]).unwrap())
+                    .unwrap();
+                let mut done = false;
+                for _ in 0..boundary {
+                    for result in executor.poll(1).unwrap().completed {
+                        if result.id == id {
+                            assert_eq!(result.result.unwrap(), 42);
+                            done = true;
+                        }
+                    }
+                    if done {
+                        break;
+                    }
+                }
+                executor.cancel_group(&group);
+                VMS.with(|vms| assert!(vms.borrow().is_empty()));
+                assert_eq!(executor.task_count(), 0);
+                assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+                drop(executor);
+                assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+                if done {
+                    completed = true;
+                    if exhaustive {
+                        break;
+                    }
+                }
+            }
+            assert!(completed, "{mode:?}/{create}: sweep missed completion");
+        }
+    }
+}
+
+#[test]
+fn pure_enum_script_cancellation_reclaims_packets() {
+    enum_bridge_cancellation(
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel typed enum Script inputs and results at every instruction"]
+fn exhaustive_pure_enum_script_cancellation() {
+    enum_bridge_cancellation(0..=32768, true);
+}

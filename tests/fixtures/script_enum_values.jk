@@ -1,0 +1,26 @@
+import joky/vm
+import joky/check
+import joky/option.{type Option}
+import joky/result.{type Result}
+__TYPES__
+fn assert(ok:Bool) {check.assert(ok,"enum Script values")}
+fn main() @suspends ->Int32 {
+    let h=vm.Vm.__CREATE__()
+    let source=__SCRIPT__
+    assert(vm.load_source(h,&source)==0)
+    match h.call::<Message,Message>("echo",Message.Empty) {Empty=>{},_=>assert(false)}
+    match h.call::<Message,Message>("echo",Message.UnitValue({})) {UnitValue(_)=>{},_=>assert(false)}
+    match h.call::<Message,Message>("echo",Message.Zero(Empty{})) {Zero(_)=>{},_=>assert(false)}
+    match h.call::<Message,Message>("echo",Message.Flag(true)) {Flag(b)=>assert(b),_=>assert(false)}
+    match h.call::<Message,Message>("echo",Message.Code('中')) {Code(c)=>assert(c=='中'),_=>assert(false)}
+    let bits=Bits{high:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626),small:Float32.from_bits(2147483648)}
+    match h.call::<Message,Message>("echo",Message.Data(bits)) {
+        Data(b)=>assert(b.high==bits.high && b.low==bits.low && b.real.to_bits()==bits.real.to_bits() && b.small.to_bits()==bits.small.to_bits()),
+        _=>assert(false)
+    }
+    match h.call::<Message,Message>("echo",Message.Nested(Option.None)) {Nested(None)=>{},_=>assert(false)}
+    match h.call::<Message,Message>("echo",Message.Nested(Option.Some(Result.Ok(42)))) {Nested(Some(Ok(n)))=>assert(n==42),_=>assert(false)}
+    match h.call::<Message,Message>("echo",Message.Nested(Option.Some(Result.Err(Fault.Limit(7))))) {Nested(Some(Err(Limit(n))))=>assert(n==7),_=>assert(false)}
+    assert(vm.close(h)==0)
+    42
+}

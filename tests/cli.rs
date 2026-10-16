@@ -7990,7 +7990,7 @@ fn domain_request_values_reject_invalid_contracts() {
     for (definition, ty, value) in [
         ("struct P {text:String}", "P", "P{text:\"owned\"}"),
         ("struct P<T> {n:T}", "P<Int32>", "P{n:1}"),
-        ("enum P {A(Int32)}", "P", "P.A(1)"),
+        ("enum P {A(String)}", "P", "P.A(\"owned\")"),
         ("", "(Int32,Int32)", "(1,2)"),
     ] {
         for result in [false, true] {
@@ -8082,7 +8082,7 @@ fn domain_timer_values_reject_invalid_inputs_and_effects() {
     for (decl, ty, value, body, effect) in [
         ("struct P{text:String}", "P", "P{text:\"owned\"}", "", ""),
         ("struct P<T>{n:T}", "P<Int32>", "P{n:1}", "", ""),
-        ("enum P{Some(Int32)}", "P", "P.Some(1)", "", ""),
+        ("enum P{Some(String)}", "P", "P.Some(\"owned\")", "", ""),
         ("", "(Int32,Int32)", "(1,2)", "", ""),
         (
             "struct P{n:Int32}",
@@ -8566,7 +8566,10 @@ fn state_domains_when_capture_limits_include_the_outer_packet() {
             accepted.push_str(&code);
         } else {
             work.write("invalid_packet.jk",&format!("import joky/domain import joky/check struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn assert(ok:Bool){{check.assert(ok,\"limit\")}} {code} fn main() @suspends {{run{index}()}}"));
-            failure(&work.cli(&["build", "invalid_packet.jk"]), "64 fields");
+            failure(
+                &work.cli(&["build", "invalid_packet.jk"]),
+                "64 contract members",
+            );
         }
     }
     accepted.push_str("fn main() @suspends {run0()}");
@@ -8599,4 +8602,190 @@ pub fn update(h:domain.WriteHandle<S>,n:Int32) @suspends ->Int32 {when "更新"(
         &Command::new(work.path().join("failure")).output().unwrap(),
         "Division by zero",
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_enum_domain_values_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "enum_values.jk",
+        include_str!("fixtures/state_domain_enum_values.jk"),
+    );
+    work.assert_all_backends("enum_values.jk", &[], b"", 0);
+}
+
+#[cfg(unix)]
+#[path = "support/enum_values.rs"]
+mod enum_values;
+
+#[test]
+#[cfg(unix)]
+fn pure_enum_script_values_run_in_all_backend_combinations() {
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write("enums.jk", &enum_values::source(create));
+        work.assert_all_backends("enums.jk", &[], b"", 42);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_enum_contract_limits_and_rejections() {
+    for count in [63, 64] {
+        let variants = (0..count)
+            .map(|i| format!("V{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let work = Workspace::new();
+        work.write("limit.jk", &format!("import joky/domain enum E{{{variants}}} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{E.V0}}.unwrap();}}"));
+        // One tag plus every variant counts, even with zero payload lanes.
+        if count == 63 {
+            work.assert_all_backends("limit.jk", &[], b"", 0);
+        } else {
+            failure(&work.cli(&["build", "limit.jk"]), "bounded pure value");
+        }
+    }
+    for depth in [8, 9] {
+        let mut definitions = String::new();
+        let mut previous = "Int32".to_string();
+        for i in 0..depth {
+            definitions.push_str(&format!("enum E{i}{{Value({previous})}} "));
+            previous = format!("E{i}");
+        }
+        let mut value = "42".to_string();
+        for i in 0..depth {
+            value = format!("E{i}.Value({value})");
+        }
+        let work = Workspace::new();
+        work.write("depth.jk", &format!("import joky/domain {definitions} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{{value}}}.unwrap();}}"));
+        if depth == 8 {
+            work.assert_all_backends("depth.jk", &[], b"", 0);
+        } else {
+            failure(&work.cli(&["build", "depth.jk"]), "bounded pure value");
+        }
+    }
+    for (definitions, ty, value) in [
+        (
+            "import joky/option.{type Option}",
+            "Option<String>",
+            "Option.None::<String>",
+        ),
+        ("enum E{Empty,Value(String)}", "E", "E.Empty"),
+        (
+            "enum Phantom<T>{Empty}",
+            "Phantom<String>",
+            "Phantom.Empty::<String>",
+        ),
+        ("enum E{Empty,Value(Ptr)}", "E", "E.Empty"),
+        ("enum E{Empty,Value(fn()->Int32)}", "E", "E.Empty"),
+    ] {
+        let work = Workspace::new();
+        work.write("reject.jk",&format!("import joky/vm {definitions} fn main() @suspends {{let h=vm.Vm.new() h.call::<{ty},Int32>(\"echo\",{value});}}"));
+        failure(
+            &work.cli(&["build", "reject.jk"]),
+            "Script contracts require",
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_enum_script_rejects_changed_input_and_result_contracts() {
+    let types = "enum Wire {Empty,Number(Int32)} enum Phantom<T>{Empty}";
+    for create in ["new", "interpreter"] {
+        for (changed, input, output, value, body) in [
+            (
+                types.replace("Empty,Number(Int32)", "Number(Int32),Empty"),
+                "Wire",
+                "Wire",
+                "Wire.Empty",
+                "fn exchange(v:Wire) @suspends ->Wire {v}",
+            ),
+            (
+                types.replace("Number(Int32)", "Other(Int32)"),
+                "Wire",
+                "Wire",
+                "Wire.Empty",
+                "fn exchange(v:Wire) @suspends ->Wire {v}",
+            ),
+            (
+                types.replace("Number(Int32)", "Number(UInt32)"),
+                "Unit",
+                "Wire",
+                "{}",
+                "fn exchange(v:Unit) @suspends ->Wire {Wire.Empty}",
+            ),
+            (
+                types.to_string(),
+                "Phantom<Int32>",
+                "Unit",
+                "Phantom.Empty::<Int32>",
+                "fn exchange(v:Phantom<UInt32>) @suspends {}",
+            ),
+        ] {
+            let script = format!("{changed} {body}");
+            let quote = format!("{:?}", script.replace('{', "{{").replace('}', "}}"));
+            let work = Workspace::new();
+            work.write("mismatch.jk",&format!("import joky/vm import joky/check {types} fn main() @suspends {{let h=vm.Vm.{create}() let source={quote} check.assert(vm.load_source(h,&source)==0,\"load enum script\") h.call::<{input},{output}>(\"exchange\",{value});}}"));
+            for args in [
+                vec!["run", "mismatch.jk"],
+                vec!["run", "--interpreter", "mismatch.jk"],
+            ] {
+                failure(&work.cli(&args), "Script entry contract mismatch");
+            }
+            success(&work.cli(&["build", "mismatch.jk"]));
+            failure(
+                &Command::new(work.path().join("mismatch")).output().unwrap(),
+                "Script entry contract mismatch",
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_enum_pending_script_results_keep_the_starting_contract() {
+    let old = r#"import joky/domain import joky/task
+struct State{n:Int32}
+enum Reply{Empty,Done(Int32)}
+fn make(n:Int32)->State{State{n:n}}
+fn pending(directory:domain.DirectoryHandle) @suspends ->Reply {
+    let owner=domain.create(make,0)
+    directory.insert(1,owner.handle());
+    while domain.lookup::<State>(directory,1).is_some() {task.yield_now()}
+    Reply.Done(42)
+}"#;
+    let next = old.replace(
+        "enum Reply{Empty,Done(Int32)}",
+        "enum Reply{Done(Int32),Empty}",
+    );
+    let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write("pending.jk",&format!(r#"import joky/vm import joky/domain import joky/task import joky/check
+struct State{{n:Int32}}
+enum Reply{{Empty,Done(Int32)}}
+fn assert(ok:Bool){{check.assert(ok,"enum old result")}}
+fn call(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
+    match h.call::<domain.DirectoryHandle,Reply>("pending",d) {{Done(n)=>assert(n==42),_=>assert(false)}}
+}}
+fn reload(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
+    while domain.lookup::<State>(d,1).is_none() {{task.yield_now()}}
+    let next={next}
+    assert(vm.load_source(h,&next)==0)
+    assert(vm.module_count(h)==2)
+    match domain.lookup::<State>(d,1) {{Some(handle)=>assert(d.remove(1,handle)),None=>assert(false)}}
+}}
+fn main() @suspends {{
+    let h=vm.Vm.{create}() let old={old}
+    assert(vm.load_source(h,&old)==0)
+    let directory=domain.directory(1) let d=directory.handle()
+    parallel {{ | call(&h,d) | reload(&h,d) }}
+    assert(vm.module_count(h)==1)
+    assert(vm.close(h)==0)
+}}
+"#,old=quote(old),next=quote(&next)));
+        work.assert_all_backends("pending.jk", &[], b"", 0);
+    }
 }

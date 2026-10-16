@@ -1885,13 +1885,11 @@ impl LoadedModule {
                 "Script entry contract mismatch",
             ));
         }
-        for (ty, &word) in info.signature.params[0].scalar_types().iter().zip(bits) {
-            if super::InstanceValue::from_bits(ty, word).is_none() {
-                return Err(runtime_error(
-                    ErrorCode::InvalidCall,
-                    "Invalid Script input lane",
-                ));
-            }
+        if !crate::core::script::valid_words(&info.signature.params[0], bits) {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Invalid Script input value",
+            ));
         }
         let layout = (info.signature.ret.is_aggregate() || info.signature.ret == Type::Unit)
             .then_some((

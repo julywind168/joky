@@ -10,13 +10,7 @@ pub(super) fn result_words(ty: &Type, mut words: Vec<u64>) -> Result<Vec<u64>, E
     if *ty == Type::Unit {
         words.clear();
     }
-    let types = ty.scalar_types();
-    if types.len() != words.len()
-        || types
-            .iter()
-            .zip(&words)
-            .any(|(ty, &word)| InstanceValue::from_bits(ty, word).is_none())
-    {
+    if !crate::core::script::valid_words(ty, &words) {
         return Err(invalid("Invalid domain value result"));
     }
     Ok(words)
@@ -30,20 +24,21 @@ pub(super) unsafe fn input_words(params: &[Type], packet: &Buffer) -> Result<Vec
     if packet.len() > crate::core::script::MAX_LANES as u64 {
         return Err(limited("Domain value packet exceeds lane limit"));
     }
-    let types = params
-        .iter()
-        .flat_map(Type::scalar_types)
-        .collect::<Vec<_>>();
-    if types.len() as u64 != packet.len() {
+    let count: usize = params.iter().map(|ty| ty.scalar_types().len()).sum();
+    if count as u64 != packet.len() {
         return Err(invalid("Domain value input length mismatch"));
     }
-    let mut input = Vec::with_capacity(types.len() + usize::from(params == [Type::Unit]));
-    for (i, ty) in types.iter().enumerate() {
-        let word = packet.load(i as u64)?.cast::<u64>().read();
-        if InstanceValue::from_bits(ty, word).is_none() {
+    let mut input = Vec::with_capacity(count + usize::from(params == [Type::Unit]));
+    for i in 0..count {
+        input.push(packet.load(i as u64)?.cast::<u64>().read());
+    }
+    let mut offset = 0;
+    for ty in params {
+        let end = offset + ty.scalar_types().len();
+        if !crate::core::script::valid_words(ty, &input[offset..end]) {
             return Err(invalid("Invalid domain value input"));
         }
-        input.push(word);
+        offset = end;
     }
     if params == [Type::Unit] {
         input.push(0);

@@ -337,3 +337,6 @@ fn broken(s:&State)->Reply {Reply{n:1/(s.n-7),wide:0}}
 
 #[path = "when_tests.rs"]
 mod when_tests;
+
+#[path = "enum_tests.rs"]
+mod enum_tests;

@@ -1,0 +1,87 @@
+import joky/domain
+import joky/check
+import joky/task
+import joky/option.{type Option}
+import joky/result.{type Result}
+
+enum Rejection { Disabled, Limit(Int32) }
+enum Command { Read, Set(Int32), Reject(Rejection) }
+struct Reply { value:Option<Int32>, status:Result<Int32,Rejection> }
+#state
+struct State { n:Int32 }
+fn assert(ok:Bool) {check.assert(ok,"enum domain values")}
+fn make(input:Option<Int32>)->State {State{n:input.unwrap_or(0)}}
+fn update(s:&mut State,input:Command)->Result<Int32,Rejection> {
+    match input {
+        Read=>Result.Ok(s.n),
+        Set(n)=>{s.n=n Result.Ok(n)},
+        Reject(e)=>Result.Err(e)
+    }
+}
+fn read(s:&State)->Option<Int32> {Option.Some(s.n)}
+fn reply(s:&State)->Reply {Reply{value:Option.Some(s.n),status:Result.Ok(s.n)}}
+fn pair(a:&State,b:&State)->Option<Int32> {Option.Some(a.n+b.n)}
+fn query(s:&State,input:Option<Int32>)->Option<Int32> {Option.Some(s.n+input.unwrap_or(0))}
+fn write_pair(a:&mut State,b:&mut State,input:Command)->Result<Int32,Rejection> {
+    let result=update(a,input)
+    b.n=a.n
+    result
+}
+fn request(input:Command) @suspends ->Result<Int32,Rejection> {
+    task.yield_now()
+    domain.write(update,input).unwrap()
+}
+fn request_read(input:Option<Int32>) @suspends ->Option<Int32> {domain.query(query,input).unwrap()}
+fn tick(s:&mut State,input:Command) {update(s,input);}
+fn edit(s:&mut State,input:Option<Int32>) {s.n=input.unwrap_or(0)}
+impl State {
+    fn apply(&mut self,input:Command)->Result<Int32,Rejection> {update(self,input)}
+    fn value(&self)->Option<Int32> {read(self)}
+}
+fn lifecycle() @suspends ->Int32 {
+    let a=domain.create(make,Option.Some(10))
+    let b=domain.create(make,Option.None::<Int32>)
+    let x=a.handle() let y=b.handle()
+    assert(x.value().unwrap().unwrap_or(-1)==10)
+    assert(x.apply(Command.Set(12)).unwrap().unwrap()==12)
+    let command=Command.Reject(Rejection.Limit(4))
+    match when "business error" (mut x,y) {
+        x.n+=1
+        update(x,command)
+    } {Ok(Err(Limit(n)))=>assert(n==4),_=>assert(false)}
+    // A business Err is a completed write, not a rollback or access rejection.
+    assert(x.value().unwrap().unwrap_or(-1)==13)
+    let absent:Option<Int32>=Option.None
+    assert(when (x) {absent}.unwrap().is_none())
+    assert(domain.write_to(x,update,Command.Read).unwrap().unwrap()==13)
+    assert(domain.write_pair(x,y,write_pair,Command.Set(14)).unwrap().unwrap()==14)
+    assert(domain.read_pair(x.read_only(),y.read_only(),pair).unwrap().unwrap_or(-1)==28)
+    assert(domain.query_from(x.read_only(),query,Option.Some(2)).unwrap().unwrap_or(-1)==16)
+    assert(domain.request(x,request,Command.Set(15)).unwrap().unwrap()==15)
+    assert(domain.request_read(x.read_only(),request_read,Option.Some(3)).unwrap().unwrap_or(-1)==18)
+    let saved=domain.snapshot_from(x.read_only(),reply)
+    assert(saved.value().value.unwrap_or(-1)==15 && saved.value().status.unwrap()==15)
+    let candidate=domain.candidate_from(saved,x,make,Option.Some(20))
+    var receipt=domain.commit_to(x,candidate)
+    assert(receipt.wait().is_ok())
+    let saved=domain.snapshot_pair(x.read_only(),y.read_only(),pair)
+    assert(saved.value().unwrap_or(-1)==34)
+    var access=domain.access_set() access.include(x.read_only()) access.include(y.read_only())
+    let saved=domain.snapshot_set(access)
+    assert(domain.read_snapshot(&saved,x.read_only(),read).unwrap_or(-1)==20)
+    let candidate=domain.edit_snapshot(saved,x,edit,Option.Some(21))
+    let candidate=domain.edit_candidate(candidate,y,edit,Option.None::<Int32>)
+    var receipt=domain.commit_set(candidate)
+    assert(receipt.wait().is_ok())
+    assert(x.value().unwrap().unwrap_or(-1)==21 && y.value().unwrap().unwrap_or(-1)==0)
+    let timer=domain.timer() let t=timer.handle()
+    domain.after(t,x,0,tick,Command.Set(30)).unwrap()
+    while match t.status() {Active=>true,_=>false} {task.yield_now()}
+    assert(x.value().unwrap().unwrap_or(-1)==30)
+    timer.close()
+    a.close()
+    match x.apply(Command.Read) {Err(Closed)=>{},_=>assert(false)}
+    b.close()
+    24
+}
+fn main() @suspends {assert(lifecycle()==24)}

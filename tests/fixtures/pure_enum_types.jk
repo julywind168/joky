@@ -1,0 +1,4 @@
+enum Fault { Denied, Limit(Int32) }
+struct Bits { high:UInt64, low:Int8, real:Float64, small:Float32 }
+struct Empty {}
+enum Message { Empty, UnitValue(Unit), Zero(Empty), Flag(Bool), Code(Rune), Data(Bits), Nested(Option<Result<Int32,Fault>>) }

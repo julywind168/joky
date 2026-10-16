@@ -187,7 +187,7 @@ impl FunctionPlan {
             return Err(type_error(
                 &block.span,
                 ErrorCode::InvalidCall,
-                "when captures require a bounded pure-value packet (64 fields, 8 record levels)",
+                "when captures require a bounded pure-value packet (64 contract members, 64 lanes, 8 aggregate levels)",
             ));
         }
         let ret = self
@@ -203,7 +203,7 @@ impl FunctionPlan {
             return Err(type_error(
                 &block.span,
                 ErrorCode::InvalidCall,
-                "when result requires a bounded pure value (64 fields, 8 record levels)",
+                "when result requires a bounded pure value (64 contract members, 64 lanes, 8 aggregate levels)",
             ));
         }
         let entry = {
