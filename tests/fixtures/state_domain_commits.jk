@@ -12,8 +12,8 @@ fn fail(state: &mut State, zero: Int32) -> Int32 { state.count = 99 1 / zero }
 fn poison(zero: Int32) @suspends -> Int32 { domain.write(fail, zero).unwrap() }
 fn valid(state: &State) -> Bool { state.wide == 18446744073709551615 && state.fraction.to_bits() == 9221120237041090626 }
 fn add(state: &mut State, delta: Int32) -> Int32 { state.count = state.count + delta state.count }
-fn committed(outcome: domain.CommitOutcome, revision: UInt64) -> Bool {
-    match outcome { Committed(value) => value == revision, _ => false }
+fn committed(outcome: Result<UInt64,domain.CommitError>, revision: UInt64) -> Bool {
+    match outcome { Ok(value) => value == revision, _ => false }
 }
 fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, 7)
@@ -21,7 +21,7 @@ fn lifecycle() @suspends -> Int32 {
     let reader = handle.read_only()
     let snapshot = domain.snapshot_from(reader, read)
     let value = snapshot.value()
-    let candidate = domain.candidate_from(snapshot, make, value + 5)
+    let candidate = domain.candidate_from(snapshot, handle, make, value + 5)
     task.yield_now()
     assert(domain.read_from(reader, read).unwrap() == 7)
     var receipt = domain.commit_to(handle, candidate)
@@ -31,27 +31,27 @@ fn lifecycle() @suspends -> Int32 {
     assert(committed(receipt.wait(), 1))
     assert(domain.read_from(reader, read).unwrap() == 12 && domain.read_from(reader, valid).unwrap())
     let old = domain.snapshot_from(reader, read)
-    let stale = domain.candidate_from(old, make, 99)
+    let stale = domain.candidate_from(old, handle, make, 99)
     domain.write_to(handle, add, 1).unwrap()
     var conflict = domain.commit_to(handle, stale)
-    assert(match conflict.wait() { Conflict => true, _ => false })
+    assert(match conflict.wait() { Err(Conflict) => true, _ => false })
     assert(domain.read_from(reader, read).unwrap() == 13)
-    let wrong = domain.candidate_from(domain.snapshot_from(reader, read), make, 88)
+    let wrong = domain.candidate_from(domain.snapshot_from(reader, read), handle, make, 88)
     let other = domain.create(make, 100)
     var rejected = domain.commit_to(other.handle(), wrong)
-    assert(match rejected.wait() { InvalidAccess => true, _ => false })
+    assert(match rejected.wait() { Err(InvalidAccess) => true, _ => false })
     assert(domain.read_from(reader, read).unwrap() == 13)
     assert(domain.read_from(other.read_handle(), read).unwrap() == 100)
     let other_handle = other.handle()
     let marker = domain.snapshot_from(other_handle.read_only(), unit)
-    let doomed = domain.candidate_from(marker, make, 200)
+    let doomed = domain.candidate_from(marker, other_handle, make, 200)
     assert(domain.request(other_handle, poison, 0).is_err())
     var failed = domain.commit_to(other_handle, doomed)
-    assert(match failed.wait() { DomainFailed => true, _ => false })
-    let abandoned = domain.candidate_from(domain.snapshot_from(reader, read), make, 90)
+    assert(match failed.wait() { Err(DomainFailed) => true, _ => false })
+    let abandoned = domain.candidate_from(domain.snapshot_from(reader, read), handle, make, 90)
     owner.close()
     var closed = domain.commit_to(handle, abandoned)
-    assert(match closed.wait() { Closed => true, _ => false })
+    assert(match closed.wait() { Err(Closed) => true, _ => false })
     assert(committed(receipt.wait(), 1))
     24
 }

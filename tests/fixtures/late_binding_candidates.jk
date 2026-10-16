@@ -11,9 +11,9 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     let a=domain.create(make,Init{n:7})
     let b=domain.create(make,Init{n:10})
     let c=domain.create(make,Init{n:11})
-    let single=domain.candidate_from(domain.snapshot_pair(a.read_handle(),c.read_handle(),total),make,Init{n:20})
-    let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),make,Init{n:21})
-    let pair=domain.candidate_pair_from(first,make,Init{n:30})
+    let single=domain.candidate_from(domain.snapshot_pair(a.read_handle(),c.read_handle(),total), a.handle(), make, Init{n:20})
+    let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), make, Init{n:21})
+    let pair=domain.candidate_pair_from(first, b.handle(), make, Init{n:30})
     var access=domain.access_set()
     access.include(c.read_handle()) access.include(b.read_handle()) access.include(a.read_handle())
     let set=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,Init{n:22})
@@ -21,11 +21,11 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     assert(directory.insert(1,a.handle()).is_ok())
     while domain.lookup::<State>(directory,1).is_some() {task.yield_now()}
     var r1=domain.commit_to(a.handle(),single)
-    assert(match r1.wait() {Conflict=>true,_=>false})
+    assert(match r1.wait() {Err(Conflict)=>true,_=>false})
     var r2=domain.commit_pair_to(a.handle(),b.handle(),pair)
-    assert(match r2.wait() {Conflict=>true,_=>false})
+    assert(match r2.wait() {Err(Conflict)=>true,_=>false})
     var r3=domain.commit_set(set)
-    assert(match r3.wait() {Conflict=>true,_=>false})
+    assert(match r3.wait() {Err(Conflict)=>true,_=>false})
     assert(domain.read_pair(a.read_handle(),b.read_handle(),total).unwrap()==17)
     assert(domain.read_from(c.read_handle(),read).unwrap()==11)
     // A resumed old flow still constructs with its pinned module.
@@ -33,9 +33,9 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
 }
 fn probe(n:Int32) @suspends ->Int32 {
     let owner=domain.create(make,Init{n:n})
-    let next=domain.candidate_from(domain.snapshot_from(owner.read_handle(),read),make,Init{n:n+1})
+    let next=domain.candidate_from(domain.snapshot_from(owner.read_handle(),read), owner.handle(), make, Init{n:n+1})
     var receipt=domain.commit_to(owner.handle(),next)
-    assert(match receipt.wait() {Committed(_)=>true,_=>false})
+    assert(match receipt.wait() {Ok(_)=>true,_=>false})
     domain.read_from(owner.read_handle(),read).unwrap()
 }
 fn ready(directory:domain.DirectoryHandle) @suspends ->Bool {domain.lookup::<State>(directory,1).is_some()}

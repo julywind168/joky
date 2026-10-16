@@ -5816,17 +5816,17 @@ fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
     "#;
     let start = "let owner = domain.create(make, 1) let handle = owner.handle() let snapshot = domain.snapshot_from(handle.read_only(), read)";
     for (extra, body) in [
-        ("", "let candidate = domain.candidate_from(snapshot, make, 2) snapshot.value();"),
-        ("", "let candidate = domain.candidate_from(snapshot, make, 2) domain.commit_to(handle, candidate); domain.commit_to(handle, candidate);"),
-        ("", "let candidate = domain.candidate_from(snapshot, make, 2) let storage = candidate.storage"),
-        ("", "let candidate = domain.candidate_from(snapshot, make, 2) domain.commit_to(handle.read_only(), candidate);"),
-        ("", "let constructor = make domain.candidate_from(snapshot, constructor, 2);"),
-        ("fn other(value: Int32) -> Other { Other { count: value } }", "domain.candidate_from(snapshot, other, 2);"),
-        ("fn owns(value: String) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, owns, \"owned\");"),
-        ("fn noisy(value: Int32) -> State { println(value) make(value) }", "domain.candidate_from(snapshot, noisy, 2);"),
-        ("fn pending(value: Int32) @suspends -> State { make(value) }", "domain.candidate_from(snapshot, pending, 2);"),
-        ("", "let factory = domain.candidate_from::<State, Int32, Int32>"),
-        ("", "let candidate = domain.candidate_from(snapshot, make, 2) let receipt = domain.commit_to(handle, candidate) let storage = receipt.storage"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) snapshot.value();"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) domain.commit_to(handle, candidate); domain.commit_to(handle, candidate);"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) let storage = candidate.storage"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) domain.commit_to(handle.read_only(), candidate);"),
+        ("", "let constructor = make domain.candidate_from(snapshot, handle, constructor, 2);"),
+        ("fn other(value: Int32) -> Other { Other { count: value } }", "domain.candidate_from(snapshot, handle, other, 2);"),
+        ("fn owns(value: String) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, handle, owns, \"owned\");"),
+        ("fn noisy(value: Int32) -> State { println(value) make(value) }", "domain.candidate_from(snapshot, handle, noisy, 2);"),
+        ("fn pending(value: Int32) @suspends -> State { make(value) }", "domain.candidate_from(snapshot, handle, pending, 2);"),
+        ("", "let factory = domain.candidate_from::<State, Int32, State, Int32>"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) let receipt = domain.commit_to(handle, candidate) let storage = receipt.storage"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{extra}\nfn main() @suspends {{ {start} {body} }}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
@@ -5902,7 +5902,7 @@ fn state_domains_deadlines_reject_forgery_before_build() {
     for source in [
         "import joky/domain fn main() @suspends { let d = domain.CommitDeadline { storage: 1 } }",
         "extern fn __domain_deadline_after(n: UInt64) @suspends -> domain.DeadlineOwner fn main() @suspends { let d = __domain_deadline_after(1) }",
-        "import joky/domain struct State { n: Int32 } fn make(n: Int32) -> State { State { n:n } } fn read(s: &State) -> Int32 { s.n } fn main() @suspends { let o=domain.create(make,1) let c=domain.candidate_from(domain.snapshot_from(o.read_handle(),read),make,2) let d=0 let r=domain.commit_before(o.handle(),c,&d) }",
+        "import joky/domain struct State { n: Int32 } fn make(n: Int32) -> State { State { n:n } } fn read(s: &State) -> Int32 { s.n } fn main() @suspends { let o=domain.create(make,1) let c=domain.candidate_from(domain.snapshot_from(o.read_handle(),read), o.handle(), make, 2) let d=0 let r=domain.commit_before(o.handle(),c,&d) }",
     ] {
         work.write("forged.jk", source);
         let output = work.cli(&["build", "forged.jk"]);
@@ -6007,7 +6007,7 @@ fn state_domains_joint_snapshots_reject_dependency_extraction_and_invalid_projec
         ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),noisy)"),
         ("fn pending(a:&S,b:&S) @suspends ->Int32 { a.n+b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),pending)"),
         ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let raw=s.storage"),
-        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let c=domain.candidate_from(s,make,2) s.value();"),
+        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let c=domain.candidate_from(s, a.handle(), make, 2) s.value();"),
         ("", "let s=domain.Snapshot::<S,Int32>{storage:1}"),
     ] {
         work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
@@ -6037,15 +6037,15 @@ fn state_domains_pair_commits_reject_forgery_reuse_and_unproved_constructors() {
     for (extra, body) in [
         ("", "let p=domain.CandidatePair::<S,S>{storage:1}"),
         ("", "let f=domain.candidate_pair_from::<S,S,Int32>"),
-        ("", "let f=make let p=domain.candidate_pair_from(c,f,2)"),
-        ("fn noisy(n:Int32)->S { println(n) make(n) }", "let p=domain.candidate_pair_from(c,noisy,2)"),
-        ("fn pending(n:Int32) @suspends ->S { make(n) }", "let p=domain.candidate_pair_from(c,pending,2)"),
-        ("", "let p=domain.candidate_pair_from(c,make,2) let p2=domain.candidate_pair_from(c,make,3)"),
-        ("", "let p=domain.candidate_pair_from(c,make,2) let r=domain.commit_pair_to(a.read_handle(),b.handle(),p)"),
-        ("", "let p=domain.candidate_pair_from(c,make,2) let r=domain.commit_pair_to(a.handle(),b.handle(),p) let r2=domain.commit_pair_to(a.handle(),b.handle(),p)"),
-        ("", "let p=domain.candidate_pair_from(c,make,2) let raw=p.storage"),
+        ("", "let f=make let p=domain.candidate_pair_from(c, b.handle(), f, 2)"),
+        ("fn noisy(n:Int32)->S { println(n) make(n) }", "let p=domain.candidate_pair_from(c, b.handle(), noisy, 2)"),
+        ("fn pending(n:Int32) @suspends ->S { make(n) }", "let p=domain.candidate_pair_from(c, b.handle(), pending, 2)"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let p2=domain.candidate_pair_from(c, b.handle(), make, 3)"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let r=domain.commit_pair_to(a.read_handle(),b.handle(),p)"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let r=domain.commit_pair_to(a.handle(),b.handle(),p) let r2=domain.commit_pair_to(a.handle(),b.handle(),p)"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let raw=p.storage"),
     ] {
-        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) let c=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),make,3) {body} }}"));
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) let c=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), make, 3) {body} }}"));
         for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
             let output=work.cli(&args);
             let error=String::from_utf8_lossy(&output.stderr);
@@ -6062,11 +6062,12 @@ fn state_domains_pair_commits_reject_single_or_duplicate_snapshot_dependencies()
         "domain.snapshot_from(a.read_handle(),read)",
         "domain.snapshot_pair(a.read_handle(),a.read_handle(),total)",
     ] {
-        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(a:&S)->Int32{{a.n}} fn total(a:&S,b:&S)->Int32{{a.n+b.n}} fn main() @suspends {{ let a=domain.create(make,1) let c=domain.candidate_from({snapshot},make,2) let p=domain.candidate_pair_from(c,make,3) }}"));
+        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(a:&S)->Int32{{a.n}} fn total(a:&S,b:&S)->Int32{{a.n+b.n}} fn main() @suspends {{ let a=domain.create(make,1) let c=domain.candidate_from({snapshot}, a.handle(), make, 2) let p=domain.candidate_pair_from(c, a.handle(), make, 3) }}"));
         let rejected = |output: std::process::Output| {
             assert!(!output.status.success());
-            assert!(String::from_utf8_lossy(&output.stderr)
-                .contains("requires a joint snapshot of two distinct domains"));
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("cannot repeat a writable domain")
+            );
         };
         rejected(work.cli(&["run", "invalid.jk"]));
         rejected(work.cli(&["run", "--interpreter", "invalid.jk"]));
@@ -6574,9 +6575,9 @@ fn send(target:outbox.Handle) @suspends ->Int32 {
     var bytes=Array.new::<UInt8>() bytes.push(255)
     var batch=outbox.batch(1,1)
     outbox.stage(&mut batch,target,bytes);
-    let candidate=domain.with_outbox(domain.candidate_from(domain.snapshot_from(state.read_handle(),read),make,1),batch)
+    let candidate=domain.candidate_from(domain.snapshot_from(state.read_handle(),read), state.handle(), make, 1).with_outbox(batch)
     var receipt=domain.commit_to(state.handle(),candidate)
-    match receipt.wait() { Committed(_) => 1, _ => 0 }
+    match receipt.wait() { Ok(_) => 1, _ => 0 }
 }"#.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
@@ -7499,10 +7500,10 @@ fn main() @suspends {{
         }
 
         let candidate_calls = [
-            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read),make,VALUE) var receipt=domain.commit_to(a.handle(),next) check.assert(match receipt.wait(){Committed(_)=>true,_=>false},&message)",
-            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),seed,0) let next=domain.candidate_pair_from(first,make,VALUE) var receipt=domain.commit_pair_to(a.handle(),b.handle(),next) check.assert(match receipt.wait(){Committed(_)=>true,_=>false},&message)",
-            "var access=domain.access_set() access.include(a.read_handle()) let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Committed=>true,_=>false},&message)",
-            "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Committed=>true,_=>false},&message)",
+            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read), a.handle(), make, VALUE) var receipt=domain.commit_to(a.handle(),next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
+            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), seed, 0) let next=domain.candidate_pair_from(first, b.handle(), make, VALUE) var receipt=domain.commit_pair_to(a.handle(),b.handle(),next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
+            "var access=domain.access_set() access.include(a.read_handle()) let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
+            "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
         ];
         for (index, call) in candidate_calls.iter().enumerate() {
             let work = Workspace::new();
@@ -7746,11 +7747,15 @@ fn domain_candidate_values_run_and_fail_in_all_backends() {
     work.write("candidate_values.jk", source);
     work.assert_all_backends("candidate_values.jk", &[], b"", 0);
     for (entry, from, to) in [
-        ("construct_single", ",make,input(24)", ",fail_make,input(0)"),
+        (
+            "construct_single",
+            ", make, input(24)",
+            ", fail_make, input(0)",
+        ),
         (
             "construct_pair",
-            ",make_scalar,input(24)",
-            ",fail_scalar,input(0)",
+            ", make_scalar, input(24)",
+            ", fail_scalar, input(0)",
         ),
         ("construct_set", ",make,input(24)", ",fail_make,input(0)"),
         (
@@ -7759,6 +7764,7 @@ fn domain_candidate_values_run_and_fail_in_all_backends() {
             ",fail_scalar,input(0)",
         ),
     ] {
+        assert!(source.contains(from), "Missing failure injection: {from}");
         work.write(
             "candidate_failure.jk",
             &source
@@ -7815,8 +7821,8 @@ fn domain_candidate_values_reject_unproved_and_non_value_inputs() {
         ),
     ] {
         for body in [
-            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read),make,INPUT)",
-            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),seed,0) let next=domain.candidate_pair_from(first,make,INPUT)",
+            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read), a.handle(), make, INPUT)",
+            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), seed, 0) let next=domain.candidate_pair_from(first, b.handle(), make, INPUT)",
             "var access=domain.access_set() access.include(a.read_handle()) let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,INPUT)",
             "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,INPUT)",
         ] {
@@ -8177,5 +8183,115 @@ fn main() @suspends {{
 }}"#));
             work.assert_all_backends("timer_reload.jk", &[], b"", 0);
         }
+    }
+}
+
+#[test]
+fn state_domains_submission_contract_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "submission.jk",
+        include_str!("fixtures/state_domain_submission.jk"),
+    );
+    work.assert_all_backends("submission.jk", &[], b"", 0);
+    let reference = include_str!("../docs/language.md");
+    let example = reference
+        .split("## 提交式出站信箱")
+        .nth(1)
+        .unwrap()
+        .split("```joky\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    work.write(
+        "documented_submission.jk",
+        &format!(
+            r#"{example}
+fn main() @suspends ->Int32 {{
+    let owner=domain.create(make,0) let mailbox=outbox.create(1,4096)
+    var receipt=update(owner.handle(),mailbox.handle()) receipt.wait().unwrap();
+    domain.read_from(owner.read_handle(),read).unwrap()-42
+}}"#
+        ),
+    );
+    work.assert_all_backends("documented_submission.jk", &[], b"", 0);
+}
+
+#[test]
+fn state_domains_submission_targets_reject_missing_members_before_construction() {
+    for pair in [false, true] {
+        let work = Workspace::new();
+        let prepare = if pair {
+            "let first=domain.candidate_from(snapshot,a.handle(),make,2) domain.candidate_pair_from(first,c.handle(),broken,0);"
+        } else {
+            "domain.candidate_from(snapshot,c.handle(),broken,0);"
+        };
+        work.write(
+            "missing.jk",
+            &format!(
+                r#"import joky/domain
+struct S {{n:Int32}}
+fn make(n:Int32)->S {{S{{n:n}}}}
+fn broken(n:Int32)->S {{make(1/n)}}
+fn sum(a:&S,b:&S)->Int32 {{a.n+b.n}}
+fn main() @suspends {{
+    let a=domain.create(make,1) let b=domain.create(make,2) let c=domain.create(make,3)
+    let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),sum)
+    {prepare}
+}}"#
+            ),
+        );
+        for args in [
+            vec!["run", "missing.jk"],
+            vec!["run", "--interpreter", "missing.jk"],
+        ] {
+            failure(
+                &work.cli(&args),
+                "Candidate target is absent from the complete read set",
+            );
+        }
+        success(&work.cli(&["build", "missing.jk", "-o", "missing"]));
+        failure(
+            &Command::new(work.path().join("missing")).output().unwrap(),
+            "Candidate target is absent from the complete read set",
+        );
+    }
+}
+
+#[test]
+fn state_domains_submission_targets_require_matching_write_capabilities() {
+    let work = Workspace::new();
+    for (target, pair) in [
+        ("a.read_handle()", false),
+        ("b.handle()", false),
+        ("a.read_handle()", true),
+        ("b.handle()", true),
+    ] {
+        let candidate = if pair {
+            format!("let first=domain.candidate_from(snapshot,b.handle(),rules,3) domain.candidate_pair_from(first,{target},make,4);")
+        } else {
+            format!("domain.candidate_from(snapshot,{target},make,3);")
+        };
+        work.write(
+            "permission.jk",
+            &format!(
+                r#"import joky/domain
+struct S {{n:Int32}} struct T {{n:Int32}}
+fn make(n:Int32)->S {{S{{n:n}}}} fn rules(n:Int32)->T {{T{{n:n}}}}
+fn total(a:&S,b:&T)->Int32 {{a.n+b.n}}
+fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(rules,2)
+let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total) {candidate}}}"#
+            ),
+        );
+        let output = work.cli(&["build", "permission.jk"]);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !error.contains("panicked") && !error.contains("[parse"),
+            "{error}"
+        );
+        assert!(error.contains("type_mismatch"), "{error}");
     }
 }

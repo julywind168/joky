@@ -43,12 +43,12 @@ fn request(ctx:Context) @suspends ->Int32 {
     let snapshot=domain.snapshot_pair(a.read_only(),b.read_only(),balance)
     let value=snapshot.value()+version()
     assert(value>0 && value<256)
-    let first=domain.candidate_from(snapshot,room,value)
-    let pair=domain.candidate_pair_from(first,ledger,value*2)
+    let first=domain.candidate_from(snapshot, a, room, value)
+    let pair=domain.candidate_pair_from(first, b, ledger, value*2)
     var bytes=Array.new::<UInt8>() bytes.push(value.to_u8().unwrap_or(0))
     var batch=outbox.batch(1,1)
     assert(outbox.stage(&mut batch,ctx.output,bytes).is_ok())
-    var receipt=domain.commit_pair_to(a,b,domain.pair_with_outbox(pair,batch))
-    assert(match receipt.wait() {Committed(_)=>true,_=>false})
+    var receipt=domain.commit_pair_to(a,b,pair.with_outbox(batch))
+    assert(match receipt.wait() {Ok(_)=>true,_=>false})
     value
 }

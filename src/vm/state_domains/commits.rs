@@ -69,6 +69,7 @@ fn deadline_after(registry: &Rc<RefCell<Domains>>, milliseconds: i32) -> Result<
     })
 }
 struct Receipt {
+    registry: u64,
     request: Option<DomainRequest>,
     rejected: Option<Status>,
 }
@@ -128,7 +129,9 @@ unsafe fn constructor_input(
     let info = module.instance_info(name)?;
     if matches!(
         op,
-        Operation::CandidateValues
+        Operation::CandidateAtValues
+            | Operation::CandidatePairAtValues
+            | Operation::CandidateValues
             | Operation::CandidatePairValues
             | Operation::SetCandidateValues
             | Operation::SetAddValues
@@ -148,6 +151,19 @@ unsafe fn constructor_input(
     } else {
         source::scalar_argument(&info.signature.params, bits).map(ConstructorInput::Scalar)
     }
+}
+fn target_version(
+    registry: &Rc<RefCell<Domains>>,
+    reads: &reads::ReadSet,
+    token: u64,
+) -> Result<reads::Version, Error> {
+    let handle = source::handle(registry, token)?;
+    if !handle.writable {
+        return Err(invalid("Candidate requires write access"));
+    }
+    reads
+        .version(handle)
+        .ok_or_else(|| invalid("Candidate target is absent from the complete read set"))
 }
 fn construct(
     registry: &Rc<RefCell<Domains>>,
@@ -299,10 +315,12 @@ fn admit(registry: &Rc<RefCell<Domains>>, token: u64, candidate: Candidate) -> R
     });
     match result {
         Ok(request) => Receipt {
+            registry: registry.borrow().identity,
             request: Some(request),
             rejected: None,
         },
         Err(status) => Receipt {
+            registry: registry.borrow().identity,
             request: None,
             rejected: Some(status),
         },
@@ -333,6 +351,8 @@ pub(super) unsafe fn poll(
     if matches!(
         op,
         Operation::CandidatePair
+            | Operation::CandidatePairAt
+            | Operation::CandidatePairAtValues
             | Operation::CandidatePairValues
             | Operation::CommitPair
             | Operation::CommitPairBefore
@@ -342,17 +362,30 @@ pub(super) unsafe fn poll(
     if op == Operation::DeadlineAfter {
         return adopt(arena, deadline_after(registry, frame.slots[0] as i32)?).map(Some);
     }
-    if matches!(op, Operation::Candidate | Operation::CandidateValues) {
+    if matches!(
+        op,
+        Operation::Candidate
+            | Operation::CandidateValues
+            | Operation::CandidateAt
+            | Operation::CandidateAtValues
+    ) {
         let snapshot_lease = lease(frame.slots[1])?;
         let snapshot = &*snapshot_lease.token().cast::<source::Snapshot>();
         let (module, _) = source::module(registry, frame.slots[0])?;
-        let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
-        let input = constructor_input(&module, name, frame.slots[3], op)?;
+        let explicit = matches!(op, Operation::CandidateAt | Operation::CandidateAtValues);
+        let version = if explicit {
+            target_version(registry, &snapshot.reads, frame.slots[2])?
+        } else {
+            snapshot.reads.first
+        };
+        let offset = usize::from(explicit);
+        let name = crate::runtime::owned_text::borrow(frame.slots[2 + offset] as *const Buffer)?;
+        let input = constructor_input(&module, name, frame.slots[3 + offset], op)?;
         let mut candidate = construct(
             registry,
             module,
-            snapshot.reads.first.handle,
-            snapshot.reads.first.revision,
+            version.handle,
+            version.revision,
             name,
             input,
             crate::runtime::suspension::current_limits(),
@@ -377,6 +410,7 @@ pub(super) unsafe fn poll(
         let bits = adopt(
             arena,
             Receipt {
+                registry: registry.borrow().identity,
                 request: None,
                 rejected: None,
             },
@@ -389,15 +423,39 @@ pub(super) unsafe fn poll(
     let receipt_lease = lease(frame.slots[0])?;
     let stored = &*receipt_lease.token().cast::<Stored<Receipt>>();
     let receipt = stored.value.borrow();
-    if receipt
-        .request
-        .as_ref()
-        .and_then(|r| r.domains.upgrade())
-        .is_some_and(|d| !Rc::ptr_eq(&d, registry))
-    {
+    if receipt.registry != registry.borrow().identity {
+        if op == Operation::SetRevisionChecked {
+            frame.slots[2] = 12;
+            frame.slots[3] = 0;
+            return Ok(Some(0));
+        }
         return Err(invalid("Commit receipt belongs to another executor"));
     }
     match op {
+        Operation::SetRevisionChecked => {
+            let (status, value) = match receipt.result() {
+                None => (11, 0),
+                Some((Status::Committed, _)) => {
+                    let domains = registry.borrow();
+                    let revision = receipt
+                        .request
+                        .as_ref()
+                        .and_then(|r| r.sequence)
+                        .and_then(|id| domains.requests.get(&id))
+                        .and_then(|r| {
+                            r.set_revisions
+                                .iter()
+                                .find(|(token, _)| *token == frame.slots[1] / 2)
+                        })
+                        .map(|(_, revision)| *revision);
+                    revision.map_or((10, 0), |revision| (0, revision))
+                }
+                Some((status, _)) => (status as u64, 0),
+            };
+            frame.slots[2] = status;
+            frame.slots[3] = value;
+            Ok(Some(0))
+        }
         Operation::CommitWait => {
             if let Some((status, _)) = receipt.result() {
                 return Ok(Some(status as u64));

@@ -758,7 +758,12 @@ pub(crate) unsafe fn poll(
                 None => return Ok(None),
             }
         }
-        Operation::Candidate
+        Operation::CandidateAt
+        | Operation::CandidatePairAt
+        | Operation::CandidateAtValues
+        | Operation::CandidatePairAtValues
+        | Operation::SetRevisionChecked
+        | Operation::Candidate
         | Operation::CandidateValues
         | Operation::CandidatePair
         | Operation::CandidatePairValues

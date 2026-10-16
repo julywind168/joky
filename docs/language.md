@@ -2955,11 +2955,11 @@ Timer 的输入也支持上述纯值记录契约，具体生命周期见[定时�
 
 | 入口 | 行为 |
 | --- | --- |
-| `candidate_from<S, R, A>(Snapshot<S, R>, fn(A) -> S, A) -> Candidate<S>` | 消费完整快照及全部读取凭据，以命名、同步、受检的构造器在独立 arena 中创建目标域的完整候选根 |
+| `candidate_from<B, R, S, A>(Snapshot<B, R>, WriteHandle<S>, fn(A) -> S, A) -> Candidate<S>` | 消费完整快照及全部读取凭据，以命名、同步、受检的构造器在独立 arena 中创建目标域的完整候选根 |
 | `commit_to<S>(WriteHandle<S>, Candidate<S>) -> CommitReceipt` | 消费候选，预留回执并申请 FIFO 提交；返回时不保证已经发布 |
 | `deadline_after(Int32) -> CommitDeadline` | 从当前执行器时钟创建不可伪造的截止凭据，参数为非负毫秒数，0 表示立即到期 |
 | `commit_before<S>(WriteHandle<S>, Candidate<S>, &CommitDeadline) -> CommitReceipt` | 消费候选，按同一 FIFO 提交；发布前检查截止凭据 |
-| `receipt.wait(&mut self) -> CommitOutcome` | 等待终态，可重复读取；不消费回执 |
+| `receipt.wait(&mut self) -> Result<UInt64,CommitError>` | 等待终态，可重复读取；不消费回执 |
 | `receipt.cancel(&self)` | 请求取消尚未发布的提交；已确定的终态保持不变 |
 | `receipt.identity(&self) -> UInt64` | 返回执行器内唯一的受理序号；未能准入时为 0，不是域句柄 |
 
@@ -2967,7 +2967,8 @@ Timer 的输入也支持上述纯值记录契约，具体生命周期见[定时�
 S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标量与上述有界纯值记录；候选构造器
 遵守与 `create` 相同的无挂起、无宿主调用和无用户 Drop 资格。
 投影可以只包含业务所需的纯值字段，构造器必须显式生成完整 S；运行时不会从投影隐式补齐其余字段。
-候选绑定快照原域的身份、类型、代码版本与修订；提交还必须提供该域的写句柄。
+候选构造时必须显式提供写句柄，目标须在原快照的完整读取集合中。候选绑定所选域的身份、类型、代码版本与修订；提交还必须提供该域的写句柄。
+目标缺失、重复写目标、错误执行器或类型／模块不匹配均在构造器执行前拒绝；这些构造错误沿任务错误通道传播。
 
 `candidate_from`、`candidate_pair_from`、`candidate_set_from` 与 `candidate_set_add` 的输入
 沿用 64 字段／8 层纯值限制，包含空记录和嵌套 Unit。输入表达式只求值一次，记录逐值复制
@@ -2981,8 +2982,9 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标�
 递归容器控制块及载荷，回收其余临时分配；发布整体移动候选 arena，不保留请求 arena，
 不复制载荷，也不重复计费。拒绝、关闭及替换后的旧根只执行受信任的存储释放。
 
-`CommitOutcome` 为 `Committed(UInt64)`（新修订）、`Conflict`、`Closed`、`DomainFailed`、
-`InvalidAccess`、`Cancelled`、`ResourceLimit`、`Expired`、`OutboxFull` 或 `OutboxClosed`。
+`wait()` 成功返回 `Ok(UInt64)`（本次提交的新修订），失败返回 `Err(CommitError)`。
+单域、双域和集合共用 `CommitError`：`Conflict`、`Closed`、`DomainFailed`、`InvalidAccess`、
+`Cancelled`、`ResourceLimit`、`Expired`、`OutboxFull` 或 `OutboxClosed`。
 后两者用于附带出站消息的提交，详见出站信箱一节。提交和短操作共享受理队列；发布前验证
 完整单域凭据、生命周期与修订余量，再于无挂起、无分配、无用户代码的区间替换根并记录结果。
 拒绝会销毁候选，旧状态保持不变；没有自动重试。构造候选或分配回执资源失败仍终止当前任务，
@@ -3006,7 +3008,7 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标�
 截止时间只约束最后一次检查，不保证发布及后续清理在截止之前完成。
 
 关闭、域失败或取消若已先成为提交终态，不改写成 `Expired`；有效凭据的发布检查在修订冲突
-判断之前检查到期。已经 `Committed` 或 `Expired` 的回执不因随后到期、取消或关闭而改变。
+判断之前检查到期。已经成功或返回 `Err(Expired)` 的回执不因随后到期、取消或关闭而改变。
 `commit_to` 保持无有效期限制；它仍检查版本、权限与生命周期。
 
 可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk) 与
@@ -3061,15 +3063,15 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 投影结果支持标量与有界纯值记录。允许同域重复读。捕获完成后保存原投影结果与版本凭据，不晚绑定重算。
 
 投影值与两个域的修订在同一次 FIFO 短操作中捕获；稍后收取结果时不重新读取修订。
-第一个域是未来候选的目标，第二个域是只读依赖，类型参数 S 表达候选目标类型。即使两个域
-类型相同，候选仍绑定第一个域的确切身份。重复域只保留一份版本依赖。
+类型参数 S 保留首域的类型信息，不限定候选写目标；构造时可显式选择任一参与域，
+包括与首域类型不同的第二域。重复域只保留一份版本依赖。
 
 `value()` 返回独立保存的值，关闭后也可读取；`check()` 检查整个依赖集合。身份和生命周期
 检查先于修订检查；任一域修订变化均可返回 Conflict，相同值写入也会推进修订。
-`candidate_from(snapshot, constructor, input)` 消费整个快照并携带全部读取凭据，不能从快照
+`candidate_from(snapshot, target, constructor, input)` 消费整个快照并携带全部读取凭据，不能从快照
 中取出部分凭据构造候选。现有 `commit_to` / `commit_before` 在发布前验证全部读取依赖，
 只读依赖变化也会拒绝发布；只读依赖在排队期间关闭或失败会终结整份申请。
-提交成功后只替换第一个域的根并推进它的修订；之后依赖关闭不会改写已提交回执。
+提交成功后只替换显式所选域的根并推进它的修订；之后依赖关闭不会改写已提交回执。
 
 读取集合为有界的不透明运行时数据，保存在快照、候选及排队结果中，随相应资源计费和释放；
 它不保活状态根，也不阻止域关闭。当前没有合并分时快照或拆分依赖的 API，
@@ -3079,19 +3081,19 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 ### 双候选原子发布
 
-联合快照的两个域必须为不同身份。先以 `candidate_from` 消费联合快照，构造第一个域的
-候选；再以 `candidate_pair_from` 消费该候选，构造第二个域的候选，得到唯一拥有的
-`CandidatePair<S,T>`。第二个构造器仍须命名、同步、无宿主调用且受检；其返回类型和模块
-版本在运行时与原联合快照的第二个域精确匹配。两份完整候选根各有独立存储，构造中可挂起
+联合快照的两个域必须为不同身份。先以 `candidate_from` 消费联合快照，显式指定首个写目标；
+再以 `candidate_pair_from` 消费该候选，显式指定另一个写目标，得到唯一拥有的
+`CandidatePair<S,T>`。写目标顺序可以与快照读取顺序不同。第二个构造器仍须命名、同步、
+无宿主调用且受检；其返回类型和模块版本在运行时与显式目标精确匹配。两份完整候选根各有独立存储，构造中可挂起
 的只有外围流程，构造器本身不能挂起。第二次构造失败会释放第一份候选，旧状态保持不变。
 
 | 入口（均为 `@suspends`） | 结果与约束 |
 | --- | --- |
-| `candidate_pair_from<S,T,A>(Candidate<S>, fn(A)->T, A)` | 返回 `CandidatePair<S,T>`；A 为标量或有界纯值记录，使用原联合快照的第二个域，保留完整读取凭据 |
+| `candidate_pair_from<S,T,A>(Candidate<S>, WriteHandle<T>, fn(A)->T, A)` | 返回 `CandidatePair<S,T>`；A 为标量或有界纯值记录，显式选择原读取集合中尚未写入的域，保留完整读取凭据 |
 | `commit_pair_to<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>)` | 消费整包，返回 `PairCommitReceipt`；两个句柄须依次对应两个确切域身份 |
 | `commit_pair_before<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>, &CommitDeadline)` | 同上，发布前检查执行器时钟截止时间 |
 
-不接受单域快照、同域重复读快照扩展出的双写包；不提供拼接独立候选、拆包、交换目标或删除
+不接受单域快照、同域重复读快照扩展出的双写包；不提供拼接独立候选、拆包、提交时交换已绑定目标或删除
 读取依赖的接口。此双域接口继承 `snapshot_pair` 的标量记录限制；更多域使用下述有界访问集合。
 构造与提交之间可以任意等待，任一域修订变化均使整个提交 Conflict，不自动重试。
 
@@ -3101,9 +3103,8 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 完整提交事实记录后才释放。排队前及排队中取消/丢弃释放整包；任一参与域关闭或失败终结
 整份申请。联合读取只能观察提交前或提交后的状态。
 
-`PairCommitReceipt.wait()` 返回 `PairCommitOutcome`：成功为 `Committed((first_revision,
-second_revision))`；其他结果为 Conflict、Closed、DomainFailed、InvalidAccess、Cancelled、
-ResourceLimit、Expired、OutboxFull、OutboxClosed。`identity()` 和 `cancel()` 与单域回执一致；成功后再次等待、取消或
+`PairCommitReceipt.wait()` 返回 `Result<(UInt64,UInt64),CommitError>`：成功的两个新修订
+按候选构造顺序对应确切写目标，失败使用公共 `CommitError`。`identity()` 和 `cancel()` 与单域回执一致；成功后再次等待、取消或
 关闭任一域都不会改写原有修订对。回执仍存活时继续占用请求配额。
 
 三后端完整示例见 [state_domain_pair_commits.jk](../tests/fixtures/state_domain_pair_commits.jk)。
@@ -3141,9 +3142,11 @@ ResourceLimit、Expired、OutboxFull、OutboxClosed。`identity()` 和 `cancel()
 都保持所有旧根和修订。成功后在同一次操作中替换全部写根，各推进一次修订，记录完整回执
 后释放旧根；只读成员的修订不变。不自动重试，也不自动发现未登记的业务依赖。
 
-`SetCommitReceipt.wait()` 返回 `SetCommitOutcome`：Committed、Conflict、Closed、DomainFailed、
-InvalidAccess、Cancelled、ResourceLimit、Expired、OutboxFull 或 OutboxClosed。成功后 `revision(ReadHandle<S>)` 返回该写目标
-的新修订；未完成、未提交或句柄不在写集合时返回 0。`identity()` / `cancel()` 沿用已有回执规则；
+`SetCommitReceipt.wait()` 返回 `Result<Unit,CommitError>`。
+`revision(ReadHandle<S>) -> Result<Option<UInt64>,RevisionError>` 查询本次提交保存的修订：
+成功且属于写目标返回 `Ok(Some(revision))`，成功但不是写目标（含只读依赖）返回 `Ok(None)`；
+未完成返回 `Err(Pending)`，提交失败返回 `Err(Failed(CommitError))`，跨执行器查询回执返回
+`Err(InvalidAccess)`。状态与修订分开传递，完整 UInt64 范围可用，不再以 0 代替查询状态。`identity()` / `cancel()` 沿用已有回执规则；
 发布后的取消、域关闭不会改写成功事实或保存的修订，回执存活期间仍占请求配额。
 
 Rust 宿主另可使用 `queue_domain_access(&[DomainHandle], method, args)` 对 2–64 个参数执行一次
@@ -3331,23 +3334,23 @@ fn read(s: &State) -> Int32 { s.count }
 
 fn update(h: domain.WriteHandle<State>, target: outbox.Handle) @suspends -> domain.CommitReceipt {
     let snapshot = domain.snapshot_from(h.read_only(), read)
-    let next = domain.candidate_from(snapshot, make, 42)
+    let next = domain.candidate_from(snapshot, h, make, 42)
     var payload = Array.new::<UInt8>()
     payload.push(42)
     var messages = outbox.batch(1, 4096)
     outbox.stage(&mut messages, target, payload);
-    domain.commit_to(h, domain.with_outbox(next, messages))
+    domain.commit_to(h, next.with_outbox(messages))
 }
 ```
 
-`domain.with_outbox`、`domain.pair_with_outbox`、`domain.set_with_outbox` 分别消费并附加一个
-Batch 到 Candidate、CandidatePair、CandidateSet，然后仍调用现有 commit/commit_before API。
+`Candidate<S>`、`CandidatePair<S,T>` 与 `CandidateSet` 均提供 `.with_outbox(batch)`，
+消费候选与 Batch，返回附带消息的同类型候选，然后调用对应的 commit/commit_before API。
 每个候选或候选集合只接受一个批次；给单候选附加后再扩展为双候选时，批次随整个提交保留。
 批次可含多个目标，同一目标的消息按暂存顺序发布。
 
 提交先验证完整读取凭据、代码版本、截止时间和状态生命周期，再一次检查所有目标的容量
 （包括重复目标的合计消息与字节数）。任一目标已关闭返回新增的 `OutboxClosed`，容量不足或
-批次曾暂存溢出返回 `OutboxFull`；三种 CommitOutcome 均提供这两个结果。拒绝时所有根和
+批次曾暂存溢出返回 `OutboxFull`；三种回执共用的 CommitError 提供这两个结果。拒绝时所有根和
 消息均不发布；成功时根、消息和提交回执在同一无挂起区间发布，然后唤醒接收方。普通
 `domain.write_to` 和可失败的原地写入不隐式获得消息回滚能力。
 

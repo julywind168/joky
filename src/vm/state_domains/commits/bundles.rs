@@ -18,14 +18,20 @@ impl Bundle {
 fn extend(
     registry: &Rc<RefCell<Domains>>,
     first: Candidate,
+    target: Option<reads::Version>,
     module: LoadedModule,
     name: &str,
     input: impl Into<ConstructorInput>,
     limits: InterpreterLimits,
 ) -> Result<Bundle, Error> {
-    let version = first.reads.second().ok_or_else(|| {
+    let version = target.or_else(|| first.reads.second()).ok_or_else(|| {
         invalid("Candidate pair requires a joint snapshot of two distinct domains")
     })?;
+    if version.handle.registry == first.base.registry
+        && version.handle.sequence == first.base.sequence
+    {
+        return Err(invalid("Candidate pair cannot repeat a writable domain"));
+    }
     let mut second = construct(
         registry,
         module,
@@ -66,10 +72,12 @@ fn admit(registry: &Rc<RefCell<Domains>>, tokens: [u64; 2], bundle: Bundle) -> R
     });
     match result {
         Ok(request) => Receipt {
+            registry: registry.borrow().identity,
             request: Some(request),
             rejected: None,
         },
         Err(status) => Receipt {
+            registry: registry.borrow().identity,
             request: None,
             rejected: Some(status),
         },
@@ -131,7 +139,10 @@ pub(super) unsafe fn poll(
 ) -> Result<Option<u64>, Error> {
     if matches!(
         op,
-        Operation::CandidatePair | Operation::CandidatePairValues
+        Operation::CandidatePair
+            | Operation::CandidatePairValues
+            | Operation::CandidatePairAt
+            | Operation::CandidatePairAtValues
     ) {
         let candidate_lease = lease(frame.slots[1])?;
         let stored = &*candidate_lease.token().cast::<Stored<Option<Candidate>>>();
@@ -141,11 +152,22 @@ pub(super) unsafe fn poll(
             .take()
             .ok_or_else(|| invalid("Candidate was already consumed"))?;
         let (module, _) = source::module(registry, frame.slots[0])?;
-        let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
-        let input = constructor_input(&module, name, frame.slots[3], op)?;
+        let explicit = matches!(
+            op,
+            Operation::CandidatePairAt | Operation::CandidatePairAtValues
+        );
+        let target = if explicit {
+            Some(target_version(registry, &first.reads, frame.slots[2])?)
+        } else {
+            None
+        };
+        let offset = usize::from(explicit);
+        let name = crate::runtime::owned_text::borrow(frame.slots[2 + offset] as *const Buffer)?;
+        let input = constructor_input(&module, name, frame.slots[3 + offset], op)?;
         let bundle = extend(
             registry,
             first,
+            target,
             module,
             name,
             input,
@@ -171,6 +193,7 @@ pub(super) unsafe fn poll(
     let bits = adopt(
         arena,
         Receipt {
+            registry: registry.borrow().identity,
             request: None,
             rejected: None,
         },
@@ -228,6 +251,7 @@ mod tests {
         extend(
             &vm.domains,
             first,
+            None,
             vm.current.clone().unwrap(),
             "make",
             InstanceValue::Int32(30),
@@ -418,6 +442,7 @@ mod tests {
                     assert!(extend(
                         &vm.domains,
                         first,
+                        None,
                         vm.current.clone().unwrap(),
                         if action == 0 { "broken_make" } else { "make" },
                         InstanceValue::Int32(0),
@@ -428,6 +453,7 @@ mod tests {
                     let pair = extend(
                         &vm.domains,
                         first,
+                        None,
                         vm.current.clone().unwrap(),
                         "make",
                         InstanceValue::Int32(30),

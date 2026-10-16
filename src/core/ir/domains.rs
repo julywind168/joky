@@ -402,7 +402,7 @@ impl FunctionPlan {
         }
         let ambient = matches!(kind, DomainAccess(_));
         let pair = matches!(kind, DomainPair(_) | DomainSnapshotPair);
-        let index = if pair {
+        let index = if pair || matches!(kind, DomainCandidate | DomainCandidatePair) {
             2
         } else {
             usize::from(!matches!(kind, DomainCreate | DomainAccess(_)))
@@ -471,15 +471,18 @@ impl FunctionPlan {
                 }));
             }
         }
+        if candidate {
+            captures.push(values[0].clone());
+            captures.push(Some(Slot {
+                index: values[1].as_ref().unwrap().index,
+                ty: crate::runtime::domain::handle_type(),
+            }));
+        }
         if index == 1 {
             let handle = values[0].as_ref().unwrap();
-            captures.push(Some(if candidate {
-                handle.clone()
-            } else {
-                Slot {
-                    index: handle.index,
-                    ty: crate::runtime::domain::handle_type(),
-                }
+            captures.push(Some(Slot {
+                index: handle.index,
+                ty: crate::runtime::domain::handle_type(),
             }));
         }
         let Flow::Value(text) = self.expr(
@@ -688,6 +691,9 @@ impl FunctionPlan {
                     unreachable!()
                 };
                 let mut arguments = snapshot.arguments.clone();
+                if matches!(kind, DomainCandidate) {
+                    arguments.push(target.signature.ret.clone());
+                }
                 let input_type = if value_candidate {
                     arguments.push(inputs[0].clone());
                     inputs[0].clone()
@@ -701,6 +707,7 @@ impl FunctionPlan {
                         vec![
                             crate::runtime::domain::module_type(),
                             info.signature.params[0].clone(),
+                            crate::runtime::domain::handle_type(),
                             Type::String,
                             input_type,
                         ],

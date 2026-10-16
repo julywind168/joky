@@ -210,10 +210,10 @@ fn run() @suspends ->Int32 {
     var batch=outbox.batch(1,1)
     var bytes=Array.new::<UInt8>() bytes.push(99)
     outbox.stage(&mut batch,queue.handle(),bytes);
-    let next=domain.with_outbox(domain.candidate_from(domain.snapshot_from(state.read_handle(),read),make,99),batch)
+    let next=domain.candidate_from(domain.snapshot_from(state.read_handle(),read), state.handle(), make, 99).with_outbox(batch)
     outbox_test_ready(); task.yield_now()
     var receipt=domain.commit_to(state.handle(),next)
-    if match receipt.wait() { Conflict=>true, _=>false } {
+    if match receipt.wait() { Err(Conflict)=>true, _=>false } {
         if domain.read_from(state.read_handle(),read).unwrap()==7 { return 42 }
     }
     0

@@ -1634,3 +1634,23 @@ fn state_domains_request_values_refund_budget_failures() {
         arena::LIMIT.with(|n| n.set(arena::MAX_BYTES));
     }
 }
+
+#[test]
+fn state_domains_submission_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_submission.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel explicit candidate targets, shared receipts, and outbox publication at every instruction"]
+fn exhaustive_state_domains_submission_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_submission.jk"),
+        0..=32768,
+        true,
+    );
+}

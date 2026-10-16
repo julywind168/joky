@@ -13,14 +13,14 @@ fn valid(a:&State)->Bool { a.wide==18446744073709551615 && a.real.to_bits()==922
 fn set_rules(b:&mut Rules,n:Int32) { b.limit=n }
 fn fail(b:&mut Rules,n:Int32)->Int32 { b.limit=99 1/n }
 fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n).unwrap() }
-fn revision(result:domain.PairCommitOutcome,a:UInt64,b:UInt64)->Bool {
-    match result { Committed((x,y))=>x==a && y==b, _=>false }
+fn revision(result:Result<(UInt64,UInt64),domain.CommitError>,a:UInt64,b:UInt64)->Bool {
+    match result { Ok((x,y))=>x==a && y==b, _=>false }
 }
-fn bundle(a:domain.ReadHandle<State>,b:domain.ReadHandle<Rules>,x:Int32,y:Int32) @suspends -> domain.CandidatePair<State,Rules> {
-    let snapshot=domain.snapshot_pair(a,b,total)
-    let first=domain.candidate_from(snapshot,make,x)
+fn bundle(a:domain.WriteHandle<State>,b:domain.WriteHandle<Rules>,x:Int32,y:Int32) @suspends -> domain.CandidatePair<State,Rules> {
+    let snapshot=domain.snapshot_pair(a.read_only(),b.read_only(),total)
+    let first=domain.candidate_from(snapshot, a, make, x)
     task.yield_now()
-    domain.candidate_pair_from(first,rules,y)
+    domain.candidate_pair_from(first, b, rules, y)
 }
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,7)
@@ -29,7 +29,7 @@ fn lifecycle() @suspends ->Int32 {
     let bh=b.handle()
     domain.write_to(bh,set_rules,10).unwrap()
     let old=domain.snapshot_pair(ah.read_only(),bh.read_only(),total)
-    let candidates=bundle(ah.read_only(),bh.read_only(),20,30)
+    let candidates=bundle(ah,bh,20,30)
     assert(domain.read_pair(ah.read_only(),bh.read_only(),total).unwrap()==17)
     let deadline=domain.deadline_after(100000)
     var receipt=domain.commit_pair_before(ah,bh,candidates,&deadline)
@@ -41,32 +41,32 @@ fn lifecycle() @suspends ->Int32 {
     assert(match old.check() { Conflict=>true, _=>false })
     assert(domain.read_pair(ah.read_only(),bh.read_only(),total).unwrap()==50)
     assert(domain.read_from(ah.read_only(),valid).unwrap())
-    let stale=bundle(ah.read_only(),bh.read_only(),100,200)
+    let stale=bundle(ah,bh,100,200)
     domain.write_to(bh,set_rules,30).unwrap()
     var conflict=domain.commit_pair_to(ah,bh,stale)
-    assert(match conflict.wait() { Conflict=>true, _=>false })
+    assert(match conflict.wait() { Err(Conflict)=>true, _=>false })
     assert(domain.read_from(ah.read_only(),read).unwrap()==20)
     assert(domain.read_from(bh.read_only(),read_rules).unwrap()==30)
-    let timed=bundle(ah.read_only(),bh.read_only(),100,200)
+    let timed=bundle(ah,bh,100,200)
     let expired=domain.deadline_after(0)
     var expiry=domain.commit_pair_before(ah,bh,timed,&expired)
-    assert(match expiry.wait() { Expired=>true, _=>false })
+    assert(match expiry.wait() { Err(Expired)=>true, _=>false })
     assert(domain.read_pair(ah.read_only(),bh.read_only(),total).unwrap()==50)
     let other=domain.create(rules,40)
-    let wrong=bundle(ah.read_only(),bh.read_only(),100,200)
+    let wrong=bundle(ah,bh,100,200)
     var rejected=domain.commit_pair_to(ah,other.handle(),wrong)
-    assert(match rejected.wait() { InvalidAccess=>true, _=>false })
+    assert(match rejected.wait() { Err(InvalidAccess)=>true, _=>false })
     assert(domain.read_pair(ah.read_only(),bh.read_only(),total).unwrap()==50)
-    let doomed=bundle(ah.read_only(),bh.read_only(),100,200)
+    let doomed=bundle(ah,bh,100,200)
     b.close()
     var closed=domain.commit_pair_to(ah,bh,doomed)
-    assert(match closed.wait() { Closed=>true, _=>false })
+    assert(match closed.wait() { Err(Closed)=>true, _=>false })
     assert(domain.read_from(ah.read_only(),read).unwrap()==20)
     let other_handle=other.handle()
-    let poisoned=bundle(ah.read_only(),other_handle.read_only(),100,200)
+    let poisoned=bundle(ah,other_handle,100,200)
     assert(domain.request(other_handle,poison,0).is_err())
     var failed=domain.commit_pair_to(ah,other_handle,poisoned)
-    assert(match failed.wait() { DomainFailed=>true, _=>false })
+    assert(match failed.wait() { Err(DomainFailed)=>true, _=>false })
     assert(domain.read_from(ah.read_only(),read).unwrap()==20)
     a.close()
     assert(revision(receipt.wait(),1,2))

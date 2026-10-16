@@ -19,9 +19,9 @@ fn producer(handle:domain.WriteHandle<State>,target:outbox.Handle) @suspends {
     var bytes=Array.new::<UInt8>() bytes.push(0) bytes.push(255) bytes.push(42)
     var batch=outbox.batch(1,3)
     assert(outbox.stage(&mut batch,target,bytes).is_ok())
-    let candidate=domain.with_outbox(domain.candidate_from(domain.snapshot_from(handle.read_only(),read),make,42),batch)
+    let candidate=domain.candidate_from(domain.snapshot_from(handle.read_only(),read), handle, make, 42).with_outbox(batch)
     var receipt=domain.commit_to(handle,candidate)
-    assert(match receipt.wait() { Committed(_) => true, _ => false })
+    assert(match receipt.wait() { Ok(_) => true, _ => false })
 }
 fn peer(stream:TcpStream) @suspends {
     var stream=stream

@@ -235,10 +235,12 @@ fn admit(registry: &Rc<RefCell<Domains>>, mut set: Proposal) -> Receipt {
     });
     match result {
         Ok(request) => Receipt {
+            registry: registry.borrow().identity,
             request: Some(request),
             rejected: None,
         },
         Err(status) => Receipt {
+            registry: registry.borrow().identity,
             request: None,
             rejected: Some(status),
         },
@@ -520,6 +522,7 @@ unsafe fn poll_inner(
         let bits = adopt(
             arena,
             Receipt {
+                registry: registry.borrow().identity,
                 request: None,
                 rejected: None,
             },
@@ -631,6 +634,106 @@ mod tests {
         assert!(
             matches!(request.take_result(),Some(DomainOutcome::Value(InstanceValue::Int32(n))) if n==expected)
         );
+    }
+    fn query_revision(
+        arena: &mut Arena,
+        registry: &Rc<RefCell<Domains>>,
+        receipt: u64,
+        token: u64,
+    ) -> (u64, u64) {
+        let mut frame = CpsFrame::new(4);
+        frame.slots[0] = receipt;
+        frame.slots[1] = token;
+        assert_eq!(
+            unsafe {
+                super::super::poll(arena, &mut frame, registry, Operation::SetRevisionChecked)
+            }
+            .unwrap(),
+            Some(0)
+        );
+        (frame.slots[2], frame.slots[3])
+    }
+    #[test]
+    fn state_domains_submission_revision_distinguishes_pending_failed_and_non_targets() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let (mut vm, owners) = setup(mode, 4);
+            vm.domains
+                .borrow_mut()
+                .entries
+                .get_mut(&owners[0].handle.sequence)
+                .unwrap()
+                .revision = u64::MAX - 1;
+            let set = candidates(&mut vm, &owners);
+            let receipt = admit(&vm.domains, set);
+            let mut arena = Arena::default();
+            let bits = adopt(&mut arena, receipt).unwrap();
+            let target = token(&vm, &owners[0]);
+            let readonly = token(&vm, &owners[3]);
+            assert_eq!(
+                query_revision(&mut arena, &vm.domains, bits, target),
+                (11, 0)
+            );
+            let foreign = VmEngine::new();
+            assert_eq!(
+                query_revision(&mut arena, &foreign.domains, bits, target),
+                (12, 0)
+            );
+            vm.poll_tasks(100).unwrap();
+            assert_eq!(
+                query_revision(&mut arena, &vm.domains, bits, target),
+                (0, u64::MAX)
+            );
+            assert_eq!(
+                query_revision(&mut arena, &vm.domains, bits, readonly),
+                (10, 0)
+            );
+            for owner in &owners {
+                owner.close();
+            }
+            assert_eq!(
+                query_revision(&mut arena, &vm.domains, bits, target),
+                (0, u64::MAX)
+            );
+            unsafe {
+                Buffer::release(&mut arena, bits as *mut Buffer).unwrap();
+            }
+            drop(arena);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            // Every rejection retains its exact CommitError, including cancellation.
+            for status in [
+                Status::Conflict,
+                Status::Closed,
+                Status::DomainFailed,
+                Status::InvalidAccess,
+                Status::Cancelled,
+                Status::ResourceLimit,
+                Status::Expired,
+                Status::OutboxFull,
+                Status::OutboxClosed,
+            ] {
+                let mut arena = Arena::default();
+                let bits = adopt(
+                    &mut arena,
+                    Receipt {
+                        registry: vm.domains.borrow().identity,
+                        request: None,
+                        rejected: Some(status),
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    query_revision(&mut arena, &vm.domains, bits, target),
+                    (status as u64, 0)
+                );
+                assert_eq!(
+                    query_revision(&mut arena, &foreign.domains, bits, target),
+                    (12, 0)
+                );
+                unsafe {
+                    Buffer::release(&mut arena, bits as *mut Buffer).unwrap();
+                }
+            }
+        }
     }
     #[test]
     fn state_domains_many_snapshot_and_atomic_writes_share_one_fifo() {

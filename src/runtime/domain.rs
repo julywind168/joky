@@ -85,6 +85,11 @@ pub(crate) enum Operation {
     SetReadValues,
     RequestValues,
     TimerStartValues,
+    CandidateAt,
+    CandidatePairAt,
+    CandidateAtValues,
+    CandidatePairAtValues,
+    SetRevisionChecked,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +166,11 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_snapshot_value" => Operation::SnapshotValue,
         "__domain_snapshot_check" => Operation::SnapshotCheck,
         "__domain_candidate_values" => Operation::CandidateValues,
+        "__domain_candidate_at" => Operation::CandidateAt,
+        "__domain_candidate_pair_at" => Operation::CandidatePairAt,
+        "__domain_candidate_at_values" => Operation::CandidateAtValues,
+        "__domain_candidate_pair_at_values" => Operation::CandidatePairAtValues,
+        "__domain_set_revision_checked" => Operation::SetRevisionChecked,
         "__domain_candidate" => Operation::Candidate,
         "__domain_commit" => Operation::Commit,
         "__domain_commit_wait" => Operation::CommitWait,
@@ -246,7 +256,7 @@ impl Operation {
         )
     }
     pub(crate) fn status_payload(self) -> bool {
-        self == Self::Request
+        matches!(self, Self::Request | Self::SetRevisionChecked)
             || (self.access() && !matches!(self, Self::Values | Self::CurrentValues))
     }
     pub(crate) fn signature(self) -> FunctionSignature {
@@ -382,6 +392,25 @@ impl Operation {
                 ],
                 commit_type(),
             ),
+            Self::SetRevisionChecked => (
+                vec![Type::reference(commit_type(), false), token],
+                Type::tuple(vec![Type::Int32, i]),
+            ),
+            Self::CandidateAt
+            | Self::CandidatePairAt
+            | Self::CandidateAtValues
+            | Self::CandidatePairAtValues => {
+                let base = match self {
+                    Self::CandidateAt => Self::Candidate,
+                    Self::CandidatePairAt => Self::CandidatePair,
+                    Self::CandidateAtValues => Self::CandidateValues,
+                    Self::CandidatePairAtValues => Self::CandidatePairValues,
+                    _ => unreachable!(),
+                };
+                let mut signature = base.signature();
+                signature.params.insert(2, token);
+                return signature;
+            }
             Self::SetRevision => (vec![Type::reference(commit_type(), false), token], i),
             Self::Create => (vec![m, text, i], owner),
             Self::CandidateValues
@@ -633,6 +662,11 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         80 => Operation::SetReadValues,
         81 => Operation::RequestValues,
         82 => Operation::TimerStartValues,
+        83 => Operation::CandidateAt,
+        84 => Operation::CandidatePairAt,
+        85 => Operation::CandidateAtValues,
+        86 => Operation::CandidatePairAtValues,
+        87 => Operation::SetRevisionChecked,
 
         _ => {
             super::error::record_error(Error::new_with_code(

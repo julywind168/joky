@@ -14,11 +14,11 @@ fn valid(room: &Room) -> Bool {
     let title = "room"
     room.title.equals(&title) && room.scores.len() == 1 && room.scores.get(0).unwrap_or(-1) == room.total
 }
-fn prepare(reader: domain.ReadHandle<Room>, delta: Int32) @suspends -> domain.Candidate<Room> {
-    let snapshot = domain.snapshot_from(reader, total)
+fn prepare(writer: domain.WriteHandle<Room>, delta: Int32) @suspends -> domain.Candidate<Room> {
+    let snapshot = domain.snapshot_from(writer.read_only(), total)
     let base = snapshot.value()
     task.yield_now()
-    let candidate = domain.candidate_from(snapshot, make, base + delta)
+    let candidate = domain.candidate_from(snapshot, writer, make, base + delta)
     task.yield_now()
     candidate
 }
@@ -27,30 +27,30 @@ fn lifecycle() @suspends -> Int32 {
     let handle = owner.handle()
     let reader = handle.read_only()
     let deadline = domain.deadline_after(2147483647)
-    let first = prepare(reader, 5)
-    let stale = prepare(reader, 100)
+    let first = prepare(handle, 5)
+    let stale = prepare(handle, 100)
     assert(domain.read_from(reader, total).unwrap() == 7)
     var committed = domain.commit_before(handle, first, &deadline)
-    assert(match committed.wait() { Committed(n) => n == 1, _ => false })
+    assert(match committed.wait() { Ok(n) => n == 1, _ => false })
     var conflict = domain.commit_before(handle, stale, &deadline)
-    assert(match conflict.wait() { Conflict => true, _ => false })
+    assert(match conflict.wait() { Err(Conflict) => true, _ => false })
     assert(domain.read_from(reader, total).unwrap() == 12 && domain.read_from(reader, valid).unwrap())
     let saved = domain.snapshot_from(reader, total)
     let expired = domain.deadline_after(0)
-    var rejected = domain.commit_before(handle, prepare(reader, 50), &expired)
-    assert(match rejected.wait() { Expired => true, _ => false })
+    var rejected = domain.commit_before(handle, prepare(handle, 50), &expired)
+    assert(match rejected.wait() { Err(Expired) => true, _ => false })
     assert(match saved.check() { Current => true, _ => false })
-    let late = prepare(reader, 80)
+    let late = prepare(handle, 80)
     owner.close()
     let replacement = domain.create(make, 99)
     var closed = domain.commit_to(handle, late)
-    assert(match closed.wait() { Closed => true, _ => false })
+    assert(match closed.wait() { Err(Closed) => true, _ => false })
     assert(match saved.check() { Closed => true, _ => false })
     assert(saved.value() == 12)
     assert(domain.read_from(replacement.read_handle(), total).unwrap() == 99 && domain.read_from(replacement.read_handle(), valid).unwrap())
     committed.cancel()
     task.yield_now()
-    assert(match committed.wait() { Committed(n) => n == 1, _ => false })
+    assert(match committed.wait() { Ok(n) => n == 1, _ => false })
     assert(committed.identity() != 0 && conflict.identity() != committed.identity())
     24
 }

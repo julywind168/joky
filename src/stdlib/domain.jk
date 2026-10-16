@@ -181,8 +181,8 @@ pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -
 }
 
 // Candidate construction consumes the snapshot and its complete, opaque read set.
-extern fn __domain_candidate(module: domain.Module, snapshot: &domain.SnapshotOwner, name: String, input: UInt64) @suspends -> domain.CandidateOwner
-extern fn __domain_candidate_values(module: domain.Module, snapshot: &domain.SnapshotOwner, name: String, input: &Buffer<UInt64>) @suspends -> domain.CandidateOwner
+extern fn __domain_candidate_at(module: domain.Module, snapshot: &domain.SnapshotOwner, target:domain.Handle, name: String, input: UInt64) @suspends -> domain.CandidateOwner
+extern fn __domain_candidate_at_values(module: domain.Module, snapshot: &domain.SnapshotOwner, target:domain.Handle, name: String, input: &Buffer<UInt64>) @suspends -> domain.CandidateOwner
 extern fn __domain_commit(handle: domain.Handle, candidate: &mut domain.CandidateOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_wait(receipt: &mut domain.CommitOwner) @suspends -> Int32
 extern fn __domain_commit_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
@@ -197,19 +197,31 @@ pub struct CommitDeadline { storage: domain.DeadlineOwner }
 pub fn deadline_after(milliseconds: Int32) @suspends -> CommitDeadline {
     CommitDeadline { storage: __domain_deadline_after(milliseconds) }
 }
-pub enum CommitOutcome { Committed(UInt64), Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
+pub enum CommitError { Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
+pub enum RevisionError { Pending, Failed(CommitError), InvalidAccess }
+fn commit_error(status:Int32)->CommitError {
+    if status==1 { return CommitError.Conflict }
+    if status==2 { return CommitError.Closed }
+    if status==3 { return CommitError.DomainFailed }
+    if status==4 { return CommitError.InvalidAccess }
+    if status==5 { return CommitError.Cancelled }
+    if status==7 { return CommitError.Expired }
+    if status==8 { return CommitError.OutboxFull }
+    if status==9 { return CommitError.OutboxClosed }
+    CommitError.ResourceLimit
+}
 #intrinsic("domain.finish_candidate")
-fn finish_candidate<S, R>(module: domain.Module, snapshot: Snapshot<S, R>, name: String, input: UInt64) @suspends -> Candidate<S> {
-    Candidate::<S> { storage: __domain_candidate(module, &snapshot.storage, name, input) }
+fn finish_candidate<B, R, S>(module: domain.Module, snapshot: Snapshot<B, R>, target:domain.Handle, name: String, input: UInt64) @suspends -> Candidate<S> {
+    Candidate::<S> { storage: __domain_candidate_at(module, &snapshot.storage, target, name, input) }
 }
 #intrinsic("domain.finish_candidate_values")
-fn finish_candidate_values<S,R,A>(module:domain.Module,snapshot:Snapshot<S,R>,name:String,input:A) @suspends -> Candidate<S> {
+fn finish_candidate_values<B,R,S,A>(module:domain.Module,snapshot:Snapshot<B,R>,target:domain.Handle,name:String,input:A) @suspends -> Candidate<S> {
     let packet=pack_value(input)
-    Candidate::<S>{storage:__domain_candidate_values(module,&snapshot.storage,name,&packet.storage)}
+    Candidate::<S>{storage:__domain_candidate_at_values(module,&snapshot.storage,target,name,&packet.storage)}
 }
 #intrinsic("domain.candidate_from")
-pub fn candidate_from<S, R, A>(snapshot: Snapshot<S, R>, constructor: fn(A) -> S, input: A) @suspends -> Candidate<S> {
-    finish_candidate_values::<S, R, A>(module(), snapshot, "", input)
+pub fn candidate_from<B, R, S, A>(snapshot: Snapshot<B, R>, target:WriteHandle<S>, constructor: fn(A) -> S, input: A) @suspends -> Candidate<S> {
+    finish_candidate_values::<B, R, S, A>(module(), snapshot, target.token, "", input)
 }
 pub fn commit_to<S>(handle: WriteHandle<S>, candidate: Candidate<S>) @suspends -> CommitReceipt {
     var storage = candidate.storage
@@ -220,18 +232,10 @@ pub fn commit_before<S>(handle: WriteHandle<S>, candidate: Candidate<S>, deadlin
     CommitReceipt { storage: __domain_commit_before(handle.token, &mut storage, &deadline.storage) }
 }
 impl CommitReceipt {
-    pub fn wait(&mut self) @suspends -> CommitOutcome {
-        let status = __domain_commit_wait(&mut self.storage)
-        if status == 0 { return CommitOutcome.Committed(__domain_commit_revision(&self.storage)) }
-        if status == 1 { return CommitOutcome.Conflict }
-        if status == 2 { return CommitOutcome.Closed }
-        if status == 3 { return CommitOutcome.DomainFailed }
-        if status == 4 { return CommitOutcome.InvalidAccess }
-        if status == 5 { return CommitOutcome.Cancelled }
-        if status == 7 { return CommitOutcome.Expired }
-        if status == 8 { return CommitOutcome.OutboxFull }
-        if status == 9 { return CommitOutcome.OutboxClosed }
-        CommitOutcome.ResourceLimit
+    pub fn wait(&mut self) @suspends -> Result<UInt64,CommitError> {
+        let status=__domain_commit_wait(&mut self.storage)
+        if status==0 { return Result.Ok(__domain_commit_revision(&self.storage)) }
+        Result.Err(commit_error(status))
     }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
@@ -256,7 +260,7 @@ pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, ope
     finish_value::<A,R>(module(),first.token,second.token,2,"",input)
 }
 
-// The first domain is the candidate target; both read dependencies stay opaque.
+// Both read dependencies stay opaque; candidate construction selects its target.
 extern fn __domain_snapshot_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
 extern fn __domain_snapshot_pair_values(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
 #intrinsic("domain.snapshot_pair")
@@ -264,29 +268,28 @@ pub fn snapshot_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, proje
     Snapshot::<S, R> { storage: __domain_snapshot_pair(module(), first.token, second.token, "") }
 }
 
-// Extending a candidate consumes it and uses the second domain of its joint read set.
-extern fn __domain_candidate_pair(module: domain.Module, first: &mut domain.CandidateOwner, name: String, input: UInt64) @suspends -> domain.CandidatePairOwner
-extern fn __domain_candidate_pair_values(module: domain.Module, first: &mut domain.CandidateOwner, name: String, input: &Buffer<UInt64>) @suspends -> domain.CandidatePairOwner
+// Extending consumes the candidate and selects another target from its complete read set.
+extern fn __domain_candidate_pair_at(module: domain.Module, first: &mut domain.CandidateOwner, target:domain.Handle, name: String, input: UInt64) @suspends -> domain.CandidatePairOwner
+extern fn __domain_candidate_pair_at_values(module: domain.Module, first: &mut domain.CandidateOwner, target:domain.Handle, name: String, input: &Buffer<UInt64>) @suspends -> domain.CandidatePairOwner
 extern fn __domain_commit_pair(first: domain.Handle, second: domain.Handle, candidates: &mut domain.CandidatePairOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_pair_before(first: domain.Handle, second: domain.Handle, candidates: &mut domain.CandidatePairOwner, deadline: &domain.DeadlineOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_second_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
 pub struct CandidatePair<S, T> { storage: domain.CandidatePairOwner }
 pub struct PairCommitReceipt { storage: domain.CommitOwner }
-pub enum PairCommitOutcome { Committed((UInt64, UInt64)), Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
 #intrinsic("domain.finish_candidate_pair")
-fn finish_candidate_pair<S, T>(module: domain.Module, first: Candidate<S>, name: String, input: UInt64) @suspends -> CandidatePair<S, T> {
+fn finish_candidate_pair<S, T>(module: domain.Module, first: Candidate<S>, target:domain.Handle, name: String, input: UInt64) @suspends -> CandidatePair<S, T> {
     var storage = first.storage
-    CandidatePair::<S, T> { storage: __domain_candidate_pair(module, &mut storage, name, input) }
+    CandidatePair::<S, T> { storage: __domain_candidate_pair_at(module, &mut storage, target, name, input) }
 }
 #intrinsic("domain.finish_candidate_pair_values")
-fn finish_candidate_pair_values<S,T,A>(module:domain.Module,first:Candidate<S>,name:String,input:A) @suspends -> CandidatePair<S,T> {
+fn finish_candidate_pair_values<S,T,A>(module:domain.Module,first:Candidate<S>,target:domain.Handle,name:String,input:A) @suspends -> CandidatePair<S,T> {
     let packet=pack_value(input)
     var storage=first.storage
-    CandidatePair::<S,T>{storage:__domain_candidate_pair_values(module,&mut storage,name,&packet.storage)}
+    CandidatePair::<S,T>{storage:__domain_candidate_pair_at_values(module,&mut storage,target,name,&packet.storage)}
 }
 #intrinsic("domain.candidate_pair_from")
-pub fn candidate_pair_from<S, T, A>(first: Candidate<S>, constructor: fn(A) -> T, input: A) @suspends -> CandidatePair<S, T> {
-    finish_candidate_pair_values::<S, T, A>(module(), first, "", input)
+pub fn candidate_pair_from<S, T, A>(first: Candidate<S>, target:WriteHandle<T>, constructor: fn(A) -> T, input: A) @suspends -> CandidatePair<S, T> {
+    finish_candidate_pair_values::<S, T, A>(module(), first, target.token, "", input)
 }
 pub fn commit_pair_to<S, T>(first: WriteHandle<S>, second: WriteHandle<T>, candidates: CandidatePair<S, T>) @suspends -> PairCommitReceipt {
     var storage = candidates.storage
@@ -297,18 +300,10 @@ pub fn commit_pair_before<S, T>(first: WriteHandle<S>, second: WriteHandle<T>, c
     PairCommitReceipt { storage: __domain_commit_pair_before(first.token, second.token, &mut storage, &deadline.storage) }
 }
 impl PairCommitReceipt {
-    pub fn wait(&mut self) @suspends -> PairCommitOutcome {
-        let status = __domain_commit_wait(&mut self.storage)
-        if status == 0 { return PairCommitOutcome.Committed((__domain_commit_revision(&self.storage), __domain_commit_second_revision(&self.storage))) }
-        if status == 1 { return PairCommitOutcome.Conflict }
-        if status == 2 { return PairCommitOutcome.Closed }
-        if status == 3 { return PairCommitOutcome.DomainFailed }
-        if status == 4 { return PairCommitOutcome.InvalidAccess }
-        if status == 5 { return PairCommitOutcome.Cancelled }
-        if status == 7 { return PairCommitOutcome.Expired }
-        if status == 8 { return PairCommitOutcome.OutboxFull }
-        if status == 9 { return PairCommitOutcome.OutboxClosed }
-        PairCommitOutcome.ResourceLimit
+    pub fn wait(&mut self) @suspends -> Result<(UInt64,UInt64),CommitError> {
+        let status=__domain_commit_wait(&mut self.storage)
+        if status==0 { return Result.Ok((__domain_commit_revision(&self.storage),__domain_commit_second_revision(&self.storage))) }
+        Result.Err(commit_error(status))
     }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
@@ -326,12 +321,11 @@ extern fn __domain_set_add(module:domain.Module,set:&mut domain.CandidateSetOwne
 extern fn __domain_set_add_values(module:domain.Module,set:&mut domain.CandidateSetOwner,handle:domain.Handle,name:String,input:&Buffer<UInt64>) @suspends -> domain.CandidateSetOwner
 extern fn __domain_commit_set(set:&mut domain.CandidateSetOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_set_before(set:&mut domain.CandidateSetOwner,deadline:&domain.DeadlineOwner) @suspends -> domain.CommitOwner
-extern fn __domain_set_revision(receipt:&domain.CommitOwner,handle:domain.Handle) @suspends -> UInt64
+extern fn __domain_set_revision_checked(receipt:&domain.CommitOwner,handle:domain.Handle) @suspends -> (Int32,UInt64)
 pub struct AccessSet { storage:domain.AccessSetOwner }
 pub struct SnapshotSet { storage:domain.SnapshotSetOwner }
 pub struct CandidateSet { storage:domain.CandidateSetOwner }
 pub struct SetCommitReceipt { storage:domain.CommitOwner }
-pub enum SetCommitOutcome { Committed, Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
 pub fn access_set() @suspends -> AccessSet { AccessSet{storage:__domain_access_set()} }
 impl AccessSet {
     pub fn include<S>(&mut self,handle:ReadHandle<S>) @suspends { include_handle(self,handle.token) }
@@ -401,47 +395,52 @@ pub fn commit_set_before(set:CandidateSet,deadline:&CommitDeadline) @suspends ->
     SetCommitReceipt{storage:__domain_commit_set_before(&mut storage,&deadline.storage)}
 }
 impl SetCommitReceipt {
-    pub fn wait(&mut self) @suspends -> SetCommitOutcome {
+    pub fn wait(&mut self) @suspends -> Result<Unit,CommitError> {
         let status=__domain_commit_wait(&mut self.storage)
-        if status==0 { return SetCommitOutcome.Committed }
-        if status==1 { return SetCommitOutcome.Conflict }
-        if status==2 { return SetCommitOutcome.Closed }
-        if status==3 { return SetCommitOutcome.DomainFailed }
-        if status==4 { return SetCommitOutcome.InvalidAccess }
-        if status==5 { return SetCommitOutcome.Cancelled }
-        if status==7 { return SetCommitOutcome.Expired }
-        if status==8 { return SetCommitOutcome.OutboxFull }
-        if status==9 { return SetCommitOutcome.OutboxClosed }
-        SetCommitOutcome.ResourceLimit
+        if status==0 { return Result.Ok({}) }
+        Result.Err(commit_error(status))
     }
-    pub fn revision<S>(&self,handle:ReadHandle<S>) @suspends -> UInt64 { set_revision(self,handle.token) }
+    pub fn revision<S>(&self,handle:ReadHandle<S>) @suspends -> Result<Option<UInt64>,RevisionError> { set_revision(self,handle.token) }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
 }
 
-fn set_revision(receipt:&SetCommitReceipt,handle:domain.Handle) @suspends -> UInt64 { __domain_set_revision(&receipt.storage,handle) }
+fn set_revision(receipt:&SetCommitReceipt,handle:domain.Handle) @suspends -> Result<Option<UInt64>,RevisionError> {
+    let (status,value)=__domain_set_revision_checked(&receipt.storage,handle)
+    if status==0 { return Result.Ok(Option.Some(value)) }
+    if status==10 { return Result.Ok(Option.None) }
+    if status==11 { return Result.Err(RevisionError.Pending) }
+    if status==12 { return Result.Err(RevisionError.InvalidAccess) }
+    Result.Err(RevisionError.Failed(commit_error(status)))
+}
 
 // Attaching consumes the batch. Only candidate commits can publish its messages.
 extern fn __outbox_attach(candidate:&mut domain.CandidateOwner, batch:&mut outbox.BatchOwner) @suspends
 extern fn __outbox_attach_pair(candidate:&mut domain.CandidatePairOwner, batch:&mut outbox.BatchOwner) @suspends
 extern fn __outbox_attach_set(candidate:&mut domain.CandidateSetOwner, batch:&mut outbox.BatchOwner) @suspends
-pub fn with_outbox<S>(candidate:Candidate<S>, batch:Batch) @suspends -> Candidate<S> {
-    var candidate=candidate
-    var batch=batch
-    __outbox_attach(&mut candidate.storage,&mut batch)
-    candidate
+impl<S> Candidate<S> {
+    pub fn with_outbox(self, batch:Batch) @suspends -> Candidate<S> {
+        var candidate=self
+        var batch=batch
+        __outbox_attach(&mut candidate.storage,&mut batch)
+        candidate
+    }
 }
-pub fn pair_with_outbox<S,T>(candidate:CandidatePair<S,T>, batch:Batch) @suspends -> CandidatePair<S,T> {
-    var candidate=candidate
-    var batch=batch
-    __outbox_attach_pair(&mut candidate.storage,&mut batch)
-    candidate
+impl<S,T> CandidatePair<S,T> {
+    pub fn with_outbox(self, batch:Batch) @suspends -> CandidatePair<S,T> {
+        var candidate=self
+        var batch=batch
+        __outbox_attach_pair(&mut candidate.storage,&mut batch)
+        candidate
+    }
 }
-pub fn set_with_outbox(candidate:CandidateSet, batch:Batch) @suspends -> CandidateSet {
-    var candidate=candidate
-    var batch=batch
-    __outbox_attach_set(&mut candidate.storage,&mut batch)
-    candidate
+impl CandidateSet {
+    pub fn with_outbox(self, batch:Batch) @suspends -> CandidateSet {
+        var candidate=self
+        var batch=batch
+        __outbox_attach_set(&mut candidate.storage,&mut batch)
+        candidate
+    }
 }
 
 // Directories own bounded routing storage, never the addressed domains or code.

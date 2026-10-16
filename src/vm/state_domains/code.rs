@@ -736,7 +736,7 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
                         r#"
     let view = domain.snapshot_pair(a.read_handle(), r.read_handle(), project)
     let n = view.value()
-    let candidate = domain.candidate_from(view, make, n + 10)
+    let candidate = domain.candidate_from(view, a.handle(), make, n + 10)
 "#
                     };
                     let prepare = if stage == "snapshot" {
@@ -754,11 +754,6 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
                     } else {
                         "domain.commit_to(a.handle(), candidate)"
                     };
-                    let result = if many {
-                        "Committed => 1"
-                    } else {
-                        "Committed(_) => 1"
-                    };
                     vm.load_source(&format!(
                         r#"
 import joky/domain
@@ -773,7 +768,7 @@ fn probe(n: Int32) @suspends -> Int32 {{
     {prepare}
     {pause}
     var receipt = {commit}
-    let status = match receipt.wait() {{ {result}, Conflict => 2, _ => 9 }}
+    let status = match receipt.wait() {{ Ok(_) => 1, Err(Conflict) => 2, _ => 9 }}
     let x = domain.read_from(a.read_handle(), read).unwrap()
     let y = domain.read_from(b.read_handle(), read).unwrap()
     let z = domain.read_from(c.read_handle(), read).unwrap()
