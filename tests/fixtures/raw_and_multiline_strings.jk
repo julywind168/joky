@@ -1,0 +1,81 @@
+import joky/task.{yield_now}
+
+fn expect(actual: String, expected: String) {
+    assert(actual.equals(&expected), "Raw and multiline string mismatch")
+}
+fn next(value: &mut Int32) @noescape -> Int32 { (*(value) = (*value) + 1); (*value) }
+
+fn literals() {
+    expect(r"", "")
+    expect(r"\d+\.\d+", "\\d+\\.\\d+")
+    expect(r"C:\Users\windy", "C:\\Users\\windy")
+    expect(r"{value} } {{ \u{41}", "{{value}} }} {{{{ \\u{{41}}")
+    expect(r#"{"k": "v"}"#, "{{\"k\": \"v\"}}")
+    expect(r##"ends with "#"##, "ends with \"#")
+    let sql = """
+    SELECT *
+      FROM users
+    """
+    expect(sql, "SELECT *\n  FROM users")
+    let empty = """
+    """
+    expect(empty, "")
+    let trailing = """
+    line
+
+    """
+    expect(trailing, "line\n")
+    let leading = """
+
+    line
+    """
+    expect(leading, "\nline")
+    let id = 7
+    let rendered = """
+    id = {id}\tok "quoted"
+      你好\nJoky\0\u{1F642}\r
+    """
+    expect(rendered, "id = 7\tok \"quoted\"\n  你好\nJoky\0🙂\r")
+    let pattern = r"""
+    path ~ '\d+' {id}
+    """
+    expect(pattern, "path ~ '\\d+' {{id}}")
+    let quoted = r#"""
+    says """ inside {id}
+    """#
+    expect(quoted, "says \"\"\" inside {{id}}")
+    let raw_newline = r"\n"
+    let newline = "\n"
+    expect(raw_newline.concat(&newline), "\\n\n")
+    var counter = 0
+    let order = """
+    {next(&mut counter)}:{next(&mut counter)}:{"[{counter}]"}
+      {r"{raw}"}
+    """
+    expect(order, "1:2:[2]\n  {{raw}}")
+    assert(counter == 2, "Interpolation must evaluate once")
+    let nested = """
+    {({ let text = r#"{"k": 1}"# // } and """ stay inside the comment
+text })}
+    """
+    expect(nested, "{{\"k\": 1}}")
+    let nested_multiline = "{r"""
+        nested {literal}
+        """}"
+    expect(nested_multiline, "nested {{literal}}")
+    let r = 42
+    expect("{r}", "42")
+}
+
+fn main() @suspends {
+    literals()
+    let kept = r"{kept}"
+    yield_now()
+    let text = """
+    {kept}
+      resumed
+    """
+    yield_now()
+    expect(text, "{{kept}}\n  resumed")
+    println("raw-and-multiline-ok")
+}

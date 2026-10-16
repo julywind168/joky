@@ -8981,3 +8981,62 @@ fn pure_composite_script_rejects_changed_input_and_result_contracts() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn raw_and_multiline_strings_match_all_backends() {
+    let work = Workspace::new();
+    // Mixed physical line endings and tabs exercise source normalization in
+    // generated code as well as the lexer-only tests.
+    let source = include_str!("fixtures/raw_and_multiline_strings.jk").replace(
+        "    let r = 42",
+        "    let mixed = \"\"\"\r\n\t a\r\n \t\r\t   b\r\n\t \"\"\"\n    expect(mixed, \"a\\n\\n  b\")\n    let r = 42",
+    );
+    work.write("strings.jk", &source);
+    work.assert_all_backends("strings.jk", &[], b"raw-and-multiline-ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn raw_and_multiline_string_diagnostics_preserve_file_and_line() {
+    let work = Workspace::new();
+    for (source, message, location) in [
+        (
+            "fn main() { r#\"open }",
+            "Unterminated string",
+            "invalid.jk:1:",
+        ),
+        (
+            "fn main() { \"\"\"same line\n\"\"\" }",
+            "must start",
+            "invalid.jk:1:",
+        ),
+        (
+            "fn main() { \"\"\"\n  text\"\"\" }",
+            "own line",
+            "invalid.jk:2:",
+        ),
+        (
+            "fn main() { \"\"\"\n x\n  \"\"\" }",
+            "indentation",
+            "invalid.jk:2:",
+        ),
+        (
+            "fn main() {\n    let value = \"\"\"\n    🙂\\n{missing}\n    \"\"\"\n}",
+            "missing",
+            "invalid.jk:3:",
+        ),
+    ] {
+        work.write("invalid.jk", source);
+        for args in [
+            vec!["build", "invalid.jk"],
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(location), "{args:?}: {stderr}");
+        }
+    }
+}
