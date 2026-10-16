@@ -1,0 +1,18 @@
+import joky/vm
+import joky/check
+import joky/option.{type Option}
+import joky/result.{type Result}
+__TYPES__
+fn assert(ok:Bool) {check.assert(ok,"composite Script values")}
+fn main() @suspends ->Int32 {
+    let h=vm.Vm.__CREATE__() let source=__SCRIPT__
+    assert(vm.load_source(h,&source)==0)
+    let bits: (Unit,Bool,Rune,UInt64,Float64,Float32)=({},true,'中',18446744073709551615,Float64.from_bits(9221120237041090626),Float32.from_bits(2147483648))
+    let out=h.call::<(Unit,Bool,Rune,UInt64,Float64,Float32),(Unit,Bool,Rune,UInt64,Float64,Float32)>("tuple",bits)
+    assert(out.1 && out.2=='中' && out.3==bits.3 && out.4.to_bits()==bits.4.to_bits() && out.5.to_bits()==bits.5.to_bits())
+    let got=h.call::<Cell<Option<(Int32,Bool)>>,Result<Cell<Option<(Int32,Bool)>>,Fault>>("record",Cell{value:Option.Some((42,true))}).unwrap()
+    assert(got.value.unwrap_or((0,false)).0==42 && got.value.unwrap_or((0,false)).1)
+    assert(h.call::<Cell<Option<(Int32,Bool)>>,Result<Cell<Option<(Int32,Bool)>>,Fault>>("record",Cell{value:Option.None}).unwrap().value.is_none())
+    h.call::<(Empty<(Unit,Bool)>,Unit),(Empty<(Unit,Bool)>,Unit)>("zero",(Empty{},{}));
+    assert(vm.close(h)==0) 42
+}

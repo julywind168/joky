@@ -1,0 +1,85 @@
+import joky/domain
+import joky/check
+import joky/task
+import joky/option.{type Option}
+import joky/result.{type Result}
+
+struct Pair<T> { left:T, right:T }
+struct Empty<T> {}
+type Input = Pair<(Int32,Bool)>
+enum Fault { Denied, Limit(Pair<Int32>) }
+#state
+struct State { n:Int32 }
+fn assert(ok:Bool) {check.assert(ok,"composite domain values")}
+fn input(n:Int32)->Input {Pair{left:(n,true),right:(0,false)}}
+fn make(value:Input)->State {State{n:value.left.0}}
+fn update(s:&mut State,value:Input)->Result<Pair<Int32>,Fault> {
+    s.n=value.left.0
+    if value.left.1 {Result.Ok(Pair{left:s.n,right:value.right.0})} else {Result.Err(Fault.Denied)}
+}
+fn read(s:&State)->Option<(Int32,Int32)> {Option.Some((s.n,s.n+1))}
+fn pair(a:&State,b:&State)->(Pair<Int32>,Unit) {(Pair{left:a.n,right:b.n},{})}
+fn query(s:&State,value:(Int32,Bool))->Pair<Int32> {Pair{left:s.n+value.0,right:s.n}}
+fn write_pair(a:&mut State,b:&mut State,value:Input)->Result<Pair<Int32>,Fault> {
+    let result=update(a,value) b.n=a.n result
+}
+fn request(value:Input) @suspends ->Result<Pair<Int32>,Fault> {
+    task.yield_now() domain.write(update,value).unwrap()
+}
+fn request_read(value:(Int32,Bool)) @suspends ->Pair<Int32> {domain.query(query,value).unwrap()}
+fn tick(s:&mut State,value:Input) {update(s,value);}
+fn edit(s:&mut State,value:(Int32,Empty<Bool>)) {s.n=value.0}
+impl State {
+    fn apply(&mut self,value:Input)->Result<Pair<Int32>,Fault> {update(self,value)}
+    fn value(&self)->Option<(Int32,Int32)> {read(self)}
+    fn sum(&self,a:(Int32,Bool),b:Pair<Int32>)->Int32 {summing(self,a,b)}
+}
+fn summing(s:&State,a:(Int32,Bool),b:Pair<Int32>)->Int32 {s.n+a.0+b.left+b.right}
+fn lifecycle() @suspends ->Int32 {
+    let a=domain.create(make,input(10)) let b=domain.create(make,input(0))
+    let x=a.handle() let y=b.handle()
+    assert(x.value().unwrap().unwrap_or((-1,-1)).0==10)
+    assert(x.sum((1,true),Pair{left:2,right:3}).unwrap()==16)
+    assert(x.apply(input(12)).unwrap().unwrap().left==12)
+    var captured=input(13) captured.left.1=false
+    let offset=(1,true)
+    match when "business error" (mut x,y) {update(x,captured)} {Ok(Err(Denied))=>{},_=>assert(false)}
+    assert(x.value().unwrap().unwrap_or((-1,-1)).0==13)
+    let answer=when (x,y) {(Pair{left:x.n+offset.0,right:y.n},Option.Some((true,'中')))}.unwrap()
+    assert(answer.0.left==14 && answer.1.unwrap_or((false,'a')).1=='中')
+    let empty=(Empty::<Bool>{},{})
+    when(x){empty}.unwrap();
+    assert(domain.write_to(x,update,input(14)).unwrap().unwrap().left==14)
+    assert(domain.write_pair(x,y,write_pair,input(15)).unwrap().unwrap().left==15)
+    assert(domain.read_pair(x.read_only(),y.read_only(),pair).unwrap().0.right==15)
+    assert(domain.query_from(x.read_only(),query,(2,true)).unwrap().left==17)
+    assert(domain.request(x,request,input(16)).unwrap().unwrap().left==16)
+    assert(domain.request_read(x.read_only(),request_read,(3,true)).unwrap().left==19)
+    let saved=domain.snapshot_from(x.read_only(),read)
+    assert(saved.value().unwrap_or((-1,-1)).0==16)
+    let candidate=domain.candidate_from(saved,x,make,input(20))
+    var receipt=domain.commit_to(x,candidate) assert(receipt.wait().is_ok())
+    let saved=domain.snapshot_pair(x.read_only(),y.read_only(),pair)
+    var copied=saved.value() copied.0.left=99
+    assert(saved.value().0.left==20 && copied.0.left==99)
+    var access=domain.access_set() access.include(x.read_only()) access.include(y.read_only())
+    let saved=domain.snapshot_set(access)
+    assert(domain.read_snapshot(&saved,x.read_only(),read).unwrap_or((-1,-1)).0==20)
+    let candidate=domain.candidate_set_from(saved,x,make,input(21))
+    let candidate=domain.candidate_set_add(candidate,y,make,input(1))
+    var receipt=domain.commit_set(candidate) assert(receipt.wait().is_ok())
+    var access=domain.access_set() access.include(x.read_only()) access.include(y.read_only())
+    let saved=domain.snapshot_set(access)
+    let candidate=domain.edit_snapshot(saved,x,edit,(22,Empty::<Bool>{}))
+    let candidate=domain.edit_candidate(candidate,y,edit,(0,Empty::<Bool>{}))
+    var receipt=domain.commit_set(candidate) assert(receipt.wait().is_ok())
+    assert(x.value().unwrap().unwrap_or((-1,-1)).0==22 && y.value().unwrap().unwrap_or((-1,-1)).0==0)
+    let timer=domain.timer() let t=timer.handle()
+    domain.after(t,x,0,tick,input(30)).unwrap()
+    while match t.status() {Active=>true,_=>false} {task.yield_now()}
+    assert(x.value().unwrap().unwrap_or((-1,-1)).0==30)
+    timer.close() a.close()
+    match x.apply(input(0)) {Err(Closed)=>{},_=>assert(false)}
+    b.close() 24
+}
+fn main() @suspends {assert(lifecycle()==24)}

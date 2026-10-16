@@ -5726,7 +5726,7 @@ fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
         ("fn bad(s: &State) -> Int32 { let f = identity f(s.count) } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count) s.count } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), \"owned\"); }", "Copy type arguments"),
-        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, 2)); }", "bounded pure-value"),
+        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, Ptr.null())); }", "bounded pure-value"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
@@ -7705,15 +7705,15 @@ fn domain_create_values_reject_owning_payloads_and_unproved_constructors() {
         (
             "tuple",
             "",
-            "(1,2)",
-            "fn make(p:(Int32,Int32))->State{State{n:1}}",
+            "(1,Ptr.null())",
+            "fn make(p:(Int32,Ptr))->State{State{n:1}}",
             "bounded pure-value signature",
         ),
         (
             "generic",
             "struct Init<T>{n:T}",
-            "Init::<Int32>{n:1}",
-            "fn make(p:Init<Int32>)->State{State{n:p.n}}",
+            "Init::<Ptr>{n:Ptr.null()}",
+            "fn make(p:Init<Ptr>)->State{State{n:1}}",
             "bounded pure-value signature",
         ),
         (
@@ -7795,14 +7795,14 @@ fn domain_candidate_values_reject_unproved_and_non_value_inputs() {
         ),
         (
             "",
-            "(1,2)",
-            "fn make(p:(Int32,Int32))->State{State{n:1}}",
+            "(1,Ptr.null())",
+            "fn make(p:(Int32,Ptr))->State{State{n:1}}",
             "bounded pure-value signature",
         ),
         (
             "struct Init<T>{n:T}",
-            "Init::<Int32>{n:1}",
-            "fn make(p:Init<Int32>)->State{State{n:p.n}}",
+            "Init::<Ptr>{n:Ptr.null()}",
+            "fn make(p:Init<Ptr>)->State{State{n:1}}",
             "bounded pure-value signature",
         ),
         (
@@ -7906,11 +7906,11 @@ fn domain_snapshot_values_reject_invalid_results_and_projections() {
             "Payload",
             "Payload{text:\"owned\"}",
         ),
-        ("", "(Int32,Int32)", "(1,2)"),
+        ("", "(Int32,Ptr)", "(1,Ptr.null())"),
         (
             "struct Payload<T>{n:T}",
-            "Payload<Int32>",
-            "Payload::<Int32>{n:1}",
+            "Payload<Ptr>",
+            "Payload::<Ptr>{n:Ptr.null()}",
         ),
     ] {
         for (params,body) in [
@@ -7989,9 +7989,9 @@ fn domain_request_values_reject_invalid_contracts() {
     let work = Workspace::new();
     for (definition, ty, value) in [
         ("struct P {text:String}", "P", "P{text:\"owned\"}"),
-        ("struct P<T> {n:T}", "P<Int32>", "P{n:1}"),
+        ("struct P<T> {n:T}", "P<Ptr>", "P{n:Ptr.null()}"),
         ("enum P {A(String)}", "P", "P.A(\"owned\")"),
-        ("", "(Int32,Int32)", "(1,2)"),
+        ("", "(Int32,Ptr)", "(1,Ptr.null())"),
     ] {
         for result in [false, true] {
             let (input, output, argument, body) = if result {
@@ -8081,9 +8081,9 @@ fn domain_timer_values_reject_invalid_inputs_and_effects() {
     let work = Workspace::new();
     for (decl, ty, value, body, effect) in [
         ("struct P{text:String}", "P", "P{text:\"owned\"}", "", ""),
-        ("struct P<T>{n:T}", "P<Int32>", "P{n:1}", "", ""),
+        ("struct P<T>{n:T}", "P<Ptr>", "P{n:Ptr.null()}", "", ""),
         ("enum P{Some(String)}", "P", "P.Some(\"owned\")", "", ""),
-        ("", "(Int32,Int32)", "(1,2)", "", ""),
+        ("", "(Int32,Ptr)", "(1,Ptr.null())", "", ""),
         (
             "struct P{n:Int32}",
             "P",
@@ -8743,32 +8743,37 @@ fn pure_enum_script_rejects_changed_input_and_result_contracts() {
     }
 }
 
-#[test]
 #[cfg(unix)]
-fn pure_enum_pending_script_results_keep_the_starting_contract() {
-    let old = r#"import joky/domain import joky/task
-struct State{n:Int32}
-enum Reply{Empty,Done(Int32)}
-fn make(n:Int32)->State{State{n:n}}
-fn pending(directory:domain.DirectoryHandle) @suspends ->Reply {
+fn assert_pending_script_result_contract(
+    types: &str,
+    next_types: &str,
+    result_type: &str,
+    value: &str,
+    assertion: &str,
+) {
+    let old = format!(
+        r#"import joky/domain import joky/task
+struct State{{n:Int32}}
+{types}
+fn make(n:Int32)->State{{State{{n:n}}}}
+fn pending(directory:domain.DirectoryHandle) @suspends ->{result_type} {{
     let owner=domain.create(make,0)
     directory.insert(1,owner.handle());
-    while domain.lookup::<State>(directory,1).is_some() {task.yield_now()}
-    Reply.Done(42)
-}"#;
-    let next = old.replace(
-        "enum Reply{Empty,Done(Int32)}",
-        "enum Reply{Done(Int32),Empty}",
+    while domain.lookup::<State>(directory,1).is_some() {{task.yield_now()}}
+    {value}
+}}"#
     );
+    let next = old.replace(types, next_types);
     let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("pending.jk",&format!(r#"import joky/vm import joky/domain import joky/task import joky/check
 struct State{{n:Int32}}
-enum Reply{{Empty,Done(Int32)}}
-fn assert(ok:Bool){{check.assert(ok,"enum old result")}}
+{types}
+fn assert(ok:Bool){{check.assert(ok,"old Script result")}}
 fn call(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
-    match h.call::<domain.DirectoryHandle,Reply>("pending",d) {{Done(n)=>assert(n==42),_=>assert(false)}}
+    let result=h.call::<domain.DirectoryHandle,{result_type}>("pending",d)
+    {assertion}
 }}
 fn reload(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
     while domain.lookup::<State>(d,1).is_none() {{task.yield_now()}}
@@ -8785,7 +8790,194 @@ fn main() @suspends {{
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}
-"#,old=quote(old),next=quote(&next)));
+"#,old=quote(&old),next=quote(&next)));
         work.assert_all_backends("pending.jk", &[], b"", 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_enum_pending_script_results_keep_the_starting_contract() {
+    assert_pending_script_result_contract(
+        "enum Reply{Empty,Done(Int32)}",
+        "enum Reply{Done(Int32),Empty}",
+        "Reply",
+        "Reply.Done(42)",
+        "match result {Done(n)=>assert(n==42),_=>assert(false)}",
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_composite_pending_script_results_keep_the_starting_contract() {
+    assert_pending_script_result_contract(
+        "struct Reply<T>{value:T,flag:Bool}",
+        "struct Reply<T>{flag:Bool,value:T}",
+        "(Reply<(Int32,Bool)>,Unit)",
+        "(Reply{value:(42,true),flag:false},{})",
+        "assert(result.0.value.0==42 && result.0.value.1 && !result.0.flag)",
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_composite_domain_values_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "composites.jk",
+        include_str!("fixtures/state_domain_composite_values.jk"),
+    );
+    work.assert_all_backends("composites.jk", &[], b"", 0);
+}
+
+#[cfg(unix)]
+#[path = "support/composite_values.rs"]
+mod composite_values;
+
+#[test]
+#[cfg(unix)]
+fn pure_composite_script_values_run_in_all_backend_combinations() {
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write("composites.jk", &composite_values::source(create));
+        work.assert_all_backends("composites.jk", &[], b"", 42);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_composite_contract_limits_and_rejections() {
+    for element in ["Int32", "Unit"] {
+        for count in [64, 65] {
+            let ty = format!("({})", vec![element; count].join(","));
+            let value = format!(
+                "({})",
+                vec![if element == "Unit" { "{}" } else { "1" }; count].join(",")
+            );
+            let work = Workspace::new();
+            work.write("limit.jk",&format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() let result:{ty}=when(h){{{value}}}.unwrap();}}"));
+            if count == 64 {
+                work.assert_all_backends("limit.jk", &[], b"", 0);
+            } else {
+                failure(&work.cli(&["build", "limit.jk"]), "bounded pure value");
+            }
+        }
+    }
+    // A phantom argument still contributes its complete contract and depth.
+    for depth in [8, 9] {
+        let mut argument = "Bool".to_owned();
+        for _ in 1..depth {
+            argument = format!("Marker<{argument}>");
+        }
+        let work = Workspace::new();
+        work.write("depth.jk", &format!("import joky/domain struct Marker<T>{{}} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{Marker::<{argument}>{{}}}}.unwrap();}}"));
+        if depth == 8 {
+            work.assert_all_backends("depth.jk", &[], b"", 0);
+        } else {
+            failure(&work.cli(&["build", "depth.jk"]), "bounded pure value");
+        }
+    }
+    for depth in [8, 9] {
+        let mut value = "42".to_owned();
+        for _ in 0..depth {
+            value = format!("({value},)");
+        }
+        let work = Workspace::new();
+        work.write("tuple_depth.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{{value}}}.unwrap();}}"));
+        if depth == 8 {
+            work.assert_all_backends("tuple_depth.jk", &[], b"", 0);
+        } else {
+            failure(
+                &work.cli(&["build", "tuple_depth.jk"]),
+                "bounded pure value",
+            );
+        }
+    }
+    // The generated capture record consumes one member in addition to its tuple.
+    for count in [63, 64] {
+        let value = format!("({})", vec!["{}"; count].join(","));
+        let work = Workspace::new();
+        work.write("capture.jk",&format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() let captured={value} when(h){{captured}}.unwrap();}}"));
+        if count == 63 {
+            work.assert_all_backends("capture.jk", &[], b"", 0);
+        } else {
+            failure(&work.cli(&["build", "capture.jk"]), "when captures require");
+        }
+    }
+    for (ty, value) in [
+        ("(Int32,String)", "(1,\"owned\")"),
+        ("Cell<String>", "Cell{value:\"owned\"}"),
+        ("Marker<String>", "Marker::<String>{}"),
+        ("Marker<(Int32,Ptr)>", "Marker::<(Int32,Ptr)>{}"),
+        ("Marker<fn()->Int32>", "Marker::<fn()->Int32>{}"),
+        ("Marker<&Int32>", "Marker::<&Int32>{}"),
+    ] {
+        let work = Workspace::new();
+        work.write("reject.jk",&format!("import joky/vm struct Cell<T>{{value:T}} struct Marker<T>{{}} fn main() @suspends {{let h=vm.Vm.new() h.call::<{ty},Int32>(\"echo\",{value});}}"));
+        failure(
+            &work.cli(&["build", "reject.jk"]),
+            "Script contracts require",
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn pure_composite_script_rejects_changed_input_and_result_contracts() {
+    let types = "struct Cell<T>{value:T} struct Marker<T>{}";
+    for create in ["new", "interpreter"] {
+        for (changed, input, output, value, body) in [
+            (
+                types.to_owned(),
+                "(Int32,UInt32)",
+                "Unit",
+                "(1,2)",
+                "fn exchange(v:(UInt32,Int32)) @suspends {}",
+            ),
+            (
+                types.replace("value:T", "renamed:T"),
+                "Cell<Int32>",
+                "Unit",
+                "Cell{value:1}",
+                "fn exchange(v:Cell<Int32>) @suspends {}",
+            ),
+            (
+                types.to_owned(),
+                "Marker<(Int32,Bool)>",
+                "Unit",
+                "Marker{}",
+                "fn exchange(v:Marker<(UInt32,Bool)>) @suspends {}",
+            ),
+            (
+                types.to_owned(),
+                "Unit",
+                "(Cell<Int32>,Unit)",
+                "{}",
+                "fn exchange(v:Unit) @suspends ->(Unit,Cell<Int32>){({},Cell{value:42})}",
+            ),
+            (
+                types.to_owned(),
+                "Unit",
+                "Cell<Int32>",
+                "{}",
+                "fn exchange(v:Unit) @suspends ->Cell<UInt32>{Cell{value:42}}",
+            ),
+        ] {
+            let script = format!("{changed} {body}");
+            let quote = format!("{:?}", script.replace('{', "{{").replace('}', "}}"));
+            let work = Workspace::new();
+            work.write("mismatch.jk",&format!("import joky/vm import joky/check {types} fn main() @suspends {{let h=vm.Vm.{create}() let source={quote} check.assert(vm.load_source(h,&source)==0,\"load composite script\") h.call::<{input},{output}>(\"exchange\",{value});}}"));
+            for args in [
+                vec!["run", "mismatch.jk"],
+                vec!["run", "--interpreter", "mismatch.jk"],
+            ] {
+                failure(&work.cli(&args), "Script entry contract mismatch");
+            }
+            success(&work.cli(&["build", "mismatch.jk"]));
+            failure(
+                &Command::new(work.path().join("mismatch")).output().unwrap(),
+                "Script entry contract mismatch",
+            );
+        }
     }
 }

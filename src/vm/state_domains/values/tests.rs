@@ -340,3 +340,6 @@ mod when_tests;
 
 #[path = "enum_tests.rs"]
 mod enum_tests;
+
+#[path = "composite_tests.rs"]
+mod composite_tests;

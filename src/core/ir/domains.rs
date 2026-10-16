@@ -107,7 +107,7 @@ impl FunctionPlan {
                 || target.signature.ret != Type::Unit
             {
                 return Err(type_error(&span, ErrorCode::InvalidCall,
-                    "Timer requires a synchronous mutable domain operation with bounded pure-value input (64 fields, 8 record levels) and Unit result"));
+                    "Timer requires a synchronous mutable domain operation with bounded pure-value input (64 contract members, 64 lanes, 8 aggregate levels) and Unit result"));
             }
             if !checking {
                 self.domain_calls.push((operation.clone(), args[3].span()));
@@ -294,7 +294,7 @@ impl FunctionPlan {
                 return Err(type_error(
                     &span,
                     ErrorCode::InvalidCall,
-                    "Domain operation requires a synchronous bounded pure-value signature (64 fields, 8 record levels)",
+                    "Domain operation requires a synchronous bounded pure-value signature (64 contract members, 64 lanes, 8 aggregate levels)",
                 ));
             }
             self.domain_calls.push((operation.clone(), args[2].span()));
@@ -476,9 +476,9 @@ impl FunctionPlan {
                 &span,
                 ErrorCode::InvalidCall,
                 if request {
-                    "Domain request requires a suspending bounded pure-value signature (64 fields, 8 record levels)"
+                    "Domain request requires a suspending bounded pure-value signature (64 contract members, 64 lanes, 8 aggregate levels)"
                 } else if value_input {
-                    "Domain operation requires a synchronous bounded pure-value signature (64 fields, 8 record levels)"
+                    "Domain operation requires a synchronous bounded pure-value signature (64 contract members, 64 lanes, 8 aggregate levels)"
                 } else {
                     "Domain operation requires a checked scalar signature"
                 },

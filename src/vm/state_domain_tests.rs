@@ -796,7 +796,7 @@ fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
         "fn bad() @suspends { let o=domain.create(make,1) let token=o.handle().token }",
         "fn bad() @suspends { let f=make let o=domain.create(f,1) }",
         "fn owned(value: String) @suspends -> String { value } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),owned,\"text\"); }",
-        "fn pair(value: Int32) @suspends -> (Int32, Int32) { (value, value) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
+        "fn pair(value: Int32) @suspends -> (Int32, Ptr) { (value, Ptr.null()) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
         "fn data(state: &State) -> String { \"text\" } fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data).unwrap(); }",
         "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
     ];
@@ -1710,6 +1710,26 @@ fn pure_enum_domain_cancellation_releases_packets() {
 fn exhaustive_pure_enum_domain_cancellation() {
     source_cancellation_boundaries(
         include_str!("../../tests/fixtures/state_domain_enum_values.jk"),
+        0..=32768,
+        true,
+    );
+}
+
+#[test]
+fn pure_composite_domain_cancellation_releases_packets() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_composite_values.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel composite captures, requests, snapshots and candidate edits at every instruction"]
+fn exhaustive_pure_composite_domain_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_composite_values.jk"),
         0..=32768,
         true,
     );

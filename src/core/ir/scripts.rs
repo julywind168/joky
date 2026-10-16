@@ -23,7 +23,7 @@ impl FunctionPlan {
             String::new()
         } else {
             crate::core::script::schema(ty).filter(|_| !self.has_custom_drop(ty)).ok_or_else(|| type_error(&span, ErrorCode::InvalidCall,
-                "Script contracts require bounded pure values without Drop: scalars, records or concrete enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"))?
+                "Script contracts require bounded pure values without Drop: scalars, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"))?
         };
         if matches!(kind, CompilerIntrinsic::ScriptSchema(_)) {
             let dst = self.slot(Type::String)?;

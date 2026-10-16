@@ -878,12 +878,16 @@ fn vm_native_registration_rejects_source_module_internal_entries() {
 #[path = "../../../tests/support/enum_values.rs"]
 mod enum_values;
 
-fn enum_bridge_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive: bool) {
+fn value_bridge_cancellation(
+    source: fn(&str) -> String,
+    boundaries: impl Clone + IntoIterator<Item = usize>,
+    exhaustive: bool,
+) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for create in ["new", "interpreter"] {
             let mut host = VmEngine::with_mode(mode);
-            host.load_source(&enum_values::source(create)).unwrap();
+            host.load_source(&source(create)).unwrap();
             if mode == VmMode::Interpreter {
                 host.set_interpreter_limits(crate::vm::InterpreterLimits {
                     poll_budget: Some(1),
@@ -931,7 +935,8 @@ fn enum_bridge_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>,
 
 #[test]
 fn pure_enum_script_cancellation_reclaims_packets() {
-    enum_bridge_cancellation(
+    value_bridge_cancellation(
+        enum_values::source,
         [
             0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
         ],
@@ -941,5 +946,24 @@ fn pure_enum_script_cancellation_reclaims_packets() {
 #[test]
 #[ignore = "exhaustive: cancel typed enum Script inputs and results at every instruction"]
 fn exhaustive_pure_enum_script_cancellation() {
-    enum_bridge_cancellation(0..=32768, true);
+    value_bridge_cancellation(enum_values::source, 0..=32768, true);
+}
+
+#[path = "../../../tests/support/composite_values.rs"]
+mod composite_values;
+
+#[test]
+fn pure_composite_script_cancellation_reclaims_packets() {
+    value_bridge_cancellation(
+        composite_values::source,
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel composite Script inputs and results at every instruction"]
+fn exhaustive_pure_composite_script_cancellation() {
+    value_bridge_cancellation(composite_values::source, 0..=32768, true);
 }

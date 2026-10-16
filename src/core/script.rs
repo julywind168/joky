@@ -16,6 +16,15 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
     if depth == MAX_DEPTH || ty.is_owner() || ty.scalar_types().len() > MAX_LANES {
         return None;
     }
+    if let Type::Tuple(tuple) = ty {
+        *members_left = members_left.checked_sub(tuple.elements.len())?;
+        let mut result = format!("tuple:{}", tuple.elements.len());
+        for element in &tuple.elements {
+            let contract = value_schema(element, depth + 1, members_left)?;
+            result.push_str(&format!(";{}:{contract}", contract.len()));
+        }
+        return Some(result);
+    }
     if let Type::Enum(enumeration) = ty {
         if enumeration.indirect || enumeration.variants.is_empty() {
             return None;
@@ -47,23 +56,28 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
         return None;
     };
     if record.closure.is_some()
-        || record.template.is_some()
-        || !record.arguments.is_empty()
-        || !record.parameters.is_empty()
+        || (!record.parameters.is_empty() && record.arguments.is_empty())
         || record.indirect
-        || record.fields.len() > *members_left
     {
         return None;
     }
-    // Count every field, including empty records and Unit, so zero-lane trees
-    // cannot bypass the bound. Scalar slots can never exceed this field count.
-    *members_left -= record.fields.len();
+    // Count every field and concrete argument, including zero-lane values and
+    // phantom arguments, without changing existing non-generic contracts.
+    *members_left = members_left.checked_sub(record.fields.len() + record.arguments.len())?;
     let mut result = format!(
         "record:{}:{}:{}",
         record.name.len(),
         record.name,
         record.repr_c
     );
+    if !record.arguments.is_empty() {
+        result = format!("generic-{result};args:{}", record.arguments.len());
+        for argument in &record.arguments {
+            let contract = value_schema(argument, depth + 1, members_left)?;
+            result.push_str(&format!(";{}:{contract}", contract.len()));
+        }
+        result.push_str(&format!(";fields:{}", record.fields.len()));
+    }
     for field in &record.fields {
         let contract = if super::instance::scalar(&field.ty) {
             // Preserve the already published encoding of flat contracts.
@@ -92,6 +106,15 @@ pub(crate) fn valid_words(ty: &Type, words: &[u64]) -> bool {
             return false;
         }
         match ty {
+            Type::Tuple(tuple) => {
+                let mut offset = 0;
+                tuple.elements.iter().all(|element| {
+                    let end = offset + element.scalar_types().len();
+                    let result = valid(element, &words[offset..end], depth + 1);
+                    offset = end;
+                    result
+                })
+            }
             Type::Record(record) => record.fields.iter().all(|field| {
                 valid(
                     &field.ty,
