@@ -54,7 +54,7 @@ Joky 脚本应能通过统一的 `joky/fs.File` 使用文件。CLI 可以提供�
 | --- | --- |
 | Joky CLI、CLI 生成的独立程序 | 显式安装本机文件实现 |
 | Rust/C 嵌入 VM 或嵌入 AOT | 默认缺省实现，宿主显式安装文件服务 |
-| Godot | 默认缺省实现；显式开启引擎 FileAccess，不能因运行在桌面而自动开放本机文件系统 |
+| Godot | 仅用于嵌入验证，不提供文件服务；合法 open 返回 Unsupported |
 | 测试 | 安装内存、可控阻塞或故障注入实现 |
 
 能力选择属于执行上下文，不使用可变的进程全局“当前文件实现”。多个 VM/执行器可以
@@ -235,9 +235,9 @@ JIT/解释器/AOT 必须共享操作语义和 poll/stop 核心，不能在解释
 结果发布顺序及关闭条件。缺省、本机和测试实现共用同一契约；错误注册必须可诊断。
 若增加公开 C 接口，同步维护头文件、符号导出、安装布局和静态库链接测试。
 
-Godot 首先验证缺省实现与每帧非阻塞驱动，再单独实现引擎文件服务。
-引擎适配必须验证路径语义、允许的线程、节点删除、脚本重载与扩展代码保活；
-普通 VM 测试通过不能作为引擎适配已完成的证据。
+Godot 仅用于嵌入验证，不追加引擎文件功能；验证缺少文件实现时仍可编译与执行，合法
+open 返回 Unsupported。其他宿主若提供自己的文件服务，应自行验证路径语义、线程规则、
+实例销毁、重载及代码保活；通用 VM 测试不代替宿主集成验收。
 
 ## 8. 实施阶段与完成门槛
 
@@ -247,14 +247,13 @@ Godot 首先验证缺省实现与每帧非阻塞驱动，再单独实现引擎�
 | FS1：类型与可选宿主 | FileOwner、File、完整缺省绑定、执行上下文选择及资源交接 | 无文件实现的三后端程序可导入/加载，调用返回 Unsupported；注册错误拒绝；拥有者与实现代码恰好释放 |
 | FS2：文件服务基础 | 有界队列、后台状态、完成唤醒、取消、计费和非阻塞关闭 | 排队/执行/完成/交接/取消状态矩阵通过；服务关闭与迟到结果隔离；无取消绕过额度 |
 | FS3：本机文件 API | 接入 open/read/write/seek/sync_all/close 与 CLI/AOT 安装 | 三后端执行真实临时文件读写、错误和取消；独立 AOT 等待与安装布局验证 |
-| FS4：嵌入与 Godot | 公开宿主配置、共享服务隔离、Godot 缺省及引擎实现 | 实际引擎场景保持帧推进；未提供/已提供实现均验证；实例关闭、重载与后台保活验证 |
+| FS4：嵌入 | 公开宿主配置、共享服务隔离、缺省 Unsupported | 未提供/已提供实现均在通用宿主验证；实例关闭、重载与后台保活验证；Godot 仅验证缺省能力 |
 | FS5：收尾与文档 | 受影响 Debug 穷举、示例、稳定接口文档和平台记录 | 逐项记录证据与未验证平台，更新 language/architecture；未实现能力继续保留设计状态 |
-| FS6：字节与文本便利 API | 默认/受限完整读取、完整 write_all、严格 UTF-8 read_text/write_text；具体契约见第 12 节 | 三后端短读/短写、超限、解码与部分进度；取消穷举及真实 Godot 场景 |
+| FS6：字节与文本便利 API | 默认/受限完整读取、完整 write_all、严格 UTF-8 read_text/write_text；具体契约见第 12 节 | 三后端短读/短写、超限、解码与部分进度；取消穷举及真实文件场景 |
 
 FS1/FS2 可以用确定性内存宿主推进，但不能跳过 FS3 的真实文件操作。
-FS4 中“Godot 缺省行为可用”和“引擎文件适配可用”分别记录，不合并为一次通过。
-首版开发验收目标为 macOS/aarch64；Linux、Windows 和其他 Godot 导出平台不在本次
-已验证范围内。Godot 首轮目标为 macOS 桌面解释器嵌入，FS4 单独记录引擎版本与实际场景；
+FS4 的文件服务能力由通用 Rust/C 宿主验证，Godot 不作为引擎文件适配的开发目标。
+首版开发验收目标为 macOS/aarch64；Linux、Windows 不在本次已验证范围内。
 单平台验证不扩写为跨平台保证。
 
 ## 9. 验收矩阵与验证范围
@@ -269,7 +268,7 @@ FS4 中“Godot 缺省行为可用”和“引擎文件适配可用”分别记�
 | 容量 | 每个上限的边界、取消后仍保留服务额度、交接复制峰值、普通队列满时析构和关闭仍可提交 |
 | 关闭与代码保活 | 任务/实例/VM 销毁、模块重载、共享服务、后台未结束时禁止卸载、最终关闭及额度恰好归还 |
 | 后端与部署 | JIT、解释器和独立 AOT 执行生成代码；宿主描述符校验；有公开 ABI 改动时验证头文件与安装布局 |
-| Godot | 实际帧推进、实例删除、脚本重载、缺少文件实现及引擎实现；后台不得访问未授权引擎对象 |
+| Godot 嵌入边界 | 不安装文件服务时仍可导入/执行，合法 open 返回 Unsupported |
 
 并发测试以可控阻塞点、完成闸门和资源账本证明顺序，不靠真实磁盘恰好慢或 sleep 时间碰运气。
 验证调度不阻塞时，在文件工作被闸门保持未完成的情况下证明其他任务已经推进，
@@ -434,7 +433,7 @@ Close 的请求与完成存储使用文件预留清理记录，不占普通请�
 
 模型通过后台持有的数据类型和资源账本检查隔离，不把它当作内存安全工具的替代品。
 真实 open/read/write/seek/sync/close、错误映射、生产计费、结果分配失败、动态库卸载、
-公开描述符和 Godot 引擎场景的正式验收见第 11 节。旧 ResourceIoV1 的协议不作任何修改。
+公开描述符及通用宿主的正式验收见第 11 节。旧 ResourceIoV1 的协议不作任何修改。
 
 ### 10.5 验证记录
 
@@ -459,7 +458,7 @@ Close 的请求与完成存储使用文件预留清理记录，不占普通请�
 | FS1 | fs.FileOwner / fs.OutcomeOwner、公开 File 和 Result API、精确内置签名、缺省 Unsupported；`tests/fs.rs` 覆盖三后端及非法声明/伪造拒绝 |
 | FS2 | 独立工作池、请求/存储/文件额度、预留关闭队列、输入快照、任务复制峰值计费；`src/runtime/fs/worker_tests.rs` 使用闸门覆盖排队/执行/待领取取消、满队列关闭和 shutdown |
 | FS3 | 本机 open/read/write/seek/sync_all/close；真实临时目录的 JIT/解释器/CLI/AOT 往返、选项及 UTF-8/字节边界；C 布局和独立嵌入缺省服务测试；安装脚本包含 joky_fs.h |
-| FS4 | Rust 阻塞宿主 trait 与非阻塞 FileServiceV1、显式共享与快照保活、嵌套 VM 隔离；宿主错误输出拥有者回收；Godot 缺省与 FileAccess 服务分别进行实际引擎验收 |
+| FS4 | Rust 阻塞宿主 trait 与非阻塞 FileServiceV1、显式共享与快照保活、嵌套 VM 隔离；宿主错误输出拥有者回收；Godot 仅验证缺省文件能力（引擎 FileAccess 适配已移除，见第 13 节） |
 | FS5 | 语言/架构/Godot 文档及 files.jk 示例；逐指令取消穷举和默认 Debug 检查，执行记录见下文 |
 
 当前实现选择：Rust 阻塞宿主复用有界工作池；异步宿主通过独立 FileServiceV1 接入，
@@ -467,12 +466,9 @@ Close 的请求与完成存储使用文件预留清理记录，不占普通请�
 非法结果按 SystemFailure 交给语言，指针有效性仍是 unsafe 注册契约。
 内部提取由同步调用改为即时 CPS，不增加 I/O 等待；这一调整避免另造一套资源聚合返回 ABI。
 
-Godot 支持范围：只有 res:// 只读及 user:// 的五种可精确映射打开模式；append、create_new、
-不截断的 create 和 sync_all 明确返回 Unsupported。完整语言 API 在这些宿主仍存在。
-Scene 退出显式等待引擎文件对象全部关闭，普通任务 poll/stop 和实例关闭不 join。
-
-首轮平台为 macOS/aarch64、Godot 4.7.2。Linux、Windows、移动/Web、Godot 导出包内的
-res:// 文件未在本次环境执行；Windows CloseHandle 仅有条件编译实现，不宣称验证通过。
+Godot 不提供文件服务，合法 open 返回 Unsupported。通用文件能力仍由其他宿主按需接入。
+首轮原生平台为 macOS/aarch64。Linux、Windows、移动/Web 未在本次环境执行；
+Windows CloseHandle 仅有条件编译实现，不宣称验证通过。
 目录/删除/重命名、元数据、文件监听、映射、句柄复制、读写拆分、
 文本流便利接口和性能/实时性保证仍未实现。read_all/write_all 与完整文本读写由 FS6 补充，
 不计入 FS0–FS5 的首版交付。
@@ -496,10 +492,6 @@ res:// 文件未在本次环境执行；Windows CloseHandle 仅有条件编译�
   正常结果与错误结果的逐指令取消。
 - `cargo test exhaustive_resource_handoff_cancel_and_exhaust_at_every_instruction --lib -- --ignored`：
   共用资源交接与耗尽路径的 Debug 穷举。
-- `integrations/godot/check.sh`：格式、Clippy、9 个 Rust 测试、Debug 扩展构建及全部实际
-  引擎场景，包含 FS GODOT PASS。收尾重建后另行重跑文件场景与新增的
-  FS SHUTDOWN PASS，覆盖带活跃文件任务的扩展退出。验收发现并修复 NET5 动态 fixture
-  中两处过时 match 分隔符。
 - `git diff --check` 和新增文档相对链接核对。
 
 没有运行 Release、完整 stress、性能计时或非本机平台验收。
@@ -571,8 +563,7 @@ write_text 将整个 String 作为 UTF-8 字节交给 write_all；written 始终
 
 ### 12.4 实现与验收记录
 
-实现位于 [fs.jk](../src/stdlib/fs.jk)。[文件示例](../examples/files.jk)使用完整文本读写；
-[Godot 文件脚本](../integrations/godot/demo/files.jk)验证 res:// 文本读取、user:// 完整写入与有界字节回读。
+实现位于 [fs.jk](../src/stdlib/fs.jk)。[文件示例](../examples/files.jk)使用完整文本读写。
 
 2026-10-17，macOS/aarch64，Debug：
 
@@ -587,20 +578,17 @@ write_text 将整个 String 作为 UTF-8 字节交给 write_all；written 始终
   在既有探针之外新增完整文本读写的逐指令取消，检查文件、请求及结果拥有者计数全部归零。
 - `./scripts/check.sh`：默认 quick Debug 通过，包含 fmt、Clippy、默认测试和 while/Map
   三后端短输入正确性。测试补充后另跑 fmt、Clippy 及受影响用例和取消穷举，均通过。
-- `integrations/godot/build.sh` 后使用 Godot 4.7.2 实际执行 `tests/files.gd` 与
-  `tests/files_shutdown.gd`：分别输出 `FS GODOT PASS` 与 `FS SHUTDOWN PASS`，无错误诊断。
-  覆盖文件任务与帧推进、禁用后的能力快照、取消、重载及带活跃任务的退出；本轮未重跑无关引擎场景。
 - `git diff --check` 与相关文档相对链接目标检查通过。
 
-本轮未运行 Release、完整 stress、性能测量、其他操作系统或 Godot 导出包验收；
-FS0–FS5 已记录的平台和 Godot 能力限制继续适用。
+本轮未运行 Release、完整 stress、性能测量或其他操作系统验收；
+FS0–FS5 已记录的平台范围继续适用。
 
 ### 12.5 默认读取与受限读取拆分
 
 2026-10-18：移除普通完整读取的必填内容上限，原有上限语义保留在 `_limited` 接口。
 无参数读取与受限读取共用私有读取循环和 UTF-8 解码，不新增宿主回调或运行时特例。
-普通 CLI 示例与 Godot 文本读取改用 `read_text()`；明确限制大小的测试和 Godot 字节回读
-改用 `_limited`。写入接口及部分进度语义保持不变。
+普通 CLI 示例改用 `read_text()`；明确限制大小的测试改用 `_limited`。
+写入接口及部分进度语义保持不变。
 
 本机 Debug 验证：
 
@@ -610,10 +598,27 @@ FS0–FS5 已记录的平台和 Godot 能力限制继续适用。
   受限版保留零上限、恰好上限、超限探测及 UInt64.MAX 用例。关闭后服务额度归零。
 - `cargo test --test fs exhaustive_filesystem_cancel_every_instruction -- --ignored`：通过；
   同一任务分别执行无参数与受限文本读取，逐指令取消后文件、请求与结果拥有者计数归零。
-- 重新构建 Godot 适配器，并在 Godot 4.7.2 执行 `tests/files.gd` 与
-  `tests/files_shutdown.gd`，分别得到 `FS GODOT PASS` 与 `FS SHUTDOWN PASS`，无错误诊断。
-
 - `./scripts/check.sh`：默认 quick Debug 全部通过，包括 fmt、Clippy、默认测试与三后端
   while/Map 短输入正确性；`git diff --check` 和相关文档相对链接目标检查通过。
 
 平台范围仍为 macOS/aarch64；没有新增其他平台、Release 或性能验收。
+
+## 13. Godot 文件适配移除
+
+2026-10-18：Godot 定位为嵌入验证，移除引擎 FileAccess 文件服务、公开能力开关、
+编译快照中的服务注入及 Scene 退出的文件服务 drain。删除对应文件示例、测试资源和
+文件专属引擎验收场景。先前 FS4/FS6 的 Godot 文件功能不再属于当前能力或后续开发目标。
+
+保留 Joky 通用的 FileService / FileServiceV1、CLI 本机实现及三后端文件测试。
+Godot 仅保留一个嵌入回归：通过适配器的 Program 编译并执行实际 Joky 代码，验证
+res://、user:// 和普通路径的合法 open 均返回 Unsupported。脚本资源加载器自身的
+FileAccess 不变，不向脚本授予文件能力。现有其他嵌入验证功能不因本次范围调整而扩展。
+
+本次验证：
+
+- `cargo test --locked --manifest-path integrations/godot/Cargo.toml embedded_scripts_keep_filesystem_capability_unavailable`：通过，执行缺省文件能力回归。
+- `integrations/godot/check.sh`：Godot 适配器格式、Clippy、10 个 Rust 测试、Debug 构建及全部
+  保留的真实引擎场景通过；包括资源加载/保存、场景重开、异步任务、重载、退出及既有网络场景。
+  使用 macOS/aarch64、Godot 4.7.2；测试入口已不包含文件专属场景。
+- `./scripts/check.sh`：默认 quick Debug 全部通过，包含格式、Clippy、默认测试、通用文件三后端用例及短输入基准正确性。
+- `git diff --check` 和相关文档相对链接目标检查通过；未运行 Release、额外穷举或其他平台验收。

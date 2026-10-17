@@ -4489,8 +4489,8 @@ write 的 1 MiB 限制。遇到错误立即停止，不自动重试 Busy。`Writ
 
 CLI 的 JIT/解释器与 `joky build` 生成的程序安装本机服务，相对路径以服务启动时的工作
 目录为基准，支持绝对路径；该基准不是安全沙箱。嵌入 VM/AOT 默认没有文件服务，
-宿主在加载前显式配置，嵌套 VM 不继承。Godot 默认也不开放文件；显式引擎服务支持
-res:// 只读和 user:// 的部分打开模式，详见 [Godot 文档](../integrations/godot/README.md#可选文件服务)。
+宿主在加载前显式配置，嵌套 VM 不继承。Godot 适配器仅用于嵌入验证，不提供文件服务或
+能力开关；合法 open 返回 Unsupported。详见 [Godot 验证范围](../integrations/godot/README.md#嵌入验证范围)。
 
 文件服务使用独立有界工作池，不占 DNS 的线程池，不在调度器 poll/stop 中调用阻塞文件 API。
 默认 2 个 worker、64 个排队请求、128 个未回收请求、256 个文件和 16 MiB 请求存储。

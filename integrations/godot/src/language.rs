@@ -22,10 +22,6 @@ pub struct JokyLanguage {
 #[godot_api]
 impl JokyLanguage {
     #[func]
-    fn enable_file_access(&self, enabled: bool) -> bool {
-        crate::files::configure(enabled).is_ok()
-    }
-    #[func]
     fn active_instance_count(&self) -> i64 {
         crate::LIVE.with(|n| n.get() as i64)
     }

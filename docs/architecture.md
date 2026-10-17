@@ -1543,10 +1543,10 @@ file_token 独立转交唯一回收责任。运行时先接管所有非空输出
 [C 头文件](../include/joky_fs.h)。C AOT 使用 `joky_fs_block_on_v1` 显式传描述符；
 `joky_cps_block_on` 不提供文件能力；CLI 专用 `joky_fs_block_on_native` 安装本机服务。
 
-Godot 的显式 FileAccess 服务仅有一个 worker，Gd<FileAccess> 保存在该线程的 TLS 表中，
-跨线程状态仅携带数字身份，避免移动引擎对象。脚本任务取消/实例关闭仍非阻塞。扩展 Scene
-退出是显式 drain 边界：先关闭所有实例，再等待文件服务完全退出，之后才释放引擎 API；
-这可能延长引擎退出，但不阻塞运行中的任务调度器。扩展动态库保留策略与 DNS 相同。
+Godot 适配器仅作为嵌入验证，不安装 FileService，不提供引擎文件适配或文件能力开关；
+脚本中的合法 open 返回 Unsupported。扩展退出没有文件服务 drain 阶段。适配器加载/保存
+`.jk` 资源所用的 FileAccess 属于脚本接入基础设施，不是授予脚本的文件能力。
+其他宿主仍可通过通用 FileService / FileServiceV1 显式提供文件访问，不要求 Godot 跟进标准库功能。
 
 ## 整数转换内建函数
 

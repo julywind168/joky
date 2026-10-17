@@ -1,5 +1,4 @@
 //! Godot 4.7 scripting adapter. Joky scripts execute only in the interpreter.
-mod files;
 mod instance;
 mod language;
 mod node;
@@ -175,7 +174,6 @@ unsafe impl ExtensionLibrary for JokyExtension {
             // Cancellation closes language owners immediately. Running system
             // lookups may outlive this callback; retain_library keeps their code.
             joky::runtime::dns::shutdown();
-            crate::files::shutdown();
             ResourceLoader::singleton().remove_resource_format_loader(&registration.loader);
             ResourceSaver::singleton().remove_resource_format_saver(&registration.saver);
             Engine::singleton().unregister_script_language(&registration.language);

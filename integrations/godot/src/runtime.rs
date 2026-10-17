@@ -93,10 +93,6 @@ impl Program {
     pub fn compile(path: &str, source: &str) -> Result<Self, Diagnostic> {
         let ast = parser::parse(source).map_err(|e| Diagnostic::error(path, source, &e.into()))?;
         let mut vm = VmEngine::with_mode(VmMode::Interpreter);
-        if let Some(service) = crate::files::current() {
-            vm.set_file_service(service)
-                .map_err(|e| Diagnostic::error(path, source, &e))?;
-        }
         vm.set_interpreter_limits(InterpreterLimits {
             max_frames: 256,
             instruction_budget: Some(100_000),
@@ -229,6 +225,30 @@ impl Program {
 mod tests {
     use super::*;
     use joky::vm::InstanceValue as V;
+    #[test]
+    fn embedded_scripts_keep_filesystem_capability_unavailable() {
+        let source = r#"import joky/fs
+            struct State { value: Int32 }
+            fn create() -> State { State { value: 0 } }
+            fn unsupported(path: String) @suspends -> Bool {
+                match fs.open(path, fs.OpenOptions.new()) {
+                    Err(error) => match error.kind { fs.ErrorKind.Unsupported => true, _ => false }
+                    Ok(file) => { let ignored = file.close() false }
+                }
+            }
+            fn probe() @suspends -> Int32 {
+                if !unsupported("res://unavailable.txt") { return 1 }
+                if !unsupported("user://unavailable.txt") { return 2 }
+                if !unsupported("unavailable.txt") { return 3 }
+                42
+            }
+        "#;
+        let program =
+            Program::compile("res://embedded.jk", source).unwrap_or_else(|error| panic!("{error}"));
+        let task = program.vm.prepare_async("probe", &[]).unwrap();
+        assert_eq!(joky::runtime::driver::block_on(task).unwrap(), 42);
+    }
+
     #[test]
     fn borrowed_dyn_views_stay_inside_checked_instance_methods() {
         let source = include_str!("../demo/borrowed_dyn.jk");
