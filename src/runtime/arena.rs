@@ -14,8 +14,12 @@ pub(crate) struct Arena {
     allocations: Vec<(NonNull<u8>, Layout)>,
     bytes: usize,
     external: Rc<Cell<usize>>,
+    // Explicit regions share the task ceiling even without a persistent budget.
+    task_bytes: Rc<Cell<usize>>,
     budget: Option<Rc<Budget>>,
     account: Option<Rc<Budget>>,
+    // Region payload also counts against the invocation's metadata-aware limit.
+    parent_account: Option<Rc<Budget>>,
     imported: usize,
     temporary_limit: Option<usize>,
 }
@@ -55,11 +59,32 @@ impl Arena {
                 limit: Cell::new(usize::MAX),
                 ..Default::default()
             })),
+            parent_account: None,
             temporary_limit,
             allocations: Vec::new(),
             bytes: 0,
             external: Default::default(),
+            task_bytes: Default::default(),
             imported: 0,
+        }
+    }
+    /// A separately reclaimed region shares its task's live allocation ceiling.
+    pub(crate) fn child(&self) -> Self {
+        Self {
+            task_bytes: self.task_bytes.clone(),
+            budget: self.budget.clone(),
+            account: self.budget.as_ref().map(|_| {
+                Rc::new(Budget {
+                    limit: Cell::new(usize::MAX),
+                    ..Default::default()
+                })
+            }),
+            parent_account: self.parent_account.clone().or_else(|| self.account.clone()),
+            imported: self.imported,
+            temporary_limit: self.temporary_limit,
+            allocations: Vec::new(),
+            bytes: 0,
+            external: Default::default(),
         }
     }
     // Buffer metadata holds a nonowning pointer; the arena pins this budget,
@@ -155,6 +180,16 @@ impl Arena {
             from.refund(charge);
             target.bytes.set(target.bytes.get() + charge);
         }
+        if let Some(account) = &self.parent_account {
+            account.refund(charge);
+        }
+        if let Some(account) = &to.parent_account {
+            account.bytes.set(account.bytes.get() + charge);
+        }
+        if !Rc::ptr_eq(&self.task_bytes, &to.task_bytes) {
+            self.task_bytes.set(self.task_bytes.get() - charge);
+            to.task_bytes.set(to.task_bytes.get() + charge);
+        }
         self.bytes -= charge;
         to.bytes += charge;
     }
@@ -202,7 +237,12 @@ impl Arena {
             .position(|&(p, _)| p == pointer)
             .expect("validated task allocation");
         let (pointer, layout) = self.allocations.swap_remove(index);
-        self.bytes -= layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>();
+        let charge = layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>();
+        self.bytes -= charge;
+        self.task_bytes.set(self.task_bytes.get() - charge);
+        if let Some(account) = &self.parent_account {
+            account.refund(charge);
+        }
         if let Some(budget) = &self.budget {
             budget.refund(
                 layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>(),
@@ -240,14 +280,31 @@ impl Arena {
             .checked_add(charge)
             .ok_or_else(allocation_error)?;
         let limit = self.allocation_limit()?;
+        let task_bytes = self
+            .task_bytes
+            .get()
+            .checked_add(charge)
+            .filter(|&n| n <= limit)
+            .ok_or_else(allocation_error)?;
         if self.bytes.checked_add(external).is_none_or(|n| n > limit) {
             return Err(allocation_error());
         }
         if let Some(account) = &self.account {
             account.charge(charge)?;
         }
+        if let Some(parent) = &self.parent_account {
+            if let Err(error) = parent.charge(charge) {
+                if let Some(account) = &self.account {
+                    account.refund(charge);
+                }
+                return Err(error);
+            }
+        }
         if let Some(budget) = &self.budget {
             if let Err(error) = budget.charge(charge) {
+                if let Some(parent) = &self.parent_account {
+                    parent.refund(charge);
+                }
                 if let Some(account) = &self.account {
                     account.refund(charge);
                 }
@@ -255,11 +312,14 @@ impl Arena {
             }
         }
         self.external.set(external);
+        self.task_bytes.set(task_bytes);
         Ok(ExternalCharge {
             bytes: charge,
             external: self.external.clone(),
+            task_bytes: self.task_bytes.clone(),
             budget: self.budget.clone(),
             account: self.account.clone(),
+            parent_account: self.parent_account.clone(),
         })
     }
 
@@ -298,14 +358,31 @@ impl Arena {
                     .is_some_and(|total| total <= limit)
             })
             .ok_or_else(allocation_error)?;
+        let task_bytes = self
+            .task_bytes
+            .get()
+            .checked_add(charge)
+            .filter(|&n| n <= limit)
+            .ok_or_else(allocation_error)?;
         self.allocations
             .try_reserve(1)
             .map_err(|_| allocation_error())?;
         if let Some(account) = &self.account {
             account.charge(charge)?;
         }
+        if let Some(parent) = &self.parent_account {
+            if let Err(error) = parent.charge(charge) {
+                if let Some(account) = &self.account {
+                    account.refund(charge);
+                }
+                return Err(error);
+            }
+        }
         if let Some(budget) = &self.budget {
             if let Err(error) = budget.charge(charge) {
+                if let Some(parent) = &self.parent_account {
+                    parent.refund(charge);
+                }
                 if let Some(account) = &self.account {
                     account.refund(charge);
                 }
@@ -313,6 +390,9 @@ impl Arena {
             }
         }
         let Some(pointer) = NonNull::new(unsafe { alloc(layout) }) else {
+            if let Some(parent) = &self.parent_account {
+                parent.refund(charge);
+            }
             if let Some(budget) = &self.budget {
                 budget.refund(charge);
             }
@@ -323,6 +403,7 @@ impl Arena {
         };
         self.allocations.push((pointer, layout));
         self.bytes = bytes;
+        self.task_bytes.set(task_bytes);
         #[cfg(test)]
         LIVE.with(|live| live.set(live.get() + 1));
         Ok(pointer)
@@ -331,12 +412,18 @@ impl Arena {
 pub(crate) struct ExternalCharge {
     bytes: usize,
     external: Rc<Cell<usize>>,
+    task_bytes: Rc<Cell<usize>>,
     budget: Option<Rc<Budget>>,
     account: Option<Rc<Budget>>,
+    parent_account: Option<Rc<Budget>>,
 }
 impl Drop for ExternalCharge {
     fn drop(&mut self) {
         self.external.set(self.external.get() - self.bytes);
+        self.task_bytes.set(self.task_bytes.get() - self.bytes);
+        if let Some(parent) = &self.parent_account {
+            parent.refund(self.bytes);
+        }
         if let Some(budget) = &self.budget {
             budget.refund(self.bytes);
         }
@@ -347,6 +434,10 @@ impl Drop for ExternalCharge {
 }
 impl Drop for Arena {
     fn drop(&mut self) {
+        self.task_bytes.set(self.task_bytes.get() - self.bytes);
+        if let Some(parent) = &self.parent_account {
+            parent.refund(self.bytes);
+        }
         if let Some(budget) = &self.budget {
             budget.refund(self.bytes);
         }
@@ -436,11 +527,19 @@ unsafe extern "C" fn release(arena: *mut Arena) {
         dealloc(arena.cast(), Layout::new::<Arena>());
     }
 }
-pub(crate) fn symbols() -> [(&'static str, *const u8); 3] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 5] {
     [
         ("__joky_arena_new", new as *const u8),
         ("__joky_arena_alloc", allocate as *const u8),
         ("__joky_arena_drop", release as *const u8),
+        (
+            "__joky_explicit_arena_new",
+            super::explicit_arena::new_native as *const u8,
+        ),
+        (
+            "__joky_explicit_arena_alloc",
+            super::explicit_arena::allocate_native as *const u8,
+        ),
     ]
 }
 #[cfg(test)]
@@ -455,6 +554,84 @@ thread_local! { pub(crate) static LOCAL_LIMIT: std::cell::Cell<usize> = const { 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arena_transfer_preserves_task_counters_and_imported_credit() {
+        let budget = Rc::new(Budget {
+            bytes: Cell::new(0),
+            limit: Cell::new(16384),
+        });
+        let mut storage = Arena::with_budget(budget.clone(), None);
+        let mut invocation = Arena::with_budget(budget.clone(), Some(1024));
+        let pointer = storage.allocate(256, 8).unwrap();
+        unsafe { pointer.cast::<u64>().as_ptr().write(42) };
+        let external = storage.reserve_external(128).unwrap();
+        let original = budget.bytes.get();
+        for checkpoint in 0..3 {
+            TRANSFER_FAIL.with(|fault| fault.set(Some(checkpoint)));
+            assert!(storage
+                .transfer(&mut invocation, &[pointer], usize::MAX)
+                .is_err());
+            assert!(storage.contains(pointer));
+            assert!(!invocation.contains(pointer));
+            assert_eq!(storage.task_bytes.get(), original);
+            assert_eq!(invocation.task_bytes.get(), 0);
+            assert_eq!(budget.bytes.get(), original);
+        }
+        storage
+            .transfer(&mut invocation, &[pointer], usize::MAX)
+            .unwrap();
+        assert_eq!(budget.bytes.get(), original);
+        assert_eq!(storage.task_bytes.get(), 128);
+        assert_eq!(invocation.task_bytes.get(), invocation.bytes);
+        invocation.credit_imported();
+        let payload = 1024 - std::mem::size_of::<(NonNull<u8>, Layout)>();
+        invocation.allocate(payload, 1).unwrap();
+        assert!(invocation.allocate(1, 1).is_err());
+        let transferred = budget.bytes.get();
+        storage.reserve_transfer(1).unwrap();
+        invocation.transfer_reserved(&mut storage, &[pointer]);
+        assert_eq!(budget.bytes.get(), transferred);
+        assert_eq!(storage.task_bytes.get(), storage.bytes + 128);
+        assert_eq!(invocation.task_bytes.get(), invocation.bytes);
+        assert_eq!(unsafe { pointer.cast::<u64>().as_ptr().read() }, 42);
+        drop(invocation);
+        assert_eq!(budget.bytes.get(), original);
+        drop(external);
+        drop(storage);
+        assert_eq!(budget.bytes.get(), 0);
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+
+    #[test]
+    fn arena_region_transfers_keep_shared_counters_and_accounts_balanced() {
+        let budget = Rc::new(Budget {
+            bytes: Cell::new(0),
+            limit: Cell::new(16384),
+        });
+        let mut parent = Arena::with_budget(budget.clone(), Some(1024));
+        parent.credit_imported();
+        let mut child = parent.child();
+        let first = parent.allocate(64, 8).unwrap();
+        let second = child.allocate(64, 8).unwrap();
+        let charged = budget.bytes.get();
+        let account = parent.account.as_ref().unwrap().clone();
+        parent.transfer(&mut child, &[first], usize::MAX).unwrap();
+        assert_eq!(account.bytes.get(), charged);
+        assert_eq!(parent.task_bytes.get(), charged);
+        child.transfer(&mut parent, &[second], usize::MAX).unwrap();
+        assert_eq!(account.bytes.get(), charged);
+        assert_eq!(child.task_bytes.get(), charged);
+        assert_eq!(budget.bytes.get(), charged);
+        drop(child);
+        assert_eq!(account.bytes.get(), parent.bytes);
+        assert_eq!(parent.task_bytes.get(), parent.bytes);
+        drop(parent);
+        assert_eq!(account.bytes.get(), 0);
+        assert_eq!(budget.bytes.get(), 0);
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+
     #[test]
     fn released_allocations_refund_budget_without_moving_remaining_objects() {
         let mut arena = Arena::default();

@@ -1,0 +1,178 @@
+import joky/arena.{type Arena}
+import joky/mem
+
+struct ArenaPoint { x: Int32, y: Int32 }
+struct ArenaView { value: &Int32 }
+enum ArenaChoice { Empty, Value(ArenaPoint) }
+
+fn explicit_make(arena: &Arena, value: Int32) -> &mut Int32 {
+    arena.alloc(value)
+}
+
+fn explicit_forward(arena: &Arena, value: Int32) -> &mut Int32 {
+    explicit_make(arena, value)
+}
+
+fn explicit_store(arena: &Arena, value: &Int32) {
+    arena.alloc((value,));
+}
+
+fn explicit_store_forward(arena: &Arena, value: &Int32) {
+    explicit_store(arena, value)
+}
+
+fn explicit_copy_between(destination: &Arena, source: &Arena) -> Int32 {
+    let value = source.alloc(20)
+    let view = destination.alloc(ArenaView { value: &*value })
+    (*view.value)
+}
+
+fn explicit_basic() -> Int32 {
+    let arena = Arena.new()
+    let first = arena.alloc(20)
+    let second = arena.alloc(21);
+    (*(second) = (*second) + 1)
+    (*first) + (*second)
+}
+
+fn explicit_helper() -> Int32 {
+    let arena = Arena.new()
+    let first = explicit_forward(&arena, 20)
+    let second = explicit_make(&arena, 22)
+    (*first) + (*second)
+}
+
+fn explicit_values() -> Int32 {
+    let arena = Arena.new()
+    let point = arena.alloc(ArenaPoint { x: 10, y: 11 })
+    let pair = arena.alloc((point.x, point.y))
+    let choice = arena.alloc(ArenaChoice.Value(*point))
+    let empty = arena.alloc({})
+    let flag = arena.alloc(true);
+    (*(empty) = {})
+    let (x, y) = (*pair)
+    let selected = match (*choice) {
+        ArenaChoice.Empty => 0,
+        ArenaChoice.Value(value) => value.x + value.y
+    }
+    if (*flag) { x + y + selected } else { 0 }
+}
+
+fn explicit_nested() -> Int32 {
+    let outer = Arena.new()
+    let first = outer.alloc(20)
+    let result = {
+        let inner = Arena.new()
+        let view = inner.alloc(ArenaView { value: &*first })
+        (*view.value)
+    };
+    (*(first) = 22)
+    result + (*first)
+}
+
+fn explicit_task_reference() -> Int32 {
+    let first = alloc(20)
+    let result = {
+        let inner = Arena.new()
+        let view = inner.alloc(ArenaView { value: &*first })
+        (*view.value)
+    };
+    (*(first) = 22)
+    result + (*first)
+}
+
+fn explicit_helper_storage() -> Int32 {
+    let value = alloc(20)
+    {
+        let arena = Arena.new()
+        explicit_store_forward(&arena, value)
+    }
+    (*(value) = (*value) + 22)
+    (*value)
+}
+
+fn explicit_arena_parameters() -> Int32 {
+    let outer = Arena.new()
+    let value = outer.alloc(20)
+    let result = {
+        let inner = Arena.new()
+        explicit_copy_between(&inner, &outer)
+    };
+    (*(value) = 22)
+    result + (*value)
+}
+
+fn explicit_move() -> Int32 {
+    let original = Arena.new()
+    let moved = original
+    let value = moved.alloc(42)
+    (*value)
+}
+
+fn explicit_drop() -> Int32 {
+    let arena = Arena.new()
+    let value = arena.alloc(42)
+    let result = (*value)
+    mem.drop(arena)
+    result
+}
+
+fn explicit_loop() -> Int32 {
+    var total = 0
+    var index = 0
+    while index < 42 {
+        let arena = Arena.new()
+        let value = arena.alloc(1)
+        total = total + (*value)
+        index = index + 1
+    }
+    total
+}
+
+fn explicit_jumps() -> Int32 {
+    var index = 0
+    var total = 0
+    while true {
+        let arena = Arena.new()
+        let value = arena.alloc(21)
+        index = index + 1
+        if index == 1 { continue }
+        total = total + (*value)
+        if index == 3 { break }
+    }
+    total
+}
+
+fn explicit_return() -> Int32 {
+    let arena = Arena.new()
+    let value = explicit_make(&arena, 42)
+    return (*value)
+}
+
+fn explicit_failure(divisor: Int32) -> Int32 {
+    let arena = Arena.new()
+    let value = arena.alloc(42)
+    (*value) / divisor
+}
+
+fn explicit_many(iterations: Int32) -> Int32 {
+    var index = 0
+    while index < iterations {
+        let arena = Arena.new()
+        let value = arena.alloc(index)
+        index = (*value) + 1
+    }
+    42
+}
+
+fn explicit_shared_budget() -> Int32 {
+    let first = Arena.new()
+    let second = Arena.new()
+    var index = 0
+    while index < 64 {
+        first.alloc((int64(1), int64(2), int64(3), int64(4), int64(5), int64(6), int64(7), int64(8)));
+        second.alloc((int64(1), int64(2), int64(3), int64(4), int64(5), int64(6), int64(7), int64(8)));
+        index = index + 1
+    }
+    42
+}

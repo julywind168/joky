@@ -368,6 +368,9 @@ impl FunctionPlan {
                 format!("Cannot infer type parameter `{}` for `{callee}`; use explicit type arguments", p.name)))?;
             types.validate(ty).map_err(|e| e.with_span(*span))?;
             validate_nominal_type(ty, &self.nominals, span)?;
+            if ty.contains_explicit_arena() && !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) {
+                return Err(type_error(span, ErrorCode::TypeMismatch, "Arena capabilities cannot be generic type arguments"));
+            }
             if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_closures() || !ty.is_copy_storage_value() && !ty.is_owner()) {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
@@ -615,7 +618,11 @@ impl FunctionPlan {
             let (arguments, signature) = self.generic_signature(expr, vars, functions, types)?;
             let name = if matches!(
                 info.compiler_intrinsic,
-                Some(CompilerIntrinsic::MemReplace | CompilerIntrinsic::MemSwap)
+                Some(
+                    CompilerIntrinsic::MemReplace
+                        | CompilerIntrinsic::MemSwap
+                        | CompilerIntrinsic::ArenaAlloc
+                )
             ) {
                 name.unwrap()
             } else {

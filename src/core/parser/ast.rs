@@ -167,6 +167,15 @@ impl PartialEq for DynTraitType {
 impl Eq for DynTraitType {}
 
 impl Type {
+    pub(crate) fn is_explicit_arena(&self) -> bool {
+        matches!(self, Self::Resource(name) if name.as_ref() == "arena.Arena")
+    }
+
+    pub(crate) fn contains_explicit_arena(&self) -> bool {
+        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Fields)
+            .any(Type::is_explicit_arena)
+    }
+
     pub(crate) fn is_domain_capability(&self) -> bool {
         matches!(self,Self::Named(name) if name=="domain.Handle" || name=="domain.Module" || name=="admission.Token")
     }
@@ -1340,6 +1349,8 @@ pub(crate) enum DomainAccessKind {
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
+    ArenaNew,
+    ArenaAlloc,
     ScriptSchema(Type),
     ScriptPack,
     ScriptUnpack,

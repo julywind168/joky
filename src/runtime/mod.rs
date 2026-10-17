@@ -18,6 +18,7 @@ pub mod text_ffi;
 
 pub(crate) mod arena;
 pub(crate) mod buffer;
+pub(crate) mod explicit_arena;
 
 pub(crate) mod cleanup;
 

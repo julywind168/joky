@@ -31,6 +31,9 @@ pub(super) struct OwnerTransfer {
 }
 
 pub(super) enum Instruction {
+    ArenaNew {
+        dst: usize,
+    },
     Project {
         dst: usize,
         reference: usize,
@@ -39,6 +42,7 @@ pub(super) enum Instruction {
     },
     Alloc {
         local: bool,
+        arena: Option<usize>,
         dst: usize,
         size: usize,
         align: usize,
@@ -102,10 +106,19 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                     && !dst.ty.reference_type().unwrap().target.is_inline_owner(),
             }
         }
-        Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
+        Op::ArenaNew { dst } => Instruction::ArenaNew { dst: dst.index },
+        Op::Alloc { dst, value, target }
+        | Op::Local { dst, value, target }
+        | Op::ArenaAlloc {
+            dst, value, target, ..
+        } => {
             let layout = target.storage_layout().map_err(layout_error)?;
             Instruction::Alloc {
                 local: matches!(op, Op::Local { .. }),
+                arena: match op {
+                    Op::ArenaAlloc { arena, .. } => Some(arena.index),
+                    _ => None,
+                },
                 dst: dst.index,
                 size: layout.size,
                 align: layout.align,
@@ -188,6 +201,10 @@ pub(super) fn execute(
     // The shared IR validates types, complete initialization, permission and
     // lifetimes. Execution owns the arena until all of its frames are discarded.
     match op {
+        Instruction::ArenaNew { dst } => {
+            slots[*dst] =
+                Value::Reference(crate::runtime::explicit_arena::new(arena)?.as_ptr().cast());
+        }
         Instruction::Project {
             dst,
             reference,
@@ -211,6 +228,7 @@ pub(super) fn execute(
         }
         Instruction::Alloc {
             local,
+            arena: explicit,
             dst,
             size,
             align,
@@ -224,6 +242,11 @@ pub(super) fn execute(
                     locals.pointers.insert(*dst, pointer);
                     pointer
                 }
+            } else if let Some(owner) = explicit {
+                let Value::Reference(owner) = slots[*owner] else {
+                    return Err(abi_error("Invalid explicit arena reference"));
+                };
+                unsafe { crate::runtime::explicit_arena::allocate(owner.cast(), *size, *align)? }
             } else {
                 arena.allocate(*size, *align)?
             };

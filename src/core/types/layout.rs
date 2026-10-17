@@ -694,6 +694,13 @@ pub(super) fn extend_layout(
     span: Span,
     kind: &str,
 ) -> Result<(), Error> {
+    if ty.contains_explicit_arena() {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            "Arena capabilities cannot be stored in aggregates or containers",
+        ));
+    }
     *depth = (*depth).max(ty.layout_depth() + 1);
     if *depth > 256 {
         return Err(error(

@@ -441,6 +441,16 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, ptr, types::I64, ptr, ptr],
             vec![ptr],
         ),
+        (
+            "__joky_explicit_arena_new",
+            vec![ptr, types::I64, ptr, ptr],
+            vec![ptr],
+        ),
+        (
+            "__joky_explicit_arena_alloc",
+            vec![ptr, ptr, ptr, types::I64, ptr, ptr],
+            vec![ptr],
+        ),
         ("__joky_memory_swap", vec![ptr, ptr, ptr], vec![]),
         ("__joky_buffer_swap", vec![ptr, ptr], vec![]),
         (
@@ -1896,7 +1906,26 @@ fn lower_ops(
                 };
                 slots.write(builder, dst, pointer);
             }
-            Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
+            Op::ArenaNew { dst } => {
+                let source = builder
+                    .ins()
+                    .iconst(types::I64, span.source_id().raw() as i64);
+                let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                let pointer = helper(
+                    builder,
+                    refs,
+                    "__joky_explicit_arena_new",
+                    &[mode.arena(), source, start, end],
+                );
+                check_call(builder, refs, mode.frame(), mode.cleanup());
+                slots.write(builder, dst, pointer);
+            }
+            Op::Alloc { dst, value, target }
+            | Op::Local { dst, value, target }
+            | Op::ArenaAlloc {
+                dst, value, target, ..
+            } => {
                 if matches!(op, Op::Local { .. }) && target.is_closure_value() && value.is_none() {
                     let zero = builder.ins().iconst(ptr_ty, 0);
                     slots.write(builder, dst, zero);
@@ -1916,7 +1945,12 @@ fn lower_ops(
                         builder.ins().stack_addr(ptr_ty, storage, 0)
                     }
                 } else {
-                    let arena = mode.arena();
+                    let (arena, helper_name) = match op {
+                        Op::ArenaAlloc { arena, .. } => {
+                            (slots.read(builder, arena), "__joky_explicit_arena_alloc")
+                        }
+                        _ => (mode.arena(), "__joky_arena_alloc"),
+                    };
                     let size = builder.ins().iconst(ptr_ty, layout.size as i64);
                     let align = builder.ins().iconst(ptr_ty, layout.align as i64);
                     let source = builder
@@ -1927,7 +1961,7 @@ fn lower_ops(
                     let pointer = helper(
                         builder,
                         refs,
-                        "__joky_arena_alloc",
+                        helper_name,
                         &[arena, size, align, source, start, end],
                     );
                     check_call(builder, refs, mode.frame(), mode.cleanup());

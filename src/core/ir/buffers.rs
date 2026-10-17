@@ -492,6 +492,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
     }
     if signature.ret.is_owner()
         && !info.uses_arena
+        && !matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::ArenaNew))
         && !signature.params.iter().any(|ty| {
             ty.is_owner()
                 || ty

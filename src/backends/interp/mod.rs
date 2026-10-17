@@ -383,7 +383,9 @@ fn lower_unoptimized(
             Op::Buffer(op) => Instruction::Buffer(Box::new(buffers::lower(op)?)),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
-            Op::Alloc { .. }
+            Op::ArenaNew { .. }
+            | Op::ArenaAlloc { .. }
+            | Op::Alloc { .. }
             | Op::Local { .. }
             | Op::Project { .. }
             | Op::PatternProject { .. }

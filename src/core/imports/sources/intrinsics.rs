@@ -25,6 +25,8 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
         let id = attribute.name.as_str();
         let mut adapter = false;
         let compiler = match (kind, id) {
+            (SourceKind::Arena, "arena.new") => ArenaNew,
+            (SourceKind::Arena, "arena.alloc") => ArenaAlloc,
             (SourceKind::Check, "check.assert") => Assert,
             (SourceKind::Check, "check.panic") => Panic,
             (SourceKind::Text, "text.clone") => TextClone,
@@ -128,6 +130,18 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
         declaration(&attribute, adapter)?;
         f.compiler_intrinsic = Some(compiler);
     }
+    if kind == SourceKind::Arena {
+        // Method identities are granted by the embedded definition, never its path.
+        for implementation in &mut module.implementations {
+            for method in &mut implementation.methods {
+                method.compiler_intrinsic = match method.name.as_str() {
+                    "new" => Some(ArenaNew),
+                    "alloc" => Some(ArenaAlloc),
+                    _ => None,
+                };
+            }
+        }
+    }
     if kind == SourceKind::BufferStorage {
         for intrinsic in BufferIntrinsic::ALL {
             if module
@@ -193,6 +207,20 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
             Some(intrinsic.signature(&parameter(f)?))
         } else {
             match &f.compiler_intrinsic {
+                Some(ArenaNew) => Some(crate::FunctionSignature::new(
+                    vec![],
+                    Type::Resource("arena.Arena".into()),
+                )),
+                Some(ArenaAlloc) => {
+                    let ty = parameter(f)?;
+                    Some(crate::FunctionSignature::new(
+                        vec![
+                            Type::reference(Type::Resource("arena.Arena".into()), false),
+                            ty.clone(),
+                        ],
+                        Type::reference(ty, true),
+                    ))
+                }
                 Some(Assert) => Some(crate::FunctionSignature::new(
                     vec![Type::Bool, shared_text],
                     Type::Unit,
@@ -311,6 +339,7 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
                 f.compiler_intrinsic,
                 Some(
                     MemDrop
+                        | ArenaAlloc
                         | MemReplace
                         | MemSwap
                         | ScriptSchema(_)

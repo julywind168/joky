@@ -77,7 +77,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派；Drop 按专门规则实现 | 默认方法、关联类型、投影及等式约束已实现；同步借用型 dyn 三后端分派、显式重借用与生命周期已验收，见第 5 项计划 |
 | 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
-| Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 parallel 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
+| Arena、引用来源检查 | 已实现隐式 arena、同步显式 Arena.new()/arena.alloc() 与 &Arena helper、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、任务 arena 引用跨挂起及 parallel 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena 跨挂起、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | Struct JSON 派生 | 已实现 `#derive(ToJson, FromJson)`，可单向派生，支持泛型条件约束与跨模块私有字段 | 生成普通 trait 实现；enum、字段改名/跳过/默认值注解留待后续，语义见 language.md |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
 | 挂起/可存储闭包、拥有型/动态挂起 dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
@@ -830,9 +830,11 @@ Result 表达可处理的错误结果，`@suspends` 表达执行可能暂停，�
 第一版优先采用 [Arena 与隐式生命周期方案](arena-borrowing-ffi.md)，以下为目标规则。
 Box / Rc 等其他拥有类型属于后续候选能力，不是 arena 的实现前提。
 数据引用已可来自 arena 分配或无引用 Copy 局部值的 `&local` / `&mut local`。
-阶段 4a/4b 已实现整个局部值及其内联记录字段借用；@suspends 函数内支持不跨挂起点的 Copy 局部借用。显式 Arena 的 `&mem` 仍是规划。
+阶段 4a/4b 已实现整个局部值及其内联记录字段借用；@suspends 函数内支持不跨挂起点的 Copy 局部借用。显式 Arena 已支持同步 `&arena` 能力借用。
 根任务自动拥有一个隐式 arena；`alloc` 返回 `&mut T`，`&*p` 或受检的
-赋值/参数共享化得到 `&T`。显式 `Arena.new()` 作为高级子 arena 接口保留，用户可以编写合法的封装函数。
+赋值/参数共享化得到 `&T`。高级子 arena 接口由 `joky/arena` 提供 `Arena.new()` 和 `arena.alloc(value)`；
+同步 helper 接收 `&Arena` 并返回依赖该能力的引用。首版不允许用户函数按值返回 Arena，
+也不开放能力聚合、普通泛型携带、闭包捕获、持久化、reset 或跨挂起；当前规则见[同步显式 arena](language.md#同步显式-arena)。
 
 | 形式 | 含义 | 约束 |
 | --- | --- | --- |

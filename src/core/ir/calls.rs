@@ -373,6 +373,27 @@ impl FunctionPlan {
         else {
             return Ok(Flow::Diverged);
         };
+        if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::ArenaAlloc)) {
+            let target = info.signature.params[1].clone();
+            if !target.is_copy_storage_value() || target.reference_type().is_some() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    "Arena.alloc requires Copy data, not a reference, String or opaque handle",
+                ));
+            }
+            let dst = self.slot(info.signature.ret.clone())?;
+            self.emit(Op::ArenaAlloc {
+                dst: dst.clone(),
+                arena: values[0].clone().unwrap(),
+                value: values.get(1).and_then(Option::as_ref).map(|value| Slot {
+                    index: value.index,
+                    ty: target.clone(),
+                }),
+                target,
+            });
+            return Ok(Flow::Value(Some(dst)));
+        }
         if let Some(flow) = self.source_domain_call(super::domains::DomainCall {
             info: &info,
             args,

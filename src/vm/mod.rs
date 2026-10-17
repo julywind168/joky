@@ -270,3 +270,5 @@ mod arithmetic_assignment_tests;
 
 #[cfg(test)]
 mod conditional_patterns_tests;
+#[cfg(test)]
+mod explicit_arena_tests;

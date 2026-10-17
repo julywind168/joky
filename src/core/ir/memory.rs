@@ -620,6 +620,15 @@ pub(super) fn check_module(
     let mut reference_capability = std::collections::HashSet::new();
     for (name, body) in bodies {
         let info = functions.get_mut(name).unwrap();
+        if info.signature.ret.is_explicit_arena()
+            && !matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::ArenaNew))
+        {
+            return Err(type_error(
+                &info.span,
+                ErrorCode::TypeMismatch,
+                "Returning an Arena owner is not supported; pass &Arena to allocate result storage",
+            ));
+        }
         let references = info
             .signature
             .params
@@ -637,7 +646,7 @@ pub(super) fn check_module(
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,
         });
-        info.needs_arena = body.is_destructor || body.has_buffers() || addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| {
+        info.needs_arena = body.is_destructor || body.has_buffers() || addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| matches!(op, Op::ArenaNew { .. } | Op::ArenaAlloc { .. })) || body.ops.iter().any(|op| {
             matches!(op, Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.needs_arena())
         });
     }
@@ -883,7 +892,7 @@ pub(super) fn check_module(
         closures::check(body, info)?;
         borrowing::check(body, info, functions, &body.type_registry)?;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
-            if let Op::Alloc { target, .. } = op {
+            if let Op::Alloc { target, .. } | Op::ArenaAlloc { target, .. } = op {
                 // Rigid templates have no concrete layout until instantiation.
                 if !target
                     .scalar_types()

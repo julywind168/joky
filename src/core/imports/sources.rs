@@ -40,6 +40,7 @@ pub(super) enum SourceKind {
     Text,
     Json,
     Mem,
+    Arena,
     Domain,
     Vm,
 }
@@ -53,6 +54,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Arena,
+        path: "joky/arena",
+        source: include_str!("../../stdlib/arena.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::Embedded,
         path: "joky/fs",

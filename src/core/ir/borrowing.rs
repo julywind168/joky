@@ -10,6 +10,7 @@ type Set = BTreeSet<usize>;
 struct Escapes {
     returned: Set,
     retained: Set,
+    arena_retained: BTreeMap<usize, Set>,
     returns_interior: bool,
 }
 
@@ -36,6 +37,8 @@ impl Origin {
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Reference {
     origins: BTreeSet<Origin>,
+    /// Explicit arena lifetimes are distinct from allocation alias identities.
+    arenas: Set,
     loans: Set,
     ancestors: Set,
     invalid: bool,
@@ -49,6 +52,7 @@ impl Reference {
         self.origins
             .iter()
             .any(|origin| roots.contains(&origin.root))
+            || !self.arenas.is_disjoint(roots)
     }
 
     fn projected(&self, path: &[String], local_roots: &Set) -> Self {
@@ -98,6 +102,7 @@ struct State {
     slots: std::rc::Rc<BTreeMap<usize, Reference>>,
     // Stored loans live until the root arena is released, even if their values die.
     retained: BTreeMap<(usize, usize), (Reference, bool)>,
+    arena_retained: BTreeMap<usize, RegionLoans>,
     regions: BTreeMap<u32, RegionLoans>,
     // Object/control identity and stored reference dependencies stay separate:
     // copying an array element does not borrow its relocatable payload.
@@ -205,6 +210,13 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         Op::Alloc { dst, value, .. } | Op::Local { dst, value, .. } => {
             (value.iter().flat_map(refs).collect(), refs(dst))
         }
+        Op::ArenaNew { dst } => (vec![], refs(dst)),
+        Op::ArenaAlloc {
+            dst, arena, value, ..
+        } => (
+            std::iter::once(arena).chain(value).flat_map(refs).collect(),
+            refs(dst),
+        ),
         Op::EndLocal(local) => (refs(local), vec![]),
         Op::ReadMemory { dst, reference, .. } => {
             (refs(reference), dst.iter().flat_map(refs).collect())
@@ -309,6 +321,7 @@ fn call_arguments<'a>(
 fn merge(target: &mut Reference, value: &Reference) -> bool {
     let before = (
         target.origins.len(),
+        target.arenas.len(),
         target.loans.len(),
         target.ancestors.len(),
         target.invalid,
@@ -316,6 +329,7 @@ fn merge(target: &mut Reference, value: &Reference) -> bool {
         target.interior,
     );
     target.origins.extend(value.origins.iter().cloned());
+    target.arenas.extend(&value.arenas);
     target.loans.extend(&value.loans);
     // An ancestry permission must hold on every incoming path.
     target
@@ -328,6 +342,7 @@ fn merge(target: &mut Reference, value: &Reference) -> bool {
     before
         != (
             target.origins.len(),
+            target.arenas.len(),
             target.loans.len(),
             target.ancestors.len(),
             target.invalid,
@@ -339,6 +354,7 @@ fn union(values: impl Iterator<Item = Reference>) -> Reference {
     let mut result = Reference::default();
     for value in values {
         result.origins.extend(value.origins);
+        result.arenas.extend(value.arenas);
         result.loans.extend(value.loans);
         result.ancestors.extend(value.ancestors);
         result.invalid |= value.invalid;
@@ -401,6 +417,53 @@ fn retain_region(
         true
     }
 }
+fn explicit_arena(ty: &Type) -> bool {
+    ty.is_explicit_arena()
+        || ty
+            .reference_type()
+            .is_some_and(|reference| reference.target.is_explicit_arena())
+}
+
+fn retain_arena(state: &mut State, arena: usize, key: (usize, usize), value: Reference) -> bool {
+    let region = state.arena_retained.entry(arena).or_default();
+    if let Some((old, _)) = region.get_mut(&key) {
+        merge(old, &value)
+    } else {
+        region.insert(key, (value, false));
+        true
+    }
+}
+
+fn move_arena(state: &mut State, old: &Set, new: usize) {
+    let mut region = RegionLoans::new();
+    for root in old {
+        if let Some(retained) = state.arena_retained.remove(root) {
+            for (key, (value, mutable)) in retained {
+                if let Some((previous, _)) = region.get_mut(&key) {
+                    merge(previous, &value);
+                } else {
+                    region.insert(key, (value, mutable));
+                }
+            }
+        }
+    }
+    // No external loan survives an owner move. Internal allocation dependencies
+    // follow the moved region, including values stored in its own objects.
+    for value in state
+        .contents
+        .values_mut()
+        .chain(region.values_mut().map(|(value, _)| value))
+    {
+        if !value.arenas.is_disjoint(old) {
+            value.arenas.retain(|root| !old.contains(root));
+            value.arenas.insert(new);
+        }
+    }
+    if !region.is_empty() {
+        state.arena_retained.insert(new, region);
+    }
+}
+
 fn join(to: &mut State, from: &State) -> bool {
     if to == from {
         return false;
@@ -428,6 +491,11 @@ fn join(to: &mut State, from: &State) -> bool {
     for (&scope, region) in &from.regions {
         for (&key, (value, mutable)) in region {
             changed |= retain_region(to, scope, key, value.clone(), *mutable);
+        }
+    }
+    for (&arena, region) in &from.arena_retained {
+        for (&key, (value, _)) in region {
+            changed |= retain_arena(to, arena, key, value.clone());
         }
     }
     for (&key, value) in &from.contents {
@@ -459,6 +527,7 @@ pub(super) fn infer_module(
             continue;
         }
         info.inferred_retained = Some(Vec::new());
+        info.inferred_arena_retained.clear();
         info.returns_interior = false;
         info.inferred_noescape = info
             .signature
@@ -527,6 +596,7 @@ pub(super) fn infer_module(
         let mut slot = 0;
         let mut rejected = Set::new();
         let mut retained = Set::new();
+        let mut parameter_roots = Vec::new();
         for (index, ty) in info.signature.params.iter().enumerate() {
             let resolved = if let Some(reference) = ty.reference_type() {
                 Type::reference(
@@ -557,12 +627,32 @@ pub(super) fn infer_module(
             if !roots.is_disjoint(&escaped.returned) {
                 rejected.insert(index);
             }
+            parameter_roots.push(roots);
+        }
+        let mut arena_effects = Vec::new();
+        for (source, roots) in parameter_roots.iter().enumerate() {
+            for (destination, arena_roots) in parameter_roots.iter().enumerate() {
+                let destination_ty = &info.signature.params[destination];
+                if explicit_arena(destination_ty)
+                    && !destination_ty.is_explicit_arena()
+                    && arena_roots.iter().any(|root| {
+                        escaped
+                            .arena_retained
+                            .get(root)
+                            .is_some_and(|sources| !roots.is_disjoint(sources))
+                    })
+                {
+                    rejected.insert(source);
+                    arena_effects.push((source, destination));
+                }
+            }
         }
         let info = functions.get_mut(&name).unwrap();
         let previous = (
             info.inferred_noescape.len(),
             info.inferred_retained.as_ref().unwrap().len(),
             info.returns_interior,
+            info.inferred_arena_retained.len(),
         );
         info.inferred_noescape
             .retain(|index| !rejected.contains(index));
@@ -573,11 +663,17 @@ pub(super) fn infer_module(
             }
         }
         info.returns_interior |= result.is_err() || escaped.returns_interior;
+        for effect in arena_effects {
+            if !info.inferred_arena_retained.contains(&effect) {
+                info.inferred_arena_retained.push(effect);
+            }
+        }
         if previous
             != (
                 info.inferred_noescape.len(),
                 stored.len(),
                 info.returns_interior,
+                info.inferred_arena_retained.len(),
             )
         {
             pending.extend(callers.get(&name).into_iter().flatten().cloned());
@@ -614,6 +710,17 @@ fn analyze(
                 &mut escaped.retained
             };
             roots.extend(value.origins.iter().map(|origin| origin.root));
+            roots.extend(&value.arenas);
+        }
+    };
+    let record_arena_escape = |value: &Reference, arenas: &Set| {
+        if let Some(escaped) = escaped {
+            let mut escaped = escaped.borrow_mut();
+            for arena in arenas {
+                let sources = escaped.arena_retained.entry(*arena).or_default();
+                sources.extend(value.origins.iter().map(|origin| origin.root));
+                sources.extend(&value.arenas);
+            }
         }
     };
     let n = plan.ops.len();
@@ -630,6 +737,12 @@ fn analyze(
         .enumerate()
         .filter_map(|(pc, op)| matches!(op, Op::Local { .. }).then_some(plan.slot_count + pc))
         .collect();
+    let explicit_allocation_roots: Set = plan
+        .ops
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, op)| matches!(op, Op::ArenaAlloc { .. }).then_some(plan.slot_count + pc))
+        .collect();
     let local_places: Set = plan
         .ops
         .iter()
@@ -641,6 +754,7 @@ fn analyze(
     let mut types = BTreeMap::new();
     let mut initial = State::default();
     let mut owner_roots = Set::new();
+    let mut arena_parameter_roots = Set::new();
     let mut argument_roots = Set::new();
     let mut index = 0;
     for (parameter, ty) in info.signature.params.iter().enumerate() {
@@ -653,6 +767,9 @@ fn analyze(
             }
             if slot.ty.is_buffer() {
                 owner_roots.insert(slot.index);
+            }
+            if explicit_arena(&slot.ty) && !slot.ty.is_explicit_arena() {
+                arena_parameter_roots.insert(slot.index);
             }
             if reference_buffer(&slot.ty) {
                 // Parameter contents have an independent, task-lived origin.
@@ -673,6 +790,11 @@ fn analyze(
                 slot.index,
                 Reference {
                     origins: BTreeSet::from([Origin::new(slot.index)]),
+                    arenas: if explicit_arena(&slot.ty) && !slot.ty.is_explicit_arena() {
+                        Set::from([slot.index])
+                    } else {
+                        Set::new()
+                    },
                     loans: Set::from([slot.index]),
                     storage: slot.ty.is_buffer() || slot.ty.is_buffer_view(),
                     ..Default::default()
@@ -699,6 +821,8 @@ fn analyze(
         }
 
         if matches!(op, Op::Text { .. })
+            || matches!(op, Op::ArenaNew { .. })
+            || matches!(op, Op::Buffer(super::BufferOp::Move { dst, .. }) if dst.ty.is_explicit_arena())
             || matches!(op, Op::Call { result: Some(dst), .. } | Op::Scope { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
             || matches!(op, Op::Buffer(super::BufferOp::Swap { .. }))
             || matches!(op, Op::Buffer(super::BufferOp::Detach { .. }))
@@ -815,6 +939,12 @@ fn analyze(
                 .values()
                 .chain(input.contents.values())
                 .chain(input.retained.values().map(|(r, _)| r))
+                .chain(
+                    input
+                        .arena_retained
+                        .values()
+                        .flat_map(|r| r.values().map(|(r, _)| r)),
+                )
                 .map(|r| {
                     1 + r
                         .origins
@@ -823,6 +953,7 @@ fn analyze(
                         .sum::<usize>()
                         + r.loans.len()
                         + r.ancestors.len()
+                        + r.arenas.len()
                 })
                 .sum::<usize>();
         budget = budget.checked_sub(cost).ok_or_else(|| {
@@ -863,6 +994,15 @@ fn analyze(
                 &projection
             };
             let conflict = |alias: &Reference, mutable: bool| {
+                if exclusive
+                    && explicit_arena(&slot.ty)
+                    && value
+                        .origins
+                        .iter()
+                        .any(|origin| alias.arenas.contains(&origin.root))
+                {
+                    return true;
+                }
                 if !value.overlaps(alias) {
                     return false;
                 }
@@ -904,6 +1044,24 @@ fn analyze(
                     ));
                 }
             }
+            for (arena, retained) in &state.arena_retained {
+                // A region's internal references move and die with that region.
+                if slot.ty.is_explicit_arena()
+                    && value.origins.iter().any(|origin| origin.root == *arena)
+                {
+                    continue;
+                }
+                if retained
+                    .values()
+                    .any(|(alias, mutable)| conflict(alias, *mutable))
+                {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        "Reference access conflicts with a borrow retained by an explicit arena",
+                    ));
+                }
+            }
             Ok(())
         };
         let check_storage = |slot: &Slot, state: &State| -> Result<(), Error> {
@@ -938,6 +1096,47 @@ fn analyze(
             }
             Ok(())
         };
+        let check_arena_storage =
+            |slot: &Slot, arenas: &Set, state: &State, summarized: bool| -> Result<(), Error> {
+                let value = &state[&slot.index];
+                record_arena_escape(value, arenas);
+                if escaped.is_none()
+                    && !arenas.is_disjoint(&arena_parameter_roots)
+                    && value.has_root(&argument_roots)
+                {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        "@noescape function cannot retain an argument borrow in an explicit arena",
+                    ));
+                }
+                if slot.ty.is_buffer()
+                    || !summarized
+                        && (slot
+                            .ty
+                            .reference_type()
+                            .is_some_and(|reference| reference.mutable)
+                            || explicit_arena(&slot.ty))
+                {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        "Explicit arena payloads require Copy values and shared data references",
+                    ));
+                }
+                // A borrowed arena belongs to the caller. Callee-owned storage cannot
+                // cover its lifetime, even when the returned object is never observed.
+                if !arenas.is_disjoint(&arena_parameter_roots)
+                    && (value.has_root(&local_roots) || value.has_root(&owner_roots))
+                {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        "A local borrow cannot be retained by a caller's explicit arena",
+                    ));
+                }
+                Ok(())
+            };
         let record_child_escapes = |name: &str, args: &[Option<Slot>]| {
             let callee = &functions[name];
             if !callee.extern_abi.has_text() {
@@ -1007,6 +1206,21 @@ fn analyze(
             Op::Scope { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
             _ => false,
         };
+        if suspending
+            && live[pc].iter().any(|index| {
+                state.get(index).is_some_and(|value| !value.invalid)
+                    && (explicit_arena(&types[index])
+                        || state
+                            .get(index)
+                            .is_some_and(|value| !value.arenas.is_empty()))
+            })
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                "Explicit arenas and their references cannot remain live across suspension or enter concurrency",
+            ));
+        }
         if suspending
             && live[pc]
                 .iter()
@@ -1078,6 +1292,50 @@ fn analyze(
         }
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
+            Op::ArenaNew { dst } => {
+                state.insert(
+                    dst.index,
+                    Reference {
+                        origins: BTreeSet::from([Origin::new(loan)]),
+                        loans: Set::from([loan]),
+                        storage: true,
+                        ..Default::default()
+                    },
+                );
+            }
+            Op::ArenaAlloc {
+                dst, arena, value, ..
+            } => {
+                check_access(arena, false, &state, &live[pc], None, &[])?;
+                let arenas = state[&arena.index].arenas.clone();
+                let inputs: Vec<_> = value.iter().flat_map(refs).collect();
+                for input in &inputs {
+                    check_access(input, false, &state, &live[pc], None, &[])?;
+                    check_arena_storage(input, &arenas, &state, false)?;
+                    let value = state[&input.index].clone();
+                    for arena in &arenas {
+                        retain_arena(&mut state, *arena, (loan, input.index), value.clone());
+                    }
+                }
+                let contents = union(inputs.iter().map(|input| state[&input.index].clone()));
+                state
+                    .contents
+                    .entry(loan)
+                    .and_modify(|old| {
+                        merge(old, &contents);
+                    })
+                    .or_insert(contents);
+                state.insert(
+                    dst.index,
+                    Reference {
+                        origins: BTreeSet::from([Origin::new(loan)]),
+                        arenas,
+                        loans: Set::from([loan]),
+                        storage: true,
+                        ..Default::default()
+                    },
+                );
+            }
             Op::Text { dst, source } => {
                 if let TextSource::Clone(src) = source {
                     check_access(src, false, &state, &live[pc], None, &[])?;
@@ -1205,6 +1463,16 @@ fn analyze(
                 for (dst, src) in refs(dst).into_iter().zip(refs(src)) {
                     if dst.index != src.index && state.get(&dst.index).is_some_and(|v| !v.invalid) {
                         check_access(&dst, true, &state, &alive, Some(src.index), &[])?;
+                        if dst.ty.is_explicit_arena() {
+                            let roots: Vec<_> = state[&dst.index]
+                                .origins
+                                .iter()
+                                .map(|origin| origin.root)
+                                .collect();
+                            for root in roots {
+                                state.arena_retained.remove(&root);
+                            }
+                        }
                     }
                     check_access(&src, true, &state, &alive, Some(dst.index), &[])?;
                     let mut value = state[&src.index].clone();
@@ -1212,6 +1480,11 @@ fn analyze(
                     if dst.index != src.index {
                         state.get_mut(&src.index).unwrap().invalid = true;
                         if dst.ty.is_buffer() {
+                            if dst.ty.is_explicit_arena() {
+                                let roots =
+                                    value.origins.iter().map(|origin| origin.root).collect();
+                                move_arena(&mut state, &roots, loan);
+                            }
                             // The move has rejected every surviving source loan.
                             // Rebase the unique capability so a later loop allocation
                             // at the same call site cannot alias its previous owner.
@@ -1242,6 +1515,11 @@ fn analyze(
                     )?;
                 }
                 let mut value = union(inputs.iter().map(|src| state[&src.index].clone()));
+                if src.ty.is_explicit_arena() {
+                    value
+                        .arenas
+                        .extend(value.origins.iter().map(|origin| origin.root));
+                }
                 if let Some(place) = place {
                     check_access(
                         place,
@@ -1253,6 +1531,7 @@ fn analyze(
                     )?;
                     let storage = &state[&place.index];
                     value.origins.extend(storage.origins.iter().cloned());
+                    value.arenas.extend(&storage.arenas);
                     value.ancestors.extend(&storage.ancestors);
                     value.ancestors.extend(&storage.loans);
                 }
@@ -1265,6 +1544,16 @@ fn analyze(
                     // Moving out ends this binding without ending the destination owner.
                     if state.get(&owner.index).is_some_and(|v| !v.invalid) {
                         check_access(&owner, true, &state, &alive, None, &[])?;
+                        if owner.ty.is_explicit_arena() {
+                            let roots: Vec<_> = state[&owner.index]
+                                .origins
+                                .iter()
+                                .map(|origin| origin.root)
+                                .collect();
+                            for root in roots {
+                                state.arena_retained.remove(&root);
+                            }
+                        }
                         state.get_mut(&owner.index).unwrap().invalid = true;
                     }
                 }
@@ -1394,7 +1683,12 @@ fn analyze(
                     state
                         .get(index)
                         .is_some_and(|value| !value.invalid && value.has_root(&roots))
-                }) {
+                }) || state
+                    .arena_retained
+                    .values()
+                    .flat_map(|region| region.values())
+                    .any(|(value, _)| value.has_root(&roots))
+                {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidAssignment,
@@ -1423,6 +1717,7 @@ fn analyze(
                 }
             }
             Op::Local { dst, value, target } => {
+                let mut arenas = Set::new();
                 if target.is_closure_value() || target.contains_references() {
                     let contents = union(
                         value
@@ -1430,12 +1725,17 @@ fn analyze(
                             .flat_map(refs)
                             .filter_map(|s| state.get(&s.index).cloned()),
                     );
+                    // Borrowed closures capture the local pointer's place. Its
+                    // stored reference must keep the explicit arena alive even
+                    // after the original scalar reference is no longer live.
+                    arenas = contents.arenas.clone();
                     state.contents.insert(loan, contents);
                 }
                 state.insert(
                     dst.index,
                     Reference {
                         origins: BTreeSet::from([Origin::new(loan)]),
+                        arenas,
                         loans: Set::from([loan]),
                         ..Default::default()
                     },
@@ -1590,17 +1890,43 @@ fn analyze(
                 target,
             } => {
                 check_access(reference, true, &state, &live[pc], None, path)?;
+                let destination = &state[&reference.index];
+                let arenas = if !destination.origins.is_empty()
+                    && destination
+                        .origins
+                        .iter()
+                        .all(|origin| explicit_allocation_roots.contains(&origin.root))
+                {
+                    destination.arenas.clone()
+                } else {
+                    Set::new()
+                };
                 let inputs: Vec<_> = value.iter().flat_map(refs).collect();
                 for input in &inputs {
                     // Checked closure assignment writes private local storage. Its
                     // contents keep their lexical roots, never an arena retention.
                     if !target.is_closure_value() {
-                        check_storage(input, &state)?;
+                        if arenas.is_empty() {
+                            check_storage(input, &state)?;
+                        } else {
+                            check_arena_storage(input, &arenas, &state, false)?;
+                        }
                     }
                     check_access(input, false, &state, &live[pc], None, &[])?;
                     if !target.is_closure_value() {
                         let value = state[&input.index].clone();
-                        retain(&mut state, (loan, input.index), value, false);
+                        if arenas.is_empty() {
+                            retain(&mut state, (loan, input.index), value, false);
+                        } else {
+                            for arena in &arenas {
+                                retain_arena(
+                                    &mut state,
+                                    *arena,
+                                    (loan, input.index),
+                                    value.clone(),
+                                );
+                            }
+                        }
                     }
                 }
                 let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
@@ -1617,6 +1943,13 @@ fn analyze(
                             merge(old, &contents);
                         })
                         .or_insert_with(|| contents.clone());
+                    if local_roots.contains(&root) {
+                        for alias in std::rc::Rc::make_mut(&mut state.slots).values_mut() {
+                            if alias.origins.iter().any(|origin| origin.root == root) {
+                                alias.arenas.extend(&contents.arenas);
+                            }
+                        }
+                    }
                 }
             }
             Op::Scope {
@@ -1904,6 +2237,35 @@ fn analyze(
                         &[],
                     )?;
                 }
+                for &(source, destination) in &functions[name].inferred_arena_retained {
+                    let arenas: Set = arguments
+                        .iter()
+                        .filter(|(parameter, _)| *parameter == Some(destination))
+                        .flat_map(|(_, argument)| argument.iter().flat_map(refs))
+                        .flat_map(|slot| state[&slot.index].arenas.iter().copied())
+                        .collect();
+                    for input in arguments
+                        .iter()
+                        .filter(|(parameter, _)| *parameter == Some(source))
+                        .flat_map(|(_, argument)| argument.iter().flat_map(refs))
+                    {
+                        check_arena_storage(&input, &arenas, &state, true)?;
+                        let value = state[&input.index].clone();
+                        for arena in &arenas {
+                            retain_arena(&mut state, *arena, (loan, input.index), value.clone());
+                        }
+                    }
+                }
+                // Unknown retention must never turn an explicit-region reference
+                // into task-lived storage, including allocation-free host wrappers.
+                for arg in &inputs {
+                    if retained_inputs.contains(&arg.index)
+                        && !arg.ty.is_buffer()
+                        && !state[&arg.index].arenas.is_empty()
+                    {
+                        check_storage(arg, &state)?;
+                    }
+                }
                 // Writable reference-element buffers impose a storage contract
                 // even in allocation-free helpers (notably set). This follows
                 // the signature, so aliases/generics/wrappers cannot hide it.
@@ -1979,6 +2341,13 @@ fn analyze(
                         } else {
                             state[&arg.index].clone()
                         };
+                        value.arenas.extend(&source.arenas);
+                        value.storage |= !source.arenas.is_empty();
+                        // An Arena parameter contributes a lifetime, not object
+                        // identity: every allocation through it remains disjoint.
+                        if explicit_arena(&arg.ty) && !explicit_arena(&dst.ty) {
+                            continue;
+                        }
                         if !mutable
                             || arg.ty.is_buffer()
                             || arg.ty.reference_type().is_some_and(|r| r.mutable)
@@ -1996,6 +2365,16 @@ fn analyze(
                     state.insert(dst.index, value);
                 }
                 for arg in inputs.iter().filter(|arg| arg.ty.is_buffer()) {
+                    if arg.ty.is_explicit_arena() {
+                        let roots: Vec<_> = state[&arg.index]
+                            .origins
+                            .iter()
+                            .map(|origin| origin.root)
+                            .collect();
+                        for root in roots {
+                            state.arena_retained.remove(&root);
+                        }
+                    }
                     state.get_mut(&arg.index).unwrap().invalid = true;
                 }
             }

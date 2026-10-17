@@ -48,5 +48,6 @@ mod lists;
 #[cfg(unix)]
 mod collections;
 
+mod explicit_arena;
 #[cfg(unix)]
 mod sets;

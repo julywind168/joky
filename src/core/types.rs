@@ -28,6 +28,18 @@ pub(crate) enum TypeDefinition {
     Alias(std::sync::Arc<AliasTemplate>),
 }
 
+impl TypeDefinition {
+    /// Arena's public spelling is an alias for a compiler-owned capability.
+    pub(crate) fn explicit_arena(&self) -> Option<&Type> {
+        let ty = match self {
+            Self::Type(ty) => ty,
+            Self::Alias(alias) if alias.parameters.is_empty() => &alias.target,
+            _ => return None,
+        };
+        ty.is_explicit_arena().then_some(ty)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct AliasTemplate {
     name: String,
@@ -294,7 +306,22 @@ impl TypeRegistry {
                 Type::Enum(e) => Some((&e.name, &e.parameters, &e.arguments)),
                 _ => None,
             };
-            let valid = if let Some((name, parameters, arguments)) = arguments {
+            let trusted_arena = target.is_explicit_arena()
+                && implementation.trait_name.is_none()
+                && implementation.type_params.is_empty()
+                && !implementation.methods.is_empty()
+                && implementation.methods.iter().all(|method| {
+                    matches!(
+                        method.compiler_intrinsic,
+                        Some(
+                            crate::parser::ast::CompilerIntrinsic::ArenaNew
+                                | crate::parser::ast::CompilerIntrinsic::ArenaAlloc
+                        )
+                    )
+                });
+            let valid = if trusted_arena {
+                true
+            } else if let Some((name, parameters, arguments)) = arguments {
                 (name == &implementation.target_name
                     || (implementation.trait_name.is_some()
                         && module.scope.as_ref().is_some_and(|scope| {
@@ -323,6 +350,9 @@ impl TypeRegistry {
                 return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                     "impl requires a Copy primitive or a record/enum with each impl parameter in declaration order; aliases and specialized implementations are not supported")
                     .with_span(implementation.span));
+            }
+            if trusted_arena {
+                implementation.target_name = target.to_string();
             }
             for constant in &mut implementation.constants {
                 resolve_type(&mut constant.ty, &canonical, &local)
@@ -507,6 +537,15 @@ impl TypeRegistry {
     }
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
+        if ty.contains_explicit_arena()
+            && !ty.is_explicit_arena()
+            && !ty
+                .reference_type()
+                .is_some_and(|r| !r.mutable && r.target.is_explicit_arena())
+        {
+            return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
+                "Arena capabilities require a direct owner or &Arena; aggregates, type arguments, function values and &mut Arena are not supported"));
+        }
         if matches!(ty, Type::DynTrait(_)) {
             return Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
@@ -1314,6 +1353,7 @@ impl Default for TypeRegistry {
             hosts: Default::default(),
             text_ffi: Default::default(),
             resources: BTreeSet::from([
+                "arena.Arena".into(),
                 VM_OWNER.into(),
                 "domain.TimerOwner".into(),
                 "domain.DirectoryOwner".into(),
@@ -1346,6 +1386,7 @@ impl Default for TypeRegistry {
             resource_io: Default::default(),
             standard: Default::default(),
             named: BTreeSet::from([
+                "arena.Arena".into(),
                 VM_OWNER.into(),
                 VM_FUNCTION.into(),
                 "admission.Token".into(),

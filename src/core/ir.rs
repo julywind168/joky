@@ -7,6 +7,7 @@ use crate::parser::ast::{
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
+mod arenas;
 mod borrowing;
 mod branches;
 mod buffers;
@@ -77,6 +78,8 @@ pub(crate) struct FunctionInfo {
     pub inferred_noescape: Vec<usize>,
     /// None means unknown; Some lists parameters whose borrows may be stored.
     pub inferred_retained: Option<Vec<usize>>,
+    /// Stored source parameter and destination explicit-arena parameter pairs.
+    pub inferred_arena_retained: Vec<(usize, usize)>,
     /// A returned reference may point into relocatable container storage.
     pub returns_interior: bool,
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
@@ -113,6 +116,7 @@ impl FunctionInfo {
             infer_noescape: false,
             inferred_noescape: Vec::new(),
             inferred_retained: None,
+            inferred_arena_retained: Vec::new(),
             returns_interior: true,
             compiler_intrinsic: None,
             signature,
@@ -233,6 +237,17 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    /// A uniquely owned explicit arena, released by ordinary owner cleanup.
+    ArenaNew {
+        dst: Slot,
+    },
+    /// Fresh stable Copy storage tied to a checked explicit arena borrow.
+    ArenaAlloc {
+        dst: Slot,
+        arena: Slot,
+        value: Option<Slot>,
+        target: Type,
+    },
     /// Static closure move/call responsibility, erased after checking.
     Closure(Box<closures::ClosureOp>),
     /// Copy validated UTF-8 into a fresh task-owned buffer; this operation may fail.
@@ -603,6 +618,19 @@ impl ModulePlan {
             local
                 .validate(ret)
                 .map_err(|error| error.with_span(*item_span(item)))?;
+            if matches!(item, Item::ExternFn(_))
+                && params
+                    .iter()
+                    .map(|p| &p.ty)
+                    .chain(std::iter::once(ret))
+                    .any(Type::contains_explicit_arena)
+            {
+                return Err(type_error(
+                    item_span(item),
+                    ErrorCode::InvalidCall,
+                    "Arena capabilities cannot cross a host boundary",
+                ));
+            }
             let source_name = if matches!(item, Item::FnDef(f) if f.scope.is_some())
                 && !members.functions.contains(name)
             {
@@ -618,6 +646,7 @@ impl ModulePlan {
                 || source_name.starts_with("__joky_resource_")
                 || source_name.starts_with("joky_byte_request_")
                 || source_name.starts_with("__joky_arena_")
+                || source_name.starts_with("__joky_explicit_arena_")
                 || source_name.starts_with("__joky_buffer_")
                 || source_name.starts_with("__joky_cps_")
                 || source_name.starts_with("__joky_generic_")
@@ -675,6 +704,7 @@ impl ModulePlan {
                     && !members.traits.requirements.contains(name),
                 inferred_noescape: Vec::new(),
                 inferred_retained: None,
+                inferred_arena_retained: Vec::new(),
                 returns_interior: true,
                 compiler_intrinsic: match item {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),
@@ -977,6 +1007,8 @@ impl ModulePlan {
                             Op::Assert { .. }
                             | Op::Panic { .. }
                             | Op::Alloc { .. }
+                            | Op::ArenaNew { .. }
+                            | Op::ArenaAlloc { .. }
                             | Op::Text { .. } => true,
                             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
                             Op::Binary(_, op, lhs, _) if op.can_fail() && !lhs.ty.is_float() => {
@@ -1071,6 +1103,15 @@ impl FunctionPlan {
     fn named_type(&self, name: &str) -> Option<&Type> {
         if name.contains('.') && !self.scope.types.contains_key(name) {
             return None;
+        }
+        if let Some(ty) = self
+            .scope
+            .types
+            .get(name)
+            .and_then(|binding| binding.resolved.as_ref())
+            .and_then(super::types::TypeDefinition::explicit_arena)
+        {
+            return Some(ty);
         }
         if self
             .scope
@@ -1383,6 +1424,9 @@ impl FunctionPlan {
         if plan.text_body(f)? {
             return Ok(plan);
         }
+        if plan.arena_body(f)? {
+            return Ok(plan);
+        }
         // Aggregate results have a fixed region immediately after parameters in CPS.
         // Direct lowering uses the same slots with an internal result pointer.
         if f.ret_ty.is_aggregate() {
@@ -1483,6 +1527,11 @@ impl FunctionPlan {
     }
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
+        if ty.contains_explicit_arena() {
+            self.type_registry
+                .validate(&ty)
+                .map_err(|error| error.with_span(self.current_span))?;
+        }
         let width = ty.scalar_types().len();
         if self
             .slot_count
