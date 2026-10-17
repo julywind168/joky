@@ -1,4 +1,4 @@
-//! NET0 feasibility probes; no production network module or resource ABI is added.
+//! Custom borrowing-host I/O lifecycle and opaque-type ABI regressions.
 use super::{VmEngine, VmMode};
 use crate::{FunctionSignature, Type};
 
@@ -125,7 +125,7 @@ fn net0_pending_io_survives_reload_and_vm_drop() {
     }
 }
 #[test]
-fn net0_records_current_external_owner_and_buffer_abi_gaps() {
+fn opaque_types_reject_ownership_and_buffer_host_abis() {
     for (source, message) in [
         ("import joky/drop.{type Drop} struct SocketOwner { token: UInt64 } impl Drop for SocketOwner { fn drop(&mut self) {} }", "Drop requires an owning record"),
         ("import joky/result.{type Result, Ok} fn wrap(socket: Socket) -> Result<Socket, Int32> { Ok(socket) }", "Generic enum argument must be a Copy type or an owner"),

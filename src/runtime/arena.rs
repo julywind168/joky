@@ -515,7 +515,3 @@ mod tests {
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }
-
-#[cfg(test)]
-#[path = "persistent_probe.rs"]
-mod persistent_probe;

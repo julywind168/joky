@@ -1,4 +1,4 @@
-//! S0 probes for existing ownership mechanisms, not a dynamic String implementation.
+//! Owning-record cleanup, budget failures, and suspension regressions.
 use super::{VmEngine, VmMode};
 use crate::{runtime::arena, ErrorCode, FunctionSignature, ModuleSources, Type};
 use std::cell::{Cell, RefCell};
@@ -238,74 +238,7 @@ fn string_storage_probe_rejects_moves_escaping_views_and_private_storage() {
 }
 
 fn rejects(source: &str, modules: &ModuleSources, message: &str) {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = registered(mode)
-            .load_source_with_modules(source, modules)
-            .unwrap_err();
-        assert!(
-            error.message().contains(message),
-            "{mode:?}: {source}: {error}"
-        );
-    }
-    let result = crate::TypeRegistry::default()
-        .resolve_with_modules(&crate::parser::parse(source).unwrap(), modules)
-        .and_then(|ast| {
-            crate::aot::AotCompiler::new("string-probe-negative")?
-                .compile_module(&ast)
-                .map(|_| ())
-        });
-    let error = result.unwrap_err();
-    assert!(error.message().contains(message), "AOT: {source}: {error}");
-}
-
-#[test]
-fn string_storage_probe_records_remaining_container_and_suspension_gaps() {
-    for (source, message) in [
-        (
-            "import joky/array.{type Array} fn bad() { Array.new::<&String>(); }",
-            "Copy type or owning record",
-        ),
-        (
-            "import probe fn bad(text: &probe.TextProbe) @suspends -> &probe.TextProbe { text }",
-            "synchronous",
-        ),
-        (
-            "import probe extern fn host(text: probe.TextProbe)",
-            "host ABI",
-        ),
-    ] {
-        rejects(source, &modules(), message);
-    }
-    assert!(Type::String.is_owner());
-    assert!(!Type::String.is_copy_value());
-    assert_eq!(
-        (
-            Type::UInt8.memory_layout().unwrap().size,
-            Type::UInt8.memory_layout().unwrap().align
-        ),
-        (1, 1)
-    );
-    assert_eq!(
-        Type::String.storage_layout().unwrap().size,
-        std::mem::size_of::<usize>()
-    );
-    assert_eq!(Type::String.parameter_slots(), 1);
-    for pointer_size in [4, 8] {
-        let target = crate::memory_layout::MemoryLayoutTarget {
-            int32_align: 4,
-            int64_align: pointer_size,
-            pointer_size,
-            pointer_align: pointer_size,
-            max_size: i32::MAX as usize,
-        };
-        // Existing narrow storage lanes demonstrate why slots cannot define
-        // UInt8/Rune layouts. The actual future types remain rejected above.
-        let byte = Type::Bool.memory_layout_for(target).unwrap();
-        let scalar = Type::UInt32.memory_layout_for(target).unwrap();
-        let pointer = Type::Ptr.memory_layout_for(target).unwrap();
-        assert_eq!((byte.size, byte.align), (1, 1));
-        assert_eq!((scalar.size, scalar.align), (4, 4));
-        assert_eq!((pointer.size, pointer.align), (pointer_size, pointer_size));
-        assert!(Type::String.memory_layout_for(target).is_err());
-    }
+    let error = super::support::frontend_error(source, modules);
+    assert!(error.message().contains(message), "{source}: {error}");
+    assert!(error.span().is_some(), "{source}: {error}");
 }

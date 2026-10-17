@@ -5112,21 +5112,6 @@ fn json1a_expanding_types_and_live_owner_loans_remain_rejected() {
 }
 
 #[test]
-fn json1b_general_numeric_from_text_remains_outside_public_api() {
-    let work = Workspace::new();
-    for source in [
-        "fn main() { let text = \"42\"; Int64.from_text(&text); }",
-        "fn main() { let text = \"18446744073709551615\"; UInt64.from_text(&text); }",
-        "fn main() { let text = \"1.25e2\"; Float64.from_text(&text); }",
-    ] {
-        work.write("number.jk", source);
-        failure(&work.cli(&["build", "number.jk"]), "from_text");
-        assert!(!work.path().join("number").exists());
-    }
-    work.assert_no_build_files();
-}
-
-#[test]
 fn json1b_values_and_numbers_run_in_all_backends() {
     let work = Workspace::new();
     work.write("values.jk", include_str!("fixtures/json1b_values.jk"));

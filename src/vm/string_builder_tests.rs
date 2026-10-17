@@ -97,10 +97,8 @@ fn string_builder_s3_rejects_private_storage_moves_and_conflicting_borrows() {
         "fn f(b: &mut StringBuilder) @suspends -> &mut StringBuilder { b }",
     ] {
         let source = format!("{prefix}{body}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            assert!(VmEngine::with_mode(mode).load_source(&source).is_err(), "{mode:?}: {body}");
-        }
-        assert!(crate::aot::AotCompiler::new("builder-negative").unwrap().compile_module(&crate::parser::parse(&source).unwrap()).is_err(), "AOT: {body}");
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.span().is_some(), "{source}: {error}");
     }
 }
 

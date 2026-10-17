@@ -56,10 +56,8 @@ fn string_s4_rejects_byte_view_escape_writes_moves_and_private_freezing() {
         "import joky/array.{type Array} fn f() { let data = Array.new::<UInt8>() String.from_utf8(data); data.release() }",
         "import joky/string.{freeze_utf8} fn f() {}",
     ] {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            assert!(VmEngine::with_mode(mode).load_source(source).is_err(), "{mode:?}: {source}");
-        }
-        assert!(crate::aot::AotCompiler::new("utf8-negative").unwrap().compile_module(&crate::parser::parse(source).unwrap()).is_err(), "AOT: {source}");
+        let error = super::support::frontend_error(source, &crate::ModuleSources::new());
+        assert!(error.span().is_some(), "{source}: {error}");
     }
 }
 

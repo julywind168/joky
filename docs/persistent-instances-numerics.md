@@ -268,7 +268,9 @@ Failed 身份计入数量，资源已释放；关闭不回收 ID 序号。注册
 这些计费不等于进程 RSS，不覆盖编译代码、诊断和 Rust 容器预留容量。
 P2 还需实现拥有分配迁移时的 VM 总峰值预算；P1 没有新增全 VM 所有任务的内存限额。
 
-P0 探针位于 [persistent_probe.rs](../src/runtime/persistent_probe.rs)，仅在测试中编译：
+P0 曾使用仅在测试中编译的 `persistent_probe.rs` 验证以下边界。正式实现落地后，
+该手写转移模型已清理；当前回归见[拥有实例测试](../src/vm/instance_owner_tests.rs)
+和[容器实例测试](../src/vm/instance_container_tests.rs)。以下保留为历史验收记录：
 
 - 调用者显式给出一个 String 根的完整分配集合；控制块、载荷登记移动，地址不变。
   临时分配保留在原 arena 并独立销毁；转移成功后单独接管清理项。

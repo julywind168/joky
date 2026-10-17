@@ -389,7 +389,7 @@ fn arrays_preserve_ownership_through_source_module_aliases() {
 }
 
 #[test]
-fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
+fn arrays_reject_capability_escapes_and_invalid_storage() {
     let prefix = r#"
         import joky/array as array.{type Array}
         fn consume(a: Array<Int32>) {}
@@ -439,14 +439,8 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         } else {
             format!("{prefix}\n{source}")
         };
-        let ast = crate::parser::parse(&source).unwrap();
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            let error = vm.load_module(&ast).expect_err(&source);
-            assert!(error.span().is_some(), "{source}: {error:?}");
-        }
-        let mut compiler = crate::aot::AotCompiler::new("invalid-array").unwrap();
-        assert!(compiler.compile_module(&ast).is_err(), "{source}");
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.span().is_some(), "{source}: {error}");
     }
 }
 

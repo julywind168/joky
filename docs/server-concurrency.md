@@ -423,9 +423,11 @@ Set 和 StringBuilder 先不进入该名单。资源叶、用户 Drop、借用�
 
 ### 11.2 SC0 探针与验证记录
 
-运行时探针位于 [state_domain_probe.rs](../src/runtime/state_domain_probe.rs)，仅通过
-`#[cfg(test)]` 接线。使用真实 Arena、Buffer、Budget 和 ExternalCharge；版本、访问权限与
-取消/关闭事件使用单域实验模型，不是现有 HostExecutor 的生产实现。
+SC0 曾通过仅在测试中编译的 `state_domain_probe.rs` 探针验证以下边界，使用真实
+Arena、Buffer、Budget 和 ExternalCharge；版本、访问权限与取消/关闭事件使用单域实验模型。
+正式实现落地后，该模型已清理；当前回归见[状态域测试](../src/vm/state_domain_tests.rs)、
+[候选提交与截止时间测试](../src/vm/state_domains/commits.rs)。
+以下表格与命令保留为 2026-10-12 的历史验收记录。
 
 | 探针 | 已验证的边界 |
 | --- | --- |

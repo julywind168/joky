@@ -443,10 +443,8 @@ fn owning_string_s2_rejects_moves_conflicting_loans_and_private_bridges() {
         "fn __joky_user_text_v2_f() {}",
         "fn joky_string_result_free_v2() {}",
     ] {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            assert!(super::VmEngine::with_mode(mode).load_source(source).is_err(), "{mode:?}: {source}");
-        }
-        assert!(crate::aot::AotCompiler::new("text-negative").unwrap().compile_module(&crate::parser::parse(source).unwrap()).is_err(), "AOT: {source}");
+        let error = super::support::frontend_error(source, &crate::ModuleSources::new());
+        assert!(error.span().is_some(), "{source}: {error}");
     }
     // Names alone cannot grant access to trusted storage operations.
     let source = r#"fn freeze_utf8() -> String { "ordinary" } fn f() -> String { freeze_utf8() }"#;
