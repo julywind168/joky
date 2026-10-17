@@ -17,6 +17,8 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 文件资源、可选宿主文件服务、后台 I/O 与取消回收见[文件运行时设计与开发计划](file-runtime.md)；
 FS0–FS5 已提供 `joky/fs`、可选宿主描述符和有界文件工作池；Godot 验证适配器不提供文件服务；
 FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `_limited` 版本。已实现接口及平台限制见 [language.md](language.md#内置文件模块-jokyfs)。
+后续先实现 FS6P：拥有型 UTF-8 Path 与消费型 IntoPath，再推进 FS7 目录/元数据和 FS8 原子替换写入；
+均为待实现设计，接口草案与嵌入边界见[路径抽象设计](file-runtime.md#14-路径抽象与后续文件能力设计)。
 
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
 [核心文法](#11-核心语法ebnf)、[实施顺序](#12-实施顺序与验收)。
