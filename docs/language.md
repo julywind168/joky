@@ -4428,9 +4428,11 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `fs.open(path: String, options: fs.OpenOptions) @suspends` | `Result<File, IoError>` |
 | `file.read(&mut self, limit: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
 | `file.write(&mut self, bytes: Array<UInt8>) @suspends` | `Result<UInt64, IoError>` |
-| `file.read_all(&mut self, max_bytes: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
+| `file.read_all(&mut self) @suspends` | `Result<Array<UInt8>, IoError>` |
+| `file.read_all_limited(&mut self, max_bytes: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
 | `file.write_all(&mut self, bytes: Array<UInt8>) @suspends` | `Result<Unit, WriteError>` |
-| `file.read_text(&mut self, max_bytes: UInt64) @suspends` | `Result<String, ReadTextError>` |
+| `file.read_text(&mut self) @suspends` | `Result<String, ReadTextError>` |
+| `file.read_text_limited(&mut self, max_bytes: UInt64) @suspends` | `Result<String, ReadTextError>` |
 | `file.write_text(&mut self, text: String) @suspends` | `Result<Unit, WriteError>` |
 | `file.seek(&mut self, from: fs.SeekFrom) @suspends` | `Result<UInt64, IoError>` |
 | `file.sync_all(&mut self) @suspends` | `Result<Unit, IoError>` |
@@ -4455,17 +4457,24 @@ WriteZero、SystemFailure；消息最多 1024 UTF-8 字节。没有宿主服务�
 
 文件内容是字节；用 `text.into_bytes()` 写入文本，用 `String.from_utf8(bytes)` 显式验证和
 转为 String，转换失败得到 Utf8Error。单次 read 可能截在 UTF-8 字符中间；多块读取时
-应先拼接或由调用方维护跨块状态；`read_text` 已封装有界读取与整体 UTF-8 校验。
+应先拼接或由调用方维护跨块状态；`read_text` 与 `read_text_limited` 已封装完整读取与整体 UTF-8 校验。
 
-`read_all(max_bytes)` 从当前游标读到 EOF，短读继续，每次最多 64 KiB；不隐式 seek。
-max_bytes 允许 0，是返回内容的字节上限，不是总内存预算。达到上限后多读 1 字节探测 EOF；
-有额外内容则返回 LimitExceeded，已读内容丢弃，游标可能推进 max_bytes + 1 字节。
-恰好上限且 EOF 则成功。I/O 失败也不回滚游标。数组按实际内容增长，扩容与临时块仍计入
-任务内存预算，过大的分配或预算耗尽遵循既有运行时错误语义。
+`read_all()` 从当前游标读到 EOF，短读继续，每次最多 64 KiB；不隐式 seek，不设置额外的
+内容大小上限。数组按实际内容增长，底层请求额度与宿主配置的任务内存预算仍然生效；
+分配或预算耗尽遵循既有运行时错误语义。无参数不表示无限内存，也不保证持续产生内容的文件会到达 EOF。
 
-`read_text(max_bytes)` 在 read_all 成功后严格解码，返回 `ReadTextError.Io(IoError)` 或
-`ReadTextError.Utf8(Utf8Error)`；保留 UTF-8 原因及相对本次读取起点的错误偏移。
-字符可跨读块；保留 BOM、NUL 与换行，不做替换或规范化。I/O 或超限失败先于 UTF-8 校验。
+`read_all_limited(max_bytes)` 额外检查内容大小。max_bytes 允许 0，是返回内容的字节上限，
+不是总内存预算。达到上限后多读 1 字节探测 EOF；有额外内容则返回 LimitExceeded，
+已读内容丢弃，游标可能推进 max_bytes + 1 字节；恰好上限且 EOF 则成功。
+两种读取遇到 I/O 失败均丢弃累积内容，不回滚游标；扩容与临时块仍占任务内存。
+
+`read_text()` / `read_text_limited(max_bytes)` 分别在对应字节读取成功后严格解码，返回
+`ReadTextError.Io(IoError)` 或 `ReadTextError.Utf8(Utf8Error)`；保留 UTF-8 原因及相对
+本次读取起点的错误偏移。字符可跨读块；保留 BOM、NUL 与换行，不做替换或规范化。
+I/O 或受限版的超限失败先于 UTF-8 校验。
+
+原来的 `read_all(max_bytes)` / `read_text(max_bytes)` 调用需改为 `_limited` 接口；
+不需要内容上限的调用直接省略参数。写入接口保持不变。
 
 `write_all(bytes)` 消费完整输入，每次最多写 64 KiB，继续处理成功短写；输入可超过单次
 write 的 1 MiB 限制。遇到错误立即停止，不自动重试 Busy。`WriteError` 有公开字段
@@ -4476,7 +4485,7 @@ write 的 1 MiB 限制。遇到错误立即停止，不自动重试 Busy。`Writ
 完整写入不自动定位、创建、截断、同步或关闭；这些由 OpenOptions 与显式操作决定。
 成功不保证持久化或多块原子性；追加模式下各块之间可被其他写入者插入。
 取消便利方法不返回部分进度、不回滚效果，当前请求沿用下述取消规则。
-[可执行示例](../examples/files.jk)演示有限 UTF-8 文件往返。
+[可执行示例](../examples/files.jk)演示 UTF-8 文件的完整读写。
 
 CLI 的 JIT/解释器与 `joky build` 生成的程序安装本机服务，相对路径以服务启动时的工作
 目录为基准，支持绝对路径；该基准不是安全沙箱。嵌入 VM/AOT 默认没有文件服务，

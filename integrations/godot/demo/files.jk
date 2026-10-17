@@ -13,7 +13,7 @@ fn task_files(count: Int32) @suspends {
     var index: Int32 = 0
     while index < count {
         var input = match fs.open("res://files_payload.txt", fs.OpenOptions.new()) { Ok(f) => f, Err(_) => { assert(false, &message) return } }
-        let text = match input.read_text(128) { Ok(t) => t, Err(_) => { assert(false, &message) return } }
+        let text = match input.read_text() { Ok(t) => t, Err(_) => { assert(false, &message) return } }
         assert(text.byte_length() == 15, &message)
         match input.close() { Ok(_) => {}, Err(_) => assert(false, &message) }
         var options = fs.OpenOptions.new()
@@ -23,7 +23,7 @@ fn task_files(count: Int32) @suspends {
         var output = match fs.open("user://joky_fs.bin", options) { Ok(f) => f, Err(_) => { assert(false, &message) return } }
         match output.write_text(text) { Ok(_) => {}, Err(_) => assert(false, &message) }
         match output.seek(fs.SeekFrom.Start(0)) { Ok(n) => assert(n == 0, &message), Err(_) => assert(false, &message) }
-        let saved = match output.read_all(128) { Ok(b) => b, Err(_) => { assert(false, &message) return } }
+        let saved = match output.read_all_limited(128) { Ok(b) => b, Err(_) => { assert(false, &message) return } }
         assert(saved.len() == 15, &message)
         match output.sync_all() { Err(e) => match e.kind { fs.ErrorKind.Unsupported => {}, _ => assert(false, &message) }, Ok(_) => assert(false, &message) }
         match output.close() { Ok(_) => {}, Err(_) => assert(false, &message) }

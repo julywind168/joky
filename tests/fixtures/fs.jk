@@ -77,7 +77,7 @@ fn boundaries() @suspends -> Int32 {
     42
 }
 
-fn pending_read(file: &mut fs.File) @suspends { let ignored = file.read_text(8) }
+fn pending_read(file: &mut fs.File) @suspends { let ignored = file.read_text_limited(8) }
 fn after_cancel(expected: Int32) @suspends -> Int32 {
     var file = match fs.open("cancel", fs.OpenOptions.new()) { Ok(f) => f, Err(_) => { return 1 } }
     race { | pending_read(&mut file) | task.yield_now() }

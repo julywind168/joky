@@ -5,9 +5,12 @@ fn convenience() @suspends -> Int32 {
     var file = fs.open("convenience", options).unwrap()
     file.write_text("Hi🙂").unwrap()
     file.seek(fs.SeekFrom.Start(0)).unwrap()
-    let text = file.read_text(6).unwrap()
+    let text = file.read_text().unwrap()
     let expected = "Hi🙂"
     if !text.equals(&expected) { return 1 }
+    file.seek(fs.SeekFrom.Start(0)).unwrap()
+    let bounded = file.read_text_limited(6).unwrap()
+    if !bounded.equals(&expected) { return 2 }
     file.close().unwrap()
     42
 }

@@ -249,7 +249,7 @@ Godot 首先验证缺省实现与每帧非阻塞驱动，再单独实现引擎�
 | FS3：本机文件 API | 接入 open/read/write/seek/sync_all/close 与 CLI/AOT 安装 | 三后端执行真实临时文件读写、错误和取消；独立 AOT 等待与安装布局验证 |
 | FS4：嵌入与 Godot | 公开宿主配置、共享服务隔离、Godot 缺省及引擎实现 | 实际引擎场景保持帧推进；未提供/已提供实现均验证；实例关闭、重载与后台保活验证 |
 | FS5：收尾与文档 | 受影响 Debug 穷举、示例、稳定接口文档和平台记录 | 逐项记录证据与未验证平台，更新 language/architecture；未实现能力继续保留设计状态 |
-| FS6：字节与文本便利 API | 有界 read_all、完整 write_all、严格 UTF-8 read_text/write_text；具体契约见第 12 节 | 三后端短读/短写、超限、解码与部分进度；取消穷举及真实 Godot 场景 |
+| FS6：字节与文本便利 API | 默认/受限完整读取、完整 write_all、严格 UTF-8 read_text/write_text；具体契约见第 12 节 | 三后端短读/短写、超限、解码与部分进度；取消穷举及真实 Godot 场景 |
 
 FS1/FS2 可以用确定性内存宿主推进，但不能跳过 FS3 的真实文件操作。
 FS4 中“Godot 缺省行为可用”和“引擎文件适配可用”分别记录，不合并为一次通过。
@@ -504,16 +504,19 @@ res:// 文件未在本次环境执行；Windows CloseHandle 仅有条件编译�
 
 没有运行 Release、完整 stress、性能计时或非本机平台验收。
 
-## 12. FS6：有界字节与文本便利 API
+## 12. FS6：字节与文本便利 API
 
 状态：2026-10-17 已实现并通过本机验收。此阶段仅组合既有异步操作，不增加内部资源类型、工作池或宿主 ABI。
+2026-10-18 调整为默认无参数读取与显式 `_limited` 读取；旧的带参数调用迁移到 `_limited`。
 正式接口放在 `File` 上，均借用 `&mut self` 且标记 `@suspends`：
 
 | 接口 | 结果 |
 | --- | --- |
-| `read_all(max_bytes: UInt64)` | `Result<Array<UInt8>, IoError>` |
+| `read_all()` | `Result<Array<UInt8>, IoError>` |
+| `read_all_limited(max_bytes: UInt64)` | `Result<Array<UInt8>, IoError>` |
 | `write_all(bytes: Array<UInt8>)` | `Result<Unit, WriteError>` |
-| `read_text(max_bytes: UInt64)` | `Result<String, ReadTextError>` |
+| `read_text()` | `Result<String, ReadTextError>` |
+| `read_text_limited(max_bytes: UInt64)` | `Result<String, ReadTextError>` |
 | `write_text(text: String)` | `Result<Unit, WriteError>` |
 
 `WriteError` 的公开字段为 `written: UInt64` 与 `error: IoError`；written 是此前成功
@@ -522,18 +525,23 @@ write 返回的字节数之和，不计失败请求中无法获知的副作用�
 
 ### 12.1 读取与存储上限
 
-read_all 从当前游标开始，不隐式 seek、不依赖元数据、不建立文件快照。
-每次最多请求 64 KiB，短读继续，只有空结果表示 EOF。max_bytes 是返回内容的字节上限，
-允许 0；读到上限后再读 1 字节，空结果表示恰好 EOF，否则返回 LimitExceeded。
-因此超限失败可能推进游标 max_bytes + 1 字节；不退回探测字节，也不返回部分内容。
-I/O 失败同样丢弃累积内容，不回滚游标。文件并发增长时也受这个内容上限约束。
-算法先减剩余额度，不对 UInt64.MAX 执行加一。
+read_all 与 read_all_limited 从当前游标开始，不隐式 seek、不依赖元数据、不建立文件快照。
+每次最多请求 64 KiB，短读继续，只有空结果表示 EOF。read_all 不设置额外内容上限，
+也不将某个固定大小作为隐式默认值；它仍受实际存储能力及宿主配置的任务内存预算约束。
 
-不按 max_bytes 预分配；Array 随实际内容增长，其扩容容量、暂时的新旧缓冲区和当前块
-仍计入任务内存预算。max_bytes 不是总内存额度，较大值不保证能够分配；分配或任务预算
-失败保持现有运行时错误语义。read_text 先完成有界字节读取，再整体严格验证 UTF-8，
-支持字符跨读块，保留 BOM、NUL 与换行，不做替换或规范化；超限/I/O 失败优先于解码。
-UTF-8 错误偏移相对于本次读取开始处，而非文件绝对位置。
+read_all_limited 的 max_bytes 是返回内容的字节上限，允许 0；读到上限后再读 1 字节，
+空结果表示恰好 EOF，否则返回 LimitExceeded。因此超限失败可能推进游标 max_bytes + 1
+字节；不退回探测字节，也不返回部分内容。算法先减剩余额度，不对 UInt64.MAX 执行加一。
+两种读取在 I/O 失败时均丢弃累积内容，不回滚游标。持续增长的文件不保证让无参数版本到达 EOF；
+需要限定内容大小时使用受限版，需要持续处理时使用分块 read。
+
+两组接口共用接受 Option 上限的私有读取循环，不按 max_bytes 预分配；Array 随实际内容
+增长，其扩容容量、暂时的新旧缓冲区和当前块仍计入任务内存预算。内容上限与任务总内存
+额度分别控制返回内容和任务资源，不能互相替代；分配或预算失败保持现有运行时错误语义。
+
+read_text 与 read_text_limited 分别完成对应字节读取，再整体严格验证 UTF-8，支持字符
+跨读块，保留 BOM、NUL 与换行，不做替换或规范化；I/O 与受限版的超限失败优先于解码。
+UTF-8 错误偏移相对于本次读取开始处，而非文件绝对位置。宿主 ABI、后台工作池和取消规则不变。
 
 ### 12.2 完整写入与部分成功
 
@@ -586,3 +594,26 @@ write_text 将整个 String 作为 UTF-8 字节交给 write_all；written 始终
 
 本轮未运行 Release、完整 stress、性能测量、其他操作系统或 Godot 导出包验收；
 FS0–FS5 已记录的平台和 Godot 能力限制继续适用。
+
+### 12.5 默认读取与受限读取拆分
+
+2026-10-18：移除普通完整读取的必填内容上限，原有上限语义保留在 `_limited` 接口。
+无参数读取与受限读取共用私有读取循环和 UTF-8 解码，不新增宿主回调或运行时特例。
+普通 CLI 示例与 Godot 文本读取改用 `read_text()`；明确限制大小的测试和 Godot 字节回读
+改用 `_limited`。写入接口及部分进度语义保持不变。
+
+本机 Debug 验证：
+
+- `cargo test --test fs_convenience --test fs`：16 项通过，1 项穷举默认忽略。
+  共用宿主用例在 JIT、解释器、独立 AOT 验证两组文本读取的短读、跨块 UTF-8、非法/截断
+  UTF-8 与 I/O 错误；无参数字节读取覆盖空文件、非零游标、EOF 和超过 1 MiB 的内容，
+  受限版保留零上限、恰好上限、超限探测及 UInt64.MAX 用例。关闭后服务额度归零。
+- `cargo test --test fs exhaustive_filesystem_cancel_every_instruction -- --ignored`：通过；
+  同一任务分别执行无参数与受限文本读取，逐指令取消后文件、请求与结果拥有者计数归零。
+- 重新构建 Godot 适配器，并在 Godot 4.7.2 执行 `tests/files.gd` 与
+  `tests/files_shutdown.gd`，分别得到 `FS GODOT PASS` 与 `FS SHUTDOWN PASS`，无错误诊断。
+
+- `./scripts/check.sh`：默认 quick Debug 全部通过，包括 fmt、Clippy、默认测试与三后端
+  while/Map 短输入正确性；`git diff --check` 和相关文档相对链接目标检查通过。
+
+平台范围仍为 macOS/aarch64；没有新增其他平台、Release 或性能验收。

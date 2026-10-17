@@ -134,5 +134,5 @@ pub fn suite(run: impl FnOnce(FileService) -> u64) {
         std::thread::yield_now();
     }
     assert_eq!(service.usage(), Some((0, 0, 0)));
-    assert_eq!(host.completed.lock().unwrap().len(), 17);
+    assert_eq!(host.completed.lock().unwrap().len(), 25);
 }
