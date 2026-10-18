@@ -284,6 +284,11 @@ register file or instruction stream. Each call's cleanup frame registers payload
 and bookkeeping in the task arena, reuses registrations across loop iterations,
 and releases payloads on lexical exit. Initialization progress belongs to the
 registration, not to the array value.
+Synchronous C array references use the existing `Value::Reference` pointer adapter
+with the exact resolved element type, dimensions and mutability checked at load.
+They point directly into Place storage without a Buffer header or element copy;
+C calls complete before the interpreter can yield. Arrays remain unavailable to
+host retention across Pending and to the public by-value VM ABI.
 Constructors write fields by byte offset; patterns read tags and copy only the
 selected payload. Matching preserves the scrutinee across its temporary scope.
 Dynamic Array elements remain inline in Buffer storage; loads and moves copy to

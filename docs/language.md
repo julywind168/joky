@@ -51,23 +51,56 @@ fn run() -> Int64 {
 ```
 
 - `#repr(C)` 位于 struct/pub 之前，保证字段按声明顺序使用目标 C 字节布局；普通记录不自动兼容 C。
-  记录必须非空、无类型参数，字段只能是四种定宽整数、Float32 / Float64 或其他 `#repr(C)` 记录，
+  记录必须非空、无类型参数，字段可以是八种定宽整数、Float32 / Float64、其他 `#repr(C)` 记录，
+  或递归包含这些类型的非空 `FixedArray`，
   透明别名按目标处理。浮点字段按 IEEE binary32 / binary64 与 C 布局逐项核对。
   不接受 Bool、Unit、String、Ptr、引用、元组、枚举、packed、union 或位域。
 - C 导入写成 `unsafe extern "C" fn`，接受合计零到四个引用或 Ptr 参数，结果为数值、Ptr 或 Unit。
-  引用所指类型只能是定宽整数、浮点或 C 记录；不接受其他按值输入、返回引用、变参、泛型或 @suspends 导入。
+  引用所指类型可以是定宽整数、浮点、C 记录或兼容固定数组；不接受其他按值输入、返回引用、变参、泛型或 @suspends 导入。
+  数组及含数组记录不能按值传入或返回；`register_c_fn` 当前结果仍限整数、Ptr 或 Unit。
 - 调用必须处于词法 `unsafe { ... }` 块内。块保留普通块的类型、返回、局部作用域和借用规则；
   允许 arena 对象、同步局部值及其字段，不能绕过共享/独占冲突、移动和局部逃逸检查。
 - C 调用本身同步完成，可位于 @suspends 函数的挂起点之间；不允许 C 保留引用实参的地址（包括作为 Ptr 返回）、释放/重分配借用对象、
   越界、跨边界 unwind 或以回调重入制造借用冲突。C const 不能证明这些保证，由绑定者承担 unsafe 契约。
 - Rust 嵌入用 `VmEngine::register_c_fn(name, signature, ptr, owner)`，与旧 direct/CPS 注册分开校验。
-  记录引用的注册签名使用实际记录名，导入记录用规范名称；每次加载后均须匹配真实外部布局。
-  可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言。
+  记录引用及数组内记录的注册签名使用实际记录名，导入记录用规范名称；加载时递归解析名字，
+  核对元素名义身份、各维长度、可变性及完整签名，不以总字节数代替类型匹配。
+  可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言，
+  数组额外断言各维长度与元素步长。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
 - `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)` 与 [JSON 派生](#struct-与类型化-json)的 `#derive(...)`，
   允许尾随逗号；未知属性、重复属性或错误使用位置报错。通用属性及属性宏尚未实现；异步借用见下节。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffic-布局与引用参数)。
+
+### 固定数组与 C 指针适配
+
+C 兼容数组要求每一维 N>0，元素为非零大小的兼容类型。语言内合法的空数组、Unit 数组，
+以及 Bool、Rune、String、普通枚举、Ptr、引用、动态容器等元素都不能借此进入 C 布局。
+普通泛型记录不会因字段兼容而获得 `#repr(C)` 身份。
+
+| Joky 类型位置 | C 声明 |
+| --- | --- |
+| 字段 `data: FixedArray<UInt8,16>` | `uint8_t data[16]` |
+| 字段 `matrix: FixedArray<FixedArray<Int32,3>,2>` | `int32_t matrix[2][3]` |
+| 参数 `values: &FixedArray<Int32,4>` | `const int32_t (*values)[4]` |
+| 参数 `values: &mut FixedArray<Int32,4>` | `int32_t (*values)[4]` |
+
+数组引用直接指向已初始化的原存储，不分配动态 Array 包装，不复制元素。
+C 的 `int32_t values[4]` 参数会调整为首元素指针，不能替代上表的 pointer-to-array 原型。
+真实 API 若接受 `int32_t *` / `const int32_t *`，应提供 C 包装，在包装内用 `*values`
+显式取得首元素指针；不得强转函数指针来掩盖原型差异。
+包装负责检查有效长度不超过容量，再转成真实 API 的长度类型。
+
+[读写包装 fixture](../tests/fixtures/fixed_array_f4.c) 的 `cfa_read` / `cfa_write` 接受
+容量为 4 的数组引用和 UInt64 长度引用，先检查上限，再调用接受 `size_t` 的首元素指针 API。
+写入要求独占借用；C 返回错误状态不会回滚已经合法完成的写入，调用结束后借用正常结束。
+地址只能在本次同步调用内使用，不能跨 Pending 保留。
+
+UInt8 数组仅表示字节。容量、有效字节数、文本编码分别约定；不能自动视为 String 或越界寻找 NUL。
+[字节示例](../tests/fixtures/fixed_array_f4.jk) 使用容量 8、有效长度 5 的 UTF-8 `é中`，
+检查有效长度后只复制有效前缀到 Array，再用 `string.from_utf8` 校验并转换；超长和截断编码分别拒绝。
+此转换是显式文本处理，C 数组调用本身不执行该复制，也不扩展 TextFfiV1。
 
 ### 异步宿主借用
 
@@ -85,8 +118,8 @@ fn run() @suspends -> Int32 {
 ```
 
 - `@suspends` extern 的引用参数选择独立的借用协议 v1。接受 1–4 个定宽整数、浮点或
-  `#repr(C)` 记录的共享/独占引用（与同步 C 引用同一布局规则），结果限整数或 Unit。
-  无 Ptr/String/引用聚合输入，不返回引用，不接受局部栈借用。
+  `#repr(C)` 记录的共享/独占引用，结果限整数或 Unit。
+  不接受固定数组或含数组记录，也无 Ptr/String/引用聚合输入，不返回引用，不接受局部栈借用。
 - Rust 通过 unsafe `register_borrowing_suspending_fn(name, signature, BorrowingHostV1, owner)` 注册；
   源码调用受普通借用与挂起效果检查。旧 `register_suspending_fn` 不能注册这种签名。
 - 描述符版本为 1，提供 poll 和强制 stop 回调。poll 返回 0 完成、1 Pending、其他值失败。
@@ -1124,10 +1157,10 @@ N=0 和零大小元素合法；空数组的 from_fn 不调用回调，但仍清�
 元素引用不分配视图头部；每次切片/子切片的头部计入任务预算并保留到根任务结束，但不拥有或保活载荷。
 重复创建切片可能耗尽头部预算；载荷仍按作用域及时回收。
 List/Map/Set 和其他拥有聚合尚不接受数组或其 Array 包装。
-尚不支持数组捕获、显式 Arena/alloc 存储、挂起函数中的数组值、持久实例/状态域及宿主边界。
+尚不支持数组捕获、显式 Arena/alloc 存储、挂起函数中的数组值、持久实例/状态域及普通 direct/CPS 宿主值边界。
 普通挂起函数可以调用内部使用数组、签名不含数组的同步 helper。
-C 数组接口待 F4；未引入数组字面量、下标语法或默认 Eq。
-当前阶段记录见 [FixedArray 计划](fixed-array-storage-ownership.md#f3元素借用与共享切片能力)。
+兼容数组字段与同步引用可按[固定数组与 C 指针适配](#固定数组与-c-指针适配)跨 C 边界；未引入数组字面量、下标语法或默认 Eq。
+当前阶段记录见 [FixedArray 计划](fixed-array-storage-ownership.md#f4c-字段数组引用和显式指针适配)。
 
 ## 函数值
 
@@ -1434,7 +1467,8 @@ extern 值传递接受浮点标量：`extern fn scale(x: Float64) -> Float64`
 使用目标平台的浮点寄存器调用约定，三后端一致；混合标量签名如
 `(Int32, Float64) -> Float64` 同样开放。`#repr(C)` 记录字段与 C 引用参数
 接受 Float32 / Float64 与含浮点的记录（布局与 C 编译器的 size、alignment、
-offset 逐项核对过），C 引用函数返回浮点也开放。浮点输出使用
+offset 逐项核对过）。C 声明接受浮点结果，但 `register_c_fn` 的注册结果矩阵仍限整数、Ptr 或 Unit；
+固定数组 F4 不扩展这一既有差异。浮点输出使用
 `joky/io.println` 与 Show。
 
 Rust 侧提供 `call_float32_0/1/2`、`call_float64_0/1/2`、`call_float64_3`、

@@ -23,6 +23,8 @@ mod borrowed_dyn;
 mod closures;
 mod compilation;
 mod control_flow;
+#[cfg(unix)]
+mod fixed_array_ffi;
 mod floats;
 mod function_values;
 mod generics;

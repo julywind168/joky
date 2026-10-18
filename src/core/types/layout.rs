@@ -474,7 +474,7 @@ pub(super) fn resolve<'a>(
                         let ty = member_type(&local, &field.ty, &canonical, field.span)?;
                         if record.repr_c() && !crate::core::ffi::is_c_value(&ty) {
                             return Err(crate::core::ffi::error(field.span,
-                                "#repr(C) fields require fixed-width integers or nested #repr(C) records"));
+                                "#repr(C) fields require fixed-width numerics, nested #repr(C) records, or nonempty arrays of C-compatible elements"));
                         }
                         let offset = scalars.len();
                         extend_layout(&mut scalars, &mut depth, &ty, field.span, "Record")?;

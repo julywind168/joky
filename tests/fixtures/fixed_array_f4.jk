@@ -1,0 +1,95 @@
+import joky/fixed_array as fixed.{type FixedArray}
+import joky/array.{type Array}
+import joky/string
+
+type Row = FixedArray<Int32,4>
+type Matrix = FixedArray<FixedArray<Int32,3>,2>
+#repr(C) struct FloatCell { tag:UInt8, x:Float32, y:Float64 }
+#repr(C) struct Packet { lead:UInt8, matrix:Matrix, cells:FixedArray<FloatCell,2>, tail:UInt16 }
+unsafe extern "C" fn cfa_packets(p:&mut FixedArray<Packet,2>) -> Int32
+unsafe extern "C" fn cfa_packet(p:&mut Packet) -> Int32
+unsafe extern "C" fn cfa_matrix(p:&Matrix) -> Int32
+unsafe extern "C" fn cfa_cells(p:&mut FixedArray<FloatCell,2>) -> Int32
+unsafe extern "C" fn cfa_read(p:&Row, length:&UInt64) -> Int32
+unsafe extern "C" fn cfa_write(p:&mut Row, length:&UInt64) -> Int32
+unsafe extern "C" fn cfa_address(p:&Row, first:&Int32) -> Int32
+unsafe extern "C" fn cfa_bytes(p:&mut FixedArray<UInt8,8>, length:&mut UInt64) -> Int32
+unsafe extern "C" fn cfa_byte_read(p:&FixedArray<UInt8,8>, length:&UInt64) -> Int32
+unsafe extern "C" fn cfa_floats(a:&mut FixedArray<Float32,2>, b:&mut FixedArray<Float64,2>) -> Int32
+unsafe extern "C" fn cfa_signed(a:&mut FixedArray<Int8,2>, b:&mut FixedArray<Int16,2>, c:&mut FixedArray<Int32,2>, d:&mut FixedArray<Int64,2>) -> Int32
+unsafe extern "C" fn cfa_unsigned(a:&mut FixedArray<UInt8,2>, b:&mut FixedArray<UInt16,2>, c:&mut FixedArray<UInt32,2>, d:&mut FixedArray<UInt64,2>) -> Int32
+
+fn ffi_array_records()->Int32 {
+    var p=Packet{lead:7,matrix:fixed.repeat::<FixedArray<Int32,3>,2>(fixed.repeat::<Int32,3>(10)),cells:fixed.repeat::<FloatCell,2>(FloatCell{tag:3,x:1.5,y:2.25}),tail:65535}
+    if unsafe {cfa_packet(&mut p)} != 42 {return 0}
+    if (*p.matrix.borrow_ref(1).borrow_ref(2))!=42 || p.cells.borrow_ref(1).y!=42.25 || p.tail!=65535 {return 0}
+    if unsafe {cfa_matrix(&p.matrix)} != 42 {return 0}
+    if unsafe {cfa_cells(&mut p.cells)} != 42 {return 0}
+    if p.cells.borrow_ref(0).x!=21.5 || p.cells.borrow_ref(1).tag!=9 {return 0}
+    var packets=fixed.repeat::<Packet,2>(p)
+    if unsafe {cfa_packets(&mut packets)} != 42 {return 0}
+    let packet=packets.borrow_ref(1)
+    let matrix=&packet.matrix
+    if (*matrix.borrow_ref(0).borrow_ref(0))==42 && (*p.matrix.borrow_ref(0).borrow_ref(0))==10 {42}else{0}
+}
+fn ffi_array_pointers()->Int32 {
+    var a=fixed.repeat::<Int32,4>(10)
+    let length:UInt64=4
+    if unsafe {cfa_address(&a,a.borrow_ref(0))} != 42 {return 0}
+    if unsafe {cfa_read(&a,&length)} != 40 {return 0}
+    // An error status does not roll back legal writes or prolong the borrow.
+    if unsafe {cfa_write(&mut a,&length)} != -1 {return 0}
+    if (*a.borrow_ref(0))!=12 {return 0}
+    a.set(1,10)
+    let oversized:UInt64=18446744073709551615
+    if unsafe {cfa_read(&a,&oversized)} != -1 {return 0}
+    if unsafe {cfa_write(&mut a,&oversized)} != -2 {return 0}
+    let total=unsafe {cfa_read(&a,&length)}
+    a=fixed.repeat::<Int32,4>(1)
+    if (*a.borrow_ref(0))==1 {total}else{0}
+}
+fn checked_text(bytes:&FixedArray<UInt8,8>, valid:UInt64)->Int32 {
+    if valid>bytes.len() {return -1}
+    var prefix=Array.new::<UInt8>()
+    var i:UInt64=0
+    while i<valid {prefix.push((*bytes.borrow_ref(i))); i=i+1}
+    let expected="é中"
+    match string.from_utf8(prefix) {Ok(text)=>if string.equals(&text,&expected) {42}else{0},Err(_)=>-2}
+}
+fn ffi_array_bytes()->Int32 {
+    // Capacity is eight bytes; C reports five valid bytes encoded as UTF-8.
+    // The remaining bytes deliberately contain invalid UTF-8, not a terminator.
+    var bytes=fixed.repeat::<UInt8,8>(255)
+    var valid:UInt64=0
+    if unsafe {cfa_bytes(&mut bytes,&mut valid)} != 0 {return 0}
+    if valid!=5 || (*bytes.borrow_ref(7))!=255 {return 0}
+    if unsafe {cfa_byte_read(&bytes,&valid)} != 42 {return 0}
+    if checked_text(&bytes,9)!=-1 || checked_text(&bytes,4)!=-2 {return 0}
+    let over:UInt64=9
+    if unsafe {cfa_byte_read(&bytes,&over)} != -1 {return 0}
+    checked_text(&bytes,valid)
+}
+fn ffi_array_floats()->Int32 {
+    var a=fixed.repeat::<Float32,2>(1.5)
+    var b=fixed.repeat::<Float64,2>(2.25)
+    if unsafe {cfa_floats(&mut a,&mut b)} != 42 {return 0}
+    if (*a.borrow_ref(1))==21.5 && (*b.borrow_ref(0))==20.5 {42}else{0}
+}
+fn ffi_array_signed()->Int32 {
+    var a=fixed.repeat::<Int8,2>(-128)
+    var b=fixed.repeat::<Int16,2>(-32768)
+    var c=fixed.repeat::<Int32,2>(-2147483648)
+    var d=fixed.repeat::<Int64,2>(-9223372036854775808)
+    if unsafe {cfa_signed(&mut a,&mut b,&mut c,&mut d)} != 42 {return 0}
+    if (*a.borrow_ref(1))==1 && (*b.borrow_ref(1))==2 && (*c.borrow_ref(1))==3 && (*d.borrow_ref(1))==36 {42}else{0}
+}
+fn ffi_array_unsigned()->Int32 {
+    var a=fixed.repeat::<UInt8,2>(255)
+    var b=fixed.repeat::<UInt16,2>(65535)
+    var c=fixed.repeat::<UInt32,2>(4294967295)
+    var d=fixed.repeat::<UInt64,2>(18446744073709551615)
+    if unsafe {cfa_unsigned(&mut a,&mut b,&mut c,&mut d)} != 42 {return 0}
+    if (*a.borrow_ref(1))==1 && (*b.borrow_ref(1))==2 && (*c.borrow_ref(1))==3 && (*d.borrow_ref(1))==36 {42}else{0}
+}
+
+fn ffi_array_task() @suspends -> Int32 { ffi_array_pointers() }

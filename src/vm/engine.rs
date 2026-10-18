@@ -422,12 +422,16 @@ impl VmEngine {
 
     /// Register a synchronous C import, separate from the legacy host ABI.
     /// Parameters are zero through four Ptr values or references to fixed-width
-    /// integers or named #repr(C) records; the result is an integer, Ptr or Unit. Record names
+    /// numerics, named #repr(C) records, or nonempty fixed arrays of these types;
+    /// the result is an integer, Ptr or Unit. Record names within arrays also
     /// resolve in each loaded module. Existing modules retain their bindings.
     ///
     /// # Safety
     /// The entry must have exactly the declared C ABI and target layout, including
     /// const/mutable reference permissions. Reference arguments may be accessed only
+    /// through their exact pointee shape: an array reference is a pointer-to-array,
+    /// not a decayed element pointer. Use a C wrapper to adapt an element-pointer API.
+    /// Reference arguments may be accessed only
     /// during this call, never retained (including in a Ptr result), freed,
     /// reallocated, or accessed out of bounds. Ptr arguments and results use the
     /// C object-pointer ABI (void *); their nullability, validity, ownership and
