@@ -439,3 +439,67 @@ fn fixed_array_f2a_aot_cleans_callbacks_on_failure_and_empty_input() {
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }
+
+#[cfg(unix)]
+fn run_fixed_array_f2b_aot(name: &str, source: &str, harness: &str) {
+    let fixture = ScratchDir::new(name);
+    let object = fixture.path().join("arrays.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("arrays");
+    let mut compiler = AotCompiler::new(name).unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, harness).unwrap();
+    link(
+        link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror"]),
+        ),
+        &program,
+    );
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+#[cfg(unix)]
+fn fixed_array_f2b_executes_in_standalone_aot() {
+    run_fixed_array_f2b_aot(
+        "fixed_array_f2b",
+        include_str!("../../../../tests/fixtures/fixed_array_f2b.jk"),
+        r#"
+        #include <stdint.h>
+        extern int32_t nested(void), records(void), tuples(void), variants(void), indirect(void), dynamic(void), generated(void), deeper(void), empty_nested(void), pattern(void), borrowed(void), reuse(void), aggregate_indirect(void), aggregate_replace(void), generated_variants(void);
+        int main(void) {
+            return nested()!=42 || records()!=42 || tuples()!=42 || variants()!=42 || indirect()!=42 || dynamic()!=42 || generated()!=42 || deeper()!=42 || empty_nested()!=42 || pattern()!=42 || borrowed()!=42 || reuse()!=42 || aggregate_indirect()!=42 || aggregate_replace()!=42 || generated_variants()!=42;
+        }
+    "#,
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn fixed_array_f2b_aot_cleans_nested_initialization_failure() {
+    run_fixed_array_f2b_aot(
+        "fixed_array_f2b_cleanup",
+        include_str!("../../../../tests/fixtures/fixed_array_f2b_cleanup.jk"),
+        r#"
+        #include <stdint.h>
+        extern int32_t exercise(void), fail_init(void);
+        extern int32_t joky_runtime_error_code(void);
+        extern void joky_runtime_error_clear(void);
+        static int32_t events[16]; static unsigned count;
+        void note(int32_t value) { if (count<16) events[count++]=value; }
+        int main(void) {
+            if (exercise()!=42 || count!=5 || events[0]!=1 || events[3]!=4 || events[4]!=-1) return 1;
+            count=0; fail_init();
+            if (!joky_runtime_error_code() || count!=4 || events[0]!=1 || events[2]!=3 || events[3]!=-1) return 2;
+            joky_runtime_error_clear(); return 0;
+        }
+    "#,
+    );
+}

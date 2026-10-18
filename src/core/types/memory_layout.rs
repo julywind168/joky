@@ -430,7 +430,7 @@ impl Type {
     }
 
     fn layout_scalars(&self, owners: bool) -> Result<Vec<(usize, Type)>, MemoryLayoutError> {
-        if self.contains_fixed_array() {
+        if self.is_place() {
             return Err(MemoryLayoutError::UnsupportedType);
         }
         fn visit(

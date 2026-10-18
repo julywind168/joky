@@ -13,6 +13,13 @@ impl FunctionPlan {
         let ty = crate::core::types::tuple_type(values.iter().map(slot_type).collect(), types)
             .map_err(|error| error.with_span(span))?;
         let result = self.slot(ty)?;
+        if result.ty.is_place() {
+            self.emit(Op::Place(PlaceOp::Allocate(result.clone())));
+            for (i, value) in values.into_iter().enumerate() {
+                self.place_write(&result, result.ty.place_child(i).0, value);
+            }
+            return Ok(Flow::Value(Some(result)));
+        }
         let mut offset = 0;
         for value in values.into_iter().flatten() {
             let dst = Slot {

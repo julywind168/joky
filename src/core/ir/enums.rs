@@ -280,7 +280,13 @@ impl FunctionPlan {
             ));
         }
         let result = self.slot(Type::Enum(enumeration.clone()))?;
-        for scalar in result.scalars() {
+        if result.ty.is_place() {
+            self.emit(Op::Place(PlaceOp::Allocate(result.clone())));
+            let tag_slot = self.slot(Type::Int32)?;
+            self.emit(Op::Literal(tag_slot.clone(), Constant::Int32(tag as i32)));
+            self.place_write(&result, 0, Some(tag_slot));
+        }
+        for scalar in result.scalars().filter(|_| !result.ty.is_place()) {
             if matches!(scalar.ty, Type::Parameter(_) | Type::Projection(_)) {
                 continue;
             }
@@ -335,7 +341,9 @@ impl FunctionPlan {
                     ),
                 ));
             }
-            if let Some(value) = value {
+            if result.ty.is_place() {
+                self.place_write(&result, result.ty.place_child(tag).0, value);
+            } else if let Some(value) = value {
                 self.emit(Op::Copy(
                     Slot {
                         index: result.index + variant.offset,
@@ -399,7 +407,7 @@ impl FunctionPlan {
         self.local_scopes.push(Vec::new());
         let mut value = self.expr(value, &mut vars.clone(), functions, suspends, types)?;
         if let Flow::Value(Some(slot)) = &value {
-            if slot.ty.is_owner() {
+            if slot.ty.is_owner() || slot.ty.is_place() {
                 value = Flow::Value(self.snapshot(&Some(slot.clone()))?);
                 self.escape_owner(&value);
             }
@@ -474,7 +482,7 @@ impl FunctionPlan {
                 None
             };
             self.local_scopes.push(Vec::new());
-            if value.ty.is_owner() {
+            if value.ty.is_owner() || value.ty.is_place() {
                 self.local_scopes.last_mut().unwrap().push(value.clone());
             }
             if borrowed.is_some() {

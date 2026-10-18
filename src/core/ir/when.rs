@@ -22,6 +22,7 @@ fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
         })
         .collect();
     Type::Record(Arc::new(RecordType {
+        array: false,
         id: crate::parser::ast::fresh_type_id(),
         name,
         fields,

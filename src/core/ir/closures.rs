@@ -554,6 +554,13 @@ impl FunctionPlan {
             let mut owners = Vec::new();
             let mut depth = 1;
             for (index, (name, ty, _)) in captures.iter().enumerate() {
+                if ty.contains_fixed_array() {
+                    return Err(type_error(
+                        &function.span,
+                        ErrorCode::TypeMismatch,
+                        "FixedArray captures are not supported",
+                    ));
+                }
                 let ty = if function.moving {
                     ty.clone()
                 } else {
@@ -580,6 +587,7 @@ impl FunctionPlan {
             }
             let make_environment = |mode| {
                 Arc::new(RecordType {
+                    array: false,
                     closure: Some(Arc::new(ClosureInfo {
                         mode,
                         signature: signature.clone(),
@@ -1068,6 +1076,9 @@ impl FunctionPlan {
         } else {
             Some(self.slot(signature.ret.clone())?)
         };
+        if let Some(dst) = result.as_ref().filter(|s| s.ty.is_place()) {
+            self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
+        }
         self.emit(Op::Call {
             indirect: None,
             name,

@@ -10,6 +10,25 @@ fn failure(code: ErrorCode, message: &str) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, code, message)
 }
 
+impl Type {
+    /// Plain inline data accepted by fixed-array places and dynamic elements.
+    /// Rigid template obligations are rechecked after specialization.
+    pub(crate) fn is_fixed_array_data(&self) -> bool {
+        TypeWalk::new(self, TypeEdges::Fields).all(|ty| match ty {
+            Type::Record(r) => r.owners.is_empty() && r.closure.is_none(),
+            Type::Enum(e) => e.owners.is_empty(),
+            Type::Tuple(_)
+            | Type::FixedArray(_)
+            | Type::Unit
+            | Type::Bool
+            | Type::Rune
+            | Type::Parameter(_)
+            | Type::Projection(_) => true,
+            _ => ty.integer().is_some() || ty.is_float(),
+        })
+    }
+}
+
 impl TypeRegistry {
     pub(crate) fn fixed_array(&self, element: Type, length: ConstArgument) -> Result<Type, Error> {
         let shape = Arc::new(FixedArrayType { element, length });
@@ -95,16 +114,28 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
     // Rigid declarations retain obligations; every concrete substitution checks them again.
     let rigid = TypeWalk::new(ty, TypeEdges::Fields).any(|t| {
         matches!(t, Type::Parameter(_) | Type::Projection(_))
-            || matches!(t,Type::FixedArray(a) if matches!(a.length,ConstArgument::Parameter(_)))
+            || matches!(t,Type::FixedArray(a) | Type::FixedArrayInit(a) if matches!(a.length,ConstArgument::Parameter(_)))
     });
     if !rigid {
-        ty.reference_type().map_or(ty, |r| &r.target).memory_layout().map_err(|e| {
-            failure(
-                ErrorCode::ResourceLimit,
-                &format!("FixedArray memory layout for {ty}: {e}; maximum object size is {MAX_BYTES} bytes"),
-            )
-        })?;
+        let target = ty.reference_type().map_or(ty, |r| &r.target);
+        let shallow = matches!(target, Type::Record(r) if r.indirect)
+            || matches!(target, Type::Enum(e) if e.indirect);
+        // References may retain only nominal identity. Validate their concrete
+        // array arguments now; the full object is rechecked on materialization.
+        for target in TypeWalk::new(target, TypeEdges::Fields).filter(|node| {
+            matches!(node, Type::FixedArray(_) | Type::FixedArrayInit(_))
+                || !shallow && std::ptr::eq(*node, target)
+        }) {
+            let layout = if target.is_owner() {
+                target.storage_layout()
+            } else {
+                target.memory_layout()
+            };
+            layout.map_err(|e| failure(ErrorCode::ResourceLimit,
+                &format!("FixedArray memory layout for {ty}: {e}; maximum object size is {MAX_BYTES} bytes")))?;
+        }
     }
+
     Ok(())
 }
 

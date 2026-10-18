@@ -624,7 +624,15 @@ impl FunctionPlan {
                     dst: Some(dst),
                     reference,
                     path,
-                } if dst.ty.is_place() && path.is_empty() => Some(PlaceOp::Read {
+                } if dst.ty.is_place() => Some(PlaceOp::Read {
+                    offset: reference
+                        .ty
+                        .reference_type()
+                        .unwrap()
+                        .target
+                        .storage_field_path(path)
+                        .unwrap()
+                        .0,
                     dst: dst.clone(),
                     reference: reference.clone(),
                 }),
@@ -633,7 +641,15 @@ impl FunctionPlan {
                     path,
                     value: Some(value),
                     target,
-                } if target.is_place() && path.is_empty() => Some(PlaceOp::Write {
+                } if target.is_place() => Some(PlaceOp::Write {
+                    offset: reference
+                        .ty
+                        .reference_type()
+                        .unwrap()
+                        .target
+                        .storage_field_path(path)
+                        .unwrap()
+                        .0,
                     reference: reference.clone(),
                     value: value.clone(),
                 }),

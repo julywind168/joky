@@ -258,6 +258,9 @@ impl FunctionPlan {
             self.state_count += 1;
             state
         });
+        if let Some(dst) = result.as_ref().filter(|s| s.ty.is_place()) {
+            self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
+        }
         self.emit(Op::Call {
             indirect: Some(target),
             name,

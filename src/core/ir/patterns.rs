@@ -298,6 +298,35 @@ impl FunctionPlan {
         failure: usize,
     ) -> Result<(), Error> {
         self.current_span = pattern.span;
+        if pattern.ty.is_place() {
+            let base = Slot {
+                index,
+                ty: pattern.ty.clone(),
+            };
+            if let Kind::Variant { tag, .. } = &pattern.kind {
+                let actual = self.place_read(&base, 0, Type::Int32)?.unwrap();
+                let expected = self.slot(Type::Int32)?;
+                self.emit(Op::Literal(expected.clone(), Constant::Int32(*tag as i32)));
+                let condition = self.slot(Type::Bool)?;
+                self.emit(Op::Binary(condition.clone(), BinOp::Eq, actual, expected));
+                let success = self.label_count;
+                self.label_count += 1;
+                self.emit(Op::Branch {
+                    condition,
+                    then_label: success,
+                    else_label: failure,
+                });
+                self.emit(Op::Label(success));
+            }
+            for (child, offset) in pattern.storage_children()? {
+                if !matches!(child.kind, Kind::Any(_)) {
+                    if let Some(value) = self.place_read(&base, offset, child.ty.clone())? {
+                        self.match_pattern_tests(child, value.index, failure)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
         match &pattern.kind {
             Kind::Any(_) | Kind::Record(_) => {}
             Kind::Tuple(elements) => {
@@ -464,6 +493,16 @@ impl FunctionPlan {
             return Ok(());
         }
         self.current_span = pattern.span;
+        if pattern.ty.is_place() && !matches!(pattern.kind, Kind::Any(_)) {
+            let base = value.as_ref().unwrap();
+            for (child, offset) in pattern.storage_children()? {
+                if child.binds() {
+                    let value = self.place_read(base, offset, child.ty.clone())?;
+                    self.bind_match_pattern(child, value, None, vars)?;
+                }
+            }
+            return Ok(());
+        }
         // Shape checking is shared with borrowed matches. Only a by-value
         // match can detach fields and therefore needs the Drop move check.
         if let Kind::Record(fields) = &pattern.kind {

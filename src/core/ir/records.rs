@@ -241,8 +241,16 @@ impl FunctionPlan {
                     },
                 )?;
                 let result = self.slot(ty.clone())?;
+                if ty.is_place() {
+                    self.emit(Op::Place(PlaceOp::Allocate(result.clone())));
+                }
                 for (index, field) in fields.iter().enumerate() {
-                    let target = field_slot(self, &result, &field.name, &field.span)?;
+                    let target = if ty.is_place() {
+                        let (_, ty) = self.field_member(&ty, &field.name, &field.span)?;
+                        (ty != Type::Unit).then_some(Slot { index: 0, ty })
+                    } else {
+                        field_slot(self, &result, &field.name, &field.span)?
+                    };
                     let Flow::Value(value) = self.expr_expected(
                         &field.value,
                         vars,
@@ -269,7 +277,13 @@ impl FunctionPlan {
                             ),
                         ));
                     }
-                    if let (Some(dst), Some(src)) = (target, value) {
+                    if ty.is_place() {
+                        let offset = ty
+                            .storage_field_path(std::slice::from_ref(&field.name))
+                            .unwrap()
+                            .0;
+                        self.place_write(&result, offset, value);
+                    } else if let (Some(dst), Some(src)) = (target, value) {
                         self.emit(Op::Copy(dst, src));
                     }
                 }
@@ -314,6 +328,14 @@ impl FunctionPlan {
                         "Cannot access a field of Unit",
                     )
                 })?;
+                if base.ty.is_place() {
+                    self.field_member(&base.ty, name, span)?;
+                    let (offset, ty) = base
+                        .ty
+                        .storage_field_path(std::slice::from_ref(name))
+                        .unwrap();
+                    return self.place_read(&base, offset, ty).map(Flow::Value);
+                }
                 let field = field_slot(self, &base, name, span)?;
                 if slot_type(&field).is_owner() {
                     self.check_owner_projection(

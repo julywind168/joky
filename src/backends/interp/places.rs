@@ -19,6 +19,7 @@ pub(super) struct Layout {
     stride: usize,
     pub(super) program: Rc<[CopyNode]>,
     fields: Vec<(usize, Type)>,
+    element: Option<Rc<Layout>>,
 }
 
 #[derive(Default)]
@@ -29,14 +30,28 @@ impl Layouts {
             return layout.clone();
         }
         let shape = ty.memory_layout().unwrap();
-        let element = &ty.fixed_shape().element;
+        let array = match ty {
+            Type::FixedArray(a) | Type::FixedArrayInit(a) => Some(a),
+            _ => None,
+        };
+        let element = array.map_or(ty, |a| &a.element);
+        let child = if array.is_some() && element.is_place() {
+            Some(self.get(element))
+        } else {
+            None
+        };
         let layout = Rc::new(Layout {
+            element: child,
             size: shape.size,
             align: shape.align,
-            length: ty.fixed_length(),
+            length: array.map_or(0, |_| ty.fixed_length()),
             stride: element.memory_layout().unwrap().size,
             program: ty.place_copy_program().into(),
-            fields: element.storage_scalars().unwrap(),
+            fields: if element.is_place() {
+                Vec::new()
+            } else {
+                element.storage_scalars().unwrap()
+            },
         });
         self.0.push((ty.clone(), layout.clone()));
         layout
@@ -92,18 +107,32 @@ pub(super) fn execute(
         PlaceOp::Alias { dst, src } => {
             slots[dst.index] = Value::Reference(pointer(&slots[src.index]))
         }
-        PlaceOp::Read { dst, reference } if matches!(dst.ty, Type::FixedArrayInit(_)) => {
+        PlaceOp::Read { dst, reference, .. } if matches!(dst.ty, Type::FixedArrayInit(_)) => {
             slots[dst.index] = Value::Place(pointer(&slots[reference.index]))
         }
         PlaceOp::Allocate(dst) => {
             let p = places.materialize(arena, dst.index, op.layout.size, op.layout.align)?;
             slots[dst.index] = Value::Place(p.as_ptr());
         }
-        PlaceOp::Copy { dst, src }
-        | PlaceOp::Read {
+        PlaceOp::Read {
             dst,
-            reference: src,
+            reference,
+            offset,
         } => {
+            let source = unsafe { pointer(&slots[reference.index]).add(*offset) };
+            if dst.ty.is_place() {
+                let p = places.materialize(arena, dst.index, op.layout.size, op.layout.align)?;
+                unsafe {
+                    crate::runtime::place::copy(p.as_ptr(), source, &op.layout.program);
+                }
+                slots[dst.index] = Value::Place(p.as_ptr());
+            } else {
+                for ((offset, ty), slot) in op.layout.fields.iter().zip(dst.scalars()) {
+                    slots[slot.index] = unsafe { memory::read_scalar(source.add(*offset), ty) };
+                }
+            }
+        }
+        PlaceOp::Copy { dst, src } => {
             let source = pointer(&slots[src.index]);
             let p = places.materialize(arena, dst.index, op.layout.size, op.layout.align)?;
             unsafe {
@@ -111,12 +140,23 @@ pub(super) fn execute(
             }
             slots[dst.index] = Value::Place(p.as_ptr());
         }
-        PlaceOp::Write { reference, value } => unsafe {
-            crate::runtime::place::copy(
-                pointer(&slots[reference.index]),
-                pointer(&slots[value.index]),
-                &op.layout.program,
-            );
+        PlaceOp::Write {
+            reference,
+            value,
+            offset,
+        } => unsafe {
+            let destination = pointer(&slots[reference.index]).add(*offset);
+            if value.ty.is_place() {
+                crate::runtime::place::copy(
+                    destination,
+                    pointer(&slots[value.index]),
+                    &op.layout.program,
+                );
+            } else {
+                for ((offset, _), slot) in op.layout.fields.iter().zip(value.scalars()) {
+                    memory::write_scalar(destination.add(*offset), &slots[slot.index]);
+                }
+            }
         },
         PlaceOp::Begin(dst) => {
             let p = places.begin(
@@ -157,7 +197,24 @@ pub(super) fn execute(
                 };
                 unsafe { base.add(index as usize * op.layout.stride) }
             };
-            if let Some(value) = value {
+            if let Some(value) = value.as_ref().filter(|s| s.ty.is_place()) {
+                let layout = op.layout.element.as_ref().unwrap();
+                if matches!(&op.op, PlaceOp::Load { .. }) {
+                    let dst = places.materialize(arena, value.index, layout.size, layout.align)?;
+                    unsafe {
+                        crate::runtime::place::copy(dst.as_ptr(), p, &layout.program);
+                    }
+                    slots[value.index] = Value::Place(dst.as_ptr());
+                } else {
+                    unsafe {
+                        crate::runtime::place::copy(
+                            p,
+                            pointer(&slots[value.index]),
+                            &layout.program,
+                        );
+                    }
+                }
+            } else if let Some(value) = value {
                 for ((offset, ty), slot) in op.layout.fields.iter().zip(value.scalars()) {
                     unsafe {
                         if matches!(&op.op, PlaceOp::Load { .. }) {

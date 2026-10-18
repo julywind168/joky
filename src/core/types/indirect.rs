@@ -7,6 +7,7 @@ use std::sync::Arc;
 pub(super) fn shallow(ty: &Type, arguments: Vec<crate::parser::ast::GenericArgument>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
+            array: r.array,
             closure: None,
             owners: if r.arguments == arguments {
                 r.owners.clone()

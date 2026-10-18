@@ -371,7 +371,7 @@ impl Type {
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
         if self.contains_fixed_array() {
-            return false;
+            return self.is_place() && self.is_fixed_array_data();
         }
         // Indirect identities carry no value layout. Their declaration bodies
         // are checked separately before any storage operation is planned.
@@ -1722,6 +1722,7 @@ pub enum AttributeValue {
 /// A parsed record declaration. Clones preserve its nominal identity.
 #[derive(Debug, Clone)]
 pub struct RecordDef {
+    pub(crate) array: bool,
     pub attributes: Vec<Attribute>,
     pub public: bool,
     pub name: String,
@@ -1747,6 +1748,7 @@ impl RecordDef {
     pub fn new(name: String, fields: Vec<Param>, name_span: Span, span: Span) -> Self {
         let id = fresh_type_id();
         Self {
+            array: false,
             public: false,
             attributes: Vec::new(),
             name,
@@ -1763,6 +1765,8 @@ impl RecordDef {
 
 /// A resolved nominal type. Only repr_c records promise a C memory layout.
 pub struct RecordType {
+    /// Identity installed only on the embedded Array declaration.
+    pub(crate) array: bool,
     pub(crate) closure: Option<Arc<ClosureInfo>>,
     /// Underlying buffer elements in declaration order, retained in shallow views.
     pub(crate) owners: Vec<Arc<Type>>,
@@ -1809,6 +1813,9 @@ pub(crate) struct RecordField {
 impl Type {
     /// Scalar expansion deliberately excludes compiler-managed places.
     pub(crate) fn scalar_types(&self) -> &[Type] {
+        if self.is_place() {
+            return &[];
+        }
         match self {
             Self::FixedArray(_) | Self::FixedArrayInit(_) => &[],
             Self::Record(record) => &record.scalars,
@@ -2257,7 +2264,17 @@ impl PartialEq<Type> for GenericArgument {
 
 impl Type {
     pub(crate) fn is_place(&self) -> bool {
-        matches!(self, Self::FixedArray(_) | Self::FixedArrayInit(_))
+        match self {
+            Self::FixedArray(_) | Self::FixedArrayInit(_) => true,
+            Self::Record(_) | Self::Tuple(_) | Self::Enum(_) => {
+                crate::core::types::walk::TypeWalk::new(
+                    self,
+                    crate::core::types::walk::TypeEdges::Inline,
+                )
+                .any(|t| matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_)))
+            }
+            _ => false,
+        }
     }
     pub(crate) fn fixed_shape(&self) -> &crate::parser::ast::FixedArrayType {
         match self {

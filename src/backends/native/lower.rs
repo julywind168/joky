@@ -26,6 +26,9 @@ pub(super) struct DataRefs {
 }
 
 fn native_type(ty: &Type) -> Option<types::Type> {
+    if ty.is_place() {
+        return native_type(&Type::Ptr);
+    }
     match ty {
         Type::BufferElement(_) | Type::BufferSlice(_) => None,
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 | Type::Rune => Some(
@@ -1462,7 +1465,9 @@ fn lower_sync_call(
             signature.params.push(AbiParam::new(ptr_ty));
         }
         signature.params.push(AbiParam::new(ptr_ty));
-        if let Some(ty) = native_lane(&info.signature.ret) {
+        if let Some(ty) =
+            native_lane(&info.signature.ret).filter(|_| !info.signature.ret.is_place())
+        {
             signature.returns.push(AbiParam::new(ty));
         }
         let signature = builder.import_signature(signature);
@@ -1824,11 +1829,18 @@ fn lower_ops(
                         | BufferIntrinsic::SliceLoad => {
                             let pointer = builder.inst_results(call)[0];
                             if let Some(dst) = dst {
-                                for ((offset, ty), dst) in element
-                                    .storage_scalars()
-                                    .unwrap()
-                                    .into_iter()
-                                    .zip(dst.scalars())
+                                if dst.ty.is_place() {
+                                    let p = place_materialize(builder, refs, ptr_ty, mode, dst);
+                                    place_copy(builder, refs, data, ptr_ty, element, p, pointer);
+                                    slots.write(builder, dst, p);
+                                }
+                                for ((offset, ty), dst) in (if element.is_place() {
+                                    Vec::new()
+                                } else {
+                                    element.storage_scalars().unwrap()
+                                })
+                                .into_iter()
+                                .zip(dst.scalars())
                                 {
                                     let value = builder.ins().load(
                                         native_type(&ty).unwrap(),
@@ -1847,11 +1859,17 @@ fn lower_ops(
                             let pointer = builder.inst_results(call)[0];
                             let initializing = *intrinsic == BufferIntrinsic::InitializeNext;
                             let value = args.last().unwrap();
-                            for ((offset, _), src) in element
-                                .storage_scalars()
-                                .unwrap()
-                                .into_iter()
-                                .zip(value.scalars())
+                            if value.ty.is_place() {
+                                let src = slots.read(builder, value);
+                                place_copy(builder, refs, data, ptr_ty, element, pointer, src);
+                            }
+                            for ((offset, _), src) in (if element.is_place() {
+                                Vec::new()
+                            } else {
+                                element.storage_scalars().unwrap()
+                            })
+                            .into_iter()
+                            .zip(value.scalars())
                             {
                                 let value = slots.read(builder, &src);
                                 builder.ins().store(
@@ -3340,7 +3358,7 @@ fn lower_place(
             let pointer = slots.read(builder, src);
             slots.write(builder, dst, pointer);
         }
-        PlaceOp::Read { dst, reference } if matches!(dst.ty, Type::FixedArrayInit(_)) => {
+        PlaceOp::Read { dst, reference, .. } if matches!(dst.ty, Type::FixedArrayInit(_)) => {
             let pointer = slots.read(builder, reference);
             slots.write(builder, dst, pointer);
         }
@@ -3348,20 +3366,65 @@ fn lower_place(
             let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
             slots.write(builder, dst, pointer);
         }
-        PlaceOp::Copy { dst, src }
-        | PlaceOp::Read {
+        PlaceOp::Read {
             dst,
-            reference: src,
+            reference,
+            offset,
         } => {
+            let source = slots.read(builder, reference);
+            let source = builder.ins().iadd_imm_u(source, *offset as i64);
+            if dst.ty.is_place() {
+                let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
+                place_copy(builder, refs, data, ptr_ty, &dst.ty, pointer, source);
+                slots.write(builder, dst, pointer);
+            } else {
+                for ((offset, ty), slot) in dst
+                    .ty
+                    .storage_scalars()
+                    .unwrap()
+                    .into_iter()
+                    .zip(dst.scalars())
+                {
+                    let value = builder.ins().load(
+                        native_type(&ty).unwrap(),
+                        MemFlagsData::new(),
+                        source,
+                        offset as i32,
+                    );
+                    slots.write(builder, &slot, value);
+                }
+            }
+        }
+        PlaceOp::Copy { dst, src } => {
             let source = slots.read(builder, src);
             let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
             place_copy(builder, refs, data, ptr_ty, &dst.ty, pointer, source);
             slots.write(builder, dst, pointer);
         }
-        PlaceOp::Write { reference, value } => {
+        PlaceOp::Write {
+            reference,
+            value,
+            offset,
+        } => {
             let pointer = slots.read(builder, reference);
-            let source = slots.read(builder, value);
-            place_copy(builder, refs, data, ptr_ty, &value.ty, pointer, source);
+            let pointer = builder.ins().iadd_imm_u(pointer, *offset as i64);
+            if value.ty.is_place() {
+                let source = slots.read(builder, value);
+                place_copy(builder, refs, data, ptr_ty, &value.ty, pointer, source);
+            } else {
+                for ((offset, _), slot) in value
+                    .ty
+                    .storage_scalars()
+                    .unwrap()
+                    .into_iter()
+                    .zip(value.scalars())
+                {
+                    let source = slots.read(builder, &slot);
+                    builder
+                        .ins()
+                        .store(MemFlagsData::new(), source, pointer, offset as i32);
+                }
+            }
         }
         PlaceOp::Begin(dst) => {
             let layout = dst.ty.memory_layout().unwrap();
@@ -3435,7 +3498,16 @@ fn lower_place(
                 };
                 builder.ins().iadd(base, offset)
             };
-            if let Some(value) = value {
+            if let Some(value) = value.as_ref().filter(|s| s.ty.is_place()) {
+                if matches!(op, PlaceOp::Load { .. }) {
+                    let dst = place_materialize(builder, refs, ptr_ty, mode, value);
+                    place_copy(builder, refs, data, ptr_ty, element, dst, pointer);
+                    slots.write(builder, value, dst);
+                } else {
+                    let src = slots.read(builder, value);
+                    place_copy(builder, refs, data, ptr_ty, element, pointer, src);
+                }
+            } else if let Some(value) = value {
                 for ((offset, ty), slot) in element
                     .storage_scalars()
                     .unwrap()

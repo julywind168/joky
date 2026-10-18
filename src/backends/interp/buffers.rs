@@ -28,16 +28,19 @@ pub(super) struct Instruction {
     pub(super) op: BufferOp,
     layout: Option<crate::memory_layout::MemoryLayout>,
     fields: Vec<(usize, crate::Type)>,
+    program: Rc<[crate::runtime::place::CopyNode]>,
 }
 
-pub(super) fn lower(op: &BufferOp) -> Result<Instruction, Error> {
+pub(super) fn lower(op: &BufferOp, layouts: &mut places::Layouts) -> Result<Instruction, Error> {
     let (layout, fields) = if let BufferOp::Storage { element, .. } = op {
         let invalid = |e: crate::memory_layout::MemoryLayoutError| {
             runtime_error(ErrorCode::InvalidState, e.to_string())
         };
         (
             Some(element.storage_layout().map_err(invalid)?),
-            if element.is_owner() {
+            if element.is_place() {
+                Ok(Vec::new())
+            } else if element.is_owner() {
                 element.storage_scalars()
             } else {
                 element.memory_scalars()
@@ -65,6 +68,12 @@ pub(super) fn lower(op: &BufferOp) -> Result<Instruction, Error> {
         (None, Vec::new())
     };
     Ok(Instruction {
+        program: match op {
+            BufferOp::Storage { element, .. } if element.is_place() => {
+                layouts.get(element).program.clone()
+            }
+            _ => Rc::default(),
+        },
         op: op.clone(),
         layout,
         fields,
@@ -234,6 +243,16 @@ pub(super) fn execute(
                                     .expect("owning element cleanup");
                                 cleanups.insert(dst.owner_key(), entry);
                             }
+                            if dst.ty.is_place() {
+                                let p = cleanups.places.materialize(
+                                    arena,
+                                    dst.index,
+                                    layout.size,
+                                    layout.align,
+                                )?;
+                                crate::runtime::place::copy(p.as_ptr(), data, &instruction.program);
+                                slots[dst.index] = Value::Place(p.as_ptr());
+                            }
                             for ((offset, ty), dst) in instruction.fields.iter().zip(dst.scalars())
                             {
                                 slots[dst.index] = memory::read_scalar(data.add(*offset), ty);
@@ -257,6 +276,13 @@ pub(super) fn execute(
                             (*buffer).load(count(arg(1))?)?
                         };
                         let value = args.last().unwrap();
+                        if value.ty.is_place() {
+                            crate::runtime::place::copy(
+                                data,
+                                places::pointer(&slots[value.index]),
+                                &instruction.program,
+                            );
+                        }
                         for ((offset, _), src) in instruction.fields.iter().zip(value.scalars()) {
                             memory::write_scalar(data.add(*offset), &slots[src.index]);
                         }

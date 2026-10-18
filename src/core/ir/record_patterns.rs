@@ -450,7 +450,12 @@ impl FunctionPlan {
             }),
             BindingKind::Tuple(children) => {
                 let base = value.as_ref().unwrap().index;
-                for (offset, child) in children {
+                for (index, (offset, child)) in children.iter().enumerate() {
+                    if checked.ty.is_place() {
+                        let slot = self.place_child(value.as_ref().unwrap(), index)?;
+                        self.lower_binding_pattern(child, slot, leaves, suspends)?;
+                        continue;
+                    }
                     let slot = (child.ty != Type::Unit).then(|| Slot {
                         index: base + offset,
                         ty: child.ty.clone(),
@@ -471,6 +476,11 @@ impl FunctionPlan {
                 };
                 let base = value.as_ref().unwrap().index;
                 for (index, child) in children {
+                    if checked.ty.is_place() {
+                        let slot = self.place_child(value.as_ref().unwrap(), *index)?;
+                        self.lower_binding_pattern(child, slot, leaves, suspends)?;
+                        continue;
+                    }
                     let field = &record.fields[*index];
                     let slot = (field.ty != Type::Unit).then(|| Slot {
                         index: base + field.offset,

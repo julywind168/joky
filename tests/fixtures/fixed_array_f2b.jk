@@ -1,0 +1,144 @@
+import joky/array.{type Array}
+import joky/mem
+import joky/fixed_array as fixed.{type FixedArray}
+import joky/result.{type Result, Ok, Err}
+type Row = FixedArray<Int32, 3>
+fn row(n:Int32) -> Row { fixed.repeat::<Int32,3>(n) }
+fn first(a:&Row) -> Int32 { match a.get(0) { Some(n) => n, None => 0 } }
+fn nested() -> Int32 {
+    var a = fixed.repeat::<Row,2>(row(42))
+    let b = a
+    a.set(0,row(1))
+    match b.get(0) { Some(r) => first(&r), None => 0 }
+}
+struct Packet { lead: UInt8, values: Row, tail: Int64 }
+fn rewrite(p:Packet) -> Packet { var q=p q.values=row(7) q }
+fn records() -> Int32 {
+    let p=Packet{lead:2,values:row(40),tail:3}
+    let q=rewrite(p)
+    if first(&q.values)!=7 { return 0 }
+    let Packet{lead:x,values:a,tail:_}=p
+    first(&a)+int32(x)
+}
+fn tuples() -> Int32 {
+    var p=(row(40),2)
+    let q=p
+    p.0=row(3)
+    let (a,b)=q
+    first(&a)+b
+}
+fn pick(flag:Bool) -> Result<Row,Row> { if flag { Ok(row(42)) } else { Err(row(42)) } }
+fn variants() -> Int32 {
+    let a=pick(true)
+    let b=pick(false)
+    let x=match a { Ok(r)=>first(&r),Err(_)=>0 }
+    let y=match b { Ok(_)=>0,Err(r)=>first(&r) }
+    if x==42 && y==42 {42}else{0}
+}
+fn identity(a:Row)->Row { a }
+fn invoke(f:fn(Row)->Row,a:Row)->Row { f(a) }
+fn indirect()->Int32 {
+    let f=identity
+    let a=invoke(f,row(42))
+    first(&a)
+}
+
+
+fn dynamic() -> Int32 {
+    var a=Array.new::<Row>()
+    var i=0
+    while i<20 { a.push(row(i)) i=i+1 }
+    let saved=match a.get(0) {Some(r)=>r,None=>row(-1)}
+    a.set(0,row(42))
+    a.reserve(64)
+    if first(&saved)!=0 {return 0}
+    let old=match a.replace(0,row(9)) {Some(r)=>r,None=>row(-1)}
+    if first(&old)!=42 {return 0}
+    a.insert(1,row(42))
+    let removed=match a.remove(1) {Some(r)=>r,None=>row(-1)}
+    a.swap(0,19)
+    let last=match a.pop() {Some(r)=>r,None=>row(-1)}
+    if first(&last)!=9 || first(&removed)!=42 {return 0}
+    a.swap_remove(0)
+    a.truncate(3)
+    a.clear()
+    if a.is_empty() {42}else{0}
+}
+fn make_row(index:UInt64)->Row { row(int32(index)+40) }
+fn generated()->Int32 {
+    let a=fixed.from_fn::<Row,3>(make_row)
+    var counter=0
+    let b=fixed.from_fn::<Row,3>(|index:UInt64| { counter=counter+1 row(40+int32(index)) })
+    if counter!=3 {return 0}
+    let r=match a.get(2) {Some(r)=>r,None=>row(0)}
+    let s=match b.get(2) {Some(r)=>r,None=>row(0)}
+    if first(&r)==42 && first(&s)==42 {42}else{0}
+}
+fn deeper()->Int32 {
+    let middle=fixed.repeat::<Row,2>(row(42))
+    let outer=fixed.repeat::<FixedArray<Row,2>,2>(middle)
+    let m=match outer.get(1) {Some(m)=>m,None=>middle}
+    match m.get(1) {Some(r)=>first(&r),None=>0}
+}
+fn empty_nested()->Int32 {
+    let empty=fixed.repeat::<Int32,0>(42)
+    let outer=fixed.repeat::<FixedArray<Int32,0>,65536>(empty)
+    let unit=fixed.repeat::<Unit,256>({})
+    let units=fixed.repeat::<FixedArray<Unit,256>,256>(unit)
+    let last=match outer.get(65535) {Some(r)=>r.is_empty(),None=>false}
+    if last && outer.len()==65536 && units.len()==256 {42}else{0}
+}
+fn select_packet(flag:Bool)->Packet {
+    if flag { return Packet{lead:2,values:row(40),tail:9} }
+    Packet{lead:1,values:row(41),tail:8}
+}
+fn pattern()->Int32 {
+    let a=Some((select_packet(true),row(42)))
+    match a {
+        Some((Packet{lead:x,values:r,tail:_},s))=> {if first(&s)==42 { first(&r)+int32(x) } else {0}},
+        None=>0
+    }
+}
+fn borrowed()->Int32 {
+    var a=Some(row(1))
+    match &mut a {Some(r)=> { *r=row(42) },None=>{}}
+    match &a {Some(r)=>first(&r),None=>0}
+}
+
+fn reuse()->Int32 {
+    var i=0
+    while i<1000 {
+        var a=Array.new::<Option<Row>>()
+        a.push(Some(row(42)))
+        let p=Packet{lead:1,values:row(42),tail:2}
+        let copy=p
+        let r=match a.take_last(){Some(r)=>r,None=>row(0)}
+        if first(&r)!=42 || first(&copy.values)!=42 {return 0}
+        i=i+1
+    }
+    42
+}
+
+fn pass<T>(f:fn(T)->T,x:T)->T {f(x)}
+fn option_identity(x:Option<Row>)->Option<Row> {x}
+fn aggregate_indirect()->Int32 {
+    let a=pass(option_identity,Some(row(42)))
+    let b=pass(rewrite,select_packet(true))
+    if first(&b.values)!=7 {return 0}
+    match a {Some(r)=>first(&r),None=>0}
+}
+fn aggregate_replace()->Int32 {
+    var a=select_packet(true)
+    var b=select_packet(false)
+    mem.swap(&mut a,&mut b)
+    let old=mem.replace(&mut a,b)
+    a.lead=9
+    if old.lead!=1 || first(&old.values)!=41 || first(&a.values)!=40 {return 0}
+    42
+}
+fn generated_variants()->Int32 {
+    let a=fixed.from_fn::<Option<Row>,2>(|i:UInt64| {if i==0 {None} else {Some(row(42))}})
+    let x=match a.get(0) {Some(None)=>true,_=>false}
+    if !x {return 0}
+    match a.get(1) {Some(Some(r))=>first(&r),_=>0}
+}

@@ -1,7 +1,7 @@
 # FixedArray 设计与分阶段开发计划
 
-状态：2026-10-18，**F0、F1、F2a 已完成；F2b–F5 未开始，F2 整体尚未完成**。
-已实现常量参数、紧凑类型布局及独立数组的连续存储和值语义；未开放组合仍在共享前端拒绝。
+状态：2026-10-18，**F0、F1、F2a、F2b 已完成，F2 整体验收完成；F3–F5 未开始**。
+已实现常量参数、紧凑布局、数组值、无引用 Copy 聚合/嵌套、Array 元素及同步间接调用；未开放组合仍在共享前端拒绝。
 实施前核对基线为 `c5035d1`，替代原 `ff8cefb`：除动态 Array、String、借用式 Map key 和
 String S7 外，窄整数与浮点 C 布局、同步闭包、模块常量、持久实例、状态域及同步显式 Arena
 已加入实现。下文按当前能力重新限定组合范围，不把这些能力自动推广到 FixedArray。
@@ -11,8 +11,8 @@ FixedArray 不依赖 String S8 的性能验收，但新增存储与借用机制�
 [arena 容器路线图](arena-borrowing-ffi.md#61-容器与所有权扩展)。
 阶段状态与设计决策放在本文；实现后的源码用法归 language.md，存储与 ABI 不变量归
 architecture.md。README 只在对应阶段验收后增加能力，不提前宣称 FixedArray 可用。
-下面的完整数组接口为 F0 冻结的目标契约；F1/F2a 当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
-F2b–F5 接口不能作为当前可执行示例。源码接点与冻结记录见第 7 节。
+下面的完整数组接口为 F0 冻结的目标契约；F1/F2 当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
+F3–F5 接口不能作为当前可执行示例。源码接点与冻结记录见第 7 节。
 
 ## 1. 首版目标与边界
 
@@ -276,7 +276,7 @@ mem.replace/mem.swap。公开接口由 [fixed_array.jk](../src/stdlib/fixed_arra
 [place.rs](../src/runtime/place.rs) 为载荷、初始化前缀与可复用清理登记统一计费和回收。
 JIT/AOT 共用原生 lowering，解释器共享类型布局并保留独立 Place 值标签；返回区先接收完整副本，
 被调者清理成功后再发布。数组不再进入标量展开；N=1 与 N=65,536 的描述/IR 规模相同。
-F2b 聚合嵌入/嵌套/间接调用、F3 元素引用/切片和 F4 C 数组 ABI 均未开放。
+以上为 F2a 的历史记录；聚合嵌入/嵌套/间接调用已在下节 F2b 开放，F3 元素引用/切片和 F4 C 数组 ABI 仍未开放。
 
 **验收记录：**
 
@@ -304,6 +304,34 @@ F2b 聚合嵌入/嵌套/间接调用、F3 元素引用/切片和 F4 C 数组 ABI
 两个分支、记录/元组字段、分支结果及直接/间接调用；执行 Array<FixedArray<…>> 的读取、
 覆盖、扩容、移出与释放。断言副本独立、预算峰值及失败回收；通过结构检查确认类型元数据和
 生成 IR 不随 N 逐元素增长，不以性能计时充当正确性验收。F2a 与 F2b 均完成后才标记 F2 完成。
+
+**完成记录（2026-10-18）：** 已实现上述 F2b 范围。含数组的 Copy 聚合整体使用 Place，
+构造、字段读写和模式投影按紧凑布局的字节偏移执行；match 保活被匹配值直到判别及绑定结束。
+同步函数值与 callable 返回数组/含数组聚合时复用调用者返回区；嵌套 from_fn 保留回调顺序及清理责任。
+动态 Array 内联保存完整元素，通过相同复制描述读取独立副本，移出前准备结果存储；扩容沿既有
+Buffer 协议搬迁。解释器位置与 Buffer 操作共享按类型缓存的复制描述，原生描述仍可重定位。
+可信 Array 类型身份在源码绑定时安装，其他拥有包装、List/Map/Set、闭包捕获与 F3/F4 边界继续拒绝。
+
+**验收记录：**
+
+- `cargo test --lib fixed_array`：23 项通过、2 项穷举默认忽略，包含 F1/F2a 回归及 F2b。
+  [组合行为 fixture](../tests/fixtures/fixed_array_f2b.jk) 在 JIT、解释器及独立 AOT 执行，
+  覆盖多层嵌套、零大小/边界长度、记录/元组/Option/Result、模式与分支、整体替换/交换、
+  直接/间接调用、回调返回含数组值，以及 Array 的读取/覆盖/扩容/移出/释放。
+- [失败与取消 fixture](../tests/fixtures/fixed_array_f2b_cleanup.jk) 覆盖嵌套初始化失败及拥有回调清理，
+  VM 按预算扫描失败点，确认回调不重放、环境最多清理一次、任务 arena 归零；1,000 次循环在
+  固定 32 KiB 预算内复用数组聚合及 Array 元素存储。AOT 独立链接运行正常与失败路径。
+- 聚合描述、IR 操作数与槽数在长度 1 / 8,192 的嵌套形状下相同；拒绝矩阵覆盖
+  get/Option 返回包装工作量超限、浅名义引用物化后的资格、长度不匹配和未开放存储/借用位置。
+- `cargo test --lib exhaustive_fixed_array -- --ignored`：F2a/F2b 逐指令取消均通过。
+  共享模式作用域及 callable 路径受影响，另跑
+  `cargo test --lib exhaustive_closure_interpreter_cancellation_every_instruction -- --ignored` 和
+  `cargo test --lib exhaustive_cps_local_borrows_cancel_at_every_instruction -- --ignored`，均通过。
+- `./scripts/check.sh`：默认 Debug 格式、Clippy、测试及三后端短输入基准正确性通过。
+  最后的解释器复制描述共享调整后，复跑 fixed_array、buffer_storage、数组取消穷举、格式及
+  `cargo clippy --all-targets -- -D warnings`，均通过。
+- 本地文档链接/锚点及 `git diff --check` 通过。未运行 Release、全量 stress 或性能测量；
+  未验证实际 32 位数组执行，未开放元素视图或 C 数组 ABI。
 
 ### F3：元素借用与共享切片能力
 

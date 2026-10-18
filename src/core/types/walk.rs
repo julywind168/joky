@@ -5,6 +5,8 @@ use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone, Copy)]
 pub(crate) enum TypeEdges {
+    /// Inline fields only; stop at references, buffers and function signatures.
+    Inline,
     /// Signature types and nominal arguments; no fields, scalars or buffer elements.
     Arguments,
     /// Also visit nominal scalar layouts and internal buffer elements.
@@ -61,36 +63,43 @@ impl<'a> Iterator for TypeWalk<'a> {
             match ty {
                 Type::FixedArray(a) | Type::FixedArrayInit(a) => self.pending.push(&a.element),
                 Type::DynTrait(d) => self.pending.extend(d.equalities.iter().map(|e| &e.ty)),
-                Type::Function(f) => {
+                Type::Function(f) if !matches!(self.edges, TypeEdges::Inline) => {
                     self.pending.extend(&f.signature.params);
                     self.pending.push(&f.signature.ret);
                 }
                 Type::Projection(p) => self.pending.push(&p.base),
-                Type::Reference(r) => self.pending.push(&r.target),
+                Type::Reference(r) if !matches!(self.edges, TypeEdges::Inline) => {
+                    self.pending.push(&r.target)
+                }
+                Type::Reference(_) | Type::Function(_) => {}
                 Type::Tuple(t) => self.pending.extend(&t.elements),
                 Type::Enum(e) => {
-                    self.pending
-                        .extend(e.arguments.iter().filter_map(|a| a.as_type()));
+                    if !matches!(self.edges, TypeEdges::Inline) {
+                        self.pending
+                            .extend(e.arguments.iter().filter_map(|a| a.as_type()));
+                    }
                     if matches!(self.edges, TypeEdges::Storage) {
                         self.pending.extend(&e.scalars);
-                    } else if matches!(self.edges, TypeEdges::Fields) {
+                    } else if matches!(self.edges, TypeEdges::Fields | TypeEdges::Inline) {
                         self.pending
                             .extend(e.variants.iter().filter_map(|v| v.payload.as_ref()));
                     }
                 }
                 Type::Record(r) => {
-                    self.pending
-                        .extend(r.arguments.iter().filter_map(|a| a.as_type()));
+                    if !matches!(self.edges, TypeEdges::Inline) {
+                        self.pending
+                            .extend(r.arguments.iter().filter_map(|a| a.as_type()));
+                    }
                     if matches!(self.edges, TypeEdges::Storage) && r.closure.is_none() {
                         self.pending.extend(&r.scalars);
-                    } else if matches!(self.edges, TypeEdges::Fields) {
+                    } else if matches!(self.edges, TypeEdges::Fields | TypeEdges::Inline) {
                         self.pending.extend(r.fields.iter().map(|f| &f.ty));
                     }
                 }
                 Type::Buffer(element)
                 | Type::BufferElement(element)
                 | Type::BufferSlice(element) => {
-                    if !matches!(self.edges, TypeEdges::Arguments) {
+                    if !matches!(self.edges, TypeEdges::Arguments | TypeEdges::Inline) {
                         self.pending.push(element);
                     }
                 }

@@ -388,7 +388,7 @@ fn lower_unoptimized(
                 dst: dst.index,
                 source: source.clone(),
             },
-            Op::Buffer(op) => Instruction::Buffer(Box::new(buffers::lower(op)?)),
+            Op::Buffer(op) => Instruction::Buffer(Box::new(buffers::lower(op, layouts)?)),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::ArenaNew { .. }

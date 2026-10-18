@@ -257,9 +257,20 @@ pub(crate) fn compile<M: Module>(
             .iter()
             .filter_map(|op| match op {
                 Op::Place(op) => Some(op.ty()),
+                Op::Buffer(crate::core::ir::BufferOp::Storage { element, .. })
+                    if element.is_place() =>
+                {
+                    Some(element)
+                }
                 _ => None,
             })
-            .chain(body.result.iter().map(|s| &s.ty).filter(|ty| ty.is_place()));
+            .chain(body.result.iter().map(|s| &s.ty).filter(|ty| ty.is_place()))
+            .flat_map(|ty| {
+                crate::core::types::walk::TypeWalk::new(
+                    ty,
+                    crate::core::types::walk::TypeEdges::Fields,
+                )
+            });
         for ty in types {
             if place_ids.iter().any(|(known, _, _)| known == ty) {
                 continue;

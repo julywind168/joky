@@ -276,15 +276,22 @@ labels, including inside its condition. These reuse Copy/Jump/Branch operations
 and the existing return convention, without new bytecode or runtime frame fields.
 A terminal divergent loop has no native epilogue; interpreter budgets still apply.
 
-Standalone fixed arrays use explicit `Place` instructions and `Value::Place`
+Fixed arrays and inline Copy aggregates containing them use explicit `Place`
+instructions and `Value::Place`
 addresses, distinct from language references. Layouts and compact copy programs
 are shared by type within the bytecode module; array length does not expand the
 register file or instruction stream. Each call's cleanup frame registers payloads
 and bookkeeping in the task arena, reuses registrations across loop iterations,
 and releases payloads on lexical exit. Initialization progress belongs to the
 registration, not to the array value.
+Constructors write fields by byte offset; patterns read tags and copy only the
+selected payload. Matching preserves the scrutinee across its temporary scope.
+Dynamic Array elements remain inline in Buffer storage; loads and moves copy to
+independent registered places before the caller can observe a result. Their
+reference and slice operations remain closed until F3.
 
-The caller owns independent parameter copies and a preallocated result place.
+Direct calls, synchronous function values and callable entries use the same
+independent parameter copies and preallocated result place.
 Array completion copies into that destination before releasing child storage;
 publication waits for successful child cleanup. Cancellation unwinds children
 before their parents and releases both pending initialization and completed

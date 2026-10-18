@@ -366,6 +366,13 @@ impl FunctionPlan {
                 "borrow_ref and borrow_mut_ref require reference-free elements",
             ));
         }
+        if element.contains_fixed_array() && intrinsic.borrows_storage() {
+            return Err(type_error(
+                &f.span,
+                ErrorCode::TypeMismatch,
+                "FixedArray element references and slices require F3",
+            ));
+        }
         let signature = intrinsic.signature(element);
         if f.suspends
             || f.ret_ty != signature.ret
@@ -397,6 +404,9 @@ impl FunctionPlan {
         };
         for arg in args.iter().filter(|arg| arg.ty.is_owner()) {
             self.register_owner(arg.clone(), None);
+        }
+        if let Some(dst) = dst.as_ref().filter(|s| s.ty.is_place()) {
+            self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
         }
         self.emit(Op::Buffer(BufferOp::Storage {
             intrinsic,
@@ -430,6 +440,13 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         .iter()
         .chain(std::iter::once(&signature.ret))
     {
+        if ty.contains_fixed_array() && (info.suspends || !super::fixed_arrays::eligible(ty)) {
+            return Err(type_error(
+                &info.span,
+                ErrorCode::TypeMismatch,
+                format!("FixedArray is not supported in this context: {ty}"),
+            ));
+        }
         if matches!(ty, Type::BufferElement(_) | Type::BufferSlice(_)) {
             return Err(type_error(
                 &info.span,

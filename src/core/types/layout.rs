@@ -164,6 +164,7 @@ pub(super) fn resolve<'a>(
     for (name, &index) in &names {
         let definition = match declarations[index] {
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                array: d.array,
                 closure: None,
                 owners: Vec::new(),
                 repr_c: d.repr_c(),
@@ -486,6 +487,7 @@ pub(super) fn resolve<'a>(
                     }
                     let owners = record_owners(&fields, record.span)?;
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                        array: record.array,
                         closure: None,
                         owners,
                         indirect: false,

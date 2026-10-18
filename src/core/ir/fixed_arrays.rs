@@ -14,10 +14,12 @@ pub(crate) enum PlaceOp {
         src: Slot,
     },
     Read {
+        offset: usize,
         dst: Slot,
         reference: Slot,
     },
     Write {
+        offset: usize,
         reference: Slot,
         value: Slot,
     },
@@ -64,14 +66,67 @@ pub(super) fn intrinsic(value: &Option<CompilerIntrinsic>) -> bool {
 
 pub(super) fn eligible(ty: &Type) -> bool {
     let target = ty.reference_type().map_or(ty, |r| &r.target);
-    matches!(target, Type::FixedArray(a) | Type::FixedArrayInit(a) if !a.element.contains_fixed_array())
+    match target {
+        Type::Function(f) => {
+            !f.suspends
+                && f.signature
+                    .params
+                    .iter()
+                    .chain(std::iter::once(&f.signature.ret))
+                    .all(|t| !t.contains_fixed_array() || eligible(t))
+        }
+        Type::FixedArrayInit(_) => true,
+        Type::Buffer(t) => t.is_place() && eligible(t),
+        Type::Record(r) if r.array => r
+            .arguments
+            .iter()
+            .filter_map(|a| a.as_type())
+            .all(|t| t.is_place() && eligible(t)),
+        _ => {
+            matches!(
+                target,
+                Type::FixedArray(_) | Type::Record(_) | Type::Tuple(_) | Type::Enum(_)
+            ) && target.is_fixed_array_data()
+        }
+    }
 }
 
 impl FunctionPlan {
+    pub(super) fn place_read(
+        &mut self,
+        base: &Slot,
+        offset: usize,
+        ty: Type,
+    ) -> Result<Option<Slot>, Error> {
+        if ty == Type::Unit {
+            return Ok(None);
+        }
+        let dst = self.slot(ty)?;
+        self.emit(Op::Place(PlaceOp::Read {
+            dst: dst.clone(),
+            reference: base.clone(),
+            offset,
+        }));
+        Ok(Some(dst))
+    }
+    pub(super) fn place_write(&mut self, base: &Slot, offset: usize, value: Option<Slot>) {
+        if let Some(value) = value {
+            self.emit(Op::Place(PlaceOp::Write {
+                reference: base.clone(),
+                value,
+                offset,
+            }));
+        }
+    }
+    pub(super) fn place_child(&mut self, base: &Slot, child: usize) -> Result<Option<Slot>, Error> {
+        let (offset, ty) = base.ty.place_child(child);
+        self.place_read(base, offset, ty)
+    }
+
     pub(super) fn check_fixed_array(&self, ty: &Type) -> Result<(), Error> {
         if ty.contains_fixed_array() && (!eligible(ty) || self.suspending) {
             return Err(type_error(&self.current_span, ErrorCode::TypeMismatch,
-                format!("FixedArray is not supported in this context: {ty}; F2a requires standalone synchronous arrays")));
+                format!("FixedArray is not supported in this context: {ty}; F2b requires supported synchronous array values")));
         }
         Ok(())
     }
@@ -129,6 +184,24 @@ impl FunctionPlan {
 }
 
 impl Type {
+    pub(crate) fn place_child(&self, index: usize) -> (usize, Type) {
+        use crate::core::types::memory_layout::MemoryLayoutShape as Shape;
+        let layout = self.memory_layout().unwrap();
+        match (self, &layout.shape) {
+            (Self::Record(r), Shape::Record(fields)) => {
+                (fields[index].offset, r.fields[index].ty.clone())
+            }
+            (Self::Tuple(t), Shape::Tuple(fields)) => {
+                (fields[index].offset, t.elements[index].clone())
+            }
+            (Self::Enum(e), Shape::Enum { variants, .. }) => (
+                variants[index].payload.map_or(0, |p| p.offset),
+                e.variants[index].payload.clone().unwrap_or(Self::Unit),
+            ),
+            _ => unreachable!("checked aggregate projection"),
+        }
+    }
+
     /// One descriptor subtree per element shape, independent of array length.
     pub(crate) fn place_copy_program(&self) -> Vec<crate::runtime::place::CopyNode> {
         use crate::core::types::memory_layout::MemoryLayoutShape as Shape;
@@ -231,6 +304,29 @@ mod tests {
                     .map(|body| body.ops.len())
                     .sum::<usize>(),
             );
+        }
+        assert_eq!(sizes[0], sizes[1]);
+    }
+    #[test]
+    fn fixed_array_f2b_aggregate_descriptors_and_ir_remain_compact() {
+        use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+        let registry = TypeRegistry::default();
+        let mut sizes = Vec::new();
+        for n in [1, 8192] {
+            let source = format!("import joky/fixed_array as fixed.{{type FixedArray}} struct Packet {{ tag:UInt8, data:FixedArray<FixedArray<UInt8,{n}>,2> }} fn pack()->Packet {{Packet{{tag:1,data:fixed.repeat::<FixedArray<UInt8,{n}>,2>(fixed.repeat::<UInt8,{n}>(7))}}}} fn check()->UInt64 {{match Some(pack()){{Some(Packet{{tag:_,data:a}})=>a.len(),None=>0}}}}");
+            let module = crate::parser::parse(&source).unwrap();
+            let prepared =
+                PreparedModule::new(&module, &registry, &BindingRegistry::default()).unwrap();
+            let plan = prepared.plan(&Default::default()).unwrap();
+            let ty = &plan.functions["pack"].signature.ret;
+            assert!(ty.scalar_types().is_empty());
+            assert_eq!(ty.value_lanes().len(), 1);
+            assert!(ty.storage_scalars().is_err());
+            sizes.push((
+                ty.place_copy_program().len(),
+                plan.bodies.values().map(|b| b.ops.len()).sum::<usize>(),
+                plan.bodies.values().map(|b| b.slot_count).sum::<usize>(),
+            ));
         }
         assert_eq!(sizes[0], sizes[1]);
     }

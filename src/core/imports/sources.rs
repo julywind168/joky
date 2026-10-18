@@ -396,6 +396,11 @@ impl StandardLibrary {
         implicit: ImplicitImports,
         kind: SourceKind,
     ) -> Result<(), Error> {
+        if matches!(kind, SourceKind::BufferLibrary) && path == "joky/array" {
+            for record in &mut module.records {
+                record.array = record.name == "Array";
+            }
+        }
         crate::core::json_derive::expand(&mut module)?;
         let embedded = !matches!(
             kind,
