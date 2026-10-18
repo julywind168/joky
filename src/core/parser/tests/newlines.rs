@@ -41,6 +41,25 @@ fn complete_expressions_end_before_next_line_operators() {
 }
 
 #[test]
+fn block_comments_preserve_newline_separation_rules() {
+    assert_eq!(block("{ 42/* same line */-1 }").len(), 1);
+    assert_eq!(block("{ 42/* outer\n/* nested */ */-1 }").len(), 2);
+    assert_eq!(block("{ (42/*\r\n*/-1) }").len(), 1);
+    for gap in ["/*\n*/", "/* outer\r\n/* nested */ */"] {
+        let source =
+            format!("struct P {{ x: Int32{gap}y: Int32 }} fn f() {{ P {{ x: 1{gap}y: 2 }} }}");
+        assert!(parse(&source).is_ok(), "{source}");
+    }
+    for source in [
+        "struct P { x: Int32/* gap */y: Int32 }",
+        "fn f() { P { x: 1/* gap */y: 2 } }",
+        "fn f() { pick(1/*\n*/2) }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn incomplete_expressions_and_parentheses_continue_across_lines() {
     for source in [
         "{ let x =\n1 +\n2\nx }",

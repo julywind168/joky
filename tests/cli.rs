@@ -8983,6 +8983,58 @@ fn raw_and_multiline_strings_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn nested_block_comments_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "comments.jk",
+        r##"/* outer
+            /* nested /* deeply nested */ */
+            // quotes and braces are comment text: " ' }
+        */
+        import joky/check
+        // /* ignored line comment
+        fn main() {
+            var value = 84/**// /* nested */2
+            value /* before operator */ /= /* after operator */ 2
+            check.assert(value == 21, "division")
+            let pair = (value, 42)
+            println(pair./* member */1)
+            println("/* literal */")
+            println(r#"/* raw */"#)
+            check.assert('/' != '*', "character literals")
+            println("{/* } \" /* nested */ */ pair.1}")
+            var total = 1/* newline separates expressions
+            */total = total + 1
+            check.assert(total == 2, "comment newline")
+        }/**/"##,
+    );
+    work.assert_all_backends("comments.jk", &[], b"42\n/* literal */\n/* raw */\n42\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn unterminated_block_comments_preserve_file_and_line() {
+    let work = Workspace::new();
+    for source in [
+        "// 🙂\n  /* outer\n/* inner */",
+        "fn main() {\n    println(\"{/* outer /* inner */ }\")\n}",
+    ] {
+        work.write("invalid.jk", source);
+        for args in [
+            vec!["build", "invalid.jk"],
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, "Unterminated block comment");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("invalid.jk:2:"), "{stderr}");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn raw_and_multiline_string_diagnostics_preserve_file_and_line() {
     let work = Workspace::new();
     for (source, message, location) in [

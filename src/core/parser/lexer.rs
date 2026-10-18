@@ -162,7 +162,7 @@ impl<'a> Lexer<'a> {
         Some(ch)
     }
 
-    fn skip_whitespace_and_comments(&mut self) {
+    fn skip_whitespace_and_comments(&mut self) -> Result<(), Diagnostic> {
         loop {
             // Skip whitespace.
             while matches!(self.peek(), Some(c) if c.is_whitespace()) {
@@ -173,8 +173,38 @@ impl<'a> Lexer<'a> {
                 while !matches!(self.peek(), Some('\n') | None) {
                     self.advance();
                 }
+            } else if self.peek() == Some('/') && self.peek2() == Some('*') {
+                let start = self.byte_pos;
+                let line = self.line;
+                self.advance();
+                self.advance();
+                let mut depth = 1usize;
+                while depth > 0 {
+                    match (self.peek(), self.peek2()) {
+                        (Some('/'), Some('*')) => {
+                            self.advance();
+                            self.advance();
+                            depth += 1;
+                        }
+                        (Some('*'), Some('/')) => {
+                            self.advance();
+                            self.advance();
+                            depth -= 1;
+                        }
+                        (Some(_), _) => {
+                            self.advance();
+                        }
+                        (None, _) => {
+                            return Err(Diagnostic::at(
+                                line,
+                                start..self.byte_pos,
+                                "Unterminated block comment",
+                            ));
+                        }
+                    }
+                }
             } else {
-                break;
+                return Ok(());
             }
         }
     }
@@ -440,7 +470,7 @@ impl<'a> Lexer<'a> {
 
     /// Read the next token.
     fn next_token(&mut self) -> Result<Token, Diagnostic> {
-        self.skip_whitespace_and_comments();
+        self.skip_whitespace_and_comments()?;
         let start = self.byte_pos;
         let line = self.line;
         let kind = match self.peek() {
@@ -659,6 +689,94 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_comments_preserve_token_boundaries_lines_and_utf8_spans() {
+        let source = "a/**/b/* outer 🙂\r\n/* inner\n*/ end */42/*tail*/";
+        let tokens = Lexer::tokenize(source).unwrap();
+        for (token, kind, text, line) in [
+            (&tokens[0], TokenKind::Ident("a".into()), "a", 1),
+            (&tokens[1], TokenKind::Ident("b".into()), "b", 1),
+            (&tokens[2], TokenKind::IntLit(42), "42", 3),
+            (&tokens[3], TokenKind::Eof, "", 3),
+        ] {
+            assert_eq!(token.kind, kind);
+            assert_eq!(token.span.slice(source), Some(text));
+            assert_eq!(token.line, line);
+            assert_eq!(token.end_line, line);
+        }
+        assert_eq!(tokens[3].span.start(), source.len());
+    }
+
+    #[test]
+    fn block_comments_mix_with_line_comments_and_operators() {
+        let tokens = Lexer::tokenize(
+            "// /* ignored\n/* // \" ' } ignored */ /**//**/ / /*gap*/* /= /*gap*/ *= // end",
+        )
+        .unwrap();
+        assert_eq!(
+            tokens
+                .into_iter()
+                .map(|token| token.kind)
+                .collect::<Vec<_>>(),
+            [
+                TokenKind::Slash,
+                TokenKind::Star,
+                TokenKind::CompoundAssign(BinOp::Div),
+                TokenKind::CompoundAssign(BinOp::Mul),
+                TokenKind::Eof,
+            ]
+        );
+        for source in ["/**/", "/*/**/*/", "/* ***/", "/* // */"] {
+            assert_eq!(Lexer::tokenize(source).unwrap()[0].kind, TokenKind::Eof);
+        }
+    }
+
+    #[test]
+    fn block_comments_nest_without_recursion() {
+        let source = format!("{}{}42", "/*".repeat(4096), "*/".repeat(4096));
+        assert_eq!(
+            Lexer::tokenize(&source).unwrap()[0].kind,
+            TokenKind::IntLit(42)
+        );
+    }
+
+    #[test]
+    fn unterminated_block_comments_report_the_outer_opening_and_complete_span() {
+        for comment in [
+            "/*",
+            "/*/",
+            "/* text *",
+            "/* 🙂\n/* nested */",
+            "/* /* */ /*",
+        ] {
+            let source = format!("// é\n  {comment}");
+            let error = Lexer::tokenize(&source).unwrap_err();
+            assert_eq!(error.message, "Unterminated block comment");
+            assert_eq!(error.line, 2);
+            assert_eq!(error.span.slice(&source), Some(comment));
+        }
+    }
+
+    #[test]
+    fn block_comments_only_apply_inside_interpolation_expressions() {
+        let source = r##""/* text */" r#"/* raw */"# '/' '*' "{/* } \" /* nested */ */ 42}""##;
+        let tokens = Lexer::tokenize(source).unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::StrLit("/* text */".into()));
+        assert_eq!(tokens[1].kind, TokenKind::StrLit("/* raw */".into()));
+        assert_eq!(tokens[2].kind, TokenKind::CharLit('/'));
+        assert_eq!(tokens[3].kind, TokenKind::CharLit('*'));
+        let TokenKind::Interpolated(parts) = &tokens[4].kind else {
+            panic!("Expected interpolation parts");
+        };
+        let InterpolationPart::Expression(expression) = &parts[1] else {
+            panic!("Expected interpolation expression");
+        };
+        assert_eq!(expression[0].kind, TokenKind::IntLit(42));
+        assert_eq!(expression[1].kind, TokenKind::Eof);
+        let error = Lexer::tokenize(r#""{/* unterminated }""#).unwrap_err();
+        assert_eq!(error.message, "Unterminated block comment");
+    }
 
     #[test]
     fn radix_literals_keep_magnitudes_and_complete_utf8_spans() {
