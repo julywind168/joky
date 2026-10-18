@@ -276,6 +276,23 @@ labels, including inside its condition. These reuse Copy/Jump/Branch operations
 and the existing return convention, without new bytecode or runtime frame fields.
 A terminal divergent loop has no native epilogue; interpreter budgets still apply.
 
+Standalone fixed arrays use explicit `Place` instructions and `Value::Place`
+addresses, distinct from language references. Layouts and compact copy programs
+are shared by type within the bytecode module; array length does not expand the
+register file or instruction stream. Each call's cleanup frame registers payloads
+and bookkeeping in the task arena, reuses registrations across loop iterations,
+and releases payloads on lexical exit. Initialization progress belongs to the
+registration, not to the array value.
+
+The caller owns independent parameter copies and a preallocated result place.
+Array completion copies into that destination before releasing child storage;
+publication waits for successful child cleanup. Cancellation unwinds children
+before their parents and releases both pending initialization and completed
+places. An element write plus prefix update, a whole-value copy, and a swap each
+complete within one instruction; callbacks remain ordinary calls and can be
+interrupted between instructions. This implements interpreter timeslicing of
+synchronous helpers, without admitting array values in `@suspends` functions.
+
 ## Frames and suspension
 
 `execute.rs` keeps user frames and native CPS calls in a flat arena. A frame

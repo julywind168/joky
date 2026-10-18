@@ -356,11 +356,19 @@ impl StandardLibrary {
             bind_buffer_definitions(&mut module)?;
         }
         if source.kind == SourceKind::FixedArrayStorage {
-            let alias = &mut module.type_aliases[0];
-            alias.target = Type::FixedArray(Arc::new(crate::parser::ast::FixedArrayType {
-                element: Type::Parameter(alias.type_params[0].clone()),
-                length: crate::parser::ast::ConstArgument::Parameter(alias.type_params[1].clone()),
-            }));
+            for alias in &mut module.type_aliases {
+                let shape = Arc::new(crate::parser::ast::FixedArrayType {
+                    element: Type::Parameter(alias.type_params[0].clone()),
+                    length: crate::parser::ast::ConstArgument::Parameter(
+                        alias.type_params[1].clone(),
+                    ),
+                });
+                alias.target = if alias.name == "Init" {
+                    Type::FixedArrayInit(shape)
+                } else {
+                    Type::FixedArray(shape)
+                };
+            }
         }
         intrinsics::bind_functions(&mut module, source.kind)?;
         // Source modules never inherit the consumer's implicit prelude or hosts.

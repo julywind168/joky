@@ -26,6 +26,9 @@ impl ScopeKind {
 pub enum Type {
     /// Compiler-owned inline shape, normalized independently of executable storage.
     FixedArray(Arc<FixedArrayType>),
+    /// Compiler-private, non-Copy initialization capability.
+    #[doc(hidden)]
+    FixedArrayInit(Arc<FixedArrayType>),
     /// Borrowed trait target, bound before shared semantic planning.
     DynTrait(Arc<DynTraitType>),
     /// A non-capturing language function value with an explicit suspension effect.
@@ -171,7 +174,7 @@ impl Eq for DynTraitType {}
 impl Type {
     pub(crate) fn contains_fixed_array(&self) -> bool {
         crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Fields)
-            .any(|t| matches!(t, Self::FixedArray(_)))
+            .any(|t| matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_)))
     }
     pub(crate) fn is_explicit_arena(&self) -> bool {
         matches!(self, Self::Resource(name) if name.as_ref() == "arena.Arena")
@@ -189,6 +192,7 @@ impl Type {
         match self {
             Self::DynTrait(_) => true,
             Self::FixedArray(_)
+            | Self::FixedArrayInit(_)
             | Self::Record(_)
             | Self::Enum(_)
             | Self::Tuple(_)
@@ -366,6 +370,9 @@ impl Type {
     /// elements move as a whole and recursively require reference-free contents.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
+        if self.contains_fixed_array() {
+            return false;
+        }
         // Indirect identities carry no value layout. Their declaration bodies
         // are checked separately before any storage operation is planned.
         if matches!(self, Self::Record(r) if r.indirect)
@@ -503,8 +510,12 @@ impl std::fmt::Display for Type {
             }
             *remaining -= 1;
             match ty {
-                Type::FixedArray(a) => {
-                    f.write_str("FixedArray<")?;
+                Type::FixedArray(a) | Type::FixedArrayInit(a) => {
+                    f.write_str(if matches!(ty, Type::FixedArrayInit(_)) {
+                        "FixedArrayInit<"
+                    } else {
+                        "FixedArray<"
+                    })?;
                     display(&a.element, f, remaining)?;
                     write!(f, ", {}>", a.length)
                 }
@@ -1366,6 +1377,11 @@ pub(crate) enum DomainAccessKind {
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
+    FixedArrayBegin,
+    FixedArrayWriteNext,
+    FixedArrayFinish,
+    FixedArrayLoad,
+    FixedArrayStore,
     ArenaNew,
     ArenaAlloc,
     ScriptSchema(Type),
@@ -1791,14 +1807,25 @@ pub(crate) struct RecordField {
 }
 
 impl Type {
+    /// Scalar expansion deliberately excludes compiler-managed places.
     pub(crate) fn scalar_types(&self) -> &[Type] {
         match self {
+            Self::FixedArray(_) | Self::FixedArrayInit(_) => &[],
             Self::Record(record) => &record.scalars,
             Self::Enum(enumeration) => &enumeration.scalars,
             Self::Tuple(tuple) => &tuple.scalars,
             Self::Reference(r) if !r.lanes.is_empty() => &r.lanes,
             Self::Unit => &[],
             _ => std::slice::from_ref(self),
+        }
+    }
+
+    /// Physical private-call lanes: a place has one address, not scalar elements.
+    pub(crate) fn value_lanes(&self) -> &[Type] {
+        if self.is_place() {
+            std::slice::from_ref(self)
+        } else {
+            self.scalar_types()
         }
     }
 
@@ -1819,7 +1846,7 @@ impl Type {
 
     pub(crate) fn layout_depth(&self) -> usize {
         match self {
-            Self::FixedArray(a) => a.element.layout_depth() + 1,
+            Self::FixedArray(a) | Self::FixedArrayInit(a) => a.element.layout_depth() + 1,
             Self::Function(signature) => signature.signature.type_depth(),
             Self::Record(record) => record.depth,
             Self::Enum(enumeration) => enumeration.depth,
@@ -1830,7 +1857,7 @@ impl Type {
 
     /// Keep legacy Unit parameter placeholders, but flatten aggregate parameters.
     pub(crate) fn parameter_slots(&self) -> usize {
-        if *self == Self::Unit {
+        if *self == Self::Unit || self.is_place() {
             1
         } else {
             self.scalar_types().len()
@@ -1977,7 +2004,8 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
     let mut functions = std::collections::HashSet::new();
     while let Some((a, b)) = pending.pop() {
         match (a, b) {
-            (Type::FixedArray(a), Type::FixedArray(b)) => {
+            (Type::FixedArray(a), Type::FixedArray(b))
+            | (Type::FixedArrayInit(a), Type::FixedArrayInit(b)) => {
                 if a.length != b.length {
                     return false;
                 }
@@ -2224,5 +2252,24 @@ fn equal_arguments(a: &[GenericArgument], b: &[GenericArgument]) -> bool {
 impl PartialEq<Type> for GenericArgument {
     fn eq(&self, other: &Type) -> bool {
         self.as_type() == Some(other)
+    }
+}
+
+impl Type {
+    pub(crate) fn is_place(&self) -> bool {
+        matches!(self, Self::FixedArray(_) | Self::FixedArrayInit(_))
+    }
+    pub(crate) fn fixed_shape(&self) -> &crate::parser::ast::FixedArrayType {
+        match self {
+            Self::FixedArray(a) | Self::FixedArrayInit(a) => a,
+            Self::Reference(r) => r.target.fixed_shape(),
+            _ => unreachable!("checked fixed-array shape"),
+        }
+    }
+    pub(crate) fn fixed_length(&self) -> u64 {
+        match self.fixed_shape().length {
+            ConstArgument::Value(n) => n,
+            ConstArgument::Parameter(_) => unreachable!("concrete fixed-array length"),
+        }
     }
 }

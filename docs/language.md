@@ -1090,10 +1090,29 @@ F1 已支持该类型及透明别名、嵌套形状、Copy 记录/元组/枚举�
 长度属于类型身份。元素限固定数值、Bool、Rune、Unit 及递归无引用 Copy 聚合；
 Ptr、函数值、opaque、引用、拥有者和闭包不能作为元素，零长度与 phantom 参数也不能绕过检查。
 
-**F1 尚不提供可执行数组值。** 数组构造、传参/返回、引用及含数组值的操作会在共享前端拒绝；
-`repeat`、`from_fn`、`get`、`set`、切片与 C 数组接口待后续阶段开放。
-普通常量参数函数和不含数组存储的常量参数记录已可执行。当前限额与阶段记录见
-[FixedArray 计划](fixed-array-storage-ownership.md#f1常量参数与定长类型)。
+**F2a 已支持独立数组值。** T 可以是上述非数组元素，包含有限的 Copy 记录、元组和枚举；
+数组本身具有 Copy 值语义，赋值、同步直接参数/返回、整数组解引用读取得到独立副本。
+支持整个数组的共享/独占引用、解引用写入，以及 `joky/mem` 的 `replace/swap`。
+
+从 `joky/fixed_array` 导入以下函数；除构造函数外，也可通过数组的固有方法调用：
+
+| 函数 | 行为 |
+| --- | --- |
+| `repeat::<T, N>(value)` | value 只求值一次，复制为 N 个元素 |
+| `from_fn::<T, N>(init)` | 接受 `FnMut(UInt64) -> T`，按 0 到 N−1 顺序调用，支持函数指针、Fn 和 FnMut 闭包 |
+| `len(&array)` / `is_empty(&array)` | 返回 UInt64 长度 / Bool；方法为 `array.len()` / `array.is_empty()` |
+| `get(&array, index)` | 返回元素副本 `Option<T>`，越界返回 None |
+| `set(&mut array, index, value)` | 成功写入返回 true，越界返回 false；value 在检查前按普通实参求值 |
+
+N=0 和零大小元素合法；空数组的 from_fn 不调用回调，但仍清理回调环境。
+单维长度与完整值逻辑工作量均不超过 65,536，对象字节数不超过 64 MiB 且受目标地址空间限制。
+载荷和清理登记占用任务 arena 预算，退出作用域后回收；数组的语言 Copy 语义不意味着共享载荷。
+
+嵌套数组、含数组的记录/元组/Option/Result、`Array<FixedArray<…>>` 和数组签名函数值仍待 F2b。
+尚不支持数组捕获、显式 Arena/alloc 存储、挂起函数中的数组值、持久实例/状态域及宿主边界。
+普通挂起函数可以调用内部使用数组、签名不含数组的同步 helper。
+元素引用、切片和 C 数组接口分别待 F3/F4；未引入数组字面量、下标语法或默认 Eq。
+当前阶段记录见 [FixedArray 计划](fixed-array-storage-ownership.md#f2a独立数组的连续存储与值语义)。
 
 ## 函数值
 

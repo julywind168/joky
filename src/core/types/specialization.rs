@@ -338,6 +338,16 @@ pub(crate) fn substitute(
         cache: &mut Cache,
     ) -> Result<Type, Error> {
         Ok(match ty {
+            Type::FixedArrayInit(a) => {
+                let Type::FixedArray(shape) = types.fixed_array(
+                    visit(&a.element, substitutions, types, cache)?,
+                    substitutions.constant(&a.length),
+                )?
+                else {
+                    unreachable!()
+                };
+                Type::FixedArrayInit(shape)
+            }
             Type::FixedArray(a) => types.fixed_array(
                 visit(&a.element, substitutions, types, cache)?,
                 substitutions.constant(&a.length),
@@ -566,7 +576,8 @@ pub(crate) fn unify(
     let mut functions = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
-            (Type::FixedArray(a), Type::FixedArray(b)) => {
+            (Type::FixedArray(a), Type::FixedArray(b))
+            | (Type::FixedArrayInit(a), Type::FixedArrayInit(b)) => {
                 unify_constant(&a.length, &b.length, params, substitutions, span)?;
                 pending.push((&a.element, &b.element));
             }

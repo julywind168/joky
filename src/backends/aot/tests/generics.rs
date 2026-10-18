@@ -348,3 +348,94 @@ fn fixed_array_f1_const_parameters_execute_in_standalone_aot() {
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }
+
+#[test]
+#[cfg(unix)]
+fn fixed_array_f2a_executes_in_standalone_aot() {
+    let fixture = ScratchDir::new("fixed-array-f2a");
+    let object = fixture.path().join("arrays.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("arrays");
+    let mut compiler = AotCompiler::new("fixed_arrays").unwrap();
+    let ast = compiler
+        .types
+        .resolve_aliases(
+            &crate::parser::parse(include_str!(
+                "../../../../tests/fixtures/fixed_array_f2a.jk"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        extern int32_t copies(void), callbacks(void), zero(void), boundary(void), aggregates(void), reuse(void), single(void), whole_reference(void);
+        int main(void) {
+            return copies() != 42 || callbacks() != 42 || zero() != 42 || boundary() != 42 || aggregates() != 42 || reuse() != 42 || single() != 42 || whole_reference() != 42;
+        }
+    "#).unwrap();
+    link(
+        link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror"]),
+        ),
+        &program,
+    );
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+#[cfg(unix)]
+fn fixed_array_f2a_aot_cleans_callbacks_on_failure_and_empty_input() {
+    let fixture = ScratchDir::new("fixed-array-f2a-cleanup");
+    let object = fixture.path().join("arrays.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("arrays");
+    let mut compiler = AotCompiler::new("fixed_array_cleanup").unwrap();
+    compiler
+        .compile_module(
+            &crate::parser::parse(include_str!(
+                "../../../../tests/fixtures/fixed_array_f2a_cleanup.jk"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        extern int32_t construct(void), zero_env(void), fail_init(void), early(void), assignment_fail(void), fail_cleanup(void);
+        extern int32_t joky_runtime_error_code(void);
+        extern void joky_runtime_error_clear(void);
+        static int32_t events[16]; static unsigned count;
+        void note(int32_t value) { if (count < 16) events[count++] = value; }
+        int main(void) {
+            if (construct() != 42 || count != 5 || events[0] != 1 || events[3] != 4 || events[4] != -1) return 1;
+            count = 0;
+            if (zero_env() != 42 || count != 1 || events[0] != -1) return 2;
+            count = 0; fail_init();
+            if (!joky_runtime_error_code() || count != 4 || events[0] != 1 || events[2] != 3 || events[3] != -1) return 3;
+            joky_runtime_error_clear(); count = 0;
+            if (early() != 42 || count != 1 || events[0] != -1) return 4;
+            count = 0; assignment_fail();
+            if (!joky_runtime_error_code() || count != 3 || events[0] != 1 || events[2] != 3) return 5;
+            joky_runtime_error_clear(); count = 0; fail_cleanup();
+            if (!joky_runtime_error_code() || count != 2 || events[0] != 1 || events[1] != -2) return 6;
+            joky_runtime_error_clear(); return 0;
+        }
+    "#).unwrap();
+    link(
+        link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror"]),
+        ),
+        &program,
+    );
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}

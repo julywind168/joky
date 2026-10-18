@@ -125,7 +125,10 @@ impl FunctionPlan {
         self.ops.iter().any(|op| {
             op.cleanups().next().is_some()
                 || match op {
-                    Op::Buffer(BufferOp::Move { .. } | BufferOp::End(_)) => true,
+                    Op::Buffer(BufferOp::SwapReferences { target, .. }) if target.is_place() => {
+                        true
+                    }
+                    Op::Buffer(BufferOp::Move { .. } | BufferOp::End(_)) | Op::Place(_) => true,
                     Op::Buffer(BufferOp::Storage { dst: Some(dst), .. }) => dst.ty.is_buffer(),
                     _ => false,
                 }

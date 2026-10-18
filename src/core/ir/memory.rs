@@ -371,7 +371,10 @@ impl FunctionPlan {
                     return Ok(Some(Flow::Diverged));
                 };
                 let target = slot_type(&value);
-                if !target.is_copy_storage_value() || target.reference_type().is_some() {
+                if target.contains_fixed_array()
+                    || !target.is_copy_storage_value()
+                    || target.reference_type().is_some()
+                {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
@@ -634,7 +637,11 @@ pub(super) fn check_module(
             .params
             .iter()
             .chain(std::iter::once(&info.signature.ret))
-            .any(|ty| ty.contains_references() || ty.contains_buffers() && *ty != Type::String);
+            .any(|ty| {
+                ty.contains_fixed_array()
+                    || ty.contains_references()
+                    || ty.contains_buffers() && *ty != Type::String
+            });
         // Reference-bearing helpers are never C/VM entries. Allocation and
         // reclamation need the hidden arena argument. borrowing::check also imposes
         // storage preconditions on writable reference-element buffer signatures.
@@ -642,7 +649,8 @@ pub(super) fn check_module(
             reference_capability.insert(name.clone());
         }
         info.uses_arena = body.ops.iter().any(|op| match op {
-            Op::Alloc { .. } | Op::Text { .. } => true,
+            Op::Alloc { .. } | Op::Text { .. } | Op::Place(_) => true,
+            Op::Buffer(BufferOp::SwapReferences { target, .. }) if target.is_place() => true,
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,
         });
@@ -745,7 +753,11 @@ pub(super) fn check_module(
             .params
             .iter()
             .chain(std::iter::once(&info.signature.ret))
-            .any(|ty| ty.contains_references() || ty.contains_buffers() && *ty != Type::String);
+            .any(|ty| {
+                ty.contains_fixed_array()
+                    || ty.contains_references()
+                    || ty.contains_buffers() && *ty != Type::String
+            });
         info.internal |= (info.signature.has_text()
             && info
                 .signature
@@ -820,7 +832,7 @@ pub(super) fn check_module(
                     value: None,
                     ..
                 } if target.is_closure_value() => None,
-                Op::Local { target, .. } => Some(target),
+                Op::Local { target, .. } if !target.is_place() => Some(target),
                 _ => None,
             };
             for target in storage

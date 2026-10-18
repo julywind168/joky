@@ -74,6 +74,7 @@ pub(super) fn member_key(ty: &Type, name: &str) -> String {
 
 pub(super) fn same_owner(a: &Type, b: &Type) -> bool {
     match (a, b) {
+        (Type::FixedArray(_), Type::FixedArray(_)) => true,
         (Type::Record(a), Type::Record(b)) => a.id == b.id,
         (Type::Enum(a), Type::Enum(b)) => a.id == b.id,
         _ => a == b,
@@ -726,6 +727,10 @@ impl FunctionPlan {
         let mut bound_arguments = if method.impl_parameters > 0 && bound_receiver {
             match (&method.target, &ty) {
                 (Type::Parameter(_), _) if method.trait_id.is_some() => vec![ty.clone().into()],
+                (_, Type::FixedArray(a)) => vec![
+                    a.element.clone().into(),
+                    crate::parser::ast::GenericArgument::Const(a.length.clone()),
+                ],
                 (_, Type::Record(r)) => r.arguments.clone(),
                 (_, Type::Enum(e)) => e.arguments.clone(),
                 _ => unreachable!("generic implementations have nominal targets"),

@@ -1,3 +1,44 @@
 import joky/internal/fixed_array as storage
+import joky/option.{type Option, Some, None}
 
 pub type FixedArray<T, const N: UInt64> = storage.FixedArray<T, N>
+
+pub fn repeat<T, const N: UInt64>(value: T) -> FixedArray<T, N> {
+    var token = storage.begin::<T, N>()
+    var index: UInt64 = 0
+    while index < N {
+        storage.write_next(&mut token, value)
+        index = index + 1
+    }
+    storage.finish(token)
+}
+
+pub fn from_fn<T, const N: UInt64, F: FnMut(UInt64) -> T>(init: F) -> FixedArray<T, N> {
+    var callback = init
+    var token = storage.begin::<T, N>()
+    var index: UInt64 = 0
+    while index < N {
+        storage.write_next(&mut token, callback(index))
+        index = index + 1
+    }
+    storage.finish(token)
+}
+
+pub fn len<T, const N: UInt64>(values: &FixedArray<T, N>) -> UInt64 { N }
+pub fn is_empty<T, const N: UInt64>(values: &FixedArray<T, N>) -> Bool { N == 0 }
+pub fn get<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<T> {
+    if index < N { Some(storage.load(values, index)) } else { None }
+}
+pub fn set<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T) -> Bool {
+    if index < N {
+        storage.store(values, index, value)
+        true
+    } else { false }
+}
+
+impl<T, const N: UInt64> FixedArray<T, N> {
+    pub fn len(&self) -> UInt64 { len(self) }
+    pub fn is_empty(&self) -> Bool { is_empty(self) }
+    pub fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
+    pub fn set(&mut self, index: UInt64, value: T) -> Bool { set(self, index, value) }
+}

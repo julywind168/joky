@@ -415,7 +415,10 @@ impl TypeRegistry {
                         )
                     )
                 });
-            let valid = if trusted_arena {
+            let trusted_fixed_array = matches!(target, Type::FixedArray(_))
+                && implementation.origin.as_deref() == Some("joky/fixed_array")
+                && implementation.trait_name.is_none();
+            let valid = if trusted_arena || trusted_fixed_array {
                 true
             } else if let Some((name, parameters, arguments)) = arguments {
                 (name == &implementation.target_name
@@ -695,7 +698,7 @@ impl TypeRegistry {
                     None
                 }
                 Type::Reference(r) => {
-                    if !matches!(&r.target, Type::DynTrait(d) if d.interface.is_some()) && !r.target.is_buffer_target() && !r.target.is_copy_scalar() && !r.target.is_aggregate() && !r.target.is_callable_parameter() {
+                    if !matches!(&r.target, Type::DynTrait(d) if d.interface.is_some()) && !r.target.is_place() && !r.target.is_buffer_target() && !r.target.is_copy_scalar() && !r.target.is_aggregate() && !r.target.is_callable_parameter() {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                             "References require Copy data; nested references, String and opaque targets are not supported"));
                     }
@@ -792,10 +795,21 @@ fn resolve_type_at_depth(
                 "Tuple nesting exceeds 256 levels",
             ));
         }
-        if let Type::FixedArray(a) = ty {
+        if matches!(ty, Type::FixedArray(_) | Type::FixedArrayInit(_)) {
+            let initializing = matches!(ty, Type::FixedArrayInit(_));
+            let a = match ty {
+                Type::FixedArray(a) | Type::FixedArrayInit(a) => a,
+                _ => unreachable!(),
+            };
             let mut element = a.element.clone();
             resolve(&mut element, aliases, registry, depth + 1, cache)?;
             *ty = registry.fixed_array(element, a.length.clone())?;
+            if initializing {
+                let Type::FixedArray(a) = ty else {
+                    unreachable!()
+                };
+                *ty = Type::FixedArrayInit(a.clone());
+            }
             return Ok(());
         }
         if let Type::Named(name) = ty {

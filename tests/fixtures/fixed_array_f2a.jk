@@ -1,0 +1,88 @@
+import joky/fixed_array as fixed.{type FixedArray}
+import joky/mem
+import joky/string as text
+
+fn item(values: &FixedArray<Int32, 4>, index: UInt64) -> Int32 {
+    match values.get(index) { Some(value) => value, None => -1 }
+}
+fn changed(values: FixedArray<Int32, 4>) -> FixedArray<Int32, 4> {
+    var next = values
+    next.set(1, 42)
+    next
+}
+fn order(index: UInt64) -> Int32 { int32(index) + 1 }
+
+fn copies() -> Int32 {
+    var a = fixed.repeat::<Int32, 4>(7)
+    var b = changed(a)
+    a = a
+    if item(&a, 1) != 7 || item(&b, 1) != 42 { return 0 }
+    let old = mem.replace(&mut a, b)
+    if item(&old, 1) != 7 || item(&a, 1) != 42 { return 0 }
+    mem.swap(&mut a, &mut b)
+    b.set(0, 11)
+    if item(&a, 0) != 7 || item(&b, 0) != 11 { return 0 }
+    var side = 0
+    if a.set(4, { side = side + 1 99 }) || side != 1 { return 0 }
+    if item(&a, 4) != -1 || item(&a, 18446744073709551615) != -1 { return 0 }
+    42
+}
+fn callbacks() -> Int32 {
+    let a = fixed.from_fn::<Int32, 4>(order)
+    if item(&a, 0) != 1 || item(&a, 3) != 4 { return 0 }
+    var sum = 0
+    let b = fixed.from_fn::<Int32, 4>(|index: UInt64| { sum = sum * 10 + int32(index) sum })
+    if item(&b, 3) != 123 || sum != 123 { return 0 }
+    let offset = 40
+    let c = fixed.from_fn::<Int32, 4>(|index: UInt64| { offset + int32(index) })
+    if item(&c, 2) == 42 { 42 } else { 0 }
+}
+fn zero() -> Int32 {
+    let owned = "callback"
+    let a = fixed.from_fn::<Int32, 0>(move |index: UInt64| { int32(text.byte_length(&owned) + index) })
+    let z = fixed.repeat::<Unit, 65536>({})
+    let empty = fixed.repeat::<Float64, 0>(1.0)
+    if a.is_empty() && empty.is_empty() && z.len() == 65536 { 42 } else { 0 }
+}
+fn boundary() -> Int32 {
+    var a = fixed.repeat::<UInt8, 65536>(13)
+    a.set(65535, 42)
+    match a.get(65535) { Some(value) => int32(value), None => 0 }
+}
+struct Pair { small: UInt8, wide: Int64 }
+enum Choice { Nothing, Number(Int32), Pair(Pair) }
+fn aggregates() -> Int32 {
+    var a = fixed.repeat::<Choice, 3>(Choice.Pair(Pair { small: 2, wide: 40 }))
+    let b = a
+    a.set(0, Choice.Number(9))
+    match b.get(0) {
+        Some(value) => match value { Nothing => 0, Number(n) => n, Pair(p) => int32(p.small) + int32(p.wide) },
+        None => 0
+    }
+}
+fn reuse() -> Int32 {
+    var i = 0
+    while i < 1000 {
+        let a = fixed.repeat::<Int32, 4>(i)
+        let b = changed(a)
+        if item(&b, 1) != 42 { return 0 }
+        i = i + 1
+    }
+    42
+}
+fn task() @suspends -> Int32 { callbacks() }
+
+fn single() -> Int32 {
+    var effects = 0
+    let a = fixed.repeat::<(Float64, Int32), 1>({ effects = effects + 1 (1.5, 42) })
+    if effects != 1 { return 0 }
+    match a.get(0) { Some(pair) => { let (real, value) = pair if real == 1.5 { value } else { 0 } }, None => 0 }
+}
+fn write_whole(values: &mut FixedArray<Int32,4>) { *values = fixed.repeat::<Int32,4>(42) }
+fn whole_reference() -> Int32 {
+    var a = fixed.repeat::<Int32,4>(1)
+    write_whole(&mut a)
+    let b = *(&a)
+    a.set(0, 9)
+    item(&b, 0)
+}

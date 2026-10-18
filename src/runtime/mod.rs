@@ -21,6 +21,7 @@ pub(crate) mod buffer;
 pub(crate) mod explicit_arena;
 
 pub(crate) mod cleanup;
+pub(crate) mod place;
 
 pub mod byte_request;
 pub mod resource;

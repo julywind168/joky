@@ -250,6 +250,42 @@ pub(crate) fn compile<M: Module>(
     } else {
         None
     };
+    let mut place_ids = Vec::new();
+    for body in plan.bodies.values() {
+        let types = body
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Place(op) => Some(op.ty()),
+                _ => None,
+            })
+            .chain(body.result.iter().map(|s| &s.ty).filter(|ty| ty.is_place()));
+        for ty in types {
+            if place_ids.iter().any(|(known, _, _)| known == ty) {
+                continue;
+            }
+            let program = ty.place_copy_program();
+            let mut bytes = Vec::new();
+            for node in &program {
+                for word in [node.offset, node.kind, node.count, node.stride, node.end] {
+                    bytes.extend(match module.isa().endianness() {
+                        cranelift_codegen::ir::Endianness::Little => word.to_le_bytes(),
+                        cranelift_codegen::ir::Endianness::Big => word.to_be_bytes(),
+                    });
+                }
+            }
+            let id = module
+                .declare_anonymous_data(false, false)
+                .map_err(|e| compile_error(e.to_string()))?;
+            let mut data = DataDescription::new();
+            data.define(bytes.into_boxed_slice());
+            data.set_align(8);
+            module
+                .define_data(id, &data)
+                .map_err(|e| compile_error(e.to_string()))?;
+            place_ids.push((ty.clone(), id, program.len()));
+        }
+    }
     let mut ctx = Context::new();
     let mut builder_ctx = FunctionBuilderContext::new();
     let mut exports = HashMap::new();
@@ -492,6 +528,16 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
+                places: place_ids
+                    .iter()
+                    .map(|(ty, id, count)| {
+                        (
+                            ty.clone(),
+                            module.declare_data_in_func(*id, builder.func),
+                            *count,
+                        )
+                    })
+                    .collect(),
                 domain: domain_data.map(|id| module.declare_data_in_func(id, builder.func)),
                 dyn_tables: dyn_ids
                     .iter()

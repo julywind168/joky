@@ -30,6 +30,7 @@ impl FunctionPlan {
         }
         let mut values = Vec::with_capacity(args.len());
         for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
+            let temporary_start = self.local_scopes.last().unwrap().len();
             let automatic = !ty.contains_dyn()
                 && contract.is_some_and(|(_, info)| info.can_borrow_argument(index))
                 && ty.reference_type().is_some_and(|r| !r.mutable)
@@ -65,6 +66,15 @@ impl FunctionPlan {
                 matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop))
             });
             let value = self.reference_value(value, consuming)?;
+            if ty.is_place() || matches!(arg, Expr::AnonymousFunction(_)) {
+                if let Some(scope) = self.argument_scopes.last_mut() {
+                    scope.extend(
+                        self.local_scopes.last().unwrap()[temporary_start..]
+                            .iter()
+                            .map(|slot| slot.index),
+                    );
+                }
+            }
             extend_argument(&mut values, value);
         }
         Ok(Some(values))
@@ -375,7 +385,10 @@ impl FunctionPlan {
         };
         if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::ArenaAlloc)) {
             let target = info.signature.params[1].clone();
-            if !target.is_copy_storage_value() || target.reference_type().is_some() {
+            if target.contains_fixed_array()
+                || !target.is_copy_storage_value()
+                || target.reference_type().is_some()
+            {
                 return Err(type_error(
                     span,
                     ErrorCode::TypeMismatch,
@@ -425,6 +438,9 @@ impl FunctionPlan {
         ) {
             return Ok(Flow::Value(None));
         }
+        if fixed_arrays::intrinsic(&info.compiler_intrinsic) {
+            return self.fixed_array_call(&info, values);
+        }
         let result = if info.signature.ret == Type::Unit {
             None
         } else {
@@ -435,6 +451,9 @@ impl FunctionPlan {
             self.state_count += 1;
             state
         });
+        if let Some(dst) = result.as_ref().filter(|s| s.ty.is_place()) {
+            self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
+        }
         self.emit(Op::Call {
             indirect: None,
             name,

@@ -30,6 +30,7 @@ mod execute;
 mod host;
 mod memory;
 mod optimize;
+mod places;
 
 pub(crate) use execute::{
     call_instance, call_sync, cleanup_call, prepare_scalar, prepare_script, start, start_text,
@@ -64,6 +65,7 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    Place(Box<places::Instruction>),
     DomainBits {
         dst: usize,
         src: usize,
@@ -202,6 +204,7 @@ struct BytecodeBranch {
 }
 
 struct BytecodeFunction {
+    place_result: Rc<[crate::runtime::place::CopyNode]>,
     name: String,
     spans: Vec<Span>,
     info: FunctionInfo,
@@ -288,9 +291,11 @@ pub(crate) fn compile(
         .collect();
     let mut functions = HashMap::new();
     let mut tables = HashMap::new();
+    let mut layouts = places::Layouts::default();
     for name in &names {
         if let Some(body) = plan.bodies.get(name) {
-            let mut function = lower_function(&plan.functions[name], body, &ids, &mut tables)?;
+            let mut function =
+                lower_function(&plan.functions[name], body, &ids, &mut tables, &mut layouts)?;
             function.name.clone_from(name);
             functions.insert(name.clone(), Rc::new(function));
         }
@@ -332,8 +337,9 @@ fn lower_function(
     plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
     tables: &mut HashMap<usize, Rc<DynMethodTable>>,
+    layouts: &mut places::Layouts,
 ) -> Result<BytecodeFunction, Error> {
-    let mut function = lower_unoptimized(info, plan, ids, tables)?;
+    let mut function = lower_unoptimized(info, plan, ids, tables, layouts)?;
     // The current optimizer reasons about values, not addressable aliasing.
     if !info.needs_arena && !plan.has_references() && !plan.has_buffers() {
         optimize::optimize(&mut function);
@@ -347,6 +353,7 @@ fn lower_unoptimized(
     plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
     tables: &mut HashMap<usize, Rc<DynMethodTable>>,
+    layouts: &mut places::Layouts,
 ) -> Result<BytecodeFunction, Error> {
     // Labels are compile-time markers, not executable instructions. Consecutive
     // labels share a PC; a terminal label maps to code.len() for completion.
@@ -364,6 +371,7 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
+            Op::Place(op) => Instruction::Place(Box::new(places::lower(op, layouts))),
             Op::Closure(_) => unreachable!("closure responsibility is erased after checking"),
             Op::Cleanup(CleanupOp::Register {
                 value,
@@ -611,6 +619,11 @@ fn lower_unoptimized(
         ));
     }
     Ok(BytecodeFunction {
+        place_result: if info.signature.ret.is_place() {
+            layouts.get(&info.signature.ret).program.clone()
+        } else {
+            Rc::from([])
+        },
         instance_hooks: plan.instance_hooks(&info.signature.ret),
         owner_result: plan
             .result
@@ -717,6 +730,7 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
 
 #[derive(Clone)]
 pub(crate) enum Value {
+    Place(*mut u8),
     DynTable(Rc<DynMethodTable>),
     Function(usize),
     Unit,

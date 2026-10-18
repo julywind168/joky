@@ -138,6 +138,22 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
+        Op::Place(op) => match op {
+            PlaceOp::WriteNext { reference, value }
+            | PlaceOp::Store {
+                reference, value, ..
+            } => (
+                std::iter::once(reference)
+                    .chain(value)
+                    .flat_map(refs)
+                    .collect(),
+                vec![],
+            ),
+            PlaceOp::Load { reference, dst, .. } => {
+                (refs(reference), dst.iter().flat_map(refs).collect())
+            }
+            _ => (vec![], vec![]),
+        },
         Op::Assert { message, .. } | Op::Panic { message } => (refs(message), vec![]),
         Op::Closure(op) => match op.as_ref() {
             closures::ClosureOp::BorrowCapture { dst, reference } => (refs(reference), refs(dst)),
@@ -1716,6 +1732,15 @@ fn analyze(
                     }
                 }
             }
+            Op::Place(op) => match op {
+                PlaceOp::WriteNext { reference, .. } | PlaceOp::Store { reference, .. } => {
+                    check_access(reference, true, &state, &live[pc], None, &[])?;
+                }
+                PlaceOp::Load { reference, .. } => {
+                    check_access(reference, false, &state, &live[pc], None, &[])?;
+                }
+                _ => {}
+            },
             Op::Local { dst, value, target } => {
                 let mut arenas = Set::new();
                 if target.is_closure_value() || target.contains_references() {

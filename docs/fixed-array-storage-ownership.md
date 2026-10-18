@@ -1,7 +1,7 @@
 # FixedArray 设计与分阶段开发计划
 
-状态：2026-10-18，**F0 核对与设计冻结完成；F1 已实现常量参数及 FixedArray 类型/布局元数据，F2a–F5 未开始**。
-F1 明确拒绝可执行数组值操作；普通常量参数函数与不含数组的常量参数记录已可执行。
+状态：2026-10-18，**F0、F1、F2a 已完成；F2b–F5 未开始，F2 整体尚未完成**。
+已实现常量参数、紧凑类型布局及独立数组的连续存储和值语义；未开放组合仍在共享前端拒绝。
 实施前核对基线为 `c5035d1`，替代原 `ff8cefb`：除动态 Array、String、借用式 Map key 和
 String S7 外，窄整数与浮点 C 布局、同步闭包、模块常量、持久实例、状态域及同步显式 Arena
 已加入实现。下文按当前能力重新限定组合范围，不把这些能力自动推广到 FixedArray。
@@ -11,8 +11,8 @@ FixedArray 不依赖 String S8 的性能验收，但新增存储与借用机制�
 [arena 容器路线图](arena-borrowing-ffi.md#61-容器与所有权扩展)。
 阶段状态与设计决策放在本文；实现后的源码用法归 language.md，存储与 ABI 不变量归
 architecture.md。README 只在对应阶段验收后增加能力，不提前宣称 FixedArray 可用。
-下面的完整数组接口为 F0 冻结的目标契约；F1 当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
-后续数组值接口不能作为当前可执行示例。源码接点与冻结记录见第 7 节。
+下面的完整数组接口为 F0 冻结的目标契约；F1/F2a 当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
+F2b–F5 接口不能作为当前可执行示例。源码接点与冻结记录见第 7 节。
 
 ## 1. 首版目标与边界
 
@@ -242,7 +242,7 @@ from_fn 的 FnMut 签名、常量参数与 callable 推导组合、受信任数�
 共享前端拒绝所有尚未支持的数组值操作，标量内存展开也不接受数组标记。
 关联常量仍沿用声明阶段求值，不支持依赖 const 参数；F1 明确拒绝此组合，读取 N 使用普通方法。
 三后端共用 `const_generics.jk` 与独立模块 fixture，布局验证覆盖 §7.3 两种目标模型。
-没有实现或验收 F2a 的分配、复制、初始化及回收。
+此处为 F1 的历史记录；后续 F2a 已替换独立数组的执行门禁，完成记录见下节。
 
 **验收记录：**
 
@@ -269,6 +269,30 @@ Copy 元素不需要 C 兼容，但必须属于 F0 白名单。物化、复制�
 捕获、N=0 环境清理与失败/取消，拒绝仅 FnOnce 或挂起回调。失败初始化不能重放回调或发布
 半成品；预算不足、提前返回、赋值失败和解释器取消后临时存储/回调环境只清理一次。
 递归拒绝拥有型/含引用元素及 §2.6 未开放位置，不能因编译器代管存储而改变语言 Copy 语义。
+
+**完成记录（2026-10-18）：** 已实现上述 F2a 范围，包含整个数组的同步引用、解引用读写及
+mem.replace/mem.swap。公开接口由 [fixed_array.jk](../src/stdlib/fixed_array.jk) 实现；
+[fixed_arrays.rs](../src/core/ir/fixed_arrays.rs) 提供显式位置操作和紧凑复制描述，
+[place.rs](../src/runtime/place.rs) 为载荷、初始化前缀与可复用清理登记统一计费和回收。
+JIT/AOT 共用原生 lowering，解释器共享类型布局并保留独立 Place 值标签；返回区先接收完整副本，
+被调者清理成功后再发布。数组不再进入标量展开；N=1 与 N=65,536 的描述/IR 规模相同。
+F2b 聚合嵌入/嵌套/间接调用、F3 元素引用/切片和 F4 C 数组 ABI 均未开放。
+
+**验收记录：**
+
+- `cargo test --lib fixed_array`：17 项通过、1 项穷举按默认忽略，覆盖 F1 布局回归及 F2a。
+  [行为 fixture](../tests/fixtures/fixed_array_f2a.jk) 在 JIT、解释器和独立 AOT 执行，
+  覆盖零长度/零大小/长度上限、有限聚合元素、复制/替换/交换、直接调用、回调及循环复用。
+  [清理 fixture](../tests/fixtures/fixed_array_f2a_cleanup.jk) 验证回调失败、空环境、提前退出、
+  赋值失败及清理失败不发布结果；VM 预算扫描和运行时测试检查释放、登记回滚与失败转移。
+- `cargo test --lib exhaustive_fixed_array_f2a_cancellation -- --ignored`：逐指令取消通过，
+  检查回调不重放、环境至多清理一次且任务 arena 归零。
+- `cargo test --lib exhaustive_closure_interpreter_cancellation_every_instruction -- --ignored`
+  与 `cargo test --lib exhaustive_cps_local_borrows_cancel_at_every_instruction -- --ignored` 均通过；
+  补跑原因是数组调用涉及共享实参临时值、匿名闭包借用结束和清理帧路径。
+- `./scripts/check.sh`：默认 Debug 格式、Clippy、测试及三后端短输入基准正确性通过。
+- 本地文档链接及 `git diff --check` 通过。未运行 Release、全量 stress 或性能测量；
+  32/64 位仍仅验证布局模型，未宣称跨架构数组执行或 C 数组互操作通过。
 
 ### F2b：聚合嵌入、嵌套数组与动态数组组合
 

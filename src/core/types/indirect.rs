@@ -184,7 +184,7 @@ fn resolve(
         Type::Applied(a) => (&a.name, Some(a.arguments.clone())),
         Type::Record(r) => return Ok(shallow(ty, r.arguments.clone())),
         Type::Enum(e) => return Ok(shallow(ty, e.arguments.clone())),
-        Type::FixedArray(_) | Type::Function(_) | Type::Projection(_) => {
+        Type::FixedArray(_) | Type::FixedArrayInit(_) | Type::Function(_) | Type::Projection(_) => {
             // Crossing between reference and value normalization has larger
             // stack frames than a plain signature walk. Bound that path too.
             if depth > 32 {
@@ -496,6 +496,12 @@ pub(crate) fn substitute_syntax(ty: &Type, arguments: &crate::core::types::Subst
             element: substitute_syntax(&a.element, arguments),
             length: arguments.constant(&a.length),
         })),
+        Type::FixedArrayInit(a) => {
+            Type::FixedArrayInit(Arc::new(crate::parser::ast::FixedArrayType {
+                element: substitute_syntax(&a.element, arguments),
+                length: arguments.constant(&a.length),
+            }))
+        }
         Type::Function(signature) => Type::function_with_effect(
             signature
                 .signature

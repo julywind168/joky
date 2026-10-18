@@ -46,7 +46,9 @@ impl<'a> Iterator for TypeWalk<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(ty) = self.pending.pop() {
             let node = match ty {
-                Type::FixedArray(a) => Some(Node::FixedArray(Arc::as_ptr(a))),
+                Type::FixedArray(a) | Type::FixedArrayInit(a) => {
+                    Some(Node::FixedArray(Arc::as_ptr(a)))
+                }
                 Type::Function(f) => Some(Node::Function(Arc::as_ptr(f))),
                 Type::Tuple(t) => Some(Node::Tuple(Arc::as_ptr(t))),
                 Type::Enum(e) => Some(Node::Enum(Arc::as_ptr(e))),
@@ -57,7 +59,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 continue;
             }
             match ty {
-                Type::FixedArray(a) => self.pending.push(&a.element),
+                Type::FixedArray(a) | Type::FixedArrayInit(a) => self.pending.push(&a.element),
                 Type::DynTrait(d) => self.pending.extend(d.equalities.iter().map(|e| &e.ty)),
                 Type::Function(f) => {
                     self.pending.extend(&f.signature.params);

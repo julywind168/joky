@@ -11,6 +11,8 @@ mod arenas;
 mod borrowing;
 mod branches;
 mod buffers;
+mod fixed_arrays;
+pub(crate) use fixed_arrays::PlaceOp;
 mod calls;
 mod cleanup;
 mod closures;
@@ -200,7 +202,7 @@ impl Slot {
 
     pub(crate) fn scalars(&self) -> impl Iterator<Item = Slot> + '_ {
         self.ty
-            .scalar_types()
+            .value_lanes()
             .iter()
             .enumerate()
             .map(|(offset, ty)| Slot {
@@ -237,6 +239,7 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    Place(PlaceOp),
     /// A uniquely owned explicit arena, released by ordinary owner cleanup.
     ArenaNew {
         dst: Slot,
@@ -442,6 +445,7 @@ pub(crate) struct DynErasure {
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
     source_function: String,
+    suspending: bool,
     when_function: String,
     callable_modes: HashMap<usize, crate::parser::ast::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
@@ -648,6 +652,7 @@ impl ModulePlan {
                 || source_name.starts_with("__joky_arena_")
                 || source_name.starts_with("__joky_explicit_arena_")
                 || source_name.starts_with("__joky_buffer_")
+                || source_name.starts_with("__joky_place_")
                 || source_name.starts_with("__joky_cps_")
                 || source_name.starts_with("__joky_generic_")
                 || source_name.starts_with("__joky_closure_")
@@ -1009,7 +1014,13 @@ impl ModulePlan {
                             | Op::Alloc { .. }
                             | Op::ArenaNew { .. }
                             | Op::ArenaAlloc { .. }
-                            | Op::Text { .. } => true,
+                            | Op::Text { .. }
+                            | Op::Place(_) => true,
+                            Op::Buffer(BufferOp::SwapReferences { target, .. })
+                                if target.is_place() =>
+                            {
+                                true
+                            }
                             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
                             Op::Binary(_, op, lhs, _) if op.can_fail() && !lhs.ty.is_float() => {
                                 true
@@ -1085,8 +1096,8 @@ impl ModulePlan {
             let info = functions.get_mut(name).unwrap();
             if info.suspends {
                 body.reserve_cps_locals()?;
-                info.frame_slots = body.slot_count;
             }
+            info.frame_slots = body.slot_count;
         }
         Ok(Self { functions, bodies })
     }
@@ -1132,14 +1143,22 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
-        if let Some(ty) = f
+        for ty in f
             .params
             .iter()
             .map(|p| &p.ty)
             .chain(std::iter::once(&f.ret_ty))
-            .find(|ty| ty.contains_fixed_array())
         {
-            return Err(type_error(&f.span,ErrorCode::TypeMismatch,format!("FixedArray values and operations are not supported in F1: function `{}` uses {ty}",f.name)));
+            if ty.contains_fixed_array() && (!fixed_arrays::eligible(ty) || f.suspends) {
+                return Err(type_error(
+                    &f.span,
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "FixedArray is not supported in this context: function `{}` uses {ty}",
+                        f.name
+                    ),
+                ));
+            }
         }
         when::validate_blocks(f)?;
         let prepared = super::json_derive::prepare_encoding(f);
@@ -1174,6 +1193,7 @@ impl FunctionPlan {
             dyn_erasures: Vec::new(),
             when_function,
             source_function: f.name.clone(),
+            suspending: f.suspends,
             callable_modes: Default::default(),
             captured_owners: Default::default(),
             captured_fields: Default::default(),
@@ -1222,6 +1242,9 @@ impl FunctionPlan {
             label_count: 0,
             span: f.span,
         };
+        if fixed_arrays::intrinsic(&f.compiler_intrinsic) {
+            return Ok(plan);
+        }
         if let Some(CompilerIntrinsic::DirectoryType(ty)) = &f.compiler_intrinsic {
             plan.result = Some(plan.directory_type(ty, f.span)?);
             plan.resolve_cleanups()?;
@@ -1536,21 +1559,13 @@ impl FunctionPlan {
     }
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
-        if ty.contains_fixed_array() {
-            return Err(type_error(
-                &self.current_span,
-                ErrorCode::TypeMismatch,
-                format!(
-                    "FixedArray values and operations are not supported in F1: value of type {ty}"
-                ),
-            ));
-        }
+        self.check_fixed_array(&ty)?;
         if ty.contains_explicit_arena() {
             self.type_registry
                 .validate(&ty)
                 .map_err(|error| error.with_span(self.current_span))?;
         }
-        let width = ty.scalar_types().len();
+        let width = ty.value_lanes().len();
         if self
             .slot_count
             .checked_add(width)
@@ -1567,7 +1582,7 @@ impl FunctionPlan {
             ty,
         };
         self.slot_count += width;
-        if slot.ty.is_owner() || slot.ty.is_closure_value() {
+        if slot.ty.is_owner() || slot.ty.is_closure_value() || slot.ty.is_place() {
             self.local_scopes.last_mut().unwrap().push(slot.clone());
         }
         Ok(slot)
@@ -1586,6 +1601,11 @@ impl FunctionPlan {
         }
 
         if let Op::EndLocal(slot) = &op {
+            if slot.ty.is_place() {
+                self.ops.push(Op::Place(PlaceOp::End(slot.clone())));
+                self.op_spans.push(self.current_span);
+                return;
+            }
             if slot.ty.is_closure_value() {
                 self.ops.push(Op::Closure(Box::new(closures::ClosureOp::End(
                     slot.clone(),
@@ -1602,6 +1622,23 @@ impl FunctionPlan {
             }
         }
         if let Op::Copy(dst, src) = &op {
+            if dst.ty.is_place() {
+                let op = if matches!(dst.ty, Type::FixedArrayInit(_)) {
+                    PlaceOp::MoveInit {
+                        dst: dst.clone(),
+                        src: src.clone(),
+                        publish: false,
+                    }
+                } else {
+                    PlaceOp::Copy {
+                        dst: dst.clone(),
+                        src: src.clone(),
+                    }
+                };
+                self.ops.push(Op::Place(op));
+                self.op_spans.push(self.current_span);
+                return;
+            }
             if let Some(place) = self.closure_places.get(&src.index).cloned() {
                 self.closure_places.entry(dst.index).or_insert(place);
             }

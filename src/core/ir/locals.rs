@@ -187,7 +187,7 @@ impl FunctionPlan {
     pub(super) fn reserve_cps_locals(&mut self) -> Result<(), Error> {
         for (op, span) in self.ops.iter().zip(&self.op_spans) {
             let local = match op {
-                Op::Local { dst, target, .. } => Some((dst.index, target)),
+                Op::Local { dst, target, .. } if !target.is_place() => Some((dst.index, target)),
                 _ => None,
             };
             for (key, target) in local.into_iter().chain(op.cleanup_storage()) {
@@ -250,7 +250,8 @@ impl FunctionPlan {
             }
         }
         let needs_place = self.borrowed_names.requires_place(name, &target, self);
-        if target.is_closure_value()
+        if target.is_place()
+            || target.is_closure_value()
             || names_capture_place(&self.borrowed_names, name)
             || target.is_inline_owner()
             || needs_place
@@ -532,11 +533,9 @@ impl FunctionPlan {
             .cloned()
             .collect();
         for local in locals.into_iter().rev() {
-            if self
-                .result
-                .as_ref()
-                .is_some_and(|result| result.index == local.index && result.ty.is_owner())
-            {
+            if self.result.as_ref().is_some_and(|result| {
+                result.index == local.index && (result.ty.is_owner() || result.ty.is_place())
+            }) {
                 continue;
             }
             if local.ty.is_closure_value() {
@@ -550,7 +549,7 @@ impl FunctionPlan {
 
     pub(super) fn escape_owner(&mut self, flow: &Flow) {
         if let Flow::Value(Some(slot)) = flow {
-            if slot.ty.is_owner() || slot.ty.is_closure_value() {
+            if slot.ty.is_owner() || slot.ty.is_closure_value() || slot.ty.is_place() {
                 self.local_scopes
                     .last_mut()
                     .unwrap()
@@ -576,11 +575,9 @@ impl FunctionPlan {
     pub(super) fn end_local_scope(&mut self) {
         let locals = self.local_scopes.pop().unwrap();
         for local in locals.into_iter().rev() {
-            if self
-                .result
-                .as_ref()
-                .is_some_and(|result| result.index == local.index && result.ty.is_owner())
-            {
+            if self.result.as_ref().is_some_and(|result| {
+                result.index == local.index && (result.ty.is_owner() || result.ty.is_place())
+            }) {
                 continue;
             }
             self.emit(Op::EndLocal(local));
@@ -599,6 +596,53 @@ impl FunctionPlan {
             keep
         });
         self.op_spans = spans;
+        for op in &mut self.ops {
+            let next = match op {
+                Op::Buffer(BufferOp::SwapReferences {
+                    left,
+                    right,
+                    target,
+                }) if target.is_place() => {
+                    let temporary = self.slot_count;
+                    self.slot_count += 1;
+                    Some(PlaceOp::Swap {
+                        left: left.clone(),
+                        right: right.clone(),
+                        target: target.clone(),
+                        temporary,
+                    })
+                }
+                Op::Local {
+                    dst,
+                    value: Some(src),
+                    target,
+                } if target.is_place() => Some(PlaceOp::Alias {
+                    dst: dst.clone(),
+                    src: src.clone(),
+                }),
+                Op::ReadMemory {
+                    dst: Some(dst),
+                    reference,
+                    path,
+                } if dst.ty.is_place() && path.is_empty() => Some(PlaceOp::Read {
+                    dst: dst.clone(),
+                    reference: reference.clone(),
+                }),
+                Op::WriteMemory {
+                    reference,
+                    path,
+                    value: Some(value),
+                    target,
+                } if target.is_place() && path.is_empty() => Some(PlaceOp::Write {
+                    reference: reference.clone(),
+                    value: value.clone(),
+                }),
+                _ => None,
+            };
+            if let Some(next) = next {
+                *op = Op::Place(next);
+            }
+        }
     }
 
     pub(super) fn local_field_expr(

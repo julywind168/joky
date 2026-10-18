@@ -212,6 +212,7 @@ fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
     match instruction {
         Instruction::Text { .. }
         | Instruction::Cleanup { .. }
+        | Instruction::Place(_)
         | Instruction::Memory(_)
         | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
@@ -232,6 +233,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
     match instruction {
         Instruction::Text { .. }
         | Instruction::Cleanup { .. }
+        | Instruction::Place(_)
         | Instruction::Memory(_)
         | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
@@ -298,6 +300,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
     match instruction {
         Instruction::Text { .. }
         | Instruction::Cleanup { .. }
+        | Instruction::Place(_)
         | Instruction::Memory(_)
         | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")

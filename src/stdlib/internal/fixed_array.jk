@@ -1,2 +1,14 @@
-// Only this embedded definition receives the compiler-owned inline shape.
+// Only these embedded definitions receive compiler-owned value/token identities.
 type FixedArray<T, const N: UInt64> = T
+type Init<T, const N: UInt64> = T
+
+#intrinsic("fixed_array.begin")
+fn begin<T, const N: UInt64>() -> Init<T, N>;
+#intrinsic("fixed_array.write_next")
+fn write_next<T, const N: UInt64>(token: &mut Init<T, N>, value: T);
+#intrinsic("fixed_array.finish")
+fn finish<T, const N: UInt64>(token: Init<T, N>) -> FixedArray<T, N>;
+#intrinsic("fixed_array.load")
+fn load<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> T;
+#intrinsic("fixed_array.store")
+fn store<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T);

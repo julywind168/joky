@@ -275,3 +275,5 @@ mod explicit_arena_tests;
 
 #[cfg(test)]
 mod const_generic_tests;
+#[cfg(test)]
+mod fixed_array_tests;

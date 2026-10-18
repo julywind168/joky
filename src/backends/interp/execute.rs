@@ -743,7 +743,22 @@ impl Execution {
         };
         debug_assert_eq!(results.len(), child.function.aggregate_result.len());
         for (&dst, &src) in results.iter().zip(&child.function.aggregate_result) {
-            parent.slots[dst] = child.slots[src].clone();
+            if child.function.info.signature.ret.is_place() {
+                unsafe {
+                    crate::runtime::place::copy(
+                        places::pointer(&parent.slots[dst]),
+                        places::pointer(&child.slots[src]),
+                        &child.function.place_result,
+                    );
+                }
+            } else {
+                parent.slots[dst] = child.slots[src].clone();
+            }
+        }
+        if child.function.info.signature.ret.is_place() {
+            unsafe {
+                child.cleanups.finish(&mut self.arena)?;
+            }
         }
         if let Some(key) = child.function.owner_result {
             let lane = child
@@ -1359,6 +1374,11 @@ fn run_frame(
 ) -> Step {
     loop {
         let Some(instruction) = frame.function.code.get(frame.pc) else {
+            // Copy a place result while its backing storage is still live. The
+            // parent publishes it only after complete_aggregate finishes cleanup.
+            if frame.function.info.signature.ret.is_place() {
+                return Step::CompleteAggregate;
+            }
             let result_entry = frame
                 .function
                 .owner_result
@@ -1599,6 +1619,14 @@ fn run_frame(
                     for arg in args.iter().filter(|arg| arg.ty.is_owner()) {
                         frame.cleanups.take(arg.owner_key());
                     }
+                }
+                frame.pc += 1;
+            }
+            Instruction::Place(op) => {
+                if let Err(error) =
+                    places::execute(op, &mut frame.slots, arena, &mut frame.cleanups.places)
+                {
+                    return Step::Failed(error);
                 }
                 frame.pc += 1;
             }

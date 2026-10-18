@@ -18,6 +18,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
 pub(super) struct DataRefs {
+    pub places: Vec<(Type, GlobalValue, usize)>,
     pub domain: Option<GlobalValue>,
     pub dyn_tables: HashMap<usize, GlobalValue>,
     pub strings: HashMap<String, GlobalValue>,
@@ -26,7 +27,7 @@ pub(super) struct DataRefs {
 
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
-        Type::FixedArray(_) | Type::BufferElement(_) | Type::BufferSlice(_) => None,
+        Type::BufferElement(_) | Type::BufferSlice(_) => None,
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 | Type::Rune => Some(
             if matches!(ty, Type::Rune) || ty.integer().unwrap().bits() == 32 {
                 types::I32
@@ -43,7 +44,9 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::DynTrait(_) | Type::Parameter(_) | Type::Applied(_) | Type::Projection(_) => {
             unreachable!("generic parameter reached native lowering")
         }
-        Type::Function(_)
+        Type::FixedArray(_)
+        | Type::FixedArrayInit(_)
+        | Type::Function(_)
         | Type::String
         | Type::Resource(_)
         | Type::Ptr
@@ -329,7 +332,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
                 sig.params
                     .push(AbiParam::new(module.target_config().pointer_type()));
             } else {
-                for scalar in ty.scalar_types() {
+                for scalar in ty.value_lanes() {
                     sig.params.push(AbiParam::new(native_lane(scalar).unwrap()));
                 }
             }
@@ -342,7 +345,9 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
             sig.params
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
-        if let Some(ty) = native_lane(&info.signature.ret) {
+        if let Some(ty) =
+            native_lane(&info.signature.ret).filter(|_| !info.signature.ret.is_place())
+        {
             sig.returns.push(AbiParam::new(ty));
         }
     }
@@ -413,6 +418,21 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
+        (
+            "__joky_place_begin",
+            vec![ptr, ptr, ptr, ptr, types::I64],
+            vec![ptr],
+        ),
+        (
+            "__joky_place_materialize",
+            vec![ptr, ptr, ptr, ptr],
+            vec![ptr],
+        ),
+        ("__joky_place_move", vec![ptr, ptr, ptr, ptr], vec![ptr]),
+        ("__joky_place_next", vec![ptr, ptr, ptr], vec![ptr]),
+        ("__joky_place_commit", vec![ptr, ptr], vec![]),
+        ("__joky_place_end", vec![ptr, ptr], vec![]),
+        ("__joky_place_copy", vec![ptr, ptr, ptr, ptr], vec![]),
         ("__joky_float_env_enter", vec![], vec![types::I64]),
         ("__joky_float_env_reset", vec![], vec![]),
         ("__joky_float_env_restore", vec![types::I64], vec![]),
@@ -1394,6 +1414,10 @@ fn lower_sync_call(
         }
     }
     let buffer = match result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
+        Some(dst) if dst.ty.is_place() => {
+            call_args.push(slots.read(builder, dst));
+            None
+        }
         Some(dst) => match mode.frame() {
             Some(_) => {
                 let SlotAccess::Frames { slots } = &*slots else {
@@ -1429,7 +1453,7 @@ fn lower_sync_call(
     let call = if let Some(target) = indirect {
         let info = &functions[name];
         let mut signature = Signature::new(builder.func.signature.call_conv);
-        for ty in info.signature.params.iter().flat_map(Type::scalar_types) {
+        for ty in info.signature.params.iter().flat_map(Type::value_lanes) {
             signature
                 .params
                 .push(AbiParam::new(native_lane(ty).unwrap()));
@@ -1562,6 +1586,7 @@ fn lower_ops(
             continue;
         }
         match op {
+            Op::Place(op) => lower_place(builder, op, slots, mode, refs, ptr_ty, data),
             Op::Closure(_) => unreachable!("closure responsibility is erased after checking"),
             Op::Cleanup(op) => lower_cleanup(builder, op, plan, refs, ptr_ty, slots, mode),
             Op::Buffer(op) => match op {
@@ -2617,6 +2642,18 @@ fn lower_direct(
         ExecMode::Direct { arena, cleanup },
     );
     if !terminated {
+        if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_place()) {
+            let source = access.read(builder, result);
+            place_copy(
+                builder,
+                refs,
+                data,
+                ptr_ty,
+                &result.ty,
+                result_pointer.unwrap(),
+                source,
+            );
+        }
         if let Some(cleanup) = cleanup {
             if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_owner()) {
                 let owner = result.scalars().find(|s| s.ty.is_buffer()).unwrap();
@@ -2632,7 +2669,7 @@ fn lower_direct(
             check_call(builder, refs, None, None);
         }
         if let Some(pointer) = result_pointer {
-            if let Some(result) = &plan.result {
+            if let Some(result) = plan.result.as_ref().filter(|s| !s.ty.is_place()) {
                 for (offset, slot) in result.scalars().enumerate() {
                     let value = builder.use_var(variables[slot.index].unwrap());
                     store(
@@ -3222,4 +3259,212 @@ pub(super) fn fs_entry(
     let status = helper(builder, refs, "__joky_fs_poll", &[frame, kind]);
     builder.ins().return_(&[status]);
     builder.seal_all_blocks();
+}
+
+fn place_copy(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    data: &DataRefs,
+    ptr_ty: types::Type,
+    ty: &Type,
+    dst: Value,
+    src: Value,
+) {
+    let (_, descriptor, count) = data
+        .places
+        .iter()
+        .find(|(known, _, _)| known == ty)
+        .expect("owned place descriptor");
+    let descriptor = builder.ins().symbol_value(ptr_ty, *descriptor);
+    let count = builder.ins().iconst(ptr_ty, *count as i64);
+    builder
+        .ins()
+        .call(refs["__joky_place_copy"], &[dst, src, descriptor, count]);
+}
+
+fn place_materialize(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
+    mode: ExecMode<'_>,
+    dst: &Slot,
+) -> Value {
+    let layout = dst.ty.memory_layout().unwrap();
+    let key = builder.ins().iconst(ptr_ty, dst.index as i64);
+    let size = builder.ins().iconst(ptr_ty, layout.size as i64);
+    let align = builder.ins().iconst(ptr_ty, layout.align as i64);
+    let pointer = helper(
+        builder,
+        refs,
+        "__joky_place_materialize",
+        &[mode.cleanup().unwrap(), key, size, align],
+    );
+    check_call(builder, refs, mode.frame(), mode.cleanup());
+    pointer
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_place(
+    builder: &mut FunctionBuilder,
+    op: &crate::core::ir::PlaceOp,
+    slots: &mut SlotAccess<'_>,
+    mode: ExecMode<'_>,
+    refs: &HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
+    data: &DataRefs,
+) {
+    use crate::core::ir::PlaceOp;
+    match op {
+        PlaceOp::Swap {
+            left,
+            right,
+            target,
+            temporary,
+        } => {
+            let temp = Slot {
+                index: *temporary,
+                ty: target.clone(),
+            };
+            let storage = place_materialize(builder, refs, ptr_ty, mode, &temp);
+            let left = slots.read(builder, left);
+            let right = slots.read(builder, right);
+            place_copy(builder, refs, data, ptr_ty, target, storage, left);
+            place_copy(builder, refs, data, ptr_ty, target, left, right);
+            place_copy(builder, refs, data, ptr_ty, target, right, storage);
+            let key = builder.ins().iconst(ptr_ty, *temporary as i64);
+            builder
+                .ins()
+                .call(refs["__joky_place_end"], &[mode.cleanup().unwrap(), key]);
+        }
+        PlaceOp::Alias { dst, src } => {
+            let pointer = slots.read(builder, src);
+            slots.write(builder, dst, pointer);
+        }
+        PlaceOp::Read { dst, reference } if matches!(dst.ty, Type::FixedArrayInit(_)) => {
+            let pointer = slots.read(builder, reference);
+            slots.write(builder, dst, pointer);
+        }
+        PlaceOp::Allocate(dst) => {
+            let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
+            slots.write(builder, dst, pointer);
+        }
+        PlaceOp::Copy { dst, src }
+        | PlaceOp::Read {
+            dst,
+            reference: src,
+        } => {
+            let source = slots.read(builder, src);
+            let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
+            place_copy(builder, refs, data, ptr_ty, &dst.ty, pointer, source);
+            slots.write(builder, dst, pointer);
+        }
+        PlaceOp::Write { reference, value } => {
+            let pointer = slots.read(builder, reference);
+            let source = slots.read(builder, value);
+            place_copy(builder, refs, data, ptr_ty, &value.ty, pointer, source);
+        }
+        PlaceOp::Begin(dst) => {
+            let layout = dst.ty.memory_layout().unwrap();
+            let key = builder.ins().iconst(ptr_ty, dst.index as i64);
+            let size = builder.ins().iconst(ptr_ty, layout.size as i64);
+            let align = builder.ins().iconst(ptr_ty, layout.align as i64);
+            let length = builder
+                .ins()
+                .iconst(types::I64, dst.ty.fixed_length() as i64);
+            let pointer = helper(
+                builder,
+                refs,
+                "__joky_place_begin",
+                &[mode.cleanup().unwrap(), key, size, align, length],
+            );
+            check_call(builder, refs, mode.frame(), mode.cleanup());
+            slots.write(builder, dst, pointer);
+        }
+        PlaceOp::MoveInit { dst, src, publish } => {
+            let pointer = slots.read(builder, src);
+            let key = builder.ins().iconst(ptr_ty, dst.index as i64);
+            let publish = builder.ins().iconst(ptr_ty, i64::from(*publish));
+            let pointer = helper(
+                builder,
+                refs,
+                "__joky_place_move",
+                &[mode.cleanup().unwrap(), key, pointer, publish],
+            );
+            check_call(builder, refs, mode.frame(), mode.cleanup());
+            slots.write(builder, dst, pointer);
+        }
+        PlaceOp::End(slot) => {
+            let key = builder.ins().iconst(ptr_ty, slot.index as i64);
+            builder
+                .ins()
+                .call(refs["__joky_place_end"], &[mode.cleanup().unwrap(), key]);
+        }
+        PlaceOp::WriteNext { reference, value }
+        | PlaceOp::Store {
+            reference, value, ..
+        }
+        | PlaceOp::Load {
+            reference,
+            dst: value,
+            ..
+        } => {
+            let base = slots.read(builder, reference);
+            let element = &reference.ty.fixed_shape().element;
+            let stride = element.memory_layout().unwrap().size;
+            let pointer = if matches!(op, PlaceOp::WriteNext { .. }) {
+                let stride = builder.ins().iconst(ptr_ty, stride as i64);
+                let pointer = helper(
+                    builder,
+                    refs,
+                    "__joky_place_next",
+                    &[mode.cleanup().unwrap(), base, stride],
+                );
+                check_call(builder, refs, mode.frame(), mode.cleanup());
+                pointer
+            } else {
+                let index = match op {
+                    PlaceOp::Store { index, .. } | PlaceOp::Load { index, .. } => index,
+                    _ => unreachable!(),
+                };
+                let index = slots.read(builder, index);
+                let offset = builder.ins().imul_imm_u(index, stride as i64);
+                let offset = if ptr_ty == types::I32 {
+                    builder.ins().ireduce(ptr_ty, offset)
+                } else {
+                    offset
+                };
+                builder.ins().iadd(base, offset)
+            };
+            if let Some(value) = value {
+                for ((offset, ty), slot) in element
+                    .storage_scalars()
+                    .unwrap()
+                    .into_iter()
+                    .zip(value.scalars())
+                {
+                    if matches!(op, PlaceOp::Load { .. }) {
+                        let value = builder.ins().load(
+                            native_type(&ty).unwrap(),
+                            MemFlagsData::new(),
+                            pointer,
+                            offset as i32,
+                        );
+                        slots.write(builder, &slot, value);
+                    } else {
+                        let value = slots.read(builder, &slot);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::new(), value, pointer, offset as i32);
+                    }
+                }
+            }
+            if matches!(op, PlaceOp::WriteNext { .. }) {
+                builder.ins().call(
+                    refs["__joky_place_commit"],
+                    &[mode.cleanup().unwrap(), base],
+                );
+                check_call(builder, refs, mode.frame(), mode.cleanup());
+            }
+        }
+    }
 }

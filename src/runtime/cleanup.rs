@@ -107,6 +107,7 @@ impl Entry {
 
 #[derive(Default)]
 pub(crate) struct Cleanups {
+    pub(crate) places: super::place::Places,
     entries: BTreeMap<usize, Entry>,
     order: Vec<usize>,
 }
@@ -282,12 +283,13 @@ impl Cleanups {
                 error.get_or_insert(next);
             }
         }
+        self.places.finish(arena);
         error.map_or(Ok(()), Err)
     }
 }
 
 pub(crate) struct NativeFrame {
-    arena: *mut Arena,
+    pub(crate) arena: *mut Arena,
     pub(crate) entries: Cleanups,
 }
 

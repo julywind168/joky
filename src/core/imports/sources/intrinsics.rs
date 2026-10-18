@@ -25,6 +25,11 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
         let id = attribute.name.as_str();
         let mut adapter = false;
         let compiler = match (kind, id) {
+            (SourceKind::FixedArrayStorage, "fixed_array.begin") => FixedArrayBegin,
+            (SourceKind::FixedArrayStorage, "fixed_array.write_next") => FixedArrayWriteNext,
+            (SourceKind::FixedArrayStorage, "fixed_array.finish") => FixedArrayFinish,
+            (SourceKind::FixedArrayStorage, "fixed_array.load") => FixedArrayLoad,
+            (SourceKind::FixedArrayStorage, "fixed_array.store") => FixedArrayStore,
             (SourceKind::Arena, "arena.new") => ArenaNew,
             (SourceKind::Arena, "arena.alloc") => ArenaAlloc,
             (SourceKind::Check, "check.assert") => Assert,

@@ -30,6 +30,7 @@ pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunc
         &plan.bodies[name],
         &ids,
         &mut HashMap::new(),
+        &mut Default::default(),
     )
     .unwrap()
 }
@@ -596,6 +597,7 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
                             &plan.bodies[name],
                             &ids,
                             &mut HashMap::new(),
+                            &mut Default::default(),
                         )
                         .unwrap(),
                     ),
@@ -659,6 +661,7 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
                             &plan.bodies[name],
                             &ids,
                             &mut HashMap::new(),
+                            &mut Default::default(),
                         )
                         .unwrap(),
                     ),
@@ -722,6 +725,7 @@ fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
                             &plan.bodies[name],
                             &ids,
                             &mut HashMap::new(),
+                            &mut Default::default(),
                         )
                         .unwrap(),
                     ),
@@ -792,6 +796,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
                                 &plan.bodies[name],
                                 &ids,
                                 &mut HashMap::new(),
+                                &mut Default::default(),
                             )
                             .unwrap(),
                         ),
@@ -876,6 +881,7 @@ fn method_receivers_and_constant_values_match_unoptimized_execution() {
                             &plan.bodies[name],
                             &ids,
                             &mut HashMap::new(),
+                            &mut Default::default(),
                         )
                         .unwrap(),
                     ),

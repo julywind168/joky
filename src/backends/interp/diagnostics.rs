@@ -17,6 +17,7 @@ fn describe(instruction: &Instruction) -> String {
             format!("IndirectCall r{}, {:?}", call.callee, call.args)
         }
         Instruction::Cleanup { .. } => "Cleanup".into(),
+        Instruction::Place(_) => "Place".into(),
         Instruction::Memory(_) => "Memory".into(),
         Instruction::Buffer(_) => "Buffer".into(),
         Instruction::Copy { dst, src } => format!("Copy r{dst}, r{src}"),
@@ -132,6 +133,7 @@ fn dump_while_bytecode() {
             &plan.bodies[name],
             &HashMap::new(),
             &mut HashMap::new(),
+            &mut Default::default(),
         )
         .unwrap();
         println!(

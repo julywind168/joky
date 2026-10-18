@@ -183,7 +183,7 @@ impl LayoutContext {
         if ty.closure_info().is_some() && !self.owners {
             return Err(MemoryLayoutError::UnsupportedType);
         }
-        if let Type::FixedArray(array) = ty {
+        if let Type::FixedArray(array) | Type::FixedArrayInit(array) = ty {
             let key = AggregateKey::Array(Arc::as_ptr(array));
             if depth >= MAX_DEPTH {
                 return Err(MemoryLayoutError::ResourceLimit);
@@ -212,7 +212,9 @@ impl LayoutContext {
                 return Err(MemoryLayoutError::ResourceLimit);
             }
             let child_key = match &array.element {
-                Type::FixedArray(a) => Some(AggregateKey::Array(Arc::as_ptr(a))),
+                Type::FixedArray(a) | Type::FixedArrayInit(a) => {
+                    Some(AggregateKey::Array(Arc::as_ptr(a)))
+                }
                 Type::Record(r) => Some(AggregateKey::Record(Arc::as_ptr(r))),
                 Type::Enum(e) => Some(AggregateKey::Enum(Arc::as_ptr(e))),
                 Type::Tuple(t) => Some(AggregateKey::Tuple(Arc::as_ptr(t))),
@@ -291,7 +293,9 @@ impl LayoutContext {
         let mut member = |ty: &Type, builder: &mut AggregateBuilder| {
             let layout = self.layout(ty, depth + 1)?;
             let child_key = match ty {
-                Type::FixedArray(a) => Some(AggregateKey::Array(Arc::as_ptr(a))),
+                Type::FixedArray(a) | Type::FixedArrayInit(a) => {
+                    Some(AggregateKey::Array(Arc::as_ptr(a)))
+                }
                 Type::Record(r) => Some(AggregateKey::Record(Arc::as_ptr(r))),
                 Type::Enum(e) => Some(AggregateKey::Enum(Arc::as_ptr(e))),
                 Type::Tuple(t) => Some(AggregateKey::Tuple(Arc::as_ptr(t))),

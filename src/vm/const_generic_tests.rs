@@ -60,8 +60,8 @@ fn fixed_array_f1_invalid_constants_and_value_operations_are_rejected() {
         "fn f<const N: UInt64>() {} fn check() { f::<Int32>(); }",
         "struct Tag<const N: UInt64> {} fn same<const N: UInt64>(a:Tag<N>,b:Tag<N>) {} fn check() { same(Tag::<1>{},Tag::<2>{}); }",
         "struct Tag<const N: UInt64> {} fn f<const N: UInt64,const M: UInt64>(a:Tag<N>) -> Tag<M> { a }",
-        "fn f(x:FixedArray<Int32,4>) -> FixedArray<Int32,4> { x }",
-        "fn f(x:&FixedArray<Int32,4>) {}",
+        "fn f(x:FixedArray<FixedArray<Int32,2>,2>) -> FixedArray<FixedArray<Int32,2>,2> { x }",
+        "fn f(x:&FixedArray<FixedArray<Int32,2>,2>) {}",
         "fn f() { let x = FixedArray::<Int32,4>{} }",
         "fn f() { FixedArray.new::<Int32,4>(); }",
     ] {
@@ -70,15 +70,52 @@ fn fixed_array_f1_invalid_constants_and_value_operations_are_rejected() {
         assert!(result.is_err(),"accepted: {source}");
     }
     // Each public compilation entry rejects the same unsupported value boundary.
-    let source="import joky/fixed_array.{type FixedArray}\nfn f(x:FixedArray<Int32,4>) -> FixedArray<Int32,4> { x }";
+    let source="import joky/fixed_array.{type FixedArray}\nfn f(x:FixedArray<FixedArray<Int32,2>,2>) -> FixedArray<FixedArray<Int32,2>,2> { x }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let error = VmEngine::with_mode(mode).load_source(source).unwrap_err();
-        assert!(error.to_string().contains("not supported in F1"), "{error}");
+        assert!(
+            error.to_string().contains("not supported in this context"),
+            "{error}"
+        );
     }
     let mut aot = crate::aot::AotCompiler::new("fixed_array_rejected").unwrap();
     assert!(aot
         .compile_module(&crate::parser::parse(source).unwrap())
         .unwrap_err()
         .to_string()
-        .contains("not supported in F1"));
+        .contains("not supported in this context"));
+}
+
+#[test]
+fn fixed_array_f2a_values_execute() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../tests/fixtures/fixed_array_f2a.jk"))
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{mode:?}: {e} {:?}",
+                    e.span().and_then(|s| e
+                        .sources()
+                        .get(s.source_id())
+                        .map(|f| (f.name(), s.slice(f.text()))))
+                )
+            });
+        for name in [
+            "copies",
+            "callbacks",
+            "zero",
+            "boundary",
+            "aggregates",
+            "reuse",
+            "single",
+            "whole_reference",
+        ] {
+            assert_eq!(
+                vm.call_int32_0(name)
+                    .unwrap_or_else(|e| panic!("{mode:?} {name}: {e}")),
+                42,
+                "{mode:?} {name}"
+            );
+        }
+    }
 }

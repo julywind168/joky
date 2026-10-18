@@ -37,7 +37,10 @@ impl FunctionPlan {
                 {
                     return Err(invalid());
                 }
-                if !value.ty.is_copy_storage_value() || value.ty.reference_type().is_some() {
+                if value.ty.contains_fixed_array()
+                    || !value.ty.is_copy_storage_value()
+                    || value.ty.reference_type().is_some()
+                {
                     return Err(type_error(
                         &f.span,
                         ErrorCode::TypeMismatch,

@@ -233,7 +233,7 @@ pub(super) fn unresolved(
         matches!(ty, Type::Parameter(p)
             if params.iter().any(|q| p.id == q.id) && !substitutions.contains_key(&p.id))
         || match ty {
-            Type::FixedArray(a) => unresolved_constant(&a.length),
+            Type::FixedArray(a) | Type::FixedArrayInit(a) => unresolved_constant(&a.length),
             Type::Record(r) => r.arguments.iter().any(|a| matches!(a,crate::parser::ast::GenericArgument::Const(c) if unresolved_constant(c))),
             Type::Enum(e) => e.arguments.iter().any(|a| matches!(a,crate::parser::ast::GenericArgument::Const(c) if unresolved_constant(c))),
             _ => false,

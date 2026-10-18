@@ -34,7 +34,7 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
         return Ok(());
     }
     for node in TypeWalk::new(ty, TypeEdges::Fields) {
-        let Type::FixedArray(array) = node else {
+        let (Type::FixedArray(array) | Type::FixedArrayInit(array)) = node else {
             continue;
         };
         match &array.length {
@@ -98,7 +98,7 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
             || matches!(t,Type::FixedArray(a) if matches!(a.length,ConstArgument::Parameter(_)))
     });
     if !rigid {
-        ty.memory_layout().map_err(|e| {
+        ty.reference_type().map_or(ty, |r| &r.target).memory_layout().map_err(|e| {
             failure(
                 ErrorCode::ResourceLimit,
                 &format!("FixedArray memory layout for {ty}: {e}; maximum object size is {MAX_BYTES} bytes"),
@@ -124,7 +124,7 @@ pub(super) fn weight(ty: &Type) -> Result<u64, Error> {
             ));
         }
         let key = match ty {
-            Type::FixedArray(a) => Arc::as_ptr(a) as usize,
+            Type::FixedArray(a) | Type::FixedArrayInit(a) => Arc::as_ptr(a) as usize,
             Type::Record(r) => Arc::as_ptr(r) as usize,
             Type::Enum(e) => Arc::as_ptr(e) as usize,
             Type::Tuple(t) => Arc::as_ptr(t) as usize,
@@ -141,7 +141,7 @@ pub(super) fn weight(ty: &Type) -> Result<u64, Error> {
         }
         let mut child = |t| visit(t, depth + 1, cache, active);
         let n = match ty {
-            Type::FixedArray(a) => {
+            Type::FixedArray(a) | Type::FixedArrayInit(a) => {
                 let n = match a.length {
                     ConstArgument::Value(n) => n,
                     ConstArgument::Parameter(_) => 1,
@@ -246,7 +246,8 @@ mod tests {
                 ("fn f(x: FixedArray<Unit,64>) -> FixedArray<Unit,64> { x }",0,1,0),
             ] {
                 let ty = result(source);
-                assert_eq!(ty.scalar_types().len(),1,"compact F1 marker");
+                assert!(ty.scalar_types().is_empty(), "places have no scalar expansion");
+                assert_eq!(ty.value_lanes().len(), 1);
                 let layout=ty.memory_layout_for(target).unwrap();
                 assert_eq!((layout.size,layout.align),(size,align));
                 let MemoryLayoutShape::Array { stride: actual, .. }=layout.shape else { panic!() };
