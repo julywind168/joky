@@ -49,6 +49,8 @@ mod enums_tests;
 #[cfg(test)]
 mod expressions_tests;
 #[cfg(test)]
+mod indexing_tests;
+#[cfg(test)]
 mod interpreter_tests;
 #[cfg(test)]
 mod jumps_tests;

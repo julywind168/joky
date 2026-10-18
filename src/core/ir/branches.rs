@@ -430,7 +430,13 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                     visit(value, scopes, walk);
                 }
             }
-            Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
+            Expr::Index {
+                base: lhs,
+                index: rhs,
+                ..
+            }
+            | Expr::BinOp { lhs, rhs, .. }
+            | Expr::Logical { lhs, rhs, .. } => {
                 visit(lhs, scopes, walk);
                 visit(rhs, scopes, walk);
             }

@@ -426,7 +426,27 @@ impl Parser {
             };
         }
         // A leading dot explicitly continues a field or method chain across lines.
-        while self.peek() == &TokenKind::Dot {
+        while self.peek() == &TokenKind::Dot
+            || !self.at_expression_break() && self.peek() == &TokenKind::LBracket
+        {
+            if self.peek() == &TokenKind::LBracket {
+                self.advance();
+                let record = std::mem::replace(&mut self.allow_record, true);
+                let pipe = std::mem::replace(&mut self.allow_pipe, true);
+                let newlines = std::mem::replace(&mut self.newline_sensitive, false);
+                let index = self.parse_expr()?;
+                self.expect(&TokenKind::RBracket)?;
+                self.allow_record = record;
+                self.allow_pipe = pipe;
+                self.newline_sensitive = newlines;
+                let span = self.span(expr.span().start(), self.last_span.end());
+                expr = Expr::Index {
+                    base: Box::new(expr),
+                    index: Box::new(index),
+                    span,
+                };
+                continue;
+            }
             self.advance();
             let name = self.parse_member_name()?;
             let type_args = if !self.at_expression_break() && self.peek() == &TokenKind::ColonColon

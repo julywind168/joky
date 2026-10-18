@@ -243,6 +243,11 @@ impl FunctionPlan {
                     },
                 )
                 .ok(),
+            Expr::Index { base, .. } => {
+                let ty = self.hint(base, vars, functions, types, default)?;
+                let target = ty.reference_type().map_or(&ty, |r| &r.target);
+                super::arrays::element_type(target).cloned()
+            }
             Expr::Field { base, name, .. } => {
                 match self
                     .hint(base, vars, functions, types, default)
@@ -495,7 +500,12 @@ impl FunctionPlan {
                     self.hint_bindings(expr, vars, functions, types);
                 }
             }
-            Expr::BinOp { lhs, rhs, .. } => {
+            Expr::Index {
+                base: lhs,
+                index: rhs,
+                ..
+            }
+            | Expr::BinOp { lhs, rhs, .. } => {
                 self.hint_bindings(lhs, vars, functions, types);
                 self.hint_bindings(rhs, vars, functions, types);
             }

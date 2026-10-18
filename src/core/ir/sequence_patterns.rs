@@ -266,7 +266,7 @@ impl FunctionPlan {
         ));
         Ok(index)
     }
-    fn sequence_element(
+    pub(super) fn sequence_element(
         &mut self,
         root: &Slot,
         element: &Type,

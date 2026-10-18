@@ -9129,3 +9129,101 @@ fn array_sequence_cleanup_runs_in_all_backends() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn indexing_executes_in_all_backends() {
+    let work = Workspace::new();
+    work.write("indexing.jk", include_str!("fixtures/indexing.jk"));
+    work.assert_all_backends("indexing.jk", &[], b"indexing ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn indexing_cleanup_and_bounds_run_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/indexing_cleanup.jk").replace(
+        "extern fn note(value: Int32)",
+        "fn note(value: Int32) { println(value) }",
+    );
+    work.write("index_cleanup.jk", &source);
+    work.assert_all_backends(
+        "index_cleanup.jk",
+        &[],
+        b"1\n2\n3\n-1\n4\n-2\n-4\n-3\n42\n",
+        0,
+    );
+    let declarations = source.split("fn main()").next().unwrap();
+    for (entry, stdout, message) in [
+        ("failed_index", "1\n-1\n", "outside the initialized prefix"),
+        ("failed_rhs", "1\n2\n-2\n-1\n", "Division by zero"),
+        ("failed_drop", "1\n2\n-1\n-2\n", "Division by zero"),
+    ] {
+        work.write(
+            "index_failure.jk",
+            &format!("{declarations}\nfn main() {{ {entry}(); }}"),
+        );
+        let mut outputs = vec![
+            work.cli(&["run", "index_failure.jk"]),
+            work.cli(&["run", "--interpreter", "index_failure.jk"]),
+        ];
+        success(&work.cli(&["build", "index_failure.jk"]));
+        outputs.push(
+            Command::new(work.path().join("index_failure"))
+                .output()
+                .unwrap(),
+        );
+        for (backend, output) in outputs.into_iter().enumerate() {
+            assert_eq!(output.status.code(), Some(1), "{entry}: {output:?}");
+            assert_eq!(output.stdout, stdout.as_bytes(), "{entry}: {output:?}");
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains(message), "{entry}: {output:?}");
+            if backend < 2 {
+                assert!(error.contains("index_failure.jk:"), "{entry}: {output:?}");
+                if entry == "failed_index" {
+                    assert!(error.contains("values[2]"), "{output:?}");
+                }
+            } else {
+                assert!(error.contains("bytes "), "{entry}: {output:?}");
+                if entry == "failed_index" {
+                    let start = declarations.find("values[2]").unwrap();
+                    assert!(
+                        error.contains(&format!("bytes {start}..{}", start + "values[2]".len())),
+                        "{output:?}"
+                    );
+                }
+            }
+        }
+    }
+    for body in [
+        "let a: Array<Int32> = []; a[0];",
+        "let a: FixedArray<Int32, 0> = []; a[0];",
+        "let a = [1]; let s = a.slice(0, 0); s[0];",
+        "var a = [1]; let s = a.slice_mut(0, 0); s[0] = 2;",
+        "var a: FixedArray<Int32, 1> = [1]; a[1] = 2;",
+        "let a = [{}, {}]; a[2];",
+    ] {
+        work.write("index_bounds.jk", &format!("import joky/array.{{type Array}} import joky/fixed_array.{{type FixedArray}}\nfn main() {{ {body} }}"));
+        let mut outputs = vec![
+            work.cli(&["run", "index_bounds.jk"]),
+            work.cli(&["run", "--interpreter", "index_bounds.jk"]),
+        ];
+        success(&work.cli(&["build", "index_bounds.jk"]));
+        outputs.push(
+            Command::new(work.path().join("index_bounds"))
+                .output()
+                .unwrap(),
+        );
+        for (backend, output) in outputs.into_iter().enumerate() {
+            assert_eq!(output.status.code(), Some(1), "{body}: {output:?}");
+            let error = String::from_utf8_lossy(&output.stderr);
+            if backend < 2 {
+                assert!(error.contains("index_bounds.jk:2:"), "{body}: {output:?}");
+                assert!(error.contains("[runtime_error]"), "{body}: {output:?}");
+            } else {
+                assert!(error.contains("bytes "), "{body}: {output:?}");
+            }
+        }
+    }
+    work.assert_no_build_files();
+}

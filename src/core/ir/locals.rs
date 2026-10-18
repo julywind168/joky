@@ -113,6 +113,12 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
                 }
                 pending.push(operand);
             }
+            Expr::Index { base, index, .. } => {
+                if let Some((name, _)) = local_path(base) {
+                    names.explicit.insert(name.to_owned());
+                }
+                pending.extend([base.as_ref(), index.as_ref()]);
+            }
             Expr::Field { base, .. } => pending.push(base),
             Expr::Let { value, .. }
             | Expr::Var { value, .. }

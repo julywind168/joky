@@ -1,0 +1,39 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn note(value: Int32)
+struct Guard { id: Int32, text: String, fails: Bool }
+impl Drop for Guard {
+    fn drop(&mut self) {
+        note(0 - self.id)
+        if self.fails { let zero = 0; let failure = 1 / zero; }
+    }
+}
+fn make(id: Int32) -> Guard {
+    let value = Guard { id: id, text: "owned", fails: false }
+    note(id)
+    value
+}
+fn normal() -> Int32 {
+    var values = [make(1), make(2)]
+    values[0] = make(3)
+    values[1] = make(4)
+    values[0].id + values[1].id + 35
+}
+fn nested() -> Int32 {
+    var values = [[make(1)], [make(2)]]
+    values[0] = [make(3)]
+    values[1][0] = make(4)
+    values[0][0].id + values[1][0].id + 35
+}
+fn fail() -> Guard { let zero = 0; let bad = 1 / zero; make(bad) }
+fn failed_rhs() -> Int32 { var values = [make(1)]; values[0] = { let pending = make(2); fail() }; 0 }
+fn failed_index() -> Int32 { var values = [make(1)]; values[2] = make(2); 0 }
+fn failed_drop() -> Int32 {
+    var values = [Guard { id: 1, text: "failing", fails: true }]
+    note(1)
+    values[0] = make(2)
+    0
+}
+fn early() -> Int32 { var values = [make(1)]; values[0] = { return 42 } }
+fn task() @suspends -> Int32 { normal() }
+fn main() { note(normal()) }

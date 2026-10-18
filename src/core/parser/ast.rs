@@ -701,6 +701,12 @@ pub enum Expr {
         fields: Vec<FieldInit>,
         span: Span,
     },
+    /// Checked element place in an array or slice.
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
     /// Contextually typed homogeneous sequence, evaluated from left to right.
     Array {
         elements: Vec<Expr>,
@@ -931,7 +937,8 @@ impl Expr {
             Self::AnonymousFunction(function) => function.span,
             Self::GenericName(name) => name.span,
             Self::MethodCall(call) => call.span,
-            Self::Array { span, .. }
+            Self::Index { span, .. }
+            | Self::Array { span, .. }
             | Self::Tuple { span, .. }
             | Self::Destructure { span, .. }
             | Self::Match { span, .. }
@@ -983,6 +990,7 @@ impl Expr {
                 Self::MethodCall(call)
             }
             Self::Invoke { callee, args, .. } => Self::Invoke { callee, args, span },
+            Self::Index { base, index, .. } => Self::Index { base, index, span },
             Self::Array { elements, .. } => Self::Array { elements, span },
             Self::Tuple { elements, .. } => Self::Tuple { elements, span },
             Self::Destructure {

@@ -111,14 +111,15 @@ impl Parser {
         if Self::name_path(&lhs).is_none()
             && !matches!(
                 place,
-                Expr::Unary {
-                    op: UnaryOp::Deref,
-                    ..
-                }
+                Expr::Index { .. }
+                    | Expr::Unary {
+                        op: UnaryOp::Deref,
+                        ..
+                    }
             )
         {
             return Err(self.error(
-                "Assignment target must be a variable, field or dereferenced place".into(),
+                "Assignment target must be a variable, field, index or dereferenced place".into(),
             ));
         }
         self.advance();

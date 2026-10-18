@@ -1253,7 +1253,13 @@ pub(crate) fn resolve_pattern_heads(
                 Expr::Return {
                     value: Some(value), ..
                 } => pending.push(value.as_mut()),
-                Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
+                Expr::Index {
+                    base: lhs,
+                    index: rhs,
+                    ..
+                }
+                | Expr::BinOp { lhs, rhs, .. }
+                | Expr::Logical { lhs, rhs, .. } => {
                     pending.push(lhs.as_mut());
                     pending.push(rhs.as_mut());
                 }
@@ -1458,7 +1464,13 @@ pub(crate) fn map_syntax(
                 map_syntax(branch, map, substitutions)?;
             }
         }
-        Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
+        Expr::Index {
+            base: lhs,
+            index: rhs,
+            ..
+        }
+        | Expr::BinOp { lhs, rhs, .. }
+        | Expr::Logical { lhs, rhs, .. } => {
             map_syntax(lhs, map, substitutions)?;
             map_syntax(rhs, map, substitutions)?;
         }

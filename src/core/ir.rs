@@ -13,6 +13,7 @@ mod borrowing;
 mod branches;
 mod buffers;
 mod fixed_arrays;
+mod indexing;
 mod sequence_patterns;
 pub(crate) use fixed_arrays::PlaceOp;
 mod calls;
@@ -1855,7 +1856,8 @@ impl FunctionPlan {
         // This also preserves compilation on the interpreter's small-stack hosts.
         if matches!(
             expr,
-            Expr::Call { .. }
+            Expr::Index { .. }
+                | Expr::Call { .. }
                 | Expr::Field { .. }
                 | Expr::FieldAssign { .. }
                 | Expr::Unary {
@@ -2250,6 +2252,7 @@ impl FunctionPlan {
             | Expr::Sequence { .. } => {
                 unreachable!("block forms are dispatched before value expressions")
             }
+            Expr::Index { .. } => unreachable!("index places are handled by memory_expr"),
             Expr::Unary { op, operand, span } => {
                 if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) {
                     return self.borrow_local(

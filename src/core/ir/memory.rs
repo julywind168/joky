@@ -160,6 +160,7 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
         reservation: bool,
+        mutable: bool,
     ) -> Result<Option<Flow>, Error> {
         let mut root = expr;
         let mut path = Vec::new();
@@ -176,22 +177,38 @@ impl FunctionPlan {
             path.push(name.clone());
             root = base;
         }
-        let Expr::Unary {
-            op: UnaryOp::Deref,
-            operand,
-            span,
-        } = root
-        else {
-            return Ok(None);
+        // Automatic field dereferencing stops at a stored reference. Let the
+        // ordinary field planner evaluate that pointer hop before projecting.
+        if matches!(root, Expr::Index { .. }) {
+            if let Some(mut target) = self.type_hint(root, vars, functions, types) {
+                for name in path.iter().rev() {
+                    if target.reference_type().is_some() {
+                        return Ok(None);
+                    }
+                    target = self.field_member(&target, name, &expr.span())?.1;
+                }
+            }
+        }
+        let span = root.span();
+        let flow = match root {
+            Expr::Index { .. } => {
+                self.index_reference(root, mutable, vars, functions, suspends, types)?
+            }
+            Expr::Unary {
+                op: UnaryOp::Deref,
+                operand,
+                ..
+            } => self.expr(operand, vars, functions, suspends, types)?,
+            _ => return Ok(None),
         };
-        let Flow::Value(value) = self.expr(operand, vars, functions, suspends, types)? else {
+        let Flow::Value(value) = flow else {
             return Ok(Some(Flow::Diverged));
         };
         let mut reference = value
             .filter(|v| v.ty.reference_type().is_some())
             .ok_or_else(|| {
                 type_error(
-                    span,
+                    &span,
                     ErrorCode::TypeMismatch,
                     "Dereferencing requires a checked reference",
                 )
@@ -410,7 +427,7 @@ impl FunctionPlan {
             _ => (expr, false, false),
         };
         if let Some(flow) =
-            self.dereferenced_place(place, vars, functions, suspends, types, !borrow)?
+            self.dereferenced_place(place, vars, functions, suspends, types, !borrow, mutable)?
         {
             let Flow::Value(Some(reference)) = flow else {
                 return Ok(Some(Flow::Diverged));
@@ -425,11 +442,17 @@ impl FunctionPlan {
                 ));
             }
             if borrow {
-                if target.reference_type().is_some() {
+                if target.reference_type().is_some()
+                    || super::indexing::is_index_place(place) && target.contains_references()
+                {
                     return Err(type_error(
                         &expr.span(),
                         ErrorCode::TypeMismatch,
-                        "Borrowing a reference value is not supported",
+                        if target.reference_type().is_some() {
+                            "Borrowing a reference value is not supported"
+                        } else {
+                            "Borrowing reference-bearing element storage is not supported"
+                        },
                     ));
                 }
                 let dst = self.slot(Type::reference(target, mutable))?;

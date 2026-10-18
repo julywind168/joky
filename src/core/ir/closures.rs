@@ -39,7 +39,13 @@ pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
         | Expr::TaskScope { body: value, .. }
         | Expr::Branch { body: value, .. } => vec![value],
         Expr::Return { value, .. } => value.iter().map(Box::as_ref).collect(),
-        Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => vec![lhs, rhs],
+        Expr::Index {
+            base: lhs,
+            index: rhs,
+            ..
+        }
+        | Expr::BinOp { lhs, rhs, .. }
+        | Expr::Logical { lhs, rhs, .. } => vec![lhs, rhs],
         Expr::FieldAssign { target, value, .. } => vec![target, value],
         Expr::While {
             condition, body, ..
@@ -487,7 +493,7 @@ impl FunctionPlan {
                             ..
                         } => {
                             let mut target = target.as_ref();
-                            while let Expr::Field { base, .. } = target {
+                            while let Expr::Field { base, .. } | Expr::Index { base, .. } = target {
                                 target = base;
                             }
                             if let Expr::Unary {

@@ -1,0 +1,115 @@
+import joky/array.{type Array}
+import joky/fixed_array.{type FixedArray}
+import joky/slice.{type Slice}
+import joky/string
+import joky/task
+fn check(value: Bool) { assert(value, "indexing regression") }
+fn at<T>(values: &Array<T>, i: UInt64) -> T { values[i] }
+fn fixed_at<T, const N: UInt64>(values: &FixedArray<T, N>, i: UInt64) -> T { values[i] }
+fn borrowed<T>(values: &Array<T>, i: UInt64) -> &T { &values[i] }
+fn set<T>(values: &mut Array<T>, i: UInt64, value: T) { values[i] = value }
+fn slice_set<T>(values: &mut Slice<T>, i: UInt64, value: T) { values[i] = value }
+fn array_once(count: &mut Int32) -> Array<Int32> { *count += 1; [20, 22] }
+fn index_once(count: &mut Int32) -> UInt64 { *count += 1; 0 }
+fn rhs_once(count: &mut Int32) -> Int32 { *count += 1; 42 }
+fn base_order(values: &mut Array<Int32>, order: &mut Int32) -> &mut Array<Int32> { *order = *order * 10 + 1; values }
+fn index_order(order: &mut Int32) -> UInt64 { *order = *order * 10 + 2; 0 }
+fn rhs_order(order: &mut Int32) -> Int32 { *order = *order * 10 + 3; 42 }
+struct Link { target: &Point }
+struct Point { x: Int32, y: Int32 }
+struct Resource { name: String, values: Array<Int32>, id: Int32 }
+fn main() @suspends {
+    sync_checks()
+    let values = [20, 22]
+    let result = values[0] + values[1]
+    task.yield_now()
+    check(result == 42)
+    var names = ["old"]
+    names[0] = "new"
+    task.yield_now()
+    check(names[0].equals("new"))
+    println("indexing ok")
+}
+fn sync_checks() {
+    var values = [20, 22]
+    check(values[0] + values[1] == 42)
+    values[0] = values[1] + 20
+    check(values[0] == 42)
+    values[1] += values[0]
+    check(values[1] == 64)
+    values[1] -= 22
+    check(values[1] == 42)
+    let r = &mut values[0]
+    *r += 1
+    check(values[0] == 43)
+    check(*borrowed(&values, 1) == 42)
+    set(&mut values, 0, 42)
+    check(at(&values, 0) == 42)
+    let view = values.slice_mut(0, 2)
+    view[0] = view[1]
+    slice_set(view, 1, 42)
+    check(view[0] + view[1] == 84)
+    var fixed: FixedArray<Int32, 2> = [20, 22]
+    fixed[0] += fixed[1]
+    check(fixed_at(&fixed, 0) == 42)
+    let r = &mut fixed[1]
+    *r = 42
+    check(fixed[0] == fixed[1])
+    let fixed_view = fixed.slice_mut(0, 2)
+    fixed_view[0] = 41
+    check(fixed_view[0] == 41)
+    var matrix: FixedArray<FixedArray<Int32, 2>, 2> = [[1, 2], [3, 4]]
+    matrix[1][0] = 42
+    check(matrix[1][0] == 42)
+    var fixed_rows = [fixed, fixed]
+    fixed_rows[0][0] = 42
+    check(fixed_rows[0][0] == 42)
+    let copied_row = fixed_rows[0]
+    fixed_rows[0][0] = 7
+    check(copied_row[0] == 42)
+    var rows = [[1, 2], [3, 4]]
+    rows[0][1] = 42
+    check(rows[0][1] == 42)
+    rows[1] = [20, 22]
+    check(rows[1][0] + rows[1][1] == 42)
+    var points = [Point { x: 20, y: 22 }]
+    points[0].x += points[0].y
+    check(points[0].x == 42)
+    let r = &mut points[0].y
+    *r = 42
+    check(points[0].y == 42)
+    var resources = [Resource { name: "old", values: [1], id: 1 }]
+    resources[0].id = 42
+    resources[0].values[0] = 42
+    check(resources[0].id == resources[0].values[0])
+    resources[0] = Resource { name: "new", values: [42], id: 42 }
+    check(resources[0].name.equals("new"))
+    var units = [{}, {}]
+    units[0] = {}
+    let u = units[1]
+    let r = &mut units[0]
+    *r = {}
+    let point = &*(alloc(Point { x: 20, y: 22 }))
+    let links = [Link { target: point }]
+    check(links[0].target.x + links[0].target.y == 42)
+    let value = &*(alloc(42))
+    var refs = [value, value]
+    let copied = refs[0]
+    refs[1] = copied
+    refs.release()
+    check(*copied == 42)
+    var count = 0
+    check(array_once(&mut count)[index_once(&mut count)] == 20)
+    check(count == 2)
+    values[index_once(&mut count)] = rhs_once(&mut count)
+    check(count == 4)
+    var order = 0
+    base_order(&mut values, &mut order)[index_order(&mut order)] = rhs_order(&mut order)
+    check(order == 123)
+    check(values[0] == 42)
+    check([42][0] == 42)
+    check("index {[42][0]}".equals("index 42"))
+    { let copy = || { values[0] }; check(copy() == 42); }
+    { var change = || { values[0] += 1 }; change(); }
+    check(values[0] == 43)
+}

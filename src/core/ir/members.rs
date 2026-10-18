@@ -692,6 +692,7 @@ impl FunctionPlan {
                 Receiver::Borrowed { mutable: false }
                     if receiver_ty.reference_type().is_none()
                         && functions[&method.function].can_borrow_argument(0)
+                        && !super::indexing::is_index_place(receiver)
                         && expression_path(receiver)
                             .and_then(|path| vars.get(path.split('.').next().unwrap()))
                             .is_none_or(|binding| {

@@ -676,7 +676,12 @@ fn resolve_calls(
                 &mut locals.clone(),
             )?;
         }
-        Expr::BinOp { lhs, rhs, .. } => {
+        Expr::Index {
+            base: lhs,
+            index: rhs,
+            ..
+        }
+        | Expr::BinOp { lhs, rhs, .. } => {
             resolve_calls(lhs, functions, member_roots, call_forms, locals)?;
             resolve_calls(rhs, functions, member_roots, call_forms, locals)?;
         }

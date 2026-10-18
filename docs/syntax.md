@@ -642,7 +642,7 @@ F0 已完成设计冻结，F1–F4 已实现常量参数、类型布局、数组
 引用生命周期的缩短由借用规则处理，不作为任意容器协变的理由。
 
 Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一个伪造元素；
-后续若加入索引运算符，必须另行明确越界行为，不能绕过引用有效性检查。
+数组与切片的下标运算符已实现，越界为运行时错误；求值顺序和借用约束见[下标访问](language.md#数组与切片下标)。
 数组按 `Array<Int32>` → Copy 元素泛型数组 → 非 Copy 元素与嵌套容器逐步验收。
 即使元素是 Copy，独占管理缓冲区的数组也不可隐式复制；其管理权、已初始化范围和退出清理
 必须受检。元素或切片借用期间禁止冲突的扩容、删除等操作，借用结束后可继续修改容器。
@@ -1034,7 +1034,7 @@ RecordFieldPattern = Identifier, [ ":", BindPattern ] ;
 Jump         = "return", [ NonSequence ] | "break" | "continue" ;
 Assignment   = Place, AssignOp, NonSequence | LogicalOr ;
 AssignOp     = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
-Place        = Identifier, { ".", Identifier } ;
+Place        = Postfix | "*", Unary ; (* 语义检查要求可写的位置。 *)
 LogicalOr    = LogicalAnd, { "||", LogicalAnd } ;
 LogicalAnd   = Comparison, { "&&", Comparison } ;
 Comparison   = BitOr, [ CompareOp, BitOr ] ;
@@ -1046,7 +1046,7 @@ CompareOp    = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 Addition     = Product, { ("+" | "-"), Product } ;
 Product      = Unary, { ("*" | "/" | "%"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postfix ;
-Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
+Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] | "[", Expression, "]" } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
@@ -1196,7 +1196,7 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 
 关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的 V0–V5 已验收，见第 5 项计划。
 关联类型项与后续成员须以换行或分号分隔；只有 trait impl 可定义关联类型，且不能加 `pub`。
-数组字面值、共享/独占/消费式序列模式和固长解构已实现，规则见[数组字面值](language.md#数组字面值)及[序列模式](language.md#序列与字面量模式)。
-后续尚待单独设计的表面语法：挂起/可存储闭包、其他容器字面量、重复/展开数组构造和索引。
+数组字面值、下标访问、共享/独占/消费式序列模式和固长解构已实现，规则见[数组字面值](language.md#数组字面值)及[序列模式](language.md#序列与字面量模式)。
+后续尚待单独设计的表面语法：挂起/可存储闭包、其他容器字面量、重复/展开数组构造及区间索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、
 包管理、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。
