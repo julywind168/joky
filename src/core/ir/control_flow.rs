@@ -327,7 +327,9 @@ impl FunctionPlan {
                 } else {
                     None
                 };
-                let expected = if expected.is_some_and(|ty| ty.dyn_interface().is_some()) {
+                let expected = if expected.is_some_and(|ty| {
+                    ty.dyn_interface().is_some() || super::arrays::element_type(ty).is_some()
+                }) {
                     expected
                 } else {
                     hint.as_ref().or(expected).or(aggregate_hint.as_ref())

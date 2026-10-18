@@ -328,6 +328,7 @@ impl Parser {
                     Ok(expr)
                 }
             }
+            TokenKind::LBracket => self.parse_array_literal(),
             // Parenthesized expression.
             TokenKind::LParen => {
                 self.advance();
@@ -546,5 +547,31 @@ impl Parser {
         self.allow_pipe = previous_pipe;
         self.newline_sensitive = previous_newlines;
         Ok(args)
+    }
+}
+
+impl Parser {
+    fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
+        self.arrays = true;
+        let start = self.peek_span().start();
+        self.advance();
+        let previous = std::mem::replace(&mut self.allow_record, true);
+        let pipe = std::mem::replace(&mut self.allow_pipe, true);
+        let newlines = std::mem::replace(&mut self.newline_sensitive, false);
+        let mut elements = Vec::new();
+        while self.peek() != &TokenKind::RBracket {
+            elements.push(self.parse_assignment()?);
+            if self.peek() != &TokenKind::RBracket {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+        self.expect(&TokenKind::RBracket)?;
+        self.allow_record = previous;
+        self.allow_pipe = pipe;
+        self.newline_sensitive = newlines;
+        Ok(Expr::Array {
+            elements,
+            span: self.span(start, self.last_span.end()),
+        })
     }
 }

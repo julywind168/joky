@@ -8,10 +8,12 @@ use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
 mod arenas;
+mod arrays;
 mod borrowing;
 mod branches;
 mod buffers;
 mod fixed_arrays;
+mod sequence_patterns;
 pub(crate) use fixed_arrays::PlaceOp;
 mod calls;
 mod cleanup;
@@ -1911,6 +1913,7 @@ impl FunctionPlan {
             Expr::AnonymousFunction(function) => {
                 self.anonymous_function(function, vars, functions, suspends, types, expected)
             }
+            Expr::Array { .. } => self.array_expr(expr, vars, functions, suspends, types, expected),
             Expr::Tuple { .. } | Expr::Destructure { .. } => {
                 self.tuple_expr(expr, vars, functions, suspends, types, expected)
             }

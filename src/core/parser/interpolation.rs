@@ -48,6 +48,7 @@ impl Parser {
                         return Err(parser.error("Interpolation requires an expression".into()));
                     }
                     let value = parser.parse_expr()?;
+                    self.arrays |= parser.arrays;
                     if parser.peek() != &TokenKind::Eof {
                         return Err(parser.error("Expected end of interpolation expression; format specifiers are not supported".into()));
                     }

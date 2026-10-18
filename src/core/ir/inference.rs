@@ -349,6 +349,15 @@ impl FunctionPlan {
             | Expr::If {
                 else_branch: None, ..
             } => Some(Type::Unit),
+            Expr::Array { elements, .. } => {
+                // Container choice remains contextual even when an element has
+                // a concrete type. Only the default pass selects dynamic Array.
+                if !default {
+                    return None;
+                }
+                let element = self.array_element_hint(elements, vars, functions, types, default)?;
+                self.dynamic_array_type(element, types, expr.span()).ok()
+            }
             Expr::Tuple { elements, .. } => {
                 let elements = elements
                     .iter()
@@ -475,6 +484,9 @@ impl FunctionPlan {
                 bind_pattern(pattern, ty.as_ref(), vars);
             }
             Expr::Sequence { exprs, .. }
+            | Expr::Array {
+                elements: exprs, ..
+            }
             | Expr::Tuple {
                 elements: exprs, ..
             }
@@ -520,6 +532,15 @@ fn bind_pattern(
 ) {
     use crate::parser::ast::BindingPattern;
     match pattern {
+        BindingPattern::Sequence(p) => {
+            let element = ty.and_then(super::arrays::element_type);
+            for item in p.prefix.iter().chain(&p.suffix) {
+                bind_pattern(item, element, vars);
+            }
+            if let Some(Some(name)) = &p.rest {
+                vars.remove(name);
+            }
+        }
         BindingPattern::Name { name, .. } => {
             vars.remove(name);
             if let Some(ty) = ty {

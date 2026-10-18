@@ -68,6 +68,8 @@ pub(crate) enum TokenKind {
     CharLit(char),
 
     // Punctuation.
+    LBracket,   // [
+    RBracket,   // ]
     LParen,     // (
     RParen,     // )
     LBrace,     // {
@@ -488,6 +490,14 @@ impl<'a> Lexer<'a> {
             Some(c) if c.is_ascii_digit() => self.read_number(start)?,
             Some('"') => self.read_string(start)?,
             Some('\'') => self.read_char(start)?,
+            Some('[') => {
+                self.advance();
+                TokenKind::LBracket
+            }
+            Some(']') => {
+                self.advance();
+                TokenKind::RBracket
+            }
             Some('(') => {
                 self.advance();
                 TokenKind::LParen

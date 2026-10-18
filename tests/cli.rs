@@ -9077,3 +9077,55 @@ fn raw_and_multiline_string_diagnostics_preserve_file_and_line() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn array_literals_and_sequence_patterns_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "array_patterns.jk",
+        include_str!("fixtures/array_patterns.jk"),
+    );
+    work.assert_all_backends("array_patterns.jk", &[], b"array patterns ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn array_sequence_cleanup_runs_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/array_patterns_cleanup.jk").replace(
+        "extern fn note(value: Int32)",
+        "fn note(value: Int32) { println(value) }",
+    );
+    work.write("array_cleanup.jk", &source);
+    work.assert_all_backends(
+        "array_cleanup.jk",
+        &[],
+        b"1\n2\n3\n4\n-3\n-2\n-1\n-4\n42\n1\n3\n-3\n-1\n42\n",
+        0,
+    );
+    let failed = format!(
+        "{}\nfn main() {{ failed_init(); }}",
+        source.split("fn main()").next().unwrap()
+    );
+    work.write("array_failed_init.jk", &failed);
+    let mut outputs = vec![
+        work.cli(&["run", "array_failed_init.jk"]),
+        work.cli(&["run", "--interpreter", "array_failed_init.jk"]),
+    ];
+    success(&work.cli(&["build", "array_failed_init.jk"]));
+    outputs.push(
+        Command::new(work.path().join("array_failed_init"))
+            .output()
+            .unwrap(),
+    );
+    for output in outputs {
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert_eq!(output.stdout, b"1\n-1\n", "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Division by zero"),
+            "{output:?}"
+        );
+    }
+    work.assert_no_build_files();
+}

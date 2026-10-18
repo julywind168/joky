@@ -516,6 +516,32 @@ impl FunctionPlan {
                 return Ok(());
             }
         }
+        if let Expr::Array { elements, .. } = arg {
+            let contextual = substitute(
+                formal,
+                &inference.substitutions,
+                &types.with_parameters(inference.params)?,
+            )?;
+            if let Some(element) = super::arrays::element_type(&contextual) {
+                if let Type::FixedArray(array) = &contextual {
+                    crate::core::types::unify_constant(
+                        &array.length,
+                        &crate::parser::ast::ConstArgument::Value(elements.len() as u64),
+                        inference.params,
+                        &mut inference.substitutions,
+                        arg.span(),
+                    )?;
+                }
+                let mut local = vars.clone();
+                for expr in elements {
+                    self.infer_generic_argument(
+                        element, expr, &local, functions, types, inference,
+                    )?;
+                    self.hint_bindings(expr, &mut local, functions, types);
+                }
+                return Ok(());
+            }
+        }
         if let (Type::Tuple(tuple), Expr::Tuple { elements, .. }) = (formal, arg) {
             if tuple.elements.len() != elements.len() {
                 return Err(type_error(

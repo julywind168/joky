@@ -665,7 +665,7 @@ Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一�
 载荷支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr / 共享引用及 Copy 或拥有型记录、枚举、元组与 Array；
 拥有型实例禁止混入引用，单个载荷可用记录或元组组合多个值。
 match 支持递归载荷模式，包括元组、嵌套枚举和 `_`；共享借用匹配将拥有载荷绑定为 `&T`、Copy 载荷绑定为快照，保留原值。
-独占匹配把每个载荷绑定为 `&mut T`，递归模式支持不重叠成员的同时借用；暂不含 guard、字面量模式。
+独占匹配把每个载荷绑定为 `&mut T`，递归模式支持不重叠成员的同时借用；支持整数、Bool、Rune 和序列模式，暂不含 guard。
 解析边界、存储成本、限额及完整规则见[当前枚举语义](language.md#枚举与模式匹配)。
 以下 Option / Result 声明已可编译，实例支持 Copy 或拥有型载荷，包括 String 和 StringBuilder；动态数据模型仍依赖后续能力：
 
@@ -696,7 +696,7 @@ fn present(result: Result<Int32, String>) -> String {
 
 整数 `to_string` 由文本库提供。match 是表达式，要求穷尽所有情况，
 正常完成的分支具有相同结果类型；不提供隐式贯穿。返回、失败等终止分支不参与结果类型合并。
-目标模式包括字面量、绑定、`_`、元组和枚举构造；`_` 覆盖尚未列举的情况。
+已实现整数/Bool/Rune 字面量、序列、绑定、`_`、载荷元组和枚举构造模式；`_` 覆盖尚未列举的情况。
 分支书写为 `pattern => expression`，多步分支可用块或括号序列，不要求尾随分号。相邻分支必须用逗号或真实换行分隔，块分支也遵循同一规则；允许尾逗号。
 目标设计中同名构造项由被匹配类型或期望类型确定，无法唯一确定时需写 `Result.Ok` 等限定名。
 
@@ -1024,7 +1024,9 @@ Graph        = "graph", Block ;
 Expression   = NonSequence, { ";", [ NonSequence ] } ;
 NonSequence  = Binding | Jump | Assignment ;
 Binding      = ("let" | "var"), BindPattern, [ ":", Type ], "=", NonSequence ;
-BindPattern  = Identifier | "_" | "(", BindPattern, ")" | TuplePattern | RecordPattern ;
+BindPattern  = Identifier | "_" | "(", BindPattern, ")" | TuplePattern | RecordPattern | SequenceBinding ;
+SequenceBinding = "[", [ SequenceBindingEntry, { ",", SequenceBindingEntry }, [ "," ] ], "]" ;
+SequenceBindingEntry = BindPattern | "..", [ Identifier ] ;
 TuplePattern = "(", BindPattern, ",", [ BindPattern, { ",", BindPattern }, [ "," ] ], ")" ;
 RecordPattern = IdentifierPath, [ "::", TypeArguments ], "{",
                 [ ( ".." | RecordFieldPattern, [ "," ] ), { ( "," | Newline ), ( ".." | RecordFieldPattern, [ "," ] ) } ], "}" ;
@@ -1047,7 +1049,7 @@ Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postf
 Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
-             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
+             | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
 Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ Result ], Block ;
 AnonymousParam = Identifier, [ ":", Type ] ;
 GroupedAnonymous = "(", (Anonymous | GroupedAnonymous), ")" ;
@@ -1060,6 +1062,7 @@ Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, 
 TypeArguments = "::", AppliedArguments ;
 TypedName    = Name, TypeArguments ;
 Group        = "(", Expression, ")" ;
+ArrayValue   = "[", [ NonSequence, { ",", NonSequence }, [ "," ] ], "]" ;
 TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 If           = "if", Condition, Block, [ "else", (If | Block) ] ;
 While        = "while", Condition, Block ;
@@ -1071,10 +1074,13 @@ TaskBranch   = "branch", Block ;
 Match        = "match", NonSequence, "{", [ MatchArm, { BracedSep, MatchArm }, [ "," ] ], "}" ;
 MatchArm     = Pattern, "=>", Expression ;
 BracedSep    = "," | Newline ;
-Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] ;
+Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] | ScalarPattern | SequencePattern ;
 PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")"
                | "(", PayloadPattern, ",", [ PayloadPattern, { ",", PayloadPattern }, [ "," ] ], ")"
-               | RecordPattern ;
+               | RecordPattern | ScalarPattern | SequencePattern ;
+ScalarPattern = [ "-" ], Integer | "true" | "false" | Rune ;
+SequencePattern = "[", [ SequenceEntry, { ",", SequenceEntry }, [ "," ] ], "]" ;
+SequenceEntry = PayloadPattern | "..", [ Identifier ] ;
 ```
 
 字段默认私有，`pub` 修饰后跨模块可见；旧 `private` 修饰已拒绝并给出迁移诊断，
@@ -1108,7 +1114,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 EBNF 的 BitOr 在 parallel / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
 数值 token 需要整体满足 Integer，不能把 `0b102` 拆成 `0b10` 和 `2`。
 枚举构造复用限定名 / Call 文法，由类型检查辨认；模式中的 `_` 不能被限定或带载荷。
-模式载荷只能绑定一个标识符（含 `_`），变体声明必须与之匹配；空枚举及不穷尽的空 match 在语义阶段拒绝。
+模式载荷递归解构元组、记录、枚举和序列；变体载荷有无必须与声明匹配。序列中的 rest 最多一个，let/var 中的序列项仅允许绑定模式。空枚举及不穷尽的空 match 在语义阶段拒绝。
 
 ## 12. 实施顺序与验收
 
@@ -1190,6 +1196,7 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 
 关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的 V0–V5 已验收，见第 5 项计划。
 关联类型项与后续成员须以换行或分号分隔；只有 trait impl 可定义关联类型，且不能加 `pub`。
-后续尚待单独设计的表面语法：挂起/可存储闭包、容器字面量和索引。
+数组字面值、共享/独占/消费式序列模式和固长解构已实现，规则见[数组字面值](language.md#数组字面值)及[序列模式](language.md#序列与字面量模式)。
+后续尚待单独设计的表面语法：挂起/可存储闭包、其他容器字面量、重复/展开数组构造和索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、
 包管理、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。

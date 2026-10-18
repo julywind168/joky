@@ -119,6 +119,20 @@ fn validate_names<'a>(
     names: &mut HashSet<&'a str>,
 ) -> Result<(), Error> {
     match pattern {
+        BindingPattern::Sequence(p) => {
+            for item in p.prefix.iter().chain(&p.suffix) {
+                validate_names(item, names)?;
+            }
+            if let Some(Some(name)) = &p.rest {
+                if !names.insert(name) {
+                    return Err(type_error(
+                        &p.span,
+                        ErrorCode::DuplicateDefinition,
+                        format!("Duplicate binding `{name}` in pattern"),
+                    ));
+                }
+            }
+        }
         BindingPattern::Name { name, span } => {
             if !names.insert(name) {
                 return Err(type_error(

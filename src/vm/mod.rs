@@ -29,6 +29,8 @@ mod aliases_tests;
 #[cfg(test)]
 mod array_borrow_tests;
 #[cfg(test)]
+mod array_patterns_tests;
+#[cfg(test)]
 mod array_tests;
 #[cfg(all(test, unix))]
 mod async_borrowing_tests;

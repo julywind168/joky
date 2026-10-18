@@ -57,7 +57,7 @@ pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
             .chain(arms.iter().map(|a| &a.body))
             .collect(),
         Expr::Record { fields, .. } => fields.iter().map(|f| &f.value).collect(),
-        Expr::Tuple { elements, .. } => elements.iter().collect(),
+        Expr::Array { elements, .. } | Expr::Tuple { elements, .. } => elements.iter().collect(),
         Expr::Unsafe { exprs, .. }
         | Expr::Block { exprs, .. }
         | Expr::Graph { exprs, .. }
@@ -70,6 +70,14 @@ pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
 fn binding_names(pattern: &crate::parser::ast::BindingPattern, names: &mut Vec<String>) {
     use crate::parser::ast::BindingPattern;
     match pattern {
+        BindingPattern::Sequence(p) => {
+            for item in p.prefix.iter().chain(&p.suffix) {
+                binding_names(item, names);
+            }
+            if let Some(Some(name)) = &p.rest {
+                names.push(name.clone());
+            }
+        }
         BindingPattern::Name { name, .. } => names.push(name.clone()),
         BindingPattern::Tuple { elements, .. } => {
             for p in elements {
@@ -129,10 +137,7 @@ fn walk_free(
                 descend(value, bound)?;
                 for arm in arms {
                     let mut inner = bound.clone();
-                    if let crate::parser::ast::Pattern::Variant {
-                        binding: Some(p), ..
-                    } = &arm.pattern
-                    {
+                    if let Some(p) = arm.pattern.payload() {
                         let mut names = Vec::new();
                         p.names(&mut names);
                         inner.extend(names);

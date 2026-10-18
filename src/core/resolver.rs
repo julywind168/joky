@@ -456,11 +456,7 @@ fn resolve_calls(
             )?;
             for arm in arms {
                 let mut branch = locals.clone();
-                if let crate::parser::ast::Pattern::Variant {
-                    binding: Some(pattern),
-                    ..
-                } = &arm.pattern
-                {
+                if let Some(pattern) = arm.pattern.payload() {
                     let mut names = Vec::new();
                     pattern.names(&mut names);
                     branch.extend(names);
@@ -573,6 +569,12 @@ fn resolve_calls(
                     crate::parser::ast::BindingPattern::Name { name, .. } => {
                         locals.insert(name.clone());
                     }
+                    crate::parser::ast::BindingPattern::Sequence(p) => {
+                        pending.extend(p.prefix.iter_mut().chain(&mut p.suffix));
+                        if let Some(Some(name)) = &p.rest {
+                            locals.insert(name.clone());
+                        }
+                    }
                     crate::parser::ast::BindingPattern::Tuple { elements, .. } => {
                         pending.extend(elements)
                     }
@@ -614,7 +616,10 @@ fn resolve_calls(
             let mut block = locals.clone();
             resolve_calls(body, functions, member_roots, call_forms, &mut block)?;
         }
-        Expr::Tuple {
+        Expr::Array {
+            elements: exprs, ..
+        }
+        | Expr::Tuple {
             elements: exprs, ..
         }
         | Expr::Sequence { exprs, .. }

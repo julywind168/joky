@@ -4,11 +4,13 @@ use crate::parser::ast::{MatchArm, Pattern, PayloadPattern};
 use std::collections::HashSet;
 
 pub(super) struct CheckedPattern {
-    ty: Type,
-    kind: Kind,
-    span: Span,
+    pub(super) ty: Type,
+    pub(super) kind: Kind,
+    pub(super) span: Span,
 }
 pub(super) enum Kind {
+    Sequence(Box<super::sequence_patterns::CheckedSequence>),
+    Literal(Constant, u64),
     Any(Option<String>),
     Tuple(Vec<CheckedPattern>),
     Variant {
@@ -42,6 +44,17 @@ impl CheckedPattern {
                 };
                 vars.insert(name.clone(), payload_binding(&ty, 0));
             }
+            Kind::Literal(..) => {}
+            Kind::Sequence(p) => {
+                for child in p.prefix.iter().chain(&p.suffix) {
+                    child.hints(vars, borrowed);
+                }
+                if let Some(Some(name)) = &p.rest {
+                    if let Some(ty) = p.rest_type(&self.ty, borrowed) {
+                        vars.insert(name.clone(), payload_binding(&ty, 0));
+                    }
+                }
+            }
             Kind::Any(None) => {}
             Kind::Tuple(elements) => elements.iter().for_each(|p| p.hints(vars, borrowed)),
             Kind::Variant { payload, .. } => {
@@ -54,7 +67,10 @@ impl CheckedPattern {
     }
     fn storage_children(&self) -> Result<Vec<(&Self, usize)>, Error> {
         use crate::memory_layout::MemoryLayoutShape;
-        if matches!(self.kind, Kind::Any(_)) {
+        if matches!(
+            self.kind,
+            Kind::Any(_) | Kind::Literal(..) | Kind::Sequence(_)
+        ) {
             return Ok(Vec::new());
         }
         // Templates are checked before they have byte layouts; their IR is
@@ -69,7 +85,7 @@ impl CheckedPattern {
                 Kind::Tuple(elements) => elements.iter().map(|p| (p, 0)).collect(),
                 Kind::Variant { payload, .. } => payload.iter().map(|p| (p.as_ref(), 0)).collect(),
                 Kind::Record(fields) => fields.iter().map(|(_, p)| (p, 0)).collect(),
-                Kind::Any(_) => unreachable!(),
+                Kind::Any(_) | Kind::Literal(..) | Kind::Sequence(_) => unreachable!(),
             });
         }
         let layout = self
@@ -94,8 +110,13 @@ impl CheckedPattern {
         })
     }
 
-    fn binds(&self) -> bool {
+    pub(super) fn binds(&self) -> bool {
         match &self.kind {
+            Kind::Literal(..) => false,
+            Kind::Sequence(p) => {
+                p.rest.as_ref().is_some_and(Option::is_some)
+                    || p.prefix.iter().chain(&p.suffix).any(Self::binds)
+            }
             Kind::Any(name) => name.is_some(),
             Kind::Tuple(elements) => elements.iter().any(Self::binds),
             Kind::Variant { payload, .. } => payload.as_ref().is_some_and(|p| p.binds()),
@@ -104,6 +125,12 @@ impl CheckedPattern {
     }
     fn coverage(&self) -> Arc<Coverage> {
         Arc::new(match &self.kind {
+            Kind::Literal(_, bits) => Coverage::Literal(*bits),
+            Kind::Sequence(p) => Coverage::Sequence {
+                prefix: p.prefix.iter().map(Self::coverage).collect(),
+                suffix: p.suffix.iter().map(Self::coverage).collect(),
+                rest: p.rest.is_some(),
+            },
             Kind::Any(_) => Coverage::Any,
             // Record patterns are irrefutable for their type.
             Kind::Record(_) => Coverage::Any,
@@ -126,6 +153,7 @@ impl FunctionPlan {
     ) -> Result<CheckedPattern, Error> {
         let mut names = HashSet::new();
         match pattern {
+            Pattern::Value(p) => self.check_payload_pattern(p, ty, &mut names, types),
             Pattern::Wildcard { span } => Ok(CheckedPattern {
                 ty: ty.clone(),
                 kind: Kind::Any(None),
@@ -199,7 +227,7 @@ impl FunctionPlan {
             span,
         })
     }
-    fn check_payload_pattern(
+    pub(super) fn check_payload_pattern(
         &self,
         pattern: &PayloadPattern,
         ty: &Type,
@@ -208,6 +236,52 @@ impl FunctionPlan {
     ) -> Result<CheckedPattern, Error> {
         let span = pattern.span();
         let kind = match pattern {
+            PayloadPattern::Sequence(p) => {
+                return self.check_sequence_pattern(
+                    p,
+                    ty,
+                    names,
+                    types,
+                    Self::check_payload_pattern,
+                )
+            }
+            PayloadPattern::Literal { literal, .. } => {
+                let (actual, constant, bits) = match literal {
+                    Literal::Integer {
+                        magnitude,
+                        negative,
+                    } if ty.integer().is_some() && *ty != Type::Rune => {
+                        let (actual, constant) =
+                            integer_literal(*magnitude, *negative, Some(ty), span)?;
+                        (
+                            actual,
+                            constant,
+                            if *negative {
+                                magnitude.wrapping_neg()
+                            } else {
+                                *magnitude
+                            },
+                        )
+                    }
+                    Literal::Bool(value) => (Type::Bool, Constant::Bool(*value), u64::from(*value)),
+                    Literal::Rune(value) => (Type::Rune, Constant::Rune(*value), u64::from(*value)),
+                    _ => {
+                        return Err(type_error(
+                            &span,
+                            ErrorCode::InvalidPattern,
+                            format!("Literal pattern is incompatible with {ty}"),
+                        ))
+                    }
+                };
+                if actual != *ty {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidPattern,
+                        format!("Literal pattern expects {actual}, got {ty}"),
+                    ));
+                }
+                Kind::Literal(constant, bits)
+            }
             PayloadPattern::Discard { .. } => Kind::Any(None),
             PayloadPattern::Name { name, .. } => {
                 // Nullary constructors are selected by the expected enum identity,
@@ -298,6 +372,14 @@ impl FunctionPlan {
         failure: usize,
     ) -> Result<(), Error> {
         self.current_span = pattern.span;
+        if let Kind::Sequence(p) = &pattern.kind {
+            let value = Slot {
+                index,
+                ty: pattern.ty.clone(),
+            };
+            let reference = self.sequence_value_reference(&value, false)?;
+            return self.sequence_tests(p, &reference, failure);
+        }
         if pattern.ty.is_place() {
             let base = Slot {
                 index,
@@ -328,6 +410,17 @@ impl FunctionPlan {
             return Ok(());
         }
         match &pattern.kind {
+            Kind::Sequence(_) => unreachable!(),
+            Kind::Literal(constant, _) => {
+                self.literal_pattern_test(
+                    Slot {
+                        index,
+                        ty: pattern.ty.clone(),
+                    },
+                    constant.clone(),
+                    failure,
+                )?;
+            }
             Kind::Any(_) | Kind::Record(_) => {}
             Kind::Tuple(elements) => {
                 let mut offset = index;
@@ -372,7 +465,7 @@ impl FunctionPlan {
         Ok(())
     }
 
-    fn pattern_reference(
+    pub(super) fn pattern_reference(
         &mut self,
         root: &Slot,
         ty: &Type,
@@ -400,6 +493,15 @@ impl FunctionPlan {
         failure: usize,
     ) -> Result<(), Error> {
         self.current_span = pattern.span;
+        if let Kind::Sequence(p) = &pattern.kind {
+            let root = self.sequence_root(root, &pattern.ty, offset, false, &[])?;
+            return self.sequence_tests(p, &root, failure);
+        }
+        if let Kind::Literal(constant, _) = &pattern.kind {
+            let reference = self.pattern_reference(root, &pattern.ty, offset, false, &[])?;
+            let actual = self.read_local(reference)?.unwrap();
+            return self.literal_pattern_test(actual, constant.clone(), failure);
+        }
         if let Kind::Variant { tag, .. } = &pattern.kind {
             let reference = self.pattern_reference(root, &Type::Int32, offset, false, &[])?;
             let actual = self.read_local(reference)?.unwrap();
@@ -435,6 +537,11 @@ impl FunctionPlan {
             return Ok(());
         }
         self.current_span = pattern.span;
+        if let Kind::Sequence(p) = &pattern.kind {
+            let mutable = root.ty.reference_type().unwrap().mutable;
+            let root = self.sequence_root(root, &pattern.ty, offset, mutable, path)?;
+            return self.bind_sequence_borrowed(p, &root, binding_mutable, vars);
+        }
         if let Kind::Any(Some(name)) = &pattern.kind {
             let mutable = root.ty.reference_type().unwrap().mutable;
             // A mutable payload binding is a reference, including Copy scalars.
@@ -493,6 +600,19 @@ impl FunctionPlan {
             return Ok(());
         }
         self.current_span = pattern.span;
+        if let Kind::Sequence(p) = &pattern.kind {
+            let mut value = value.unwrap();
+            if let Some(parent) = parent.filter(|_| value.ty.is_owner()) {
+                let dst = self.slot(value.ty.clone())?;
+                self.emit(Op::Buffer(BufferOp::Detach {
+                    dst: dst.clone(),
+                    src: value,
+                    owner: parent.clone(),
+                }));
+                value = dst;
+            }
+            return self.bind_sequence_value(p, &value, vars);
+        }
         if pattern.ty.is_place() && !matches!(pattern.kind, Kind::Any(_)) {
             let base = value.as_ref().unwrap();
             for (child, offset) in pattern.storage_children()? {
@@ -534,6 +654,7 @@ impl FunctionPlan {
             value
         };
         match &pattern.kind {
+            Kind::Literal(..) | Kind::Sequence(_) => {}
             Kind::Any(Some(name)) => {
                 let binding = self.local_binding(
                     name,
@@ -600,6 +721,12 @@ impl FunctionPlan {
 enum Coverage {
     Any,
     Ctor(usize, Vec<Arc<Coverage>>),
+    Literal(u64),
+    Sequence {
+        prefix: Vec<Arc<Coverage>>,
+        suffix: Vec<Arc<Coverage>>,
+        rest: bool,
+    },
 }
 fn any() -> Arc<Coverage> {
     Arc::new(Coverage::Any)
@@ -664,6 +791,142 @@ fn useful(
             depth + 1,
         );
     }
+    // Length classes stop once all prefixes and suffixes are disjoint and
+    // every exact-length pattern has been passed. Larger lengths are equivalent.
+    if let Some(element) = super::arrays::element_type(&types[0]) {
+        let mut prefix = 0;
+        let mut suffix = 0;
+        let mut exact = 0;
+        for p in matrix
+            .iter()
+            .map(|r| &r[0])
+            .chain(std::iter::once(&query[0]))
+        {
+            if let Coverage::Sequence {
+                prefix: a,
+                suffix: b,
+                rest,
+            } = p.as_ref()
+            {
+                prefix = prefix.max(a.len());
+                suffix = suffix.max(b.len());
+                if !rest {
+                    exact = exact.max(a.len() + b.len() + 1);
+                }
+            }
+        }
+        let limit = exact.max(prefix + suffix);
+        if limit > *budget {
+            return Err(type_error(
+                &span,
+                ErrorCode::ResourceLimit,
+                "Sequence coverage exceeds analysis budget",
+            ));
+        }
+        let lengths = match &types[0] {
+            Type::FixedArray(a) => match a.length {
+                crate::parser::ast::ConstArgument::Value(n) => vec![n as usize],
+                crate::parser::ast::ConstArgument::Parameter(_) => vec![limit],
+            },
+            _ => (0..=limit).collect(),
+        };
+        for length in lengths {
+            let mut indices: Vec<_> = (0..prefix.min(length)).collect();
+            indices.extend(length.saturating_sub(suffix)..length);
+            indices.sort_unstable();
+            indices.dedup();
+            let expand = |p: &Coverage| -> Option<Vec<Arc<Coverage>>> {
+                match p {
+                    Coverage::Any => Some(vec![any(); indices.len()]),
+                    Coverage::Sequence {
+                        prefix,
+                        suffix,
+                        rest,
+                    } => {
+                        let count = prefix.len() + suffix.len();
+                        if length < count || !rest && length != count {
+                            return None;
+                        }
+                        Some(
+                            indices
+                                .iter()
+                                .map(|&index| {
+                                    if index < prefix.len() {
+                                        prefix[index].clone()
+                                    } else if index >= length - suffix.len() {
+                                        suffix[index - (length - suffix.len())].clone()
+                                    } else {
+                                        any()
+                                    }
+                                })
+                                .collect(),
+                        )
+                    }
+                    _ => unreachable!("sequence coverage"),
+                }
+            };
+            let Some(mut candidate) = expand(&query[0]) else {
+                continue;
+            };
+            candidate.extend_from_slice(&query[1..]);
+            let rows: Vec<_> = matrix
+                .iter()
+                .filter_map(|row| {
+                    let mut fields = expand(&row[0])?;
+                    fields.extend_from_slice(&row[1..]);
+                    Some(fields)
+                })
+                .collect();
+            let mut fields = vec![element.clone(); indices.len()];
+            fields.extend_from_slice(&types[1..]);
+            if useful(&rows, &candidate, &fields, budget, span, depth + 1)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    if types[0].integer().is_some() || types[0] == Type::Bool {
+        let specialize = |value: Option<u64>, budget: &mut usize| {
+            let rows: Vec<_> = matrix
+                .iter()
+                .filter(|row| match row[0].as_ref() {
+                    Coverage::Any => true,
+                    Coverage::Literal(actual) => Some(*actual) == value,
+                    _ => false,
+                })
+                .map(|row| row[1..].to_vec())
+                .collect();
+            useful(&rows, &query[1..], &types[1..], budget, span, depth + 1)
+        };
+        if let Coverage::Literal(value) = query[0].as_ref() {
+            return specialize(Some(*value), budget);
+        }
+        let values: HashSet<_> = matrix
+            .iter()
+            .filter_map(|row| match row[0].as_ref() {
+                Coverage::Literal(v) => Some(*v),
+                _ => None,
+            })
+            .collect();
+        let count: u128 = match types[0] {
+            Type::Bool => 2,
+            Type::Int8 | Type::UInt8 => 1 << 8,
+            Type::Int16 | Type::UInt16 => 1 << 16,
+            Type::Int32 | Type::UInt32 => 1 << 32,
+            Type::Int64 | Type::UInt64 => 1 << 64,
+            Type::Rune => 0x110000 - 0x800,
+            _ => unreachable!(),
+        };
+        if (values.len() as u128) < count && specialize(None, budget)? {
+            return Ok(true);
+        }
+        for value in values {
+            if specialize(Some(value), budget)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
     let head = &query[0];
     let specialized = |tag: usize, args: Vec<Arc<Coverage>>, budget: &mut usize| {
         let fields: Vec<Type> = match &types[0] {
@@ -690,6 +953,7 @@ fn useful(
         useful(&rows, &candidate, &new_types, budget, span, depth + 1)
     };
     match head.as_ref() {
+        Coverage::Literal(_) | Coverage::Sequence { .. } => unreachable!("typed pattern coverage"),
         Coverage::Ctor(tag, args) => specialized(*tag, args.clone(), budget),
         Coverage::Any => {
             let tags: HashSet<_> = matrix
@@ -774,7 +1038,21 @@ pub(super) fn validate(
         checked.push(pattern);
     }
     let Type::Enum(enumeration) = ty else {
-        unreachable!()
+        if useful(
+            &matrix,
+            &[any()],
+            std::slice::from_ref(ty),
+            &mut budget,
+            span,
+            0,
+        )? {
+            return Err(type_error(
+                &span,
+                ErrorCode::NonExhaustiveMatch,
+                "Non-exhaustive match; missing sequence lengths or element values",
+            ));
+        }
+        return Ok(checked);
     };
     let mut missing = Vec::new();
     for (tag, variant) in enumeration.variants.iter().enumerate() {

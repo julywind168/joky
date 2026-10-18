@@ -13,6 +13,7 @@ pub(super) struct CheckedBinding {
 }
 
 enum BindingKind {
+    Sequence(Vec<(usize, CheckedBinding)>),
     Any(Option<String>),
     /// Children with their scalar-slot offsets relative to this value.
     Tuple(Vec<(usize, CheckedBinding)>),
@@ -30,7 +31,9 @@ impl CheckedBinding {
     fn binds(&self) -> bool {
         match &self.kind {
             BindingKind::Any(name) => name.is_some(),
-            BindingKind::Tuple(elements) => elements.iter().any(|(_, p)| p.binds()),
+            BindingKind::Tuple(elements) | BindingKind::Sequence(elements) => {
+                elements.iter().any(|(_, p)| p.binds())
+            }
             BindingKind::Record(fields) => fields.iter().any(|(_, p)| p.binds()),
         }
     }
@@ -246,7 +249,9 @@ impl FunctionPlan {
         match pattern {
             BindingPattern::Name { .. } => (true, false),
             BindingPattern::Discard { .. } => (false, false),
-            BindingPattern::Tuple { .. } | BindingPattern::Record { .. } => (true, true),
+            BindingPattern::Sequence(_)
+            | BindingPattern::Tuple { .. }
+            | BindingPattern::Record { .. } => (true, true),
         }
     }
 
@@ -259,6 +264,62 @@ impl FunctionPlan {
     ) -> Result<CheckedBinding, Error> {
         let span = pattern.span();
         let kind = match pattern {
+            BindingPattern::Sequence(p) => {
+                use crate::parser::ast::{ConstArgument, FixedArrayType};
+                let Type::FixedArray(array) = ty else {
+                    return Err(type_error(&span, ErrorCode::InvalidPattern, "Sequence let/var destructuring requires FixedArray; use match or if let for dynamic lengths"));
+                };
+                let ConstArgument::Value(length) = array.length else {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidPattern,
+                        "Sequence let/var destructuring requires a concrete fixed length",
+                    ));
+                };
+                let count = (p.prefix.len() + p.suffix.len()) as u64;
+                if count > length || p.rest.is_none() && count != length {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidPattern,
+                        "Sequence binding must match the fixed length",
+                    ));
+                }
+                let stride = super::sequence_patterns::element_stride(&array.element, span)?;
+                let mut children = Vec::new();
+                for (i, child) in p.prefix.iter().chain(&p.suffix).enumerate() {
+                    let index = if i < p.prefix.len() {
+                        i
+                    } else {
+                        length as usize - p.suffix.len() + i - p.prefix.len()
+                    };
+                    children.push((
+                        index * stride,
+                        self.check_binding_pattern(child, &array.element, types, names)?,
+                    ));
+                }
+                if let Some(Some(name)) = &p.rest {
+                    if !names.insert(name.clone()) {
+                        return Err(type_error(
+                            &span,
+                            ErrorCode::DuplicateDefinition,
+                            format!("Duplicate binding `{name}` in pattern"),
+                        ));
+                    }
+                    let rest = Type::FixedArray(Arc::new(FixedArrayType {
+                        element: array.element.clone(),
+                        length: ConstArgument::Value(length - count),
+                    }));
+                    children.push((
+                        p.prefix.len() * stride,
+                        CheckedBinding {
+                            ty: rest,
+                            kind: BindingKind::Any(Some(name.clone())),
+                            span,
+                        },
+                    ));
+                }
+                BindingKind::Sequence(children)
+            }
             BindingPattern::Name { name, span } => {
                 if !names.insert(name.clone()) {
                     return Err(type_error(
@@ -364,6 +425,17 @@ impl FunctionPlan {
     ) -> Result<CheckedPattern, Error> {
         let span = pattern.span();
         let kind = match pattern {
+            BindingPattern::Sequence(p) => {
+                // Record-field binding patterns are irrefutable as well.
+                self.check_binding_pattern(pattern, ty, types, &mut HashSet::new())?;
+                return self.check_sequence_pattern(
+                    p,
+                    ty,
+                    names,
+                    types,
+                    |plan, p, ty, names, types| plan.check_nested_binding(p, ty, types, names),
+                );
+            }
             BindingPattern::Name { name, span } => {
                 if !names.insert(name.clone()) {
                     return Err(type_error(
@@ -448,6 +520,13 @@ impl FunctionPlan {
                 slot: value,
                 span: checked.span,
             }),
+            BindingKind::Sequence(children) => {
+                let base = value.as_ref().unwrap();
+                for (offset, child) in children {
+                    let value = self.place_read(base, *offset, child.ty.clone())?;
+                    self.lower_binding_pattern(child, value, leaves, suspends)?;
+                }
+            }
             BindingKind::Tuple(children) => {
                 let base = value.as_ref().unwrap().index;
                 for (index, (offset, child)) in children.iter().enumerate() {
@@ -508,7 +587,12 @@ impl FunctionPlan {
         if let Some(reference) = value
             .as_ref()
             .filter(|slot| slot.ty.reference_type().is_some())
-            .filter(|_| matches!(pattern, BindingPattern::Record { .. }))
+            .filter(|_| {
+                matches!(
+                    pattern,
+                    BindingPattern::Record { .. } | BindingPattern::Sequence(_)
+                )
+            })
         {
             let borrowed = reference.ty.reference_type().unwrap();
             if borrowed.mutable {

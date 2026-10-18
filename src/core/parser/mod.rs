@@ -63,6 +63,7 @@ struct Parser {
     impl_target: Option<Type>,
     impl_trait: Option<String>,
     interpolation: bool,
+    arrays: bool,
 }
 
 impl Parser {
@@ -84,6 +85,7 @@ impl Parser {
             impl_target: None,
             impl_trait: None,
             interpolation: false,
+            arrays: false,
         }
     }
 

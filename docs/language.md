@@ -710,6 +710,34 @@ pub trait BorrowHash { fn hash_ref(&self) @noescape -> UInt64 }
 同一 key 的相等和 hash 必须稳定，代数一致性由实现者保证。
 
 
+## 数组字面值
+
+`[a, b, c]` 从左到右求值各元素一次，允许尾随逗号；所有元素必须同型。
+局部注解、形参、返回类型、聚合字段和构造器载荷提供上下文：
+
+```joky
+import joky/array.{type Array}
+import joky/fixed_array.{type FixedArray}
+
+var dynamic = [1, 2, 3]                    // Array<Int32>
+dynamic.push(4)
+let bytes: Array<UInt8> = [1, 255]
+let fixed: FixedArray<Int32, 3> = [1, 2, 3]
+let empty: Array<String> = []
+let matrix: FixedArray<FixedArray<Int32, 2>, 2> = [[1, 2], [3, 4]]
+```
+
+无容器上下文时选择 `Array<T>`；先从元素的已有类型推导 T，再使用数值字面量默认类型。
+空数组必须能从上下文确定 T，不根据后续 push 反推。固长上下文检查字面值项数等于 N，
+固长形参中的常量参数也可由字面值项数推导。`let` / `var` 只控制绑定可变性，不选择容器类型。
+已经定型的 Array 与 FixedArray 不隐式互转；也没有隐式复制拥有元素或数值类型转换。
+
+字面值通过编译器私有别名引入数组库，不需要 prelude，也不向用户作用域引入 `Array`、
+`array` 等名称；书写类型注解仍需普通 import。动态构造预留项数对应的容量，逐项移动拥有值，
+中途返回、失败和取消清理已初始化内容；元素表达式可按普通规则挂起，恢复不重放副作用。
+固长构造复用受检初始化令牌，仅在完整初始化后发布值，保留原有 Copy 元素和同步使用限制。
+首轮没有重复构造 `[x; n]`、展开构造 `[a, ..values]` 或下标运算符。
+
 ## 数值动态数组
 
 显式导入 `joky/array` 后可使用 `Array<T>`。元素支持四种整数、Bool、Unit、Ptr，
@@ -718,7 +746,8 @@ pub trait BorrowHash { fn hash_ref(&self) @noescape -> UInt64 }
 数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
 构造函数写 `Array.new::<T>()` / `Array.with_capacity::<T>(n)`，实例支持 `values.push(x)`、`values.get(i)` 等方法。
 原有 `array.new::<T>()` / `array.push(&mut values, x)` 等模块函数保持兼容，两种调用风格可混用。
-不从返回注解或后续写入反推元素类型；其他方法从接收者推导 T。
+`Array.new` 等泛型函数不从返回注解或后续写入反推元素类型；其他方法从接收者推导 T。
+数组字面值的上下文定型见上节。
 零大小元素仍受逻辑长度/容量检查，但不分配元素载荷；数组自身始终不是 Copy。
 
 ```joky
@@ -916,7 +945,8 @@ fn borrowed_answer() -> Int32 {
   借用构造越界会报告带位置的运行时错误；slices.get / set 的越界仍返回 None / false。
 - slices 提供 len、is_empty、get、set、borrow、borrow_mut、slice、slice_mut；子切片索引相对当前切片。
   元素借用不分配；每次创建切片/子切片均分配一个计入任务预算的头部，不复制元素，并在根任务结束时回收。
-- 所有派生视图借用整个原始缓冲区，不证明不同索引或区间互不重叠。共享视图允许共享读；
+- 普通 API 派生的视图借用整个原始缓冲区，不证明不同索引或区间互不重叠；
+  序列模式在成功长度检查后可证明同一模式中的元素和余段不重叠。共享视图允许共享读；
   独占视图阻止其他冲突读写，子视图最后使用后恢复父权限。视图存活时不能冲突修改、扩容、pop、移动或覆盖拥有者。
 - element.read / slices.get 的复制值不延长存储借用；复制出的普通共享引用仍保留元素内容来源。
   Element/Slice 不能按值使用，其视图继承数组视图的不可存储、宿主和直接挂起限制；
@@ -1179,7 +1209,7 @@ N=0 和零大小元素合法；空数组的 from_fn 不调用回调，但仍清�
 List/Map/Set 和其他拥有聚合尚不接受数组或其 Array 包装。
 尚不支持数组捕获、显式 Arena/alloc 存储、挂起函数中的数组值、持久实例/状态域及普通 direct/CPS 宿主值边界。
 普通挂起函数可以调用内部使用数组、签名不含数组的同步 helper。
-兼容数组字段与同步引用可按[固定数组与 C 指针适配](#固定数组与-c-指针适配)跨 C 边界；未引入数组字面量、下标语法或默认 Eq。
+兼容数组字段与同步引用可按[固定数组与 C 指针适配](#固定数组与-c-指针适配)跨 C 边界；数组字面值见上文；尚无下标语法或默认 Eq。
 首版 F0–F5 已验收，覆盖与限制见 [FixedArray 记录](fixed-array-storage-ownership.md#f5集成验收与文档发布)。
 
 ## 函数值
@@ -2334,7 +2364,8 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
 - 分支以 `pattern => expression` 书写，不带前导 `|`。相邻分支用逗号或真实换行分隔，
   块分支也需要分隔；允许尾逗号，不允许空分支。
-- `match value { pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举值或枚举引用 `&Enum` / `&mut Enum`。
+- `match value { pattern => expression ... }` 是表达式，被匹配值只求值一次，本节描述枚举值或枚举引用 `&Enum` / `&mut Enum`；
+  数组、切片及标量字面量匹配见[序列与字面量模式](#序列与字面量模式)。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
   有载荷模式可递归写元组及嵌套构造，例如 `Some((left, right))`、`Some(None)`、
   `Some(Some(value))`；元组形状和元素数量必须与载荷类型一致。模式中的导入名称按声明身份检查；
@@ -2370,7 +2401,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
 公开导出只考虑公开枚举，私有枚举的同名成员不会使外部导出产生歧义。
 `match` 的无限定成员模式仍可根据被匹配枚举确定含义，包括嵌套载荷模式；
 显式限定或导入重命名的模式继续校验枚举身份。同一枚举内部的重复成员仍报错。
-当前不支持 guard、字面量模式或整体相等比较；模式递归深度与类型布局同样限制为 256 层。
+支持嵌套的序列、整数、Bool 和 Rune 字面量模式；不支持 guard、字符串/浮点字面量模式或枚举整体相等比较。模式递归深度与类型布局同样限制为 256 层。
 拥有型 enum 的按值 `match` 消费整个值，将当前变体的载荷转交给模式绑定；`Variant(_)` 和 `_` 清理未绑定的拥有载荷。
 分支退出、提前返回和失败均保持恰好一次清理，仅当前标签对应的载荷运行 Drop；未激活的拥有者槽为空。
 这些规则适用于任意用户枚举，与 Option / Result 的名称无关。示例见 [owning_enums.jk](../examples/owning_enums.jk)。
@@ -2707,6 +2738,61 @@ fn safe_divide(value: Int32, divisor: Int32) -> Int32 {
 if 表达式可直接参与运算：`if true { 1 } else { 9 } + 2` 为 3。
 else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配分词，不是两个 parallel 分支符。
 完整可运行示例见 [examples/conditionals.jk](../examples/conditionals.jk)。
+
+## 序列与字面量模式
+
+`match`、`if let` 和 `while let` 接受数组/切片的序列模式，并复用枚举的求值一次、
+分支作用域、分支结果同型及穷尽检查。元素模式可嵌套枚举、元组、记录、序列和标量字面量。
+整数按被匹配的整数类型检查范围；Bool 和 Rune 按各自类型匹配，不调用用户相等协议。
+
+| 模式 | 长度与绑定 |
+| --- | --- |
+| `[]` / `[x]` / `[x, y]` | 恰好 0 / 1 / 2 项 |
+| `[head, ..]` | 至少 1 项，忽略余下部分 |
+| `[head, ..tail]` | 至少 1 项，绑定余段 |
+| `[first, ..middle, last]` | 至少 2 项，绑定中间余段 |
+| `[..]` | 任意长度 |
+
+每个序列最多一个 `..`，可以位于开头、中间或结尾；`.._` 等同于 `..`。
+名称绑定不能重复，包括余段名。没有 `..` 时严格匹配长度，不能隐式忽略多余元素。
+
+```joky
+import joky/array.{type Array}
+import joky/slice as slices
+
+fn inspect(values: &Array<Int32>) -> Int32 {
+    match values {
+        [] => 0
+        [0, ..] => 100
+        [only] => only
+        [first, ..middle, last] => first + last + int32(slices.len(middle))
+    }
+}
+```
+
+共享匹配 `match &values` 的 Copy 元素绑定为独立快照，拥有元素绑定为 `&T`；
+命名余段始终为 `&Slice<T>`，不复制元素。独占匹配 `match &mut values` 的元素绑定为
+`&mut T`，余段为 `&mut Slice<T>`，同一模式的不同元素及余段可同时使用；含引用元素不能
+再绑定为独占元素引用。来源数组和外层拥有者仍受约束，视图存活期间不能扩容、移动、
+覆盖或借用整个数组进行冲突访问。元素与 Slice 引用保留原有不逃逸和跨挂起限制。
+
+按值匹配 FixedArray 复制值，原值仍可用；命名余段为 `FixedArray<T, N-K>`，K 是前后缀项数，
+当前要求具体长度，类型中的 `N-K` 由编译器计算，不开放源码常量算术。
+按值匹配 Array 消费整个数组，元素绑定取得所有权，命名余段是保序的 `Array<T>`，可继续移动
+或跨挂起持有。忽略的拥有元素在匹配作用域清理。所有长度、字面量和嵌套标签检查通过以后
+才开始移出元素；失败分支不会破坏后续分支看到的值。当前消费前缀使用保序移除，未承诺常数时间。
+
+固定长度的 `[a, b]` 可穷尽 `FixedArray<T, 2>`；不可能的长度直接报 `invalid_pattern`。
+动态长度的 `[]` 与 `[head, ..]` 合起来穷尽；`[]` 与 `[0, ..]` 则不穷尽。
+元素值和枚举载荷也递归参与覆盖判断，重复或被前面分支覆盖的模式报 `unreachable_code`。
+分析按有限长度类别及实际测试位置进行，保留编译工作量限额，不按大数组全部元素展开。
+尚未实例化的固长 N 不支持带前后缀的模式；可使用不约束长度的 `[..]` 或共享/独占的全长余段。
+
+`let` / `var` 还支持具体 FixedArray 的不可失败解构及共享解构，例如
+`let [a, b]: FixedArray<Int32, 2> = [20, 22]`。按值余段是独立固长数组，共享余段是切片。
+动态数组的 let/var 序列解构不开放，使用 `match` 或 `if let`。
+行为覆盖见 [array_patterns.jk](../tests/fixtures/array_patterns.jk)，失败清理见
+[array_patterns_cleanup.jk](../tests/fixtures/array_patterns_cleanup.jk)。
 
 ## 条件模式与模式循环
 

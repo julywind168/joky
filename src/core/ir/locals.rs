@@ -159,7 +159,7 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
                 }
                 pending.extend(args);
             }
-            Expr::Tuple { elements, .. } => pending.extend(elements),
+            Expr::Array { elements, .. } | Expr::Tuple { elements, .. } => pending.extend(elements),
             Expr::Scope { branches, .. } => pending.extend(branches),
             Expr::Unsafe { exprs, .. }
             | Expr::Block { exprs, .. }

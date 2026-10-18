@@ -270,6 +270,14 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
     }
     fn binding_names(pattern: &BindingPattern, out: &mut Vec<String>) {
         match pattern {
+            BindingPattern::Sequence(p) => {
+                for item in p.prefix.iter().chain(&p.suffix) {
+                    binding_names(item, out);
+                }
+                if let Some(Some(name)) = &p.rest {
+                    out.push(name.clone());
+                }
+            }
             BindingPattern::Name { name, .. } => out.push(name.clone()),
             BindingPattern::Discard { .. } => {}
             BindingPattern::Tuple { elements, .. } => {
@@ -365,6 +373,7 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                     scopes.push(std::collections::HashSet::new());
                     let mut names = Vec::new();
                     match &arm.pattern {
+                        Pattern::Value(p) => p.names(&mut names),
                         Pattern::Wildcard { .. } => {}
                         Pattern::Variant { binding, .. } => {
                             if let Some(binding) = binding {
@@ -377,7 +386,8 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                     scopes.pop();
                 }
             }
-            Expr::Tuple { elements, .. }
+            Expr::Array { elements, .. }
+            | Expr::Tuple { elements, .. }
             | Expr::Scope {
                 branches: elements, ..
             } => {

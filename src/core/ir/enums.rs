@@ -366,22 +366,28 @@ impl FunctionPlan {
         span: Span,
     ) -> Result<(Type, Option<bool>), Error> {
         match ty {
-            Type::Enum(_) => Ok((ty.clone(), None)),
+            Type::Enum(_) | Type::FixedArray(_) | Type::Bool | Type::Rune => Ok((ty.clone(), None)),
+            _ if ty.integer().is_some() || matches!(ty, Type::Record(r) if r.array) => {
+                Ok((ty.clone(), None))
+            }
             Type::Reference(r) => {
                 let target = self.pointee(&r.target, types)?;
-                if matches!(target, Type::Enum(_)) {
+                if matches!(target, Type::Enum(_) | Type::Bool | Type::Rune)
+                    || target.integer().is_some()
+                    || super::arrays::element_type(&target).is_some()
+                {
                     return Ok((target, Some(r.mutable)));
                 }
                 Err(type_error(
                     &span,
                     ErrorCode::TypeMismatch,
-                    "match requires an enum value or enum reference",
+                    "match requires an enum, integer, Bool, Rune, or sequence value or reference",
                 ))
             }
             _ => Err(type_error(
                 &span,
                 ErrorCode::TypeMismatch,
-                "match requires an enum value or enum reference",
+                "match requires an enum, integer, Bool, Rune, or sequence value or reference",
             )),
         }
     }
@@ -423,7 +429,7 @@ impl FunctionPlan {
             return Err(type_error(
                 span,
                 ErrorCode::TypeMismatch,
-                "match requires an enum value",
+                "match requires a supported value",
             ));
         };
         let (matched_type, borrowed) = self.match_type(&value.ty, types, *span)?;
@@ -457,7 +463,9 @@ impl FunctionPlan {
                 }
             })
         });
-        let expected = if expected.is_some_and(|ty| ty.dyn_interface().is_some()) {
+        let expected = if expected.is_some_and(|ty| {
+            ty.dyn_interface().is_some() || super::arrays::element_type(ty).is_some()
+        }) {
             expected
         } else {
             hint.as_ref().or(expected)

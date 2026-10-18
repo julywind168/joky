@@ -19,7 +19,7 @@ mod projections;
 mod specialization;
 pub(crate) mod walk;
 pub(crate) use indirect::{materialize as reference_target, substitute_syntax, validate_elements};
-pub(crate) use specialization::{substitute, unify};
+pub(crate) use specialization::{substitute, unify, unify_constant};
 use walk::{TypeEdges, TypeWalk};
 
 /// Definition-only templates never enter executable types or constructor lookup.
@@ -1048,6 +1048,12 @@ fn map_binding_types(
             }
             Ok(())
         }
+        BindingPattern::Sequence(p) => {
+            for item in p.prefix.iter_mut().chain(&mut p.suffix) {
+                map_binding_types(item, map, substitutions)?;
+            }
+            Ok(())
+        }
         BindingPattern::Tuple { elements, .. } => {
             for element in elements {
                 map_binding_types(element, map, substitutions)?;
@@ -1076,6 +1082,12 @@ fn map_payload_types(
             }
             for field in fields {
                 map_binding_types(&mut field.pattern, map, substitutions)?;
+            }
+            Ok(())
+        }
+        PayloadPattern::Sequence(p) => {
+            for item in p.prefix.iter_mut().chain(&mut p.suffix) {
+                map_payload_types(item, map, substitutions)?;
             }
             Ok(())
         }
@@ -1156,6 +1168,12 @@ pub(crate) fn resolve_pattern_heads(
             BindingPattern::Record { inner, .. } => {
                 head(&mut inner.name, &mut inner.type_args, aliases, registry)
             }
+            BindingPattern::Sequence(p) => {
+                for item in p.prefix.iter_mut().chain(&mut p.suffix) {
+                    walk_binding(item, aliases, registry)?;
+                }
+                Ok(())
+            }
             BindingPattern::Tuple { elements, .. } => {
                 for element in elements {
                     walk_binding(element, aliases, registry)?;
@@ -1175,6 +1193,12 @@ pub(crate) fn resolve_pattern_heads(
             PayloadPattern::Record {
                 name, type_args, ..
             } => head(name, type_args, aliases, registry),
+            PayloadPattern::Sequence(p) => {
+                for item in p.prefix.iter_mut().chain(&mut p.suffix) {
+                    walk_payload(item, aliases, registry)?;
+                }
+                Ok(())
+            }
             PayloadPattern::Tuple { elements, .. } => {
                 for element in elements {
                     walk_payload(element, aliases, registry)?;
@@ -1206,11 +1230,7 @@ pub(crate) fn resolve_pattern_heads(
                 Expr::Match { value, arms, .. } => {
                     pending.push(value.as_mut());
                     for arm in arms.iter_mut() {
-                        if let crate::parser::ast::Pattern::Variant {
-                            binding: Some(binding),
-                            ..
-                        } = &mut arm.pattern
-                        {
+                        if let Some(binding) = arm.pattern.payload_mut() {
                             walk_payload(binding, aliases, registry)?;
                         }
                     }
@@ -1254,7 +1274,8 @@ pub(crate) fn resolve_pattern_heads(
                 Expr::Record { fields, .. } => {
                     pending.extend(fields.iter_mut().map(|field| &mut field.value));
                 }
-                Expr::Tuple { elements, .. }
+                Expr::Array { elements, .. }
+                | Expr::Tuple { elements, .. }
                 | Expr::Unsafe {
                     exprs: elements, ..
                 }
@@ -1355,11 +1376,7 @@ pub(crate) fn map_syntax(
         Expr::Match { value, arms, .. } => {
             map_syntax(value, map, substitutions)?;
             for arm in arms.iter_mut() {
-                if let crate::parser::ast::Pattern::Variant {
-                    binding: Some(binding),
-                    ..
-                } = &mut arm.pattern
-                {
+                if let Some(binding) = arm.pattern.payload_mut() {
                     map_payload_types(binding, map, substitutions)?;
                 }
             }
@@ -1458,7 +1475,10 @@ pub(crate) fn map_syntax(
                 map_syntax(arg, map, substitutions)?;
             }
         }
-        Expr::Tuple {
+        Expr::Array {
+            elements: exprs, ..
+        }
+        | Expr::Tuple {
             elements: exprs, ..
         }
         | Expr::Unsafe { exprs, .. }

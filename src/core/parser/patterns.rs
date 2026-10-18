@@ -15,6 +15,11 @@ impl Parser {
 
     fn parse_binding_pattern_inner(&mut self) -> Result<BindingPattern, Diagnostic> {
         let start = self.peek_span().start();
+        if self.peek() == &TokenKind::LBracket {
+            return self
+                .parse_sequence_pattern(Self::parse_binding_pattern)
+                .map(|p| BindingPattern::Sequence(Box::new(p)));
+        }
         if self.peek() != &TokenKind::LParen {
             if self.peek() == &TokenKind::Amp {
                 return Err(self.error(
@@ -133,7 +138,38 @@ impl Parser {
         }
         self.pattern_depth += 1;
         let start = self.peek_span().start();
-        let result = if self.peek() == &TokenKind::LParen {
+        let result = if self.peek() == &TokenKind::LBracket {
+            PayloadPattern::Sequence(Box::new(
+                self.parse_sequence_pattern(Self::parse_match_payload_pattern)?,
+            ))
+        } else if matches!(
+            self.peek(),
+            TokenKind::IntLit(_)
+                | TokenKind::Minus
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::CharLit(_)
+        ) {
+            let negative = self.peek() == &TokenKind::Minus;
+            if negative {
+                self.advance();
+            }
+            let literal = match self.peek().clone() {
+                TokenKind::IntLit(magnitude) => Literal::Integer {
+                    magnitude,
+                    negative,
+                },
+                TokenKind::True if !negative => Literal::Bool(true),
+                TokenKind::False if !negative => Literal::Bool(false),
+                TokenKind::CharLit(value) if !negative => Literal::Rune(value as u32),
+                _ => return Err(self.error("Expected an integer after '-' in pattern".into())),
+            };
+            self.advance();
+            PayloadPattern::Literal {
+                literal,
+                span: self.span(start, self.last_span.end()),
+            }
+        } else if self.peek() == &TokenKind::LParen {
             self.advance();
             let first = self.parse_match_payload_pattern()?;
             if self.peek() != &TokenKind::Comma {
@@ -205,5 +241,50 @@ impl Parser {
         };
         self.pattern_depth -= 1;
         Ok(result)
+    }
+}
+
+impl Parser {
+    fn parse_sequence_pattern<P>(
+        &mut self,
+        parse: fn(&mut Self) -> Result<P, Diagnostic>,
+    ) -> Result<SequencePattern<P>, Diagnostic> {
+        self.arrays = true;
+        let start = self.peek_span().start();
+        self.expect(&TokenKind::LBracket)?;
+        let mut prefix = Vec::new();
+        let mut suffix = Vec::new();
+        let mut rest = None;
+        while self.peek() != &TokenKind::RBracket {
+            if self.peek() == &TokenKind::Dot {
+                if rest.is_some() {
+                    return Err(self.error("Sequence patterns allow only one rest".into()));
+                }
+                self.advance();
+                self.expect(&TokenKind::Dot)?;
+                let name = if let TokenKind::Ident(name) = self.peek().clone() {
+                    self.advance();
+                    self.check_binding_name(&name)?;
+                    (name != "_").then_some(name)
+                } else {
+                    None
+                };
+                rest = Some(name);
+            } else if rest.is_some() {
+                suffix.push(parse(self)?);
+            } else {
+                prefix.push(parse(self)?);
+            }
+            if self.peek() != &TokenKind::RBracket {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+        self.expect(&TokenKind::RBracket)?;
+        Ok(SequencePattern {
+            prefix,
+            suffix,
+            rest,
+            span: self.span(start, self.last_span.end()),
+        })
     }
 }

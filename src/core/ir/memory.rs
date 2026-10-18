@@ -672,6 +672,9 @@ pub(super) fn check_module(
         }
         info.uses_arena = body.ops.iter().any(|op| match op {
             Op::Alloc { .. } | Op::Text { .. } | Op::Place(_) => true,
+            // Local fixed-array aliases become Place operations after this pass,
+            // including unused by-value parameters. Lowering needs an arena.
+            Op::Local { target, .. } if target.is_place() => true,
             Op::Buffer(BufferOp::SwapReferences { target, .. }) if target.is_place() => true,
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,

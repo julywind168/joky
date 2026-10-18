@@ -162,9 +162,9 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "A",
         ),
         (
-            "fn f() { match 1 { _ => {} } }",
+            "fn f(value: Float64) { match value { _ => {} } }",
             ErrorCode::TypeMismatch,
-            "enum value",
+            "match requires",
         ),
         (
             "enum E { A, B } fn f(e: E) { match e { A => {}, A => {}, _ => {} } }",

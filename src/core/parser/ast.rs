@@ -701,6 +701,11 @@ pub enum Expr {
         fields: Vec<FieldInit>,
         span: Span,
     },
+    /// Contextually typed homogeneous sequence, evaluated from left to right.
+    Array {
+        elements: Vec<Expr>,
+        span: Span,
+    },
     /// Nonempty positional aggregate, evaluated from left to right.
     Tuple {
         elements: Vec<Expr>,
@@ -926,7 +931,8 @@ impl Expr {
             Self::AnonymousFunction(function) => function.span,
             Self::GenericName(name) => name.span,
             Self::MethodCall(call) => call.span,
-            Self::Tuple { span, .. }
+            Self::Array { span, .. }
+            | Self::Tuple { span, .. }
             | Self::Destructure { span, .. }
             | Self::Match { span, .. }
             | Self::Record { span, .. }
@@ -977,6 +983,7 @@ impl Expr {
                 Self::MethodCall(call)
             }
             Self::Invoke { callee, args, .. } => Self::Invoke { callee, args, span },
+            Self::Array { elements, .. } => Self::Array { elements, span },
             Self::Tuple { elements, .. } => Self::Tuple { elements, span },
             Self::Destructure {
                 pattern,
@@ -1960,6 +1967,7 @@ pub struct MatchArm {
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
+    Value(Box<PayloadPattern>),
     Wildcard {
         span: Span,
     },
@@ -1973,6 +1981,7 @@ pub enum Pattern {
 impl Pattern {
     pub fn span(&self) -> Span {
         match self {
+            Self::Value(p) => p.span(),
             Self::Wildcard { span } | Self::Variant { span, .. } => *span,
         }
     }
@@ -2129,6 +2138,7 @@ pub struct RecordFieldPattern {
 /// Irrefutable binding patterns; enum and literal patterns are excluded.
 #[derive(Debug, Clone)]
 pub enum BindingPattern {
+    Sequence(Box<SequencePattern<BindingPattern>>),
     Name {
         name: String,
         span: Span,
@@ -2159,6 +2169,7 @@ pub struct RecordPattern {
 impl BindingPattern {
     pub fn span(&self) -> Span {
         match self {
+            Self::Sequence(p) => p.span,
             Self::Name { span, .. }
             | Self::Discard { span }
             | Self::Tuple { span, .. }
@@ -2170,6 +2181,11 @@ impl BindingPattern {
 /// Recursive match payload syntax; bare names are resolved using the payload type.
 #[derive(Debug, Clone)]
 pub enum PayloadPattern {
+    Sequence(Box<SequencePattern<PayloadPattern>>),
+    Literal {
+        literal: Literal,
+        span: Span,
+    },
     Name {
         name: String,
         span: Span,
@@ -2197,6 +2213,8 @@ pub enum PayloadPattern {
 impl PayloadPattern {
     pub fn span(&self) -> Span {
         match self {
+            Self::Sequence(p) => p.span,
+            Self::Literal { span, .. } => *span,
             Self::Name { span, .. }
             | Self::Discard { span }
             | Self::Tuple { span, .. }
@@ -2206,6 +2224,15 @@ impl PayloadPattern {
     }
     pub(crate) fn names(&self, out: &mut Vec<String>) {
         match self {
+            Self::Sequence(p) => {
+                for item in p.prefix.iter().chain(&p.suffix) {
+                    item.names(out);
+                }
+                if let Some(Some(name)) = &p.rest {
+                    out.push(name.clone());
+                }
+            }
+            Self::Literal { .. } => {}
             Self::Name { name, .. } => out.push(name.clone()),
             Self::Discard { .. } => {}
             Self::Tuple { elements, .. } => elements.iter().for_each(|element| element.names(out)),
@@ -2225,6 +2252,14 @@ impl PayloadPattern {
 
 fn pattern_names(pattern: &BindingPattern, out: &mut Vec<String>) {
     match pattern {
+        BindingPattern::Sequence(p) => {
+            for item in p.prefix.iter().chain(&p.suffix) {
+                pattern_names(item, out);
+            }
+            if let Some(Some(name)) = &p.rest {
+                out.push(name.clone());
+            }
+        }
         BindingPattern::Name { name, .. } => out.push(name.clone()),
         BindingPattern::Discard { .. } => {}
         BindingPattern::Tuple { elements, .. } => elements
@@ -2289,6 +2324,31 @@ impl Type {
         match self.fixed_shape().length {
             ConstArgument::Value(n) => n,
             ConstArgument::Parameter(_) => unreachable!("concrete fixed-array length"),
+        }
+    }
+}
+
+/// A single optional rest separates prefix and suffix patterns.
+#[derive(Debug, Clone)]
+pub struct SequencePattern<P> {
+    pub prefix: Vec<P>,
+    pub suffix: Vec<P>,
+    pub rest: Option<Option<String>>,
+    pub span: Span,
+}
+impl Pattern {
+    pub(crate) fn payload(&self) -> Option<&PayloadPattern> {
+        match self {
+            Self::Value(p) => Some(p),
+            Self::Variant { binding, .. } => binding.as_deref(),
+            _ => None,
+        }
+    }
+    pub(crate) fn payload_mut(&mut self) -> Option<&mut PayloadPattern> {
+        match self {
+            Self::Value(p) => Some(p),
+            Self::Variant { binding, .. } => binding.as_deref_mut(),
+            _ => None,
         }
     }
 }

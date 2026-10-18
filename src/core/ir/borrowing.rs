@@ -1402,6 +1402,11 @@ fn analyze(
                         result.ancestors.extend(&result.loans);
                         result.loans = Set::from([loan]);
                     }
+                    BufferIntrinsic::TakeLast if !dst.as_ref().is_some_and(|s| s.ty.is_owner()) => {
+                        result = buffer_contents(&state, &args[0]);
+                        result.ancestors.extend(&result.loans);
+                        result.loans = Set::from([loan]);
+                    }
                     BufferIntrinsic::Load
                     | BufferIntrinsic::ElementLoad
                     | BufferIntrinsic::SliceLoad => {

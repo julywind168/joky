@@ -1,0 +1,46 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+import joky/fixed_array.{type FixedArray}
+extern fn note(value: Int32)
+struct Guard { id: Int32, text: String }
+impl Drop for Guard { fn drop(&mut self) { note(0 - self.id) } }
+fn make(id: Int32) -> Guard {
+    let value = Guard { id: id, text: "owned" }
+    note(id)
+    value
+}
+fn normal() -> Int32 {
+    let values = [make(1), make(2), make(3), make(4)]
+    match values {
+        [first, ..middle, last] => {
+            match middle { [a, b] => first.id + a.id + b.id + last.id + 32, _ => 0 }
+        }
+        _ => 0
+    }
+}
+fn fail() -> Guard { let zero = 0; let bad = 1 / zero; make(bad) }
+fn failed_init() -> Int32 { let values = [make(1), fail(), make(3)]; 0 }
+fn early() -> Int32 { let values: Array<Guard> = [make(1), { return 42 }] }
+fn alternatives() -> Int32 {
+    let values = [Some(make(1)), None, Some(make(3))]
+    match values {
+        [Some(a), Some(b), ..] => a.id + b.id
+        [Some(a), None, Some(b)] => a.id + b.id + 38
+        _ => 0
+    }
+}
+fn failed_arm() -> Int32 {
+    let values = [make(1), make(2), make(3)]
+    match values { [first, ..tail] => { let zero = 0; first.id / zero }, [] => 0 }
+}
+fn fixed_failure() -> Int32 {
+    let value: FixedArray<Int32, 3> = [1, { let zero = 0; 1 / zero }, 3]
+    0
+}
+fn task() @suspends -> Int32 { normal() }
+fn main() {
+    let answer = normal()
+    note(answer)
+    let answer = alternatives()
+    note(answer)
+}

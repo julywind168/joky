@@ -33,7 +33,11 @@ impl Parser {
             }
             if matches!(
                 self.peek(),
-                TokenKind::RParen | TokenKind::RBrace | TokenKind::Comma | TokenKind::Eof
+                TokenKind::RParen
+                    | TokenKind::RBracket
+                    | TokenKind::RBrace
+                    | TokenKind::Comma
+                    | TokenKind::Eof
             ) || (self.peek() == &TokenKind::Pipe && !self.allow_pipe)
             {
                 break;
@@ -60,6 +64,7 @@ impl Parser {
                         TokenKind::Semi
                             | TokenKind::RBrace
                             | TokenKind::RParen
+                            | TokenKind::RBracket
                             | TokenKind::Comma
                             | TokenKind::Eof
                     )

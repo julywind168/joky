@@ -487,7 +487,10 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                         && info.parameter_noescape(index))
             })
             || plan.ops.iter().any(|op| match op {
-                Op::Buffer(BufferOp::Storage { .. }) => true,
+                Op::Buffer(BufferOp::Storage { args, dst, .. }) => args
+                    .iter()
+                    .chain(dst)
+                    .any(|s| unsupported(&s.ty) && !s.ty.is_buffer_view()),
                 Op::Buffer(BufferOp::Move { dst, .. } | BufferOp::End(dst)) => unsupported(&dst.ty),
                 Op::Call { args, result, .. } => args.iter().flatten().chain(result).any(|s| {
                     // Borrowed arguments/results may exist inside a synchronous

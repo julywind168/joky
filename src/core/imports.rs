@@ -295,9 +295,10 @@ fn bind(
                 .insert(format!("{root}.{name}"), binding.clone());
             scope.imported_constants.insert(binding.clone());
         }
-        // Interpolation uses unspellable aliases so user imports and names cannot
-        // redirect its builder or Show helper. An existing import is sufficient.
+        // Compiler-generated calls use unspellable aliases so user names cannot
+        // redirect array construction or interpolation. Existing imports suffice.
         let compiler_alias = match import.path.as_str() {
+            "joky/array" => Some("$joky_array"),
             "joky/show" => Some("$joky_show"),
             "joky/string" => Some("$joky_string"),
             _ => None,

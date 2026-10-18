@@ -44,6 +44,19 @@ impl Parser {
 
     /// Share enum pattern syntax with match, including recursive payloads.
     fn parse_match_pattern(&mut self) -> Result<Pattern, Diagnostic> {
+        if matches!(
+            self.peek(),
+            TokenKind::LBracket
+                | TokenKind::IntLit(_)
+                | TokenKind::Minus
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::CharLit(_)
+        ) {
+            return self
+                .parse_match_payload_pattern()
+                .map(|p| Pattern::Value(Box::new(p)));
+        }
         let pattern_start = self.peek_span().start();
         let name = self.expect_ident()?;
         let name = self.parse_dotted_name(name)?;
