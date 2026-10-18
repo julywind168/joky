@@ -1382,6 +1382,8 @@ pub(crate) enum CompilerIntrinsic {
     FixedArrayFinish,
     FixedArrayLoad,
     FixedArrayStore,
+    FixedArrayBorrow,
+    FixedArraySlice,
     ArenaNew,
     ArenaAlloc,
     ScriptSchema(Type),

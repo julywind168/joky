@@ -118,10 +118,11 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
     });
     if !rigid {
         let target = ty.reference_type().map_or(ty, |r| &r.target);
-        let shallow = matches!(target, Type::Record(r) if r.indirect)
+        let shallow = matches!(target, Type::BufferElement(_) | Type::BufferSlice(_))
+            || matches!(target, Type::Record(r) if r.indirect)
             || matches!(target, Type::Enum(e) if e.indirect);
-        // References may retain only nominal identity. Validate their concrete
-        // array arguments now; the full object is rechecked on materialization.
+        // Nominal references and borrow-only views have no inline root layout.
+        // Validate all contained arrays; materialization checks concrete objects.
         for target in TypeWalk::new(target, TypeEdges::Fields).filter(|node| {
             matches!(node, Type::FixedArray(_) | Type::FixedArrayInit(_))
                 || !shallow && std::ptr::eq(*node, target)

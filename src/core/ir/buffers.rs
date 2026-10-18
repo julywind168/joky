@@ -366,13 +366,6 @@ impl FunctionPlan {
                 "borrow_ref and borrow_mut_ref require reference-free elements",
             ));
         }
-        if element.contains_fixed_array() && intrinsic.borrows_storage() {
-            return Err(type_error(
-                &f.span,
-                ErrorCode::TypeMismatch,
-                "FixedArray element references and slices require F3",
-            ));
-        }
         let signature = intrinsic.signature(element);
         if f.suspends
             || f.ret_ty != signature.ret
@@ -525,11 +518,11 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
     }
     if signature.ret.is_buffer_view() {
         let mutable = signature.ret.reference_type().unwrap().mutable;
-        if !signature
-            .params
-            .iter()
-            .any(|ty| ty.is_buffer_view() && (!mutable || ty.reference_type().unwrap().mutable))
-        {
+        if !signature.params.iter().any(|ty| {
+            ty.reference_type().is_some_and(|r| {
+                (ty.is_buffer_view() || r.target.is_place()) && (!mutable || r.mutable)
+            })
+        }) {
             return Err(type_error(
                 &info.span,
                 ErrorCode::InvalidAssignment,

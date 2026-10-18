@@ -78,6 +78,34 @@ pub(super) fn execute(
     places: &mut Places,
 ) -> Result<(), Error> {
     match &op.op {
+        PlaceOp::View {
+            reference,
+            start,
+            end,
+            dst,
+        } => {
+            let Value::UInt64(from) = slots[start.index] else {
+                unreachable!("checked index")
+            };
+            let to = end.as_ref().map(|end| {
+                let Value::UInt64(to) = slots[end.index] else {
+                    unreachable!("checked index")
+                };
+                to
+            });
+            let pointer = unsafe {
+                crate::runtime::buffer::fixed_view(
+                    arena,
+                    pointer(&slots[reference.index]),
+                    op.layout.length,
+                    op.layout.stride,
+                    op.layout.align,
+                    from,
+                    to,
+                )?
+            };
+            slots[dst.index] = Value::Reference(pointer);
+        }
         PlaceOp::Swap {
             left,
             right,

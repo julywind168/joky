@@ -506,6 +506,7 @@ impl FunctionPlan {
         let field = match expr {
             Expr::Field { .. } => expr,
             Expr::FieldAssign { target, .. } => target,
+            _ if borrow && matches!(place, Expr::Field { .. }) => place,
             _ => return Ok(None),
         };
         let mut root = field;
@@ -538,6 +539,16 @@ impl FunctionPlan {
         for (name, span) in &path {
             target = self.field_member(&target, name, span)?.1;
         }
+        if borrow && !target.is_place() {
+            return Ok(None);
+        }
+        if borrow && mutable && !r.mutable {
+            return Err(type_error(
+                &expr.span(),
+                ErrorCode::InvalidAssignment,
+                "Cannot borrow an array field through a shared reference as mutable",
+            ));
+        }
         if target.is_owner() {
             return Err(type_error(&expr.span(), ErrorCode::InvalidAssignment,
                 "Cannot move or replace an owning field through a borrowed wrapper; borrow the field instead"));
@@ -548,6 +559,17 @@ impl FunctionPlan {
         let mut reference = reference.unwrap();
         reference.ty = Type::reference(pointee, r.mutable);
         let path: Vec<_> = path.into_iter().map(|(name, _)| name).collect();
+        if borrow {
+            let dst = self.slot(Type::reference(target, mutable))?;
+            self.emit(Op::Project {
+                dst: dst.clone(),
+                src: reference,
+                path,
+                reservation: false,
+            });
+            return Ok(Some(Flow::Value(Some(dst))));
+        }
+
         if let Expr::FieldAssign {
             value, op, span, ..
         } = expr

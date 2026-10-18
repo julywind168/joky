@@ -441,7 +441,7 @@ fn fixed_array_f2a_aot_cleans_callbacks_on_failure_and_empty_input() {
 }
 
 #[cfg(unix)]
-fn run_fixed_array_f2b_aot(name: &str, source: &str, harness: &str) {
+fn run_fixed_array_aot(name: &str, source: &str, harness: &str) {
     let fixture = ScratchDir::new(name);
     let object = fixture.path().join("arrays.o");
     let host = fixture.path().join("host.c");
@@ -468,7 +468,7 @@ fn run_fixed_array_f2b_aot(name: &str, source: &str, harness: &str) {
 #[test]
 #[cfg(unix)]
 fn fixed_array_f2b_executes_in_standalone_aot() {
-    run_fixed_array_f2b_aot(
+    run_fixed_array_aot(
         "fixed_array_f2b",
         include_str!("../../../../tests/fixtures/fixed_array_f2b.jk"),
         r#"
@@ -484,7 +484,7 @@ fn fixed_array_f2b_executes_in_standalone_aot() {
 #[test]
 #[cfg(unix)]
 fn fixed_array_f2b_aot_cleans_nested_initialization_failure() {
-    run_fixed_array_f2b_aot(
+    run_fixed_array_aot(
         "fixed_array_f2b_cleanup",
         include_str!("../../../../tests/fixtures/fixed_array_f2b_cleanup.jk"),
         r#"
@@ -501,5 +501,56 @@ fn fixed_array_f2b_aot_cleans_nested_initialization_failure() {
             joky_runtime_error_clear(); return 0;
         }
     "#,
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn fixed_array_f3_views_execute_in_standalone_aot() {
+    run_fixed_array_aot(
+        "fixed_array_f3",
+        include_str!("../../../../tests/fixtures/fixed_array_f3.jk"),
+        r#"
+        #include <stdint.h>
+        extern int32_t elements(void), slice_values(void), nested(void), dynamic(void), empty(void), returned(void), indirect(void), generic(void), shared_views(void), element_views(void), aligned(void), noescape(void), fields(void), alias_methods(void), record_method(void), enum_view(void), slice_operations(void);
+        extern int32_t bad_index(void), bad_mut_index(void), bad_range(void), bad_end(void), bad_empty(void), bad_zero_size(void);
+        extern int32_t joky_runtime_error_code(void);
+        extern void joky_runtime_error_clear(void);
+        int main(void) {
+            int32_t (*valid[])(void)={elements,slice_values,nested,dynamic,empty,returned,indirect,generic,shared_views,element_views,aligned,noescape,fields,alias_methods,record_method,enum_view,slice_operations};
+            int32_t (*invalid[])(void)={bad_index,bad_mut_index,bad_range,bad_end,bad_empty,bad_zero_size};
+            for(unsigned i=0;i<sizeof(valid)/sizeof(*valid);++i)
+                if(valid[i]()!=42 || joky_runtime_error_code()) return 1;
+            for(unsigned i=0;i<sizeof(invalid)/sizeof(*invalid);++i) {
+                invalid[i](); if(!joky_runtime_error_code()) return 2;
+                joky_runtime_error_clear();
+            }
+            return elements()!=42;
+        }
+        "#,
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn fixed_array_f3_aot_cleans_views_after_success_and_failure() {
+    run_fixed_array_aot(
+        "fixed_array_f3_cleanup",
+        include_str!("../../../../tests/fixtures/fixed_array_f3_cleanup.jk"),
+        r#"
+        #include <stdint.h>
+        extern int32_t exercise(void), failure(void), payload_reuse(void), headers(void), references(void);
+        extern int32_t joky_runtime_error_code(void);
+        extern void joky_runtime_error_clear(void);
+        static int32_t events[16]; static unsigned count;
+        void note(int32_t value) { if(count<16) events[count++]=value; }
+        int main(void) {
+            if(exercise()!=42 || count!=5 || events[0]!=1 || events[3]!=4 || events[4]!=-1) return 1;
+            count=0; failure();
+            if(!joky_runtime_error_code() || count!=2 || events[0]!=1 || events[1]!=-1) return 2;
+            joky_runtime_error_clear();
+            return payload_reuse()!=42 || headers()!=42 || references()!=42 || joky_runtime_error_code();
+        }
+        "#,
     );
 }

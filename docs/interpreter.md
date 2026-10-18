@@ -287,8 +287,14 @@ registration, not to the array value.
 Constructors write fields by byte offset; patterns read tags and copy only the
 selected payload. Matching preserves the scrutinee across its temporary scope.
 Dynamic Array elements remain inline in Buffer storage; loads and moves copy to
-independent registered places before the caller can observe a result. Their
-reference and slice operations remain closed until F3.
+independent registered places before the caller can observe a result.
+`PlaceOp::View` performs checked element projection or creates a nonowning Slice
+header through the shared Buffer view constructor. Slice operations also accept
+inline array elements. Headers are charged to the root task arena and survive
+helper returns; payloads retain their independently checked source lifetimes.
+Array indices and empty ranges keep the whole source loan, including enclosing
+Buffer storage/interior loans. Budget pauses preserve these payloads; cancellation
+unwinds child users before the parent storage and finally releases all headers.
 
 Direct calls, synchronous function values and callable entries use the same
 independent parameter copies and preallocated result place.

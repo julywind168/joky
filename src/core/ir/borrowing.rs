@@ -139,6 +139,7 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
         Op::Place(op) => match op {
+            PlaceOp::View { reference, dst, .. } => (refs(reference), refs(dst)),
             PlaceOp::WriteNext { reference, value }
             | PlaceOp::Store {
                 reference, value, ..
@@ -812,7 +813,12 @@ fn analyze(
                         Set::new()
                     },
                     loans: Set::from([slot.index]),
-                    storage: slot.ty.is_buffer() || slot.ty.is_buffer_view(),
+                    storage: slot.ty.is_buffer()
+                        || slot.ty.is_buffer_view()
+                        || slot
+                            .ty
+                            .reference_type()
+                            .is_some_and(|r| r.target.is_place()),
                     ..Default::default()
                 },
             );
@@ -1733,6 +1739,24 @@ fn analyze(
                 }
             }
             Op::Place(op) => match op {
+                PlaceOp::View { reference, dst, .. } => {
+                    check_access(
+                        reference,
+                        dst.ty.reference_type().unwrap().mutable,
+                        &state,
+                        &live[pc],
+                        None,
+                        &[],
+                    )?;
+                    // Keep the whole array root and any enclosing storage loan.
+                    // Dynamic indices (including empty ranges) never split loans.
+                    let mut result = state[&reference.index].clone();
+                    result.storage = true;
+                    result.interior = true;
+                    result.ancestors.extend(&result.loans);
+                    result.loans = Set::from([loan]);
+                    state.insert(dst.index, result);
+                }
                 PlaceOp::WriteNext { reference, .. } | PlaceOp::Store { reference, .. } => {
                     check_access(reference, true, &state, &live[pc], None, &[])?;
                 }
@@ -1762,6 +1786,7 @@ fn analyze(
                         origins: BTreeSet::from([Origin::new(loan)]),
                         arenas,
                         loans: Set::from([loan]),
+                        storage: target.is_place(),
                         ..Default::default()
                     },
                 );
@@ -2296,9 +2321,14 @@ fn analyze(
                 // the signature, so aliases/generics/wrappers cannot hide it.
                 if functions[name].uses_arena || inputs.iter().any(|arg| writable_buffer(&arg.ty)) {
                     for arg in &inputs {
-                        // Owner/view types cannot be stored: allocation does not
-                        // turn their temporary loans into task-long retention.
-                        if arg.ty.contains_buffers() || !retained_inputs.contains(&arg.index) {
+                        // Owner/view types and fixed-array references cannot be
+                        // stored: allocation does not turn their temporary loans
+                        // into task-long retention. Return dependencies still
+                        // carry their full origins through indirect calls.
+                        if arg.ty.contains_buffers()
+                            || arg.ty.contains_fixed_array()
+                            || !retained_inputs.contains(&arg.index)
+                        {
                             continue;
                         }
                         check_storage(arg, &state)?;

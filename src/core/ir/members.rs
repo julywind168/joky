@@ -697,6 +697,7 @@ impl FunctionPlan {
                             .is_none_or(|binding| {
                                 let root = slot_type(&binding.slot);
                                 receiver_ty.is_copy_value()
+                                    && !receiver_ty.is_place()
                                     && (root.contains_references() || root.is_owner())
                             }) =>
                 {

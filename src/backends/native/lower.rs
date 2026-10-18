@@ -436,6 +436,23 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_place_commit", vec![ptr, ptr], vec![]),
         ("__joky_place_end", vec![ptr, ptr], vec![]),
         ("__joky_place_copy", vec![ptr, ptr, ptr, ptr], vec![]),
+        (
+            "__joky_place_view",
+            vec![
+                ptr,
+                ptr,
+                types::I64,
+                ptr,
+                ptr,
+                types::I64,
+                types::I64,
+                ptr,
+                types::I64,
+                ptr,
+                ptr,
+            ],
+            vec![ptr],
+        ),
         ("__joky_float_env_enter", vec![], vec![types::I64]),
         ("__joky_float_env_reset", vec![], vec![]),
         ("__joky_float_env_restore", vec![types::I64], vec![]),
@@ -1591,7 +1608,7 @@ fn lower_ops(
             continue;
         }
         match op {
-            Op::Place(op) => lower_place(builder, op, slots, mode, refs, ptr_ty, data),
+            Op::Place(op) => lower_place(builder, op, slots, mode, refs, ptr_ty, data, span),
             Op::Closure(_) => unreachable!("closure responsibility is erased after checking"),
             Op::Cleanup(op) => lower_cleanup(builder, op, plan, refs, ptr_ty, slots, mode),
             Op::Buffer(op) => match op {
@@ -3330,9 +3347,55 @@ fn lower_place(
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
     data: &DataRefs,
+    span: crate::Span,
 ) {
     use crate::core::ir::PlaceOp;
     match op {
+        PlaceOp::View {
+            reference,
+            start,
+            end,
+            dst,
+        } => {
+            let base = slots.read(builder, reference);
+            let element = reference.ty.fixed_shape().element.memory_layout().unwrap();
+            let length = builder
+                .ins()
+                .iconst(types::I64, reference.ty.fixed_length() as i64);
+            let size = builder.ins().iconst(ptr_ty, element.size as i64);
+            let align = builder.ins().iconst(ptr_ty, element.align as i64);
+            let from = slots.read(builder, start);
+            let to = end
+                .as_ref()
+                .map(|s| slots.read(builder, s))
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let slice = builder.ins().iconst(ptr_ty, i64::from(end.is_some()));
+            let source = builder
+                .ins()
+                .iconst(types::I64, span.source_id().raw() as i64);
+            let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+            let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+            let pointer = helper(
+                builder,
+                refs,
+                "__joky_place_view",
+                &[
+                    mode.arena(),
+                    base,
+                    length,
+                    size,
+                    align,
+                    from,
+                    to,
+                    slice,
+                    source,
+                    start,
+                    end,
+                ],
+            );
+            check_call(builder, refs, mode.frame(), mode.cleanup());
+            slots.write(builder, dst, pointer);
+        }
         PlaceOp::Swap {
             left,
             right,

@@ -1,3 +1,4 @@
+import joky/slice as slices.{type Slice}
 // Only these embedded definitions receive compiler-owned value/token identities.
 type FixedArray<T, const N: UInt64> = T
 type Init<T, const N: UInt64> = T
@@ -12,3 +13,15 @@ fn finish<T, const N: UInt64>(token: Init<T, N>) -> FixedArray<T, N>;
 fn load<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> T;
 #intrinsic("fixed_array.store")
 fn store<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T);
+
+#intrinsic("fixed_array.borrow_ref")
+fn borrow_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T;
+
+#intrinsic("fixed_array.borrow_mut_ref")
+fn borrow_mut_ref<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T;
+
+#intrinsic("fixed_array.slice")
+fn slice<T, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T>;
+
+#intrinsic("fixed_array.slice_mut")
+fn slice_mut<T, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T>;

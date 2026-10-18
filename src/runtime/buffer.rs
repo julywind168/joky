@@ -333,12 +333,34 @@ impl Buffer {
             ));
         }
         // The parent allocation already proved every offset fits usize/isize.
-        let len = (end - start) as usize;
+        unsafe {
+            Self::view(
+                arena,
+                self.address(start as usize),
+                (end - start) as usize,
+                self.element,
+            )
+        }
+    }
+
+    /// Create a nonowning header retained by the root task arena.
+    ///
+    /// # Safety
+    /// data must be nonnull, aligned and valid for len initialized contiguous
+    /// elements of the supplied layout, including a valid sentinel for ZSTs.
+    /// Checked borrows keep the payload live and enforce access permissions for
+    /// every use of the header, on this task's thread. The header owns no payload.
+    unsafe fn view(
+        arena: &mut Arena,
+        data: *mut u8,
+        len: usize,
+        element: Layout,
+    ) -> Result<NonNull<Self>, Error> {
         let value = Self {
-            data: NonNull::new(self.address(start as usize)).unwrap(),
+            data: NonNull::new(data).unwrap(),
             len,
             capacity: len,
-            element: self.element,
+            element,
             cleanup: None,
             failed_store: None,
             metadata_budget: std::ptr::null(),
@@ -876,6 +898,71 @@ impl Buffer {
     }
 }
 
+/// Project a checked fixed-array element or construct a borrowed slice header.
+///
+/// # Safety
+/// base identifies length initialized elements of the compiler-validated size
+/// and alignment (total size fits isize), with a nonnull aligned ZST sentinel.
+/// Its source borrow covers all returned accesses and outlives them. Only the
+/// owning task thread may access the arena; no ownership of base is transferred.
+pub(crate) unsafe fn fixed_view(
+    arena: &mut Arena,
+    base: *mut u8,
+    length: u64,
+    size: usize,
+    align: usize,
+    from: u64,
+    to: Option<u64>,
+) -> Result<*mut u8, Error> {
+    if to.map_or(from >= length, |to| from > to || to > length) {
+        return Err(bounds_error("FixedArray index or slice is out of bounds"));
+    }
+    let data = base.add(from as usize * size);
+    match to {
+        None => Ok(data),
+        Some(to) => Buffer::view(
+            arena,
+            data,
+            (to - from) as usize,
+            Layout::from_size_align(size, align).unwrap(),
+        )
+        .map(|view| view.as_ptr().cast()),
+    }
+}
+
+/// # Safety
+/// Same validated layout, source-borrow lifetime and task-thread contract as
+/// fixed_view; arena must point to the live current task arena.
+#[export_name = "__joky_place_view"]
+unsafe extern "C" fn place_view(
+    arena: *mut Arena,
+    base: *mut u8,
+    length: u64,
+    size: usize,
+    align: usize,
+    from: u64,
+    to: u64,
+    slice: usize,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut u8 {
+    located(
+        fixed_view(
+            &mut *arena,
+            base,
+            length,
+            size,
+            align,
+            from,
+            (slice != 0).then_some(to),
+        ),
+        source,
+        start,
+        end,
+    )
+}
+
 fn located<T: Default>(result: Result<T, Error>, source: u64, start: usize, end: usize) -> T {
     result.unwrap_or_else(|error| {
         let error = if error.span().is_some() {
@@ -1134,8 +1221,9 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 20] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 21] {
     [
+        ("__joky_place_view", place_view as *const u8),
         ("__joky_buffer_transfer", transfer as *const u8),
         ("__joky_buffer_take_last", take_last as *const u8),
         ("__joky_buffer_swap_elements", swap_elements as *const u8),

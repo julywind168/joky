@@ -82,7 +82,7 @@ pub(crate) struct FunctionInfo {
     pub inferred_retained: Option<Vec<usize>>,
     /// Stored source parameter and destination explicit-arena parameter pairs.
     pub inferred_arena_retained: Vec<(usize, usize)>,
-    /// A returned reference may point into relocatable container storage.
+    /// A returned reference may point into scoped or relocatable aggregate storage.
     pub returns_interior: bool,
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
     pub builtin: Option<Builtin>,

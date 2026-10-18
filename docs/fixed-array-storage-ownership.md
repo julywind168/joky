@@ -1,7 +1,7 @@
 # FixedArray 设计与分阶段开发计划
 
-状态：2026-10-18，**F0、F1、F2a、F2b 已完成，F2 整体验收完成；F3–F5 未开始**。
-已实现常量参数、紧凑布局、数组值、无引用 Copy 聚合/嵌套、Array 元素及同步间接调用；未开放组合仍在共享前端拒绝。
+状态：2026-10-18，**F0–F3 已完成；F4/F5 未开始**。
+已实现常量参数、紧凑布局、数组值、无引用 Copy 聚合/嵌套、Array 元素、同步间接调用及元素引用/切片；未开放组合仍在共享前端拒绝。
 实施前核对基线为 `c5035d1`，替代原 `ff8cefb`：除动态 Array、String、借用式 Map key 和
 String S7 外，窄整数与浮点 C 布局、同步闭包、模块常量、持久实例、状态域及同步显式 Arena
 已加入实现。下文按当前能力重新限定组合范围，不把这些能力自动推广到 FixedArray。
@@ -11,8 +11,8 @@ FixedArray 不依赖 String S8 的性能验收，但新增存储与借用机制�
 [arena 容器路线图](arena-borrowing-ffi.md#61-容器与所有权扩展)。
 阶段状态与设计决策放在本文；实现后的源码用法归 language.md，存储与 ABI 不变量归
 architecture.md。README 只在对应阶段验收后增加能力，不提前宣称 FixedArray 可用。
-下面的完整数组接口为 F0 冻结的目标契约；F1/F2 当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
-F3–F5 接口不能作为当前可执行示例。源码接点与冻结记录见第 7 节。
+下面的完整数组接口为 F0 冻结的目标契约；F1–F3 当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
+F4/F5 待实现接口不能作为当前可执行示例。源码接点与冻结记录见第 7 节。
 
 ## 1. 首版目标与边界
 
@@ -276,7 +276,7 @@ mem.replace/mem.swap。公开接口由 [fixed_array.jk](../src/stdlib/fixed_arra
 [place.rs](../src/runtime/place.rs) 为载荷、初始化前缀与可复用清理登记统一计费和回收。
 JIT/AOT 共用原生 lowering，解释器共享类型布局并保留独立 Place 值标签；返回区先接收完整副本，
 被调者清理成功后再发布。数组不再进入标量展开；N=1 与 N=65,536 的描述/IR 规模相同。
-以上为 F2a 的历史记录；聚合嵌入/嵌套/间接调用已在下节 F2b 开放，F3 元素引用/切片和 F4 C 数组 ABI 仍未开放。
+以上为 F2a 的历史记录；聚合嵌入/嵌套/间接调用和元素引用/切片分别在下节 F2b、F3 开放，C 数组 ABI 留给 F4。
 
 **验收记录：**
 
@@ -310,7 +310,7 @@ JIT/AOT 共用原生 lowering，解释器共享类型布局并保留独立 Place
 同步函数值与 callable 返回数组/含数组聚合时复用调用者返回区；嵌套 from_fn 保留回调顺序及清理责任。
 动态 Array 内联保存完整元素，通过相同复制描述读取独立副本，移出前准备结果存储；扩容沿既有
 Buffer 协议搬迁。解释器位置与 Buffer 操作共享按类型缓存的复制描述，原生描述仍可重定位。
-可信 Array 类型身份在源码绑定时安装，其他拥有包装、List/Map/Set、闭包捕获与 F3/F4 边界继续拒绝。
+可信 Array 类型身份在源码绑定时安装，其他拥有包装、List/Map/Set 和闭包捕获继续拒绝；本阶段未开放的元素/切片借用见下节 F3，C 数组 ABI 留给 F4。
 
 **验收记录：**
 
@@ -341,6 +341,38 @@ Buffer 协议搬迁。解释器位置与 Buffer 操作共享按类型缓存的�
 **验收：** 三后端覆盖读取、独占写入、空切片、越界失败、借用结束后的整体赋值；
 负例覆盖局部视图返回、借用期间替换/销毁、外层容器扩容及冲突读写。
 模块别名、普通方法、函数值和泛型 helper 的来源传播一致；解释器时间片暂停/取消无悬空视图。
+
+**完成记录（2026-10-18）：** 四个入口及同名固有方法已接入 JIT、解释器和原生 AOT。
+`PlaceOp::View` 从原数组位置受检投影元素或创建共享 Buffer 视图头部，不为数组制造拥有型包装。
+记录引用上的数组字段直接按布局投影，返回视图保留原记录来源；类型检查区分借用型目标与内联布局。
+同一数组所有索引/区间共用借用范围，保留父 Buffer 的 storage/interior loan；空区间与零大小元素也不例外。
+数组引用及其普通标量投影不能被保留到任务 arena，helper 不能通过返回普通 `&Int32` 擦除存储限制。
+函数值继续使用保守返回来源；数组引用本身不可存储，间接调用不把它误判为任务级保留。
+已开放动态 Array 含数组元素的引用、Element 及 Slice 操作，沿用既有共享视图与 noescape 规则。
+
+**验收记录：**
+
+- `cargo test --lib fixed_array`：29 项通过、3 项穷举默认忽略，包含 F1/F2 回归。
+  [视图行为 fixture](../tests/fixtures/fixed_array_f3.jk) 在 JIT、解释器和独立 AOT 执行，
+  覆盖读取/独占写入、嵌套数组、带对齐字段的记录、借用枚举模式、原位置方法投影、
+  模块别名/函数值/泛型 helper/noescape、所有现有 Slice 操作、视图结束后的整体赋值和父 Array 扩容。
+  同一 fixture 回归动态 Array 与 String 字节视图；空数组、零大小元素和合法空区间均执行。
+- 越界索引（含 UInt64 最大值）、反向区间、过大末尾及零大小元素越界产生受检错误；VM 检查诊断和 span，
+  独立 AOT 检查错误传播和清错后继续调用。
+- 借用负例覆盖局部/按值参数返回、记录字段与间接返回的来源、冲突读写/复制/替换、空切片限制、
+  父 Array 扩容/覆盖/移出/释放，以及通过标量引用或 helper 保留数组存储；未开放 F4 等位置仍拒绝。
+- [清理与预算 fixture](../tests/fixtures/fixed_array_f3_cleanup.jk) 扫描预算失败点，
+  核对视图保活、拥有者清理一次、回调不重放及任务 arena 归零。64 次构造 1,024 项数组并切片在
+  64 KiB 预算内完成，确认载荷及时复用；1,000 次元素引用不积累头部，1,000 次切片在该预算下
+  受检失败、默认预算下成功，确认头部单独计费并在根任务退出时全部释放。
+- `cargo test --lib exhaustive_fixed_array -- --ignored`：F2a/F2b/F3 逐指令取消全部通过。
+  共享视图与字段借用路径受影响，另跑
+  `cargo test --lib exhaustive_async_owner_views_cancel_every_instruction -- --ignored` 和
+  `cargo test --lib exhaustive_cps_local_borrows_cancel_at_every_instruction -- --ignored`，均通过。
+- `./scripts/check.sh`：默认 Debug 格式、Clippy、默认测试及三后端 while/Map 短输入基准正确性全部通过。
+  包含既有动态 Array、拥有型元素/Slice、String 字节视图与 CLI/独立 AOT 回归。
+- 433 个本地文档链接/锚点及 `git diff --check` 通过。未运行 Release、全量 stress 或性能测量；
+  未验证实际 32 位执行。C 数组引用/字段仍待 F4，模型集成验收仍待 F5。
 
 ### F4：C 字段、数组引用和显式指针适配
 

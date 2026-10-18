@@ -30,6 +30,13 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::FixedArrayStorage, "fixed_array.finish") => FixedArrayFinish,
             (SourceKind::FixedArrayStorage, "fixed_array.load") => FixedArrayLoad,
             (SourceKind::FixedArrayStorage, "fixed_array.store") => FixedArrayStore,
+            (
+                SourceKind::FixedArrayStorage,
+                "fixed_array.borrow_ref" | "fixed_array.borrow_mut_ref",
+            ) => FixedArrayBorrow,
+            (SourceKind::FixedArrayStorage, "fixed_array.slice" | "fixed_array.slice_mut") => {
+                FixedArraySlice
+            }
             (SourceKind::Arena, "arena.new") => ArenaNew,
             (SourceKind::Arena, "arena.alloc") => ArenaAlloc,
             (SourceKind::Check, "check.assert") => Assert,

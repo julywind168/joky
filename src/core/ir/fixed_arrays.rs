@@ -3,6 +3,12 @@ use super::*;
 
 #[derive(Clone)]
 pub(crate) enum PlaceOp {
+    View {
+        reference: Slot,
+        start: Slot,
+        end: Option<Slot>,
+        dst: Slot,
+    },
     Swap {
         left: Slot,
         right: Slot,
@@ -60,6 +66,8 @@ pub(super) fn intrinsic(value: &Option<CompilerIntrinsic>) -> bool {
                 | CompilerIntrinsic::FixedArrayFinish
                 | CompilerIntrinsic::FixedArrayLoad
                 | CompilerIntrinsic::FixedArrayStore
+                | CompilerIntrinsic::FixedArrayBorrow
+                | CompilerIntrinsic::FixedArraySlice
         )
     )
 }
@@ -76,7 +84,9 @@ pub(super) fn eligible(ty: &Type) -> bool {
                     .all(|t| !t.contains_fixed_array() || eligible(t))
         }
         Type::FixedArrayInit(_) => true,
-        Type::Buffer(t) => t.is_place() && eligible(t),
+        Type::Buffer(t) | Type::BufferSlice(t) | Type::BufferElement(t) => {
+            t.is_place() && eligible(t)
+        }
         Type::Record(r) if r.array => r
             .arguments
             .iter()
@@ -126,7 +136,7 @@ impl FunctionPlan {
     pub(super) fn check_fixed_array(&self, ty: &Type) -> Result<(), Error> {
         if ty.contains_fixed_array() && (!eligible(ty) || self.suspending) {
             return Err(type_error(&self.current_span, ErrorCode::TypeMismatch,
-                format!("FixedArray is not supported in this context: {ty}; F2b requires supported synchronous array values")));
+                format!("FixedArray is not supported in this context: {ty}; requires supported synchronous array values or views")));
         }
         Ok(())
     }
@@ -156,6 +166,14 @@ impl FunctionPlan {
             Some(self.slot(info.signature.ret.clone())?)
         };
         let op = match info.compiler_intrinsic.as_ref().unwrap() {
+            CompilerIntrinsic::FixedArrayBorrow | CompilerIntrinsic::FixedArraySlice => {
+                PlaceOp::View {
+                    reference: values[0].clone().unwrap(),
+                    start: values[1].clone().unwrap(),
+                    end: values.get(2).cloned().flatten(),
+                    dst: result.clone().unwrap(),
+                }
+            }
             CompilerIntrinsic::FixedArrayBegin => PlaceOp::Begin(result.clone().unwrap()),
             CompilerIntrinsic::FixedArrayFinish => PlaceOp::MoveInit {
                 dst: result.clone().unwrap(),
@@ -270,7 +288,8 @@ impl PlaceOp {
             | Self::MoveInit { dst, .. }
             | Self::End(dst) => &dst.ty,
             Self::Write { value, .. } => &value.ty,
-            Self::WriteNext { reference, .. }
+            Self::View { reference, .. }
+            | Self::WriteNext { reference, .. }
             | Self::Load { reference, .. }
             | Self::Store { reference, .. } => &reference.ty.reference_type().unwrap().target,
         }
