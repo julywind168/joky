@@ -25,6 +25,8 @@ mod compilation;
 mod control_flow;
 #[cfg(unix)]
 mod fixed_array_ffi;
+#[cfg(unix)]
+mod fixed_array_model;
 mod floats;
 mod function_values;
 mod generics;

@@ -205,6 +205,13 @@ impl FunctionPlan {
                             return Err(unreachable_error(root));
                         };
                         let target = slot_type(&value);
+                        if target.contains_fixed_array() {
+                            return Err(type_error(
+                                span,
+                                ErrorCode::TypeMismatch,
+                                "FixedArray is not supported in graph.alloc payloads",
+                            ));
+                        }
                         if !matches!(target, Type::Record(_)) || !target.is_copy_value() {
                             return Err(type_error(
                                 call_span,

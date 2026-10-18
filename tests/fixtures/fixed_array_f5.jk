@@ -1,0 +1,80 @@
+import joky/fixed_array as fixed.{type FixedArray}
+import joky/array.{type Array}
+import joky/slice as slices
+import joky/mem
+import joky/drop.{type Drop}
+type Row=FixedArray<Int32,8>
+#repr(C) struct Pair { rows:FixedArray<Row,2> }
+struct Guard { text:String }
+extern fn model_drop()
+impl Drop for Guard { fn drop(&mut self) { model_drop() } }
+unsafe extern "C" fn model_command(out:&mut FixedArray<Int32,4>, step:&Int32)
+unsafe extern "C" fn model_check(value:&Row, saved:&Row, step:&Int32)->Int32
+unsafe extern "C" fn model_rotate(value:&mut Row, delta:&Int32)->Int32
+fn identity<T>(value:T)->T {value}
+fn indirect(f:fn(Row)->Row, value:Row)->Row {f(value)}
+fn iteration(input:Row, snapshot:Row, scratch:FixedArray<Row,32>, step:Int32)->(Row,Row) {
+    let guard=Guard{text:"model"}
+    // Reclaimed every iteration; retaining these payloads would exceed the test budget.
+    if *scratch.borrow_ref(31).borrow_ref(7)!=42 {1/0;}
+    var command=fixed.repeat::<Int32,4>(0)
+    unsafe {model_command(&mut command,&step)}
+    let op=*command.borrow_ref(0)
+    let first=uint64(*command.borrow_ref(1))
+    let last=uint64(*command.borrow_ref(2))
+    let value=*command.borrow_ref(3)
+    var current=input
+    var saved=snapshot
+    if op==0 {current=fixed.repeat::<Int32,8>(value)}
+    else if op==1 {current=fixed.from_fn::<Int32,8>(|i:UInt64| {value+int32(i)})}
+    else if op==2 {saved=current}
+    else if op==3 {current=saved}
+    else if op==4 {if current.set(first,value)!=(first<8) {1/0;}}
+    else if op==5 {
+        let view=current.slice_mut(first,last)
+        var i:UInt64=0
+        while i<slices.len(view) {*slices.borrow_mut_ref(view,i)=value+int32(i); i=i+1}
+    }
+    else if op==6 {mem.swap(&mut current,&mut saved)}
+    else if op==7 {saved=mem.replace(&mut current,fixed.repeat::<Int32,8>(value))}
+    else if op==8 {
+        var pair=Pair{rows:fixed.repeat::<Row,2>(current)}
+        pair.rows.set(1,saved)
+        let row=pair.rows.borrow_mut_ref(0)
+        *row.borrow_mut_ref(first%8)=value
+        let Pair{rows:rows}=pair
+        current=*rows.borrow_ref(0)
+        saved=*rows.borrow_ref(1)
+    }
+    else if op==9 {
+        var rows=Array.new::<Row>()
+        rows.push(current)
+        rows.push(saved)
+        let copy=rows.get(0).unwrap_or(current)
+        *rows.borrow_mut_ref(0).borrow_mut_ref(first%8)=value
+        rows.reserve(32)
+        current=rows.remove(0).unwrap_or(current)
+        saved=copy
+    }
+    else if op==10 {
+        let wrapped:Result<Option<Row>,Int32>=Ok(Some(indirect(identity::<Row>,current)))
+        current=match wrapped {Ok(Some(row))=>row,Ok(None)=>saved,Err(_)=>saved}
+    }
+    else {if unsafe {model_rotate(&mut current,&value)} != -7 {1/0;}}
+    (current,saved)
+}
+fn model_run(rounds:Int32)->Int32 {
+    var current=fixed.repeat::<Int32,8>(0)
+    var saved=current
+    let scratch=fixed.repeat::<Row,32>(fixed.repeat::<Int32,8>(42))
+    var step=0
+    while step<rounds {
+        let (next,copy)=iteration(current,saved,scratch,step)
+        current=next
+        saved=copy
+        if unsafe {model_check(&current,&saved,&step)} != 1 {return 0}
+        step=step+1
+    }
+    42
+}
+fn model_task() @suspends -> Int32 {model_run(12)}

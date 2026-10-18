@@ -469,3 +469,218 @@ fn fixed_array_f3_cancellation_boundaries() {
 fn exhaustive_fixed_array_f3_cancellation() {
     f3_cancellation(super::support::CancellationSweep::EveryInstruction);
 }
+
+#[test]
+fn fixed_array_f5_rejects_recursive_wrappers_at_closed_boundaries() {
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+    let prefix = r#"
+        import joky/fixed_array as fixed.{type FixedArray}
+        import joky/array.{type Array}
+        import joky/arena.{type Arena}
+        import joky/list.{type List}
+        import joky/map.{type Map}
+        import joky/set.{type Set}
+        type Row=FixedArray<Int32,2>
+        struct Wrapper<T>{value:T}
+        type Nested=Wrapper<Option<(Row,Int32)>>
+        fn make()->Nested {Wrapper{value:Some((fixed.repeat::<Int32,2>(42),0))}}
+    "#;
+    let prepare = |source: &str| {
+        let ast = crate::parser::parse(source).unwrap();
+        PreparedModule::new(
+            &ast,
+            &crate::TypeRegistry::default(),
+            &BindingRegistry::default(),
+        )
+        .and_then(|p| p.plan(&Default::default()))
+    };
+    prepare(prefix).unwrap();
+    for body in [
+        "fn bad(){let p=alloc(make())}",
+        "fn bad(){let p=graph{let p=graph.alloc(make()); p}}",
+        "fn bad(){let arena=Arena.new(); let p=arena.alloc(make())}",
+        "fn bad(){let p=make(); let f=||{p.value;}; f();}",
+        "fn bad(){let p=make(); let f=move ||{p.value;}; f();}",
+        "fn bad(p:&Nested){let f=||{p.value;}; f();}",
+        "fn bad(){let values=List.new::<Nested>()}",
+        "fn bad(){let values=Map.new::<Int32,Nested>()}",
+        "fn bad(){let values=Set.new::<Nested>()}",
+        "fn bad(){let values=List.new::<Array<Row>>()}",
+        "fn bad(){let values=Wrapper{value:Array.new::<Row>()}}",
+        "fn bad(){let values=Some(Array.new::<Row>())}",
+        "fn bad(p:Nested) @suspends {}",
+        "fn bad(p:&Nested) @suspends {}",
+        "fn bad(p:Array<Row>) @suspends {}",
+        "fn bad() @suspends {parallel{|let p=make()|let p=make()}}",
+        "fn bad() @suspends {race{|let p=make()|let p=make()}}",
+        "extern fn foreign(p:Nested)",
+        "extern fn foreign(p:&Nested) @suspends",
+        "fn bad()->&Nested{let p=make(); &p}",
+        "fn bad(){let p=fixed.repeat::<Wrapper<String>,0>(Wrapper{value:\"owned\"})}",
+    ] {
+        let source = format!("{prefix}\n{body}");
+        let error = prepare(&source)
+            .err()
+            .unwrap_or_else(|| panic!("accepted: {body}"));
+        assert!(error.span().is_some(), "{body}: {error}");
+        assert!(
+            !matches!(
+                error.code(),
+                ErrorCode::UnknownName | ErrorCode::UnknownType
+            ),
+            "wrong rejection: {body}: {error}"
+        );
+    }
+}
+
+#[test]
+fn fixed_array_f5_wrapped_values_cannot_enter_persistent_or_public_abis() {
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+    let source = r#"
+        import joky/fixed_array as fixed.{type FixedArray}
+        type Row=FixedArray<Int32,2>
+        struct Wrapper<T>{value:T}
+        struct State{nested:Wrapper<Option<Row>>}
+        struct Plain{value:Int32}
+        fn make()->State{State{nested:Wrapper{value:Some(fixed.repeat::<Int32,2>(42))}}}
+        fn migrate(old:&Plain)->State{make()}
+        fn read(state:&State)->Int32{42}
+        fn run()->Int32{let value=make(); read(&value)}
+    "#;
+    let ast = crate::parser::parse(source).unwrap();
+    let prepared = PreparedModule::new(
+        &ast,
+        &crate::TypeRegistry::default(),
+        &BindingRegistry::default(),
+    )
+    .unwrap();
+    let plan = prepared.plan(&Default::default()).unwrap();
+    let state_source = source.replace("struct State", "#state struct State");
+    let state_ast = crate::parser::parse(&state_source).unwrap();
+    assert!(PreparedModule::new(
+        &state_ast,
+        &crate::TypeRegistry::default(),
+        &BindingRegistry::default()
+    )
+    .and_then(|p| p.plan(&Default::default()))
+    .is_err());
+    let root = &plan.functions["make"].signature.ret;
+    assert!(!crate::core::instance::persistent(root));
+    assert!(crate::core::script::schema(root).is_none());
+    for name in ["make", "migrate", "read"] {
+        assert!(!plan.functions[name].instance_entry, "{name}");
+        assert!(!plan.functions[name].domain_entry, "{name}");
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        assert_eq!(vm.call_int32_0("run").unwrap(), 42);
+        assert!(vm.create_instance("make", &[]).is_err());
+        assert!(vm.create_domain("make", &[]).is_err());
+        assert!(vm.call_int32_0("make").is_err());
+        assert!(vm.call_async("make", &[]).is_err());
+        assert_eq!(vm.instance_count(), 0);
+        assert_eq!(vm.instance_bytes(), 0);
+        arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+    let mut aot = crate::aot::AotCompiler::new("fixed-array-private").unwrap();
+    let exports = aot.compile_module(&ast).unwrap();
+    for name in ["make", "migrate", "read"] {
+        assert!(!exports.iter().any(|export| export == name), "{name}");
+    }
+}
+
+#[test]
+fn fixed_array_f5_graph_allocation_rejects_nested_arrays_before_lowering() {
+    let source = r#"
+        import joky/fixed_array as fixed.{type FixedArray}
+        struct Wrap<T>{value:T}
+        type Row=FixedArray<Int32,2>
+        fn bad(){let p=graph{let p=graph.alloc(Wrap{value:Some(fixed.repeat::<Int32,2>(42))}); p}}
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        let error = vm.load_source(source).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::TypeMismatch);
+        assert!(error.message().contains("graph.alloc"));
+        assert!(error
+            .span()
+            .unwrap()
+            .slice(source)
+            .unwrap()
+            .contains("graph.alloc"));
+    }
+    let error = crate::aot::AotCompiler::new("graph-array-rejected")
+        .unwrap()
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap_err();
+    assert_eq!(error.code(), ErrorCode::TypeMismatch);
+    assert!(error.message().contains("graph.alloc"));
+}
+
+#[test]
+fn fixed_array_f5_imported_wrappers_preserve_graph_rejection() {
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "payload",
+            r#"
+        import joky/fixed_array as fixed.{type FixedArray}
+        pub struct Wrap<T>{pub value:T}
+        pub type Payload=Wrap<Option<FixedArray<Int32,2>>>
+        pub fn make()->Payload{Wrap{value:Some(fixed.repeat::<Int32,2>(42))}}
+    "#,
+        )
+        .unwrap();
+    let source = "import payload.{make} fn bad(){let p=graph{let p=graph.alloc(make()); p}}";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        let error = vm.load_source_with_modules(source, &modules).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::TypeMismatch);
+        assert!(error.message().contains("graph.alloc"));
+    }
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
+        .unwrap();
+    let error = crate::aot::AotCompiler::new("imported-array-graph")
+        .unwrap()
+        .compile_module(&ast)
+        .unwrap_err();
+    assert_eq!(error.code(), ErrorCode::TypeMismatch);
+    assert!(error.message().contains("graph.alloc"));
+}
+
+#[test]
+fn fixed_array_f5_migration_cannot_publish_wrapped_array_candidates() {
+    use crate::vm::state_domains::migration;
+    let source = r#"
+        import joky/fixed_array as fixed.{type FixedArray}
+        struct Wrap<T>{value:T}
+        struct State{payload:Wrap<Option<FixedArray<Int32,2>>>}
+        fn upgrade(old:&PreviousState)->State{State{payload:Wrap{value:Some(fixed.repeat::<Int32,2>(old.value))}}}
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(
+            "struct Plain{value:Int32} fn make()->Plain{Plain{value:42}} fn version()->Int32{42}",
+        )
+        .unwrap();
+        let domain = vm.create_domain("make", &[]).unwrap();
+        let owners = vec![vm.script_code_owner().unwrap()];
+        let schema = migration::schema(&vm.domains, &owners).unwrap();
+        let usage = vm.domains.borrow().usage();
+        let version = vm.module_version();
+        let result = migration::prepare(&vm, &vm.domains, &owners, schema, source, "upgrade");
+        assert!(
+            result.is_err(),
+            "accepted wrapped array migration: {mode:?}"
+        );
+        assert_eq!(vm.module_version(), version);
+        assert_eq!(migration::schema(&vm.domains, &owners).unwrap(), schema);
+        assert_eq!(vm.domains.borrow().usage(), usage);
+        assert_eq!(vm.call_int32_0("version").unwrap(), 42);
+        domain.close();
+        drop(vm);
+        arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}

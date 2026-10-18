@@ -1,6 +1,6 @@
 # FixedArray 设计与分阶段开发计划
 
-状态：2026-10-18，**F0–F4 已完成；F5 未开始**。
+状态：2026-10-18，**F0–F5 已完成，首版范围验收完成**。
 已实现常量参数、紧凑布局、数组值、无引用 Copy 聚合/嵌套、Array 元素、同步间接调用、元素引用/切片及 C 数组字段/同步引用；未开放组合仍在共享前端拒绝。
 实施前核对基线为 `c5035d1`，替代原 `ff8cefb`：除动态 Array、String、借用式 Map key 和
 String S7 外，窄整数与浮点 C 布局、同步闭包、模块常量、持久实例、状态域及同步显式 Arena
@@ -11,8 +11,8 @@ FixedArray 不依赖 String S8 的性能验收，但新增存储与借用机制�
 [arena 容器路线图](arena-borrowing-ffi.md#61-容器与所有权扩展)。
 阶段状态与设计决策放在本文；实现后的源码用法归 language.md，存储与 ABI 不变量归
 architecture.md。README 只在对应阶段验收后增加能力，不提前宣称 FixedArray 可用。
-下面的完整数组接口为 F0 冻结的目标契约；F1–F4 当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
-F5 继续集成验收，不扩展首版范围。源码接点与冻结记录见第 7 节。
+下面的完整数组接口为 F0 冻结的目标契约；首版当前用法见 [language.md](language.md#常量参数与-fixedarray-类型)，
+F5 已完成集成验收；首版之后的独立扩展见第 6 节。源码接点与冻结记录见第 7 节。
 
 ## 1. 首版目标与边界
 
@@ -177,8 +177,8 @@ S7 的 TextFfiV1 继续遵守自己的文本输入/输出协议，不因新增 F
 
 ### 2.6 使用位置与组合准入
 
-以下为首版目标矩阵，不是当前可用能力。具体检查入口冻结于 §7.5；后续阶段只能在相应测试
-完成后开放。无引用 Copy 是元素的必要条件，不代替存储、调用或外部寿命资格检查。
+以下为 F5 验收后的首版支持矩阵；各项准入检查见 §7.5，测试证据见 F5 完成记录。
+无引用 Copy 是元素的必要条件，不代替存储、调用或外部寿命资格检查。
 
 | 使用位置 | 首版目标与验收阶段 |
 | --- | --- |
@@ -204,7 +204,7 @@ Copy 元素白名单与 Eq / Hash / Show 等能力的准入见 §7.2，不能从
 
 主依赖：`F0 → F1 → F2a → F2b → F3 → F4 → F5`；F2a / F2b 合称 F2。
 每个实现子阶段单独提交基本失败行为与三后端测试，
-不能把内存安全和预算计费推迟到 F5。F0–F4 已完成，F5 待集成验收。
+不能把内存安全和预算计费推迟到 F5。F0–F5 已完成；后续工作不得隐式扩大本矩阵。
 
 ### F0：冻结表示、常量参数和支持矩阵
 
@@ -423,6 +423,53 @@ JIT、解释器、独立 AOT 均验证记录内数组、只读引用、独占写
 §2.6 所有开放项有行为证据、拒绝项有递归包装负例，首版范围与限制文档准确。
 性能计时按 benches/README.md 独立执行，若未测量则明确记录，
 不能把正确性检查写成性能改善。
+
+**F5 完成记录（2026-10-18）：**
+
+- [独立 Vec 模型与驱动](../src/backends/aot/tests/fixed_array_model.rs) 使用固定种子
+  `0`、`1`、`0x55aa01239876fedc`、`u64::MAX`，生成操作参数和逐轮期望值。
+  [Joky 执行体](../tests/fixtures/fixed_array_f5.jk) 与 [真实 C 检查点](../tests/fixtures/fixed_array_f5.c)
+  在 JIT、解释器及独立 AOT 执行同一语料：默认每种子 48 轮，长模型每种子 1,024 轮，
+  每个后端每种子重复两次。前 12 轮强制覆盖所有操作，后续由种子决定操作与区间。
+- 每轮比较当前值和独立副本的全部 16 个元素、C 写入次数、命令次序及 Drop 次数。
+  操作包含 repeat/from_fn、复制/恢复、受检 set（含越界无修改）、空/满/子区间切片、
+  swap/replace、嵌套记录和数组、Array 元素借用后扩容、Option/Result 与函数值间接调用，
+  以及首元素指针 C 包装的原地旋转/写入和错误状态后的继续访问。
+- VM 短模型限制为 64 KiB、长模型为 512 KiB；每轮按值复制 1 KiB scratch，
+  长模型仅 scratch 累计载荷就达 1 MiB，超过预算但按作用域复用可通过，切片头部仍按根任务计费。
+  两个 VM 扫描分配预算失败点并验证后续调用可恢复、清理不重复、arena 归零。
+  解释器以单指令预算恢复完整语料，默认抽取宿主事件/清理附近边界，ignored 用例逐指令取消。
+  AOT 核对相同内容和 Drop 账本；低预算扫描使用 VM 测试入口，不宣称 AOT 暴露可调任务预算接口。
+- 递归包装验收发现 `graph.alloc` 遗漏含数组 Copy 记录的拒绝检查；已在共享前端补齐。
+  本模块和跨模块别名/泛型/Option 包装均在 JIT、解释器、AOT lowering 前以带 span 的类型错误拒绝。
+  其他关闭边界的递归负例与状态/迁移保护见下表；迁移候选拒绝不改变旧版本、schema 或资源计数。
+- 新增 [Rust 注册示例](../examples/fixed_array_ffi.rs)、[Joky 调用示例](../examples/fixed_array_ffi.jk)
+  和 [C 包装示例](../examples/fixed_array_ffi.c)。Rust 示例执行两个 VM 并可生成头文件/对象；
+  C 示例独立联编运行，保留 pointer-to-array 原型、长度检查和同步有效期。
+- `cargo test --lib fixed_array_f5 -- --include-ignored`：最终 11 项通过，含长模型、逐指令取消、
+  跨模块拒绝及实际迁移候选保护。Rust 示例在 JIT/解释器均返回 42，额外生成头文件/对象并与 C 示例
+  及同一 Debug 运行时联编执行通过。
+- `cargo test --lib exhaustive_fixed_array -- --ignored`：5 项通过；共享拥有者视图与 CPS 局部借用
+  逐指令取消穷举各 1 项通过。`cargo test --lib arena_cycles`：6 项通过，核对既有 graph 行为。
+- `./scripts/check.sh` 默认 Debug 检查通过：格式、Clippy、库测试 1,452 项通过（100 项忽略）、
+  CLI 268 项通过（5 项忽略）、其余集成测试及 while/map 三后端短输入正确性。
+  此后仅补充跨模块/迁移负例和取消边界采样，已由上述最终 F5 专项覆盖，并复核
+  `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`，均通过。
+- 本地文档链接/锚点及 `git diff --check` 通过。
+  未运行 Release、全量 stress 或性能计时；未执行实际 32 位目标，不把正确性结果解释成性能改善。
+
+| 首版位置 | 验收证据 |
+| --- | --- |
+| 同步局部、完整初始化、整体复制、直接参数/返回、整数组引用 | [F2a 行为/失败](../tests/fixtures/fixed_array_f2a.jk)、[清理](../tests/fixtures/fixed_array_f2a_cleanup.jk)、F5 模型及预算扫描 |
+| 间接函数调用、Copy 记录/元组/Option/Result、嵌套数组 | [F2b 行为](../tests/fixtures/fixed_array_f2b.jk)、[失败清理](../tests/fixtures/fixed_array_f2b_cleanup.jk)、F5 模型 |
+| Array 内联数组元素、视图与外层拥有者 | F2b 行为、[F3 视图](../tests/fixtures/fixed_array_f3.jk)与[预算/取消](../tests/fixtures/fixed_array_f3_cleanup.jk)、F5 模型 |
+| C 字段、数组引用、显式首元素指针与字节文本边界 | [F4 Joky](../tests/fixtures/fixed_array_f4.jk) / [C](../tests/fixtures/fixed_array_f4.c)、F5 模型与 Rust/C 示例 |
+| alloc、graph、Arena.alloc；借用/move 捕获 | [F5 递归包装及跨模块负例](../src/vm/fixed_array_tests.rs)，graph 三入口诊断回归 |
+| List/Map/Set、其他拥有聚合及 Array 外层包装 | 同文件 F2a/F5 拒绝矩阵；Wrapper、Option、List<Array<Row>> 等组合不能隐藏数组 |
+| 挂起函数、parallel/race、宿主跨 Pending 保留 | F1/F2a/F5 包装负例、[F4 异步 C/宿主声明拒绝](../src/backends/aot/tests/fixed_array_ffi.rs)；普通挂起函数可调用不携带数组跨入口的同步 helper |
+| 持久实例、状态域、快照/候选、迁移 | F5 核对 persistent/schema/入口资格、#state 拒绝、create_instance/create_domain 拒绝、迁移候选失败后旧状态与资源不变 |
+| 普通 direct/CPS、文本适配、VM 公开值接口 | F4 注册拒绝、F5 包装 extern/公开调用拒绝，含数组入口不导出到独立 AOT；既有文本 FFI 回归保持 |
+| 元素、零长度、零大小、限额和借用来源 | [F1 类型矩阵](../src/core/types/fixed_array.rs)、F2a/F3 行为/拒绝矩阵；N=0 不绕过元素或来源检查 |
 
 ## 4. 验证范围与提交要求
 

@@ -108,6 +108,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [独占借用示例](examples/mutable_borrows.jk)：原地更新数组资源与枚举载荷，三后端均输出 42、42、42。
 - [共享借用匹配示例](examples/borrowed_matches.jk)：递归查看拥有型载荷后仍可消费原枚举；三后端均输出 42、42、22、20。
 - [拥有型数组示例](examples/owning_arrays.jk)：只读借用元素、整体移动与自动 Drop；三后端均输出 42、20、22。
+- [FixedArray Rust/C 示例](examples/fixed_array_ffi.rs)：`cargo run --example fixed_array_ffi`；[C 包装](examples/fixed_array_ffi.c)及[调用源码](examples/fixed_array_ffi.jk)，首版 [F0–F5 验收完成](docs/fixed-array-storage-ownership.md#f5集成验收与文档发布)。
 - [Rust 嵌入示例](examples/embedding.rs)：`cargo run --example embedding`。
 - [循环](examples/loops.jk)、[跳转](examples/jumps.jk)、[序列](examples/sequences.jk)、[类型别名](examples/aliases.jk)、[记录](examples/records.jk)、[枚举](examples/enums.jk)、[元组](examples/tuples.jk)、[Int64](examples/int64.jk)、[无符号整数](examples/unsigned.jk)、[位运算](examples/bitwise.jk)、[整数转换](examples/conversions.jk)、[泛型函数](examples/generics.jk)、[泛型枚举](examples/generic_enums.jk)、[泛型记录](examples/generic_records.jk)、[泛型别名](examples/generic_aliases.jk)、[泛型 impl](examples/generic_impls.jk)、[泛型方法](examples/generic_methods.jk)、[受检整数方法](examples/integer_methods.jk)、[VM](examples/vm.jk) 以及
   [C VM](examples/vm_runtime.c) / [C CPS](examples/cps_runtime.c) 示例。

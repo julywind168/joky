@@ -102,6 +102,18 @@ UInt8 数组仅表示字节。容量、有效字节数、文本编码分别约�
 检查有效长度后只复制有效前缀到 Array，再用 `string.from_utf8` 校验并转换；超长和截断编码分别拒绝。
 此转换是显式文本处理，C 数组调用本身不执行该复制，也不扩展 TextFfiV1。
 
+可运行的 [Rust 嵌入示例](../examples/fixed_array_ffi.rs) 使用 `Type::FixedArray` 与
+`FixedArrayType { element, length: ConstArgument::Value(N) }` 构造注册签名，分别运行 JIT/解释器：
+
+```sh
+cargo run --example fixed_array_ffi
+cargo run --example fixed_array_ffi -- /tmp/joky-fixed-array
+```
+
+第二条还生成 `bindings.h` 与 `fixed_array.o`，可与 [C 示例](../examples/fixed_array_ffi.c)
+及同一 Debug `libjoky.a` 联编。独立 AOT 联编执行由 `fixed_array_f5_c_embedding_example_executes`
+回归覆盖；Rust 示例和 C 示例共用[调用源码](../examples/fixed_array_ffi.jk)。
+
 ### 异步宿主借用
 
 ```joky
@@ -1160,7 +1172,7 @@ List/Map/Set 和其他拥有聚合尚不接受数组或其 Array 包装。
 尚不支持数组捕获、显式 Arena/alloc 存储、挂起函数中的数组值、持久实例/状态域及普通 direct/CPS 宿主值边界。
 普通挂起函数可以调用内部使用数组、签名不含数组的同步 helper。
 兼容数组字段与同步引用可按[固定数组与 C 指针适配](#固定数组与-c-指针适配)跨 C 边界；未引入数组字面量、下标语法或默认 Eq。
-当前阶段记录见 [FixedArray 计划](fixed-array-storage-ownership.md#f4c-字段数组引用和显式指针适配)。
+首版 F0–F5 已验收，覆盖与限制见 [FixedArray 记录](fixed-array-storage-ownership.md#f5集成验收与文档发布)。
 
 ## 函数值
 
