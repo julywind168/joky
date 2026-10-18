@@ -9227,3 +9227,58 @@ fn indexing_cleanup_and_bounds_run_in_all_backends() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn array_spread_executes_in_all_backends() {
+    let work = Workspace::new();
+    work.write("array_spread.jk", include_str!("fixtures/array_spread.jk"));
+    work.assert_all_backends("array_spread.jk", &[], b"array spread ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn array_spread_cleanup_runs_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/array_spread_cleanup.jk").replace(
+        "extern fn note(value: Int32)",
+        "fn note(value: Int32) { println(value) }",
+    );
+    work.write("spread_cleanup.jk", &source);
+    work.assert_all_backends(
+        "spread_cleanup.jk",
+        &[],
+        b"1\n2\n3\n4\n-3\n-2\n-1\n-4\n42\n1\n2\n3\n4\n-4\n-2\n-1\n-3\n42\n1\n2\n3\n-2\n-1\n-3\n42\n",
+        0,
+    );
+    let declarations = source.split("fn main()").next().unwrap();
+    for (entry, stdout) in [
+        ("failed_source", "1\n2\n3\n4\n-4\n-3\n-2\n-1\n"),
+        ("failed_after", "1\n2\n-2\n-1\n"),
+        ("failed_drop", "2\n1\n3\n-3\n-2\n-1\n"),
+    ] {
+        work.write(
+            "spread_failure.jk",
+            &format!("{declarations}\nfn main() {{ {entry}(); }}"),
+        );
+        let mut outputs = vec![
+            work.cli(&["run", "spread_failure.jk"]),
+            work.cli(&["run", "--interpreter", "spread_failure.jk"]),
+        ];
+        success(&work.cli(&["build", "spread_failure.jk"]));
+        outputs.push(
+            Command::new(work.path().join("spread_failure"))
+                .output()
+                .unwrap(),
+        );
+        for output in outputs {
+            assert_eq!(output.status.code(), Some(1), "{entry}: {output:?}");
+            assert_eq!(output.stdout, stdout.as_bytes(), "{entry}: {output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("Division by zero"),
+                "{entry}: {output:?}"
+            );
+        }
+    }
+    work.assert_no_build_files();
+}

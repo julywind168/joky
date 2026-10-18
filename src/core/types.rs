@@ -1241,6 +1241,7 @@ pub(crate) fn resolve_pattern_heads(
                 Expr::Let { value, .. }
                 | Expr::Var { value, .. }
                 | Expr::Assign { value, .. }
+                | Expr::Spread { value, .. }
                 | Expr::Unary { operand: value, .. }
                 | Expr::TaskScope { body: value, .. }
                 | Expr::Branch { body: value, .. } => pending.push(value.as_mut()),
@@ -1442,6 +1443,7 @@ pub(crate) fn map_syntax(
             map_syntax(value, map, substitutions)?;
         }
         Expr::Assign { value, .. }
+        | Expr::Spread { value, .. }
         | Expr::Unary { operand: value, .. }
         | Expr::Return {
             value: Some(value), ..

@@ -129,7 +129,7 @@ impl FunctionPlan {
         self.emit(Op::Literal(dst.clone(), Constant::UInt64(n)));
         Ok(dst)
     }
-    fn sequence_storage(
+    pub(super) fn sequence_storage(
         &mut self,
         intrinsic: BI,
         element: &Type,
@@ -165,7 +165,7 @@ impl FunctionPlan {
         self.emit(Op::Literal(expected.clone(), constant));
         self.pattern_compare(actual, expected, BinOp::Eq, failure)
     }
-    fn pattern_compare(
+    pub(super) fn pattern_compare(
         &mut self,
         left: Slot,
         right: Slot,
@@ -229,7 +229,7 @@ impl FunctionPlan {
             self.pattern_reference(root, ty, offset, mutable, path)
         }
     }
-    fn sequence_len(&mut self, root: &Slot, element: &Type) -> Result<Slot, Error> {
+    pub(super) fn sequence_len(&mut self, root: &Slot, element: &Type) -> Result<Slot, Error> {
         match &root.ty.reference_type().unwrap().target {
             Type::FixedArray(a) => {
                 let n = match a.length {

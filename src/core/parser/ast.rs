@@ -712,6 +712,11 @@ pub enum Expr {
         elements: Vec<Expr>,
         span: Span,
     },
+    /// Sequence expansion, permitted only as an array literal entry.
+    Spread {
+        value: Box<Expr>,
+        span: Span,
+    },
     /// Nonempty positional aggregate, evaluated from left to right.
     Tuple {
         elements: Vec<Expr>,
@@ -939,6 +944,7 @@ impl Expr {
             Self::MethodCall(call) => call.span,
             Self::Index { span, .. }
             | Self::Array { span, .. }
+            | Self::Spread { span, .. }
             | Self::Tuple { span, .. }
             | Self::Destructure { span, .. }
             | Self::Match { span, .. }
@@ -992,6 +998,7 @@ impl Expr {
             Self::Invoke { callee, args, .. } => Self::Invoke { callee, args, span },
             Self::Index { base, index, .. } => Self::Index { base, index, span },
             Self::Array { elements, .. } => Self::Array { elements, span },
+            Self::Spread { value, .. } => Self::Spread { value, span },
             Self::Tuple { elements, .. } => Self::Tuple { elements, span },
             Self::Destructure {
                 pattern,

@@ -123,7 +123,8 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             Expr::Let { value, .. }
             | Expr::Var { value, .. }
             | Expr::Assign { value, .. }
-            | Expr::Destructure { value, .. } => pending.push(value),
+            | Expr::Destructure { value, .. }
+            | Expr::Spread { value, .. } => pending.push(value),
             Expr::Return { value, .. } => pending.extend(value.iter().map(Box::as_ref)),
             Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
                 pending.extend([lhs.as_ref(), rhs.as_ref()])

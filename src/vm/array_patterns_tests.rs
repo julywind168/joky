@@ -163,7 +163,6 @@ fn array_patterns_reject_malformed_sequence_syntax() {
         "fn bad() { [,] }",
         "fn bad() { [1,,2] }",
         "fn bad() { [1; 2] }",
-        "fn bad() { [1, ..other] }",
         "fn bad() { match [1] { [..a, ..b] => {} } }",
         "fn bad() { let [..a, ..b] = [1] }",
     ] {

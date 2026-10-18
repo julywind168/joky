@@ -523,6 +523,7 @@ impl FunctionPlan {
             Expr::Field { base, .. } => self.hint_bindings(base, vars, functions, types),
             Expr::FieldAssign { value, .. }
             | Expr::Assign { value, .. }
+            | Expr::Spread { value, .. }
             | Expr::Unary { operand: value, .. } => {
                 self.hint_bindings(value, vars, functions, types)
             }

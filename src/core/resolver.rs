@@ -585,7 +585,9 @@ fn resolve_calls(
                 }
             }
         }
-        Expr::Assign { value, .. } | Expr::Unary { operand: value, .. } => {
+        Expr::Assign { value, .. }
+        | Expr::Spread { value, .. }
+        | Expr::Unary { operand: value, .. } => {
             resolve_calls(value, functions, member_roots, call_forms, locals)?;
         }
         Expr::While {

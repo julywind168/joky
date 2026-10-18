@@ -39,13 +39,51 @@ impl FunctionPlan {
         for use_default in [false, true].into_iter().take(if default { 2 } else { 1 }) {
             let mut local = vars.clone();
             for expr in elements {
-                if let Some(ty) = self.hint(expr, &local, functions, types, use_default) {
-                    return Some(ty);
+                let hint = match expr {
+                    Expr::Spread { value, .. } => {
+                        if let Expr::Array { elements, .. } = value.as_ref() {
+                            self.array_element_hint(elements, &local, functions, types, use_default)
+                        } else {
+                            self.hint(value, &local, functions, types, use_default)
+                                .and_then(|ty| spread_element_type(&ty).cloned())
+                        }
+                    }
+                    _ => self.hint(expr, &local, functions, types, use_default),
+                };
+                if hint.is_some() {
+                    return hint;
                 }
                 self.hint_bindings(expr, &mut local, functions, types);
             }
         }
         None
+    }
+
+    pub(super) fn array_static_length(
+        &self,
+        elements: &[Expr],
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Option<u64> {
+        let mut local = vars.clone();
+        let mut length = 0u64;
+        for expr in elements {
+            let count = if let Expr::Spread { value, .. } = expr {
+                let ty = self.hint(value, &local, functions, types, true)?;
+                let ty = ty.reference_type().map_or(&ty, |r| &r.target);
+                let Type::FixedArray(a) = ty else { return None };
+                let ConstArgument::Value(n) = a.length else {
+                    return None;
+                };
+                n
+            } else {
+                1
+            };
+            length = length.checked_add(count)?;
+            self.hint_bindings(expr, &mut local, functions, types);
+        }
+        Some(length)
     }
 
     pub(super) fn array_expr(
@@ -71,23 +109,33 @@ impl FunctionPlan {
                     "Cannot infer array element type; add an array type annotation",
                 )
             })?;
-        if let Some(Type::FixedArray(shape)) = expected {
-            if let ConstArgument::Value(length) = shape.length {
-                if length != elements.len() as u64 {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::TypeMismatch,
-                        format!(
-                            "Array literal has {} elements, expected {length}",
-                            elements.len()
-                        ),
-                    ));
-                }
-            } else {
+        let context = ArrayContext {
+            functions,
+            suspends,
+            types,
+        };
+        let (array, fixed_reference) = if let Some(Type::FixedArray(shape)) = expected {
+            let ConstArgument::Value(length) = shape.length else {
                 return Err(type_error(
                     span,
                     ErrorCode::TypeMismatch,
                     "Array literal requires a concrete fixed length",
+                ));
+            };
+            let actual = self
+                .array_static_length(elements, vars, functions, types)
+                .ok_or_else(|| {
+                    type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        "FixedArray literal requires statically known spread lengths",
+                    )
+                })?;
+            if actual != length {
+                return Err(type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    format!("Array literal has {actual} elements, expected {length}"),
                 ));
             }
             types
@@ -95,25 +143,61 @@ impl FunctionPlan {
                 .map_err(|e| e.with_span(*span))?;
             let token = self.slot(Type::FixedArrayInit(shape.clone()))?;
             self.emit(Op::Place(PlaceOp::Begin(token.clone())));
-            let reference = self.slot(Type::reference(token.ty.clone(), true))?;
-            self.emit(Op::Local {
-                dst: reference.clone(),
-                value: Some(token.clone()),
-                target: token.ty.clone(),
-            });
-            self.local_scopes
-                .last_mut()
-                .unwrap()
-                .push(reference.clone());
-            for (index, expr) in elements.iter().enumerate() {
-                let Flow::Value(value) =
-                    self.expr_expected(expr, vars, functions, suspends, types, Some(&element))?
-                else {
-                    if let Some(next) = elements.get(index + 1) {
-                        return Err(unreachable_error(next));
-                    }
-                    return Ok(Flow::Diverged);
-                };
+            let reference = self.sequence_value_reference(&token, true)?;
+            (token, Some(reference))
+        } else {
+            let capacity = self.pattern_u64(
+                elements
+                    .iter()
+                    .filter(|e| !matches!(e, Expr::Spread { .. }))
+                    .count() as u64,
+            )?;
+            let value = self
+                .array_library_call(
+                    "with_capacity",
+                    &element,
+                    vec![Some(capacity)],
+                    &context,
+                    *span,
+                )?
+                .unwrap();
+            (value, None)
+        };
+        for (index, expr) in elements.iter().enumerate() {
+            let (value_expr, expected) = if let Expr::Spread { value, .. } = expr {
+                (
+                    value.as_ref(),
+                    self.hint(value, vars, functions, types, false)
+                        .map(Ok)
+                        .unwrap_or_else(|| {
+                            self.dynamic_array_type(element.clone(), types, expr.span())
+                        })?,
+                )
+            } else {
+                (expr, element.clone())
+            };
+            let Flow::Value(value) = self.expr_expected(
+                value_expr,
+                vars,
+                functions,
+                suspends,
+                types,
+                Some(&expected),
+            )?
+            else {
+                if let Some(next) = elements.get(index + 1) {
+                    return Err(unreachable_error(next));
+                }
+                return Ok(Flow::Diverged);
+            };
+            self.current_span = expr.span();
+            let destination = ArrayDestination {
+                array: &array,
+                fixed_reference: fixed_reference.as_ref(),
+            };
+            if matches!(expr, Expr::Spread { .. }) {
+                self.array_spread(value, &destination, &element, &context)?;
+            } else {
                 if slot_type(&value) != element {
                     return Err(type_error(
                         &expr.span(),
@@ -121,95 +205,225 @@ impl FunctionPlan {
                         format!("Array element expects {element}, got {}", slot_type(&value)),
                     ));
                 }
-                self.emit(Op::Place(PlaceOp::WriteNext {
-                    reference: reference.clone(),
-                    value,
-                }));
+                if let Some(reference) = &fixed_reference {
+                    self.emit(Op::Place(PlaceOp::WriteNext {
+                        reference: reference.clone(),
+                        value,
+                    }));
+                } else {
+                    // Evaluate the element before taking an exclusive destination loan.
+                    let root = self.sequence_value_reference(&array, true)?;
+                    self.array_library_call(
+                        "push",
+                        &element,
+                        vec![Some(root), value],
+                        &context,
+                        expr.span(),
+                    )?;
+                }
             }
+        }
+        if let Some(Type::FixedArray(shape)) = expected {
             let result = self.slot(Type::FixedArray(shape.clone()))?;
             self.emit(Op::Place(PlaceOp::MoveInit {
                 dst: result.clone(),
-                src: token,
+                src: array,
                 publish: true,
             }));
-            return Ok(Flow::Value(Some(result)));
+            Ok(Flow::Value(Some(result)))
+        } else {
+            Ok(Flow::Value(Some(array)))
         }
-        // Each element is evaluated before borrowing the growing owner. This
-        // permits suspension in an element without retaining an exclusive loan.
-        let name = format!("$array_literal_{}", span.start());
-        let ident = |name: String| Expr::Ident { name, span: *span };
-        let Flow::Value(Some(array)) = self.expr(
+    }
+
+    fn array_library_call(
+        &mut self,
+        name: &str,
+        element: &Type,
+        args: Vec<Option<Slot>>,
+        context: &ArrayContext<'_>,
+        span: Span,
+    ) -> Result<Option<Slot>, Error> {
+        let mut local = HashMap::new();
+        let args = args
+            .into_iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                let name = format!("$array_argument_{i}");
+                local.insert(
+                    name.clone(),
+                    Binding {
+                        slot,
+                        mutable: false,
+                        place: None,
+                    },
+                );
+                Expr::Ident { name, span }
+            })
+            .collect();
+        let Flow::Value(value) = self.expr(
             &Expr::Call {
-                callee: "$joky_array.with_capacity".into(),
+                callee: format!("$joky_array.{name}"),
                 type_args: vec![GenericArgument::Type(element.clone())],
-                args: vec![Expr::Literal {
-                    literal: Literal::UInt64(elements.len() as u64),
-                    span: *span,
-                }],
-                span: *span,
+                args,
+                span,
             },
-            vars,
-            functions,
-            suspends,
-            types,
+            &mut local,
+            context.functions,
+            context.suspends,
+            context.types,
         )?
         else {
             unreachable!()
         };
-        for (index, expr) in elements.iter().enumerate() {
-            let Flow::Value(value) =
-                self.expr_expected(expr, vars, functions, suspends, types, Some(&element))?
-            else {
-                if let Some(next) = elements.get(index + 1) {
-                    return Err(unreachable_error(next));
-                }
-                return Ok(Flow::Diverged);
-            };
-            if slot_type(&value) != element {
-                return Err(type_error(
-                    &expr.span(),
-                    ErrorCode::TypeMismatch,
-                    format!("Array element expects {element}, got {}", slot_type(&value)),
-                ));
-            }
-            let temporary = format!("{name}_element_{index}");
-            let mut local = vars.clone();
-            local.insert(
-                name.clone(),
-                Binding {
-                    slot: Some(array.clone()),
-                    mutable: true,
-                    place: None,
-                },
-            );
-            local.insert(
-                temporary.clone(),
-                Binding {
-                    slot: value,
-                    mutable: false,
-                    place: None,
-                },
-            );
-            self.expr(
-                &Expr::Call {
-                    callee: "$joky_array.push".into(),
-                    type_args: vec![GenericArgument::Type(element.clone())],
-                    args: vec![
-                        Expr::Unary {
-                            op: UnaryOp::BorrowMut,
-                            operand: Box::new(ident(name.clone())),
-                            span: *span,
-                        },
-                        ident(temporary),
-                    ],
-                    span: expr.span(),
-                },
-                &mut local,
-                functions,
-                suspends,
-                types,
-            )?;
-        }
-        Ok(Flow::Value(Some(array)))
+        Ok(value)
     }
+
+    fn array_spread(
+        &mut self,
+        value: Option<Slot>,
+        destination: &ArrayDestination<'_>,
+        element: &Type,
+        context: &ArrayContext<'_>,
+    ) -> Result<(), Error> {
+        use crate::parser::ast::BufferIntrinsic as BI;
+        let ty = slot_type(&value);
+        if spread_element_type(&ty) != Some(element) {
+            return Err(type_error(
+                &self.current_span,
+                ErrorCode::TypeMismatch,
+                format!("Array spread expects a sequence of {element}, got {ty}"),
+            ));
+        }
+        let moving = matches!(&ty, Type::Record(r) if r.array);
+        if !moving && !element.is_copy_value() {
+            return Err(type_error(
+                &self.current_span,
+                ErrorCode::TypeMismatch,
+                "Borrowed array spread requires Copy elements; move the array or clone explicitly",
+            ));
+        }
+        self.local_scopes.push(Vec::new());
+        // A private snapshot consumes even an empty Array and freezes a Copy
+        // FixedArray before any following entry can mutate its original binding.
+        let value = value.unwrap();
+        let root = if ty.reference_type().is_some() {
+            self.reference_value(Some(value), false)?.unwrap()
+        } else {
+            let value = self.snapshot(&Some(value))?.unwrap();
+            self.sequence_value_reference(&value, moving)?
+        };
+        let length = self.sequence_len(&root, element)?;
+        let target = if let Some(fixed) = destination.fixed_reference {
+            fixed.clone()
+        } else {
+            let reference = self.sequence_value_reference(destination.array, true)?;
+            self.array_library_call(
+                "reserve",
+                element,
+                vec![Some(reference), Some(length.clone())],
+                context,
+                self.current_span,
+            )?;
+            self.sequence_value_reference(destination.array, true)?
+        };
+        let one = self.pattern_u64(1)?;
+        if moving {
+            // Reverse the private source once, then take_last transfers elements
+            // in source order. Every intermediate state remains fully droppable.
+            let half = self.slot(Type::UInt64)?;
+            let two = self.pattern_u64(2)?;
+            self.emit(Op::Binary(half.clone(), BinOp::Div, length.clone(), two));
+            let index = self.pattern_u64(0)?;
+            let (header, exit) = self.array_loop(&index, half)?;
+            let end = self.slot(Type::UInt64)?;
+            self.emit(Op::Binary(
+                end.clone(),
+                BinOp::Sub,
+                length.clone(),
+                one.clone(),
+            ));
+            let opposite = self.slot(Type::UInt64)?;
+            self.emit(Op::Binary(opposite.clone(), BinOp::Sub, end, index.clone()));
+            self.sequence_storage(
+                BI::SwapElements,
+                element,
+                vec![root.clone(), index.clone(), opposite],
+                Type::Unit,
+            )?;
+            self.array_loop_end(index, &one, header, exit)?;
+        }
+        let index = self.pattern_u64(0)?;
+        let (header, exit) = self.array_loop(&index, length)?;
+        self.local_scopes.push(Vec::new());
+        let value = if moving {
+            self.sequence_storage(BI::TakeLast, element, vec![root], element.clone())?
+        } else {
+            let raw = self.sequence_element(&root, element, index.clone(), false)?;
+            let reference = self.pattern_reference(&raw, element, 0, false, &[])?;
+            self.read_local(reference)?
+        };
+        if destination.fixed_reference.is_some() {
+            self.emit(Op::Place(PlaceOp::WriteNext {
+                reference: target,
+                value,
+            }));
+        } else {
+            let value = match value {
+                Some(value) => value,
+                None => self.slot(Type::Unit)?,
+            };
+            self.sequence_storage(BI::InitializeNext, element, vec![target, value], Type::Unit)?;
+        }
+        // Temporary element places belong to one iteration; the private source
+        // belongs to this spread, rather than the surrounding literal or block.
+        self.end_local_scope();
+        self.array_loop_end(index, &one, header, exit)?;
+        self.end_local_scope();
+        Ok(())
+    }
+
+    fn array_loop(&mut self, index: &Slot, length: Slot) -> Result<(usize, usize), Error> {
+        let header = self.label_count;
+        let exit = header + 1;
+        self.label_count += 2;
+        self.emit(Op::Label(header));
+        self.pattern_compare(index.clone(), length, BinOp::Lt, exit)?;
+        Ok((header, exit))
+    }
+
+    fn array_loop_end(
+        &mut self,
+        index: Slot,
+        one: &Slot,
+        header: usize,
+        exit: usize,
+    ) -> Result<(), Error> {
+        let next = self.slot(Type::UInt64)?;
+        self.emit(Op::Binary(
+            next.clone(),
+            BinOp::Add,
+            index.clone(),
+            one.clone(),
+        ));
+        self.emit(Op::Copy(index, next));
+        self.emit(Op::Jump(header));
+        self.emit(Op::Label(exit));
+        Ok(())
+    }
+}
+
+pub(super) fn spread_element_type(ty: &Type) -> Option<&Type> {
+    element_type(ty.reference_type().map_or(ty, |r| &r.target))
+}
+
+struct ArrayContext<'a> {
+    functions: &'a HashMap<String, FunctionInfo>,
+    types: &'a TypeRegistry,
+    suspends: bool,
+}
+
+struct ArrayDestination<'a> {
+    array: &'a Slot,
+    fixed_reference: Option<&'a Slot>,
 }

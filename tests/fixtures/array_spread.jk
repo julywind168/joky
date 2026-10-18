@@ -1,0 +1,116 @@
+import joky/array.{type Array}
+import joky/fixed_array.{type FixedArray}
+import joky/slice.{type Slice}
+import joky/string
+import joky/task
+fn check(value: Bool) { assert(value, "array spread regression") }
+fn typed<T>(first: T, rest: Array<T>) -> T { rest[0] }
+fn count<T>(values: Array<T>) -> UInt64 { values.len() }
+fn width<T, const N: UInt64>(values: FixedArray<T, N>) -> UInt64 { values.len() }
+fn copy<T>(values: &Array<T>) -> Array<T> { [..values] }
+fn copy_fixed<T, const N: UInt64>(values: &FixedArray<T, N>) -> Array<T> { [..values] }
+fn copy_slice(values: &Slice<Int32>) -> Array<Int32> { [..values] }
+fn move_all<T>(values: Array<T>) -> Array<T> { [..values] }
+fn marked(n: Int32, order: &mut Int32) -> Int32 { *order = *order * 10 + n; n }
+fn once(order: &mut Int32) -> Array<Int32> { [marked(2, order), marked(3, order)] }
+fn pause() @suspends -> Int32 { task.yield_now(); 42 }
+struct Pair { x: Int32, y: Int32 }
+struct Link { value: &Int32 }
+fn main() @suspends {
+    sync_checks()
+    shape_checks()
+    empty_checks()
+    inference_checks()
+    storage_checks()
+    reference_checks()
+    order_checks()
+    let source = [20, 22]
+    let values = [..source, pause()]
+    check(values[0] + values[1] == values[2])
+    let names = [..["first", "second"], { task.yield_now(); "third" }]
+    check(names[0].equals("first") && names[2].equals("third"))
+    println("array spread ok")
+}
+fn sync_checks() {
+    let left = [2, 3]
+    let right = [5, 6]
+    let values = [1, ..left, 4, ..right, 7]
+    check(values.len() == 7)
+    var i: UInt64 = 0
+    var n = 1
+    while i < values.len() { check(values[i] == n); i += 1; n += 1 }
+}
+fn shape_checks() {
+    let values = [1, 2, 3, 4, 5, 6, 7]
+    var fixed: FixedArray<Int32, 2> = [20, 22]
+    let copied: FixedArray<Int32, 5> = [..fixed, 0, ..&fixed]
+    check(copied[0] + copied[4] == 42)
+    check(fixed[0] + fixed[1] == 42)
+    check(width([1, ..fixed, 2]) == 4)
+    check([..if true { fixed } else { [1, 2] }][0] == 20)
+    check([..if true { &fixed } else { &fixed }][1] == 22)
+    check(count([..fixed]) == 2)
+    check(copy_fixed(&fixed)[1] == 22)
+    check(copy(&values)[6] == 7)
+    check(copy_slice(values.slice(1, 3))[1] == 3)
+    check([..fixed.slice(0, 2)][0] == 20)
+}
+fn empty_checks() {
+    let empty: Array<Int32> = []
+    let empty_fixed: FixedArray<Int32, 0> = []
+    let empty_copy: FixedArray<Int32, 0> = [..empty_fixed]
+    check([..empty, ..&empty_fixed, ..empty_copy].len() == 0)
+}
+fn inference_checks() {
+    let fixed: FixedArray<Int32, 2> = [20, 22]
+    let small: Array<UInt8> = [..[1, 2], 3, ..[]]
+    check(small[0] == 1 && small[2] == 3)
+    let byte: UInt8 = 42
+    check(typed(byte, [..[42]]) == byte)
+    let inferred = [1, ..[byte]]
+    check(inferred[1] == byte)
+    check(count::<UInt8>([..[1, 2]]) == 2)
+    let packed = Some([..fixed])
+    check(match packed { Some(xs) => xs[0] + xs[1] == 42, None => false })
+    let shaped: Option<FixedArray<Int32, 2>> = Some([..fixed])
+    check(match shaped { Some(xs) => xs[0] == 20, None => false })
+}
+fn storage_checks() {
+    let fixed: FixedArray<Int32, 2> = [20, 22]
+    let source = [Pair { x: 20, y: 22 }]
+    let pairs = [..&source, ..source]
+    check(pairs[0].x + pairs[1].y == 42)
+    let rows = [fixed, fixed]
+    let copied_rows = [..&rows]
+    let moved_rows = [..rows]
+    check(copied_rows[0][0] + moved_rows[1][1] == 42)
+    let nested = [..[[1], [2]], [3]]
+    check(nested[0][0] + nested[1][0] + nested[2][0] == 6)
+    check(move_all(["a", "b"])[1].equals("b"))
+    let unit = [{}, {}]
+    check([{}, ..&unit, ..unit].len() == 5)
+}
+fn reference_checks() {
+    let pointed = &*(alloc(42))
+    let refs = [pointed, pointed]
+    let copied_refs = [..&refs]
+    let moved_refs = [..refs]
+    check(*copied_refs[0] + *moved_refs[1] == 84)
+    let links = [Link { value: pointed }]
+    let linked = [..&links]
+    check(*linked[0].value == 42)
+    var mutable = [20, 22]
+    let from_mut = [..&mut mutable]
+    mutable[0] = 1
+    check(from_mut[0] + from_mut[1] == 42)
+}
+fn order_checks() {
+    var fixed: FixedArray<Int32, 2> = [20, 22]
+    let values = [1, 2]
+    var order = 0
+    let ordered = [marked(1, &mut order), ..once(&mut order), marked(4, &mut order)]
+    check(order == 1234 && ordered[1] == 2 && ordered[2] == 3)
+    let before = [..fixed, { fixed[0] = 1; 0 }]
+    check(before[0] == 20 && fixed[0] == 1)
+    { let closure = || { [..&values] }; check(closure()[0] == 1); }
+}

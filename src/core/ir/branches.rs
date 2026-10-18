@@ -440,7 +440,9 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                 visit(lhs, scopes, walk);
                 visit(rhs, scopes, walk);
             }
-            Expr::Unary { operand, .. } => visit(operand, scopes, walk),
+            Expr::Unary { operand, .. } | Expr::Spread { value: operand, .. } => {
+                visit(operand, scopes, walk)
+            }
             Expr::Literal { .. }
             | Expr::GenericName(_)
             | Expr::FunctionRef { .. }

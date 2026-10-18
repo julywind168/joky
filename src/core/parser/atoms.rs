@@ -580,7 +580,19 @@ impl Parser {
         let newlines = std::mem::replace(&mut self.newline_sensitive, false);
         let mut elements = Vec::new();
         while self.peek() != &TokenKind::RBracket {
-            elements.push(self.parse_assignment()?);
+            let value = if self.peek() == &TokenKind::Dot {
+                let start = self.peek_span().start();
+                self.advance();
+                self.expect(&TokenKind::Dot)?;
+                let value = self.parse_assignment()?;
+                Expr::Spread {
+                    span: self.span(start, value.span().end()),
+                    value: Box::new(value),
+                }
+            } else {
+                self.parse_assignment()?
+            };
+            elements.push(value);
             if self.peek() != &TokenKind::RBracket {
                 self.expect(&TokenKind::Comma)?;
             }

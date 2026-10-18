@@ -524,9 +524,18 @@ impl FunctionPlan {
             )?;
             if let Some(element) = super::arrays::element_type(&contextual) {
                 if let Type::FixedArray(array) = &contextual {
+                    let length = self
+                        .array_static_length(elements, vars, functions, types)
+                        .ok_or_else(|| {
+                            type_error(
+                                &arg.span(),
+                                ErrorCode::TypeMismatch,
+                                "FixedArray literal requires statically known spread lengths",
+                            )
+                        })?;
                     crate::core::types::unify_constant(
                         &array.length,
-                        &crate::parser::ast::ConstArgument::Value(elements.len() as u64),
+                        &crate::parser::ast::ConstArgument::Value(length),
                         inference.params,
                         &mut inference.substitutions,
                         arg.span(),
@@ -534,9 +543,31 @@ impl FunctionPlan {
                 }
                 let mut local = vars.clone();
                 for expr in elements {
-                    self.infer_generic_argument(
-                        element, expr, &local, functions, types, inference,
-                    )?;
+                    if let Expr::Spread { value, .. } = expr {
+                        if matches!(value.as_ref(), Expr::Array { .. }) {
+                            let container =
+                                self.dynamic_array_type(element.clone(), types, value.span())?;
+                            self.infer_generic_argument(
+                                &container, value, &local, functions, types, inference,
+                            )?;
+                        } else if let Some(actual) =
+                            self.hint(value, &local, functions, types, inference.default)
+                        {
+                            if let Some(actual) = super::arrays::spread_element_type(&actual) {
+                                unify(
+                                    element,
+                                    actual,
+                                    inference.params,
+                                    &mut inference.substitutions,
+                                    expr.span(),
+                                )?;
+                            }
+                        }
+                    } else {
+                        self.infer_generic_argument(
+                            element, expr, &local, functions, types, inference,
+                        )?;
+                    }
                     self.hint_bindings(expr, &mut local, functions, types);
                 }
                 return Ok(());

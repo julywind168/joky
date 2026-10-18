@@ -1915,6 +1915,11 @@ impl FunctionPlan {
             Expr::AnonymousFunction(function) => {
                 self.anonymous_function(function, vars, functions, suspends, types, expected)
             }
+            Expr::Spread { span, .. } => Err(type_error(
+                span,
+                ErrorCode::TypeMismatch,
+                "Spread is only allowed inside an array literal",
+            )),
             Expr::Array { .. } => self.array_expr(expr, vars, functions, suspends, types, expected),
             Expr::Tuple { .. } | Expr::Destructure { .. } => {
                 self.tuple_expr(expr, vars, functions, suspends, types, expected)

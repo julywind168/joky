@@ -34,6 +34,7 @@ pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
         | Expr::Var { value, .. }
         | Expr::Assign { value, .. }
         | Expr::Destructure { value, .. }
+        | Expr::Spread { value, .. }
         | Expr::Unary { operand: value, .. }
         | Expr::Field { base: value, .. }
         | Expr::TaskScope { body: value, .. }

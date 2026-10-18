@@ -1062,7 +1062,8 @@ Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, 
 TypeArguments = "::", AppliedArguments ;
 TypedName    = Name, TypeArguments ;
 Group        = "(", Expression, ")" ;
-ArrayValue   = "[", [ NonSequence, { ",", NonSequence }, [ "," ] ], "]" ;
+ArrayValue   = "[", [ ArrayEntry, { ",", ArrayEntry }, [ "," ] ], "]" ;
+ArrayEntry   = [ ".." ], NonSequence ;
 TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 If           = "if", Condition, Block, [ "else", (If | Block) ] ;
 While        = "while", Condition, Block ;
@@ -1196,7 +1197,7 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 
 关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的 V0–V5 已验收，见第 5 项计划。
 关联类型项与后续成员须以换行或分号分隔；只有 trait impl 可定义关联类型，且不能加 `pub`。
-数组字面值、下标访问、共享/独占/消费式序列模式和固长解构已实现，规则见[数组字面值](language.md#数组字面值)及[序列模式](language.md#序列与字面量模式)。
-后续尚待单独设计的表面语法：挂起/可存储闭包、其他容器字面量、重复/展开数组构造及区间索引。
+数组字面值及展开构造、下标访问、共享/独占/消费式序列模式和固长解构已实现，规则见[数组字面值](language.md#数组字面值)及[序列模式](language.md#序列与字面量模式)。
+后续尚待单独设计的表面语法：挂起/可存储闭包、其他容器字面量、重复数组构造及区间索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、
 包管理、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。
