@@ -176,7 +176,7 @@ impl FunctionPlan {
                 Literal::UInt16(_) => Some(Type::UInt16),
                 Literal::UInt32(_) => Some(Type::UInt32),
                 Literal::Rune(_) => Some(Type::Rune),
-                Literal::UInt64(_) => Some(Type::UInt64),
+                Literal::ConstParameter(_) | Literal::UInt64(_) => Some(Type::UInt64),
                 Literal::Bool(_) => Some(Type::Bool),
                 Literal::String(_) => Some(Type::String),
             },

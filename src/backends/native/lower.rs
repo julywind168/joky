@@ -26,7 +26,7 @@ pub(super) struct DataRefs {
 
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
-        Type::BufferElement(_) | Type::BufferSlice(_) => None,
+        Type::FixedArray(_) | Type::BufferElement(_) | Type::BufferSlice(_) => None,
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 | Type::Rune => Some(
             if matches!(ty, Type::Rune) || ty.integer().unwrap().bits() == 32 {
                 types::I32

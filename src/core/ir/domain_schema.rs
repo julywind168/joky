@@ -49,7 +49,7 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                     arguments: r
                         .arguments
                         .iter()
-                        .map(&mut child)
+                        .map(|a| a.try_map_type(&mut child))
                         .collect::<Result<_, _>>()?,
                     template: r.template.clone(),
                     scalars: fields
@@ -100,7 +100,7 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                     arguments: e
                         .arguments
                         .iter()
-                        .map(&mut child)
+                        .map(|a| a.try_map_type(&mut child))
                         .collect::<Result<_, _>>()?,
                     template: e.template.clone(),
                     variants,

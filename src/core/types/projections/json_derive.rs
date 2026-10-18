@@ -195,7 +195,7 @@ impl TypeRegistry {
             if !same {
                 continue;
             }
-            let mut substitutions = HashMap::new();
+            let mut substitutions = crate::core::types::Substitutions::default();
             super::super::unify(
                 &target,
                 ty,

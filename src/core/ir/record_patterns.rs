@@ -42,7 +42,7 @@ impl FunctionPlan {
     pub(super) fn resolve_record_pattern(
         &self,
         name: &str,
-        type_args: &[Type],
+        type_args: &[crate::parser::ast::GenericArgument],
         expected: &Type,
         span: Span,
         types: &TypeRegistry,

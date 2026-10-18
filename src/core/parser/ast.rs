@@ -24,6 +24,8 @@ impl ScopeKind {
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
+    /// Compiler-owned inline shape, normalized independently of executable storage.
+    FixedArray(Arc<FixedArrayType>),
     /// Borrowed trait target, bound before shared semantic planning.
     DynTrait(Arc<DynTraitType>),
     /// A non-capturing language function value with an explicit suspension effect.
@@ -167,6 +169,10 @@ impl PartialEq for DynTraitType {
 impl Eq for DynTraitType {}
 
 impl Type {
+    pub(crate) fn contains_fixed_array(&self) -> bool {
+        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Fields)
+            .any(|t| matches!(t, Self::FixedArray(_)))
+    }
     pub(crate) fn is_explicit_arena(&self) -> bool {
         matches!(self, Self::Resource(name) if name.as_ref() == "arena.Arena")
     }
@@ -182,7 +188,8 @@ impl Type {
     pub(crate) fn contains_dyn(&self) -> bool {
         match self {
             Self::DynTrait(_) => true,
-            Self::Record(_)
+            Self::FixedArray(_)
+            | Self::Record(_)
             | Self::Enum(_)
             | Self::Tuple(_)
             | Self::Function(_)
@@ -479,7 +486,7 @@ impl Type {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeApplication {
     pub name: String,
-    pub arguments: Vec<Type>,
+    pub arguments: Vec<GenericArgument>,
 }
 
 impl std::fmt::Display for Type {
@@ -496,6 +503,11 @@ impl std::fmt::Display for Type {
             }
             *remaining -= 1;
             match ty {
+                Type::FixedArray(a) => {
+                    f.write_str("FixedArray<")?;
+                    display(&a.element, f, remaining)?;
+                    write!(f, ", {}>", a.length)
+                }
                 Type::Buffer(element)
                 | Type::BufferElement(element)
                 | Type::BufferSlice(element) => {
@@ -598,7 +610,7 @@ impl std::fmt::Display for Type {
             }
         }
         fn arguments(
-            args: &[Type],
+            args: &[GenericArgument],
             f: &mut std::fmt::Formatter<'_>,
             remaining: &mut usize,
         ) -> std::fmt::Result {
@@ -614,7 +626,10 @@ impl std::fmt::Display for Type {
                     f.write_str("...")?;
                     break;
                 }
-                display(ty, f, remaining)?;
+                match ty {
+                    GenericArgument::Type(ty) => display(ty, f, remaining)?,
+                    GenericArgument::Const(c) => write!(f, "{c}")?,
+                };
             }
             f.write_str(">")
         }
@@ -625,6 +640,8 @@ impl std::fmt::Display for Type {
 /// Literals.
 #[derive(Debug, Clone)]
 pub enum Literal {
+    /// Rigid UInt64 value, replaced by an immediate during specialization.
+    ConstParameter(Arc<TypeParameter>),
     Float32(f32),
     Float64(f64),
     /// Decimal spelling retained until contextual precision is known.
@@ -669,7 +686,7 @@ pub enum Expr {
     /// Construct a nominal record; initializer order is significant.
     Record {
         name: String,
-        type_args: Vec<Type>,
+        type_args: Vec<GenericArgument>,
         fields: Vec<FieldInit>,
         span: Span,
     },
@@ -700,7 +717,7 @@ pub enum Expr {
         base: Box<Expr>,
         name: String,
         /// Explicit arguments for a nullary enum constructor; empty for projections.
-        type_args: Vec<Type>,
+        type_args: Vec<GenericArgument>,
         span: Span,
     },
     /// Assign through a field path rooted in a mutable binding.
@@ -726,7 +743,7 @@ pub enum Expr {
     Call {
         callee: String,
         /// Empty for inferred calls; explicit calls use `::<Type, ...>`.
-        type_args: Vec<Type>,
+        type_args: Vec<GenericArgument>,
         args: Vec<Expr>,
         span: Span,
     },
@@ -1098,7 +1115,7 @@ impl Expr {
 pub struct MethodCall {
     pub receiver: Expr,
     pub name: String,
-    pub type_args: Vec<Type>,
+    pub type_args: Vec<GenericArgument>,
     pub args: Vec<Expr>,
     pub span: Span,
 }
@@ -1476,9 +1493,86 @@ pub struct AssociatedTypeDef {
     pub target_span: Span,
 }
 
+/// Compact homogeneous inline shape; no element lanes are expanded here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixedArrayType {
+    pub element: Type,
+    pub length: ConstArgument,
+}
+
+/// Generic parameter kinds are explicit, independent of declaration identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterKind {
+    Type,
+    Const,
+}
+
+/// A canonical UInt64 value or a declaration-scoped rigid constant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstArgument {
+    Value(u64),
+    Parameter(Arc<TypeParameter>),
+}
+impl std::fmt::Display for ConstArgument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Value(n) => write!(f, "{n}"),
+            Self::Parameter(p) => f.write_str(&p.name),
+        }
+    }
+}
+
+/// Ordered generic arguments retain their kind in syntax and instance keys.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenericArgument {
+    Type(Type),
+    Const(ConstArgument),
+}
+impl GenericArgument {
+    /// Borrow a type argument without interpreting constants as types.
+    pub fn as_type(&self) -> Option<&Type> {
+        if let Self::Type(t) = self {
+            Some(t)
+        } else {
+            None
+        }
+    }
+    /// Mutably borrow the type portion during annotation normalization.
+    pub fn as_type_mut(&mut self) -> Option<&mut Type> {
+        if let Self::Type(t) = self {
+            Some(t)
+        } else {
+            None
+        }
+    }
+    pub(crate) fn try_map_type<E>(
+        &self,
+        mut f: impl FnMut(&Type) -> Result<Type, E>,
+    ) -> Result<Self, E> {
+        Ok(match self {
+            Self::Type(t) => Self::Type(f(t)?),
+            Self::Const(c) => Self::Const(c.clone()),
+        })
+    }
+}
+impl From<Type> for GenericArgument {
+    fn from(t: Type) -> Self {
+        Self::Type(t)
+    }
+}
+impl std::fmt::Display for GenericArgument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Type(t) => t.fmt(f),
+            Self::Const(c) => c.fmt(f),
+        }
+    }
+}
+
 /// A distinct rigid parameter owned by a generic declaration or trait Self.
 #[derive(Debug, Clone)]
 pub struct TypeParameter {
+    pub kind: ParameterKind,
     pub(crate) callable: Option<Arc<CallableBound>>,
     pub name: String,
     pub bounds: Vec<TraitBound>,
@@ -1486,11 +1580,18 @@ pub struct TypeParameter {
     pub(crate) id: u64,
 }
 impl TypeParameter {
+    pub(crate) fn argument(self: &Arc<Self>) -> GenericArgument {
+        match self.kind {
+            ParameterKind::Type => GenericArgument::Type(Type::Parameter(self.clone())),
+            ParameterKind::Const => GenericArgument::Const(ConstArgument::Parameter(self.clone())),
+        }
+    }
     pub fn new(name: String, span: Span) -> Self {
         Self {
             name,
             span,
             id: fresh_type_id(),
+            kind: ParameterKind::Type,
             bounds: Vec::new(),
             callable: None,
         }
@@ -1654,7 +1755,7 @@ pub struct RecordType {
     pub(crate) id: u64,
     pub(crate) name: String,
     pub(crate) parameters: Vec<Arc<TypeParameter>>,
-    pub(crate) arguments: Vec<Type>,
+    pub(crate) arguments: Vec<GenericArgument>,
     pub(crate) template: Option<Arc<RecordType>>,
     pub(crate) fields: Vec<RecordField>,
     pub(crate) scalars: Vec<Type>,
@@ -1675,7 +1776,7 @@ impl PartialEq for RecordType {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
             && self.arguments.len() == other.arguments.len()
-            && equal_types(self.arguments.iter().zip(&other.arguments))
+            && equal_arguments(&self.arguments, &other.arguments)
     }
 }
 impl Eq for RecordType {}
@@ -1702,7 +1803,10 @@ impl Type {
     }
 
     pub(crate) fn is_aggregate(&self) -> bool {
-        matches!(self, Self::Record(_) | Self::Enum(_) | Self::Tuple(_))
+        matches!(
+            self,
+            Self::FixedArray(_) | Self::Record(_) | Self::Enum(_) | Self::Tuple(_)
+        )
     }
 
     pub(crate) fn nominal(&self) -> Option<(&str, u64)> {
@@ -1715,6 +1819,7 @@ impl Type {
 
     pub(crate) fn layout_depth(&self) -> usize {
         match self {
+            Self::FixedArray(a) => a.element.layout_depth() + 1,
             Self::Function(signature) => signature.signature.type_depth(),
             Self::Record(record) => record.depth,
             Self::Enum(enumeration) => enumeration.depth,
@@ -1779,7 +1884,7 @@ pub struct EnumType {
     pub(crate) indirect: bool,
     pub(crate) id: u64,
     pub(crate) parameters: Vec<Arc<TypeParameter>>,
-    pub(crate) arguments: Vec<Type>,
+    pub(crate) arguments: Vec<GenericArgument>,
     pub(crate) template: Option<Arc<EnumType>>,
     pub(crate) name: String,
     pub(crate) variants: Vec<EnumVariant>,
@@ -1798,7 +1903,7 @@ impl PartialEq for EnumType {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
             && self.arguments.len() == other.arguments.len()
-            && equal_types(self.arguments.iter().zip(&other.arguments))
+            && equal_arguments(&self.arguments, &other.arguments)
     }
 }
 impl Eq for EnumType {}
@@ -1872,6 +1977,12 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
     let mut functions = std::collections::HashSet::new();
     while let Some((a, b)) = pending.pop() {
         match (a, b) {
+            (Type::FixedArray(a), Type::FixedArray(b)) => {
+                if a.length != b.length {
+                    return false;
+                }
+                pending.push((&a.element, &b.element));
+            }
             (Type::Function(a), Type::Function(b)) => {
                 if a.suspends != b.suspends || a.signature.params.len() != b.signature.params.len()
                 {
@@ -1893,7 +2004,15 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
                     return false;
                 }
                 if !Arc::ptr_eq(a, b) && records.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                    for (a, b) in a.arguments.iter().zip(&b.arguments) {
+                        match (a, b) {
+                            (GenericArgument::Type(a), GenericArgument::Type(b)) => {
+                                pending.push((a, b))
+                            }
+                            _ if a == b => {}
+                            _ => return false,
+                        }
+                    }
                 }
             }
             (Type::Tuple(a), Type::Tuple(b)) => {
@@ -1909,7 +2028,15 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
                     return false;
                 }
                 if !Arc::ptr_eq(a, b) && enums.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                    for (a, b) in a.arguments.iter().zip(&b.arguments) {
+                        match (a, b) {
+                            (GenericArgument::Type(a), GenericArgument::Type(b)) => {
+                                pending.push((a, b))
+                            }
+                            _ if a == b => {}
+                            _ => return false,
+                        }
+                    }
                 }
             }
             _ if a != b => return false,
@@ -1986,7 +2113,7 @@ pub enum BindingPattern {
 #[derive(Debug, Clone)]
 pub struct RecordPattern {
     pub name: String,
-    pub type_args: Vec<Type>,
+    pub type_args: Vec<GenericArgument>,
     pub fields: Vec<RecordFieldPattern>,
     /// `..` ignores every unlisted field; at most one, in final position.
     pub rest: bool,
@@ -2024,7 +2151,7 @@ pub enum PayloadPattern {
     },
     Record {
         name: String,
-        type_args: Vec<Type>,
+        type_args: Vec<GenericArgument>,
         fields: Vec<RecordFieldPattern>,
         rest: bool,
         span: Span,
@@ -2077,6 +2204,25 @@ fn pattern_names(pattern: &BindingPattern, out: &mut Vec<String>) {
 #[derive(Debug, Clone)]
 pub struct GenericName {
     pub name: String,
-    pub type_args: Vec<Type>,
+    pub type_args: Vec<GenericArgument>,
     pub span: Span,
+}
+
+fn equal_arguments(a: &[GenericArgument], b: &[GenericArgument]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| match (a, b) {
+            (GenericArgument::Type(_), GenericArgument::Type(_)) => true,
+            _ => a == b,
+        })
+        && equal_types(
+            a.iter()
+                .zip(b)
+                .filter_map(|(a, b)| Some((a.as_type()?, b.as_type()?))),
+        )
+}
+
+impl PartialEq<Type> for GenericArgument {
+    fn eq(&self, other: &Type) -> bool {
+        self.as_type() == Some(other)
+    }
 }

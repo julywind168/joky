@@ -15,6 +15,7 @@ pub(crate) enum TypeEdges {
 
 #[derive(Hash, PartialEq, Eq)]
 enum Node {
+    FixedArray(*const crate::parser::ast::FixedArrayType),
     Function(*const FunctionType),
     Tuple(*const TupleType),
     Enum(*const EnumType),
@@ -45,6 +46,7 @@ impl<'a> Iterator for TypeWalk<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(ty) = self.pending.pop() {
             let node = match ty {
+                Type::FixedArray(a) => Some(Node::FixedArray(Arc::as_ptr(a))),
                 Type::Function(f) => Some(Node::Function(Arc::as_ptr(f))),
                 Type::Tuple(t) => Some(Node::Tuple(Arc::as_ptr(t))),
                 Type::Enum(e) => Some(Node::Enum(Arc::as_ptr(e))),
@@ -55,6 +57,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 continue;
             }
             match ty {
+                Type::FixedArray(a) => self.pending.push(&a.element),
                 Type::DynTrait(d) => self.pending.extend(d.equalities.iter().map(|e| &e.ty)),
                 Type::Function(f) => {
                     self.pending.extend(&f.signature.params);
@@ -64,7 +67,8 @@ impl<'a> Iterator for TypeWalk<'a> {
                 Type::Reference(r) => self.pending.push(&r.target),
                 Type::Tuple(t) => self.pending.extend(&t.elements),
                 Type::Enum(e) => {
-                    self.pending.extend(&e.arguments);
+                    self.pending
+                        .extend(e.arguments.iter().filter_map(|a| a.as_type()));
                     if matches!(self.edges, TypeEdges::Storage) {
                         self.pending.extend(&e.scalars);
                     } else if matches!(self.edges, TypeEdges::Fields) {
@@ -73,7 +77,8 @@ impl<'a> Iterator for TypeWalk<'a> {
                     }
                 }
                 Type::Record(r) => {
-                    self.pending.extend(&r.arguments);
+                    self.pending
+                        .extend(r.arguments.iter().filter_map(|a| a.as_type()));
                     if matches!(self.edges, TypeEdges::Storage) && r.closure.is_none() {
                         self.pending.extend(&r.scalars);
                     } else if matches!(self.edges, TypeEdges::Fields) {

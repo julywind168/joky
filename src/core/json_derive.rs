@@ -1,7 +1,7 @@
 //! Expand JSON derives into ordinary, hygienic trait implementations before binding.
 use crate::parser::ast::*;
 use crate::{Error, ErrorCode, ErrorPhase, Span};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 fn error(span: Span, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch, message).with_span(span)
@@ -13,6 +13,13 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
     for (index, record) in module.records.iter().enumerate() {
         let mut seen = Vec::new();
         for attribute in record.attributes.iter().filter(|a| a.path == "derive") {
+            if record
+                .type_params
+                .iter()
+                .any(|p| p.kind == ParameterKind::Const)
+            {
+                return Err(error(attribute.span,"Derive with const parameters requires unsupported generic trait implementations"));
+            }
             let Some(arguments) = &attribute.arguments else {
                 return Err(error(
                     attribute.span,
@@ -90,7 +97,10 @@ fn import(module: &mut Module, path: &str, alias: &str, span: Span) -> String {
 }
 
 fn applied(name: String, arguments: Vec<Type>) -> Type {
-    Type::Applied(Arc::new(TypeApplication { name, arguments }))
+    Type::Applied(Arc::new(TypeApplication {
+        name,
+        arguments: arguments.into_iter().map(Into::into).collect(),
+    }))
 }
 fn ident(name: &str, span: Span) -> Expr {
     Expr::Ident {
@@ -121,7 +131,7 @@ fn context_call(name: &str, type_args: Vec<Type>, args: Vec<Expr>, span: Span) -
     Expr::MethodCall(Box::new(MethodCall {
         receiver: ident("$context", span),
         name: name.into(),
-        type_args,
+        type_args: type_args.into_iter().map(Into::into).collect(),
         args,
         span,
     }))
@@ -180,7 +190,7 @@ fn implementation(
         .iter()
         .map(|p| Arc::new(TypeParameter::new(p.name.clone(), p.span)))
         .collect();
-    let substitutions: HashMap<_, _> = record
+    let substitutions: crate::core::types::Substitutions = record
         .type_params
         .iter()
         .zip(&type_params)
@@ -273,7 +283,7 @@ fn implementation(
         ));
         Expr::Record {
             name: record.name.clone(),
-            type_args: type_params.iter().cloned().map(Type::Parameter).collect(),
+            type_args: type_params.iter().map(|p| p.argument()).collect(),
             fields: fields
                 .iter()
                 .enumerate()
@@ -356,7 +366,9 @@ pub(crate) fn prepare_encoding(function: &FnDef) -> std::borrow::Cow<'_, FnDef> 
     for (index, mut expression) in std::mem::take(exprs).into_iter().enumerate() {
         if let Expr::Match { value, span, .. } = &mut expression {
             if let Expr::MethodCall(call) = value.as_mut() {
-                if call.name == "put_field" && !call.type_args[0].is_owner() {
+                if call.name == "put_field"
+                    && !call.type_args[0].as_type().is_some_and(Type::is_owner)
+                {
                     let Expr::Unary { operand, .. } = &call.args[2] else {
                         unreachable!()
                     };

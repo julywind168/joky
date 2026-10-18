@@ -53,7 +53,7 @@ impl FunctionPlan {
                         if r.name == "joky/domain.WriteHandle"
                             || (!mutable && r.name == "joky/domain.ReadHandle") =>
                     {
-                        r.arguments.first().cloned()
+                        r.arguments.first().and_then(|a| a.as_type()).cloned()
                     }
                     _ => None,
                 }
@@ -443,7 +443,7 @@ impl FunctionPlan {
                 .unwrap();
             c.instantiate(
                 &adapter,
-                vec![handles.clone(), input.clone(), ret],
+                vec![handles.clone().into(), input.clone().into(), ret.into()],
                 crate::FunctionSignature::new(
                     vec![module.ty.clone(), Type::String, handles, input],
                     result_ty.clone(),

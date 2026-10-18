@@ -171,9 +171,10 @@ impl FunctionPlan {
                 ),
             ));
         }
-        let mut inference = generics::seed_inference(&record.parameters, type_args);
+        let mut inference = generics::seed_inference(&record.parameters, type_args, *span)?;
         if let Some(Type::Record(target)) = context.expected {
             if target.id == record.id {
+                let constants = inference.substitutions.constants.clone();
                 generics::unify(
                     &Type::Record(record.clone()),
                     &Type::Record(target.clone()),
@@ -181,6 +182,8 @@ impl FunctionPlan {
                     &mut inference.substitutions,
                     *span,
                 )?;
+                // A result expectation may refine type parameters, but cannot guess lengths.
+                inference.substitutions.constants = constants;
             }
         }
         generics::inference_passes(&mut inference, context.default, |inference| {
@@ -205,7 +208,7 @@ impl FunctionPlan {
             Ok(())
         })?;
         self.materialize_inference(&mut inference, types, *span)?;
-        let arguments = record.parameters.iter().map(|p| inference.substitutions.get(&p.id).cloned()
+        let arguments = record.parameters.iter().map(|p| inference.substitutions.argument(p)
             .ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{name}`; add a type annotation or explicit type arguments", p.name))))
             .collect::<Result<Vec<_>, _>>()?;

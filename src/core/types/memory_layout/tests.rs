@@ -285,7 +285,7 @@ fn layout_queries_reject_dyn_inside_signatures_buffers_and_phantom_arguments() {
     };
     Arc::get_mut(record)
         .expect("unshared test record")
-        .arguments = vec![view.clone()];
+        .arguments = vec![view.clone().into()];
     for ty in [
         view.clone(),
         Type::function(vec![view.clone()], Type::Unit),

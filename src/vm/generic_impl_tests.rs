@@ -126,7 +126,7 @@ fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
         panic!()
     };
     assert_eq!(name, "Pair");
-    assert!(matches!(&type_args[0], Type::Parameter(p) if p == parameter));
+    assert!(matches!(type_args[0].as_type(), Some(Type::Parameter(p)) if p == parameter));
     assert_eq!(
         span.slice(source),
         Some("Self { left: value, right: value }")

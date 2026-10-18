@@ -1,0 +1,2 @@
+// Only this embedded definition receives the compiler-owned inline shape.
+type FixedArray<T, const N: UInt64> = T

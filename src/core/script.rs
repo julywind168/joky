@@ -36,7 +36,15 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
         let mut result = format!("enum:{}:{}", enumeration.name.len(), enumeration.name);
         result.push_str(&format!(";args:{}", enumeration.arguments.len()));
         for argument in &enumeration.arguments {
-            let contract = value_schema(argument, depth + 1, members_left)?;
+            let contract = match argument {
+                crate::parser::ast::GenericArgument::Type(t) => {
+                    value_schema(t, depth + 1, members_left)?
+                }
+                crate::parser::ast::GenericArgument::Const(
+                    crate::parser::ast::ConstArgument::Value(n),
+                ) => format!("const:UInt64:{n}"),
+                _ => return None,
+            };
             result.push_str(&format!(";{}:{contract}", contract.len()));
         }
         result.push_str(&format!(";variants:{}", enumeration.variants.len()));
@@ -73,7 +81,15 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
     if !record.arguments.is_empty() {
         result = format!("generic-{result};args:{}", record.arguments.len());
         for argument in &record.arguments {
-            let contract = value_schema(argument, depth + 1, members_left)?;
+            let contract = match argument {
+                crate::parser::ast::GenericArgument::Type(t) => {
+                    value_schema(t, depth + 1, members_left)?
+                }
+                crate::parser::ast::GenericArgument::Const(
+                    crate::parser::ast::ConstArgument::Value(n),
+                ) => format!("const:UInt64:{n}"),
+                _ => return None,
+            };
             result.push_str(&format!(";{}:{contract}", contract.len()));
         }
         result.push_str(&format!(";fields:{}", record.fields.len()));

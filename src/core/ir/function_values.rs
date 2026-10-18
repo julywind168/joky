@@ -117,6 +117,12 @@ impl FunctionPlan {
             ));
         }
         for (parameter, ty) in template.type_params.iter().zip(explicit) {
+            types
+                .validate_argument(parameter, ty)
+                .map_err(|e| e.with_span(span))?;
+            let Some(ty) = ty.as_type() else {
+                continue;
+            };
             types.validate(ty).map_err(|e| e.with_span(span))?;
             validate_nominal_type(ty, &self.nominals, &span)?;
             if !ty.is_copy_storage_value() {

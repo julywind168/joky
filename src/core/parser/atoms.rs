@@ -197,6 +197,16 @@ impl Parser {
             TokenKind::Ident(ref name) if name == "when" && self.starts_when() => self.parse_when(),
             TokenKind::Ident(name) => {
                 self.advance();
+                if let Some(p) = self
+                    .type_params
+                    .iter()
+                    .find(|p| p.name == name && p.kind == ParameterKind::Const)
+                {
+                    return Ok(Expr::Literal {
+                        literal: Literal::ConstParameter(p.clone()),
+                        span: self.span(start, self.last_span.end()),
+                    });
+                }
                 let self_application = (name == "Self")
                     .then_some(self.impl_target.as_ref())
                     .flatten()
@@ -474,6 +484,7 @@ impl Parser {
         while !empty && self.peek() != &TokenKind::Pipe {
             let span_start = self.peek_span().start();
             let name = self.expect_ident()?;
+            self.check_binding_name(&name)?;
             if name == "_" || name == "self" {
                 return Err(
                     self.error("Anonymous function parameters require ordinary names".into())

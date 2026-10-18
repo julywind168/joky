@@ -45,7 +45,9 @@ impl<'a> Declaration<'a> {
                     Type::Parameter(parameter) => {
                         used.insert(parameter.id);
                     }
-                    Type::Applied(application) => pending.extend(&application.arguments),
+                    Type::Applied(application) => {
+                        pending.extend(application.arguments.iter().filter_map(|a| a.as_type()))
+                    }
                     _ => {}
                 }
             }
@@ -169,7 +171,7 @@ pub(super) fn resolve<'a>(
                 id: d.id,
                 name: d.name.clone(),
                 parameters: d.type_params.clone(),
-                arguments: d.type_params.iter().cloned().map(Type::Parameter).collect(),
+                arguments: d.type_params.iter().map(|p| p.argument()).collect(),
                 template: None,
                 fields: Vec::new(),
                 scalars: Vec::new(),
@@ -181,7 +183,7 @@ pub(super) fn resolve<'a>(
                 id: d.id,
                 name: d.name.clone(),
                 parameters: d.type_params.clone(),
-                arguments: d.type_params.iter().cloned().map(Type::Parameter).collect(),
+                arguments: d.type_params.iter().map(|p| p.argument()).collect(),
                 template: None,
                 variants: Vec::new(),
                 scalars: Vec::new(),
@@ -301,7 +303,7 @@ pub(super) fn resolve<'a>(
                                 .iter()
                                 .zip(arguments)
                                 .filter(|(parameter, _)| !used.contains(&parameter.id))
-                                .map(|(_, ty)| (ty.clone(), span)),
+                                .filter_map(|(_, a)| a.as_type().map(|ty| (ty.clone(), span))),
                         );
                         let substitutions = parameters
                             .iter()
@@ -313,6 +315,10 @@ pub(super) fn resolve<'a>(
                         ));
                     }
                 }
+                continue;
+            }
+            if let Type::FixedArray(a) = ty {
+                pending.push((a.element.clone(), span));
                 continue;
             }
             if matches!(ty, Type::Reference(_) | Type::Buffer(_)) {
@@ -344,6 +350,7 @@ pub(super) fn resolve<'a>(
                         enumeration
                             .arguments
                             .iter()
+                            .filter_map(|a| a.as_type())
                             .rev()
                             .map(|ty| (ty.clone(), span)),
                     );
@@ -351,7 +358,14 @@ pub(super) fn resolve<'a>(
             }
             if let Type::Record(record) = ty {
                 if seen_records.insert(Arc::as_ptr(record)) {
-                    pending.extend(record.arguments.iter().rev().map(|ty| (ty.clone(), span)));
+                    pending.extend(
+                        record
+                            .arguments
+                            .iter()
+                            .filter_map(|a| a.as_type())
+                            .rev()
+                            .map(|ty| (ty.clone(), span)),
+                    );
                 }
             }
             let target = match ty {
@@ -479,12 +493,7 @@ pub(super) fn resolve<'a>(
                         id: record.id,
                         name: record.name.clone(),
                         parameters: record.type_params.clone(),
-                        arguments: record
-                            .type_params
-                            .iter()
-                            .cloned()
-                            .map(Type::Parameter)
-                            .collect(),
+                        arguments: record.type_params.iter().map(|p| p.argument()).collect(),
                         template: None,
                         fields,
                         scalars,
@@ -524,8 +533,7 @@ pub(super) fn resolve<'a>(
                         arguments: enumeration
                             .type_params
                             .iter()
-                            .cloned()
-                            .map(Type::Parameter)
+                            .map(|p| p.argument())
                             .collect(),
                         template: None,
                         name: enumeration.name.clone(),
@@ -539,6 +547,15 @@ pub(super) fn resolve<'a>(
                     alias_type(registry, alias, &canonical)?
                 }
             };
+            if let TypeDefinition::Type(value) = &ty {
+                let parameters = match declaration {
+                    Declaration::Record(d) => &d.type_params,
+                    Declaration::Enum(d) => &d.type_params,
+                    Declaration::Alias(d) => &d.type_params,
+                };
+                super::fixed_array::validate(value, &registry.with_parameters(parameters)?)
+                    .map_err(|e| e.with_span(declaration.span()))?;
+            }
             if let Some(scope) = &module.scope {
                 for (name, binding) in &scope.types {
                     if binding.declaration == declaration.id() && binding.declaration.is_some() {
@@ -767,10 +784,12 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
             "Additional elements of an owning tuple must be reference-free Copy data",
         ));
     }
-    Ok(Type::Tuple(Arc::new(TupleType {
+    let ty = Type::Tuple(Arc::new(TupleType {
         owners,
         elements,
         scalars,
         depth,
-    })))
+    }));
+    super::fixed_array::validate(&ty, registry)?;
+    Ok(ty)
 }

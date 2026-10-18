@@ -122,11 +122,17 @@ pub(crate) fn persistent_graph(
                 pending.push(super::types::reference_target(element, nominals, registry)?)
             }
             Type::Record(record) => {
-                pending.extend(record.arguments.iter().cloned());
+                pending.extend(record.arguments.iter().filter_map(|a| a.as_type()).cloned());
                 pending.extend(record.fields.iter().map(|field| field.ty.clone()));
             }
             Type::Enum(enumeration) => {
-                pending.extend(enumeration.arguments.iter().cloned());
+                pending.extend(
+                    enumeration
+                        .arguments
+                        .iter()
+                        .filter_map(|a| a.as_type())
+                        .cloned(),
+                );
                 pending.extend(
                     enumeration
                         .variants

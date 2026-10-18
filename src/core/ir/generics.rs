@@ -16,7 +16,7 @@ const MAX_INSTANCE_DEPTH: usize = 32;
 pub(super) struct Instance {
     pub name: String,
     pub template: String,
-    arguments: Vec<Type>,
+    arguments: Vec<crate::parser::ast::GenericArgument>,
     pub signature: FunctionSignature,
     pub depth: usize,
 }
@@ -106,7 +106,7 @@ impl GenericContext {
     pub(super) fn instantiate(
         &mut self,
         template: &str,
-        arguments: Vec<Type>,
+        arguments: Vec<crate::parser::ast::GenericArgument>,
         signature: FunctionSignature,
         depth: usize,
         span: Span,
@@ -115,13 +115,19 @@ impl GenericContext {
             self.templates[template].compiler_intrinsic,
             Some(CompilerIntrinsic::PlainCopy(_))
         ) {
-            validate_plain_copy(&arguments[0], span)?;
+            validate_plain_copy(
+                arguments[0].as_type().expect("intrinsic type argument"),
+                span,
+            )?;
         }
         if matches!(
             self.templates[template].compiler_intrinsic,
             Some(CompilerIntrinsic::ReferenceFree(_))
         ) {
-            validate_reference_free(&arguments[0], span)?;
+            validate_reference_free(
+                arguments[0].as_type().expect("intrinsic type argument"),
+                span,
+            )?;
         }
         if self.checking {
             return Ok(template.to_owned());
@@ -202,10 +208,14 @@ impl GenericContext {
                 .map_err(|e| e.with_span(param.span))?;
         }
         definition.ret_ty = instance.signature.ret.clone();
-        super::super::types::map_annotations(&mut definition.body, &mut |ty, span| {
-            *ty = substitute(ty, &substitutions, types).map_err(|e| e.with_span(span))?;
-            Ok(())
-        })?;
+        super::super::types::map_syntax(
+            &mut definition.body,
+            &mut |ty, span| {
+                *ty = substitute(ty, &substitutions, types).map_err(|e| e.with_span(span))?;
+                Ok(())
+            },
+            &substitutions,
+        )?;
         Ok(definition)
     }
 }
@@ -215,27 +225,49 @@ pub(super) use crate::core::types::unify;
 pub(super) fn unresolved(
     ty: &Type,
     params: &[Arc<TypeParameter>],
-    substitutions: &HashMap<u64, Type>,
+    substitutions: &crate::core::types::Substitutions,
 ) -> bool {
     use crate::core::types::walk::{TypeEdges, TypeWalk};
+    let unresolved_constant = |c: &crate::parser::ast::ConstArgument| matches!(c,crate::parser::ast::ConstArgument::Parameter(p) if params.iter().any(|q|q.id==p.id) && !substitutions.constants.contains_key(&p.id));
     TypeWalk::new(ty, TypeEdges::Arguments).any(|ty| {
         matches!(ty, Type::Parameter(p)
             if params.iter().any(|q| p.id == q.id) && !substitutions.contains_key(&p.id))
+        || match ty {
+            Type::FixedArray(a) => unresolved_constant(&a.length),
+            Type::Record(r) => r.arguments.iter().any(|a| matches!(a,crate::parser::ast::GenericArgument::Const(c) if unresolved_constant(c))),
+            Type::Enum(e) => e.arguments.iter().any(|a| matches!(a,crate::parser::ast::GenericArgument::Const(c) if unresolved_constant(c))),
+            _ => false,
+        }
     })
 }
 
 pub(super) struct InferenceState<'a> {
     pub params: &'a [Arc<TypeParameter>],
-    pub substitutions: HashMap<u64, Type>,
+    pub substitutions: crate::core::types::Substitutions,
     pub default: bool,
 }
 
 /// Seed inference with explicitly provided type arguments, if any.
 pub(super) fn seed_inference<'a>(
     parameters: &'a [Arc<TypeParameter>],
-    explicit: &[Type],
-) -> InferenceState<'a> {
-    InferenceState {
+    explicit: &[crate::parser::ast::GenericArgument],
+    span: Span,
+) -> Result<InferenceState<'a>, Error> {
+    use crate::parser::ast::{GenericArgument, ParameterKind};
+    for (p, a) in parameters.iter().zip(explicit) {
+        if !matches!(
+            (p.kind, a),
+            (ParameterKind::Type, GenericArgument::Type(_))
+                | (ParameterKind::Const, GenericArgument::Const(_))
+        ) {
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                format!("Generic argument kind mismatch for `{}`: got {a}", p.name),
+            ));
+        }
+    }
+    Ok(InferenceState {
         params: parameters,
         substitutions: parameters
             .iter()
@@ -243,7 +275,7 @@ pub(super) fn seed_inference<'a>(
             .map(|(p, ty)| (p.id, ty.clone()))
             .collect(),
         default: false,
-    }
+    })
 }
 
 /// The shared two-pass protocol: infer from concrete argument types first,
@@ -285,7 +317,7 @@ impl FunctionPlan {
         vars: &HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
-    ) -> Result<(Vec<Type>, FunctionSignature), Error> {
+    ) -> Result<(Vec<crate::parser::ast::GenericArgument>, FunctionSignature), Error> {
         let Expr::Call {
             callee,
             type_args,
@@ -331,7 +363,7 @@ impl FunctionPlan {
             ));
         }
         drop(context);
-        let mut inference = seed_inference(&template.type_params, type_args);
+        let mut inference = seed_inference(&template.type_params, type_args, *span)?;
         // First use already known argument types, then default only unresolved
         // parameters. Hints never evaluate arguments or move source effects.
         inference_passes(&mut inference, true, |inference| {
@@ -364,8 +396,10 @@ impl FunctionPlan {
         self.materialize_inference(&mut inference, types, *span)?;
         let substitutions = inference.substitutions;
         let arguments: Vec<_> = template.type_params.iter().map(|p| {
-            let ty = substitutions.get(&p.id).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
-                format!("Cannot infer type parameter `{}` for `{callee}`; use explicit type arguments", p.name)))?;
+            let argument = substitutions.argument(p).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
+                format!("Cannot infer {} parameter `{}` for `{callee}`; use explicit generic arguments", if p.kind == crate::parser::ast::ParameterKind::Const { "constant" } else { "type" }, p.name)))?;
+            types.validate_argument(p, &argument).map_err(|e| e.with_span(*span))?;
+            let Some(ty) = argument.as_type() else { return Ok(argument); };
             types.validate(ty).map_err(|e| e.with_span(*span))?;
             validate_nominal_type(ty, &self.nominals, span)?;
             if ty.contains_explicit_arena() && !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) {
@@ -382,7 +416,7 @@ impl FunctionPlan {
                 let required = FunctionSignature::new(bound.signature.params.iter().map(|t| substitute(t, &substitutions, types)).collect::<Result<_, _>>()?, substitute(&bound.signature.ret, &substitutions, types)?);
                 if mode > bound.mode || actual != required { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable capability or signature does not satisfy its bound")); }
             }
-            Ok(ty.clone())
+            Ok(argument)
         }).collect::<Result<_, Error>>()?;
         let params = template
             .params

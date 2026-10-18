@@ -21,7 +21,7 @@ impl TypeRegistry {
     pub(crate) fn instantiate_alias(
         &self,
         alias: &Arc<AliasTemplate>,
-        arguments: Vec<Type>,
+        arguments: Vec<crate::parser::ast::GenericArgument>,
     ) -> Result<Type, Error> {
         self.with_alias_obligation(&alias.name, &arguments, || {
             self.instantiate_alias_inner(alias, arguments.clone())
@@ -31,7 +31,7 @@ impl TypeRegistry {
     fn instantiate_alias_inner(
         &self,
         alias: &Arc<AliasTemplate>,
-        arguments: Vec<Type>,
+        arguments: Vec<crate::parser::ast::GenericArgument>,
     ) -> Result<Type, Error> {
         if alias.parameters.len() != arguments.len() {
             return Err(error(
@@ -43,8 +43,11 @@ impl TypeRegistry {
                 ),
             ));
         }
+        for (p, a) in alias.parameters.iter().zip(&arguments) {
+            self.validate_argument(p, a)?;
+        }
         // Validate even unused parameters before erasing the transparent alias.
-        for arg in &arguments {
+        for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
             if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
@@ -110,7 +113,7 @@ impl TypeRegistry {
     pub(crate) fn instantiate_record(
         &self,
         record: &Arc<RecordType>,
-        arguments: Vec<Type>,
+        arguments: Vec<crate::parser::ast::GenericArgument>,
     ) -> Result<Type, Error> {
         let template = record.template.as_ref().unwrap_or(record);
         if template.parameters.is_empty() || template.parameters.len() != arguments.len() {
@@ -123,7 +126,7 @@ impl TypeRegistry {
                 ),
             ));
         }
-        for arg in &arguments {
+        for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
             if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
@@ -133,6 +136,9 @@ impl TypeRegistry {
                     ),
                 ));
             }
+        }
+        for (p, a) in template.parameters.iter().zip(&arguments) {
+            self.validate_argument(p, a)?;
         }
         if let Some(instance) = self
             .record_instances
@@ -158,7 +164,7 @@ impl TypeRegistry {
         // Phantom arguments contribute to depth even when they occupy no lanes.
         let mut depth = arguments
             .iter()
-            .map(|ty| ty.layout_depth() + 1)
+            .map(|a| a.as_type().map_or(0, |ty| ty.layout_depth()) + 1)
             .max()
             .unwrap_or(1);
         if depth > 256 {
@@ -206,6 +212,7 @@ impl TypeRegistry {
                 "Generic record instantiation exceeds 256 instances",
             ));
         }
+        super::fixed_array::validate(&Type::Record(instance.clone()), self)?;
         self.record_instances.borrow_mut().push(instance.clone());
         Ok(Type::Record(instance))
     }
@@ -213,7 +220,7 @@ impl TypeRegistry {
     pub(crate) fn instantiate_enum(
         &self,
         enumeration: &Arc<EnumType>,
-        arguments: Vec<Type>,
+        arguments: Vec<crate::parser::ast::GenericArgument>,
     ) -> Result<Type, Error> {
         let template = enumeration.template.as_ref().unwrap_or(enumeration);
         if template.parameters.is_empty() || template.parameters.len() != arguments.len() {
@@ -226,7 +233,7 @@ impl TypeRegistry {
                 ),
             ));
         }
-        for arg in &arguments {
+        for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
             if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
@@ -234,6 +241,9 @@ impl TypeRegistry {
                     format!("Generic enum argument must be a Copy type or an owner, got {arg}"),
                 ));
             }
+        }
+        for (p, a) in template.parameters.iter().zip(&arguments) {
+            self.validate_argument(p, a)?;
         }
         if let Some(instance) = self
             .enum_instances
@@ -258,7 +268,7 @@ impl TypeRegistry {
         let mut scalars = vec![Type::Int32];
         let mut depth = arguments
             .iter()
-            .map(|ty| ty.layout_depth() + 1)
+            .map(|a| a.as_type().map_or(0, |ty| ty.layout_depth()) + 1)
             .max()
             .unwrap_or(1);
         if depth > 256 {
@@ -303,6 +313,7 @@ impl TypeRegistry {
                 "Generic enum instantiation exceeds 256 instances",
             ));
         }
+        super::fixed_array::validate(&Type::Enum(instance.clone()), self)?;
         self.enum_instances.borrow_mut().push(instance.clone());
         Ok(Type::Enum(instance))
     }
@@ -310,7 +321,7 @@ impl TypeRegistry {
 
 pub(crate) fn substitute(
     ty: &Type,
-    substitutions: &HashMap<u64, Type>,
+    substitutions: &crate::core::types::Substitutions,
     types: &TypeRegistry,
 ) -> Result<Type, Error> {
     #[derive(Default)]
@@ -322,11 +333,15 @@ pub(crate) fn substitute(
     }
     fn visit(
         ty: &Type,
-        substitutions: &HashMap<u64, Type>,
+        substitutions: &crate::core::types::Substitutions,
         types: &TypeRegistry,
         cache: &mut Cache,
     ) -> Result<Type, Error> {
         Ok(match ty {
+            Type::FixedArray(a) => types.fixed_array(
+                visit(&a.element, substitutions, types, cache)?,
+                substitutions.constant(&a.length),
+            )?,
             Type::DynTrait(d) => {
                 let mut d = d.as_ref().clone();
                 for e in &mut d.equalities {
@@ -365,7 +380,18 @@ pub(crate) fn substitute(
                         record
                             .arguments
                             .iter()
-                            .map(|t| visit(t, substitutions, types, cache))
+                            .map(|a| match a {
+                                crate::parser::ast::GenericArgument::Type(t) => {
+                                    Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(
+                                        visit(t, substitutions, types, cache)?,
+                                    ))
+                                }
+                                crate::parser::ast::GenericArgument::Const(c) => {
+                                    Ok(crate::parser::ast::GenericArgument::Const(
+                                        substitutions.constant(c),
+                                    ))
+                                }
+                            })
                             .collect::<Result<_, _>>()?,
                     ),
                     Type::Enum(enumeration) => indirect::shallow(
@@ -373,7 +399,18 @@ pub(crate) fn substitute(
                         enumeration
                             .arguments
                             .iter()
-                            .map(|t| visit(t, substitutions, types, cache))
+                            .map(|a| match a {
+                                crate::parser::ast::GenericArgument::Type(t) => {
+                                    Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(
+                                        visit(t, substitutions, types, cache)?,
+                                    ))
+                                }
+                                crate::parser::ast::GenericArgument::Const(c) => {
+                                    Ok(crate::parser::ast::GenericArgument::Const(
+                                        substitutions.constant(c),
+                                    ))
+                                }
+                            })
                             .collect::<Result<_, _>>()?,
                     ),
                     _ => visit(&r.target, substitutions, types, cache)?,
@@ -401,7 +438,21 @@ pub(crate) fn substitute(
                     arguments: application
                         .arguments
                         .iter()
-                        .map(|t| visit(t, substitutions, types, cache))
+                        .map(|a| match a {
+                            crate::parser::ast::GenericArgument::Type(t) => {
+                                Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(visit(
+                                    t,
+                                    substitutions,
+                                    types,
+                                    cache,
+                                )?))
+                            }
+                            crate::parser::ast::GenericArgument::Const(c) => {
+                                Ok(crate::parser::ast::GenericArgument::Const(
+                                    substitutions.constant(c),
+                                ))
+                            }
+                        })
                         .collect::<Result<_, _>>()?,
                 }))
             }
@@ -436,7 +487,19 @@ pub(crate) fn substitute(
                 let arguments = enumeration
                     .arguments
                     .iter()
-                    .map(|ty| visit(ty, substitutions, types, cache))
+                    .map(|a| match a {
+                        crate::parser::ast::GenericArgument::Type(t) => {
+                            Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(visit(
+                                t,
+                                substitutions,
+                                types,
+                                cache,
+                            )?))
+                        }
+                        crate::parser::ast::GenericArgument::Const(c) => Ok(
+                            crate::parser::ast::GenericArgument::Const(substitutions.constant(c)),
+                        ),
+                    })
                     .collect::<Result<_, _>>()?;
                 let ty = if enumeration.indirect {
                     indirect::shallow(ty, arguments)
@@ -454,7 +517,19 @@ pub(crate) fn substitute(
                 let arguments = record
                     .arguments
                     .iter()
-                    .map(|ty| visit(ty, substitutions, types, cache))
+                    .map(|a| match a {
+                        crate::parser::ast::GenericArgument::Type(t) => {
+                            Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(visit(
+                                t,
+                                substitutions,
+                                types,
+                                cache,
+                            )?))
+                        }
+                        crate::parser::ast::GenericArgument::Const(c) => Ok(
+                            crate::parser::ast::GenericArgument::Const(substitutions.constant(c)),
+                        ),
+                    })
                     .collect::<Result<_, _>>()?;
                 // Nested arguments of a reference target can also be shallow.
                 // Do not cache their absent fields as a concrete value layout.
@@ -480,7 +555,7 @@ pub(crate) fn unify(
     formal: &Type,
     actual: &Type,
     params: &[Arc<TypeParameter>],
-    substitutions: &mut HashMap<u64, Type>,
+    substitutions: &mut crate::core::types::Substitutions,
     span: Span,
 ) -> Result<(), Error> {
     // Iterative tuple matching avoids expanding shared zero-sized type DAGs.
@@ -491,6 +566,10 @@ pub(crate) fn unify(
     let mut functions = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
+            (Type::FixedArray(a), Type::FixedArray(b)) => {
+                unify_constant(&a.length, &b.length, params, substitutions, span)?;
+                pending.push((&a.element, &b.element));
+            }
             (Type::Projection(_), _) => {} // Checked after ordinary parameter inference.
             (Type::DynTrait(a), Type::DynTrait(b))
                 if a.interface
@@ -542,14 +621,50 @@ pub(crate) fn unify(
                 if a.id == b.id && a.arguments.len() == b.arguments.len() =>
             {
                 if enums.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                    for (a, b) in a.arguments.iter().zip(&b.arguments) {
+                        match (a, b) {
+                            (
+                                crate::parser::ast::GenericArgument::Type(a),
+                                crate::parser::ast::GenericArgument::Type(b),
+                            ) => pending.push((a, b)),
+                            (
+                                crate::parser::ast::GenericArgument::Const(a),
+                                crate::parser::ast::GenericArgument::Const(b),
+                            ) => unify_constant(a, b, params, substitutions, span)?,
+                            _ => {
+                                return Err(unification_error(
+                                    span,
+                                    ErrorCode::TypeMismatch,
+                                    "Generic argument kind mismatch",
+                                ))
+                            }
+                        }
+                    }
                 }
             }
             (Type::Record(a), Type::Record(b))
                 if a.id == b.id && a.arguments.len() == b.arguments.len() =>
             {
                 if records.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                    for (a, b) in a.arguments.iter().zip(&b.arguments) {
+                        match (a, b) {
+                            (
+                                crate::parser::ast::GenericArgument::Type(a),
+                                crate::parser::ast::GenericArgument::Type(b),
+                            ) => pending.push((a, b)),
+                            (
+                                crate::parser::ast::GenericArgument::Const(a),
+                                crate::parser::ast::GenericArgument::Const(b),
+                            ) => unify_constant(a, b, params, substitutions, span)?,
+                            _ => {
+                                return Err(unification_error(
+                                    span,
+                                    ErrorCode::TypeMismatch,
+                                    "Generic argument kind mismatch",
+                                ))
+                            }
+                        }
+                    }
                 }
             }
             _ if formal == actual => {}
@@ -567,4 +682,34 @@ pub(crate) fn unify(
 
 fn unification_error(span: Span, code: ErrorCode, message: impl Into<String>) -> Error {
     error(code, message).with_span(span)
+}
+
+pub(crate) fn unify_constant(
+    a: &crate::parser::ast::ConstArgument,
+    b: &crate::parser::ast::ConstArgument,
+    params: &[Arc<TypeParameter>],
+    s: &mut crate::core::types::Substitutions,
+    span: Span,
+) -> Result<(), Error> {
+    if let crate::parser::ast::ConstArgument::Parameter(p) = a {
+        if params.iter().any(|q| q.id == p.id) {
+            if let Some(previous) = s.constants.get(&p.id) {
+                if previous == b {
+                    return Ok(());
+                }
+            } else {
+                s.constants.insert(p.id, b.clone());
+                return Ok(());
+            }
+        }
+    }
+    if a == b {
+        Ok(())
+    } else {
+        Err(unification_error(
+            span,
+            ErrorCode::TypeMismatch,
+            format!("Conflicting constant arguments: {a} and {b}"),
+        ))
+    }
 }

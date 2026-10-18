@@ -150,6 +150,17 @@ impl Parser {
         }
     }
 
+    fn check_binding_name(&self, name: &str) -> Result<(), Diagnostic> {
+        if self
+            .type_params
+            .iter()
+            .any(|p| p.name == name && p.kind == ParameterKind::Const)
+        {
+            return Err(self.error(format!("Binding `{name}` shadows a const parameter")));
+        }
+        Ok(())
+    }
+
     /// Continue an already-consumed identifier through `.nested` path segments.
     fn parse_dotted_name(&mut self, mut name: String) -> Result<String, Diagnostic> {
         while self.peek() == &TokenKind::Dot {

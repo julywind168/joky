@@ -1,0 +1,9 @@
+import joky/fixed_array.{type FixedArray}
+pub type Bytes<const N: UInt64> = FixedArray<UInt8,N>
+pub struct Marker<const N: UInt64> { value: UInt64 }
+impl<const N: UInt64> Marker<N> {
+    pub fn make() -> Self { Self { value: N } }
+    pub fn size(&self) -> UInt64 { N }
+}
+pub fn constant<const N: UInt64>() -> UInt64 { N }
+pub fn forward<const N: UInt64>() -> UInt64 { constant::<N>() }

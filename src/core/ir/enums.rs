@@ -8,7 +8,7 @@ pub(super) struct Constructor<'a> {
     pub enumeration: Arc<EnumType>,
     pub name: String,
     pub args: Option<&'a [Expr]>,
-    pub type_args: &'a [Type],
+    pub type_args: &'a [crate::parser::ast::GenericArgument],
     span: Span,
 }
 
@@ -20,7 +20,7 @@ impl FunctionPlan {
         vars: &HashMap<String, Binding>,
     ) -> Result<Option<Constructor<'a>>, Error> {
         let Some((path, payload, type_args)) = (|| {
-            let parts: (String, _, &[Type]) = match expr {
+            let parts: (String, _, &[crate::parser::ast::GenericArgument]) = match expr {
                 Expr::Call {
                     callee,
                     args,
@@ -177,7 +177,11 @@ impl FunctionPlan {
                 format!("Type argument count mismatch for enum `{}`", template.name),
             ));
         }
-        let mut inference = generics::seed_inference(&template.parameters, constructor.type_args);
+        let mut inference = generics::seed_inference(
+            &template.parameters,
+            constructor.type_args,
+            constructor.span,
+        )?;
         if let Some(Type::Enum(target)) = context.expected {
             if target.id == template.id {
                 generics::unify(
@@ -196,7 +200,7 @@ impl FunctionPlan {
             Ok(())
         })?;
         self.materialize_inference(&mut inference, types, constructor.span)?;
-        let arguments = template.parameters.iter().map(|p| inference.substitutions.get(&p.id).cloned()
+        let arguments = template.parameters.iter().map(|p| inference.substitutions.argument(p)
             .ok_or_else(|| type_error(&constructor.span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{}.{}`; add a type annotation or explicit type arguments", p.name, template.name, constructor.name))))
             .collect::<Result<Vec<_>, _>>()?;

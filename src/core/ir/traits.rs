@@ -72,7 +72,7 @@ impl Traits {
         {
             return Ok(false);
         }
-        let mut substitutions = HashMap::new();
+        let mut substitutions = crate::core::types::Substitutions::default();
         generics::unify(
             &implementation.target,
             ty,
@@ -306,8 +306,9 @@ pub(super) fn collect(
                 "Trait implementations cannot define associated constants",
             ));
         }
-        let substitutions =
-            HashMap::from([(declaration.self_parameter.id, implementation.target.clone())]);
+        let substitutions = [(declaration.self_parameter.id, implementation.target.clone())]
+            .into_iter()
+            .collect::<crate::core::types::Substitutions>();
         let local = types.with_parameters(&implementation.type_params)?;
         let mut names = HashSet::new();
         for definition in &implementation.methods {
@@ -584,7 +585,7 @@ impl FunctionPlan {
             span,
         };
         let (arguments, _) = self.generic_signature(&probe, vars, functions, types)?;
-        let target = &arguments[0];
+        let target = arguments[0].as_type().expect("trait Self type");
         let context = self.generics.borrow();
         let method = context
             .members
@@ -600,7 +601,7 @@ impl FunctionPlan {
             Vec::new()
         } else {
             match (&method.target, target) {
-                (Type::Parameter(_), _) => vec![target.clone()],
+                (Type::Parameter(_), _) => vec![target.clone().into()],
                 (_, Type::Record(r)) => r.arguments.clone(),
                 (_, Type::Enum(e)) => e.arguments.clone(),
                 _ => unreachable!("generic trait targets are nominal or rigid"),

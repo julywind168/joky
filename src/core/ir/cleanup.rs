@@ -86,6 +86,7 @@ impl FunctionPlan {
                 Type::Record(r) if r.closure.is_none() && !r.indirect => r
                     .arguments
                     .iter()
+                    .filter_map(|a| a.as_type())
                     .cloned()
                     .chain(r.fields.iter().map(|f| f.ty.clone()))
                     .collect(),
@@ -95,6 +96,7 @@ impl FunctionPlan {
                 Type::Enum(e) if !ty.is_owner() && !e.indirect => e
                     .arguments
                     .iter()
+                    .filter_map(|a| a.as_type())
                     .cloned()
                     .chain(e.variants.iter().filter_map(|v| v.payload.clone()))
                     .collect(),
@@ -317,7 +319,7 @@ impl FunctionPlan {
             if let Some(method) = method {
                 let mut name = method.function.clone();
                 if let Some(template) = context.templates.get(&name) {
-                    let mut substitutions = HashMap::new();
+                    let mut substitutions = crate::core::types::Substitutions::default();
                     generics::unify(
                         &method.target,
                         &ty,
@@ -328,7 +330,11 @@ impl FunctionPlan {
                     let arguments = template
                         .type_params
                         .iter()
-                        .map(|p| substitutions[&p.id].clone())
+                        .map(|p| {
+                            substitutions
+                                .argument(p)
+                                .expect("inferred implementation argument")
+                        })
                         .collect();
                     drop(context);
                     name = self.generics.borrow_mut().instantiate(

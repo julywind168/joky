@@ -309,3 +309,42 @@ fn imported_constructor_aliases_execute_in_direct_and_cps_objects() {
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn fixed_array_f1_const_parameters_execute_in_standalone_aot() {
+    let fixture = ScratchDir::new("const-generics");
+    let object = fixture.path().join("const-generics.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("const-generics");
+    let mut compiler = AotCompiler::new("const_generics").unwrap();
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "const_model",
+            include_str!("../../../../tests/fixtures/const_generics_model.jk"),
+        )
+        .unwrap();
+    let ast = compiler
+        .types
+        .resolve_with_modules(
+            &crate::parser::parse(include_str!("../../../../tests/fixtures/const_generics.jk"))
+                .unwrap(),
+            &modules,
+        )
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host,"#include <stdint.h>\nextern int32_t check(void);\nint main(void) { return check() != 42; }\n").unwrap();
+    link(
+        link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror"]),
+        ),
+        &program,
+    );
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}

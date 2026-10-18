@@ -81,7 +81,7 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
             out.push(0);
             put_u64(out, e.arguments.len() as u64);
             for argument in &e.arguments {
-                encode_type(out, argument);
+                encode_argument(out, argument);
             }
             put_u64(out, e.variants.len() as u64);
             for variant in &e.variants {
@@ -103,7 +103,7 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
             out.push(u8::from(r.repr_c));
             put_u64(out, r.arguments.len() as u64);
             for argument in &r.arguments {
-                encode_type(out, argument);
+                encode_argument(out, argument);
             }
             put_u64(out, r.fields.len() as u64);
             for field in &r.fields {
@@ -203,7 +203,17 @@ impl Reader<'_> {
         let start = self.bytes;
         let mut arguments = Vec::new();
         for _ in 0..arity {
-            arguments.push(self.ty_at(depth + 1)?);
+            arguments.push(if self.bytes.first() == Some(&20) {
+                self.byte()?;
+                let bytes = self.bytes.get(..8).ok_or_else(invalid)?;
+                let n = u64::from_le_bytes(bytes.try_into().unwrap());
+                self.bytes = &self.bytes[8..];
+                crate::parser::ast::GenericArgument::Const(
+                    crate::parser::ast::ConstArgument::Value(n),
+                )
+            } else {
+                self.ty_at(depth + 1)?.into()
+            });
         }
         let key = (id, start[..start.len() - self.bytes.len()].to_vec());
         let n = self.number()?;
@@ -359,4 +369,50 @@ pub(crate) unsafe fn decode(
     info.domain_entry = entry.kind == 0;
     info.noescape = entry.kind == 0;
     Ok((name, info))
+}
+
+fn encode_argument(out: &mut Vec<u8>, a: &crate::parser::ast::GenericArgument) {
+    match a {
+        crate::parser::ast::GenericArgument::Type(t) => encode_type(out, t),
+        crate::parser::ast::GenericArgument::Const(crate::parser::ast::ConstArgument::Value(n)) => {
+            out.push(20);
+            put_u64(out, *n);
+        }
+        _ => unreachable!("concrete domain argument"),
+    }
+}
+
+#[cfg(test)]
+mod const_tests {
+    use super::*;
+    #[test]
+    fn fixed_array_f1_const_nominal_arguments_round_trip_without_host_width_loss() {
+        let module=crate::TypeRegistry::new().with_prelude(false).resolve_aliases(&crate::parser::parse("struct Tag<const N: UInt64> { value: Int32 } fn a(x:Tag<18446744073709551615>) {} fn b(x:Tag<0>) {}").unwrap()).unwrap();
+        let mut records = HashMap::new();
+        let mut decoded = Vec::new();
+        for item in module.items {
+            let crate::parser::ast::Item::FnDef(f) = item else {
+                continue;
+            };
+            let original = &f.params[0].ty;
+            let mut bytes = Vec::new();
+            encode_type(&mut bytes, original);
+            let mut reader = Reader {
+                bytes: &bytes,
+                records: &mut records,
+            };
+            let copy = reader.ty().unwrap();
+            assert!(reader.bytes.is_empty());
+            let (Type::Record(a), Type::Record(b)) = (original, &copy) else {
+                panic!()
+            };
+            assert_eq!(a.arguments, b.arguments);
+            assert_eq!(
+                crate::core::script::schema(original),
+                crate::core::script::schema(&copy)
+            );
+            decoded.push(copy);
+        }
+        assert_ne!(decoded[0], decoded[1]);
+    }
 }

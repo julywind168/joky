@@ -24,7 +24,7 @@ enum Obligation {
     Normalize(TypeProjection),
     Binding(TypeProjection),
     Implements(Type, u64),
-    Alias(String, Vec<Type>),
+    Alias(String, Vec<crate::parser::ast::GenericArgument>),
 }
 #[derive(Clone, Debug)]
 enum Answer {
@@ -84,7 +84,7 @@ impl TypeRegistry {
     pub(super) fn with_alias_obligation<T>(
         &self,
         name: &str,
-        arguments: &[Type],
+        arguments: &[crate::parser::ast::GenericArgument],
         f: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error> {
         if self.trait_work.borrow().active.is_empty() {
@@ -268,7 +268,7 @@ impl TypeRegistry {
                         &associated.bounds,
                         declaration_scope,
                         &ty,
-                        &HashMap::new(),
+                        &crate::core::types::Substitutions::default(),
                     )? {
                         return Err(error(
                             ErrorCode::TypeMismatch,
@@ -313,7 +313,12 @@ impl TypeRegistry {
                     .scope
                     .as_ref()
                     .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
-                if !self.bounds_hold(&associated.bounds, declaration_scope, &ty, &HashMap::new())? {
+                if !self.bounds_hold(
+                    &associated.bounds,
+                    declaration_scope,
+                    &ty,
+                    &crate::core::types::Substitutions::default(),
+                )? {
                     return Err(error(
                         ErrorCode::TypeMismatch,
                         format!(
@@ -890,7 +895,7 @@ impl TypeRegistry {
         &self,
         implementation: &ImplDef,
         actual: &Type,
-    ) -> Result<Option<HashMap<u64, Type>>, Error> {
+    ) -> Result<Option<crate::core::types::Substitutions>, Error> {
         let scope = implementation
             .scope
             .as_ref()
@@ -906,7 +911,7 @@ impl TypeRegistry {
         if !same {
             return Ok(None);
         }
-        let mut substitutions = HashMap::new();
+        let mut substitutions = crate::core::types::Substitutions::default();
         super::unify(
             &target,
             actual,
@@ -930,7 +935,7 @@ impl TypeRegistry {
         bounds: &[TraitBound],
         scope: &ImportScope,
         actual: &Type,
-        substitutions: &HashMap<u64, Type>,
+        substitutions: &crate::core::types::Substitutions,
     ) -> Result<bool, Error> {
         for bound in bounds {
             let id = self.trait_id(&bound.name, scope, bound.span)?;
@@ -988,7 +993,7 @@ impl TypeRegistry {
         &self,
         parameter: &TypeParameter,
         actual: &Type,
-        substitutions: &HashMap<u64, Type>,
+        substitutions: &crate::core::types::Substitutions,
     ) -> Result<bool, Error> {
         let scope = self
             .trait_environment
@@ -1004,7 +1009,7 @@ impl TypeRegistry {
         &self,
         parameter: &TypeParameter,
         actual: &Type,
-        substitutions: &HashMap<u64, Type>,
+        substitutions: &crate::core::types::Substitutions,
         span: Span,
     ) -> Result<(), Error> {
         if parameter.bounds.iter().all(|b| b.equalities.is_empty()) {

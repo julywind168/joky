@@ -154,6 +154,13 @@ impl Parser {
             TokenKind::Ident(name) => {
                 self.advance();
                 let mut name = name;
+                if self
+                    .type_params
+                    .iter()
+                    .any(|p| p.name == name && p.kind == ParameterKind::Const)
+                {
+                    return Err(self.error("Const parameter cannot be used as a type".into()));
+                }
                 if name == "Self" || self.type_params.iter().any(|p| p.name == name) {
                     if matches!(self.peek(), TokenKind::Lt | TokenKind::Shl) {
                         return Ok(Type::Applied(std::sync::Arc::new(TypeApplication {
@@ -242,6 +249,10 @@ impl Parser {
             self.advance();
             loop {
                 let span = self.peek_span();
+                let constant = self.peek() == &TokenKind::Const;
+                if constant {
+                    self.advance();
+                }
                 let parameter = self.expect_ident()?;
                 if matches!(parameter.as_str(), "_" | "Fn" | "FnMut" | "FnOnce")
                     || type_params.iter().any(|p| p.name == parameter)
@@ -258,7 +269,12 @@ impl Parser {
                     );
                 }
                 let mut parameter = TypeParameter::new(parameter, span);
-                if self.peek() == &TokenKind::Colon {
+                if constant {
+                    parameter.kind = ParameterKind::Const;
+                    self.expect(&TokenKind::Colon)?;
+                    self.expect(&TokenKind::TyUInt64)?;
+                }
+                if !constant && self.peek() == &TokenKind::Colon {
                     if !allow_bounds {
                         return Err(self.error("Trait bounds are currently supported on functions and implementations only".into()));
                     }
@@ -379,7 +395,18 @@ impl Parser {
                 }
                 Type::Applied(a) => {
                     for ty in &mut std::sync::Arc::make_mut(a).arguments {
-                        bind(ty, parameters);
+                        if let GenericArgument::Type(Type::Named(name)) = ty {
+                            if let Some(p) = parameters
+                                .iter()
+                                .find(|p| p.name == *name && p.kind == ParameterKind::Const)
+                            {
+                                *ty = p.argument();
+                                continue;
+                            }
+                        }
+                        if let Some(ty) = ty.as_type_mut() {
+                            bind(ty, parameters);
+                        }
                     }
                 }
                 Type::Function(f) => {
@@ -455,9 +482,28 @@ impl Parser {
         }
     }
 
-    pub(super) fn parse_type_arguments(&mut self) -> Result<Vec<Type>, Diagnostic> {
+    fn parse_generic_argument(&mut self) -> Result<GenericArgument, Diagnostic> {
+        if let TokenKind::IntLit(n) = self.peek().clone() {
+            self.advance();
+            return Ok(GenericArgument::Const(ConstArgument::Value(n)));
+        }
+        if let TokenKind::Ident(name) = self.peek() {
+            if let Some(p) = self
+                .type_params
+                .iter()
+                .find(|p| p.name == *name && p.kind == ParameterKind::Const)
+                .cloned()
+            {
+                self.advance();
+                return Ok(GenericArgument::Const(ConstArgument::Parameter(p)));
+            }
+        }
+        Ok(GenericArgument::Type(self.parse_type()?))
+    }
+
+    pub(super) fn parse_type_arguments(&mut self) -> Result<Vec<GenericArgument>, Diagnostic> {
         self.expect_type_open()?;
-        let mut args = vec![self.parse_type()?];
+        let mut args = vec![self.parse_generic_argument()?];
         while self.peek() == &TokenKind::Comma {
             self.advance();
             if matches!(
@@ -469,7 +515,7 @@ impl Parser {
             ) {
                 break;
             }
-            args.push(self.parse_type()?);
+            args.push(self.parse_generic_argument()?);
         }
         self.expect_type_close()?;
         Ok(args)

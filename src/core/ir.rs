@@ -1132,6 +1132,15 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
+        if let Some(ty) = f
+            .params
+            .iter()
+            .map(|p| &p.ty)
+            .chain(std::iter::once(&f.ret_ty))
+            .find(|ty| ty.contains_fixed_array())
+        {
+            return Err(type_error(&f.span,ErrorCode::TypeMismatch,format!("FixedArray values and operations are not supported in F1: function `{}` uses {ty}",f.name)));
+        }
         when::validate_blocks(f)?;
         let prepared = super::json_derive::prepare_encoding(f);
         let f = prepared.as_ref();
@@ -1527,6 +1536,15 @@ impl FunctionPlan {
     }
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
+        if ty.contains_fixed_array() {
+            return Err(type_error(
+                &self.current_span,
+                ErrorCode::TypeMismatch,
+                format!(
+                    "FixedArray values and operations are not supported in F1: value of type {ty}"
+                ),
+            ));
+        }
         if ty.contains_explicit_arena() {
             self.type_registry
                 .validate(&ty)
@@ -1886,6 +1904,16 @@ impl FunctionPlan {
                         (Type::Rune, Constant::Rune(*n))
                     }
                     Literal::UInt64(n) => (Type::UInt64, Constant::UInt64(*n)),
+                    Literal::ConstParameter(_) if self.generics.borrow().checking => {
+                        (Type::UInt64, Constant::UInt64(0))
+                    }
+                    Literal::ConstParameter(_) => {
+                        return Err(type_error(
+                            &expr.span(),
+                            ErrorCode::TypeMismatch,
+                            "Unsubstituted constant parameter",
+                        ))
+                    }
                     Literal::Integer {
                         magnitude,
                         negative,
@@ -2330,7 +2358,7 @@ fn payload_binding(ty: &Type, index: usize) -> Binding {
 
 /// Explicit arguments on a namespace or variant path. Qualified paths retain
 /// the parser's field representation, while simple paths use GenericName.
-fn expression_type_arguments(expr: &Expr) -> Option<&[Type]> {
+fn expression_type_arguments(expr: &Expr) -> Option<&[crate::parser::ast::GenericArgument]> {
     match expr {
         Expr::GenericName(name) => Some(&name.type_args),
         Expr::Field { type_args, .. } if !type_args.is_empty() => Some(type_args),

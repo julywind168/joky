@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[cfg(test)]
 mod alias_tests;
+mod fixed_array;
 mod indirect;
 mod layout;
 pub mod memory_layout;
@@ -50,8 +51,79 @@ pub(crate) struct AliasTemplate {
 #[derive(Debug)]
 struct AliasInstance {
     template: std::sync::Arc<AliasTemplate>,
-    arguments: Vec<Type>,
+    arguments: Vec<crate::parser::ast::GenericArgument>,
     target: Type,
+}
+
+/// Separate substitution maps retain type and constant argument kinds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Substitutions {
+    types: HashMap<u64, Type>,
+    pub(crate) constants: HashMap<u64, crate::parser::ast::ConstArgument>,
+}
+impl std::ops::Deref for Substitutions {
+    type Target = HashMap<u64, Type>;
+    fn deref(&self) -> &Self::Target {
+        &self.types
+    }
+}
+impl std::ops::DerefMut for Substitutions {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.types
+    }
+}
+impl FromIterator<(u64, Type)> for Substitutions {
+    fn from_iter<I: IntoIterator<Item = (u64, Type)>>(iter: I) -> Self {
+        Self {
+            types: iter.into_iter().collect(),
+            constants: HashMap::new(),
+        }
+    }
+}
+impl FromIterator<(u64, crate::parser::ast::GenericArgument)> for Substitutions {
+    fn from_iter<I: IntoIterator<Item = (u64, crate::parser::ast::GenericArgument)>>(
+        iter: I,
+    ) -> Self {
+        let mut s = Self::default();
+        for (id, a) in iter {
+            match a {
+                crate::parser::ast::GenericArgument::Type(t) => {
+                    s.types.insert(id, t);
+                }
+                crate::parser::ast::GenericArgument::Const(c) => {
+                    s.constants.insert(id, c);
+                }
+            }
+        }
+        s
+    }
+}
+impl Substitutions {
+    pub(crate) fn argument(
+        &self,
+        p: &crate::parser::ast::TypeParameter,
+    ) -> Option<crate::parser::ast::GenericArgument> {
+        use crate::parser::ast::{GenericArgument, ParameterKind};
+        match p.kind {
+            ParameterKind::Type => self.types.get(&p.id).cloned().map(GenericArgument::Type),
+            ParameterKind::Const => self
+                .constants
+                .get(&p.id)
+                .cloned()
+                .map(GenericArgument::Const),
+        }
+    }
+    pub(crate) fn constant(
+        &self,
+        c: &crate::parser::ast::ConstArgument,
+    ) -> crate::parser::ast::ConstArgument {
+        match c {
+            crate::parser::ast::ConstArgument::Parameter(p) => {
+                self.constants.get(&p.id).unwrap_or(c).clone()
+            }
+            _ => c.clone(),
+        }
+    }
 }
 
 const VM_OWNER: &str = "vm.Owner";
@@ -77,10 +149,34 @@ pub struct TypeRegistry {
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::EnumType>>>>,
     record_instances:
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::RecordType>>>>,
+    fixed_arrays:
+        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::FixedArrayType>>>>,
     alias_instances: std::rc::Rc<std::cell::RefCell<Vec<AliasInstance>>>,
 }
 
 impl TypeRegistry {
+    pub(crate) fn validate_argument(
+        &self,
+        p: &crate::parser::ast::TypeParameter,
+        a: &crate::parser::ast::GenericArgument,
+    ) -> Result<(), Error> {
+        use crate::parser::ast::{ConstArgument, GenericArgument, ParameterKind};
+        match (p.kind, a) {
+            (ParameterKind::Type, GenericArgument::Type(t)) => self.validate(t),
+            (ParameterKind::Const, GenericArgument::Const(ConstArgument::Value(_))) => Ok(()),
+            (ParameterKind::Const, GenericArgument::Const(ConstArgument::Parameter(c)))
+                if c.kind == ParameterKind::Const && self.parameters.contains_key(&c.id) =>
+            {
+                Ok(())
+            }
+            _ => Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::TypeMismatch,
+                format!("Generic argument kind mismatch for `{}`", p.name),
+            )),
+        }
+    }
+
     /// Create a registry containing the built-in VM opaque types.
     pub fn new() -> Self {
         Self::default()
@@ -335,7 +431,7 @@ impl TypeRegistry {
                     && arguments
                         .iter()
                         .zip(&implementation.type_params)
-                        .all(|(ty, p)| matches!(ty, Type::Parameter(actual) if actual == p))
+                        .all(|(ty, p)| *ty == p.argument())
             } else if let Type::Parameter(parameter) = target {
                 implementation.trait_name.is_some()
                     && implementation.type_params.len() == 1
@@ -496,6 +592,7 @@ impl TypeRegistry {
         local.enum_instances = Default::default();
         local.record_instances = Default::default();
         local.alias_instances = Default::default();
+        local.fixed_arrays = Default::default();
         local.forwards = Default::default();
         local
     }
@@ -537,6 +634,7 @@ impl TypeRegistry {
     }
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
+        fixed_array::validate(ty, self)?;
         if ty.contains_explicit_arena()
             && !ty.is_explicit_arena()
             && !ty
@@ -604,7 +702,7 @@ impl TypeRegistry {
                     None
                 }
                 Type::Applied(_) => Some("Type applications must be resolved before planning".into()),
-                Type::Parameter(p) if !self.parameters.contains_key(&p.id) =>
+                Type::Parameter(p) if p.kind != crate::parser::ast::ParameterKind::Type || !self.parameters.contains_key(&p.id) =>
                     Some(format!("Type parameter `{}` is outside its declaring function or type", p.name)),
                 Type::Resource(name) if !self.resources.contains(name.as_ref()) => Some(format!("Unregistered resource type `{name}`")),
                 Type::Named(name) if !self.contains(name) => Some(format!(
@@ -693,6 +791,12 @@ fn resolve_type_at_depth(
                 ErrorCode::ResourceLimit,
                 "Tuple nesting exceeds 256 levels",
             ));
+        }
+        if let Type::FixedArray(a) = ty {
+            let mut element = a.element.clone();
+            resolve(&mut element, aliases, registry, depth + 1, cache)?;
+            *ty = registry.fixed_array(element, a.length.clone())?;
+            return Ok(());
         }
         if let Type::Named(name) = ty {
             if registry.resources.contains(name) {
@@ -830,7 +934,7 @@ fn resolve_type_at_depth(
                 ));
             };
             let mut arguments = arguments.clone();
-            for arg in &mut arguments {
+            for arg in arguments.iter_mut().filter_map(|a| a.as_type_mut()) {
                 resolve(arg, aliases, registry, depth + 1, cache)?;
             }
             *ty = match template {
@@ -917,21 +1021,22 @@ pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
 fn map_binding_types(
     pattern: &mut crate::parser::ast::BindingPattern,
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
+    substitutions: &Substitutions,
 ) -> Result<(), Error> {
     use crate::parser::ast::BindingPattern;
     match pattern {
         BindingPattern::Record { inner, span } => {
-            for ty in inner.type_args.iter_mut() {
-                map(ty, *span)?;
+            for a in inner.type_args.iter_mut() {
+                map_generic_argument(a, *span, map, substitutions)?;
             }
             for field in inner.fields.iter_mut() {
-                map_binding_types(&mut field.pattern, map)?;
+                map_binding_types(&mut field.pattern, map, substitutions)?;
             }
             Ok(())
         }
         BindingPattern::Tuple { elements, .. } => {
             for element in elements {
-                map_binding_types(element, map)?;
+                map_binding_types(element, map, substitutions)?;
             }
             Ok(())
         }
@@ -942,6 +1047,7 @@ fn map_binding_types(
 fn map_payload_types(
     pattern: &mut crate::parser::ast::PayloadPattern,
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
+    substitutions: &Substitutions,
 ) -> Result<(), Error> {
     use crate::parser::ast::PayloadPattern;
     match pattern {
@@ -951,23 +1057,23 @@ fn map_payload_types(
             span,
             ..
         } => {
-            for ty in type_args {
-                map(ty, *span)?;
+            for a in type_args.iter_mut() {
+                map_generic_argument(a, *span, map, substitutions)?;
             }
             for field in fields {
-                map_binding_types(&mut field.pattern, map)?;
+                map_binding_types(&mut field.pattern, map, substitutions)?;
             }
             Ok(())
         }
         PayloadPattern::Tuple { elements, .. } => {
             for element in elements {
-                map_payload_types(element, map)?;
+                map_payload_types(element, map, substitutions)?;
             }
             Ok(())
         }
         PayloadPattern::Variant { payload, .. } => payload
             .as_mut()
-            .map(|payload| map_payload_types(payload, map))
+            .map(|payload| map_payload_types(payload, map, substitutions))
             .transpose()
             .map(|_| ()),
         _ => Ok(()),
@@ -995,17 +1101,17 @@ pub(crate) fn resolve_pattern_heads(
 ) -> Result<(), Error> {
     fn head(
         name: &mut String,
-        type_args: &mut [Type],
+        type_args: &mut [crate::parser::ast::GenericArgument],
         aliases: &HashMap<&str, TypeDefinition>,
         registry: &TypeRegistry,
     ) -> Result<(), Error> {
-        for ty in type_args.iter_mut() {
+        for ty in type_args.iter_mut().filter_map(|a| a.as_type_mut()) {
             resolve_type(ty, aliases, registry)?;
         }
         // Module-qualified spellings already resolve through import scopes;
         // only bare names can be same-module aliases needing canonicalization.
         if name.contains('.') {
-            for ty in type_args.iter_mut() {
+            for ty in type_args.iter_mut().filter_map(|a| a.as_type_mut()) {
                 resolve_type(ty, aliases, registry)?;
             }
             return Ok(());
@@ -1178,10 +1284,29 @@ pub(crate) fn resolve_pattern_heads(
 
 pub(crate) fn map_annotations(
     expr: &mut Expr,
+    map: &mut impl FnMut(&mut Type, Span) -> Result<(), Error>,
+) -> Result<(), Error> {
+    map_syntax(expr, map, &Substitutions::default())
+}
+fn map_generic_argument(
+    a: &mut crate::parser::ast::GenericArgument,
+    span: Span,
+    map: &mut impl FnMut(&mut Type, Span) -> Result<(), Error>,
+    substitutions: &Substitutions,
+) -> Result<(), Error> {
+    match a {
+        crate::parser::ast::GenericArgument::Type(t) => map(t, span)?,
+        crate::parser::ast::GenericArgument::Const(c) => *c = substitutions.constant(c),
+    }
+    Ok(())
+}
+pub(crate) fn map_syntax(
+    expr: &mut Expr,
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
+    substitutions: &Substitutions,
 ) -> Result<(), Error> {
     match expr {
-        Expr::When(block) => map_annotations(&mut block.body, map)?,
+        Expr::When(block) => map_syntax(&mut block.body, map, substitutions)?,
         Expr::AnonymousFunction(function) => {
             for param in &mut function.params {
                 if let Some(ty) = &mut param.ty {
@@ -1191,41 +1316,41 @@ pub(crate) fn map_annotations(
             if let Some(ty) = &mut function.ret {
                 map(ty, function.span)?;
             }
-            map_annotations(&mut function.body, map)?;
+            map_syntax(&mut function.body, map, substitutions)?;
         }
         Expr::Invoke { callee, args, .. } => {
-            map_annotations(callee, map)?;
+            map_syntax(callee, map, substitutions)?;
             for arg in args {
-                map_annotations(arg, map)?;
+                map_syntax(arg, map, substitutions)?;
             }
         }
         Expr::GenericName(name) => {
-            for ty in &mut name.type_args {
-                map(ty, name.span)?;
+            for a in name.type_args.iter_mut() {
+                map_generic_argument(a, name.span, map, substitutions)?;
             }
         }
         Expr::MethodCall(call) => {
-            map_annotations(&mut call.receiver, map)?;
-            for ty in &mut call.type_args {
-                map(ty, call.span)?;
+            map_syntax(&mut call.receiver, map, substitutions)?;
+            for a in call.type_args.iter_mut() {
+                map_generic_argument(a, call.span, map, substitutions)?;
             }
             for arg in &mut call.args {
-                map_annotations(arg, map)?;
+                map_syntax(arg, map, substitutions)?;
             }
         }
         Expr::Match { value, arms, .. } => {
-            map_annotations(value, map)?;
+            map_syntax(value, map, substitutions)?;
             for arm in arms.iter_mut() {
                 if let crate::parser::ast::Pattern::Variant {
                     binding: Some(binding),
                     ..
                 } = &mut arm.pattern
                 {
-                    map_payload_types(binding, map)?;
+                    map_payload_types(binding, map, substitutions)?;
                 }
             }
             for arm in arms.iter_mut() {
-                map_annotations(&mut arm.body, map)?;
+                map_syntax(&mut arm.body, map, substitutions)?;
             }
         }
         Expr::Record {
@@ -1234,11 +1359,11 @@ pub(crate) fn map_annotations(
             span,
             ..
         } => {
-            for ty in type_args {
-                map(ty, *span)?;
+            for a in type_args.iter_mut() {
+                map_generic_argument(a, *span, map, substitutions)?;
             }
             for field in fields {
-                map_annotations(&mut field.value, map)?;
+                map_syntax(&mut field.value, map, substitutions)?;
             }
         }
         Expr::Field {
@@ -1247,14 +1372,14 @@ pub(crate) fn map_annotations(
             span,
             ..
         } => {
-            for ty in type_args {
-                map(ty, *span)?;
+            for a in type_args.iter_mut() {
+                map_generic_argument(a, *span, map, substitutions)?;
             }
-            map_annotations(base, map)?;
+            map_syntax(base, map, substitutions)?;
         }
         Expr::FieldAssign { target, value, .. } => {
-            map_annotations(target, map)?;
-            map_annotations(value, map)?;
+            map_syntax(target, map, substitutions)?;
+            map_syntax(value, map, substitutions)?;
         }
         Expr::Destructure {
             annotation,
@@ -1265,8 +1390,8 @@ pub(crate) fn map_annotations(
             if let Some(ty) = annotation {
                 map(ty, value.span())?;
             }
-            map_binding_types(pattern, map)?;
-            map_annotations(value, map)?;
+            map_binding_types(pattern, map, substitutions)?;
+            map_syntax(value, map, substitutions)?;
         }
         Expr::Let {
             annotation, value, ..
@@ -1277,18 +1402,18 @@ pub(crate) fn map_annotations(
             if let Some(ty) = annotation {
                 map(ty, value.span())?;
             }
-            map_annotations(value, map)?;
+            map_syntax(value, map, substitutions)?;
         }
         Expr::Assign { value, .. }
         | Expr::Unary { operand: value, .. }
         | Expr::Return {
             value: Some(value), ..
-        } => map_annotations(value, map)?,
+        } => map_syntax(value, map, substitutions)?,
         Expr::While {
             condition, body, ..
         } => {
-            map_annotations(condition, map)?;
-            map_annotations(body, map)?;
+            map_syntax(condition, map, substitutions)?;
+            map_syntax(body, map, substitutions)?;
         }
         Expr::If {
             condition,
@@ -1296,15 +1421,15 @@ pub(crate) fn map_annotations(
             else_branch,
             ..
         } => {
-            map_annotations(condition, map)?;
-            map_annotations(then_branch, map)?;
+            map_syntax(condition, map, substitutions)?;
+            map_syntax(then_branch, map, substitutions)?;
             if let Some(branch) = else_branch {
-                map_annotations(branch, map)?;
+                map_syntax(branch, map, substitutions)?;
             }
         }
         Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
-            map_annotations(lhs, map)?;
-            map_annotations(rhs, map)?;
+            map_syntax(lhs, map, substitutions)?;
+            map_syntax(rhs, map, substitutions)?;
         }
         Expr::Call {
             type_args,
@@ -1312,11 +1437,11 @@ pub(crate) fn map_annotations(
             span,
             ..
         } => {
-            for ty in type_args {
-                map(ty, *span)?;
+            for a in type_args.iter_mut() {
+                map_generic_argument(a, *span, map, substitutions)?;
             }
             for arg in args {
-                map_annotations(arg, map)?;
+                map_syntax(arg, map, substitutions)?;
             }
         }
         Expr::Tuple {
@@ -1330,11 +1455,23 @@ pub(crate) fn map_annotations(
             branches: exprs, ..
         } => {
             for expr in exprs {
-                map_annotations(expr, map)?;
+                map_syntax(expr, map, substitutions)?;
             }
         }
         Expr::TaskScope { body, .. } | Expr::Branch { body, .. } => {
-            map_annotations(body, map)?;
+            map_syntax(body, map, substitutions)?;
+        }
+        Expr::Literal {
+            literal: crate::parser::ast::Literal::ConstParameter(p),
+            ..
+        } => {
+            if let Some(crate::parser::ast::ConstArgument::Value(n)) =
+                substitutions.constants.get(&p.id)
+            {
+                if let Expr::Literal { literal, .. } = expr {
+                    *literal = crate::parser::ast::Literal::UInt64(*n);
+                }
+            }
         }
         Expr::Literal { .. }
         | Expr::Ident { .. }
@@ -1428,6 +1565,7 @@ impl Default for TypeRegistry {
             forwards: Default::default(),
             enum_instances: Default::default(),
             record_instances: Default::default(),
+            fixed_arrays: Default::default(),
             alias_instances: Default::default(),
         }
     }

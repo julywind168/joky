@@ -24,10 +24,12 @@ pub(super) fn compatible(a: &Type, b: &Type) -> bool {
                 || (a.name == b.name
                     && a.indirect == b.indirect
                     && a.arguments.len() == b.arguments.len()
-                    && a.arguments
-                        .iter()
-                        .zip(&b.arguments)
-                        .all(|(a, b)| compatible(a, b))
+                    && a.arguments.iter().zip(&b.arguments).all(|(a, b)| {
+                        match (a.as_type(), b.as_type()) {
+                            (Some(a), Some(b)) => compatible(a, b),
+                            _ => a == b,
+                        }
+                    })
                     && a.variants.len() == b.variants.len()
                     && a.variants.iter().zip(&b.variants).all(|(a, b)| {
                         a.name == b.name
@@ -47,10 +49,12 @@ pub(super) fn compatible(a: &Type, b: &Type) -> bool {
                     && a.repr_c == b.repr_c
                     && a.indirect == b.indirect
                     && a.arguments.len() == b.arguments.len()
-                    && a.arguments
-                        .iter()
-                        .zip(&b.arguments)
-                        .all(|(a, b)| compatible(a, b))
+                    && a.arguments.iter().zip(&b.arguments).all(|(a, b)| {
+                        match (a.as_type(), b.as_type()) {
+                            (Some(a), Some(b)) => compatible(a, b),
+                            _ => a == b,
+                        }
+                    })
                     && a.fields.len() == b.fields.len()
                     && a.fields.iter().zip(&b.fields).all(|(a, b)| {
                         a.name == b.name

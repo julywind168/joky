@@ -30,6 +30,8 @@ pub(super) enum ImplicitImports {
 pub(super) enum SourceKind {
     User,
     Embedded,
+    FixedArrayStorage,
+    FixedArrayLibrary,
     BufferStorage,
     BufferLibrary,
     DropTrait,
@@ -54,6 +56,20 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::FixedArrayStorage,
+        path: "joky/internal/fixed_array",
+        source: include_str!("../../stdlib/internal/fixed_array.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::FixedArrayLibrary,
+        path: "joky/fixed_array",
+        source: include_str!("../../stdlib/fixed_array.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::Arena,
         path: "joky/arena",
@@ -339,6 +355,13 @@ impl StandardLibrary {
         if source.kind == SourceKind::BufferStorage {
             bind_buffer_definitions(&mut module)?;
         }
+        if source.kind == SourceKind::FixedArrayStorage {
+            let alias = &mut module.type_aliases[0];
+            alias.target = Type::FixedArray(Arc::new(crate::parser::ast::FixedArrayType {
+                element: Type::Parameter(alias.type_params[0].clone()),
+                length: crate::parser::ast::ConstArgument::Parameter(alias.type_params[1].clone()),
+            }));
+        }
         intrinsics::bind_functions(&mut module, source.kind)?;
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {
@@ -369,6 +392,7 @@ impl StandardLibrary {
         let embedded = !matches!(
             kind,
             SourceKind::User
+                | SourceKind::FixedArrayLibrary
                 | SourceKind::BufferLibrary
                 | SourceKind::Text
                 | SourceKind::Json
@@ -381,7 +405,8 @@ impl StandardLibrary {
             &self.modules,
             matches!(
                 kind,
-                SourceKind::BufferLibrary
+                SourceKind::FixedArrayLibrary
+                    | SourceKind::BufferLibrary
                     | SourceKind::Text
                     | SourceKind::Json
                     | SourceKind::Domain
@@ -659,7 +684,12 @@ impl StandardLibrary {
                 } else {
                     BTreeSet::new()
                 },
-                private: matches!(kind, SourceKind::BufferStorage | SourceKind::TypeCheck),
+                private: matches!(
+                    kind,
+                    SourceKind::FixedArrayStorage
+                        | SourceKind::BufferStorage
+                        | SourceKind::TypeCheck
+                ),
                 module,
                 exports,
                 dependencies: required.into_iter().collect(),

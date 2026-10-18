@@ -47,7 +47,7 @@ impl FunctionPlan {
                 })?;
             let name = context.instantiate(
                 &witness,
-                vec![ty.clone()],
+                vec![ty.clone().into()],
                 crate::FunctionSignature::new(vec![Type::reference(ty.clone(), false)], Type::Unit),
                 self.instantiation_depth + 1,
                 span,
@@ -142,7 +142,7 @@ impl FunctionPlan {
                     })?;
                 context.instantiate(
                     &name,
-                    vec![target.signature.params[1].clone()],
+                    vec![target.signature.params[1].clone().into()],
                     crate::FunctionSignature::new(
                         vec![
                             crate::runtime::domain::module_type(),
@@ -346,7 +346,7 @@ impl FunctionPlan {
                     })?;
                 context.instantiate(
                     &name,
-                    vec![target.signature.ret.clone()],
+                    vec![target.signature.ret.clone().into()],
                     crate::FunctionSignature::new(
                         vec![
                             crate::runtime::domain::module_type(),
@@ -368,7 +368,7 @@ impl FunctionPlan {
                     .ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, "Missing domain set value adapter"))?;
                 context.instantiate(
                     &name,
-                    vec![inputs[0].clone()],
+                    vec![inputs[0].clone().into()],
                     crate::FunctionSignature::new(
                         vec![
                             crate::runtime::domain::module_type(),
@@ -549,7 +549,10 @@ impl FunctionPlan {
                     })?;
                 context.instantiate(
                     &name,
-                    vec![target.signature.ret.clone(), input_type.clone()],
+                    vec![
+                        target.signature.ret.clone().into(),
+                        input_type.clone().into(),
+                    ],
                     crate::FunctionSignature::new(
                         vec![
                             crate::runtime::domain::module_type(),
@@ -616,9 +619,9 @@ impl FunctionPlan {
                 context.instantiate(
                     &name,
                     if scalar_call {
-                        vec![result_type]
+                        vec![result_type.into()]
                     } else {
-                        vec![input_type, result_type]
+                        vec![input_type.into(), result_type.into()]
                     },
                     crate::FunctionSignature::new(params, info.signature.ret.clone()),
                     self.instantiation_depth + 1,
@@ -724,10 +727,10 @@ impl FunctionPlan {
                 };
                 let mut arguments = snapshot.arguments.clone();
                 if matches!(kind, DomainCandidate) {
-                    arguments.push(target.signature.ret.clone());
+                    arguments.push(target.signature.ret.clone().into());
                 }
                 let input_type = if value_candidate {
-                    arguments.push(inputs[0].clone());
+                    arguments.push(inputs[0].clone().into());
                     inputs[0].clone()
                 } else {
                     Type::UInt64
@@ -772,9 +775,12 @@ impl FunctionPlan {
                 context.instantiate(
                     &name,
                     if value_request {
-                        vec![inputs[0].clone(), target.signature.ret.clone()]
+                        vec![
+                            inputs[0].clone().into(),
+                            target.signature.ret.clone().into(),
+                        ]
                     } else {
-                        vec![target.signature.ret.clone()]
+                        vec![target.signature.ret.clone().into()]
                     },
                     crate::FunctionSignature::new(
                         if value_request {

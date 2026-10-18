@@ -18,6 +18,7 @@ impl Parser {
                 None
             };
             let name = self.expect_ident()?;
+            self.check_binding_name(&name)?;
             if borrowed.is_some() && (name != "self" || self.impl_target.is_none()) {
                 return Err(
                     self.error("Only a trait or impl receiver may use &self or &mut self".into())
@@ -365,6 +366,11 @@ impl Parser {
         } else {
             (None, first)
         };
+        if trait_name.is_some() && type_params.iter().any(|p| p.kind == ParameterKind::Const) {
+            return Err(
+                self.error("Const parameters are not supported in trait implementations".into())
+            );
+        }
         let target_name = match &target {
             Type::Applied(application) => application.name.clone(),
             _ => target.to_string(),
@@ -452,6 +458,11 @@ impl Parser {
         let name_span = self.peek_span();
         let name = self.expect_ident()?;
         let type_params = self.parse_type_parameters(false)?;
+        if type_params.iter().any(|p| p.kind == ParameterKind::Const) {
+            return Err(
+                self.error("Const parameters are not supported on enum declarations".into())
+            );
+        }
         self.type_params.clone_from(&type_params);
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();

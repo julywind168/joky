@@ -4,7 +4,7 @@ use super::*;
 use crate::parser::ast::{EnumType, RecordType};
 use std::sync::Arc;
 
-pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
+pub(super) fn shallow(ty: &Type, arguments: Vec<crate::parser::ast::GenericArgument>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
             closure: None,
@@ -184,7 +184,7 @@ fn resolve(
         Type::Applied(a) => (&a.name, Some(a.arguments.clone())),
         Type::Record(r) => return Ok(shallow(ty, r.arguments.clone())),
         Type::Enum(e) => return Ok(shallow(ty, e.arguments.clone())),
-        Type::Function(_) | Type::Projection(_) => {
+        Type::FixedArray(_) | Type::Function(_) | Type::Projection(_) => {
             // Crossing between reference and value normalization has larger
             // stack frames than a plain signature walk. Bound that path too.
             if depth > 32 {
@@ -241,7 +241,7 @@ fn resolve(
         return Err(bad(&format!("Unknown reference target {name}")));
     };
     let mut arguments = supplied.clone().unwrap_or_default();
-    for argument in &mut arguments {
+    for argument in arguments.iter_mut().filter_map(|a| a.as_type_mut()) {
         *argument = resolve(argument, canonical, registry, depth + 1, budget)?;
         registry.validate(argument)?;
         if argument.contains_closures() || !argument.is_copy_storage_value() && !argument.is_owner()
@@ -257,6 +257,9 @@ fn resolve(
                 return Err(bad(
                     "Reference target alias requires matching type arguments",
                 ));
+            }
+            for (p, a) in alias.parameters.iter().zip(&arguments) {
+                registry.validate_argument(p, a)?;
             }
             let substitutions = alias
                 .parameters
@@ -287,6 +290,9 @@ fn resolve(
             if let Some(parameters) = parameters {
                 if parameters.len() != arguments.len() {
                     return Err(bad("Reference target requires matching type arguments"));
+                }
+                for (p, a) in parameters.iter().zip(&arguments) {
+                    registry.validate_argument(p, a)?;
                 }
                 Ok(shallow(&target, arguments))
             } else if supplied.is_some() {
@@ -358,7 +364,7 @@ pub(crate) fn materialize(
                         template,
                         r.arguments
                             .iter()
-                            .map(|t| visit(t, nominals, registry, cache))
+                            .map(|a| a.try_map_type(|t| visit(t, nominals, registry, cache)))
                             .collect::<Result<_, _>>()?,
                     )
                 }
@@ -384,7 +390,7 @@ pub(crate) fn materialize(
                         template,
                         e.arguments
                             .iter()
-                            .map(|t| visit(t, nominals, registry, cache))
+                            .map(|a| a.try_map_type(|t| visit(t, nominals, registry, cache)))
                             .collect::<Result<_, _>>()?,
                     )
                 }
@@ -484,8 +490,12 @@ pub(crate) fn validate_elements(
 
 // Alias targets can still contain unresolved names. Substitute their syntax
 // before resolving, without prematurely asking for an inline value layout.
-pub(crate) fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
+pub(crate) fn substitute_syntax(ty: &Type, arguments: &crate::core::types::Substitutions) -> Type {
     match ty {
+        Type::FixedArray(a) => Type::FixedArray(Arc::new(crate::parser::ast::FixedArrayType {
+            element: substitute_syntax(&a.element, arguments),
+            length: arguments.constant(&a.length),
+        })),
         Type::Function(signature) => Type::function_with_effect(
             signature
                 .signature
@@ -520,23 +530,34 @@ pub(crate) fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Ty
             arguments: a
                 .arguments
                 .iter()
-                .map(|t| substitute_syntax(t, arguments))
+                .map(|a| substitute_argument_syntax(a, arguments))
                 .collect(),
         })),
         Type::Record(r) => shallow(
             ty,
             r.arguments
                 .iter()
-                .map(|t| substitute_syntax(t, arguments))
+                .map(|a| substitute_argument_syntax(a, arguments))
                 .collect(),
         ),
         Type::Enum(e) => shallow(
             ty,
             e.arguments
                 .iter()
-                .map(|t| substitute_syntax(t, arguments))
+                .map(|a| substitute_argument_syntax(a, arguments))
                 .collect(),
         ),
         _ => ty.clone(),
+    }
+}
+
+pub(crate) fn substitute_argument_syntax(
+    a: &crate::parser::ast::GenericArgument,
+    s: &crate::core::types::Substitutions,
+) -> crate::parser::ast::GenericArgument {
+    use crate::parser::ast::GenericArgument;
+    match a {
+        GenericArgument::Type(t) => GenericArgument::Type(substitute_syntax(t, s)),
+        GenericArgument::Const(c) => GenericArgument::Const(s.constant(c)),
     }
 }

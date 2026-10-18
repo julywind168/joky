@@ -1,0 +1,3 @@
+import joky/internal/fixed_array as storage
+
+pub type FixedArray<T, const N: UInt64> = storage.FixedArray<T, N>

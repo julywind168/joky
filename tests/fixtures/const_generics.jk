@@ -1,0 +1,32 @@
+import const_model as model
+import joky/fixed_array.{type FixedArray}
+
+type Phantom<T, const N: UInt64> = T
+type Bytes<const N: UInt64> = FixedArray<UInt8, N>
+struct Tag<T, const N: UInt64> { value: T }
+impl<T, const N: UInt64> Tag<T, N> {
+    fn length(&self) -> UInt64 { N }
+    fn shifted<const M: UInt64>(&self) -> UInt64 { N + M }
+}
+fn constant<const N: UInt64>() -> UInt64 { N }
+fn forward<const N: UInt64>() -> UInt64 { constant::<N>() }
+fn unused<const N: UInt64>(value: Int32) -> Int32 { value }
+fn inferred<T, const N: UInt64>(value: Tag<T, N>) -> UInt64 { N }
+fn mixed<const N: UInt64, T, const M: UInt64>(value: T) -> UInt64 { N + M }
+fn apply<const N: UInt64, F: Fn() -> UInt64>(f: F) -> UInt64 { N + f() }
+const SHADOW: UInt64 = 1
+fn shadow<const SHADOW: UInt64>() -> UInt64 { SHADOW }
+fn check() -> Int32 {
+    if apply::<40>(|| { constant::<2>() }) != 42 || shadow::<42>() != 42 { return 7 }
+    let imported = model.Marker::<26>.make()
+    if imported.size() + model.forward::<16>() != 42 { return 6 }
+    let tag = Tag::<Int32, 0x10> { value: 7 }
+    let value: Phantom<Int32, 100> = 42
+    let function = constant::<26>
+    if forward::<0b10000>() != 16 || function() != 26 { return 1 }
+    if tag.length() != 16 || tag.shifted::<26>() != 42 { return 2 }
+    if inferred(tag) != 16 || mixed::<12, Int32, 30>(7) != 42 { return 3 }
+    if unused::<1>(value) != unused::<2>(42) { return 4 }
+    if constant::<0xffff_ffff_ffff_ffff>() != 0xffff_ffff_ffff_ffff { return 5 }
+    value
+}

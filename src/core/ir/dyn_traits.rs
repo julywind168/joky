@@ -207,7 +207,7 @@ impl FunctionPlan {
                 Vec::new()
             } else {
                 match (&method.target, target) {
-                    (Type::Parameter(_), _) => vec![target.clone()],
+                    (Type::Parameter(_), _) => vec![target.clone().into()],
                     (_, Type::Record(r)) => r.arguments.clone(),
                     (_, Type::Enum(e)) => e.arguments.clone(),
                     _ => {

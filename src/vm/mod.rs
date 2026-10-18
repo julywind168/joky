@@ -272,3 +272,6 @@ mod arithmetic_assignment_tests;
 mod conditional_patterns_tests;
 #[cfg(test)]
 mod explicit_arena_tests;
+
+#[cfg(test)]
+mod const_generic_tests;

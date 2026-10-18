@@ -363,7 +363,7 @@ impl FunctionPlan {
             .cloned();
         if let Some(c) = &constant {
             if let Some(owner) = c.owner.target().filter(|_| !c.parameters.is_empty()) {
-                let mut substitutions = HashMap::new();
+                let mut substitutions = crate::core::types::Substitutions::default();
                 generics::unify(owner, &ty, &c.parameters, &mut substitutions, expr.span())?;
                 for p in &c.parameters {
                     if let Some(actual) = substitutions.get(&p.id) {
@@ -567,7 +567,7 @@ impl FunctionPlan {
                     handle.name.as_str(),
                     "joky/domain.ReadHandle" | "joky/domain.WriteHandle"
                 ) {
-                    let state = &handle.arguments[0];
+                    let state = handle.arguments[0].as_type().expect("domain state type");
                     if let Some(method) = context
                         .members
                         .method(state, name)
@@ -725,7 +725,7 @@ impl FunctionPlan {
         arguments.extend_from_slice(args);
         let mut bound_arguments = if method.impl_parameters > 0 && bound_receiver {
             match (&method.target, &ty) {
-                (Type::Parameter(_), _) if method.trait_id.is_some() => vec![ty.clone()],
+                (Type::Parameter(_), _) if method.trait_id.is_some() => vec![ty.clone().into()],
                 (_, Type::Record(r)) => r.arguments.clone(),
                 (_, Type::Enum(e)) => e.arguments.clone(),
                 _ => unreachable!("generic implementations have nominal targets"),

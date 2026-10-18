@@ -89,6 +89,12 @@ pub struct MemoryLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemoryLayoutShape {
+    /// One compact descriptor, independent of the number of elements.
+    Array {
+        element: Arc<MemoryLayout>,
+        length: u64,
+        stride: usize,
+    },
     Scalar,
     /// Members in declaration order; offsets are relative to this object.
     Record(Vec<FieldMemoryLayout>),
@@ -115,6 +121,7 @@ pub struct VariantMemoryLayout {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum AggregateKey {
+    Array(*const crate::parser::ast::FixedArrayType),
     Record(*const RecordType),
     Enum(*const EnumType),
     Tuple(*const TupleType),
@@ -135,6 +142,17 @@ impl Type {
         target: MemoryLayoutTarget,
     ) -> Result<MemoryLayout, MemoryLayoutError> {
         target.validate()?;
+        let mut target = target;
+        if self.contains_fixed_array() {
+            super::fixed_array::weight(self).map_err(|_| MemoryLayoutError::ResourceLimit)?;
+            target.max_size = target.max_size.min(super::fixed_array::MAX_BYTES).min(
+                if target.pointer_size == 4 {
+                    i32::MAX as usize
+                } else {
+                    isize::MAX as usize
+                },
+            );
+        }
         // Validate the whole reachable type graph once, before recursive layout.
         if self.contains_dyn() {
             return Err(MemoryLayoutError::UnsupportedType);
@@ -164,6 +182,55 @@ impl LayoutContext {
     fn layout(&mut self, ty: &Type, depth: usize) -> Result<Arc<MemoryLayout>, MemoryLayoutError> {
         if ty.closure_info().is_some() && !self.owners {
             return Err(MemoryLayoutError::UnsupportedType);
+        }
+        if let Type::FixedArray(array) = ty {
+            let key = AggregateKey::Array(Arc::as_ptr(array));
+            if depth >= MAX_DEPTH {
+                return Err(MemoryLayoutError::ResourceLimit);
+            }
+            if let Some((layout, height)) = self.cache.get(&key) {
+                if depth + height > MAX_DEPTH {
+                    return Err(MemoryLayoutError::ResourceLimit);
+                }
+                return Ok(layout.clone());
+            }
+            if !self.visiting.insert(key) {
+                return Err(MemoryLayoutError::RecursiveType);
+            }
+            let crate::parser::ast::ConstArgument::Value(length) = array.length else {
+                return Err(MemoryLayoutError::UnsupportedType);
+            };
+            if length > super::fixed_array::MAX_LENGTH {
+                return Err(MemoryLayoutError::ResourceLimit);
+            }
+            let element = self.layout(&array.element, depth + 1)?;
+            let stride = checked_align_up(element.size, element.align, self.target.max_size)?;
+            let size = (stride as u128)
+                .checked_mul(u128::from(length))
+                .ok_or(MemoryLayoutError::Overflow)?;
+            if size > self.target.max_size as u128 || size > super::fixed_array::MAX_BYTES as u128 {
+                return Err(MemoryLayoutError::ResourceLimit);
+            }
+            let child_key = match &array.element {
+                Type::FixedArray(a) => Some(AggregateKey::Array(Arc::as_ptr(a))),
+                Type::Record(r) => Some(AggregateKey::Record(Arc::as_ptr(r))),
+                Type::Enum(e) => Some(AggregateKey::Enum(Arc::as_ptr(e))),
+                Type::Tuple(t) => Some(AggregateKey::Tuple(Arc::as_ptr(t))),
+                _ => None,
+            };
+            let height = child_key.map_or(1, |key| self.cache[&key].1 + 1);
+            let layout = Arc::new(MemoryLayout {
+                size: usize::try_from(size).map_err(|_| MemoryLayoutError::Overflow)?,
+                align: element.align,
+                shape: MemoryLayoutShape::Array {
+                    stride,
+                    element,
+                    length,
+                },
+            });
+            self.visiting.remove(&key);
+            self.cache.insert(key, (layout.clone(), height));
+            return Ok(layout);
         }
         let (key, count) = match ty {
             Type::Record(r) if r.indirect => return Err(MemoryLayoutError::UnsupportedType),
@@ -224,6 +291,7 @@ impl LayoutContext {
         let mut member = |ty: &Type, builder: &mut AggregateBuilder| {
             let layout = self.layout(ty, depth + 1)?;
             let child_key = match ty {
+                Type::FixedArray(a) => Some(AggregateKey::Array(Arc::as_ptr(a))),
                 Type::Record(r) => Some(AggregateKey::Record(Arc::as_ptr(r))),
                 Type::Enum(e) => Some(AggregateKey::Enum(Arc::as_ptr(e))),
                 Type::Tuple(t) => Some(AggregateKey::Tuple(Arc::as_ptr(t))),
@@ -358,6 +426,9 @@ impl Type {
     }
 
     fn layout_scalars(&self, owners: bool) -> Result<Vec<(usize, Type)>, MemoryLayoutError> {
+        if self.contains_fixed_array() {
+            return Err(MemoryLayoutError::UnsupportedType);
+        }
         fn visit(
             context: &mut LayoutContext,
             ty: &Type,

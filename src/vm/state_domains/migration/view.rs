@@ -129,7 +129,10 @@ impl View {
                 let arguments = r
                     .arguments
                     .iter()
-                    .map(|t| self.render(t, depth + 1))
+                    .map(|a| match a.as_type() {
+                        Some(t) => self.render(t, depth + 1),
+                        None => Ok(a.to_string()),
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(format!("{container}<{}>", arguments.join(",")))
             }

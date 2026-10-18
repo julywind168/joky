@@ -50,6 +50,7 @@ impl Parser {
             if name.contains('.') || !type_args.is_empty() {
                 return Err(self.error("Record patterns require a field list in braces".into()));
             }
+            self.check_binding_name(&name)?;
             return Ok(BindingPattern::Name {
                 name,
                 span: self.span(start, self.last_span.end()),
@@ -108,6 +109,7 @@ impl Parser {
                 self.advance();
                 self.parse_binding_pattern()?
             } else {
+                self.check_binding_name(&name)?;
                 BindingPattern::Name {
                     name: name.clone(),
                     span: self.span(field_start, self.last_span.end()),

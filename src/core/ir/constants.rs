@@ -265,6 +265,7 @@ fn validate_expression(expr: &Expr) -> Result<(), Error> {
             ));
         }
         match expr {
+            Expr::Literal { literal: Literal::ConstParameter(_), .. } => return Err(type_error(&expr.span(),ErrorCode::TypeMismatch,"Associated constants cannot depend on const parameters; return the value from a method")),
             Expr::Literal { literal, .. } if !matches!(literal, Literal::String(_)) => {},
             // A bare name is a module constant reference, and a dotted path is
             // either a module constant or an associated constant. Both are
