@@ -785,7 +785,8 @@ String 和 opaque 类型暂不提供对象布局。现有 scalar slot 偏移和�
 List 与 Set 的具体表示、接口、所有权和阶段验收见 [List / Set 开发计划](list-set-storage-ownership.md)。
 两者尚未实现；该计划复用已实现的 Array 与 Map，不改变只读 graph 的现有语义。
 
-定长内联数组另见 [FixedArray 开发计划](fixed-array-storage-ownership.md)，F0–F5 尚未开始。
+定长内联数组另见 [FixedArray 开发计划](fixed-array-storage-ownership.md)，F0 已完成核对与设计冻结，
+F1–F5 尚未开始，语言仍不支持 FixedArray。
 该计划复用已验收的借用与 FFI 基础，分别验收常量参数、连续值存储、切片来源和 C 数组引用；
 动态 Array 或 String 文本适配的完成不代表 FixedArray 已实现。
 
