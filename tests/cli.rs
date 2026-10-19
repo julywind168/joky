@@ -4881,8 +4881,21 @@ fn net4c_buffered_tcp_messages_run_in_standalone_aot() {
         "buffered_tcp_messages.jk",
         include_str!("fixtures/buffered_tcp_messages.jk"),
     );
-    // VM wire/limit tests already run this exact main, including the 1 MiB boundary.
+    // VM wire/limit tests already run this exact main with owner ledgers.
     work.assert_native("buffered_tcp_messages.jk", &[], b"", 0);
+}
+
+#[test]
+#[ignore = "exhaustive: transfer maximum-size TCP messages in standalone AOT"]
+fn exhaustive_net4c_buffered_tcp_maximum_messages_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/buffered_tcp_messages.jk")
+        .replace("fn main()", "fn ordinary_messages()");
+    work.write(
+        "maximum_messages.jk",
+        &format!("{source}\nfn main() @suspends -> Int32 {{ ensure(maximum() == 42) 0 }}"),
+    );
+    work.assert_native("maximum_messages.jk", &[], b"", 0);
 }
 
 #[test]
@@ -4920,21 +4933,33 @@ fn net4d_buffered_tcp_echo_example_runs_in_all_backends() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn net4d_buffered_tcp_native_peer_and_cancelled_prefix_match_all_backends() {
-    message_native_peer(false);
+fn net4d_buffered_tcp_native_peer_and_cancelled_prefix_in_standalone_aot() {
+    message_native_peer(false, &[2]);
 }
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn net5c_buffered_writer_native_peer_and_cancelled_prefix_match_all_backends() {
-    message_native_peer(true);
+fn net5c_buffered_writer_native_peer_and_cancelled_prefix_in_standalone_aot() {
+    message_native_peer(true, &[2]);
+}
+#[test]
+#[ignore = "exhaustive: buffered TCP native-peer wire parity through both CLI VM modes"]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn exhaustive_net4d_buffered_tcp_native_peer_and_cancelled_prefix_cli_vm_modes() {
+    message_native_peer(false, &[0, 1]);
+}
+#[test]
+#[ignore = "exhaustive: split TCP writer native-peer wire parity through both CLI VM modes"]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn exhaustive_net5c_buffered_writer_native_peer_and_cancelled_prefix_cli_vm_modes() {
+    message_native_peer(true, &[0, 1]);
 }
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn message_native_peer(split: bool) {
+fn message_native_peer(split: bool, backends: &[usize]) {
     mod endpoint {
         include!("support/tcp_messages.rs");
     }
     for cancel in [false, true] {
-        for backend in 0..3 {
+        for &backend in backends {
             let mut peer = endpoint::peer();
             let work = Workspace::new();
             let source = include_str!("fixtures/buffered_tcp_pressure.jk")

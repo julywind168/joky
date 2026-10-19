@@ -128,6 +128,12 @@ When an identical network fixture already runs in both VM modes with ownership
 assertions, its CLI test can cover standalone AOT only. Keep CLI routing smoke
 coverage separately; do not shrink message-size boundaries or remove real
 backpressure assertions to speed up checks.
+The full 1 MiB TCP transfers, interpreter backpressure completion, and additional
+CLI network backend matrices live in ignored `exhaustive_` tests selected by
+`--stress`, with their original sizes and assertions intact. Default Debug tests
+retain short-message protocol boundaries, real backpressure, JIT resumption,
+cancellation and owner cleanup in both VM modes, standalone AOT interoperability,
+and CLI routing smoke coverage.
 Reuse the cancellation harness to execute each selected prefix with one poll;
 keep a budget-one completion trace to exercise repeated resumes.
 

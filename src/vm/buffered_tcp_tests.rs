@@ -320,6 +320,20 @@ fn net4c_buffered_tcp_messages_wire_limits_and_truncation() {
 }
 
 #[test]
+#[ignore = "exhaustive: transfer maximum-size TCP messages in both VM modes"]
+fn exhaustive_net4c_buffered_tcp_maximum_messages() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = messages_vm(mode);
+        assert_eq!(
+            block_on(vm.prepare_async("maximum", &[]).unwrap()).unwrap(),
+            42,
+            "{mode:?}"
+        );
+        clean();
+    }
+}
+
+#[test]
 fn net4c_buffered_tcp_rejects_message_length_before_payload_allocation() {
     struct ResetBudget(usize);
     impl Drop for ResetBudget {
@@ -420,15 +434,30 @@ fn net4d_buffered_tcp_echo_program() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn net4d_buffered_tcp_backpressure_resumes_and_cancel_closes() {
-    message_backpressure(false);
+    // Keep real blocking and cleanup in both modes; interpreted draining is stress coverage.
+    message_backpressure(false, &[VmMode::Jit], &[false, true]);
+    message_backpressure(false, &[VmMode::Interpreter], &[true]);
 }
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn net5c_buffered_writer_backpressure_resumes_and_cancel_closes() {
-    message_backpressure(true);
+    message_backpressure(true, &[VmMode::Jit], &[false, true]);
+    message_backpressure(true, &[VmMode::Interpreter], &[true]);
+}
+#[test]
+#[ignore = "exhaustive: resume large buffered TCP writes in the interpreter"]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn exhaustive_net4d_buffered_tcp_backpressure_resumes() {
+    message_backpressure(false, &[VmMode::Interpreter], &[false]);
+}
+#[test]
+#[ignore = "exhaustive: resume large split TCP writes in the interpreter"]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn exhaustive_net5c_buffered_writer_backpressure_resumes() {
+    message_backpressure(true, &[VmMode::Interpreter], &[false]);
 }
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn message_backpressure(split: bool) {
+fn message_backpressure(split: bool, modes: &[VmMode], cancellations: &[bool]) {
     mod endpoint {
         include!("../../tests/support/tcp_messages.rs");
     }
@@ -442,8 +471,8 @@ fn message_backpressure(split: bool) {
     unsafe extern "C" fn send_limit() -> i32 {
         SEND_LIMIT.with(std::cell::Cell::get)
     }
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for cancel in [false, true] {
+    for &mode in modes {
+        for &cancel in cancellations {
             let mut peer = endpoint::peer();
             let mut vm = VmEngine::with_mode(mode);
             // SAFETY: Both callbacks implement their declared scalar ABIs and live for the test.

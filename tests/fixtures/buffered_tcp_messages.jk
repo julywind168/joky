@@ -153,7 +153,6 @@ fn main() @suspends -> Int32 {
     ensure(wire() == 42)
     ensure(write_failure() == 42)
     ensure(fragmented() == 42)
-    ensure(maximum() == 42)
     ensure(cancel() == 42)
     0
 }

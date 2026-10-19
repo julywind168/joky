@@ -57,8 +57,18 @@ fn json3_native_frames_and_business_recovery_release_owners() {
 }
 #[test]
 fn json3_borrowed_encoded_tree_survives_backpressure_reload_drop_and_cancel() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for cancel in [false, true] {
+    // Keep the borrowed tree live across real blocking in both modes on every run.
+    borrowed_encoded_tree_backpressure(&[VmMode::Jit], &[false, true]);
+    borrowed_encoded_tree_backpressure(&[VmMode::Interpreter], &[true]);
+}
+#[test]
+#[ignore = "exhaustive: resume all 512 JSON frames after interpreter backpressure and VM drop"]
+fn exhaustive_json3_borrowed_encoded_tree_resumes_after_backpressure() {
+    borrowed_encoded_tree_backpressure(&[VmMode::Interpreter], &[false]);
+}
+fn borrowed_encoded_tree_backpressure(modes: &[VmMode], cancellations: &[bool]) {
+    for &mode in modes {
+        for &cancel in cancellations {
             let mut peer = endpoint::peer(3);
             let source = format!(
                 "{}\nfn probe() @suspends -> Int32 {{ pressure({}) }}",

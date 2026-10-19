@@ -49,6 +49,8 @@ full 与 quick 运行相同的 Debug 检查，不必在同一版本上依次重�
 - 长模型压力、逐指令取消穷举与额外 CLI 类型矩阵用例以 `exhaustive_` 命名并默认
   `#[ignore]`，stress 默认在 Debug 下自动执行；默认测试保留短模型周期与资源变化边界回归。
   单独运行穷举：`cargo test exhaustive_ -- --ignored`；聚焦某组时用更具体的测试名替代 `exhaustive_`。
+- TCP 的 1 MiB 完整消息传输、解释器背压恢复和额外 CLI 网络后端矩阵归入 stress，保留原消息尺寸与断言。
+  日常 Debug 保留短消息协议边界、真实背压、JIT 恢复、两种 VM 模式的取消与资源清理、AOT 互操作及 CLI 路由回归。
 - 检查只验证正确性，不计时、不断言性能；性能测量独立进行，方法见
   benches/README.md。
 
