@@ -128,6 +128,25 @@ impl FunctionPlan {
         Ok(flow)
     }
 
+    /// Share the function exit and scope-join path with postfix propagation.
+    pub(super) fn return_value(&mut self, value: Option<Slot>, span: Span) -> Result<Flow, Error> {
+        self.check_return(&value, &span)?;
+        let exit = self.return_exit()?;
+        if let (Some(dst), Some(src)) = (&self.result, value) {
+            self.emit(Op::Copy(dst.clone(), src));
+        }
+        if self.task_scopes.is_empty() {
+            self.end_locals_from(0);
+            self.emit(Op::Jump(exit));
+        } else {
+            // Return values are already saved; every crossed scope
+            // joins and cleans up before the function exit runs.
+            let target = self.route_task_scope_exit(exit, 0, 0);
+            self.emit(Op::Jump(target));
+        }
+        Ok(Flow::Diverged)
+    }
+
     pub(super) fn control_flow_expr(
         &mut self,
         expr: &Expr,
@@ -155,21 +174,7 @@ impl FunctionPlan {
                 } else {
                     None
                 };
-                self.check_return(&value, span)?;
-                let exit = self.return_exit()?;
-                if let (Some(dst), Some(src)) = (&self.result, value) {
-                    self.emit(Op::Copy(dst.clone(), src));
-                }
-                if self.task_scopes.is_empty() {
-                    self.end_locals_from(0);
-                    self.emit(Op::Jump(exit));
-                } else {
-                    // Return values are already saved; every crossed scope
-                    // joins and cleans up before the function exit runs.
-                    let target = self.route_task_scope_exit(exit, 0, 0);
-                    self.emit(Op::Jump(target));
-                }
-                Ok(Flow::Diverged)
+                self.return_value(value, *span)
             }
             Expr::Break { span } | Expr::Continue { span } => {
                 let keyword = if matches!(expr, Expr::Break { .. }) {

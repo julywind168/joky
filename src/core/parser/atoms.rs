@@ -427,8 +427,27 @@ impl Parser {
         }
         // A leading dot explicitly continues a field or method chain across lines.
         while self.peek() == &TokenKind::Dot
-            || !self.at_expression_break() && self.peek() == &TokenKind::LBracket
+            || !self.at_expression_break()
+                && matches!(
+                    self.peek(),
+                    TokenKind::LBracket | TokenKind::Bang | TokenKind::Question
+                )
         {
+            if matches!(self.peek(), TokenKind::Bang | TokenKind::Question) {
+                let op = if self.peek() == &TokenKind::Bang {
+                    UnaryOp::Unwrap
+                } else {
+                    UnaryOp::Try
+                };
+                self.advance();
+                let span = self.span(expr.span().start(), self.last_span.end());
+                expr = Expr::Unary {
+                    op,
+                    operand: Box::new(expr),
+                    span,
+                };
+                continue;
+            }
             if self.peek() == &TokenKind::LBracket {
                 self.advance();
                 let record = std::mem::replace(&mut self.allow_record, true);

@@ -208,3 +208,161 @@ fn option_result_lazy_defaults_reject_wrong_callbacks_and_consumed_owners() {
         assert!(compiler.compile_module(&parser::parse(source).unwrap()).is_err(), "{source}");
     }
 }
+
+#[test]
+fn postfix_unwrap_and_propagation_preserve_values() {
+    for prelude in [false, true] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for suspends in [false, true] {
+                let source = with_suspends(
+                    include_str!("../../tests/fixtures/postfix_unwrap.jk"),
+                    suspends,
+                    Suspends::Typed,
+                );
+                let mut vm = VmEngine::with_mode(mode);
+                vm.set_prelude_enabled(prelude);
+                vm.load_source(&source)
+                    .unwrap_or_else(|e| panic!("{mode:?}, suspends={suspends}: {e}"));
+                let result = if suspends {
+                    vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
+                } else {
+                    vm.call_int32_0("check").unwrap()
+                };
+                assert_eq!(
+                    result, 42,
+                    "{mode:?}, prelude={prelude}, suspends={suspends}"
+                );
+                for name in ["fail_option", "fail_result"] {
+                    let error = if suspends {
+                        vm.call_async(name, &[]).err().unwrap()
+                    } else {
+                        vm.call_int32_0(name).unwrap_err()
+                    };
+                    assert!(error.to_string().contains("Postfix `!` on"), "{error}");
+                    let expression = error.span().unwrap().slice(&source).unwrap();
+                    assert!(expression.ends_with('!'), "{expression}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn postfix_unwrap_rejects_wrong_types_and_consumed_owners() {
+    for source in [
+        "fn bad() -> Int32 { 1! }",
+        "fn bad() -> Bool { true? }",
+        "fn bad() -> Int32 { Some(1)? }",
+        "fn bad() -> Result<Int32, Unit> { Ok(Some(1)?) }",
+        "fn bad() -> Option<Int32> { Some(Result.Ok::<Int32, Unit>(1)?) }",
+        "fn bad(x: Result<Int32, String>) -> Result<Int32, Bool> { Ok(x?) }",
+        "fn bad() { let x = Some(\"owned\") let y = x! x!; }",
+        "fn bad() -> Option<String> { let x = Some(\"owned\") let y = x? Some(x!) }",
+        "fn bad(x: &Option<Int32>) -> Int32 { x! }",
+        "fn bad() -> &Int32 { let n = 42 Some(&n)! }",
+        "fn bad() { let f = || -> Int32 { Some(1)? } }",
+    ] {
+        let mut vm = VmEngine::new_interpreter();
+        assert!(vm.load_source(source).is_err(), "{source}");
+    }
+    for name in ["Option", "Result"] {
+        let source =
+            format!("enum {name}<T> {{ None, Some(T) }} fn bad() -> Int32 {{ {name}.Some(42)! }}");
+        let mut vm = VmEngine::new_interpreter();
+        vm.set_prelude_enabled(false);
+        let error = vm.load_source(&source).unwrap_err();
+        assert!(
+            error.to_string().contains("standard Option or Result"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn postfix_unwrap_cleanup_and_cancellation() {
+    use super::support::{parity_vm, EVENTS};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/postfix_cleanup.jk"),
+                suspends,
+                Suspends::Typed,
+            );
+            let vm = parity_vm(&source, mode);
+            if suspends {
+                assert_eq!(vm.call_async("check", &[]).unwrap().cps_result(), Some(42));
+            } else {
+                assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+            }
+            EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, -42, 42, 1, -1, -7, 1, 7, 99]));
+            EVENTS.with(|e| e.borrow_mut().clear());
+            let error = if suspends {
+                vm.call_async("force_failure", &[]).err().unwrap()
+            } else {
+                vm.call_int32_0("force_failure").unwrap_err()
+            };
+            assert!(error.to_string().contains("Postfix `!` on Err"), "{error}");
+            EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, -7, 7, 1]));
+            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+    postfix_cancellation(super::support::CancellationSweep::ResourceBoundaries);
+}
+
+fn postfix_cancellation(sweep: super::support::CancellationSweep) {
+    use super::support::{assert_cancellation, parity_vm, EVENTS};
+    let source = with_suspends(
+        include_str!("../../tests/fixtures/postfix_cleanup.jk"),
+        true,
+        Suspends::Typed,
+    );
+    let mut vm = parity_vm(&source, VmMode::Interpreter);
+    assert_cancellation(
+        &mut vm,
+        "check",
+        4000,
+        sweep,
+        || EVENTS.with(|e| e.borrow_mut().clear()),
+        || EVENTS.with(|e| e.borrow().clone()),
+        || {
+            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+            EVENTS.with(|e| {
+                let events = e.borrow();
+                for (id, maximum) in [(42, 1), (7, 1), (1, 2)] {
+                    let created = events.iter().filter(|&&n| n == -id).count();
+                    let dropped = events.iter().filter(|&&n| n == id).count();
+                    assert!(dropped >= created && dropped <= maximum, "{events:?}");
+                }
+            });
+        },
+    );
+}
+
+#[test]
+#[ignore = "exhaustive: cancel postfix extraction and propagation at every instruction"]
+fn exhaustive_postfix_unwrap_cancellation() {
+    postfix_cancellation(super::support::CancellationSweep::EveryInstruction);
+}
+
+#[test]
+fn postfix_unwrap_resumes_once_and_joins_scopes_before_return() {
+    use super::support::{parity_vm, EVENTS};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(include_str!("../../tests/fixtures/postfix_tasks.jk"), mode);
+        assert_eq!(vm.call_int32_0("closure_check").unwrap(), 42);
+        let mut task = vm.call_async("check", &[]).unwrap();
+        assert!(!task.is_finished());
+        vm.load_source("fn check() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        for _ in 0..100 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 20, 10, 30]));
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}

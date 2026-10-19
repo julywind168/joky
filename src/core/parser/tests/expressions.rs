@@ -380,7 +380,8 @@ fn malformed_mutable_bindings_and_loops_return_parse_errors() {
 #[test]
 fn malformed_input_returns_located_diagnostics() {
     for (source, line, message) in [
-        ("\nfn f() { ? }", 2, "Unexpected character"),
+        ("\nfn f() { $ }", 2, "Unexpected character"),
+        ("\nfn f() { ? }", 2, "Expected an expression"),
         ("\nfn f() { # }", 2, "Expected an expression"),
         (
             "\n\nfn f() { 18446744073709551616 }",

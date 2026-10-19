@@ -44,6 +44,7 @@ mod scripts;
 mod text;
 mod traits;
 mod tuples;
+mod unwrap;
 use super::builtins::{Builtin, ExternAbi};
 use super::integer::IntegerType;
 use super::types::validate_nominal_type;
@@ -2267,6 +2268,9 @@ impl FunctionPlan {
             }
             Expr::Index { .. } => unreachable!("index places are handled by memory_expr"),
             Expr::Unary { op, operand, span } => {
+                if matches!(op, UnaryOp::Unwrap | UnaryOp::Try) {
+                    return self.unwrap_expr(expr, vars, functions, suspends, types, expected);
+                }
                 if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) {
                     return self.borrow_local(
                         operand,
@@ -2288,7 +2292,11 @@ impl FunctionPlan {
                     }
                     UnaryOp::Not => ty == Type::Bool,
                     UnaryOp::BitNot => ty.integer().is_some(),
-                    UnaryOp::Borrow | UnaryOp::BorrowMut | UnaryOp::Deref => unreachable!(),
+                    UnaryOp::Borrow
+                    | UnaryOp::BorrowMut
+                    | UnaryOp::Deref
+                    | UnaryOp::Unwrap
+                    | UnaryOp::Try => unreachable!(),
                 };
                 if !valid {
                     return Err(type_error(
@@ -2298,7 +2306,11 @@ impl FunctionPlan {
                             UnaryOp::Neg => "Unary `-` operand must be a signed integer or float",
                             UnaryOp::Not => "Unary `!` operand must be Bool",
                             UnaryOp::BitNot => "Unary `~` operand must be an integer",
-                            UnaryOp::Borrow | UnaryOp::BorrowMut | UnaryOp::Deref => unreachable!(),
+                            UnaryOp::Borrow
+                            | UnaryOp::BorrowMut
+                            | UnaryOp::Deref
+                            | UnaryOp::Unwrap
+                            | UnaryOp::Try => unreachable!(),
                         },
                     ));
                 }

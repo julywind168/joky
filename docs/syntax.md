@@ -463,6 +463,7 @@ fn empty() -> opt.Option<Int32> { Maybe.None }
 模块别名下的 `opt.Some` 与 `opt.Option.Some` 指向同一构造器。
 
 默认 prelude 提供 Option / Result、Some / None / Ok / Err、状态判断 / 默认值 / 组合方法、整数受检转换方法与边界常量，以及 print / println / assert / panic。
+Option / Result 已支持后缀 `!` 强制取值与 `?` 失败提前返回；`?` 不转换错误类型，完整规则见[后缀解包](language.md#option-与-result-后缀解包)。
 Option / Result 的状态查询通过 `&self` 借用；`unwrap_or_else` 按需执行同步回调，其余普通默认值和备选值会急切求值，完整表见[基础方法](language.md#option-与-result-基础方法)。
 因此通常无需 import 就能写 `Some(42)`、`None::<Int32>` 和 `n.to_u64()`。
 `--no-prelude` 或嵌入 API 可关闭默认导入；`joky/vm` 始终显式导入。
@@ -1049,7 +1050,7 @@ CompareOp    = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 Addition     = Product, { ("+" | "-"), Product } ;
 Product      = Unary, { ("*" | "/" | "%"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postfix ;
-Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] | "[", Expression, "]" } ;
+Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] | "[", Expression, "]" | "!" | "?" } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;

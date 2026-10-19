@@ -100,6 +100,7 @@ pub(crate) enum TokenKind {
     EqEq,       // ==
     Ne,         // !=
     Bang,       // !
+    Question,   // ?
     Lt,         // <
     Le,         // <=
     Gt,         // >
@@ -645,6 +646,10 @@ impl<'a> Lexer<'a> {
             Some('<') => {
                 self.advance();
                 TokenKind::Lt
+            }
+            Some('?') => {
+                self.advance();
+                TokenKind::Question
             }
             Some('!') => {
                 self.advance();

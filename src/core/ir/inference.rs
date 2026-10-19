@@ -278,6 +278,18 @@ impl FunctionPlan {
                 }
             }
             Expr::Unary {
+                op: UnaryOp::Unwrap | UnaryOp::Try,
+                operand,
+                ..
+            } => {
+                let ty = self.hint(operand, vars, functions, types, default)?;
+                let Type::Enum(enumeration) = ty else {
+                    return None;
+                };
+                let success = unwrap::success_variant(&enumeration, types)?;
+                enumeration.variants[success].payload.clone()
+            }
+            Expr::Unary {
                 op: UnaryOp::Deref,
                 operand,
                 ..

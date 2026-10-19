@@ -159,3 +159,33 @@ fn multiline_interpolation_ends_on_its_closing_line() {
     assert_eq!(exprs.len(), 2);
     assert!(matches!(&exprs[0], Expr::BinOp { op: BinOp::Add, .. }));
 }
+
+#[test]
+fn postfix_unwrap_chains_and_respects_expression_boundaries() {
+    let source = "{ value?!.field[0]!\n!flag\nother != last }";
+    let exprs = block(source);
+    assert_eq!(exprs.len(), 3);
+    assert_eq!(exprs[0].span().slice(source), Some("value?!.field[0]!"));
+    assert!(matches!(
+        exprs[0],
+        Expr::Unary {
+            op: UnaryOp::Unwrap,
+            ..
+        }
+    ));
+    assert!(matches!(
+        exprs[1],
+        Expr::Unary {
+            op: UnaryOp::Not,
+            ..
+        }
+    ));
+    assert!(matches!(exprs[2], Expr::BinOp { op: BinOp::Ne, .. }));
+    assert_eq!(block("{ value\n!flag }").len(), 2);
+    assert_eq!(block("{ value/*\n*/!flag }").len(), 2);
+    assert!(Parser::from_source("{ value\n? }")
+        .unwrap()
+        .parse_block()
+        .is_err());
+    assert_eq!(block("{ value!\n.method()? }").len(), 1);
+}

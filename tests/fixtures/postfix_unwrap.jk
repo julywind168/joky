@@ -1,0 +1,36 @@
+import joky/option as opt.{type Option as Maybe}
+import joky/result as res.{type Result as Outcome}
+import joky/string
+
+struct Owned { text: String, n: Int32 }
+fn option(value: Maybe<Int32>) -> Maybe<Int64> { Maybe.Some(int64(value?) + 1) }
+fn result(value: Outcome<Int32, String>) -> Outcome<Int64, String> { Outcome.Ok(int64(value?) + 1) }
+fn generic<T>(value: Maybe<T>) -> Maybe<T> { Maybe.Some(value?) }
+fn force<T>(value: Maybe<T>) -> T { value! }
+fn owned(value: Maybe<Owned>) -> Maybe<String> {
+    let held = "local"
+    let extracted = value?
+    if held.byte_length() != 5 { return Maybe.None }
+    Maybe.Some(extracted.text)
+}
+fn unit(value: Outcome<Unit, Unit>) -> Outcome<Int32, Unit> { value?; Outcome.Ok(42) }
+fn check() -> Int32 {
+    if option(Maybe.Some(41))! != 42 || !option(Maybe.None).is_none() { return 1 }
+    if result(Outcome.Ok(41))! != 42 { return 2 }
+    let error = result(Outcome.Err("failure"))
+    if error.err()!.byte_length() != 7 { return 3 }
+    if generic(Maybe.Some("owned"))!.byte_length() != 5 { return 4 }
+    if owned(Maybe.Some(Owned { text: "answer", n: 42 }))!.byte_length() != 6 { return 5 }
+    if !owned(Maybe.None).is_none() { return 6 }
+    if unit(Outcome.Ok({}))! != 42 || !unit(Outcome.Err({})).is_err() { return 7 }
+    let wide: UInt64 = Maybe.Some(0xffff_ffff_ffff_ffff)!
+    if wide != 0xffff_ffff_ffff_ffff { return 8 }
+    let a = Maybe.Some(Maybe.Some((40, 2)))!!
+    if a.0 + a.1 != 42 || !Maybe.Some(true)! { return 9 }
+    var calls = 0
+    let once = { calls = calls + 1 Maybe.Some(42) }!
+    if calls != 1 || once != 42 || force(Maybe.Some(42)) != 42 { return 10 }
+    42
+}
+fn fail_option() -> Int32 { Maybe.None::<Int32>! }
+fn fail_result() -> Int32 { Outcome.Err::<Int32, String>("owned error")! }

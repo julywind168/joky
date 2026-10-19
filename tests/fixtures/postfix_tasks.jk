@@ -1,0 +1,43 @@
+import joky/task
+import joky/option.{type Option, Some, None}
+import joky/result.{type Result, Ok, Err}
+extern fn record(n: Int32) -> Int32
+
+fn read(ok: Bool) @suspends -> Result<Int32, String> {
+    record(10)
+    task.yield_now()
+    task.yield_now()
+    if ok { Ok(40) } else { Err("failure") }
+}
+fn step(ok: Bool) @suspends -> Result<Int32, String> {
+    let value = read(ok)?
+    record(20)
+    Ok(value + 2)
+}
+fn scoped() @suspends -> Option<Int32> {
+    scope {
+        branch { task.yield_now() record(30); }
+        None::<Int32>?;
+        Some(0)
+    }
+}
+fn check() @suspends -> Int32 {
+    if step(true)! != 42 { return 1 }
+    let error = step(false).err()!
+    if error.byte_length() != 7 { return 2 }
+    if !scoped().is_none() { return 3 }
+    42
+}
+fn closure_check() -> Int32 {
+    let choose = |ok: Bool| -> Option<Int32> {
+        let value = if ok { Some(40) } else { None }
+        Some(value? + 2)
+    }
+    let missing = choose(false)
+    if !missing.is_none() { return 0 }
+    choose(true)!
+}
+fn inferred(error: String) -> Result<Int64, String> {
+    let value: Int64 = Ok(40)?
+    Ok(value + 2)
+}

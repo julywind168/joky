@@ -1195,25 +1195,25 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
 #[test]
 fn parser_errors_render_ariadne_source_context() {
     let work = Workspace::new();
-    work.write("bad.jk", "fn main() {\n?\n}\n");
+    work.write("bad.jk", "fn main() {\n$\n}\n");
     let output = work.cli(&["run", "bad.jk"]);
     failure(&output, "Unexpected character");
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("bad.jk:2:1"), "{error}");
-    assert!(error.contains("2 │ ?"), "{error}");
-    assert!(error.contains("Unexpected character '?'"), "{error}");
+    assert!(error.contains("2 │ $"), "{error}");
+    assert!(error.contains("Unexpected character '$'"), "{error}");
 }
 
 #[test]
 fn parser_diagnostics_use_utf8_byte_spans() {
     let work = Workspace::new();
-    work.write("unicode.jk", "fn main() { let x = \"🙂\" ? }\n");
+    work.write("unicode.jk", "fn main() { let x = \"🙂\" $ }\n");
     let output = work.cli(&["run", "unicode.jk"]);
     failure(&output, "Unexpected character");
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("unicode.jk:1:25"), "{error}");
     assert!(
-        error.contains("1 │ fn main() { let x = \"🙂\" ? }"),
+        error.contains("1 │ fn main() { let x = \"🙂\" $ }"),
         "{error}"
     );
 }
@@ -9453,4 +9453,79 @@ fn main() @suspends {{
         );
         work.assert_all_backends("migrate.jk", &[], b"", 0);
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn postfix_unwrap_matches_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/postfix_unwrap.jk");
+    work.write(
+        "postfix.jk",
+        &format!("import joky/io.{{println}}\n{source}\nfn main() {{ println(check()) }}"),
+    );
+    work.assert_all_backends("postfix.jk", &["--no-prelude"], b"42\n", 0);
+    for (entry, message) in [
+        ("fail_option", "Postfix `!` on None"),
+        ("fail_result", "Postfix `!` on Err"),
+    ] {
+        work.write(
+            "postfix.jk",
+            &format!("{source}\nfn main() {{ {entry}(); }}"),
+        );
+        let check = |output: std::process::Output| {
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(message), "{stderr}");
+            assert!(
+                stderr.contains("postfix.jk:") || stderr.contains("bytes "),
+                "{stderr}"
+            );
+        };
+        check(work.cli(&["run", "postfix.jk"]));
+        check(work.cli(&["run", "--interpreter", "postfix.jk"]));
+        success(&work.cli(&["build", "postfix.jk"]));
+        check(Command::new(work.path().join("postfix")).output().unwrap());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn postfix_unwrap_cleanup_matches_native_execution() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/postfix_cleanup.jk").replace(
+        "extern fn record(n: Int32) -> Int32",
+        "import joky/io.{println}\nfn record(n: Int32) -> Int32 { println(n) n }",
+    );
+    work.write(
+        "cleanup.jk",
+        &format!("{source}\nfn main() {{ record(check()); }}"),
+    );
+    work.assert_native(
+        "cleanup.jk",
+        &[],
+        b"-1\n-42\n42\n1\n-1\n-7\n1\n7\n99\n42\n",
+        0,
+    );
+    work.write(
+        "cleanup.jk",
+        &format!("{source}\nfn main() {{ force_failure(); }}"),
+    );
+    success(&work.cli(&["build", "cleanup.jk"]));
+    let output = Command::new(work.path().join("cleanup")).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stdout, b"-1\n-7\n7\n1\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Postfix `!` on Err"));
+}
+
+#[test]
+#[cfg(unix)]
+fn postfix_unwrap_tasks_and_closures_match_native_execution() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/postfix_tasks.jk").replace(
+        "extern fn record(n: Int32) -> Int32",
+        "import joky/io.{println}\nfn record(n: Int32) -> Int32 { println(n) n }",
+    );
+    work.write("tasks.jk", &format!("{source}\nfn main() @suspends {{ record(check()) record(closure_check()) println(inferred(\"context\")!) }}"));
+    work.assert_native("tasks.jk", &[], b"10\n20\n10\n30\n42\n42\n42\n", 0);
 }

@@ -9,7 +9,7 @@ pub(super) struct Constructor<'a> {
     pub name: String,
     pub args: Option<&'a [Expr]>,
     pub type_args: &'a [crate::parser::ast::GenericArgument],
-    span: Span,
+    pub(super) span: Span,
 }
 
 impl FunctionPlan {

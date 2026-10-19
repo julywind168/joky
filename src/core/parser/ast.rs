@@ -1241,6 +1241,10 @@ pub enum LogicalOp {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnaryOp {
+    /// Postfix extraction; lowered through enum patterns before backend selection.
+    Unwrap,
+    /// Postfix extraction with an early return of the failure variant.
+    Try,
     Neg,
     Not,
     BitNot,
