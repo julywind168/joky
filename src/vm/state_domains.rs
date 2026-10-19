@@ -36,6 +36,7 @@ pub(crate) mod source;
 mod tasks;
 pub use tasks::queue_current_domain_call;
 pub(crate) use tasks::queue_current_i32_call;
+pub use timers::Status as PeriodicStatus;
 
 fn error(code: ErrorCode, message: &str) -> Error {
     Error::new_with_code(ErrorPhase::Runtime, code, message)
@@ -245,6 +246,8 @@ struct Domain {
     failure: Option<Error>,
     closing: bool,
     tasks: HashMap<TaskId, BoundTask>,
+    automatic: Vec<Rc<timers::automatic::Registration>>,
+    limits: InterpreterLimits,
 }
 struct BoundTask {
     group: TaskGroup,
@@ -437,6 +440,10 @@ impl Domains {
 }
 
 impl VmEngine {
+    /// Observe an automatic method by its unqualified name without driving it.
+    pub fn domain_periodic_status(&self, handle: DomainHandle, method: &str) -> PeriodicStatus {
+        timers::automatic::status(&self.domains.borrow(), handle, method)
+    }
     pub fn set_domain_limits(&mut self, limits: DomainLimits) -> Result<(), Error> {
         let mut domains = self.domains.borrow_mut();
         if limits.max_domains == 0
@@ -951,17 +958,30 @@ fn create_words(
             failure: None,
             closing: false,
             tasks: HashMap::new(),
+            automatic: Vec::new(),
+            limits,
         },
     );
     domains.next_domain = next;
-    Ok(DomainOwner {
+    let owner = DomainOwner {
         domains: Rc::downgrade(registry),
         handle: DomainHandle {
             registry: domains.identity,
             sequence,
             writable: true,
         },
-    })
+    };
+    let module = domains.entries[&sequence].module.clone();
+    let ty = domains.entries[&sequence].ty.clone();
+    drop(domains);
+    let mut periodic = timers::automatic::prepare(registry, owner.handle, &module, &ty, false)?;
+    {
+        let mut domains = registry.borrow_mut();
+        domains.get(owner.handle)?;
+        periodic.commit(domains.entries.get_mut(&sequence).unwrap());
+    }
+    drop(periodic);
+    Ok(owner)
 }
 
 #[cfg(test)]

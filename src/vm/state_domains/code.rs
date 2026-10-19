@@ -107,11 +107,14 @@ pub(super) fn module_key(module: &LoadedModule) -> usize {
     }
 }
 
-pub(super) fn state_types(module: &LoadedModule) -> HashMap<String, Type> {
-    let names: Vec<String> = match module {
+pub(super) fn entry_names(module: &LoadedModule) -> Vec<String> {
+    match module {
         LoadedModule::Jit(module) => module.instance_entries.keys().cloned().collect(),
         LoadedModule::Interpreter(module) => interp::instance_names(module),
-    };
+    }
+}
+pub(super) fn state_types(module: &LoadedModule) -> HashMap<String, Type> {
+    let names = entry_names(module);
     let mut types = HashMap::new();
     for name in names {
         let Ok(info) = module.instance_info(&name) else {
@@ -181,7 +184,7 @@ fn publish_matching(
     owns: impl Fn(&LoadedModule) -> bool,
 ) -> Result<usize, Error> {
     let types = state_types(module);
-    let mut domains = registry.borrow_mut();
+    let domains = registry.borrow();
     if domains.shutting_down {
         return Err(invalid("Domain VM is shutting down"));
     }
@@ -217,24 +220,69 @@ fn publish_matching(
         moves
             .try_reserve(1)
             .map_err(|_| limited("Domain publication allocation failed"))?;
-        moves.push((id, ty.clone(), code));
+        let target = DomainHandle {
+            registry: domains.identity,
+            sequence: id,
+            writable: true,
+        };
+        moves.push((
+            id,
+            ty.clone(),
+            code,
+            reads::ReadSet::single(target, domain.revision, domain.code, domain.schema),
+        ));
+    }
+    drop(domains);
+    let mut periodic = Vec::new();
+    periodic
+        .try_reserve_exact(moves.len())
+        .map_err(|_| limited("Periodic publication allocation failed"))?;
+    for (_, ty, _, reads) in &moves {
+        periodic.push(timers::automatic::prepare(
+            registry,
+            reads.first.handle,
+            module,
+            ty,
+            false,
+        )?);
     }
     let mut retired = Vec::new();
     retired
         .try_reserve(moves.len())
         .map_err(|_| limited("Domain publication allocation failed"))?;
+    let mut domains = registry.borrow_mut();
+    for (_, _, _, reads) in &moves {
+        reads
+            .validate(&domains)
+            .map_err(|_| invalid("Domain changed during periodic publication"))?;
+    }
+    for (&id, domain) in &domains.entries {
+        if owns(&domain.module)
+            && !domain.closing
+            && domain.failure.is_none()
+            && !source::same_module(&domain.module, module)
+            && matches!(&domain.ty, Type::Record(r) if types.contains_key(&r.name))
+            && !moves.iter().any(|(selected, _, _, _)| *selected == id)
+        {
+            return Err(invalid(
+                "Domain selection changed during periodic publication",
+            ));
+        }
+    }
     // Validation is complete: only moves and scalar stores remain.
     let key = module_key(module);
-    for (id, ty, code) in &moves {
+    for ((id, ty, code, _), periodic) in moves.iter().zip(&mut periodic) {
         let domain = domains.entries.get_mut(id).unwrap();
         retired.push(std::mem::replace(&mut domain.module, module.clone()));
         domain.ty = ty.clone();
         domain.code = *code;
+        periodic.commit(domain);
         if domain.source_module != 0 {
             domain.source_module = key;
         }
     }
     drop(domains);
+    drop(periodic);
     // Old code is released outside the registry borrow, once nothing else holds it.
     drop(retired);
     Ok(moves.len())

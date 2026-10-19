@@ -157,6 +157,16 @@ pub(super) fn module(
     ))
 }
 pub(super) fn handle(registry: &Rc<RefCell<Domains>>, token: u64) -> Result<DomainHandle, Error> {
+    let handle = handle_identity(registry, token)?;
+    registry.borrow().get(handle)?;
+    Ok(handle)
+}
+// Observations may distinguish a quarantined domain from a closed one without
+// obtaining access to its root. All actual accesses still go through `handle`.
+pub(super) fn handle_identity(
+    registry: &Rc<RefCell<Domains>>,
+    token: u64,
+) -> Result<DomainHandle, Error> {
     let domains = registry.borrow();
     let sequence = domains
         .entries
@@ -169,7 +179,6 @@ pub(super) fn handle(registry: &Rc<RefCell<Domains>>, token: u64) -> Result<Doma
         sequence,
         writable: token & 1 != 0,
     };
-    domains.get(handle)?;
     Ok(handle)
 }
 unsafe fn owner(frame: &CpsFrame) -> Result<crate::runtime::resource::ResourceLease, Error> {
@@ -700,6 +709,7 @@ pub(crate) unsafe fn poll(
         | Operation::TimerClose
         | Operation::TimerCancel
         | Operation::TimerStatus
+        | Operation::PeriodicStatus
         | Operation::TimerStart
         | Operation::TimerStartValues => super::timers::poll(arena, frame, &registry, op)?,
         Operation::DirectoryCreate

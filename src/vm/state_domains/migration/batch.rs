@@ -314,6 +314,19 @@ pub(crate) fn publish(
             timers.push(timers::schema_dependents(registry, entry.target)?);
         }
     }
+    let mut periodic = Vec::new();
+    periodic
+        .try_reserve_exact(batch.entries.len())
+        .map_err(|_| limited("Periodic migration allocation failed"))?;
+    for entry in &batch.entries {
+        periodic.push(timers::automatic::prepare(
+            registry,
+            entry.target,
+            &batch.module,
+            entry.ty.as_ref().unwrap(),
+            entry.root.is_some(),
+        )?);
+    }
     let mut domains = registry.borrow_mut();
     batch.validate(engine, registry, &domains, owners)?;
     // Check ALL counters before moving any root or binding.
@@ -331,7 +344,7 @@ pub(crate) fn publish(
         }
     }
     // No allocations, user code, destructors or fallible operations in this interval.
-    for entry in &mut batch.entries {
+    for (entry, periodic) in batch.entries.iter_mut().zip(&mut periodic) {
         let domain = domains.entries.get_mut(&entry.target.sequence).unwrap();
         if entry.root.is_some() {
             std::mem::swap(&mut domain.root, &mut entry.root);
@@ -341,12 +354,14 @@ pub(crate) fn publish(
         entry.ty = Some(std::mem::replace(&mut domain.ty, entry.ty.take().unwrap()));
         entry.retired_module = Some(std::mem::replace(&mut domain.module, batch.module.clone()));
         domain.code += 1;
+        periodic.commit(domain);
         if domain.source_module != 0 {
             domain.source_module = code::module_key(&batch.module);
         }
     }
     let old_entry = engine.install_staged(batch.module.clone(), batch.next_version);
     drop(domains);
+    drop(periodic);
     for timers in timers {
         timers::invalidate_schema(registry, timers);
     }

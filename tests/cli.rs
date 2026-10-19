@@ -9290,170 +9290,167 @@ fn every_declarations_run_in_all_backends() {
     work.write(
         "every.jk",
         &include_str!("fixtures/domain_every.jk")
-            .replace("{lifecycle()}", "{lifecycle() live() live_input()}"),
+            .replace("#every(100000)", "#every(1)")
+            .replace("{lifecycle()}", "{lifecycle() live() failure()}"),
     );
     work.assert_all_backends("every.jk", &[], b"", 0);
 }
-
 #[test]
 #[cfg(unix)]
-fn every_declarations_reject_invalid_entries_and_registration() {
-    let prefix="import joky/domain import joky/task import joky/io struct Room{value:Int32} fn make(n:Int32)->Room{Room{value:n}}";
+fn every_declarations_reject_invalid_entries() {
     let work = Workspace::new();
-    for declaration in [
-        "#every(1) fn tick(){}",
-        "#every(1) fn tick(s:Room){}",
-        "#every(1) fn tick(s:&Room){}",
-        "#every(1) fn tick(s:&mut Int32){}",
-        "#every(1) fn tick(s:&mut Room) @suspends {}",
-        "#every(1) fn tick(s:&mut Room)->Int32 {1}",
-        "#every(1) fn tick<T>(s:&mut Room,p:T){}",
-        "#every(1) fn tick(s:&mut Room,p:String){}",
-        "#every(1) fn tick(s:&mut Room,p:Ptr){}",
-        "#every(1) fn tick(s:&mut Room,t:&mut Room){}",
-        "#every(1) fn tick(s:&mut Room,a:Int32,b:Int32){}",
-        "#every(1) fn tick(s:&mut Room){io.println(&s.value)}",
-        "fn helper(s:&mut Room){io.println(&s.value)} #every(1) fn tick(s:&mut Room){helper(s)}",
-        "fn helper(s:&mut Room){} #every(1) fn tick(s:&mut Room){let f=helper f(s)}",
-        "#every(1) struct Bad{value:Int32}",
+    for method in [
+        "fn tick(){}",
+        "fn tick(self){}",
+        "fn tick(&self){}",
+        "fn tick(&mut self) @suspends {}",
+        "fn tick(&mut self)->Int32{1}",
+        "fn tick<T>(&mut self){}",
+        "fn tick(&mut self,dt:Int32){}",
+        "fn tick(&mut self,p:String){}",
+        "fn tick(&mut self,t:&mut Room){}",
+        "fn tick(&mut self){let n=self.value io.println(&n)}",
+        "fn tick(&mut self){helper(self)}",
     ] {
-        work.write(
-            "invalid.jk",
-            &format!("{prefix} {declaration} fn main(){{}}"),
-        );
-        let result = work.cli(&["build", "invalid.jk"]);
-        failure(&result, "error:");
-        assert!(!String::from_utf8_lossy(&result.stderr).contains("panicked"));
+        work.write("invalid.jk", &format!("import joky/io #state struct Room{{value:Int32}} fn helper(s:&mut Room){{let n=s.value io.println(&n)}} impl Room{{#every(1) {method}}} fn main(){{}}"));
+        failure(&work.cli(&["build", "invalid.jk"]), "#every requires");
     }
-    for (declaration, call) in [
-        ("fn tick(s:&mut Room){}", "domain.schedule(t,h,tick)"),
-        (
-            "#every(1) fn tick(s:&mut Room){}",
-            "let f=tick; domain.schedule(t,h,f)",
-        ),
-        (
-            "#every(1) fn tick(s:&mut Room){}",
-            "domain.schedule(t,room.read_handle(),tick)",
-        ),
-        (
-            "#every(1) fn tick(s:&mut Room){}",
-            "domain.schedule_with(t,h,tick,1)",
-        ),
-        (
-            "#every(1) fn tick(s:&mut Room,p:Int32){}",
-            "domain.schedule(t,h,tick)",
-        ),
-        (
-            "#every(1) fn tick(s:&mut Room,p:Int32){}",
-            "domain.schedule_with(t,h,tick,true)",
-        ),
-        (
-            "#every(1) fn tick(s:&mut Room){}",
-            "let f=domain.schedule::<Room>; f(t,h,tick)",
-        ),
+    for source in [
+        "struct Room{value:Int32} impl Room{#every(1) fn tick(&mut self){}}",
+        "#state struct Room{value:Int32} #every(1) fn tick(s:&mut Room){}",
+        "struct Room<T>{value:T} impl<T> Room<T>{#every(1) fn tick(&mut self){}}",
+        "#state struct Room{value:Int32} trait Tick{fn tick(&mut self);} impl Tick for Room{#every(1) fn tick(&mut self){}}",
     ] {
-        work.write("invalid.jk",&format!("{prefix} {declaration} fn main() @suspends {{let room=domain.create(make,0) let owner=domain.timer() let t=owner.handle() let h=room.handle() {call};}}"));
-        failure(&work.cli(&["build", "invalid.jk"]), "error:");
+        work.write("invalid.jk",&format!("{source} fn main(){{}}"));
+        failure(&work.cli(&["build","invalid.jk"]),"error:");
     }
-    let ty = format!("({})", vec!["Unit"; 65].join(","));
-    work.write(
-        "invalid.jk",
-        &format!("{prefix} #every(1) fn tick(s:&mut Room,p:{ty}){{}} fn main(){{}}"),
-    );
-    failure(&work.cli(&["build", "invalid.jk"]), "#every requires");
 }
-
 #[test]
 #[cfg(unix)]
-fn every_declarations_import_aliases_preserve_entries_and_periods() {
+fn every_declarations_import_aliases_preserve_automatic_methods() {
     let work = Workspace::new();
     work.write(
         "room.jk",
-        r#"pub struct Room{pub n:Int32}
+        r#"#state pub struct Room{pub n:Int32}
 pub fn make(n:Int32)->Room{Room{n:n}}
 fn increment(room:&mut Room){room.n+=1}
-#every(1) pub fn tick(room:&mut Room){increment(room)}
+impl Room{#every(1) fn tick(&mut self){increment(self)}}
 pub fn read(room:&Room)->Int32{room.n}"#,
     );
-    work.write(
-        "imported.jk",
-        r#"import room.{tick as advance} import joky/domain import joky/task import joky/check
-fn main() @suspends {let o=domain.create(room.make,0) let timer=domain.timer() let t=timer.handle()
-domain.schedule(t,o.handle(),advance).unwrap()
+    work.write("imported.jk",r#"import room.{make as open} import joky/domain import joky/task import joky/check
+fn main() @suspends {let o=domain.create(open,0)
 while domain.read_from(o.read_handle(),room.read).unwrap()<1 {task.yield_now()}
-t.cancel() check.assert(match t.status(){Cancelled=>true,_=>false},"imported every")}"#,
-    );
+check.assert(match domain.periodic_status(o.read_handle(),"tick"){Active=>true,_=>false},"imported every")}"#);
     work.assert_all_backends("imported.jk", &[], b"", 0);
+}
+#[test]
+#[cfg(unix)]
+fn every_declarations_script_publication_updates_automatic_methods() {
+    let base = r#"import joky/domain import joky/task
+#state struct Room{value:Int32}
+impl Room{#every(100000) fn tick(&mut self){self.value=10}}
+fn make(n:Int32)->Room{Room{value:n}}
+fn read(room:&Room)->Int32{room.value}
+fn hold(d:domain.DirectoryHandle) @suspends {
+ let room=domain.create(make,10) d.insert(0,room.handle()).unwrap()
+ while true{task.yield_now()}
+}
+fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {
+ match domain.lookup::<Room>(d,0){Some(h)=>domain.read_from(h,read).unwrap(),None=>-1}
+}
+fn status(d:domain.DirectoryHandle) @suspends ->Int32 {
+ match domain.lookup::<Room>(d,0){Some(h)=>match domain.periodic_status(h,"tick"){Active=>1,InvalidAccess=>2,_=>0},None=>-1}
+}"#;
+    for action in ["add", "remove", "change"] {
+        let old = if action == "add" {
+            base.replace("#every(100000)", "")
+        } else {
+            base.into()
+        };
+        let next = if action == "remove" {
+            base.replace("#every(100000)", "")
+        } else {
+            base.replace("#every(100000)", "#every(1)")
+                .replace("self.value=10", "self.value=42")
+        };
+        let expected = if action == "remove" { 10 } else { 42 };
+        let status = if action == "remove" { 2 } else { 1 };
+        let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
+        for create in ["new", "interpreter"] {
+            let work = Workspace::new();
+            work.write(
+                "reload.jk",
+                &format!(
+                    r#"import joky/domain import joky/vm import joky/task import joky/check
+fn assert(ok:Bool){{check.assert(ok,"automatic periodic publication")}}
+fn control(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
+ while h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1{{task.yield_now()}}
+ let next={next} assert(vm.load_source(h,&next)==0)
+ assert(vm.publish_domain_code(h)==1) assert(vm.module_count(h)==2)
+ while h.call::<domain.DirectoryHandle,Int32>("probe",d)!={expected}{{task.yield_now()}}
+ assert(h.call::<domain.DirectoryHandle,Int32>("status",d)=={status})
+}}
+fn main() @suspends {{
+ let owner=domain.directory(1) let d=owner.handle() let h=vm.Vm.{create}()
+ let source={old} assert(vm.load_source(h,&source)==0)
+ race{{| h.call::<domain.DirectoryHandle,Unit>("hold",d) | control(&h,d)}};
+ assert(vm.module_count(h)==1)
+ assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1)
+ assert(vm.close(h)==0)
+}}"#,
+                    next = quote(&next),
+                    old = quote(&old)
+                ),
+            );
+            work.assert_all_backends("reload.jk", &[], b"", 0);
+        }
+    }
 }
 
 #[test]
 #[cfg(unix)]
-fn every_declarations_script_publication_rebinds_or_invalidates() {
-    for input in [false, true] {
-        for remove in [false, true] {
-            let parameters = if input { ",amount:Int32" } else { "" };
-            let schedule = if input {
-                "domain.schedule_with(timer,room.handle(),tick,2)"
-            } else {
-                "domain.schedule(timer,room.handle(),tick)"
-            };
-            let next_body = if input {
-                "room.value=amount*21"
-            } else {
-                "room.value=42"
-            };
-            let await_result = if remove {
-                "while match timer.status(){Active=>true,_=>false}{task.yield_now()} check.assert(match timer.status(){InvalidAccess=>true,_=>false},\"removed declaration\") check.assert(domain.read_from(room.read_handle(),read).unwrap()==10,\"no incompatible write\")"
-            } else {
-                "while domain.read_from(room.read_handle(),read).unwrap()!=42{task.yield_now()} timer.cancel()"
-            };
-            let source = format!(
-                r#"import joky/domain import joky/task import joky/check
-struct Room{{value:Int32}}
-fn make(n:Int32)->Room{{Room{{value:n}}}}
-fn read(room:&Room)->Int32{{room.value}}
-#every(1) fn tick(room:&mut Room{parameters}){{room.value=10}}
-fn hold(timer:domain.TimerHandle) @suspends {{
-    let room=domain.create(make,10)
-    {schedule}.unwrap()
-    {await_result}
-}}"#
-            );
-            let next = if remove {
-                source
-                    .replace("#every(1)", "")
-                    .replace(&format!("{schedule}.unwrap()"), "")
-            } else {
-                source.replace("room.value=10", next_body)
-            };
-            let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
-            for create in ["new", "interpreter"] {
-                let work = Workspace::new();
-                work.write(
-                    "reload.jk",
-                    &format!(
-                        r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool){{check.assert(ok,"declared timer publication")}}
-fn control(h:&vm.Vm,t:domain.TimerHandle) @suspends {{
-    while match t.status(){{Idle=>true,_=>false}}{{task.yield_now()}}
-    let next={next}
-    assert(vm.load_source(h,&next)==0)
-    assert(vm.publish_domain_code(h)==1)
-    assert(vm.module_count(h)==2)
+fn every_declarations_migration_runs_in_all_host_and_script_backends() {
+    let old = r#"import joky/domain import joky/task
+#state struct Room{value:Int32}
+impl Room{#every(100000) fn tick(&mut self){self.value+=1}}
+fn make(n:Int32)->Room{Room{value:n}}
+fn read(room:&Room)->Int32{room.value}
+fn hold(d:domain.DirectoryHandle) @suspends {let room=domain.create(make,10) d.insert(0,room.handle()).unwrap() while true{task.yield_now()}}
+fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {match domain.lookup::<Room>(d,0){Some(h)=>domain.read_from(h,read).unwrap(),None=>-1}}"#;
+    let next = r#"import joky/domain
+#state struct Room{value:Int64}
+impl Room{#every(1) fn tick(&mut self){self.value=42}}
+fn upgrade(old:&PreviousState)->Room{Room{value:int64(old.value)}}
+fn read(room:&Room)->Int32{int32(room.value)}
+fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {match domain.lookup::<Room>(d,0){Some(h)=>domain.read_from(h,read).unwrap(),None=>-1}}"#;
+    let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write(
+            "migrate.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/task import joky/check
+fn assert(ok:Bool){{check.assert(ok,"automatic migration")}}
+fn control(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
+ while h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1{{task.yield_now()}}
+ let schema=vm.domain_schema(h) let next={next}
+ assert(vm.prepare_migration(h,schema,&next,"upgrade")==0)
+ assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==10)
+ assert(vm.publish_migration(h)==0)
+ while h.call::<domain.DirectoryHandle,Int32>("probe",d)!=42{{task.yield_now()}}
 }}
 fn main() @suspends {{
-    let owner=domain.timer() let t=owner.handle() let h=vm.Vm.{create}()
-    let source={source} assert(vm.load_source(h,&source)==0)
-    parallel {{| h.call::<domain.TimerHandle,Unit>("hold",t) | control(&h,t)}}
-    assert(vm.module_count(h)==1)
-    assert(vm.close(h)==0)
+ let owner=domain.directory(1) let d=owner.handle() let h=vm.Vm.{create}()
+ let old={old} assert(vm.load_source(h,&old)==0)
+ race{{| h.call::<domain.DirectoryHandle,Unit>("hold",d) | control(&h,d)}};
+ assert(vm.module_count(h)==1)
+ assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1)
+ assert(vm.close(h)==0)
 }}"#,
-                        next = quote(&next),
-                        source = quote(&source)
-                    ),
-                );
-                work.assert_all_backends("reload.jk", &[], b"", 0);
-            }
-        }
+                next = quote(next),
+                old = quote(old)
+            ),
+        );
+        work.assert_all_backends("migrate.jk", &[], b"", 0);
     }
 }

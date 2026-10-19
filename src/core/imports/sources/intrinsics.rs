@@ -81,8 +81,6 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     "domain.finish_create" => DomainCreateFinish,
                     "domain.after" => TimerStart(false),
                     "domain.every" => TimerStart(true),
-                    "domain.schedule" => TimerSchedule(false),
-                    "domain.schedule_with" => TimerSchedule(true),
                     "domain.finish_timer" => TimerFinish,
                     "domain.finish_timer_value" => TimerValueFinish,
                     "domain.lookup_witness" => DirectoryWitness,

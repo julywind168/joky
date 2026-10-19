@@ -3742,8 +3742,6 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 | `Timer.close(self)` | 关闭、取消排队调用并释放所有者 |
 | `domain.after<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记一次调用，延迟非负；0 表示排队执行，不在登记期间调用 |
 | `domain.every<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记周期调用，间隔必须大于 0，第一次在一个间隔后到期 |
-| `domain.schedule<S>(timer: TimerHandle, target: WriteHandle<S>, operation: fn(&mut S)->Unit) -> Result<Unit,TimerError>` | 按操作的 `#every` 声明登记无输入周期调用 |
-| `domain.schedule_with<S,A>(timer: TimerHandle, target: WriteHandle<S>, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 按操作的 `#every` 声明登记带纯值输入的周期调用 |
 | `TimerHandle.cancel(self)` | 取消尚未开始的调用，Active 变为 Cancelled；其他终态不变 |
 | `TimerHandle.status(self) -> TimerStatus` | 观察 Idle / Active / Completed / Cancelled / Closed / InvalidAccess / ResourceLimit / Failed |
 
@@ -3778,24 +3776,33 @@ Timer 登记/取消即时生效，不参与候选事务。tick 是普通短域�
 
 ### 周期声明 `#every`
 
-`#every(1000)` 为紧随其后的顶层函数声明 1000 毫秒周期。参数须为一个正 Int32 整数字面量
-（1–2147483647），不接受常量名或运行时表达式；不得重复或与其他函数属性组合。
-函数必须是非泛型、同步、无宿主调用的受检域写操作，签名为 `fn(&mut State) -> Unit`
-或 `fn(&mut State, Input) -> Unit`，Input 遵循共同有界纯值契约。未登记的声明也会接受完整资格检查。
-当前不支持方法、闭包、多域操作或拥有型输入。
+`#every(1000)` 标注 `#state` 类型的固有方法，声明 1000 毫秒周期。方法必须是非泛型、
+同步、无宿主调用的受检域写操作，只接受 `&mut self`，返回 Unit。尚不支持额外输入、dt、
+泛型 impl、trait 方法或顶层函数。配置从状态字段读取；普通方法调用仍正常执行一次方法体。
+属性参数须为一个正 Int32 整数字面量（1–2147483647），不接受常量名或运行时表达式，
+不得重复或与其他方法属性组合。即使没有创建实例，也会检查声明资格。
 
-无输入操作使用 `domain.schedule(timer, target, tick)`，带输入操作使用
-`domain.schedule_with(timer, target, tick, input)`；两者均为 `@suspends`，返回
-`Result<Unit,TimerError>`。操作参数须直接指定带声明的具名函数，可通过导入别名引用，
-不能先保存为函数值再传入。Timer 所有者、弱句柄及写目标仍由调用方显式提供。
-模块加载、声明函数或普通直接调用该函数均不会启动定时任务。
+每个状态域实例创建成功时自动登记该类型的全部周期方法，由状态域拥有登记；
+无需创建 Timer 或手动调用 schedule。普通结构体值、快照、候选及迁移中间状态不启动任务。
+模块加载本身不启动任务。首次在一个周期后到期，沿用上文的节拍跳过、同域串行执行和写失败隔离规则。
+Owner 销毁、显式关闭或域隔离会取消相应任务；自动调度仍需宿主驱动执行器，没有独立后台线程。
+实际写法及可执行示例见[周期声明测试](../tests/fixtures/domain_every.jk)。
 
-登记沿用上文的输入单次求值与复制、首次延迟、节拍跳过、无重叠调用、取消、预算及失败隔离规则。
-声明周期在调用方编译时写入登记代码；兼容热更新只替换后续 tick 的实现，不修改已登记周期。
-执行新版流程中的登记才采用新版声明周期，仍在运行的旧流程即使重新登记也沿用其编译时周期。
-删除属性、改名或改变入口契约会令旧定时器在下一次到期／执行前以 InvalidAccess 终止，
-即使去掉属性后普通函数仍存在也不继续调用。需要动态间隔时继续使用显式 `domain.every`。
-完整可执行示例见[周期声明测试](../tests/fixtures/domain_every.jk)。
+兼容代码发布会同时更新周期声明：只改方法体时保留原节拍，排队 tick 兼容晚绑定到新版实现；
+新增方法自动启动；删除属性或方法会取消其登记及排队 tick；改名视作删除旧方法并新增方法。
+改变周期会取消旧登记和排队 tick，按发布时钟重新计时。迁移候选在成功发布前没有周期任务，
+发布时用新状态类型的声明重新建立调度；批量迁移和不改 schema 的代码发布也整批处理。
+
+创建和发布均先准备全部新任务，再安装状态与调度。失败时创建不留下实例，发布则保留原代码、
+状态和周期登记。准备阶段的新旧任务同时计入峰值资源预算，预算不足不会先取消旧任务腾位置。
+已经终止的登记不会因只改方法体而自动重试；改变周期或删除后重新添加声明会建立新登记。
+
+`domain.periodic_status<S>(target: ReadHandle<S>, method: String) @suspends -> TimerStatus`
+按方法短名查询，例如 `domain.periodic_status(room.read_handle(), "tick")`。
+Active 表示正在调度；到期准入不足报告 ResourceLimit，写失败报告 Failed；关闭报告 Closed，
+不存在该周期方法报告 InvalidAccess。查询不推进 tick、不授予写权限，也不重新启动任务。
+Rust 宿主使用 `VmEngine::domain_periodic_status(handle, method)` 和 `joky::vm::PeriodicStatus`。
+需要动态间隔、输入或独立取消控制时继续使用显式 Timer 与 `domain.after/every`。
 
 ## 提交式出站信箱 `joky/outbox`
 

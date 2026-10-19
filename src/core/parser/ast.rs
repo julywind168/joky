@@ -1335,7 +1335,7 @@ pub enum Item {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
-    /// A positive literal period in milliseconds; declaration never starts a timer.
+    /// A positive literal period for an automatically scheduled state method.
     pub every: Option<std::num::NonZeroI32>,
     /// Rebuild Copy field snapshots after generic substitution for JSON encoding.
     pub(crate) json_encode: bool,
@@ -1421,8 +1421,6 @@ pub(crate) enum CompilerIntrinsic {
     DomainCreate,
     DomainCreateFinish,
     TimerStart(bool),
-    /// Explicit registration of a declared periodic entry, with optional input.
-    TimerSchedule(bool),
     TimerFinish,
     TimerValueFinish,
     DirectoryType(Type),

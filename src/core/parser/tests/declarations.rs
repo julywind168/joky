@@ -521,15 +521,18 @@ fn conditional_patterns_preserve_spans_and_match_payload_syntax() {
 
 #[test]
 fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
-    for period in ["1", "1_000", "0x10", "2147483647"] {
-        let source = format!("#every({period}) pub fn tick(s:&mut State) {{}}");
+    for (period, value) in [
+        ("1", 1),
+        ("1_000", 1000),
+        ("0x10", 16),
+        ("2147483647", i32::MAX),
+    ] {
+        let source = format!("#state struct State{{n:Int32}} impl State {{#every({period}) pub fn tick(&mut self) {{}}}}");
         let module = parse(&source).unwrap();
-        let Item::FnDef(f) = &module.items[0] else {
-            panic!()
-        };
-        assert!(f.every.is_some_and(|n| n.get() > 0));
+        let f = &module.implementations[0].methods[0];
+        assert_eq!(f.every.unwrap().get(), value);
         assert!(f.public);
-        assert_eq!(f.span.slice(&source), Some(source.as_str()));
+        assert!(f.span.slice(&source).unwrap().starts_with("#every"));
     }
     for attr in [
         "#every",
@@ -540,20 +543,21 @@ fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
         "#every(1,2)",
         "#every(ms:1)",
         "#every(SECOND)",
-        "#every(\"1\")",
         "#every(true)",
         "#every(1) #every(2)",
         "#every(1) #intrinsic(\"domain.every\")",
     ] {
         assert!(
-            parse(&format!("{attr} fn tick(s:&mut State) {{}}")).is_err(),
+            parse(&format!("impl State {{{attr} fn tick(&mut self){{}}}}")).is_err(),
             "{attr}"
         );
     }
     for source in [
+        "#every(1) fn tick(s:&mut State){}",
         "#every(1) extern fn tick(s:&mut State)",
-        "impl State {#every(1) fn tick(&mut self){}}",
-        "#every(1) fn tick(s:&mut State);",
+        "impl Trait for State {#every(1) fn tick(&mut self){}}",
+        "impl State {#every(1) fn tick(&mut self);}",
+        "impl State {#every(1) const N:Int32=1}",
     ] {
         assert!(parse(source).is_err(), "{source}");
     }

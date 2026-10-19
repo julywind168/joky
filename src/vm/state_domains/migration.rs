@@ -266,6 +266,8 @@ pub(crate) fn publish(
     }
     // Reserve the cleanup list before the final validation/publication interval.
     let timers = timers::schema_dependents(registry, plan.target)?;
+    let mut periodic =
+        timers::automatic::prepare(registry, plan.target, &plan.module, &plan.ty, true)?;
     let mut domains = registry.borrow_mut();
     plan.validate_reads(&domains, owners)?;
     let domain = domains.entries.get_mut(&plan.target.sequence).unwrap();
@@ -285,11 +287,13 @@ pub(crate) fn publish(
     domain.revision = revision;
     domain.code = code;
     domain.schema = plan.schema;
+    periodic.commit(domain);
     if domain.source_module != 0 {
         domain.source_module = code::module_key(&domain.module);
     }
     let old_entry = engine.install_staged(plan.module, plan.next_version);
     drop(domains);
+    drop(periodic);
     timers::invalidate_schema(registry, timers);
     drop((old_root, old_module, old_type, old_entry));
     Ok(())

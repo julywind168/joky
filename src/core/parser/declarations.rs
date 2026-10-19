@@ -390,14 +390,27 @@ impl Parser {
         let mut constants = Vec::new();
         while self.peek() != &TokenKind::RBrace {
             let start = self.peek_span().start();
+            let mut attributes = Vec::new();
+            while self.peek() == &TokenKind::Hash {
+                self.advance();
+                attributes.push(self.parse_attribute(0)?);
+            }
+            let (every, attributes) = self.parse_every_attribute(attributes)?;
+            if !attributes.is_empty() || (every.is_some() && trait_name.is_some()) {
+                return Err(self.error("#every requires an inherent state method".into()));
+            }
             let public = self.peek() == &TokenKind::Pub;
             if public {
                 self.advance();
+            }
+            if every.is_some() && self.peek() != &TokenKind::Fn {
+                return Err(self.error("#every requires an inherent state method".into()));
             }
             match self.peek() {
                 TokenKind::Fn => {
                     self.advance();
                     let mut method = self.parse_fn_def(start)?;
+                    method.every = every;
                     method.public = public;
                     methods.push(method);
                 }

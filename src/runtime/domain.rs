@@ -93,6 +93,7 @@ pub(crate) enum Operation {
     SetEditSnapshot,
     SetEditCandidate,
     When,
+    PeriodicStatus,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +130,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__timer_close" => Operation::TimerClose,
         "__timer_cancel" => Operation::TimerCancel,
         "__timer_status" => Operation::TimerStatus,
+        "__domain_periodic_status" => Operation::PeriodicStatus,
         "__timer_start" => Operation::TimerStart,
         "__timer_start_values" => Operation::TimerStartValues,
         "__directory_create" => Operation::DirectoryCreate,
@@ -281,6 +283,7 @@ impl Operation {
         let bytes = Type::Buffer(std::sync::Arc::new(Type::UInt8));
         let directory = Type::Resource("domain.DirectoryOwner".into());
         let (params, ret) = match self {
+            Self::PeriodicStatus => (vec![token, text], Type::Int32),
             Self::When => (
                 vec![
                     m,
@@ -688,6 +691,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         88 => Operation::SetEditSnapshot,
         89 => Operation::SetEditCandidate,
         90 => Operation::When,
+        91 => Operation::PeriodicStatus,
 
         _ => {
             super::error::record_error(Error::new_with_code(

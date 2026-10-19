@@ -122,6 +122,10 @@ pub(crate) fn encode(info: &FunctionInfo) -> Vec<u8> {
         encode_type(&mut out, ty);
     }
     encode_type(&mut out, &info.signature.ret);
+    if let Some(period) = info.every {
+        // Optional scheduling metadata; ordinary v3 signatures are unchanged.
+        put_u64(&mut out, period as u64);
+    }
     out
 }
 struct Reader<'a> {
@@ -356,6 +360,15 @@ pub(crate) unsafe fn decode(
         params.push(r.ty()?)
     }
     let ret = r.ty()?;
+    let every = if r.bytes.is_empty() {
+        None
+    } else {
+        let period = r.number()?;
+        if entry.kind != 0 || !(1..=i32::MAX as usize).contains(&period) {
+            return Err(invalid());
+        }
+        Some(period as i32)
+    };
     if !r.bytes.is_empty() {
         return Err(invalid());
     }
@@ -365,6 +378,7 @@ pub(crate) unsafe fn decode(
         Span::empty(0),
     );
     info.frame_slots = entry.slots;
+    info.every = every;
     info.internal = false;
     info.instance_entry = entry.kind == 0;
     info.domain_entry = entry.kind == 0;

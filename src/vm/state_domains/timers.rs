@@ -3,10 +3,12 @@ use super::commits::{adopt, lease, Stored};
 use super::*;
 use crate::runtime::{buffer::Buffer, domain::Operation, driver::Wake};
 use std::time::{Duration, Instant};
+pub(super) mod automatic;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
-enum Status {
+/// Observable state of a periodic operation owned by a domain.
+pub enum Status {
     Idle,
     Active,
     Completed,
@@ -21,6 +23,8 @@ pub(super) struct State {
     generation: u64,
     target: Option<DomainHandle>,
     job: Option<TaskId>,
+    staged: bool,
+    waiter: Option<TaskWaker>,
     _charge: reads::Charge,
 }
 struct Owner {
@@ -55,6 +59,8 @@ fn create(registry: &Rc<RefCell<Domains>>) -> Result<Owner, Error> {
         generation: 0,
         target: None,
         job: None,
+        staged: false,
+        waiter: None,
         _charge: charge,
     }));
     domains.timers.insert(token, Rc::downgrade(&state));
@@ -152,6 +158,13 @@ impl Worker {
     fn step(&mut self) -> Result<Option<Wake>, Status> {
         if !self.active() {
             return Err(Status::Cancelled);
+        }
+        {
+            let mut state = self.state.borrow_mut();
+            if state.staged {
+                state.waiter = current_waker();
+                return Ok(None);
+            }
         }
         let registry = self.registry.upgrade().ok_or(Status::Closed)?;
         let executor = registry.borrow().executor.upgrade().ok_or(Status::Closed)?;
@@ -255,10 +268,12 @@ fn submit_values(
 }
 
 fn target_status(domains: &Domains, target: DomainHandle) -> Status {
-    if domains
-        .entries
-        .get(&target.sequence)
-        .is_some_and(|d| d.failure.is_some() && !d.closing)
+    if target.registry == domains.identity
+        && !domains.shutting_down
+        && domains
+            .entries
+            .get(&target.sequence)
+            .is_some_and(|d| d.failure.is_some() && !d.closing)
     {
         Status::Failed
     } else {
@@ -303,6 +318,7 @@ impl Drop for Worker {
         let mut state = self.state.borrow_mut();
         if state.generation == self.generation {
             state.job = None;
+            state.waiter = None;
             if state.status == Status::Active {
                 state.status = status;
             }
@@ -356,6 +372,16 @@ struct Schedule<'a> {
 // Start error codes are deliberately distinct from terminal status codes.
 fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) -> Result<(), u64> {
     let state = state(registry, token).ok_or(1u64)?;
+    start_state(registry, state, schedule, None)
+}
+// Automatic registrations are prepared against the next state schema. Their
+// caller has already sampled the clock without borrowing the registry.
+fn start_state(
+    registry: &Rc<RefCell<Domains>>,
+    state: Rc<RefCell<State>>,
+    schedule: Schedule<'_>,
+    prepared: Option<(&Type, Instant)>,
+) -> Result<(), u64> {
     if state.borrow().status == Status::Closed {
         return Err(1);
     }
@@ -367,7 +393,8 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
     }
     let executor = registry.borrow().executor.upgrade().ok_or(1u64)?;
     let delay = Duration::from_millis(schedule.milliseconds as u64);
-    let due = executor.now().checked_add(delay).ok_or(3u64)?;
+    let now = prepared.map_or_else(|| executor.now(), |(_, now)| now);
+    let due = now.checked_add(delay).ok_or(3u64)?;
     // Recheck owner and target after the external clock callback.
     if state.borrow().status == Status::Closed || registry.borrow().shutting_down {
         return Err(1);
@@ -411,11 +438,16 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
     let charge = {
         let mut domains = registry.borrow_mut();
         let domain = domains.get(schedule.target).map_err(|_| 1u64)?;
-        let current = domain
-            .module
-            .instance_info(schedule.name)
-            .map_err(|_| 4u64)?;
-        if !info.domain_entry || !matches_contract(&current, &info.signature, &domain.ty) {
+        let compatible = if let Some((ty, _)) = prepared {
+            matches_contract(&info, &info.signature, ty)
+        } else {
+            let current = domain
+                .module
+                .instance_info(schedule.name)
+                .map_err(|_| 4u64)?;
+            matches_contract(&current, &info.signature, &domain.ty)
+        };
+        if !info.domain_entry || !compatible {
             return Err(4);
         }
         let bytes = input_bytes
@@ -481,6 +513,13 @@ pub(super) unsafe fn poll(
 ) -> Result<u64, Error> {
     let slots = &frame.slots;
     match op {
+        Operation::PeriodicStatus => {
+            let Ok(target) = source::handle_identity(registry, slots[0]) else {
+                return Ok(Status::Closed as u64);
+            };
+            let name = crate::runtime::owned_text::borrow(slots[1] as *const Buffer)?;
+            Ok(automatic::status(&registry.borrow(), target, name) as u64)
+        }
         Operation::TimerCreate => adopt(arena, create(registry)?),
         Operation::TimerHandle => {
             let lease = lease(slots[0])?;

@@ -542,12 +542,26 @@ extern fn __timer_handle(owner:&domain.TimerOwner) @suspends -> UInt64
 extern fn __timer_close(timer:UInt64) @suspends
 extern fn __timer_cancel(timer:UInt64) @suspends
 extern fn __timer_status(timer:UInt64) @suspends -> Int32
+extern fn __domain_periodic_status(target:domain.Handle,method:String) @suspends -> Int32
 extern fn __timer_start(module:domain.Module, timer:UInt64, target:domain.Handle, milliseconds:Int32, operation:String, input:UInt64, periodic:Bool) @suspends -> Int32
 pub struct Timer { storage:domain.TimerOwner }
 pub struct TimerHandle { identity:UInt64 }
 pub enum TimerStatus { Idle, Active, Completed, Cancelled, Closed, InvalidAccess, ResourceLimit, Failed }
 pub enum TimerError { Closed, Busy, InvalidDelay, InvalidAccess, ResourceLimit }
 pub fn timer() @suspends -> Timer { Timer{storage:__timer_create()} }
+pub fn periodic_status<S>(target:ReadHandle<S>,method:String) @suspends -> TimerStatus {
+    timer_status(__domain_periodic_status(target.token,method))
+}
+fn timer_status(status:Int32)->TimerStatus {
+    if status==0 { return TimerStatus.Idle }
+    if status==1 { return TimerStatus.Active }
+    if status==2 { return TimerStatus.Completed }
+    if status==3 { return TimerStatus.Cancelled }
+    if status==4 { return TimerStatus.Closed }
+    if status==5 { return TimerStatus.InvalidAccess }
+    if status==6 { return TimerStatus.ResourceLimit }
+    TimerStatus.Failed
+}
 impl Timer {
     pub fn handle(&self) @suspends -> TimerHandle { TimerHandle{identity:__timer_handle(&self.storage)} }
     pub fn close(self) @suspends { __timer_close(self.handle().identity) }
@@ -555,15 +569,7 @@ impl Timer {
 impl TimerHandle {
     pub fn cancel(self) @suspends { __timer_cancel(self.identity) }
     pub fn status(self) @suspends -> TimerStatus {
-        let status=__timer_status(self.identity)
-        if status==0 { return TimerStatus.Idle }
-        if status==1 { return TimerStatus.Active }
-        if status==2 { return TimerStatus.Completed }
-        if status==3 { return TimerStatus.Cancelled }
-        if status==4 { return TimerStatus.Closed }
-        if status==5 { return TimerStatus.InvalidAccess }
-        if status==6 { return TimerStatus.ResourceLimit }
-        TimerStatus.Failed
+        timer_status(__timer_status(self.identity))
     }
 }
 #intrinsic("domain.finish_timer")
@@ -595,16 +601,6 @@ pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, 
 #intrinsic("domain.every")
 pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
     finish_timer_value::<A>(module(),timer.identity,target.token,milliseconds,"",input,true)
-}
-
-// Declared periods are supplied by the compiler; registration remains explicit.
-#intrinsic("domain.schedule")
-pub fn schedule<S>(timer:TimerHandle, target:WriteHandle<S>, operation:fn(&mut S)->Unit) @suspends -> Result<Unit,TimerError> {
-    finish_timer_value::<Unit>(module(),timer.identity,target.token,1,"",{},true)
-}
-#intrinsic("domain.schedule_with")
-pub fn schedule_with<S,A>(timer:TimerHandle, target:WriteHandle<S>, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
-    finish_timer_value::<A>(module(),timer.identity,target.token,1,"",input,true)
 }
 
 // Compiler-generated when and handle-method calls use a variable-size access packet.

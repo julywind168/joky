@@ -35,12 +35,15 @@ impl Parser {
             if public {
                 self.advance();
             }
+            if attributes.iter().any(|a| a.path == "every") {
+                return Err(self.error(
+                    "#every requires a method in an inherent impl for a #state type".into(),
+                ));
+            }
             if !attributes.is_empty()
                 && self.peek() != &TokenKind::Struct
                 && !(self.peek() == &TokenKind::Fn
-                    && attributes
-                        .iter()
-                        .all(|a| matches!(a.path.as_str(), "intrinsic" | "every")))
+                    && attributes.iter().all(|a| a.path == "intrinsic"))
             {
                 return Err(self.error("Declaration attributes currently require a struct".into()));
             }
@@ -70,7 +73,6 @@ impl Parser {
             declarations_started = true;
             match self.peek() {
                 TokenKind::Fn => {
-                    let (every, attributes) = self.parse_every_attribute(attributes)?;
                     let intrinsic = self.parse_intrinsic_attribute(attributes)?;
                     self.advance();
                     let (mut function, intrinsic) =
@@ -80,7 +82,6 @@ impl Parser {
                             .intrinsic_attributes
                             .push((module.items.len(), attribute));
                     }
-                    function.every = every;
                     function.public = public;
                     module.items.push(Item::FnDef(function));
                 }

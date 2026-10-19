@@ -9,7 +9,7 @@ pub(crate) mod state_domains;
 pub(crate) use state_domains::queue_current_i32_call;
 pub use state_domains::{
     queue_current_domain_call, DomainHandle, DomainLimits, DomainOutcome, DomainOwner,
-    DomainRequest,
+    DomainRequest, PeriodicStatus,
 };
 mod limits;
 #[cfg(test)]
