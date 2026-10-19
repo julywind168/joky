@@ -2082,10 +2082,10 @@ panic 的函数值签名为 `fn(&String) -> Unit`，间接调用需显式传引�
 
 ```joky
 #intrinsic("text.clone")
-fn copy_text(text: &String) @noescape -> String;
+fn copy_text(text: &String) @noescape -> String
 ```
 
-这类声明以分号结束，没有占位函数体；函数名可改变，操作身份由注解标识符决定。
+这类声明没有占位函数体，尾随分号可省略，与 `extern fn` 一致；函数名可改变，操作身份由注解标识符决定。
 部分 domain 调用适配函数带同类注解并保留实际源码函数体，编译器仍在调用点检查及捕获操作身份。
 该属性只允许受信任的内嵌标准库使用；普通文件或用户模块中的同名路径和属性不授予权限。
 未知标识符、跨模块权限、错误声明形式和不符合操作要求的签名均会被拒绝。

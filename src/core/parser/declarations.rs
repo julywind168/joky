@@ -151,8 +151,13 @@ impl Parser {
             if attribute.has_body {
                 self.parse_block()?
             } else {
-                let span = self.peek_span();
-                self.expect(&TokenKind::Semi)?;
+                let span = if self.peek() == &TokenKind::Semi {
+                    let span = self.peek_span();
+                    self.advance();
+                    span
+                } else {
+                    self.span(self.last_span.end(), self.last_span.end())
+                };
                 Expr::Block {
                     exprs: Vec::new(),
                     span,

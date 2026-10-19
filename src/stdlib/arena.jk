@@ -7,6 +7,6 @@ impl Arena {
 }
 
 #intrinsic("arena.new")
-fn new() -> Arena;
+fn new() -> Arena
 #intrinsic("arena.alloc")
-fn allocate<T>(arena: &Arena, value: T) -> &mut T;
+fn allocate<T>(arena: &Arena, value: T) -> &mut T

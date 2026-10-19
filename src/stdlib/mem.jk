@@ -1,11 +1,11 @@
 // Checked whole-value operations, bound by trusted module identity.
 // Replace and swap lower at the call site without an escape boundary.
 #intrinsic("mem.replace")
-pub fn replace<T>(target: &mut T, next: T) -> T;
+pub fn replace<T>(target: &mut T, next: T) -> T
 #intrinsic("mem.swap")
-pub fn swap<T>(left: &mut T, right: &mut T);
+pub fn swap<T>(left: &mut T, right: &mut T)
 
 // Consuming the argument ends its ownership at this function's scope exit.
 // Its trusted identity also permits borrow-only and callable type arguments.
 #intrinsic("mem.drop")
-pub fn drop<T>(value: T);
+pub fn drop<T>(value: T)

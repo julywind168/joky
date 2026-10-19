@@ -22,9 +22,43 @@ fn intrinsic_declarations_parse_without_placeholder_bodies() {
         "#intrinsic(\"a\", \"b\") fn f();",
         "#intrinsic(\"a\") #intrinsic(\"b\") fn f();",
         "fn f();",
-        "#intrinsic(\"text.clone\") fn f()",
+        "fn f()",
     ] {
         assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn intrinsic_declarations_allow_optional_semicolons() {
+    for signature in [
+        "pub fn duplicate(text: &String) @noescape -> String",
+        "fn stop(message: &String) @noescape",
+        "fn primitive<T>(value: T) -> T",
+        "fn primitive()",
+    ] {
+        for separator in ["", ";"] {
+            for following in [
+                "",
+                " fn next() {}",
+                "\n// Another intrinsic.\n#intrinsic(\"next\") fn next()",
+                " extern fn next()",
+            ] {
+                let declaration = format!("#intrinsic(\"test\") {signature}{separator}");
+                let source = format!("{declaration}{following}");
+                let module = parse(&source).unwrap_or_else(|error| panic!("{source}: {error}"));
+                assert_eq!(module.items.len(), if following.is_empty() { 1 } else { 2 });
+                let Item::FnDef(function) = &module.items[0] else {
+                    panic!()
+                };
+                assert_eq!(function.span.slice(&source), Some(declaration.as_str()));
+                assert!(!module.intrinsic_attributes[0].1.has_body);
+                let Expr::Block { exprs, span } = &function.body else {
+                    panic!()
+                };
+                assert!(exprs.is_empty());
+                assert_eq!(span.slice(&source), Some(separator));
+            }
+        }
     }
 }
 

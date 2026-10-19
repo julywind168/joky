@@ -60,11 +60,11 @@ extern fn __vm_call_float64_2(owner: &vm.Owner, name: &String, arg0: Float64, ar
 pub fn call_float64_2(value: &Vm, name: &String, arg0: Float64, arg1: Float64) -> Float64 { __vm_call_float64_2(&value.owner, name, arg0, arg1) }
 struct Packet { storage: Buffer<UInt64> }
 #intrinsic("vm.schema")
-fn schema<T>() -> String;
+fn schema<T>() -> String
 #intrinsic("vm.pack")
-fn pack<T>(value: T) -> Packet;
+fn pack<T>(value: T) -> Packet
 #intrinsic("vm.unpack")
-fn unpack<T>(packet: &Packet) -> T;
+fn unpack<T>(packet: &Packet) -> T
 extern fn __vm_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>) @suspends
 impl Vm {
     pub fn call<A, R>(&self, name: String, input: A) @suspends -> R {

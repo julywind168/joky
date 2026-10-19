@@ -185,7 +185,7 @@ fn declaration(attribute: &IntrinsicAttribute, adapter: bool) -> Result<(), Erro
             if adapter {
                 "This intrinsic requires a source adapter body"
             } else {
-                "Compiler-implemented intrinsic declarations must end with ';' and have no body"
+                "Compiler-implemented intrinsic declarations must have no body"
             },
         ));
     }

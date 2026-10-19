@@ -3180,6 +3180,8 @@ fn intrinsic_declarations_and_assert_prelude_match_all_backends() {
     for source in [
         r#"#intrinsic("text.clone") fn fake(text: &String) -> String; fn main() {}"#,
         r#"#intrinsic("check.assert") fn fake(ok: Bool, text: &String); fn main() {}"#,
+        r#"#intrinsic("text.clone") fn fake(text: &String) -> String fn main() {}"#,
+        r#"#intrinsic("check.assert") fn fake(ok: Bool, text: &String) fn main() {}"#,
     ] {
         work.write("invalid.jk", source);
         failure(&work.cli(&["build", "invalid.jk"]), "restricted to trusted");

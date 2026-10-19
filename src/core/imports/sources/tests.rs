@@ -248,9 +248,9 @@ fn registry(sources: &[SourceDefinition]) -> TypeRegistry {
 fn intrinsic_annotations_bind_renamed_definitions_and_keep_error_locations() {
     use crate::vm::{VmEngine, VmMode};
     const TEXT: &str = r#"#intrinsic("text.clone")
-        pub fn duplicate(input: &String) @noescape -> String;"#;
+        pub fn duplicate(input: &String) @noescape -> String"#;
     const CHECK: &str = r#"#intrinsic("check.assert")
-        fn verify(ok: Bool, message: &String) @noescape;
+        fn verify(ok: Bool, message: &String) @noescape
         #intrinsic("check.panic")
         fn stop(message: &String) @noescape;"#;
     let types = registry(&[

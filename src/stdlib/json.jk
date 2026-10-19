@@ -34,7 +34,7 @@ pub struct Number { text: String }
 // Compiler-bound shared conversion. Its placeholder never executes. Only
 // bounded, grammar-validated text reaches it through Number.to_f64.
 #intrinsic("json.parse_float64")
-fn parse_float64(text: &String) -> Float64;
+fn parse_float64(text: &String) -> Float64
 fn error(kind: NumberErrorKind, offset: UInt64) -> NumberError {
     NumberError { kind: kind, offset: offset }
 }

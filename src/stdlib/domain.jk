@@ -9,9 +9,9 @@ extern fn __domain_write_scalar(method: String, input: UInt64) @suspends -> (Int
 
 struct ValuePacket { storage: Buffer<UInt64> }
 #intrinsic("domain.value_pack")
-fn pack_value<A>(value:A) -> ValuePacket;
+fn pack_value<A>(value:A) -> ValuePacket
 #intrinsic("domain.value_unpack")
-fn unpack_value<R>(packet:&ValuePacket) -> R;
+fn unpack_value<R>(packet:&ValuePacket) -> R
 extern fn __domain_values(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,packet:&mut Buffer<UInt64>) @suspends -> Int32
 #intrinsic("domain.finish_value")
 fn finish_value<A,R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:A) @suspends -> Result<R,DomainAccessError> {
@@ -58,9 +58,9 @@ fn finish_current_scalar<R>(name:String,input:UInt64,write:Bool,query:Bool) @sus
 
 // Only trusted call-site lowering can encode or decode a checked scalar type.
 #intrinsic("domain.pack")
-fn pack<A>(value: A) -> UInt64;
+fn pack<A>(value: A) -> UInt64
 #intrinsic("domain.unpack")
-fn unpack<R>(bits: UInt64) -> R;
+fn unpack<R>(bits: UInt64) -> R
 #intrinsic("domain.read")
 pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_current_value::<Unit,R>("",{})
@@ -78,7 +78,7 @@ extern fn __domain_module() -> domain.Module
 extern fn __domain_create(module: domain.Module, name: String, input: UInt64) @suspends -> domain.StateOwner
 extern fn __domain_handle(owner: &domain.StateOwner) @suspends -> domain.Handle
 #intrinsic("domain.readonly")
-fn readonly(handle: domain.Handle) -> domain.Handle;
+fn readonly(handle: domain.Handle) -> domain.Handle
 extern fn __domain_close(owner: &mut domain.StateOwner) @suspends
 extern fn __domain_request(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> (Int32, UInt64)
@@ -96,7 +96,7 @@ fn snapshot_value<R>(snapshot:&domain.SnapshotOwner) @suspends -> R {
 }
 extern fn __domain_snapshot_check(snapshot: &domain.SnapshotOwner) @suspends -> Int32
 #intrinsic("domain.module")
-fn module() -> domain.Module;
+fn module() -> domain.Module
 pub struct Owner<S> { value: domain.StateOwner }
 pub struct ReadHandle<S> { token: domain.Handle }
 pub struct WriteHandle<S> { token: domain.Handle }
@@ -518,7 +518,7 @@ impl DirectoryHandle {
 // Specialization supplies checked state metadata without a user operation.
 // The private witness is never invoked and does not borrow a live root.
 #intrinsic("domain.lookup_type")
-fn lookup_type<S>() -> String;
+fn lookup_type<S>() -> String
 #intrinsic("domain.lookup_witness")
 fn lookup_witness<S>(state: &S) {}
 pub fn lookup<S>(directory:DirectoryHandle, key:UInt64) @suspends -> Option<ReadHandle<S>> {
