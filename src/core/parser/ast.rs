@@ -1200,6 +1200,7 @@ pub struct TraitMethod {
 impl TraitMethod {
     pub(crate) fn definition(&self) -> FnDef {
         FnDef {
+            every: None,
             json_encode: false,
             name: self.name.clone(),
             params: self.params.clone(),
@@ -1334,6 +1335,8 @@ pub enum Item {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
+    /// A positive literal period in milliseconds; declaration never starts a timer.
+    pub every: Option<std::num::NonZeroI32>,
     /// Rebuild Copy field snapshots after generic substitution for JSON encoding.
     pub(crate) json_encode: bool,
     /// Checked promise that borrowed arguments do not escape this call.
@@ -1418,6 +1421,8 @@ pub(crate) enum CompilerIntrinsic {
     DomainCreate,
     DomainCreateFinish,
     TimerStart(bool),
+    /// Explicit registration of a declared periodic entry, with optional input.
+    TimerSchedule(bool),
     TimerFinish,
     TimerValueFinish,
     DirectoryType(Type),

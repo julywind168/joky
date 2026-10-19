@@ -38,7 +38,9 @@ impl Parser {
             if !attributes.is_empty()
                 && self.peek() != &TokenKind::Struct
                 && !(self.peek() == &TokenKind::Fn
-                    && attributes.iter().all(|a| a.path == "intrinsic"))
+                    && attributes
+                        .iter()
+                        .all(|a| matches!(a.path.as_str(), "intrinsic" | "every")))
             {
                 return Err(self.error("Declaration attributes currently require a struct".into()));
             }
@@ -68,6 +70,7 @@ impl Parser {
             declarations_started = true;
             match self.peek() {
                 TokenKind::Fn => {
+                    let (every, attributes) = self.parse_every_attribute(attributes)?;
                     let intrinsic = self.parse_intrinsic_attribute(attributes)?;
                     self.advance();
                     let (mut function, intrinsic) =
@@ -77,6 +80,7 @@ impl Parser {
                             .intrinsic_attributes
                             .push((module.items.len(), attribute));
                     }
+                    function.every = every;
                     function.public = public;
                     module.items.push(Item::FnDef(function));
                 }

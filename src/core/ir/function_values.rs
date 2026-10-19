@@ -60,6 +60,7 @@ impl FunctionPlan {
                     | CompilerIntrinsic::DomainReadOnly
                     | CompilerIntrinsic::DomainModule
                     | CompilerIntrinsic::TimerStart(_)
+                    | CompilerIntrinsic::TimerSchedule(_)
                     | CompilerIntrinsic::TimerValueFinish
                     | CompilerIntrinsic::TimerFinish
                     | CompilerIntrinsic::DirectoryType(_)

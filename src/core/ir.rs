@@ -21,6 +21,7 @@ mod cleanup;
 mod closures;
 mod domain_schema;
 mod domains;
+mod every;
 mod when;
 pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;
@@ -74,6 +75,7 @@ pub(crate) enum Constant {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
+    pub every: Option<i32>,
     pub closure_entry: bool,
     pub noescape: bool,
     pub noescape_params: Vec<usize>,
@@ -115,6 +117,7 @@ impl FunctionInfo {
         span: Span,
     ) -> Self {
         Self {
+            every: None,
             closure_entry: false,
             noescape: false,
             noescape_params: Vec::new(),
@@ -529,6 +532,7 @@ impl ModulePlan {
             &nominals,
             types,
         )?);
+        every::expand(module.to_mut())?;
         let module = module.as_ref();
         let mut functions = HashMap::new();
         for item in &module.items {
@@ -680,6 +684,10 @@ impl ModulePlan {
                 builtin.validate_declaration(item)?;
             }
             let info = FunctionInfo {
+                every: match item {
+                    Item::FnDef(f) => f.every.map(std::num::NonZeroI32::get),
+                    _ => None,
+                },
                 closure_entry: false,
                 noescape: builtin.is_some()
                     || types.resource_io.contains_key(name)

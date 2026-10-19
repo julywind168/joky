@@ -89,9 +89,11 @@ impl FunctionPlan {
         let Some(kind) = &info.compiler_intrinsic else {
             return Ok(None);
         };
-        if let TimerStart(periodic) = kind {
-            let (operation, target) = self
-                .function_value_info(&args[3], vars, functions, types, true)?
+        if matches!(kind, TimerStart(_) | TimerSchedule(_)) {
+            let declared = matches!(kind, TimerSchedule(_));
+            let operation_index = if declared { 2 } else { 3 };
+            let (mut operation, mut target) = self
+                .function_value_info(&args[operation_index], vars, functions, types, true)?
                 .ok_or_else(|| {
                     type_error(
                         &span,
@@ -99,6 +101,33 @@ impl FunctionPlan {
                         "Timer requires a named domain operation",
                     )
                 })?;
+            let milliseconds = if declared {
+                let period = target.every.ok_or_else(|| {
+                    type_error(
+                        &args[operation_index].span(),
+                        ErrorCode::InvalidCall,
+                        "Scheduled operation must have an #every declaration",
+                    )
+                })?;
+                operation = super::every::entry(&operation);
+                target = functions.get(&operation).cloned().ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::InvalidCall,
+                        "Missing declared periodic entry",
+                    )
+                })?;
+                let slot = self.slot(Type::Int32)?;
+                self.emit(Op::Literal(slot.clone(), Constant::Int32(period)));
+                Some(slot)
+            } else {
+                values[2].clone()
+            };
+            let input = match kind {
+                TimerSchedule(false) => &[None][..],
+                TimerSchedule(true) => &values[3..],
+                _ => &values[4..],
+            };
             if target.suspends
                 || target.signature.params.len() != 2
                 || !matches!(&target.signature.params[0], Type::Reference(r) if r.mutable)
@@ -110,7 +139,8 @@ impl FunctionPlan {
                     "Timer requires a synchronous mutable domain operation with bounded pure-value input (64 contract members, 64 lanes, 8 aggregate levels) and Unit result"));
             }
             if !checking {
-                self.domain_calls.push((operation.clone(), args[3].span()));
+                self.domain_calls
+                    .push((operation.clone(), args[operation_index].span()));
             }
             let module = self.slot(crate::runtime::domain::module_type())?;
             self.emit(Op::DomainModule(module.clone()));
@@ -129,7 +159,10 @@ impl FunctionPlan {
             };
             let value_input = checking || !scalar(&target.signature.params[1]);
             let flag = self.slot(Type::Bool)?;
-            self.emit(Op::Literal(flag.clone(), Constant::Bool(*periodic)));
+            self.emit(Op::Literal(
+                flag.clone(),
+                Constant::Bool(!matches!(kind, TimerStart(false))),
+            ));
             let name = if value_input {
                 let mut context = self.generics.borrow_mut();
                 let name = context
@@ -177,13 +210,13 @@ impl FunctionPlan {
                     index: values[1].as_ref().unwrap().index,
                     ty: crate::runtime::domain::handle_type(),
                 }),
-                values[2].clone(),
+                milliseconds,
                 text,
             ];
             if value_input {
-                captures.extend_from_slice(&values[4..]);
+                captures.extend_from_slice(input);
             } else {
-                captures.push(Some(self.pack_domain_scalar(values[4].clone())?));
+                captures.push(Some(self.pack_domain_scalar(input[0].clone())?));
             }
             captures.push(Some(flag));
             let result = self.slot(info.signature.ret.clone())?;

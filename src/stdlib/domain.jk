@@ -597,6 +597,16 @@ pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, 
     finish_timer_value::<A>(module(),timer.identity,target.token,milliseconds,"",input,true)
 }
 
+// Declared periods are supplied by the compiler; registration remains explicit.
+#intrinsic("domain.schedule")
+pub fn schedule<S>(timer:TimerHandle, target:WriteHandle<S>, operation:fn(&mut S)->Unit) @suspends -> Result<Unit,TimerError> {
+    finish_timer_value::<Unit>(module(),timer.identity,target.token,1,"",{},true)
+}
+#intrinsic("domain.schedule_with")
+pub fn schedule_with<S,A>(timer:TimerHandle, target:WriteHandle<S>, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
+    finish_timer_value::<A>(module(),timer.identity,target.token,1,"",input,true)
+}
+
 // Compiler-generated when and handle-method calls use a variable-size access packet.
 extern fn __domain_when(module:domain.Module,name:String,handles:&Buffer<UInt64>,packet:&mut Buffer<UInt64>) @suspends -> Int32
 #intrinsic("domain.finish_when")

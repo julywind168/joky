@@ -164,6 +164,7 @@ impl Parser {
         self.type_params = enclosing_parameters;
         Ok((
             FnDef {
+                every: None,
                 json_encode: false,
                 noescape: (noescape || !noescape_params.is_empty()).then(|| {
                     Box::new(NoEscape {

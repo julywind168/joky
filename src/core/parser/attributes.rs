@@ -2,6 +2,43 @@
 use super::*;
 
 impl Parser {
+    pub(super) fn parse_every_attribute(
+        &self,
+        mut attributes: Vec<Attribute>,
+    ) -> Result<(Option<std::num::NonZeroI32>, Vec<Attribute>), Diagnostic> {
+        let Some(index) = attributes.iter().position(|a| a.path == "every") else {
+            return Ok((None, attributes));
+        };
+        let attribute = attributes.remove(index);
+        if !attributes.is_empty() {
+            return Err(Diagnostic::at(
+                self.peek_line(),
+                attribute.span,
+                "#every must be the only function declaration attribute",
+            ));
+        }
+        match attribute.arguments.as_deref() {
+            Some(
+                [AttributeArgument {
+                    name: None,
+                    value:
+                        AttributeValue::Literal(Literal::Integer {
+                            magnitude,
+                            negative: false,
+                        }),
+                    ..
+                }],
+            ) if *magnitude > 0 && *magnitude <= i32::MAX as u64 => {
+                Ok((std::num::NonZeroI32::new(*magnitude as i32), attributes))
+            }
+            _ => Err(Diagnostic::at(
+                self.peek_line(),
+                attribute.span,
+                "#every requires one positive Int32 millisecond literal",
+            )),
+        }
+    }
+
     pub(super) fn parse_intrinsic_attribute(
         &self,
         attributes: Vec<Attribute>,

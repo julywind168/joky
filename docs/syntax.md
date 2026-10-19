@@ -145,7 +145,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
-`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)` 与 `#derive(ToJson, FromJson)`，
+`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)`、`#derive(ToJson, FromJson)`、`#state`，以及顶层函数前的 `#every(milliseconds)`，
 不开放通用属性或用户属性宏；后续语法方向见 [Arena 设计 §2.5](arena-borrowing-ffi.md#25-后续属性系统的语法方向)。
 函数名、参数名和局部名称是单个标识符；`vm.call_int32` 是限定调用名，
 `vm.Vm` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。
@@ -442,7 +442,10 @@ W5 已将两种写法接入服务端联合示例，验证跨发布旧流程、�
 E0–E3 已将共同纯值契约扩展到具体枚举，包括 Option 和业务 Result；状态域与 Script 桥同样检查
 全部分支、具体类型参数与未使用槽位。V0–V3 已补齐元组和具体泛型记录载荷，支持与 Option／Result
 任意组合（仍受共同额度限制）；拥有型载荷和泛型函数内的 `when` 仍未开放。
-周期声明、迁移声明及候选编辑语法糖另设切片。
+T0–T3 已实现 `#every(正 Int32 毫秒字面量)` 与显式 `domain.schedule/schedule_with` 登记；
+仅支持同步非泛型单域写操作及可选纯值输入，返回 Unit，不在模块加载时启动任务。
+周期按调用方编译版本确定，tick 实现兼容晚绑定；具体规则见[周期声明](language.md#周期声明-every)。
+迁移声明及候选编辑语法糖另设切片。
 
 当前支持宿主模块 `joky/vm` 和源码库 `joky/option`、`joky/result`、`joky/integer`、`joky/prelude`。
 导入位于全部声明之前，尾随分号可选；模块路径用 `/`，限定类型、构造器和函数用 `.`。

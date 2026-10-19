@@ -688,3 +688,6 @@ fn domain_timer_values_restore_caller_budget() {
         arena::LIMIT.with(|v| v.set(arena::MAX_BYTES));
     }
 }
+
+#[path = "every_tests.rs"]
+mod every_tests;

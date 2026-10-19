@@ -76,7 +76,7 @@ fn run() -> Int64 {
   可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言，
   数组额外断言各维长度与元素步长。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
-- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)` 与 [JSON 派生](#struct-与类型化-json)的 `#derive(...)`，
+- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)`、[JSON 派生](#struct-与类型化-json)的 `#derive(...)`、[域根声明](#when-状态域操作)的 `#state` 与[周期声明](#周期声明-every)的 `#every(...)`，
   允许尾随逗号；未知属性、重复属性或错误使用位置报错。通用属性及属性宏尚未实现；异步借用见下节。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffic-布局与引用参数)。
@@ -3742,6 +3742,8 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 | `Timer.close(self)` | 关闭、取消排队调用并释放所有者 |
 | `domain.after<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记一次调用，延迟非负；0 表示排队执行，不在登记期间调用 |
 | `domain.every<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记周期调用，间隔必须大于 0，第一次在一个间隔后到期 |
+| `domain.schedule<S>(timer: TimerHandle, target: WriteHandle<S>, operation: fn(&mut S)->Unit) -> Result<Unit,TimerError>` | 按操作的 `#every` 声明登记无输入周期调用 |
+| `domain.schedule_with<S,A>(timer: TimerHandle, target: WriteHandle<S>, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 按操作的 `#every` 声明登记带纯值输入的周期调用 |
 | `TimerHandle.cancel(self)` | 取消尚未开始的调用，Active 变为 Cancelled；其他终态不变 |
 | `TimerHandle.status(self) -> TimerStatus` | 观察 Idle / Active / Completed / Cancelled / Closed / InvalidAccess / ResourceLimit / Failed |
 
@@ -3750,7 +3752,7 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 输入表达式只求值一次，登记时逐值复制，之后修改调用方记录不会影响定时器。
 每次调用使用同一份保存值，不保留操作内对输入副本的修改，也不自动计算实际经过时间。业务需要 dt 时自行选择固定步长或显式建模时间。
 时钟是登记所在执行器的单调 Clock：普通运行使用真实单调时间，嵌入宿主可用模拟时钟控制暂停。
-不提供每个定时器单独选择时钟、持久化、重启恢复或 `#every` 语法糖。
+不提供每个定时器单独选择时钟、持久化或重启恢复。
 
 每个 Active 定时器最多有一个待处理短调用，完成后才安排下次到期。周期以本次登记的节拍为准，
 下一截止时间严格晚于完成处理时的当前时刻；跳过错过的节拍，不补发积压。协作式调度不能保证
@@ -3773,6 +3775,27 @@ Timer 登记/取消即时生效，不参与候选事务。tick 是普通短域�
 登记预算不足返回 `TimerError.ResourceLimit`，到期时请求准入不足则终止为 `TimerStatus.ResourceLimit`。
 完整示例见[标量定时器测试](../tests/fixtures/domain_timers.jk)和
 [记录定时器测试](../tests/fixtures/domain_timer_values.jk)。
+
+### 周期声明 `#every`
+
+`#every(1000)` 为紧随其后的顶层函数声明 1000 毫秒周期。参数须为一个正 Int32 整数字面量
+（1–2147483647），不接受常量名或运行时表达式；不得重复或与其他函数属性组合。
+函数必须是非泛型、同步、无宿主调用的受检域写操作，签名为 `fn(&mut State) -> Unit`
+或 `fn(&mut State, Input) -> Unit`，Input 遵循共同有界纯值契约。未登记的声明也会接受完整资格检查。
+当前不支持方法、闭包、多域操作或拥有型输入。
+
+无输入操作使用 `domain.schedule(timer, target, tick)`，带输入操作使用
+`domain.schedule_with(timer, target, tick, input)`；两者均为 `@suspends`，返回
+`Result<Unit,TimerError>`。操作参数须直接指定带声明的具名函数，可通过导入别名引用，
+不能先保存为函数值再传入。Timer 所有者、弱句柄及写目标仍由调用方显式提供。
+模块加载、声明函数或普通直接调用该函数均不会启动定时任务。
+
+登记沿用上文的输入单次求值与复制、首次延迟、节拍跳过、无重叠调用、取消、预算及失败隔离规则。
+声明周期在调用方编译时写入登记代码；兼容热更新只替换后续 tick 的实现，不修改已登记周期。
+执行新版流程中的登记才采用新版声明周期，仍在运行的旧流程即使重新登记也沿用其编译时周期。
+删除属性、改名或改变入口契约会令旧定时器在下一次到期／执行前以 InvalidAccess 终止，
+即使去掉属性后普通函数仍存在也不继续调用。需要动态间隔时继续使用显式 `domain.every`。
+完整可执行示例见[周期声明测试](../tests/fixtures/domain_every.jk)。
 
 ## 提交式出站信箱 `joky/outbox`
 

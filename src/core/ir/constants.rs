@@ -160,6 +160,7 @@ fn evaluate(
         declaration.name
     );
     let definition = FnDef {
+        every: None,
         json_encode: false,
         noescape: None,
         public: false,
@@ -179,6 +180,7 @@ fn evaluate(
     functions.insert(
         name,
         FunctionInfo {
+            every: None,
             closure_entry: false,
             noescape: false,
             noescape_params: vec![],

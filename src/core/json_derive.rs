@@ -298,6 +298,7 @@ fn implementation(
     };
     body.push(call(format!("{result}.Result.Ok"), vec![output], span));
     let method = FnDef {
+        every: None,
         json_encode: encoding,
         noescape: Some(Box::new(NoEscape {
             all: true,

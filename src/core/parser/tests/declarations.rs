@@ -518,3 +518,43 @@ fn conditional_patterns_preserve_spans_and_match_payload_syntax() {
         assert!(parse(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
+    for period in ["1", "1_000", "0x10", "2147483647"] {
+        let source = format!("#every({period}) pub fn tick(s:&mut State) {{}}");
+        let module = parse(&source).unwrap();
+        let Item::FnDef(f) = &module.items[0] else {
+            panic!()
+        };
+        assert!(f.every.is_some_and(|n| n.get() > 0));
+        assert!(f.public);
+        assert_eq!(f.span.slice(&source), Some(source.as_str()));
+    }
+    for attr in [
+        "#every",
+        "#every()",
+        "#every(0)",
+        "#every(-1)",
+        "#every(2147483648)",
+        "#every(1,2)",
+        "#every(ms:1)",
+        "#every(SECOND)",
+        "#every(\"1\")",
+        "#every(true)",
+        "#every(1) #every(2)",
+        "#every(1) #intrinsic(\"domain.every\")",
+    ] {
+        assert!(
+            parse(&format!("{attr} fn tick(s:&mut State) {{}}")).is_err(),
+            "{attr}"
+        );
+    }
+    for source in [
+        "#every(1) extern fn tick(s:&mut State)",
+        "impl State {#every(1) fn tick(&mut self){}}",
+        "#every(1) fn tick(s:&mut State);",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}

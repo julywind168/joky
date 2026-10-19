@@ -134,6 +134,7 @@ impl FunctionPlan {
             TASK_ENTRY_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         let task_def = FnDef {
+            every: None,
             json_encode: false,
             noescape: None,
             public: false,
@@ -162,6 +163,7 @@ impl FunctionPlan {
             span: *span,
         };
         let info = FunctionInfo {
+            every: None,
             closure_entry: false,
             noescape: false,
             noescape_params: Vec::new(),

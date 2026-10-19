@@ -312,6 +312,7 @@ impl FunctionPlan {
             info.infer_noescape = true;
             info.returns_interior = false;
             let definition = FnDef {
+                every: None,
                 json_encode: false,
                 noescape: Some(Box::new(crate::parser::ast::NoEscape {
                     all: true,
@@ -482,6 +483,7 @@ pub(super) fn validate_states(
             continue;
         }
         let f = FnDef {
+            every: None,
             json_encode: false,
             noescape: None,
             public: false,
