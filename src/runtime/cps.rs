@@ -60,6 +60,8 @@ pub struct CpsFrame {
     arena: Option<Rc<UnsafeCell<Arena>>>,
     pub(crate) cleanup: *mut super::cleanup::NativeFrame,
     pub(crate) text_views: Vec<super::string::JokyText>,
+    pub(crate) domain_return: Option<(crate::Type, usize)>,
+    pub(crate) domain_result: Option<Vec<u64>>,
     pub(crate) root_text: bool,
     pub(crate) text_result: Option<String>,
 }
@@ -82,6 +84,8 @@ impl CpsFrame {
             arena: None,
             cleanup: std::ptr::null_mut(),
             text_views: Vec::new(),
+            domain_return: None,
+            domain_result: None,
             root_text: false,
             text_result: None,
         }
@@ -104,6 +108,7 @@ impl CpsFrame {
         }
         if self.state != DONE || super::error::joky_runtime_error_code() != 0 {
             self.text_result = None;
+            self.domain_result = None;
         }
         self.wake = None;
         self.arena = None;
@@ -347,6 +352,22 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
 pub(crate) unsafe extern "C" fn finish_return(frame: *mut CpsFrame, slot: usize) {
     let cleanup = std::mem::replace(&mut (*frame).cleanup, std::ptr::null_mut());
     super::cleanup::finish_return(cleanup, slot);
+    if super::error::joky_runtime_error_code() == 0 {
+        if let Some((ty, offset)) = (*frame).domain_return.clone() {
+            let raw = if ty.is_aggregate() {
+                (&(*frame).slots)[offset..offset + ty.scalar_types().len()].to_vec()
+            } else {
+                vec![(*frame).result]
+            };
+            match super::domain_packet::encode_result(&ty, &raw, &mut *arena(frame)) {
+                Ok(words) => {
+                    (*frame).domain_result = Some(words);
+                    (*frame).result = 0;
+                }
+                Err(error) => super::error::record_error(error),
+            }
+        }
+    }
 }
 
 /// # Safety
@@ -384,7 +405,7 @@ pub(crate) unsafe extern "C" fn capture_text(
     frame: *mut CpsFrame,
     owner: *const super::buffer::Buffer,
 ) {
-    if (*frame).root_text {
+    if (*frame).root_text && (*frame).domain_return.is_none() {
         match super::owned_text::borrow(owner).and_then(super::owned_text::copy_to_host) {
             Ok(text) => (*frame).text_result = Some(text),
             Err(error) => super::error::record_error(error),

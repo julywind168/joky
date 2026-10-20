@@ -38,7 +38,8 @@ impl Root {
             pointer,
             owners,
         };
-        let result = module.invoke_instance(constructor, words, limits, &mut root.arena)?;
+        let input = decode_input(info, words, &mut root.arena)?;
+        let result = module.invoke_instance(constructor, &input, limits, &mut root.arena)?;
         super::super::instances::initialize(root.pointer, ty, &result)?;
         let live = root.allocations()?;
         unsafe {
@@ -144,6 +145,7 @@ impl Root {
         limits: InterpreterLimits,
     ) -> Result<Vec<u64>, Error> {
         let (mutable, entered) = access;
+        let info = module.instance_info(method)?;
         let mut arena = Arena::with_budget(domains.budget.clone(), None);
         let mut graphs = Vec::new();
         graphs
@@ -189,8 +191,12 @@ impl Root {
                 Buffer::migrate_metadata(&graph.buffers, &arena);
             }
         }
-        *entered = true;
-        let mut result = module.invoke_instance(method, words, limits, &mut arena);
+        let mut result = decode_input(&info, words, &mut arena)
+            .and_then(|input| {
+                *entered = true;
+                module.invoke_instance(method, &input, limits, &mut arena)
+            })
+            .and_then(|raw| encode_output(&info.signature.ret, raw, &mut arena));
         let mut after = Vec::new();
         let prepared = (|| {
             if result.is_err() {
@@ -259,7 +265,7 @@ impl Root {
                     .root
                     .as_mut()
                     .unwrap();
-                if !mutable[index] {
+                if !*entered || !mutable[index] {
                     arena.transfer_reserved(&mut root.arena, &graph.allocations);
                     unsafe {
                         Buffer::migrate_metadata(&graph.buffers, &root.arena);
@@ -267,7 +273,7 @@ impl Root {
                 }
             }
             for &index in &members {
-                if mutable[index] {
+                if *entered && mutable[index] {
                     let root = domains
                         .entries
                         .get_mut(&handles[index].sequence)
@@ -302,7 +308,7 @@ impl Root {
         words: &mut [u64],
         limits: InterpreterLimits,
     ) -> Result<InstanceValue, Error> {
-        let words = self.invoke_values(module, ty, method, info, words, limits)?;
+        let words = self.invoke_values(module, ty, method, info, (words, None), limits)?;
         InstanceValue::from_bits(&info.signature.ret, words.first().copied().unwrap_or(0))
             .ok_or_else(|| invalid("Invalid domain scalar result"))
     }
@@ -312,24 +318,45 @@ impl Root {
         ty: &Type,
         method: &str,
         info: &FunctionInfo,
-        words: &mut [u64],
+        input: (&mut [u64], Option<&mut bool>),
         limits: InterpreterLimits,
     ) -> Result<Vec<u64>, Error> {
+        let (words, entered) = input;
         let mutable = info.signature.params[0].reference_type().unwrap().mutable;
         // A read cannot change the graph. Prepare its live set before entering
         // user code so even an allocation failure can reclaim all temporaries.
-        let before = if mutable {
+        let before = if mutable
+            && !info
+                .signature
+                .params
+                .iter()
+                .any(crate::runtime::domain_packet::has_text)
+        {
             None
         } else {
             Some(self.allocations()?)
         };
         words[0] = self.borrow_pointer(ty);
+        let input = match decode_input(info, words, &mut self.arena) {
+            Ok(input) => input,
+            Err(error) => {
+                if let Some(live) = before {
+                    unsafe {
+                        self.arena.retain_allocations(&live);
+                    }
+                }
+                return Err(error);
+            }
+        };
+        if let Some(entered) = entered {
+            *entered = true;
+        }
         let result = module
-            .invoke_instance(method, words, limits, &mut self.arena)
-            .and_then(|words| values::result_words(&info.signature.ret, words));
-        if let Some(live) = before {
+            .invoke_instance(method, &input, limits, &mut self.arena)
+            .and_then(|raw| encode_output(&info.signature.ret, raw, &mut self.arena));
+        if !mutable {
             unsafe {
-                self.arena.retain_allocations(&live);
+                self.arena.retain_allocations(before.as_ref().unwrap());
             }
         } else if result.is_ok() {
             let live = self.allocations()?;
@@ -362,3 +389,29 @@ impl Drop for Root {
 
 #[cfg(test)]
 mod tests;
+
+fn decode_input<'a>(
+    info: &FunctionInfo,
+    words: &'a [u64],
+    arena: &mut Arena,
+) -> Result<std::borrow::Cow<'a, [u64]>, Error> {
+    let count = crate::core::state_domain::access_count(info);
+    let types = &info.signature.params[count..];
+    if !types.iter().any(crate::runtime::domain_packet::has_text) {
+        return Ok(std::borrow::Cow::Borrowed(words));
+    }
+    let mut input = words[..count].to_vec();
+    input.extend(crate::runtime::domain_packet::decode(
+        types,
+        &words[count..],
+        arena,
+    )?);
+    Ok(std::borrow::Cow::Owned(input))
+}
+fn encode_output(ty: &Type, raw: Vec<u64>, arena: &mut Arena) -> Result<Vec<u64>, Error> {
+    if crate::runtime::domain_packet::has_text(ty) {
+        unsafe { crate::runtime::domain_packet::encode_result(ty, &raw, arena) }
+    } else {
+        values::result_words(ty, raw)
+    }
+}

@@ -1417,6 +1417,8 @@ pub(crate) enum CompilerIntrinsic {
     ArenaAlloc,
     ScriptSchema(Type),
     ScriptPack,
+    DomainValuePack,
+    DomainValueUnpack,
     ScriptUnpack,
     DomainAccess(DomainAccessKind),
     DomainModule,

@@ -1966,6 +1966,73 @@ impl LoadedModule {
         };
         Ok((task, layout))
     }
+    pub(super) fn prepare_domain_call(
+        &self,
+        name: &str,
+        bits: &[u64],
+        limits: InterpreterLimits,
+    ) -> Result<(Continuation, Option<(usize, usize)>), Error> {
+        let info = match self {
+            LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
+            LoadedModule::Interpreter(module) => interp::request_info(module, name),
+        }
+        .ok_or_else(|| runtime_error(ErrorCode::NotFound, "Unknown domain request"))?;
+        if !info.domain_request_entry
+            || !info.suspends
+            || info.signature.params.len() != 1
+            || crate::core::script::domain_schema(&info.signature.params[0]).is_none()
+            || crate::core::script::domain_schema(&info.signature.ret).is_none()
+        {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Invalid domain request contract",
+            ));
+        }
+        crate::runtime::domain_packet::validate(&info.signature.params, bits)?;
+        let layout = (info.signature.ret.is_aggregate() || info.signature.ret == Type::Unit)
+            .then_some((
+                info.aggregate_result_offset(),
+                info.signature.ret.scalar_types().len(),
+            ));
+        let task = match self {
+            LoadedModule::Interpreter(module) => Continuation::new_interpreted(
+                interp::prepare_domain(module.clone(), name, bits, limits)?,
+                module.version,
+                module.clone(),
+            ),
+            LoadedModule::Jit(module) => {
+                let mut frame = CpsFrame::new(info.frame_slots);
+                let input =
+                    crate::runtime::domain_packet::decode(&info.signature.params, bits, unsafe {
+                        &mut *crate::runtime::cps::arena(&mut frame)
+                    })?;
+                frame.slots[..input.len()].copy_from_slice(&input);
+                if let Some((key, entry)) =
+                    crate::runtime::domain_packet::input_cleanup(&info.signature.params[0], &input)
+                {
+                    unsafe {
+                        (*crate::runtime::cps::cleanup(&mut frame))
+                            .entries
+                            .insert(key, entry);
+                    }
+                }
+                if crate::runtime::domain_packet::has_text(&info.signature.ret) {
+                    frame.domain_return =
+                        Some((info.signature.ret.clone(), info.aggregate_result_offset()));
+                }
+                unsafe {
+                    Continuation::new(
+                        crate::runtime::abi::as_cps_entry(module.exports[name].entry),
+                        frame,
+                        module.version,
+                        module.clone(),
+                    )
+                }
+                .with_sources(module.sources.clone())
+            }
+        };
+        Ok((task, layout))
+    }
     pub(super) fn prepare_async(
         &self,
         name: &str,

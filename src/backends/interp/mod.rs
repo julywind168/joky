@@ -33,7 +33,8 @@ mod optimize;
 mod places;
 
 pub(crate) use execute::{
-    call_instance, call_sync, cleanup_call, prepare_scalar, prepare_script, start, start_text,
+    call_instance, call_sync, cleanup_call, prepare_domain, prepare_scalar, prepare_script, start,
+    start_text,
 };
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
@@ -66,6 +67,12 @@ enum ConstantValue {
 
 enum Instruction {
     Place(Box<places::Instruction>),
+    DomainText {
+        packet: usize,
+        index: usize,
+        value: usize,
+        decode: bool,
+    },
     DomainBits {
         dst: usize,
         src: usize,
@@ -464,6 +471,17 @@ fn lower_unoptimized(
                     lower_constant(value)
                 },
             },
+            Op::DomainText {
+                packet,
+                index,
+                value,
+                decode,
+            } => Instruction::DomainText {
+                packet: packet.index,
+                index: *index,
+                value: value.index,
+                decode: *decode,
+            },
             Op::DomainBits { dst, src, decode } => Instruction::DomainBits {
                 dst: dst.index,
                 src: src.index,
@@ -756,7 +774,7 @@ pub(crate) enum Value {
 impl Value {
     fn from_instance_bits(ty: &Type, bits: u64) -> Result<Self, Error> {
         use crate::core::instance::InstanceValue as V;
-        if matches!(ty, Type::Reference(_)) {
+        if matches!(ty, Type::Reference(_) | Type::String) {
             return Ok(Self::Reference(bits as usize as *mut u8));
         }
         Ok(

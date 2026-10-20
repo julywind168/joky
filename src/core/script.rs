@@ -7,20 +7,27 @@ const MAX_MEMBERS: usize = 64;
 
 pub(crate) fn schema(ty: &Type) -> Option<String> {
     let mut members_left = MAX_MEMBERS;
-    value_schema(ty, 0, &mut members_left)
+    value_schema(ty, 0, &mut members_left, false)
 }
-fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<String> {
+pub(crate) fn domain_schema(ty: &Type) -> Option<String> {
+    let mut members_left = MAX_MEMBERS;
+    value_schema(ty, 0, &mut members_left, true)
+}
+fn value_schema(ty: &Type, depth: usize, members_left: &mut usize, text: bool) -> Option<String> {
+    if text && *ty == Type::String {
+        return Some("owned:utf8:v1".into());
+    }
     if super::instance::scalar(ty) {
         return Some(format!("scalar:{ty}"));
     }
-    if depth == MAX_DEPTH || ty.is_owner() || ty.scalar_types().len() > MAX_LANES {
+    if depth == MAX_DEPTH || (!text && ty.is_owner()) || ty.scalar_types().len() > MAX_LANES {
         return None;
     }
     if let Type::Tuple(tuple) = ty {
         *members_left = members_left.checked_sub(tuple.elements.len())?;
         let mut result = format!("tuple:{}", tuple.elements.len());
         for element in &tuple.elements {
-            let contract = value_schema(element, depth + 1, members_left)?;
+            let contract = value_schema(element, depth + 1, members_left, text)?;
             result.push_str(&format!(";{}:{contract}", contract.len()));
         }
         return Some(result);
@@ -38,7 +45,7 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
         for argument in &enumeration.arguments {
             let contract = match argument {
                 crate::parser::ast::GenericArgument::Type(t) => {
-                    value_schema(t, depth + 1, members_left)?
+                    value_schema(t, depth + 1, members_left, text)?
                 }
                 crate::parser::ast::GenericArgument::Const(
                     crate::parser::ast::ConstArgument::Value(n),
@@ -53,7 +60,7 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
             match &variant.payload {
                 None => result.push_str(":none"),
                 Some(payload) => {
-                    let contract = value_schema(payload, depth + 1, members_left)?;
+                    let contract = value_schema(payload, depth + 1, members_left, text)?;
                     result.push_str(&format!(":some:{}:{contract}", contract.len()));
                 }
             }
@@ -83,7 +90,7 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
         for argument in &record.arguments {
             let contract = match argument {
                 crate::parser::ast::GenericArgument::Type(t) => {
-                    value_schema(t, depth + 1, members_left)?
+                    value_schema(t, depth + 1, members_left, text)?
                 }
                 crate::parser::ast::GenericArgument::Const(
                     crate::parser::ast::ConstArgument::Value(n),
@@ -99,7 +106,7 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize) -> Option<Str
             // Preserve the already published encoding of flat contracts.
             field.ty.to_string()
         } else {
-            let nested = value_schema(&field.ty, depth + 1, members_left)?;
+            let nested = value_schema(&field.ty, depth + 1, members_left, text)?;
             format!("nested:{}:{nested}", nested.len())
         };
         result.push_str(&format!(

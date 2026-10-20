@@ -103,11 +103,11 @@ impl FunctionPlan {
                 || target.signature.params.len() != 2
                 || !matches!(&target.signature.params[0], Type::Reference(r) if r.mutable)
                 || !(scalar(&target.signature.params[1])
-                    || crate::core::script::schema(&target.signature.params[1]).is_some())
+                    || self.domain_value(&target.signature.params[1]))
                 || target.signature.ret != Type::Unit
             {
                 return Err(type_error(&span, ErrorCode::InvalidCall,
-                    "Timer requires a synchronous mutable domain operation with bounded pure-value input (64 contract members, 64 lanes, 8 aggregate levels) and Unit result"));
+                    "Timer requires a synchronous mutable domain operation with bounded value input (64 contract members, 64 lanes, 8 aggregate levels) and Unit result"));
             }
             if !checking {
                 self.domain_calls.push((operation.clone(), args[3].span()));
@@ -284,17 +284,17 @@ impl FunctionPlan {
             let inputs = &target.signature.params[usize::from(!candidate || editing)..];
             if target.suspends
                 || inputs.len() != usize::from(candidate)
-                || !inputs.iter().all(|ty| {
-                    scalar(ty) || (candidate && crate::core::script::schema(ty).is_some())
-                })
+                || !inputs
+                    .iter()
+                    .all(|ty| scalar(ty) || (candidate && self.domain_value(ty)))
                 || (!candidate
                     && !scalar(&target.signature.ret)
-                    && crate::core::script::schema(&target.signature.ret).is_none())
+                    && !self.domain_value(&target.signature.ret))
             {
                 return Err(type_error(
                     &span,
                     ErrorCode::InvalidCall,
-                    "Domain operation requires a synchronous bounded pure-value signature (64 contract members, 64 lanes, 8 aggregate levels)",
+                    "Domain operation requires a synchronous bounded value signature (64 contract members, 64 lanes, 8 aggregate levels)",
                 ));
             }
             self.domain_calls.push((operation.clone(), args[2].span()));
@@ -408,8 +408,10 @@ impl FunctionPlan {
                 result: Some(output),
                 state: Some(state),
             });
-            if candidate {
+            if result.ty.is_owner() {
                 self.register_owner(result.clone(), None);
+            }
+            if candidate {
                 return Ok(Some(Flow::Value(Some(result))));
             }
             return Ok(Some(Flow::Value(if value_read {
@@ -465,8 +467,7 @@ impl FunctionPlan {
         }..];
         let value_call = matches!(kind, DomainAt(_) | DomainPair(_) | DomainAccess(_));
         let value_input = value_call || create || snapshot || request;
-        let value_type =
-            |ty: &Type| scalar(ty) || (value_input && crate::core::script::schema(ty).is_some());
+        let value_type = |ty: &Type| scalar(ty) || (value_input && self.domain_value(ty));
         if inputs.len() != usize::from(request || create || write || query)
             || !inputs.iter().all(value_type)
             || (!create && !value_type(&target.signature.ret))
@@ -476,9 +477,9 @@ impl FunctionPlan {
                 &span,
                 ErrorCode::InvalidCall,
                 if request {
-                    "Domain request requires a suspending bounded pure-value signature (64 contract members, 64 lanes, 8 aggregate levels)"
+                    "Domain request requires a suspending bounded value signature (64 contract members, 64 lanes, 8 aggregate levels)"
                 } else if value_input {
-                    "Domain operation requires a synchronous bounded pure-value signature (64 contract members, 64 lanes, 8 aggregate levels)"
+                    "Domain operation requires a synchronous bounded value signature (64 contract members, 64 lanes, 8 aggregate levels)"
                 } else {
                     "Domain operation requires a checked scalar signature"
                 },
@@ -668,6 +669,9 @@ impl FunctionPlan {
                 result: result.clone(),
                 state: Some(state),
             });
+            if let Some(value) = result.as_ref().filter(|v| v.ty.is_owner()) {
+                self.register_owner(value.clone(), None);
+            }
             return Ok(Some(Flow::Value(result)));
         }
         let value_candidate = candidate && (checking || !inputs.iter().all(scalar));
@@ -825,7 +829,7 @@ impl FunctionPlan {
             result: Some(output),
             state: Some(state),
         });
-        if create || snapshot {
+        if result.ty.is_owner() {
             self.register_owner(result.clone(), None);
         }
         Ok(Some(Flow::Value(Some(result))))

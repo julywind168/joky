@@ -23,16 +23,16 @@ fn verify_conflict(ctx: Context, alice: &outbox.Mailbox, bob: &outbox.Mailbox) @
     var access = domain.access_set()
     access.include(chat.read_only())
     let snapshot = domain.snapshot_set(access)
-    let plan = chat.plan(1, Command.Leave)!
-    let change = Change { id: 1, command: Command.Leave, plan: plan, first_bytes: 6, second_bytes: 0 }
+    let plan = chat.plan(1, Command.Leave, "")!
+    let change = Change { room: "", id: 1, command: Command.Leave, plan: plan, first_bytes: 6, second_bytes: 0 }
     var batch = outbox.batch(2, 12)
     outbox.stage(&mut batch, alice.handle(), "ghost\n".into_bytes())!
     outbox.stage(&mut batch, bob.handle(), "ghost\n".into_bytes())!
     let candidate = domain.edit_snapshot(snapshot, chat, apply, change).with_outbox(batch)
-    chat.input(1, empty_packet())!
+    when (mut chat) { chat.next_id += 0 }!
     var receipt = domain.commit_set(candidate)
     check.assert(match receipt.wait() { Err(Conflict) => true, _ => false }, "stale broadcast rejected")
-    let room = room_text(chat, 1)
+    let room = chat.room(1)!
     check.assert(room.equals("r"), "failed leave preserves membership")
     check.assert(chat.route(0)!!.messages == 0 && chat.route(1)!!.messages == 0, "failed commit preserves credits")
     permit.release()
@@ -122,11 +122,11 @@ fn verify_slots(state: &mut Chat, targets: (outbox.Handle, outbox.Handle)) {
         i += 1
     }
     check.assert(state.connect(output, stop) == 0, "connection capacity")
-    let plan = state.plan(64, Command.Say)
+    let plan = state.plan(64, Command.Say, "")
     let zero: UInt64 = 0
     check.assert(plan.first == ~zero, "all 64 recipient bits")
     let empty = Plan { first: 0, second: 0, error: 0 }
-    apply(state, Change { id: 1, command: Command.Disconnect, plan: empty, first_bytes: 0, second_bytes: 0 })
+    apply(state, Change { room: "", id: 1, command: Command.Disconnect, plan: empty, first_bytes: 0, second_bytes: 0 })
     check.assert(state.index(64)! == 63, "removing a member preserves other slots")
     check.assert(state.connect(output, stop) == 65, "connection slot reclaimed")
     check.assert(state.index(65)! == 0, "reuse inactive slot with fresh identity")

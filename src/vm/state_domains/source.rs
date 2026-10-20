@@ -191,6 +191,50 @@ pub(super) struct RequestOutput {
     pub layout: Option<(usize, usize)>,
     pub ty: Type,
     pub words: Vec<u64>,
+    extra: Option<ResultCharge>,
+}
+struct ResultCharge {
+    registry: Weak<RefCell<Domains>>,
+    bytes: usize,
+}
+impl Drop for ResultCharge {
+    fn drop(&mut self) {
+        if let Some(registry) = self.registry.upgrade() {
+            registry.borrow_mut().request_bytes -= self.bytes;
+        }
+    }
+}
+impl RequestOutput {
+    pub(super) fn store(
+        &mut self,
+        registry: &Rc<RefCell<Domains>>,
+        words: Vec<u64>,
+    ) -> Result<(), Error> {
+        if !crate::runtime::domain_packet::has_text(&self.ty) {
+            self.words.copy_from_slice(&words);
+            return Ok(());
+        }
+        let extra = words
+            .capacity()
+            .saturating_sub(self.words.capacity())
+            .checked_mul(8)
+            .ok_or_else(|| limited("Domain result size overflow"))?;
+        if extra != 0 {
+            let mut domains = registry.borrow_mut();
+            let bytes = domains
+                .request_bytes
+                .checked_add(extra)
+                .filter(|n| *n <= domains.limits.max_request_bytes)
+                .ok_or_else(|| limited("Domain request byte limit exceeded"))?;
+            domains.request_bytes = bytes;
+            self.extra = Some(ResultCharge {
+                registry: Rc::downgrade(registry),
+                bytes: extra,
+            });
+        }
+        self.words = words;
+        Ok(())
+    }
 }
 pub(super) struct Completion {
     pub output: Option<RequestOutput>,
@@ -325,6 +369,7 @@ pub(super) fn request_info<'a>(module: &'a LoadedModule, name: &str) -> Option<&
         LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
         LoadedModule::Interpreter(module) => crate::backends::interp::request_info(module, name),
     }
+    .filter(|info| info.domain_request_entry)
 }
 fn request_input(module: &LoadedModule, name: &str, bits: u64) -> Result<InstanceValue, Error> {
     let info = request_info(module, name).ok_or_else(|| {
@@ -514,14 +559,16 @@ unsafe fn wait(
                     let (input, output, extra) = if value_request {
                         if !info.suspends
                             || info.signature.params.len() != 1
-                            || crate::core::script::schema(&info.signature.params[0]).is_none()
-                            || crate::core::script::schema(&info.signature.ret).is_none()
+                            || crate::core::script::domain_schema(&info.signature.params[0])
+                                .is_none()
+                            || crate::core::script::domain_schema(&info.signature.ret).is_none()
                         {
                             return Err(invalid("Invalid domain request value contract"));
                         }
                         let count = info.signature.ret.scalar_types().len();
                         // Reserve the retained result and the bounded extraction copy.
-                        let extra = (info.signature.params[0].scalar_types().len()
+                        let packet = &*(frame.slots[3] as *const Buffer);
+                        let extra = (packet.len() as usize
                             + usize::from(info.signature.params == [Type::Unit])
                             + 2 * count)
                             * std::mem::size_of::<u64>();
@@ -532,6 +579,7 @@ unsafe fn wait(
                     let receipt = Receipt::reserve(registry, extra)?;
                     let output = output.map(|(ty, count)| RequestOutput {
                         layout: None,
+                        extra: None,
                         ty,
                         words: vec![0; count],
                     });

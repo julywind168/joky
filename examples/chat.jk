@@ -4,55 +4,22 @@ import joky/admission
 import joky/string.{type StringBuilder}
 import joky/integer
 import joky/mem
-import joky/slice
 import joky/array.{type Array}
 import joky/option.{type Option}
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
 
-// Room-name bridge until domain operations accept owning inputs/results.
-// A packet carries up to 32 UTF-8 bytes, not necessarily complete code points.
-struct Packet { a: UInt64, b: UInt64, c: UInt64, d: UInt64, length: UInt64 }
-fn empty_packet() -> Packet { Packet { a: 0, b: 0, c: 0, d: 0, length: 0 } }
-impl Packet {
-    fn push(&mut self, byte: UInt8) {
-        let bits = byte.to_u64()! << ((self.length % 8) * 8)
-        if self.length < 8 { self.a |= bits } else if self.length < 16 { self.b |= bits }
-        else if self.length < 24 { self.c |= bits } else { self.d |= bits }
-        self.length += 1
-    }
-    fn byte(&self, index: UInt64) -> UInt8 {
-        let bits = if index < 8 { self.a } else if index < 16 { self.b }
-            else if index < 24 { self.c } else { self.d }
-        ((bits >> ((index % 8) * 8)) & 255).to_u8()!
-    }
-}
-fn packet_at(bytes: &Array<UInt8>, offset: UInt64) -> Packet {
-    var packet = empty_packet()
-    while packet.length < 32 && offset + packet.length < bytes.len() {
-        let byte = bytes.get(offset + packet.length)!
-        packet.push(byte)
-    }
-    packet
-}
-
 // Owners stay in the connection task; only mailbox identities enter shared state.
 struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle, messages: UInt64, bytes: UInt64 }
-struct Client { route: Route, room: String, input: Array<UInt8> }
+struct Client { route: Route, room: String }
 // Slots stay fixed during nested eviction; new connections reuse inactive slots.
 #state
 struct Chat { clients: Array<Client>, next_id: UInt64 }
 struct Context { chat: domain.WriteHandle<Chat>, gate: admission.Handle }
 enum Command { Welcome, Join, Leave, Say, Invalid, Disconnect }
 struct Plan { first: UInt64, second: UInt64, error: Int32 }
-struct Change { id: UInt64, command: Command, plan: Plan, first_bytes: UInt64, second_bytes: UInt64 }
+struct Change { room: String, id: UInt64, command: Command, plan: Plan, first_bytes: UInt64, second_bytes: UInt64 }
 fn make_chat(_: Unit) -> Chat { Chat { clients: Array.new::<Client>(), next_id: 1 } }
 fn bit(index: UInt64) -> UInt64 { let one: UInt64 = 1; one << index }
-fn requested_room(client: &Client) -> String {
-    var bytes = Array.new::<UInt8>()
-    var i: UInt64 = 0
-    while i < client.input.len() { bytes.push(client.input.get(i)!) i += 1 }
-    String.from_utf8(bytes)!
-}
 fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
     var text = StringBuilder.from(kind)
     let number = id.to_string()
@@ -81,26 +48,15 @@ impl Chat {
         let id = self.next_id
         self.next_id += 1
         let client = Client { route: Route { live: true, id: id, output: output, stop: stop, messages: 0, bytes: 0 },
-            room: "", input: Array.new::<UInt8>() }
+            room: "" }
         if slot == self.clients.len() { self.clients.push(client) }
         else { self.clients.replace(slot, client); }
         id
     }
 
-    fn input(&mut self, id: UInt64, packet: Packet) {
-        let index = self.index(id)!
-        let client = self.clients.borrow_mut_ref(index)
-        var i: UInt64 = 0
-        while i < packet.length { client.input.push(packet.byte(i)) i += 1 }
-    }
-    fn room_packet(&self, id: UInt64, offset: UInt64) -> Packet {
+    fn room(&self, id: UInt64) -> String {
         let client = self.clients.borrow_ref(self.index(id)!)
-        var packet = empty_packet()
-        while packet.length < 32 && offset + packet.length < client.room.byte_length() {
-            let byte = slice.get(client.room.bytes(), offset + packet.length)!
-            packet.push(byte)
-        }
-        packet
+        client.room.clone()
     }
     fn members(&self, room: &String) -> UInt64 {
         if room.is_empty() { return 0 }
@@ -113,7 +69,7 @@ impl Chat {
         }
         mask
     }
-    fn plan(&self, id: UInt64, command: Command) -> Plan {
+    fn plan(&self, id: UInt64, command: Command, room: String) -> Plan {
         let index = self.index(id)!
         let client = self.clients.borrow_ref(index)
         let own = bit(index)
@@ -121,7 +77,6 @@ impl Chat {
         match command {
             Welcome => Plan { first: own, second: 0, error: 0 },
             Join => {
-                let room = requested_room(client)
                 if client.room.equals(&room) { Plan { first: own, second: 0, error: 1 } }
                 else { Plan { first: members, second: self.members(&room) | own, error: 0 } }
             },
@@ -156,14 +111,13 @@ fn apply(state: &mut Chat, change: Change) {
                 client.route.live = false
                 client.route.messages = 0
                 client.route.bytes = 0
-                client.input.clear()
                 var room = ""
                 mem.swap(&mut client.room, &mut room)
                 return
             },
             Join => {
                 let client = state.clients.borrow_mut_ref(index)
-                var room = requested_room(client)
+                var room = change.room
                 mem.swap(&mut client.room, &mut room)
             },
             Leave => {
@@ -174,18 +128,6 @@ fn apply(state: &mut Chat, change: Change) {
             _ => {}
         }
     }
-    let client = state.clients.borrow_mut_ref(index)
-    client.input.clear()
-}
-fn room_text(chat: domain.WriteHandle<Chat>, id: UInt64) @suspends -> String {
-    var bytes = Array.new::<UInt8>()
-    while true {
-        let packet = chat.room_packet(id, bytes.len())!
-        var i: UInt64 = 0
-        while i < packet.length { bytes.push(packet.byte(i)) i += 1 }
-        if packet.length < 32 { return String.from_utf8(bytes)! }
-    }
-    ""
 }
 fn messages(command: Command, plan: Plan, room: &String, id: UInt64, argument: &String) -> (String, String) {
     if plan.error == 1 { return ("error already joined\n", "") }
@@ -215,10 +157,10 @@ fn publish(ctx: Context, id: UInt64, command: Command, argument: String, exclude
         var access = domain.access_set()
         access.include(chat.read_only())
         let snapshot = domain.snapshot_set(access)
-        var plan = chat.plan(id, command)!
+        var plan = chat.plan(id, command, argument.clone())!
         plan.first &= ~excluded
         plan.second &= ~excluded
-        let room = room_text(chat, id)
+        let room = chat.room(id)!
         let (first, second) = messages(command, plan, &room, id, &argument)
         var slow: UInt64 = 0
         var i: UInt64 = 0
@@ -250,7 +192,7 @@ fn publish(ctx: Context, id: UInt64, command: Command, argument: String, exclude
             if (plan.second & bit(i)) != 0 { outbox.stage(&mut batch, route.output, second.clone().into_bytes())! }
             i += 1
         }
-        let change = Change { id: id, command: command, plan: plan, first_bytes: first.byte_length(), second_bytes: second.byte_length() }
+        let change = Change { room: argument.clone(), id: id, command: command, plan: plan, first_bytes: first.byte_length(), second_bytes: second.byte_length() }
         let candidate = domain.edit_snapshot(snapshot, chat, apply, change).with_outbox(batch)
         var receipt = domain.commit_set(candidate)
         let result = receipt.wait()
@@ -278,18 +220,6 @@ fn process(ctx: Context, id: UInt64, line: String) @suspends -> Bool {
     let permit = ctx.gate.acquire()!
     let chat = ctx.chat
     if chat.index(id)!.is_none() { return false }
-    match command {
-        Join => {
-            let bytes = argument.clone().into_bytes()
-            var offset: UInt64 = 0
-            while offset < bytes.len() {
-                let packet = packet_at(&bytes, offset)
-                chat.input(id, packet)!
-                offset += packet.length
-            }
-        },
-        _ => {}
-    }
     let result = publish(ctx, id, command, argument, 0)
     permit.release()
     result

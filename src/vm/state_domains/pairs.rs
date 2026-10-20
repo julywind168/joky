@@ -274,6 +274,7 @@ pub(super) fn execute(
     domains: &mut Domains,
     pair: &mut Pair,
     rejection: &mut Option<access::Rejection>,
+    charge: &mut usize,
 ) -> (DomainOutcome, Vec<TaskId>, Vec<TaskGroup>) {
     let count = pair.handles.len();
     let mut mutable = [false; 64];
@@ -322,7 +323,7 @@ pub(super) fn execute(
         };
         revisions[index] = next;
     }
-    let mut entered = count == 1;
+    let mut entered = false;
     let result = if count == 1 {
         let domain = domains.entries.get_mut(&pair.handles[0].sequence).unwrap();
         domain.root.as_mut().unwrap().invoke_values(
@@ -330,7 +331,7 @@ pub(super) fn execute(
             &domain.ty,
             &pair.method,
             &pair.info,
-            &mut pair.words,
+            (&mut pair.words, Some(&mut entered)),
             pair.limits,
         )
     } else {
@@ -347,7 +348,23 @@ pub(super) fn execute(
     .and_then(|words| {
         if let Some(output) = &pair.output {
             let words = values::result_words(&pair.info.signature.ret, words)?;
-            output.words.borrow_mut().copy_from_slice(&words);
+            if !crate::runtime::domain_packet::has_text(&pair.info.signature.ret) {
+                output.words.borrow_mut().copy_from_slice(&words);
+                return Ok(InstanceValue::Unit);
+            }
+            let extra = words
+                .capacity()
+                .saturating_sub(output.words.borrow().capacity())
+                .checked_mul(8)
+                .ok_or_else(|| limited("Domain result size overflow"))?;
+            let bytes = domains
+                .request_bytes
+                .checked_add(extra)
+                .filter(|n| *n <= domains.limits.max_request_bytes)
+                .ok_or_else(|| limited("Domain request byte limit exceeded"))?;
+            domains.request_bytes = bytes;
+            *charge += extra;
+            *output.words.borrow_mut() = words;
             Ok(InstanceValue::Unit)
         } else {
             InstanceValue::from_bits(

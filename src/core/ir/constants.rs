@@ -201,6 +201,7 @@ fn evaluate(
             internal: true,
             instance_entry: false,
             domain_entry: false,
+            domain_request_entry: false,
             span: declaration.span,
         },
     );

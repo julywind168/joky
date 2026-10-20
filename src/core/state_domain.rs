@@ -40,16 +40,16 @@ pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
             .all(super::instance::scalar)
 }
 
-/// Bounded pure-value inputs/results, with the existing root restrictions.
+/// Bounded value inputs/results, including String leaves, with the existing root restrictions.
 pub(crate) fn value_eligible(info: &FunctionInfo) -> bool {
     let count = access_count(info);
     !info.suspends
         && (1..=64).contains(&count)
-        && super::script::schema(&info.signature.ret).is_some()
+        && super::script::domain_schema(&info.signature.ret).is_some()
         && info.signature.params.len() <= count + 1
         && info.signature.params[count..]
             .iter()
-            .all(|ty| super::script::schema(ty).is_some())
+            .all(|ty| super::script::domain_schema(ty).is_some())
         && info.signature.params[..count]
             .iter()
             .enumerate()
@@ -63,13 +63,13 @@ pub(crate) fn value_eligible(info: &FunctionInfo) -> bool {
             })
 }
 
-/// Domain-only constructors accept one bounded pure-value packet.
+/// Domain-only constructors accept one bounded value packet.
 /// The persistent-instance API retains its scalar argument contract.
 pub(crate) fn constructor_eligible(info: &FunctionInfo) -> bool {
     !info.suspends
         && matches!(info.signature.ret, Type::Record(_))
         && info.signature.params.len() == 1
-        && super::script::schema(&info.signature.params[0]).is_some()
+        && super::script::domain_schema(&info.signature.params[0]).is_some()
 }
 
 /// Storage hooks and the entire owning graph are checked by `infer`.
@@ -180,6 +180,12 @@ pub(crate) fn infer(
         }
     }
     for (name, info) in functions {
+        info.domain_request_entry = info.suspends
+            && info.signature.params.len() == 1
+            && bodies.get(name).is_some_and(|body| {
+                body.domain_value(&info.signature.params[0])
+                    && body.domain_value(&info.signature.ret)
+            });
         let pair = safe.contains(name)
             && pair_eligible(info)
             && info.signature.params[..access_count(info)]

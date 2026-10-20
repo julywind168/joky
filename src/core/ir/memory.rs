@@ -694,7 +694,7 @@ pub(super) fn check_module(
             reference_capability.insert(name.clone());
         }
         info.uses_arena = body.ops.iter().any(|op| match op {
-            Op::Alloc { .. } | Op::Text { .. } | Op::Place(_) => true,
+            Op::Alloc { .. } | Op::Text { .. } | Op::DomainText { .. } | Op::Place(_) => true,
             // Local fixed-array aliases become Place operations after this pass,
             // including unused by-value parameters. Lowering needs an arena.
             Op::Local { target, .. } if target.is_place() => true,

@@ -108,6 +108,10 @@ pub(crate) fn compile(
         .chain(crate::runtime::arena::symbols())
         .chain(crate::runtime::owned_text::symbols())
         .chain([(
+            "__joky_domain_text_v1",
+            crate::runtime::domain_packet::text as *const u8,
+        )])
+        .chain([(
             "__joky_text_ffi_call_v1",
             crate::runtime::text_ffi::call as *const u8,
         )])

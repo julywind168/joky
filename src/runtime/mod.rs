@@ -28,5 +28,6 @@ pub mod resource;
 pub(crate) mod tcp;
 
 pub(crate) mod domain;
+pub(crate) mod domain_packet;
 
 pub mod fs;

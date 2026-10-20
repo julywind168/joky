@@ -70,6 +70,9 @@ pub(crate) trait InterpretedTask {
     fn take_text_result(&mut self) -> Option<String> {
         None
     }
+    fn domain_result(&self) -> Option<Vec<u64>> {
+        None
+    }
     fn flat_result(&self) -> Option<Vec<u64>> {
         None
     }
@@ -190,11 +193,30 @@ impl Continuation {
             return None;
         }
         Some(match &self.inner {
-            ContinuationInner::Native(task) if task.frame.root_text => return None,
+            ContinuationInner::Native(task)
+                if task.frame.root_text && task.frame.domain_return.is_none() =>
+            {
+                return None
+            }
             ContinuationInner::Interpreted(task) if task.is_text() => return None,
             ContinuationInner::Native(task) => task.frame.result,
             ContinuationInner::Interpreted(task) => task.result(),
         })
+    }
+
+    pub(crate) fn domain_result(&self, layout: Option<(usize, usize)>) -> Option<Vec<u64>> {
+        if self.status != ContinuationStatus::Completed {
+            return None;
+        }
+        match &self.inner {
+            ContinuationInner::Native(task) if task.frame.domain_return.is_some() => {
+                task.frame.domain_result.clone()
+            }
+            ContinuationInner::Interpreted(task) => {
+                task.domain_result().or_else(|| self.flat_result(layout))
+            }
+            _ => self.flat_result(layout),
+        }
     }
 
     /// Only used after a checked, reference-free Script signature has completed.

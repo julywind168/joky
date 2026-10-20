@@ -294,7 +294,7 @@ unsafe fn edit(
         &candidate.ty,
         name,
         &info,
-        &mut words,
+        (&mut words, None),
         limits,
     )?;
     Ok(())
@@ -537,7 +537,7 @@ unsafe fn poll_inner(
                 &frozen.ty,
                 name,
                 &info,
-                &mut input,
+                (&mut input, None),
                 crate::runtime::suspension::current_limits(),
             )?;
             let words = values::result_words(&info.signature.ret, words)?;

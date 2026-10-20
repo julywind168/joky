@@ -5706,7 +5706,7 @@ fn state_domains_snapshots_reject_forgery_and_unchecked_projections() {
     for case in [
         "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let raw=snapshot.storage }",
         "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let moved=snapshot snapshot.value(); moved.value(); }",
-        "fn project(state: &State) -> String { \"owned\" } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
+        "import joky/array.{type Array} fn project(state: &State) -> Array<UInt8> { Array.new::<UInt8>() } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
         "fn project(state: &mut State) -> Int32 { state.count=99 state.count } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
         "fn main() @suspends { let owner=domain.create(make,1) let operation=read domain.snapshot_from(owner.read_handle(),operation); }",
         "fn main() @suspends { let factory=domain.snapshot_from::<State,Int32> }",
@@ -5738,7 +5738,7 @@ fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
         ("fn bad(s: &State) -> Int32 { let f = identity f(s.count) } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count) s.count } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), \"owned\"); }", "Copy type arguments"),
-        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, Ptr.null())); }", "bounded pure-value"),
+        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, Ptr.null())); }", "bounded value"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
@@ -5834,7 +5834,7 @@ fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
         ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) domain.commit_to(handle.read_only(), candidate);"),
         ("", "let constructor = make domain.candidate_from(snapshot, handle, constructor, 2);"),
         ("fn other(value: Int32) -> Other { Other { count: value } }", "domain.candidate_from(snapshot, handle, other, 2);"),
-        ("fn owns(value: String) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, handle, owns, \"owned\");"),
+        ("import joky/array.{type Array} fn owns(value: Array<UInt8>) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, handle, owns, Array.new::<UInt8>());"),
         ("fn noisy(value: Int32) -> State { println(value) make(value) }", "domain.candidate_from(snapshot, handle, noisy, 2);"),
         ("fn pending(value: Int32) @suspends -> State { make(value) }", "domain.candidate_from(snapshot, handle, pending, 2);"),
         ("", "let factory = domain.candidate_from::<State, Int32, State, Int32>"),
@@ -6014,7 +6014,7 @@ fn state_domains_joint_snapshots_reject_dependency_extraction_and_invalid_projec
         ("", "let f=project let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),f)"),
         ("", "let f=domain.snapshot_pair::<S,S,Int32>"),
         ("fn mutating(a:&S,b:&mut S)->Int32 { b.n=3 a.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),mutating)"),
-        ("fn owning(a:&S,b:&S)->String { \"value\" }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),owning)"),
+        ("import joky/array.{type Array} fn owning(a:&S,b:&S)->Array<UInt8> { Array.new::<UInt8>() }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),owning)"),
         ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),noisy)"),
         ("fn pending(a:&S,b:&S) @suspends ->Int32 { a.n+b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),pending)"),
         ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let raw=s.storage"),
@@ -6824,7 +6824,7 @@ fn domain_timers_reject_unsafe_contracts_in_all_frontends() {
         "import joky/domain fn main() @suspends { let timer=domain.TimerHandle{identity:1} }".to_owned(),
         "extern fn __timer_create(n:Int32) @suspends -> domain.TimerOwner fn main() @suspends { let timer=__timer_create(1) }".to_owned(),
         "extern fn forge() -> domain.TimerOwner fn main() {let timer=forge()}".to_owned(),
-        "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:String){} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,\"bad\");}".to_owned(),
+        "import joky/domain import joky/array.{type Array} struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:Array<UInt8>){} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,Array.new::<UInt8>());}".to_owned(),
         "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} extern fn external(value:Int32) fn tick(room:&mut Room,value:Int32){external(value)} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,1);}".to_owned(),
     ] {
         work.write("bad_timer.jk", &source);
@@ -7422,7 +7422,7 @@ fn main() @suspends {{
         } else {
             failure(
                 &work.cli(&["build", "create_bound.jk"]),
-                "bounded pure-value signature",
+                "bounded value signature",
             );
         }
 
@@ -7460,7 +7460,7 @@ fn main() @suspends {{
             } else {
                 failure(
                     &work.cli(&["build", "request_bound.jk"]),
-                    "bounded pure-value signature",
+                    "bounded value signature",
                 );
             }
         }
@@ -7484,7 +7484,7 @@ fn main() @suspends {{
         } else {
             failure(
                 &timer_work.cli(&["build", "timer_bound.jk"]),
-                "bounded pure-value input",
+                "bounded value input",
             );
         }
 
@@ -7506,7 +7506,7 @@ fn main() @suspends {{
     let message="snapshot result bounds" check.assert({assertion},&message)
 }}"#));
             if accepted {work.assert_all_backends("snapshot_bound.jk",&[],b"",0);}
-            else {failure(&work.cli(&["build","snapshot_bound.jk"]),"bounded pure-value signature");}
+            else {failure(&work.cli(&["build","snapshot_bound.jk"]),"bounded value signature");}
         }
 
         let candidate_calls = [
@@ -7542,7 +7542,7 @@ fn main() @suspends {{
             } else {
                 failure(
                     &work.cli(&["build", "candidate_bound.jk"]),
-                    "bounded pure-value signature",
+                    "bounded value signature",
                 );
             }
         }
@@ -7573,10 +7573,7 @@ fn main() @suspends {{
             if accepted {
                 work.assert_all_backends("bound.jk", &[], b"", 0);
             } else {
-                failure(
-                    &work.cli(&["build", "bound.jk"]),
-                    "bounded pure-value signature",
-                );
+                failure(&work.cli(&["build", "bound.jk"]), "bounded value signature");
             }
         }
     }
@@ -7584,17 +7581,17 @@ fn main() @suspends {{
 
 #[test]
 #[cfg(unix)]
-fn domain_value_packets_reject_owning_inputs_and_results() {
+fn domain_value_packets_reject_container_inputs_and_results() {
     let work = Workspace::new();
     for (name, operation, invocation) in [
         (
             "input",
             "fn turn(s:&mut State,p:Packet)->Int32 {s.n}",
-            "domain.write_to(owner.handle(),turn,Packet{text:\"owned\"}).unwrap()",
+            "domain.write_to(owner.handle(),turn,Packet{text:Array.new::<UInt8>()}).unwrap()",
         ),
         (
             "result",
-            "fn turn(s:&State)->Packet {Packet{text:\"owned\"}}",
+            "fn turn(s:&State)->Packet {Packet{text:Array.new::<UInt8>()}}",
             "domain.read_from(owner.read_handle(),turn).unwrap()",
         ),
     ] {
@@ -7602,14 +7599,14 @@ fn domain_value_packets_reject_owning_inputs_and_results() {
         work.write(
             &file,
             &format!(
-                r#"import joky/domain
-struct State {{n:Int32}} struct Packet {{text:String}}
+                r#"import joky/domain import joky/array.{{type Array}}
+struct State {{n:Int32}} struct Packet {{text:Array<UInt8>}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 {operation}
 fn main() @suspends {{let owner=domain.create(make,1) {invocation};}}"#
             ),
         );
-        failure(&work.cli(&["build", &file]), "bounded pure-value signature");
+        failure(&work.cli(&["build", &file]), "bounded value signature");
     }
 }
 
@@ -7636,7 +7633,7 @@ fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
         (
             "owning",
             "fn query(s:&State,p:Packet)->Int32{s.n}",
-            "domain.query_from(h,query,Packet{text:\"owned\"})",
+            "domain.query_from(h,query,Packet{text:Array.new::<UInt8>()})",
         ),
         (
             "async",
@@ -7663,8 +7660,8 @@ fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
         work.write(
             &file,
             &format!(
-                r#"import joky/domain
-struct State {{n:Int32}} struct Packet {{text:String}}
+                r#"import joky/domain import joky/array.{{type Array}}
+struct State {{n:Int32}} struct Packet {{text:Array<UInt8>}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 {operation}
 fn main() @suspends {{let owner=domain.create(make,1) let h=owner.read_handle() {invocation};}}"#
@@ -7704,29 +7701,29 @@ fn domain_create_values_run_and_fail_in_all_backends() {
 }
 
 #[test]
-fn domain_create_values_reject_owning_payloads_and_unproved_constructors() {
+fn domain_create_values_reject_container_payloads_and_unproved_constructors() {
     let work = Workspace::new();
     for (name, definitions, input, constructor, expected) in [
         (
             "owning",
-            "struct Init {text:String}",
-            "Init{text:\"owned\"}",
+            "struct Init {text:Array<UInt8>}",
+            "Init{text:Array.new::<UInt8>()}",
             "fn make(p:Init)->State{State{n:1}}",
-            "bounded pure-value signature",
+            "bounded value signature",
         ),
         (
             "tuple",
             "",
             "(1,Ptr.null())",
             "fn make(p:(Int32,Ptr))->State{State{n:1}}",
-            "bounded pure-value signature",
+            "bounded value signature",
         ),
         (
             "generic",
             "struct Init<T>{n:T}",
             "Init::<Ptr>{n:Ptr.null()}",
             "fn make(p:Init<Ptr>)->State{State{n:1}}",
-            "bounded pure-value signature",
+            "bounded value signature",
         ),
         (
             "async",
@@ -7744,7 +7741,7 @@ fn domain_create_values_reject_owning_payloads_and_unproved_constructors() {
         ),
     ] {
         let file = format!("create_{name}.jk");
-        work.write(&file, &format!("import joky/domain\nstruct State {{n:Int32}}\n{definitions}\n{constructor}\nfn main() @suspends {{let owner=domain.create(make,{input})}}"));
+        work.write(&file, &format!("import joky/domain import joky/array.{{type Array}}\nstruct State {{n:Int32}}\n{definitions}\n{constructor}\nfn main() @suspends {{let owner=domain.create(make,{input})}}"));
         failure(&work.cli(&["build", &file]), expected);
     }
 }
@@ -7800,22 +7797,22 @@ fn domain_candidate_values_reject_unproved_and_non_value_inputs() {
     let work = Workspace::new();
     for (definition, input, constructor, expected) in [
         (
-            "struct Init{text:String}",
-            "Init{text:\"owned\"}",
+            "struct Init{text:Array<UInt8>}",
+            "Init{text:Array.new::<UInt8>()}",
             "fn make(p:Init)->State{State{n:1}}",
-            "bounded pure-value signature",
+            "bounded value signature",
         ),
         (
             "",
             "(1,Ptr.null())",
             "fn make(p:(Int32,Ptr))->State{State{n:1}}",
-            "bounded pure-value signature",
+            "bounded value signature",
         ),
         (
             "struct Init<T>{n:T}",
             "Init::<Ptr>{n:Ptr.null()}",
             "fn make(p:Init<Ptr>)->State{State{n:1}}",
-            "bounded pure-value signature",
+            "bounded value signature",
         ),
         (
             "struct Init{n:Int32}",
@@ -7837,7 +7834,7 @@ fn domain_candidate_values_reject_unproved_and_non_value_inputs() {
             "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,INPUT)",
         ] {
             let body=body.replace("INPUT",input);
-            work.write("candidate_invalid.jk", &format!("import joky/domain struct State{{n:Int32}} {definition} {constructor} fn seed(n:Int32)->State{{State{{n:n}}}} fn read(s:&State)->Int32{{s.n}} fn total(a:&State,b:&State)->Int32{{a.n+b.n}} fn main() @suspends {{let a=domain.create(seed,0) let b=domain.create(seed,0) {body}}}"));
+            work.write("candidate_invalid.jk", &format!("import joky/domain import joky/array.{{type Array}} struct State{{n:Int32}} {definition} {constructor} fn seed(n:Int32)->State{{State{{n:n}}}} fn read(s:&State)->Int32{{s.n}} fn total(a:&State,b:&State)->Int32{{a.n+b.n}} fn main() @suspends {{let a=domain.create(seed,0) let b=domain.create(seed,0) {body}}}"));
             failure(&work.cli(&["build","candidate_invalid.jk"]),expected);
         }
     }
@@ -7914,9 +7911,9 @@ fn domain_snapshot_values_reject_invalid_results_and_projections() {
     let work = Workspace::new();
     for (definitions, ty, value) in [
         (
-            "struct Payload{text:String}",
+            "struct Payload{text:Array<UInt8>}",
             "Payload",
-            "Payload{text:\"owned\"}",
+            "Payload{text:Array.new::<UInt8>()}",
         ),
         ("", "(Int32,Ptr)", "(1,Ptr.null())"),
         (
@@ -7930,8 +7927,8 @@ fn domain_snapshot_values_reject_invalid_results_and_projections() {
             ("a:&State,b:&State","let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project)"),
             ("a:&State","var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,a.read_handle(),project);"),
         ] {
-            work.write("invalid_snapshot.jk",&format!("import joky/domain {definitions} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params})->{ty}{{{value}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
-            failure(&work.cli(&["build","invalid_snapshot.jk"]),"bounded pure-value signature");
+            work.write("invalid_snapshot.jk",&format!("import joky/domain import joky/array.{{type Array}} {definitions} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params})->{ty}{{{value}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+            failure(&work.cli(&["build","invalid_snapshot.jk"]),"bounded value signature");
         }
     }
     for (modifier, receiver, extra, expected) in [
@@ -7945,7 +7942,7 @@ fn domain_snapshot_values_reject_invalid_results_and_projections() {
             (format!("a:{receiver}"),"var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,a.read_handle(),project);"),
         ] {
             let extra=if params.contains("b:&mut") {"b.n=5"} else {extra};
-            work.write("invalid_snapshot.jk",&format!("import joky/domain struct Payload{{n:Int32}} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params}) {modifier} ->Payload{{{extra} Payload{{n:a.n}}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+            work.write("invalid_snapshot.jk",&format!("import joky/domain import joky/array.{{type Array}} struct Payload{{n:Int32}} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params}) {modifier} ->Payload{{{extra} Payload{{n:a.n}}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
             failure(&work.cli(&["build","invalid_snapshot.jk"]),expected);
         }
     }
@@ -8000,9 +7997,13 @@ fn domain_request_values_run_in_all_backends() {
 fn domain_request_values_reject_invalid_contracts() {
     let work = Workspace::new();
     for (definition, ty, value) in [
-        ("struct P {text:String}", "P", "P{text:\"owned\"}"),
+        (
+            "struct P {text:Array<UInt8>}",
+            "P",
+            "P{text:Array.new::<UInt8>()}",
+        ),
         ("struct P<T> {n:T}", "P<Ptr>", "P{n:Ptr.null()}"),
-        ("enum P {A(String)}", "P", "P.A(\"owned\")"),
+        ("enum P {A(Array<UInt8>)}", "P", "P.A(Array.new::<UInt8>())"),
         ("", "(Int32,Ptr)", "(1,Ptr.null())"),
     ] {
         for result in [false, true] {
@@ -8011,7 +8012,7 @@ fn domain_request_values_reject_invalid_contracts() {
             } else {
                 (ty, "Int32", value, "0")
             };
-            work.write("rejected_request.jk", &format!(r#"import joky/domain
+            work.write("rejected_request.jk", &format!(r#"import joky/domain import joky/array.{{type Array}}
 {definition}
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
@@ -8026,7 +8027,7 @@ fn main() @suspends {{let owner=domain.create(make,0) domain.request(owner.handl
                 "{error}"
             );
             assert!(
-                error.contains("bounded pure-value") || error.contains("Copy type arguments"),
+                error.contains("bounded value") || error.contains("Copy type arguments"),
                 "{error}"
             );
         }
@@ -8092,9 +8093,21 @@ fn domain_timer_values_run_in_all_backends() {
 fn domain_timer_values_reject_invalid_inputs_and_effects() {
     let work = Workspace::new();
     for (decl, ty, value, body, effect) in [
-        ("struct P{text:String}", "P", "P{text:\"owned\"}", "", ""),
+        (
+            "struct P{text:Array<UInt8>}",
+            "P",
+            "P{text:Array.new::<UInt8>()}",
+            "",
+            "",
+        ),
         ("struct P<T>{n:T}", "P<Ptr>", "P{n:Ptr.null()}", "", ""),
-        ("enum P{Some(String)}", "P", "P.Some(\"owned\")", "", ""),
+        (
+            "enum P{Some(Array<UInt8>)}",
+            "P",
+            "P.Some(Array.new::<UInt8>())",
+            "",
+            "",
+        ),
         ("", "(Int32,Ptr)", "(1,Ptr.null())", "", ""),
         (
             "struct P{n:Int32}",
@@ -8111,7 +8124,7 @@ fn domain_timer_values_reject_invalid_inputs_and_effects() {
             "",
         ),
     ] {
-        work.write("rejected_timer.jk",&format!(r#"import joky/domain import joky/task import joky/io
+        work.write("rejected_timer.jk",&format!(r#"import joky/domain import joky/array.{{type Array}} import joky/task import joky/io
 {decl}
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
@@ -8125,7 +8138,7 @@ fn main() @suspends {{let o=domain.create(make,0) let t=domain.timer() domain.af
             "{error}"
         );
     }
-    work.write("generic_timer_effect.jk",r#"import joky/domain import joky/io
+    work.write("generic_timer_effect.jk",r#"import joky/domain import joky/array.{type Array} import joky/io
 struct State {n:Int32} struct P {n:Int32}
 fn make(n:Int32)->State {State{n:n}}
 fn tick<T>(s:&mut State,p:T) {let text="timer" io.print(&text)}
@@ -8343,8 +8356,8 @@ fn state_domains_storage_editors_reject_invalid_contracts() {
             "domain.edit_snapshot(snapshot,owner.handle(),noisy,2);",
         ),
         (
-            "fn owned(s:&mut S,n:String){}",
-            "domain.edit_snapshot(snapshot,owner.handle(),owned,\"input\");",
+            "import joky/array.{type Array} fn owned(s:&mut S,n:Array<UInt8>){}",
+            "domain.edit_snapshot(snapshot,owner.handle(),owned,Array.new::<UInt8>());",
         ),
         (
             "",
@@ -8459,21 +8472,21 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ("", "when (mut h) {println(1)};", "proved synchronous"),
         (
             "",
-            "let text=\"owned\" when (h) {text};",
-            "pure-value packet",
+            "let text=\"owned\" let view=&text when (h) {view};",
+            "value packet",
         ),
         (
             "",
-            "let text=\"owned\" when (h) {text.len()};",
-            "pure-value packet",
+            "let text=\"owned\" let view=&text when (h) {view.byte_length()};",
+            "value packet",
         ),
-        ("", "var n=1 let r=&n when (h) {*r};", "pure-value packet"),
+        ("", "var n=1 let r=&n when (h) {*r};", "value packet"),
         (
             "fn get(n:Int32)->Int32{n}",
             "let f=get when (h) {f(h.n)};",
-            "pure-value packet",
+            "value packet",
         ),
-        ("", "when (h) {&h.n};", "pure value"),
+        ("", "when (h) {&h.n};", "bounded value"),
         (
             "impl S {fn add(&mut self,n:Int32){self.n+=n}}",
             "let ro=h.read_only() ro.add(2);",
@@ -8655,7 +8668,7 @@ fn pure_enum_contract_limits_and_rejections() {
         if count == 63 {
             work.assert_all_backends("limit.jk", &[], b"", 0);
         } else {
-            failure(&work.cli(&["build", "limit.jk"]), "bounded pure value");
+            failure(&work.cli(&["build", "limit.jk"]), "bounded value");
         }
     }
     for depth in [8, 9] {
@@ -8674,7 +8687,7 @@ fn pure_enum_contract_limits_and_rejections() {
         if depth == 8 {
             work.assert_all_backends("depth.jk", &[], b"", 0);
         } else {
-            failure(&work.cli(&["build", "depth.jk"]), "bounded pure value");
+            failure(&work.cli(&["build", "depth.jk"]), "bounded value");
         }
     }
     for (definitions, ty, value) in [
@@ -8871,7 +8884,7 @@ fn pure_composite_contract_limits_and_rejections() {
             if count == 64 {
                 work.assert_all_backends("limit.jk", &[], b"", 0);
             } else {
-                failure(&work.cli(&["build", "limit.jk"]), "bounded pure value");
+                failure(&work.cli(&["build", "limit.jk"]), "bounded value");
             }
         }
     }
@@ -8886,7 +8899,7 @@ fn pure_composite_contract_limits_and_rejections() {
         if depth == 8 {
             work.assert_all_backends("depth.jk", &[], b"", 0);
         } else {
-            failure(&work.cli(&["build", "depth.jk"]), "bounded pure value");
+            failure(&work.cli(&["build", "depth.jk"]), "bounded value");
         }
     }
     for depth in [8, 9] {
@@ -8899,10 +8912,7 @@ fn pure_composite_contract_limits_and_rejections() {
         if depth == 8 {
             work.assert_all_backends("tuple_depth.jk", &[], b"", 0);
         } else {
-            failure(
-                &work.cli(&["build", "tuple_depth.jk"]),
-                "bounded pure value",
-            );
+            failure(&work.cli(&["build", "tuple_depth.jk"]), "bounded value");
         }
     }
     // The generated capture record consumes one member in addition to its tuple.
@@ -9555,4 +9565,15 @@ fn postfix_unwrap_tasks_and_closures_match_native_execution() {
     );
     work.write("tasks.jk", &format!("{source}\nfn main() @suspends {{ record(check()) record(closure_check()) println(inferred(\"context\")!) }}"));
     work.assert_native("tasks.jk", &[], b"10\n20\n10\n30\n42\n42\n42\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn owned_text_domain_values_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "text_values.jk",
+        include_str!("fixtures/state_domain_text_values.jk"),
+    );
+    work.assert_all_backends("text_values.jk", &[], b"", 0);
 }

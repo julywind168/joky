@@ -172,6 +172,40 @@ impl FunctionPlan {
         })
     }
 
+    /// Value transport never retains or invokes user-defined destructor code.
+    pub(crate) fn domain_value(&self, ty: &Type) -> bool {
+        if crate::core::script::domain_schema(ty).is_none() {
+            return false;
+        }
+        fn hooks(plan: &FunctionPlan, ty: &Type) -> bool {
+            if plan.has_custom_drop(ty) {
+                return false;
+            }
+            match ty {
+                Type::Tuple(t) => t.elements.iter().all(|ty| hooks(plan, ty)),
+                Type::Record(r) => {
+                    r.fields.iter().all(|f| hooks(plan, &f.ty))
+                        && r.arguments
+                            .iter()
+                            .filter_map(|a| a.as_type())
+                            .all(|ty| hooks(plan, ty))
+                }
+                Type::Enum(e) => {
+                    e.arguments
+                        .iter()
+                        .filter_map(|a| a.as_type())
+                        .all(|ty| hooks(plan, ty))
+                        && e.variants
+                            .iter()
+                            .filter_map(|v| v.payload.as_ref())
+                            .all(|ty| hooks(plan, ty))
+                }
+                _ => true,
+            }
+        }
+        hooks(self, ty)
+    }
+
     pub(super) fn check_owner_projection(
         &self,
         mut ty: Type,

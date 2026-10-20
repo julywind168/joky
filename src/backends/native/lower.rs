@@ -558,6 +558,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, ptr, ptr],
             vec![],
         ),
+        (
+            "__joky_domain_text_v1",
+            vec![ptr, ptr, ptr, types::I64, types::I32],
+            vec![types::I64],
+        ),
         ("__joky_cps_capture_text_v2", vec![ptr, ptr], vec![]),
         ("__joky_text_cps_prepare_v2", vec![ptr, ptr, ptr], vec![ptr]),
         ("__joky_text_cps_argument_v2", vec![ptr, ptr], vec![]),
@@ -2203,6 +2208,31 @@ fn lower_ops(
             Op::Literal(dst, literal) => {
                 let value = lower_literal(builder, literal, &data.strings);
                 slots.write(builder, dst, value);
+            }
+            Op::DomainText {
+                packet,
+                index,
+                value,
+                decode,
+            } => {
+                let packet = slots.read(builder, packet);
+                let index = builder.ins().iconst(ptr_ty, *index as i64);
+                let input = if *decode {
+                    builder.ins().iconst(types::I64, 0)
+                } else {
+                    slots.read(builder, value)
+                };
+                let flag = builder.ins().iconst(types::I32, i64::from(*decode));
+                let output = helper(
+                    builder,
+                    refs,
+                    "__joky_domain_text_v1",
+                    &[mode.arena(), packet, index, input, flag],
+                );
+                check_call(builder, refs, mode.frame(), mode.cleanup());
+                if *decode {
+                    slots.write(builder, value, output);
+                }
             }
             Op::DomainBits { dst, src, decode } => {
                 let value = slots.read(builder, src);

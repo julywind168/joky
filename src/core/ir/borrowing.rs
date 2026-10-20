@@ -166,6 +166,18 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             }
             _ => (vec![], vec![]),
         },
+        Op::DomainText {
+            packet,
+            value,
+            decode,
+            ..
+        } => {
+            if *decode {
+                (refs(packet), refs(value))
+            } else {
+                ([packet, value].into_iter().flat_map(refs).collect(), vec![])
+            }
+        }
         Op::Text { dst, source } => (
             match source {
                 TextSource::Literal(_) => vec![],
@@ -842,7 +854,7 @@ fn analyze(
             }
         }
 
-        if matches!(op, Op::Text { .. })
+        if matches!(op, Op::Text { .. } | Op::DomainText { decode: true, .. })
             || matches!(op, Op::ArenaNew { .. })
             || matches!(op, Op::Buffer(super::BufferOp::Move { dst, .. }) if dst.ty.is_explicit_arena())
             || matches!(op, Op::Call { result: Some(dst), .. } | Op::Scope { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
@@ -1357,6 +1369,27 @@ fn analyze(
                         ..Default::default()
                     },
                 );
+            }
+            Op::DomainText {
+                packet,
+                value,
+                decode,
+                ..
+            } => {
+                check_access(packet, !decode, &state, &live[pc], None, &[])?;
+                if *decode {
+                    state.insert(
+                        value.index,
+                        Reference {
+                            origins: BTreeSet::from([Origin::new(loan)]),
+                            loans: Set::from([loan]),
+                            storage: true,
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    check_access(value, false, &state, &live[pc], None, &[])?;
+                }
             }
             Op::Text { dst, source } => {
                 if let TextSource::Clone(src) = source {

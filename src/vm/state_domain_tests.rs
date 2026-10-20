@@ -795,9 +795,9 @@ fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
         "fn bad() @suspends { let o=domain.create(make,1) domain.write_to(o.read_handle(),add,1).unwrap(); }",
         "fn bad() @suspends { let o=domain.create(make,1) let token=o.handle().token }",
         "fn bad() @suspends { let f=make let o=domain.create(f,1) }",
-        "fn owned(value: String) @suspends -> String { value } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),owned,\"text\"); }",
+        "fn owned(value: String) @suspends -> String { value } fn bad() @suspends { let o=domain.create(make,1) let text=\"text\" domain.request(o.handle(),owned,text); text.byte_length(); }",
         "fn pair(value: Int32) @suspends -> (Int32, Ptr) { (value, Ptr.null()) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
-        "fn data(state: &State) -> String { \"text\" } fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data).unwrap(); }",
+        "import joky/array.{type Array} fn data(state: &State) -> Array<UInt8> {Array.new::<UInt8>()} fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data).unwrap(); }",
         "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
     ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -1733,4 +1733,104 @@ fn exhaustive_pure_composite_domain_cancellation() {
         0..=32768,
         true,
     );
+}
+
+fn owned_text_domain_cancellation_source() -> String {
+    include_str!("../../tests/fixtures/state_domain_text_values.jk")
+        .replace(
+            "domain.every(t,x,1,tick,\"repeated🙂\")",
+            "domain.after(t,x,0,tick,\"repeated🙂\")",
+        )
+        .replace(
+            "while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep_ms(1)}",
+            "while match t.status() {Active=>true,_=>false} {task.yield_now()}",
+        )
+}
+#[test]
+fn owned_text_domain_cancellation_reclaims_packets_and_owners() {
+    source_cancellation_boundaries(
+        &owned_text_domain_cancellation_source(),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000, 32768,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel owned domain captures, requests and result decoding at every instruction"]
+fn exhaustive_owned_text_domain_cancellation() {
+    source_cancellation_boundaries(&owned_text_domain_cancellation_source(), 0..=32768, true);
+}
+
+#[test]
+fn owned_text_domain_allocation_failures_release_every_owner() {
+    use crate::runtime::{
+        arena,
+        executor::{HostExecutor, TaskGroup},
+    };
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            arena::LIMIT.with(|n| n.set(self.0));
+        }
+    }
+    let _restore = Restore(arena::LIMIT.with(|n| n.get()));
+    let source = r#"
+import joky/domain
+import joky/task
+struct State { text:String }
+fn make(text:String)->State {State{text:text}}
+fn read(s:&State)->String {s.text.clone()}
+fn echo(text:String) @suspends ->String {task.yield_now() text}
+fn probe() @suspends ->Int32 {
+    let owner=domain.create(make,"initial🙂")
+    let saved=domain.snapshot_from(owner.read_handle(),read)
+    let text=saved.value()
+    let reply=domain.request(owner.handle(),echo,text).unwrap()
+    if reply.equals("initial🙂") {24} else {0}
+}
+"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let baseline = arena::LIVE.with(|n| n.get());
+        let mut successes = 0;
+        let mut failures = 0;
+        for limit in (0..=16384).step_by(64) {
+            arena::LIMIT.with(|n| n.set(limit));
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            let outcome = (|| {
+                let id = executor.spawn(&group, vm.prepare_async("probe", &[])?)?;
+                for _ in 0..1000 {
+                    for done in executor.poll(1)?.completed {
+                        if done.id == id {
+                            return done.result;
+                        }
+                    }
+                }
+                panic!("domain text allocation probe stalled");
+            })();
+            if let Ok(value) = outcome {
+                assert_eq!(value, 24);
+                successes += 1;
+            } else {
+                failures += 1;
+            }
+            executor.cancel_group(&group);
+            assert_eq!(
+                executor.domains().borrow().usage(),
+                (0, 0, 0, 0),
+                "{mode:?} limit={limit}"
+            );
+            drop(executor);
+            assert_eq!(
+                arena::LIVE.with(|n| n.get()),
+                baseline,
+                "{mode:?} limit={limit}"
+            );
+        }
+        assert!(successes > 0 && failures > 0, "{mode:?}");
+        arena::LIMIT.with(|n| n.set(arena::MAX_BYTES));
+    }
 }

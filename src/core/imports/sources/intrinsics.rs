@@ -64,8 +64,8 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::Vm, "vm.schema") => ScriptSchema(parameter(f)?),
             (SourceKind::Vm, "vm.pack") => ScriptPack,
             (SourceKind::Vm, "vm.unpack") => ScriptUnpack,
-            (SourceKind::Domain, "domain.value_pack") => ScriptPack,
-            (SourceKind::Domain, "domain.value_unpack") => ScriptUnpack,
+            (SourceKind::Domain, "domain.value_pack") => DomainValuePack,
+            (SourceKind::Domain, "domain.value_unpack") => DomainValueUnpack,
             (SourceKind::Domain, "domain.lookup_type") => DirectoryType(parameter(f)?),
             (SourceKind::Domain, "domain.module") => DomainModule,
             (SourceKind::Domain, "domain.readonly") => DomainReadOnly,
@@ -284,10 +284,12 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
                     parameter(f)?;
                     Some(crate::FunctionSignature::new(vec![], Type::String))
                 }
-                Some(ScriptPack) if params == [parameter(f)?] && packet(&f.ret_ty) => {
+                Some(ScriptPack | DomainValuePack)
+                    if params == [parameter(f)?] && packet(&f.ret_ty) =>
+                {
                     Some(signature.clone())
                 }
-                Some(ScriptUnpack)
+                Some(ScriptUnpack | DomainValueUnpack)
                     if params.len() == 1
                         && params[0]
                             .reference_type()
@@ -338,8 +340,8 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
                     Some(signature.clone())
                 }
                 Some(
-                    TextFreeze | TextIntoBytes | ScriptPack | ScriptUnpack | Float(_) | FloatToText
-                    | IntFromFloat,
+                    TextFreeze | TextIntoBytes | ScriptPack | ScriptUnpack | DomainValuePack
+                    | DomainValueUnpack | Float(_) | FloatToText | IntFromFloat,
                 ) => None,
                 // Domain adapters also have real source bodies. The shared IR
                 // checks their return types and each captured operation at use sites.
@@ -356,6 +358,8 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
                         | MemSwap
                         | ScriptSchema(_)
                         | DirectoryType(_)
+                        | DomainValuePack
+                        | DomainValueUnpack
                         | ScriptPack
                         | ScriptUnpack
                         | PlainCopy(_)

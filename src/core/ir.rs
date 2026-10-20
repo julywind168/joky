@@ -107,6 +107,8 @@ pub(crate) struct FunctionInfo {
     pub instance_entry: bool,
     /// Proved synchronous, host-free single-domain or scalar pair entry.
     pub domain_entry: bool,
+    /// A suspending request with one transferable input and a hook-free value result.
+    pub domain_request_entry: bool,
     pub span: Span,
 }
 
@@ -139,6 +141,7 @@ impl FunctionInfo {
             internal: true,
             instance_entry: false,
             domain_entry: false,
+            domain_request_entry: false,
             span,
         }
     }
@@ -356,6 +359,13 @@ pub(crate) enum Op {
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
     DomainModule(Slot),
+    /// Encode/decode one nullable String lane in a domain-owned wire packet.
+    DomainText {
+        packet: Slot,
+        index: usize,
+        value: Slot,
+        decode: bool,
+    },
     /// Trusted scalar slot encoding; never accepts references or owned values.
     DomainBits {
         dst: Slot,
@@ -730,6 +740,7 @@ impl ModulePlan {
                 extern_abi,
                 instance_entry: false,
                 domain_entry: false,
+                domain_request_entry: false,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
                     || members.functions.contains(name)
                     || matches!(item, Item::FnDef(f) if f.scope.is_some())
@@ -1027,6 +1038,7 @@ impl ModulePlan {
                             | Op::ArenaNew { .. }
                             | Op::ArenaAlloc { .. }
                             | Op::Text { .. }
+                            | Op::DomainText { .. }
                             | Op::Place(_) => true,
                             Op::Buffer(BufferOp::SwapReferences { target, .. })
                                 if target.is_place() =>
@@ -1306,6 +1318,8 @@ impl FunctionPlan {
             f.compiler_intrinsic,
             Some(
                 CompilerIntrinsic::ScriptSchema(_)
+                    | CompilerIntrinsic::DomainValuePack
+                    | CompilerIntrinsic::DomainValueUnpack
                     | CompilerIntrinsic::ScriptPack
                     | CompilerIntrinsic::ScriptUnpack
             )

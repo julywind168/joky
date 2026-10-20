@@ -7,10 +7,14 @@ use crate::parser::ast::{
 fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
     let mut scalars = Vec::new();
     let mut depth = 1;
+    let mut owners = Vec::new();
     let fields = fields
         .into_iter()
         .map(|(name, ty)| {
             let offset = scalars.len();
+            if ty.is_owner() {
+                owners.extend_from_slice(ty.buffer_elements());
+            }
             scalars.extend_from_slice(ty.scalar_types());
             depth = depth.max(ty.layout_depth() + 1);
             RecordField {
@@ -29,7 +33,7 @@ fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
         scalars,
         depth,
         closure: None,
-        owners: vec![],
+        owners,
         repr_c: false,
         indirect: false,
         parameters: vec![],
@@ -184,11 +188,11 @@ impl FunctionPlan {
                 .map(|n| (n.clone(), slot_type(&vars[n].slot)))
                 .collect(),
         );
-        if crate::core::script::schema(&input).is_none() {
+        if !self.domain_value(&input) {
             return Err(type_error(
                 &block.span,
                 ErrorCode::InvalidCall,
-                "when captures require a bounded pure-value packet (64 contract members, 64 lanes, 8 aggregate levels)",
+                "when captures require a bounded value packet (64 contract members, 64 lanes, 8 aggregate levels)",
             ));
         }
         let ret = self
@@ -200,11 +204,11 @@ impl FunctionPlan {
                     "Cannot infer when result type",
                 )
             })?;
-        if crate::core::script::schema(&ret).is_none() {
+        if !self.domain_value(&ret) {
             return Err(type_error(
                 &block.span,
                 ErrorCode::InvalidCall,
-                "when result requires a bounded pure value (64 contract members, 64 lanes, 8 aggregate levels)",
+                "when result requires a bounded value (64 contract members, 64 lanes, 8 aggregate levels)",
             ));
         }
         let entry = {
@@ -262,15 +266,54 @@ impl FunctionPlan {
             }
         };
         let mut body = Vec::new();
-        for name in &names {
-            let value = Box::new(Expr::Field {
-                base: Box::new(Expr::Ident {
+        let owned_captures = input.is_owner();
+        if owned_captures {
+            use crate::parser::ast::{BindingPattern, RecordFieldPattern, RecordPattern};
+            body.push(Expr::Destructure {
+                pattern: BindingPattern::Record {
+                    inner: Box::new(RecordPattern {
+                        name: "$when_captures".into(),
+                        type_args: vec![],
+                        rest: false,
+                        fields: names
+                            .iter()
+                            .map(|name| RecordFieldPattern {
+                                name: name.clone(),
+                                pattern: BindingPattern::Name {
+                                    name: format!("$capture.{name}"),
+                                    span: block.span,
+                                },
+                                span: block.span,
+                            })
+                            .collect(),
+                    }),
+                    span: block.span,
+                },
+                mutable: false,
+                annotation: None,
+                value: Box::new(Expr::Ident {
                     name: "$captures".into(),
                     span: block.span,
                 }),
-                name: name.clone(),
-                type_args: vec![],
                 span: block.span,
+            });
+        }
+        for name in &names {
+            let value = Box::new(if owned_captures {
+                Expr::Ident {
+                    name: format!("$capture.{name}"),
+                    span: block.span,
+                }
+            } else {
+                Expr::Field {
+                    base: Box::new(Expr::Ident {
+                        name: "$captures".into(),
+                        span: block.span,
+                    }),
+                    name: name.clone(),
+                    type_args: vec![],
+                    span: block.span,
+                }
             });
             body.push(if vars[name].mutable {
                 Expr::Var {
@@ -311,7 +354,7 @@ impl FunctionPlan {
             info.noescape = true;
             info.infer_noescape = true;
             info.returns_interior = false;
-            let definition = FnDef {
+            let mut definition = FnDef {
                 every: None,
                 json_encode: false,
                 noescape: Some(Box::new(crate::parser::ast::NoEscape {
@@ -338,11 +381,16 @@ impl FunctionPlan {
                 .borrow_mut()
                 .generated_functions
                 .insert(entry.clone(), info.clone());
+            let mut nominals = (*self.nominals).clone();
+            nominals.insert("$when_captures".into(), input.clone());
+            if let Some(scope) = definition.scope.as_mut() {
+                Arc::make_mut(scope).nominals = Arc::new(nominals.clone());
+            }
             let plan = FunctionPlan::new(
                 &definition,
                 functions,
                 types,
-                &self.nominals,
+                &Arc::new(nominals),
                 self.generics.clone(),
                 self.instantiation_depth + 1,
             )?;
@@ -414,6 +462,9 @@ impl FunctionPlan {
                 ));
             }
         }
+        if input_slot.ty.is_owner() {
+            self.register_owner(input_slot.clone(), None);
+        }
         let module = self.slot(crate::runtime::domain::module_type())?;
         self.emit(Op::DomainModule(module.clone()));
         let Flow::Value(text) = self.expr(
@@ -467,6 +518,9 @@ impl FunctionPlan {
             result: Some(result.clone()),
             state: Some(state),
         });
+        if result.ty.is_owner() {
+            self.register_owner(result.clone(), None);
+        }
         Ok(Flow::Value(Some(result)))
     }
 }

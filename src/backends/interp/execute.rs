@@ -227,6 +227,60 @@ pub(crate) fn prepare_script(
     }))
 }
 
+pub(crate) fn prepare_domain(
+    module: Rc<BytecodeModule>,
+    name: &str,
+    bits: &[u64],
+    limits: InterpreterLimits,
+) -> Result<Box<dyn InterpretedTask>, Error> {
+    let function = module
+        .functions
+        .get(name)
+        .cloned()
+        .ok_or_else(|| abi_error("Unknown Script entry"))?;
+    let input = function.info.signature.params[0].clone();
+    let ret = function.info.signature.ret.clone();
+    let empty = vec![0; input.scalar_types().len()];
+    let initial = &empty;
+    let args = if input == Type::Unit {
+        vec![Value::Unit]
+    } else {
+        input
+            .scalar_types()
+            .iter()
+            .zip(initial)
+            .map(|(ty, &bits)| Value::from_instance_bits(ty, bits))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let aggregate =
+        function.info.signature.ret.is_aggregate() || function.info.signature.ret == Type::Unit;
+    let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
+    let words = crate::runtime::domain_packet::decode(
+        std::slice::from_ref(&input),
+        bits,
+        &mut execution.arena,
+    )?;
+    let frame = execution.frame_mut(0);
+    for (index, (ty, bits)) in input.scalar_types().iter().zip(&words).enumerate() {
+        frame.slots[index] = Value::from_instance_bits(ty, *bits)?;
+    }
+    if let Some((key, entry)) = crate::runtime::domain_packet::input_cleanup(&input, &words) {
+        frame.cleanups.insert(key, entry);
+    }
+    if crate::runtime::domain_packet::has_text(&ret) {
+        execution.domain_return = Some(ret);
+    }
+    if aggregate {
+        execution.root_aggregate = Some(Vec::new());
+    }
+    Ok(Box::new(Task {
+        module,
+        execution,
+        result: None,
+        text_result: None,
+    }))
+}
+
 pub(crate) fn start_text(
     module: Rc<BytecodeModule>,
     name: &str,
@@ -426,6 +480,8 @@ impl Budget {
 
 pub(super) struct Execution {
     root_aggregate: Option<Vec<Value>>,
+    domain_return: Option<Type>,
+    domain_result: Option<Vec<u64>>,
     cleanup_mode: bool,
     cleanup_module: Option<Rc<BytecodeModule>>,
     nodes: Vec<Option<Node>>,
@@ -445,6 +501,8 @@ impl Execution {
         Self {
             cleanup_mode: false,
             root_aggregate: None,
+            domain_return: None,
+            domain_result: None,
             cleanup_module: None,
             nodes: vec![Some(Node {
                 parent: None,
@@ -1050,7 +1108,32 @@ impl Execution {
             };
             if complete && parent.is_none() {
                 let text = matches!(&self.node(id).activation, Activation::User(frame) if frame.function.info.signature.ret == crate::Type::String);
-                if text {
+                if let Some(ty) = self.domain_return.clone() {
+                    let raw = self
+                        .root_aggregate
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| vec![value.clone().unwrap()]);
+                    let raw = raw
+                        .iter()
+                        .map(Value::instance_bits)
+                        .collect::<Result<Vec<_>, _>>();
+                    let encoded = raw.and_then(|raw| unsafe {
+                        crate::runtime::domain_packet::encode_result(&ty, &raw, &mut self.arena)
+                    });
+                    // encode_result consumes all String owners, including on allocation failure.
+                    owner.take();
+                    match encoded {
+                        Ok(words) => {
+                            self.domain_result = Some(words);
+                            value = Some(Value::Unit);
+                        }
+                        Err(error) => {
+                            self.release();
+                            return Some(Poll::Failed(error));
+                        }
+                    }
+                } else if text && !self.cleanup_mode {
                     let Some(Value::Reference(handle)) = value.as_ref() else {
                         return Some(Poll::Failed(abi_error("Invalid owning text result")));
                     };
@@ -1855,6 +1938,41 @@ fn run_frame(
                 };
                 frame.pc += 1;
             }
+            Instruction::DomainText {
+                packet,
+                index,
+                value,
+                decode,
+            } => {
+                let Value::Reference(packet) = frame.slots[*packet] else {
+                    unreachable!()
+                };
+                let result = unsafe {
+                    if *decode {
+                        crate::runtime::domain_packet::unpack(arena, packet.cast(), *index)
+                    } else {
+                        let Value::Reference(owner) = frame.slots[*value] else {
+                            unreachable!()
+                        };
+                        crate::runtime::domain_packet::pack(
+                            arena,
+                            packet.cast(),
+                            *index,
+                            owner.cast(),
+                        )
+                        .map(|()| 0)
+                    }
+                };
+                match result {
+                    Ok(bits) => {
+                        if *decode {
+                            frame.slots[*value] = Value::Reference(bits as *mut u8);
+                        }
+                    }
+                    Err(error) => return Step::Failed(error),
+                }
+                frame.pc += 1;
+            }
             Instruction::DomainBits {
                 dst,
                 src,
@@ -2189,6 +2307,9 @@ impl InterpretedTask for Task {
     }
     fn take_text_result(&mut self) -> Option<String> {
         self.text_result.take()
+    }
+    fn domain_result(&self) -> Option<Vec<u64>> {
+        self.execution.domain_result.clone()
     }
     fn flat_result(&self) -> Option<Vec<u64>> {
         self.execution

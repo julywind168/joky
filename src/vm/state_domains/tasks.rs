@@ -48,10 +48,10 @@ impl TaskEnvironment for Access {
                 let mut completion = completion.borrow_mut();
                 if let Some(output) = &mut completion.output {
                     let words = task
-                        .flat_result(output.layout)
+                        .domain_result(output.layout)
                         .ok_or_else(|| invalid("Missing domain request value result"))?;
                     let words = super::values::result_words(&output.ty, words)?;
-                    output.words.copy_from_slice(&words);
+                    output.store(&domains, words)?;
                 }
                 completion.result = Some((RequestStatus::Completed, value));
             }
@@ -294,17 +294,7 @@ pub(super) fn spawn_values(
     completion: Rc<RefCell<super::source::Completion>>,
 ) -> Result<TaskId, Error> {
     spawn_with(registry, handle, limits, Some(completion), |module| {
-        let info = super::source::request_info(module, name)
-            .ok_or_else(|| invalid("Unknown domain request entry"))?;
-        let input = info
-            .signature
-            .params
-            .first()
-            .and_then(crate::core::script::schema)
-            .ok_or_else(|| invalid("Invalid domain request input contract"))?;
-        let output = crate::core::script::schema(&info.signature.ret)
-            .ok_or_else(|| invalid("Invalid domain request result contract"))?;
-        module.prepare_script_call(name, &input, &output, words, limits)
+        module.prepare_domain_call(name, words, limits)
     })
 }
 

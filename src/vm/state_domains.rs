@@ -700,7 +700,12 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         };
         let (outcome, jobs, groups) = match reads {
             Ok(reads) => {
-                let result = pairs::execute(&mut domains, pair, &mut request.access_error);
+                let result = pairs::execute(
+                    &mut domains,
+                    pair,
+                    &mut request.access_error,
+                    &mut request.charge,
+                );
                 if matches!(result.0, DomainOutcome::Value(_)) {
                     request.observed_reads = reads;
                 }

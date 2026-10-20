@@ -10,36 +10,25 @@ pub(super) fn result_words(ty: &Type, mut words: Vec<u64>) -> Result<Vec<u64>, E
     if *ty == Type::Unit {
         words.clear();
     }
-    if !crate::core::script::valid_words(ty, &words) {
-        return Err(invalid("Invalid domain value result"));
-    }
+    crate::runtime::domain_packet::validate(std::slice::from_ref(ty), &words)?;
     Ok(words)
 }
 
-/// Copy a checked pure-value packet into the private typed trampoline lanes.
+/// Copy and validate an independent domain value packet.
 ///
 /// # Safety
 /// The packet must point to a live compiler-owned UInt64 buffer.
 pub(super) unsafe fn input_words(params: &[Type], packet: &Buffer) -> Result<Vec<u64>, Error> {
-    if packet.len() > crate::core::script::MAX_LANES as u64 {
-        return Err(limited("Domain value packet exceeds lane limit"));
-    }
-    let count: usize = params.iter().map(|ty| ty.scalar_types().len()).sum();
-    if count as u64 != packet.len() {
-        return Err(invalid("Domain value input length mismatch"));
-    }
-    let mut input = Vec::with_capacity(count + usize::from(params == [Type::Unit]));
+    let count =
+        usize::try_from(packet.len()).map_err(|_| limited("Domain packet size overflow"))?;
+    let mut input = Vec::new();
+    input
+        .try_reserve_exact(count + usize::from(params == [Type::Unit]))
+        .map_err(|_| limited("Domain packet allocation failed"))?;
     for i in 0..count {
         input.push(packet.load(i as u64)?.cast::<u64>().read());
     }
-    let mut offset = 0;
-    for ty in params {
-        let end = offset + ty.scalar_types().len();
-        if !crate::core::script::valid_words(ty, &input[offset..end]) {
-            return Err(invalid("Invalid domain value input"));
-        }
-        offset = end;
-    }
+    crate::runtime::domain_packet::validate(params, &input)?;
     if params == [Type::Unit] {
         input.push(0);
     }
@@ -48,18 +37,13 @@ pub(super) unsafe fn input_words(params: &[Type], packet: &Buffer) -> Result<Vec
 
 /// Copy checked result lanes into a caller-owned output packet.
 /// # Safety
-/// The packet is a live UInt64 buffer with at least MAX_LANES capacity.
+/// The packet is a live exclusive UInt64 buffer; it grows for String payloads.
 pub(super) unsafe fn write_packet(
     arena: &mut Arena,
     packet: &mut Buffer,
     words: &[u64],
 ) -> Result<(), Error> {
-    packet.truncate_owned(arena, 0)?;
-    for &word in words {
-        packet.initialize_next()?.cast::<u64>().write(word);
-        packet.commit_next();
-    }
-    Ok(())
+    crate::runtime::domain_packet::write(arena, packet, words)
 }
 
 struct Wait {

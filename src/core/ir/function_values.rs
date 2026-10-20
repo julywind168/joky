@@ -54,6 +54,8 @@ impl FunctionPlan {
             info.compiler_intrinsic,
             Some(
                 CompilerIntrinsic::ScriptSchema(_)
+                    | CompilerIntrinsic::DomainValuePack
+                    | CompilerIntrinsic::DomainValueUnpack
                     | CompilerIntrinsic::ScriptPack
                     | CompilerIntrinsic::ScriptUnpack
                     | CompilerIntrinsic::DomainAccess(_)

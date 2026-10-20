@@ -24,15 +24,7 @@ pub(super) fn metadata<M: Module>(
         .iter()
         .filter(|name| {
             let info = &plan.functions[**name];
-            info.domain_entry
-                || (info.suspends
-                    && plan.bodies.contains_key(**name)
-                    && info
-                        .signature
-                        .params
-                        .iter()
-                        .all(|ty| crate::core::script::schema(ty).is_some())
-                    && crate::core::script::schema(&info.signature.ret).is_some())
+            info.domain_entry || info.domain_request_entry
         })
         .collect();
     let endian = module.isa().endianness();

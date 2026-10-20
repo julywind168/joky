@@ -237,9 +237,6 @@ impl Reader<'_> {
                 };
                 let offset = scalars.len();
                 if let Some(ty) = &payload {
-                    if ty.is_owner() {
-                        return Err(invalid());
-                    }
                     layout_depth = layout_depth.max(ty.layout_depth() + 1);
                     scalars.extend(ty.scalar_types().iter().cloned());
                 }
@@ -253,7 +250,11 @@ impl Reader<'_> {
                 return Ok(ty.clone());
             }
             let ty = Type::Enum(Arc::new(EnumType {
-                owners: Vec::new(),
+                owners: variants
+                    .iter()
+                    .filter_map(|v| v.payload.as_ref())
+                    .flat_map(|ty| ty.buffer_elements().iter().cloned())
+                    .collect(),
                 indirect: false,
                 id: fresh_type_id(),
                 parameters: Vec::new(),
@@ -382,6 +383,7 @@ pub(crate) unsafe fn decode(
     info.internal = false;
     info.instance_entry = entry.kind == 0;
     info.domain_entry = entry.kind == 0;
+    info.domain_request_entry = entry.kind == 1;
     info.noescape = entry.kind == 0;
     Ok((name, info))
 }

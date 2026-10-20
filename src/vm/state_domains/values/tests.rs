@@ -343,3 +343,189 @@ mod enum_tests;
 
 #[path = "composite_tests.rs"]
 mod composite_tests;
+
+#[test]
+fn owned_text_domain_packets_rebind_without_retaining_input_pointers() {
+    const SOURCE: &str = r#"
+struct State {n:Int32}
+fn make(n:Int32)->State {State{n:n}}
+fn turn(s:&mut State,text:String)->String {s.n+=1 text}
+"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for compatible in [true, false] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(SOURCE).unwrap();
+            let root = vm
+                .create_domain("make", &[InstanceValue::Int32(0)])
+                .unwrap();
+            let output = Rc::new(RefCell::new(vec![0]));
+            let mut request = pairs::submit_values(
+                &vm.domains,
+                &[root.write_handle()],
+                vm.current.as_ref().unwrap(),
+                "turn",
+                vec![1, 3, 0x636261],
+                pairs::ValueOutput {
+                    words: output.clone(),
+                    snapshot: false,
+                },
+                vm.interpreter_limits(),
+            )
+            .unwrap();
+            let next = if compatible {
+                SOURCE.replace("s.n+=1 text", "s.n+=10 \"new\"")
+            } else {
+                SOURCE
+                    .replace("text:String", "text:Int32")
+                    .replace("s.n+=1 text", "s.n+=10 \"new\"")
+            };
+            vm.load_source(&next).unwrap();
+            assert_eq!(vm.publish_domain_code().unwrap(), 1);
+            vm.poll_tasks(100).unwrap();
+            let (result, rejected) = request.take_access_result().unwrap();
+            if compatible {
+                assert!(matches!(result, DomainOutcome::Value(InstanceValue::Unit)));
+                assert!(rejected.is_none());
+                assert_eq!(*output.borrow(), [1, 3, 0x77656e]);
+                assert_eq!(vm.domain_revision(root.read_handle()).unwrap(), 1);
+            } else {
+                assert!(rejected.is_some());
+                assert_eq!(vm.domain_revision(root.read_handle()).unwrap(), 0);
+            }
+            drop(root);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}
+
+#[test]
+fn owned_text_domain_decode_failure_rejects_before_mutating_or_poisoning_roots() {
+    const SOURCE: &str = r#"
+struct State {n:Int32}
+fn make(n:Int32)->State {State{n:n}}
+fn turn(s:&mut State,text:String)->Int32 {s.n+=1 s.n}
+fn pair(a:&mut State,b:&mut State,text:String)->Int32 {a.n+=1 b.n+=1 a.n}
+"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for many in [false, true] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(SOURCE).unwrap();
+            let a = vm
+                .create_domain("make", &[InstanceValue::Int32(0)])
+                .unwrap();
+            let b = vm
+                .create_domain("make", &[InstanceValue::Int32(0)])
+                .unwrap();
+            let handles = if many {
+                vec![a.write_handle(), b.write_handle()]
+            } else {
+                vec![a.write_handle()]
+            };
+            let mut input = vec![1, 8192];
+            input.resize(1026, 0x6161616161616161);
+            let output = Rc::new(RefCell::new(vec![0]));
+            let mut request = pairs::submit_values(
+                &vm.domains,
+                &handles,
+                vm.current.as_ref().unwrap(),
+                if many { "pair" } else { "turn" },
+                input,
+                pairs::ValueOutput {
+                    words: output,
+                    snapshot: false,
+                },
+                vm.interpreter_limits(),
+            )
+            .unwrap();
+            let before = vm.domains.borrow().usage().3;
+            vm.set_domain_limits(DomainLimits {
+                max_state_bytes: before + 1024,
+                ..Default::default()
+            })
+            .unwrap();
+            vm.poll_tasks(100).unwrap();
+            let (_, rejection) = request.take_access_result().unwrap();
+            assert_eq!(rejection, Some(access::Rejection::ResourceLimit));
+            for h in &handles {
+                let domains = vm.domains.borrow();
+                let root = domains.get(*h).unwrap();
+                assert!(root.failure.is_none());
+                assert_eq!(root.revision, 0);
+            }
+            assert_eq!(vm.domains.borrow().usage().3, before);
+            drop((a, b));
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}
+
+#[test]
+fn owned_text_domain_result_delivery_failure_is_not_an_admission_rejection() {
+    let source = format!(
+        r#"
+struct State {{n:Int32}}
+fn make(n:Int32)->State {{State{{n:n}}}}
+fn turn(s:&mut State)->String {{s.n+=1 "{}"}}
+"#,
+        "result".repeat(512)
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&source).unwrap();
+        let root = vm
+            .create_domain("make", &[InstanceValue::Int32(0)])
+            .unwrap();
+        let output = Rc::new(RefCell::new(vec![0]));
+        let mut request = pairs::submit_values(
+            &vm.domains,
+            &[root.write_handle()],
+            vm.current.as_ref().unwrap(),
+            "turn",
+            vec![],
+            pairs::ValueOutput {
+                words: output,
+                snapshot: false,
+            },
+            vm.interpreter_limits(),
+        )
+        .unwrap();
+        let bytes = vm.domains.borrow().usage().2;
+        vm.set_domain_limits(DomainLimits {
+            max_request_bytes: bytes,
+            ..Default::default()
+        })
+        .unwrap();
+        vm.poll_tasks(100).unwrap();
+        let (result, rejection) = request.take_access_result().unwrap();
+        assert!(
+            matches!(result, DomainOutcome::Failed(error) if error.code() == ErrorCode::ResourceLimit)
+        );
+        assert!(rejection.is_none(), "operation already executed");
+        assert!(vm.domains.borrow().entries[&root.read_handle().sequence]
+            .failure
+            .is_some());
+        drop(root);
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}
+
+#[test]
+fn owned_text_domain_request_rebinding_rejects_new_drop_contracts() {
+    let source = "import joky/drop.{type Drop} struct Packet{text:String} fn echo(input:Packet) @suspends ->Packet {input} fn retain(){let f=echo;}";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let old = vm.current.as_ref().unwrap().clone();
+        assert!(source::request_info(&old, "echo").is_some());
+        vm.load_source(&format!(
+            "{source} impl Drop for Packet {{fn drop(&mut self) {{}}}} "
+        ))
+        .unwrap();
+        let next = vm.current.as_ref().unwrap();
+        assert!(source::request_info(next, "echo").is_none());
+        assert!(!code::admits(&old, next, "echo", true));
+        assert!(next
+            .prepare_domain_call("echo", &[1, 0], vm.interpreter_limits())
+            .is_err());
+    }
+}

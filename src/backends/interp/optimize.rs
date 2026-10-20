@@ -210,7 +210,8 @@ fn compact_instructions(function: &mut BytecodeFunction, keep: &[bool]) {
 
 fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
     match instruction {
-        Instruction::Text { .. }
+        Instruction::DomainText { .. }
+        | Instruction::Text { .. }
         | Instruction::Cleanup { .. }
         | Instruction::Place(_)
         | Instruction::Memory(_)
@@ -231,7 +232,8 @@ fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
 
 fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize)) {
     match instruction {
-        Instruction::Text { .. }
+        Instruction::DomainText { .. }
+        | Instruction::Text { .. }
         | Instruction::Cleanup { .. }
         | Instruction::Place(_)
         | Instruction::Memory(_)
@@ -298,7 +300,8 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
 
 fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
     match instruction {
-        Instruction::Text { .. }
+        Instruction::DomainText { .. }
+        | Instruction::Text { .. }
         | Instruction::Cleanup { .. }
         | Instruction::Place(_)
         | Instruction::Memory(_)

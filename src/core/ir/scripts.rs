@@ -14,16 +14,32 @@ impl FunctionPlan {
         };
         let ty = match kind {
             CompilerIntrinsic::ScriptSchema(ty) => ty,
-            CompilerIntrinsic::ScriptPack => &info.signature.params[0],
-            CompilerIntrinsic::ScriptUnpack => &info.signature.ret,
+            CompilerIntrinsic::ScriptPack | CompilerIntrinsic::DomainValuePack => {
+                &info.signature.params[0]
+            }
+            CompilerIntrinsic::ScriptUnpack | CompilerIntrinsic::DomainValueUnpack => {
+                &info.signature.ret
+            }
             _ => return Ok(None),
         };
+        let domain = matches!(
+            kind,
+            CompilerIntrinsic::DomainValuePack | CompilerIntrinsic::DomainValueUnpack
+        );
         let checking = self.generics.borrow().checking;
         let schema = if checking {
             String::new()
         } else {
-            crate::core::script::schema(ty).filter(|_| !self.has_custom_drop(ty)).ok_or_else(|| type_error(&span, ErrorCode::InvalidCall,
-                "Script contracts require bounded pure values without Drop: scalars, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"))?
+            let contract = if domain {
+                crate::core::script::domain_schema(ty).filter(|_| self.domain_value(ty))
+            } else {
+                crate::core::script::schema(ty).filter(|_| !self.has_custom_drop(ty))
+            };
+            contract.ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, if domain {
+                "Domain contracts require bounded values without Drop: scalars, String, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
+            } else {
+                "Script contracts require bounded pure values without Drop: scalars, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
+            }))?
         };
         if matches!(kind, CompilerIntrinsic::ScriptSchema(_)) {
             let dst = self.slot(Type::String)?;
@@ -34,7 +50,15 @@ impl FunctionPlan {
             self.register_owner(dst.clone(), None);
             return Ok(Some(Flow::Value(Some(dst))));
         }
-        let packing = matches!(kind, CompilerIntrinsic::ScriptPack);
+        let packing = matches!(
+            kind,
+            CompilerIntrinsic::ScriptPack | CompilerIntrinsic::DomainValuePack
+        );
+        if packing {
+            if let Some(value) = values[0].as_ref().filter(|v| v.ty.is_owner()) {
+                self.register_owner(value.clone(), None);
+            }
+        }
         let dst = if packing {
             Some(self.slot(info.signature.ret.clone())?)
         } else if *ty == Type::Unit {
@@ -75,20 +99,26 @@ impl FunctionPlan {
         } else {
             dst.iter().flat_map(Slot::scalars).collect()
         };
-        for (index, lane) in lanes.into_iter().enumerate() {
+        for (index, lane) in lanes.iter().cloned().enumerate() {
             let bits = self.slot(Type::UInt64)?;
             if packing {
-                self.emit(Op::DomainBits {
-                    dst: bits.clone(),
-                    src: lane,
-                    decode: false,
-                });
+                if lane.ty == Type::String {
+                    self.emit(Op::Literal(bits.clone(), Constant::UInt64(0)));
+                } else {
+                    self.emit(Op::DomainBits {
+                        dst: bits.clone(),
+                        src: lane,
+                        decode: false,
+                    });
+                }
                 self.emit(Op::Buffer(BufferOp::Storage {
                     intrinsic: BufferIntrinsic::InitializeNext,
                     element: Type::UInt64,
                     args: vec![packet.clone(), bits],
                     dst: None,
                 }));
+            } else if lane.ty == Type::String {
+                self.emit(Op::Literal(lane, Constant::UInt64(0)));
             } else {
                 let at = self.slot(Type::UInt64)?;
                 self.emit(Op::Literal(at.clone(), Constant::UInt64(index as u64)));
@@ -104,6 +134,28 @@ impl FunctionPlan {
                     decode: true,
                 });
             }
+        }
+        for (index, lane) in lanes
+            .into_iter()
+            .enumerate()
+            .filter(|(_, lane)| lane.ty == Type::String)
+        {
+            self.emit(Op::DomainText {
+                packet: packet.clone(),
+                index,
+                value: lane.clone(),
+                decode: !packing,
+            });
+            if !packing {
+                self.register_owner(lane, None);
+            }
+        }
+        if packing {
+            if let Some(value) = values[0].as_ref().filter(|v| v.ty.is_owner()) {
+                self.emit(Op::EndLocal(value.clone()));
+            }
+        } else if let Some(value) = dst.as_ref().filter(|v| v.ty.is_owner()) {
+            self.register_owner(value.clone(), None);
         }
         Ok(Some(Flow::Value(dst)))
     }

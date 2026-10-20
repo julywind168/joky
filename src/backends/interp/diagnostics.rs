@@ -4,6 +4,12 @@ use std::{collections::BTreeMap, mem::size_of};
 
 fn describe(instruction: &Instruction) -> String {
     match instruction {
+        Instruction::DomainText {
+            packet,
+            index,
+            value,
+            decode,
+        } => format!("DomainText packet={packet} index={index} value={value} decode={decode}"),
         Instruction::DynCopy { lanes } => format!("DynCopy {lanes:?}"),
         Instruction::DynMethod { method, .. } => format!("DynMethod #{method}"),
         Instruction::Text { .. } => "text".into(),
