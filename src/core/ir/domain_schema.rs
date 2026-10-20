@@ -36,7 +36,7 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 Type::Record(Arc::new(RecordType {
-                    array: false,
+                    array: r.array,
                     closure: None,
                     owners: fields
                         .iter()
@@ -93,7 +93,11 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 Type::Enum(Arc::new(EnumType {
-                    owners: Vec::new(),
+                    owners: variants
+                        .iter()
+                        .filter_map(|v| v.payload.as_ref())
+                        .flat_map(|ty| ty.buffer_elements().iter().cloned())
+                        .collect(),
                     indirect: false,
                     id: e.id,
                     name: e.name.clone(),
@@ -104,8 +108,15 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                         .map(|a| a.try_map_type(&mut child))
                         .collect::<Result<_, _>>()?,
                     template: e.template.clone(),
+                    scalars: std::iter::once(Type::Int32)
+                        .chain(
+                            variants
+                                .iter()
+                                .filter_map(|v| v.payload.as_ref())
+                                .flat_map(|ty| ty.scalar_types().iter().cloned()),
+                        )
+                        .collect(),
                     variants,
-                    scalars: e.scalars.clone(),
                     depth: e.depth,
                 }))
             }

@@ -67,7 +67,8 @@ enum ConstantValue {
 
 enum Instruction {
     Place(Box<places::Instruction>),
-    DomainText {
+    DomainOwner {
+        owner: Type,
         packet: usize,
         index: usize,
         value: usize,
@@ -471,12 +472,14 @@ fn lower_unoptimized(
                     lower_constant(value)
                 },
             },
-            Op::DomainText {
+            Op::DomainOwner {
+                owner,
                 packet,
                 index,
                 value,
                 decode,
-            } => Instruction::DomainText {
+            } => Instruction::DomainOwner {
+                owner: owner.clone(),
                 packet: packet.index,
                 index: *index,
                 value: value.index,
@@ -774,7 +777,7 @@ pub(crate) enum Value {
 impl Value {
     fn from_instance_bits(ty: &Type, bits: u64) -> Result<Self, Error> {
         use crate::core::instance::InstanceValue as V;
-        if matches!(ty, Type::Reference(_) | Type::String) {
+        if matches!(ty, Type::Reference(_) | Type::String | Type::Buffer(_)) {
             return Ok(Self::Reference(bits as usize as *mut u8));
         }
         Ok(

@@ -210,7 +210,7 @@ impl RequestOutput {
         registry: &Rc<RefCell<Domains>>,
         words: Vec<u64>,
     ) -> Result<(), Error> {
-        if !crate::runtime::domain_packet::has_text(&self.ty) {
+        if !crate::runtime::domain_packet::has_owners(&self.ty) {
             self.words.copy_from_slice(&words);
             return Ok(());
         }

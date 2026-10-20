@@ -97,7 +97,7 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
             encode_type(out, &r.target);
         }
         Type::Record(r) => {
-            out.push(13);
+            out.push(if r.array { 21 } else { 13 });
             put_u64(out, r.id);
             put_text(out, &r.name);
             out.push(u8::from(r.repr_c));
@@ -194,7 +194,7 @@ impl Reader<'_> {
                 elements,
             })));
         }
-        if code != 13 && code != 19 {
+        if code != 13 && code != 19 && code != 21 {
             return Err(invalid());
         }
         let id = self.number()? as u64;
@@ -306,7 +306,7 @@ impl Reader<'_> {
             .unwrap_or(0)
             + 1;
         let ty = Type::Record(Arc::new(RecordType {
-            array: false,
+            array: code == 21,
             closure: None,
             owners: fields
                 .iter()
@@ -397,6 +397,25 @@ fn encode_argument(out: &mut Vec<u8>, a: &crate::parser::ast::GenericArgument) {
         }
         _ => unreachable!("concrete domain argument"),
     }
+}
+
+/// Private owner descriptors use the same relocatable type encoding as domain entries.
+pub(crate) fn encode_value_type(ty: &Type) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    encode_type(&mut bytes, ty);
+    bytes
+}
+pub(crate) fn decode_value_type(bytes: &[u8]) -> Result<Type, Error> {
+    let mut records = HashMap::new();
+    let mut reader = Reader {
+        bytes,
+        records: &mut records,
+    };
+    let ty = reader.ty_at(0)?;
+    if !reader.bytes.is_empty() {
+        return Err(invalid());
+    }
+    Ok(ty)
 }
 
 #[cfg(test)]

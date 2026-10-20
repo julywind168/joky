@@ -797,7 +797,7 @@ fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
         "fn bad() @suspends { let f=make let o=domain.create(f,1) }",
         "fn owned(value: String) @suspends -> String { value } fn bad() @suspends { let o=domain.create(make,1) let text=\"text\" domain.request(o.handle(),owned,text); text.byte_length(); }",
         "fn pair(value: Int32) @suspends -> (Int32, Ptr) { (value, Ptr.null()) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
-        "import joky/array.{type Array} fn data(state: &State) -> Array<UInt8> {Array.new::<UInt8>()} fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data).unwrap(); }",
+        "import joky/array.{type Array} fn data(state: &State) -> Array<Ptr> {Array.new::<Ptr>()} fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data).unwrap(); }",
         "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
     ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -1764,18 +1764,8 @@ fn exhaustive_owned_text_domain_cancellation() {
 
 #[test]
 fn owned_text_domain_allocation_failures_release_every_owner() {
-    use crate::runtime::{
-        arena,
-        executor::{HostExecutor, TaskGroup},
-    };
-    struct Restore(usize);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            arena::LIMIT.with(|n| n.set(self.0));
-        }
-    }
-    let _restore = Restore(arena::LIMIT.with(|n| n.get()));
-    let source = r#"
+    domain_value_allocation_failures(
+        r#"
 import joky/domain
 import joky/task
 struct State { text:String }
@@ -1789,7 +1779,23 @@ fn probe() @suspends ->Int32 {
     let reply=domain.request(owner.handle(),echo,text).unwrap()
     if reply.equals("initial🙂") {24} else {0}
 }
-"#;
+"#,
+    );
+}
+
+fn domain_value_allocation_failures(source: &str) {
+    use crate::runtime::{
+        arena,
+        executor::{HostExecutor, TaskGroup},
+    };
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            arena::LIMIT.with(|n| n.set(self.0));
+        }
+    }
+    let _restore = Restore(arena::LIMIT.with(|n| n.get()));
+
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap();
@@ -1833,4 +1839,58 @@ fn probe() @suspends ->Int32 {
         assert!(successes > 0 && failures > 0, "{mode:?}");
         arena::LIMIT.with(|n| n.set(arena::MAX_BYTES));
     }
+}
+
+fn owned_array_domain_cancellation_source() -> String {
+    include_str!("../../tests/fixtures/state_domain_array_values.jk")
+        .replace(
+            "domain.every(t,h,1,tick,strings())",
+            "domain.after(t,h,0,tick,strings())",
+        )
+        .replace(
+            "while domain.read_from(h.read_only(),count)!<8 {task.sleep_ms(1)}",
+            "while match t.status() {Active=>true,_=>false} {task.yield_now()}",
+        )
+}
+#[test]
+fn owned_array_domain_cancellation_reclaims_nested_owners() {
+    source_cancellation_boundaries(
+        &owned_array_domain_cancellation_source(),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000, 32768,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel nested array domain inputs, snapshots and results at every instruction"]
+fn exhaustive_owned_array_domain_cancellation() {
+    source_cancellation_boundaries(&owned_array_domain_cancellation_source(), 0..=32768, true);
+}
+
+#[test]
+fn owned_array_domain_allocation_failures_release_nested_owners() {
+    domain_value_allocation_failures(
+        r#"
+import joky/domain
+import joky/task
+import joky/array.{type Array}
+import joky/option.{type Option}
+struct State { n:Int32 }
+fn make(a:Array<Array<String>>)->State {State{n:a.len().to_i32()!}}
+fn read(s:&State)->Array<Option<String>> {
+    var a=Array.new::<Option<String>>() a.push(Option.Some("nested🙂")) a.push(Option.None) a
+}
+fn echo(a:Array<Option<String>>) @suspends ->Array<Option<String>> {task.yield_now() a}
+fn probe() @suspends ->Int32 {
+    var inner=Array.new::<String>() inner.push("first") inner.push("second")
+    var outer=Array.new::<Array<String>>() outer.push(inner)
+    let owner=domain.create(make,outer)
+    let saved=domain.snapshot_from(owner.read_handle(),read)
+    let a=saved.value()
+    let reply=domain.request(owner.handle(),echo,a).unwrap()
+    if reply.len()==2 {24} else {0}
+}
+"#,
+    );
 }

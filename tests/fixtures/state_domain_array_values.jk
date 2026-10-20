@@ -1,0 +1,105 @@
+import joky/domain
+import joky/mem
+import joky/task
+import joky/check
+import joky/array.{type Array}
+import joky/option.{type Option}
+import joky/result.{type Result}
+struct State { count:Int32 }
+struct Item { number:Int8, text:Option<String> }
+fn assert(ok:Bool) {check.assert(ok,"domain array values")}
+fn make(values:Array<String>)->State {State{count:values.len().to_i32()!}}
+fn strings()->Array<String> {var a=Array.new::<String>() a.push("数组🙂\0") a.push("") a}
+fn echo(s:&State,a:Array<Item>)->Array<Item>{a}
+fn reply(a:Array<Item>) @suspends ->Array<Item>{task.yield_now() a}
+fn read(s:&State)->Array<Result<String,Int32>> {
+    var a=Array.new::<Result<String,Int32>>()
+    a.push(Result.Ok("saved🙂")) a.push(Result.Err(s.count)) a
+}
+fn query(s:&State,values:Array<String>)->Array<String>{values}
+struct Query { values:Array<String>, suffix:String }
+fn query_packet(s:&State,input:Query)->Array<String> {
+    let Query{values,suffix}=input var result=values result.push(suffix) result.push(s.count.to_string()) result
+}
+fn tick(s:&mut State,values:Array<String>) {s.count+=values.len().to_i32()!}
+fn count(s:&State)->Int32{s.count}
+fn nested(s:&State,values:Array<Array<String>>)->Array<Array<String>>{values}
+fn empty(s:&State,values:Array<Unit>)->Array<Unit>{values}
+fn values_test(h:domain.WriteHandle<State>) @suspends {
+    var a=Array.with_capacity::<Item>(8) a.push(Item{number:-7,text:Option.Some("item🙂")}) a.push(Item{number:3,text:Option.None})
+    let a=domain.query_from(h.read_only(),echo,a)!
+    let a=domain.request(h,reply,a)!
+    let second=a.borrow_ref(1)
+    assert(a.len()==2 && a.capacity()==2 && a.borrow_ref(0).number == -7 && second.text.is_none())
+    let a=when(h){a}!
+    let first=a.borrow_ref(0)
+    assert(first.text.is_some())
+    var outer=Array.new::<Array<String>>() outer.push(strings()) outer.push(Array.new::<String>())
+    let outer=domain.query_from(h.read_only(),nested,outer)!
+    assert(outer.len()==2 && outer.borrow_ref(0).borrow_ref(0).equals("数组🙂\0") && outer.borrow_ref(1).is_empty())
+    var units=Array.new::<Unit>() units.push({}) units.push({})
+    let units=domain.query_from(h.read_only(),empty,units)!
+    assert(units.len()==2)
+}
+fn snapshots_test(h:domain.WriteHandle<State>) @suspends {
+    let saved=domain.snapshot_from(h.read_only(),read)
+    let a=saved.value() let b=saved.value()
+    assert(a.len()==2 && b.borrow_ref(1).is_err())
+    var access=domain.access_set() access.include(h.read_only())
+    let snap=domain.snapshot_set(access)
+    domain.write_to(h,tick,strings())!
+    let a=domain.query_snapshot(&snap,h.read_only(),query_packet,Query{values:strings(),suffix:"tail"})
+    assert(a.len()==4 && a.borrow_ref(0).equals("数组🙂\0") && a.borrow_ref(2).equals("tail") && a.borrow_ref(3).equals("2"))
+    let candidate=domain.edit_snapshot(snap,h,tick,strings())
+    var receipt=domain.commit_set(candidate) assert(match receipt.wait() {Err(Conflict)=>true,_=>false})
+    var access=domain.access_set() access.include(h.read_only())
+    let snap=domain.snapshot_set(access)
+    let candidate=domain.edit_snapshot(snap,h,tick,strings())
+    var receipt=domain.commit_set(candidate) assert(receipt.wait().is_ok())
+    let projected=domain.snapshot_from(h.read_only(),read)
+    let candidate=domain.candidate_from(projected,h,make,strings())
+    var receipt=domain.commit_to(h,candidate) assert(receipt.wait().is_ok())
+}
+fn timers_test(h:domain.WriteHandle<State>) @suspends {
+    let timer=domain.timer() let t=timer.handle()
+    domain.every(t,h,1,tick,strings()).unwrap()
+    while domain.read_from(h.read_only(),count)!<8 {task.sleep_ms(1)}
+    t.cancel() timer.close()
+}
+fn lifecycle() @suspends ->Int32 {
+    let owner=domain.create(make,strings()) let h=owner.handle()
+    values_test(h) numbers_test(h) snapshots_test(h) roots_test() timers_test(h)
+    owner.close()
+    match domain.query_from(h.read_only(),query,strings()) {Err(Closed)=>{},_=>assert(false)}
+    24
+}
+fn main() @suspends {assert(lifecycle()==24)}
+struct Numbers { small:Int16, big:Int64, unsigned:UInt32, real:Float64, flag:Bool, rune:Rune, byte:UInt8 }
+fn numbers(s:&State,a:Array<Numbers>)->Array<Numbers>{a}
+fn numbers_test(h:domain.WriteHandle<State>) @suspends {
+    var a=Array.new::<Numbers>()
+    a.push(Numbers{small:-1234,big:-1234567890123,unsigned:4294967295,real:-3.25,flag:true,rune:'🙂',byte:255})
+    let a=domain.query_from(h.read_only(),numbers,a)!
+    let n=a.get(0)!
+    assert(n.small == -1234 && n.big == -1234567890123 && n.unsigned == 4294967295 && n.real == -3.25 && n.flag && n.rune == '🙂' && n.byte == 255)
+}
+struct Owned { values:Array<String> }
+fn make_owned(values:Array<String>)->Owned {Owned{values:values}}
+fn rotate(a:&mut Owned,b:&mut Owned,values:Array<String>)->Array<String> {
+    var old=values
+    mem.swap(&mut a.values,&mut b.values)
+    mem.swap(&mut b.values,&mut old)
+    old
+}
+fn owned_count(s:&Owned)->UInt64{s.values.len()}
+fn roots_test() @suspends {
+    let a=domain.create(make_owned,strings())
+    let b=domain.create(make_owned,Array.new::<String>())
+    let previous=domain.write_pair(a.handle(),b.handle(),rotate,strings())!
+    assert(previous.len()==2 && previous.borrow_ref(0).equals("数组🙂\0"))
+    var set=domain.access_set() set.include(a.read_handle()) set.include(b.read_handle())
+    let snapshot=domain.snapshot_set(set)
+    assert(domain.read_snapshot(&snapshot,a.read_handle(),owned_count)==0)
+    assert(domain.read_snapshot(&snapshot,b.read_handle(),owned_count)==2)
+    a.close() b.close()
+}

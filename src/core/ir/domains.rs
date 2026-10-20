@@ -281,12 +281,13 @@ impl FunctionPlan {
                     "Candidate editor requires a mutable state reference and Unit result",
                 ));
             }
+            let querying = !candidate && args.len() == 4;
             let inputs = &target.signature.params[usize::from(!candidate || editing)..];
             if target.suspends
-                || inputs.len() != usize::from(candidate)
+                || inputs.len() != usize::from(candidate || querying)
                 || !inputs
                     .iter()
-                    .all(|ty| scalar(ty) || (candidate && self.domain_value(ty)))
+                    .all(|ty| scalar(ty) || ((candidate || querying) && self.domain_value(ty)))
                 || (!candidate
                     && !scalar(&target.signature.ret)
                     && !self.domain_value(&target.signature.ret))
@@ -329,7 +330,19 @@ impl FunctionPlan {
             } else if candidate {
                 captures.push(Some(self.pack_domain_scalar(values[3].clone())?));
             }
-            let value_read = !candidate && (checking || !scalar(&target.signature.ret));
+            let value_read = !candidate && (querying || checking || !scalar(&target.signature.ret));
+            let query_input = if querying {
+                inputs[0].clone()
+            } else {
+                Type::Unit
+            };
+            if value_read {
+                if querying {
+                    captures.extend_from_slice(&values[3..]);
+                } else {
+                    captures.push(None);
+                }
+            }
             let name = if value_read {
                 let mut context = self.generics.borrow_mut();
                 let name = context
@@ -346,13 +359,17 @@ impl FunctionPlan {
                     })?;
                 context.instantiate(
                     &name,
-                    vec![target.signature.ret.clone().into()],
+                    vec![
+                        query_input.clone().into(),
+                        target.signature.ret.clone().into(),
+                    ],
                     crate::FunctionSignature::new(
                         vec![
                             crate::runtime::domain::module_type(),
                             Type::reference(crate::runtime::domain::snapshot_set_type(), false),
                             crate::runtime::domain::handle_type(),
                             Type::String,
+                            query_input,
                         ],
                         target.signature.ret.clone(),
                     ),

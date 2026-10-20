@@ -2,7 +2,8 @@ fn test_connect(ctx: Context, output: outbox.Handle, stop: outbox.Handle) @suspe
     let permit = ctx.gate.acquire()!
     let chat = ctx.chat
     let id = chat.connect(output, stop)!
-    check.assert(publish(ctx, id, Command.Welcome, "", 0), "welcome committed")
+    let excluded = Array.new::<UInt64>()
+    check.assert(publish(ctx, id, Command.Welcome, &excluded), "welcome committed")
     permit.release()
     id
 }
@@ -23,12 +24,12 @@ fn verify_conflict(ctx: Context, alice: &outbox.Mailbox, bob: &outbox.Mailbox) @
     var access = domain.access_set()
     access.include(chat.read_only())
     let snapshot = domain.snapshot_set(access)
-    let plan = chat.plan(1, Command.Leave, "")!
-    let change = Change { room: "", id: 1, command: Command.Leave, plan: plan, first_bytes: 6, second_bytes: 0 }
+    let request = Request { id: 1, command: Command.Leave, excluded: Array.new::<UInt64>() }
+    let prepared = domain.query_snapshot(&snapshot, chat.read_only(), plan, request)!
     var batch = outbox.batch(2, 12)
     outbox.stage(&mut batch, alice.handle(), "ghost\n".into_bytes())!
     outbox.stage(&mut batch, bob.handle(), "ghost\n".into_bytes())!
-    let candidate = domain.edit_snapshot(snapshot, chat, apply, change).with_outbox(batch)
+    let candidate = domain.edit_snapshot(snapshot, chat, apply, prepared).with_outbox(batch)
     when (mut chat) { chat.next_id += 0 }!
     var receipt = domain.commit_set(candidate)
     check.assert(match receipt.wait() { Err(Conflict) => true, _ => false }, "stale broadcast rejected")
@@ -102,8 +103,9 @@ fn verify_simultaneous_capacity(ctx: Context, alice: &mut outbox.Mailbox, alice_
     var i: UInt64 = 0
     while i < 64 { check.assert(process(ctx, 1, "say full"), "fill both queues") i += 1 }
     let permit = ctx.gate.acquire()!
-    check.assert(publish(ctx, 1, Command.Disconnect, "", 0), "simultaneous overload terminates")
-    check.assert(!publish(ctx, 1, Command.Disconnect, "", 0), "disconnect is idempotent")
+    let excluded = Array.new::<UInt64>()
+    check.assert(publish(ctx, 1, Command.Disconnect, &excluded), "simultaneous overload terminates")
+    check.assert(!publish(ctx, 1, Command.Disconnect, &excluded), "disconnect is idempotent")
     permit.release()
     check.assert(alice_stop.receive().is_none() && other_stop.receive().is_none(), "both sessions signalled")
     check.assert(alice.receive().is_none() && other.receive().is_none(), "both output queues closed")
@@ -114,22 +116,21 @@ fn verify_simultaneous_capacity(ctx: Context, alice: &mut outbox.Mailbox, alice_
 fn verify_slots(state: &mut Chat, targets: (outbox.Handle, outbox.Handle)) {
     let (output, stop) = targets
     var i: UInt64 = 0
-    while i < 64 {
+    while i < 96 {
         check.assert(state.connect(output, stop) == i + 1, "connection identity")
         let client = state.clients.borrow_mut_ref(i)
         var room = "r"
         mem.swap(&mut client.room, &mut room)
         i += 1
     }
-    check.assert(state.connect(output, stop) == 0, "connection capacity")
-    let plan = state.plan(64, Command.Say, "")
-    let zero: UInt64 = 0
-    check.assert(plan.first == ~zero, "all 64 recipient bits")
-    let empty = Plan { first: 0, second: 0, error: 0 }
-    apply(state, Change { room: "", id: 1, command: Command.Disconnect, plan: empty, first_bytes: 0, second_bytes: 0 })
-    check.assert(state.index(64)! == 63, "removing a member preserves other slots")
-    check.assert(state.connect(output, stop) == 65, "connection slot reclaimed")
-    check.assert(state.index(65)! == 0, "reuse inactive slot with fresh identity")
+    let request = Request { id: 96, command: Command.Say("probe"), excluded: Array.new::<UInt64>() }
+    let prepared = plan(state, request)!
+    check.assert(prepared.recipients.len() == 96, "recipient list spans more than 64 members")
+    let departing = plan(state, Request { id: 1, command: Command.Disconnect, excluded: Array.new::<UInt64>() })!
+    apply(state, departing)
+    check.assert(state.index(96)! == 95, "removing a member preserves other slots")
+    check.assert(state.connect(output, stop) == 97, "connection slot reclaimed")
+    check.assert(state.index(97)! == 0, "reuse inactive slot with fresh identity")
 }
 fn verify_connection_slots() @suspends {
     let owner = domain.create(make_chat, {})

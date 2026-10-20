@@ -36,7 +36,7 @@ impl FunctionPlan {
                 crate::core::script::schema(ty).filter(|_| !self.has_custom_drop(ty))
             };
             contract.ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, if domain {
-                "Domain contracts require bounded values without Drop: scalars, String, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
+                "Domain contracts require bounded values without Drop: scalars, String, Array, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
             } else {
                 "Script contracts require bounded pure values without Drop: scalars, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
             }))?
@@ -102,7 +102,7 @@ impl FunctionPlan {
         for (index, lane) in lanes.iter().cloned().enumerate() {
             let bits = self.slot(Type::UInt64)?;
             if packing {
-                if lane.ty == Type::String {
+                if lane.ty.is_buffer() {
                     self.emit(Op::Literal(bits.clone(), Constant::UInt64(0)));
                 } else {
                     self.emit(Op::DomainBits {
@@ -117,7 +117,7 @@ impl FunctionPlan {
                     args: vec![packet.clone(), bits],
                     dst: None,
                 }));
-            } else if lane.ty == Type::String {
+            } else if lane.ty.is_buffer() {
                 self.emit(Op::Literal(lane, Constant::UInt64(0)));
             } else {
                 let at = self.slot(Type::UInt64)?;
@@ -138,9 +138,10 @@ impl FunctionPlan {
         for (index, lane) in lanes
             .into_iter()
             .enumerate()
-            .filter(|(_, lane)| lane.ty == Type::String)
+            .filter(|(_, lane)| lane.ty.is_buffer())
         {
-            self.emit(Op::DomainText {
+            self.emit(Op::DomainOwner {
+                owner: super::domain_schema::freeze(self, &lane.ty)?,
                 packet: packet.clone(),
                 index,
                 value: lane.clone(),

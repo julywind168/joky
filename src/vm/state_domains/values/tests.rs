@@ -529,3 +529,61 @@ fn owned_text_domain_request_rebinding_rejects_new_drop_contracts() {
             .is_err());
     }
 }
+
+#[test]
+fn owned_array_domain_packets_rebind_without_retaining_input_pointers() {
+    const SOURCE: &str = r#"
+import joky/array.{type Array}
+struct State {n:Int32}
+fn make(n:Int32)->State {State{n:n}}
+fn turn(s:&mut State,text:Array<String>)->Array<String> {s.n+=1 text}
+"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for compatible in [true, false] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(SOURCE).unwrap();
+            let root = vm
+                .create_domain("make", &[InstanceValue::Int32(0)])
+                .unwrap();
+            let output = Rc::new(RefCell::new(vec![0]));
+            let mut request = pairs::submit_values(
+                &vm.domains,
+                &[root.write_handle()],
+                vm.current.as_ref().unwrap(),
+                "turn",
+                vec![1, 1, 3, 3, 0x636261],
+                pairs::ValueOutput {
+                    words: output.clone(),
+                    snapshot: false,
+                },
+                vm.interpreter_limits(),
+            )
+            .unwrap();
+            let next = if compatible {
+                SOURCE.replace(
+                    "s.n+=1 text",
+                    "s.n+=10 var reply=text reply.push(\"new\") reply",
+                )
+            } else {
+                SOURCE
+                    .replace("text:Array<String>", "text:Array<Int32>")
+                    .replace("s.n+=1 text", "s.n+=10 Array.new::<String>()")
+            };
+            vm.load_source(&next).unwrap();
+            assert_eq!(vm.publish_domain_code().unwrap(), 1);
+            vm.poll_tasks(100).unwrap();
+            let (result, rejected) = request.take_access_result().unwrap();
+            if compatible {
+                assert!(matches!(result, DomainOutcome::Value(InstanceValue::Unit)));
+                assert!(rejected.is_none());
+                assert_eq!(*output.borrow(), [1, 2, 4, 6, 3, 0x636261, 3, 0x77656e]);
+                assert_eq!(vm.domain_revision(root.read_handle()).unwrap(), 1);
+            } else {
+                assert!(rejected.is_some());
+                assert_eq!(vm.domain_revision(root.read_handle()).unwrap(), 0);
+            }
+            drop(root);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}

@@ -187,6 +187,18 @@ fn conversation(port: u16) {
     carol.quiet();
     alice.send("say still running\n");
     alice.expect("message 123 1 still running\n");
+    // The recipient collection crosses the former UInt64 mask boundary.
+    let mut peers: Vec<_> = (16..86).map(|id| Peer::connect(port, id)).collect();
+    for index in 0..peers.len() {
+        peers[index].send("join wide\n");
+        for peer in &mut peers[..=index] {
+            peer.expect(&format!("joined wide {}\n", 16 + index));
+        }
+    }
+    peers[69].send("say beyond64\n");
+    for peer in &mut peers {
+        peer.expect("message wide 85 beyond64\n");
+    }
 }
 
 #[test]
@@ -202,7 +214,7 @@ fn chat_real_tcp_on_all_backends() {
     std::fs::write(
         &path,
         format!(
-            "import joky/check\n{source}\n{}",
+            "import joky/check\nimport joky/string.{{type StringBuilder}}\n{source}\n{}",
             include_str!("fixtures/chat_queue.jk")
         ),
     )

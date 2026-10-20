@@ -3240,7 +3240,7 @@ S 必须是普通非泛型记录。单域、双域及集合均支持上节所述
 标量输入 A 与结果 R 支持 Int8/16/32/64、UInt8/16/32/64、Float32/64、Bool、Rune 和 Unit；
 `create` 的输入、具名短操作及异步请求的输入／结果另支持有界嵌套传递值，具体范围见下述能力表。
 构造、带参查询、写入及请求各接收一个输入，用 `Unit` 表示无数据输入；该实参表达式仍只求值一次。
-拥有叶仅支持 String；不接受容器、借用、函数或资源作为输入/结果，也不支持可变参数。
+拥有值支持 String 和元素满足传递值契约的 Array；不接受 Map、借用、函数或资源作为输入/结果，也不支持可变参数。
 以下入口除 `handle.read_only()` 外均为 `@suspends`：
 
 | 入口 | 行为 |
@@ -3260,7 +3260,7 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 `request` 与 `request_read` 返回 `Result<R, RequestError>`。成功载荷支持有界传递值，保留完整标量位模式，
 包括 UInt64 最大值、浮点负零和 NaN 载荷，不占用成功值作为错误哨兵。
 
-当前入口能力如下；表中“传递值”采用下节的统一资格与上限，允许 String 拥有叶，不允许容器或资源：
+当前入口能力如下；表中“传递值”采用下节的统一资格与上限，允许 String 和合格 Array，不允许 Map 或资源：
 
 | 入口 | 状态根 | 输入／结果 |
 | --- | --- | --- |
@@ -3342,7 +3342,7 @@ fn main() @suspends {
 构造函数与读写操作必须是直接指定的命名函数，编译器检查同步、不逃逸和无宿主调用；
 请求入口也必须是命名函数，但允许挂起。支持导入的命名入口，不接受闭包或动态函数值，
 这些 intrinsic API 自身也不能保存为函数值。排队环境仅包含模块与操作身份、句柄和独立
-传递值输入，不包含状态借用。泛型调用在具体实例化时再次检查载荷资格；String 及其嵌套拥有捕获按值移动。
+传递值输入，不包含状态借用。泛型调用在具体实例化时再次检查载荷资格；String、Array 及其嵌套拥有捕获按值移动。
 请求的环境权限与操作名义类型在运行时再次检查；重载后，旧域和请求继续使用旧代码与类型，
 直到宿主发布结构兼容的新代码（见 Rust 宿主状态域一节）。
 
@@ -3350,31 +3350,36 @@ fn main() @suspends {
 
 `read_from/query_from/write_to`、请求内的 `read/query/write` 与
 `read_pair/query_pair/update_pair/write_pair` 支持标量，
-以及由标量、String、元组、具体记录与枚举嵌套组成的输入 A、结果 R。记录允许普通记录和已实例化的
+以及由标量、String、Array、元组、具体记录与枚举嵌套组成的输入 A、结果 R。记录允许普通记录和已实例化的
 泛型记录，例如 `Pair<Int32>`；元组按元素顺序传递，包括 `(Unit, Empty)` 等零槽组合。枚举可以是无载荷枚举，
 或所有分支载荷均为传递值的具体实例，包括 `Option<Int32>`、`Result<Reply, BusinessError>` 和自定义泛型枚举。
 所有具体类型参数也须满足资格，即使参数没有出现在载荷中；不能用 `Phantom<Ptr>` 绕过限制。
 
-每个包分别最多 64 个结构项、64 个标量槽、8 层聚合（记录／枚举／元组，最外层为第 1 层）。
+每个包分别最多 64 个结构项、64 个标量槽、8 层聚合（记录／枚举／元组／Array，最外层为第 1 层）。
 记录的每个字段和具体类型参数计一项，元组每个元素计一项；枚举的标签、每个分支和每个具体
 类型参数各计一项，再递归累计参数契约、字段、元素和分支载荷中的结构项。同一类型在参数与
 字段／载荷处出现时分别计数；Unit／空记录字段、零槽元组元素和无载荷分支也计数。
 只使用某一个分支不会免除其他分支的检查或计费，普通记录原有 64 字段边界不变。
 允许 String 作为拥有叶，包括 `Option<String>`、`Result<String, BusinessError>` 及嵌套记录／元组。
-String 按值移动；需要继续使用原值时显式 `.clone()`。字符串字节不计入 64 槽上限，
-按实际存储计入既有任务、域状态与请求预算。不接受容器、引用、指针、函数、资源、用户 Drop 或未实例化类型参数。
+Array 元素递归满足同一契约，支持 `Array<String>`、`Array<Option<String>>` 和嵌套 Array；
+空数组同样检查元素类型。传递保留元素和长度，不保留额外预留容量；接收数组的容量等于长度。
+数组类型本身计一个结构项和一层聚合，再递归计算元素契约；
+动态元素个数不展开到 64 项／64 槽上限，数组数据和字符串字节按实际存储计入既有预算。
+String 和 Array 按值移动；需保留原值时显式构造副本，String 可用 `.clone()`。
+不接受 Map、原始 Buffer、引用、指针、函数、资源、用户 Drop 或未实例化类型参数。
 单域与双域根均可持有受检拥有图。可执行示例见
 [state_domain_values.jk](../tests/fixtures/state_domain_values.jk) 和
 [state_domain_queries.jk](../tests/fixtures/state_domain_queries.jk)；枚举覆盖见
 [state_domain_enum_values.jk](../tests/fixtures/state_domain_enum_values.jk)，组合类型覆盖见
 [state_domain_composite_values.jk](../tests/fixtures/state_domain_composite_values.jk)；String 生命周期覆盖见
-[state_domain_text_values.jk](../tests/fixtures/state_domain_text_values.jk)。
+[state_domain_text_values.jk](../tests/fixtures/state_domain_text_values.jk)，数组与嵌套拥有值覆盖见
+[state_domain_array_values.jk](../tests/fixtures/state_domain_array_values.jk)。
 
 `query_from` 与请求内 `query` 接收 `fn(&S, A) -> R`，`query_pair` 接收
 `fn(&S, &T, A) -> R`。带输入不授予写权限，`request_read` 内也能使用 `query`；
 查询不推进任何参与域的数据修订。无输入查询继续使用 `read`、`read_from`、`read_pair`。
 
-输入在入队前封装为独立数据，操作执行时建立域内拥有值；队列不保留调用方的 String 地址。
+输入在入队前封装为独立数据，操作执行时建立域内拥有值；队列不保留调用方的 String 或 Array 地址。
 结果在操作 arena 清理前封装，返回调用方时建立新的拥有值。排队输入和未收取结果按实际字节占用请求额度。
 结果交付失败发生在操作执行之后，不作为“操作体未执行”的 DomainAccessError 返回。
 晚绑定比较完整输入与结果契约，包括嵌套名义类型、字段名、顺序、可见性和类型，
@@ -3407,7 +3412,7 @@ String 按值移动；需要继续使用原值时显式 `.clone()`。字符串�
 块返回 `Option<T>` 时同样保留外层访问 Result。只构造 `None` 或 `Err` 等无法推导全部参数的分支时，
 使用显式类型参数、带类型的局部变量或有完整返回类型的辅助函数。
 
-Timer 的输入也支持上述传递值契约；重复触发时每次建立独立 String 输入，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
+Timer 的输入也支持上述传递值契约；重复触发时每次建立独立拥有输入，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
 `when` 使用同一传递值载荷资格；Rust `InstanceValue` 公共入口保持标量。
 
 ### 传递值投影快照
@@ -3436,7 +3441,7 @@ Timer 的输入也支持上述传递值契约；重复触发时每次建立独�
 可执行行为示例见 [state_domain_snapshots.jk](../tests/fixtures/state_domain_snapshots.jk) 与
 [state_domain_snapshot_values.jk](../tests/fixtures/state_domain_snapshot_values.jk)。
 
-每次 `value()` 都独立复制字段并建立新的 String 拥有值，修改返回记录不会改变快照。传递值结果与完整
+每次 `value()` 都独立复制字段并建立新的 String／Array 拥有值，修改返回记录不会改变快照。传递值结果与完整
 读取凭据在同一次执行中捕获，领取时不刷新版本；记录结果在执行前预留并计入请求额度，
 交付快照后计入调用任务预算。构造候选可消费记录快照并使用其投影结果，仍保留全部依赖。
 捕获前的兼容代码发布可改变实际投影实现；捕获后的值固定，不因后续发布重新计算。
@@ -3507,7 +3512,7 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标�
 [String/Array 示例](../tests/fixtures/state_domain_owned.jk)、
 [嵌套记录与 Map 示例](../tests/fixtures/state_domain_nested.jk)、[有效期示例](../tests/fixtures/state_domain_deadlines.jk)。
 候选构造输入和快照投影结果均支持有界传递值；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
-当前私有 AOT 模块描述格式为 v3，保留记录字段可见性；旧 v1/v2 描述对象须重新编译。String 值桥扩展了私有 CPS 帧，AOT 对象须与匹配的运行时一起构建。
+当前私有 AOT 模块描述格式为 v3，保留记录字段可见性；旧 v1/v2 描述对象须重新编译。拥有值桥扩展了私有 CPS 帧，AOT 对象须与匹配的运行时一起构建。
 
 ### 双域短操作
 
@@ -3613,6 +3618,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 | `AccessSet.include<S>(&mut self, ReadHandle<S>)` | 登记只读成员；不读取状态、不持有借用 |
 | `snapshot_set(AccessSet) -> SnapshotSet` | 消费访问集合，一次 FIFO 操作深复制全部拥有根并捕获完整修订集合 |
 | `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为有界传递值 |
+| `query_snapshot<S,A,R>(&SnapshotSet, ReadHandle<S>, fn(&S,A)->R, A) -> R` | 在同一冻结副本上运行带参投影；A、R 均为传递值，输入求值一次并按值传入 |
 | `SnapshotSet.check() -> SnapshotStatus` | 检查全部成员的当前身份、生命周期与修订；不授予提交权限 |
 | `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为有界传递值 |
 | `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；A 为有界传递值，失败释放整包 |
@@ -3626,7 +3632,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 函数变量、宿主回调、可挂起操作或用户析构。投影须与对应成员具有相同加载模块版本和精确
 状态类型；候选构造器同样须匹配目标域。冻结副本保留原模块，原域关闭后仍可读取旧值。
 副本与动态元数据计入状态字节预算，不能靠快照绕过存储上限。
-`read_snapshot` 的记录结果按字段独立复制到调用方值包，不引用冻结根；结果包计入调用
+`read_snapshot`／`query_snapshot` 的结果独立封装到调用方值包，不引用冻结根；结果包计入调用
 任务预算。投影始终使用冻结副本保留的模块，原域写入、代码发布或关闭不会改变投影来源；
 投影失败不修改冻结根或在线状态，错误仍沿任务失败通道传播。
 
@@ -3646,7 +3652,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 每次编辑本身同步完成，不开放 HR5 的迁移能力。不同模块版本的编辑入口拒绝执行；旧编辑仍可用其保留代码
 修改候选，但代码发布使后续提交冲突。目标关闭、权限、类型或输入契约错误通过任务失败通道报告；
 编辑运行时失败或预算耗尽清理整包，均不改变活根。编辑 API 用于冻结派生的包，构造候选继续使用
-`candidate_set_from`／`candidate_set_add`。投影结果支持上述传递值，包括 String 拥有叶及其嵌套组合。
+`candidate_set_from`／`candidate_set_add`。投影结果支持上述传递值，包括 String、Array 及其嵌套组合。
 
 `Snapshot.value()` 等保存值读取继续为 `@suspends`：需要检查托管资源租借并按任务预算分配结果包，
 不因数据已保存而绕过资源访问协议。拥有型冻结、跨根移动及分步编辑示例见
@@ -3784,7 +3790,7 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 
 操作必须是编译器受检的同步域写入口，A 支持上述有界传递值，结果为 Unit；
 不允许宿主调用、闭包或挂起。空记录与嵌套 Unit 也遵循同一资格及计数限制。
-输入表达式只求值一次。Copy 输入保存独立副本；String 拥有值按值移动，需保留原值时显式 clone。
+输入表达式只求值一次。Copy 输入保存独立副本；String／Array 拥有值按值移动，需保留原值时显式构造副本。
 每次调用使用同一份保存值，不保留操作内对输入副本的修改，也不自动计算实际经过时间。业务需要 dt 时自行选择固定步长或显式建模时间。
 时钟是登记所在执行器的单调 Clock：普通运行使用真实单调时间，嵌入宿主可用模拟时钟控制暂停。
 不提供每个定时器单独选择时钟、持久化或重启恢复。

@@ -5706,7 +5706,7 @@ fn state_domains_snapshots_reject_forgery_and_unchecked_projections() {
     for case in [
         "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let raw=snapshot.storage }",
         "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let moved=snapshot snapshot.value(); moved.value(); }",
-        "import joky/array.{type Array} fn project(state: &State) -> Array<UInt8> { Array.new::<UInt8>() } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
+        "import joky/array.{type Array} fn project(state: &State) -> Array<Ptr> { Array.new::<Ptr>() } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
         "fn project(state: &mut State) -> Int32 { state.count=99 state.count } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
         "fn main() @suspends { let owner=domain.create(make,1) let operation=read domain.snapshot_from(owner.read_handle(),operation); }",
         "fn main() @suspends { let factory=domain.snapshot_from::<State,Int32> }",
@@ -5834,7 +5834,7 @@ fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
         ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) domain.commit_to(handle.read_only(), candidate);"),
         ("", "let constructor = make domain.candidate_from(snapshot, handle, constructor, 2);"),
         ("fn other(value: Int32) -> Other { Other { count: value } }", "domain.candidate_from(snapshot, handle, other, 2);"),
-        ("import joky/array.{type Array} fn owns(value: Array<UInt8>) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, handle, owns, Array.new::<UInt8>());"),
+        ("import joky/array.{type Array} fn owns(value: Array<Ptr>) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, handle, owns, Array.new::<Ptr>());"),
         ("fn noisy(value: Int32) -> State { println(value) make(value) }", "domain.candidate_from(snapshot, handle, noisy, 2);"),
         ("fn pending(value: Int32) @suspends -> State { make(value) }", "domain.candidate_from(snapshot, handle, pending, 2);"),
         ("", "let factory = domain.candidate_from::<State, Int32, State, Int32>"),
@@ -6014,7 +6014,7 @@ fn state_domains_joint_snapshots_reject_dependency_extraction_and_invalid_projec
         ("", "let f=project let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),f)"),
         ("", "let f=domain.snapshot_pair::<S,S,Int32>"),
         ("fn mutating(a:&S,b:&mut S)->Int32 { b.n=3 a.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),mutating)"),
-        ("import joky/array.{type Array} fn owning(a:&S,b:&S)->Array<UInt8> { Array.new::<UInt8>() }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),owning)"),
+        ("import joky/array.{type Array} fn owning(a:&S,b:&S)->Array<Ptr> { Array.new::<Ptr>() }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),owning)"),
         ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),noisy)"),
         ("fn pending(a:&S,b:&S) @suspends ->Int32 { a.n+b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),pending)"),
         ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let raw=s.storage"),
@@ -6824,7 +6824,7 @@ fn domain_timers_reject_unsafe_contracts_in_all_frontends() {
         "import joky/domain fn main() @suspends { let timer=domain.TimerHandle{identity:1} }".to_owned(),
         "extern fn __timer_create(n:Int32) @suspends -> domain.TimerOwner fn main() @suspends { let timer=__timer_create(1) }".to_owned(),
         "extern fn forge() -> domain.TimerOwner fn main() {let timer=forge()}".to_owned(),
-        "import joky/domain import joky/array.{type Array} struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:Array<UInt8>){} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,Array.new::<UInt8>());}".to_owned(),
+        "import joky/domain import joky/array.{type Array} struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:Array<Ptr>){} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,Array.new::<Ptr>());}".to_owned(),
         "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} extern fn external(value:Int32) fn tick(room:&mut Room,value:Int32){external(value)} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,1);}".to_owned(),
     ] {
         work.write("bad_timer.jk", &source);
@@ -7581,17 +7581,17 @@ fn main() @suspends {{
 
 #[test]
 #[cfg(unix)]
-fn domain_value_packets_reject_container_inputs_and_results() {
+fn domain_value_packets_reject_unsafe_inputs_and_results() {
     let work = Workspace::new();
     for (name, operation, invocation) in [
         (
             "input",
             "fn turn(s:&mut State,p:Packet)->Int32 {s.n}",
-            "domain.write_to(owner.handle(),turn,Packet{text:Array.new::<UInt8>()}).unwrap()",
+            "domain.write_to(owner.handle(),turn,Packet{text:Array.new::<Ptr>()}).unwrap()",
         ),
         (
             "result",
-            "fn turn(s:&State)->Packet {Packet{text:Array.new::<UInt8>()}}",
+            "fn turn(s:&State)->Packet {Packet{text:Array.new::<Ptr>()}}",
             "domain.read_from(owner.read_handle(),turn).unwrap()",
         ),
     ] {
@@ -7600,7 +7600,7 @@ fn domain_value_packets_reject_container_inputs_and_results() {
             &file,
             &format!(
                 r#"import joky/domain import joky/array.{{type Array}}
-struct State {{n:Int32}} struct Packet {{text:Array<UInt8>}}
+struct State {{n:Int32}} struct Packet {{text:Array<Ptr>}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 {operation}
 fn main() @suspends {{let owner=domain.create(make,1) {invocation};}}"#
@@ -7633,7 +7633,7 @@ fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
         (
             "owning",
             "fn query(s:&State,p:Packet)->Int32{s.n}",
-            "domain.query_from(h,query,Packet{text:Array.new::<UInt8>()})",
+            "domain.query_from(h,query,Packet{text:Array.new::<Ptr>()})",
         ),
         (
             "async",
@@ -7661,7 +7661,7 @@ fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
             &file,
             &format!(
                 r#"import joky/domain import joky/array.{{type Array}}
-struct State {{n:Int32}} struct Packet {{text:Array<UInt8>}}
+struct State {{n:Int32}} struct Packet {{text:Array<Ptr>}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 {operation}
 fn main() @suspends {{let owner=domain.create(make,1) let h=owner.read_handle() {invocation};}}"#
@@ -7701,13 +7701,13 @@ fn domain_create_values_run_and_fail_in_all_backends() {
 }
 
 #[test]
-fn domain_create_values_reject_container_payloads_and_unproved_constructors() {
+fn domain_create_values_reject_unsafe_payloads_and_unproved_constructors() {
     let work = Workspace::new();
     for (name, definitions, input, constructor, expected) in [
         (
             "owning",
-            "struct Init {text:Array<UInt8>}",
-            "Init{text:Array.new::<UInt8>()}",
+            "struct Init {text:Array<Ptr>}",
+            "Init{text:Array.new::<Ptr>()}",
             "fn make(p:Init)->State{State{n:1}}",
             "bounded value signature",
         ),
@@ -7797,8 +7797,8 @@ fn domain_candidate_values_reject_unproved_and_non_value_inputs() {
     let work = Workspace::new();
     for (definition, input, constructor, expected) in [
         (
-            "struct Init{text:Array<UInt8>}",
-            "Init{text:Array.new::<UInt8>()}",
+            "struct Init{text:Array<Ptr>}",
+            "Init{text:Array.new::<Ptr>()}",
             "fn make(p:Init)->State{State{n:1}}",
             "bounded value signature",
         ),
@@ -7911,9 +7911,9 @@ fn domain_snapshot_values_reject_invalid_results_and_projections() {
     let work = Workspace::new();
     for (definitions, ty, value) in [
         (
-            "struct Payload{text:Array<UInt8>}",
+            "struct Payload{text:Array<Ptr>}",
             "Payload",
-            "Payload{text:Array.new::<UInt8>()}",
+            "Payload{text:Array.new::<Ptr>()}",
         ),
         ("", "(Int32,Ptr)", "(1,Ptr.null())"),
         (
@@ -7998,12 +7998,12 @@ fn domain_request_values_reject_invalid_contracts() {
     let work = Workspace::new();
     for (definition, ty, value) in [
         (
-            "struct P {text:Array<UInt8>}",
+            "struct P {text:Array<Ptr>}",
             "P",
-            "P{text:Array.new::<UInt8>()}",
+            "P{text:Array.new::<Ptr>()}",
         ),
         ("struct P<T> {n:T}", "P<Ptr>", "P{n:Ptr.null()}"),
-        ("enum P {A(Array<UInt8>)}", "P", "P.A(Array.new::<UInt8>())"),
+        ("enum P {A(Array<Ptr>)}", "P", "P.A(Array.new::<Ptr>())"),
         ("", "(Int32,Ptr)", "(1,Ptr.null())"),
     ] {
         for result in [false, true] {
@@ -8094,17 +8094,17 @@ fn domain_timer_values_reject_invalid_inputs_and_effects() {
     let work = Workspace::new();
     for (decl, ty, value, body, effect) in [
         (
-            "struct P{text:Array<UInt8>}",
+            "struct P{text:Array<Ptr>}",
             "P",
-            "P{text:Array.new::<UInt8>()}",
+            "P{text:Array.new::<Ptr>()}",
             "",
             "",
         ),
         ("struct P<T>{n:T}", "P<Ptr>", "P{n:Ptr.null()}", "", ""),
         (
-            "enum P{Some(Array<UInt8>)}",
+            "enum P{Some(Array<Ptr>)}",
             "P",
-            "P.Some(Array.new::<UInt8>())",
+            "P.Some(Array.new::<Ptr>())",
             "",
             "",
         ),
@@ -8356,8 +8356,8 @@ fn state_domains_storage_editors_reject_invalid_contracts() {
             "domain.edit_snapshot(snapshot,owner.handle(),noisy,2);",
         ),
         (
-            "import joky/array.{type Array} fn owned(s:&mut S,n:Array<UInt8>){}",
-            "domain.edit_snapshot(snapshot,owner.handle(),owned,Array.new::<UInt8>());",
+            "import joky/array.{type Array} fn owned(s:&mut S,n:Array<Ptr>){}",
+            "domain.edit_snapshot(snapshot,owner.handle(),owned,Array.new::<Ptr>());",
         ),
         (
             "",
@@ -9576,4 +9576,61 @@ fn owned_text_domain_values_run_in_all_backends() {
         include_str!("fixtures/state_domain_text_values.jk"),
     );
     work.assert_all_backends("text_values.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn owned_array_domain_values_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "array_values.jk",
+        include_str!("fixtures/state_domain_array_values.jk"),
+    );
+    work.assert_all_backends("array_values.jk", &[], b"", 0);
+}
+
+#[test]
+fn owned_array_domain_contracts_reject_unsafe_elements_and_reuse() {
+    let work = Workspace::new();
+    let prefix = r#"
+import joky/domain
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/drop.{type Drop}
+struct S{n:Int32}
+fn make(n:Int32)->S{S{n:n}}
+"#;
+    for (definitions, ty, value) in [
+        ("", "Array<Ptr>", "Array.new::<Ptr>()"),
+        ("", "Array<Array<Ptr>>", "Array.new::<Array<Ptr>>()"),
+        (
+            "struct D{text:String} impl Drop for D{fn drop(&mut self){}}",
+            "Array<D>",
+            "Array.new::<D>()",
+        ),
+        (
+            "",
+            "Array<Map<Int32,Int32>>",
+            "Array.new::<Map<Int32,Int32>>()",
+        ),
+        ("", "Map<Int32,Int32>", "Map.new::<Int32,Int32>()"),
+    ] {
+        work.write("unsafe.jk", &format!("{prefix} {definitions} fn read(s:&S)->{ty}{{{value}}} fn main() @suspends {{let o=domain.create(make,1) domain.read_from(o.read_handle(),read);}}"));
+        for args in [
+            vec!["run", "unsafe.jk"],
+            vec!["run", "--interpreter", "unsafe.jk"],
+            vec!["build", "unsafe.jk"],
+        ] {
+            let result = work.cli(&args);
+            let error = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                !result.status.success()
+                    && !error.contains("[parse")
+                    && !error.contains("panicked"),
+                "{ty}: {error}"
+            );
+        }
+    }
+    work.write("moved.jk", &format!("{prefix} fn echo(s:&S,a:Array<String>)->Array<String>{{a}} fn main() @suspends {{let o=domain.create(make,1) let a=Array.new::<String>() domain.query_from(o.read_handle(),echo,a); a.len();}}"));
+    failure(&work.cli(&["build", "moved.jk"]), "moved");
 }

@@ -166,7 +166,7 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             }
             _ => (vec![], vec![]),
         },
-        Op::DomainText {
+        Op::DomainOwner {
             packet,
             value,
             decode,
@@ -854,7 +854,7 @@ fn analyze(
             }
         }
 
-        if matches!(op, Op::Text { .. } | Op::DomainText { decode: true, .. })
+        if matches!(op, Op::Text { .. } | Op::DomainOwner { decode: true, .. })
             || matches!(op, Op::ArenaNew { .. })
             || matches!(op, Op::Buffer(super::BufferOp::Move { dst, .. }) if dst.ty.is_explicit_arena())
             || matches!(op, Op::Call { result: Some(dst), .. } | Op::Scope { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
@@ -1370,7 +1370,7 @@ fn analyze(
                     },
                 );
             }
-            Op::DomainText {
+            Op::DomainOwner {
                 packet,
                 value,
                 decode,

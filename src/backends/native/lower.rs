@@ -21,6 +21,7 @@ pub(super) struct DataRefs {
     pub places: Vec<(Type, GlobalValue, usize)>,
     pub domain: Option<GlobalValue>,
     pub dyn_tables: HashMap<usize, GlobalValue>,
+    pub domain_owners: HashMap<Vec<u8>, GlobalValue>,
     pub strings: HashMap<String, GlobalValue>,
     pub callables: HashMap<String, GlobalValue>,
 }
@@ -559,8 +560,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![],
         ),
         (
-            "__joky_domain_text_v1",
-            vec![ptr, ptr, ptr, types::I64, types::I32],
+            "__joky_domain_owner_v1",
+            vec![ptr, ptr, ptr, types::I64, types::I32, ptr, ptr],
             vec![types::I64],
         ),
         ("__joky_cps_capture_text_v2", vec![ptr, ptr], vec![]),
@@ -2209,12 +2210,18 @@ fn lower_ops(
                 let value = lower_literal(builder, literal, &data.strings);
                 slots.write(builder, dst, value);
             }
-            Op::DomainText {
+            Op::DomainOwner {
+                owner,
                 packet,
                 index,
                 value,
                 decode,
             } => {
+                let schema = crate::runtime::domain::metadata::encode_value_type(owner);
+                let descriptor = builder
+                    .ins()
+                    .symbol_value(ptr_ty, data.domain_owners[&schema]);
+                let length = builder.ins().iconst(ptr_ty, schema.len() as i64);
                 let packet = slots.read(builder, packet);
                 let index = builder.ins().iconst(ptr_ty, *index as i64);
                 let input = if *decode {
@@ -2226,8 +2233,8 @@ fn lower_ops(
                 let output = helper(
                     builder,
                     refs,
-                    "__joky_domain_text_v1",
-                    &[mode.arena(), packet, index, input, flag],
+                    "__joky_domain_owner_v1",
+                    &[mode.arena(), packet, index, input, flag, descriptor, length],
                 );
                 check_call(builder, refs, mode.frame(), mode.cleanup());
                 if *decode {

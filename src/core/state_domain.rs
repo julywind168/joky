@@ -112,7 +112,9 @@ fn storage_op(op: &Op, body: &FunctionPlan) -> bool {
         Op::Cleanup(CleanupOp::Register {
             hooks, elements, ..
         }) => hooks.is_empty() && elements.iter().all(|e| e.hooks.is_empty()),
-        Op::Buffer(BufferOp::Storage { element, .. }) => body.domain_storage(element),
+        Op::Buffer(BufferOp::Storage { element, .. }) => {
+            body.domain_storage(element) || body.domain_value(element)
+        }
         Op::Buffer(_) => true,
         _ => false,
     }

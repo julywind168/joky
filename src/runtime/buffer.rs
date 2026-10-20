@@ -396,6 +396,16 @@ impl Buffer {
         self.len += 1;
     }
 
+    /// Initialize a zero-sized element prefix without iterating its logical length.
+    pub(crate) fn initialize_empty(&mut self, count: u64) -> Result<(), Error> {
+        let count = usize::try_from(count).map_err(|_| bounds_error("Buffer length overflow"))?;
+        if self.element.size() != 0 || self.len != 0 || count > self.capacity {
+            return Err(bounds_error("Invalid empty element initialization"));
+        }
+        self.len = count;
+        Ok(())
+    }
+
     /// Cleanup view of a detached element, used until its new local snapshot is
     /// installed. Its parent storage remains alive throughout this atomic transfer.
     ///

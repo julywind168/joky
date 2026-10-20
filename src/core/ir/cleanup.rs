@@ -182,6 +182,7 @@ impl FunctionPlan {
                 return false;
             }
             match ty {
+                Type::Buffer(element) => hooks(plan, element),
                 Type::Tuple(t) => t.elements.iter().all(|ty| hooks(plan, ty)),
                 Type::Record(r) => {
                     r.fields.iter().all(|f| hooks(plan, &f.ty))

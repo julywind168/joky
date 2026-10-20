@@ -524,14 +524,18 @@ unsafe fn poll_inner(
         if op == Operation::SetReadValues {
             if !info.domain_entry
                 || !crate::core::state_domain::value_eligible(&info)
-                || info.signature.params.len() != 1
+                || !(1..=2).contains(&info.signature.params.len())
                 || info.signature.params[0]
                     .reference_type()
                     .is_none_or(|r| r.mutable || r.target != frozen.ty)
             {
-                return Err(invalid("Snapshot projection requires a proved shared entry with a bounded pure-value result for the exact state type"));
+                return Err(invalid("Snapshot projection requires a proved shared entry with a bounded value contract for the exact state type"));
             }
-            let mut input = [frozen.root.as_ref().unwrap().scalar_pointer()];
+            let mut input = vec![frozen.root.as_ref().unwrap().scalar_pointer()];
+            input.extend(values::input_words(
+                &info.signature.params[1..],
+                &*(frame.slots[4] as *const Buffer),
+            )?);
             let words = frozen.root.as_mut().unwrap().invoke_values(
                 &frozen.module,
                 &frozen.ty,

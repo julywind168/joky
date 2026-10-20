@@ -305,6 +305,7 @@ pub(crate) fn compile<M: Module>(
     let mut exports = HashMap::new();
     let mut requires_runtime = false;
     let mut data_ids = HashMap::new();
+    let mut domain_owner_ids = HashMap::new();
     let mut callable_ids = HashMap::new();
     let mut dyn_ids = HashMap::new();
     for (_, body) in plan
@@ -313,6 +314,22 @@ pub(crate) fn compile<M: Module>(
         .filter(|(name, _)| reachable.contains(*name))
     {
         for op in &body.ops {
+            if let Op::DomainOwner { owner, .. } = op {
+                let bytes = crate::runtime::domain::metadata::encode_value_type(owner);
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    domain_owner_ids.entry(bytes)
+                {
+                    let id = module
+                        .declare_anonymous_data(false, false)
+                        .map_err(|e| compile_error(e.to_string()))?;
+                    let mut data = DataDescription::new();
+                    data.define(entry.key().clone().into_boxed_slice());
+                    module
+                        .define_data(id, &data)
+                        .map_err(|e| compile_error(e.to_string()))?;
+                    entry.insert(id);
+                }
+            }
             if let Op::DynTable { table, .. } = op {
                 let methods = &table.methods;
                 let key = table.id;
@@ -557,6 +574,12 @@ pub(crate) fn compile<M: Module>(
                 dyn_tables: dyn_ids
                     .iter()
                     .map(|(key, &id)| (*key, module.declare_data_in_func(id, builder.func)))
+                    .collect(),
+                domain_owners: domain_owner_ids
+                    .iter()
+                    .map(|(bytes, &id)| {
+                        (bytes.clone(), module.declare_data_in_func(id, builder.func))
+                    })
                     .collect(),
                 strings: data_ids
                     .iter()

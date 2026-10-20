@@ -694,7 +694,7 @@ pub(super) fn check_module(
             reference_capability.insert(name.clone());
         }
         info.uses_arena = body.ops.iter().any(|op| match op {
-            Op::Alloc { .. } | Op::Text { .. } | Op::DomainText { .. } | Op::Place(_) => true,
+            Op::Alloc { .. } | Op::Text { .. } | Op::DomainOwner { .. } | Op::Place(_) => true,
             // Local fixed-array aliases become Place operations after this pass,
             // including unused by-value parameters. Lowering needs an arena.
             Op::Local { target, .. } if target.is_place() => true,
@@ -825,7 +825,10 @@ pub(super) fn check_module(
     super::every::validate(functions)?;
     // Runtime schema views must retain definitions behind buffers after the
     // compiler's nominal table has gone away. Storage/ABI lanes stay identical.
-    for (name, info) in functions.iter_mut().filter(|(_, info)| info.domain_entry) {
+    for (name, info) in functions
+        .iter_mut()
+        .filter(|(_, info)| info.domain_entry || info.domain_request_entry)
+    {
         let body = &bodies[name];
         for ty in &mut info.signature.params {
             *ty = super::domain_schema::freeze(body, ty)?;

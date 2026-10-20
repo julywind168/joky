@@ -359,8 +359,9 @@ pub(crate) enum Op {
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
     DomainModule(Slot),
-    /// Encode/decode one nullable String lane in a domain-owned wire packet.
-    DomainText {
+    /// Encode/decode one nullable owner lane in a domain-owned wire packet.
+    DomainOwner {
+        owner: Type,
         packet: Slot,
         index: usize,
         value: Slot,
@@ -1038,7 +1039,7 @@ impl ModulePlan {
                             | Op::ArenaNew { .. }
                             | Op::ArenaAlloc { .. }
                             | Op::Text { .. }
-                            | Op::DomainText { .. }
+                            | Op::DomainOwner { .. }
                             | Op::Place(_) => true,
                             Op::Buffer(BufferOp::SwapReferences { target, .. })
                                 if target.is_place() =>

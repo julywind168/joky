@@ -330,7 +330,7 @@ impl Root {
                 .signature
                 .params
                 .iter()
-                .any(crate::runtime::domain_packet::has_text)
+                .any(crate::runtime::domain_packet::has_owners)
         {
             None
         } else {
@@ -397,7 +397,7 @@ fn decode_input<'a>(
 ) -> Result<std::borrow::Cow<'a, [u64]>, Error> {
     let count = crate::core::state_domain::access_count(info);
     let types = &info.signature.params[count..];
-    if !types.iter().any(crate::runtime::domain_packet::has_text) {
+    if !types.iter().any(crate::runtime::domain_packet::has_owners) {
         return Ok(std::borrow::Cow::Borrowed(words));
     }
     let mut input = words[..count].to_vec();
@@ -409,7 +409,7 @@ fn decode_input<'a>(
     Ok(std::borrow::Cow::Owned(input))
 }
 fn encode_output(ty: &Type, raw: Vec<u64>, arena: &mut Arena) -> Result<Vec<u64>, Error> {
-    if crate::runtime::domain_packet::has_text(ty) {
+    if crate::runtime::domain_packet::has_owners(ty) {
         unsafe { crate::runtime::domain_packet::encode_result(ty, &raw, arena) }
     } else {
         values::result_words(ty, raw)

@@ -23,6 +23,23 @@ fn value_schema(ty: &Type, depth: usize, members_left: &mut usize, text: bool) -
     if depth == MAX_DEPTH || (!text && ty.is_owner()) || ty.scalar_types().len() > MAX_LANES {
         return None;
     }
+    if let Type::Record(record) = ty {
+        // Map needs its own transport contract; its internal arrays are not a public value schema.
+        if text && record.name == "joky/map.Map" {
+            return None;
+        }
+        if text && record.array {
+            let [field] = record.fields.as_slice() else {
+                return None;
+            };
+            let Type::Buffer(element) = &field.ty else {
+                return None;
+            };
+            *members_left = members_left.checked_sub(1)?;
+            let contract = value_schema(element, depth + 1, members_left, text)?;
+            return Some(format!("array:v1:{}:{contract}", contract.len()));
+        }
+    }
     if let Type::Tuple(tuple) = ty {
         *members_left = members_left.checked_sub(tuple.elements.len())?;
         let mut result = format!("tuple:{}", tuple.elements.len());

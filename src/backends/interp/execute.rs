@@ -106,6 +106,29 @@ pub(crate) fn call_instance(
         .collect::<Result<Vec<_>, _>>()?;
     let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, false);
     execution.cleanup_mode = true;
+    if execution.frame_mut(0).function.info.domain_entry {
+        let params = execution
+            .frame_mut(0)
+            .function
+            .info
+            .signature
+            .params
+            .clone();
+        let mut offset = 0;
+        for ty in params {
+            let count = if ty == Type::Unit {
+                1
+            } else {
+                ty.scalar_types().len()
+            };
+            if let Some((key, entry)) =
+                crate::runtime::domain_packet::input_cleanup(&ty, &bits[offset..offset + count])
+            {
+                execution.frame_mut(0).cleanups.insert(offset + key, entry);
+            }
+            offset += count;
+        }
+    }
     execution.arena = std::mem::take(arena);
     if ret.is_aggregate() {
         execution.root_aggregate = Some(Vec::new());
@@ -267,7 +290,7 @@ pub(crate) fn prepare_domain(
     if let Some((key, entry)) = crate::runtime::domain_packet::input_cleanup(&input, &words) {
         frame.cleanups.insert(key, entry);
     }
-    if crate::runtime::domain_packet::has_text(&ret) {
+    if crate::runtime::domain_packet::has_owners(&ret) {
         execution.domain_return = Some(ret);
     }
     if aggregate {
@@ -1121,7 +1144,7 @@ impl Execution {
                     let encoded = raw.and_then(|raw| unsafe {
                         crate::runtime::domain_packet::encode_result(&ty, &raw, &mut self.arena)
                     });
-                    // encode_result consumes all String owners, including on allocation failure.
+                    // encode_result consumes all returned owners, including on allocation failure.
                     owner.take();
                     match encoded {
                         Ok(words) => {
@@ -1938,7 +1961,8 @@ fn run_frame(
                 };
                 frame.pc += 1;
             }
-            Instruction::DomainText {
+            Instruction::DomainOwner {
+                owner: ty,
                 packet,
                 index,
                 value,
@@ -1949,7 +1973,7 @@ fn run_frame(
                 };
                 let result = unsafe {
                     if *decode {
-                        crate::runtime::domain_packet::unpack(arena, packet.cast(), *index)
+                        crate::runtime::domain_packet::unpack(arena, packet.cast(), *index, ty)
                     } else {
                         let Value::Reference(owner) = frame.slots[*value] else {
                             unreachable!()
@@ -1959,6 +1983,7 @@ fn run_frame(
                             packet.cast(),
                             *index,
                             owner.cast(),
+                            ty,
                         )
                         .map(|()| 0)
                     }

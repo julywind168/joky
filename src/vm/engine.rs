@@ -2016,7 +2016,7 @@ impl LoadedModule {
                             .insert(key, entry);
                     }
                 }
-                if crate::runtime::domain_packet::has_text(&info.signature.ret) {
+                if crate::runtime::domain_packet::has_owners(&info.signature.ret) {
                     frame.domain_return =
                         Some((info.signature.ret.clone(), info.aggregate_result_offset()));
                 }

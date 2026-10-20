@@ -348,7 +348,7 @@ pub(super) fn execute(
     .and_then(|words| {
         if let Some(output) = &pair.output {
             let words = values::result_words(&pair.info.signature.ret, words)?;
-            if !crate::runtime::domain_packet::has_text(&pair.info.signature.ret) {
+            if !crate::runtime::domain_packet::has_owners(&pair.info.signature.ret) {
                 output.words.borrow_mut().copy_from_slice(&words);
                 return Ok(InstanceValue::Unit);
             }
