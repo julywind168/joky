@@ -1,5 +1,6 @@
 import joky/domain
-import joky/task
+import joky/outbox
+import joky/admission
 import joky/string.{type StringBuilder}
 import joky/integer
 import joky/mem
@@ -8,7 +9,7 @@ import joky/array.{type Array}
 import joky/option.{type Option}
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
 
-// Temporary bridge until domain operations accept owning inputs/results.
+// Room-name bridge until domain operations accept owning inputs/results.
 // A packet carries up to 32 UTF-8 bytes, not necessarily complete code points.
 struct Packet { a: UInt64, b: UInt64, c: UInt64, d: UInt64, length: UInt64 }
 fn empty_packet() -> Packet { Packet { a: 0, b: 0, c: 0, d: 0, length: 0 } }
@@ -34,13 +35,24 @@ fn packet_at(bytes: &Array<UInt8>, offset: UInt64) -> Packet {
     packet
 }
 
-struct Client {
-    id: UInt64, room: String, input: Array<UInt8>, output: Array<UInt8>,
-    offset: UInt64, closing: Bool
-}
+// Owners stay in the connection task; only mailbox identities enter shared state.
+struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle, messages: UInt64, bytes: UInt64 }
+struct Client { route: Route, room: String, input: Array<UInt8> }
+// Slots stay fixed during nested eviction; new connections reuse inactive slots.
 #state
 struct Chat { clients: Array<Client>, next_id: UInt64 }
+struct Context { chat: domain.WriteHandle<Chat>, gate: admission.Handle }
+enum Command { Welcome, Join, Leave, Say, Invalid, Disconnect }
+struct Plan { first: UInt64, second: UInt64, error: Int32 }
+struct Change { id: UInt64, command: Command, plan: Plan, first_bytes: UInt64, second_bytes: UInt64 }
 fn make_chat(_: Unit) -> Chat { Chat { clients: Array.new::<Client>(), next_id: 1 } }
+fn bit(index: UInt64) -> UInt64 { let one: UInt64 = 1; one << index }
+fn requested_room(client: &Client) -> String {
+    var bytes = Array.new::<UInt8>()
+    var i: UInt64 = 0
+    while i < client.input.len() { bytes.push(client.input.get(i)!) i += 1 }
+    String.from_utf8(bytes)!
+}
 fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
     var text = StringBuilder.from(kind)
     let number = id.to_string()
@@ -49,174 +61,267 @@ fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
     text.push('\n')
     text.finish()
 }
-impl Client {
-    fn enqueue(&mut self, text: &String) {
-        if self.closing { return }
-        // A stalled socket must not grow the shared state without bound.
-        if text.byte_length() > 65536 - (self.output.len() - self.offset) {
-            self.closing = true
-            self.output.clear()
-            self.offset = 0
-            return
-        }
-        if self.offset > 0 {
-            var pending = Array.new::<UInt8>()
-            while self.offset < self.output.len() {
-                pending.push(self.output.get(self.offset)!)
-                self.offset += 1
-            }
-            mem.swap(&mut self.output, &mut pending)
-            self.offset = 0
-        }
-        var i: UInt64 = 0
-        while i < text.byte_length() {
-            self.output.push(slice.get(text.bytes(), i)!)
-            i += 1
-        }
-    }
-}
 impl Chat {
     fn index(&self, id: UInt64) -> Option<UInt64> {
         var i: UInt64 = 0
         while i < self.clients.len() {
-            if self.clients.borrow_ref(i).id == id { return Option.Some(i) }
+            if self.clients.borrow_ref(i).route.live && self.clients.borrow_ref(i).route.id == id { return Option.Some(i) }
             i += 1
         }
         Option.None
     }
-    fn connect(&mut self) -> UInt64 {
-        if self.clients.len() >= 64 { return 0 }
+    fn route(&self, index: UInt64) -> Option<Route> {
+        if index < self.clients.len() { Option.Some(self.clients.borrow_ref(index).route) }
+        else { Option.None }
+    }
+    fn connect(&mut self, output: outbox.Handle, stop: outbox.Handle) -> UInt64 {
+        var slot: UInt64 = 0
+        while slot < self.clients.len() && self.clients.borrow_ref(slot).route.live { slot += 1 }
+        if slot == 64 { return 0 }
         let id = self.next_id
         self.next_id += 1
-        var client = Client { id: id, room: "", input: Array.new::<UInt8>(),
-            output: Array.new::<UInt8>(), offset: 0, closing: false }
-        let number = id.to_string()
-        let prefix = "welcome "
-        let welcome = prefix.concat(&number)
-        let greeting = welcome.concat("\n")
-        client.enqueue(&greeting)
-        self.clients.push(client)
+        let client = Client { route: Route { live: true, id: id, output: output, stop: stop, messages: 0, bytes: 0 },
+            room: "", input: Array.new::<UInt8>() }
+        if slot == self.clients.len() { self.clients.push(client) }
+        else { self.clients.replace(slot, client); }
         id
     }
-    fn broadcast(&mut self, room: &String, text: &String) {
-        var i: UInt64 = 0
-        while i < self.clients.len() {
-            let client = self.clients.borrow_mut_ref(i)
-            if client.room.equals(room) { client.enqueue(text) }
-            i += 1
-        }
-    }
-    fn disconnect(&mut self, id: UInt64) {
-        let index = match self.index(id) { Some(index) => index, None => return }
-        let client = self.clients.swap_remove(index)!
-        if !client.room.is_empty() {
-            let text = event("left", &client.room, id, "")
-            self.broadcast(&client.room, &text)
-        }
-    }
+
     fn input(&mut self, id: UInt64, packet: Packet) {
-        let index = match self.index(id) { Some(index) => index, None => return }
+        let index = self.index(id)!
         let client = self.clients.borrow_mut_ref(index)
         var i: UInt64 = 0
         while i < packet.length { client.input.push(packet.byte(i)) i += 1 }
     }
-    fn execute(&mut self, id: UInt64) {
+    fn room_packet(&self, id: UInt64, offset: UInt64) -> Packet {
+        let client = self.clients.borrow_ref(self.index(id)!)
+        var packet = empty_packet()
+        while packet.length < 32 && offset + packet.length < client.room.byte_length() {
+            let byte = slice.get(client.room.bytes(), offset + packet.length)!
+            packet.push(byte)
+        }
+        packet
+    }
+    fn members(&self, room: &String) -> UInt64 {
+        if room.is_empty() { return 0 }
+        var mask: UInt64 = 0
+        var i: UInt64 = 0
+        while i < self.clients.len() {
+            let client = self.clients.borrow_ref(i)
+            if client.route.live && client.room.equals(room) { mask |= bit(i) }
+            i += 1
+        }
+        mask
+    }
+    fn plan(&self, id: UInt64, command: Command) -> Plan {
+        let index = self.index(id)!
+        let client = self.clients.borrow_ref(index)
+        let own = bit(index)
+        let members = self.members(&client.room)
+        match command {
+            Welcome => Plan { first: own, second: 0, error: 0 },
+            Join => {
+                let room = requested_room(client)
+                if client.room.equals(&room) { Plan { first: own, second: 0, error: 1 } }
+                else { Plan { first: members, second: self.members(&room) | own, error: 0 } }
+            },
+            Leave => if members == 0 { Plan { first: own, second: 0, error: 2 } }
+                else { Plan { first: members, second: 0, error: 0 } },
+            Say => if members == 0 { Plan { first: own, second: 0, error: 2 } }
+                else { Plan { first: members, second: 0, error: 0 } },
+            Disconnect => Plan { first: members & ~own, second: 0, error: 0 },
+            Invalid => Plan { first: own, second: 0, error: 3 }
+        }
+    }
+    fn acknowledge(&mut self, id: UInt64, bytes: UInt64) {
         let index = match self.index(id) { Some(index) => index, None => return }
-        if self.clients.borrow_ref(index).closing { return }
         let client = self.clients.borrow_mut_ref(index)
-        let bytes = mem.replace(&mut client.input, Array.new::<UInt8>())
-        let line = String.from_utf8(bytes)!
-        let separator = line.find(" ").unwrap_or(line.byte_length())
-        let command = line.substring(0, separator)!
-        let argument = if separator < line.byte_length() {
-            line.substring(separator + 1, line.byte_length())!
-        } else { "" }
-        let member = self.clients.borrow_ref(index)
-        let room = member.room.clone()
-        if command.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() {
-            if room.equals(&argument) {
-                self.clients.borrow_mut_ref(index).enqueue("error already joined\n")
-                return
-            }
-            if !room.is_empty() {
-                let notice = event("left", &room, id, "")
-                self.broadcast(&room, &notice)
-            }
-            let client = self.clients.borrow_mut_ref(index)
-            var next_room = argument.clone()
-            mem.swap(&mut client.room, &mut next_room)
-            let notice = event("joined", &argument, id, "")
-            self.broadcast(&argument, &notice)
-        } else if line.equals("leave") {
-            if room.is_empty() { self.clients.borrow_mut_ref(index).enqueue("error join a room first\n") }
-            else {
-                let notice = event("left", &room, id, "")
-                self.broadcast(&room, &notice)
-                let client = self.clients.borrow_mut_ref(index)
-                var next_room = ""
-                mem.swap(&mut client.room, &mut next_room)
-            }
-        } else if command.equals("say") && !argument.is_empty() {
-            if room.is_empty() { self.clients.borrow_mut_ref(index).enqueue("error join a room first\n") }
-            else {
-                let notice = event("message", &room, id, &argument)
-                self.broadcast(&room, &notice)
-            }
-        } else { self.clients.borrow_mut_ref(index).enqueue("error use join <room>, leave, or say <message>\n") }
-    }
-    fn output(&mut self, id: UInt64) -> Option<Packet> {
-        let index = match self.index(id) { Some(index) => index, None => return Option.None }
-        let client = self.clients.borrow_mut_ref(index)
-        if client.closing { return Option.None }
-        let packet = packet_at(&client.output, client.offset)
-        client.offset += packet.length
-        if client.offset == client.output.len() { client.output.clear() client.offset = 0 }
-        Option.Some(packet)
-    }
-    fn active(&self, id: UInt64) -> Bool {
-        let index = match self.index(id) { Some(index) => index, None => return false }
-        !self.clients.borrow_ref(index).closing
+        client.route.messages -= 1
+        client.route.bytes -= bytes
     }
 }
-
-fn receive(chat: domain.WriteHandle<Chat>, id: UInt64, reader: BufferedTcpReader) @suspends {
+fn apply(state: &mut Chat, change: Change) {
+    var i: UInt64 = 0
+    while i < state.clients.len() {
+        let client = state.clients.borrow_mut_ref(i)
+        if (change.plan.first & bit(i)) != 0 { client.route.messages += 1 client.route.bytes += change.first_bytes }
+        if (change.plan.second & bit(i)) != 0 { client.route.messages += 1 client.route.bytes += change.second_bytes }
+        i += 1
+    }
+    let index = state.index(change.id)!
+    if change.plan.error == 0 {
+        match change.command {
+            Disconnect => {
+                let client = state.clients.borrow_mut_ref(index)
+                client.route.live = false
+                client.route.messages = 0
+                client.route.bytes = 0
+                client.input.clear()
+                var room = ""
+                mem.swap(&mut client.room, &mut room)
+                return
+            },
+            Join => {
+                let client = state.clients.borrow_mut_ref(index)
+                var room = requested_room(client)
+                mem.swap(&mut client.room, &mut room)
+            },
+            Leave => {
+                let client = state.clients.borrow_mut_ref(index)
+                var room = ""
+                mem.swap(&mut client.room, &mut room)
+            },
+            _ => {}
+        }
+    }
+    let client = state.clients.borrow_mut_ref(index)
+    client.input.clear()
+}
+fn room_text(chat: domain.WriteHandle<Chat>, id: UInt64) @suspends -> String {
+    var bytes = Array.new::<UInt8>()
+    while true {
+        let packet = chat.room_packet(id, bytes.len())!
+        var i: UInt64 = 0
+        while i < packet.length { bytes.push(packet.byte(i)) i += 1 }
+        if packet.length < 32 { return String.from_utf8(bytes)! }
+    }
+    ""
+}
+fn messages(command: Command, plan: Plan, room: &String, id: UInt64, argument: &String) -> (String, String) {
+    if plan.error == 1 { return ("error already joined\n", "") }
+    if plan.error == 2 { return ("error join a room first\n", "") }
+    if plan.error == 3 { return ("error use join <room>, leave, or say <message>\n", "") }
+    match command {
+        Welcome => {
+            let number = id.to_string()
+            let prefix = "welcome "
+            let text = prefix.concat(&number)
+            (text.concat("\n"), "")
+        },
+        Join => (event("left", room, id, ""), event("joined", argument, id, "")),
+        Leave => (event("left", room, id, ""), ""),
+        Disconnect => (event("left", room, id, ""), ""),
+        Say => (event("message", room, id, argument), ""),
+        Invalid => ("error use join <room>, leave, or say <message>\n", "")
+    }
+}
+// The caller holds the admission permit across preparation and commit. Receivers
+// also use this gate to return credits. No network operation runs under the gate.
+fn publish(ctx: Context, id: UInt64, command: Command, argument: String, excluded: UInt64) @suspends -> Bool {
+    let chat = ctx.chat
+    while true {
+        let index = match chat.index(id)! { Some(index) => index, None => return false }
+        let origin = chat.route(index)!!
+        var access = domain.access_set()
+        access.include(chat.read_only())
+        let snapshot = domain.snapshot_set(access)
+        var plan = chat.plan(id, command)!
+        plan.first &= ~excluded
+        plan.second &= ~excluded
+        let room = room_text(chat, id)
+        let (first, second) = messages(command, plan, &room, id, &argument)
+        var slow: UInt64 = 0
+        var i: UInt64 = 0
+        var routes = Array.new::<Route>()
+        while i < 64 {
+            let route = match chat.route(i)! { Some(route) => route, None => break }
+            let a: UInt64 = if (plan.first & bit(i)) != 0 { 1 } else { 0 }
+            let b: UInt64 = if (plan.second & bit(i)) != 0 { 1 } else { 0 }
+            if a + b > 64 - route.messages || a * first.byte_length() + b * second.byte_length() > 65536 - route.bytes {
+                slow = route.id
+                break
+            }
+            routes.push(route)
+            i += 1
+        }
+        if slow != 0 {
+            // At least one member is removed before retrying the original command.
+            // Excluding departing ancestors prevents cycles between full mailboxes.
+            // Recursive departures can evict other full recipients, at most 64 total.
+            let ancestors = match command { Disconnect => excluded | bit(index), _ => excluded }
+            publish(ctx, slow, Command.Disconnect, "", ancestors);
+            continue
+        }
+        var batch = outbox.batch(128, 2097152)
+        i = 0
+        while i < routes.len() {
+            let route = routes.get(i)!
+            if (plan.first & bit(i)) != 0 { outbox.stage(&mut batch, route.output, first.clone().into_bytes())! }
+            if (plan.second & bit(i)) != 0 { outbox.stage(&mut batch, route.output, second.clone().into_bytes())! }
+            i += 1
+        }
+        let change = Change { id: id, command: command, plan: plan, first_bytes: first.byte_length(), second_bytes: second.byte_length() }
+        let candidate = domain.edit_snapshot(snapshot, chat, apply, change).with_outbox(batch)
+        var receipt = domain.commit_set(candidate)
+        let result = receipt.wait()
+        match result { Err(Conflict) => continue, _ => {} }
+        // Owners survive cleanup and credits reserve capacity. Any other
+        // rejection is a resource failure or a broken application invariant.
+        result!
+        match command {
+            Disconnect => { outbox.close(origin.stop) outbox.close(origin.output) },
+            _ => {}
+        }
+        return true
+    }
+    false
+}
+fn process(ctx: Context, id: UInt64, line: String) @suspends -> Bool {
+    let separator = line.find(" ").unwrap_or(line.byte_length())
+    let verb = line.substring(0, separator)!
+    let argument = if separator < line.byte_length() { line.substring(separator + 1, line.byte_length())! } else { "" }
+    let command = if verb.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() {
+        Command.Join
+    } else if line.equals("leave") { Command.Leave }
+    else if verb.equals("say") && !argument.is_empty() { Command.Say }
+    else { Command.Invalid }
+    let permit = ctx.gate.acquire()!
+    let chat = ctx.chat
+    if chat.index(id)!.is_none() { return false }
+    match command {
+        Join => {
+            let bytes = argument.clone().into_bytes()
+            var offset: UInt64 = 0
+            while offset < bytes.len() {
+                let packet = packet_at(&bytes, offset)
+                chat.input(id, packet)!
+                offset += packet.length
+            }
+        },
+        _ => {}
+    }
+    let result = publish(ctx, id, command, argument, 0)
+    permit.release()
+    result
+}
+fn receive(ctx: Context, id: UInt64, reader: BufferedTcpReader) @suspends {
     var reader = reader
     while true {
         let line = match reader.read_line(4096) { Ok(Some(line)) => line, _ => return }
-        let bytes = line.into_bytes()
-        var offset: UInt64 = 0
-        while offset < bytes.len() {
-            let packet = packet_at(&bytes, offset)
-            chat.input(id, packet)!
-            offset += packet.length
-        }
-        // Membership and all recipient queues change in one synchronous domain turn.
-        when "command" (mut chat) { chat.execute(id) }!
+        if !process(ctx, id, line) { return }
     }
 }
-fn send(chat: domain.WriteHandle<Chat>, id: UInt64, writer: TcpWriter) @suspends {
+fn send(ctx: Context, id: UInt64, queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends {
     var writer = writer
     while true {
-        var bytes = Array.new::<UInt8>()
-        while bytes.len() < 4096 {
-            let packet = match chat.output(id)! { Some(packet) => packet, None => return }
-            if packet.length == 0 { break }
-            var i: UInt64 = 0
-            while i < packet.length { bytes.push(packet.byte(i)) i += 1 }
-        }
-        if bytes.is_empty() { task.sleep_ms(10) }
-        else if writer.write_all(bytes).is_err() { return }
+        let bytes = match queue.receive() { Some(bytes) => bytes, None => return }
+        let permit = ctx.gate.acquire()!
+        let chat = ctx.chat
+        chat.acknowledge(id, bytes.len())!
+        permit.release()
+        if writer.write_all(bytes).is_err() { return }
     }
 }
-fn monitor(chat: domain.WriteHandle<Chat>, id: UInt64) @suspends {
-    // Also interrupt a writer blocked inside write_all after its queue overflows.
-    while chat.active(id)! { task.sleep_ms(100) }
-}
-fn session(chat: domain.WriteHandle<Chat>, id: UInt64, stream: TcpStream) @suspends {
+fn stop(queue: &mut outbox.Mailbox) @suspends { queue.receive(); }
+fn session(ctx: Context, id: UInt64, queue: outbox.Mailbox, control: outbox.Mailbox, stream: TcpStream) @suspends {
+    var queue = queue
+    var control = control
     let (reader, writer) = BufferedTcp.new(stream).split()
-    race { | receive(chat, id, reader) | send(chat, id, writer) | monitor(chat, id) }
-    // Either EOF or a failed writer cancels the other half before removing membership.
-    chat.disconnect(id)!
+    // Retain both mailbox owners until membership removal has committed.
+    race { | receive(ctx, id, reader) | send(ctx, id, &mut queue, writer) | stop(&mut control) }
+    let permit = ctx.gate.acquire()!
+    publish(ctx, id, Command.Disconnect, "", 0);
+    permit.release()
 }
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
@@ -225,13 +330,20 @@ fn main() @suspends -> Int32 {
     let address = listener.local_addr()!
     println(address.port())
     let owner = domain.create(make_chat, {})
-    let chat = owner.handle()
+    let gate = admission.create(1, 256)
+    let ctx = Context { chat: owner.handle(), gate: gate.handle() }
+    let chat = ctx.chat
     scope {
         while true {
             let stream = match listener.accept() { Ok(stream) => stream, Err(_) => break }
-            let id = chat.connect()!
+            let queue = outbox.create(64, 65536)
+            let control = outbox.create(1, 0)
+            let permit = ctx.gate.acquire()!
+            let id = chat.connect(queue.handle(), control.handle())!
+            if id != 0 { publish(ctx, id, Command.Welcome, "", 0); }
+            permit.release()
             if id == 0 { stream.close(); }
-            else { branch { session(chat, id, stream) } }
+            else { branch { session(ctx, id, queue, control, stream) } }
         }
     }
     0
