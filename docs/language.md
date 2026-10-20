@@ -3858,9 +3858,10 @@ Rust 宿主使用 `VmEngine::domain_periodic_status(handle, method)` 和 `joky::
 | --- | --- |
 | `outbox.create(messages: UInt64, bytes: UInt64) -> Mailbox` | 创建数量与有效载荷字节双限额的 FIFO；数量必须大于 0，允许零字节容量 |
 | `Mailbox.handle(&self) -> Handle` | 返回弱句柄 |
-| `Mailbox.receive(&mut self) -> Option<Array<UInt8>>` | 取出一条消息；空队列挂起并注册唤醒；关闭返回 None，空消息返回 Some(empty) |
+| `Handle.identity(&self) -> UInt64` | 返回不复用的身份，用于匹配提交失败的目标 |
+| `Mailbox.receive(&mut self) -> Option<Array<UInt8>>` | 取出一条消息并立即归还数量与字节容量；空队列挂起并注册唤醒；关闭返回 None，空消息返回 Some(empty) |
 | `outbox.close(handle: Handle)` | 幂等关闭，丢弃队列中的消息并唤醒接收方；Mailbox 析构也会关闭 |
-| `outbox.batch(messages: UInt64, bytes: UInt64) -> Batch` | 创建暂存批次；数量范围 1–256，字节上限独立于信箱上限 |
+| `outbox.batch(messages: UInt64, bytes: UInt64) -> Batch` | 创建暂存批次；按给定消息数预分配，无固定条数上限，允许零条空批次；字节上限独立于信箱上限 |
 | `outbox.stage(batch: &mut Batch, target: Handle, bytes: Array<UInt8>) -> Result<Unit, StageError>` | 消费输入数组，复制到批次独立存储；不发送、不等待队列容量 |
 
 `StageError` 为 Full 或 Closed。一次暂存失败会使整个批次失效，之后不能提交成功；即使忽略
@@ -3901,6 +3902,16 @@ fn update(h: domain.WriteHandle<State>, target: outbox.Handle) @suspends -> doma
 批次曾暂存溢出返回 `OutboxFull`；三种回执共用的 CommitError 提供这两个结果。拒绝时所有根和
 消息均不发布；成功时根、消息和提交回执在同一无挂起区间发布，然后唤醒接收方。普通
 `domain.write_to` 和可失败的原地写入不隐式获得消息回滚能力。
+
+三种回执都提供 `failed_outbox(&self) @suspends -> Option<UInt64>`：在 `wait()` 返回
+OutboxFull／OutboxClosed 后，Some(identity) 指出本次检查遇到的一个失败目标，可与
+`Handle.identity()` 比较。它是该次拒绝的历史事实，接收释放容量、关闭邮箱或迟到取消不会
+改变它；不会重新检查邮箱，也不保活邮箱。批次自身的消息数／字节上限溢出没有失败邮箱，
+返回 None；尚未完成、成功提交或因非邮箱原因拒绝也返回 None。多个目标失败时不保证一次
+列出全部，调用方处理目标后应重新准备并提交。暂存阶段的 Closed 同样保留失败目标。
+
+批次元数据大小计算检查整数溢出，预分配或预算不足仍报告运行时错误；取消固定条数上限
+不取消存储预算。容量只由信箱在入队、出队和关闭时管理，业务状态无需维护另一份发送额度。
 
 等待提交前丢弃候选或取消未完成回执，会清理消息批次；取消已经提交的回执不会撤销消息。
 接收只出队一次；取消可能丢弃已经出队、尚未写完的消息。出队后字节所有权归接收任务，

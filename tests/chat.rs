@@ -96,7 +96,7 @@ impl Peer {
     }
 }
 
-fn conversation(port: u16) {
+fn conversation(port: u16, members: u64) {
     let mut alice = Peer::connect(port, 1);
     let mut bob = Peer::connect(port, 2);
     let mut carol = Peer::connect(port, 3);
@@ -187,17 +187,67 @@ fn conversation(port: u16) {
     carol.quiet();
     alice.send("say still running\n");
     alice.expect("message 123 1 still running\n");
-    // The recipient collection crosses the former UInt64 mask boundary.
-    let mut peers: Vec<_> = (16..86).map(|id| Peer::connect(port, id)).collect();
+    // Concurrent join, move, send and disconnect agree at both stable observers.
+    let mut witness = Peer::connect(port, 16);
+    let mut newcomer = Peer::connect(port, 17);
+    let mut mover = Peer::connect(port, 18);
+    let mut quitter = Peer::connect(port, 19);
+    witness.send("join 123\n");
+    alice.expect("joined 123 16\n");
+    witness.expect("joined 123 16\n");
+    mover.send("join 123\n");
+    for peer in [&mut alice, &mut witness, &mut mover] {
+        peer.expect("joined 123 18\n");
+    }
+    quitter.send("join 123\n");
+    for peer in [&mut alice, &mut witness, &mut mover, &mut quitter] {
+        peer.expect("joined 123 19\n");
+    }
+    newcomer.send("join 123\n");
+    mover.send("join other\n");
+    alice.send("say concurrent\n");
+    drop(quitter);
+    let mut events = Vec::new();
+    for _ in 0..4 {
+        let mut line = String::new();
+        alice.0.read_line(&mut line).unwrap();
+        witness.expect(&line);
+        events.push(line);
+    }
+    events.sort();
+    assert_eq!(
+        events,
+        [
+            "joined 123 17\n",
+            "left 123 18\n",
+            "left 123 19\n",
+            "message 123 1 concurrent\n"
+        ]
+    );
+    drop((witness, newcomer, mover));
+    let mut departures = Vec::new();
+    for _ in 0..2 {
+        let mut line = String::new();
+        alice.0.read_line(&mut line).unwrap();
+        departures.push(line);
+    }
+    departures.sort();
+    assert_eq!(departures, ["left 123 16\n", "left 123 17\n"]);
+    // Native backends also cross the former 256-message batch boundary.
+    // The interpreter's 1024 live-frame budget admits fewer simultaneous TCP sessions;
+    // its 260-target publication is covered by verify_wide_broadcast before listening.
+    let mut peers: Vec<_> = (20..20 + members)
+        .map(|id| Peer::connect(port, id))
+        .collect();
     for index in 0..peers.len() {
         peers[index].send("join wide\n");
         for peer in &mut peers[..=index] {
-            peer.expect(&format!("joined wide {}\n", 16 + index));
+            peer.expect(&format!("joined wide {}\n", 20 + index));
         }
     }
-    peers[69].send("say beyond64\n");
+    peers.last_mut().unwrap().send("say wide broadcast\n");
     for peer in &mut peers {
-        peer.expect("message wide 85 beyond64\n");
+        peer.expect(&format!("message wide {} wide broadcast\n", 19 + members));
     }
 }
 
@@ -244,7 +294,7 @@ fn chat_real_tcp_on_all_backends() {
         };
         command.current_dir(work.path());
         let (mut server, port) = Server::start(command, work.path().join(format!("{backend}.log")));
-        conversation(port);
+        conversation(port, if backend == "interpreter" { 70 } else { 260 });
         assert!(server.child.try_wait().unwrap().is_none());
     }
 }

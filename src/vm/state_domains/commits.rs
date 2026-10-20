@@ -256,6 +256,7 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<
     };
     if let Some(batch) = &mut candidate.outbox {
         if let Err(status) = batch.prepare(domains) {
+            request.failed_outbox = batch.failed_target;
             request.commit_status = Some(status);
             request.finish(DomainOutcome::Value(InstanceValue::Unit));
             return;
@@ -468,6 +469,17 @@ pub(super) unsafe fn poll(
             frame.wake = None;
             Ok(None)
         }
+        Operation::CommitFailedOutbox => Ok(Some(
+            receipt
+                .request
+                .as_ref()
+                .and_then(|request| {
+                    let domains = request.domains.upgrade()?;
+                    let domains = domains.borrow();
+                    domains.requests.get(&request.sequence?)?.failed_outbox
+                })
+                .unwrap_or(0),
+        )),
         Operation::CommitRevision => Ok(Some(receipt.result().map_or(0, |(_, revision)| revision))),
         Operation::CommitSecondRevision => Ok(Some(
             receipt

@@ -4,7 +4,6 @@ use super::*;
 use crate::runtime::{buffer::Buffer, domain::Operation};
 use std::collections::VecDeque;
 
-const MAX_BATCH_MESSAGES: usize = 256;
 struct Message {
     bytes: Vec<u8>,
     _charge: reads::Charge,
@@ -46,15 +45,21 @@ struct Staged {
     token: u64,
     message: Message,
 }
+struct Target {
+    token: u64,
+    queue: Rc<RefCell<Mailbox>>,
+}
 pub(super) struct Batch {
     registry: u64,
     max_messages: usize,
     max_bytes: usize,
     bytes: usize,
     failure: Option<Status>,
+    pub(super) failed_target: Option<u64>,
     messages: Vec<Staged>,
     // Allocated before staging. Preflight and publication cannot grow this vector.
-    targets: Vec<Rc<RefCell<Mailbox>>>,
+    targets: Vec<Target>,
+    order: Vec<usize>,
     _charge: reads::Charge,
 }
 fn size(value: u64) -> Result<usize, Error> {
@@ -117,27 +122,29 @@ fn create(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<
 fn batch(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<Batch, Error> {
     let max_messages = size(messages)?;
     let max_bytes = size(bytes)?;
-    if max_messages == 0 || max_messages > MAX_BATCH_MESSAGES {
-        return Err(invalid("Outbox batch requires 1 to 256 message slots"));
-    }
     let domains = registry.borrow();
     if domains.shutting_down {
         return Err(invalid("Outbox executor is closed"));
     }
-    let charge = reads::Charge::new(
-        domains.budget.clone(),
-        std::mem::size_of::<Batch>()
-            + max_messages
-                * (std::mem::size_of::<Staged>() + std::mem::size_of::<Rc<RefCell<Mailbox>>>()),
-    )?;
+    let overhead = max_messages
+        .checked_mul(
+            std::mem::size_of::<Staged>()
+                + std::mem::size_of::<Target>()
+                + std::mem::size_of::<usize>(),
+        )
+        .and_then(|n| n.checked_add(std::mem::size_of::<Batch>()))
+        .ok_or_else(|| limited("Outbox batch capacity overflow"))?;
+    let charge = reads::Charge::new(domains.budget.clone(), overhead)?;
     Ok(Batch {
         registry: domains.identity,
         max_messages,
         max_bytes,
         bytes: 0,
         failure: None,
+        failed_target: None,
         messages: vector(max_messages)?,
         targets: vector(max_messages)?,
+        order: vector(max_messages)?,
         _charge: charge,
     })
 }
@@ -155,10 +162,12 @@ impl Batch {
                     .is_none_or(|q| q.borrow().closed)
             {
                 self.failure = Some(Status::OutboxClosed);
+                self.failed_target = Some(token);
             } else if self.messages.len() == self.max_messages
                 || bytes.len() > self.max_bytes - self.bytes
             {
                 self.failure = Some(Status::OutboxFull);
+                self.failed_target = None;
             }
         }
         if let Some(status) = self.failure {
@@ -188,10 +197,26 @@ impl Batch {
             return Err(Status::OutboxClosed);
         }
         self.targets.clear();
-        for (index, message) in self.messages.iter().enumerate() {
+        self.failed_target = None;
+        self.order.clear();
+        self.order.extend(0..self.messages.len());
+        // Sorting indices leaves staging order intact and requires no allocation.
+        self.order
+            .sort_unstable_by_key(|&i| (self.messages[i].token, i));
+        let mut cursor = 0;
+        while cursor < self.order.len() {
+            let token = self.messages[self.order[cursor]].token;
+            let mut count = 0;
+            let mut bytes = 0;
+            while cursor < self.order.len() && self.messages[self.order[cursor]].token == token {
+                bytes += self.messages[self.order[cursor]].message.bytes.len();
+                count += 1;
+                cursor += 1;
+            }
+            self.failed_target = Some(token);
             let target = domains
                 .outboxes
-                .get(&message.token)
+                .get(&token)
                 .and_then(Weak::upgrade)
                 .ok_or(Status::OutboxClosed)?;
             {
@@ -199,29 +224,28 @@ impl Batch {
                 if queue.closed {
                     return Err(Status::OutboxClosed);
                 }
-                // At most 256 entries; include every earlier message to this target,
-                // including empty messages, without allocating a reservation map.
-                let previous = self.messages[..index]
-                    .iter()
-                    .filter(|m| m.token == message.token);
-                let (count, bytes) = previous
-                    .fold((1usize, message.message.bytes.len()), |(n, b), m| {
-                        (n + 1, b + m.message.bytes.len())
-                    });
                 if count > queue.max_messages - queue.messages.len()
                     || bytes > queue.max_bytes - queue.bytes
                 {
                     return Err(Status::OutboxFull);
                 }
             }
-            self.targets.push(target);
+            self.targets.push(Target {
+                token,
+                queue: target,
+            });
         }
+        self.failed_target = None;
         Ok(())
     }
     // Called in the same registry turn as prepare, with no intervening callbacks.
     pub(super) fn publish(&mut self) {
-        for (message, target) in self.messages.drain(..).zip(&self.targets) {
-            let mut queue = target.borrow_mut();
+        for message in self.messages.drain(..) {
+            let index = self
+                .targets
+                .binary_search_by_key(&message.token, |t| t.token)
+                .unwrap();
+            let mut queue = self.targets[index].queue.borrow_mut();
             queue.bytes += message.message.bytes.len();
             queue.messages.push_back(message.message);
         }
@@ -229,7 +253,7 @@ impl Batch {
     // Notifications are deliberately outside the root/message publication interval.
     pub(super) fn wake(&self) {
         for target in &self.targets {
-            if let Some(waker) = &target.borrow().waiter {
+            if let Some(waker) = &target.queue.borrow().waiter {
                 waker.wake();
             }
         }

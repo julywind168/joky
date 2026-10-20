@@ -94,6 +94,7 @@ pub(crate) enum Operation {
     SetEditCandidate,
     When,
     PeriodicStatus,
+    CommitFailedOutbox,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,6 +183,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_candidate" => Operation::Candidate,
         "__domain_commit" => Operation::Commit,
         "__domain_commit_wait" => Operation::CommitWait,
+        "__domain_commit_failed_outbox" => Operation::CommitFailedOutbox,
         "__domain_commit_revision" => Operation::CommitRevision,
         "__domain_commit_cancel" => Operation::CommitCancel,
         "__domain_commit_identity" => Operation::CommitIdentity,
@@ -553,9 +555,10 @@ impl Operation {
                 commit_type(),
             ),
             Self::CommitWait => (vec![Type::reference(commit_type(), true)], Type::Int32),
-            Self::CommitRevision | Self::CommitIdentity | Self::CommitSecondRevision => {
-                (vec![Type::reference(commit_type(), false)], i)
-            }
+            Self::CommitRevision
+            | Self::CommitIdentity
+            | Self::CommitSecondRevision
+            | Self::CommitFailedOutbox => (vec![Type::reference(commit_type(), false)], i),
             Self::CommitCancel => (vec![Type::reference(commit_type(), false)], Type::Unit),
         };
         FunctionSignature::new(params, ret)
@@ -692,6 +695,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         89 => Operation::SetEditCandidate,
         90 => Operation::When,
         91 => Operation::PeriodicStatus,
+        92 => Operation::CommitFailedOutbox,
 
         _ => {
             super::error::record_error(Error::new_with_code(

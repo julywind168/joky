@@ -186,6 +186,7 @@ extern fn __domain_candidate_at(module: domain.Module, snapshot: &domain.Snapsho
 extern fn __domain_candidate_at_values(module: domain.Module, snapshot: &domain.SnapshotOwner, target:domain.Handle, name: String, input: &Buffer<UInt64>) @suspends -> domain.CandidateOwner
 extern fn __domain_commit(handle: domain.Handle, candidate: &mut domain.CandidateOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_wait(receipt: &mut domain.CommitOwner) @suspends -> Int32
+extern fn __domain_commit_failed_outbox(receipt: &domain.CommitOwner) @suspends -> UInt64
 extern fn __domain_commit_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
 extern fn __domain_commit_identity(receipt: &domain.CommitOwner) @suspends -> UInt64
 extern fn __domain_commit_cancel(receipt: &domain.CommitOwner) @suspends
@@ -237,6 +238,10 @@ impl CommitReceipt {
         let status=__domain_commit_wait(&mut self.storage)
         if status==0 { return Result.Ok(__domain_commit_revision(&self.storage)) }
         Result.Err(commit_error(status))
+    }
+    pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
+        let identity = __domain_commit_failed_outbox(&self.storage)
+        if identity == 0 { Option.None } else { Option.Some(identity) }
     }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
@@ -305,6 +310,10 @@ impl PairCommitReceipt {
         let status=__domain_commit_wait(&mut self.storage)
         if status==0 { return Result.Ok((__domain_commit_revision(&self.storage),__domain_commit_second_revision(&self.storage))) }
         Result.Err(commit_error(status))
+    }
+    pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
+        let identity = __domain_commit_failed_outbox(&self.storage)
+        if identity == 0 { Option.None } else { Option.Some(identity) }
     }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
@@ -428,6 +437,10 @@ impl SetCommitReceipt {
         Result.Err(commit_error(status))
     }
     pub fn revision<S>(&self,handle:ReadHandle<S>) @suspends -> Result<Option<UInt64>,RevisionError> { set_revision(self,handle.token) }
+    pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
+        let identity = __domain_commit_failed_outbox(&self.storage)
+        if identity == 0 { Option.None } else { Option.Some(identity) }
+    }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
 }

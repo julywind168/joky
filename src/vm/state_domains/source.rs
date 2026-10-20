@@ -832,6 +832,7 @@ pub(crate) unsafe fn poll(
         | Operation::CommitSecondRevision
         | Operation::Commit
         | Operation::CommitWait
+        | Operation::CommitFailedOutbox
         | Operation::CommitRevision
         | Operation::CommitCancel
         | Operation::DeadlineAfter

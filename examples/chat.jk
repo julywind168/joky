@@ -1,17 +1,16 @@
 import joky/domain
 import joky/outbox
-import joky/admission
 import joky/mem
 import joky/array.{type Array}
 import joky/option.{type Option}
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
 
 // Owners stay in the connection task; shared state holds only mailbox identities.
-struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle, messages: UInt64, bytes: UInt64 }
+struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 struct Client { route: Route, room: String }
 #state
 struct Chat { clients: Array<Client>, next_id: UInt64 }
-struct Context { chat: domain.WriteHandle<Chat>, gate: admission.Handle }
+struct Context { chat: domain.WriteHandle<Chat> }
 enum Command { Welcome, Join(String), Leave, Say(String), Invalid, Disconnect }
 enum Effect { Stay, Join(String), Leave, Disconnect }
 struct Recipient { route: Route, first: Bool, second: Bool }
@@ -52,16 +51,12 @@ impl Chat {
         }
         Option.None
     }
-    fn route(&self, index: UInt64) -> Option<Route> {
-        if index < self.clients.len() { Option.Some(self.clients.borrow_ref(index).route) }
-        else { Option.None }
-    }
     fn connect(&mut self, output: outbox.Handle, stop: outbox.Handle) -> UInt64 {
         var slot: UInt64 = 0
         while slot < self.clients.len() && self.clients.borrow_ref(slot).route.live { slot += 1 }
         let id = self.next_id
         self.next_id += 1
-        let client = Client { route: Route { live: true, id: id, output: output, stop: stop, messages: 0, bytes: 0 }, room: "" }
+        let client = Client { route: Route { live: true, id: id, output: output, stop: stop }, room: "" }
         if slot == self.clients.len() { self.clients.push(client) }
         else { self.clients.replace(slot, client); }
         id
@@ -70,11 +65,14 @@ impl Chat {
         let client = self.clients.borrow_ref(self.index(id)!)
         client.room.clone()
     }
-    fn acknowledge(&mut self, id: UInt64, bytes: UInt64) {
-        let index = match self.index(id) { Some(index) => index, None => return }
-        let client = self.clients.borrow_mut_ref(index)
-        client.route.messages -= 1
-        client.route.bytes -= bytes
+    fn recipient(&self, identity: UInt64) -> Option<UInt64> {
+        var i: UInt64 = 0
+        while i < self.clients.len() {
+            let route = self.clients.borrow_ref(i).route
+            if route.live && route.output.identity() == identity { return Option.Some(route.id) }
+            i += 1
+        }
+        Option.None
     }
 }
 fn messages(command: &Command, room: &String, id: UInt64) -> (String, String, Effect) {
@@ -123,29 +121,19 @@ fn plan(state: &Chat, request: Request) -> Option<Plan> {
 }
 fn apply(state: &mut Chat, plan: Plan) {
     let Plan { origin, recipients, first, second, effect } = plan
-    var i: UInt64 = 0
-    while i < recipients.len() {
-        let recipient = recipients.get(i)!
-        let index = state.index(recipient.route.id)!
-        let client = state.clients.borrow_mut_ref(index)
-        if recipient.first { client.route.messages += 1 client.route.bytes += first.byte_length() }
-        if recipient.second { client.route.messages += 1 client.route.bytes += second.byte_length() }
-        i += 1
-    }
     let index = state.index(origin.id)!
     let client = state.clients.borrow_mut_ref(index)
     match effect {
         Join(room) => { var next = room mem.swap(&mut client.room, &mut next) },
         Leave => { var next = "" mem.swap(&mut client.room, &mut next) },
         Disconnect => {
-            client.route.live = false client.route.messages = 0 client.route.bytes = 0
+            client.route.live = false
             var next = "" mem.swap(&mut client.room, &mut next)
         },
         Stay => {}
     }
 }
-fn capacity(plan: &Plan) -> (UInt64, UInt64, UInt64) {
-    var slow: UInt64 = 0
+fn size(plan: &Plan) -> (UInt64, UInt64) {
     var messages: UInt64 = 0
     var bytes: UInt64 = 0
     var i: UInt64 = 0
@@ -153,26 +141,25 @@ fn capacity(plan: &Plan) -> (UInt64, UInt64, UInt64) {
         let recipient = plan.recipients.get(i)!
         let a: UInt64 = if recipient.first { 1 } else { 0 }
         let b: UInt64 = if recipient.second { 1 } else { 0 }
-        let size = a * plan.first.byte_length() + b * plan.second.byte_length()
-        if a + b > 64 - recipient.route.messages || size > 65536 - recipient.route.bytes {
-            slow = recipient.route.id break
-        }
-        messages += a + b bytes += size i += 1
+        messages += a + b
+        bytes += a * plan.first.byte_length() + b * plan.second.byte_length()
+        i += 1
     }
-    (slow, messages, bytes)
+    (messages, bytes)
 }
-fn stage(plan: &Plan, messages: UInt64, bytes: UInt64) @suspends -> outbox.Batch {
-    var batch = outbox.batch(if messages == 0 { 1 } else { messages }, bytes)
+fn stage(plan: &Plan) @suspends -> outbox.Batch {
+    let (messages, bytes) = size(plan)
+    var batch = outbox.batch(messages, bytes)
     var i: UInt64 = 0
     while i < plan.recipients.len() {
         let recipient = plan.recipients.get(i)!
-        if recipient.first { outbox.stage(&mut batch, recipient.route.output, plan.first.clone().into_bytes())! }
-        if recipient.second { outbox.stage(&mut batch, recipient.route.output, plan.second.clone().into_bytes())! }
+        if recipient.first { outbox.stage(&mut batch, recipient.route.output, plan.first.clone().into_bytes()); }
+        if recipient.second { outbox.stage(&mut batch, recipient.route.output, plan.second.clone().into_bytes()); }
         i += 1
     }
     batch
 }
-// Hold the gate during preparation and commit; network writes remain outside it.
+// Snapshot validation orders membership changes and their broadcasts atomically.
 fn publish(ctx: Context, id: UInt64, command: Command, excluded: &Array<UInt64>) @suspends -> Bool {
     let chat = ctx.chat
     while true {
@@ -182,22 +169,27 @@ fn publish(ctx: Context, id: UInt64, command: Command, excluded: &Array<UInt64>)
         let prepared = domain.query_snapshot(&snapshot, chat.read_only(), plan, request)
         let plan = match prepared { Some(plan) => plan, None => return false }
         let origin = plan.origin
-        let (slow, messages, bytes) = capacity(&plan)
-        if slow != 0 {
-            // Exclude departing ancestors so full mailboxes cannot form a cycle.
-            var ancestors = copy_ids(excluded)
-            match &command { Disconnect => ancestors.push(id), _ => {} }
-            publish(ctx, slow, Command.Disconnect, &ancestors);
-            continue
-        }
-        let batch = stage(&plan, messages, bytes)
+        let batch = stage(&plan)
         let candidate = domain.edit_snapshot(snapshot, chat, apply, plan).with_outbox(batch)
         var receipt = domain.commit_set(candidate)
         let result = receipt.wait()
-        match result { Err(Conflict) => continue, _ => {} }
-        result!
-        match &command { Disconnect => { outbox.close(origin.stop) outbox.close(origin.output) }, _ => {} }
-        return true
+        match result {
+            Err(Conflict) => continue,
+            Err(OutboxFull) => {}, Err(OutboxClosed) => {},
+            _ => {
+                result!
+                match &command { Disconnect => { outbox.close(origin.stop) outbox.close(origin.output) }, _ => {} }
+                return true
+            }
+        }
+        // The failed batch published nothing. Remove its blocked recipient, then retry.
+        let failed = receipt.failed_outbox()!
+        let slow = match chat.recipient(failed)! { Some(id) => id, None => continue }
+        // Exclude departing ancestors so full mailboxes cannot form a cycle.
+        var ancestors = copy_ids(excluded)
+        match &command { Disconnect => ancestors.push(id), _ => {} }
+        publish(ctx, slow, Command.Disconnect, &ancestors);
+        continue
     }
     false
 }
@@ -213,11 +205,8 @@ fn parse(line: String) -> Command {
 }
 fn process(ctx: Context, id: UInt64, line: String) @suspends -> Bool {
     let command = parse(line)
-    let permit = ctx.gate.acquire()!
     let excluded = Array.new::<UInt64>()
-    let result = publish(ctx, id, command, &excluded)
-    permit.release()
-    result
+    publish(ctx, id, command, &excluded)
 }
 fn receive(ctx: Context, id: UInt64, reader: BufferedTcpReader) @suspends {
     var reader = reader
@@ -226,14 +215,10 @@ fn receive(ctx: Context, id: UInt64, reader: BufferedTcpReader) @suspends {
         if !process(ctx, id, line) { return }
     }
 }
-fn send(ctx: Context, id: UInt64, queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends {
+fn send(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends {
     var writer = writer
     while true {
         let bytes = match queue.receive() { Some(bytes) => bytes, None => return }
-        let permit = ctx.gate.acquire()!
-        let chat = ctx.chat
-        chat.acknowledge(id, bytes.len())!
-        permit.release()
         if writer.write_all(bytes).is_err() { return }
     }
 }
@@ -243,11 +228,9 @@ fn session(ctx: Context, id: UInt64, queue: outbox.Mailbox, control: outbox.Mail
     var control = control
     let (reader, writer) = BufferedTcp.new(stream).split()
     // Retain both mailbox owners until membership removal has committed.
-    race { | receive(ctx, id, reader) | send(ctx, id, &mut queue, writer) | stop(&mut control) }
-    let permit = ctx.gate.acquire()!
+    race { | receive(ctx, id, reader) | send(&mut queue, writer) | stop(&mut control) }
     let excluded = Array.new::<UInt64>()
     publish(ctx, id, Command.Disconnect, &excluded);
-    permit.release()
 }
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
@@ -256,19 +239,16 @@ fn main() @suspends -> Int32 {
     let address = listener.local_addr()!
     println(address.port())
     let owner = domain.create(make_chat, {})
-    let gate = admission.create(1, 256)
-    let ctx = Context { chat: owner.handle(), gate: gate.handle() }
+    let ctx = Context { chat: owner.handle() }
     let chat = ctx.chat
     scope {
         while true {
             let stream = match listener.accept() { Ok(stream) => stream, Err(_) => break }
             let queue = outbox.create(64, 65536)
             let control = outbox.create(1, 0)
-            let permit = ctx.gate.acquire()!
             let id = chat.connect(queue.handle(), control.handle())!
             let excluded = Array.new::<UInt64>()
             publish(ctx, id, Command.Welcome, &excluded);
-            permit.release()
             branch { session(ctx, id, queue, control, stream) }
         }
     }

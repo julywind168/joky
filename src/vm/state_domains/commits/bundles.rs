@@ -104,6 +104,7 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<
     };
     if let Some(batch) = &mut bundle.candidates[0].outbox {
         if let Err(status) = batch.prepare(domains) {
+            request.failed_outbox = batch.failed_target;
             request.commit_status = Some(status);
             request.finish(DomainOutcome::Value(InstanceValue::Unit));
             return;

@@ -14,6 +14,10 @@ extern fn __outbox_message_bytes(message:&mut outbox.MessageOwner) @suspends -> 
 pub struct Mailbox { storage:outbox.QueueOwner }
 // An executor-local, non-owning identity; safe to copy through Script contracts.
 pub struct Handle { identity:UInt64 }
+impl Handle {
+    // Stable identity for matching failed commit targets; it does not keep the queue alive.
+    pub fn identity(&self) -> UInt64 { self.identity }
+}
 pub type Batch = outbox.BatchOwner
 pub enum StageError { Full, Closed }
 

@@ -43,20 +43,32 @@ fn main() @suspends {
     // A full queue rejects the root replacement too.
     var full=domain.commit_to(handle,domain.candidate_from(domain.snapshot_from(handle.read_only(),read), handle, make, 10).with_outbox(staged(target,10)))
     assert(match full.wait() { Err(OutboxFull) => true, _ => false })
+    assert(full.failed_outbox()! == target.identity())
+    assert(conflict.failed_outbox().is_none() && receipt.failed_outbox().is_none())
     assert(domain.read_from(handle.read_only(),read).unwrap()==9)
     let received=match queue.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }
     assert(received.get(0).unwrap_or(0)==9)
+    assert(full.failed_outbox()! == target.identity())
     // An ignored staging failure poisons the entire batch, never publishing a prefix.
     var batch=outbox.batch(1,3)
     outbox.stage(&mut batch,target,bytes(11));
     assert(match outbox.stage(&mut batch,target,bytes(12)) { Err(Full) => true, _ => false })
     var poisoned=domain.commit_to(handle,domain.candidate_from(domain.snapshot_from(handle.read_only(),read), handle, make, 11).with_outbox(batch))
     assert(match poisoned.wait() { Err(OutboxFull) => true, _ => false })
+    assert(poisoned.failed_outbox().is_none())
     assert(domain.read_from(handle.read_only(),read).unwrap()==9)
     let pending=domain.candidate_from(domain.snapshot_from(handle.read_only(),read), handle, make, 12).with_outbox(staged(target,12))
     outbox.close(target)
     var closed=domain.commit_to(handle,pending)
     assert(match closed.wait() { Err(OutboxClosed) => true, _ => false })
+    assert(closed.failed_outbox()! == target.identity())
+    closed.cancel()
+    assert(closed.failed_outbox()! == target.identity())
+    var invalid=outbox.batch(1,3)
+    assert(match outbox.stage(&mut invalid,target,bytes(1)) { Err(Closed)=>true, _=>false })
+    var staged_closed=domain.commit_to(handle,domain.candidate_from(domain.snapshot_from(handle.read_only(),read),handle,make,13).with_outbox(invalid))
+    assert(match staged_closed.wait() { Err(OutboxClosed)=>true, _=>false })
+    assert(staged_closed.failed_outbox()! == target.identity())
     assert(match queue.receive() { None => true, _ => false })
     assert(domain.read_from(handle.read_only(),read).unwrap()==9)
     owner.close()
@@ -86,6 +98,7 @@ fn many() @suspends {
     // The second target's byte capacity rejects the entire three-domain commit.
     var rejected=domain.commit_set(set.with_outbox(messages))
     assert(match rejected.wait() { Err(OutboxFull) => true, _ => false })
+    assert(rejected.failed_outbox()! == rh.identity())
     assert(domain.read_from(a.read_handle(),read).unwrap()==1 && domain.read_from(b.read_handle(),read).unwrap()==2 && domain.read_from(c.read_handle(),read).unwrap()==3)
     var access=domain.access_set()
     access.include(a.read_handle()) access.include(b.read_handle()) access.include(c.read_handle())
@@ -125,6 +138,7 @@ fn pairs() @suspends {
     var messages=staged(rh,13)
     var pair_rejected=domain.commit_pair_to(a.handle(),b.handle(),pair.with_outbox(messages))
     assert(match pair_rejected.wait() { Err(OutboxFull) => true, _ => false })
+    assert(pair_rejected.failed_outbox()! == rh.identity())
     assert(domain.read_from(a.read_handle(),read).unwrap()==12 && domain.read_from(b.read_handle(),read).unwrap()==22)
     outbox.close(lh) outbox.close(rh)
 }

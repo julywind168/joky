@@ -1,26 +1,18 @@
 fn test_connect(ctx: Context, output: outbox.Handle, stop: outbox.Handle) @suspends -> UInt64 {
-    let permit = ctx.gate.acquire()!
     let chat = ctx.chat
     let id = chat.connect(output, stop)!
     let excluded = Array.new::<UInt64>()
     check.assert(publish(ctx, id, Command.Welcome, &excluded), "welcome committed")
-    permit.release()
     id
 }
-fn expect_message(ctx: Context, id: UInt64, queue: &mut outbox.Mailbox, expected: String) @suspends {
+fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
     let bytes = queue.receive()!
-    let length = bytes.len()
     let text = String.from_utf8(bytes)!
     check.assert(text.equals(&expected), "mailbox message and ordering")
-    let permit = ctx.gate.acquire()!
-    let chat = ctx.chat
-    chat.acknowledge(id, length)!
-    permit.release()
 }
 fn verify_conflict(ctx: Context, alice: &outbox.Mailbox, bob: &outbox.Mailbox) @suspends {
     let chat = ctx.chat
     // A stale membership change must publish neither its root nor its message.
-    let permit = ctx.gate.acquire()!
     var access = domain.access_set()
     access.include(chat.read_only())
     let snapshot = domain.snapshot_set(access)
@@ -35,28 +27,26 @@ fn verify_conflict(ctx: Context, alice: &outbox.Mailbox, bob: &outbox.Mailbox) @
     check.assert(match receipt.wait() { Err(Conflict) => true, _ => false }, "stale broadcast rejected")
     let room = chat.room(1)!
     check.assert(room.equals("r"), "failed leave preserves membership")
-    check.assert(chat.route(0)!!.messages == 0 && chat.route(1)!!.messages == 0, "failed commit preserves credits")
-    permit.release()
 
 }
 fn verify_message_capacity(ctx: Context, alice: &mut outbox.Mailbox, bob: &mut outbox.Mailbox, bob_stop: &mut outbox.Mailbox, carol: &mut outbox.Mailbox) @suspends {
     let chat = ctx.chat
-    // Bob never receives. Alice returns credits after each message, so only Bob
+    // Bob never receives. Alice drains each message, so only Bob
     // reaches the mailbox's message limit. Carol's unrelated room stays live.
     var i: UInt64 = 0
     while i < 64 {
         check.assert(process(ctx, 1, "say fill"), "broadcast before capacity")
-        expect_message(ctx, 1, alice, "message r 1 fill\n")
+        expect_message(alice, "message r 1 fill\n")
         i += 1
     }
     check.assert(process(ctx, 1, "say after eviction"), "broadcast retries after eviction")
-    expect_message(ctx, 1, alice, "left r 2\n")
-    expect_message(ctx, 1, alice, "message r 1 after eviction\n")
+    expect_message(alice, "left r 2\n")
+    expect_message(alice, "message r 1 after eviction\n")
     check.assert(bob_stop.receive().is_none(), "control mailbox wakes cancellation")
     check.assert(bob.receive().is_none(), "eviction discards pending messages")
     check.assert(chat.index(2)!.is_none(), "evicted membership removed")
     check.assert(process(ctx, 3, "say alive"), "other room unaffected")
-    expect_message(ctx, 3, carol, "message other 3 alive\n")
+    expect_message(carol, "message other 3 alive\n")
 
 }
 fn verify_byte_capacity(ctx: Context, alice: &mut outbox.Mailbox) @suspends {
@@ -64,10 +54,10 @@ fn verify_byte_capacity(ctx: Context, alice: &mut outbox.Mailbox) @suspends {
     var slow = outbox.create(64, 65536)
     var slow_stop = outbox.create(1, 0)
     check.assert(test_connect(ctx, slow.handle(), slow_stop.handle()) == 4, "slot reclaimed with fresh identity")
-    expect_message(ctx, 4, &mut slow, "welcome 4\n")
+    expect_message(&mut slow, "welcome 4\n")
     check.assert(process(ctx, 4, "join r"), "join reused slot")
-    expect_message(ctx, 1, alice, "joined r 4\n")
-    expect_message(ctx, 4, &mut slow, "joined r 4\n")
+    expect_message(alice, "joined r 4\n")
+    expect_message(&mut slow, "joined r 4\n")
     var builder = StringBuilder.new()
     var i: UInt64 = 0
     while i < 4091 { builder.push('x') i += 1 }
@@ -80,12 +70,12 @@ fn verify_byte_capacity(ctx: Context, alice: &mut outbox.Mailbox) @suspends {
     i = 0
     while i < count {
         check.assert(process(ctx, 1, line.clone()), "broadcast within byte capacity")
-        expect_message(ctx, 1, alice, expected.clone())
+        expect_message(alice, expected.clone())
         i += 1
     }
     check.assert(process(ctx, 1, line.clone()), "byte capacity eviction")
-    expect_message(ctx, 1, alice, "left r 4\n")
-    expect_message(ctx, 1, alice, expected.clone())
+    expect_message(alice, "left r 4\n")
+    expect_message(alice, expected.clone())
     check.assert(slow_stop.receive().is_none(), "byte overload closes control mailbox")
     check.assert(slow.receive().is_none(), "byte overload closes output mailbox")
 
@@ -96,22 +86,20 @@ fn verify_simultaneous_capacity(ctx: Context, alice: &mut outbox.Mailbox, alice_
     var other = outbox.create(64, 65536)
     var other_stop = outbox.create(1, 0)
     check.assert(test_connect(ctx, other.handle(), other_stop.handle()) == 5, "reuse after byte overflow")
-    expect_message(ctx, 5, &mut other, "welcome 5\n")
+    expect_message(&mut other, "welcome 5\n")
     check.assert(process(ctx, 5, "join r"), "join simultaneous overload")
-    expect_message(ctx, 1, alice, "joined r 5\n")
-    expect_message(ctx, 5, &mut other, "joined r 5\n")
+    expect_message(alice, "joined r 5\n")
+    expect_message(&mut other, "joined r 5\n")
     var i: UInt64 = 0
     while i < 64 { check.assert(process(ctx, 1, "say full"), "fill both queues") i += 1 }
-    let permit = ctx.gate.acquire()!
     let excluded = Array.new::<UInt64>()
     check.assert(publish(ctx, 1, Command.Disconnect, &excluded), "simultaneous overload terminates")
     check.assert(!publish(ctx, 1, Command.Disconnect, &excluded), "disconnect is idempotent")
-    permit.release()
     check.assert(alice_stop.receive().is_none() && other_stop.receive().is_none(), "both sessions signalled")
     check.assert(alice.receive().is_none() && other.receive().is_none(), "both output queues closed")
     check.assert(chat.index(1)!.is_none() && chat.index(5)!.is_none(), "both memberships removed")
     check.assert(process(ctx, 3, "say still alive"), "server survives overload chain")
-    expect_message(ctx, 3, carol, "message other 3 still alive\n")
+    expect_message(carol, "message other 3 still alive\n")
 }
 fn verify_slots(state: &mut Chat, targets: (outbox.Handle, outbox.Handle)) {
     let (output, stop) = targets
@@ -141,9 +129,10 @@ fn verify_connection_slots() @suspends {
 }
 fn verify_chat_queue_domain() @suspends {
     verify_connection_slots()
+    verify_wide_broadcast()
+    verify_closed_output()
     let owner = domain.create(make_chat, {})
-    let gate = admission.create(1, 256)
-    let ctx = Context { chat: owner.handle(), gate: gate.handle() }
+    let ctx = Context { chat: owner.handle() }
     var alice = outbox.create(64, 65536)
     var alice_stop = outbox.create(1, 0)
     var bob = outbox.create(64, 65536)
@@ -153,20 +142,65 @@ fn verify_chat_queue_domain() @suspends {
     check.assert(test_connect(ctx, alice.handle(), alice_stop.handle()) == 1, "first identity")
     check.assert(test_connect(ctx, bob.handle(), bob_stop.handle()) == 2, "second identity")
     check.assert(test_connect(ctx, carol.handle(), carol_stop.handle()) == 3, "third identity")
-    expect_message(ctx, 1, &mut alice, "welcome 1\n")
-    expect_message(ctx, 2, &mut bob, "welcome 2\n")
-    expect_message(ctx, 3, &mut carol, "welcome 3\n")
+    expect_message(&mut alice, "welcome 1\n")
+    expect_message(&mut bob, "welcome 2\n")
+    expect_message(&mut carol, "welcome 3\n")
     check.assert(process(ctx, 1, "join r"), "join alice")
-    expect_message(ctx, 1, &mut alice, "joined r 1\n")
+    expect_message(&mut alice, "joined r 1\n")
     check.assert(process(ctx, 2, "join r"), "join bob")
-    expect_message(ctx, 1, &mut alice, "joined r 2\n")
-    expect_message(ctx, 2, &mut bob, "joined r 2\n")
+    expect_message(&mut alice, "joined r 2\n")
+    expect_message(&mut bob, "joined r 2\n")
     check.assert(process(ctx, 3, "join other"), "join carol")
-    expect_message(ctx, 3, &mut carol, "joined other 3\n")
+    expect_message(&mut carol, "joined other 3\n")
 
     verify_conflict(ctx, &alice, &bob)
     verify_message_capacity(ctx, &mut alice, &mut bob, &mut bob_stop, &mut carol)
     verify_byte_capacity(ctx, &mut alice)
     verify_simultaneous_capacity(ctx, &mut alice, &mut alice_stop, &mut carol)
+    owner.close()
+}
+
+fn connect_room(state: &mut Chat, targets: (outbox.Handle, outbox.Handle)) {
+    let (output, stop) = targets
+    let id = state.connect(output, stop)
+    let index = state.index(id)!
+    let client = state.clients.borrow_mut_ref(index)
+    var room = "wide"
+    mem.swap(&mut client.room, &mut room)
+}
+fn verify_wide_broadcast() @suspends {
+    let owner = domain.create(make_chat, {})
+    let control = outbox.create(1, 0)
+    let ctx = Context { chat: owner.handle() }
+    var queues = Array.new::<outbox.Mailbox>()
+    var i: UInt64 = 0
+    while i < 260 {
+        let queue = outbox.create(2, 128)
+        domain.write_to(ctx.chat, connect_room, (queue.handle(), control.handle()))!
+        queues.push(queue)
+        i += 1
+    }
+    check.assert(process(ctx, 1, "say beyond256"), "large batch committed")
+    while !queues.is_empty() {
+        var queue = queues.pop()!
+        expect_message(&mut queue, "message wide 1 beyond256\n")
+    }
+    owner.close()
+}
+
+fn verify_closed_output() @suspends {
+    let owner = domain.create(make_chat, {})
+    let ctx = Context { chat: owner.handle() }
+    var alice = outbox.create(4, 256)
+    let alice_stop = outbox.create(1, 0)
+    let bob = outbox.create(4, 256)
+    var bob_stop = outbox.create(1, 0)
+    domain.write_to(ctx.chat, connect_room, (alice.handle(), alice_stop.handle()))!
+    domain.write_to(ctx.chat, connect_room, (bob.handle(), bob_stop.handle()))!
+    outbox.close(bob.handle())
+    check.assert(process(ctx, 1, "say after close"), "closed target evicted and broadcast retried")
+    expect_message(&mut alice, "left wide 2\n")
+    expect_message(&mut alice, "message wide 1 after close\n")
+    check.assert(bob_stop.receive().is_none(), "closed output still signals its session")
     owner.close()
 }

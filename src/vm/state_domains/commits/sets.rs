@@ -356,7 +356,10 @@ pub(crate) fn execute_commit(domains: &mut Domains, request: &mut Request, now: 
             next.push(validate(domains, candidate, now)?);
         }
         if let Some(batch) = &mut set.outbox {
-            batch.prepare(domains)?;
+            if let Err(status) = batch.prepare(domains) {
+                request.failed_outbox = batch.failed_target;
+                return Err(status);
+            }
         }
         Ok::<_, Status>((next, retired, revisions))
     })();

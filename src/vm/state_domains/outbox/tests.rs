@@ -123,7 +123,9 @@ fn outbox_limits_identity_poison_and_allocation_failures_refund_storage() {
     let vm = VmEngine::new();
     assert!(create(&vm.domains, 0, 0).is_err());
     assert!(create(&vm.domains, u64::MAX, 0).is_err());
-    assert!(batch(&vm.domains, 257, 0).is_err());
+    assert!(batch(&vm.domains, u64::MAX, 0).is_err());
+    drop(batch(&vm.domains, 257, 0).unwrap());
+    drop(batch(&vm.domains, 0, 0).unwrap());
     for allowance in [0, 1, 64, 256, 1024, 4096] {
         vm.domains.borrow().budget.limit.set(allowance);
         drop(create(&vm.domains, 2, 6));
@@ -273,4 +275,64 @@ fn run() @suspends ->Int32 {
         assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
         assert_eq!(crate::runtime::arena::LIVE.with(Cell::get), baseline);
     }
+}
+
+#[test]
+fn outbox_large_batches_aggregate_targets_and_preserve_each_fifo() {
+    let vm = VmEngine::new();
+    let owners: Vec<_> = (0..300)
+        .map(|_| create(&vm.domains, 2, 2).unwrap())
+        .collect();
+    let mut outgoing = batch(&vm.domains, 600, 600).unwrap();
+    for owner in owners.iter().rev() {
+        assert_eq!(
+            outgoing
+                .stage(&vm.domains.borrow(), owner.token, &[1])
+                .unwrap(),
+            0
+        );
+    }
+    for owner in &owners {
+        assert_eq!(
+            outgoing
+                .stage(&vm.domains.borrow(), owner.token, &[2])
+                .unwrap(),
+            0
+        );
+    }
+    // Preflight and publication require no additional budget, even above 256 messages.
+    vm.domains
+        .borrow()
+        .budget
+        .limit
+        .set(vm.domains.borrow().budget.bytes.get());
+    outgoing.prepare(&vm.domains.borrow()).unwrap();
+    assert_eq!(outgoing.targets.len(), 300);
+    outgoing.publish();
+    for owner in &owners {
+        let queue = owner.queue.borrow();
+        assert_eq!(queue.bytes, 2);
+        assert_eq!(
+            queue
+                .messages
+                .iter()
+                .map(|m| m.bytes[0])
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+    }
+    vm.domains.borrow().budget.limit.set(usize::MAX);
+    let mut rejected = batch(&vm.domains, 300, 0).unwrap();
+    for owner in owners.iter().rev() {
+        rejected
+            .stage(&vm.domains.borrow(), owner.token, &[])
+            .unwrap();
+    }
+    assert_eq!(
+        rejected.prepare(&vm.domains.borrow()),
+        Err(Status::OutboxFull)
+    );
+    assert_eq!(rejected.failed_target, Some(owners[0].token));
+    drop((outgoing, rejected, owners));
+    assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
 }
