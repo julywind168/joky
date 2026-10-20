@@ -1,0 +1,48 @@
+fn verify_chat_queue(state: &mut Chat) {
+    let slow = state.connect()
+    let healthy = state.connect()
+    var i: UInt64 = 0
+    while i < 62 { check.assert(state.connect() != 0, "client admission") i += 1 }
+    check.assert(state.connect() == 0, "client capacity")
+    state.disconnect(64)
+    check.assert(state.connect() == 65, "client slot reclaimed")
+    let index = state.index(slow)!
+    let client = state.clients.borrow_mut_ref(index)
+    var room = "room"
+    mem.swap(&mut client.room, &mut room)
+    let index = state.index(healthy)!
+    let client = state.clients.borrow_mut_ref(index)
+    var room = "room"
+    mem.swap(&mut client.room, &mut room)
+    var builder = StringBuilder.new()
+    i = 0
+    while i < 1024 { builder.push('x') i += 1 }
+    let message = builder.finish()
+    i = 0
+    while i < 70 {
+        state.broadcast("room", &message)
+        while state.output(healthy)!.length > 0 {}
+        i += 1
+    }
+    check.assert(!state.active(slow), "slow client marked for cancellation")
+    check.assert(state.output(slow).is_none(), "slow client queue discarded")
+    check.assert(state.active(healthy), "healthy client unaffected")
+    state.disconnect(slow)
+    var bytes = Array.new::<UInt8>()
+    while true {
+        let packet = state.output(healthy)!
+        if packet.length == 0 { break }
+        i = 0
+        while i < packet.length { bytes.push(packet.byte(i)) i += 1 }
+    }
+    let notice = String.from_utf8(bytes)!
+    check.assert(notice.equals("left room 1\n"), "overflow removal broadcasts departure")
+    state.disconnect(slow)
+    check.assert(state.output(healthy)!.length == 0, "disconnect is idempotent")
+}
+fn verify_chat_queue_domain() @suspends {
+    let owner = domain.create(make_chat, {})
+    let chat = owner.handle()
+    when (mut chat) { verify_chat_queue(chat) }!
+    owner.close()
+}

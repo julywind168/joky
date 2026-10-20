@@ -116,6 +116,44 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [循环](examples/loops.jk)、[跳转](examples/jumps.jk)、[序列](examples/sequences.jk)、[类型别名](examples/aliases.jk)、[记录](examples/records.jk)、[枚举](examples/enums.jk)、[元组](examples/tuples.jk)、[Int64](examples/int64.jk)、[无符号整数](examples/unsigned.jk)、[位运算](examples/bitwise.jk)、[整数转换](examples/conversions.jk)、[泛型函数](examples/generics.jk)、[泛型枚举](examples/generic_enums.jk)、[泛型记录](examples/generic_records.jk)、[泛型别名](examples/generic_aliases.jk)、[泛型 impl](examples/generic_impls.jk)、[泛型方法](examples/generic_methods.jk)、[受检整数方法](examples/integer_methods.jk)、[VM](examples/vm.jk) 以及
   [C VM](examples/vm_runtime.c) / [C CPS](examples/cps_runtime.c) 示例。
 
+## TCP 状态域聊天室
+
+[chat.jk](examples/chat.jk) 是纯 Joky 服务端，监听 `127.0.0.1:7777`，
+启动时输出实际端口。启动后，在多个终端分别连接：
+
+```sh
+cargo run -- run examples/chat.jk
+# 其他终端：
+nc 127.0.0.1 7777
+```
+
+每行一条指令，支持 LF / CRLF：
+
+```text
+join 123
+say hello world
+leave
+```
+
+`join <room>` 的房间名是非空 UTF-8 字符串，不含空格或 Tab；`say <message>` 在第一个空格
+处分割，保留后续空格。连接收到 `welcome <id>`；房间成员收到
+`joined <room> <id>`、`left <room> <id>` 或 `message <room> <id> <message>`。
+广播包括发送者；换房先离开旧房间，再进入新房间。重复加入返回错误；`leave` 保留连接，
+EOF、读写失败、非法 UTF-8 或超长行会断开并广播离开；错误指令只返回错误，保留连接。
+无换行的末尾残片不执行。Ctrl-C 停止服务端。
+
+示例用一个 `#state Chat` 保存成员、房间名、输入暂存和每个客户端的输出队列；
+`when "command"` 在一次同步操作中更新成员及所有接收者的队列。
+`scope` / `branch` 接受并发连接，连接内 `race` 管理读、写和积压监视，任一结束后移除成员。
+默认最多 64 个连接，每行最多 4096 字节（含结束符），单客户端待发送队列最多 64 KiB；
+队列超限关闭该连接，不阻塞其他成员。网络发送不保证对端已接收，也不提供断线重放。
+
+这也展示了当前的两个使用缺口：域操作尚不接受拥有型 `String` / `Array` 输入和结果，
+因此示例通过 32 字节纯值包搬运文本；普通状态队列没有等待非空的接口，发送任务每 10 ms
+检查队列，积压监视每 100 ms 检查一次。`outbox.receive()` 已支持挂起唤醒，但消息必须通过
+候选提交发布，不能直接从 `when` 推送。这是功能验证 demo，尚未做吞吐或长期运行验收。
+`cargo test --test chat` 在 JIT、解释器、独立 AOT 上执行真实 TCP 对话和域内队列边界检查。
+
 ## 验证
 
 ```sh

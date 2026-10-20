@@ -1,0 +1,238 @@
+import joky/domain
+import joky/task
+import joky/string.{type StringBuilder}
+import joky/integer
+import joky/mem
+import joky/slice
+import joky/array.{type Array}
+import joky/option.{type Option}
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
+
+// Temporary bridge until domain operations accept owning inputs/results.
+// A packet carries up to 32 UTF-8 bytes, not necessarily complete code points.
+struct Packet { a: UInt64, b: UInt64, c: UInt64, d: UInt64, length: UInt64 }
+fn empty_packet() -> Packet { Packet { a: 0, b: 0, c: 0, d: 0, length: 0 } }
+impl Packet {
+    fn push(&mut self, byte: UInt8) {
+        let bits = byte.to_u64()! << ((self.length % 8) * 8)
+        if self.length < 8 { self.a |= bits } else if self.length < 16 { self.b |= bits }
+        else if self.length < 24 { self.c |= bits } else { self.d |= bits }
+        self.length += 1
+    }
+    fn byte(&self, index: UInt64) -> UInt8 {
+        let bits = if index < 8 { self.a } else if index < 16 { self.b }
+            else if index < 24 { self.c } else { self.d }
+        ((bits >> ((index % 8) * 8)) & 255).to_u8()!
+    }
+}
+fn packet_at(bytes: &Array<UInt8>, offset: UInt64) -> Packet {
+    var packet = empty_packet()
+    while packet.length < 32 && offset + packet.length < bytes.len() {
+        let byte = bytes.get(offset + packet.length)!
+        packet.push(byte)
+    }
+    packet
+}
+
+struct Client {
+    id: UInt64, room: String, input: Array<UInt8>, output: Array<UInt8>,
+    offset: UInt64, closing: Bool
+}
+#state
+struct Chat { clients: Array<Client>, next_id: UInt64 }
+fn make_chat(_: Unit) -> Chat { Chat { clients: Array.new::<Client>(), next_id: 1 } }
+fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
+    var text = StringBuilder.from(kind)
+    let number = id.to_string()
+    text.push(' ') text.push_str(room) text.push(' ') text.push_str(&number)
+    if !message.is_empty() { text.push(' ') text.push_str(message) }
+    text.push('\n')
+    text.finish()
+}
+impl Client {
+    fn enqueue(&mut self, text: &String) {
+        if self.closing { return }
+        // A stalled socket must not grow the shared state without bound.
+        if text.byte_length() > 65536 - (self.output.len() - self.offset) {
+            self.closing = true
+            self.output.clear()
+            self.offset = 0
+            return
+        }
+        if self.offset > 0 {
+            var pending = Array.new::<UInt8>()
+            while self.offset < self.output.len() {
+                pending.push(self.output.get(self.offset)!)
+                self.offset += 1
+            }
+            mem.swap(&mut self.output, &mut pending)
+            self.offset = 0
+        }
+        var i: UInt64 = 0
+        while i < text.byte_length() {
+            self.output.push(slice.get(text.bytes(), i)!)
+            i += 1
+        }
+    }
+}
+impl Chat {
+    fn index(&self, id: UInt64) -> Option<UInt64> {
+        var i: UInt64 = 0
+        while i < self.clients.len() {
+            if self.clients.borrow_ref(i).id == id { return Option.Some(i) }
+            i += 1
+        }
+        Option.None
+    }
+    fn connect(&mut self) -> UInt64 {
+        if self.clients.len() >= 64 { return 0 }
+        let id = self.next_id
+        self.next_id += 1
+        var client = Client { id: id, room: "", input: Array.new::<UInt8>(),
+            output: Array.new::<UInt8>(), offset: 0, closing: false }
+        let number = id.to_string()
+        let prefix = "welcome "
+        let welcome = prefix.concat(&number)
+        let greeting = welcome.concat("\n")
+        client.enqueue(&greeting)
+        self.clients.push(client)
+        id
+    }
+    fn broadcast(&mut self, room: &String, text: &String) {
+        var i: UInt64 = 0
+        while i < self.clients.len() {
+            let client = self.clients.borrow_mut_ref(i)
+            if client.room.equals(room) { client.enqueue(text) }
+            i += 1
+        }
+    }
+    fn disconnect(&mut self, id: UInt64) {
+        let index = match self.index(id) { Some(index) => index, None => return }
+        let client = self.clients.swap_remove(index)!
+        if !client.room.is_empty() {
+            let text = event("left", &client.room, id, "")
+            self.broadcast(&client.room, &text)
+        }
+    }
+    fn input(&mut self, id: UInt64, packet: Packet) {
+        let index = match self.index(id) { Some(index) => index, None => return }
+        let client = self.clients.borrow_mut_ref(index)
+        var i: UInt64 = 0
+        while i < packet.length { client.input.push(packet.byte(i)) i += 1 }
+    }
+    fn execute(&mut self, id: UInt64) {
+        let index = match self.index(id) { Some(index) => index, None => return }
+        if self.clients.borrow_ref(index).closing { return }
+        let client = self.clients.borrow_mut_ref(index)
+        let bytes = mem.replace(&mut client.input, Array.new::<UInt8>())
+        let line = String.from_utf8(bytes)!
+        let separator = line.find(" ").unwrap_or(line.byte_length())
+        let command = line.substring(0, separator)!
+        let argument = if separator < line.byte_length() {
+            line.substring(separator + 1, line.byte_length())!
+        } else { "" }
+        let member = self.clients.borrow_ref(index)
+        let room = member.room.clone()
+        if command.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() {
+            if room.equals(&argument) {
+                self.clients.borrow_mut_ref(index).enqueue("error already joined\n")
+                return
+            }
+            if !room.is_empty() {
+                let notice = event("left", &room, id, "")
+                self.broadcast(&room, &notice)
+            }
+            let client = self.clients.borrow_mut_ref(index)
+            var next_room = argument.clone()
+            mem.swap(&mut client.room, &mut next_room)
+            let notice = event("joined", &argument, id, "")
+            self.broadcast(&argument, &notice)
+        } else if line.equals("leave") {
+            if room.is_empty() { self.clients.borrow_mut_ref(index).enqueue("error join a room first\n") }
+            else {
+                let notice = event("left", &room, id, "")
+                self.broadcast(&room, &notice)
+                let client = self.clients.borrow_mut_ref(index)
+                var next_room = ""
+                mem.swap(&mut client.room, &mut next_room)
+            }
+        } else if command.equals("say") && !argument.is_empty() {
+            if room.is_empty() { self.clients.borrow_mut_ref(index).enqueue("error join a room first\n") }
+            else {
+                let notice = event("message", &room, id, &argument)
+                self.broadcast(&room, &notice)
+            }
+        } else { self.clients.borrow_mut_ref(index).enqueue("error use join <room>, leave, or say <message>\n") }
+    }
+    fn output(&mut self, id: UInt64) -> Option<Packet> {
+        let index = match self.index(id) { Some(index) => index, None => return Option.None }
+        let client = self.clients.borrow_mut_ref(index)
+        if client.closing { return Option.None }
+        let packet = packet_at(&client.output, client.offset)
+        client.offset += packet.length
+        if client.offset == client.output.len() { client.output.clear() client.offset = 0 }
+        Option.Some(packet)
+    }
+    fn active(&self, id: UInt64) -> Bool {
+        let index = match self.index(id) { Some(index) => index, None => return false }
+        !self.clients.borrow_ref(index).closing
+    }
+}
+
+fn receive(chat: domain.WriteHandle<Chat>, id: UInt64, reader: BufferedTcpReader) @suspends {
+    var reader = reader
+    while true {
+        let line = match reader.read_line(4096) { Ok(Some(line)) => line, _ => return }
+        let bytes = line.into_bytes()
+        var offset: UInt64 = 0
+        while offset < bytes.len() {
+            let packet = packet_at(&bytes, offset)
+            chat.input(id, packet)!
+            offset += packet.length
+        }
+        // Membership and all recipient queues change in one synchronous domain turn.
+        when "command" (mut chat) { chat.execute(id) }!
+    }
+}
+fn send(chat: domain.WriteHandle<Chat>, id: UInt64, writer: TcpWriter) @suspends {
+    var writer = writer
+    while true {
+        var bytes = Array.new::<UInt8>()
+        while bytes.len() < 4096 {
+            let packet = match chat.output(id)! { Some(packet) => packet, None => return }
+            if packet.length == 0 { break }
+            var i: UInt64 = 0
+            while i < packet.length { bytes.push(packet.byte(i)) i += 1 }
+        }
+        if bytes.is_empty() { task.sleep_ms(10) }
+        else if writer.write_all(bytes).is_err() { return }
+    }
+}
+fn monitor(chat: domain.WriteHandle<Chat>, id: UInt64) @suspends {
+    // Also interrupt a writer blocked inside write_all after its queue overflows.
+    while chat.active(id)! { task.sleep_ms(100) }
+}
+fn session(chat: domain.WriteHandle<Chat>, id: UInt64, stream: TcpStream) @suspends {
+    let (reader, writer) = BufferedTcp.new(stream).split()
+    race { | receive(chat, id, reader) | send(chat, id, writer) | monitor(chat, id) }
+    // Either EOF or a failed writer cancels the other half before removing membership.
+    chat.disconnect(id)!
+}
+fn main() @suspends -> Int32 {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
+        Ok(listener) => listener, Err(_) => { println("Could not bind chat listener") return 1 }
+    }
+    let address = listener.local_addr()!
+    println(address.port())
+    let owner = domain.create(make_chat, {})
+    let chat = owner.handle()
+    scope {
+        while true {
+            let stream = match listener.accept() { Ok(stream) => stream, Err(_) => break }
+            let id = chat.connect()!
+            if id == 0 { stream.close(); }
+            else { branch { session(chat, id, stream) } }
+        }
+    }
+    0
+}
