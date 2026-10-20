@@ -1,0 +1,6 @@
+fn source_loading() @suspends ->Int32 {
+    let engine=vm.Vm.interpreter()
+    engine.load_file("empty.jk").unwrap()
+    engine.publish_file("empty.jk").unwrap()
+    42
+}

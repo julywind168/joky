@@ -73,7 +73,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | Godot 原型 | G0–G2：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API、帧回调、所属任务与引擎等待；TCP 双向收发、背压与消息生命周期已联合验收；[构建和示例](integrations/godot/README.md) |
 | 文件 | `joky/fs`：异步 open/read/write/seek/sync_all/close、二进制字节与显式 UTF-8 转换；CLI 提供本机服务，嵌入默认 Unsupported；[文件示例](examples/files.jk)；Godot 验证适配器不提供文件服务 |
 | 网络 | 共享 I/O reactor、IPv4/IPv6 TCP、独立读写端与缓冲拆分、完整写入、有界接收缓冲、读满/分隔符/UTF-8 行、四字节大端长度前缀消息；CLI/JIT/解释器/AOT 验证，Godot 已验收双向收发、背压与消息生命周期 |
-| 标准库 | 默认 prelude、option/result/integer/float/array/list/set/map/string/show/io/eq/hash/check 源码库、模块及成员别名；`joky/vm` 源码库、拥有型 `Vm` 与自动释放、加载、整数与浮点调用、重载、关闭和错误查询 |
+| 标准库 | 默认 prelude、option/result/integer/float/array/list/set/map/string/show/io/eq/hash/check 源码库、模块及成员别名；`joky/vm` 源码库、拥有型 `Vm` 与自动释放、源码／文件加载、原子兼容发布与结构化错误、整数与浮点调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
 [多文件示例](examples/modules/main.jk)。尚无包管理或多线程调度。显示与插值见 [Show 示例](examples/show.jk)，默认方法与关联类型见 [Source 示例](examples/trait_sources.jk)，文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)，C 文本边界见 [Rust 注册示例](examples/text_ffi.rs)及 [C 适配示例](examples/text_ffi.c)。

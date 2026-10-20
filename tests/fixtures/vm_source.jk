@@ -1,0 +1,80 @@
+import joky/vm
+import joky/fs
+import joky/domain
+import joky/task
+import joky/check
+fn expect(ok:Bool){let message="VM source convenience assertion failed" check.assert(ok,&message)}
+fn answer(h:&vm.Vm)->Int32 {let name="answer" vm.call_int32_0(h,&name)}
+fn failure(h:&vm.Vm,path:String,kind:Int32) @suspends {
+    match h.publish_file(path.clone()) {
+        Ok(_) => expect(false)
+        Err(error) => {
+            expect(error.path.equals(&path))
+            expect(match error.kind {
+                vm.LoadErrorKind.Io(_) => kind==1
+                vm.LoadErrorKind.Utf8(_) => kind==2
+                vm.LoadErrorKind.Compile(diagnostic) => {expect(diagnostic.message.byte_length()>0) kind==3}
+                vm.LoadErrorKind.Incompatible(_) => kind==4
+                _ => false
+            })
+        }
+    }
+    expect(answer(h)==1)
+}
+fn update(h:&vm.Vm,directory:domain.DirectoryHandle,other:&vm.Vm,other_directory:domain.DirectoryHandle) @suspends {
+    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {task.yield_now()}
+    while other.call::<domain.DirectoryHandle,Int32>("probe",other_directory)==-1 {task.yield_now()}
+    expect(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==41)
+    expect(h.call::<Int32,Bool>("files",0))
+    failure(h,"missing.jk",1)
+    failure(h,"utf8.jk",2)
+    failure(h,"syntax.jk",3)
+    failure(h,"imports.jk",3)
+    failure(h,"read_error.jk",1)
+    failure(h,"close_error.jk",1)
+    failure(h,"schema.jk",4)
+    expect(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==41)
+    expect(vm.module_count(h)==1)
+    expect(h.publish_file("new.jk").unwrap()==1)
+    expect(answer(h)==2)
+    expect(answer(other)==1)
+    expect(other.call::<domain.DirectoryHandle,Int32>("probe",other_directory)==41)
+    expect(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42)
+    // Loading replaces only the entry; the existing domain keeps its new implementation.
+    h.load_file("old.jk").unwrap()
+    expect(answer(h)==1)
+    expect(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42)
+    expect(h.publish_file("old.jk").unwrap()==1)
+    expect(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==41)
+}
+fn run(interpreted:Bool) @suspends ->Int32 {
+    let h=if interpreted {vm.Vm.interpreter()}else{vm.Vm.new()}
+    h.load_source("fn answer()->Int32{{7}}").unwrap()
+    expect(answer(&h)==7)
+    expect(h.publish_source("fn answer()->Int32{{8}}").unwrap()==0)
+    expect(answer(&h)==8)
+    match h.load_source("fn broken(") {
+        Err(error)=>{
+            let path="<source>"
+            expect(error.path.equals(&path))
+            expect(match error.kind{vm.LoadErrorKind.Compile(d)=>d.has_span,_=>false})
+        }
+        Ok(_)=>expect(false)
+    }
+    expect(answer(&h)==8)
+    h.load_file("empty.jk").unwrap()
+    h.load_file("old.jk").unwrap()
+    let directory=domain.directory(1)
+    let other=vm.Vm.interpreter()
+    other.load_file("old.jk").unwrap()
+    let other_directory=domain.directory(1)
+    race {
+        | h.call::<domain.DirectoryHandle,Unit>("hold",directory.handle())
+        | other.call::<domain.DirectoryHandle,Unit>("hold",other_directory.handle())
+        | update(&h,directory.handle(),&other,other_directory.handle())
+    };
+    expect(h.call::<domain.DirectoryHandle,Int32>("probe",directory.handle())==-1)
+    0
+}
+fn run_jit() @suspends ->Int32 {run(false)}
+fn run_interp() @suspends ->Int32 {run(true)}

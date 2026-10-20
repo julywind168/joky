@@ -114,7 +114,10 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
-        if matches!(plan.functions[name].builtin, Some(Builtin::VmCall)) {
+        if matches!(
+            plan.functions[name].builtin,
+            Some(Builtin::VmCall | Builtin::VmSource)
+        ) {
             linkage = Linkage::Local;
             symbol = format!("__joky_vm_adapter_{symbol}");
         } else if matches!(plan.functions[name].builtin, Some(Builtin::Domain(_))) {
@@ -401,6 +404,7 @@ pub(crate) fn compile<M: Module>(
             match builtin {
                 Builtin::Dns => lower::runtime_entry(&mut builder, &refs, "__joky_dns_poll"),
                 Builtin::VmCall => lower::runtime_entry(&mut builder, &refs, "__joky_vm_call"),
+                Builtin::VmSource => lower::runtime_entry(&mut builder, &refs, "__joky_vm_source"),
                 Builtin::Domain(op) => lower::domain_entry(&mut builder, *op, &refs),
                 Builtin::Tcp(op) => lower::tcp_entry(&mut builder, *op, &refs),
                 Builtin::Fs(op) => lower::fs_entry(&mut builder, *op, &refs),

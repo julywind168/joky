@@ -249,3 +249,5 @@ pub(crate) fn module_registry() -> Rc<ModuleRegistry> {
 }
 
 pub(crate) use vm::{call_poll, call_poll_native};
+
+pub(crate) use vm::{source_poll, source_poll_native};

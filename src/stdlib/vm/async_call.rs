@@ -14,7 +14,7 @@ pub(crate) use diagnostics::{module_count, print_modules};
 pub(super) struct HandleState {
     pub(super) engine: RefCell<VmEngine>,
     session: RefCell<Option<Session>>,
-    modules: RefCell<Vec<Weak<dyn Any>>>,
+    pub(super) modules: RefCell<Vec<Weak<dyn Any>>>,
     migration: RefCell<Option<Migration>>,
 }
 enum Migration {
@@ -55,7 +55,7 @@ impl HandleState {
             }
         }
     }
-    fn bind(&self, executor: &HostExecutor) -> Result<(), Error> {
+    pub(super) fn bind(&self, executor: &HostExecutor) -> Result<(), Error> {
         let mut context = self.session.borrow_mut();
         if let Some(session) = context.as_ref() {
             if !session

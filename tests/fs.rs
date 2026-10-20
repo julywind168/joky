@@ -208,7 +208,12 @@ fn descriptor_cancellation(exhaustive: bool) {
         vm::InterpreterLimits,
     };
     use std::sync::{atomic::Ordering, Arc};
-    for (mode, entry) in [(0, "run"), (2, "malformed"), (0, "convenience")] {
+    for (mode, entry) in [
+        (0, "run"),
+        (2, "malformed"),
+        (0, "convenience"),
+        (0, "source_loading"),
+    ] {
         let stats = Arc::new(descriptor_host::Stats {
             mode,
             ..Default::default()
@@ -223,9 +228,10 @@ fn descriptor_cancellation(exhaustive: bool) {
         })
         .unwrap();
         vm.load_source(&format!(
-            "{}\n{}",
+            "import joky/vm\n{}\n{}\n{}",
             include_str!("fixtures/fs.jk"),
-            include_str!("fixtures/fs_convenience_cancel.jk")
+            include_str!("fixtures/fs_convenience_cancel.jk"),
+            include_str!("fixtures/vm_source_cancel.jk")
         ))
         .unwrap();
         let execute = |cut: usize| {

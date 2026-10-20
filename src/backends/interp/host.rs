@@ -56,6 +56,7 @@ impl BoundHost {
                 })?)
             }
             HostEntry::VmCall
+            | HostEntry::VmSource
             | HostEntry::Domain(_)
             | HostEntry::Dns
             | HostEntry::Tcp(_)
@@ -78,6 +79,7 @@ impl BoundHost {
         matches!(
             self.binding.entry,
             HostEntry::VmCall
+                | HostEntry::VmSource
                 | HostEntry::Domain(_)
                 | HostEntry::Dns
                 | HostEntry::Tcp(_)
@@ -198,6 +200,7 @@ impl HostPending {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
             HostEntry::VmCall
+            | HostEntry::VmSource
             | HostEntry::Domain(_)
             | HostEntry::Dns
             | HostEntry::Tcp(_)
@@ -232,6 +235,7 @@ impl HostPending {
             frame.slots[index] = if matches!(
                 host.binding.entry,
                 HostEntry::VmCall
+                    | HostEntry::VmSource
                     | HostEntry::Domain(_)
                     | HostEntry::Dns
                     | HostEntry::Tcp(_)
@@ -317,6 +321,11 @@ impl HostPending {
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
         self.notification = crate::runtime::executor::current_waker().map(|w| w.observe());
+        if matches!(self.host.binding.entry, HostEntry::VmSource) {
+            let result = unsafe { crate::stdlib::source_poll(arena, &mut self.frame) }?;
+            self.frame.result = result;
+            return Ok(Some(Value::Reference(result as usize as *mut u8)));
+        }
         if matches!(self.host.binding.entry, HostEntry::VmCall) {
             return unsafe { crate::stdlib::call_poll(&mut self.frame) }
                 .map(|value| value.map(|_| Value::Unit));

@@ -4088,6 +4088,58 @@ Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失�
 或 AOT 宿主中同名状态不受影响；仅加载不发布不会替换域代码。跨版本布局与调用兼容规则同
 前述状态域接口。标量范围与验收见[热更新计划](aot-script-hot-reload.md#61-hr2-标量异步探针已实现)。
 
+### 文件加载与原子兼容发布
+
+`Vm` 提供返回 `Result` 的便利方法；以下方法均为 `@suspends`，接受拥有型 `String`：
+
+| 方法 | 返回值与行为 |
+| --- | --- |
+| `engine.load_source(source)` | `Result<Unit, vm.LoadError>`；成功替换当前 Script 入口，已有状态域继续使用其原代码 |
+| `engine.load_file(path)` | 同上；使用调用任务的文件服务读取完整 UTF-8 源码，并在编译前关闭文件 |
+| `engine.publish_source(source)` | `Result<UInt64, vm.LoadError>`；编译暂存模块，校验并一起切换当前 Script 入口与所属兼容域的代码，返回切换域数 |
+| `engine.publish_file(path)` | 同上；先读取并关闭文件，再执行同一原子发布路径 |
+
+加载失败保留当前入口。原子发布的编译、兼容性检查或周期任务预备失败时，当前入口与
+目标域代码均保持原版本；预备任务被取消。成功时即使没有待切换域，也安装新入口并返回 0。
+域的选择沿用 `publish_domain_code`：只处理该 Script 历史模块所属、仍存活且新版声明了同名
+状态类型的域；其他 Script 的域不受影响。布局变化必须显式迁移。数据根和数据修订不因
+兼容代码发布改变；已启动流程仍使用启动版本，之后的域操作按已有晚绑定规则执行。
+
+文件入口沿用 `fs.File.read_text()`，不提供额外的 `_limited` 方法；任务存储与文件服务
+预算仍生效。路径按宿主文件服务解析，CLI 本机服务以启动工作目录为基准。没有文件能力时
+返回 `Io(Unsupported)`；读取脚本不会给子 VM 自动授予文件能力。读取或 UTF-8 校验失败后
+仍关闭文件；读取与关闭同时失败时报告读取错误，读取成功而关闭失败时不编译、不发布。
+文件内容读取完毕后固定为本次编译输入，但不保证并发写入期间的文件系统快照一致性。
+
+第一版保持单源码导入范围，不自动搜索文件依赖。错误的 `path` 保存读取路径；源码方法
+使用 `<source>`。诊断文件名不改变根模块默认逻辑身份 `main`，因此同一 Script 从另一条
+文件路径加载兼容实现，不会仅因路径不同改变 `when` 操作身份。
+
+`vm.LoadError` 包含拥有型 `path: String` 与 `kind: vm.LoadErrorKind`：
+
+- `Io(fs.IoError)`：打开、读取或关闭失败；保留文件错误分类和消息。
+- `Utf8(Utf8Error)`：文件内容不是合法 UTF-8。
+- `Compile(vm.Diagnostic)`：解析、导入解析、类型检查或代码生成失败。
+- `Incompatible(vm.Diagnostic)`：活跃目标域的状态 schema 不兼容。
+- `Conflict(vm.Diagnostic)`：执行器／操作状态不匹配，或发布准备期间域凭据发生变化。
+- `Runtime(vm.Diagnostic)`：其他运行时失败，包括发布的资源不足。
+
+`Diagnostic` 含 `message: String`、`has_span: Bool`、`start/end: UInt64`；有位置时为源码
+UTF-8 字节的半开区间，无位置时两端为 0。错误值独立保存，可跨挂起保留，不依赖
+`vm.error_code()` 或 `vm.print_error()`。任务取消、任务预算不足以构造结果以及内部 ABI
+违约仍走任务失败／清理通道，不保证都能分配出业务 `Err`。提交完成后、调用方领取结果前
+发生取消或任务失败，不撤销已经提交的代码更新。
+
+旧的自由函数 `vm.load_source(engine, &source)`／`vm.reload_source` 保留状态码协议；
+`engine.load_source(source)` 是新的拥有型、可挂起、`Result` 方法。文件 I/O 可挂起，
+编译和最终发布仍同步执行，不提供编译线程池、文件监视或自动重载。
+
+Rust 嵌入方可使用 `VmEngine::load_named_source(name, source)` 保留诊断文件名；
+`VmEngine::publish_source(source)` 对该引擎域注册表执行同样的原子兼容发布。
+行为示例见 [文件加载／发布 fixture](../tests/fixtures/vm_source.jk)。
+
+### 显式状态迁移
+
 迁移入口是 `fn upgrade(old: &PreviousState) -> Room`。`PreviousState` 由运行时根据
 实际旧根的类型生成，再与新源码一起编译；业务源码不能重复声明该名字。新根必须与旧根同名，
 且 schema 确实变化；根仍限非泛型记录。HR5-B1 支持无用户 Drop 的有限拥有图：嵌套记录、

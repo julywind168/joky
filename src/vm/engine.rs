@@ -599,6 +599,7 @@ impl VmEngine {
         staging.types = self.types.clone();
         staging.next_version = self.next_version;
         staging.interpreter_limits = self.interpreter_limits;
+        staging.files = self.files.clone();
         staging.load_module(ast)?;
         Ok((staging.current.take().unwrap(), staging.next_version))
     }
@@ -615,6 +616,24 @@ impl VmEngine {
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, Error> {
         self.load_module(&parser::parse(source)?)
+    }
+
+    /// Load a source snapshot with a diagnostic filename, independently of module identity.
+    pub fn load_named_source(&mut self, name: &str, source: &str) -> Result<Vec<String>, Error> {
+        self.load_module(&Self::parse_named_source(name, source)?)
+    }
+
+    pub(super) fn parse_named_source(
+        name: &str,
+        source: &str,
+    ) -> Result<parser::ast::Module, Error> {
+        let file = crate::SourceFile::new(name, source);
+        let mut sources = crate::SourceMap::default();
+        sources.insert(file.clone());
+        let mut ast = parser::parse_with_source(file.text(), file.id())
+            .map_err(|error| Error::from(error).with_sources(&sources))?;
+        ast.sources = std::sync::Arc::new(sources);
+        Ok(ast)
     }
 
     /// Resolve user imports only from caller-supplied source snapshots.
@@ -718,6 +737,7 @@ impl VmEngine {
                 );
                 let entry = match builtin {
                     Builtin::VmCall => HostEntry::VmCall,
+                    Builtin::VmSource => HostEntry::VmSource,
                     Builtin::Domain(op) => HostEntry::Domain(*op),
                     Builtin::Tcp(op) => HostEntry::Tcp(*op),
                     Builtin::Fs(op) => HostEntry::Fs(*op),
@@ -836,7 +856,8 @@ impl VmEngine {
                 | HostEntry::Tcp(_)
                 | HostEntry::Fs(_)
                 | HostEntry::Dns
-                | HostEntry::VmCall => {
+                | HostEntry::VmCall
+                | HostEntry::VmSource => {
                     unreachable!("Network runtime adapter")
                 }
                 HostEntry::Direct(ptr) | HostEntry::C(ptr) => {

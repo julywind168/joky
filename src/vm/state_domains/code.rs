@@ -174,6 +174,47 @@ impl VmEngine {
     }
 }
 
+impl VmEngine {
+    /// Compile and atomically replace the entry module and compatible live domain code.
+    /// Schema changes require an explicit migration. Existing calls retain their module.
+    pub fn publish_source(&mut self, source: &str) -> Result<usize, Error> {
+        let registry = self.domains.clone();
+        self.publish_source_matching(&registry, "<source>", source, |_| true)
+    }
+
+    pub(crate) fn publish_script_source(
+        &mut self,
+        executor: &crate::runtime::executor::HostExecutor,
+        owners: &[Rc<dyn std::any::Any>],
+        name: &str,
+        source: &str,
+    ) -> Result<usize, Error> {
+        self.publish_source_matching(&executor.domains(), name, source, |bound| {
+            owners
+                .iter()
+                .any(|owner| Rc::as_ptr(owner) as *const () as usize == module_key(bound))
+        })
+    }
+
+    fn publish_source_matching(
+        &mut self,
+        registry: &Rc<RefCell<Domains>>,
+        name: &str,
+        source: &str,
+        owns: impl Fn(&LoadedModule) -> bool,
+    ) -> Result<usize, Error> {
+        let ast = Self::parse_named_source(name, source)?;
+        let (module, next_version) = self.stage_module(&ast)?;
+        let mut previous = None;
+        let count = publish_matching_with(registry, &module, owns, || {
+            previous = self.install_staged(module.clone(), next_version);
+        })?;
+        // Release old entry code after domain publication and timer activation.
+        drop(previous);
+        Ok(count)
+    }
+}
+
 fn publish(registry: &Rc<RefCell<Domains>>, module: &LoadedModule) -> Result<usize, Error> {
     publish_matching(registry, module, |_| true)
 }
@@ -182,6 +223,15 @@ fn publish_matching(
     registry: &Rc<RefCell<Domains>>,
     module: &LoadedModule,
     owns: impl Fn(&LoadedModule) -> bool,
+) -> Result<usize, Error> {
+    publish_matching_with(registry, module, owns, || {})
+}
+
+fn publish_matching_with(
+    registry: &Rc<RefCell<Domains>>,
+    module: &LoadedModule,
+    owns: impl Fn(&LoadedModule) -> bool,
+    commit: impl FnOnce(),
 ) -> Result<usize, Error> {
     let types = state_types(module);
     let domains = registry.borrow();
@@ -281,6 +331,7 @@ fn publish_matching(
             domain.source_module = key;
         }
     }
+    commit();
     drop(domains);
     drop(periodic);
     // Old code is released outside the registry borrow, once nothing else holds it.

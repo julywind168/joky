@@ -339,3 +339,53 @@ fn every_declarations_prepared_tasks_cannot_run_before_atomic_publication() {
         assert_eq!(registry.borrow().usage(), (0, 0, 0, 0));
     }
 }
+
+#[test]
+fn vm_source_atomic_publication_preserves_entry_and_timers_on_failure() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let source = format!("{AUTO}\nfn version()->Int32{{1}}");
+        let (mut vm, clock) = setup_auto(mode, &source, 2);
+        let owner = create_auto(&vm);
+        let original = vm.current.clone().unwrap();
+        let usage = vm.domains.borrow().usage();
+        let next = source
+            .replace("{1}", "{2}")
+            .replace("self.value+=1", "self.value+=2");
+        let overloaded = format!("{next}\nimpl Room{{#every(10) fn extra(&mut self){{self.value+=100}} #every(10) fn third(&mut self){{self.value+=1000}}}}");
+        assert!(vm.publish_source(&overloaded).is_err());
+        assert!(source::same_module(vm.current.as_ref().unwrap(), &original));
+        assert_eq!(vm.call_int32_0("version").unwrap(), 1);
+        assert_eq!(vm.task_count(), 1);
+        assert_eq!(vm.domains.borrow().usage(), usage);
+        advance(&vm, &clock, 10);
+        assert_eq!(value(&vm, &owner), 11);
+        assert_eq!(vm.publish_source(&next).unwrap(), 1);
+        assert_eq!(vm.call_int32_0("version").unwrap(), 2);
+        advance(&vm, &clock, 10);
+        assert_eq!(value(&vm, &owner), 13);
+        owner.close();
+        drive(&vm);
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}
+
+#[test]
+fn vm_source_atomic_publication_revalidates_after_clock_callbacks() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let source = format!("{AUTO}\nfn version()->Int32{{1}}");
+        let (mut vm, clock) = setup_auto(mode, &source, 64);
+        let owner = create_auto(&vm);
+        let registry = vm.domains.clone();
+        let sequence = owner.handle.sequence;
+        *clock.hook.borrow_mut() = Some(Box::new(move || {
+            close(&registry, sequence);
+        }));
+        let next = source
+            .replace("#every(10)", "#every(20)")
+            .replace("{1}", "{2}");
+        assert!(vm.publish_source(&next).is_err());
+        assert_eq!(vm.call_int32_0("version").unwrap(), 1);
+        assert_eq!(vm.task_count(), 0);
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+    }
+}

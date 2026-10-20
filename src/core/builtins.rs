@@ -12,6 +12,7 @@ use crate::{
 pub(crate) enum Builtin {
     Vm(Box<BindingSpec>),
     VmCall,
+    VmSource,
     Tcp(tcp::Operation),
     Dns,
     Fs(crate::runtime::fs::Operation),
@@ -22,6 +23,8 @@ impl Builtin {
     pub(crate) fn lookup(name: &str) -> Option<Self> {
         if name == "__vm_call" {
             Some(Self::VmCall)
+        } else if name == "__vm_source" {
+            Some(Self::VmSource)
         } else if let Some(op) = tcp::operation(name) {
             Some(Self::Tcp(op))
         } else if let Some(op) = crate::runtime::fs::operation(name) {
@@ -46,8 +49,13 @@ impl Builtin {
         c_abi: bool,
     ) -> Result<(), Error> {
         match self {
-            Self::VmCall => {
-                if c_abi || !suspends || *signature != super::vm::call_signature() {
+            Self::VmCall | Self::VmSource => {
+                let expected = if matches!(self, Self::VmSource) {
+                    super::vm::source_signature()
+                } else {
+                    super::vm::call_signature()
+                };
+                if c_abi || !suspends || *signature != expected {
                     return Err(Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError,
                         "VM call requires its exact compiler-owned signature and suspension convention"));
                 }
@@ -78,7 +86,7 @@ impl Builtin {
         let Item::ExternFn(f) = item else {
             let Item::FnDef(f) = item else { unreachable!() };
             return Err(match self {
-                Self::Vm(_) | Self::VmCall => Error::new_with_code(
+                Self::Vm(_) | Self::VmCall | Self::VmSource => Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::ReservedName,
                     "VM runtime names require checked extern declarations",

@@ -125,3 +125,17 @@ pub(crate) fn call_signature() -> FunctionSignature {
         Type::Unit,
     )
 }
+
+/// Source operations return an owned diagnostic and fill five checked scalar lanes.
+pub(crate) fn source_signature() -> FunctionSignature {
+    FunctionSignature::new(
+        vec![
+            Type::reference(Type::Resource("vm.Owner".into()), false),
+            Type::String,
+            Type::String,
+            Type::Bool,
+            Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+        ],
+        Type::String,
+    )
+}

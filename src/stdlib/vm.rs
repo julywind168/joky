@@ -271,3 +271,6 @@ pub(crate) use async_call::{
 
 #[cfg(test)]
 mod server_tests;
+
+mod source;
+pub(crate) use source::{source_poll, source_poll_native};
