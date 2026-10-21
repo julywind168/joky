@@ -1,4 +1,4 @@
-//! Typed Script calls use a private, frame-owned scalar packet.
+//! Typed Script and domain calls use private, frame-owned value packets.
 use super::*;
 use crate::parser::ast::BufferIntrinsic;
 
@@ -30,15 +30,11 @@ impl FunctionPlan {
         let schema = if checking {
             String::new()
         } else {
-            let contract = if domain {
-                crate::core::script::domain_schema(ty).filter(|_| self.domain_value(ty))
-            } else {
-                crate::core::script::schema(ty).filter(|_| !self.has_custom_drop(ty))
-            };
+            let contract = crate::core::script::domain_schema(ty).filter(|_| self.domain_value(ty));
             contract.ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, if domain {
                 "Domain contracts require bounded values without Drop: scalars, String, Array, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
             } else {
-                "Script contracts require bounded pure values without Drop: scalars, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
+                "Script contracts require bounded values without Drop: scalars, String, Array, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
             }))?
         };
         if matches!(kind, CompilerIntrinsic::ScriptSchema(_)) {

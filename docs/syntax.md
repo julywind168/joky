@@ -428,7 +428,7 @@ SC4-A 已提供 `joky/admission`：池拥有者、可复制申请句柄、唯一
 Joky AOT 主程序加载动态 Script 的目标见 [热更新开发计划](aot-script-hot-reload.md)。
 HR0 已提供 Rust 宿主的域代码发布、多域执行前检查与完整读取凭据的代码版本校验；
 HR2 标量异步链路已提供 `Vm.call<Int32, Int32>` 与 `vm.publish_domain_code`，支持独立 AOT
-宿主；HR1 已扩展域根的嵌套记录与 Array/Map 拥有图。HR2 已提供 `Vm.call<A, R>` 的标量/平面记录契约；HR3-A 已提供运行时字节信箱与候选提交的联合发布，HR3-B 已提供可跨 Script 传递句柄的有界弱引用域目录；HR4 已提供显式 Timer/after/every，周期调用按当前代码执行并跳过错过的节拍；HR5-A 已提供单个平面标量域的显式 schema 迁移，HR5-B1 已扩展为同步拥有图迁移，HR5-B2 已提供显式 begin/step 分批构建，HR5-C 已支持同一 Script 全部存活域的整批原子迁移；HR6 已支持从第一个域解析具名多域操作及基础模块持有诊断；HR7 已完成 TCP/tick/热修复/迁移联合功能验收，并将 Script 契约扩展为有界嵌套纯值记录，普通 Context 可组合目录、信箱和定时器句柄。性能预算、通用拥有型消息桥接、配置快照及跨 Script 迁移仍待后续阶段，不改变当前 `import` 的含义。
+宿主；HR1 已扩展域根的嵌套记录与 Array/Map 拥有图。HR2 已提供 `Vm.call<A, R>` 的标量/平面记录契约；HR3-A 已提供运行时字节信箱与候选提交的联合发布，HR3-B 已提供可跨 Script 传递句柄的有界弱引用域目录；HR4 已提供显式 Timer/after/every，周期调用按当前代码执行并跳过错过的节拍；HR5-A 已提供单个平面标量域的显式 schema 迁移，HR5-B1 已扩展为同步拥有图迁移，HR5-B2 已提供显式 begin/step 分批构建，HR5-C 已支持同一 Script 全部存活域的整批原子迁移；HR6 已支持从第一个域解析具名多域操作及基础模块持有诊断；HR7 已完成 TCP/tick/热修复/迁移联合功能验收，并将 Script 契约扩展为有界嵌套纯值记录，普通 Context 可组合目录、信箱和定时器句柄。性能预算、Map／资源消息、配置快照及跨 Script 迁移仍待后续阶段，不改变当前 `import` 的含义。
 状态域 API 收敛契约、服务端业务写法与实施阶段见[状态域语法糖草案](state-domain-syntax.md)。
 目录已改用 `lookup::<S>` / `lookup_write::<S>`，无需用户投影；具名短操作已统一执行前访问错误，
 候选版本失效统一为 Conflict。`query/query_from/query_pair` 已支持带标量或有界纯值记录输入的只读查询；
@@ -440,7 +440,8 @@ W0–W4 已实现 1–64 域 `when`、可选字符串标签、独立纯值捕获
 W5 已将两种写法接入服务端联合示例，验证跨发布旧流程、入口不兼容拒绝、候选信箱与等待期间取消，
 见[业务验收](aot-script-hot-reload.md#111-hr7-服务器联合功能验收已实现)。
 状态域传递值现已支持 String、Array 及嵌套记录、元组、Option／业务 Result；when 捕获按值移动，
-快照取值和周期输入分别建立独立拥有值。Vm.call 保持纯值契约，Map／资源消息仍待后续阶段。
+快照取值和周期输入分别建立独立拥有值。Vm.call 已接通同一 String／Array 拥有值契约，
+每次调用独立解码输入与结果；Map／资源消息仍待后续阶段。
 E0–E3 已将共同纯值契约扩展到具体枚举，包括 Option 和业务 Result；状态域与 Script 桥同样检查
 全部分支、具体类型参数与未使用槽位。V0–V3 已补齐元组和具体泛型记录载荷，支持与 Option／Result
 任意组合（仍受共同额度限制）；Map／资源载荷和泛型函数内的 `when` 仍未开放。

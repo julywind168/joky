@@ -188,6 +188,7 @@ pub(crate) fn infer(
                 body.domain_value(&info.signature.params[0])
                     && body.domain_value(&info.signature.ret)
             });
+        info.script_entry &= info.domain_request_entry;
         let pair = safe.contains(name)
             && pair_eligible(info)
             && info.signature.params[..access_count(info)]

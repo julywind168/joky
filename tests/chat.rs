@@ -39,16 +39,19 @@ impl Server {
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let mut port = String::new();
-            let result = BufReader::new(stdout).read_line(&mut port).map(|_| port);
+            let mut stdout = BufReader::new(stdout);
+            let result = stdout.read_line(&mut port).map(|_| port);
             let _ = sender.send(result);
+            let _ = std::io::copy(&mut stdout, &mut std::io::sink());
         });
-        let port = receiver
+        let line = receiver
             .recv_timeout(Duration::from_secs(60))
             .expect("server must announce its bound port")
-            .unwrap()
+            .unwrap();
+        let port = line
             .trim()
             .parse()
-            .unwrap();
+            .unwrap_or_else(|_| panic!("server did not announce a port: {line}"));
         (server, port)
     }
 }
@@ -96,7 +99,7 @@ impl Peer {
     }
 }
 
-fn conversation(port: u16, members: u64) {
+fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &str) {
     let mut alice = Peer::connect(port, 1);
     let mut bob = Peer::connect(port, 2);
     let mut carol = Peer::connect(port, 3);
@@ -112,6 +115,38 @@ fn conversation(port: u16, members: u64) {
     bob.expect("joined 123 2\n");
     carol.send("join 房间\n");
     carol.expect("joined 房间 3\n");
+    // Publish a business change without replacing either socket or membership.
+    let patched = logic.replace(
+        "event(\"message\", room, id, text)",
+        "event(\"message-v2\", room, id, text)",
+    );
+    assert_ne!(patched, logic);
+    std::fs::write(logic_path, &patched).unwrap();
+    alice.send("reload\n");
+    alice.expect("reloaded\n");
+    bob.send("say updated\n");
+    alice.expect("message-v2 123 2 updated\n");
+    bob.expect("message-v2 123 2 updated\n");
+    for invalid in [
+        format!("{patched}\nfn broken("),
+        patched.replace("next_id", "sequence"),
+    ] {
+        std::fs::write(logic_path, invalid).unwrap();
+        alice.send("reload\n");
+        alice.expect("reload failed\n");
+        bob.send("say preserved\n");
+        alice.expect("message-v2 123 2 preserved\n");
+        bob.expect("message-v2 123 2 preserved\n");
+    }
+    std::fs::remove_file(logic_path).unwrap();
+    alice.send("reload\n");
+    alice.expect("reload failed\n");
+    std::fs::write(logic_path, logic).unwrap();
+    alice.send("reload\n");
+    alice.expect("reloaded\n");
+    alice.quiet();
+    bob.quiet();
+
     // Coalesced commands, spaces and UTF-8 spanning the packet boundary.
     let message = format!("{}你好 🙂  hello world", "x".repeat(27));
     alice.send(format!("say {message}\nsay second\n"));
@@ -257,44 +292,52 @@ fn chat_real_tcp_on_all_backends() {
     let source = include_str!("../examples/chat.jk");
     assert_eq!(source.matches("0x7f000001, 7777").count(), 1);
     let path = work.path().join("chat.jk");
-    let source = source.replace("0x7f000001, 7777", "0x7f000001, 0").replace(
-        "fn main() @suspends -> Int32 {",
-        "fn main() @suspends -> Int32 {\n    verify_chat_queue_domain()",
+    let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check")
+        .replace("    permit.release()\n}\nfn receive", "    check.assert(vm.module_count(engine) == 2, \"bootstrap and current module only\")\n    permit.release()\n}\nfn receive")
+        .replace("0x7f000001, 7777", "0x7f000001, 0")
+        .replace("examples/chat_logic.jk", "chat_logic.jk")
+        .replace("    let directory = domain.directory(1)", "    engine.call::<Unit,Unit>(\"verify\", {});\n    let directory = domain.directory(1)");
+    for create in ["new", "interpreter"] {
+        let source = source.replace("vm.Vm.new()", &format!("vm.Vm.{create}()"));
+        std::fs::write(&path, &source).unwrap();
+        let logic = format!(
+        "import joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
+        include_str!("../examples/chat_logic.jk"), include_str!("fixtures/chat_queue.jk")
     );
-    std::fs::write(
-        &path,
-        format!(
-            "import joky/check\nimport joky/string.{{type StringBuilder}}\n{source}\n{}",
-            include_str!("fixtures/chat_queue.jk")
-        ),
-    )
-    .unwrap();
-    let binary = work.path().join("chat");
-    let built = Command::new(env!("CARGO_BIN_EXE_joky"))
-        .arg("build")
-        .arg(&path)
-        .arg("-o")
-        .arg(&binary)
-        .env("JOKY_RUNTIME", runtime::runtime_archive())
-        .output()
-        .unwrap();
-    assert!(built.status.success(), "{built:?}");
-    for backend in ["jit", "interpreter", "aot"] {
-        eprintln!("chat backend: {backend}");
-        let mut command = if backend == "aot" {
-            Command::new(&binary)
-        } else {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
-            command.arg("run");
-            if backend == "interpreter" {
-                command.arg("--interpreter");
-            }
-            command.arg(&path);
-            command
-        };
-        command.current_dir(work.path());
-        let (mut server, port) = Server::start(command, work.path().join(format!("{backend}.log")));
-        conversation(port, if backend == "interpreter" { 70 } else { 260 });
-        assert!(server.child.try_wait().unwrap().is_none());
+        std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
+        let binary = work.path().join("chat");
+        let built = Command::new(env!("CARGO_BIN_EXE_joky"))
+            .arg("build")
+            .arg(&path)
+            .arg("-o")
+            .arg(&binary)
+            .env("JOKY_RUNTIME", runtime::runtime_archive())
+            .output()
+            .unwrap();
+        assert!(built.status.success(), "{built:?}");
+        for backend in ["jit", "interpreter", "aot"] {
+            eprintln!("chat backend: {backend}, script: {create}");
+            let mut command = if backend == "aot" {
+                Command::new(&binary)
+            } else {
+                let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
+                command.arg("run");
+                if backend == "interpreter" {
+                    command.arg("--interpreter");
+                }
+                command.arg(&path);
+                command
+            };
+            command.current_dir(work.path());
+            let (mut server, port) =
+                Server::start(command, work.path().join(format!("{backend}.log")));
+            conversation(
+                port,
+                if backend == "interpreter" { 70 } else { 260 },
+                &work.path().join("chat_logic.jk"),
+                &logic,
+            );
+            assert!(server.child.try_wait().unwrap().is_none());
+        }
     }
 }

@@ -10,6 +10,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::default_libcall_names;
 use std::{any::Any, collections::HashMap, rc::Rc};
 
+#[derive(Clone)]
 pub(crate) struct CompiledFunction {
     pub abi: crate::EntryAbi,
     pub entry: *const u8,
@@ -22,6 +23,8 @@ pub(crate) struct CompiledModule {
     pub files: Option<crate::runtime::fs::FileService>,
     pub sources: std::sync::Arc<crate::SourceMap>,
     pub exports: HashMap<String, CompiledFunction>,
+    /// Raw CPS request entries; source visibility is checked separately.
+    pub request_entries: HashMap<String, CompiledFunction>,
     pub instance_entries: HashMap<String, CompiledFunction>,
     pub instance_hooks:
         HashMap<String, Vec<(crate::core::ir::DropHook, crate::runtime::cleanup::Callback)>>,
@@ -46,6 +49,7 @@ impl CompiledModule {
             version: ModuleId(1),
             sources,
             exports: HashMap::new(),
+            request_entries: HashMap::new(),
             instance_entries,
             instance_hooks,
             _code: OwnedCode(None),
@@ -64,6 +68,7 @@ impl CompiledModule {
             files: None,
             version: ModuleId(0),
             sources: Default::default(),
+            request_entries: exports.clone(),
             exports,
             instance_entries,
             instance_hooks: HashMap::new(),
@@ -172,6 +177,20 @@ pub(crate) fn compile(
         })
         .collect();
     Ok(CompiledModule {
+        request_entries: compiled
+            .request_entries
+            .into_iter()
+            .map(|(name, (id, info))| {
+                (
+                    name,
+                    CompiledFunction {
+                        entry: module.get_finalized_function(id),
+                        info,
+                        abi: crate::EntryAbi::Scalar,
+                    },
+                )
+            })
+            .collect(),
         instance_hooks: compiled
             .instance_hooks
             .into_iter()

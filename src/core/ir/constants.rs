@@ -202,6 +202,7 @@ fn evaluate(
             instance_entry: false,
             domain_entry: false,
             domain_request_entry: false,
+            script_entry: false,
             span: declaration.span,
         },
     );

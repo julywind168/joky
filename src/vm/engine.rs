@@ -1606,6 +1606,14 @@ impl VmEngine {
         })
     }
 
+    pub(crate) fn script_signature(&self, name: &str) -> Option<FunctionSignature> {
+        let info = match self.current.as_ref()? {
+            LoadedModule::Jit(module) => module.request_entries.get(name).map(|f| &f.info),
+            LoadedModule::Interpreter(module) => interp::script_info(module, name),
+        }?;
+        Some(info.signature.clone())
+    }
+
     pub(crate) fn prepare_script_call(
         &self,
         name: &str,
@@ -1617,16 +1625,6 @@ impl VmEngine {
             .current
             .as_ref()
             .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?;
-        // Script names are public lookups; compiler-addressed domain requests
-        // may also target private imported or specialized language functions.
-        if let LoadedModule::Interpreter(module) = module {
-            if interp::function_info(module, name).is_none() {
-                return Err(runtime_error(
-                    ErrorCode::NotFound,
-                    format!("Function `{name}` not found"),
-                ));
-            }
-        }
         module.prepare_script_call(
             name,
             input_schema,
@@ -1914,23 +1912,34 @@ impl LoadedModule {
     ) -> Result<(Continuation, Option<(usize, usize)>), Error> {
         let module = self;
         let info = match module {
-            LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
-            LoadedModule::Interpreter(module) => interp::request_info(module, name),
+            LoadedModule::Jit(module) => module
+                .request_entries
+                .get(name)
+                .or_else(|| module.exports.get(name))
+                .filter(|f| !f.info.internal || f.info.script_entry)
+                .map(|f| &f.info),
+            LoadedModule::Interpreter(module) => interp::script_info(module, name),
         }
         .ok_or_else(|| {
             runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
         })?;
         if !info.suspends
             || info.signature.params.len() != 1
-            || crate::core::script::schema(&info.signature.params[0]).as_deref()
+            || crate::core::script::domain_schema(&info.signature.params[0]).as_deref()
                 != Some(input_schema)
-            || crate::core::script::schema(&info.signature.ret).as_deref() != Some(result_schema)
-            || info.signature.params[0].scalar_types().len() != bits.len()
+            || crate::core::script::domain_schema(&info.signature.ret).as_deref()
+                != Some(result_schema)
+            || !info.domain_request_entry
         {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
                 "Script entry contract mismatch",
             ));
+        }
+        if crate::runtime::domain_packet::has_owners(&info.signature.params[0])
+            || crate::runtime::domain_packet::has_owners(&info.signature.ret)
+        {
+            return self.prepare_domain_call(name, bits, limits);
         }
         if !crate::core::script::valid_words(&info.signature.params[0], bits) {
             return Err(runtime_error(
@@ -1950,7 +1959,7 @@ impl LoadedModule {
                 module.clone(),
             ),
             LoadedModule::Jit(module) => {
-                let function = &module.exports[name];
+                let function = &module.request_entries[name];
                 let mut frame = CpsFrame::new(info.frame_slots);
                 frame.slots[..bits.len()].copy_from_slice(bits);
                 unsafe {
@@ -1973,7 +1982,11 @@ impl LoadedModule {
         limits: InterpreterLimits,
     ) -> Result<(Continuation, Option<(usize, usize)>), Error> {
         let info = match self {
-            LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
+            LoadedModule::Jit(module) => module
+                .request_entries
+                .get(name)
+                .or_else(|| module.exports.get(name))
+                .map(|f| &f.info),
             LoadedModule::Interpreter(module) => interp::request_info(module, name),
         }
         .ok_or_else(|| runtime_error(ErrorCode::NotFound, "Unknown domain request"))?;
@@ -2022,7 +2035,7 @@ impl LoadedModule {
                 }
                 unsafe {
                     Continuation::new(
-                        crate::runtime::abi::as_cps_entry(module.exports[name].entry),
+                        crate::runtime::abi::as_cps_entry(module.request_entries[name].entry),
                         frame,
                         module.version,
                         module.clone(),

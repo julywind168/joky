@@ -435,21 +435,28 @@ unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
                 frame.slots[3] as *const crate::runtime::buffer::Buffer,
             )?;
             let packet = &*(frame.slots[4] as *const crate::runtime::buffer::Buffer);
-            if packet.len() > crate::core::script::MAX_LANES as u64 {
-                return Err(runtime_error(
-                    ErrorCode::ResourceLimit,
-                    "Script packet exceeds lane limit",
-                ));
+            let count = usize::try_from(packet.len()).map_err(|_| {
+                runtime_error(ErrorCode::ResourceLimit, "Script packet size overflow")
+            })?;
+            let bytes = count
+                .checked_mul(std::mem::size_of::<u64>())
+                .ok_or_else(|| {
+                    runtime_error(ErrorCode::ResourceLimit, "Script packet size overflow")
+                })?;
+            let _packet_charge = (&mut *cps::arena(frame)).reserve_external(bytes)?;
+            let mut words = Vec::new();
+            words.try_reserve_exact(count).map_err(|_| {
+                runtime_error(ErrorCode::ResourceLimit, "Script packet allocation failed")
+            })?;
+            for i in 0..packet.len() {
+                words.push(packet.load(i)?.cast::<u64>().read());
             }
-            let words = (0..packet.len())
-                .map(|i| packet.load(i).map(|p| p.cast::<u64>().read()))
-                .collect::<Result<Vec<_>, _>>()?;
             let (task, layout) = engine.prepare_script_call(name, input, output, &words)?;
             (
                 task,
                 layout,
                 engine
-                    .function_signature(name)
+                    .script_signature(name)
                     .ok_or_else(|| {
                         runtime_error(ErrorCode::NotFound, "Script result signature missing")
                     })?
@@ -516,8 +523,10 @@ unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
             "Script VM closed during call",
         ));
     }
-    if let Some(values) = call.task.flat_result(call.layout) {
-        if !crate::core::script::valid_words(&call.result_type, &values) {
+    if let Some(values) = call.task.domain_result(call.layout) {
+        if crate::runtime::domain_packet::validate(std::slice::from_ref(&call.result_type), &values)
+            .is_err()
+        {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
                 "Invalid Script result value",
@@ -525,12 +534,11 @@ unsafe fn poll(frame: &mut CpsFrame, typed: bool) -> Result<i32, Error> {
         }
         let value = values.first().copied().unwrap_or(0);
         if typed {
-            let packet = &mut *(frame.slots[4] as *mut crate::runtime::buffer::Buffer);
-            packet.truncate_owned(&mut *cps::arena(frame), 0)?;
-            for value in values {
-                packet.initialize_next()?.cast::<u64>().write(value);
-                packet.commit_next();
-            }
+            crate::runtime::domain_packet::write(
+                &mut *cps::arena(frame),
+                frame.slots[4] as *mut crate::runtime::buffer::Buffer,
+                &values,
+            )?;
         }
         // Dispose child locals and callbacks before publishing its result.
         crate::runtime::error::checked(|| {

@@ -91,7 +91,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [parallel、scope 与 branch 开发计划](docs/structured-concurrency-scopes.md)：现有 scope 改名 parallel、顺序主体与动态子任务的生命周期和分阶段验收；首版已完成并验收。
 - [服务端状态域与任务并发设计草案](docs/server-concurrency.md)：长期状态、按访问权限调度的短操作、提案提交、取消与有界准入；SC0–SC2 已按阶段范围验收；支持纯值记录投影快照与异步请求输入／结果、候选根独立存储、单域原子提交、平面 String／标量 Array 拥有图及执行器时钟提交有效期；SC3 已提供最多 64 域的访问集合、联合快照、完整读取凭据及多候选原子发布；支持三域换房与只读第四域冲突检查，A4 已扩展受检拥有图联合访问、冻结快照派生和分步候选编辑；SC4-A 已提供 `joky/admission` 有界准入、FIFO 等待、取消归还和关闭唤醒。
 - [Arena、隐式生命周期与 FFI 设计](docs/arena-borrowing-ffi.md)：无 GC 的内存归属、借用、结构化并发和分阶段验收。
-- [Joky AOT 与 Script 热更新开发计划](docs/aot-script-hot-reload.md)：状态留在状态域、具名域操作按执行切换代码、流程按启动版本跑完；HR0 已提供 Rust 宿主发布（JIT/解释器）、多域操作与完整读取凭据的代码版本校验及版本耗尽保护；HR2 标量探针已支持独立 AOT 调用 JIT/解释器 Script、共享执行器与受模块归属限制的发布；HR1 已支持嵌套记录与 Array/Map 拥有根；HR2 已完成标量/平面记录类型化入口；HR3-A 已支持候选提交绑定的有界出站信箱，HR3-B 已提供不保活状态的有界域目录；HR4 已提供不保活代码的具名一次性/周期域调用，支持有界纯值记录输入；HR5-A 已提供单域平面标量 schema 的暂存迁移与原子入口切换；HR5-B1 已扩展同步拥有图迁移，HR5-B2 已提供宿主驱动分批构建与逐批冲突校验；HR5-C 已支持同一 Script 多域候选的联合校验与整批原子发布；HR6 已支持具名多域操作的兼容晚绑定与旧模块持有诊断；HR7 已完成 TCP、tick、两次热修复与多域迁移的联合功能验收，并支持嵌套纯值 Context；E0–E3 已支持状态域与 Script 桥的纯值枚举输入／结果（包括 Option／业务 Result）；V0–V3 已补齐纯值元组和具体泛型记录；状态域另支持 String、Array 及其嵌套记录、元组、Option／Result 输入和结果；延迟与迁移停顿的性能预算仍待测量。
+- [Joky AOT 与 Script 热更新开发计划](docs/aot-script-hot-reload.md)：状态留在状态域、具名域操作按执行切换代码、流程按启动版本跑完；HR0 已提供 Rust 宿主发布（JIT/解释器）、多域操作与完整读取凭据的代码版本校验及版本耗尽保护；HR2 标量探针已支持独立 AOT 调用 JIT/解释器 Script、共享执行器与受模块归属限制的发布；HR1 已支持嵌套记录与 Array/Map 拥有根；HR2 已完成标量/平面记录类型化入口；HR3-A 已支持候选提交绑定的有界出站信箱，HR3-B 已提供不保活状态的有界域目录；HR4 已提供不保活代码的具名一次性/周期域调用，支持有界纯值记录输入；HR5-A 已提供单域平面标量 schema 的暂存迁移与原子入口切换；HR5-B1 已扩展同步拥有图迁移，HR5-B2 已提供宿主驱动分批构建与逐批冲突校验；HR5-C 已支持同一 Script 多域候选的联合校验与整批原子发布；HR6 已支持具名多域操作的兼容晚绑定与旧模块持有诊断；HR7 已完成 TCP、tick、两次热修复与多域迁移的联合功能验收，并支持嵌套纯值 Context；E0–E3 已支持状态域与 Script 桥的纯值枚举输入／结果（包括 Option／业务 Result）；V0–V3 已补齐纯值元组和具体泛型记录；状态域与 Script 桥均支持 String、Array 及其嵌套记录、元组、Option／Result 输入和结果；延迟与迁移停顿的性能预算仍待测量。
 - [状态域语法糖草案](docs/state-domain-syntax.md)：已实现 1–64 域 `when`、可选字符串标签、具名操作兼容晚绑定、`#state`、句柄方法调用及 `#every` 状态方法自动周期执行；记录候选编辑及后续声明语法的边界。
 - [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0–G2 已接入 Node 的解释器脚本、基础属性、受检 Node API、帧回调与所属异步任务/引擎等待，示例见 [async.tscn](integrations/godot/demo/async.tscn)；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
@@ -118,10 +118,12 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 
 ## TCP 状态域聊天室
 
-[chat.jk](examples/chat.jk) 是纯 Joky 服务端，监听 `127.0.0.1:7777`，
+[chat.jk](examples/chat.jk) 是纯 Joky 热更新服务端，负责连接、邮箱和发布；
+[chat_logic.jk](examples/chat_logic.jk) 保存状态类型与业务处理。服务端监听 `127.0.0.1:7777`，
 启动时输出实际端口。启动后，在多个终端分别连接：
 
 ```sh
+# 在仓库根目录执行
 cargo run -- run examples/chat.jk
 # 其他终端：
 nc 127.0.0.1 7777
@@ -145,8 +147,17 @@ EOF、读写失败、非法 UTF-8 或超长行会断开并广播离开；错误�
 示例用一个 `#state Chat` 保存成员、房间名和邮箱句柄；每个连接任务拥有独立出站邮箱。
 `query_snapshot` 在冻结状态上一次生成消息、收件人数组和状态变更计划，任务据此组装
 `outbox.Batch`，通过 `domain.edit_snapshot(...).with_outbox(batch)` 提交，让成员修改与
-所有接收者的消息入队一起成功或失败。并发指令遇到快照冲突会重新准备，成功提交顺序就是
-房间广播顺序，无需全局 admission 许可。
+所有接收者的消息入队一起成功或失败。快照冲突会重新准备，成功提交顺序就是房间广播顺序。
+
+修改 `examples/chat_logic.jk` 后，任一客户端发送 `reload`，收到 `reloaded` 后后续指令使用新逻辑，
+连接、成员和待发送消息保持。编译错误、文件读取失败或已有 Chat 布局不兼容时返回 `reload failed`，
+旧版本继续运行，服务端输出具体诊断。此示例用一个 admission 许可串行化业务指令与发布；
+一条指令完整使用一个版本，TCP 收发独立运行。
+
+热更新必须保留 `dispatch` 的 Call/Action 契约及 Chat 布局；发布 API 校验域 schema，
+不会预先检查宿主约定的所有入口，调用时才检查完整入口契约。布局变化应走显式迁移。
+启动任务持有域所有者并挂起在邮箱上，因此初始模块会保留；反复更新后只需初始模块与当前模块。
+宿主也可用 `cargo run -- build examples/chat.jk` 编译为 AOT，业务脚本仍由内嵌 VM 动态编译。
 
 发送任务挂起在 `outbox.receive()`，出队立即由信箱释放容量，然后直接写 TCP，无需回访 Chat。
 `scope` / `branch` 接受并发连接，连接内 `race` 管理读、写和控制邮箱等待。
@@ -162,8 +173,9 @@ EOF、读写失败、非法 UTF-8 或超长行会断开并广播离开；错误�
 失败的候选不会发送部分广播；网络发送不保证对端已接收，也不提供断线重放。
 
 房间名直接以拥有型 `String` 传入域操作、从状态查询返回，并随候选编辑一起提交；无需分块中转。
-这是功能验证 demo，尚未做吞吐或长期运行验收。`cargo test --test chat` 在 JIT、解释器、
-独立 AOT 上执行真实 TCP 对话，包括三后端 260 个成员邮箱的广播、JIT／AOT 260 人及解释器 70 人的 TCP 广播，
+这是功能验证 demo，尚未做吞吐或长期运行验收。`cargo test --test chat` 覆盖 JIT、解释器、
+独立 AOT 宿主 × JIT／解释器脚本的六种组合，验证在线更新、失败保留旧版及旧模块回收，
+包括 260 个成员邮箱的广播、JIT／AOT 宿主 260 人及解释器宿主 70 人的 TCP 广播，
 以及并发加入／换房／发送／断开的一致顺序，并检查候选冲突不发送、
 消息／字节额度及多个邮箱同时满的清理。解释器并发 TCP 会话还受默认 1024 个活动帧预算约束；
 这与广播批次的消息数无关。

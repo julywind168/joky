@@ -6490,11 +6490,11 @@ fn script_flat_bridge_runs_in_all_host_and_script_backends() {
 fn script_flat_bridge_rejects_unsupported_caller_contracts_before_build() {
     let work = Workspace::new();
     for (definitions, ty, value) in [
-        ("", "String", "\"owned\""),
+        ("", "vm.Vm", "vm.Vm.new()"),
         (
-            "struct Inner { text:String } struct Input { nested:Inner }",
+            "struct Inner { owner:vm.Vm } struct Input { nested:Inner }",
             "Input",
-            "Input { nested:Inner { text:\"owned\" } }",
+            "Input { nested:Inner { owner:vm.Vm.new() } }",
         ),
         ("struct Input { p:Ptr }", "Input", "Input { p:Ptr.null() }"),
         (
@@ -8693,14 +8693,14 @@ fn pure_enum_contract_limits_and_rejections() {
     for (definitions, ty, value) in [
         (
             "import joky/option.{type Option}",
-            "Option<String>",
-            "Option.None::<String>",
+            "Option<vm.Vm>",
+            "Option.None::<vm.Vm>",
         ),
-        ("enum E{Empty,Value(String)}", "E", "E.Empty"),
+        ("enum E{Empty,Value(vm.Vm)}", "E", "E.Empty"),
         (
             "enum Phantom<T>{Empty}",
-            "Phantom<String>",
-            "Phantom.Empty::<String>",
+            "Phantom<vm.Vm>",
+            "Phantom.Empty::<vm.Vm>",
         ),
         ("enum E{Empty,Value(Ptr)}", "E", "E.Empty"),
         ("enum E{Empty,Value(fn()->Int32)}", "E", "E.Empty"),
@@ -8927,9 +8927,9 @@ fn pure_composite_contract_limits_and_rejections() {
         }
     }
     for (ty, value) in [
-        ("(Int32,String)", "(1,\"owned\")"),
-        ("Cell<String>", "Cell{value:\"owned\"}"),
-        ("Marker<String>", "Marker::<String>{}"),
+        ("(Int32,vm.Vm)", "(1,vm.Vm.new())"),
+        ("Cell<vm.Vm>", "Cell{value:vm.Vm.new()}"),
+        ("Marker<vm.Vm>", "Marker::<vm.Vm>{}"),
         ("Marker<(Int32,Ptr)>", "Marker::<(Int32,Ptr)>{}"),
         ("Marker<fn()->Int32>", "Marker::<fn()->Int32>{}"),
         ("Marker<&Int32>", "Marker::<&Int32>{}"),
@@ -9633,4 +9633,71 @@ fn make(n:Int32)->S{S{n:n}}
     }
     work.write("moved.jk", &format!("{prefix} fn echo(s:&S,a:Array<String>)->Array<String>{{a}} fn main() @suspends {{let o=domain.create(make,1) let a=Array.new::<String>() domain.query_from(o.read_handle(),echo,a); a.len();}}"));
     failure(&work.cli(&["build", "moved.jk"]), "moved");
+}
+
+#[cfg(unix)]
+#[path = "support/owned_values.rs"]
+mod owned_values;
+
+#[test]
+#[cfg(unix)]
+fn owned_script_values_run_in_all_backend_combinations() {
+    for create in ["new", "interpreter"] {
+        let work = Workspace::new();
+        work.write("owned.jk", &owned_values::source(create));
+        work.assert_all_backends("owned.jk", &[], b"", 42);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn owned_script_pending_results_keep_the_starting_contract() {
+    assert_pending_script_result_contract(
+        "enum Reply{Empty,Done(String)}",
+        "enum Reply{Done(String),Empty}",
+        "Reply",
+        "Reply.Done(\"old text\")",
+        "match result {Done(text)=>assert(text.equals(\"old text\")),_=>assert(false)}",
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn owned_script_rejects_mismatched_and_hooked_contracts() {
+    let imports = "import joky/array.{type Array} import joky/option.{type Option} import joky/drop.{type Drop}";
+    for create in ["new", "interpreter"] {
+        for (types, script, input, output, value) in [
+            ("", "fn exchange(v:Array<String>) @suspends ->String {let bad=1/0 \"\"}", "String", "String", "\"input\""),
+            ("", "fn exchange(v:String) @suspends ->Option<String> {let bad=1/0 Option.None}", "String", "String", "\"input\""),
+            ("struct Item{text:String}", "struct Item{renamed:String} fn exchange(v:Array<Item>) @suspends ->Unit {let bad=1/0}", "Array<Item>", "Unit", "Array.new::<Item>()"),
+            ("struct Item{text:String}", "struct Item{text:String} impl Drop for Item{fn drop(&mut self){}} fn exchange(v:Array<Item>) @suspends ->Unit {let bad=1/0}", "Array<Item>", "Unit", "Array.new::<Item>()"),
+        ] {
+            let script=format!("{imports} {script}");
+            let quoted=format!("{:?}",script.replace('{',"{{").replace('}',"}}"));
+            let work=Workspace::new();
+            work.write("reject.jk",&format!("import joky/vm {imports} {types} fn main() @suspends {{let h=vm.Vm.{create}() h.load_source({quoted})! h.call::<{input},{output}>(\"exchange\",{value});}}"));
+            for args in [vec!["run","reject.jk"],vec!["run","--interpreter","reject.jk"]] {
+                let output=work.cli(&args);
+                assert!(!output.status.success());
+                let error=String::from_utf8_lossy(&output.stderr);
+                assert!(error.contains("Script entry contract mismatch") || error.contains("Function `exchange` not found"),"{error}");
+            }
+            success(&work.cli(&["build","reject.jk"]));
+            let output=Command::new(work.path().join("reject")).output().unwrap();
+            assert!(!output.status.success());
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains("Script entry contract mismatch") || error.contains("Function `exchange` not found"),"{error}");
+        }
+    }
+    for (ty, value) in [
+        ("Array<Item>", "Array.new::<Item>()"),
+        ("(Option<Item>,)", "(Option.None,)"),
+    ] {
+        let work = Workspace::new();
+        work.write("reject.jk",&format!("import joky/vm {imports} struct Item{{text:String}} impl Drop for Item{{fn drop(&mut self){{}}}} fn main() @suspends {{let h=vm.Vm.new() h.call::<{ty},Unit>(\"exchange\",{value});}}"));
+        failure(
+            &work.cli(&["build", "reject.jk"]),
+            "Script contracts require",
+        );
+    }
 }

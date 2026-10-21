@@ -230,3 +230,48 @@ fn pure_composite_contracts_count_repeated_and_phantom_zero_lane_members() {
         before
     );
 }
+
+#[test]
+fn script_requests_keep_imported_functions_private() {
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "helpers",
+            "pub fn echo(value:String) @suspends ->String {value}",
+        )
+        .unwrap();
+    let source = r#"import helpers
+fn root(_:Unit) @suspends ->Int32 {
+    let result=helpers.echo("owned")
+    if result.equals("owned") {42} else {0}
+}"#;
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
+        .unwrap();
+    let hidden = ast
+        .items
+        .iter()
+        .find_map(|item| match item {
+            crate::parser::ast::Item::FnDef(f) if f.name.ends_with(".echo") => Some(f.name.clone()),
+            _ => None,
+        })
+        .expect("imported echo must have a qualified name");
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source_with_modules(source, &modules).unwrap();
+        let (mut task, layout) = vm
+            .prepare_script_call("root", "scalar:Unit", "scalar:Int32", &[])
+            .unwrap();
+        while task.flat_result(layout).is_none() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.flat_result(layout).unwrap(), vec![42]);
+        assert!(vm.function_signature(&hidden).is_none());
+        let contract = domain_schema(&Type::String).unwrap();
+        let error = match vm.prepare_script_call(&hidden, &contract, &contract, &[]) {
+            Err(error) => error,
+            Ok(_) => panic!("imported entry must stay private"),
+        };
+        assert_eq!(error.code(), crate::ErrorCode::NotFound);
+    }
+}

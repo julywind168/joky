@@ -1,0 +1,259 @@
+import joky/domain
+import joky/outbox
+import joky/mem
+import joky/array.{type Array}
+import joky/option.{type Option}
+
+// Owners stay in the connection task; shared state holds only mailbox identities.
+struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
+struct Client { route: Route, room: String }
+#state
+struct Chat { clients: Array<Client>, next_id: UInt64 }
+struct Context { chat: domain.WriteHandle<Chat> }
+enum Command { Welcome, Join(String), Leave, Say(String), Invalid, Disconnect, Notice(String) }
+enum Effect { Stay, Join(String), Leave, Disconnect }
+struct Recipient { route: Route, first: Bool, second: Bool }
+struct Plan { origin: Route, recipients: Array<Recipient>, first: String, second: String, effect: Effect }
+struct Request { id: UInt64, command: Command, excluded: Array<UInt64> }
+fn make_chat(_: Unit) -> Chat { Chat { clients: Array.new::<Client>(), next_id: 1 } }
+fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
+    if message.is_empty() { "{kind} {room} {id}\n" }
+    else { "{kind} {room} {id} {message}\n" }
+}
+impl Command {
+    fn clone(&self) -> Command {
+        match self {
+            Welcome => Command.Welcome, Join(room) => Command.Join(room.clone()),
+            Leave => Command.Leave, Say(text) => Command.Say(text.clone()),
+            Invalid => Command.Invalid, Disconnect => Command.Disconnect, Notice(text) => Command.Notice(text.clone())
+        }
+    }
+}
+fn copy_ids(ids: &Array<UInt64>) -> Array<UInt64> {
+    var copy = Array.new::<UInt64>()
+    var i: UInt64 = 0
+    while i < ids.len() { copy.push(ids.get(i)!) i += 1 }
+    copy
+}
+fn contains(ids: &Array<UInt64>, id: UInt64) -> Bool {
+    var i: UInt64 = 0
+    while i < ids.len() { if ids.get(i)! == id { return true } i += 1 }
+    false
+}
+impl Chat {
+    fn index(&self, id: UInt64) -> Option<UInt64> {
+        var i: UInt64 = 0
+        while i < self.clients.len() {
+            let client = self.clients.borrow_ref(i)
+            if client.route.live && client.route.id == id { return Option.Some(i) }
+            i += 1
+        }
+        Option.None
+    }
+    fn connect(&mut self, output: outbox.Handle, stop: outbox.Handle) -> UInt64 {
+        var slot: UInt64 = 0
+        while slot < self.clients.len() && self.clients.borrow_ref(slot).route.live { slot += 1 }
+        let id = self.next_id
+        self.next_id += 1
+        let client = Client { route: Route { live: true, id: id, output: output, stop: stop }, room: "" }
+        if slot == self.clients.len() { self.clients.push(client) }
+        else { self.clients.replace(slot, client); }
+        id
+    }
+    fn room(&self, id: UInt64) -> String {
+        let client = self.clients.borrow_ref(self.index(id)!)
+        client.room.clone()
+    }
+    fn recipient(&self, identity: UInt64) -> Option<UInt64> {
+        var i: UInt64 = 0
+        while i < self.clients.len() {
+            let route = self.clients.borrow_ref(i).route
+            if route.live && route.output.identity() == identity { return Option.Some(route.id) }
+            i += 1
+        }
+        Option.None
+    }
+}
+fn messages(command: &Command, room: &String, id: UInt64) -> (String, String, Effect) {
+    match command {
+        Welcome => ("welcome {id}\n", "", Effect.Stay),
+        Join(next) => if room.equals(next) { ("error already joined\n", "", Effect.Stay) }
+            else { (event("left", room, id, ""), event("joined", next, id, ""), Effect.Join(next.clone())) },
+        Leave => if room.is_empty() { ("error join a room first\n", "", Effect.Stay) }
+            else { (event("left", room, id, ""), "", Effect.Leave) },
+        Say(text) => if room.is_empty() { ("error join a room first\n", "", Effect.Stay) }
+            else { (event("message", room, id, text), "", Effect.Stay) },
+        Disconnect => (event("left", room, id, ""), "", Effect.Disconnect),
+        Invalid => ("error use join <room>, leave, or say <message>\n", "", Effect.Stay),
+        Notice(text) => (text.clone(), "", Effect.Stay)
+    }
+}
+fn selected(command: &Command, room: &String, client: &Client, id: UInt64) -> (Bool, Bool) {
+    let own = client.route.id == id
+    let same = !room.is_empty() && client.room.equals(room)
+    match command {
+        Welcome => (own, false),
+        Join(next) => if room.equals(next) { (own, false) }
+            else { (same, own || client.room.equals(next)) },
+        Leave => (if room.is_empty() { own } else { same }, false),
+        Say(_) => (if room.is_empty() { own } else { same }, false),
+        Disconnect => (same && !own, false),
+        Invalid => (own, false), Notice(_) => (own, false)
+    }
+}
+// Compute membership, messages and the intended change from one frozen state.
+fn plan(state: &Chat, request: Request) -> Option<Plan> {
+    let Request { id, command, excluded } = request
+    let index = match state.index(id) { Some(index) => index, None => return Option.None }
+    let source = state.clients.borrow_ref(index)
+    let (first, second, effect) = messages(&command, &source.room, id)
+    var recipients = Array.new::<Recipient>()
+    var i: UInt64 = 0
+    while i < state.clients.len() {
+        let client = state.clients.borrow_ref(i)
+        if client.route.live && !contains(&excluded, client.route.id) {
+            let (a, b) = selected(&command, &source.room, client, id)
+            if a || b { recipients.push(Recipient { route: client.route, first: a, second: b }) }
+        }
+        i += 1
+    }
+    Option.Some(Plan { origin: source.route, recipients: recipients, first: first, second: second, effect: effect })
+}
+fn apply(state: &mut Chat, plan: Plan) {
+    let Plan { origin, recipients, first, second, effect } = plan
+    let index = state.index(origin.id)!
+    let client = state.clients.borrow_mut_ref(index)
+    match effect {
+        Join(room) => { var next = room mem.swap(&mut client.room, &mut next) },
+        Leave => { var next = "" mem.swap(&mut client.room, &mut next) },
+        Disconnect => {
+            client.route.live = false
+            var next = "" mem.swap(&mut client.room, &mut next)
+        },
+        Stay => {}
+    }
+}
+fn size(plan: &Plan) -> (UInt64, UInt64) {
+    var messages: UInt64 = 0
+    var bytes: UInt64 = 0
+    var i: UInt64 = 0
+    while i < plan.recipients.len() {
+        let recipient = plan.recipients.get(i)!
+        let a: UInt64 = if recipient.first { 1 } else { 0 }
+        let b: UInt64 = if recipient.second { 1 } else { 0 }
+        messages += a + b
+        bytes += a * plan.first.byte_length() + b * plan.second.byte_length()
+        i += 1
+    }
+    (messages, bytes)
+}
+fn stage(plan: &Plan) @suspends -> outbox.Batch {
+    let (messages, bytes) = size(plan)
+    var batch = outbox.batch(messages, bytes)
+    var i: UInt64 = 0
+    while i < plan.recipients.len() {
+        let recipient = plan.recipients.get(i)!
+        if recipient.first { outbox.stage(&mut batch, recipient.route.output, plan.first.clone().into_bytes()); }
+        if recipient.second { outbox.stage(&mut batch, recipient.route.output, plan.second.clone().into_bytes()); }
+        i += 1
+    }
+    batch
+}
+// Snapshot validation orders membership changes and their broadcasts atomically.
+fn publish(ctx: Context, id: UInt64, command: Command, excluded: &Array<UInt64>) @suspends -> Bool {
+    let chat = ctx.chat
+    while true {
+        var access = domain.access_set() access.include(chat.read_only())
+        let snapshot = domain.snapshot_set(access)
+        let request = Request { id: id, command: command.clone(), excluded: copy_ids(excluded) }
+        let prepared = domain.query_snapshot(&snapshot, chat.read_only(), plan, request)
+        let plan = match prepared { Some(plan) => plan, None => return false }
+        let origin = plan.origin
+        let batch = stage(&plan)
+        let candidate = domain.edit_snapshot(snapshot, chat, apply, plan).with_outbox(batch)
+        var receipt = domain.commit_set(candidate)
+        let result = receipt.wait()
+        match result {
+            Err(Conflict) => continue,
+            Err(OutboxFull) => {}, Err(OutboxClosed) => {},
+            _ => {
+                result!
+                match &command { Disconnect => { outbox.close(origin.stop) outbox.close(origin.output) }, _ => {} }
+                return true
+            }
+        }
+        // The failed batch published nothing. Remove its blocked recipient, then retry.
+        let failed = receipt.failed_outbox()!
+        let slow = match chat.recipient(failed)! { Some(id) => id, None => continue }
+        // Exclude departing ancestors so full mailboxes cannot form a cycle.
+        var ancestors = copy_ids(excluded)
+        match &command { Disconnect => ancestors.push(id), _ => {} }
+        publish(ctx, slow, Command.Disconnect, &ancestors);
+        continue
+    }
+    false
+}
+fn parse(line: String) -> Command {
+    let separator = line.find(" ").unwrap_or(line.byte_length())
+    let verb = line.substring(0, separator)!
+    let argument = if separator < line.byte_length() { line.substring(separator + 1, line.byte_length())! } else { "" }
+    if verb.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() {
+        Command.Join(argument)
+    } else if line.equals("leave") { Command.Leave }
+    else if verb.equals("say") && !argument.is_empty() { Command.Say(argument) }
+    else { Command.Invalid }
+}
+fn process(ctx: Context, id: UInt64, line: String) @suspends -> Bool {
+    let command = parse(line)
+    let excluded = Array.new::<UInt64>()
+    publish(ctx, id, command, &excluded)
+}
+
+// Keep this entry contract identical in the host and each published version.
+enum Action { Connect((outbox.Handle, outbox.Handle)), Line(String), Disconnect, Notice(String) }
+struct Call { directory: domain.DirectoryHandle, id: UInt64, action: Action }
+struct Bootstrap { directory: domain.DirectoryHandle, ready: outbox.Handle }
+
+fn split(request: Call) -> (domain.DirectoryHandle, UInt64, Action) {
+    let Call { directory, id, action } = request
+    (directory, id, action)
+}
+fn dispatch(request: Call) @suspends -> UInt64 {
+    let (directory, id, action) = split(request)
+    let chat = domain.lookup_write::<Chat>(directory, 1)!
+    let ctx = Context { chat: chat }
+    match action {
+        Connect(targets) => {
+            let (output, stop) = targets
+            let id = chat.connect(output, stop)!
+            let excluded = Array.new::<UInt64>()
+            publish(ctx, id, Command.Welcome, &excluded);
+            id
+        },
+        Line(line) => if process(ctx, id, line) { 1 } else { 0 },
+        Disconnect => {
+            let excluded = Array.new::<UInt64>()
+            publish(ctx, id, Command.Disconnect, &excluded);
+            0
+        },
+        Notice(text) => {
+            let excluded = Array.new::<UInt64>()
+            if publish(ctx, id, Command.Notice(text), &excluded) { 1 } else { 0 }
+        }
+    }
+}
+fn ready(state: &mut Chat, _: Unit) {}
+// This bootstrap task retains the domain owner; request tasks never own Chat.
+fn hold(input: Bootstrap) @suspends {
+    let owner = domain.create(make_chat, {})
+    let chat = owner.handle()
+    input.directory.insert(1, chat)!
+    var access = domain.access_set() access.include(chat.read_only())
+    let snapshot = domain.snapshot_set(access)
+    var batch = outbox.batch(1, 0)
+    outbox.stage(&mut batch, input.ready, Array.new::<UInt8>())!
+    var receipt = domain.commit_set(domain.edit_snapshot(snapshot, chat, ready, {}).with_outbox(batch))
+    receipt.wait()!
+    var lifetime = outbox.create(1, 0)
+    lifetime.receive();
+}

@@ -796,6 +796,8 @@ pub(super) fn check_module(
             info.instance_entry =
                 crate::core::instance::persistent_graph(root, &body.nominals, &body.type_registry)?;
         }
+        // Preserve source visibility before filtering the ordinary host ABI.
+        info.script_entry = !info.internal;
         let references = info
             .signature
             .params

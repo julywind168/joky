@@ -887,7 +887,8 @@ fn value_bridge_cancellation(
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for create in ["new", "interpreter"] {
             let mut host = VmEngine::with_mode(mode);
-            host.load_source(&source(create)).unwrap();
+            host.load_source(&source(create))
+                .unwrap_or_else(|e| panic!("{e}"));
             if mode == VmMode::Interpreter {
                 host.set_interpreter_limits(crate::vm::InterpreterLimits {
                     poll_budget: Some(1),
@@ -966,4 +967,102 @@ fn pure_composite_script_cancellation_reclaims_packets() {
 #[ignore = "exhaustive: cancel composite Script inputs and results at every instruction"]
 fn exhaustive_pure_composite_script_cancellation() {
     value_bridge_cancellation(composite_values::source, 0..=32768, true);
+}
+
+#[path = "../../../tests/support/owned_values.rs"]
+mod owned_values;
+
+#[test]
+fn owned_script_cancellation_reclaims_inputs_results_and_packets() {
+    value_bridge_cancellation(
+        owned_values::source,
+        [0, 1, 2, 5, 10, 30, 100, 300, 1000, 4000, 16000, 65536],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel owning Script inputs and results at every instruction"]
+fn exhaustive_owned_script_cancellation() {
+    value_bridge_cancellation(owned_script_lifecycle_source, 0..=32768, true);
+}
+
+fn owned_script_lifecycle_source(create: &str) -> String {
+    let script = r#"import joky/array.{type Array} import joky/result.{type Result} import joky/task
+fn exchange(value:Array<Result<String,String>>) @suspends ->Array<Result<String,String>> {
+    task.yield_now()
+    var result=value
+    result.push(Result.Ok("a longer result that grows the caller packet and allocates a fresh returned String"))
+    result
+}"#;
+    let quoted = format!("{:?}", script.replace('{', "{{").replace('}', "}}"));
+    format!(
+        r#"import joky/vm import joky/array.{{type Array}} import joky/result.{{type Result}}
+fn main() @suspends ->Int32 {{
+    let h=vm.Vm.{create}() h.load_source({quoted})!
+    var values=Array.new::<Result<String,String>>() values.push(Result.Err("input🙂"))
+    let result=h.call::<Array<Result<String,String>>,Array<Result<String,String>>>("exchange",values)
+    h.close();
+    if result.len()==2 {{42}} else {{0}}
+}}"#
+    )
+}
+
+#[test]
+fn owned_script_allocation_failures_reclaim_inputs_results_and_packets() {
+    use crate::runtime::{
+        arena,
+        executor::{HostExecutor, TaskGroup},
+    };
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            arena::LIMIT.with(|n| n.set(self.0));
+        }
+    }
+    let _restore = Restore(arena::LIMIT.with(|n| n.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for create in ["new", "interpreter"] {
+            let mut host = VmEngine::with_mode(mode);
+            host.load_source(&owned_script_lifecycle_source(create))
+                .unwrap_or_else(|e| panic!("{e}"));
+            let baseline = arena::LIVE.with(|n| n.get());
+            let mut successes = 0;
+            let mut failures = 0;
+            for limit in (0..=16384).step_by(128) {
+                arena::LIMIT.with(|n| n.set(limit));
+                let executor = HostExecutor::default();
+                let group = TaskGroup::new();
+                let outcome = (|| {
+                    let id = executor.spawn(&group, host.prepare_async("main", &[])?)?;
+                    for _ in 0..1000 {
+                        for done in executor.poll(1)?.completed {
+                            if done.id == id {
+                                return done.result;
+                            }
+                        }
+                    }
+                    panic!("owned Script allocation probe stalled");
+                })();
+                match outcome {
+                    Ok(value) => {
+                        assert_eq!(value, 42);
+                        successes += 1;
+                    }
+                    Err(_) => failures += 1,
+                }
+                executor.cancel_group(&group);
+                VMS.with(|vms| assert!(vms.borrow().is_empty()));
+                assert_eq!(executor.task_count(), 0);
+                assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+                drop(executor);
+                assert_eq!(
+                    arena::LIVE.with(|n| n.get()),
+                    baseline,
+                    "{mode:?}/{create} limit={limit}"
+                );
+            }
+            assert!(successes > 0 && failures > 0, "{mode:?}/{create}");
+            arena::LIMIT.with(|n| n.set(arena::MAX_BYTES));
+        }
+    }
 }

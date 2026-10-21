@@ -20,6 +20,8 @@ use std::collections::{HashMap, HashSet};
 pub(crate) struct CompiledDefinitions {
     /// Exported functions in source order of their names.
     pub exports: HashMap<String, (FuncId, FunctionInfo)>,
+    /// Raw CPS entries for checked requests, without public host ABI wrappers.
+    pub request_entries: HashMap<String, (FuncId, FunctionInfo)>,
     pub instance_entries: HashMap<String, (FuncId, FunctionInfo)>,
     pub instance_hooks: HashMap<String, Vec<(crate::core::ir::DropHook, FuncId)>>,
     /// Whether any compiled body, exported or internal, needs the native
@@ -41,7 +43,7 @@ pub(crate) fn compile<M: Module>(
     let mut reachable: HashSet<String> = plan
         .functions
         .iter()
-        .filter(|(_, info)| !info.internal || info.instance_entry)
+        .filter(|(_, info)| !info.internal || info.instance_entry || info.script_entry)
         .map(|(name, _)| name.clone())
         .collect();
     let mut pending: Vec<_> = reachable.iter().cloned().collect();
@@ -694,7 +696,16 @@ pub(crate) fn compile<M: Module>(
         }
         instance_entries.insert(name.clone(), (id, info.clone()));
     }
+    let request_entries = names
+        .iter()
+        .filter_map(|name| {
+            let info = &plan.functions[*name];
+            info.domain_request_entry
+                .then(|| ((*name).clone(), (ids[*name], info.clone())))
+        })
+        .collect();
     Ok(CompiledDefinitions {
+        request_entries,
         exports,
         instance_entries,
         instance_hooks,

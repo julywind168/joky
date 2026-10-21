@@ -711,6 +711,14 @@ pub(crate) fn function_info<'a>(
         .map(|function| &function.info)
 }
 
+pub(crate) fn script_info<'a>(module: &'a BytecodeModule, name: &str) -> Option<&'a FunctionInfo> {
+    module
+        .functions
+        .get(name)
+        .filter(|f| !f.info.internal || f.info.script_entry)
+        .map(|f| &f.info)
+}
+
 /// Compiler-addressed request entries may be private imported functions.
 pub(crate) fn request_info<'a>(module: &'a BytecodeModule, name: &str) -> Option<&'a FunctionInfo> {
     module.functions.get(name).map(|function| &function.info)

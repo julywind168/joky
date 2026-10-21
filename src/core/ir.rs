@@ -109,6 +109,8 @@ pub(crate) struct FunctionInfo {
     pub domain_entry: bool,
     /// A suspending request with one transferable input and a hook-free value result.
     pub domain_request_entry: bool,
+    /// Source-visible typed Script entry, independent of the public host ABI.
+    pub script_entry: bool,
     pub span: Span,
 }
 
@@ -142,6 +144,7 @@ impl FunctionInfo {
             instance_entry: false,
             domain_entry: false,
             domain_request_entry: false,
+            script_entry: false,
             span,
         }
     }
@@ -742,6 +745,7 @@ impl ModulePlan {
                 instance_entry: false,
                 domain_entry: false,
                 domain_request_entry: false,
+                script_entry: false,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
                     || members.functions.contains(name)
                     || matches!(item, Item::FnDef(f) if f.scope.is_some())
