@@ -1,206 +1,220 @@
-fn test_connect(ctx: Context, output: outbox.Handle, stop: outbox.Handle) @suspends -> UInt64 {
-    let chat = ctx.chat
-    let id = chat.connect(output, stop)!
-    let excluded = Array.new::<UInt64>()
-    check.assert(publish(ctx, id, Command.Welcome, &excluded), "welcome committed")
-    id
+// Test owners stay local, independently of the production connection holders.
+struct Fixture { directory: domain.Directory, rooms: domain.Directory, accounts: domain.Directory, requests: outbox.Mailbox, catalog: domain.Owner<Catalog>, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Context }
+fn seed_catalog(state: &mut Catalog, _: Unit) {
+    state.rooms.push(RoomEntry { name: "r", status: RoomStatus.Ready, waiters: Array.new::<outbox.Handle>() })
+    state.rooms.push(RoomEntry { name: "other", status: RoomStatus.Ready, waiters: Array.new::<outbox.Handle>() })
+}
+fn fixture() @suspends -> Fixture {
+    let directory = domain.directory(2)
+    let rooms = domain.directory(4096)
+    let accounts = domain.directory(4096)
+    let requests = outbox.create(4096, 0)
+    let catalog = domain.create(make_catalog, {})
+    let room = domain.create(make_room, "r")
+    let other = domain.create(make_room, "other")
+    let host = Host { directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
+    host.directory.insert(1, catalog.handle())!
+    host.rooms.insert(1, room.handle())!
+    host.rooms.insert(2, other.handle())!
+    domain.write_to(catalog.handle(), seed_catalog, {})!
+    Fixture { directory: directory, rooms: rooms, accounts: accounts, requests: requests, catalog: catalog, room: room, other: other, ctx: Context { host: host } }
+}
+fn test_account(ctx: Context, id: UInt64, key: UInt64, output: outbox.Handle, stop: outbox.Handle) @suspends -> domain.Owner<Account> {
+    let value = Account { route: Route { live: true, id: id, output: output, stop: stop }, room: key, balance_cents: 500, lifetime: stop }
+    let owner = domain.create(make_account, value)
+    ctx.host.accounts.insert(id, owner.handle())!
+    if key != 0 { domain.write_to(room_handle(ctx, key)!, add_member, value.route)! }
+    owner
 }
 fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
     let bytes = queue.receive()!
     let text = String.from_utf8(bytes)!
     check.assert(text.equals(&expected), "mailbox message and ordering")
 }
-fn verify_conflict(ctx: Context, alice: &outbox.Mailbox, bob: &outbox.Mailbox) @suspends {
-    let chat = ctx.chat
-    // A stale membership change must publish neither its root nor its message.
-    var access = domain.access_set()
-    access.include(chat.read_only())
+fn balance(owner: &domain.Owner<Account>) @suspends -> UInt64 { domain.read_from(owner.read_handle(), account_view)!.balance_cents }
+fn unchanged(state: &mut Account, _: Unit) { state.balance_cents += 0 }
+fn fund_capacity_test(state: &mut Account, _: Unit) { state.balance_cents = 10000 }
+fn candidate(ctx: Context, account: domain.WriteHandle<Account>, text: String) @suspends -> domain.CandidateSet {
+    let room = room_handle(ctx, 1)!
+    var access = domain.access_set() access.include(account.read_only()) access.include(room.read_only())
     let snapshot = domain.snapshot_set(access)
-    let request = Request { id: 1, command: Command.Leave, excluded: Array.new::<UInt64>() }
-    let prepared = domain.query_snapshot(&snapshot, chat.read_only(), plan, request)!
-    var batch = outbox.batch(2, 12)
-    outbox.stage(&mut batch, alice.handle(), "ghost\n".into_bytes())!
-    outbox.stage(&mut batch, bob.handle(), "ghost\n".into_bytes())!
-    let candidate = domain.edit_snapshot(snapshot, chat, apply, prepared).with_outbox(batch)
-    when (mut chat) { chat.next_id += 0 }!
-    var receipt = domain.commit_set(candidate)
-    check.assert(match receipt.wait() { Err(Conflict) => true, _ => false }, "stale broadcast rejected")
-    let room = chat.room(1)!
-    check.assert(room.equals("r"), "failed leave preserves membership")
-
+    var value = domain.read_snapshot(&snapshot, account.read_only(), account_view)
+    value.balance_cents -= 100
+    var batch = outbox.batch(1, text.byte_length())
+    outbox.stage(&mut batch, value.route.output, text.into_bytes())!
+    domain.edit_snapshot(snapshot, account, apply_account, value).with_outbox(batch)
 }
-fn verify_message_capacity(ctx: Context, alice: &mut outbox.Mailbox, bob: &mut outbox.Mailbox, bob_stop: &mut outbox.Mailbox, carol: &mut outbox.Mailbox) @suspends {
-    let chat = ctx.chat
-    // Bob never receives. Alice drains each message, so only Bob
-    // reaches the mailbox's message limit. Carol's unrelated room stays live.
+fn verify_conflicts_and_independence() @suspends {
+    let f = fixture()
+    var queue = outbox.create(16, 1024)
+    let control = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, queue.handle(), control.handle())
+    let stale = candidate(f.ctx, alice.handle(), "ghost\n")
+    domain.write_to(alice.handle(), unchanged, {})!
+    var rejected = domain.commit_set(stale)
+    check.assert(match rejected.wait() { Err(Conflict) => true, _ => false }, "stale debit and broadcast rejected together")
+    check.assert(balance(&alice) == 500, "conflict never charges")
+    let independent = candidate(f.ctx, alice.handle(), "independent\n")
+    // Changing another room and the catalog cannot invalidate this send.
+    domain.write_to(f.other.handle(), remove_member, 99)!
+    domain.write_to(f.catalog.handle(), ready, {})!
+    var accepted = domain.commit_set(independent)
+    accepted.wait()!
+    check.assert(balance(&alice) == 400, "unrelated state writes do not conflict")
+    expect_message(&mut queue, "independent\n")
+}
+fn paid_send(ctx: Context) @suspends { check.assert(process(ctx, 1, "say concurrent"), "concurrent send handled") }
+fn verify_balance_race() @suspends {
+    let f = fixture()
+    var queue = outbox.create(16, 1024)
+    let control = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 0, queue.handle(), control.handle())
+    check.assert(process(f.ctx, 1, "say outside"), "error is a handled command")
+    expect_message(&mut queue, "error join a room first\n")
+    check.assert(balance(&alice) == 500, "no-room send is free")
+    check.assert(process(f.ctx, 1, "join r"), "join")
+    expect_message(&mut queue, "joined r 1\n")
+    parallel { | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) }
+    var i: UInt64 = 0
+    while i < 5 { expect_message(&mut queue, "message r 1 concurrent\n") i += 1 }
+    expect_message(&mut queue, "error insufficient balance\n")
+    check.assert(balance(&alice) == 0, "six concurrent sends spend only five yuan")
+    check.assert(process(f.ctx, 1, "balance"), "query balance")
+    expect_message(&mut queue, "balance 0\n")
+}
+fn verify_message_capacity() @suspends {
+    let f = fixture()
+    var alice_queue = outbox.create(64, 65536)
+    let alice_stop = outbox.create(1, 0)
+    var bob_queue = outbox.create(64, 65536)
+    var bob_stop = outbox.create(1, 0)
+    var carol_queue = outbox.create(8, 256)
+    let carol_stop = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, alice_queue.handle(), alice_stop.handle())
+    let bob = test_account(f.ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
+    let carol = test_account(f.ctx, 3, 2, carol_queue.handle(), carol_stop.handle())
+    domain.write_to(alice.handle(), fund_capacity_test, {})!
     var i: UInt64 = 0
     while i < 64 {
-        check.assert(process(ctx, 1, "say fill"), "broadcast before capacity")
-        expect_message(alice, "message r 1 fill\n")
+        check.assert(process(f.ctx, 1, "say fill"), "fill slow target")
+        expect_message(&mut alice_queue, "message r 1 fill\n")
         i += 1
     }
-    check.assert(process(ctx, 1, "say after eviction"), "broadcast retries after eviction")
-    expect_message(alice, "left r 2\n")
-    expect_message(alice, "message r 1 after eviction\n")
-    check.assert(bob_stop.receive().is_none(), "control mailbox wakes cancellation")
-    check.assert(bob.receive().is_none(), "eviction discards pending messages")
-    check.assert(chat.index(2)!.is_none(), "evicted membership removed")
-    check.assert(process(ctx, 3, "say alive"), "other room unaffected")
-    expect_message(carol, "message other 3 alive\n")
-
+    check.assert(process(f.ctx, 1, "say retry"), "retry after eviction")
+    expect_message(&mut alice_queue, "left r 2\n")
+    expect_message(&mut alice_queue, "message r 1 retry\n")
+    check.assert(balance(&alice) == 3500, "failed full batch never double-charges")
+    check.assert(bob_stop.receive().is_none(), "evicted session wakes")
+    check.assert(bob_queue.receive().is_none(), "evicted output closes")
+    check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "evicted account inactive")
+    check.assert(process(f.ctx, 3, "say alive"), "unrelated room survives")
+    expect_message(&mut carol_queue, "message other 3 alive\n")
+    check.assert(balance(&carol) == 400, "other account pays independently")
 }
-fn verify_byte_capacity(ctx: Context, alice: &mut outbox.Mailbox) @suspends {
-    // Reuse a stable slot with a fresh identity and exercise byte capacity first.
-    var slow = outbox.create(64, 65536)
+fn verify_byte_capacity() @suspends {
+    let f = fixture()
+    var alice_queue = outbox.create(64, 65536)
+    let alice_stop = outbox.create(1, 0)
+    var slow_queue = outbox.create(64, 65536)
     var slow_stop = outbox.create(1, 0)
-    check.assert(test_connect(ctx, slow.handle(), slow_stop.handle()) == 4, "slot reclaimed with fresh identity")
-    expect_message(&mut slow, "welcome 4\n")
-    check.assert(process(ctx, 4, "join r"), "join reused slot")
-    expect_message(alice, "joined r 4\n")
-    expect_message(&mut slow, "joined r 4\n")
+    let alice = test_account(f.ctx, 1, 1, alice_queue.handle(), alice_stop.handle())
+    let slow = test_account(f.ctx, 2, 1, slow_queue.handle(), slow_stop.handle())
+    domain.write_to(alice.handle(), fund_capacity_test, {})!
     var builder = StringBuilder.new()
     var i: UInt64 = 0
     while i < 4091 { builder.push('x') i += 1 }
     let payload = builder.finish()
-    let prefix = "say "
-    let line = prefix.concat(&payload)
-    let expected = event("message", "r", 1, &payload)
+    let expected = "message r 1 {payload}\n"
     let count = 65536 / expected.byte_length()
-    check.assert(count < 64, "byte limit precedes message limit")
     i = 0
     while i < count {
-        check.assert(process(ctx, 1, line.clone()), "broadcast within byte capacity")
-        expect_message(alice, expected.clone())
+        check.assert(process(f.ctx, 1, "say {payload}"), "fill byte budget")
+        expect_message(&mut alice_queue, expected.clone())
         i += 1
     }
-    check.assert(process(ctx, 1, line.clone()), "byte capacity eviction")
-    expect_message(alice, "left r 4\n")
-    expect_message(alice, expected.clone())
-    check.assert(slow_stop.receive().is_none(), "byte overload closes control mailbox")
-    check.assert(slow.receive().is_none(), "byte overload closes output mailbox")
-
+    check.assert(process(f.ctx, 1, "say {payload}"), "retry byte overflow")
+    expect_message(&mut alice_queue, "left r 2\n")
+    expect_message(&mut alice_queue, expected.clone())
+    check.assert(balance(&alice) == 10000 - (count + 1) * 100, "byte retry charges once")
+    check.assert(slow_stop.receive().is_none() && slow_queue.receive().is_none(), "byte overload closes session")
+    check.assert(balance(&slow) == 500, "recipient never pays")
 }
-fn verify_simultaneous_capacity(ctx: Context, alice: &mut outbox.Mailbox, alice_stop: &mut outbox.Mailbox, carol: &mut outbox.Mailbox) @suspends {
-    let chat = ctx.chat
-    // Two simultaneously full recipients must not recursively evict each other forever.
-    var other = outbox.create(64, 65536)
-    var other_stop = outbox.create(1, 0)
-    check.assert(test_connect(ctx, other.handle(), other_stop.handle()) == 5, "reuse after byte overflow")
-    expect_message(&mut other, "welcome 5\n")
-    check.assert(process(ctx, 5, "join r"), "join simultaneous overload")
-    expect_message(alice, "joined r 5\n")
-    expect_message(&mut other, "joined r 5\n")
-    var i: UInt64 = 0
-    while i < 64 { check.assert(process(ctx, 1, "say full"), "fill both queues") i += 1 }
-    let excluded = Array.new::<UInt64>()
-    check.assert(publish(ctx, 1, Command.Disconnect, &excluded), "simultaneous overload terminates")
-    check.assert(!publish(ctx, 1, Command.Disconnect, &excluded), "disconnect is idempotent")
-    check.assert(alice_stop.receive().is_none() && other_stop.receive().is_none(), "both sessions signalled")
-    check.assert(alice.receive().is_none() && other.receive().is_none(), "both output queues closed")
-    check.assert(chat.index(1)!.is_none() && chat.index(5)!.is_none(), "both memberships removed")
-    check.assert(process(ctx, 3, "say still alive"), "server survives overload chain")
-    expect_message(carol, "message other 3 still alive\n")
-}
-fn verify_slots(state: &mut Chat, targets: (outbox.Handle, outbox.Handle)) {
-    let (output, stop) = targets
-    var i: UInt64 = 0
-    while i < 96 {
-        check.assert(state.connect(output, stop) == i + 1, "connection identity")
-        let client = state.clients.borrow_mut_ref(i)
-        var room = "r"
-        mem.swap(&mut client.room, &mut room)
-        i += 1
-    }
-    let request = Request { id: 96, command: Command.Say("probe"), excluded: Array.new::<UInt64>() }
-    let prepared = plan(state, request)!
-    check.assert(prepared.recipients.len() == 96, "recipient list spans more than 64 members")
-    let departing = plan(state, Request { id: 1, command: Command.Disconnect, excluded: Array.new::<UInt64>() })!
-    apply(state, departing)
-    check.assert(state.index(96)! == 95, "removing a member preserves other slots")
-    check.assert(state.connect(output, stop) == 97, "connection slot reclaimed")
-    check.assert(state.index(97)! == 0, "reuse inactive slot with fresh identity")
-}
-fn verify_connection_slots() @suspends {
-    let owner = domain.create(make_chat, {})
-    let queue = outbox.create(64, 65536)
-    let control = outbox.create(1, 0)
-    domain.write_to(owner.handle(), verify_slots, (queue.handle(), control.handle()))!
-    owner.close()
-}
-fn verify_chat_queue_domain() @suspends {
-    verify_connection_slots()
-    verify_wide_broadcast()
-    verify_closed_output()
-    let owner = domain.create(make_chat, {})
-    let ctx = Context { chat: owner.handle() }
-    var alice = outbox.create(64, 65536)
+fn verify_simultaneous_capacity() @suspends {
+    let f = fixture()
+    var alice_queue = outbox.create(2, 128)
     var alice_stop = outbox.create(1, 0)
-    var bob = outbox.create(64, 65536)
+    var bob_queue = outbox.create(2, 128)
     var bob_stop = outbox.create(1, 0)
-    var carol = outbox.create(64, 65536)
-    let carol_stop = outbox.create(1, 0)
-    check.assert(test_connect(ctx, alice.handle(), alice_stop.handle()) == 1, "first identity")
-    check.assert(test_connect(ctx, bob.handle(), bob_stop.handle()) == 2, "second identity")
-    check.assert(test_connect(ctx, carol.handle(), carol_stop.handle()) == 3, "third identity")
-    expect_message(&mut alice, "welcome 1\n")
-    expect_message(&mut bob, "welcome 2\n")
-    expect_message(&mut carol, "welcome 3\n")
-    check.assert(process(ctx, 1, "join r"), "join alice")
-    expect_message(&mut alice, "joined r 1\n")
-    check.assert(process(ctx, 2, "join r"), "join bob")
-    expect_message(&mut alice, "joined r 2\n")
-    expect_message(&mut bob, "joined r 2\n")
-    check.assert(process(ctx, 3, "join other"), "join carol")
-    expect_message(&mut carol, "joined other 3\n")
-
-    verify_conflict(ctx, &alice, &bob)
-    verify_message_capacity(ctx, &mut alice, &mut bob, &mut bob_stop, &mut carol)
-    verify_byte_capacity(ctx, &mut alice)
-    verify_simultaneous_capacity(ctx, &mut alice, &mut alice_stop, &mut carol)
-    owner.close()
+    let alice = test_account(f.ctx, 1, 1, alice_queue.handle(), alice_stop.handle())
+    let bob = test_account(f.ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
+    check.assert(process(f.ctx, 1, "say full"), "first queued send")
+    check.assert(process(f.ctx, 1, "say full"), "second queued send")
+    let excluded = Array.new::<UInt64>()
+    check.assert(publish(f.ctx, 1, Command.Disconnect, &excluded), "recursive cleanup terminates")
+    check.assert(!publish(f.ctx, 1, Command.Disconnect, &excluded), "disconnect is idempotent")
+    check.assert(alice_stop.receive().is_none() && bob_stop.receive().is_none(), "both sessions wake")
+    check.assert(alice_queue.receive().is_none() && bob_queue.receive().is_none(), "both queues close")
+    check.assert(balance(&alice) == 300 && balance(&bob) == 500, "disconnect is free")
 }
-
-fn connect_room(state: &mut Chat, targets: (outbox.Handle, outbox.Handle)) {
-    let (output, stop) = targets
-    let id = state.connect(output, stop)
-    let index = state.index(id)!
-    let client = state.clients.borrow_mut_ref(index)
-    var room = "wide"
-    mem.swap(&mut client.room, &mut room)
+fn verify_atomic_disconnect_signal() @suspends {
+    let f = fixture()
+    let output = outbox.create(4, 256)
+    var control = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, output.handle(), control.handle())
+    let command = Command.Disconnect
+    let excluded = Array.new::<UInt64>()
+    let (candidate, plan) = prepare(f.ctx, alice.handle(), 0, &command, &excluded)!
+    var receipt = domain.commit_set(candidate)
+    receipt.wait()!
+    // No post-commit close ran: the commit itself must wake the connection.
+    let notification = control.receive()!
+    check.assert(notification.is_empty(), "disconnect control signal is part of the commit")
+    check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "signal accompanies account removal")
+    let view = domain.read_from(f.room.read_handle(), room_view)!
+    check.assert(!view.members.get(0)!.live, "signal accompanies room removal")
+}
+fn verify_closed_output() @suspends {
+    let f = fixture()
+    var queue = outbox.create(4, 256)
+    let stop = outbox.create(1, 0)
+    let closed = outbox.create(4, 256)
+    var closed_stop = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, queue.handle(), stop.handle())
+    let bob = test_account(f.ctx, 2, 1, closed.handle(), closed_stop.handle())
+    outbox.close(closed.handle())
+    check.assert(process(f.ctx, 1, "say retry"), "closed target evicted")
+    expect_message(&mut queue, "left r 2\n")
+    expect_message(&mut queue, "message r 1 retry\n")
+    check.assert(closed_stop.receive().is_none(), "closed output signals session")
+    check.assert(balance(&alice) == 400 && balance(&bob) == 500, "closed batch never double-charges")
 }
 fn verify_wide_broadcast() @suspends {
-    let owner = domain.create(make_chat, {})
+    let f = fixture()
     let control = outbox.create(1, 0)
-    let ctx = Context { chat: owner.handle() }
     var queues = Array.new::<outbox.Mailbox>()
+    var accounts = Array.new::<domain.Owner<Account>>()
     var i: UInt64 = 0
     while i < 260 {
         let queue = outbox.create(2, 128)
-        domain.write_to(ctx.chat, connect_room, (queue.handle(), control.handle()))!
+        accounts.push(test_account(f.ctx, i + 1, 1, queue.handle(), control.handle()))
         queues.push(queue)
         i += 1
     }
-    check.assert(process(ctx, 1, "say beyond256"), "large batch committed")
+    check.assert(process(f.ctx, 1, "say beyond256"), "wide broadcast committed")
     while !queues.is_empty() {
         var queue = queues.pop()!
-        expect_message(&mut queue, "message wide 1 beyond256\n")
+        expect_message(&mut queue, "message r 1 beyond256\n")
     }
-    owner.close()
+    let alice = domain.lookup_write::<Account>(f.ctx.host.accounts, 1)!
+    check.assert(domain.read_from(alice.read_only(), account_view)!.balance_cents == 400, "wide broadcast costs one yuan")
 }
-
-fn verify_closed_output() @suspends {
-    let owner = domain.create(make_chat, {})
-    let ctx = Context { chat: owner.handle() }
-    var alice = outbox.create(4, 256)
-    let alice_stop = outbox.create(1, 0)
-    let bob = outbox.create(4, 256)
-    var bob_stop = outbox.create(1, 0)
-    domain.write_to(ctx.chat, connect_room, (alice.handle(), alice_stop.handle()))!
-    domain.write_to(ctx.chat, connect_room, (bob.handle(), bob_stop.handle()))!
-    outbox.close(bob.handle())
-    check.assert(process(ctx, 1, "say after close"), "closed target evicted and broadcast retried")
-    expect_message(&mut alice, "left wide 2\n")
-    expect_message(&mut alice, "message wide 1 after close\n")
-    check.assert(bob_stop.receive().is_none(), "closed output still signals its session")
-    owner.close()
+fn verify_chat_queue_domain() @suspends {
+    verify_conflicts_and_independence()
+    verify_balance_race()
+    verify_message_capacity()
+    verify_byte_capacity()
+    verify_simultaneous_capacity()
+    verify_closed_output()
+    verify_atomic_disconnect_signal()
+    verify_wide_broadcast()
 }

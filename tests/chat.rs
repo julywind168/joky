@@ -103,8 +103,10 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     let mut alice = Peer::connect(port, 1);
     let mut bob = Peer::connect(port, 2);
     let mut carol = Peer::connect(port, 3);
-    alice.send("say before joining\n");
+    alice.send("balance\nsay before joining\nbalance\n");
+    alice.expect("balance 5\n");
     alice.expect("error join a room first\n");
+    alice.expect("balance 5\n");
     // A command split between writes must not run before its LF arrives.
     alice.send("join 12");
     alice.quiet();
@@ -129,7 +131,7 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     bob.expect("message-v2 123 2 updated\n");
     for invalid in [
         format!("{patched}\nfn broken("),
-        patched.replace("next_id", "sequence"),
+        patched.replace("balance_cents", "credit_cents"),
     ] {
         std::fs::write(logic_path, invalid).unwrap();
         alice.send("reload\n");
@@ -188,7 +190,7 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
         bob.expect("error join a room first\n");
     }
     for _ in 0..4 {
-        bob.expect("error use join <room>, leave, or say <message>\n");
+        bob.expect("error use join <room>, leave, say <message>, or balance\n");
     }
     carol.send("say alone\n");
     carol.expect("message 房间 3 alone\n");
@@ -222,6 +224,10 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     carol.quiet();
     alice.send("say still running\n");
     alice.expect("message 123 1 still running\n");
+    alice.send("balance\nsay too expensive\nbalance\n");
+    alice.expect("balance 0\n");
+    alice.expect("error insufficient balance\n");
+    alice.expect("balance 0\n");
     // Concurrent join, move, send and disconnect agree at both stable observers.
     let mut witness = Peer::connect(port, 16);
     let mut newcomer = Peer::connect(port, 17);
@@ -240,7 +246,7 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     }
     newcomer.send("join 123\n");
     mover.send("join other\n");
-    alice.send("say concurrent\n");
+    witness.send("say concurrent\n");
     drop(quitter);
     let mut events = Vec::new();
     for _ in 0..4 {
@@ -256,7 +262,7 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
             "joined 123 17\n",
             "left 123 18\n",
             "left 123 19\n",
-            "message 123 1 concurrent\n"
+            "message 123 16 concurrent\n"
         ]
     );
     drop((witness, newcomer, mover));
@@ -269,8 +275,8 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     departures.sort();
     assert_eq!(departures, ["left 123 16\n", "left 123 17\n"]);
     // Native backends also cross the former 256-message batch boundary.
-    // The interpreter's 1024 live-frame budget admits fewer simultaneous TCP sessions;
-    // its 260-target publication is covered by verify_wide_broadcast before listening.
+    // Account/room owner tasks also consume the interpreter's 1024 live-frame budget;
+    // 40 TCP members leave headroom, while verify_wide_broadcast still covers 260 targets.
     let mut peers: Vec<_> = (20..20 + members)
         .map(|id| Peer::connect(port, id))
         .collect();
@@ -291,19 +297,35 @@ fn chat_real_tcp_on_all_backends() {
     let work = scratch::ScratchDir::new("chat");
     let source = include_str!("../examples/chat.jk");
     assert_eq!(source.matches("0x7f000001, 7777").count(), 1);
+    assert_eq!(
+        source
+            .matches("    let directory = domain.directory(1)")
+            .count(),
+        1
+    );
     let path = work.path().join("chat.jk");
     let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check")
-        .replace("    permit.release()\n}\nfn receive", "    check.assert(vm.module_count(engine) == 2, \"bootstrap and current module only\")\n    permit.release()\n}\nfn receive")
         .replace("0x7f000001, 7777", "0x7f000001, 0")
         .replace("examples/chat_logic.jk", "chat_logic.jk")
-        .replace("    let directory = domain.directory(1)", "    engine.call::<Unit,Unit>(\"verify\", {});\n    let directory = domain.directory(1)");
+        .replace("    let directory = domain.directory(1)", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let directory = domain.directory(1)");
+    let source = format!("{source}\n{}", include_str!("fixtures/chat_reload_host.jk"));
     for create in ["new", "interpreter"] {
         let source = source.replace("vm.Vm.new()", &format!("vm.Vm.{create}()"));
         std::fs::write(&path, &source).unwrap();
         let logic = format!(
-        "import joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
-        include_str!("../examples/chat_logic.jk"), include_str!("fixtures/chat_queue.jk")
+        "import joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
+        include_str!("../examples/chat_logic.jk"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
+        assert_eq!(
+            logic
+                .matches("if !prepared.origin.live { return false }")
+                .count(),
+            1
+        );
+        let logic = logic.replace(
+            "if !prepared.origin.live { return false }",
+            "if !prepared.origin.live { return false }\n        pause_send(ctx, &command)",
+        );
         std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
         let binary = work.path().join("chat");
         let built = Command::new(env!("CARGO_BIN_EXE_joky"))
@@ -333,7 +355,7 @@ fn chat_real_tcp_on_all_backends() {
                 Server::start(command, work.path().join(format!("{backend}.log")));
             conversation(
                 port,
-                if backend == "interpreter" { 70 } else { 260 },
+                if backend == "interpreter" { 40 } else { 260 },
                 &work.path().join("chat_logic.jk"),
                 &logic,
             );

@@ -1,0 +1,68 @@
+// Only the test host knows these synchronization entries.
+struct Probe { directory: domain.DirectoryHandle, ready: outbox.Handle }
+#state
+struct ProbeState { resume: outbox.Handle, ready: outbox.Handle, attempts: UInt64 }
+fn make_probe(ready: outbox.Handle) -> ProbeState { ProbeState { resume: ready, ready: ready, attempts: 0 } }
+fn probe_view(state: &ProbeState) -> ProbeState { *state }
+fn probe_ready(state: &mut ProbeState, _: Unit) {}
+fn arm_probe(state: &mut ProbeState, handle: outbox.Handle) -> Bool {
+    state.attempts += 1
+    if state.attempts == 1 { state.resume = handle true } else { false }
+}
+fn pause_send(ctx: Context, command: &Command) @suspends {
+    let pause = match command { Say(text) => text.equals("paused"), _ => false }
+    if !pause { return }
+    let state = domain.lookup_write::<ProbeState>(ctx.host.directory, 2)!
+    var resume = outbox.create(1, 0)
+    let handle = resume.handle()
+    let first = domain.write_to(state, arm_probe, handle)!
+    if !first { return }
+    signal_probe(state)
+    // The host publishes while this business request and its candidate are alive.
+    resume.receive();
+}
+fn set_probe_resume(state: &mut ProbeState, resume: outbox.Handle) { state.resume = resume }
+fn signal_probe(state: domain.WriteHandle<ProbeState>) @suspends {
+    let value = domain.read_from(state.read_only(), probe_view)!
+    var access = domain.access_set() access.include(state.read_only())
+    let snapshot = domain.snapshot_set(access)
+    var batch = outbox.batch(1, 0)
+    outbox.stage(&mut batch, value.ready, Array.new::<UInt8>())!
+    var receipt = domain.commit_set(domain.edit_snapshot(snapshot, state, probe_ready, {}).with_outbox(batch))
+    receipt.wait()!
+}
+fn verify_online(input: Probe) @suspends {
+    let f = fixture()
+    let sync = domain.create(make_probe, input.ready)
+    input.directory.insert(1, sync.handle())!
+    f.ctx.host.directory.insert(2, sync.handle())!
+    var queue = outbox.create(8, 1024)
+    let stop = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, queue.handle(), stop.handle())
+    check.assert(process(f.ctx, 1, "say queued"), "queue an old-version message")
+    check.assert(process(f.ctx, 1, "say paused"), "in-flight operation retries after publication")
+    check.assert(domain.read_from(sync.read_handle(), probe_view)!.attempts == 2, "publication rejects exactly the old candidate")
+    check.assert(balance(&alice) == 300, "two successful sends cost exactly two yuan")
+    // This old continuation creates another root after the publication boundary.
+    let late_queue = outbox.create(4, 256)
+    let late = test_account(f.ctx, 2, 0, late_queue.handle(), stop.handle())
+    let stale = candidate(f.ctx, late.handle(), "late ghost\n")
+    var resume = outbox.create(1, 0)
+    domain.write_to(sync.handle(), set_probe_resume, resume.handle())!
+    signal_probe(sync.handle())
+    resume.receive();
+    var rejected = domain.commit_set(stale)
+    check.assert(match rejected.wait() { Err(Conflict) => true, _ => false }, "refresh catches a root created by an old continuation")
+    check.assert(balance(&late) == 500, "late-root conflict never charges")
+    let excluded = Array.new::<UInt64>()
+    check.assert(publish(f.ctx, 1, Command.Notice("sentinel\n"), &excluded), "sentinel committed")
+    // No receive ran before publication: the old queue survived intact and in order.
+    expect_message(&mut queue, "message r 1 queued\n")
+    expect_message(&mut queue, "message r 1 paused\n")
+    expect_message(&mut queue, "sentinel\n")
+}
+fn resume_probe(directory: domain.DirectoryHandle) @suspends {
+    let state = domain.lookup_write::<ProbeState>(directory, 1)!
+    let value = domain.read_from(state.read_only(), probe_view)!
+    outbox.close(value.resume)
+}

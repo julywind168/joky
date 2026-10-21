@@ -1,0 +1,17 @@
+struct Probe { directory: domain.DirectoryHandle, ready: outbox.Handle }
+fn run_probe(engine: &vm.Vm, input: Probe) @suspends { engine.call::<Probe, Unit>("verify_online", input) }
+fn publish_probe(engine: &vm.Vm, directory: domain.DirectoryHandle, ready: &mut outbox.Mailbox) @suspends {
+    ready.receive()!
+    engine.publish_file(script_path())!
+    engine.call::<domain.DirectoryHandle, Unit>("resume_probe", directory)
+    ready.receive()!
+    check.assert(vm.publish_domain_code(engine) == 1, "refresh only the root created after publication")
+    engine.call::<domain.DirectoryHandle, Unit>("resume_probe", directory)
+}
+fn verify_publication(engine: &vm.Vm) @suspends {
+    let directory = domain.directory(1)
+    var ready = outbox.create(1, 0)
+    let input = Probe { directory: directory.handle(), ready: ready.handle() }
+    parallel { | run_probe(engine, input) | publish_probe(engine, directory.handle(), &mut ready) }
+    check.assert(vm.module_count(engine) == 1, "completed old tasks and roots release their module")
+}

@@ -930,6 +930,76 @@ fn probe(n: Int32) @suspends -> Int32 {{
     }
 
     #[test]
+    fn state_domain_code_publication_checks_frozen_projection_input_and_result_contracts() {
+        use crate::runtime::executor::Clock;
+        use std::time::{Duration, Instant};
+        struct TestClock(Cell<Instant>);
+        impl Clock for TestClock {
+            fn now(&self) -> Instant {
+                self.0.get()
+            }
+        }
+        const SOURCE: &str = r#"
+import joky/domain
+import joky/task
+struct State { value: Int32 }
+struct Input { delta: Int32 }
+struct Answer { value: Int32 }
+fn make(value: Int32) -> State { State { value: value } }
+fn project(state: &State, input: Input) -> Answer { Answer { value: state.value + input.delta } }
+fn probe(_: Int32) @suspends -> Int32 {
+    let owner = domain.create(make, 9)
+    task.sleep_ms(1000)
+    var access = domain.access_set() access.include(owner.read_handle())
+    let snapshot = domain.snapshot_set(access)
+    let answer = domain.query_snapshot(&snapshot, owner.read_handle(), project, Input { delta: 5 })
+    answer.value
+}
+"#;
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for changed in ["Input", "Answer"] {
+                let before = crate::runtime::arena::LIVE.with(|n| n.get());
+                let clock = Rc::new(TestClock(Cell::new(Instant::now())));
+                let mut vm = VmEngine::with_mode(mode);
+                vm.configure_tasks(clock.clone(), 100).unwrap();
+                vm.load_source(SOURCE).unwrap();
+                let owner = vm
+                    .create_domain("make", &[InstanceValue::Int32(0)])
+                    .unwrap();
+                let task = vm
+                    .spawn_domain_task(owner.write_handle(), "probe", &[InstanceValue::Int32(0)])
+                    .unwrap();
+                for _ in 0..10 {
+                    assert!(vm.poll_tasks(100).unwrap().completed.is_empty());
+                }
+                vm.load_source(&SOURCE.replace(changed, &format!("Changed{changed}")))
+                    .unwrap();
+                assert_eq!(vm.publish_domain_code().unwrap(), 2);
+                clock.0.set(clock.0.get() + Duration::from_millis(1001));
+                let mut failure = None;
+                for _ in 0..10 {
+                    for done in vm.poll_tasks(100).unwrap().completed {
+                        if done.id == task {
+                            failure = Some(done.result.unwrap_err());
+                        }
+                    }
+                    if failure.is_some() {
+                        break;
+                    }
+                }
+                assert!(failure
+                    .unwrap()
+                    .to_string()
+                    .contains("incompatible frozen entry contract"));
+                drop(owner);
+                assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+                drop(vm);
+                assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), before);
+            }
+        }
+    }
+
+    #[test]
     fn script_scalar_bridge_publication_excludes_other_module_families() {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut host = VmEngine::with_mode(mode);

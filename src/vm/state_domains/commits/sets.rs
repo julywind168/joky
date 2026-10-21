@@ -15,7 +15,6 @@ impl Accesses {
 struct Frozen {
     token: u64,
     module: LoadedModule,
-    module_key: usize,
     ty: Type,
     root: Option<Root>,
 }
@@ -116,7 +115,6 @@ fn capture(domains: &Domains, set: &Accesses) -> Result<Snapshot, Error> {
         roots.push(Frozen {
             token: domain.source_token * 2,
             module: domain.module.clone(),
-            module_key: domain.source_module,
             ty: domain.ty.clone(),
             root: Some(
                 domain
@@ -213,7 +211,7 @@ unsafe fn edit(
     registry: &Rc<RefCell<Domains>>,
     set: &mut Proposal,
     token: u64,
-    module_key: usize,
+    caller: &LoadedModule,
     name: &str,
     packet: &Buffer,
     limits: InterpreterLimits,
@@ -231,9 +229,9 @@ unsafe fn edit(
             .as_mut()
             .and_then(|s| s.roots.iter_mut().find(|f| f.token / 2 == token / 2))
             .ok_or_else(|| invalid("Candidate target has no retained frozen state"))?;
-        if frozen.module_key != module_key {
+        if !code::admits(caller, &frozen.module, name, false) {
             return Err(invalid(
-                "Candidate editor belongs to another module version",
+                "Candidate editor has an incompatible frozen entry contract",
             ));
         }
         let root = frozen
@@ -260,9 +258,9 @@ unsafe fn edit(
         .as_ref()
         .and_then(|s| s.roots.iter().find(|f| f.token / 2 == token / 2))
         .ok_or_else(|| invalid("Candidate editor requires a frozen candidate"))?;
-    if frozen.module_key != module_key {
+    if !code::admits(caller, &frozen.module, name, false) {
         return Err(invalid(
-            "Candidate editor belongs to another module version",
+            "Candidate editor has an incompatible frozen entry contract",
         ));
     }
     let candidate = &mut set.candidates[index];
@@ -511,18 +509,18 @@ unsafe fn poll_inner(
                 Err(_) => 4,
             }));
         }
-        let (_, key) = source::module(registry, frame.slots[0])?;
+        let (caller, _) = source::module(registry, frame.slots[0])?;
         let frozen = snapshot
             .roots
             .iter_mut()
             .find(|f| f.token / 2 == frame.slots[2] / 2)
             .ok_or_else(|| invalid("Projection domain is absent from the snapshot set"))?;
-        if frozen.module_key != key {
+        let name = crate::runtime::owned_text::borrow(frame.slots[3] as *const Buffer)?;
+        if !code::admits(&caller, &frozen.module, name, false) {
             return Err(invalid(
-                "Snapshot projection belongs to another module version",
+                "Snapshot projection has an incompatible frozen entry contract",
             ));
         }
-        let name = crate::runtime::owned_text::borrow(frame.slots[3] as *const Buffer)?;
         let info = frozen.module.instance_info(name)?;
         if op == Operation::SetReadValues {
             if !info.domain_entry
@@ -592,7 +590,7 @@ unsafe fn poll_inner(
                 .take()
                 .ok_or_else(|| invalid("Candidate set was consumed"))?
         };
-        let (_, key) = source::module(registry, frame.slots[0])?;
+        let (caller, _) = source::module(registry, frame.slots[0])?;
         let name = crate::runtime::owned_text::borrow(frame.slots[3] as *const Buffer)?;
         let packet = (frame.slots[4] as *const Buffer)
             .as_ref()
@@ -601,7 +599,7 @@ unsafe fn poll_inner(
             registry,
             &mut set,
             frame.slots[2],
-            key,
+            &caller,
             name,
             packet,
             crate::runtime::suspension::current_limits(),
@@ -792,7 +790,7 @@ mod tests {
                 domain.source_module = code::module_key(&domain.module);
             }
             let snapshot = snapshot(&mut vm, &owners);
-            let key = snapshot.roots[0].module_key;
+            let original_module = snapshot.roots[0].module.clone();
             let original = snapshot
                 .roots
                 .iter()
@@ -820,7 +818,7 @@ mod tests {
                     &vm.domains,
                     &mut set,
                     token(&vm, &owners[0]),
-                    key,
+                    &original_module,
                     "update",
                     packet.as_ref(),
                     Default::default(),
@@ -833,29 +831,53 @@ mod tests {
             )
             .unwrap();
             assert_eq!(vm.publish_domain_code().unwrap(), 3);
-            let new_key = vm.domains.borrow().entries[&owners[0].handle.sequence].source_module;
-            assert_ne!(key, new_key);
+            let current = vm.current.clone().unwrap();
+            assert!(!source::same_module(&original_module, &current));
             unsafe {
-                assert!(edit(
-                    &vm.domains,
-                    &mut set,
-                    token(&vm, &owners[0]),
-                    new_key,
-                    "update",
-                    packet.as_ref(),
-                    Default::default()
-                )
-                .is_err());
+                // A compatible newer caller still edits with the frozen old code.
                 edit(
                     &vm.domains,
                     &mut set,
                     token(&vm, &owners[0]),
-                    key,
+                    &current,
                     "update",
                     packet.as_ref(),
                     Default::default(),
                 )
                 .unwrap();
+                edit(
+                    &vm.domains,
+                    &mut set,
+                    token(&vm, &owners[0]),
+                    &original_module,
+                    "update",
+                    packet.as_ref(),
+                    Default::default(),
+                )
+                .unwrap();
+            }
+            // Identical lane counts do not make a changed nominal input compatible.
+            vm.load_source(&source.replace("ignored", "renamed"))
+                .unwrap();
+            let incompatible = vm.current.clone().unwrap();
+            unsafe {
+                for owner in &owners[..2] {
+                    let count = set.candidates.len();
+                    let error = edit(
+                        &vm.domains,
+                        &mut set,
+                        token(&vm, owner),
+                        &incompatible,
+                        "update",
+                        packet.as_ref(),
+                        Default::default(),
+                    )
+                    .unwrap_err();
+                    assert!(error
+                        .to_string()
+                        .contains("incompatible frozen entry contract"));
+                    assert_eq!(set.candidates.len(), count);
+                }
             }
             let candidate = &mut set.candidates[0];
             let info = candidate.module.instance_info("read").unwrap();
