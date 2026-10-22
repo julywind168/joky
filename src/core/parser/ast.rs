@@ -952,7 +952,7 @@ pub struct TypeAlias {
     pub span: Span,
 }
 
-/// One explicitly named field initializer.
+/// One named field initializer, with shorthand expanded to its value expression.
 #[derive(Debug, Clone)]
 pub struct FieldInit {
     pub name: String,

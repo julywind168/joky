@@ -6,6 +6,71 @@ use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 use crate::{ErrorCode, FunctionSignature};
 
 #[test]
+fn record_shorthand_preserves_evaluation_order_and_owned_values() {
+    let source = r#"
+        struct Snapshot { value: Int32, effect: Unit }
+        struct User<T> { name: String, age: Int32, nickname: T }
+        struct Size { size: UInt64 }
+        fn size<const size: UInt64>() -> Size { Size { size } }
+        fn check() -> Int32 {
+            var value = 1
+            let before = Snapshot { value, effect: { value = 2 } }
+            let after = Snapshot { effect: { value = 3 }, value }
+            let name = "Ada"
+            let age = 37
+            let nickname = "A"
+            let user = User {
+                nickname
+                name
+                age: age + 1
+            }
+            let User { name, age, nickname } = user
+            if before.value == 1 && after.value == 3 && value == 3 && size::<42>().size == 42 {
+                age + int32(name.rune_count()) + int32(nickname.rune_count())
+            } else { -1 }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = super::VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42, "{mode:?}");
+    }
+    crate::backends::aot::tests::assert_sync_int32(
+        &crate::parser::parse(source).unwrap(),
+        "check",
+        42,
+    );
+}
+
+#[test]
+fn record_shorthand_uses_explicit_field_validation_and_name_resolution() {
+    for (declarations, body) in [
+        ("struct P { x: Int32 }", "P { x }"),
+        ("struct P { x: Int32 }", "let x = true; P { x }"),
+        ("struct P { x: Int32 }", "let x = 1; P { x, x: 2 }"),
+        ("struct P { y: Int32 }", "let x = 1; P { x }"),
+        ("struct P { x: Int32, y: Int32 }", "let x = 1; P { x }"),
+        (
+            "struct P { x: String }",
+            "let x = \"owned\"; let first = P { x }; P { x }",
+        ),
+    ] {
+        let shorthand = format!("{declarations} fn check() -> P {{ {body} }}");
+        let explicit = shorthand
+            .replace("{ x }", "{ x: x }")
+            .replace("{ x,", "{ x: x,");
+        let actual = frontend_error(&shorthand, &crate::ModuleSources::new());
+        let expected = frontend_error(&explicit, &crate::ModuleSources::new());
+        assert_eq!(actual.code(), expected.code(), "{shorthand}");
+        assert_eq!(actual.message(), expected.message(), "{shorthand}");
+        if body == "P { x }" {
+            assert_eq!(actual.code(), ErrorCode::UnknownName);
+            assert_eq!(actual.span().unwrap().slice(&shorthand), Some("x"));
+        }
+    }
+}
+
+#[test]
 fn records_preserve_values_and_calls_in_direct_and_cps_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {

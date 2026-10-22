@@ -5,7 +5,7 @@ struct Empty {}
 struct Marker { unit: Unit, empty: Empty }
 struct Shape { point: Position, visible: Bool, marker: Marker }
 
-fn make_point(x: Int32, y: Int32) -> Position { Point { y: y, x: x } }
+fn make_point(x: Int32, y: Int32) -> Position { Point { y, x } }
 fn identity(p: Position) -> Point { p }
 fn packed(unit: Unit, p: Point, empty: Empty, delta: Int32) -> Point {
     Point { x: p.x + delta, y: p.y }

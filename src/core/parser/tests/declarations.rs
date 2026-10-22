@@ -164,6 +164,65 @@ fn records_parse_fields_places_and_condition_boundaries() {
 }
 
 #[test]
+fn record_shorthand_preserves_field_spans_and_constructor_boundaries() {
+    for (constructor, body, count) in [
+        ("P", "x", 1),
+        ("P", "x, y,", 2),
+        ("P", "x\ny", 2),
+        ("P", "x\r\ny", 2),
+        ("P", "x // separator\n y: 2", 2),
+        ("P", "x /* separator\n */ y", 2),
+        ("P", "x, y: 2", 2),
+        ("P", "y: 2, x", 2),
+        ("model.P::<Int32>", "x", 1),
+    ] {
+        let source = format!("fn f() {{ {constructor} {{ {body} }} }}");
+        let module = parse(&source).unwrap();
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!()
+        };
+        let Expr::Record { fields, .. } = &exprs[0] else {
+            panic!("{source}")
+        };
+        assert_eq!(fields.len(), count, "{source}");
+        let field = fields.iter().find(|field| field.name == "x").unwrap();
+        assert_eq!(field.span.slice(&source), Some("x"));
+        assert!(matches!(&field.value, Expr::Ident { name, span }
+            if name == "x" && *span == field.span));
+    }
+    for source in [
+        "fn f() { P { x, y z } }",
+        "fn f() { P { x,, } }",
+        "fn f() { P { x, y; } }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+    let module = parse(
+        "fn f() { value\n { x }\n if flag { x }\n while flag { x }\n match value { x => x } }",
+    )
+    .unwrap();
+    let Item::FnDef(function) = &module.items[0] else {
+        panic!()
+    };
+    let Expr::Block { exprs, .. } = &function.body else {
+        panic!()
+    };
+    assert!(matches!(
+        &exprs[..],
+        [
+            Expr::Ident { .. },
+            Expr::Block { .. },
+            Expr::If { .. },
+            Expr::While { .. },
+            Expr::Match { .. }
+        ]
+    ));
+}
+
+#[test]
 fn type_aliases_keep_source_spans_and_allow_forward_declarations() {
     let source = "// 🙂\nimport joky/vm; type 数 = Later\nfn f(x: 数,) -> Later { let y: 数 = x\n y } type Later = Int32; type Handle = vm.Function";
     let module = parse(source).unwrap();

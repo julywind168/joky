@@ -9,7 +9,7 @@ enum Option<T> { None, Some(T) }
 type Wide = UInt64
 type WidePair = Pair<Wide>
 fn id<T>(value: T) -> T { value }
-fn pair<T>(left: T, right: T) -> Pair<T> { Pair { right: right, left: left } }
+fn pair<T>(left: T, right: T) -> Pair<T> { Pair { right, left } }
 fn first<T>(value: Pair<T>) -> T { value.left }
 fn choose<T>(a: T, b: T) -> T { a }
 fn pick<T>(a: Pair<T>, b: T) -> T { a.left }
@@ -17,7 +17,7 @@ fn unwrap<T>(value: Option<T>, fallback: T) -> T { match value { None => fallbac
 fn replace<T: Copy>(value: Pair<T>, next: T) -> Pair<T> { var p = value; let saved = p; p.left = next; saved }
 fn recurse<T>(value: Pair<T>, n: Int32) -> Pair<T> { if n == 0 { value } else { recurse(value, n - 1) } }
 fn local<T: Copy>(value: T) -> T { let p = Pair { left: value, right: value }; p.left }
-fn explicit<T>(value: T) -> Cell<T> { Cell::<T> { value: value } }
+fn explicit<T>(value: T) -> Cell<T> { Cell::<T> { value } }
 fn phantom<T>() -> Marker<T> { Marker {} }
 fn split<A, B>(a: A, b: B) -> Split<A, B> { Split { second: b, first: a } }
 fn read_tag<T, Tag>(p: Tagged<T, Tag>) -> T { p.value }

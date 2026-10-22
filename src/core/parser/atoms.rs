@@ -197,15 +197,8 @@ impl Parser {
             TokenKind::Ident(ref name) if name == "when" && self.starts_when() => self.parse_when(),
             TokenKind::Ident(name) => {
                 self.advance();
-                if let Some(p) = self
-                    .type_params
-                    .iter()
-                    .find(|p| p.name == name && p.kind == ParameterKind::Const)
-                {
-                    return Ok(Expr::Literal {
-                        literal: Literal::ConstParameter(p.clone()),
-                        span: self.span(start, self.last_span.end()),
-                    });
+                if let Some(value) = self.const_parameter_value(&name, self.last_span) {
+                    return Ok(value);
                 }
                 let self_application = (name == "Self")
                     .then_some(self.impl_target.as_ref())
@@ -298,8 +291,16 @@ impl Parser {
                         }
                         let field_start = self.peek_span().start();
                         let name = self.expect_ident()?;
-                        self.expect(&TokenKind::Colon)?;
-                        let value = self.parse_assignment()?;
+                        let value = if self.peek() == &TokenKind::Colon {
+                            self.advance();
+                            self.parse_assignment()?
+                        } else {
+                            self.const_parameter_value(&name, self.last_span)
+                                .unwrap_or_else(|| Expr::Ident {
+                                    name: name.clone(),
+                                    span: self.last_span,
+                                })
+                        };
                         fields.push(FieldInit {
                             name,
                             value,
@@ -362,25 +363,34 @@ impl Parser {
         }
     }
 
+    fn const_parameter_value(&self, name: &str, span: Span) -> Option<Expr> {
+        self.type_params
+            .iter()
+            .find(|p| p.name == name && p.kind == ParameterKind::Const)
+            .map(|p| Expr::Literal {
+                literal: Literal::ConstParameter(p.clone()),
+                span,
+            })
+    }
+
     /// A field-shaped or empty brace belongs to a constructor. Other braces
     /// remain independent block expressions. A complete name ends at a newline
     /// outside parentheses, so constructor braces must start on the same line.
     fn starts_record_body(&self) -> bool {
-        self.allow_record
-            && !self.at_expression_break()
-            && self.peek() == &TokenKind::LBrace
-            && (self
-                .tokens
-                .get(self.pos + 1)
-                .is_some_and(|token| token.kind == TokenKind::RBrace)
-                || (self
-                    .tokens
-                    .get(self.pos + 1)
-                    .is_some_and(|token| matches!(token.kind, TokenKind::Ident(_)))
-                    && self
-                        .tokens
-                        .get(self.pos + 2)
-                        .is_some_and(|token| token.kind == TokenKind::Colon)))
+        if !self.allow_record || self.at_expression_break() || self.peek() != &TokenKind::LBrace {
+            return false;
+        }
+        let Some(first) = self.tokens.get(self.pos + 1) else {
+            return false;
+        };
+        first.kind == TokenKind::RBrace
+            || (matches!(first.kind, TokenKind::Ident(_))
+                && self.tokens.get(self.pos + 2).is_some_and(|next| {
+                    matches!(
+                        next.kind,
+                        TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace
+                    ) || next.line > first.line
+                }))
     }
 
     pub(super) fn name_path(mut expr: &Expr) -> Option<String> {

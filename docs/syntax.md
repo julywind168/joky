@@ -608,6 +608,8 @@ struct OrderId { value: UInt64 }
   包括未用于目标的参数；每次规范化最多 256 个不同别名应用（含刚性参数应用），共享目标不重复展开。
   参数最多 64 个，目标沿用布局上限；不能形成别名环，经过未使用参数的依赖环也保守拒绝。
 - 记录构造必须恰好提供所有字段，不重复、不依赖隐式默认值；字段按源码书写顺序求值。
+  `User { name, age }` 中的 `name` 等价于 `name: name`，支持与显式初始化混用；
+  名称查找、复制或移动及字段访问权限沿用显式写法，详见[当前记录语义](language.md#记录)。
   相邻字段声明和相邻初始化项之间必须有逗号或真实换行（不插入丢弃值的分号）；
   不能以此省略函数实参的逗号。字段默认私有，`pub` 字段在类型可见时可跨模块访问。
   相邻枚举变体之间同样必须有逗号或真实换行，载荷类型的尾随逗号仍允许。
@@ -1065,7 +1067,7 @@ AnonymousParam = Identifier, [ ":", Type ] ;
 TaskForm     = TaskScope | TaskBranch ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;
-FieldInit    = Identifier, ":", NonSequence ;
+FieldInit    = Identifier, [ ":", NonSequence ] ;
 Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 TypeArguments = "::", AppliedArguments ;
 TypedName    = Name, TypeArguments ;
@@ -1141,7 +1143,7 @@ mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；�
 `__joky_generic_` 前缀保留给编译器实例，使用该前缀的用户函数或 extern 需要改名。
 数值后紧邻标识符须添加空白或 `;`，如 `1foo` 不再拆成两个表达式。
 旧的 `let _ = ...` 再读取 `_` 的代码须给绑定改名；它现在是丢弃模式。
-名称后独立空块需要写成 `value; {}` 或 `(value) {}`，避免被识别为记录构造。
+名称后独立的空块或形似字段简写的块需要明确分隔，如 `value; { name }`，或将 `{` 放到下一行，避免被识别为记录构造。
 第一版先采用单一目标语法，不设计兼容模式或按文件切换语法版本的指令。
 
 1. **规范解析边界**：运算符优先级、一元运算和 Bool 相等比较已实现；保留分号连接及可省略规则。

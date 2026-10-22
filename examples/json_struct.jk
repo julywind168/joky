@@ -21,7 +21,7 @@ impl FromJson for User {
         let age = context.take_field::<UInt8>(&mut fields, "age")?
         let nickname = context.take_field::<Option<String>>(&mut fields, "nickname")?
         context.finish_object(fields)?
-        Ok(User { name: name, age: age, nickname: nickname })
+        Ok(User { name, age, nickname })
     }
 }
 fn ensure(ok: Bool) { assert(ok, "typed JSON example") }
