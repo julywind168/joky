@@ -162,7 +162,6 @@ fn read_remaining(file: &mut File, max_bytes: Option<UInt64>) @suspends -> Resul
             index = index + 1
         }
     }
-    Ok(output)
 }
 
 fn decode_text(result: Result<Array<UInt8>, IoError>) -> Result<String, ReadTextError> {

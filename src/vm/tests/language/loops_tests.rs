@@ -5,6 +5,122 @@ use super::VmMode;
 use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 
 #[test]
+fn unconditional_loops_match_in_direct_and_cps_execution() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            let source = with_suspends(
+                include_str!("../../../../tests/fixtures/unconditional_loops.jk"),
+                suspends,
+                Suspends::All,
+            );
+            let vm = parity_vm(&source, mode);
+            assert_eq!(call_int32(&vm, suspends, "check", &[]), 42);
+        }
+    }
+}
+
+#[test]
+fn unconditional_loops_preserve_structural_reachability() {
+    use crate::ErrorCode;
+    for (body, code) in [
+        ("while true {}; 42", ErrorCode::UnreachableCode),
+        ("while true { return 1 }; 42", ErrorCode::UnreachableCode),
+        (
+            "while true { while true { break } }; 42",
+            ErrorCode::UnreachableCode,
+        ),
+        (
+            "while true { while (break) {} }; 42",
+            ErrorCode::UnreachableCode,
+        ),
+        ("while true { if false { break } }", ErrorCode::TypeMismatch),
+        ("while true { break }", ErrorCode::TypeMismatch),
+        ("while false { return 1 }", ErrorCode::TypeMismatch),
+        (
+            "let flag = true; while flag { return 1 }",
+            ErrorCode::TypeMismatch,
+        ),
+        ("while (1 == 1) { return 1 }", ErrorCode::TypeMismatch),
+        ("while { true } { return 1 }", ErrorCode::TypeMismatch),
+        ("while true { return 1; break }", ErrorCode::UnreachableCode),
+    ] {
+        let source = format!("fn check() -> Int32 {{ {body} }}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), code, "{source}: {error}");
+        if body.ends_with("; 42") {
+            assert_eq!(error.span().unwrap().slice(&source), Some("42"));
+        }
+    }
+}
+
+#[test]
+fn unconditional_loop_returns_resume_and_cancel_with_owner_cleanup() {
+    let source = r#"
+        import joky/drop.{type Drop}
+        extern fn record(value: Int32) -> Int32
+        extern fn delayed_value(value: Int32) @suspends -> Int32
+        struct Owner { text: String }
+        impl Drop for Owner {
+            fn drop(&mut self) { record(90); }
+        }
+        fn check() @suspends -> Int32 {
+            let owner = Owner { text: "owned" }
+            var attempts = 0
+            while true {
+                attempts += 1
+                let value = delayed_value(record(attempts))
+                if value < 3 { continue }
+                return value + int32(owner.text.byte_length()) + 34
+            }
+        }
+        fn scoped_return() @suspends -> Int32 {
+            scope {
+                branch { record(7); }
+                while true { return 42 }
+            }
+        }
+        fn scoped_break() @suspends -> Int32 {
+            while true {
+                scope { branch { record(7); }; break }
+            }
+            42
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("check", &[]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+            assert!(!task.is_finished());
+        }
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1]));
+        drop(task);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1, 90]));
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+
+        EVENTS.with(|events| events.borrow_mut().clear());
+        READY.with(|ready| ready.set(true));
+        let mut task = vm.call_async("check", &[]).unwrap();
+        for _ in 0..8 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1, 2, 2, 90]));
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+
+        for entry in ["scoped_return", "scoped_break"] {
+            EVENTS.with(|events| events.borrow_mut().clear());
+            assert_eq!(call_int32(&vm, true, entry, &[]), 42);
+            EVENTS.with(|events| assert_eq!(*events.borrow(), [7]));
+        }
+    }
+}
+
+#[test]
 fn mutable_bindings_and_loops_match_in_direct_and_cps_execution() {
     let source = include_str!("../../../../tests/fixtures/loops.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {

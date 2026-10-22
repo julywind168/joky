@@ -437,7 +437,6 @@ fn jumps_cannot_inherit_caller_loops_or_skip_scope_argument_checks() {
         ("fn child(x: Int32) @suspends {} fn f() @suspends { parallel { | child(return) | child(1) } }", ErrorCode::UnreachableCode),
         ("fn child(x: Int32, y: Int32) @suspends {} fn f() @suspends { parallel { | child(return, 1) } }", ErrorCode::UnreachableCode),
         ("fn f() -> Int32 { if true { return 1 } }", ErrorCode::TypeMismatch),
-        ("fn f() -> Int32 { while true { return 1 } }", ErrorCode::TypeMismatch),
     ] {
         let ast = crate::parser::parse(source).unwrap();
         for mode in [crate::vm::VmMode::Jit, crate::vm::VmMode::Interpreter] {

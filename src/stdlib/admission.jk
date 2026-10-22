@@ -1,4 +1,4 @@
-import joky/result.{type Result}
+import joky/result.{type Result, Ok, Err}
 import joky/mem
 
 extern fn __domain_admission_create(capacity:UInt64, max_waiters:UInt64) @suspends -> admission.PoolOwner
@@ -23,10 +23,10 @@ impl Pool {
 }
 fn outcome(storage:admission.PermitOwner) @suspends -> Result<Permit,AcquireError> {
     let status=__domain_admission_status(&storage)
-    if status==0 { return Result.Ok(Permit{storage:storage}) }
-    if status==1 { return Result.Err(AcquireError.Full) }
-    if status==2 { return Result.Err(AcquireError.Closed) }
-    Result.Err(AcquireError.WaitLimit)
+    if status==0 { return Ok(Permit{storage:storage}) }
+    if status==1 { return Err(AcquireError.Full) }
+    if status==2 { return Err(AcquireError.Closed) }
+    Err(AcquireError.WaitLimit)
 }
 impl Handle {
     pub fn try_acquire(self) @suspends -> Result<Permit,AcquireError> {

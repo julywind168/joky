@@ -1,5 +1,5 @@
 // The standard fallible value. Either payload may own resources.
-import joky/option.{type Option}
+import joky/option.{type Option, Some, None}
 import joky/check
 
 enum Result<T, E> { Ok(T), Err(E) }
@@ -14,15 +14,15 @@ impl<T, E> Result<T, E> {
     }
 
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Result<U, E> {
-        match self { Ok(value) => Result.Ok(transform(value)), Err(error) => Result.Err(error) }
+        match self { Ok(value) => Ok(transform(value)), Err(error) => Err(error) }
     }
 
     fn map_err<U, F: FnOnce(E) -> U>(self, transform: F) -> Result<T, U> {
-        match self { Ok(value) => Result.Ok(value), Err(error) => Result.Err(transform(error)) }
+        match self { Ok(value) => Ok(value), Err(error) => Err(transform(error)) }
     }
 
     fn and_then<U, F: FnOnce(T) -> Result<U, E>>(self, transform: F) -> Result<U, E> {
-        match self { Ok(value) => transform(value), Err(error) => Result.Err(error) }
+        match self { Ok(value) => transform(value), Err(error) => Err(error) }
     }
 
     fn is_ok(&self) -> Bool {
@@ -44,23 +44,23 @@ impl<T, E> Result<T, E> {
     }
 
     fn ok(self) -> Option<T> {
-        match self { Ok(value) => Option.Some(value), Err(_) => Option.None }
+        match self { Ok(value) => Some(value), Err(_) => None }
     }
 
     fn err(self) -> Option<E> {
-        match self { Ok(_) => Option.None, Err(error) => Option.Some(error) }
+        match self { Ok(_) => None, Err(error) => Some(error) }
     }
 
     // The next result is evaluated eagerly; the receiver's error takes priority.
     fn and<U>(self, next: Result<U, E>) -> Result<U, E> {
         match self {
             Ok(value) => next
-            Err(error) => Result.Err(error)
+            Err(error) => Err(error)
         }
     }
 
     // Both arguments are evaluated; an existing success keeps its payload.
     fn or<F>(self, fallback: Result<T, F>) -> Result<T, F> {
-        match self { Ok(value) => Result.Ok(value), Err(_) => fallback }
+        match self { Ok(value) => Ok(value), Err(_) => fallback }
     }
 }

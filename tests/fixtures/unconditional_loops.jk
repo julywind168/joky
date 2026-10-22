@@ -1,0 +1,49 @@
+fn identity<T>(value: T) -> T { value }
+
+fn retry() -> Int32 {
+    var attempts = 0
+    while (true) {
+        // Both breaks belong to the inner loop, including its condition.
+        while true { break }
+        while (break) {}
+        attempts += 1
+        if attempts < 3 { continue }
+        return attempts * 14
+    }
+}
+fn conditional(flag: Bool) -> Int64 {
+    let wide: Int64 = 4294967295
+    identity(if flag { while true { return 42 } } else { wide })
+}
+fn matched(flag: Bool) -> Int64 {
+    let wide: Int64 = 4294967295
+    identity(match flag {
+        true => { while true { return 42 }; }
+        false => wide
+    })
+}
+fn break_value() {
+    let unit = identity(while true { if true { break } })
+    unit
+}
+fn propagated(value: Result<Int32, Int32>) -> Result<Int32, Int32> {
+    while true { return Ok(value?) }
+}
+fn owned() -> String {
+    let text = "owned"
+    while true { return text }
+}
+fn endless() -> Int32 { while true { continue } }
+fn empty_endless() -> Int32 { while true {} }
+fn failed() -> Int32 { while true { panic("loop failure") } }
+
+fn check() -> Int32 {
+    if retry() != 42 { return 1 }
+    if conditional(true) != 42 || conditional(false) != 4294967295 { return 2 }
+    if matched(true) != 42 || matched(false) != 4294967295 { return 3 }
+    break_value()
+    if propagated(Ok(42)).unwrap_or(0) != 42 { return 4 }
+    if !propagated(Err(7)).is_err() { return 5 }
+    if owned().byte_length() != 5 { return 6 }
+    42
+}

@@ -1,6 +1,30 @@
 //! Shared control-flow typing and lowering. Abrupt exits have no normal value.
 use super::*;
 
+pub(super) fn is_true_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Literal {
+            literal: Literal::Bool(true),
+            ..
+        }
+    )
+}
+
+/// Hints conservatively count every break in this loop's lexical jump scope.
+/// The checked walk records reachable breaks in `LoopTargets::has_break`.
+pub(super) fn has_loop_break(body: &Expr) -> bool {
+    let mut pending = vec![body];
+    while let Some(expr) = pending.pop() {
+        match expr {
+            Expr::Break { .. } => return true,
+            Expr::While { .. } | Expr::AnonymousFunction(_) | Expr::Branch { .. } => {}
+            _ => pending.extend(closures::children(expr)),
+        }
+    }
+    false
+}
+
 pub(super) fn unreachable_error(expr: &Expr) -> Error {
     type_error(
         &expr.span(),
@@ -255,13 +279,16 @@ impl FunctionPlan {
                         "while condition must be Bool",
                     ));
                 }
-                self.emit(Op::Branch {
-                    condition: test.unwrap(),
-                    then_label: body_label,
-                    else_label: exit,
-                });
-                // A normally completing condition may be false. Do not infer
-                // divergence from constants or speculate about loop execution.
+                let unconditional = is_true_literal(condition);
+                if unconditional {
+                    self.emit(Op::Jump(body_label));
+                } else {
+                    self.emit(Op::Branch {
+                        condition: test.unwrap(),
+                        then_label: body_label,
+                        else_label: exit,
+                    });
+                }
                 self.emit(Op::Label(body_label));
                 if matches!(
                     self.expr(body, &mut vars.clone(), functions, suspends, types)?,
@@ -269,9 +296,13 @@ impl FunctionPlan {
                 ) {
                     self.emit(Op::Jump(header));
                 }
-                self.emit(Op::Label(exit));
-                self.loops.pop();
-                Ok(Flow::Value(None))
+                let targets = self.loops.pop().unwrap();
+                if unconditional && !targets.has_break {
+                    Ok(Flow::Diverged)
+                } else {
+                    self.emit(Op::Label(exit));
+                    Ok(Flow::Value(None))
+                }
             }
             Expr::If { .. } | Expr::Logical { .. } => {
                 self.conditional_expr(expr, vars, functions, suspends, types, expected)

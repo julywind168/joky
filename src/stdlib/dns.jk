@@ -1,6 +1,6 @@
 // System host lookup. Cancellation ends delivery; running OS lookups may continue.
 import joky/array.{type Array}
-import joky/result.{type Result}
+import joky/result.{type Result, Ok, Err}
 import joky/tcp.{type Address}
 import joky/integer
 import joky/string
@@ -32,7 +32,7 @@ pub fn lookup(host: String, port: UInt16) @suspends -> Result<Array<Address>, Re
             }
         }
         let message = match String.from_utf8(bytes) { Ok(text) => text, Err(_) => "Name resolution failed" }
-        return Result.Err(ResolveError { kind: kind, message: message })
+        return Err(ResolveError { kind: kind, message: message })
     }
     var addresses = Array.with_capacity::<Address>(bytes.len() / 24)
     var offset: UInt64 = 0
@@ -49,5 +49,5 @@ pub fn lookup(host: String, port: UInt16) @suspends -> Result<Array<Address>, Re
         addresses.push(address)
         offset = offset + 24
     }
-    Result.Ok(addresses)
+    Ok(addresses)
 }

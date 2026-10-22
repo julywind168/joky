@@ -358,10 +358,18 @@ impl FunctionPlan {
             | Expr::Destructure { .. }
             | Expr::Assign { .. }
             | Expr::FieldAssign { .. }
-            | Expr::While { .. }
             | Expr::If {
                 else_branch: None, ..
             } => Some(Type::Unit),
+            Expr::While {
+                condition, body, ..
+            } => {
+                if control_flow::is_true_literal(condition) && !control_flow::has_loop_break(body) {
+                    None
+                } else {
+                    Some(Type::Unit)
+                }
+            }
             Expr::Array { elements, .. } => {
                 // Container choice remains contextual even when an element has
                 // a concrete type. Only the default pass selects dynamic Array.

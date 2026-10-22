@@ -1,7 +1,7 @@
 import joky/internal/buffer.{type Buffer}
-import joky/option.{type Option}
+import joky/option.{type Option, Some, None}
 import joky/outbox.{type Batch}
-import joky/result.{type Result}
+import joky/result.{type Result, Ok, Err}
 
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
 extern fn __domain_read_scalar(method: String) @suspends -> (Int32, UInt64)
@@ -18,8 +18,8 @@ extern fn __domain_values(module:domain.Module,first:domain.Handle,second:domain
 fn finish_value<A,R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:A) @suspends -> Result<R,DomainAccessError> {
     var packet=pack_value(input)
     let status=__domain_values(module,first,second,count,name,&mut packet.storage)
-    if status != 0 { return Result.Err(access_error(status)) }
-    Result.Ok(unpack_value::<R>(&packet))
+    if status != 0 { return Err(access_error(status)) }
+    Ok(unpack_value::<R>(&packet))
 }
 
 extern fn __domain_current_values(name:String,packet:&mut Buffer<UInt64>) @suspends -> Int32
@@ -27,8 +27,8 @@ extern fn __domain_current_values(name:String,packet:&mut Buffer<UInt64>) @suspe
 fn finish_current_value<A,R>(name:String,input:A) @suspends -> Result<R,DomainAccessError> {
     var packet=pack_value(input)
     let status=__domain_current_values(name,&mut packet.storage)
-    if status != 0 { return Result.Err(access_error(status)) }
-    Result.Ok(unpack_value::<R>(&packet))
+    if status != 0 { return Err(access_error(status)) }
+    Ok(unpack_value::<R>(&packet))
 }
 
 // Access errors are rejections before the operation body starts.
@@ -46,15 +46,15 @@ fn finish_scalar<R: Copy>(module:domain.Module,first:domain.Handle,second:domain
         else if query { __domain_query_at(module,first,name,input) }
         else if write { __domain_write_at(module,first,name,input) }
         else { __domain_read_at(module,first,name) }
-    if status != 0 { return Result.Err(access_error(status)) }
-    Result.Ok(unpack::<R>(bits))
+    if status != 0 { return Err(access_error(status)) }
+    Ok(unpack::<R>(bits))
 }
 #intrinsic("domain.finish_current_scalar")
 fn finish_current_scalar<R: Copy>(name:String,input:UInt64,write:Bool,query:Bool) @suspends -> Result<R,DomainAccessError> {
     let (status,bits) = if query { __domain_query_scalar(name,input) }
         else if write { __domain_write_scalar(name,input) } else { __domain_read_scalar(name) }
-    if status != 0 { return Result.Err(access_error(status)) }
-    Result.Ok(unpack::<R>(bits))
+    if status != 0 { return Err(access_error(status)) }
+    Ok(unpack::<R>(bits))
 }
 
 // Only trusted call-site lowering can encode or decode a checked scalar type.
@@ -152,26 +152,26 @@ pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, 
 #intrinsic("domain.finish_request")
 fn finish_request<R: Copy>(module: domain.Module, token: domain.Handle, name: String, input: UInt64) @suspends -> Result<R, RequestError> {
     let (status, bits) = __domain_request(module, token, name, input)
-    if status == 0 { return Result.Ok(unpack::<R>(bits)) }
-    if status == 1 { return Result.Err(RequestError.Failed) }
-    if status == 2 { return Result.Err(RequestError.Cancelled) }
-    if status == 3 { return Result.Err(RequestError.Closed) }
-    if status == 4 { return Result.Err(RequestError.ResourceLimit) }
-    if status == 5 { return Result.Err(RequestError.InvalidAccess) }
-    Result.Err(RequestError.DomainFailed)
+    if status == 0 { return Ok(unpack::<R>(bits)) }
+    if status == 1 { return Err(RequestError.Failed) }
+    if status == 2 { return Err(RequestError.Cancelled) }
+    if status == 3 { return Err(RequestError.Closed) }
+    if status == 4 { return Err(RequestError.ResourceLimit) }
+    if status == 5 { return Err(RequestError.InvalidAccess) }
+    Err(RequestError.DomainFailed)
 }
 extern fn __domain_request_values(module:domain.Module,token:domain.Handle,name:String,packet:&mut Buffer<UInt64>) @suspends -> Int32
 #intrinsic("domain.finish_request_value")
 fn finish_request_value<A,R>(module:domain.Module,token:domain.Handle,name:String,input:A) @suspends -> Result<R,RequestError> {
     var packet=pack_value(input)
     let status=__domain_request_values(module,token,name,&mut packet.storage)
-    if status == 0 { return Result.Ok(unpack_value::<R>(&packet)) }
-    if status == 1 { return Result.Err(RequestError.Failed) }
-    if status == 2 { return Result.Err(RequestError.Cancelled) }
-    if status == 3 { return Result.Err(RequestError.Closed) }
-    if status == 4 { return Result.Err(RequestError.ResourceLimit) }
-    if status == 5 { return Result.Err(RequestError.InvalidAccess) }
-    Result.Err(RequestError.DomainFailed)
+    if status == 0 { return Ok(unpack_value::<R>(&packet)) }
+    if status == 1 { return Err(RequestError.Failed) }
+    if status == 2 { return Err(RequestError.Cancelled) }
+    if status == 3 { return Err(RequestError.Closed) }
+    if status == 4 { return Err(RequestError.ResourceLimit) }
+    if status == 5 { return Err(RequestError.InvalidAccess) }
+    Err(RequestError.DomainFailed)
 }
 #intrinsic("domain.request")
 pub fn request<S, A, R>(handle: WriteHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
@@ -237,12 +237,12 @@ pub fn commit_before<S>(handle: WriteHandle<S>, candidate: Candidate<S>, deadlin
 impl CommitReceipt {
     pub fn wait(&mut self) @suspends -> Result<UInt64,CommitError> {
         let status=__domain_commit_wait(&mut self.storage)
-        if status==0 { return Result.Ok(__domain_commit_revision(&self.storage)) }
-        Result.Err(commit_error(status))
+        if status==0 { return Ok(__domain_commit_revision(&self.storage)) }
+        Err(commit_error(status))
     }
     pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
         let identity = __domain_commit_failed_outbox(&self.storage)
-        if identity == 0 { Option.None } else { Option.Some(identity) }
+        if identity == 0 { None } else { Some(identity) }
     }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
@@ -309,12 +309,12 @@ pub fn commit_pair_before<S, T>(first: WriteHandle<S>, second: WriteHandle<T>, c
 impl PairCommitReceipt {
     pub fn wait(&mut self) @suspends -> Result<(UInt64,UInt64),CommitError> {
         let status=__domain_commit_wait(&mut self.storage)
-        if status==0 { return Result.Ok((__domain_commit_revision(&self.storage),__domain_commit_second_revision(&self.storage))) }
-        Result.Err(commit_error(status))
+        if status==0 { return Ok((__domain_commit_revision(&self.storage),__domain_commit_second_revision(&self.storage))) }
+        Err(commit_error(status))
     }
     pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
         let identity = __domain_commit_failed_outbox(&self.storage)
-        if identity == 0 { Option.None } else { Option.Some(identity) }
+        if identity == 0 { None } else { Some(identity) }
     }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
@@ -434,13 +434,13 @@ pub fn commit_set_before(set:CandidateSet,deadline:&CommitDeadline) @suspends ->
 impl SetCommitReceipt {
     pub fn wait(&mut self) @suspends -> Result<Unit,CommitError> {
         let status=__domain_commit_wait(&mut self.storage)
-        if status==0 { return Result.Ok({}) }
-        Result.Err(commit_error(status))
+        if status==0 { return Ok({}) }
+        Err(commit_error(status))
     }
     pub fn revision<S>(&self,handle:ReadHandle<S>) @suspends -> Result<Option<UInt64>,RevisionError> { set_revision(self,handle.token) }
     pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
         let identity = __domain_commit_failed_outbox(&self.storage)
-        if identity == 0 { Option.None } else { Option.Some(identity) }
+        if identity == 0 { None } else { Some(identity) }
     }
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
@@ -448,11 +448,11 @@ impl SetCommitReceipt {
 
 fn set_revision(receipt:&SetCommitReceipt,handle:domain.Handle) @suspends -> Result<Option<UInt64>,RevisionError> {
     let (status,value)=__domain_set_revision_checked(&receipt.storage,handle)
-    if status==0 { return Result.Ok(Option.Some(value)) }
-    if status==10 { return Result.Ok(Option.None) }
-    if status==11 { return Result.Err(RevisionError.Pending) }
-    if status==12 { return Result.Err(RevisionError.InvalidAccess) }
-    Result.Err(RevisionError.Failed(commit_error(status)))
+    if status==0 { return Ok(Some(value)) }
+    if status==10 { return Ok(None) }
+    if status==11 { return Err(RevisionError.Pending) }
+    if status==12 { return Err(RevisionError.InvalidAccess) }
+    Err(RevisionError.Failed(commit_error(status)))
 }
 
 // Attaching consumes the batch. Only candidate commits can publish its messages.
@@ -508,12 +508,12 @@ impl Directory {
     pub fn close(self) @suspends { __directory_close(self.handle().identity) }
 }
 fn directory_status(status:Int32) -> Result<Unit,DirectoryError> {
-    if status==0 { return Result.Ok({}) }
-    if status==1 { return Result.Err(DirectoryError.Closed) }
-    if status==2 { return Result.Err(DirectoryError.Full) }
-    if status==3 { return Result.Err(DirectoryError.Occupied) }
-    if status==4 { return Result.Err(DirectoryError.InvalidTarget) }
-    Result.Err(DirectoryError.Conflict)
+    if status==0 { return Ok({}) }
+    if status==1 { return Err(DirectoryError.Closed) }
+    if status==2 { return Err(DirectoryError.Full) }
+    if status==3 { return Err(DirectoryError.Occupied) }
+    if status==4 { return Err(DirectoryError.InvalidTarget) }
+    Err(DirectoryError.Conflict)
 }
 impl DirectoryHandle {
     pub fn insert<S>(self, key:UInt64, target:WriteHandle<S>) @suspends -> Result<Unit,DirectoryError> {
@@ -547,11 +547,11 @@ pub fn lookup_write<S>(directory:DirectoryHandle, key:UInt64) @suspends -> Optio
 }
 fn finish_lookup<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<ReadHandle<S>> {
     let token=__directory_lookup(module,directory,key,operation,false)
-    if __directory_found(token) { Option.Some(ReadHandle::<S>{token:token}) } else { Option.None }
+    if __directory_found(token) { Some(ReadHandle::<S>{token:token}) } else { None }
 }
 fn finish_lookup_write<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<WriteHandle<S>> {
     let token=__directory_lookup(module,directory,key,operation,true)
-    if __directory_found(token) { Option.Some(WriteHandle::<S>{token:token}) } else { Option.None }
+    if __directory_found(token) { Some(WriteHandle::<S>{token:token}) } else { None }
 }
 
 // A timer owner is independent of the Script invocation that arms it.
@@ -593,24 +593,24 @@ impl TimerHandle {
 #intrinsic("domain.finish_timer")
 fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, milliseconds:Int32, operation:String, input:UInt64, periodic:Bool) @suspends -> Result<Unit,TimerError> {
     let status=__timer_start(module,timer,target,milliseconds,operation,input,periodic)
-    if status==0 { return Result.Ok({}) }
-    if status==1 { return Result.Err(TimerError.Closed) }
-    if status==2 { return Result.Err(TimerError.Busy) }
-    if status==3 { return Result.Err(TimerError.InvalidDelay) }
-    if status==4 { return Result.Err(TimerError.InvalidAccess) }
-    Result.Err(TimerError.ResourceLimit)
+    if status==0 { return Ok({}) }
+    if status==1 { return Err(TimerError.Closed) }
+    if status==2 { return Err(TimerError.Busy) }
+    if status==3 { return Err(TimerError.InvalidDelay) }
+    if status==4 { return Err(TimerError.InvalidAccess) }
+    Err(TimerError.ResourceLimit)
 }
 extern fn __timer_start_values(module:domain.Module,timer:UInt64,target:domain.Handle,milliseconds:Int32,operation:String,input:&Buffer<UInt64>,periodic:Bool) @suspends -> Int32
 #intrinsic("domain.finish_timer_value")
 fn finish_timer_value<A>(module:domain.Module,timer:UInt64,target:domain.Handle,milliseconds:Int32,operation:String,input:A,periodic:Bool) @suspends -> Result<Unit,TimerError> {
     let packet=pack_value(input)
     let status=__timer_start_values(module,timer,target,milliseconds,operation,&packet.storage,periodic)
-    if status==0 { return Result.Ok({}) }
-    if status==1 { return Result.Err(TimerError.Closed) }
-    if status==2 { return Result.Err(TimerError.Busy) }
-    if status==3 { return Result.Err(TimerError.InvalidDelay) }
-    if status==4 { return Result.Err(TimerError.InvalidAccess) }
-    Result.Err(TimerError.ResourceLimit)
+    if status==0 { return Ok({}) }
+    if status==1 { return Err(TimerError.Closed) }
+    if status==2 { return Err(TimerError.Busy) }
+    if status==3 { return Err(TimerError.InvalidDelay) }
+    if status==4 { return Err(TimerError.InvalidAccess) }
+    Err(TimerError.ResourceLimit)
 }
 #intrinsic("domain.after")
 pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
@@ -628,6 +628,6 @@ fn finish_when<H,A,R>(module:domain.Module,name:String,handles:H,input:A) @suspe
     let access=pack_value(handles)
     var packet=pack_value(input)
     let status=__domain_when(module,name,&access.storage,&mut packet.storage)
-    if status != 0 { return Result.Err(access_error(status)) }
-    Result.Ok(unpack_value::<R>(&packet))
+    if status != 0 { return Err(access_error(status)) }
+    Ok(unpack_value::<R>(&packet))
 }

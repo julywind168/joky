@@ -1,12 +1,12 @@
 import joky/io.{println}
-import joky/option.{type Option}
+import joky/option.{type Option, Some, None}
 
 fn increment(value: Int32) -> Int32 { value + 1 }
-fn optional(value: Int32) -> Option<Int32> { Option.Some(value + 1) }
+fn optional(value: Int32) -> Option<Int32> { Some(value + 1) }
 fn apply<T, U>(value: T, transform: fn(T) -> U) -> U { transform(value) }
 
 fn main() {
     let transform: fn(Int32) -> Int32 = increment
     let value = apply(39, transform)
-    println(Option.Some(value).map(increment).and_then(optional).unwrap_or(0))
+    println(Some(value).map(increment).and_then(optional).unwrap_or(0))
 }

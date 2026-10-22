@@ -249,25 +249,25 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
 #[test]
 #[cfg(unix)]
 fn concrete_branch_hints_match_native_direct_and_cps_execution() {
-    for suspends in [false, true] {
-        let source = with_suspends(
-            include_str!("../../../../tests/fixtures/inference.jk"),
-            suspends,
-            Suspends::All,
-        );
-        let mut compiler = AotCompiler::new("inference").unwrap();
-        compiler
-            .compile_module(&crate::parser::parse(&source).unwrap())
-            .unwrap();
-        let fixture = ScratchDir::new("inference");
-        let dir = fixture.path();
-        let object = dir.join("inference.o");
-        let host = dir.join("host.c");
-        let program = dir.join("inference");
-        let harness = if suspends {
-            let slots = compiler.cps_frame_slots("check").unwrap();
-            format!(
-                r#"
+    for fixture_source in [
+        include_str!("../../../../tests/fixtures/inference.jk"),
+        include_str!("../../../../tests/fixtures/unconditional_loops.jk"),
+    ] {
+        for suspends in [false, true] {
+            let source = with_suspends(fixture_source, suspends, Suspends::All);
+            let mut compiler = AotCompiler::new("inference").unwrap();
+            compiler
+                .compile_module(&crate::parser::parse(&source).unwrap())
+                .unwrap();
+            let fixture = ScratchDir::new("inference");
+            let dir = fixture.path();
+            let object = dir.join("inference.o");
+            let host = dir.join("host.c");
+            let program = dir.join("inference");
+            let harness = if suspends {
+                let slots = compiler.cps_frame_slots("check").unwrap();
+                format!(
+                    r#"
                 #include "joky_cps.h"
         #include "text.h"
                 extern int32_t check(JokyCpsFrame *);
@@ -278,26 +278,27 @@ fn concrete_branch_hints_match_native_direct_and_cps_execution() {
                     return failed;
                 }}
                 "#
+                )
+            } else {
+                "#include <stdint.h>\nextern int32_t check(void);\nint main(void) { return check() != 42; }".to_owned()
+            };
+            std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
+            compiler.write_object(&object).unwrap();
+            std::fs::write(&host, harness).unwrap();
+            let output = link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
             )
-        } else {
-            "#include <stdint.h>\nextern int32_t check(void);\nint main(void) { return check() != 42; }".to_owned()
-        };
-        std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
-        compiler.write_object(&object).unwrap();
-        std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        let output = Command::new(program).output().unwrap();
-        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+            .arg("-o")
+            .arg(&program)
+            .output()
+            .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            let output = Command::new(program).output().unwrap();
+            assert!(output.status.success(), "suspends={suspends}: {output:?}");
+        }
     }
 }

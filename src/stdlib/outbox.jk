@@ -1,6 +1,6 @@
 import joky/array.{type Array}
-import joky/option.{type Option}
-import joky/result.{type Result}
+import joky/option.{type Option, Some, None}
+import joky/result.{type Result, Ok, Err}
 
 extern fn __outbox_create(messages:UInt64, bytes:UInt64) @suspends -> outbox.QueueOwner
 extern fn __outbox_handle(queue:&outbox.QueueOwner) @suspends -> UInt64
@@ -28,8 +28,8 @@ impl Mailbox {
     pub fn handle(&self) @suspends -> Handle { Handle{identity:__outbox_handle(&self.storage)} }
     pub fn receive(&mut self) @suspends -> Option<Array<UInt8>> {
         var message=__outbox_receive(&mut self.storage)
-        if __outbox_message_closed(&message) { return Option.None }
-        Option.Some(__outbox_message_bytes(&mut message))
+        if __outbox_message_closed(&message) { return None }
+        Some(__outbox_message_bytes(&mut message))
     }
 }
 // Closing drops queued messages and wakes the receiver. Identities are never reused.
@@ -40,7 +40,7 @@ pub fn batch(messages:UInt64, bytes:UInt64) @suspends -> Batch {
 // A failed stage poisons this batch, so ignoring the error cannot publish a prefix.
 pub fn stage(batch:&mut Batch, handle:Handle, bytes:Array<UInt8>) @suspends -> Result<Unit,StageError> {
     let status=__outbox_stage(batch,handle.identity,bytes)
-    if status==0 { return Result.Ok({}) }
-    if status==1 { return Result.Err(StageError.Full) }
-    Result.Err(StageError.Closed)
+    if status==0 { return Ok({}) }
+    if status==1 { return Err(StageError.Full) }
+    Err(StageError.Closed)
 }

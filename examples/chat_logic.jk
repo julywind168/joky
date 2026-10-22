@@ -2,7 +2,7 @@ import joky/domain
 import joky/outbox
 import joky/mem
 import joky/array.{type Array}
-import joky/option.{type Option}
+import joky/option.{type Option, Some, None}
 
 // Keep these entry contracts identical in the host and each published version.
 struct Host { directory: domain.DirectoryHandle, rooms: domain.DirectoryHandle, accounts: domain.DirectoryHandle, requests: outbox.Handle }
@@ -87,11 +87,11 @@ fn take_room(state: &mut Catalog, host: Host) -> Option<RoomInit> {
         let entry = state.rooms.borrow_mut_ref(i)
         if match entry.status { Pending => true, _ => false } {
             entry.status = RoomStatus.Starting
-            return Option.Some(RoomInit { host: host, key: i + 1, name: entry.name.clone(), ready: host.requests })
+            return Some(RoomInit { host: host, key: i + 1, name: entry.name.clone(), ready: host.requests })
         }
         i += 1
     }
-    Option.None
+    None
 }
 fn finish_room(state: &mut Catalog, key: UInt64) -> Array<outbox.Handle> {
     let entry = state.rooms.borrow_mut_ref(key - 1)
@@ -118,7 +118,6 @@ fn ensure_room(ctx: Context, name: &String) @suspends -> UInt64 {
         ready.receive();
         return domain.query_from(catalog.read_only(), find_room, name.clone())!.0
     }
-    0
 }
 fn next_room(host: Host) @suspends -> Option<RoomInit> {
     let catalog = domain.lookup_write::<Catalog>(host.directory, 1)!
@@ -256,7 +255,7 @@ fn captured_room(snapshot: &domain.SnapshotSet, handle: Option<domain.WriteHandl
     match handle { Some(handle) => domain.read_snapshot(snapshot, handle.read_only(), room_view), None => empty_room() }
 }
 fn room_handle(ctx: Context, key: UInt64) @suspends -> Option<domain.WriteHandle<Room>> {
-    if key == 0 { Option.None } else { domain.lookup_write::<Room>(ctx.host.rooms, key) }
+    if key == 0 { None } else { domain.lookup_write::<Room>(ctx.host.rooms, key) }
 }
 // Bind each operation to its account lifetime. Closing the owner cancels its
 // outstanding domain requests without serializing requests or publication.
@@ -280,7 +279,7 @@ fn prepare(ctx: Context, account: domain.WriteHandle<Account>, next_key: UInt64,
     if next_key != before.room { match next_handle { Some(handle) => access.include(handle.read_only()), None => {} } }
     let snapshot = domain.snapshot_set(access)
     let frozen = domain.read_snapshot(&snapshot, account.read_only(), account_view)
-    if frozen.room != before.room { return Option.None }
+    if frozen.room != before.room { return None }
     let old = captured_room(&snapshot, old_handle)
     let next = captured_room(&snapshot, next_handle)
     let prepared = plan(frozen, &old, &next, next_key, command, excluded)
@@ -290,7 +289,7 @@ fn prepare(ctx: Context, account: domain.WriteHandle<Account>, next_key: UInt64,
         match old_handle { Some(handle) => { candidate = domain.edit_candidate(candidate, handle, remove_member, frozen.route.id) }, None => {} }
         match next_handle { Some(handle) => { candidate = domain.edit_candidate(candidate, handle, add_member, prepared.origin) }, None => {} }
     }
-    Option.Some((candidate.with_outbox(batch), prepared))
+    Some((candidate.with_outbox(batch), prepared))
 }
 fn execute(input: Request) @suspends -> Bool {
     let (ctx, id, command, excluded) = split_request(input)
@@ -324,7 +323,6 @@ fn execute(input: Request) @suspends -> Bool {
         match &command { Disconnect => ancestors.push(id), _ => {} }
         if slow != 0 { publish(ctx, slow, Command.Disconnect, &ancestors); }
     }
-    false
 }
 fn parse(line: String) -> Command {
     let separator = line.find(" ").unwrap_or(line.byte_length())

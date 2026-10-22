@@ -1,18 +1,18 @@
 import joky/mem
 
-// The standard optional value. Constructors are provided by the enum
-// namespace, so both Option.Some and imported Some retain enum identity.
+// The standard optional value. Qualified and imported constructors
+// retain the enum's nominal identity.
 enum Option<T> { None, Some(T) }
 
 impl<T> Option<T> {
-    fn take(&mut self) -> Option<T> { mem.replace(self, Option.None) }
+    fn take(&mut self) -> Option<T> { mem.replace(self, None) }
 
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Option<U> {
-        match self { None => Option.None, Some(value) => Option.Some(transform(value)) }
+        match self { None => None, Some(value) => Some(transform(value)) }
     }
 
     fn and_then<U, F: FnOnce(T) -> Option<U>>(self, transform: F) -> Option<U> {
-        match self { None => Option.None, Some(value) => transform(value) }
+        match self { None => None, Some(value) => transform(value) }
     }
 
     fn is_some(&self) -> Bool {
@@ -34,23 +34,23 @@ impl<T> Option<T> {
     }
 
     fn and<U>(self, next: Option<U>) -> Option<U> {
-        match self { None => Option.None, Some(_) => next }
+        match self { None => None, Some(_) => next }
     }
 
     fn or(self, fallback: Self) -> Self {
-        match self { None => fallback, Some(value) => Option.Some(value) }
+        match self { None => fallback, Some(value) => Some(value) }
     }
 
     // Both operands are evaluated before this ordinary by-value method call.
     fn zip<U>(self, other: Option<U>) -> Option<(T, U)> {
         let left = match self {
-            None => return Option.None
+            None => return None
             Some(value) => value
         }
         let right = match other {
-            None => return Option.None
+            None => return None
             Some(value) => value
         }
-        Option.Some((left, right))
+        Some((left, right))
     }
 }

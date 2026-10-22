@@ -1,7 +1,7 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
 import joky/json.{type Value, type Number, type Limits}
 import joky/array.{type Array}
-import joky/option.{type Option}
+import joky/option.{type Option, Some, None}
 import joky/mem
 import joky/check.{assert, panic}
 import joky/task
@@ -25,11 +25,11 @@ fn envelope(kind: String, id: UInt64, payload: Value) -> Value {
 fn message_id(value: &Value, kind: &String) -> Option<UInt64> {
     match value {
         Array(items) => {
-            if items.len() != 3 { return Option.None }
-            match items.borrow_ref(0) { Text(text) => { if !text.equals(kind) { return Option.None } }, _ => { return Option.None } }
-            match items.borrow_ref(1) { Number(number) => number.to_u64().ok(), _ => Option.None }
+            if items.len() != 3 { return None }
+            match items.borrow_ref(0) { Text(text) => { if !text.equals(kind) { return None } }, _ => { return None } }
+            match items.borrow_ref(1) { Number(number) => number.to_u64().ok(), _ => None }
         }
-        _ => Option.None
+        _ => None
     }
 }
 fn send_value(writer: &mut TcpWriter, value: &Value) @suspends -> Bool {
