@@ -1220,3 +1220,8 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 成功发布才推进修订；普通 false 与 Ok(false) 正常提交。显式原地短操作保留旧规则。
 S2b 已提供受检的 `outbox.emit`，与候选状态一起原子发布；S2c 将 chat 的收费与成员变更
 移入具名业务操作，目录依赖解析进入有界重算。进度及验证见[实施计划](stateful-service-ergonomics.md)。
+
+2026-10-23 的服务易用性阶段补充：共享 Script 入口预检及依赖快照、`Vm.try_call`、
+`joky/session` 连接组件已实现；chat 使用有界迭代淘汰、创建等待超时和可配置空房回收。
+具体接口见 [language.md](language.md)，阶段验收见
+[stateful-service-ergonomics.md](stateful-service-ergonomics.md)。

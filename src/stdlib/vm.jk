@@ -69,12 +69,24 @@ fn schema<T>() -> String
 fn pack<T>(value: T) -> Packet
 #intrinsic("vm.unpack")
 fn unpack<T>(packet: &Packet) -> T
-extern fn __vm_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>) @suspends
+extern fn __vm_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>, checked: Bool) @suspends -> Int32
+pub enum CallError { Unavailable, Incompatible, Failed }
 impl Vm {
     pub fn call<A, R>(&self, name: String, input: A) @suspends -> R {
         var packet = pack(input)
-        __vm_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage)
+        __vm_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage, false)
         unpack::<R>(&packet)
+    }
+}
+
+impl Vm {
+    pub fn try_call<A, R>(&self, name: String, input: A) @suspends -> Result<R, CallError> {
+        var packet = pack(input)
+        let status = __vm_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage, true)
+        if status == 0 { Ok(unpack::<R>(&packet)) }
+        else if status == 1 { Err(CallError.Unavailable) }
+        else if status == 2 { Err(CallError.Incompatible) }
+        else { Err(CallError.Failed) }
     }
 }
 

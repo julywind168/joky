@@ -580,11 +580,21 @@ unsafe fn poll_native(frame: *mut CpsFrame, typed: bool) -> i32 {
 }
 
 /// # Safety
-/// Five live slots match core::vm::call_signature, with an attached arena.
+/// Six live slots match core::vm::call_signature, with an attached arena.
 /// The caller owns the VM borrow, three Strings and packet through completion/stop.
 #[export_name = "__joky_vm_call"]
 pub(crate) unsafe extern "C" fn call_poll_native(frame: *mut CpsFrame) -> i32 {
-    poll_native(frame, true)
+    match call_poll(&mut *frame) {
+        Ok(Some(status)) => {
+            (*frame).result = status;
+            0
+        }
+        Ok(None) => 1,
+        Err(error) => {
+            crate::runtime::error::record_error(error);
+            RUNTIME_ERROR
+        }
+    }
 }
 
 /// Private compiler adapter: three owning Strings and a borrowed UInt64 packet
@@ -596,8 +606,22 @@ pub(crate) unsafe fn call_poll(frame: &mut CpsFrame) -> Result<Option<u64>, Erro
         Ok(0) => Ok(Some(0)),
         Ok(_) => Ok(None),
         Err(error) => {
-            stop(frame, crate::runtime::borrowed_host::STOP_FAILED);
-            Err(error)
+            // Cleanup may report an error too. Consume it inside this boundary so
+            // a handled child failure cannot poison the next caller operation.
+            let _ = crate::runtime::error::checked(|| {
+                stop(frame, crate::runtime::borrowed_host::STOP_FAILED)
+            });
+            if frame.slots.get(5).copied().unwrap_or(0) == 0 {
+                return Err(error);
+            }
+            let status = match error.code() {
+                ErrorCode::InvalidState => 1,
+                ErrorCode::NotFound | ErrorCode::InvalidCall | ErrorCode::TypeMismatch => 2,
+                _ => 3,
+            };
+            frame.result = status;
+            frame.state = DONE;
+            Ok(Some(status))
         }
     }
 }

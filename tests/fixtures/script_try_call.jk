@@ -1,0 +1,22 @@
+import joky/vm
+import joky/check
+import joky/task
+fn main() @suspends {
+    let engine = vm.Vm.new()
+    check.assert(match engine.try_call::<Int32,Int32>("run", 1) { Err(Unavailable) => true, _ => false }, "empty VM is a local refusal")
+    engine.load_source("import joky/task import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn run(n:Int32) @suspends ->Int32 {{let owner=domain.create(make,n); task.yield_now(); 42 / n}} fn text(s:String) @suspends ->String {{task.yield_now(); if s.equals(\"fail\") {{let bad=1/0;}}; s}}")!
+    check.assert(match engine.try_call::<Int32,Int32>("missing", 1) { Err(Incompatible) => true, _ => false }, "missing entry")
+    check.assert(match engine.try_call::<UInt64,Int32>("run", 1) { Err(Incompatible) => true, _ => false }, "input contract")
+    check.assert(match engine.try_call::<Int32,UInt64>("run", 1) { Err(Incompatible) => true, _ => false }, "output contract")
+    var i: UInt64 = 0
+    while i < 3 {
+        check.assert(match engine.try_call::<Int32,Int32>("run", 0) { Err(Failed) => true, _ => false }, "suspended child trap")
+        check.assert(engine.try_call::<Int32,Int32>("run", 1)! == 42, "healthy call after trap cleanup")
+        check.assert(engine.try_call::<String,String>("text", "fail").is_err(), "owned child input cleanup")
+        let text=engine.try_call::<String,String>("text", "alive")!
+        check.assert(text.equals("alive"), "owned result after handled failure")
+        task.yield_now()
+        i += 1
+    }
+    check.assert(vm.module_count(&engine) == 1, "failed child frames release code owners")
+}

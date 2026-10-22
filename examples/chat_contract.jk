@@ -1,9 +1,18 @@
 import joky/domain
 import joky/outbox
 import joky/vm
+import joky/session
 import joky/option.{type Option}
 
-pub struct Host { pub directory: domain.DirectoryHandle, pub rooms: domain.DirectoryHandle, pub accounts: domain.DirectoryHandle, pub requests: outbox.Handle }
+pub struct Config {
+    pub connection: session.Options, pub retries: UInt64, pub max_evictions: UInt64,
+    pub max_rooms: UInt64, pub max_clients: UInt64, pub room_wait_ms: UInt64, pub reclaim_empty: Bool
+}
+pub fn defaults() -> Config {
+    Config { connection: session.defaults(), retries: 64, max_evictions: 512,
+        max_rooms: 4096, max_clients: 512, room_wait_ms: 5000, reclaim_empty: true }
+}
+pub struct Host { pub config: Config, pub directory: domain.DirectoryHandle, pub rooms: domain.DirectoryHandle, pub accounts: domain.DirectoryHandle, pub requests: outbox.Handle }
 pub enum Action { Welcome, Line(String), Disconnect, Notice(String) }
 pub struct Call { pub host: Host, pub id: UInt64, pub action: Action }
 pub struct RoomInit { pub host: Host, pub key: UInt64, pub name: String }
@@ -17,4 +26,6 @@ pub fn require_contract(engine: &vm.Vm) @suspends {
     engine.require::<RoomInit, Unit>("init_room")!
     engine.require::<RoomKey, Unit>("open_room")!
     engine.require::<AccountInit, Unit>("init_account")!
+    engine.require::<RoomKey, Unit>("fail_room")!
+    engine.require::<Call, Unit>("forget")!
 }

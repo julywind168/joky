@@ -240,6 +240,26 @@ fn build_registry() -> ModuleRegistry {
         )
     }
     .expect("Private task binding must be valid");
+    let mut spec = BindingSpec::with_symbol(
+        "__joky_task_sleep_ms",
+        FunctionSignature::new(vec![Type::UInt64], Type::Unit),
+        "__joky_task_sleep_ms",
+    );
+    spec.suspends = true;
+    unsafe {
+        registry.register_module(
+            "joky/internal/session",
+            [NativeBinding {
+                spec,
+                entry: Some(HostEntry::Cps {
+                    entry: task::sleep_internal,
+                    frame_slots: Some(1),
+                }),
+                owner: None,
+            }],
+        )
+    }
+    .expect("Private session timer binding must be valid");
     registry
 }
 

@@ -328,7 +328,7 @@ impl HostPending {
         }
         if matches!(self.host.binding.entry, HostEntry::VmCall) {
             return unsafe { crate::stdlib::call_poll(&mut self.frame) }
-                .map(|value| value.map(|_| Value::Unit));
+                .map(|value| value.map(|status| Value::Int32(status as i32)));
         }
         if let HostEntry::Domain(op) = self.host.binding.entry {
             return unsafe { crate::runtime::domain::poll(arena, &mut self.frame, op) }.and_then(

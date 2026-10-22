@@ -705,3 +705,11 @@ fn message_native_peer(split: bool, backends: &[usize]) {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn connection_sessions_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("session.jk", include_str!("../fixtures/session.jk"));
+    work.assert_all_backends("session.jk", &[], b"", 0);
+}

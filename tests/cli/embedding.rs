@@ -1195,3 +1195,17 @@ fn required_script_contracts_preflight_all_loads_on_all_backends() {
         work.assert_native("required.jk", &[], b"", 0);
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn script_try_call_isolates_child_failures_on_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/script_try_call.jk");
+    for create in ["new", "interpreter"] {
+        work.write(
+            "try_call.jk",
+            &source.replace("vm.Vm.new()", &format!("vm.Vm.{create}()")),
+        );
+        work.assert_all_backends("try_call.jk", &[], b"", 0);
+    }
+}

@@ -230,6 +230,9 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
         } else if id == 5 {
             peer.send(format!("say {}\n", "x".repeat(4096)));
             peer.closed();
+        } else if id == 6 {
+            peer.send("crash\n");
+            peer.closed();
         }
         drop(peer);
         alice.expect(&format!("left 123 {id}\n"));
@@ -287,7 +290,7 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     }
     departures.sort();
     assert_eq!(departures, ["left 123 16\n", "left 123 17\n"]);
-    // Empty rooms retain their state, but no initializer task or interpreter frames.
+    // Empty rooms retire their owned roots without parked initializer frames.
     // One connection crosses the former parked-owner frame limit by changing rooms.
     let mut previous = "房间".to_owned();
     for index in 0..224 {
@@ -297,6 +300,9 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
         carol.expect(&format!("joined {room} 3\n"));
         previous = room;
     }
+    carol.send("join retained-0\n");
+    carol.expect(&format!("left {previous} 3\n"));
+    carol.expect("joined retained-0 3\n");
     carol.send("balance\n");
     carol.expect("balance 4\n");
     // Native backends also cross the former 256-message batch boundary.
@@ -346,17 +352,21 @@ fn chat_real_tcp_on_all_backends() {
         std::fs::write(&path, &source).unwrap();
         let logic = format!(
         "import joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
-        include_str!("../examples/chat_logic.jk"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
+        include_str!("../examples/chat_logic.jk").replace("type AccountInit}", "type AccountInit, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
         assert_eq!(
             logic
-                .matches("if !value.route.live { return false }")
+                .matches("if !value.route.live { return Step.Done(false) }")
                 .count(),
             1
         );
         let logic = logic.replace(
-            "if !value.route.live { return false }",
-            "if !value.route.live { return false }\n        pause_send(ctx, &command)",
+            "Action.Line(line) => if process(ctx, id, line) { 1 } else { 0 },",
+            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; if process(ctx, id, line) { 1 } else { 0 } },",
+        );
+        let logic = logic.replace(
+            "if !value.route.live { return Step.Done(false) }",
+            "if !value.route.live { return Step.Done(false) }\n        pause_send(ctx, &command)",
         );
         std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
         let next = logic

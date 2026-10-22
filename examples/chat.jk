@@ -1,9 +1,11 @@
-import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, require_contract}
+import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, defaults, require_contract}
 import joky/vm
 import joky/domain
 import joky/outbox
+import joky/session
+import joky/admission
 import joky/option.{type Option}
-import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
+import joky/tcp.{type Address, type TcpListener, type TcpStream}
 
 fn script_path() -> String { "examples/chat_logic.jk" }
 fn report(error: vm.LoadError) {
@@ -14,7 +16,7 @@ fn report(error: vm.LoadError) {
     }
 }
 fn call(engine: &vm.Vm, host: Host, id: UInt64, action: Action) @suspends -> UInt64 {
-    engine.call::<Call, UInt64>("dispatch", Call { host: host, id: id, action: action })
+    engine.try_call::<Call, UInt64>("dispatch", Call { host: host, id: id, action: action }).unwrap_or(0)
 }
 fn reload(engine: &vm.Vm, host: Host, id: UInt64) @suspends {
     // Publication neither acquires a business permit nor drains any output mailbox.
@@ -24,56 +26,47 @@ fn reload(engine: &vm.Vm, host: Host, id: UInt64) @suspends {
     }
     call(engine, host, id, Action.Notice(message));
 }
-fn receive(engine: &vm.Vm, host: Host, id: UInt64, reader: BufferedTcpReader) @suspends {
-    var reader = reader
-    while true {
-        let line = match reader.read_line(4096) { Ok(Some(line)) => line, _ => return }
-        if line.equals("reload") { reload(engine, host, id) }
-        else if call(engine, host, id, Action.Line(line)) == 0 { return }
-    }
+struct Client { host: Host, id: UInt64 }
+fn line(engine: &vm.Vm, client: &Client, text: String) @suspends @noescape -> Bool {
+    if text.equals("reload") { reload(engine, client.host, client.id); true }
+    else { call(engine, client.host, client.id, Action.Line(text)) != 0 }
 }
-fn send(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends {
-    var writer = writer
-    while true {
-        let bytes = match queue.receive() { Some(bytes) => bytes, None => return }
-        if writer.write_all(bytes).is_err() { return }
-    }
+fn disconnected(engine: &vm.Vm, client: &Client) @suspends @noescape {
+    call(engine, client.host, client.id, Action.Disconnect);
+    engine.try_call::<Call, Unit>("forget", Call { host: client.host, id: client.id, action: Action.Disconnect });
 }
-fn stop(queue: &mut outbox.Mailbox) @suspends { queue.receive(); }
-fn session(engine: &vm.Vm, host: Host, id: UInt64, queue: outbox.Mailbox, control: outbox.Mailbox, stream: TcpStream) @suspends {
-    var queue = queue
-    var control = control
-    let (reader, writer) = BufferedTcp.new(stream).split()
-    // Retain both mailbox owners until membership removal has committed.
-    race { | receive(engine, host, id, reader) | send(&mut queue, writer) | stop(&mut control) }
-    call(engine, host, id, Action.Disconnect);
-}
-fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream) @suspends {
-    // The connection owns its account even when the session is cancelled.
+fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream, permit: admission.Permit) @suspends {
     let owners = domain.directory(1)
-    let queue = outbox.create(64, 65536)
-    let control = outbox.create(1, 0)
-    let input = AccountInit { host: host, owners: owners.handle(), id: id, output: queue.handle(), stop: control.handle() }
-    engine.call::<AccountInit, Unit>("init_account", input)
-    refresh(engine)
-    call(engine, host, id, Action.Welcome);
-    session(engine, host, id, queue, control, stream)
+    let connection = session.create(host.config.connection)
+    let input = AccountInit { host: host, owners: owners.handle(), id: id, output: connection.output(), stop: connection.stop_handle() }
+    let client = Client { host: host, id: id }
+    if engine.try_call::<AccountInit, Unit>("init_account", input).is_err() || !refresh(engine) {
+        disconnected(engine, &client)
+        return
+    }
+    if call(engine, host, id, Action.Welcome) == 0 { disconnected(engine, &client); return }
+    session.run(connection, stream, engine, &client, line, disconnected)
+    permit.release()
 }
 // Creation may have started in an older module while publication was in flight.
 // Bring newly created roots to the current module before exposing them to clients.
-fn refresh(engine: &vm.Vm) { assert(vm.publish_domain_code(engine) >= 0, "Could not publish code for a newly created state") }
+fn refresh(engine: &vm.Vm) -> Bool { vm.publish_domain_code(engine) >= 0 }
 fn room(engine: &vm.Vm, input: RoomInit) @suspends {
     let key = RoomKey { host: input.host, key: input.key }
-    engine.call::<RoomInit, Unit>("init_room", input)
-    refresh(engine)
-    engine.call::<RoomKey, Unit>("open_room", key)
+    if engine.try_call::<RoomInit, Unit>("init_room", input).is_err() || !refresh(engine) {
+        engine.try_call::<RoomKey, Unit>("fail_room", key);
+        return
+    }
+    if engine.try_call::<RoomKey, Unit>("open_room", key).is_err() {
+        engine.try_call::<RoomKey, Unit>("fail_room", key);
+    }
 }
 fn manage(engine: &vm.Vm, host: Host, requests: &mut outbox.Mailbox) @suspends -> Int32 {
     while true {
         let request = requests.receive()
         if request.is_none() { break }
         while true {
-            let pending = engine.call::<Host, Option<RoomInit>>("next_room", host)
+            let pending = match engine.try_call::<Host, Option<RoomInit>>("next_room", host) { Ok(value) => value, Err(_) => break }
             match pending { Some(input) => room(engine, input), None => break }
         }
     }
@@ -84,13 +77,16 @@ fn serve(engine: &vm.Vm, host: Host) @suspends -> Int32 {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
     println(listener.local_addr()!.port())
+    let admission = admission.create(host.config.max_clients, 0)
+    let entrants = admission.handle()
     var next_id: UInt64 = 1
     scope {
         while true {
             let stream = match listener.accept() { Ok(stream) => stream, Err(_) => break }
+            let permit = match entrants.try_acquire() { Ok(permit) => permit, Err(_) => continue }
             let id = next_id
             next_id += 1
-            branch { connection(engine, host, id, stream) }
+            branch { connection(engine, host, id, stream, permit) }
         }
     }
     0
@@ -101,10 +97,11 @@ fn main() @suspends -> Int32 {
     require_contract(&engine)
     match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { report(error); return 1 } }
     let directory = domain.directory(1)
-    let rooms = domain.directory(4096)
-    let accounts = domain.directory(4096)
-    var requests = outbox.create(4096, 0)
-    let host = Host { directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
+    let config = defaults()
+    let rooms = domain.directory(config.max_rooms)
+    let accounts = domain.directory(config.max_clients)
+    var requests = outbox.create(config.max_rooms, 0)
+    let host = Host { config: config, directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
     engine.call::<Host, Unit>("initialize", host)
     race {
         | serve(&engine, host)

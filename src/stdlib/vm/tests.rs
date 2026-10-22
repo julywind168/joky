@@ -376,6 +376,7 @@ fn script_bridge_cancellation(
     boundaries: impl Clone + IntoIterator<Item = usize>,
     exhaustive: bool,
     flat: bool,
+    checked: bool,
 ) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     let script = "import joky/domain import joky/task struct S { n: Int32 } fn make(n:Int32)->S { S{n:n} } fn read(s:&S)->Int32{s.n} fn work(n:Int32) @suspends ->Int32 { let s=domain.create(make,42); task.yield_now(); domain.read_from(s.read_handle(),read).unwrap() }";
@@ -402,6 +403,19 @@ fn script_bridge_cancellation(
                 )
         } else {
             script_call_source(script, mode, "work")
+        };
+        let source = if checked {
+            source
+                .replace(
+                    "h.call::<Int32, Int32>(\"work\", 0)",
+                    "match h.try_call::<Int32, Int32>(\"work\", 0) { Err(Failed) => 42, _ => 0 }",
+                )
+                .replace(
+                    "domain.read_from(s.read_handle(),read).unwrap()",
+                    "domain.read_from(s.read_handle(),read).unwrap() / n",
+                )
+        } else {
+            source
         };
         host.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
         if mode == VmMode::Interpreter {
@@ -450,13 +464,18 @@ fn script_bridge_cancellation(
 
 #[test]
 fn script_scalar_bridge_cancellation_reclaims_frames_and_domain_requests() {
-    script_bridge_cancellation([0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800], false, false);
+    script_bridge_cancellation(
+        [0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800],
+        false,
+        false,
+        false,
+    );
 }
 
 #[test]
 #[ignore = "exhaustive: cancel scalar Script bridge at every host instruction"]
 fn exhaustive_script_scalar_bridge_cancellation() {
-    script_bridge_cancellation(0..=2048, true, false);
+    script_bridge_cancellation(0..=2048, true, false, false);
 }
 
 #[test]
@@ -506,12 +525,13 @@ fn script_flat_bridge_cancellation_reclaims_packets() {
         [0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800, 1600],
         false,
         true,
+        false,
     );
 }
 #[test]
 #[ignore = "exhaustive: cancel typed Script packets at every host instruction"]
 fn exhaustive_script_flat_bridge_cancellation() {
-    script_bridge_cancellation(0..=4096, true, true);
+    script_bridge_cancellation(0..=4096, true, true, false);
 }
 
 #[test]
@@ -1070,4 +1090,14 @@ fn owned_script_allocation_failures_reclaim_inputs_results_and_packets() {
             arena::LIMIT.with(|n| n.set(arena::MAX_BYTES));
         }
     }
+}
+
+#[test]
+fn script_try_call_cancellation_and_failure_reclaim_children() {
+    script_bridge_cancellation([0, 1, 5, 20, 100, 400, 800], false, false, true);
+}
+#[test]
+#[ignore = "exhaustive: cancel a handled Script failure at every host instruction"]
+fn exhaustive_script_try_call_cancellation() {
+    script_bridge_cancellation(0..=4096, true, false, true);
 }

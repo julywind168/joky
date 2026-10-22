@@ -2,6 +2,7 @@ import chat_contract.{type Host, type Action, type Call, type RoomInit, type Roo
 import joky/domain
 import joky/outbox
 import joky/mem
+import joky/task
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 
@@ -10,15 +11,15 @@ struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handl
 #state
 struct Account { route: Route, room: UInt64, balance_cents: UInt64 }
 #state
-struct Room { name: String, members: Array<Route> }
-enum RoomStatus { Pending, Starting, Ready }
+struct Room { name: String, members: Array<Route>, retired: Bool }
+enum RoomStatus { Pending, Starting, Ready, Dormant }
 struct RoomEntry { name: String, status: RoomStatus, waiters: Array<outbox.Handle> }
 #state
 struct Catalog { rooms: Array<RoomEntry> }
 struct Context { host: Host }
 enum Command { Welcome, Balance, Join(String), Leave, Say(String), Invalid, Disconnect, Notice(String) }
 fn make_catalog(_: Unit) -> Catalog { Catalog { rooms: Array.new::<RoomEntry>() } }
-fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>() } }
+fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>(), retired: false } }
 fn make_account(account: Account) -> Account { account }
 fn account_view(state: &Account) -> Account { *state }
 fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
@@ -56,13 +57,20 @@ fn find_room(state: &Catalog, name: String) -> (UInt64, Bool) {
     }
     (0, false)
 }
-fn reserve_room(state: &mut Catalog, input: (String, outbox.Handle)) {
+fn reserve_room(state: &mut Catalog, input: (String, outbox.Handle)) -> Bool {
     let (name, waiter) = input
     let (key, _) = find_room(state, name.clone())
     if key == 0 {
         var waiters = Array.new::<outbox.Handle>(); waiters.push(waiter)
         state.rooms.push(RoomEntry { name: name, status: RoomStatus.Pending, waiters: waiters })
-    } else { let entry = state.rooms.borrow_mut_ref(key - 1); entry.waiters.push(waiter) }
+        true
+    } else {
+        let entry = state.rooms.borrow_mut_ref(key - 1)
+        let restart = match entry.status { Dormant => true, _ => false }
+        if restart { entry.status = RoomStatus.Pending }
+        entry.waiters.push(waiter)
+        restart
+    }
 }
 fn take_room(state: &mut Catalog, host: Host) -> Option<RoomInit> {
     var i: UInt64 = 0
@@ -83,24 +91,48 @@ fn finish_room(state: &mut Catalog, key: UInt64) -> Array<outbox.Handle> {
     mem.swap(&mut entry.waiters, &mut waiters)
     waiters
 }
+fn waiter_count(catalog: &Catalog, key: UInt64) -> UInt64 {
+    let entry = catalog.rooms.borrow_ref(key - 1)
+    entry.waiters.len()
+}
+fn resolve_room(catalog: &mut Catalog, room_name: String, waiter: outbox.Handle, request: outbox.Handle, limit: UInt64, clients: UInt64) -> Result<UInt64, Unit> {
+    let (key, available) = find_room(catalog, room_name.clone())
+    if available { Ok(key) }
+    else if key == 0 && catalog.rooms.len() >= limit { Err({}) }
+    else if key != 0 && waiter_count(catalog, key) >= clients { Err({}) }
+    else {
+        reserve_room(catalog, (room_name, waiter));
+        let signal = Array.new::<UInt8>(); outbox.emit(request, &signal)
+        Ok(0)
+    }
+}
+fn room_ready(ready: &mut outbox.Mailbox) @suspends { ready.receive(); }
+fn discard_waiter(catalog: &mut Catalog, input: (String, UInt64)) {
+    let (name, identity) = input
+    let (key, _) = find_room(catalog, name)
+    if key == 0 { return }
+    let entry = catalog.rooms.borrow_mut_ref(key - 1)
+    var i: UInt64 = 0
+    while i < entry.waiters.len() {
+        if entry.waiters.get(i)!.identity() == identity { entry.waiters.remove(i); return }
+        i += 1
+    }
+}
 fn ensure_room(ctx: Context, name: &String) @suspends -> UInt64 {
     let catalog = match domain.lookup_write::<Catalog>(ctx.host.directory, 1) { Some(handle) => handle, None => return 0 }
     var ready = outbox.create(1, 0)
     let waiter = ready.handle()
     let request = ctx.host.requests
     let room_name = name.clone()
+    let limit = ctx.host.config.max_rooms
+    let clients = ctx.host.config.max_clients
     let result = when "resolve room" (mut catalog) {
-        let (key, available) = find_room(catalog, room_name.clone())
-        if available { key }
-        else {
-            reserve_room(catalog, (room_name, waiter))
-            if key == 0 { let signal = Array.new::<UInt8>(); outbox.emit(request, &signal) }
-            0
-        }
+        resolve_room(catalog, room_name, waiter, request, limit, clients)
     }
-    let key = match result { Ok(key) => key, Err(_) => return 0 }
+    let key = match result { Ok(Ok(key)) => key, _ => return 0 }
     if key != 0 { return key }
-    ready.receive();
+    race { | room_ready(&mut ready) | task.sleep_ms(ctx.host.config.room_wait_ms) }
+    domain.write_to(catalog, discard_waiter, (name.clone(), waiter.identity()));
     match domain.query_from(catalog.read_only(), find_room, name.clone()) { Ok((key, true)) => key, _ => 0 }
 }
 fn next_room(host: Host) @suspends -> Option<RoomInit> {
@@ -120,6 +152,40 @@ fn open_room(input: RoomKey) @suspends {
     let waiters = domain.write_to(catalog, finish_room, input.key)!
     var i: UInt64 = 0
     while i < waiters.len() { outbox.close(waiters.get(i)!); i += 1 }
+}
+fn fail_room(input: RoomKey) @suspends {
+    let catalog = match domain.lookup_write::<Catalog>(input.host.directory, 1) { Some(h) => h, None => return }
+    let key = input.key
+    let waiters = when "fail room" (mut catalog) {
+        let entry = catalog.rooms.borrow_mut_ref(key - 1)
+        entry.status = RoomStatus.Dormant
+        var waiters = Array.new::<outbox.Handle>()
+        mem.swap(&mut entry.waiters, &mut waiters)
+        waiters
+    }
+    match waiters { Ok(waiters) => {
+        var i: UInt64 = 0
+        while i < waiters.len() { outbox.close(waiters.get(i)!); i += 1 }
+    }, Err(_) => {} }
+}
+fn empty(room: &Room) -> Bool {
+    var i: UInt64 = 0
+    while i < room.members.len() { if room.members.get(i)!.live { return false }; i += 1 }
+    true
+}
+fn reclaim(ctx: Context, key: UInt64) @suspends {
+    if !ctx.host.config.reclaim_empty || key == 0 { return }
+    let room = match room_handle(ctx, key) { Some(h) => h, None => return }
+    let catalog = match domain.lookup_write::<Catalog>(ctx.host.directory, 1) { Some(h) => h, None => return }
+    let retired = when "retire room" (mut room, mut catalog) {
+        if empty(room) && !room.retired {
+            room.retired = true
+            let entry = catalog.rooms.borrow_mut_ref(key - 1)
+            entry.status = RoomStatus.Dormant
+            true
+        } else { false }
+    }
+    if retired.unwrap_or(false) { ctx.host.rooms.remove(key, room.read_only()); }
 }
 fn deliver(route: Route, message: &String, excluded: &Array<UInt64>) {
     if route.live && !contains(excluded, route.id) {
@@ -198,7 +264,8 @@ fn change_membership(account: &mut Account, old: &mut Room, next: &mut Room, exp
     let route = account.route
     let id = route.id
     match command {
-        Join(_) => {
+        Join(name) => {
+            if account.room != next_key && (next.retired || !next.name.equals(name)) { return Err(Retry.Changed) }
             if account.room == next_key { deliver(route, "error already joined\n", excluded) }
             else {
                 if account.room != 0 {
@@ -245,10 +312,40 @@ fn split_request(input: Request) -> (Context, UInt64, Command, Array<UInt64>) {
     let Request { ctx, id, command, excluded } = input
     (ctx, id, command, excluded)
 }
+enum Step { Done(Bool), Slow(UInt64) }
+struct Work { id: UInt64, command: Command }
+fn split_work(work: Work) -> (UInt64, Command) { let Work { id, command } = work; (id, command) }
 fn publish(ctx: Context, id: UInt64, command: Command, excluded: &Array<UInt64>) @suspends -> Bool {
-    let account = match domain.lookup_write::<Account>(ctx.host.accounts, id) { Some(handle) => handle, None => return false }
-    let input = Request { ctx: ctx, id: id, command: command, excluded: copy_ids(excluded) }
-    match domain.request(account, execute, input) { Ok(value) => value, Err(_) => false }
+    var pending = Array.new::<Work>()
+    pending.push(Work { id: id, command: command })
+    var excluded = copy_ids(excluded)
+    var evictions: UInt64 = 0
+    var answer = false
+    while !pending.is_empty() {
+        let (current, command) = split_work(pending.pop()!)
+        let account = match domain.lookup_write::<Account>(ctx.host.accounts, current) { Some(h) => h, None => return false }
+        let input = Request { ctx: ctx, id: current, command: command.clone(), excluded: copy_ids(&excluded) }
+        let step = match domain.request(account, execute, input) { Ok(step) => step, Err(_) => return false }
+        match step {
+            Done(value) => {
+                if !value && !pending.is_empty() {
+                    // A failed eviction cannot silently turn into a skipped recipient.
+                    forget(Call { host: ctx.host, id: current, action: Action.Disconnect })
+                    if domain.lookup_write::<Account>(ctx.host.accounts, current).is_some() { return false }
+                }
+                answer = value
+            },
+            Slow(slow) => {
+                if evictions >= ctx.host.config.max_evictions || contains(&excluded, slow) { return false }
+                evictions += 1
+                match &command { Disconnect => { if !contains(&excluded, current) { excluded.push(current) } }, _ => {} }
+                excluded.push(slow)
+                pending.push(Work { id: current, command: command })
+                pending.push(Work { id: slow, command: Command.Disconnect })
+            }
+        }
+    }
+    answer
 }
 fn attempt(ctx: Context, account: domain.WriteHandle<Account>, expected: UInt64, next_key: UInt64, command: &Command, excluded: &Array<UInt64>) @suspends -> Result<Result<Route, Retry>, domain.DomainAccessError> {
     let old_handle = room_handle(ctx, expected)
@@ -309,34 +406,34 @@ fn slow_client(ctx: Context, value: Account, next_key: UInt64, token: UInt64) @s
         Some(room) => domain.query_from(room.read_only(), target_member, token).unwrap_or(0), None => 0
     }
 }
-fn execute(input: Request) @suspends -> Bool {
+fn execute(input: Request) @suspends -> Step {
     let (ctx, id, command, excluded) = split_request(input)
     var tries: UInt64 = 0
-    while tries < 64 {
+    while tries < ctx.host.config.retries {
         tries += 1
         // Directory resolution and room creation belong to the complete retry boundary.
         let next_key = match &command { Join(name) => ensure_room(ctx, name), _ => 0 }
-        if match &command { Join(_) => next_key == 0, _ => false } { return false }
-        let account = match domain.lookup_write::<Account>(ctx.host.accounts, id) { Some(handle) => handle, None => return false }
-        let value = match domain.read_from(account.read_only(), account_view) { Ok(value) => value, Err(_) => return false }
-        if !value.route.live { return false }
+        if match &command { Join(_) => next_key == 0, _ => false } { return Step.Done(false) }
+        let account = match domain.lookup_write::<Account>(ctx.host.accounts, id) { Some(handle) => handle, None => return Step.Done(false) }
+        let value = match domain.read_from(account.read_only(), account_view) { Ok(value) => value, Err(_) => return Step.Done(false) }
+        if !value.route.live { return Step.Done(false) }
         let result = attempt(ctx, account, value.room, next_key, &command, &excluded)
         let failed = match result {
             Ok(Ok(route)) => {
                 match &command { Disconnect => { outbox.close(route.stop); outbox.close(route.output) }, _ => {} }
-                return true
+                if changes_membership(&command) { reclaim(ctx, value.room) }
+                return Step.Done(true)
             },
             Ok(Err(Changed)) => continue,
+            Err(Closed) => continue,
             Err(OutboxFull(token)) => token, Err(OutboxClosed(token)) => token,
-            _ => return false
+            _ => return Step.Done(false)
         }
         let slow = slow_client(ctx, value, next_key, failed)
-        if slow == 0 { return false }
-        var ancestors = copy_ids(&excluded)
-        match &command { Disconnect => ancestors.push(id), _ => {} }
-        publish(ctx, slow, Command.Disconnect, &ancestors);
+        if slow == 0 { return Step.Done(false) }
+        return Step.Slow(slow)
     }
-    false
+    Step.Done(false)
 }
 
 fn parse(line: String) -> Command {
@@ -368,10 +465,7 @@ fn dispatch(request: Call) @suspends -> UInt64 {
         Action.Line(line) => if process(ctx, id, line) { 1 } else { 0 },
         Action.Disconnect => {
             publish(ctx, id, Command.Disconnect, &excluded);
-            match domain.lookup_write::<Account>(host.accounts, id) {
-                Some(account) => { host.accounts.remove(id, account.read_only()); },
-                None => {}
-            }
+            forget(Call { host: host, id: id, action: Action.Disconnect })
             0
         },
         Action.Notice(text) => if publish(ctx, id, Command.Notice(text), &excluded) { 1 } else { 0 }
@@ -385,4 +479,33 @@ fn init_account(input: AccountInit) @suspends {
 }
 fn initialize(host: Host) @suspends {
     host.directory.insert_owned(1, domain.create(make_catalog, {}))!
+}
+
+// Membership cleanup has no queue dependency, including after a failed Script call.
+fn forget(request: Call) @suspends {
+    let (host, id, _) = split(request)
+    let ctx = Context { host: host }
+    var tries: UInt64 = 0
+    while tries < host.config.retries {
+        tries += 1
+        let account = match domain.lookup_write::<Account>(host.accounts, id) { Some(h) => h, None => return }
+        let value = match domain.read_from(account.read_only(), account_view) { Ok(v) => v, Err(_) => return }
+        let key = value.room
+        let removed = match room_handle(ctx, key) {
+            Some(room) => when "forget member" (mut account, mut room) {
+                if account.room != key { false }
+                else { remove_member(room, id); account.room = 0; account.route.live = false; true }
+            },
+            None => when "forget account" (mut account) {
+                if account.room != key { false }
+                else { account.room = 0; account.route.live = false; true }
+            }
+        }
+        if removed.unwrap_or(false) {
+            outbox.close(value.route.stop); outbox.close(value.route.output)
+            host.accounts.remove(id, account.read_only());
+            reclaim(ctx, key)
+            return
+        }
+    }
 }

@@ -20,7 +20,9 @@ fn fixture() @suspends -> Fixture {
     let catalog = domain.create(make_catalog, {})
     let room = domain.create(make_room, "r")
     let other = domain.create(make_room, "other")
-    let host = Host { directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
+    var config = defaults()
+    config.reclaim_empty = false
+    let host = Host { config: config, directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
     host.directory.insert(1, catalog.handle())!
     host.rooms.insert(1, room.handle())!
     host.rooms.insert(2, other.handle())!
@@ -159,7 +161,7 @@ fn verify_simultaneous_capacity() @suspends {
     check.assert(process(f.ctx, 1, "say full"), "first queued send")
     check.assert(process(f.ctx, 1, "say full"), "second queued send")
     let excluded = Array.new::<UInt64>()
-    check.assert(publish(f.ctx, 1, Command.Disconnect, &excluded), "recursive cleanup terminates")
+    check.assert(publish(f.ctx, 1, Command.Disconnect, &excluded), "iterative cleanup terminates")
     check.assert(!publish(f.ctx, 1, Command.Disconnect, &excluded), "disconnect is idempotent")
     check.assert(alice_stop.receive().is_none() && bob_stop.receive().is_none(), "both sessions wake")
     check.assert(alice_queue.receive().is_none() && bob_queue.receive().is_none(), "both queues close")
@@ -235,6 +237,8 @@ fn verify_room_resolution_changes_before_operation() @suspends {
     check.assert(balance(&alice) == 400, "recalculation charges exactly once")
 }
 fn verify_chat_queue_domain() @suspends {
+    verify_retired_rooms_and_cleanup_budget()
+    verify_unavailable_control_eviction()
     verify_room_resolution_changes_before_operation()
     verify_conflicts_and_independence()
     verify_balance_race()
@@ -244,4 +248,72 @@ fn verify_chat_queue_domain() @suspends {
     verify_closed_output()
     verify_atomic_disconnect_signal()
     verify_wide_broadcast()
+}
+
+fn verify_retired_rooms_and_cleanup_budget() @suspends {
+    let f = fixture()
+    var host = f.ctx.host
+    host.config.reclaim_empty = true
+    host.config.max_rooms = 2
+    let ctx = Context { host: host }
+    var queue = outbox.create(8, 1024)
+    let stop = outbox.create(1, 0)
+    let alice = test_account(ctx, 1, 1, queue.handle(), stop.handle())
+    check.assert(process(ctx, 1, "leave"), "leave before reclaim")
+    expect_message(&mut queue, "left r 1\n")
+    check.assert(room_handle(ctx, 1).is_none(), "empty root removed from directory")
+    let old = f.room.handle()
+    check.assert(when(old) { old.retired }!, "old root cannot accept a new join")
+    let beyond = "beyond-capacity"
+    check.assert(ensure_room(ctx, &beyond) == 0, "catalog names have an explicit bound")
+    let signal = outbox.create(1, 0)
+    check.assert(domain.write_to(f.catalog.handle(), reserve_room, ("r", signal.handle()))!, "dormant name restarts creation")
+    let input = next_room(host)!
+    init_room(input)
+    open_room(RoomKey { host: host, key: 1 })
+    check.assert(!host.rooms.remove(1, old.read_only()), "old cleanup cannot delete a replacement")
+    check.assert(process(ctx, 1, "join r"), "join replacement room")
+    expect_message(&mut queue, "joined r 1\n")
+    let bob_queue = outbox.create(1, 64)
+    let bob_stop = outbox.create(1, 0)
+    let bob = test_account(ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
+    check.assert(process(ctx, 2, "balance"), "fill another recipient")
+    host.config.max_evictions = 0
+    let bounded = Context { host: host }
+    let excluded = Array.new::<UInt64>()
+    check.assert(!publish(bounded, 1, Command.Disconnect, &excluded), "eviction budget refuses work without recursion")
+    check.assert(domain.read_from(alice.read_handle(), account_view)!.route.live, "refused operation did not partially disconnect")
+    forget(Call { host: host, id: 1, action: Action.Disconnect })
+    check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "cleanup does not depend on queue space")
+    let room = room_handle(ctx, 1)!
+    check.assert(!domain.query_from(room.read_only(), member_value, 1).unwrap_or(true), "failed connection leaves no membership")
+    check.assert(domain.read_from(bob.read_handle(), account_view)!.route.live, "unrelated account stays alive")
+    host.config.max_rooms = 3
+    host.config.room_wait_ms = 1
+    let waiting = Context { host: host }
+    let missing = "no-manager"
+    check.assert(ensure_room(waiting, &missing) == 0, "room creation has a bounded wait")
+    let catalog = f.catalog.handle()
+    check.assert(when(catalog) { waiter_count(catalog, 3) == 0 }!, "timed out waiter is removed")
+    let pending = next_room(host)!
+    fail_room(RoomKey { host: host, key: pending.key })
+    check.assert(when(catalog) { let entry = catalog.rooms.borrow_ref(2); match entry.status { Dormant => true, _ => false } }!, "failed room can be retried")
+}
+
+fn member_value(room: &Room, id: UInt64) -> Bool { member(room, id) }
+
+fn verify_unavailable_control_eviction() @suspends {
+    let f = fixture()
+    var output = outbox.create(8, 1024)
+    let stop = outbox.create(1, 0)
+    let slow_output = outbox.create(1, 64)
+    let slow_stop = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, output.handle(), stop.handle())
+    let bob = test_account(f.ctx, 2, 1, slow_output.handle(), slow_stop.handle())
+    check.assert(process(f.ctx, 2, "balance"), "fill slow queue")
+    outbox.close(slow_stop.handle())
+    check.assert(process(f.ctx, 1, "say after-cleanup"), "failed eviction falls back to state-only cleanup")
+    expect_message(&mut output, "message r 1 after-cleanup\n")
+    check.assert(balance(&alice) == 400, "retry charges only after cleanup")
+    check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "excluded recipient must actually be removed")
 }

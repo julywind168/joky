@@ -74,3 +74,9 @@ pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
 pub(crate) unsafe extern "C" fn yield_internal(frame: *mut CpsFrame) -> i32 {
     yield_now(frame)
 }
+
+// Source modules use a private name for the same frame-owned timer.
+#[export_name = "__joky_task_sleep_ms"]
+pub(crate) unsafe extern "C" fn sleep_internal(frame: *mut CpsFrame) -> i32 {
+    sleep_ms(frame)
+}

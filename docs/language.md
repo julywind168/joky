@@ -4094,6 +4094,14 @@ fn dispatch(h: &vm.Vm, request: Request) @suspends -> Reply {
 }
 ```
 
+`Vm.try_call<A, R>(&self, name: String, input: A) @suspends -> Result<R, vm.CallError>`
+使用相同契约，显式处理调用边界内的失败：`Unavailable` 表示 VM／执行器不可用，
+`Incompatible` 表示入口缺失或类型不符，`Failed` 表示执行、分配或结果传递失败。
+失败先清理子 continuation、局部资源和错误通道，再返回 Err；之后可继续调用同一 VM。
+子调用已经完成的外部效果不会回滚。业务返回 Result 时，成功调用仍得到 `Ok(业务结果)`。
+输入打包和返回值解包在此边界之外，其失败仍传播给调用任务；父任务取消仍取消整个子调用，
+不转换为业务 Err。原有 `call` 继续沿运行时错误通道传播失败。
+
 Script 应声明同名、同字段契约的 Request/Reply，以及 `handle_message` 入口。A/R 分别支持
 全部整数宽度、Float32/Float64、Bool、Rune、Unit、String、Array，以及由它们和元组、具体记录、枚举
 嵌套组成的值，包括 `Option<String>`、`Array<Pair<String>>` 和业务 `Result<T,E>`。64 结构项／64 头部槽／8 层限制与
@@ -4191,7 +4199,7 @@ let status = vm.register_int32_2(engine, &name, host_add)
 多个共享借用允许挂起调用与加载/重载并行；借用存活期间不能移动或关闭拥有者。
 底层 VM 仍绑定创建线程，Rust/C 的数值句柄接口保持原有显式关闭协议。
 模块与成员别名见[导入与 prelude](#导入与-prelude)。Joky 内的 `vm.load_source` 不隐式搜索文件，
-显式多源码加载使用 Rust API；同步 `Int32` 宿主函数可通过 `vm.register_int32_0/1/2` 注册。
+显式依赖快照使用 `Vm.module_source`／`module_file` 或 Rust API；同步 `Int32` 宿主函数可通过 `vm.register_int32_0/1/2` 注册。
 
 `Vm.call` 的名称是拥有型 String，不跨模块保留业务借用。首次异步调用或发布将句柄
 绑定当前执行器，此后从另一执行器或原执行器销毁后调用均拒绝；不创建额外事件循环。
@@ -4759,6 +4767,26 @@ scope 主体直接声明的局部值保留到 join 完成；return、break、con
 [async_borrowing.jk](../tests/fixtures/async_borrowing.jk) 覆盖异步宿主的局部及元素引用。
 [async_owner_views.jk](../tests/fixtures/async_owner_views.jk) 覆盖异步方法、递归和字段替换；
 [async_owner_tcp.jk](../tests/fixtures/async_owner_tcp.jk) 展示保存 stream、数组缓冲与偏移的异步接收对象。
+
+## 连接运行组件 joky/session
+
+显式导入 `joky/session`。`Options` 的公开字段为 `max_line_bytes`、`queue_messages`、
+`queue_bytes` 和 `idle_ms`；`defaults()` 分别返回 4096、64、65536 和 0。
+行长含结束符，容量沿用 TCP／outbox 的有效范围。`idle_ms = 0` 关闭超时；非零值限制
+等到下一条完整行的时间，零散字节不会重置期限。
+
+`create(options) @suspends -> Connection` 创建出站队列和控制队列；
+`Connection.output()`／`stop_handle()` 为挂起方法，返回可传给业务状态的弱 outbox.Handle。
+`run<S,T>(connection, stream, shared: &S, ctx: &T, on_line, on_close) @suspends`
+消费 Connection 和 TcpStream，沿用创建时的 Options，借用服务共享上下文与连接上下文。两个回调分别是
+`fn(&S,&T,String) @suspends @noescape -> Bool` 和
+`fn(&S,&T) @suspends @noescape -> Unit`，可直接传具名函数。
+
+组件竞速接收、发送和控制等待。EOF、TCP／UTF-8／行长错误、超时、控制队列收到消息或关闭，
+以及 on_line 返回 false，都会结束竞速并调用一次 on_close；两个邮箱 Owner 保留到回调完成。
+业务可用 `Vm.try_call` 在 on_line 中处理脚本失败。组件不会隐式捕获任意回调异常，也不保证
+断开前排空输出队列。父任务取消会结构化停止子任务、释放 socket 和邮箱，不运行挂起清理回调；
+应用应让账户等资源由外层作用域持有。chat 的成员清理、重试与空房回收策略在业务层显式实现。
 
 ## 内置 TCP 模块 joky/tcp
 

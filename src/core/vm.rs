@@ -121,8 +121,9 @@ pub(crate) fn call_signature() -> FunctionSignature {
             Type::String,
             Type::String,
             Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+            Type::Bool,
         ],
-        Type::Unit,
+        Type::Int32,
     )
 }
 
