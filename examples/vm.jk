@@ -1,5 +1,4 @@
 import joky/io.{println}
-
 import joky/vm
 
 fn host_add(x: Int32, y: Int32) -> Int32 { x + y }

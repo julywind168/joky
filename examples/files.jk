@@ -1,5 +1,6 @@
 import joky/fs
 import joky/io.{println}
+
 // Creates joky-file-example.txt in the process working directory.
 fn main() @suspends -> Int32 {
     var options = fs.OpenOptions.new()

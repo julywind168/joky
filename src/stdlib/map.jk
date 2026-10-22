@@ -1,5 +1,4 @@
 import joky/mem
-// Single-owner, unordered Map. All table policies execute in Joky.
 import joky/array as arrays.{type Array}
 import joky/element.{type Element}
 import joky/slice.{type Slice}
@@ -10,6 +9,7 @@ import joky/eq.{type Eq, type BorrowEq}
 import joky/hash.{type Hash, type BorrowHash}
 import joky/internal/types
 
+// Single-owner, unordered Map. All table policies execute in Joky.
 enum Bucket { Empty, Deleted, Full(UInt64) }
 pub struct Map<K, V> {
     buckets: Array<Bucket>

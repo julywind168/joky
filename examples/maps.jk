@@ -1,12 +1,12 @@
 import joky/io.{println}
-
-// Core synchronous Map operations; keys are reference-free Copy values.
 import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/element
 import joky/slice as slices
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
+
+// Core synchronous Map operations; keys are reference-free Copy values.
 fn frequencies() -> Int32 {
     var counts = Map.new::<Int32, Int32>()
     var i = 0

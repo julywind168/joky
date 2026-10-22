@@ -1,6 +1,6 @@
 import joky/io.{println}
-
 import joky/array.{type Array}
+
 fn answer() -> Int32 {
     var values: Array<Int32> = Array.new::<Int32>()
     values.push(20)

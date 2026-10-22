@@ -1,4 +1,5 @@
 import joky/slice as slices.{type Slice}
+
 // Only these embedded definitions receive compiler-owned value/token identities.
 type FixedArray<T: Copy, const N: UInt64> = T
 type Init<T: Copy, const N: UInt64> = T

@@ -2,6 +2,7 @@ import joky/internal/buffer.{type Buffer}
 import joky/option.{type Option}
 import joky/outbox.{type Batch}
 import joky/result.{type Result}
+
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
 extern fn __domain_read_scalar(method: String) @suspends -> (Int32, UInt64)
 extern fn __domain_query_scalar(method: String, input: UInt64) @suspends -> (Int32, UInt64)

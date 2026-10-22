@@ -1,12 +1,10 @@
 import joky/io.{println}
-
 import joky/vm
 
 type Count = Total
 type Total = Int32
 type Nothing = Unit
 type Handle = vm.Vm
-
 
 fn add(a: Count, b: Total) -> Count { a + b }
 

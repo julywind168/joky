@@ -1,4 +1,5 @@
 import joky/string as text
+
 // By-value equality for reference-free Copy keys. Equality must be stable.
 pub trait Eq { fn eq(self, other: Self) -> Bool }
 impl Eq for Int32 { fn eq(self, other: Self) -> Bool { self == other } }

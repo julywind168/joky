@@ -1,5 +1,4 @@
 import joky/io.{println}
-
 import joky/string as text
 import joky/array.{type Array}
 

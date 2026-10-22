@@ -1,7 +1,7 @@
 import joky/io.{println}
-
 import joky/array.{type Array}
 import joky/drop.{type Drop}
+
 struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { println(self.id) } }
 enum Message { Empty, Ready(Resource), Count(Int32) }

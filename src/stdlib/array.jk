@@ -109,7 +109,6 @@ pub fn replace<T>(values: &mut Array<T>, index: UInt64, next: T) -> Option<T> {
     Some(old)
 }
 
-
 // Rotate the removed element to the tail while preserving its successors.
 pub fn remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
     let values = &mut values.storage

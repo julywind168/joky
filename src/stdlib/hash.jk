@@ -1,6 +1,7 @@
 import joky/integer
 import joky/string as text
 import joky/internal/buffer as storage
+
 // Equal keys must have equal, stable hashes. Outputs are not a persistent format.
 pub trait Hash { fn hash(self) -> UInt64 }
 fn mix(value: UInt64) -> UInt64 {

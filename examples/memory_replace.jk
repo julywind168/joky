@@ -1,7 +1,7 @@
 import joky/mem
 import joky/io.{println}
-
 import joky/array.{type Array}
+
 struct Resource { id: Int32, values: Array<Int32> }
 fn resource(id: Int32) -> Resource {
     Resource { id: id, values: Array.new::<Int32>() }

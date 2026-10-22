@@ -3,6 +3,7 @@ import joky/internal/buffer as storage.{type Buffer}
 import joky/fs
 import joky/result.{type Result, Ok, Err}
 import joky/string.{type Utf8Error}
+
 extern fn __vm_create(mode: UInt64) -> vm.Owner
 extern fn __vm_close(owner: &vm.Owner) -> Int32
 extern fn __vm_error_code() -> Int32
@@ -76,7 +77,6 @@ impl Vm {
         unpack::<R>(&packet)
     }
 }
-
 
 pub struct Diagnostic { pub message: String, pub has_span: Bool, pub start: UInt64, pub end: UInt64 }
 pub enum LoadErrorKind {

@@ -1,5 +1,6 @@
 import joky/show.{type Show}
 import joky/string.{type StringBuilder}
+
 extern fn __joky_write_stdout(text: &String) -> Int32
 
 pub fn print<T: Show>(value: &T) @noescape {

@@ -1,6 +1,6 @@
 import joky/io.{println}
-
 import joky/option.{type Option}
+
 fn increment(value: Int32) -> Int32 { value + 1 }
 fn optional(value: Int32) -> Option<Int32> { Option.Some(value + 1) }
 fn apply<T, U>(value: T, transform: fn(T) -> U) -> U { transform(value) }

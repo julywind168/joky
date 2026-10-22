@@ -1,5 +1,4 @@
 import joky/io.{println}
-
 import joky/integer
 
 fn main() {

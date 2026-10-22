@@ -1,6 +1,6 @@
 import joky/io.{println}
-
 import joky/string.{type StringBuilder}
+
 fn greeting(name: &String) -> String {
     var builder = StringBuilder.new()
     builder.push_str("Hello, ")

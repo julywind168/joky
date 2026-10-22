@@ -1,5 +1,4 @@
 import joky/io.{println}
-
 import app/math.{add}
 
 fn main() {

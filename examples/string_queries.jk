@@ -1,9 +1,8 @@
 import joky/io.{println}
-
-// Byte offsets and Unicode scalar counts are deliberately different.
 import joky/string as text
 import joky/array.{type Array}
 
+// Byte offsets and Unicode scalar counts are deliberately different.
 fn main() {
     var input = Array.new::<UInt8>()
     input.push(0xe4)
