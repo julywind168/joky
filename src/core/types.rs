@@ -1629,9 +1629,8 @@ fn is_type_name(name: &str) -> bool {
     !name.is_empty() && segments.all(valid)
 }
 
-/// Canonical spelling of each primitive type. These names are reserved and
-/// can never be redeclared. Lookups that resolve member paths keep their own
-/// narrower sets; for example `String` deliberately has no member namespace.
+/// Canonical spelling of each primitive type, shared by annotation and member lookup.
+/// These names are reserved and can never be redeclared.
 pub(crate) fn primitive_type(name: &str) -> Option<Type> {
     Some(match name {
         "Float32" => Type::Float32,

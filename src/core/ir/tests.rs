@@ -3,6 +3,62 @@ use crate::{ErrorCode, TypeRegistry};
 use std::collections::HashMap;
 
 #[test]
+fn code_dependencies_execute_indirect_methods_and_cleanup_in_all_backends() {
+    use crate::vm::{VmEngine, VmMode};
+
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "dependencies",
+            r#"
+        import joky/drop.{type Drop}
+        fn increment(value: Int32) -> Int32 { value + 1 }
+        pub fn callback() -> fn(Int32) -> Int32 { increment }
+        pub trait Read { fn read(&self) @noescape -> Int32 }
+        pub struct Value { number: Int32 }
+        impl Read for Value { fn read(&self) -> Int32 { self.number } }
+        pub fn value() -> Value { Value { number: 41 } }
+        pub struct Owner { text: String, divisor: Int32 }
+        fn cleanup(divisor: Int32) { let checked = 42 / divisor }
+        impl Drop for Owner { fn drop(&mut self) { cleanup(self.divisor) } }
+        pub fn owner(divisor: Int32) -> Owner { Owner { text: "cleanup", divisor: divisor } }
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import dependencies as d.{type Read}
+        fn check() -> Int32 {
+            let owner = d.owner(1)
+            let value = d.value()
+            let view: &dyn Read = &value
+            let callback = d.callback()
+            callback(view.read())
+        }
+        fn failure() -> Int32 { let owner = d.owner(0) 42 }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source_with_modules(source, &modules).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42, "{mode:?}");
+        let error = vm.call_int32_0("failure").unwrap_err();
+        assert_eq!(error.code(), ErrorCode::RuntimeError, "{mode:?}: {error}");
+        assert!(error.message().contains("zero"), "{mode:?}: {error}");
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42, "{mode:?}");
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+    #[cfg(unix)]
+    {
+        let ast = TypeRegistry::default()
+            .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
+            .unwrap();
+        crate::aot::tests::assert_sync_results(
+            &ast,
+            &[("check", Some(42)), ("failure", None), ("check", Some(42))],
+        );
+    }
+}
+
+#[test]
 fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
     let ast = crate::parser::parse(
         r#"

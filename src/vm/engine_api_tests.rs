@@ -174,12 +174,49 @@ fn registered_host_opaque_types_are_accepted() {
 fn scalar_call_adapters_preserve_width_arity_and_failure_checks() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source("fn signed(x: Int32) -> Int32 { x } fn wide(x: Int64) -> Int64 { x } fn floating(x: Float64) -> Float64 { x }").unwrap();
+        vm.load_source(
+            r#"
+            fn signed(x: Int32) -> Int32 { x }
+            fn wide(x: Int64) -> Int64 { x }
+            fn floating(x: Float64) -> Float64 { x }
+            fn narrow(x: Int8) -> Int8 { x }
+            fn unsigned(x: UInt64) -> UInt64 { x }
+            fn mixed(x: Float64, y: Int32) -> Float64 { x - float64(y) }
+            fn reversed(x: Int32, y: Float64) -> Float64 { float64(x) - y }
+            fn triple(x: Float64, y: Float64, z: Float64) -> Float64 { x - y - z }
+            fn failure(x: Int64) -> Int64 { x / 0 }
+            fn pending(x: UInt64) @suspends -> UInt64 { x }
+            fn negative_zero(x: Float64) @suspends -> Float64 { x }
+        "#,
+        )
+        .unwrap();
         assert_eq!(vm.call_int32_1("signed", i32::MIN).unwrap(), i32::MIN);
         assert_eq!(vm.call_int64_1("wide", i64::MIN).unwrap(), i64::MIN);
         assert_eq!(
             vm.call_float64_1("floating", -0.0).unwrap().to_bits(),
             (-0.0_f64).to_bits()
+        );
+        assert_eq!(vm.call_i8_1("narrow", i8::MIN).unwrap(), i8::MIN);
+        assert_eq!(vm.call_uint64_1("unsigned", u64::MAX).unwrap(), u64::MAX);
+        assert_eq!(vm.call_float64_f64_i32("mixed", 4.5, 2).unwrap(), 2.5);
+        assert_eq!(vm.call_float64_i32_f64("reversed", 4, 2.5).unwrap(), 1.5);
+        assert_eq!(vm.call_float64_3("triple", 9.5, 2.0, 3.0).unwrap(), 4.5);
+        assert_eq!(
+            vm.call_int64_1("failure", 7).unwrap_err().code(),
+            ErrorCode::RuntimeError,
+        );
+        assert_eq!(vm.call_int64_1("wide", i64::MAX).unwrap(), i64::MAX);
+        assert_eq!(
+            vm.call_async_uint64("pending", &[u64::MAX])
+                .unwrap()
+                .cps_result(),
+            Some(u64::MAX),
+        );
+        assert_eq!(
+            vm.call_async_float64("negative_zero", &[-0.0])
+                .unwrap()
+                .cps_result(),
+            Some((-0.0_f64).to_bits()),
         );
         for error in [
             vm.call_int32_0("signed").unwrap_err(),

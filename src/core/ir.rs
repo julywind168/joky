@@ -432,6 +432,50 @@ pub(crate) enum Op {
     },
 }
 
+impl Op {
+    /// Concrete code dependencies, including callbacks used only during cleanup.
+    /// Indirect-call signature placeholders describe contracts, not code entries.
+    pub(crate) fn dependencies(&self) -> impl Iterator<Item = &String> {
+        let mut single = None;
+        let mut methods = &[][..];
+        let mut branches = &[][..];
+        match self {
+            Self::Call {
+                name,
+                indirect: None,
+                ..
+            }
+            | Self::FunctionRef(_, name) => {
+                single = Some(name);
+            }
+            Self::TaskBranch { entry, .. } => single = Some(entry),
+            Self::DynTable { table, .. } => methods = table.methods.as_slice(),
+            Self::Scope {
+                branches: scope, ..
+            } => branches = scope.as_slice(),
+            _ => {}
+        }
+        self.cleanups()
+            .flat_map(|cleanup| {
+                let CleanupOp::Register {
+                    hooks, elements, ..
+                } = cleanup;
+                hooks
+                    .iter()
+                    .chain(elements.iter().flat_map(|element| &element.hooks))
+            })
+            .map(|hook| &hook.name)
+            .chain(single)
+            .chain(methods)
+            .chain(
+                branches
+                    .iter()
+                    .filter(|branch| branch.indirect.is_none())
+                    .map(|branch| &branch.name),
+            )
+    }
+}
+
 /// Normal completion (including Unit) is distinct from a control-flow exit.
 enum Flow {
     Value(Option<Slot>),
@@ -1110,14 +1154,7 @@ impl ModulePlan {
             let used: std::collections::HashSet<_> = bodies
                 .values()
                 .flat_map(|body| &body.ops)
-                .flat_map(|op| match op {
-                    Op::Call { name, .. } | Op::FunctionRef(_, name) => vec![name],
-                    Op::Scope { branches, .. } => {
-                        branches.iter().map(|branch| &branch.name).collect()
-                    }
-                    Op::TaskBranch { entry, .. } => vec![entry],
-                    _ => Vec::new(),
-                })
+                .flat_map(Op::dependencies)
                 .collect();
             functions.retain(|name, _| !scope.lazy_hosts.contains(name) || used.contains(name));
         }
@@ -2509,7 +2546,6 @@ fn item_span(item: &Item) -> &Span {
     }
 }
 
-/// Drain branch entry points planned inside `plan`, children before parents.
 /// Dependencies needed both for execution and for checking unused templates.
 fn collect_plan_dependencies(
     plan: &FunctionPlan,
@@ -2518,35 +2554,11 @@ fn collect_plan_dependencies(
     let mut pending = vec![plan];
     while let Some(plan) = pending.pop() {
         pending.extend(plan.nested.iter().map(|task| &task.plan));
-        for op in &plan.ops {
-            for CleanupOp::Register {
-                hooks, elements, ..
-            } in op.cleanups()
-            {
-                dependencies.extend(
-                    hooks
-                        .iter()
-                        .chain(elements.iter().flat_map(|e| &e.hooks))
-                        .map(|hook| hook.name.clone()),
-                );
-            }
-
-            match op {
-                Op::Call { name, .. } | Op::FunctionRef(_, name) => {
-                    dependencies.insert(name.clone());
-                }
-                Op::Scope { branches, .. } => {
-                    dependencies.extend(branches.iter().map(|branch| branch.name.clone()));
-                }
-                Op::TaskBranch { entry, .. } => {
-                    dependencies.insert(entry.clone());
-                }
-                _ => {}
-            }
-        }
+        dependencies.extend(plan.ops.iter().flat_map(Op::dependencies).cloned());
     }
 }
 
+/// Drain branch entry points planned inside `plan`, children before parents.
 fn take_nested_tasks(plan: &mut FunctionPlan, out: &mut Vec<NestedTask>) {
     for mut task in plan.nested.drain(..) {
         take_nested_tasks(&mut task.plan, out);

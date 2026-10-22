@@ -13,7 +13,7 @@ use crate::{
 };
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::{DataDescription, FuncId, Linkage, Module};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
 
 /// Compiled definitions returned to a backend.
@@ -28,6 +28,15 @@ pub(crate) struct CompiledDefinitions {
     /// runtime. Private module functions can fail or suspend without being
     /// reachable from an export, so this must not be inferred from `exports`.
     pub requires_runtime: bool,
+}
+
+/// Each imported function selects exactly one native adapter.
+enum Adapter<'a> {
+    Builtin(&'a Builtin),
+    Resource(DataId),
+    TextFfi(DataId),
+    Text(FuncId),
+    Borrowing(DataId),
 }
 
 /// Lower a checked plan into temporary Cranelift contexts and owned definitions.
@@ -51,29 +60,7 @@ pub(crate) fn compile<M: Module>(
         let Some(body) = plan.bodies.get(&name) else {
             continue;
         };
-        let mut dependencies = Vec::new();
-        for op in &body.ops {
-            for crate::core::ir::CleanupOp::Register {
-                hooks, elements, ..
-            } in op.cleanups()
-            {
-                dependencies.extend(
-                    hooks
-                        .iter()
-                        .chain(elements.iter().flat_map(|e| &e.hooks))
-                        .map(|h| &h.name),
-                );
-            }
-
-            match op {
-                Op::Call { name, .. } | Op::FunctionRef(_, name) => dependencies.push(name),
-                Op::DynTable { table, .. } => dependencies.extend(&table.methods),
-                Op::Scope { branches, .. } => dependencies.extend(branches.iter().map(|b| &b.name)),
-                Op::TaskBranch { entry, .. } => dependencies.push(entry),
-                _ => {}
-            }
-        }
-        for dependency in dependencies {
+        for dependency in body.ops.iter().flat_map(Op::dependencies) {
             if reachable.insert(dependency.clone()) {
                 pending.push(dependency.clone());
             }
@@ -82,10 +69,7 @@ pub(crate) fn compile<M: Module>(
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
-    let mut borrowing_hosts = HashMap::new();
-    let mut text_ffi_hosts = HashMap::new();
-    let mut resource_factories = HashMap::new();
-    let mut text_hosts = HashMap::new();
+    let mut adapters = HashMap::new();
     let mut names: Vec<_> = plan
         .functions
         .keys()
@@ -116,24 +100,22 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
-        if matches!(
-            plan.functions[name].builtin,
-            Some(Builtin::VmCall | Builtin::VmSource)
-        ) {
+        if let Some(builtin) = plan.functions[name]
+            .builtin
+            .as_ref()
+            .filter(|op| op.needs_adapter())
+        {
+            let family = match builtin {
+                Builtin::VmCall | Builtin::VmSource => "vm",
+                Builtin::Domain(_) => "domain",
+                Builtin::Dns => "dns",
+                Builtin::Fs(_) => "fs",
+                Builtin::Tcp(_) => "tcp",
+                Builtin::Vm(_) => unreachable!(),
+            };
+            adapters.insert(name.clone(), Adapter::Builtin(builtin));
             linkage = Linkage::Local;
-            symbol = format!("__joky_vm_adapter_{symbol}");
-        } else if matches!(plan.functions[name].builtin, Some(Builtin::Domain(_))) {
-            linkage = Linkage::Local;
-            symbol = format!("__joky_domain_adapter_{symbol}");
-        } else if matches!(plan.functions[name].builtin, Some(Builtin::Dns)) {
-            linkage = Linkage::Local;
-            symbol = format!("__joky_dns_adapter_{symbol}");
-        } else if matches!(plan.functions[name].builtin, Some(Builtin::Fs(_))) {
-            linkage = Linkage::Local;
-            symbol = format!("__joky_fs_adapter_{symbol}");
-        } else if matches!(plan.functions[name].builtin, Some(Builtin::Tcp(_))) {
-            linkage = Linkage::Local;
-            symbol = format!("__joky_tcp_adapter_{symbol}");
+            symbol = format!("__joky_{family}_adapter_{symbol}");
         } else if plan.functions[name].extern_abi.is_resource() {
             let descriptor_symbol = if plan.functions[name].extern_abi.byte_io().is_some() {
                 crate::runtime::byte_request::symbol(&symbol)
@@ -148,7 +130,7 @@ pub(crate) fn compile<M: Module>(
             let descriptor = module
                 .declare_data(&descriptor_symbol, Linkage::Import, false, false)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
-            resource_factories.insert(name.clone(), descriptor);
+            adapters.insert(name.clone(), Adapter::Resource(descriptor));
             linkage = Linkage::Local;
             symbol = format!("__joky_resource_adapter_{symbol}");
         } else if plan.functions[name].extern_abi == ExternAbi::TextFfi {
@@ -161,7 +143,7 @@ pub(crate) fn compile<M: Module>(
             let descriptor = module
                 .declare_data(&descriptor_symbol, Linkage::Import, false, false)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
-            text_ffi_hosts.insert(name.clone(), descriptor);
+            adapters.insert(name.clone(), Adapter::TextFfi(descriptor));
             linkage = Linkage::Local;
             symbol = format!("__joky_text_ffi_adapter_{symbol}");
         } else if plan.functions[name].extern_abi == ExternAbi::TextView {
@@ -175,7 +157,7 @@ pub(crate) fn compile<M: Module>(
                 )
                 .map_err(|e| compile_error(format!("{e:?}")))?;
             declared_symbols.insert(symbol.clone());
-            text_hosts.insert(name.clone(), wire);
+            adapters.insert(name.clone(), Adapter::Text(wire));
             linkage = Linkage::Local;
             symbol = format!("__joky_host_text_adapter_{symbol}");
         }
@@ -189,7 +171,7 @@ pub(crate) fn compile<M: Module>(
             let descriptor = module
                 .declare_data(&descriptor_symbol, Linkage::Import, false, false)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
-            borrowing_hosts.insert(name.clone(), descriptor);
+            adapters.insert(name.clone(), Adapter::Borrowing(descriptor));
             // Callers still use the normal CPS shape. This private wrapper makes
             // every path (sequential call or scope/race) use managed host polling.
             linkage = Linkage::Local;
@@ -408,133 +390,70 @@ pub(crate) fn compile<M: Module>(
     }
     for name in &names {
         let name = *name;
-        if let Some(builtin) = plan.functions[name]
-            .builtin
-            .as_ref()
-            .filter(|op| op.needs_adapter())
-        {
-            ctx.clear();
-            ctx.func.signature = lower::signature(module, &plan.functions[name]);
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-            let refs = ids
-                .iter()
-                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
-                .collect();
-            match builtin {
-                Builtin::Dns => lower::runtime_entry(&mut builder, &refs, "__joky_dns_poll"),
-                Builtin::VmCall => lower::runtime_entry(&mut builder, &refs, "__joky_vm_call"),
-                Builtin::VmSource => lower::runtime_entry(&mut builder, &refs, "__joky_vm_source"),
-                Builtin::Domain(op) => lower::domain_entry(&mut builder, *op, &refs),
-                Builtin::Tcp(op) => lower::tcp_entry(&mut builder, *op, &refs),
-                Builtin::Fs(op) => lower::fs_entry(&mut builder, *op, &refs),
-                Builtin::Vm(_) => unreachable!(),
-            }
-            builder.finalize(module.target_config());
-            float_env::instrument(module, &mut ctx.func, &ids);
-            module
-                .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(format!("{e:?}")))?;
-            requires_runtime = true;
-            continue;
-        }
-        if let Some(&descriptor) = resource_factories.get(name) {
-            ctx.clear();
-            ctx.func.signature = lower::signature(module, &plan.functions[name]);
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-            let refs = ids
-                .iter()
-                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
-                .collect();
-            let data = module.declare_data_in_func(descriptor, builder.func);
-            lower::resource_factory_entry(
-                &mut builder,
-                plan.functions[name].suspends,
-                plan.functions[name].extern_abi.byte_io(),
-                data,
-                &refs,
-                module.target_config().pointer_type(),
-            );
-            builder.finalize(module.target_config());
-            float_env::instrument(module, &mut ctx.func, &ids);
-            module
-                .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(format!("{e:?}")))?;
-            requires_runtime = true;
-            continue;
-        }
-        if let Some(&descriptor) = text_ffi_hosts.get(name) {
+        if let Some(adapter) = adapters.get(name) {
             ctx.clear();
             let info = &plan.functions[name];
             ctx.func.signature = lower::signature(module, info);
+            let target = module.target_config();
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
             let refs = ids
                 .iter()
                 .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
                 .collect();
-            let data = module.declare_data_in_func(descriptor, builder.func);
-            lower::text_ffi_entry(
-                &mut builder,
-                data,
-                info,
-                &refs,
-                module.target_config().pointer_type(),
-            );
-            builder.finalize(module.target_config());
-            float_env::instrument(module, &mut ctx.func, &ids);
-            module
-                .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(format!("{e:?}")))?;
-            requires_runtime = true;
-            continue;
-        }
-        if let Some(&wire) = text_hosts.get(name) {
-            ctx.clear();
-            let info = &plan.functions[name];
-            ctx.func.signature = lower::signature(module, info);
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-            let refs = ids
-                .iter()
-                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
-                .collect();
-            let body = module.declare_func_in_func(wire, builder.func);
-            if info.suspends {
-                lower::host_text_cps_entry(
-                    &mut builder,
-                    body,
-                    info,
-                    &refs,
-                    module.target_config().pointer_type(),
-                );
-            } else {
-                lower::host_text_direct_entry(
-                    &mut builder,
-                    body,
-                    info,
-                    &refs,
-                    module.target_config().pointer_type(),
-                );
+            match adapter {
+                Adapter::Builtin(builtin) => match builtin {
+                    Builtin::Dns => lower::runtime_entry(&mut builder, &refs, "__joky_dns_poll"),
+                    Builtin::VmCall => lower::runtime_entry(&mut builder, &refs, "__joky_vm_call"),
+                    Builtin::VmSource => {
+                        lower::runtime_entry(&mut builder, &refs, "__joky_vm_source")
+                    }
+                    Builtin::Domain(op) => lower::domain_entry(&mut builder, *op, &refs),
+                    Builtin::Tcp(op) => lower::tcp_entry(&mut builder, *op, &refs),
+                    Builtin::Fs(op) => lower::fs_entry(&mut builder, *op, &refs),
+                    Builtin::Vm(_) => unreachable!(),
+                },
+                Adapter::Resource(descriptor) => {
+                    let data = module.declare_data_in_func(*descriptor, builder.func);
+                    lower::resource_factory_entry(
+                        &mut builder,
+                        info.suspends,
+                        info.extern_abi.byte_io(),
+                        data,
+                        &refs,
+                        target.pointer_type(),
+                    );
+                }
+                Adapter::TextFfi(descriptor) => {
+                    let data = module.declare_data_in_func(*descriptor, builder.func);
+                    lower::text_ffi_entry(&mut builder, data, info, &refs, target.pointer_type());
+                }
+                Adapter::Text(wire) => {
+                    let body = module.declare_func_in_func(*wire, builder.func);
+                    if info.suspends {
+                        lower::host_text_cps_entry(
+                            &mut builder,
+                            body,
+                            info,
+                            &refs,
+                            target.pointer_type(),
+                        );
+                    } else {
+                        lower::host_text_direct_entry(
+                            &mut builder,
+                            body,
+                            info,
+                            &refs,
+                            target.pointer_type(),
+                        );
+                    }
+                }
+                Adapter::Borrowing(descriptor) => {
+                    let data = module.declare_data_in_func(*descriptor, builder.func);
+                    let poll = refs["joky_cps_poll_borrowing_v1"];
+                    lower::borrowing_entry(&mut builder, data, poll, target.pointer_type());
+                }
             }
-            builder.finalize(module.target_config());
-            float_env::instrument(module, &mut ctx.func, &ids);
-            module
-                .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(format!("{e:?}")))?;
-            requires_runtime = true;
-            continue;
-        }
-        if let Some(&descriptor) = borrowing_hosts.get(name) {
-            ctx.clear();
-            ctx.func.signature = lower::signature(module, &plan.functions[name]);
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-            let data = module.declare_data_in_func(descriptor, builder.func);
-            let poll = module.declare_func_in_func(ids["joky_cps_poll_borrowing_v1"], builder.func);
-            lower::borrowing_entry(
-                &mut builder,
-                data,
-                poll,
-                module.target_config().pointer_type(),
-            );
-            builder.finalize(module.target_config());
+            builder.finalize(target);
             float_env::instrument(module, &mut ctx.func, &ids);
             module
                 .define_function(ids[name], &mut ctx)

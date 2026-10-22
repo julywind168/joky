@@ -29,7 +29,8 @@ cli    → public parser / VmEngine / AotCompiler
 | `src/vm/` | checked embedding API、加载发布、宿主注册和执行限额 |
 | `src/cli/` | 参数、入口检查、诊断渲染、原生链接及产物发布 |
 
-`core` 的生产代码不依赖 Cranelift、运行时或具体执行后端；跨后端行为测试可以使用它们。
+`core` 的生产代码不依赖 Cranelift 或具体执行后端；它可以引用共享运行时契约，
+编译期浮点运算也使用共同的环境保护，但不负责执行编译后的任务。
 JIT 和 AOT 共享 `backends::native`，解释器直接消费 `core::ir`。内部代码使用实际模块路径，
 `lib.rs` 只保留面向嵌入方的公开 re-export。
 
@@ -43,7 +44,15 @@ provider trait。标准库每线程初始化一次 registry，以 `Rc` 共享，
 文本 FFI、资源工厂、字节 I/O、同步 C 与挂起借用调用；它与内置操作身份独立，例如 `__vm_create`
 同时具有 VM 契约和资源工厂 ABI。`suspends`、`may_fail`、`uses_arena` 与 `needs_arena` 仍是独立能力。
 
+需要适配的导入在原生后端各自对应一个 `Adapter`，统一管理内置操作、资源、文本与借用适配器的声明和生成。
+这些导入适配器共用构建、浮点环境插桩和定义步骤；具体 ABI lowering 仍由各入口负责。
+VM 的标量调用与 runtime 的固定 C 签名分别用声明表维护，共用各自的类型检查、分发和错误处理实现。
+
 ## 语义与代码生成
+
+`Op::dependencies` 统一枚举需要保留的具体函数，包括函数值、动态方法表、任务分支和清理回调。
+库函数补齐、惰性宿主保留、解释器绑定及原生可达性扫描共用该入口。间接调用的签名占位不代表代码入口；
+能力传播仍按实际执行的操作及其调用契约计算，不能把“引用函数”当成“执行函数”。
 
 `core::parser` 根模块保存公共入口、诊断和共享 token 游标；`module` 负责导入顺序与顶层分派，
 `declarations`、`types`、`patterns`、`atoms`、`expressions`、`control_flow` 和 `attributes`

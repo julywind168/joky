@@ -291,26 +291,10 @@ impl FunctionPlan {
         if vars.contains_key(root) || types.is_parameter_name(root) {
             return Ok(None);
         }
-        let ty = match name.as_str() {
-            "Float32" => Type::Float32,
-            "Float64" => Type::Float64,
-            "Int8" => Type::Int8,
-            "Int16" => Type::Int16,
-            "Int32" => Type::Int32,
-            "Int64" => Type::Int64,
-            "UInt8" => Type::UInt8,
-            "UInt16" => Type::UInt16,
-            "UInt32" => Type::UInt32,
-            "Rune" => Type::Rune,
-            "UInt64" => Type::UInt64,
-            "Bool" => Type::Bool,
-            "String" => Type::String,
-            "Unit" => Type::Unit,
-            "Ptr" => Type::Ptr,
-            _ => match self.named_type(&name) {
-                Some(ty) => ty.clone(),
-                None => return Ok(None),
-            },
+        let Some(ty) =
+            super::super::types::primitive_type(&name).or_else(|| self.named_type(&name).cloned())
+        else {
+            return Ok(None);
         };
         if let Some(arguments) = arguments {
             let ty = match ty {

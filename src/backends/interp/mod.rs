@@ -255,30 +255,14 @@ pub(crate) fn compile(
     for name in body_names {
         let body = &plan.bodies[name];
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
-            let targets: Vec<&str> = match op {
-                Op::DynTable { table, .. } => table.methods.iter().map(String::as_str).collect(),
-                Op::Call {
-                    name,
-                    indirect: None,
-                    ..
-                } => vec![name],
-                Op::FunctionRef(slot, name) if matches!(slot.ty, crate::Type::Function(_)) => {
-                    vec![name]
-                }
-                Op::Scope { branches, .. } => branches
-                    .iter()
-                    .filter(|b| b.indirect.is_none())
-                    .map(|b| b.name.as_str())
-                    .collect(),
-                Op::FunctionRef(_, _) => {
-                    return Err(abi_error(
-                        "Native function references are unavailable in interpreter mode",
-                    )
-                    .with_span(*span))
-                }
-                _ => continue,
-            };
-            for name in targets {
+            if matches!(op, Op::FunctionRef(slot, _) if !matches!(slot.ty, crate::Type::Function(_)))
+            {
+                return Err(abi_error(
+                    "Native function references are unavailable in interpreter mode",
+                )
+                .with_span(*span));
+            }
+            for name in op.dependencies().map(String::as_str) {
                 names.insert(name.to_owned());
                 if !plan.bodies.contains_key(name) && !bound_hosts.contains_key(name) {
                     let binding = hosts.get(name).ok_or_else(|| {
