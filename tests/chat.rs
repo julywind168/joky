@@ -293,6 +293,7 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
 }
 
 #[test]
+#[ignore = "manual: real TCP chat matrix; run with cargo test --test chat -- --ignored"]
 fn chat_real_tcp_on_all_backends() {
     let work = scratch::ScratchDir::new("chat");
     let source = include_str!("../examples/chat.jk");
