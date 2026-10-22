@@ -1,8 +1,8 @@
 //! Typed slot IR with explicit control flow shared by all execution backends.
 pub(crate) use crate::parser::ast::FloatKind;
 use crate::parser::ast::{
-    BinOp, CompilerIntrinsic, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule,
-    ScopeKind, Type, UnaryOp,
+    BinOp, CompilerIntrinsic, ConcurrentKind, Expr, FnDef, Item, Literal, LogicalOp,
+    Module as AstModule, Type, UnaryOp,
 };
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
@@ -10,11 +10,11 @@ use std::{collections::HashMap, sync::Arc};
 mod arenas;
 mod arrays;
 mod borrowing;
-mod branches;
 mod buffers;
 mod fixed_arrays;
 mod indexing;
 mod sequence_patterns;
+mod task_scopes;
 pub(crate) use fixed_arrays::PlaceOp;
 mod calls;
 mod cleanup;
@@ -197,7 +197,7 @@ pub(crate) struct Slot {
 impl Slot {
     pub(crate) fn owner_key(&self) -> usize {
         self.scalars()
-            .find(|s| s.ty.is_buffer())
+            .find(|s| s.ty.is_owner_lane())
             .expect("owning value")
             .index
     }
@@ -212,11 +212,11 @@ impl Slot {
         result
     }
 
-    /// Buffer ordinals within a cleanup group, independent of metadata lanes.
+    /// Owner ordinals within a cleanup group, independent of metadata lanes.
     pub(crate) fn owner_range(&self, field: &Slot) -> (usize, usize) {
         let first = self
             .scalars()
-            .filter(|s| s.ty.is_buffer() && s.index < field.index)
+            .filter(|s| s.ty.is_owner_lane() && s.index < field.index)
             .count();
         let count = field.ty.buffer_elements().len();
         (first, count)
@@ -249,7 +249,7 @@ struct Binding {
     place: Option<Slot>,
 }
 
-pub(crate) struct ScopeBranch {
+pub(crate) struct ConcurrentBranch {
     /// Join accepts each result independently before polling another child.
     pub(crate) result: Option<Slot>,
     /// Register owning results atomically with acceptance, including partial joins.
@@ -396,15 +396,15 @@ pub(crate) enum Op {
         table: Slot,
         method: usize,
     },
-    /// Deliver a branch result before ScopeFinish cancels remaining children.
-    Scope {
+    /// Deliver a branch result before ConcurrentFinish cancels remaining children.
+    Concurrent {
         result: Option<Slot>,
-        kind: ScopeKind,
-        branches: Vec<ScopeBranch>,
+        kind: ConcurrentKind,
+        branches: Vec<ConcurrentBranch>,
         state: u32,
     },
     /// Run after result ownership registration, before any source continuation.
-    ScopeFinish,
+    ConcurrentFinish,
     Binary(Slot, BinOp, Slot, Slot),
     Unary(Slot, UnaryOp, Slot),
     /// Wrapping integer conversion or already-range-checked float truncation;
@@ -459,7 +459,7 @@ impl Op {
             }
             Self::TaskBranch { entry, .. } => single = Some(entry),
             Self::DynTable { table, .. } => methods = table.methods.as_slice(),
-            Self::Scope {
+            Self::Concurrent {
                 branches: scope, ..
             } => branches = scope.as_slice(),
             _ => {}
@@ -548,7 +548,7 @@ pub(crate) struct FunctionPlan {
     /// Implicit conversions must have a proof after all bodies have been analyzed.
     implicit_borrows: Vec<(String, usize, Span)>,
     pub(crate) domain_calls: Vec<(String, Span)>,
-    task_scopes: Vec<branches::TaskScopeFrame>,
+    task_scopes: Vec<task_scopes::TaskScopeFrame>,
     task_scope_count: u32,
     /// Branch entry points planned for this function; the module driver
     /// registers them before capability and reference analysis.
@@ -1108,7 +1108,7 @@ impl ModulePlan {
                             }
                             Op::Buffer(BufferOp::End(_)) => true,
                             Op::Call { name, .. } => functions[name].may_fail,
-                            Op::Scope { branches, .. } => branches
+                            Op::Concurrent { branches, .. } => branches
                                 .iter()
                                 .any(|branch| functions[&branch.name].may_fail),
                             // Registration can fail on capacity limits; joins
@@ -1760,7 +1760,7 @@ impl FunctionPlan {
             Op::Call {
                 result: Some(dst), ..
             }
-            | Op::Scope {
+            | Op::Concurrent {
                 result: Some(dst), ..
             }
             | Op::ReadOwner { dst: Some(dst), .. }
@@ -2453,7 +2453,7 @@ impl FunctionPlan {
             Expr::Invoke { .. } | Expr::Call { .. } => {
                 self.call_expr(expr, vars, functions, suspends, types)
             }
-            Expr::Scope { .. } => self.scope_expr(expr, vars, functions, suspends, types),
+            Expr::Concurrent { .. } => self.concurrent_expr(expr, vars, functions, suspends, types),
             Expr::TaskScope { .. } => {
                 self.task_scope_expr(expr, vars, functions, suspends, types, expected)
             }

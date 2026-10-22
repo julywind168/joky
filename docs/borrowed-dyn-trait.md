@@ -287,7 +287,7 @@ V2–V5 **未实现**：没有方法表、动态槽调用、动态来源合流�
 平台：macOS arm64；Rust `1.97.1 (8bab26f4f 2026-07-14)`；
 AOT C 编译器为 Apple clang `21.0.0 (clang-2100.1.1.101)`。
 本次修改公共 Type、解析和共享类型准备路径，按 AGENTS.md 选择 full；
-新测试位于 [borrowed_dyn_tests.rs](../src/vm/borrowed_dyn_tests.rs)。
+新测试位于 [borrowed_dyn_tests.rs](../src/vm/tests/language/borrowed_dyn_tests.rs)。
 
 | 实际命令 | 结果与范围 |
 | --- | --- |
@@ -336,7 +336,7 @@ full 通过后增加了仅在 dyn 资格路径生效的求解栈防护和两项�
 
 实现与用例：[资格与规范化](../src/core/types/projections/dyn_traits.rs)、
 [共享计划与语义测试](../src/core/ir/dyn_traits.rs)、
-[三后端边界测试](../src/vm/borrowed_dyn_tests.rs)。
+[三后端边界测试](../src/vm/tests/language/borrowed_dyn_tests.rs)。
 导入用例覆盖同名不同 trait、导入重命名、菱形依赖及私有类型别名，且核对方法槽的源码所属文件。
 
 ### 9.5 V1 验证与剩余边界
@@ -398,7 +398,7 @@ T1–T5 与第 9.4–9.5 节的 V1 证据：声明身份、关联等式、默认
 
 实际生成代码证据位于 [dispatch fixture](../tests/fixtures/borrowed_dyn_dispatch.jk)、
 [lifecycle fixture](../tests/fixtures/borrowed_dyn_lifecycle.jk)、
-[VM 与非法程序测试](../src/vm/borrowed_dyn_tests.rs)和
+[VM 与非法程序测试](../src/vm/tests/language/borrowed_dyn_tests.rs)和
 [AOT 独立 harness](../src/backends/aot/tests/borrowed_dyn.rs)。
 正例包含两个具体类型、默认/覆盖、同名固有/其他 trait 方法、局部名称遮蔽、显式 trait 调用、
 关联 String/拥有记录/元组/枚举结果、窄整数与浮点、Unit、借用与拥有参数、泛型擦除、
@@ -463,7 +463,7 @@ V1 遗留的 dyn 专项 32/33 深度及 256/257 义务组合矩阵仍未补齐�
 交集规则。共享方法通过独占视图调用时使用共享权限，允许参数中合法的共享方法嵌套调用。
 
 [组合 fixture](../tests/fixtures/borrowed_dyn_composition.jk) 与
-[VM 测试](../src/vm/borrowed_dyn_tests.rs)在 JIT、解释器和独立 AOT 进程执行：
+[VM 测试](../src/vm/tests/language/borrowed_dyn_tests.rs)在 JIT、解释器和独立 AOT 进程执行：
 泛型具体实例擦除、带别名的 helper 多层转发、共享副本、两次独占重借用、独立字段、
 三路嵌套分支及再次赋值、视图最后使用后的原对象访问、两个零大小对象的独立来源。
 非法程序通过全部三后端编译入口核对权限、来源冲突、作用域、存储/捕获、语言挂起与并发拒绝。

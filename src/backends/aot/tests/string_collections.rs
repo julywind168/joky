@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
-fn string_s5_collections_match_models_in_standalone_aot() {
+fn string_collections_collections_match_models_in_standalone_aot() {
     let mut groups = crate::string_collection_model::ownership_groups();
     groups.push(crate::string_collection_model::bulk_group());
     run_groups(groups);
@@ -11,7 +11,7 @@ fn string_s5_collections_match_models_in_standalone_aot() {
 
 #[test]
 #[cfg(unix)]
-fn string_s6_map_ownership_and_failures_in_aot() {
+fn string_map_map_ownership_and_failures_in_aot() {
     run_groups(crate::string_map_model::groups());
 }
 
@@ -99,7 +99,7 @@ fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
 
 #[test]
 #[cfg(unix)]
-fn string_s5_join_length_boundaries_execute_in_aot_without_allocating_payloads() {
+fn string_collections_join_length_boundaries_execute_in_aot_without_allocating_payloads() {
     let registry = std::rc::Rc::new(crate::modules::ModuleRegistry::default());
     assert!(registry
         .types()

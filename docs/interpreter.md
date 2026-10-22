@@ -80,7 +80,7 @@ The signature and conservative allocation/retention effects are checked in share
 Function values cannot cross host ABIs. Existing module ownership keeps their target
 table alive across pending calls, reload, cancellation and VM destruction. Suspending
 indirect calls use the same activation tree, poll budgets, aggregate completion and
-cancellation paths as named CPS calls. Scope/race branches can select a saved callee
+cancellation paths as named CPS calls. Parallel/race branches can select a saved callee
 slot; register compaction visits that slot as well as all arguments. Callee selection
 and argument side effects are never replayed on resume.
 
@@ -141,7 +141,7 @@ The instruction set mirrors the shared IR:
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | Assert / Panic | `Assert` checks a condition; `Panic` fails unconditionally with no normal successor. Both copy the borrowed message into RuntimeError and use frame cleanup. |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
-| `parallel` / `race` | `Scope` with a Join / Race completion policy and optional result destinations; `ScopeFinish` cleans children after result registration |
+| `parallel` / `race` | `Concurrent` with a Join / Race completion policy and optional result destinations; `ConcurrentFinish` cleans children after result registration |
 | sequential `scope` / `branch` | `TaskScopeEnter` opens a dynamic scope record, `TaskBranch` registers a child entry with captured inputs, `TaskJoin` suspends on the scope's join |
 | Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
 | Project | `Memory::Project`, adding a validated inline field byte offset to a local pointer |
@@ -389,7 +389,7 @@ in the caller. Shared IR limits the conservative total borrowed-local layout of
 each concrete function to 64 KiB, including zero-size placeholders and alignment
 slack; this is not a bound on the total activation stack or process memory.
 
-Scope branches use the same activation representation as ordinary calls, so
+Concurrent branches use the same activation representation as ordinary calls, so
 both direct native CPS imports and Joky functions are valid branches. Each parallel
 round polls incomplete branches in source order and skips completed branches.
 Repeated Pending does not rebuild arguments or replay earlier side effects.
@@ -409,7 +409,7 @@ completion policy. All branches return the same reference-free type. Scalar and
 flattened aggregate destinations receive the winner using the ordinary CPS return
 protocol, including transfer of owning cleanup entries. The completed pending
 scope retains its losing children while result cleanup registration runs;
-`ScopeFinish` then cancels them before source continuation code resumes. A slice
+`ConcurrentFinish` then cancels them before source continuation code resumes. A slice
 or cancellation at this boundary still sees both result and child ownership.
 Cleanup failures propagate and release the received result. The first observed failure fails the
 whole task. Source-order polling breaks ties and can leave later branches unpolled.
@@ -543,7 +543,7 @@ is polled again, even if an intervening root poll resumed a sibling's saved slic
 Internal slice scheduling does not increment this counter. The observation is weak,
 so it neither keeps the root alive nor makes an unsupported wait appear supported.
 It reports unsupported external waits instead of polling them indefinitely. The CLI
-uses this driver for suspending main, including joky/task imports. Scope/race order remains
+uses this driver for suspending main, including joky/task imports. Parallel/race order remains
 deterministic, but slices do not promise fair CPU time among branches. A slice yield
 does not advance to the next branch or count as a winning completion.
 A caller can cancel an infinite interpreted loop between slices. Native callbacks

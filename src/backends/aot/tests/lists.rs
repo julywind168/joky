@@ -1,6 +1,6 @@
 //! Production List runs in independent native processes, including cleanup failures.
 use super::*;
-use crate::vm::list_tests::{fixture_entries, model_events, model_source, CASES};
+use crate::vm::tests::list_tests::{fixture_entries, model_events, model_source, CASES};
 
 fn check(source: &str, cases: &[collections::Case<'_>], invariants: bool) {
     let mut types = crate::TypeRegistry::default();

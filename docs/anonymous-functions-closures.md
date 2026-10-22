@@ -519,7 +519,7 @@ C0 验收：语法与内建约束身份、有限推导、嵌套权限传播、�
 | C5 | 八个固定种子/各 64 轮模型、入口预算拒绝、指令预算失败、切片取消、JIT/解释器重载保活；`closure_fixed_seed_*`、`closure_limits_*`、`closure_instruction_*`、`closure_interpreter_*`、`closure_entries_*`；Release `exhaustive_closure_interpreter_cancellation_every_instruction` 穷举所有切点 |
 | C6 | [可执行示例](../examples/anonymous_functions.jk)，README 与 language/syntax/architecture/interpreter 文档同步；full、stress 与 Godot G0–G2 集成验收全部通过 |
 
-实现与测试入口：[closures.rs](../src/core/ir/closures.rs)、[行为测试](../src/vm/closure_tests.rs)、
+实现与测试入口：[closures.rs](../src/core/ir/closures.rs)、[行为测试](../src/vm/tests/language/closure_tests.rs)、
 [拥有值 fixture](../tests/fixtures/closures.jk)、[独立 AOT 清理测试](../src/backends/aot/tests/closures.rs)。
 Float32/Float64 捕获与消费入口复用[浮点环境 fixture](../tests/fixtures/float_environment.jk)，
 在宿主改变舍入模式后检查语言结果与宿主环境恢复；JIT、解释器及独立 AOT 均执行。

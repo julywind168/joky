@@ -425,7 +425,7 @@ Set 和 StringBuilder 先不进入该名单。资源叶、用户 Drop、借用�
 
 SC0 曾通过仅在测试中编译的 `state_domain_probe.rs` 探针验证以下边界，使用真实
 Arena、Buffer、Budget 和 ExternalCharge；版本、访问权限与取消/关闭事件使用单域实验模型。
-正式实现落地后，该模型已清理；当前回归见[状态域测试](../src/vm/state_domain_tests.rs)、
+正式实现落地后，该模型已清理；当前回归见[状态域测试](../src/vm/tests/embedding/state_domain_tests.rs)、
 [候选提交与截止时间测试](../src/vm/state_domains/commits.rs)。
 以下表格与命令保留为 2026-10-12 的历史验收记录。
 
@@ -458,7 +458,7 @@ CLI 用例执行 JIT、解释器和独立 AOT，正常输出为 `42`、`77`、`9
 本次验证命令：
 
 ```sh
-cargo test sc0_probe -- --nocapture
+cargo test state_domain_probe -- --nocapture
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 git diff --check
@@ -522,7 +522,7 @@ DomainFailed。接口与边界以[语言参考](language.md#内置域访问-joky
 | 生命周期与资源归属 | 验收场景连续运行 8 轮，解释器逐指令推进，每轮根任务、域/请求登记及 arena 回到基线；关闭后旧句柄不能访问替代域 |
 | 唤醒与取消交接 | 验收发现并修复兄弟分支时间片消耗外部唤醒的问题；独立执行器回归覆盖通知合并、无通知不轮询、完成后迟到通知，以及多种解释器时间片大小；4 组域穷举继续验证取消/关闭终态与清理 |
 
-测试入口见 [VM 域测试](../src/vm/state_domain_tests.rs)、[执行器测试](../src/vm/executor_tests.rs)
+测试入口见 [VM 域测试](../src/vm/tests/embedding/state_domain_tests.rs)、[执行器测试](../src/vm/tests/tasks/executor_tests.rs)
 与 [CLI 三后端测试](../tests/cli.rs)。本次运行 `cargo test state_domains_`、`cargo test host_executor_`、
 `cargo test runtime::driver::tests`、`cargo test exhaustive_state_domains_ -- --ignored`、
 `cargo test exhaustive_instance_tasks_ -- --ignored`、`./scripts/check.sh` 和 `git diff --check`。

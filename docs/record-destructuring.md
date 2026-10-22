@@ -246,7 +246,7 @@ let User { name, score } = &user
 
 测试证据：
 
-- `src/vm/record_patterns_tests.rs`（9 个测试）：19 个正向语义入口双执行模式对齐；
+- `src/vm/tests/language/record_patterns_tests.rs`（9 个测试）：19 个正向语义入口双执行模式对齐；
   忽略/绑定/转移字段的 Drop 事件顺序与恰好一次；构造失败保留首错并继续清理；
   RHS 失败不发布绑定；解释器资源边界取消穷举；VM 销毁兜底清理；
   Copy CPS 挂起恢复；跨模块 pub 字段解构与私有字段/不可见字段拒绝（含 AOT 编译器拒绝）；

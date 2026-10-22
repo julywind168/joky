@@ -396,15 +396,15 @@ impl Frame {
     }
 }
 
-// Children are indices into a flat arena, including scope branches. Both
+// Children are indices into a flat arena, including concurrent branches. Both
 // execution and cancellation/drop remain iterative at arbitrary language depth.
 enum Pending {
     Call {
         child: usize,
         result: Option<usize>,
     },
-    Scope {
-        kind: ScopeKind,
+    Concurrent {
+        kind: ConcurrentKind,
         branches: Vec<Branch>,
         next: usize,
         pending: bool,
@@ -462,8 +462,8 @@ enum Step {
         target: usize,
         result: Option<usize>,
     },
-    Scope,
-    ScopeFinish,
+    Concurrent,
+    ConcurrentFinish,
     TaskBranch,
     TaskJoin,
     Complete(Value),
@@ -784,8 +784,8 @@ impl Execution {
             let results = match &parent.function.code[parent.pc] {
                 Instruction::AggregateCall(call) => &call.results,
                 Instruction::IndirectCall(call) => &call.results,
-                Instruction::Scope { branches, .. } => {
-                    let Some(Pending::Scope { next, .. }) = &parent.pending else {
+                Instruction::Concurrent { branches, .. } => {
+                    let Some(Pending::Concurrent { next, .. }) = &parent.pending else {
                         unreachable!()
                     };
                     &branches[*next].results
@@ -814,8 +814,8 @@ impl Execution {
         let results = match &parent.function.code[parent.pc] {
             Instruction::AggregateCall(call) => &call.results,
             Instruction::IndirectCall(call) => &call.results,
-            Instruction::Scope { branches, .. } => {
-                let Some(Pending::Scope { next, .. }) = &parent.pending else {
+            Instruction::Concurrent { branches, .. } => {
+                let Some(Pending::Concurrent { next, .. }) = &parent.pending else {
                     unreachable!()
                 };
                 &branches[*next].results
@@ -855,12 +855,12 @@ impl Execution {
         Ok(())
     }
 
-    fn start_scope(&mut self, module: &BytecodeModule) -> Result<(), Error> {
+    fn start_concurrent(&mut self, module: &BytecodeModule) -> Result<(), Error> {
         let id = self.current;
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
             unreachable!()
         };
-        let Instruction::Scope { kind, branches, .. } = &frame.function.code[frame.pc] else {
+        let Instruction::Concurrent { kind, branches, .. } = &frame.function.code[frame.pc] else {
             unreachable!()
         };
         let kind = *kind;
@@ -909,7 +909,7 @@ impl Execution {
                 }
             })
             .collect();
-        self.frame_mut(id).pending = Some(Pending::Scope {
+        self.frame_mut(id).pending = Some(Pending::Concurrent {
             kind,
             branches,
             next: 0,
@@ -936,7 +936,7 @@ impl Execution {
                 if let Activation::User(frame) = &self.node(id).activation {
                     match &frame.pending {
                         Some(Pending::Call { child, .. }) => pending.push((*child, false)),
-                        Some(Pending::Scope { branches, .. }) => pending.extend(
+                        Some(Pending::Concurrent { branches, .. }) => pending.extend(
                             branches
                                 .iter()
                                 .filter_map(|b| b.child)
@@ -992,7 +992,7 @@ impl Execution {
             };
             match &frame.pending {
                 Some(Pending::Call { child, .. }) => pending.push(Visit::Frame(*child)),
-                Some(Pending::Scope { branches, .. }) => pending.extend(
+                Some(Pending::Concurrent { branches, .. }) => pending.extend(
                     branches
                         .iter()
                         .rev()
@@ -1051,7 +1051,7 @@ impl Execution {
     }
 
     /// Record a polled child's outcome in the scope that registered it.
-    /// Returns false for ordinary call or scope children.
+    /// Returns false for ordinary call or concurrent children.
     fn finish_task_child(frame: &mut Frame, child: usize, completed: bool) -> bool {
         for scope in frame.task_scopes.iter_mut().rev() {
             if let Some(slot) = scope
@@ -1237,7 +1237,7 @@ impl Execution {
                 Pending::TaskJoin => {
                     unreachable!("task children report to their registering scope")
                 }
-                Pending::Scope {
+                Pending::Concurrent {
                     kind,
                     branches,
                     next,
@@ -1259,7 +1259,7 @@ impl Execution {
                         *pending = true;
                     }
                     *next += 1;
-                    if complete && *kind == ScopeKind::Race {
+                    if complete && *kind == ConcurrentKind::Race {
                         *finished = true;
                         frame.pc += 1;
                     }
@@ -1301,8 +1301,8 @@ impl Execution {
                         self.current = *child;
                         continue;
                     }
-                    Some(Pending::Scope { complete: true, .. }) => {}
-                    Some(Pending::Scope {
+                    Some(Pending::Concurrent { complete: true, .. }) => {}
+                    Some(Pending::Concurrent {
                         branches,
                         next,
                         pending,
@@ -1412,14 +1412,14 @@ impl Execution {
                         return self.fail(error);
                     }
                 }
-                Step::Scope => {
-                    if let Err(error) = self.start_scope(module) {
+                Step::Concurrent => {
+                    if let Err(error) = self.start_concurrent(module) {
                         return self.fail(error);
                     }
                 }
-                Step::ScopeFinish => {
+                Step::ConcurrentFinish => {
                     let frame = self.frame_mut(self.current);
-                    let Some(Pending::Scope {
+                    let Some(Pending::Concurrent {
                         branches,
                         complete: true,
                         ..
@@ -1542,7 +1542,7 @@ fn run_frame(
                             unsafe { memory::read_scalar(data.add(offset), &ty) };
                     }
                 }
-                let owners: Vec<_> = value.scalars().filter(|s| s.ty.is_buffer()).collect();
+                let owners: Vec<_> = value.scalars().filter(|s| s.ty.is_owner_lane()).collect();
                 let mut entry = crate::runtime::cleanup::Entry {
                     keep_alive: None,
                     storage_size: 0,
@@ -1586,7 +1586,7 @@ fn run_frame(
                             .storage_scalars()
                             .unwrap()
                             .into_iter()
-                            .filter(|(_, ty)| ty.is_buffer())
+                            .filter(|(_, ty)| ty.is_owner_lane())
                             .map(|(offset, _)| offset)
                             .collect(),
                         hooks: vec![],
@@ -2129,8 +2129,8 @@ fn run_frame(
                     result: None,
                 }
             }
-            Instruction::Scope { .. } => return Step::Scope,
-            Instruction::ScopeFinish => return Step::ScopeFinish,
+            Instruction::Concurrent { .. } => return Step::Concurrent,
+            Instruction::ConcurrentFinish => return Step::ConcurrentFinish,
             Instruction::TaskScopeEnter => {
                 frame.task_scopes.push(Default::default());
                 frame.pc += 1;

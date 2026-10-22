@@ -285,7 +285,7 @@ impl LoadedModule {
             .storage_scalars()
             .map_err(|e| invalid(e.to_string()))?
             .into_iter()
-            .filter(|(_, ty)| ty.is_buffer())
+            .filter(|(_, ty)| ty.is_owner_lane())
             .map(|(offset, _)| offset)
             .collect();
         let hooks = match self {

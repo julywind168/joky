@@ -1,5 +1,7 @@
 # String 设计与分阶段开发计划
 
+阅读约定：阶段编号与验收命令保留当时的记录；现行测试按行为命名，可用 `cargo test -- --list` 查找。当前 API 以 [language.md](language.md) 为准。
+
 状态：2026-10-03，**S0–S7 已完成；不可变拥有型 String、StringBuilder、文本转换与批量操作、同步聚合/容器、宿主文本 ABI/CPS、借用式 String Map key 及同步 C 文本适配已验收；S8 未开始**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 
@@ -12,7 +14,7 @@ VM 文本 C 入口迁移到 `_v2` 符号，旧宿主与 AOT 对象需要重新�
 同时修复 scope/race 活动文本借用漏检和 CPS 参数掩码的 64 位边界；具体 ABI 见
 [架构说明](architecture.md#宿主与字符串-abi)。
 
-修订验收：[宿主回归](../src/vm/text_host_tests.rs) 在 JIT/解释器验证 8 KiB 任务预算下
+修订验收：[宿主回归](../src/vm/tests/embedding/text_host_tests.rs) 在 JIT/解释器验证 8 KiB 任务预算下
 重复借用/复制/CPS 调用、Pending 取消及重载后恢复；独立 AOT/C 对 1 MiB 文本连续调用
 100 次，三后端覆盖包含 Unit 和两个 String 的 67 参数 CPS，以及 scope/race 的准确借用诊断。
 旧非法 UTF-8 fixture 已改为有效 JokyText 描述符携带非法字节，保留输入验证覆盖。
@@ -239,7 +241,7 @@ S0 完成只表示方案可实施，不表示正式字符串完成。
 以下为历史决策记录，涉及旧宿主兼容的承诺已由本文开头的 S5 后审查修订取代。
 S0 对生产实现的审计基线为 `f80c13c`，本阶段不改变内建 String 或任何生产 ABI。
 S0 使用[存储探针](../tests/fixtures/string_storage_probe.jk)、
-[VM 探针及负例](../src/vm/string_storage_tests.rs)和[CLI 三后端执行](../tests/cli.rs)。
+[VM 探针及负例](../src/vm/tests/containers/string_storage_tests.rs)和[CLI 三后端执行](../tests/cli.rs)。
 `TextProbe`/`BuilderProbe` 是测试模块中的私有 Int32 数组包装，**不是 String 或 UTF-8 实现**。
 它们验证通用所有权的可复用部分；实际内建 String 接入仍属于下面的 P-storage。
 
@@ -482,7 +484,7 @@ Rust `call_string_0/1` 返回宿主 String，`call_async_string_0/1` 返回 Stri
 根结果在任务清理前复制，成功输出可在任务/VM 销毁后读取；失败、取消和未完成均没有文本结果。
 旧数值入口拒绝文本签名，不暴露拥有句柄。旧生成对象仍需匹配其 runtime archive。
 
-行为验证见 [String VM 测试](../src/vm/strings_tests.rs)、
+行为验证见 [String VM 测试](../src/vm/tests/containers/strings_tests.rs)、
 [独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)及保留的 CLI、源码模块与旧路径回归。
 覆盖空串、中文、emoji、内部 NUL、重复/空/未命中查询、提前释放后 clone 生存、输入失效后输出、
 UTF-8/长度边界、独立宿主结果和上述清理路径；JIT、解释器及独立 AOT 实际执行生成代码。
@@ -528,7 +530,7 @@ Rust char 编码、内部 NUL、空追加、连续增长、reserve 后追加、c
 共享借用冲突和 Builder/其引用的语言挂起。模块及类型别名、普通函数值也已执行验证。
 
 三后端验证由 [共享 fixture](../tests/fixtures/string_builder.jk)、
-[VM 测试](../src/vm/string_builder_tests.rs)、[独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)
+[VM 测试](../src/vm/tests/containers/string_builder_tests.rs)、[独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)
 和 [CLI 示例测试](../tests/cli.rs)覆盖。示例 [string_builder.jk](../examples/string_builder.jk)
 在 JIT、解释器和独立 AOT 上输出相同字节长度。S3 新增 9 个单元测试和 1 个 CLI 测试。
 
@@ -566,7 +568,7 @@ InvalidSequence 表示已有字节非法，UnexpectedEnd 表示合法编码前�
 
 [独立 Rust 模型](../tests/support/string_queries.rs)生成合法/非法 UTF-8 语料、首错误偏移、
 每个 Rune 与下一偏移、小文本的全部子串范围和四种整数的十进制预期。
-[VM 测试](../src/vm/string_queries_tests.rs)与[独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)
+[VM 测试](../src/vm/tests/containers/string_queries_tests.rs)与[独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)
 执行同一语料，覆盖 NUL、Unicode 边界、过长编码、代理项、孤立续字节、超界、截断与组合重音。
 子串和拼接在输入释放后仍可使用，拼接输入保持可用；转换保留数组容量。
 字节借用及 into_bytes 在预算归零后仍成功；连续拒绝 80 个 1 MiB 输入，证明失败释放载荷。
@@ -611,7 +613,7 @@ join 先逐项受检累加总字节数，超过存储布局上限时使用非法
 因此输出边界始终合法；每项由复制式 substring 构造，失败清理已完成前缀。
 两者均在 [string.jk](../src/stdlib/string.jk) 实现，不增加后端专属文本算法。
 
-验证入口为 [VM 测试](../src/vm/string_collections_tests.rs)、
+验证入口为 [VM 测试](../src/vm/tests/containers/string_collections_tests.rs)、
 [AOT C 宿主测试](../src/backends/aot/tests/string_collections.rs)、
 [共享所有权 fixture](../tests/fixtures/string_collections.jk)、
 [独立 Rust 模型](../tests/support/string_collections.rs) 和 [CLI 测试](../tests/cli.rs)。
@@ -630,7 +632,7 @@ String Map key、容器/Builder/含文本拥有聚合跨语言挂起及新的直
 通用容器 CPS 扩展和 S7 边界处理。批量文本示例见
 [string_collections.jk](../examples/string_collections.jk)。
 
-验收执行 `cargo test string_s5 -- --nocapture`（7 个单元测试及 1 个三后端 CLI 用例）、
+验收执行 `cargo test string_collections -- --nocapture`（7 个单元测试及 1 个三后端 CLI 用例）、
 受影响的 Map key 与存储探针负例，以及完整 `./scripts/check.sh`。
 完整检查通过 fmt、Clippy、Debug/Release 各 770 个单元测试、81 个 CLI 与 22 个模块用例，
 Release 4 个模型/逐指令取消穷举及 4 个 CLI 穷举，Debug/Release 的 while/Map 三后端正确性检查。

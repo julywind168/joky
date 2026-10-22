@@ -13,7 +13,7 @@ pub fn source() -> String {
         .unwrap();
     format!(
         "{protocol}\n{}",
-        include_str!("../fixtures/json3_sessions.jk").replace("PRESSURE_TEXT", &"x".repeat(8192))
+        include_str!("../fixtures/json_tcp_sessions.jk").replace("PRESSURE_TEXT", &"x".repeat(8192))
     )
 }
 fn frame(bytes: &[u8]) -> Vec<u8> {

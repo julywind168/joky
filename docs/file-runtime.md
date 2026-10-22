@@ -422,8 +422,8 @@ Close 的请求与完成存储使用文件预留清理记录，不占普通请�
 
 ### 10.4 可控探针的证据范围
 
-探针文件： [共享宿主模型](../tests/fixtures/fs0_host.rs)、
-[Joky 程序](../tests/fixtures/fs0.jk)、[三后端入口](../tests/fs0.rs)。
+探针文件： [共享宿主模型](../tests/fixtures/host_file_io_host.rs)、
+[Joky 程序](../tests/fixtures/host_file_io.jk)、[三后端入口](../tests/host_file_io.rs)。
 宿主模型只有一个工作线程、一个普通排队位置、两个未回收请求和三个文件槽，
 使用固定四字节快照及完成闸门缩小容量边界；不访问真实磁盘。
 
@@ -446,9 +446,9 @@ Close 的请求与完成存储使用文件预留清理记录，不占普通请�
 
 2026-10-17，macOS / aarch64，FS0 开发验证完成：
 
-- `cargo test --test fs0`：2 项测试通过。第一项执行 JIT 和解释器，第二项编译并运行
+- `cargo test --test host_file_io`：2 项测试通过。第一项执行 JIT 和解释器，第二项编译并运行
   独立 AOT 可执行程序；三后端共用上述 6 组受控生命周期场景。
-- `cargo fmt --check` 及 `rustfmt --edition 2021 --check tests/fixtures/fs0_host.rs` 通过。
+- `cargo fmt --check` 及 `rustfmt --edition 2021 --check tests/fixtures/host_file_io_host.rs` 通过。
   include 的共享 fixture 单独检查格式。
 - `cargo clippy --all-targets -- -D warnings` 通过。
 - 本文 10 个本地链接和 `git diff --check` 通过；新增未跟踪文件另行检查差异格式。
@@ -482,7 +482,7 @@ Windows CloseHandle 仅有条件编译实现，不宣称验证通过。
 
 ### 验证记录
 
-正式实现的针对性用例：`cargo test --test fs`、`cargo test --test fs0`、
+正式实现的针对性用例：`cargo test --test fs`、`cargo test --test host_file_io`、
 `cargo test runtime::fs::worker::tests --lib`。FS0 可控宿主继续覆盖三个后端的慢操作与
 调度并存；正式 worker 用例直接观察队列、请求与物理关闭账本，避免磁盘速度相关断言。
 `tests/fs.rs` 使用独立进程执行静态链接 AOT，验证真实文件、宿主描述符与 C 布局，
@@ -492,7 +492,7 @@ Windows CloseHandle 仅有条件编译实现，不宣称验证通过。
 
 - `./scripts/check.sh`：默认 Debug 格式、Clippy、单元/集成测试和三后端短输入基准正确性。
   完成收尾调整后重跑受影响的文件行为、worker、格式与 Clippy 检查。
-- `cargo test --test fs --test fs0`：正式文件接口、描述符、C 布局/入口、安装布局、示例，
+- `cargo test --test fs --test host_file_io`：正式文件接口、描述符、C 布局/入口、安装布局、示例，
   以及 FS0 可控宿主的 JIT/解释器/独立 AOT 行为。
 - `cargo test runtime::fs::worker::tests --lib`：10 个确定性状态/额度/失败回收用例。
 - `cargo test --test fs exhaustive_filesystem_cancel_every_instruction -- --ignored`：

@@ -5,7 +5,7 @@ use crate::string_query_model as query_model;
 
 #[test]
 #[cfg(unix)]
-fn string_s4_matches_models_in_independent_aot_objects() {
+fn string_queries_matches_models_in_independent_aot_objects() {
     let cases = query_model::cases();
     let fixture = ScratchDir::new("string-queries");
     let object = fixture.path().join("queries.o");
@@ -48,7 +48,7 @@ fn string_s4_matches_models_in_independent_aot_objects() {
 
 #[test]
 #[cfg(unix)]
-fn string_builder_s3_runs_source_algorithms_in_independent_aot_objects() {
+fn string_builder_runs_source_algorithms_in_independent_aot_objects() {
     let source = include_str!("../../../../tests/fixtures/string_builder.jk");
     let fixture = ScratchDir::new("string-builder");
     let object = fixture.path().join("builder.o");

@@ -221,7 +221,7 @@ T0 仅完成设计与源码盘点；下列结构是拟新增模型，例子是�
 [PreparedModule](../src/core/prepared.rs)、[类型规范化](../src/core/types.rs)、
 [布局](../src/core/types/layout.rs)、[替换](../src/core/types/specialization.rs)、
 [导入与定义作用域](../src/core/imports/sources.rs)、[trait 收集](../src/core/ir/traits.rs)、
-[模板检查接线](../src/core/ir.rs)及[既有 trait 用例](../src/vm/trait_tests.rs)。
+[模板检查接线](../src/core/ir.rs)及[既有 trait 用例](../src/vm/tests/language/trait_tests.rs)。
 这些源码只证明当前接线和限制，不构成新功能的运行证据。
 
 ### 8.2 AST、绑定模型与身份
@@ -502,7 +502,7 @@ T2 引入投影时必须采用 8.4 的共享类型环境，不沿用“先强制
 | T4 | 默认体丢弃/失败时 Drop 一次；String Item 跨多次 Pending、取消和完成，副作用不重放且 arena 归零。失败加载保持旧模块；成功加载同时修改默认体与 Item 后，旧任务仍返回 42，新任务返回 99。解释器逐指令取消另有 Release 穷举 |
 | T5 | 新增 Source 示例；Show.to_text 默认方法集中 builder 包装，自由函数及 io.print 复用，io.println 保持直接追加换行。README、language、syntax、architecture 同步；发布检查结果见下表 |
 
-主要行为证据位于 [trait_tests.rs](../src/vm/trait_tests.rs)、
+主要行为证据位于 [trait_tests.rs](../src/vm/tests/language/trait_tests.rs)、
 [AOT 独立 C harness](../src/backends/aot/tests/members.rs)、
 [生命周期 fixture](../tests/fixtures/trait_associated_lifecycle.jk)与
 [CLI 示例测试](../tests/cli.rs)。AOT 正例实际链接并运行独立程序；非法程序也经过 AOT 编译入口。

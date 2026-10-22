@@ -1,12 +1,13 @@
 # parallel、scope 与 branch 开发计划
 
-状态：2026-10-05，首版（C0–C3）已实现并通过发布验收（`./scripts/check.sh --full` 与
-`--stress`）。基线为 `3c878a9`。
-当前 `scope { | first() | second() }` 和 `race` 已实现；本文计划将前者改名为
-`parallel`，新增顺序主体的 `scope` 与创建子任务的 `branch`。
-实现提交：C0 改名迁移 `5b7eb33`，C1 语义与受检表示，C2 三后端执行闭环 `33be532`，
-C3 调度轮、额度与稳定性 `98656a4`。本文历史设计章节保留原貌；当前可用语法以
-[language.md](language.md) 为准。
+状态：首版 C0–C3 已实现。当前语法为静态组合 `parallel` / `race`，以及顺序主体的
+`scope` 和动态子任务 `branch`；用法与限制以 [language.md](language.md) 为准。
+
+本文以下章节保留实施前的设计措辞：其中“当前 scope”指迁移前的管线式组合，
+“新 scope”指如今已实现的顺序作用域，不代表仍有一次待完成的关键字迁移。
+基线为 `3c878a9`；C0 改名迁移 `5b7eb33`，C1 语义与受检表示，
+C2 三后端执行闭环 `33be532`，C3 调度轮、额度与稳定性 `98656a4`。
+历史验收记录于 2026-10-05 完成，当时使用 `./scripts/check.sh --full` 与 `--stress`。
 
 本阶段面向纯 Joky，不依赖节点、Godot 或持久实例。语法与阶段设计归本文；
 现有能力仍以 [language.md](language.md) 为准，相关语法入口见
@@ -55,7 +56,8 @@ fn run_pair(a: Int32, b: Int32) @suspends {
 旧 `scope { | ... }` 给出明确诊断，例如 `Use parallel for pipe-separated branches`；
 不默默解释成新语义，也不长期保留两种 scope 主体。历史验收记录可保留旧名称并注明版本。
 
-内部 IR/CPS 的名字不必机械替换。现有 `ScopeKind::Join` 表示完成策略，可以继续复用；
+实施时内部 IR/CPS 沿用了旧命名；后续统一为 `Concurrent` / `ConcurrentKind`，
+其中 `ConcurrentKind::Join` 表示完成策略；
 应清楚区分静态分支组合与新增的顺序主体，不能仅修改关键字映射就宣称完成新 scope。
 
 ## 3. 新 scope 与 branch 的语言契约
@@ -240,7 +242,7 @@ scope/branch 已支持；C3 验收完成后才标记本计划首版完成。各�
 - C0：`parallel` 关键字与旧 `scope { | ... }` 迁移诊断；全仓库源码、fixture、文档迁移；
   旧写法与 `parallel`/`branch` 标识符冲突均有明确诊断（`tests/cli.rs` 迁移用例）。
 - C1：解析、所属关系、捕获移动、区域借用检查与退出改道；正反例覆盖父流程冲突、
-  函数边界、条件移动与跨分支跳转（`src/vm/task_scope_tests.rs`）。
+  函数边界、条件移动与跨分支跳转（`src/vm/tests/tasks/task_scope_tests.rs`）。
 - C2：解释器与原生 CPS 的动态登记、调度轮次、汇合、提前跳转与取消；
   三后端共享 fixture 经 `assert_all_backends` 验收；行为轨迹跨后端一致。
 - C3：解释器帧额度、原生动态子任务额度（受控 `ResourceLimit`）、长循环登记回收、

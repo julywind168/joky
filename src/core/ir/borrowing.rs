@@ -127,7 +127,7 @@ fn refs(slot: &Slot) -> Vec<Slot> {
                     index: slot.index,
                     ty: Type::reference(Type::Unit, false),
                 })
-            } else if slot.ty.reference_type().is_some() || slot.ty.is_buffer() {
+            } else if slot.ty.reference_type().is_some() || slot.ty.is_owner_lane() {
                 Some(slot)
             } else {
                 None
@@ -278,7 +278,7 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             args.iter().flatten().flat_map(refs).collect(),
             result.iter().flat_map(refs).collect(),
         ),
-        Op::Scope {
+        Op::Concurrent {
             branches, result, ..
         } => (
             branches
@@ -435,7 +435,7 @@ fn reference_buffer(ty: &Type) -> bool {
         .any(|element| element.contains_references())
 }
 fn writable_buffer(ty: &Type) -> bool {
-    reference_buffer(ty) && (ty.is_buffer() || ty.reference_type().is_some_and(|r| r.mutable))
+    reference_buffer(ty) && (ty.is_owner_lane() || ty.reference_type().is_some_and(|r| r.mutable))
 }
 fn retain(state: &mut State, key: (usize, usize), value: Reference, mutable: bool) -> bool {
     if let Some((old, exclusive)) = state.retained.get_mut(&key) {
@@ -589,7 +589,7 @@ pub(super) fn infer_module(
                         ty: (*ty).clone(),
                     })
                     .iter()
-                    .any(|s| !s.ty.is_buffer())
+                    .any(|s| !s.ty.is_owner_lane())
             })
             .map(|(index, _)| index)
             .collect();
@@ -607,7 +607,7 @@ pub(super) fn infer_module(
         for op in &body.ops {
             let callees: Vec<_> = match op {
                 Op::Call { name, .. } => vec![name],
-                Op::Scope { branches, .. } => branches.iter().map(|b| &b.name).collect(),
+                Op::Concurrent { branches, .. } => branches.iter().map(|b| &b.name).collect(),
                 Op::TaskBranch { entry, .. } => vec![entry],
                 _ => vec![],
             };
@@ -809,10 +809,10 @@ fn analyze(
             index,
             ty: resolved(ty)?,
         }) {
-            if !slot.ty.is_buffer() && info.parameter_noescape(parameter) {
+            if !slot.ty.is_owner_lane() && info.parameter_noescape(parameter) {
                 argument_roots.insert(slot.index);
             }
-            if slot.ty.is_buffer() {
+            if slot.ty.is_owner_lane() {
                 owner_roots.insert(slot.index);
             }
             if explicit_arena(&slot.ty) && !slot.ty.is_explicit_arena() {
@@ -843,7 +843,7 @@ fn analyze(
                         Set::new()
                     },
                     loans: Set::from([slot.index]),
-                    storage: slot.ty.is_buffer()
+                    storage: slot.ty.is_owner_lane()
                         || slot.ty.is_buffer_view()
                         || slot
                             .ty
@@ -862,7 +862,7 @@ fn analyze(
         }
     }
     for (pc, op) in plan.ops.iter().enumerate() {
-        if let Op::Scope { branches, .. } = op {
+        if let Op::Concurrent { branches, .. } = op {
             for dst in branches
                 .iter()
                 .filter_map(|b| b.result.as_ref())
@@ -875,7 +875,7 @@ fn analyze(
         if matches!(op, Op::Text { .. } | Op::DomainOwner { decode: true, .. })
             || matches!(op, Op::ArenaNew { .. })
             || matches!(op, Op::Buffer(super::BufferOp::Move { dst, .. }) if dst.ty.is_explicit_arena())
-            || matches!(op, Op::Call { result: Some(dst), .. } | Op::Scope { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
+            || matches!(op, Op::Call { result: Some(dst), .. } | Op::Concurrent { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
             || matches!(op, Op::Buffer(super::BufferOp::Swap { .. }))
             || matches!(op, Op::Buffer(super::BufferOp::Detach { .. }))
         {
@@ -1037,7 +1037,7 @@ fn analyze(
                     type_error(
                         span,
                         ErrorCode::InvalidAssignment,
-                        if slot.ty.is_buffer() {
+                        if slot.ty.is_owner_lane() {
                             "Use of a moved or uninitialized buffer owner"
                         } else {
                             "Use of a moved, sealed or uninitialized exclusive reference"
@@ -1075,7 +1075,7 @@ fn analyze(
                 if other == slot.index
                     || Some(other) == ignore
                     || local_places.contains(&other)
-                    || types[&other].is_buffer()
+                    || types[&other].is_owner_lane()
                 {
                     continue;
                 }
@@ -1168,7 +1168,7 @@ fn analyze(
                         "@noescape function cannot retain an argument borrow in an explicit arena",
                     ));
                 }
-                if slot.ty.is_buffer()
+                if slot.ty.is_owner_lane()
                     || !summarized
                         && (slot
                             .ty
@@ -1222,7 +1222,7 @@ fn analyze(
                             "@noescape function cannot return an argument borrow",
                         ));
                     }
-                    if !slot.ty.is_buffer()
+                    if !slot.ty.is_owner_lane()
                         && state
                             .get(&slot.index)
                             .is_some_and(|value| value.has_root(&owner_roots))
@@ -1245,7 +1245,8 @@ fn analyze(
                     }
                     check_access(
                         &slot,
-                        slot.ty.is_buffer() || slot.ty.reference_type().is_some_and(|r| r.mutable),
+                        slot.ty.is_owner_lane()
+                            || slot.ty.reference_type().is_some_and(|r| r.mutable),
                         &state,
                         &live[pc],
                         None,
@@ -1261,7 +1262,7 @@ fn analyze(
             .collect();
         let suspending = match &plan.ops[pc] {
             Op::Call { name, .. } => functions[name].suspends,
-            Op::Scope { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
+            Op::Concurrent { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
             _ => false,
         };
         if suspending
@@ -1433,7 +1434,7 @@ fn analyze(
                 for arg in args.iter().flat_map(refs) {
                     check_access(
                         &arg,
-                        arg.ty.is_buffer() || arg.ty.reference_type().unwrap().mutable,
+                        arg.ty.is_owner_lane() || arg.ty.reference_type().unwrap().mutable,
                         &state,
                         &live[pc],
                         None,
@@ -1470,7 +1471,7 @@ fn analyze(
                     | BufferIntrinsic::ElementStore
                     | BufferIntrinsic::SliceStore => {
                         let inputs = refs(args.last().unwrap());
-                        for arg in inputs.iter().filter(|arg| !arg.ty.is_buffer()) {
+                        for arg in inputs.iter().filter(|arg| !arg.ty.is_owner_lane()) {
                             check_storage(arg, &state)?;
                             let value = state[&arg.index].clone();
                             retain(&mut state, (loan, arg.index), value, false);
@@ -1557,7 +1558,7 @@ fn analyze(
                     let contents = buffer_contents(&state, &src);
                     if dst.index != src.index {
                         state.get_mut(&src.index).unwrap().invalid = true;
-                        if dst.ty.is_buffer() {
+                        if dst.ty.is_owner_lane() {
                             if dst.ty.is_explicit_arena() {
                                 let roots =
                                     value.origins.iter().map(|origin| origin.root).collect();
@@ -1748,7 +1749,7 @@ fn analyze(
                 }
                 state.insert(dst.index, value);
             }
-            Op::Literal(dst, _) if dst.ty.reference_type().is_some() || dst.ty.is_buffer() => {
+            Op::Literal(dst, _) if dst.ty.reference_type().is_some() || dst.ty.is_owner_lane() => {
                 state.insert(dst.index, Reference::default());
             }
             Op::EndLocal(local) => {
@@ -1929,7 +1930,7 @@ fn analyze(
                     state.get_mut(&input.index).unwrap().invalid = true;
                 }
                 for (dst, (mut value, contents)) in refs(dst).into_iter().zip(values) {
-                    if dst.ty.is_buffer() {
+                    if dst.ty.is_owner_lane() {
                         // Checked detachment creates a unique cleanup group after
                         // rejecting live aliases to the source. Call-result lanes
                         // may share conservative origins, but detached owners no
@@ -2059,7 +2060,7 @@ fn analyze(
                     }
                 }
             }
-            Op::Scope {
+            Op::Concurrent {
                 branches, result, ..
             } => {
                 for branch in branches {
@@ -2079,7 +2080,7 @@ fn analyze(
                     ));
                 }
 
-                // Scope/race is one structured boundary in the caller CFG. All
+                // Parallel/race is one structured boundary in the caller CFG. All
                 // argument snapshots stay live until branches complete or cancel,
                 // including while later arguments are evaluated or suspend.
                 for arg in branches
@@ -2133,7 +2134,7 @@ fn analyze(
                         .iter()
                         .flat_map(|b| b.args.iter().flatten())
                         .flat_map(refs)
-                        .filter(|s| s.ty.is_buffer())
+                        .filter(|s| s.ty.is_owner_lane())
                     {
                         let source = &state[&arg.index];
                         value.origins.extend(source.origins.iter().cloned());
@@ -2156,7 +2157,7 @@ fn analyze(
                             .iter()
                             .flatten()
                             .flat_map(refs)
-                            .filter(|s| s.ty.is_buffer())
+                            .filter(|s| s.ty.is_owner_lane())
                         {
                             let source = &state[&arg.index];
                             value.origins.extend(source.origins.iter().cloned());
@@ -2328,7 +2329,8 @@ fn analyze(
                 for arg in &inputs {
                     check_access(
                         arg,
-                        arg.ty.is_buffer() || arg.ty.reference_type().is_some_and(|r| r.mutable),
+                        arg.ty.is_owner_lane()
+                            || arg.ty.reference_type().is_some_and(|r| r.mutable),
                         &state,
                         &live[pc],
                         None,
@@ -2358,7 +2360,7 @@ fn analyze(
                 // into task-lived storage, including allocation-free host wrappers.
                 for arg in &inputs {
                     if retained_inputs.contains(&arg.index)
-                        && !arg.ty.is_buffer()
+                        && !arg.ty.is_owner_lane()
                         && !state[&arg.index].arenas.is_empty()
                     {
                         check_storage(arg, &state)?;
@@ -2376,7 +2378,7 @@ fn analyze(
                         let symbolic_borrow = arg.ty.reference_type().is_some_and(|r| {
                             r.target.scalar_types().iter().any(|ty| {
                                 matches!(ty, Type::Parameter(_) | Type::Projection(_))
-                                    && ty.is_buffer()
+                                    && ty.is_owner_lane()
                             })
                         });
                         if symbolic_borrow {
@@ -2425,27 +2427,27 @@ fn analyze(
                 }
                 for mut dst in result.iter().flat_map(refs) {
                     dst.ty = types[&dst.index].clone();
-                    let mutable =
-                        dst.ty.is_buffer() || dst.ty.reference_type().is_some_and(|r| r.mutable);
+                    let mutable = dst.ty.is_owner_lane()
+                        || dst.ty.reference_type().is_some_and(|r| r.mutable);
                     let mut value = Reference {
                         origins: BTreeSet::from([Origin::new(loan)]),
                         loans: Set::from([loan]),
-                        storage: dst.ty.is_buffer() || dst.ty.is_buffer_view(),
+                        storage: dst.ty.is_owner_lane() || dst.ty.is_buffer_view(),
                         // Unknown ordinary host references retain their existing ABI
                         // contract. Unknown owner views must remain conservative.
-                        interior: !dst.ty.is_buffer()
+                        interior: !dst.ty.is_owner_lane()
                             && functions[name].returns_interior
                             && (functions[name].inferred_retained.is_some()
                                 || dst.ty.is_buffer_view()),
                         ..Default::default()
                     };
                     for arg in &inputs {
-                        if noescape_inputs.contains(&arg.index) && !arg.ty.is_buffer() {
+                        if noescape_inputs.contains(&arg.index) && !arg.ty.is_owner_lane() {
                             continue;
                         }
-                        let source = if dst.ty.is_buffer() {
+                        let source = if dst.ty.is_owner_lane() {
                             // Owner identity flows only from consumed owners.
-                            if !arg.ty.is_buffer() {
+                            if !arg.ty.is_owner_lane() {
                                 continue;
                             }
                             state[&arg.index].clone()
@@ -2453,7 +2455,7 @@ fn analyze(
                             // Preserve the existing signature-wide dependency
                             // contract for returned views, including ordinary
                             // reference inputs. Owners still cannot lend a view.
-                            if arg.ty.is_buffer() {
+                            if arg.ty.is_owner_lane() {
                                 continue;
                             }
                             state[&arg.index].clone()
@@ -2475,7 +2477,7 @@ fn analyze(
                             continue;
                         }
                         if !mutable
-                            || arg.ty.is_buffer()
+                            || arg.ty.is_owner_lane()
                             || arg.ty.reference_type().is_some_and(|r| r.mutable)
                         {
                             value.origins.extend(source.origins.iter().cloned());
@@ -2485,12 +2487,12 @@ fn analyze(
                         value.ancestors.extend(&source.ancestors);
                         value.ancestors.extend(&source.loans);
                     }
-                    if dst.ty.is_buffer() && reference_buffer(&dst.ty) {
+                    if dst.ty.is_owner_lane() && reference_buffer(&dst.ty) {
                         add_contents(&mut state, &value, &contents);
                     }
                     state.insert(dst.index, value);
                 }
-                for arg in inputs.iter().filter(|arg| arg.ty.is_buffer()) {
+                for arg in inputs.iter().filter(|arg| arg.ty.is_owner_lane()) {
                     if arg.ty.is_explicit_arena() {
                         let roots: Vec<_> = state[&arg.index]
                             .origins

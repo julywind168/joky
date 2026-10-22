@@ -7,12 +7,12 @@ use std::sync::{
 
 /// Completion policy for structured concurrent branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScopeKind {
+pub enum ConcurrentKind {
     Join,
     Race,
 }
 
-impl ScopeKind {
+impl ConcurrentKind {
     pub(crate) const fn keyword(self) -> &'static str {
         match self {
             Self::Join => "parallel",
@@ -259,21 +259,21 @@ impl Type {
                     .is_some_and(|r| r.target.contains_functions())
         })
     }
-    // Rigid unknowns model a movable owner during definition checking. Concrete
-    // substitution replaces these symbolic lanes before any backend sees them.
-    pub(crate) fn is_buffer(&self) -> bool {
+    /// One scalar storage lane carrying ownership, including text and host resources.
+    /// Rigid unknowns model movable owners until concrete substitution before lowering.
+    pub(crate) fn is_owner_lane(&self) -> bool {
         matches!(
             self,
             Self::Buffer(_) | Self::String | Self::Resource(_) | Self::Projection(_)
         ) || matches!(self, Self::Parameter(p) if p.callable.is_none() && !p.copy)
     }
-    /// A movable buffer capability, including aggregates with owning contents.
+    /// A movable owning value, including aggregates with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
         match self {
-            Self::Record(r) => !r.owners.is_empty() || r.scalars.iter().any(Type::is_buffer),
-            Self::Enum(e) => !e.owners.is_empty() || e.scalars.iter().any(Type::is_buffer),
-            Self::Tuple(t) => !t.owners.is_empty() || t.scalars.iter().any(Type::is_buffer),
-            _ => self.is_buffer(),
+            Self::Record(r) => !r.owners.is_empty() || r.scalars.iter().any(Type::is_owner_lane),
+            Self::Enum(e) => !e.owners.is_empty() || e.scalars.iter().any(Type::is_owner_lane),
+            Self::Tuple(t) => !t.owners.is_empty() || t.scalars.iter().any(Type::is_owner_lane),
+            _ => self.is_owner_lane(),
         }
     }
     /// Mixed records, enums and tuples borrow their inline storage. One-field wrapper chains
@@ -900,8 +900,8 @@ pub enum Expr {
         span: Span,
     },
     /// `parallel { | branch1 | branch2 ... }` or `race { | branch1 | branch2 ... }`.
-    Scope {
-        kind: ScopeKind,
+    Concurrent {
+        kind: ConcurrentKind,
         branches: Vec<Expr>,
         span: Span,
     },
@@ -1004,7 +1004,7 @@ impl Expr {
             | Self::Block { span, .. }
             | Self::Graph { span, .. }
             | Self::Sequence { span, .. }
-            | Self::Scope { span, .. }
+            | Self::Concurrent { span, .. }
             | Self::TaskScope { span, .. }
             | Self::Branch { span, .. } => *span,
         }
@@ -1165,7 +1165,7 @@ impl Expr {
                 trailing,
                 span,
             },
-            Self::Scope { kind, branches, .. } => Self::Scope {
+            Self::Concurrent { kind, branches, .. } => Self::Concurrent {
                 kind,
                 branches,
                 span,

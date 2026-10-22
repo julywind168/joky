@@ -994,7 +994,7 @@ fn create_words(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::{state_domain_tests::SOURCE, VmMode};
+    use crate::vm::{tests::state_domain_tests::SOURCE, VmMode};
 
     #[test]
     fn state_domains_snapshot_revision_is_captured_before_later_queued_writes() {

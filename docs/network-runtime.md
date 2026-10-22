@@ -1,5 +1,7 @@
 # 网络运行时开发计划与验收记录
 
+阅读约定：阶段编号与验收命令保留当时的记录；现行测试按行为命名，可用 `cargo test -- --list` 查找。当前 API 以 [language.md](language.md) 为准。
+
 状态：NET0–NET4 已完成本机 Debug 开发验证与 Godot 联合验收；NET5a 已完成拆分契约与独立拥有者借用前置，NET5b/NET5c 已完成独立读写端、缓存交接与消息发送，NET5d 已完成单连接双向示例与 Godot 联合验收。已提供共享 TCP 驱动、有界接收缓冲、读满、分隔符、UTF-8 行读取和长度前缀消息读写。
 NET6 已实现有界线程池系统解析与 `joky/dns.lookup`；生命周期、限额与验收记录见第 16 节。
 起点为 `f76a407`。
@@ -118,9 +120,9 @@ NET1a 是探针确认后补出的依赖，先完成它再推进 NET1b/NET2。仅
 
 ## 5. NET0 探针与验收记录
 
-源码见 [net0.jk](../tests/fixtures/net0.jk)，共享宿主见
-[net0_host.rs](../tests/fixtures/net0_host.rs)，VM 验收见
-[net0_tests.rs](../src/vm/net0_tests.rs)，独立 AOT 程序由 [CLI 测试](../tests/cli.rs)链接执行。
+源码见 [borrowed_host_io.jk](../tests/fixtures/borrowed_host_io.jk)，共享宿主见
+[borrowed_host_io_host.rs](../tests/fixtures/borrowed_host_io_host.rs)，VM 验收见
+[borrowed_host_io_tests.rs](../src/vm/tests/embedding/borrowed_host_io_tests.rs)，独立 AOT 程序由 [CLI 测试](../tests/cli.rs)链接执行。
 
 宿主在测试驱动中创建 127.0.0.1 临时端口的真实 TCP 连接，语言 poll 内仅执行非阻塞读取。
 已接受的 socket 由操作状态拥有，stop 关闭；监听器和对端由测试驱动管理。
@@ -147,9 +149,9 @@ VM 用例额外检查任务 arena 分配计数归零；AOT 通过宿主事件检
 
 2026-10-09 本机验证通过：
 
-- `cargo test net0_`：4 项 VM 测试覆盖 JIT/解释器，1 项独立链接的 AOT 程序测试；
+- `cargo test borrowed_host_io_`：4 项 VM 测试覆盖 JIT/解释器，1 项独立链接的 AOT 程序测试；
   共享运行用例覆盖八个入口及显式取消组，九个编译拒绝用例分别检查三后端。
-- `cargo fmt --check`、`rustfmt --edition 2021 --check tests/fixtures/net0_host.rs`。
+- `cargo fmt --check`、`rustfmt --edition 2021 --check tests/fixtures/borrowed_host_io_host.rs`。
 - `cargo clippy --all-targets -- -D warnings`。
 - 本地文档链接、锚点与 `git diff --check`。
 
@@ -286,8 +288,8 @@ Godot 验收。首版支持范围定为 macOS、Linux、Windows；当前本机�
 完成时撤销登记，下一次请求先实际尝试 I/O，不能假设内核会再次发送同一就绪边沿。
 不能通过裸 fd 绕过 Mio 的跨平台 I/O 状态管理。
 
-用例 [net1b.jk](../tests/fixtures/net1b.jk) 与共享宿主
-[net1b_host.rs](../tests/fixtures/net1b_host.rs) 使用真实本地 TCP，覆盖虚假唤醒、EOF、
+用例 [reactor_io.jk](../tests/fixtures/reactor_io.jk) 与共享宿主
+[reactor_io_host.rs](../tests/fixtures/reactor_io_host.rs) 使用真实本地 TCP，覆盖虚假唤醒、EOF、
 取消后重新登记、动态分支、定时器竞争、兄弟失败、实例关闭和旧代码保活。解释器另
 逐实际执行的指令切点取消。Reactor 单元测试覆盖配额、身份耗尽、失败 deregister、
 迟到通知和有界内核批次；独立 AOT 使用同一 fixture 和运行时。
@@ -313,7 +315,7 @@ poll，C/AOT `joky_cps_block_on` 在首次原生 poll 前建立时钟/唤醒/Rea
 等待拒绝/到期恢复，以及多个就绪根受 max_polls 约束并在 VM 销毁后保活旧代码。
 测试发送线程只访问自己拥有的对端 socket；不访问脚本、Node、帧或请求存储。
 
-第 2 步验证通过：`cargo test net1b_ -- --include-ignored`（含独立 AOT 原生阻塞入口与
+第 2 步验证通过：`cargo test reactor_io_ -- --include-ignored`（含独立 AOT 原生阻塞入口与
 逐指令取消）、`cargo test runtime::driver -- --include-ignored`（外部通知与确定性竞态）、
 `cargo test executor_ -- --include-ignored`、`cargo test resource_bytes -- --include-ignored`
 （资源请求取消/预算耗尽）、`./scripts/check.sh` 完整默认 Debug 检查。
@@ -423,7 +425,7 @@ VM 侧检查所有者/arena 计数归零；独立 AOT 执行同一组合行为�
 ## 10. 网络缓冲前置：拥有值与挂起组合
 
 分两步实现并分别提交：先开放挂起函数同步片段中的短借用，再开放整个无引用拥有对象的
-共享/独占引用跨挂起。具体语义见[语言说明](language.md#挂起函数中的拥有值借用)，
+共享/独占引用跨挂起。具体语义见[语言说明](language.md#跨挂起借用)，
 来源推导与 CPS 存储不变量见[架构说明](architecture.md#拥有值引用与挂起)。
 
 无需增加网络后端或改变宿主 ABI，即可在语言层定义含 TcpStream、Array<UInt8> 和偏移的
@@ -689,9 +691,9 @@ Detach 先按原来源拒绝仍活跃/保留的借用，再为已分离的拥有
 容器内容的引用依赖单独迁移到新身份，不重建被引用对象，不缩短已保留借用的期限。
 含多个字段的单一拥有对象仍按整体冲突规则处理；此步骤不开放记录字段的任意并行借用。
 
-[普通拥有用例](../tests/fixtures/net5_owner_destructure.jk) 覆盖转发调用、Result、嵌套 Option/元组、
+[普通拥有用例](../tests/fixtures/detached_owners.jk) 覆盖转发调用、Result、嵌套 Option/元组、
 同步记录拆构、循环、parallel、动态 scope、race 取消后复用及容器内容引用。
-[真实 TCP 用例](../tests/fixtures/net5_owner_tcp.jk) 经挂起 Result 返回两个独立连接，
+[真实 TCP 用例](../tests/fixtures/detached_tcp_owners.jk) 经挂起 Result 返回两个独立连接，
 拆构后并行收发任意字节、验证 EOF 并分别关闭。两连接是回环的一对端点，
 这项前置测试不等于 NET5b 在同一 socket 上的双向 I/O 已实现。
 
@@ -738,7 +740,7 @@ Reactor 为每个 source 保存一个内核 token 与最多两个逻辑等待身
 NET5b 开发验证：
 
 - `cargo test net5b_`：10 项库测试与 1 项 CLI 三后端用例通过；默认忽略的新拆分穷举另行运行。
-- `cargo test --lib -- --ignored exhaustive_net5b_ exhaustive_net1b_ exhaustive_net2_ exhaustive_net4a_ exhaustive_net4b_ exhaustive_net4c_`
+- `cargo test --lib -- --ignored exhaustive_net5b_ exhaustive_reactor_io_ exhaustive_net2_ exhaustive_net4a_ exhaustive_net4b_ exhaustive_net4c_`
   通过 6 组 Debug 逐指令取消穷举，覆盖拆分发布、旧字节资源 reactor、TCP 交接以及全部 NET4 读取路径。
 - `./scripts/check.sh` 通过：格式、全目标 Clippy、1119 项库测试、136 项 CLI 测试、
   19 项模块常量、23 项源码模块，以及三后端短 while/Map 基准正确性。

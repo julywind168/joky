@@ -1,11 +1,11 @@
 //! Cranelift lowering of the shared typed IR.
 use crate::core::ir::{
-    BufferOp, CleanupOp, Constant, FloatKind, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot,
-    TextSource,
+    BufferOp, CleanupOp, ConcurrentBranch, Constant, FloatKind, FunctionInfo, FunctionPlan, Op,
+    Slot, TextSource,
 };
 use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
-    parser::ast::{BinOp, BufferIntrinsic, ScopeKind, Type, UnaryOp},
+    parser::ast::{BinOp, BufferIntrinsic, ConcurrentKind, Type, UnaryOp},
     Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::ir::{
@@ -954,13 +954,13 @@ fn lower_cleanup(
             slots.write(builder, &scalar, bits);
         }
     }
-    let owner = value.scalars().find(|s| s.ty.is_buffer()).unwrap();
+    let owner = value.scalars().find(|s| s.ty.is_owner_lane()).unwrap();
     let index = builder.ins().iconst(ptr_ty, owner.index as i64);
     let handle = slots.read(builder, &owner);
     builder
         .ins()
         .call(refs["__joky_cleanup_register"], &[cleanup, index, handle]);
-    for field in value.scalars().filter(|s| s.ty.is_buffer()).skip(1) {
+    for field in value.scalars().filter(|s| s.ty.is_owner_lane()).skip(1) {
         let field_index = builder.ins().iconst(ptr_ty, field.index as i64);
         let handle = slots.read(builder, &field);
         builder.ins().call(
@@ -1044,7 +1044,7 @@ fn lower_cleanup(
             &[cleanup, index, pointer, size],
         );
         for (offset, ty) in value.ty.storage_scalars().unwrap() {
-            if ty.is_buffer() {
+            if ty.is_owner_lane() {
                 let offset = builder.ins().iconst(ptr_ty, offset as i64);
                 builder.ins().call(
                     refs["__joky_cleanup_storage_owner"],
@@ -1172,13 +1172,13 @@ fn lower_cps_result(
     }
 }
 
-struct ScopeContext<'a> {
+struct ConcurrentContext<'a> {
     plan: &'a FunctionPlan,
     mode: ExecMode<'a>,
     result: Option<&'a Slot>,
-    kind: ScopeKind,
-    branches: &'a [ScopeBranch],
-    scope_state: u32,
+    kind: ConcurrentKind,
+    branches: &'a [ConcurrentBranch],
+    concurrent_state: u32,
     functions: &'a HashMap<String, FunctionInfo>,
     refs: &'a HashMap<String, FuncRef>,
     ptr_ty: types::Type,
@@ -1188,14 +1188,14 @@ struct ScopeContext<'a> {
     states: &'a [cranelift_codegen::ir::Block],
 }
 
-fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
-    let ScopeContext {
+fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_>) {
+    let ConcurrentContext {
         plan,
         mode,
         result,
         kind,
         branches,
-        scope_state,
+        concurrent_state,
         functions,
         refs,
         ptr_ty,
@@ -1225,12 +1225,12 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         let pending = builder.ins().iconst(types::I8, 0);
         store(builder, slots, &branch.done, pending);
     }
-    let saved = builder.ins().iconst(types::I32, scope_state as i64);
+    let saved = builder.ins().iconst(types::I32, concurrent_state as i64);
     builder
         .ins()
         .store(MemFlagsData::new(), saved, frame, state_offset);
-    builder.ins().jump(states[scope_state as usize], &[]);
-    builder.switch_to_block(states[scope_state as usize]);
+    builder.ins().jump(states[concurrent_state as usize], &[]);
+    builder.switch_to_block(states[concurrent_state as usize]);
 
     let finished = builder.create_block();
     // Poll incomplete children in source order. A completed join child is
@@ -1286,7 +1286,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         let one = builder.ins().iconst(types::I8, 1);
         store(builder, slots, &branch.done, one);
         builder.ins().jump(
-            if kind == ScopeKind::Race {
+            if kind == ConcurrentKind::Race {
                 finished
             } else {
                 after
@@ -1298,7 +1298,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     }
 
     let pending = builder.create_block();
-    if kind == ScopeKind::Join {
+    if kind == ConcurrentKind::Join {
         for branch in branches {
             let next = builder.create_block();
             let done = load(builder, slots, &branch.done);
@@ -1314,7 +1314,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     builder.switch_to_block(pending);
     let pending_status = builder.ins().iconst(types::I32, 1);
     builder.ins().return_(&[pending_status]);
-    // ScopeFinish releases children after the caller registers the result.
+    // ConcurrentFinish releases children after the caller registers the result.
     // No source continuation can run between these two IR operations.
     builder.switch_to_block(finished);
 }
@@ -1649,7 +1649,7 @@ fn lower_ops(
                         builder,
                         place
                             .as_ref()
-                            .unwrap_or(&value.scalars().find(|s| s.ty.is_buffer()).unwrap()),
+                            .unwrap_or(&value.scalars().find(|s| s.ty.is_owner_lane()).unwrap()),
                     );
                     if place.is_some() {
                         let size = builder
@@ -1667,7 +1667,7 @@ fn lower_ops(
                 BufferOp::Borrow { dst, src, place } => {
                     let source = place
                         .clone()
-                        .unwrap_or_else(|| src.scalars().find(|s| s.ty.is_buffer()).unwrap());
+                        .unwrap_or_else(|| src.scalars().find(|s| s.ty.is_owner_lane()).unwrap());
                     let value = slots.read(builder, &source);
                     slots.write(builder, dst, value);
                 }
@@ -1686,7 +1686,7 @@ fn lower_ops(
                     for (dst, src) in dst.scalars().zip(src.scalars()) {
                         let value = slots.read(builder, &src);
                         slots.write(builder, &dst, value);
-                        if dst.index != src.index && src.ty.is_buffer() {
+                        if dst.index != src.index && src.ty.is_owner_lane() {
                             let empty = builder.ins().iconst(ptr_ty, 0);
                             slots.write(builder, &src, empty);
                         }
@@ -1744,7 +1744,7 @@ fn lower_ops(
                             pointer,
                             (base + offset) as i32,
                         );
-                        if src.ty.is_buffer() {
+                        if src.ty.is_owner_lane() {
                             let empty = builder.ins().iconst(ptr_ty, 0);
                             slots.write(builder, &src, empty);
                         }
@@ -2271,7 +2271,7 @@ fn lower_ops(
                 };
                 slots.write(builder, dst, value);
             }
-            Op::Scope {
+            Op::Concurrent {
                 result,
                 kind,
                 branches,
@@ -2284,20 +2284,20 @@ fn lower_ops(
                     ..
                 } = mode
                 else {
-                    unreachable!("scope is only valid in suspending functions")
+                    unreachable!("concurrent combination is only valid in suspending functions")
                 };
                 let SlotAccess::Frames { slots } = &*slots else {
-                    unreachable!("scope branches address frame memory")
+                    unreachable!("concurrent branches address frame memory")
                 };
-                lower_scope(
+                lower_concurrent(
                     builder,
-                    ScopeContext {
+                    ConcurrentContext {
                         plan,
                         mode,
                         result: result.as_ref(),
                         kind: *kind,
                         branches,
-                        scope_state: *state,
+                        concurrent_state: *state,
                         functions,
                         refs,
                         ptr_ty,
@@ -2308,8 +2308,8 @@ fn lower_ops(
                     },
                 );
             }
-            Op::ScopeFinish => {
-                let frame = mode.frame().expect("structured scope requires CPS");
+            Op::ConcurrentFinish => {
+                let frame = mode.frame().expect("concurrent combination requires CPS");
                 builder
                     .ins()
                     .call(refs["__joky_cps_release_children"], &[frame]);
@@ -2729,7 +2729,7 @@ fn lower_direct(
         }
         if let Some(cleanup) = cleanup {
             if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_owner()) {
-                let owner = result.scalars().find(|s| s.ty.is_buffer()).unwrap();
+                let owner = result.scalars().find(|s| s.ty.is_owner_lane()).unwrap();
                 let index = builder.ins().iconst(ptr_ty, owner.index as i64);
                 builder
                     .ins()

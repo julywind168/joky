@@ -191,10 +191,10 @@ P-key 在 M4b 发布泛型 Map 之前完成。两者不阻塞 M1。
 
 下表保留 M0 验证时的结果；相应缺口现由 M1、P-error 和 P-key 补齐。
 当时的 Storage 探针只验证表示，不进行哈希寻址；正式实现完成后已删除这层重复测试。
-当前回归直接覆盖 [Array 替换](../src/vm/array_replace_tests.rs)、
-[标准 key 协议](../src/vm/key_protocol_tests.rs)、
-[生产 Map 的类型与布局](../src/vm/generic_map_tests.rs)、
-[拥有值清理](../src/vm/owned_map_tests.rs)、[借用](../src/vm/map_borrowing_tests.rs)与
+当前回归直接覆盖 [Array 替换](../src/vm/tests/containers/array_replace_tests.rs)、
+[标准 key 协议](../src/vm/tests/containers/key_protocol_tests.rs)、
+[生产 Map 的类型与布局](../src/vm/tests/containers/generic_map_tests.rs)、
+[拥有值清理](../src/vm/tests/containers/owned_map_tests.rs)、[借用](../src/vm/tests/containers/map_borrowing_tests.rs)与
 [三后端 CLI](../tests/cli.rs)。
 
 | 检查 | 结果 |
@@ -262,7 +262,7 @@ Map 未命中借用使用 `Map key not found`；容量算术或布局上限失�
 
 P-error 验收（2026-10-02）：已提供编译器绑定的 `joky/check.assert(Bool, String)`。
 最小缺口由 M0 的 UnknownName 复现证明；实现采用通用 IR 检查，不依赖 Map 或宿主注册。
-[行为用例](../tests/fixtures/checked_failure.jk)、[VM 测试](../src/vm/checked_failure_tests.rs)
+[行为用例](../tests/fixtures/checked_failure.jk)、[VM 测试](../src/vm/tests/language/checked_failure_tests.rs)
 与 CLI 三后端测试覆盖成功、终止失败、顺序求值、参数求值失败、直接/别名/跨模块及函数值调用、
 嵌入/CPS 调用、析构失败和首错保留；消息在 VM 释放后仍有效，所有 arena 存储回收。
 直接调用定位到源码调用处，函数值调用定位到绑定定义；保留后端已有轨迹能力。
@@ -304,7 +304,7 @@ M0 完成的是验证、契约冻结和前置任务界定；两个前置机制�
 已加入 `array.replace` / `Array.replace`，复用交换、take_last、push，不增加底层机制。
 [行为用例](../tests/fixtures/array_replace.jk)覆盖空/单项/首中末/越界/UInt64.MAX、
 Unit、对齐记录、共享引用与拥有型资源；三后端核对输出及 Drop 事件。
-[VM 测试](../src/vm/array_replace_tests.rs)逐指令取消、扫描分配预算、禁止后续分配、
+[VM 测试](../src/vm/tests/containers/array_replace_tests.rs)逐指令取消、扫描分配预算、禁止后续分配、
 检查所有已构造资源恰好一次清理与 arena 全部回收；借用冲突及消费后使用继续拒绝。
 替换契约由正式 Array API 的专项测试维护，不再保留 M0 探针包装。
 `./scripts/check.sh --quick` 与 `./scripts/check.sh` 均通过（Debug/Release 与基准正确性）。
@@ -331,11 +331,11 @@ Rust Map 只用于测试对照，不能成为 Joky Map 的实现。
 M2 提交的内部 `joky/internal/int_map` 原型实现了本阶段核心接口（不作长期公开 API）。
 该算法现迁入 [统一源码](../src/stdlib/map.jk)，不保留重复原型；实现仅组合 Array；桶/载荷分离、有界探测、
 缓存哈希重建、删除末项修正与受检容量算术均在 Joky 中实现。
-[用例](../tests/fixtures/int_map.jk)与 [VM 测试](../src/vm/int_map_tests.rs)覆盖整数边界、
+[用例](../tests/fixtures/int_map.jk)与 [VM 测试](../src/vm/tests/containers/int_map_tests.rs)覆盖整数边界、
 首中尾碰撞删除、环绕、删除标记复用、全删重插、反复替换、多次扩容、同容量重建、
 reserve(0)、非 2 的幂布局上限、加法/倍增上限与失败诊断。
 固定种子模型验证已收敛到 [Map 独立模型](../tests/fixtures/map_stress_oracle.rs)与
-[生产 Map 状态及所有权测试](../src/vm/map_stress_tests.rs)：每步比较返回值、长度、内容与
+[生产 Map 状态及所有权测试](../src/vm/tests/containers/map_stress_tests.rs)：每步比较返回值、长度、内容与
 资源账本，并检查双向桶索引；CLI 继续核对三后端的基础、碰撞、容量边界及失败诊断。
 禁止后续 arena 分配时，空查询、Copy 替换和 reserve 后 20 次新增仍成功。
 小栈解析问题通过浅层源码 helper 拆分解决，既有 256 KiB 栈测试继续通过，未增加底层机制。
@@ -362,7 +362,7 @@ reserve(0)、非 2 的幂布局上限、加法/倍增上限与失败诊断。
 [拥有型用例](../tests/fixtures/owned_map.jk)覆盖嵌套 Array、多拥有字段资源、
 拥有型 Option/元组、返回/移动/显式释放、clear 保留容量与重新插入。
 替换和删除返回的旧值可在 Map 释放后继续读取；资源事件证明重建不触发 value Drop。
-[VM 故障测试](../src/vm/owned_map_tests.rs)扫描分配预算（含迁移峰值失败）、
+[VM 故障测试](../src/vm/tests/containers/owned_map_tests.rs)扫描分配预算（含迁移峰值失败）、
 逐指令取消、执行指令预算耗尽、重载后旧任务继续/取消，检查已创建 ID 恰好清理一次与 arena 全回收。
 CLI 三后端核对正常操作、Drop 失败、旧值消费时 Drop 失败和普通运行时失败的清理输出。
 clear/release 后可连续复用分配预算；Copy get、重复使用已消费拥有者仍拒绝。
@@ -388,7 +388,7 @@ quick 与完整检查（含 Debug/Release、基准正确性）均通过；原型
 
 已发布按值 `joky/eq.Eq`、`joky/hash.Hash` 和六种基础实现。
 [协议用例](../tests/fixtures/key_protocols.jk)在三后端核对冻结向量；
-[VM/原生测试](../src/vm/key_protocol_tests.rs)验证别名、跨模块、条件 impl、
+[VM/原生测试](../src/vm/tests/containers/key_protocol_tests.rs)验证别名、跨模块、条件 impl、
 泛型体约束、固定 trait 选择和错误签名诊断。真实资格检查仍由 P-key 提供。
 可信源码容器改为显式 pub 导出，Array/Element/Slice 的既有接口保持公开；
 最小私有 helper 回归在旧行为下失败，修正后内部调用可执行、外部访问拒绝。
@@ -401,7 +401,7 @@ insert/remove、reserve/clear/release；模块函数与方法共用 [唯一 Joky
 内部 IntMap 源码与模块注册已移除。构造/写入以 P-key 的真实分类限制 K，
 生命周期操作不要求 Eq/Hash，查找/修改使用普通静态协议；没有 Map 专用运行时 ABI。
 
-[泛型用例](../tests/fixtures/generic_map.jk)与 [诊断/布局/模块测试](../src/vm/generic_map_tests.rs)
+[泛型用例](../tests/fixtures/generic_map.jk)与 [诊断/布局/模块测试](../src/vm/tests/containers/generic_map_tests.rs)
 覆盖六种基础 key、自定义记录/枚举、完全碰撞、Eq 相等的不同表示保留原 key、
 别名与跨模块条件 impl、固定 trait 选择、生命周期无协议约束，以及 Array<Map>、Map<Array>、Map<Map>。
 Hash/Eq 失败在修改前传播，传入和驻留拥有值均恰好清理；资源事件证明重建不调用用户协议。
@@ -437,7 +437,7 @@ Map 移动/释放后已复制出的普通共享引用仍按原契约有效，原
 通过 mem.replace 取回旧拥有值、最后使用后恢复修改权限，以及 Map 返回/移动/释放后的引用读取。
 共享引用与含引用 Copy 记录/Option/元组沿用现有 contents/retained 分析，无需放宽所有权或引用规则。
 
-[VM 验证](../src/vm/map_borrowing_tests.rs)与[跨模块 helper](../tests/fixtures/map_views_library.jk)
+[VM 验证](../src/vm/tests/containers/map_borrowing_tests.rs)与[跨模块 helper](../tests/fixtures/map_views_library.jk)
 覆盖泛型、别名、跨模块返回视图与复制内容；三后端拒绝冲突视图、不同 key 的同时独占借用、
 栈引用写入、移动后使用、局部视图逃逸、视图聚合、宿主 ABI 和语言挂起。
 普通共享引用复制出来后不依赖 Map 存储，原来源的任务期冲突修改仍被拒绝。
@@ -479,7 +479,7 @@ from_entries/extend 的模块函数与方法。切片复用 Array 的完整范�
 失败按终止性错误清理 Map、当前拥有临时量及尚未处理的输入，未增加编译器机制或运行时 ABI。
 导出循环展开嵌套表达式后，既有 256 KiB 小栈加载/执行回归保持通过，无需放宽测试限制。
 
-[遍历与批量测试](../src/vm/map_iteration_tests.rs)及[语言用例](../tests/fixtures/map_iteration.jk)
+[遍历与批量测试](../src/vm/tests/containers/map_iteration_tests.rs)及[语言用例](../tests/fixtures/map_iteration.jk)
 覆盖空/单项/多项、只读和独占切片、完全碰撞与重复 key、Copy/拥有型/共享引用 value，
 并拒绝修改 key、冲突借用、局部视图逃逸和消费后复用。资源导出后继续使用，
 跨模块别名和泛型 helper 保持实际内容来源；反复 pop、重建和重用逐次检查双向索引。
@@ -519,7 +519,7 @@ O(b + n²)，其中 b 为目标桶数。紧凑载荷遍历 O(n)，clear 还需 O
 [Rust BTreeMap 参照与资源账本](../tests/fixtures/map_stress_oracle.rs)另逐步核对操作结果、长度、
 内容摘要和存活资源 ID 集合，不依赖 Map 的内部排列或析构顺序。
 
-[VM 测试](../src/vm/map_stress_tests.rs)在 JIT/解释器的全部长序列中检查私有双向索引及删除计数；
+[VM 测试](../src/vm/tests/containers/map_stress_tests.rs)在 JIT/解释器的全部长序列中检查私有双向索引及删除计数；
 AOT 另执行同定义域的 320 步索引验证。[CLI 测试](../tests/cli.rs)在独立 AOT 程序上运行相同
 六组公共行为与资源账本；仅测试专有索引断言由 VM 测试注册表提供，生产标准库没有测试导出。
 512 KiB 预算下连续六次 512 步调用均完整清理，LIVE 归零；

@@ -114,7 +114,7 @@ impl FunctionPlan {
         for (index, lane) in lanes.iter().cloned().enumerate() {
             let bits = self.slot(Type::UInt64)?;
             if packing {
-                if lane.ty.is_buffer() {
+                if lane.ty.is_owner_lane() {
                     self.emit(Op::Literal(bits.clone(), Constant::UInt64(0)));
                 } else {
                     self.emit(Op::DomainBits {
@@ -129,7 +129,7 @@ impl FunctionPlan {
                     args: vec![packet.clone(), bits],
                     dst: None,
                 }));
-            } else if lane.ty.is_buffer() {
+            } else if lane.ty.is_owner_lane() {
                 self.emit(Op::Literal(lane, Constant::UInt64(0)));
             } else {
                 let at = self.slot(Type::UInt64)?;
@@ -150,7 +150,7 @@ impl FunctionPlan {
         for (index, lane) in lanes
             .into_iter()
             .enumerate()
-            .filter(|(_, lane)| lane.ty.is_buffer())
+            .filter(|(_, lane)| lane.ty.is_owner_lane())
         {
             self.emit(Op::DomainOwner {
                 owner: super::domain_schema::freeze(self, &lane.ty)?,

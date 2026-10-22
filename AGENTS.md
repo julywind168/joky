@@ -76,6 +76,8 @@ full 与 quick 运行相同的 Debug 检查，不必在同一版本上依次重�
 
 ## 文档分工
 
+文档导航见 docs/README.md；当前参考与历史阶段记录按索引区分。
+
 入门与能力表看 README.md；实现语法与内置模块看 docs/language.md；语法设计与
 阶段目标看 docs/syntax.md；架构边界与 ABI 不变量看 docs/architecture.md；
 字节码设计看 docs/interpreter.md；历史性能数据归 docs/interpreter-performance.md。

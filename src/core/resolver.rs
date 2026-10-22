@@ -625,7 +625,7 @@ fn resolve_calls(
             elements: exprs, ..
         }
         | Expr::Sequence { exprs, .. }
-        | Expr::Scope {
+        | Expr::Concurrent {
             branches: exprs, ..
         } => {
             for expr in exprs {

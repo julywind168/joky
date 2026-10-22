@@ -1305,7 +1305,7 @@ pub(crate) fn resolve_pattern_heads(
                 | Expr::Sequence {
                     exprs: elements, ..
                 }
-                | Expr::Scope {
+                | Expr::Concurrent {
                     branches: elements, ..
                 } => pending.extend(elements.iter_mut()),
                 Expr::If {
@@ -1509,7 +1509,7 @@ pub(crate) fn map_syntax(
         | Expr::Block { exprs, .. }
         | Expr::Graph { exprs, .. }
         | Expr::Sequence { exprs, .. }
-        | Expr::Scope {
+        | Expr::Concurrent {
             branches: exprs, ..
         } => {
             for expr in exprs {

@@ -15,7 +15,7 @@
 
 ## 类型与函数
 
-类型包括 `Int32`、`Int64`、`UInt8`、`UInt32`、`UInt64`、Unicode 标量 `Rune`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组、同步数组 `Array<T>`、无序字典 `Map<K, V>` 、注册过的宿主 opaque 类型和非 Copy 外部资源类型。
+类型包括 `Int8` / `Int16` / `Int32` / `Int64`、`UInt8` / `UInt16` / `UInt32` / `UInt64`、`Float32` / `Float64`、Unicode 标量 `Rune`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组、动态数组 `Array<T>`、无序字典 `Map<K, V>` 、注册过的宿主 opaque 类型和非 Copy 外部资源类型。
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
@@ -218,7 +218,7 @@ fn run() -> Int32 {
 目标地址先求值并保留，再完整求值新值；借用检查通过后才交换内容，交换本身不调用 Drop。
 返回的旧值归调用方所有，新值由原存储负责清理。旧值最后使用后可移动或释放原容器，
 但仍存活的目标载荷借用会阻止替换。两侧类型必须相同，类型由引用目标推导，也支持 `mem.replace::<T>` / `mem.swap::<T>` 显式类型参数。
-拥有型替换继续限同步使用；arena Copy 值可在挂起函数中替换。
+拥有型替换可以在挂起函数中使用，目标仍须满足借用与稳定存储规则；arena Copy 值也可在挂起函数中替换。
 
 ```joky
 import joky/mem
@@ -245,7 +245,7 @@ Copy 局部记录的不同字段可以分别借用后交换；拥有记录字段
 完整表达式后的换行会分隔下一表达式，因此 `let p = &mut value` 后可直接换行写 `*p = 42`。
 旧的 `memory.read/write/replace` 和全局 `share` 内建已删除，没有兼容入口。
 
-- 分配目标支持四种整数、Bool、Unit、Ptr，以及含这些值和共享引用字段的 Copy 记录、枚举和元组。
+- 分配目标支持八种定宽整数、Float32 / Float64、Rune、Bool、Unit、Ptr，以及含这些值和共享引用字段的 Copy 记录、枚举和元组。
   暂不允许 String、opaque 句柄、独占引用字段或直接分配引用本身；零大小对象也有独立分配身份。
 - `let` / `var` 控制绑定是否可重新赋值，与所指对象是否可写分开。
   `let p = alloc(...)` 可以修改对象；`p = other` 表示替换绑定，要求 var。
@@ -260,14 +260,14 @@ Copy 局部记录的不同字段可以分别借用后交换；拥有记录字段
   循环重复执行同一分配点可能保守合并来源；分析超出预算会报编译错误。
 - 可定义 `type View = &Point` 或 `fn read<T: Copy>(p: &T) -> T`。
   普通 `&T` 可以作为 Copy 类型实参、元组元素、记录字段或枚举载荷；`&mut T` 不可以。
-  数组视图 `&Array<Int32>` 另有不可存储限制，见[数值动态数组](#数值动态数组)。
+  数组视图 `&Array<Int32>` 另有不可存储限制，见[动态数组](#动态数组)。
   仍不支持引用到引用，如 `&&T` 或 `&mut &T`。
 - 带引用参数或返回值（含聚合内引用）的函数只作为 Joky 内部 helper，允许跨源码模块调用；不导出为
   Rust VM / C 任务入口。旧宿主注册及原生回调不接受这些引用，宿主引用结果仍不开放；
   同步 C 引用输入和挂起宿主引用输入分别通过独立 FFI 契约开放。
 - 同步及 `@suspends` 函数都可分配、读写、传递和返回 arena 引用，
   包括带共享引用的 Copy 聚合和已封存图。挂起只保留对象，不解除已有借用限制。
-  `parallel` 分支可以接收受检任务 arena 引用，共享读取同一对象或独占访问不同对象；显式 arena 与同步局部借用见下节；同步 C 和异步宿主借用接口见前节。
+  `parallel` 分支可以接收受检任务 arena 引用，共享读取同一对象或独占访问不同对象；显式 arena 与局部值借用见下节；同步 C 和异步宿主借用接口见前节。
 - 根任务正常结束、提前返回、运行时失败、取消或 continuation 丢弃时释放全部对象；
   Pending、内部 helper 返回、分支/parallel 完成及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
   当前每次分配使用独立稳定存储，尚未做分块优化。每根任务固定 64 MiB 计费预算，
@@ -316,9 +316,9 @@ fn run() -> Int32 {
 显式分配不改变 `alloc(value)` 的目标，也不会把 helper 内的 String、Array 等分配重定向到该 arena。
 三后端共享用例见 [explicit_arena.jk](../tests/fixtures/explicit_arena.jk)。
 
-### 同步局部借用
+### 局部值借用
 
-函数可以在同步调用中直接借用局部值，把修改结果留在原变量中，不需要先调用 `alloc`：
+函数可以直接借用局部值，把修改结果留在原变量中，不需要先调用 `alloc`：
 
 ```joky
 struct Point { x: Int32 }
@@ -347,7 +347,7 @@ fn run() -> Int32 {
   借用得到的引用仍可通过字段访问及 *p / *p = next 操作，不增加引用算术。
 - `@suspends` 函数中的 Copy 局部引用可跨挂起调用、parallel/race、branch 注册和 scope join，
   也可传给满足不保留借用契约的挂起函数或受检异步 FFI。借用期间原位置保持稳定，
-  原绑定必须活到调用完成或取消，冲突访问仍被拒绝。统一规则见下文[跨挂起借用](#挂起函数中的拥有值借用)。
+  原绑定必须活到调用完成或取消，冲突访问仍被拒绝。统一规则见下文[跨挂起借用](#跨挂起借用)。
 - 局部存储由函数调用拥有，原生同步函数使用稳定栈位置，挂起函数使用 CPS 帧的固定存储，
   解释器使用独立的帧属存储，内部时间片暂停也保持有效。循环再次进入
   同一声明时重新初始化并复用存储，不累积任务 arena 分配。每个具体函数的被借用存储保守限额为
@@ -474,9 +474,9 @@ fn run() -> Int32 {
   不允许独占引用字段或可变循环图。直接内联递归布局仍拒绝。
 
 示例见 [arena_graphs.jk](../examples/arena_graphs.jk)，三后端均输出 42、42。
-同步可变双向链表见下一节；共享只读对象图仍使用上述引用规则和 graph 构造契约。
+可变双向链表见下一节；共享只读对象图仍使用上述引用规则和 graph 构造契约。
 
-## 同步可变 List
+## 可变 List
 
 显式导入 `joky/list as lists.{type List}` 使用 `List<T>`；未加入默认 prelude。
 容器是非 Copy 拥有者，作用域退出自动清理，也可消费式 release。方法和模块函数共用
@@ -529,7 +529,7 @@ append 的节点转移次数对源元素数量线性；扩容还可能搬迁目�
 示例见 [lists.jk](../examples/lists.jk)，三后端输出 last、0、last、before、extra、tail。
 阶段证据见 [L1–L4 验收记录](list-set-storage-ownership.md#52-l1l4-验收记录)。
 
-## 同步无序 Set
+## 无序 Set
 
 显式导入 `joky/set as sets.{type Set}`；未加入默认 prelude。Set 是非 Copy 拥有者，
 由私有 `Map<T, Unit>` 保存元素；模块函数和方法共用 [set.jk](../src/stdlib/set.jk) 的算法。
@@ -573,7 +573,7 @@ Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、�
 示例见 [sets.jk](../examples/sets.jk)，三后端输出 2、true、3、true、true、3；
 验证范围见 [S1–S3 与联合验收记录](list-set-storage-ownership.md#53-s1s3-与-ls1-验收记录)。
 
-## 同步无序 Map
+## 无序 Map
 
 显式导入 `joky/map as maps.{type Map}` 使用 `Map<K, V>`；容器是非 Copy 拥有者，
 作用域退出自动清理，也可消费式 `release`。实现全部在 [map.jk](../src/stdlib/map.jk)，
@@ -796,10 +796,10 @@ let item = &mut values[0]
 完整行为和清理回归见 [indexing.jk](../tests/fixtures/indexing.jk) 与
 [indexing_cleanup.jk](../tests/fixtures/indexing_cleanup.jk)。
 
-## 数值动态数组
+## 动态数组
 
-显式导入 `joky/array` 后可使用 `Array<T>`。元素支持四种整数、Bool、Unit、Ptr，
-普通共享引用，以及由这些类型组成的 Copy 记录、元组和枚举；另支持下述拥有型记录元素；
+显式导入 `joky/array` 后可使用 `Array<T>`。元素支持八种定宽整数、Float32 / Float64、Rune、Bool、Unit、Ptr，
+普通共享引用，以及由这些类型组成的 Copy 记录、元组和枚举；还支持 String 与递归无引用的拥有型聚合和嵌套容器；
 长度、容量和索引为 UInt64；方法调用和下标访问均不需要 unsafe 指针操作。
 数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
 构造函数写 `Array.new::<T>()` / `Array.with_capacity::<T>(n)`，实例支持 `values.push(x)`、`values.get(i)` 等方法。
@@ -1962,7 +1962,7 @@ fn example() -> Bool {
 实现方法继承 trait 声明，允许实现参数改名；递归调用也必须通过函数体检查。
 函数类型可用 `fn(&T) @noescape -> R` 保留全部参数不逃逸的契约，详见函数值章节。
 因此 `fn inspect<T: Eq>(x: T) { x.eq(&x); }` 不能把局部借用交给未知实现；可改为接收引用参数，
-由具体调用处检查存储条件，或使用 arena 对象。单态化后根据实际方法体计算效果，纯实现仍可接受同步局部借用，
+由具体调用处检查存储条件，或使用 arena 对象。单态化后根据实际方法体计算效果，纯实现仍可接受局部值借用，
 释放操作仍区分 `needs_arena` 与真正分配的 `uses_arena`。
 点调用也保留现有局部借用限制：不借用临时值、不直接借用经 arena 引用解引用后的内联字段。
 
@@ -2653,7 +2653,7 @@ fn example() -> Int32 {
 移动、替换或扩容所属容器。拥有树可跨普通 CPS 挂起，取消与失败均释放完整初始化前缀。
 清理按迭代遍历释放子缓冲区，不因树深度增长原生调用栈，也不需要分配清理工作栈；
 其状态计入缓冲区控制块预算。用户 Drop 主动创建或释放其他拥有者造成的析构重入仍受既有 32 层限制。
-实际行为及拒绝边界见 [JSON1a 递归拥有树探针](../tests/fixtures/json1a_recursive.jk)。
+实际行为及拒绝边界见 [JSON1a 递归拥有树探针](../tests/fixtures/json_recursive_owners.jk)。
 
 
 ## 元组与解构绑定
@@ -2683,7 +2683,7 @@ fn answer() -> Int32 {
   解构消费整个元组，将每个名称对应的拥有型子树转移到独立绑定；忽略项在解构结束时清理。
   元组本身没有自定义 Drop；成员记录的 Drop 及嵌套拥有者按元素声明顺序清理。
   引用不允许从借用元组中解构出拥有者。无引用拥有型元组及其完整对象视图支持挂起调用，
-  仍须满足[拥有值借用](#挂起函数中的拥有值借用)规则；可作为引用自由的 Array 元素。
+  仍须满足[拥有值借用](#跨挂起借用)规则；可作为引用自由的 Array 元素。
   消费式解构后的独立拥有绑定可以分别参与并行可变借用，包括函数或 Result 返回的元组。
   解构前必须结束源的活跃借用；同一拥有者的别名冲突、视图逃逸及容器内容引用的约束保持有效。
 - `let (x, y) = pair` / `var (x, y) = pair` 只接受不可失败的模式：名称、`_`、元组及嵌套组合。
@@ -4667,7 +4667,7 @@ fn greeting(name: &String) -> String {
 解释器时间片可能中途暂停同步 helper，取消仍清理当前已初始化的字节。
 无引用拥有聚合的 CPS 存储、转移和清理见[网络基础阶段](network-runtime.md#6-net1a-分步实施)。
 
-## 挂起函数中的拥有值借用
+## 跨挂起借用
 
 跨挂起借用统一按存储、生命周期和访问权限检查。支持无引用 Copy 局部值及其字段、
 完整存储树无引用的拥有值，以及这些容器的元素、Element 和 Slice 视图。
@@ -5070,7 +5070,7 @@ NumberError 的公开字段为 kind、offset；offset 是零基文本字节位�
 kind 包括 InvalidSyntax（首个错误字节或 EOF）、NotInteger（小数点/指数标记）、
 OutOfRange（首个使整数超范围的数字，UInt64 负号或浮点溢出为 0）、NonFinite（0）、NumberLimit（1024）。
 语法/范围错误是可恢复 Result；内存或执行预算不足沿用终止性运行时错误。
-行为样例见 [三后端验收 fixture](../tests/fixtures/json1b_values.jk)。
+行为样例见 [三后端验收 fixture](../tests/fixtures/json_values.jk)。
 
 ### JSON 解码
 
@@ -5114,7 +5114,7 @@ StringLimit 指向使解码后长度超限的标量或转义起始处，数字/�
 
 语法和限额错误不返回部分树；内存或执行预算不足仍为终止性运行时错误。
 限额不等于实际总内存预算，也不保证同步调用的帧耗时；JIT/AOT 同步 helper 不主动让出。
-公开用法及边界样例见 [解码 fixture](../tests/fixtures/json2a_decode.jk)。
+公开用法及边界样例见 [解码 fixture](../tests/fixtures/json_decode.jk)。
 
 ### JSON 编码
 
@@ -5138,7 +5138,7 @@ Limits 的硬上限和计数方式同上；编码忽略 max_input_bytes，解码
 失败清理本次输出及索引栈；内存或执行预算不足仍为终止性运行时错误。
 编码不存借用到拥有容器，也不按树深度递归；每步重新借用索引路径上的节点，最多遍历 128 层祖先。
 同步接口不主动让出，JSON 上限不保证帧耗时。TCP 载荷仍需单独满足 write_message 的限额。
-样例见 [编码 fixture](../tests/fixtures/json2b_encode.jk)与 [独立语义往返模型](../tests/fixtures/json2a_model.jk)。
+样例见 [编码 fixture](../tests/fixtures/json_encode.jk)与 [独立语义往返模型](../tests/fixtures/json_model.jk)。
 
 ### Struct 与类型化 JSON
 

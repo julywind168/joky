@@ -34,7 +34,7 @@ impl Op {
     pub(crate) fn cleanups(&self) -> impl Iterator<Item = &CleanupOp> {
         let (own, branches) = match self {
             Op::Cleanup(cleanup) => (Some(cleanup), &[][..]),
-            Op::Scope { branches, .. } => (None, branches.as_slice()),
+            Op::Concurrent { branches, .. } => (None, branches.as_slice()),
             _ => (None, &[][..]),
         };
         own.into_iter()
@@ -44,7 +44,7 @@ impl Op {
     fn cleanups_mut(&mut self) -> impl Iterator<Item = &mut CleanupOp> {
         let (own, branches) = match self {
             Op::Cleanup(cleanup) => (Some(cleanup), &mut [][..]),
-            Op::Scope { branches, .. } => (None, branches.as_mut_slice()),
+            Op::Concurrent { branches, .. } => (None, branches.as_mut_slice()),
             _ => (None, &mut [][..]),
         };
         own.into_iter()
@@ -129,7 +129,7 @@ impl FunctionPlan {
                         true
                     }
                     Op::Buffer(BufferOp::Move { .. } | BufferOp::End(_)) | Op::Place(_) => true,
-                    Op::Buffer(BufferOp::Storage { dst: Some(dst), .. }) => dst.ty.is_buffer(),
+                    Op::Buffer(BufferOp::Storage { dst: Some(dst), .. }) => dst.ty.is_owner_lane(),
                     _ => false,
                 }
         })
@@ -269,7 +269,7 @@ impl FunctionPlan {
                                 type_error(&span, ErrorCode::ResourceLimit, error.to_string())
                             })?
                             .into_iter()
-                            .filter(|(_, ty)| ty.is_buffer())
+                            .filter(|(_, ty)| ty.is_owner_lane())
                             .map(|(offset, _)| offset)
                             .collect()
                     },
@@ -291,7 +291,7 @@ impl FunctionPlan {
         let mut before = 0;
         let mut work = vec![(ty, 0, Vec::new())];
         while let Some((ty, offset, guards)) = work.pop() {
-            if ty.is_buffer() {
+            if ty.is_owner_lane() {
                 before += 1;
                 continue;
             }

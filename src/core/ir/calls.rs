@@ -469,7 +469,7 @@ impl FunctionPlan {
 }
 
 impl FunctionPlan {
-    pub(super) fn scope_expr(
+    pub(super) fn concurrent_expr(
         &mut self,
         expr: &Expr,
         vars: &mut HashMap<String, Binding>,
@@ -477,7 +477,7 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
-        let Expr::Scope {
+        let Expr::Concurrent {
             kind,
             branches,
             span,
@@ -603,7 +603,7 @@ impl FunctionPlan {
                     format!("{keyword} results must not contain references or function values"),
                 ));
             }
-            if *kind == ScopeKind::Race {
+            if *kind == ConcurrentKind::Race {
                 if let Some(expected) = &result_type {
                     if expected != &ret {
                         return Err(type_error(branch_span, ErrorCode::TypeMismatch,
@@ -631,7 +631,7 @@ impl FunctionPlan {
                 return Ok(Flow::Diverged);
             };
             let done = self.slot(Type::Bool)?;
-            let result = if *kind == ScopeKind::Join && ret != Type::Unit {
+            let result = if *kind == ConcurrentKind::Join && ret != Type::Unit {
                 Some(self.slot(ret)?)
             } else {
                 None
@@ -646,7 +646,7 @@ impl FunctionPlan {
                         hooks: vec![],
                         elements: vec![],
                     });
-            planned.push(ScopeBranch {
+            planned.push(ConcurrentBranch {
                 result,
                 cleanup,
                 indirect,
@@ -662,14 +662,14 @@ impl FunctionPlan {
             _ => None,
         };
         let values: Vec<_> = planned.iter().map(|b| b.result.clone()).collect();
-        self.emit(Op::Scope {
+        self.emit(Op::Concurrent {
             result: result.clone(),
             kind: *kind,
             branches: planned,
             state,
         });
-        self.emit(Op::ScopeFinish);
-        if *kind == ScopeKind::Join && values.iter().any(Option::is_some) {
+        self.emit(Op::ConcurrentFinish);
+        if *kind == ConcurrentKind::Join && values.iter().any(Option::is_some) {
             self.tuple_values(values, types, *span)
         } else {
             Ok(Flow::Value(result))

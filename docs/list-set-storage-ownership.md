@@ -2,7 +2,7 @@
 
 状态：LS0、List L1–L4、Set S1–S3 与 LS1 联合开发验收已完成。LS0 起点为 `e75787e`。
 本文将同步可变链表 `List<T>` 与无序哈希集合 `Set<T>` 纳入同一轮容器开发；
-LS0 已冻结首版接口、表示和类型准入；List 和 Set 已实现，公开用法见 [List](language.md#同步可变-list) 与 [Set](language.md#同步无序-set)。
+LS0 已冻结首版接口、表示和类型准入；List 和 Set 已实现，公开用法见 [List](language.md#可变-list) 与 [Set](language.md#无序-set)。
 
 首版以现有 Array、Map、拥有型记录、借用和 Drop 为基础，容器算法用 Joky 源码实现。
 不新增容器关键字，不要求先实现 Box、Rc、通用迭代器或独占引用字段。
@@ -275,7 +275,7 @@ List 与 Set 的后续生产覆盖见下节。
 | L4 | from_array、extend、into_array、append 按逻辑顺序移动拥有值；源 List 清空且保留容量；[lists.jk](../examples/lists.jk) 和跨文件别名程序在三种 CLI 后端运行；公开接口及复杂度归入 language.md |
 
 行为与资源 fixture 见 [list.jk](../tests/fixtures/list.jk)，VM 测试见
-[list_tests.rs](../src/vm/list_tests.rs)，独立原生程序见
+[list_tests.rs](../src/vm/tests/containers/list_tests.rs)，独立原生程序见
 [lists.rs](../src/backends/aot/tests/lists.rs)。19 个行为/失败入口在 JIT、解释器与 AOT 执行；
 默认顺序模型在两种 VM 后端及 AOT 使用两个种子、各 256 步，逐步检查完整序列和内部不变量。
 负例覆盖直接 API 及用户模块包装；正例和 CLI 示例关闭 prelude，使用显式导入。
@@ -308,7 +308,7 @@ List 与 Set 的后续生产覆盖见下节。
 | LS1 | List/Set 文档与三后端 CLI 示例、默认 Debug 回归、相关 Debug 穷举；LS0 重复原型已移除，graph 范围保持不变 |
 
 行为 fixture 见 [set.jk](../tests/fixtures/set.jk)，VM 与独立原生测试见
-[set_tests.rs](../src/vm/set_tests.rs)、[sets.rs](../src/backends/aot/tests/sets.rs)。
+[set_tests.rs](../src/vm/tests/containers/set_tests.rs)、[sets.rs](../src/backends/aot/tests/sets.rs)。
 24 个正常/失败入口在 JIT、解释器、AOT 执行，包含 Hash/Eq/Drop/容量失败、重复析构失败、
 批量和四种运算的 Eq 失败；每个拥有实例的析构事件单独核对。
 [跨模块包装](../tests/fixtures/set_views.jk)验证 noescape 查询、别名导入与借用右侧离开作用域后的结果。

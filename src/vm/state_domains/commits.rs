@@ -564,7 +564,7 @@ fn attach(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::{state_domain_tests::SOURCE, VmMode};
+    use crate::vm::{tests::state_domain_tests::SOURCE, VmMode};
 
     fn candidate(vm: &VmEngine, owner: &DomainOwner, value: i32) -> Candidate {
         construct(

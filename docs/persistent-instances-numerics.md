@@ -8,14 +8,14 @@
 INFINITY/NAN 常量）、N3 数值嵌入（extern 浮点与混合标量签名、`#repr(C)` 浮点
 字段与 C 引用（与真实 C 编译器逐项核对）、CPS 位槽、`joky_vm_call_float64_*`
 C API 与 `vm.call_float64_*` 绑定、独立 AOT 联编）。行为验证见
-`src/vm/float_tests.rs`、`src/vm/float_math_tests.rs`、
+`src/vm/tests/language/float_tests.rs`、`src/vm/tests/language/float_math_tests.rs`、
 `src/backends/aot/tests/floats.rs` 与 `tests/cli.rs` 的
 `float_literals_arithmetic_and_semantics_match_all_backends`、
 `float_math_checked_conversions_and_formatting_match_all_backends`、
 `float_hosts_and_vm_float_calls_match_all_backends`。
 N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用审计开放、
 窄整数边界以 I32 符号值传递、数组步长与 C 布局核对）验证见
-`src/vm/narrow_tests.rs`、`src/backends/aot/tests/narrow.rs`、
+`src/vm/tests/language/narrow_tests.rs`、`src/backends/aot/tests/narrow.rs`、
 `tests/fixtures/narrow_integers.jk` 与 `tests/cli.rs` 的
 `narrow_integers_match_all_backends_and_reject_bad_literals`。
 2026-10-05：P0 契约与受控转移探针、P1 简单实例已实现，见下方验收记录。
@@ -269,8 +269,8 @@ Failed 身份计入数量，资源已释放；关闭不回收 ID 序号。注册
 P2 还需实现拥有分配迁移时的 VM 总峰值预算；P1 没有新增全 VM 所有任务的内存限额。
 
 P0 曾使用仅在测试中编译的 `persistent_probe.rs` 验证以下边界。正式实现落地后，
-该手写转移模型已清理；当前回归见[拥有实例测试](../src/vm/instance_owner_tests.rs)
-和[容器实例测试](../src/vm/instance_container_tests.rs)。以下保留为历史验收记录：
+该手写转移模型已清理；当前回归见[拥有实例测试](../src/vm/tests/embedding/instance_owner_tests.rs)
+和[容器实例测试](../src/vm/tests/embedding/instance_container_tests.rs)。以下保留为历史验收记录：
 
 - 调用者显式给出一个 String 根的完整分配集合；控制块、载荷登记移动，地址不变。
   临时分配保留在原 arena 并独立销毁；转移成功后单独接管清理项。
@@ -286,7 +286,7 @@ P0 曾使用仅在测试中编译的 `persistent_probe.rs` 验证以下边界。
 元素描述转移、借用内联拥有字段、Map/StringBuilder 隐藏分配、完整峰值预算和生产故障注入
 仍须在 P2/P3 完成。不得把探针的手动分配集合用作不受检宿主 API。
 
-行为证据：[VM 实例测试](../src/vm/instance_tests.rs)覆盖两个后端的状态隔离、临时清理、
+行为证据：[VM 实例测试](../src/vm/tests/embedding/instance_tests.rs)覆盖两个后端的状态隔离、临时清理、
 全部标量位模式、嵌套布局、签名/隐藏引用拒绝、失败与预算、重入/延迟关闭、旧模块保活及反复销毁；
 [AOT 测试](../src/backends/aot/tests/instances.rs)通过真实 C 联编执行同一 fixture 的私有桥接，
 核对混合标量 ABI、根布局、失败出口和零大小记录。AOT 桥接是内部验证接口，不是公开实例 ABI。
@@ -317,7 +317,7 @@ P2 在原 Rust 实例 API 中开放 String、递归无引用 Array、嵌套记�
 关闭先失效 ID；根 Drop 报错仍清理嵌套字段。`InstanceCleanupReport` 可在 VM 析构后保留首错。
 旧模块的 Drop 和 Buffer 元素回调由根模块快照保活。
 
-行为证据：[拥有实例测试](../src/vm/instance_owner_tests.rs)覆盖百次替换的分配/计费稳定、
+行为证据：[拥有实例测试](../src/vm/tests/embedding/instance_owner_tests.rs)覆盖百次替换的分配/计费稳定、
 三层 Array、枚举活跃载荷替换、泛型和失败 Drop、VM 析构报告、重入/延迟关闭、三个转移故障点
 的入口/构造/出口责任、持久/峰值预算失败、分配边界及逐字节 Release 穷举。
 [AOT 测试](../src/backends/aot/tests/instances.rs)实际加载原生对象，共用测试进程的 Rust 运行时，
@@ -345,7 +345,7 @@ StringBuilder 的唯一拥有字段是私有字节 Array。扩容/rehash 的旧�
 递归拥有偏移与 Drop 描述继续随 Buffer 迁移。字段替换和移出 builder 后 finish 均沿用
 现有借用与移动检查；clear 保留预留容量，替换为空容器才退还这部分长期额度。
 
-行为证据：[容器实例测试](../src/vm/instance_container_tests.rs)及
+行为证据：[容器实例测试](../src/vm/tests/embedding/instance_container_tests.rs)及
 [共用 fixture](../tests/fixtures/persistent_containers.jk)覆盖 Map 的 String key/value、
 带 String/Drop 的记录 value、Array<Map<Int32, StringBuilder>>、独立 StringBuilder 根、
 UTF-8 追加、扩容、删除后再插入、元素替换与整字段重置。每轮状态归还到相同分配数及
@@ -397,7 +397,7 @@ Rust 1.97.1、Release，构造/编译不计时；检查与构建完成后单线�
   经同步适配器 `call_current_instance` 访问 checked State 入口，不持引用等待。
 - 关闭先使身份失效，再取消/stop 任务，最后清理 State；执行中关闭延迟到安全出口。
   任务失败关闭该实例任务组并使实例 Failed；迟到通知不会执行已取消任务。
-- 行为用例：`src/vm/executor_tests.rs` 覆盖无忙轮询、重复/跨线程/迟到唤醒、
+- 行为用例：`src/vm/tests/tasks/executor_tests.rs` 覆盖无忙轮询、重复/跨线程/迟到唤醒、
   可控时钟、FIFO 小预算、签名与根数限制、旧代码与双实例、执行中关闭、失败取消、stop 顺序。
   `tests/fixtures/host_executor.jk` 同时经 VM 与独立 Rust AOT 宿主执行，链接单份运行时。
 - 取消切片默认覆盖启动、状态访问和外部 Pending；逐指令版本为

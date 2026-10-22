@@ -14,7 +14,7 @@ fn limited() -> Error {
     )
 }
 pub(crate) fn has_owners(ty: &Type) -> bool {
-    ty.scalar_types().iter().any(Type::is_buffer)
+    ty.scalar_types().iter().any(Type::is_owner_lane)
 }
 
 // Walk only active values; inactive enum lanes must remain canonical zeroes.
@@ -199,7 +199,7 @@ fn layout_error(_: crate::memory_layout::MemoryLayoutError) -> Error {
 }
 fn release_values(types: &[Type], raw: &[u64], arena: &mut Arena) {
     for (ty, pointer) in types.iter().flat_map(Type::scalar_types).zip(raw) {
-        if ty.is_buffer() && *pointer != 0 {
+        if ty.is_owner_lane() && *pointer != 0 {
             unsafe {
                 let _ = Buffer::release(arena, *pointer as *mut Buffer);
             }
@@ -252,7 +252,7 @@ fn decode_owner(
                 owner.as_mut().configure(super::buffer::ElementCleanup {
                     owners: locations
                         .iter()
-                        .filter(|(_, ty)| ty.is_buffer())
+                        .filter(|(_, ty)| ty.is_owner_lane())
                         .map(|(offset, _)| *offset)
                         .collect(),
                     hooks: vec![],
@@ -557,11 +557,11 @@ pub(crate) unsafe extern "C" fn transfer(
 /// Initial owner registration also protects requests cancelled before their first poll.
 pub(crate) fn input_cleanup(ty: &Type, words: &[u64]) -> Option<(usize, super::cleanup::Entry)> {
     let scalars = ty.scalar_types();
-    let key = scalars.iter().position(Type::is_buffer)?;
+    let key = scalars.iter().position(Type::is_owner_lane)?;
     let owners = scalars
         .iter()
         .zip(words)
-        .filter(|(ty, _)| ty.is_buffer())
+        .filter(|(ty, _)| ty.is_owner_lane())
         .map(|(_, word)| {
             std::ptr::NonNull::new(*word as *mut Buffer).map(std::ptr::NonNull::as_ptr)
         })

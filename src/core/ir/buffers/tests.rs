@@ -103,7 +103,7 @@ fn buffer_moves_cover_bindings_arguments_returns_and_reinitialization() {
     assert!(!plan.bodies["f"]
         .ops
         .iter()
-        .any(|op| matches!(op, Op::Copy(dst, _) if dst.ty.is_buffer())));
+        .any(|op| matches!(op, Op::Copy(dst, _) if dst.ty.is_owner_lane())));
 }
 
 #[test]

@@ -464,7 +464,7 @@ JIT、解释器、独立 AOT 均验证记录内数组、只读引用、独占写
 | 间接函数调用、Copy 记录/元组/Option/Result、嵌套数组 | [F2b 行为](../tests/fixtures/fixed_array_f2b.jk)、[失败清理](../tests/fixtures/fixed_array_f2b_cleanup.jk)、F5 模型 |
 | Array 内联数组元素、视图与外层拥有者 | F2b 行为、[F3 视图](../tests/fixtures/fixed_array_f3.jk)与[预算/取消](../tests/fixtures/fixed_array_f3_cleanup.jk)、F5 模型 |
 | C 字段、数组引用、显式首元素指针与字节文本边界 | [F4 Joky](../tests/fixtures/fixed_array_f4.jk) / [C](../tests/fixtures/fixed_array_f4.c)、F5 模型与 Rust/C 示例 |
-| alloc、graph、Arena.alloc；借用/move 捕获 | [F5 递归包装及跨模块负例](../src/vm/fixed_array_tests.rs)，graph 三入口诊断回归 |
+| alloc、graph、Arena.alloc；借用/move 捕获 | [F5 递归包装及跨模块负例](../src/vm/tests/language/fixed_array_tests.rs)，graph 三入口诊断回归 |
 | List/Map/Set、其他拥有聚合及 Array 外层包装 | 同文件 F2a/F5 拒绝矩阵；Wrapper、Option、List<Array<Row>> 等组合不能隐藏数组 |
 | 挂起函数、parallel/race、宿主跨 Pending 保留 | F1/F2a/F5 包装负例、[F4 异步 C/宿主声明拒绝](../src/backends/aot/tests/fixed_array_ffi.rs)；普通挂起函数可调用不携带数组跨入口的同步 helper |
 | 持久实例、状态域、快照/候选、迁移 | F5 核对 persistent/schema/入口资格、#state 拒绝、create_instance/create_domain 拒绝、迁移候选失败后旧状态与资源不变 |
@@ -708,7 +708,7 @@ Slice 的首版物理协议保持现有不拥有载荷的 Buffer 视图头部，
 | 普通 alloc、graph、Arena.alloc | ir/memory.rs、ir/graph.rs、ir/arenas.rs 在分配/封存前拒绝递归含数组载荷，保留同步局部数组引用的独立准入 |
 | 聚合/其他容器 | ir/records.rs、tuples.rs、enums.rs、buffers.rs 及类型元素验证只开放 §2.6 的 Copy 组合与 Array；检查完整外层名义类型，不能因 List/Map/Set 底层复用 Array 就放行 |
 | 闭包捕获 | ir/closures.rs 的 prepare_closure/捕获绑定前拒绝含数组的捕获类型，也追踪引用指向类型；from_fn 的普通回调环境照常检查 |
-| 挂起/并发 | ir/memory.rs、buffers.rs、borrowing.rs、branches.rs 检查签名、局部和捕获；首版直接拒绝 @suspends 函数体中物化数组或数组视图，仅允许不携带数组跨入口的同步 helper |
+| 挂起/并发 | ir/memory.rs、buffers.rs、borrowing.rs、task_scopes.rs 检查签名、局部和捕获；首版直接拒绝 @suspends 函数体中物化数组或数组视图，仅允许不携带数组跨入口的同步 helper |
 | 函数值与泛型 helper | ir/function_values.rs 与 generics.rs 保留完整语言签名及不逃逸/保留效果；F2a 拒绝数组签名的函数取值/间接调用，F2b 才开放 |
 | 持久实例/状态域/迁移 | core/instance.rs 的 persistent/persistent_graph、ir/cleanup.rs 的 domain_storage、ir/domain_schema.rs 及 vm/state_domains/migration/view.rs 递归拒绝数组；读取/写入、值包与迁移入口不能仅检查 Copy/字节数 |
 | C 与普通宿主边界 | core/ffi.rs、core/builtins.rs、core/signature.rs 和 VM/AOT 注册/导出入口分别核对；F4 只放行兼容数组引用/字段，不放行普通 direct/CPS、文本或公开值接口 |

@@ -684,7 +684,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
 #[cfg(unix)]
 fn ffi_c_compiler_layout_and_pointer_roundtrips_agree_in_all_backends() {
     use crate::vm::{
-        ffi_tests::{register_fixture, CASES, C_SOURCE, SOURCE},
+        tests::ffi_tests::{register_fixture, CASES, C_SOURCE, SOURCE},
         VmEngine, VmMode,
     };
     let fixture = ScratchDir::new("ffi-borrowing");

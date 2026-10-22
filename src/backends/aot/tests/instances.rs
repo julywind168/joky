@@ -162,7 +162,7 @@ fn owning_roots(containers: bool) {
     });
     let mut compiler = AotCompiler::with_symbol_prefix("owners", "probe_").unwrap();
     let source = if containers {
-        crate::vm::instance_container_tests::SOURCE
+        crate::vm::tests::instance_container_tests::SOURCE
     } else {
         include_str!("../../../../tests/fixtures/persistent_owners.jk")
     };
@@ -314,8 +314,8 @@ fn owning_roots(containers: bool) {
                 assert_eq!(actual, expected);
             })
         };
-        crate::vm::instance_container_tests::exercise(&vm, check_events);
-        crate::vm::instance_container_tests::transfer_failures(&vm, check_events);
+        crate::vm::tests::instance_container_tests::exercise(&vm, check_events);
+        crate::vm::tests::instance_container_tests::transfer_failures(&vm, check_events);
         let old = vm
             .create_instance("make_populated_containers", &[])
             .unwrap();
@@ -387,7 +387,7 @@ fn clean_aot(vm: &crate::vm::VmEngine) {
 fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
     use crate::{
         backends::jit::{CompiledFunction, CompiledModule},
-        vm::{state_domain_tests, VmEngine},
+        vm::{tests::state_domain_tests, VmEngine},
     };
     use std::rc::Rc;
     let fixture = ScratchDir::new("state-domains-aot");

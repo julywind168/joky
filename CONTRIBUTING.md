@@ -167,3 +167,11 @@ design, staged goals and implementation gaps, `docs/architecture.md` for boundar
 and ABI invariants, `docs/interpreter.md` for the current bytecode design, and `benches/README.md`
 for measurement methodology. Consolidate historical interpreter measurements in
 `docs/interpreter-performance.md`; do not present old timings as current results.
+
+Execution tests live under `src/vm/tests/{language,containers,tasks,embedding}/`
+and still compile into the library test target. `tests/cli.rs` wires the CLI
+submodules under `tests/cli/` into one integration test target. Keep fixture
+paths and cross-backend shared helpers in sync when moving a test; compare test
+inventories so an organizational change cannot silently remove coverage.
+Use behavior names for tests and fixtures; keep stage identifiers in design records.
+Start at [the documentation index](docs/README.md) for reference and design navigation.

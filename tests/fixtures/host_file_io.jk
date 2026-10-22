@@ -1,0 +1,52 @@
+import joky/task
+
+// Test-only routing IDs are not the proposed file API or a resource capability.
+extern fn host_file_io_file(id: UInt64) -> ProbeFile
+extern fn host_file_io_request(id: UInt64) -> ProbeRequest
+extern fn host_file_io_wait(id: UInt64) @suspends -> Int32
+extern fn host_file_io_closed(id: Int32) -> Int32
+
+fn operation(id: UInt64) @suspends -> Int32 {
+    let request = host_file_io_request(id)
+    host_file_io_wait(id)
+}
+fn hold(id: UInt64) @suspends { let result = operation(id) }
+fn first() @suspends -> Int32 {
+    let file = host_file_io_file(0)
+    operation(0)
+}
+fn second() @suspends -> Int32 {
+    let file = host_file_io_file(1)
+    operation(1)
+}
+fn third() @suspends -> Int32 {
+    let file = host_file_io_file(2)
+    operation(2)
+}
+fn timeout_running() @suspends -> Int32 {
+    let file = host_file_io_file(0)
+    race {
+        | hold(0)
+        | task.sleep_ms(10)
+    }
+    if host_file_io_closed(0) == 1 { 42 } else { 0 }
+}
+fn timeout_queued() @suspends -> Int32 {
+    let file = host_file_io_file(1)
+    race {
+        | hold(1)
+        | task.sleep_ms(10)
+    }
+    if host_file_io_closed(1) == 0 { 42 } else { 0 }
+}
+fn queued_reuse() @suspends -> Int32 {
+    let file = host_file_io_file(1)
+    race {
+        | hold(1)
+        | task.sleep_ms(10)
+    }
+    if host_file_io_closed(1) != 0 { return 0 }
+    operation(1)
+}
+fn timer() @suspends -> Int32 { task.sleep_ms(10); 42 }
+fn immediate() @suspends -> Int32 { 42 }

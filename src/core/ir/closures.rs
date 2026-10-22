@@ -69,7 +69,7 @@ pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
         | Expr::Block { exprs, .. }
         | Expr::Graph { exprs, .. }
         | Expr::Sequence { exprs, .. } => exprs.iter().collect(),
-        Expr::Scope { branches, .. } => branches.iter().collect(),
+        Expr::Concurrent { branches, .. } => branches.iter().collect(),
         _ => Vec::new(),
     }
 }

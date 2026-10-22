@@ -1,6 +1,6 @@
 //! Set runs in independent native processes with identity and cleanup observations.
 use super::*;
-use crate::vm::set_tests::{fixture_entries, model_events, model_source, CASES};
+use crate::vm::tests::set_tests::{fixture_entries, model_events, model_source, CASES};
 
 fn check(source: &str, cases: &[collections::Case<'_>], extra: &str) {
     let mut types = crate::TypeRegistry::default();

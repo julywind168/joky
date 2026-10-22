@@ -1,13 +1,13 @@
 # Joky 首页
 
-`joky-home/dist/` 是无构建步骤的静态站点源码，HTML、CSS、JavaScript 和 SVG 均需
-提交，不能按常见构建输出目录忽略。`.openai/hosting.json` 保存站点 ID 和静态目录，
+`joky-home/public/` 保存直接编辑的静态站点源码，无构建步骤。HTML、CSS、JavaScript 和 SVG 均需提交。
+`joky-home/.openai/hosting.json` 保存站点 ID 和静态目录，
 不含凭据，也需提交。
 
 本地预览：
 
 ```sh
-python3 -m http.server 4173 --bind 127.0.0.1 --directory sites/joky-home/dist
+python3 -m http.server 4173 --bind 127.0.0.1 --directory sites/joky-home/public
 ```
 
 在浏览器中访问 `http://127.0.0.1:4173`。验证范围为 JavaScript 语法、页面布局、

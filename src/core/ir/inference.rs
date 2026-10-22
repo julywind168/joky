@@ -334,15 +334,15 @@ impl FunctionPlan {
                 self.binary_hint(lhs, rhs, vars, functions, types)
                     .or_else(from_operands)
             }
-            Expr::Scope {
-                kind: ScopeKind::Race,
+            Expr::Concurrent {
+                kind: ConcurrentKind::Race,
                 branches,
                 ..
             } => branches
                 .first()
                 .and_then(|branch| self.hint(branch, vars, functions, types, default)),
             Expr::TaskScope { body, .. } => self.hint(body, vars, functions, types, default),
-            Expr::Scope { branches, .. } => {
+            Expr::Concurrent { branches, .. } => {
                 let values = branches
                     .iter()
                     .map(|b| self.hint(b, vars, functions, types, default))

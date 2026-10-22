@@ -721,7 +721,7 @@ pub(super) fn check_module(
             if !reference_capability.contains(name)
                 && body.ops.iter().any(|op| match op {
                     Op::Call { name, .. } => reference_capability.contains(name),
-                    Op::Scope { branches, .. } => branches
+                    Op::Concurrent { branches, .. } => branches
                         .iter()
                         .any(|branch| reference_capability.contains(&branch.name)),
                     Op::TaskBranch { entry, .. } => reference_capability.contains(entry),
@@ -734,7 +734,7 @@ pub(super) fn check_module(
             if !functions[name].needs_arena
                 && body.ops.iter().any(|op| match op {
                     Op::Call { name, .. } => functions[name].needs_arena,
-                    Op::Scope { branches, .. } => branches
+                    Op::Concurrent { branches, .. } => branches
                         .iter()
                         .any(|branch| functions[&branch.name].needs_arena),
                     Op::TaskBranch { entry, .. } => functions[entry].needs_arena,
@@ -756,7 +756,7 @@ pub(super) fn check_module(
                             .any(|hook| functions[&hook.name].uses_arena)
                     }) || match op {
                         Op::Call { name, .. } => functions[name].uses_arena,
-                        Op::Scope { branches, .. } => branches
+                        Op::Concurrent { branches, .. } => branches
                             .iter()
                             .any(|branch| functions[&branch.name].uses_arena),
                         Op::TaskBranch { entry, .. } => functions[entry].uses_arena,

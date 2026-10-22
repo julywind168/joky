@@ -214,7 +214,7 @@ impl Bundle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::{state_domain_tests::SOURCE, VmMode};
+    use crate::vm::{tests::state_domain_tests::SOURCE, VmMode};
     fn setup(mode: VmMode) -> (VmEngine, DomainOwner, DomainOwner) {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(&format!("{SOURCE}\nfn total(a:&State,b:&State)->Int32{{a.count+b.count}}\nfn broken_make(n:Int32)->State{{make(1/n)}}")).unwrap();

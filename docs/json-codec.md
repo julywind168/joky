@@ -1,5 +1,7 @@
 # JSON 编解码设计与分阶段验收
 
+阅读约定：阶段编号与验收命令保留当时的记录；现行测试按行为命名，可用 `cargo test -- --list` 查找。当前 API 以 [language.md](language.md) 为准。
+
 状态：JSON0–JSON3 已完成，后续已实现手写 struct 类型映射基础层（第 13 节）。起点为 `a0c8f8d`。
 `joky/json` 提供 Value、Number、受检数字转换、Limits 与严格编解码入口；TCP JSON 示例与 Godot 联合验收已接入。
 JSON0 本身不修改编译器、运行时或标准库语义。
@@ -28,7 +30,7 @@ JSON 不负责 TCP 分帧；TCP 超时、重连、HTTP、TLS 和 UDP 不属于�
 
 ## 2. JSON0 探针与实际缺口
 
-[最小探针](../tests/fixtures/json0_primitives.jk)及 [CLI 接线](../tests/cli.rs)检查现有能力，
+[最小探针](../tests/fixtures/json_primitives.jk)及 [CLI 接线](../tests/cli.rs)检查现有能力，
 探针的有限 Atom/Group 不是 JSON Value 实现，也不验证 JSON 语法。
 
 | 能力 | JSON0 实测 | 后续处理 |
@@ -133,10 +135,10 @@ number.as_text() 返回共享借用，不能修改私有文本；整数转换先
 第一个使整数超范围的数字，UInt64 负号为 0，浮点溢出为 0；NonFinite.offset 为 0，
 NumberLimit.offset 为 1024。构造的 InvalidSyntax.offset 指向首个违反语法的字节或 EOF。
 
-[三后端行为 fixture](../tests/fixtures/json1b_values.jk)覆盖文本保真、边界/错误位置、
+[三后端行为 fixture](../tests/fixtures/json_values.jk)覆盖文本保真、边界/错误位置、
 正确舍入、溢出、下溢、负零、最小次正规数和最大有限数的格式化往返，以及所有 Value 类别的
 构造、共享查询、独占替换、删除、消费匹配和跨 yield 保存。私有字段/原语的拒绝测试防止绕过不变量。
-[VM 验收](../src/vm/json_tests.rs)补充部分构造预算失败、取消边界、逐指令取消、重载与 VM 销毁后的保活清理。
+[VM 验收](../src/vm/tests/containers/json_tests.rs)补充部分构造预算失败、取消边界、逐指令取消、重载与 VM 销毁后的保活清理。
 编解码和 TCP JSON 组合仍留到 JSON2/JSON3。
 
 验证：针对性三后端行为与拒绝测试、默认 `./scripts/check.sh`（Debug）、JSON1b 逐指令取消穷举均通过。
@@ -287,12 +289,12 @@ Debug 逐指令取消穷举覆盖递归树、挂起拥有者、NET5a 分离拥�
 - JSON2a 最初将 DecodeErrorKind 放在独立源码模块并由 `joky/json` 重导出，以绕过
   同名裸构造器冲突。枚举同名成员支持完成后已合回 `json.jk`，公开使用方式仍为
   `DecodeErrorKind.NumberLimit`。
-- [严格行为 fixture](../tests/fixtures/json2a_decode.jk)覆盖全部值类别、语法拒绝、精确错误位置、
+- [严格行为 fixture](../tests/fixtures/json_decode.jk)覆盖全部值类别、语法拒绝、精确错误位置、
   每项相关限额的 N-1/N/N+1 和零值、全部配置硬上限、128/129 层容器、UTF-8/代理对/NUL、
   转义后重复键与不同规范化形式的键。解码输入释放后继续查询拥有树。
-  [独立语义样本](../tests/fixtures/json2a_model.jk)在 JSON2a 时包含固定种子生成的 40 组输入与期望指纹，
+  [独立语义样本](../tests/fixtures/json_model.jk)在 JSON2a 时包含固定种子生成的 40 组输入与期望指纹，
   由 Python JSON 解析结果产生基准，忽略对象顺序并精确保留数字拼写；两组 fixture 均执行三后端。
-- [VM 验收](../src/vm/json_tests.rs)检查正常/错误路径的分配预算失败、解析中取消、完成树跨 yield、
+- [VM 验收](../src/vm/tests/containers/json_tests.rs)检查正常/错误路径的分配预算失败、解析中取消、完成树跨 yield、
   重载和 VM 销毁后的完成/取消清理；逐指令取消另以 ignored Debug 用例执行。
 - Godot 回归暴露并修正 [NET5 截止时间 fixture](../integrations/godot/demo/tests/network_duplex.gd)
   的准备顺序：旧用例在请求前暂停树，空闲发送端的 next_frame 按节点暂停，可能一直等到会话超时。
@@ -324,12 +326,12 @@ Godot 首轮完整回归、原样单独复跑与临时计时探针均复现旧 N
 - 所有配置先校验硬上限；编码忽略 max_input_bytes 的操作限制，但仍校验该配置。
   深度/节点在输出当前值前检查，字符串/数字先检查源长度；每次追加前检查实际 UTF-8 输出增长，
   包括转义、引号、逗号、冒号及容器闭合符。不同限额同时违反时，除配置预检外按遍历及追加顺序返回。
-- [编码 fixture](../tests/fixtures/json2b_encode.jk)覆盖紧凑拼写、全部控制字符、Unicode、键转义、
+- [编码 fixture](../tests/fixtures/json_encode.jk)覆盖紧凑拼写、全部控制字符、Unicode、键转义、
   数字保真、相关限额的 N-1/N/N+1、零限额与全部配置硬上限、128 层成功及 1024 层树的受限拒绝。
   成功和可恢复限额错误后均继续检查原输入树。
-  [共享语义样本](../tests/fixtures/json2a_model.jk)扩为 45 组，并检查 decode/encode/decode 的独立期望指纹；
+  [共享语义样本](../tests/fixtures/json_model.jk)扩为 45 组，并检查 decode/encode/decode 的独立期望指纹；
   五个新增边界模型覆盖所有控制字符及键、机器范围外数字、不同 Unicode 规范化形式和空内容。
-- [VM 验收](../src/vm/json_tests.rs)覆盖部分输出的分配预算失败、限额错误清理、解析/编码过程中取消、
+- [VM 验收](../src/vm/tests/containers/json_tests.rs)覆盖部分输出的分配预算失败、限额错误清理、解析/编码过程中取消、
   输入树与输出跨 yield、重载及 VM 销毁后的完成/取消；逐指令取消另行执行 ignored Debug 用例。
 
 独立互操作验收：三后端分别编码 45 组样本，再用 Python 标准 JSON 解析器读取全部输出，
@@ -463,7 +465,7 @@ FromJson 的缺失策略使用不返回 Self 的 accepts_missing 钩子，Option
 未知字段、错误路径转义、映射限额及递归 dispatch。测试也覆盖补齐缺失字段的节点计数，
 失败后继续处理兄弟字段的深度/路径恢复，以及输入/输出 codec 错误的分层。
 
-[VM 生命周期回归](../src/vm/json_typed_tests.rs)扫描成功映射和中途失败的内存预算，
+[VM 生命周期回归](../src/vm/tests/containers/json_typed_tests.rs)扫描成功映射和中途失败的内存预算，
 逐次核对 arena 归零；JIT/解释器核对挂起后重载、销毁、完成或取消。
 解释器分别执行资源变化边界取消和逐指令取消穷举；私有 Context 与非字符串 Map key 的拒绝
 在三后端验证。复现命令：

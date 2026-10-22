@@ -9,7 +9,7 @@ use crate::{
         },
         prepared::PreparedModule,
     },
-    parser::ast::{BinOp, ScopeKind, UnaryOp},
+    parser::ast::{BinOp, ConcurrentKind, UnaryOp},
     runtime::{bindings::HostBinding, suspension::ModuleId},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
@@ -170,13 +170,13 @@ enum Instruction {
         result: Option<usize>,
     },
     AggregateCall(Box<AggregateCall>),
-    Scope {
+    Concurrent {
         result: Option<usize>,
         results: Vec<usize>,
-        kind: ScopeKind,
+        kind: ConcurrentKind,
         branches: Vec<BytecodeBranch>,
     },
-    ScopeFinish,
+    ConcurrentFinish,
     /// Open a dynamic task scope on the current frame.
     TaskScopeEnter,
     /// Register a child task entry with captured inputs; the child runs when
@@ -450,7 +450,7 @@ fn lower_unoptimized(
                 dst: dst.index,
                 value: if matches!(dst.ty, crate::Type::Function(_)) {
                     ConstantValue::Function(usize::MAX)
-                } else if dst.ty.reference_type().is_some() || dst.ty.is_buffer() {
+                } else if dst.ty.reference_type().is_some() || dst.ty.is_owner_lane() {
                     ConstantValue::EmptyReference
                 } else {
                     lower_constant(value)
@@ -556,12 +556,12 @@ fn lower_unoptimized(
                     }
                 }
             }
-            Op::Scope {
+            Op::Concurrent {
                 kind,
                 branches,
                 result,
                 ..
-            } => Instruction::Scope {
+            } => Instruction::Concurrent {
                 result: result
                     .as_ref()
                     .filter(|s| !s.ty.is_aggregate())
@@ -597,7 +597,7 @@ fn lower_unoptimized(
                     })
                     .collect(),
             },
-            Op::ScopeFinish => Instruction::ScopeFinish,
+            Op::ConcurrentFinish => Instruction::ConcurrentFinish,
             Op::TaskScopeEnter => Instruction::TaskScopeEnter,
             Op::TaskBranch {
                 entry, captures, ..
@@ -634,7 +634,7 @@ fn lower_unoptimized(
             .result
             .as_ref()
             .filter(|s| s.ty.is_owner())
-            .and_then(|s| s.scalars().find(|s| s.ty.is_buffer()))
+            .and_then(|s| s.scalars().find(|s| s.ty.is_owner_lane()))
             .map(|s| s.index),
         name: "<anonymous>".into(),
         spans,

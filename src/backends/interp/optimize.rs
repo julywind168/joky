@@ -21,8 +21,8 @@ fn snapshot_barrier(instruction: &Instruction) -> bool {
         Instruction::Call { .. }
             | Instruction::IndirectCall(_)
             | Instruction::AggregateCall(_)
-            | Instruction::Scope { .. }
-            | Instruction::ScopeFinish
+            | Instruction::Concurrent { .. }
+            | Instruction::ConcurrentFinish
             | Instruction::TaskBranch { .. }
             | Instruction::TaskJoin
     )
@@ -278,7 +278,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
                 visit(slot);
             }
         }
-        Instruction::Scope { branches, .. } => {
+        Instruction::Concurrent { branches, .. } => {
             for branch in branches {
                 if let Some(slot) = &mut branch.indirect {
                     visit(slot);
@@ -293,7 +293,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
                 visit(slot);
             }
         }
-        Instruction::ScopeFinish | Instruction::TaskScopeEnter | Instruction::TaskJoin => {}
+        Instruction::ConcurrentFinish | Instruction::TaskScopeEnter | Instruction::TaskJoin => {}
         Instruction::Const { .. } | Instruction::Jump(_) => {}
     }
 }
@@ -340,7 +340,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
                 visit(*result);
             }
         }
-        Instruction::Scope {
+        Instruction::Concurrent {
             branches,
             result,
             results,
@@ -356,7 +356,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
                 }
             }
         }
-        Instruction::ScopeFinish
+        Instruction::ConcurrentFinish
         | Instruction::TaskScopeEnter
         | Instruction::TaskBranch { .. }
         | Instruction::TaskJoin => {}
@@ -410,7 +410,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
                     *slot = remap[*slot];
                 }
             }
-            Instruction::Scope {
+            Instruction::Concurrent {
                 branches,
                 result,
                 results,

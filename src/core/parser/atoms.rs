@@ -112,9 +112,9 @@ impl Parser {
             // parallel/race { | branch ... }
             TokenKind::Parallel | TokenKind::Race => {
                 let kind = if self.peek() == &TokenKind::Race {
-                    ScopeKind::Race
+                    ConcurrentKind::Race
                 } else {
-                    ScopeKind::Join
+                    ConcurrentKind::Join
                 };
                 self.advance();
                 self.expect(&TokenKind::LBrace)?;
@@ -132,7 +132,7 @@ impl Parser {
                 }
                 self.expect(&TokenKind::RBrace)?;
                 self.newline_sensitive = previous_newlines;
-                Ok(Expr::Scope {
+                Ok(Expr::Concurrent {
                     kind,
                     branches,
                     span: self.span(start, self.last_span.end()),
