@@ -1,7 +1,7 @@
 //! Independent Vec model, real C checkpoints, and task-budget reuse across backends.
 use super::*;
+use crate::core::types::{ConstArgument, FixedArrayType};
 use crate::{
-    parser::ast::{ConstArgument, FixedArrayType},
     runtime::arena,
     vm::{InterpreterLimits, VmEngine, VmMode},
 };

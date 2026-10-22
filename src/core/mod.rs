@@ -19,9 +19,9 @@ pub mod types;
 pub(crate) mod vm;
 
 pub use error::{Error, ErrorCode, ErrorPhase, RuntimeFrame};
-pub use parser::ast::Type;
 pub use signature::{EntryAbi, FunctionSignature};
 pub use span::Span;
+pub use types::Type;
 mod source;
 pub use source::{ModuleSources, SourceFile, SourceId, SourceMap};
 pub use types::TypeRegistry;

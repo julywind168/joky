@@ -1,5 +1,6 @@
 use super::*;
-use crate::parser::ast::{Item, Type};
+use crate::core::types::Type;
+use crate::parser::ast::Item;
 
 fn return_type(source: &str) -> Type {
     let registry = crate::TypeRegistry::new().with_prelude(false);

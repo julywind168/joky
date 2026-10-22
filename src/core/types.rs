@@ -1,10 +1,10 @@
-//! Named type registration shared by every compilation backend.
+//! Shared type model, registration, normalization, and layout.
 //!
 //! Primitive types are part of the language. Source aliases are module-local;
 //! opaque host types must be registered before compilation.
 
 use crate::{
-    parser::ast::{Expr, Item, Module, Type},
+    parser::ast::{Expr, Item, Module},
     Error, ErrorCode, ErrorPhase, Span,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -14,6 +14,15 @@ mod alias_tests;
 mod fixed_array;
 mod indirect;
 mod layout;
+mod model;
+pub(crate) use model::{
+    equal_types, fresh_type_id, CallableBound, CallableKind, ClosureInfo, EnumVariant, RecordField,
+};
+pub use model::{
+    AssociatedEquality, ConstArgument, DynInterface, DynMethodSlot, DynTraitType, EnumType,
+    FixedArrayType, FunctionType, GenericArgument, ParameterKind, RecordType, ReferenceType,
+    TraitBound, TupleType, Type, TypeApplication, TypeParameter, TypeProjection,
+};
 pub mod memory_layout;
 mod projections;
 mod specialization;
@@ -44,14 +53,14 @@ impl TypeDefinition {
 #[derive(Debug)]
 pub(crate) struct AliasTemplate {
     name: String,
-    parameters: Vec<std::sync::Arc<crate::parser::ast::TypeParameter>>,
+    parameters: Vec<std::sync::Arc<crate::core::types::TypeParameter>>,
     target: Type,
 }
 
 #[derive(Debug)]
 struct AliasInstance {
     template: std::sync::Arc<AliasTemplate>,
-    arguments: Vec<crate::parser::ast::GenericArgument>,
+    arguments: Vec<crate::core::types::GenericArgument>,
     target: Type,
 }
 
@@ -59,7 +68,7 @@ struct AliasInstance {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Substitutions {
     types: HashMap<u64, Type>,
-    pub(crate) constants: HashMap<u64, crate::parser::ast::ConstArgument>,
+    pub(crate) constants: HashMap<u64, crate::core::types::ConstArgument>,
 }
 impl std::ops::Deref for Substitutions {
     type Target = HashMap<u64, Type>;
@@ -80,17 +89,17 @@ impl FromIterator<(u64, Type)> for Substitutions {
         }
     }
 }
-impl FromIterator<(u64, crate::parser::ast::GenericArgument)> for Substitutions {
-    fn from_iter<I: IntoIterator<Item = (u64, crate::parser::ast::GenericArgument)>>(
+impl FromIterator<(u64, crate::core::types::GenericArgument)> for Substitutions {
+    fn from_iter<I: IntoIterator<Item = (u64, crate::core::types::GenericArgument)>>(
         iter: I,
     ) -> Self {
         let mut s = Self::default();
         for (id, a) in iter {
             match a {
-                crate::parser::ast::GenericArgument::Type(t) => {
+                crate::core::types::GenericArgument::Type(t) => {
                     s.types.insert(id, t);
                 }
-                crate::parser::ast::GenericArgument::Const(c) => {
+                crate::core::types::GenericArgument::Const(c) => {
                     s.constants.insert(id, c);
                 }
             }
@@ -101,9 +110,8 @@ impl FromIterator<(u64, crate::parser::ast::GenericArgument)> for Substitutions 
 impl Substitutions {
     pub(crate) fn argument(
         &self,
-        p: &crate::parser::ast::TypeParameter,
-    ) -> Option<crate::parser::ast::GenericArgument> {
-        use crate::parser::ast::{GenericArgument, ParameterKind};
+        p: &crate::core::types::TypeParameter,
+    ) -> Option<crate::core::types::GenericArgument> {
         match p.kind {
             ParameterKind::Type => self.types.get(&p.id).cloned().map(GenericArgument::Type),
             ParameterKind::Const => self
@@ -115,10 +123,10 @@ impl Substitutions {
     }
     pub(crate) fn constant(
         &self,
-        c: &crate::parser::ast::ConstArgument,
-    ) -> crate::parser::ast::ConstArgument {
+        c: &crate::core::types::ConstArgument,
+    ) -> crate::core::types::ConstArgument {
         match c {
-            crate::parser::ast::ConstArgument::Parameter(p) => {
+            crate::core::types::ConstArgument::Parameter(p) => {
                 self.constants.get(&p.id).unwrap_or(c).clone()
             }
             _ => c.clone(),
@@ -146,21 +154,20 @@ pub struct TypeRegistry {
     trait_work: std::rc::Rc<std::cell::RefCell<projections::Work>>,
     forwards: std::rc::Rc<std::cell::RefCell<HashMap<String, TypeDefinition>>>,
     enum_instances:
-        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::EnumType>>>>,
+        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::core::types::EnumType>>>>,
     record_instances:
-        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::RecordType>>>>,
+        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::core::types::RecordType>>>>,
     fixed_arrays:
-        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::FixedArrayType>>>>,
+        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::core::types::FixedArrayType>>>>,
     alias_instances: std::rc::Rc<std::cell::RefCell<Vec<AliasInstance>>>,
 }
 
 impl TypeRegistry {
     pub(crate) fn validate_argument(
         &self,
-        p: &crate::parser::ast::TypeParameter,
-        a: &crate::parser::ast::GenericArgument,
+        p: &crate::core::types::TypeParameter,
+        a: &crate::core::types::GenericArgument,
     ) -> Result<(), Error> {
-        use crate::parser::ast::{ConstArgument, GenericArgument, ParameterKind};
         match (p.kind, a) {
             (ParameterKind::Type, GenericArgument::Type(t)) => {
                 self.validate(t)?;
@@ -612,7 +619,7 @@ impl TypeRegistry {
 
     pub(crate) fn with_parameters(
         &self,
-        params: &[std::sync::Arc<crate::parser::ast::TypeParameter>],
+        params: &[std::sync::Arc<crate::core::types::TypeParameter>],
     ) -> Result<Self, Error> {
         let mut local = self.clone();
         let mut names = BTreeSet::new();
@@ -715,7 +722,7 @@ impl TypeRegistry {
                     None
                 }
                 Type::Applied(_) => Some("Type applications must be resolved before planning".into()),
-                Type::Parameter(p) if p.kind != crate::parser::ast::ParameterKind::Type || !self.parameters.contains_key(&p.id) =>
+                Type::Parameter(p) if p.kind != crate::core::types::ParameterKind::Type || !self.parameters.contains_key(&p.id) =>
                     Some(format!("Type parameter `{}` is outside its declaring function or type", p.name)),
                 Type::Resource(name) if !self.resources.contains(name.as_ref()) => Some(format!("Unregistered resource type `{name}`")),
                 Type::Named(name) if !self.contains(name) => Some(format!(
@@ -750,7 +757,7 @@ fn resolve_type(
 }
 
 fn resolve_callable_parameter(
-    parameter: &mut std::sync::Arc<crate::parser::ast::TypeParameter>,
+    parameter: &mut std::sync::Arc<crate::core::types::TypeParameter>,
     aliases: &HashMap<&str, TypeDefinition>,
     registry: &TypeRegistry,
 ) -> Result<(), Error> {
@@ -788,8 +795,8 @@ fn resolve_type_at_depth(
 ) -> Result<(), Error> {
     #[derive(Default)]
     struct Cache {
-        tuples: HashMap<*const crate::parser::ast::TupleType, Type>,
-        functions: HashMap<*const crate::parser::ast::FunctionType, Type>,
+        tuples: HashMap<*const crate::core::types::TupleType, Type>,
+        functions: HashMap<*const crate::core::types::FunctionType, Type>,
     }
     fn resolve(
         ty: &mut Type,
@@ -849,7 +856,7 @@ fn resolve_type_at_depth(
                         .and_then(|(id, _)| registry.trait_parameter(*id))
                         .map(Type::Parameter)
                         .unwrap_or_else(|| Type::Named(base.to_owned()));
-                    let p = crate::parser::ast::TypeProjection {
+                    let p = crate::core::types::TypeProjection {
                         base,
                         name: member.to_owned(),
                         trait_name: None,
@@ -928,7 +935,7 @@ fn resolve_type_at_depth(
             return Ok(());
         }
         if let Type::Applied(application) = ty {
-            let crate::parser::ast::TypeApplication { name, arguments } = application.as_ref();
+            let crate::core::types::TypeApplication { name, arguments } = application.as_ref();
             if registry.is_parameter_name(name) {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
@@ -1137,7 +1144,7 @@ pub(crate) fn resolve_pattern_heads(
 ) -> Result<(), Error> {
     fn head(
         name: &mut String,
-        type_args: &mut [crate::parser::ast::GenericArgument],
+        type_args: &mut [crate::core::types::GenericArgument],
         aliases: &HashMap<&str, TypeDefinition>,
         registry: &TypeRegistry,
     ) -> Result<(), Error> {
@@ -1155,7 +1162,7 @@ pub(crate) fn resolve_pattern_heads(
         let synthetic = if type_args.is_empty() {
             Type::Named(name.clone())
         } else {
-            Type::Applied(std::sync::Arc::new(crate::parser::ast::TypeApplication {
+            Type::Applied(std::sync::Arc::new(crate::core::types::TypeApplication {
                 name: name.clone(),
                 arguments: type_args.to_vec(),
             }))
@@ -1341,14 +1348,14 @@ pub(crate) fn map_annotations(
     map_syntax(expr, map, &Substitutions::default())
 }
 fn map_generic_argument(
-    a: &mut crate::parser::ast::GenericArgument,
+    a: &mut crate::core::types::GenericArgument,
     span: Span,
     map: &mut impl FnMut(&mut Type, Span) -> Result<(), Error>,
     substitutions: &Substitutions,
 ) -> Result<(), Error> {
     match a {
-        crate::parser::ast::GenericArgument::Type(t) => map(t, span)?,
-        crate::parser::ast::GenericArgument::Const(c) => *c = substitutions.constant(c),
+        crate::core::types::GenericArgument::Type(t) => map(t, span)?,
+        crate::core::types::GenericArgument::Const(c) => *c = substitutions.constant(c),
     }
     Ok(())
 }
@@ -1523,7 +1530,7 @@ pub(crate) fn map_syntax(
             literal: crate::parser::ast::Literal::ConstParameter(p),
             ..
         } => {
-            if let Some(crate::parser::ast::ConstArgument::Value(n)) =
+            if let Some(crate::core::types::ConstArgument::Value(n)) =
                 substitutions.constants.get(&p.id)
             {
                 if let Expr::Literal { literal, .. } = expr {

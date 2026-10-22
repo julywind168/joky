@@ -28,7 +28,7 @@ pub(super) enum ConstantOwner {
 
 pub(super) struct ConstMember {
     pub owner: ConstantOwner,
-    pub parameters: Vec<Arc<crate::parser::ast::TypeParameter>>,
+    pub parameters: Vec<Arc<crate::core::types::TypeParameter>>,
     pub declaration: AssociatedConst,
     pub value: RefCell<Option<Expr>>,
 }
@@ -715,7 +715,7 @@ impl FunctionPlan {
                 (Type::Parameter(_), _) if method.trait_id.is_some() => vec![ty.clone().into()],
                 (_, Type::FixedArray(a)) => vec![
                     a.element.clone().into(),
-                    crate::parser::ast::GenericArgument::Const(a.length.clone()),
+                    crate::core::types::GenericArgument::Const(a.length.clone()),
                 ],
                 (_, Type::Record(r)) => r.arguments.clone(),
                 (_, Type::Enum(e)) => e.arguments.clone(),

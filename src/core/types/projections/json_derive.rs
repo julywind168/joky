@@ -274,7 +274,7 @@ impl TypeRegistry {
                                             }
                                         } else {
                                             inferred.1.equalities.push(
-                                                crate::parser::ast::AssociatedEquality {
+                                                crate::core::types::AssociatedEquality {
                                                     name: equality.name.clone(),
                                                     ty,
                                                     span,

@@ -1,6 +1,6 @@
 //! Canonical borrowed trait interfaces and declaration-scoped qualification.
 use super::*;
-use crate::parser::ast::{DynInterface, DynMethodSlot, DynTraitType};
+use crate::core::types::{DynInterface, DynMethodSlot, DynTraitType};
 
 impl TypeRegistry {
     pub(crate) fn normalize_dyn_trait(&self, view: &DynTraitType) -> Result<DynTraitType, Error> {
@@ -71,7 +71,7 @@ impl TypeRegistry {
                 )
                 .with_span(equality.span));
             }
-            equalities.push(crate::parser::ast::AssociatedEquality {
+            equalities.push(crate::core::types::AssociatedEquality {
                 ty,
                 ..equality.clone()
             });

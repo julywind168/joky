@@ -3,9 +3,10 @@ use crate::core::ir::{
     BufferOp, CleanupOp, ConcurrentBranch, Constant, FloatKind, FunctionInfo, FunctionPlan, Op,
     Slot, TextSource,
 };
+use crate::core::types::Type;
 use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
-    parser::ast::{BinOp, BufferIntrinsic, ConcurrentKind, Type, UnaryOp},
+    parser::ast::{BinOp, BufferIntrinsic, ConcurrentKind, UnaryOp},
     Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::ir::{

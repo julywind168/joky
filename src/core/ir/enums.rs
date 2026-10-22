@@ -1,6 +1,6 @@
 //! Enum construction and exhaustive matching, lowered to typed scalar storage.
 use super::*;
-use crate::parser::ast::EnumType;
+use crate::core::types::EnumType;
 
 use super::generics::ConstructorContext;
 
@@ -8,7 +8,7 @@ pub(super) struct Constructor<'a> {
     pub enumeration: Arc<EnumType>,
     pub name: String,
     pub args: Option<&'a [Expr]>,
-    pub type_args: &'a [crate::parser::ast::GenericArgument],
+    pub type_args: &'a [crate::core::types::GenericArgument],
     pub(super) span: Span,
 }
 
@@ -20,7 +20,7 @@ impl FunctionPlan {
         vars: &HashMap<String, Binding>,
     ) -> Result<Option<Constructor<'a>>, Error> {
         let Some((path, payload, type_args)) = (|| {
-            let parts: (String, _, &[crate::parser::ast::GenericArgument]) = match expr {
+            let parts: (String, _, &[crate::core::types::GenericArgument]) = match expr {
                 Expr::Call {
                     callee,
                     args,

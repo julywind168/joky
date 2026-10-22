@@ -2,7 +2,8 @@
 use super::*;
 use crate::core::imports::ImportScope;
 use crate::core::types::substitute;
-use crate::parser::ast::{TraitDef, TypeParameter};
+use crate::core::types::TypeParameter;
+use crate::parser::ast::TraitDef;
 use members::{same_owner, Members, Method, Receiver};
 use std::collections::HashSet;
 

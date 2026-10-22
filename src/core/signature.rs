@@ -1,5 +1,5 @@
 //! Language signatures used by compiled exports and host registrations.
-use crate::parser::ast::Type;
+use crate::core::types::Type;
 
 /// Physical protocol of an exported entry, separate from its language signature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub struct FunctionSignature {
 impl PartialEq for FunctionSignature {
     fn eq(&self, other: &Self) -> bool {
         self.params.len() == other.params.len()
-            && crate::parser::ast::equal_types(
+            && crate::core::types::equal_types(
                 self.params
                     .iter()
                     .zip(&other.params)

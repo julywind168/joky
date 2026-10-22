@@ -6,7 +6,7 @@ impl FunctionPlan {
     /// Whether a field name is accessible from this plan's definition scope.
     pub(super) fn field_visible(
         &self,
-        record: &crate::parser::ast::RecordType,
+        record: &crate::core::types::RecordType,
         name: &str,
     ) -> bool {
         record
@@ -28,7 +28,7 @@ impl FunctionPlan {
 
     pub(super) fn check_field(
         &self,
-        record: &crate::parser::ast::RecordType,
+        record: &crate::core::types::RecordType,
         name: &str,
         span: &Span,
     ) -> Result<(), Error> {

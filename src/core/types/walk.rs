@@ -1,6 +1,6 @@
 //! Shared, iterative traversal of type arguments and validated storage.
 //! Nominal bodies are not expanded: recursive references retain shallow identity.
-use crate::parser::ast::{EnumType, FunctionType, RecordType, TupleType, Type};
+use crate::core::types::{EnumType, FunctionType, RecordType, TupleType, Type};
 use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone, Copy)]
@@ -17,7 +17,7 @@ pub(crate) enum TypeEdges {
 
 #[derive(Hash, PartialEq, Eq)]
 enum Node {
-    FixedArray(*const crate::parser::ast::FixedArrayType),
+    FixedArray(*const crate::core::types::FixedArrayType),
     Function(*const FunctionType),
     Tuple(*const TupleType),
     Enum(*const EnumType),

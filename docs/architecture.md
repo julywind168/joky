@@ -58,6 +58,10 @@ VM 的标量调用与 runtime 的固定 C 签名分别用声明表维护，共�
 `declarations`、`types`、`patterns`、`atoms`、`expressions`、`control_flow` 和 `attributes`
 按语法职责扩展同一个 Parser。调用与方法调用共用参数列表规则，各语法模块共享泛型作用域与分支上下文。
 
+`core::types::model` 保存 AST、类型检查和后端共用的类型表示、名义身份、布局元数据与类型算法，
+由 `core::types` 统一导出。`parser::ast` 负责语法节点并引用这些类型，同时重导出原有公开类型路径，
+保持 Rust 调用方兼容。解析注解与已解析类型继续使用同一表示，不增加转换层或改变存储布局。
+
 词法器借用原始 UTF-8 源码，以字节位置为唯一游标；关键词和数字直接从切片解析，
 标识符及解码后的字符串由 AST 所有。`Span` 保存文件身份 SourceId 与半开字节范围；源码文本由 SourceFile / SourceMap 的共享快照保存。
 `parser::Diagnostic` 转为 `Error` 时统一保留 Parse 阶段、行号和范围，CLI 在最后一步渲染。

@@ -169,7 +169,7 @@ impl FunctionPlan {
     pub(super) fn dyn_entries(
         &self,
         target: &Type,
-        interface: &Arc<crate::parser::ast::DynInterface>,
+        interface: &Arc<crate::core::types::DynInterface>,
         span: Span,
     ) -> Result<Arc<DynTable>, Error> {
         let context = self.generics.borrow();

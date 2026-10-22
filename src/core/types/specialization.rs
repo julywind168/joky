@@ -1,6 +1,6 @@
 //! Bounded nominal specialization and substitution shared with generic functions.
 use super::*;
-use crate::parser::ast::{
+use crate::core::types::{
     EnumType, EnumVariant, RecordField, RecordType, TupleType, TypeParameter,
 };
 use std::sync::Arc;
@@ -21,7 +21,7 @@ impl TypeRegistry {
     pub(crate) fn instantiate_alias(
         &self,
         alias: &Arc<AliasTemplate>,
-        arguments: Vec<crate::parser::ast::GenericArgument>,
+        arguments: Vec<crate::core::types::GenericArgument>,
     ) -> Result<Type, Error> {
         self.with_alias_obligation(&alias.name, &arguments, || {
             self.instantiate_alias_inner(alias, arguments.clone())
@@ -31,7 +31,7 @@ impl TypeRegistry {
     fn instantiate_alias_inner(
         &self,
         alias: &Arc<AliasTemplate>,
-        arguments: Vec<crate::parser::ast::GenericArgument>,
+        arguments: Vec<crate::core::types::GenericArgument>,
     ) -> Result<Type, Error> {
         if alias.parameters.len() != arguments.len() {
             return Err(error(
@@ -113,7 +113,7 @@ impl TypeRegistry {
     pub(crate) fn instantiate_record(
         &self,
         record: &Arc<RecordType>,
-        arguments: Vec<crate::parser::ast::GenericArgument>,
+        arguments: Vec<crate::core::types::GenericArgument>,
     ) -> Result<Type, Error> {
         let template = record.template.as_ref().unwrap_or(record);
         if template.parameters.is_empty() || template.parameters.len() != arguments.len() {
@@ -221,7 +221,7 @@ impl TypeRegistry {
     pub(crate) fn instantiate_enum(
         &self,
         enumeration: &Arc<EnumType>,
-        arguments: Vec<crate::parser::ast::GenericArgument>,
+        arguments: Vec<crate::core::types::GenericArgument>,
     ) -> Result<Type, Error> {
         let template = enumeration.template.as_ref().unwrap_or(enumeration);
         if template.parameters.is_empty() || template.parameters.len() != arguments.len() {
@@ -327,7 +327,7 @@ pub(crate) fn substitute(
 ) -> Result<Type, Error> {
     #[derive(Default)]
     struct Cache {
-        functions: HashMap<*const crate::parser::ast::FunctionType, Type>,
+        functions: HashMap<*const crate::core::types::FunctionType, Type>,
         tuples: HashMap<*const TupleType, Type>,
         enums: HashMap<*const EnumType, Type>,
         records: HashMap<*const RecordType, Type>,
@@ -393,13 +393,13 @@ pub(crate) fn substitute(
                             .arguments
                             .iter()
                             .map(|a| match a {
-                                crate::parser::ast::GenericArgument::Type(t) => {
-                                    Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(
+                                crate::core::types::GenericArgument::Type(t) => {
+                                    Ok::<_, Error>(crate::core::types::GenericArgument::Type(
                                         visit(t, substitutions, types, cache)?,
                                     ))
                                 }
-                                crate::parser::ast::GenericArgument::Const(c) => {
-                                    Ok(crate::parser::ast::GenericArgument::Const(
+                                crate::core::types::GenericArgument::Const(c) => {
+                                    Ok(crate::core::types::GenericArgument::Const(
                                         substitutions.constant(c),
                                     ))
                                 }
@@ -412,13 +412,13 @@ pub(crate) fn substitute(
                             .arguments
                             .iter()
                             .map(|a| match a {
-                                crate::parser::ast::GenericArgument::Type(t) => {
-                                    Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(
+                                crate::core::types::GenericArgument::Type(t) => {
+                                    Ok::<_, Error>(crate::core::types::GenericArgument::Type(
                                         visit(t, substitutions, types, cache)?,
                                     ))
                                 }
-                                crate::parser::ast::GenericArgument::Const(c) => {
-                                    Ok(crate::parser::ast::GenericArgument::Const(
+                                crate::core::types::GenericArgument::Const(c) => {
+                                    Ok(crate::core::types::GenericArgument::Const(
                                         substitutions.constant(c),
                                     ))
                                 }
@@ -445,22 +445,22 @@ pub(crate) fn substitute(
                 result
             }
             Type::Applied(application) => {
-                Type::Applied(Arc::new(crate::parser::ast::TypeApplication {
+                Type::Applied(Arc::new(crate::core::types::TypeApplication {
                     name: application.name.clone(),
                     arguments: application
                         .arguments
                         .iter()
                         .map(|a| match a {
-                            crate::parser::ast::GenericArgument::Type(t) => {
-                                Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(visit(
+                            crate::core::types::GenericArgument::Type(t) => {
+                                Ok::<_, Error>(crate::core::types::GenericArgument::Type(visit(
                                     t,
                                     substitutions,
                                     types,
                                     cache,
                                 )?))
                             }
-                            crate::parser::ast::GenericArgument::Const(c) => {
-                                Ok(crate::parser::ast::GenericArgument::Const(
+                            crate::core::types::GenericArgument::Const(c) => {
+                                Ok(crate::core::types::GenericArgument::Const(
                                     substitutions.constant(c),
                                 ))
                             }
@@ -500,16 +500,16 @@ pub(crate) fn substitute(
                     .arguments
                     .iter()
                     .map(|a| match a {
-                        crate::parser::ast::GenericArgument::Type(t) => {
-                            Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(visit(
+                        crate::core::types::GenericArgument::Type(t) => {
+                            Ok::<_, Error>(crate::core::types::GenericArgument::Type(visit(
                                 t,
                                 substitutions,
                                 types,
                                 cache,
                             )?))
                         }
-                        crate::parser::ast::GenericArgument::Const(c) => Ok(
-                            crate::parser::ast::GenericArgument::Const(substitutions.constant(c)),
+                        crate::core::types::GenericArgument::Const(c) => Ok(
+                            crate::core::types::GenericArgument::Const(substitutions.constant(c)),
                         ),
                     })
                     .collect::<Result<_, _>>()?;
@@ -530,16 +530,16 @@ pub(crate) fn substitute(
                     .arguments
                     .iter()
                     .map(|a| match a {
-                        crate::parser::ast::GenericArgument::Type(t) => {
-                            Ok::<_, Error>(crate::parser::ast::GenericArgument::Type(visit(
+                        crate::core::types::GenericArgument::Type(t) => {
+                            Ok::<_, Error>(crate::core::types::GenericArgument::Type(visit(
                                 t,
                                 substitutions,
                                 types,
                                 cache,
                             )?))
                         }
-                        crate::parser::ast::GenericArgument::Const(c) => Ok(
-                            crate::parser::ast::GenericArgument::Const(substitutions.constant(c)),
+                        crate::core::types::GenericArgument::Const(c) => Ok(
+                            crate::core::types::GenericArgument::Const(substitutions.constant(c)),
                         ),
                     })
                     .collect::<Result<_, _>>()?;
@@ -638,12 +638,12 @@ pub(crate) fn unify(
                     for (a, b) in a.arguments.iter().zip(&b.arguments) {
                         match (a, b) {
                             (
-                                crate::parser::ast::GenericArgument::Type(a),
-                                crate::parser::ast::GenericArgument::Type(b),
+                                crate::core::types::GenericArgument::Type(a),
+                                crate::core::types::GenericArgument::Type(b),
                             ) => pending.push((a, b)),
                             (
-                                crate::parser::ast::GenericArgument::Const(a),
-                                crate::parser::ast::GenericArgument::Const(b),
+                                crate::core::types::GenericArgument::Const(a),
+                                crate::core::types::GenericArgument::Const(b),
                             ) => unify_constant(a, b, params, substitutions, span)?,
                             _ => {
                                 return Err(unification_error(
@@ -663,12 +663,12 @@ pub(crate) fn unify(
                     for (a, b) in a.arguments.iter().zip(&b.arguments) {
                         match (a, b) {
                             (
-                                crate::parser::ast::GenericArgument::Type(a),
-                                crate::parser::ast::GenericArgument::Type(b),
+                                crate::core::types::GenericArgument::Type(a),
+                                crate::core::types::GenericArgument::Type(b),
                             ) => pending.push((a, b)),
                             (
-                                crate::parser::ast::GenericArgument::Const(a),
-                                crate::parser::ast::GenericArgument::Const(b),
+                                crate::core::types::GenericArgument::Const(a),
+                                crate::core::types::GenericArgument::Const(b),
                             ) => unify_constant(a, b, params, substitutions, span)?,
                             _ => {
                                 return Err(unification_error(
@@ -699,13 +699,13 @@ fn unification_error(span: Span, code: ErrorCode, message: impl Into<String>) ->
 }
 
 pub(crate) fn unify_constant(
-    a: &crate::parser::ast::ConstArgument,
-    b: &crate::parser::ast::ConstArgument,
+    a: &crate::core::types::ConstArgument,
+    b: &crate::core::types::ConstArgument,
     params: &[Arc<TypeParameter>],
     s: &mut crate::core::types::Substitutions,
     span: Span,
 ) -> Result<(), Error> {
-    if let crate::parser::ast::ConstArgument::Parameter(p) = a {
+    if let crate::core::types::ConstArgument::Parameter(p) = a {
         if params.iter().any(|q| q.id == p.id) {
             if let Some(previous) = s.constants.get(&p.id) {
                 if previous == b {

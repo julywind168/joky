@@ -1,11 +1,8 @@
 //! Internal domain module ABI v3. All addresses are relocations owned by the caller.
-use crate::{
-    core::{
-        ir::FunctionInfo,
-        parser::ast::{fresh_type_id, EnumType, EnumVariant, RecordField, RecordType, TupleType},
-    },
-    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
+use crate::core::types::{
+    fresh_type_id, EnumType, EnumVariant, RecordField, RecordType, TupleType,
 };
+use crate::{core::ir::FunctionInfo, Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type};
 use std::{collections::HashMap, sync::Arc};
 
 #[repr(C)]
@@ -212,8 +209,8 @@ impl Reader<'_> {
                 let bytes = self.bytes.get(..8).ok_or_else(invalid)?;
                 let n = u64::from_le_bytes(bytes.try_into().unwrap());
                 self.bytes = &self.bytes[8..];
-                crate::parser::ast::GenericArgument::Const(
-                    crate::parser::ast::ConstArgument::Value(n),
+                crate::core::types::GenericArgument::Const(
+                    crate::core::types::ConstArgument::Value(n),
                 )
             } else {
                 self.ty_at(depth + 1)?.into()
@@ -388,10 +385,10 @@ pub(crate) unsafe fn decode(
     Ok((name, info))
 }
 
-fn encode_argument(out: &mut Vec<u8>, a: &crate::parser::ast::GenericArgument) {
+fn encode_argument(out: &mut Vec<u8>, a: &crate::core::types::GenericArgument) {
     match a {
-        crate::parser::ast::GenericArgument::Type(t) => encode_type(out, t),
-        crate::parser::ast::GenericArgument::Const(crate::parser::ast::ConstArgument::Value(n)) => {
+        crate::core::types::GenericArgument::Type(t) => encode_type(out, t),
+        crate::core::types::GenericArgument::Const(crate::core::types::ConstArgument::Value(n)) => {
             out.push(20);
             put_u64(out, *n);
         }

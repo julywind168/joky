@@ -164,7 +164,7 @@ impl FunctionPlan {
         Ok(Some((name, info)))
     }
 
-    pub(super) fn indirect_contract(&self, signature: &crate::parser::ast::FunctionType) -> String {
+    pub(super) fn indirect_contract(&self, signature: &crate::core::types::FunctionType) -> String {
         let mut context = self.generics.borrow_mut();
         let index = if let Some(index) = context.callables.iter().position(|s| s == signature) {
             index

@@ -1,6 +1,7 @@
 //! Generic inherent member specialization and execution parity.
 use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
+use crate::core::types::Type;
 use crate::ErrorCode;
 
 #[test]
@@ -86,7 +87,7 @@ fn generic_impl_rejects_invalid_contracts() {
 
 #[test]
 fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
-    use crate::parser::ast::{Expr, Item, Type};
+    use crate::parser::ast::{Expr, Item};
     let source = "// 🙂\nimpl<T,> Pair<T> { fn make(value: T) -> Self { Self { left: value, right: value } } fn get(self) -> T { Self.first(self) } } fn outside(value: T) {}";
     let ast = crate::parser::parse(source).unwrap();
     let implementation = &ast.implementations[0];

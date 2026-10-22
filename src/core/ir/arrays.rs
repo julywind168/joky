@@ -1,6 +1,6 @@
 //! Contextual array construction uses the existing storage and cleanup contracts.
 use super::*;
-use crate::parser::ast::{ConstArgument, GenericArgument};
+use crate::core::types::{ConstArgument, GenericArgument};
 
 pub(super) fn element_type(ty: &Type) -> Option<&Type> {
     match ty {

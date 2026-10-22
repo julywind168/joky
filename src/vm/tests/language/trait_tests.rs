@@ -1,4 +1,5 @@
 use super::{VmEngine, VmMode};
+use crate::core::types::Type;
 
 #[test]
 fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
@@ -345,7 +346,7 @@ fn static_trait_proofs_share_repeated_phantom_obligations() {
 
 #[test]
 fn static_trait_syntax_preserves_bounds_receivers_and_declaration_identity() {
-    use crate::parser::ast::{Item, Type};
+    use crate::parser::ast::Item;
     let source = "pub trait Eq { fn eq(&self, other: &Self) -> Bool } trait Mark {} struct P<T> { value: T } impl<T: Eq + Mark> Eq for P<T> { fn eq(&self, other: &Self) -> Bool { true } } fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }";
     let module = crate::parser::parse(source).unwrap();
     let declaration = &module.traits[0];
@@ -393,7 +394,7 @@ fn static_traits_reject_stale_identities_in_normalized_ast() {
             .unwrap(),
         )
         .unwrap();
-    module.traits[0].self_parameter = std::sync::Arc::new(crate::parser::ast::TypeParameter::new(
+    module.traits[0].self_parameter = std::sync::Arc::new(crate::core::types::TypeParameter::new(
         "Self".into(),
         module.traits[0].span,
     ));

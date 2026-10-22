@@ -1,6 +1,6 @@
 //! Postfix extraction shares consuming patterns, cleanup, and function exits.
 use super::*;
-use crate::parser::ast::{EnumType, GenericArgument};
+use crate::core::types::{EnumType, GenericArgument};
 use patterns::{CheckedPattern, Kind};
 
 // Declaration identity survives aliases and disabled preludes. User enums with

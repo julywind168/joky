@@ -1,7 +1,8 @@
 //! Sequence tests precede all moves; successful projections carry disjoint paths.
 use super::patterns::{CheckedPattern, Kind};
 use super::*;
-use crate::parser::ast::{BufferIntrinsic as BI, ConstArgument, FixedArrayType, SequencePattern};
+use crate::core::types::{ConstArgument, FixedArrayType};
+use crate::parser::ast::{BufferIntrinsic as BI, SequencePattern};
 use std::collections::HashSet;
 
 pub(super) struct CheckedSequence {

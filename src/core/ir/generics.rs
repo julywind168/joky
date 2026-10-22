@@ -1,7 +1,8 @@
 //! Rigid template checking and bounded, module-local function specialization.
 use super::*;
 use crate::core::types::substitute;
-use crate::{parser::ast::TypeParameter, FunctionSignature};
+use crate::core::types::{GenericArgument, ParameterKind, TypeParameter};
+use crate::FunctionSignature;
 use std::collections::HashMap;
 
 pub(super) struct ConstructorContext<'a> {
@@ -16,7 +17,7 @@ const MAX_INSTANCE_DEPTH: usize = 32;
 pub(super) struct Instance {
     pub name: String,
     pub template: String,
-    arguments: Vec<crate::parser::ast::GenericArgument>,
+    arguments: Vec<crate::core::types::GenericArgument>,
     pub signature: FunctionSignature,
     pub depth: usize,
 }
@@ -25,7 +26,7 @@ pub(super) struct Instance {
 pub(super) struct ClosureInstance {
     pub parent: String,
     pub site: Span,
-    pub environment: Arc<crate::parser::ast::RecordType>,
+    pub environment: Arc<crate::core::types::RecordType>,
 }
 
 pub(super) struct GenericContext {
@@ -42,10 +43,10 @@ pub(super) struct GenericContext {
     pub generated_bodies: Vec<NestedTask>,
     pub generated_functions: HashMap<String, FunctionInfo>,
     pub closures: Vec<ClosureInstance>,
-    pub callables: Vec<crate::parser::ast::FunctionType>,
+    pub callables: Vec<crate::core::types::FunctionType>,
     pub abstract_callables: Vec<FunctionSignature>,
     pub dyn_tables: Vec<Arc<DynTable>>,
-    pub dyn_contracts: Vec<crate::parser::ast::DynMethodSlot>,
+    pub dyn_contracts: Vec<crate::core::types::DynMethodSlot>,
     pub definitions: std::collections::HashSet<String>,
     pub members: std::rc::Rc<super::members::Members>,
 }
@@ -106,7 +107,7 @@ impl GenericContext {
     pub(super) fn instantiate(
         &mut self,
         template: &str,
-        arguments: Vec<crate::parser::ast::GenericArgument>,
+        arguments: Vec<crate::core::types::GenericArgument>,
         signature: FunctionSignature,
         depth: usize,
         span: Span,
@@ -228,14 +229,14 @@ pub(super) fn unresolved(
     substitutions: &crate::core::types::Substitutions,
 ) -> bool {
     use crate::core::types::walk::{TypeEdges, TypeWalk};
-    let unresolved_constant = |c: &crate::parser::ast::ConstArgument| matches!(c,crate::parser::ast::ConstArgument::Parameter(p) if params.iter().any(|q|q.id==p.id) && !substitutions.constants.contains_key(&p.id));
+    let unresolved_constant = |c: &crate::core::types::ConstArgument| matches!(c,crate::core::types::ConstArgument::Parameter(p) if params.iter().any(|q|q.id==p.id) && !substitutions.constants.contains_key(&p.id));
     TypeWalk::new(ty, TypeEdges::Arguments).any(|ty| {
         matches!(ty, Type::Parameter(p)
             if params.iter().any(|q| p.id == q.id) && !substitutions.contains_key(&p.id))
         || match ty {
             Type::FixedArray(a) | Type::FixedArrayInit(a) => unresolved_constant(&a.length),
-            Type::Record(r) => r.arguments.iter().any(|a| matches!(a,crate::parser::ast::GenericArgument::Const(c) if unresolved_constant(c))),
-            Type::Enum(e) => e.arguments.iter().any(|a| matches!(a,crate::parser::ast::GenericArgument::Const(c) if unresolved_constant(c))),
+            Type::Record(r) => r.arguments.iter().any(|a| matches!(a,crate::core::types::GenericArgument::Const(c) if unresolved_constant(c))),
+            Type::Enum(e) => e.arguments.iter().any(|a| matches!(a,crate::core::types::GenericArgument::Const(c) if unresolved_constant(c))),
             _ => false,
         }
     })
@@ -250,10 +251,9 @@ pub(super) struct InferenceState<'a> {
 /// Seed inference with explicitly provided type arguments, if any.
 pub(super) fn seed_inference<'a>(
     parameters: &'a [Arc<TypeParameter>],
-    explicit: &[crate::parser::ast::GenericArgument],
+    explicit: &[crate::core::types::GenericArgument],
     span: Span,
 ) -> Result<InferenceState<'a>, Error> {
-    use crate::parser::ast::{GenericArgument, ParameterKind};
     for (p, a) in parameters.iter().zip(explicit) {
         if !matches!(
             (p.kind, a),
@@ -317,7 +317,7 @@ impl FunctionPlan {
         vars: &HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
-    ) -> Result<(Vec<crate::parser::ast::GenericArgument>, FunctionSignature), Error> {
+    ) -> Result<(Vec<crate::core::types::GenericArgument>, FunctionSignature), Error> {
         let Expr::Call {
             callee,
             type_args,
@@ -397,7 +397,7 @@ impl FunctionPlan {
         let substitutions = inference.substitutions;
         let arguments: Vec<_> = template.type_params.iter().map(|p| {
             let argument = substitutions.argument(p).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
-                format!("Cannot infer {} parameter `{}` for `{callee}`; use explicit generic arguments", if p.kind == crate::parser::ast::ParameterKind::Const { "constant" } else { "type" }, p.name)))?;
+                format!("Cannot infer {} parameter `{}` for `{callee}`; use explicit generic arguments", if p.kind == crate::core::types::ParameterKind::Const { "constant" } else { "type" }, p.name)))?;
             types.validate_argument(p, &argument).map_err(|e| e.with_span(*span))?;
             let Some(ty) = argument.as_type() else { return Ok(argument); };
             types.validate(ty).map_err(|e| e.with_span(*span))?;
@@ -535,7 +535,7 @@ impl FunctionPlan {
                         })?;
                     crate::core::types::unify_constant(
                         &array.length,
-                        &crate::parser::ast::ConstArgument::Value(length),
+                        &crate::core::types::ConstArgument::Value(length),
                         inference.params,
                         &mut inference.substitutions,
                         arg.span(),

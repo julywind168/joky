@@ -1,8 +1,7 @@
 //! Inline domain operations share the checked value bridge and FIFO admission.
 use super::*;
-use crate::parser::ast::{
-    AnonymousFunction, ClosureParameter, Param, RecordField, RecordType, When,
-};
+use crate::core::types::{RecordField, RecordType};
+use crate::parser::ast::{AnonymousFunction, ClosureParameter, Param, When};
 
 fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
     let mut scalars = Vec::new();
@@ -27,7 +26,7 @@ fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
         .collect();
     Type::Record(Arc::new(RecordType {
         array: false,
-        id: crate::parser::ast::fresh_type_id(),
+        id: crate::core::types::fresh_type_id(),
         name,
         fields,
         scalars,

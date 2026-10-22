@@ -495,7 +495,7 @@ fn generic_templates_need_concrete_wrappers_at_native_function_boundaries() {
 
 #[test]
 fn generic_parameters_are_rejected_by_host_registration_without_replacing_entries() {
-    use crate::parser::ast::TypeParameter;
+    use crate::core::types::TypeParameter;
     let parameter = Type::Parameter(std::sync::Arc::new(TypeParameter::new(
         "T".into(),
         crate::Span::empty(0),

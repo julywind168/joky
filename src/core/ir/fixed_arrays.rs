@@ -299,7 +299,7 @@ impl PlaceOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::ast::ConstArgument;
+    use crate::core::types::ConstArgument;
     #[test]
     fn fixed_array_f2a_descriptor_and_ir_size_do_not_expand_elements() {
         use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};

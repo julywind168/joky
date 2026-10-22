@@ -1,8 +1,7 @@
 //! Compiler-owned anonymous entries and static closure responsibility.
 use super::*;
-use crate::parser::ast::{
-    AnonymousFunction, CallableKind, ClosureInfo, Param, RecordField, RecordType,
-};
+use crate::core::types::{CallableKind, ClosureInfo, RecordField, RecordType};
+use crate::parser::ast::{AnonymousFunction, Param};
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
 pub(crate) enum ClosureOp {
@@ -286,7 +285,7 @@ impl FunctionPlan {
                     "Capturing closures cannot convert to function pointers",
                 ));
             }
-            let dst = self.slot(Type::Function(Arc::new(crate::parser::ast::FunctionType {
+            let dst = self.slot(Type::Function(Arc::new(crate::core::types::FunctionType {
                 signature: signature.clone(),
                 suspends: false,
                 noescape: pointer.noescape,
@@ -610,7 +609,7 @@ impl FunctionPlan {
                     owners: owners.clone(),
                     repr_c: false,
                     indirect: false,
-                    id: crate::parser::ast::fresh_type_id(),
+                    id: crate::core::types::fresh_type_id(),
                     name: format!("<closure:{count}>"),
                     parameters: vec![],
                     arguments: vec![],

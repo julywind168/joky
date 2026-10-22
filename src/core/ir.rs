@@ -1,8 +1,9 @@
 //! Typed slot IR with explicit control flow shared by all execution backends.
+use crate::core::types::Type;
 pub(crate) use crate::parser::ast::FloatKind;
 use crate::parser::ast::{
     BinOp, CompilerIntrinsic, ConcurrentKind, Expr, FnDef, Item, Literal, LogicalOp,
-    Module as AstModule, Type, UnaryOp,
+    Module as AstModule, UnaryOp,
 };
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
@@ -505,7 +506,7 @@ struct LoopTargets {
 pub(crate) struct DynTable {
     pub id: usize,
     pub self_type: Type,
-    pub interface: Arc<crate::parser::ast::DynInterface>,
+    pub interface: Arc<crate::core::types::DynInterface>,
     pub methods: Vec<String>,
 }
 
@@ -521,7 +522,7 @@ pub(crate) struct FunctionPlan {
     source_function: String,
     suspending: bool,
     when_function: String,
-    callable_modes: HashMap<usize, crate::parser::ast::CallableKind>,
+    callable_modes: HashMap<usize, crate::core::types::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
     captured_fields: HashMap<usize, (Slot, Vec<String>)>,
     closure_places: HashMap<usize, Slot>,
@@ -2492,7 +2493,7 @@ fn payload_binding(ty: &Type, index: usize) -> Binding {
 
 /// Explicit arguments on a namespace or variant path. Qualified paths retain
 /// the parser's field representation, while simple paths use GenericName.
-fn expression_type_arguments(expr: &Expr) -> Option<&[crate::parser::ast::GenericArgument]> {
+fn expression_type_arguments(expr: &Expr) -> Option<&[crate::core::types::GenericArgument]> {
     match expr {
         Expr::GenericName(name) => Some(&name.type_args),
         Expr::Field { type_args, .. } if !type_args.is_empty() => Some(type_args),

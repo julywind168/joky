@@ -1,9 +1,8 @@
 //! Resolve finite nominal layouts and aliases without recursing on source graphs.
 use super::*;
+use crate::core::types::{EnumType, EnumVariant, RecordField, RecordType, TupleType};
 use crate::{
-    parser::ast::{
-        EnumDef, EnumType, EnumVariant, RecordDef, RecordField, RecordType, TupleType, TypeAlias,
-    },
+    parser::ast::{EnumDef, RecordDef, TypeAlias},
     Span,
 };
 use std::{collections::HashSet, sync::Arc};
@@ -239,14 +238,14 @@ pub(super) fn resolve<'a>(
                 _ => None,
             };
             if let Some((name, arguments)) = application {
-                ty = Type::Applied(Arc::new(crate::parser::ast::TypeApplication {
+                ty = Type::Applied(Arc::new(crate::core::types::TypeApplication {
                     name,
                     arguments,
                 }));
             }
             let ty = &ty;
             if let Type::Applied(application) = ty {
-                let crate::parser::ast::TypeApplication { name, arguments } = application.as_ref();
+                let crate::core::types::TypeApplication { name, arguments } = application.as_ref();
                 let parameters = match declaration {
                     Declaration::Record(d) => &d.type_params,
                     Declaration::Enum(d) => &d.type_params,

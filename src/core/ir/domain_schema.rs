@@ -1,4 +1,5 @@
 //! Freeze finite domain storage definitions while the compiler still owns nominals.
+use crate::core::types::{EnumVariant, RecordField};
 use crate::{core::ir::FunctionPlan, parser::ast::*, Error};
 use std::sync::Arc;
 

@@ -361,9 +361,9 @@ impl StandardLibrary {
         }
         if source.kind == SourceKind::FixedArrayStorage {
             for alias in &mut module.type_aliases {
-                let shape = Arc::new(crate::parser::ast::FixedArrayType {
+                let shape = Arc::new(crate::core::types::FixedArrayType {
                     element: Type::Parameter(alias.type_params[0].clone()),
-                    length: crate::parser::ast::ConstArgument::Parameter(
+                    length: crate::core::types::ConstArgument::Parameter(
                         alias.type_params[1].clone(),
                     ),
                 });

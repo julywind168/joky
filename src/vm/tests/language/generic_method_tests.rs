@@ -1,6 +1,7 @@
 //! Method-local Copy parameters, inference, and specialization parity.
 use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
+use crate::core::types::Type;
 use crate::ErrorCode;
 
 #[test]
@@ -164,7 +165,7 @@ fn generic_method_errors_keep_the_previous_module() {
 
 #[test]
 fn generic_method_parameters_keep_local_identity_and_normalize_twice() {
-    use crate::parser::ast::{Item, Type};
+    use crate::parser::ast::Item;
     let source = "// 🙂\nstruct Pair<T> { value: T } impl<T> Pair<T> { fn one<U>(self, value: U) -> (T, U) { (self.value, value) } fn two<U>(self, value: U) -> Self { self } } fn outside(value: U) {}";
     let ast = crate::parser::parse(source).unwrap();
     let implementation = &ast.implementations[0];

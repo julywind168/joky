@@ -1,7 +1,8 @@
 //! Declaration-scoped associated-type binding and bounded static trait solving.
 use super::*;
 use crate::core::imports::ImportScope;
-use crate::parser::ast::{ImplDef, TraitBound, TraitDef, TypeParameter, TypeProjection};
+use crate::core::types::{TraitBound, TypeParameter, TypeProjection};
+use crate::parser::ast::{ImplDef, TraitDef};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 mod dyn_traits;
@@ -24,7 +25,7 @@ enum Obligation {
     Normalize(TypeProjection),
     Binding(TypeProjection),
     Implements(Type, u64),
-    Alias(String, Vec<crate::parser::ast::GenericArgument>),
+    Alias(String, Vec<crate::core::types::GenericArgument>),
 }
 #[derive(Clone, Debug)]
 enum Answer {
@@ -84,7 +85,7 @@ impl TypeRegistry {
     pub(super) fn with_alias_obligation<T>(
         &self,
         name: &str,
-        arguments: &[crate::parser::ast::GenericArgument],
+        arguments: &[crate::core::types::GenericArgument],
         f: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error> {
         if self.trait_work.borrow().active.is_empty() {

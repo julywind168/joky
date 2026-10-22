@@ -825,8 +825,8 @@ fn useful(
         }
         let lengths = match &types[0] {
             Type::FixedArray(a) => match a.length {
-                crate::parser::ast::ConstArgument::Value(n) => vec![n as usize],
-                crate::parser::ast::ConstArgument::Parameter(_) => vec![limit],
+                crate::core::types::ConstArgument::Value(n) => vec![n as usize],
+                crate::core::types::ConstArgument::Parameter(_) => vec![limit],
             },
             _ => (0..=limit).collect(),
         };

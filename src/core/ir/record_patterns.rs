@@ -2,7 +2,8 @@
 //! field-level checks for let/var bindings and enum match payloads.
 use super::patterns::{CheckedPattern, Kind};
 use super::*;
-use crate::parser::ast::{BindingPattern, RecordFieldPattern, RecordType};
+use crate::core::types::{ConstArgument, FixedArrayType, RecordType};
+use crate::parser::ast::{BindingPattern, RecordFieldPattern};
 use std::collections::HashSet;
 
 /// A fully checked irrefutable pattern over scalar-slot coordinates.
@@ -45,7 +46,7 @@ impl FunctionPlan {
     pub(super) fn resolve_record_pattern(
         &self,
         name: &str,
-        type_args: &[crate::parser::ast::GenericArgument],
+        type_args: &[crate::core::types::GenericArgument],
         expected: &Type,
         span: Span,
         types: &TypeRegistry,
@@ -171,7 +172,7 @@ impl FunctionPlan {
             indices.push(index);
         }
         if !rest {
-            let missing: Vec<&crate::parser::ast::RecordField> = record
+            let missing: Vec<&crate::core::types::RecordField> = record
                 .fields
                 .iter()
                 .enumerate()
@@ -265,7 +266,6 @@ impl FunctionPlan {
         let span = pattern.span();
         let kind = match pattern {
             BindingPattern::Sequence(p) => {
-                use crate::parser::ast::{ConstArgument, FixedArrayType};
                 let Type::FixedArray(array) = ty else {
                     return Err(type_error(&span, ErrorCode::InvalidPattern, "Sequence let/var destructuring requires FixedArray; use match or if let for dynamic lengths"));
                 };

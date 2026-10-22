@@ -18,6 +18,7 @@ mod when;
 
 use self::ast::*;
 use self::lexer::{Lexer, Token, TokenKind};
+use crate::core::types::{CallableBound, CallableKind};
 use crate::Span;
 
 /// A lexical or syntactic error at a one-based source line.

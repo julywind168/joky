@@ -1,6 +1,6 @@
 //! Exact C array prototypes and independent layout checks execute in every backend.
 use super::*;
-use crate::parser::ast::{ConstArgument, FixedArrayType};
+use crate::core::types::{ConstArgument, FixedArrayType};
 use crate::vm::{VmEngine, VmMode};
 use std::{rc::Rc, sync::Arc};
 
