@@ -24,10 +24,31 @@ fn classify(error: &Error) -> u64 {
     }
 }
 
-fn apply(owner: u64, name: &str, source: &str, publish: bool) -> Result<u64, Error> {
+fn apply(owner: u64, name: &str, source: &str, mode: u64) -> Result<u64, Error> {
     let handle = unsafe { managed::handle(owner)? };
     let state = lookup(handle)?;
-    let executor = if publish {
+    if mode >= 2 {
+        let mut engine = state.engine.try_borrow_mut().map_err(|_| {
+            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
+        })?;
+        match mode {
+            2 => {
+                let (input, output) = source.split_once('\n').ok_or_else(|| {
+                    runtime_error(ErrorCode::InvalidCall, "Invalid Script contract packet")
+                })?;
+                engine.require_script_entry(name, input, output)?;
+            }
+            3 => engine.add_source_module(name, source)?,
+            _ => {
+                return Err(runtime_error(
+                    ErrorCode::InvalidCall,
+                    "Unknown Script source operation",
+                ))
+            }
+        }
+        return Ok(0);
+    }
+    let executor = if mode == 1 {
         let executor = current_executor().ok_or_else(|| {
             runtime_error(
                 ErrorCode::InvalidState,
@@ -88,7 +109,7 @@ pub(crate) unsafe fn source_poll(arena: &mut Arena, frame: &mut CpsFrame) -> Res
     // Reserve the success result before any publication. Nothing fallible follows a commit.
     let empty = Buffer::copy_bytes(arena, b"")?;
     let result = catch_unwind(AssertUnwindSafe(|| {
-        apply(frame.slots[0], name, source, frame.slots[3] != 0)
+        apply(frame.slots[0], name, source, frame.slots[3])
     }))
     .unwrap_or_else(|_| {
         Err(runtime_error(

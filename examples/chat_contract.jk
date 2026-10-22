@@ -1,0 +1,20 @@
+import joky/domain
+import joky/outbox
+import joky/vm
+import joky/option.{type Option}
+
+pub struct Host { pub directory: domain.DirectoryHandle, pub rooms: domain.DirectoryHandle, pub accounts: domain.DirectoryHandle, pub requests: outbox.Handle }
+pub enum Action { Welcome, Line(String), Disconnect, Notice(String) }
+pub struct Call { pub host: Host, pub id: UInt64, pub action: Action }
+pub struct RoomInit { pub host: Host, pub key: UInt64, pub name: String }
+pub struct RoomKey { pub host: Host, pub key: UInt64 }
+pub struct AccountInit { pub host: Host, pub owners: domain.DirectoryHandle, pub id: UInt64, pub output: outbox.Handle, pub stop: outbox.Handle }
+
+pub fn require_contract(engine: &vm.Vm) @suspends {
+    engine.require::<Host, Unit>("initialize")!
+    engine.require::<Call, UInt64>("dispatch")!
+    engine.require::<Host, Option<RoomInit>>("next_room")!
+    engine.require::<RoomInit, Unit>("init_room")!
+    engine.require::<RoomKey, Unit>("open_room")!
+    engine.require::<AccountInit, Unit>("init_account")!
+}

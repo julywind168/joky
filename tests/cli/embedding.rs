@@ -1181,3 +1181,17 @@ mod composite_values;
 #[cfg(unix)]
 #[path = "../support/owned_values.rs"]
 mod owned_values;
+
+#[test]
+#[cfg(unix)]
+fn required_script_contracts_preflight_all_loads_on_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/script_required_contracts.jk");
+    for create in ["new", "interpreter"] {
+        let source = source.replace("vm.Vm.new()", &format!("vm.Vm.{create}()"));
+        work.write("required.jk", &source);
+        success(&work.cli(&["run", "required.jk"]));
+        success(&work.cli(&["run", "--interpreter", "required.jk"]));
+        work.assert_native("required.jk", &[], b"", 0);
+    }
+}

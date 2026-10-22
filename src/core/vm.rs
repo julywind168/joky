@@ -133,7 +133,7 @@ pub(crate) fn source_signature() -> FunctionSignature {
             Type::reference(Type::Resource("vm.Owner".into()), false),
             Type::String,
             Type::String,
-            Type::Bool,
+            Type::UInt64,
             Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
         ],
         Type::String,

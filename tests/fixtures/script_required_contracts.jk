@@ -1,0 +1,43 @@
+import joky/vm
+import joky/check
+import joky/domain
+fn rejected(result:Result<UInt64,vm.LoadError>) {
+    match result {
+        Err(error) => match error.kind { Incompatible(_) => {}, _ => check.assert(false,"contract error classification") },
+        Ok(_) => check.assert(false,"incompatible publication accepted")
+    }
+}
+fn main() @suspends {
+    let engine=vm.Vm.new()
+    engine.require::<UInt64,UInt64>("run")!
+    engine.require::<Unit,Unit>("initialize")!
+    engine.module_source("math", "pub fn answer()->UInt64{{42}}")!
+    let missing="import math fn run(n:UInt64) @suspends ->UInt64{{math.answer()+n}}"
+    check.assert(engine.load_source(missing.clone()).is_err(),"initial load checks the complete contract")
+    check.assert(vm.module_count(&engine)==0,"failed initial load never installs code")
+    let valid="import math fn run(n:UInt64) @suspends ->UInt64{{math.answer()+n}} fn initialize(_:Unit) @suspends {{}}"
+    engine.load_source(valid.clone())!
+    check.assert(engine.call::<UInt64,UInt64>("run",1)==43,"initial implementation")
+    rejected(engine.publish_source(missing))
+    rejected(engine.publish_source("fn run(n:UInt32) @suspends ->UInt64{{uint64(n)}} fn initialize(_:Unit) @suspends {{}}"))
+    rejected(engine.publish_source("fn run(n:UInt64) @suspends ->UInt32{{uint32(n)}} fn initialize(_:Unit) @suspends {{}}"))
+    rejected(engine.publish_source("fn run(n:UInt64)->UInt64{{n}} fn initialize(_:Unit) @suspends {{}}"))
+    check.assert(engine.require::<UInt32,UInt64>("run").is_err(),"a conflicting registration leaves the contract intact")
+    check.assert(engine.call::<UInt64,UInt64>("run",1)==43,"failed publications preserve the old entry")
+    engine.module_source("math", "pub fn answer()->UInt64{{84}}")!
+    check.assert(engine.call::<UInt64,UInt64>("run",1)==43,"dependency staging cannot mutate running code")
+    engine.publish_source(valid)!
+    check.assert(engine.call::<UInt64,UInt64>("run",1)==85,"publication uses the staged dependency snapshot")
+    check.assert(vm.module_count(&engine)==1,"failed versions and replaced dependencies retire")
+    let stateful=vm.Vm.new()
+    stateful.require::<domain.DirectoryHandle,Unit>("initialize")!
+    stateful.require::<domain.DirectoryHandle,Int32>("read")!
+    stateful.load_source("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn initialize(d:domain.DirectoryHandle) @suspends {{d.insert_owned(1,domain.create(make,7))!}} fn read(d:domain.DirectoryHandle) @suspends ->Int32{{let h=domain.lookup_write::<S>(d,1)!; when(h){{h.n}}!}}")!
+    let roots=domain.directory(1)
+    stateful.call::<domain.DirectoryHandle,Unit>("initialize",roots.handle())
+    rejected(stateful.publish_source("import joky/domain fn initialize(d:domain.DirectoryHandle) @suspends {{}} fn read(d:domain.DirectoryHandle) @suspends ->Int32{{99}}"))
+    stateful.publish_source("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn initialize(d:domain.DirectoryHandle) @suspends {{}} fn read(d:domain.DirectoryHandle) @suspends ->Int32{{let h=domain.lookup_write::<S>(d,1)!; when \"read\"(h){{h.n}}!}}")!
+    rejected(stateful.publish_source("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn initialize(d:domain.DirectoryHandle) @suspends {{}} fn read(d:domain.DirectoryHandle) @suspends ->Int32{{99}}"))
+    rejected(stateful.publish_source("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn initialize(d:domain.DirectoryHandle) @suspends {{}} fn read(d:domain.DirectoryHandle) @suspends ->Int32{{let h=domain.lookup_write::<S>(d,1)!; let delta=1; when \"read\"(h){{h.n+delta}}!}}"))
+    check.assert(stateful.call::<domain.DirectoryHandle,Int32>("read",roots.handle())==7,"omitted live schema preserves entry and domain code together")
+}

@@ -1,16 +1,10 @@
+import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit}
 import joky/domain
 import joky/outbox
 import joky/mem
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 
-// Keep these entry contracts identical in the host and each published version.
-struct Host { directory: domain.DirectoryHandle, rooms: domain.DirectoryHandle, accounts: domain.DirectoryHandle, requests: outbox.Handle }
-enum Action { Welcome, Line(String), Disconnect, Notice(String) }
-struct Call { host: Host, id: UInt64, action: Action }
-struct RoomInit { host: Host, key: UInt64, name: String }
-struct RoomKey { host: Host, key: UInt64 }
-struct AccountInit { host: Host, owners: domain.DirectoryHandle, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 
 struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 #state
@@ -370,9 +364,9 @@ fn dispatch(request: Call) @suspends -> UInt64 {
     let ctx = Context { host: host }
     let excluded = Array.new::<UInt64>()
     match action {
-        Welcome => if publish(ctx, id, Command.Welcome, &excluded) { 1 } else { 0 },
-        Line(line) => if process(ctx, id, line) { 1 } else { 0 },
-        Disconnect => {
+        Action.Welcome => if publish(ctx, id, Command.Welcome, &excluded) { 1 } else { 0 },
+        Action.Line(line) => if process(ctx, id, line) { 1 } else { 0 },
+        Action.Disconnect => {
             publish(ctx, id, Command.Disconnect, &excluded);
             match domain.lookup_write::<Account>(host.accounts, id) {
                 Some(account) => { host.accounts.remove(id, account.read_only()); },
@@ -380,7 +374,7 @@ fn dispatch(request: Call) @suspends -> UInt64 {
             }
             0
         },
-        Notice(text) => if publish(ctx, id, Command.Notice(text), &excluded) { 1 } else { 0 }
+        Action.Notice(text) => if publish(ctx, id, Command.Notice(text), &excluded) { 1 } else { 0 }
     }
 }
 fn init_account(input: AccountInit) @suspends {

@@ -129,16 +129,29 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     bob.send("say updated\n");
     alice.expect("message-v2 123 2 updated\n");
     bob.expect("message-v2 123 2 updated\n");
-    for invalid in [
+    for (index, invalid) in [
         format!("{patched}\nfn broken("),
         patched.replace("balance_cents", "credit_cents"),
-    ] {
+        patched.replace("fn dispatch(", "fn missing_dispatch("),
+        patched.replace(
+            "fn dispatch(request: Call) @suspends -> UInt64",
+            "fn dispatch(request: Call) @suspends -> Int32",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         std::fs::write(logic_path, invalid).unwrap();
         alice.send("reload\n");
         alice.expect("reload failed\n");
-        bob.send("say preserved\n");
-        alice.expect("message-v2 123 2 preserved\n");
-        bob.expect("message-v2 123 2 preserved\n");
+        if index < 2 {
+            bob.send("say preserved\n");
+            alice.expect("message-v2 123 2 preserved\n");
+            bob.expect("message-v2 123 2 preserved\n");
+        } else {
+            bob.send("balance\n");
+            bob.expect("balance 2\n");
+        }
     }
     std::fs::remove_file(logic_path).unwrap();
     alice.send("reload\n");
@@ -309,6 +322,11 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
 fn chat_real_tcp_on_all_backends() {
     let work = scratch::ScratchDir::new("chat");
     let source = include_str!("../examples/chat.jk");
+    std::fs::write(
+        work.path().join("chat_contract.jk"),
+        include_str!("../examples/chat_contract.jk"),
+    )
+    .unwrap();
     assert_eq!(source.matches("0x7f000001, 7777").count(), 1);
     assert_eq!(
         source
@@ -320,6 +338,7 @@ fn chat_real_tcp_on_all_backends() {
     let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check")
         .replace("0x7f000001, 7777", "0x7f000001, 0")
         .replace("examples/chat_logic.jk", "chat_logic.jk")
+        .replace("examples/chat_contract.jk", "chat_contract.jk")
         .replace("    let directory = domain.directory(1)", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let directory = domain.directory(1)");
     let source = format!("{source}\n{}", include_str!("fixtures/chat_reload_host.jk"));
     for create in ["new", "interpreter"] {

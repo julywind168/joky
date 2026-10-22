@@ -179,7 +179,7 @@ impl VmEngine {
     /// Schema changes require an explicit migration. Existing calls retain their module.
     pub fn publish_source(&mut self, source: &str) -> Result<usize, Error> {
         let registry = self.domains.clone();
-        self.publish_source_matching(&registry, "<source>", source, |_| true)
+        self.publish_source_matching(&registry, "<source>", source, false, |_| true)
     }
 
     pub(crate) fn publish_script_source(
@@ -189,7 +189,7 @@ impl VmEngine {
         name: &str,
         source: &str,
     ) -> Result<usize, Error> {
-        self.publish_source_matching(&executor.domains(), name, source, |bound| {
+        self.publish_source_matching(&executor.domains(), name, source, true, |bound| {
             owners
                 .iter()
                 .any(|owner| Rc::as_ptr(owner) as *const () as usize == module_key(bound))
@@ -201,10 +201,43 @@ impl VmEngine {
         registry: &Rc<RefCell<Domains>>,
         name: &str,
         source: &str,
+        strict: bool,
         owns: impl Fn(&LoadedModule) -> bool,
     ) -> Result<usize, Error> {
         let ast = Self::parse_named_source(name, source)?;
         let (module, next_version) = self.stage_module(&ast)?;
+        if strict {
+            if let Some(previous) = &self.current {
+                for name in entry_names(previous) {
+                    if name.starts_with("$when/named/") || name.starts_with("$when/method/") {
+                        let compatible = previous
+                            .instance_info(&name)
+                            .ok()
+                            .zip(module.instance_info(&name).ok())
+                            .is_some_and(|(old, new)| {
+                                new.domain_entry && compatible_entry(&old, &new)
+                            });
+                        if !compatible {
+                            return Err(Error::new_with_code(ErrorPhase::Runtime, ErrorCode::TypeMismatch,
+                                format!("Published Script changed or omitted business operation `{name}`")));
+                        }
+                    }
+                }
+            }
+            let types = state_types(&module);
+            for domain in registry.borrow().entries.values() {
+                if owns(&domain.module) && !domain.closing && domain.failure.is_none() {
+                    if let Type::Record(record) = &domain.ty {
+                        if !types.contains_key(&record.name) {
+                            return Err(error(
+                                ErrorCode::TypeMismatch,
+                                "Published Script omitted a live state schema",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         let mut previous = None;
         let count = publish_matching_with(registry, &module, owns, || {
             previous = self.install_staged(module.clone(), next_version);

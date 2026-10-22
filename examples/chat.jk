@@ -1,16 +1,10 @@
+import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, require_contract}
 import joky/vm
 import joky/domain
 import joky/outbox
 import joky/option.{type Option}
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
 
-// Keep these entry contracts identical in the host and each published version.
-struct Host { directory: domain.DirectoryHandle, rooms: domain.DirectoryHandle, accounts: domain.DirectoryHandle, requests: outbox.Handle }
-enum Action { Welcome, Line(String), Disconnect, Notice(String) }
-struct Call { host: Host, id: UInt64, action: Action }
-struct RoomInit { host: Host, key: UInt64, name: String }
-struct RoomKey { host: Host, key: UInt64 }
-struct AccountInit { host: Host, owners: domain.DirectoryHandle, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 fn script_path() -> String { "examples/chat_logic.jk" }
 fn report(error: vm.LoadError) {
     match error.kind {
@@ -103,6 +97,8 @@ fn serve(engine: &vm.Vm, host: Host) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.new()
+    engine.module_file("chat_contract", "examples/chat_contract.jk")!
+    require_contract(&engine)
     match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { report(error); return 1 } }
     let directory = domain.directory(1)
     let rooms = domain.directory(4096)

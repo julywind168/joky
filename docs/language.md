@@ -4057,6 +4057,26 @@ JIT、解释器和 AOT 共用执行器。Rust AOT 宿主可用 unsafe `Continuat
 目前未提供 C 执行器封装；Godot 的帧、信号和游戏/真实时间适配见
 [Godot G2 用法](../integrations/godot/README.md#g2-异步任务)。
 
+## Script 入口预检与共享模块
+
+`Vm.require<A,R>(name: String) @suspends -> Result<Unit, LoadError>` 登记必需的完整入口契约。
+建议在首次加载前登记所有宿主入口；已加载时还会先检查当前版本，失败不改变已登记契约。
+后续 load／publish 必须同时满足全部登记项：入口存在、一个输入、挂起约定、完整输入和结果 schema。
+不兼容版本返回 `LoadErrorKind.Incompatible`，当前入口和域代码均不改变；重复同一契约允许，
+同名但不同的契约拒绝。普通调用仍检查实际契约，未登记的入口也可以按原有规则调用。
+
+`Vm.module_source(name: String, source: String)` 和 `Vm.module_file(name: String, path: String)`
+均为挂起方法，返回 `Result<Unit, LoadError>`，为后续编译提供显式依赖快照。
+前者不执行文件 I/O；后者沿现有文件能力读取并关闭文件。模块名使用用户导入路径规则，
+不允许覆盖 `joky`。更换依赖快照不改变运行中的代码，只有下次成功 load／publish 才使用它；
+依赖文件也不会在每次调用或发布时自动重读。源 VM 的 load_source 不搜索磁盘。
+
+宿主与脚本可导入同一个契约文件，见 `examples/chat_contract.jk`：宿主先用 module_file
+登记该源文件，再用 require_contract 登记六个入口。每次操作固定选中的实现；源 Script 的
+publish 还检查上一版具名 when／句柄方法的身份与完整捕获契约，以及全部仍存活的域 schema。
+删掉具名操作、改变其访问／捕获／返回契约或遗漏活域类型都拒绝整个发布。匿名 when 仍只属于
+创建它的版本，不提供跨版本晚绑定。底层 Rust publish_domain_code 仍保留按匹配类型选择的规则。
+
 ## 类型化 Script 调用 `Vm.call<A, R>`
 
 `Vm.call<A, R>(&self, name: String, input: A) @suspends -> R`

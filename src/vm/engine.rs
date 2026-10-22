@@ -34,6 +34,8 @@ pub(super) enum LoadedModule {
 pub struct VmEngine {
     mode: VmMode,
     files: Option<crate::runtime::fs::FileService>,
+    module_sources: crate::ModuleSources,
+    script_contracts: HashMap<String, (String, String)>,
     pub(super) current: Option<LoadedModule>,
     pub(super) instances: Rc<super::instances::Instances>,
     pub(super) domains: Rc<std::cell::RefCell<super::state_domains::Domains>>,
@@ -97,6 +99,8 @@ impl VmEngine {
         Self {
             mode,
             files: None,
+            module_sources: Default::default(),
+            script_contracts: Default::default(),
             current: None,
             instances: Default::default(),
             domains,
@@ -615,6 +619,8 @@ impl VmEngine {
         staging.next_version = self.next_version;
         staging.interpreter_limits = self.interpreter_limits;
         staging.files = self.files.clone();
+        staging.module_sources = self.module_sources.clone();
+        staging.script_contracts = self.script_contracts.clone();
         staging.load_module(ast)?;
         Ok((staging.current.take().unwrap(), staging.next_version))
     }
@@ -631,6 +637,43 @@ impl VmEngine {
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, Error> {
         self.load_module(&parser::parse(source)?)
+    }
+
+    /// Supply an explicit dependency snapshot for subsequent compilations.
+    /// This does not publish code or change already-running modules.
+    pub fn add_source_module(&mut self, name: &str, source: &str) -> Result<(), Error> {
+        self.module_sources.insert(name, source)
+    }
+
+    /// Require a complete typed Script entry before any subsequent load or publication.
+    /// Schemas use the same encoding as the typed Script call bridge.
+    pub fn require_script_entry(
+        &mut self,
+        name: &str,
+        input: &str,
+        output: &str,
+    ) -> Result<(), Error> {
+        if let Some(current) = &self.current {
+            current.check_script_contract(name, input, output)?;
+        }
+        if let Some((old_input, old_output)) = self.script_contracts.get(name) {
+            if old_input == input && old_output == output {
+                return Ok(());
+            }
+            return Err(runtime_error(
+                ErrorCode::TypeMismatch,
+                "Conflicting required Script contract",
+            ));
+        }
+        self.script_contracts.try_reserve(1).map_err(|_| {
+            runtime_error(
+                ErrorCode::ResourceLimit,
+                "Script contract allocation failed",
+            )
+        })?;
+        self.script_contracts
+            .insert(name.to_owned(), (input.to_owned(), output.to_owned()));
+        Ok(())
     }
 
     /// Load a source snapshot with a diagnostic filename, independently of module identity.
@@ -709,7 +752,8 @@ impl VmEngine {
             .filter(|(_, host)| matches!(host.entry, HostEntry::TextFfi(_)))
             .map(|(name, host)| (name.clone(), host.signature.clone()))
             .collect();
-        let prepared = PreparedModule::new(ast, &types, self.registry.metadata())?;
+        let ast = types.resolve_with_modules(ast, &self.module_sources)?;
+        let prepared = PreparedModule::new(&ast, &types, self.registry.metadata())?;
         self.load_prepared(&prepared)
             .map_err(|error| error.with_sources(prepared.ast().sources()))
     }
@@ -979,6 +1023,9 @@ impl VmEngine {
             LoadedModule::Interpreter(module) => interp::function_names(module),
         };
         names.sort();
+        for (name, (input, output)) in &self.script_contracts {
+            loaded.check_script_contract(name, input, output)?;
+        }
         self.current = Some(loaded);
         self.next_version = next;
         Ok(names)
@@ -1589,6 +1636,28 @@ fn abi_error(code: ErrorCode, message: impl Into<String>) -> Error {
 }
 
 impl LoadedModule {
+    fn check_script_contract(&self, name: &str, input: &str, output: &str) -> Result<(), Error> {
+        let info = match self {
+            Self::Jit(module) => module.request_entries.get(name).map(|f| &f.info),
+            Self::Interpreter(module) => interp::script_info(module, name),
+        };
+        if info.is_some_and(|info| {
+            info.suspends
+                && info.domain_request_entry
+                && info.signature.params.len() == 1
+                && crate::core::script::domain_schema(&info.signature.params[0]).as_deref()
+                    == Some(input)
+                && crate::core::script::domain_schema(&info.signature.ret).as_deref()
+                    == Some(output)
+        }) {
+            Ok(())
+        } else {
+            Err(runtime_error(
+                ErrorCode::TypeMismatch,
+                format!("Required Script entry `{name}` is missing or incompatible"),
+            ))
+        }
+    }
     pub(super) fn prepare_script_call(
         &self,
         name: &str,

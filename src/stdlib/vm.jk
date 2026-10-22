@@ -84,13 +84,13 @@ pub enum LoadErrorKind {
     Conflict(Diagnostic), Runtime(Diagnostic)
 }
 pub struct LoadError { pub path: String, pub kind: LoadErrorKind }
-extern fn __vm_source(owner: &vm.Owner, name: String, source: String, publish: Bool, packet: &mut Buffer<UInt64>) @suspends -> String
+extern fn __vm_source(owner: &vm.Owner, name: String, source: String, mode: UInt64, packet: &mut Buffer<UInt64>) @suspends -> String
 
-fn source_result(value: &Vm, path: String, source: String, publish: Bool) @suspends -> Result<UInt64, LoadError> {
+fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspends -> Result<UInt64, LoadError> {
     var packet = storage.allocate::<UInt64>(5)
     var index: UInt64 = 0
     while index < 5 { storage.initialize_next(&mut packet, 0); index += 1 }
-    let message = __vm_source(&value.owner, path.clone(), source, publish, &mut packet)
+    let message = __vm_source(&value.owner, path.clone(), source, mode, &mut packet)
     let code = storage.load(&packet, 0)
     if code == 0 { return Ok(storage.load(&packet, 4)) }
     let diagnostic = Diagnostic { message: message, has_span: storage.load(&packet, 3) != 0,
@@ -103,7 +103,7 @@ fn source_result(value: &Vm, path: String, source: String, publish: Bool) @suspe
     }
     Err(LoadError { path: path, kind: kind })
 }
-fn file_result(value: &Vm, path: String, publish: Bool) @suspends -> Result<UInt64, LoadError> {
+fn file_text(path: String) @suspends -> Result<String, LoadError> {
     var file = match fs.open(path.clone(), fs.OpenOptions.new()) {
         Ok(file) => file
         Err(error) => { return Err(LoadError { path: path, kind: LoadErrorKind.Io(error) }) }
@@ -125,22 +125,43 @@ fn file_result(value: &Vm, path: String, publish: Bool) @suspends -> Result<UInt
         Ok(_) => {}
         Err(error) => { return Err(LoadError { path: path, kind: LoadErrorKind.Io(error) }) }
     }
-    source_result(value, path, source, publish)
+    Ok(source)
+}
+fn file_result(value: &Vm, path: String, publish: Bool) @suspends -> Result<UInt64, LoadError> {
+    let source = match file_text(path.clone()) { Ok(source) => source, Err(error) => return Err(error) }
+    source_result(value, path, source, if publish { 1 } else { 0 })
 }
 fn loaded(result: Result<UInt64, LoadError>) -> Result<Unit, LoadError> {
     match result { Ok(_) => Ok({}), Err(error) => Err(error) }
 }
 impl Vm {
     pub fn load_source(&self, source: String) @suspends -> Result<Unit, LoadError> {
-        loaded(source_result(self, "<source>", source, false))
+        loaded(source_result(self, "<source>", source, 0))
     }
     pub fn publish_source(&self, source: String) @suspends -> Result<UInt64, LoadError> {
-        source_result(self, "<source>", source, true)
+        source_result(self, "<source>", source, 1)
     }
     pub fn load_file(&self, path: String) @suspends -> Result<Unit, LoadError> {
         loaded(file_result(self, path, false))
     }
     pub fn publish_file(&self, path: String) @suspends -> Result<UInt64, LoadError> {
         file_result(self, path, true)
+    }
+}
+
+impl Vm {
+    // Register all host contracts before the initial load. Future loads and
+    // publications validate the complete set before installing any code.
+    pub fn require<A, R>(&self, name: String) @suspends -> Result<Unit, LoadError> {
+        let input = schema::<A>()
+        let output = schema::<R>()
+        loaded(source_result(self, name, "{input}\n{output}", 2))
+    }
+    pub fn module_source(&self, name: String, source: String) @suspends -> Result<Unit, LoadError> {
+        loaded(source_result(self, name, source, 3))
+    }
+    pub fn module_file(&self, name: String, path: String) @suspends -> Result<Unit, LoadError> {
+        let source = match file_text(path) { Ok(source) => source, Err(error) => return Err(error) }
+        self.module_source(name, source)
     }
 }
