@@ -44,9 +44,11 @@ fn lifecycle() @suspends ->Int32 {
     var captured=input(13); captured.left.1=false
     let offset=(1,true)
     match when "business error" (mut x,y) {update(x,captured)} {Ok(Err(Denied))=>{},_=>assert(false)}
-    assert(x.value().unwrap().unwrap_or((-1,-1)).0==13)
+    assert(x.value().unwrap().unwrap_or((-1,-1)).0==12)
     let answer=when (x,y) {(Pair{left:x.n+offset.0,right:y.n},Option.Some((true,'中')))}.unwrap()
-    assert(answer.0.left==14 && answer.1.unwrap_or((false,'a')).1=='中')
+    assert(answer.0.left==13 && answer.1.unwrap_or((false,'a')).1=='中')
+    assert(domain.write_to(x,update,captured).unwrap().is_err())
+    assert(x.value().unwrap().unwrap_or((-1,-1)).0==13)
     let empty=(Empty::<Bool>{},{})
     when(x){empty}.unwrap();
     assert(domain.write_to(x,update,input(14)).unwrap().unwrap().left==14)

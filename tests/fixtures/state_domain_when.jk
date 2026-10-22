@@ -9,6 +9,7 @@ fn assert(ok:Bool) { check.assert(ok,"when") }
 struct State { n:Int32, text:String, values:Array<Int32> }
 struct Input { n:Int32 }
 struct Output { first:Int32, second:Int32 }
+enum Decision { Rejected }
 fn make(n:Int32)->State {
     var values=Array.new::<Int32>()
     values.push(n)
@@ -17,6 +18,13 @@ fn make(n:Int32)->State {
 impl State {
     fn add(&mut self, a:Int32, b:Input)->Int32 {self.n+=a+b.n; self.n}
     fn value(&self)->Int32 {self.n}
+    fn reject(&mut self)->Result<String,String> {
+        self.n=99
+        var replacement="rejected"
+        mem.swap(&mut self.text,&mut replacement)
+        self.values.push(99)
+        Err("denied")
+    }
     fn read_only(&self)->Int32 {self.n}
 }
 fn when(n:Int32)->Int32 {n}
@@ -56,6 +64,28 @@ fn lifecycle() @suspends ->Int32 {
     scope { branch {when "读取\u{0}状态" (x) {x.n};}; branch {when "another read" (y) {y.n};} }
     assert(!when (mut x) {x.n=11; false}.unwrap())
     assert(same.value().unwrap()==11)
+    let rejected=same.value().unwrap()
+    match x.reject().unwrap() {Err(message)=>{assert(message.equals("denied"))},_=>{assert(false)}}
+    assert(same.value().unwrap()==rejected)
+    let rollback=when "reject transfer" (mut x,mut y,z) {
+        mem.swap(&mut x.values,&mut y.values)
+        mem.swap(&mut x.text,&mut y.text)
+        x.n=99
+        y.n=z.n
+        x.values.push(99)
+        let result:Result<Bool,Int32>=Err(42)
+        result
+    }
+    match rollback.unwrap() {Err(n)=>{assert(n==42)},_=>{assert(false)}}
+    assert(when(x,y){x.n==11 && y.n==6 && x.values.len()==1 && y.values.len()==1 && x.values.get(0)! ==2 && y.values.get(0)! ==1 && x.text.equals("state")}.unwrap())
+    let success=when(mut x) {x.n=12; let result:Result<Bool,Int32>=Ok(false); result}
+    assert(!success.unwrap().unwrap())
+    assert(same.value().unwrap()==12)
+    match when(mut x){x.n=13; Decision.Rejected}.unwrap() {Rejected=>{}}
+    assert(same.value().unwrap()==13)
+    let nested=when(mut x){x.n=14; let inner:Result<Bool,Int32>=Err(7); let outer:Result<Result<Bool,Int32>,Int32>=Ok(inner); outer}
+    assert(nested.unwrap().unwrap().is_err())
+    assert(same.value().unwrap()==14)
     a.close()
     match when (x) {x.n} {Err(Closed)=>{},_=>{assert(false)}}
     b.close()

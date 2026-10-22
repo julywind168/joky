@@ -1,5 +1,6 @@
 //! Complete bounded domain access sets on the existing FIFO executor.
 use super::*;
+mod transactions;
 
 pub(super) struct Pair {
     pub(super) handles: Vec<DomainHandle>,
@@ -323,8 +324,23 @@ pub(super) fn execute(
         };
         revisions[index] = next;
     }
+    let transactional = pair.method.starts_with("$when/");
+    let mut candidates = if transactional {
+        match transactions::Candidates::capture(domains, &pair.handles) {
+            Ok(candidates) => Some(candidates),
+            Err(error) => {
+                *rejection = Some(access::classify(domains, &pair.handles, &error));
+                return (DomainOutcome::Failed(error), Vec::new(), Vec::new());
+            }
+        }
+    } else {
+        None
+    };
+    let mut accepted = true;
     let mut entered = false;
-    let result = if count == 1 {
+    let result = if let Some(candidates) = &mut candidates {
+        candidates.invoke(domains, pair, &module, &mutable[..count], &mut entered)
+    } else if count == 1 {
         let domain = domains.entries.get_mut(&pair.handles[0].sequence).unwrap();
         domain.root.as_mut().unwrap().invoke_values(
             &module,
@@ -346,6 +362,7 @@ pub(super) fn execute(
         )
     }
     .and_then(|words| {
+        accepted = !transactional || transactions::accepts(&pair.info.signature.ret, &words);
         if let Some(output) = &pair.output {
             let words = values::result_words(&pair.info.signature.ret, words)?;
             if !crate::runtime::domain_packet::has_owners(&pair.info.signature.ret) {
@@ -379,17 +396,23 @@ pub(super) fn execute(
     let mut groups = Vec::new();
     let outcome = match result {
         Ok(value) => {
+            if accepted {
+                if let Some(candidates) = candidates.take() {
+                    candidates.publish(domains, &pair.handles, &mutable[..count]);
+                }
+            }
             for (index, handle) in pair.handles.iter().enumerate() {
-                if mutable[index] {
+                if accepted && mutable[index] {
                     domains.entries.get_mut(&handle.sequence).unwrap().revision = revisions[index];
                 }
             }
             DomainOutcome::Value(value)
         }
-        Err(error) if !entered => {
+        Err(error) if !entered || (transactional && error.code() == ErrorCode::ResourceLimit) => {
             *rejection = Some(access::classify(domains, &pair.handles, &error));
             DomainOutcome::Failed(error)
         }
+        Err(error) if transactional => DomainOutcome::Failed(error),
         Err(error) => {
             // A failed short operation is not rollback. Every writable participant
             // is isolated; shared-read participants and unrelated domains survive.

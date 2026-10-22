@@ -1,4 +1,5 @@
-//! Only preflight rejections cross the source Result boundary. Body failures do not.
+//! In-place calls expose preflight rejections. Candidate calls also expose
+//! resource exhaustion after calculation without publishing any state.
 use super::*;
 use crate::runtime::domain::Operation;
 

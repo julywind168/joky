@@ -31,7 +31,8 @@ fn finish_current_value<A,R>(name:String,input:A) @suspends -> Result<R,DomainAc
     Ok(unpack_value::<R>(&packet))
 }
 
-// Access errors are rejections before the operation body starts.
+// In-place access rejects before entry; candidate operations may also reject
+// resource exhaustion after calculation without publishing state.
 pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit }
 fn access_error(status:Int32) -> DomainAccessError {
     if status == 1 { return DomainAccessError.Closed }

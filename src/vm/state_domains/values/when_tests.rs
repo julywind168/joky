@@ -117,7 +117,7 @@ fn state_domains_when_queued_contracts_rebind_and_reject_incompatible_publicatio
 }
 
 #[test]
-fn state_domains_when_preflight_budget_preserves_roots_but_body_failure_isolates_writers() {
+fn state_domains_when_preflight_and_body_failure_preserve_all_roots() {
     use crate::runtime::arena::TRANSFER_FAIL;
     let source = r#"import joky/domain import joky/mem
 struct S{n:Int32,text:String}
@@ -165,18 +165,100 @@ fn operation(a:domain.WriteHandle<S>,b:domain.WriteHandle<S>,c:domain.ReadHandle
                 before_entry.then_some(access::Rejection::ResourceLimit)
             );
             for (index, owner) in owners.iter().enumerate() {
-                if before_entry || index >= 2 {
-                    read(&mut vm, owner.read_handle(), index as i32 + 1);
-                } else {
-                    assert!(vm
-                        .queue_domain_call(owner.read_handle(), "read", &[])
-                        .is_err());
-                }
+                read(&mut vm, owner.read_handle(), index as i32 + 1);
+                assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
             }
             for owner in owners {
                 owner.close();
             }
             assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
         }
+    }
+}
+
+#[test]
+fn state_domains_when_candidate_budget_failures_and_business_rejection_refund_every_root() {
+    let source = r#"import joky/domain import joky/mem
+struct S{n:Int32,text:String}
+fn make(n:Int32)->S{S{n:n,text:"unchanged"}}
+fn read(s:&S)->Int32{s.n}
+fn operation(a:domain.WriteHandle<S>,b:domain.WriteHandle<S>) @suspends ->Result<String,String> {
+    when "update" (mut a,mut b) {
+        mem.swap(&mut a.text,&mut b.text); a.n=90; b.n=91;
+        let rejected:Result<String,String>=Err("business rejection"); rejected
+    }.unwrap()
+}"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let a = vm
+            .create_domain("make", &[InstanceValue::Int32(10)])
+            .unwrap();
+        let b = vm
+            .create_domain("make", &[InstanceValue::Int32(20)])
+            .unwrap();
+        let module = vm.current.as_ref().unwrap().clone();
+        let width = module
+            .instance_info(ENTRY)
+            .unwrap()
+            .signature
+            .ret
+            .scalar_types()
+            .len();
+        let budget = vm.domains.borrow().budget.clone();
+        let baseline = budget.bytes.get();
+        let live = crate::runtime::arena::LIVE.with(Cell::get);
+        let mut succeeded = false;
+        let mut failures = 0;
+        for allowance in (0..=100_000).step_by(97) {
+            let output = Rc::new(RefCell::new(vec![0; width]));
+            let mut request = pairs::submit_values(
+                &vm.domains,
+                &[a.write_handle(), b.write_handle()],
+                &module,
+                ENTRY,
+                vec![],
+                pairs::ValueOutput {
+                    words: output.clone(),
+                    snapshot: false,
+                },
+                vm.interpreter_limits(),
+            )
+            .unwrap();
+            budget.limit.set(baseline + allowance);
+            vm.poll_tasks(10000).unwrap();
+            let (outcome, rejection) = request.take_access_result().unwrap();
+            budget.limit.set(DomainLimits::default().max_state_bytes);
+            match outcome {
+                DomainOutcome::Value(_) => {
+                    assert_eq!(rejection, None);
+                    assert_eq!(output.borrow()[0], 1);
+                    succeeded = true;
+                }
+                DomainOutcome::Failed(error) => {
+                    assert_eq!(error.code(), ErrorCode::ResourceLimit);
+                    assert_eq!(rejection, Some(access::Rejection::ResourceLimit));
+                    failures += 1;
+                }
+                other => panic!("Unexpected transaction result: {other:?}"),
+            }
+            read(&mut vm, a.read_handle(), 10);
+            read(&mut vm, b.read_handle(), 20);
+            assert_eq!(vm.domain_revision(a.read_handle()).unwrap(), 0);
+            assert_eq!(vm.domain_revision(b.read_handle()).unwrap(), 0);
+            assert_eq!(
+                budget.bytes.get(),
+                baseline,
+                "{mode:?}: allowance {allowance}"
+            );
+            assert_eq!(crate::runtime::arena::LIVE.with(Cell::get), live);
+            if succeeded {
+                break;
+            }
+        }
+        assert!(succeeded && failures > 5);
+        a.close();
+        b.close();
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
     }
 }

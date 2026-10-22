@@ -8,6 +8,15 @@ pub(super) struct Root {
     pointer: NonNull<u8>,
     owners: Vec<usize>,
 }
+pub(super) trait RootAccess {
+    fn root(&mut self, sequence: u64) -> (&Type, &mut Root);
+}
+impl RootAccess for Domains {
+    fn root(&mut self, sequence: u64) -> (&Type, &mut Root) {
+        let domain = self.entries.get_mut(&sequence).unwrap();
+        (&domain.ty, domain.root.as_mut().unwrap())
+    }
+}
 impl Root {
     pub(super) fn construct(
         module: &LoadedModule,
@@ -144,9 +153,32 @@ impl Root {
         access: (&[bool], &mut bool),
         limits: InterpreterLimits,
     ) -> Result<Vec<u64>, Error> {
+        let budget = domains.budget.clone();
+        Self::invoke_roots(
+            domains,
+            handles,
+            module,
+            method,
+            words,
+            access,
+            (limits, budget),
+        )
+    }
+    /// Execute against distinct roots supplied by the caller. The roots may be
+    /// live low-level state or unpublished transaction candidates.
+    pub(super) fn invoke_roots(
+        roots: &mut impl RootAccess,
+        handles: &[DomainHandle],
+        module: &LoadedModule,
+        method: &str,
+        words: &mut [u64],
+        access: (&[bool], &mut bool),
+        execution: (InterpreterLimits, Rc<Budget>),
+    ) -> Result<Vec<u64>, Error> {
+        let (limits, budget) = execution;
         let (mutable, entered) = access;
         let info = module.instance_info(method)?;
-        let mut arena = Arena::with_budget(domains.budget.clone(), None);
+        let mut arena = Arena::with_budget(budget, None);
         let mut graphs = Vec::new();
         graphs
             .try_reserve_exact(handles.len())
@@ -156,9 +188,8 @@ impl Root {
             .try_reserve_exact(handles.len())
             .map_err(|_| limited("Domain graph allocation failed"))?;
         for (index, handle) in handles.iter().enumerate() {
-            let domain = &domains.entries[&handle.sequence];
-            let root = domain.root.as_ref().unwrap();
-            words[index] = root.borrow_pointer(&domain.ty);
+            let (ty, root) = roots.root(handle.sequence);
+            words[index] = root.borrow_pointer(ty);
             if members
                 .iter()
                 .any(|&i: &usize| handles[i].sequence == handle.sequence)
@@ -179,13 +210,7 @@ impl Root {
         let _scratch = arena.reserve_external(scratch_bytes)?;
         arena.reserve_transfer(graphs.iter().map(|g| g.allocations.len()).sum())?;
         for (&index, graph) in members.iter().zip(&graphs) {
-            let root = domains
-                .entries
-                .get_mut(&handles[index].sequence)
-                .unwrap()
-                .root
-                .as_mut()
-                .unwrap();
+            let (_, root) = roots.root(handles[index].sequence);
             root.arena.transfer_reserved(&mut arena, &graph.allocations);
             unsafe {
                 Buffer::migrate_metadata(&graph.buffers, &arena);
@@ -206,13 +231,7 @@ impl Root {
                 .try_reserve_exact(members.len())
                 .map_err(|_| limited("Domain graph allocation failed"))?;
             for &index in &members {
-                let root = domains
-                    .entries
-                    .get_mut(&handles[index].sequence)
-                    .unwrap()
-                    .root
-                    .as_mut()
-                    .unwrap();
+                let (_, root) = roots.root(handles[index].sequence);
                 let graph = unsafe { Buffer::owning_allocations(&arena, root.owner_pointers()?)? };
                 if after.iter().any(|g: &crate::runtime::buffer::OwningGraph| {
                     g.buffers
@@ -242,13 +261,7 @@ impl Root {
         };
         if result.is_ok() {
             for (&index, graph) in members.iter().zip(&after) {
-                let root = domains
-                    .entries
-                    .get_mut(&handles[index].sequence)
-                    .unwrap()
-                    .root
-                    .as_mut()
-                    .unwrap();
+                let (_, root) = roots.root(handles[index].sequence);
                 arena.transfer_reserved(&mut root.arena, &graph.allocations);
                 unsafe {
                     Buffer::migrate_metadata(&graph.buffers, &root.arena);
@@ -258,13 +271,7 @@ impl Root {
             // Shared graphs cannot change, and their original arena capacities
             // survived import. Restoration cannot allocate or fail.
             for (&index, graph) in members.iter().zip(&graphs) {
-                let root = domains
-                    .entries
-                    .get_mut(&handles[index].sequence)
-                    .unwrap()
-                    .root
-                    .as_mut()
-                    .unwrap();
+                let (_, root) = roots.root(handles[index].sequence);
                 if !*entered || !mutable[index] {
                     arena.transfer_reserved(&mut root.arena, &graph.allocations);
                     unsafe {
@@ -274,13 +281,7 @@ impl Root {
             }
             for &index in &members {
                 if *entered && mutable[index] {
-                    let root = domains
-                        .entries
-                        .get_mut(&handles[index].sequence)
-                        .unwrap()
-                        .root
-                        .as_mut()
-                        .unwrap();
+                    let (_, root) = roots.root(handles[index].sequence);
                     root.release_owners(&mut arena);
                 }
             }

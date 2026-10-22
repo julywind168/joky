@@ -49,11 +49,11 @@ fn lifecycle() @suspends ->Int32 {
         x.n+=1
         update(x,command)
     } {Ok(Err(Limit(n)))=>assert(n==4),_=>assert(false)}
-    // A business Err is a completed write, not a rollback or access rejection.
-    assert(x.value().unwrap().unwrap_or(-1)==13)
+    // A business Err discards candidates while preserving the outer success result.
+    assert(x.value().unwrap().unwrap_or(-1)==12)
     let absent:Option<Int32>=Option.None
     assert(when (x) {absent}.unwrap().is_none())
-    assert(domain.write_to(x,update,Command.Read).unwrap().unwrap()==13)
+    assert(domain.write_to(x,update,Command.Read).unwrap().unwrap()==12)
     assert(domain.write_pair(x,y,write_pair,Command.Set(14)).unwrap().unwrap()==14)
     assert(domain.read_pair(x.read_only(),y.read_only(),pair).unwrap().unwrap_or(-1)==28)
     assert(domain.query_from(x.read_only(),query,Option.Some(2)).unwrap().unwrap_or(-1)==16)
