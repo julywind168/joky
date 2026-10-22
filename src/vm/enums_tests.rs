@@ -40,7 +40,7 @@ fn enums_preserve_values_and_matching_in_direct_and_cps_backends() {
 }
 
 #[test]
-fn invalid_enums_and_patterns_are_rejected_before_publication() {
+fn invalid_enums_and_patterns_are_rejected() {
     let cases = [
         ("enum E {}", ErrorCode::InvalidPattern, "at least one"),
         ("enum E { A, A }", ErrorCode::DuplicateDefinition, "variant"),
@@ -262,28 +262,17 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "Unreachable expression",
         ),
     ];
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = parity_vm("fn current() -> Int32 { 42 }", mode);
-        let version = vm.module_version();
-        for (source, code, message) in cases {
-            let source = format!("// 🙂\n{source}");
-            let error = vm.load_source(&source).unwrap_err();
-            assert_eq!(error.code(), code, "{mode:?}: {source}: {error}");
-            assert!(error.message().contains(message), "{source}: {error}");
-            assert!(
-                error
-                    .span()
-                    .is_some_and(|span| span.slice(&source).is_some()),
-                "{error}"
-            );
-            let mut aot = crate::aot::AotCompiler::new("invalid_enum").unwrap();
-            let error = aot
-                .compile_module(&crate::parser::parse(&source).unwrap())
-                .unwrap_err();
-            assert_eq!(error.code(), code, "AOT: {source}: {error}");
-            assert_eq!(vm.module_version(), version);
-            assert_eq!(vm.call_int32_0("current").unwrap(), 42);
-        }
+    for (source, code, message) in cases {
+        let source = format!("// 🙂\n{source}");
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), code, "{source}: {error}");
+        assert!(error.message().contains(message), "{source}: {error}");
+        assert!(
+            error
+                .span()
+                .is_some_and(|span| span.slice(&source).is_some()),
+            "{error}"
+        );
     }
 }
 

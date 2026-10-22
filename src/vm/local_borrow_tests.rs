@@ -114,14 +114,9 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         ("fn f() { let x = alloc(42); copy((&*x)); }", "Copy data"),
     ] {
         let source = format!("{prefix}{body}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let error = VmEngine::with_mode(mode).load_source(&source).expect_err(body);
-            assert!(error.message().contains(message), "{mode:?}: {error}\n{source}");
-            assert!(error.span().is_some());
-        }
-        let ast = crate::parser::parse(&source).unwrap();
-        let error = crate::aot::AotCompiler::new("local-rejection").unwrap().compile_module(&ast).expect_err(body);
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert!(error.message().contains(message), "{error}\n{source}");
+        assert!(error.span().is_some());
     }
 }
 

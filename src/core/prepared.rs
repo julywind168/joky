@@ -52,6 +52,24 @@ impl PreparedModule {
     }
 }
 
+/// Check source without generating code. Execution and entry-point parity have
+/// dedicated tests; static diagnostic and complexity-limit matrices use this path.
+#[cfg(test)]
+pub(crate) fn check_source(source: &str, modules: &crate::ModuleSources) -> Result<(), Error> {
+    // Reuse parsed standard-library sources across cases, just as VM loading
+    // does. Type resolution creates its own compilation scope for each source.
+    thread_local! {
+        static REGISTRY: crate::modules::ModuleRegistry = Default::default();
+    }
+    REGISTRY.with(|registry| {
+        let ast = crate::parser::parse(source)?;
+        let ast = registry.types().resolve_with_modules(&ast, modules)?;
+        PreparedModule::new(&ast, registry.types(), registry.metadata())?
+            .plan(&HashMap::new())
+            .map(|_| ())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

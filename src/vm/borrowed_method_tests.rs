@@ -82,17 +82,9 @@ fn borrowed_receivers_reject_conflicts_escapes_and_unsupported_places() {
         ("fn bad<T>(value: T) { value.read(); }", "no method"),
     ] {
         let source = format!("{SOURCE} {body}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source("fn previous() -> Int32 { 42 }").unwrap();
-            let error = vm.load_source(&source).expect_err(body);
-            assert!(error.message().contains(message), "{mode:?}: {error}\n{body}");
-            assert!(error.span().is_some());
-            assert_eq!(vm.call_int32_0("previous").unwrap(), 42);
-        }
-        let error = crate::aot::AotCompiler::new("invalid-receiver").unwrap()
-            .compile_module(&crate::parser::parse(&source).unwrap()).expect_err(body);
-        assert!(error.message().contains(message), "{error}\n{body}");
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.message().contains(message), "{error}\n{source}");
+        assert!(error.span().is_some());
     }
 }
 

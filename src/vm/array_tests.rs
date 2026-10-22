@@ -217,16 +217,9 @@ fn generic_arrays_reject_noncopy_elements_and_preserve_template_ownership() {
         ("fn bad() { var a = array.new::<Int64>(); array.push::<Bool>(&mut a, true) }", "Conflicting types"),
     ] {
         let source = format!("{prefix}{body}");
-        let ast = crate::parser::parse(&source).unwrap();
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            let error = vm.load_module(&ast).expect_err(&source);
-            assert!(error.message().contains(message), "{source}: {error}");
-            assert!(error.span().is_some(), "{source}: {error}");
-        }
-        let mut compiler = crate::aot::AotCompiler::new("invalid-generic-array").unwrap();
-        let error = compiler.compile_module(&ast).expect_err(&source);
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert!(error.message().contains(message), "{source}: {error}");
+        assert!(error.span().is_some());
     }
 }
 
@@ -645,16 +638,9 @@ fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
         ("let p = alloc(42); let a = make(Item { value: (&*p) }); first(&a); (*(p) = 0)", "retained"),
     ] {
         let source = format!("{prefix} fn bad() {{ {body} }}");
-        let ast = crate::parser::parse(&source).unwrap();
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            let error = vm.load_module(&ast).expect_err(&source);
-            assert!(error.message().contains(message), "{source}: {error}");
-            assert!(error.span().is_some());
-        }
-        let mut compiler = crate::aot::AotCompiler::new("invalid-reference-array").unwrap();
-        let error = compiler.compile_module(&ast).expect_err(&source);
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert!(error.message().contains(message), "{source}: {error}");
+        assert!(error.span().is_some());
     }
 }
 
@@ -864,14 +850,9 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
     ] {
         let source = format!("{OWNED_SOURCE}\n{body}");
-        let ast = crate::parser::parse(&source).unwrap();
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let error = VmEngine::with_mode(mode).load_module(&ast).expect_err(&source);
-            assert!(error.message().contains(message), "{body}: {error}");
-            assert!(error.span().is_some());
-        }
-        let error = crate::aot::AotCompiler::new("invalid-owner").unwrap().compile_module(&ast).expect_err(&source);
-        assert!(error.message().contains(message), "{body}: {error}");
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.message().contains(message), "{source}: {error}");
+        assert!(error.span().is_some());
     }
 }
 
@@ -979,12 +960,8 @@ fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
         ("fn bad() { var b = Batch.new::<&Int32>(); let p = alloc(42); b.add((&*p)) ; (*(p) = 0) }", "retained"),
     ] {
         let source = format!("{MIXED_SOURCE}\n{body}");
-        let ast = crate::parser::parse(&source).unwrap();
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let error = VmEngine::with_mode(mode).load_module(&ast).expect_err(body);
-            assert!(error.message().contains(message), "{body}: {error}");
-        }
-        let error = crate::aot::AotCompiler::new("invalid-mixed-owner").unwrap().compile_module(&ast).expect_err(body);
-        assert!(error.message().contains(message), "{body}: {error}");
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.message().contains(message), "{source}: {error}");
+        assert!(error.span().is_some());
     }
 }

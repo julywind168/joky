@@ -1060,6 +1060,11 @@ fn owned_script_allocation_failures_reclaim_inputs_results_and_packets() {
                     baseline,
                     "{mode:?}/{create} limit={limit}"
                 );
+                // Every failure budget has been checked; larger budgets only
+                // repeat the same successful nested compilation and transfer.
+                if successes > 0 {
+                    break;
+                }
             }
             assert!(successes > 0 && failures > 0, "{mode:?}/{create}");
             arena::LIMIT.with(|n| n.set(arena::MAX_BYTES));

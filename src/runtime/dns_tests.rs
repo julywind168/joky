@@ -277,7 +277,11 @@ fn net6_dns_busy_is_a_business_result_in_both_vm_modes() {
     wait_until(|| service.quiescent());
 }
 
-fn cancel_cuts(exhaustive: bool) {
+// Pending resolver cancellation, reload and cleanup are covered directly above.
+// Instruction-prefix replay is useful as a full sweep, not an arbitrary stride.
+#[test]
+#[ignore = "exhaustive: DNS input/result and cancellation at every interpreter instruction"]
+fn exhaustive_net6_dns_cancel_every_instruction() {
     let service = Arc::new(
         Service::new(
             1,
@@ -310,7 +314,7 @@ fn cancel_cuts(exhaustive: bool) {
             executor.task_count() == 0
         });
         clean();
-        for cut in (0..=steps).filter(|cut| exhaustive || cut % 32 == 0 || *cut == steps) {
+        for cut in 0..=steps {
             let executor = HostExecutor::default();
             let group = TaskGroup::new();
             executor
@@ -329,16 +333,6 @@ fn cancel_cuts(exhaustive: bool) {
     service.close();
     wait_until(|| service.quiescent());
 }
-#[test]
-fn net6_dns_cancel_at_instruction_boundaries() {
-    cancel_cuts(false);
-}
-#[test]
-#[ignore = "exhaustive: DNS input/result and cancellation at every interpreter instruction"]
-fn exhaustive_net6_dns_cancel_every_instruction() {
-    cancel_cuts(true);
-}
-
 #[test]
 fn net6_dns_rejects_forged_runtime_signatures() {
     extern "C" fn forbidden_registration() {}

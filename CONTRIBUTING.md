@@ -101,6 +101,13 @@ build of these profiles takes longer, while subsequent source changes reuse
 dependency artifacts and incremental compilation. For unoptimized test stepping,
 use `CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test <test-name>`.
 
+Every default test needs a distinct regression responsibility. Before adding one,
+check whether the same fixture, diagnostic, or boundary already runs elsewhere.
+Backend coverage is a property of the behavior across the suite, not a reason to
+repeat its full matrix at the VM, AOT, and CLI layers. Separate shared type limits
+from API behavior instead of multiplying their independent axes. Stop allocation
+budget sweeps after the first complete success and its cleanup assertions.
+
 Keep default tests useful for daily iteration: run short deterministic model cycles
 and resource-boundary cancellation checks there. Name long model matrices,
 every-instruction cancellation sweeps, and additional CLI type matrices with the
@@ -124,8 +131,11 @@ error codes, messages and source spans; host ABI validation and execution failur
 still need their affected backends. CLI diagnostic matrices normally use `build`
 once per source, retaining source locations and output-preservation assertions.
 The CLI syntax, assignment, dependency and entry-point tests cover route parity.
-When an identical network fixture already runs in both VM modes with ownership
-assertions, its CLI test can cover standalone AOT only. Keep CLI routing smoke
+When an identical fixture already runs in both VM modes with ownership
+assertions, its CLI test should cover standalone AOT only. Batch related CLI
+fixtures with `write_fixture_batch` when their entries return Unit and their
+assertions do not depend on separate processes. Keep CLI argument, file, output,
+import and diagnostic regressions independent of language-feature matrices. Keep CLI routing smoke
 coverage separately; do not shrink message-size boundaries or remove real
 backpressure assertions to speed up checks.
 The full 1 MiB TCP transfers, interpreter backpressure completion, and additional

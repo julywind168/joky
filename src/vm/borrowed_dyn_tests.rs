@@ -1037,18 +1037,8 @@ fn borrowed_dyn_qualification_shares_exact_obligation_boundary() {
         if overflow {
             rejected(&program, "256 obligations");
         } else {
-            for mode in [VmMode::Jit, VmMode::Interpreter] {
-                let mut vm = VmEngine::with_mode(mode);
-                vm.load_source(&program)
-                    .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
-                assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
-            }
-            #[cfg(unix)]
-            crate::aot::tests::assert_sync_int32(
-                &crate::parser::parse(&program).unwrap(),
-                "answer",
-                42,
-            );
+            crate::core::prepared::check_source(&program, &crate::ModuleSources::new())
+                .unwrap_or_else(|e| panic!("{e}"));
         }
     }
 }

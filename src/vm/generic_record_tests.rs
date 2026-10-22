@@ -35,7 +35,7 @@ fn generic_records_preserve_inference_and_snapshots_across_backends() {
 }
 
 #[test]
-fn generic_record_errors_leave_the_previous_module_published() {
+fn generic_record_rejects_invalid_types_and_layouts() {
     let declarations =
         "struct Pair<T> { left: T, right: T } struct Cell<T> { value: T } struct Marker<T> {} ";
     for (body, code) in [
@@ -151,26 +151,14 @@ fn generic_record_errors_leave_the_previous_module_published() {
         ),
     ] {
         let source = format!("// 🙂\n{declarations}{body}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source("fn answer() -> Int32 { 42 }").unwrap();
-            let version = vm.module_version();
-            let error = vm.load_source(&source).unwrap_err();
-            assert_eq!(error.code(), code, "{source}: {error}");
-            assert!(
-                error
-                    .span()
-                    .is_some_and(|span| span.slice(&source).is_some()),
-                "{error}"
-            );
-            assert_eq!(vm.module_version(), version);
-            assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
-        }
-        let mut aot = crate::aot::AotCompiler::new("bad_generic_record").unwrap();
-        let error = aot
-            .compile_module(&crate::parser::parse(&source).unwrap())
-            .unwrap_err();
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert_eq!(error.code(), code, "{source}: {error}");
+        assert!(
+            error
+                .span()
+                .is_some_and(|span| span.slice(&source).is_some()),
+            "{error}"
+        );
     }
 }
 

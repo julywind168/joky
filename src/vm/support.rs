@@ -197,18 +197,7 @@ pub(super) fn vm(source: &str) -> VmEngine {
 /// parity is checked separately below; no code generation is needed for these errors.
 #[track_caller]
 pub(super) fn frontend_error(source: &str, modules: &crate::ModuleSources) -> crate::Error {
-    let result = (|| {
-        let registry = crate::modules::ModuleRegistry::default();
-        let ast = crate::parser::parse(source)?;
-        let ast = registry.types().resolve_with_modules(&ast, modules)?;
-        let prepared = crate::core::prepared::PreparedModule::new(
-            &ast,
-            registry.types(),
-            registry.metadata(),
-        )?;
-        prepared.plan(&Default::default()).map(|_| ())
-    })();
-    result.expect_err(source)
+    crate::core::prepared::check_source(source, modules).expect_err(source)
 }
 
 #[test]
@@ -230,7 +219,12 @@ fn shared_frontend_rejections_reach_all_backend_entry_points() {
             assert_eq!(error.span(), expected.span(), "{source}");
         };
         for mode in [VmMode::Jit, VmMode::Interpreter] {
-            check(VmEngine::with_mode(mode).load_source(source).unwrap_err());
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source("fn previous() -> Int32 { 42 }").unwrap();
+            let version = vm.module_version();
+            check(vm.load_source(source).unwrap_err());
+            assert_eq!(vm.module_version(), version);
+            assert_eq!(vm.call_int32_0("previous").unwrap(), 42);
         }
         check(match crate::parser::parse(source) {
             Ok(ast) => crate::aot::AotCompiler::new("frontend-rejection")

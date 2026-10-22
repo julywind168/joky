@@ -112,24 +112,8 @@ fn map_borrowing_missing_keys_report_calls_and_clean_stored_owners() {
 }
 fn rejected(body: &str) {
     let source = format!("import joky/map.{{type Map}} import joky/array.{{type Array}} import joky/element as element.{{type Element}} {body}");
-    let ast = match TypeRegistry::default().resolve_with_modules(
-        &crate::parser::parse(&source).unwrap(),
-        &ModuleSources::new(),
-    ) {
-        Ok(ast) => ast,
-        Err(error) => {
-            assert!(error.span().is_some(), "{body}: {error}");
-            return;
-        }
-    };
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = VmEngine::with_mode(mode).load_module(&ast).expect_err(body);
-        assert!(error.span().is_some(), "{mode:?} {body}: {error}");
-    }
-    crate::aot::AotCompiler::new("invalid-map-view")
-        .unwrap()
-        .compile_module(&ast)
-        .expect_err(body);
+    let error = super::support::frontend_error(&source, &ModuleSources::new());
+    assert!(error.span().is_some(), "{body}: {error}");
 }
 #[test]
 fn map_borrowing_rejects_conflicts_escape_and_invalid_view_representations() {

@@ -130,11 +130,8 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
 }
 
 #[test]
-fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
-    use crate::{
-        vm::{VmEngine, VmMode},
-        ErrorPhase,
-    };
+fn reject_invalid_assignment_loop_and_comparison_semantics() {
+    use crate::ErrorPhase;
     for attribute in ["", "@suspends"] {
         for (body, code, marked) in [
             ("let x = 1; x = 2", ErrorCode::InvalidAssignment, "x = 2"),
@@ -272,38 +269,22 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
             ),
         ] {
             let source = format!("fn f(p: Int32) {attribute} {{ {body} }}");
-            let ast = crate::parser::parse(&source).unwrap();
-            let mut errors = Vec::new();
-            for mode in [VmMode::Jit, VmMode::Interpreter] {
-                errors.push(VmEngine::with_mode(mode).load_source(&source).unwrap_err());
-            }
-            errors.push(
-                crate::aot::AotCompiler::new("invalid_control_flow")
-                    .unwrap()
-                    .compile_module(&ast)
-                    .unwrap_err(),
+            let error = crate::core::prepared::check_source(&source, &crate::ModuleSources::new())
+                .unwrap_err();
+            assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{source}: {error}");
+            assert_eq!(error.code(), code, "{source}: {error}");
+            assert_eq!(
+                error.span().unwrap().slice(&source),
+                Some(marked),
+                "{source}: {error}"
             );
-            for error in &errors {
-                assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{source}: {error}");
-                assert_eq!(error.code(), code, "{source}: {error}");
-                assert_eq!(
-                    error.span().unwrap().slice(&source),
-                    Some(marked),
-                    "{source}: {error}"
-                );
-            }
-            assert_eq!(errors[0], errors[1]);
-            assert_eq!(errors[1], errors[2]);
         }
     }
 }
 
 #[test]
-fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() {
-    use crate::{
-        vm::{VmEngine, VmMode},
-        ErrorPhase,
-    };
+fn reject_invalid_jumps_and_structurally_unreachable_expressions() {
+    use crate::ErrorPhase;
     for attribute in ["", "@suspends"] {
         for (ret, body, code, marked) in [
             ("Int32", "return", ErrorCode::TypeMismatch, "return"),
@@ -340,7 +321,6 @@ fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() 
                 ErrorCode::InvalidControlFlow,
                 "(continue)",
             ),
-            ("Int32", "return 1; 2", ErrorCode::UnreachableCode, "2"),
             ("Int32", "return 1; 2", ErrorCode::UnreachableCode, "2"),
             ("Int32", "{ return 1; }; 2", ErrorCode::UnreachableCode, "2"),
             (
@@ -436,28 +416,15 @@ fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() 
             ),
         ] {
             let source = format!("fn pair(a: Int32, b: Int32) -> Int32 {{ a + b }} fn f() {attribute} -> {ret} {{ {body} }}");
-            let ast = crate::parser::parse(&source).unwrap();
-            let mut errors: Vec<_> = [VmMode::Jit, VmMode::Interpreter]
-                .into_iter()
-                .map(|mode| VmEngine::with_mode(mode).load_source(&source).unwrap_err())
-                .collect();
-            errors.push(
-                crate::aot::AotCompiler::new("invalid_jumps")
-                    .unwrap()
-                    .compile_module(&ast)
-                    .unwrap_err(),
+            let error = crate::core::prepared::check_source(&source, &crate::ModuleSources::new())
+                .unwrap_err();
+            assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{source}: {error}");
+            assert_eq!(error.code(), code, "{source}: {error}");
+            assert_eq!(
+                error.span().unwrap().slice(&source),
+                Some(marked),
+                "{source}: {error}"
             );
-            for error in &errors {
-                assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{source}: {error}");
-                assert_eq!(error.code(), code, "{source}: {error}");
-                assert_eq!(
-                    error.span().unwrap().slice(&source),
-                    Some(marked),
-                    "{source}: {error}"
-                );
-            }
-            assert_eq!(errors[0], errors[1]);
-            assert_eq!(errors[1], errors[2]);
         }
     }
 }

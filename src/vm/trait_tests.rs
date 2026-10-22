@@ -1066,17 +1066,6 @@ fn associated_types_share_the_256_obligation_budget_with_trait_proofs() {
             level[0].clone()
         };
         let source = format!("{source} fn test() -> <C<{root}> as S>::Item {{ 42 }}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(false);
-            if overflow {
-                let error = vm.load_source(&source).unwrap_err();
-                assert_eq!(error.code(), crate::ErrorCode::ResourceLimit, "{error}");
-            } else {
-                vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
-                assert_eq!(vm.call_int32_0("test").unwrap(), 42);
-            }
-        }
         // Keep the exact obligation budget independent of standard-library templates.
         let mut types = crate::TypeRegistry::default();
         types.set_prelude_enabled(false);
@@ -1087,8 +1076,12 @@ fn associated_types_share_the_256_obligation_budget_with_trait_proofs() {
         if overflow {
             assert_eq!(ast.unwrap_err().code(), crate::ErrorCode::ResourceLimit);
         } else {
-            #[cfg(unix)]
-            crate::backends::aot::tests::assert_sync_int32(&ast.unwrap(), "test", 42);
+            crate::core::ir::ModulePlan::with_import_layouts_and_types(
+                &ast.unwrap(),
+                &Default::default(),
+                &types,
+            )
+            .unwrap();
         }
     }
 }

@@ -23,6 +23,27 @@ impl Workspace {
         std::fs::write(self.path().join(name), source).unwrap();
     }
 
+    /// Compile related fixtures together while keeping their private names isolated.
+    /// Each fixture must have a Unit-returning main and performs its own assertions.
+    pub fn write_fixture_batch(&self, entry: &str, fixtures: &[(&str, &str)]) {
+        let mut imports = String::new();
+        let mut calls = String::new();
+        for (file, source) in fixtures {
+            let module = file.strip_suffix(".jk").unwrap();
+            assert!(source.contains("fn main()"), "{file} has no fixture entry");
+            self.write(
+                file,
+                &source.replacen("fn main()", "pub fn run_fixture()", 1),
+            );
+            imports.push_str(&format!("import {module}\n"));
+            calls.push_str(&format!("{module}.run_fixture();\n"));
+        }
+        self.write(
+            entry,
+            &format!("{imports} fn main() @suspends {{ {calls} }}"),
+        );
+    }
+
     pub fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
         command.current_dir(self.path());

@@ -28,9 +28,9 @@ fn vm(mode: VmMode, source: &str) -> VmEngine {
 #[test]
 fn net5c_buffered_split_duplex_cache_framing_and_cancel() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = vm(mode, SOURCE);
-        // main already asserts duplex, sweep, cancellation, limits, truncation,
-        // fragmentation and the maximum message size. Run each algorithm once.
+        let vm = vm(mode, &SOURCE.replace("    ensure(maximum() == 42)\n", ""));
+        // Keep duplex, cancellation, limits, truncation and fragmentation in
+        // daily checks; the full-size transfer has a dedicated stress test.
         assert_eq!(block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(), 0);
         clean();
         let vm = self::vm(mode, &matrix::frames_source());
@@ -38,6 +38,19 @@ fn net5c_buffered_split_duplex_cache_framing_and_cancel() {
         clean();
     }
 }
+#[test]
+#[ignore = "exhaustive: transfer maximum-size split TCP messages in both VM modes"]
+fn exhaustive_net5c_buffered_split_maximum_messages() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = vm(mode, SOURCE);
+        assert_eq!(
+            block_on(vm.prepare_async("maximum", &[]).unwrap()).unwrap(),
+            42
+        );
+        clean();
+    }
+}
+
 #[test]
 fn net5c_buffered_split_preserves_private_cursor_and_terminal_states() {
     struct ResetBudget(usize);

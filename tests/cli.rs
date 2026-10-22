@@ -1,8 +1,8 @@
 //! End-to-end checks of the installed-style command-line interface.
 //! Static diagnostic matrices use `build` once per source, retaining publication checks.
 //! The syntax, assignment, dependency and entry-point regressions separately cover
-//! diagnostic parity across CLI routes. Shared network fixtures get VM execution
-//! coverage in library tests and standalone AOT coverage here.
+//! diagnostic parity across CLI routes. Fixtures already executed in both VM modes
+//! with resource assertions need only standalone AOT coverage here.
 #[cfg(unix)]
 #[path = "fixtures/map_stress_oracle.rs"]
 mod map_stress_oracle;
@@ -3058,13 +3058,13 @@ fn array_management_runs_and_builds_with_owned_elements() {
 
 #[test]
 #[cfg(unix)]
-fn array_replace_runs_on_all_backends() {
+fn array_replace_runs_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "array_replace.jk",
         &recording_cli_source(include_str!("fixtures/array_replace.jk")),
     );
-    work.assert_all_backends(
+    work.assert_native(
         "array_replace.jk",
         &[],
         b"42\n42\n42\n-1\n-2\n-3\n-4\n3\n4\n1\n2\n42\n-1\n-2\n2\n1\n42\n",
@@ -3295,17 +3295,6 @@ fn check_owned_map_cli_cases(additional_cases: bool) {
         success(&work.cli(&["build", "failure.jk"]));
         assert_failure(Command::new(work.path().join("failure")).output().unwrap());
     }
-}
-
-#[test]
-#[cfg(unix)]
-fn standard_key_protocols_match_all_backends() {
-    let work = Workspace::new();
-    work.write(
-        "key_protocols.jk",
-        &recording_cli_source(include_str!("fixtures/key_protocols.jk")),
-    );
-    work.assert_all_backends("key_protocols.jk", &[], b"42\n", 0);
 }
 
 #[test]
@@ -4780,23 +4769,23 @@ fn net3_tcp_composition_runs_in_all_backends() {
 }
 
 #[test]
-fn async_owner_borrows_short_segments_in_all_backends() {
+fn async_owner_borrows_short_segments_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "async_owner_borrows.jk",
         include_str!("fixtures/async_owner_borrows.jk"),
     );
-    work.assert_all_backends("async_owner_borrows.jk", &[], b"", 0);
+    work.assert_native("async_owner_borrows.jk", &[], b"", 0);
 }
 
 #[test]
-fn async_owner_views_execute_in_all_backends() {
+fn async_owner_views_execute_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "async_owner_views.jk",
         include_str!("fixtures/async_owner_views.jk"),
     );
-    work.assert_all_backends("async_owner_views.jk", &[], b"", 0);
+    work.assert_native("async_owner_views.jk", &[], b"", 0);
 }
 
 #[test]
@@ -4810,14 +4799,14 @@ fn async_owner_tcp_buffers_execute_in_all_backends() {
 }
 
 #[test]
-fn async_owner_views_drop_in_order_in_all_backends() {
+fn async_owner_views_drop_in_order_in_standalone_aot() {
     let work = Workspace::new();
     let source = include_str!("fixtures/async_owner_drop.jk").replace(
         "extern fn record_drop(id: Int32)",
         "fn record_drop(id: Int32) { println(id) }",
     );
     work.write("async_owner_drop.jk", &source);
-    work.assert_all_backends("async_owner_drop.jk", &[], b"2\n42\n1\n2\n3\n1\n", 0);
+    work.assert_native("async_owner_drop.jk", &[], b"2\n42\n1\n2\n3\n1\n", 0);
 }
 
 #[test]
@@ -4884,15 +4873,19 @@ fn net4c_buffered_tcp_messages_run_in_standalone_aot() {
 
 #[test]
 #[ignore = "exhaustive: transfer maximum-size TCP messages in standalone AOT"]
-fn exhaustive_net4c_buffered_tcp_maximum_messages_in_standalone_aot() {
+fn exhaustive_buffered_tcp_maximum_messages_in_standalone_aot() {
     let work = Workspace::new();
-    let source = include_str!("fixtures/buffered_tcp_messages.jk")
-        .replace("fn main()", "fn ordinary_messages()");
-    work.write(
-        "maximum_messages.jk",
-        &format!("{source}\nfn main() @suspends -> Int32 {{ ensure(maximum() == 42); 0 }}"),
-    );
-    work.assert_native("maximum_messages.jk", &[], b"", 0);
+    for fixture in [
+        include_str!("fixtures/buffered_tcp_messages.jk"),
+        include_str!("fixtures/buffered_tcp_split.jk"),
+    ] {
+        let source = fixture.replace("fn main()", "fn ordinary_messages()");
+        work.write(
+            "maximum_messages.jk",
+            &format!("{source}\nfn main() @suspends -> Int32 {{ ensure(maximum() == 42); 0 }}"),
+        );
+        work.assert_native("maximum_messages.jk", &[], b"", 0);
+    }
 }
 
 #[test]
@@ -5041,7 +5034,8 @@ fn net5c_buffered_split_native_execution_and_cli_resets() {
     let work = Workspace::new();
     work.write(
         "buffered_split.jk",
-        include_str!("fixtures/buffered_tcp_split.jk"),
+        &include_str!("fixtures/buffered_tcp_split.jk")
+            .replace("    ensure(maximum() == 42)\n", ""),
     );
     // net5c_buffered_split_duplex_cache_framing_and_cancel covers both VM modes.
     work.assert_native("buffered_split.jk", &[], b"", 0);
@@ -5231,34 +5225,34 @@ fn json_typed_structs_and_example_run_in_all_backends() {
 
 #[test]
 fn json_typed_scalars_containers_and_limits_run_in_all_backends() {
-    // Separate type families keep failures focused. Composed roundtrips have their own test.
     let work = Workspace::new();
-    for (file, source) in [
-        ("numbers.jk", include_str!("fixtures/json_typed_numbers.jk")),
-        (
-            "unsigned.jk",
-            include_str!("fixtures/json_typed_unsigned.jk"),
-        ),
-        ("floats.jk", include_str!("fixtures/json_typed_floats.jk")),
-        (
-            "containers.jk",
-            include_str!("fixtures/json_typed_containers.jk"),
-        ),
-        ("errors.jk", include_str!("fixtures/json_typed_errors.jk")),
-        (
-            "map_encode.jk",
-            include_str!("fixtures/json_typed_map_encode.jk"),
-        ),
-        (
-            "dispatch.jk",
-            include_str!("fixtures/json_typed_dispatch.jk"),
-        ),
-        ("limits.jk", include_str!("fixtures/json_typed_limits.jk")),
-        ("cancel.jk", include_str!("fixtures/json_typed_cancel.jk")),
-    ] {
-        work.write(file, source);
-        work.assert_all_backends(file, &[], b"", 0);
-    }
+    work.write_fixture_batch(
+        "typed_matrix.jk",
+        &[
+            ("numbers.jk", include_str!("fixtures/json_typed_numbers.jk")),
+            (
+                "unsigned.jk",
+                include_str!("fixtures/json_typed_unsigned.jk"),
+            ),
+            ("floats.jk", include_str!("fixtures/json_typed_floats.jk")),
+            (
+                "containers.jk",
+                include_str!("fixtures/json_typed_containers.jk"),
+            ),
+            ("errors.jk", include_str!("fixtures/json_typed_errors.jk")),
+            (
+                "map_encode.jk",
+                include_str!("fixtures/json_typed_map_encode.jk"),
+            ),
+            (
+                "dispatch.jk",
+                include_str!("fixtures/json_typed_dispatch.jk"),
+            ),
+            ("limits.jk", include_str!("fixtures/json_typed_limits.jk")),
+            ("cancel.jk", include_str!("fixtures/json_typed_cancel.jk")),
+        ],
+    );
+    work.assert_all_backends("typed_matrix.jk", &[], b"", 0);
 }
 
 #[test]
@@ -5278,23 +5272,25 @@ fn json_typed_nested_map_roundtrip_runs_in_all_backends() {
 #[test]
 fn json_derive_composition_and_example_run_in_all_backends() {
     let work = Workspace::new();
-    work.write("derive.jk", include_str!("fixtures/json_derive.jk"));
-    work.assert_all_backends("derive.jk", &[], b"", 0);
-    work.write(
-        "derive_example.jk",
-        include_str!("../examples/json_derive.jk"),
+    work.write_fixture_batch(
+        "derived_matrix.jk",
+        &[
+            ("derive.jk", include_str!("fixtures/json_derive.jk")),
+            (
+                "derive_example.jk",
+                include_str!("../examples/json_derive.jk"),
+            ),
+            (
+                "derive_lifecycle.jk",
+                include_str!("fixtures/json_derive_lifecycle.jk"),
+            ),
+            (
+                "derive_cancel.jk",
+                include_str!("fixtures/json_derive_cancel.jk"),
+            ),
+        ],
     );
-    work.assert_all_backends("derive_example.jk", &[], b"Ada\n37\n/age\n", 0);
-    work.write(
-        "derive_lifecycle.jk",
-        include_str!("fixtures/json_derive_lifecycle.jk"),
-    );
-    work.assert_all_backends("derive_lifecycle.jk", &[], b"", 0);
-    work.write(
-        "derive_cancel.jk",
-        include_str!("fixtures/json_derive_cancel.jk"),
-    );
-    work.assert_all_backends("derive_cancel.jk", &[], b"", 0);
+    work.assert_all_backends("derived_matrix.jk", &[], b"Ada\n37\n/age\n", 0);
 }
 
 #[test]
@@ -5671,24 +5667,24 @@ fn state_domains_scalar_bits_and_unit_inputs_run_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_sc1_acceptance_runs_in_all_backends() {
+fn state_domains_sc1_acceptance_runs_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "acceptance.jk",
         include_str!("fixtures/state_domain_acceptance.jk"),
     );
-    work.assert_all_backends("acceptance.jk", &[], b"SC1 acceptance ok\n", 0);
+    work.assert_native("acceptance.jk", &[], b"SC1 acceptance ok\n", 0);
 }
 
 #[test]
 #[cfg(unix)]
-fn state_domains_versioned_snapshots_run_in_all_backends() {
+fn state_domains_versioned_snapshots_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "snapshots.jk",
         include_str!("fixtures/state_domain_snapshots.jk"),
     );
-    work.assert_all_backends("snapshots.jk", &[], b"snapshot domains ok\n", 0);
+    work.assert_native("snapshots.jk", &[], b"snapshot domains ok\n", 0);
 }
 
 #[test]
@@ -5814,13 +5810,13 @@ fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_candidates_commit_atomically_in_all_backends() {
+fn state_domains_candidates_commit_atomically_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "commits.jk",
         include_str!("fixtures/state_domain_commits.jk"),
     );
-    work.assert_all_backends("commits.jk", &[], b"domain commits ok\n", 0);
+    work.assert_native("commits.jk", &[], b"domain commits ok\n", 0);
 }
 
 #[test]
@@ -5858,10 +5854,10 @@ fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_owned_graphs_run_in_all_backends() {
+fn state_domains_owned_graphs_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write("owned.jk", include_str!("fixtures/state_domain_owned.jk"));
-    work.assert_all_backends("owned.jk", &[], b"owned domains ok\n", 0);
+    work.assert_native("owned.jk", &[], b"owned domains ok\n", 0);
 }
 
 #[test]
@@ -5887,13 +5883,13 @@ fn state_domains_owned_roots_reject_hooks_and_unsafe_graphs() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_deadlines_run_in_all_backends() {
+fn state_domains_deadlines_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "deadlines.jk",
         include_str!("fixtures/state_domain_deadlines.jk"),
     );
-    work.assert_all_backends("deadlines.jk", &[], b"domain deadlines ok\n", 0);
+    work.assert_native("deadlines.jk", &[], b"domain deadlines ok\n", 0);
 }
 
 #[test]
@@ -5953,10 +5949,10 @@ fn state_domains_sc2_acceptance_and_scalar_arrays_run_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_pairs_run_in_all_backends() {
+fn state_domains_pairs_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write("pairs.jk", include_str!("fixtures/state_domain_pairs.jk"));
-    work.assert_all_backends("pairs.jk", &[], b"domain pairs ok\n", 0);
+    work.assert_native("pairs.jk", &[], b"domain pairs ok\n", 0);
 }
 
 #[test]
@@ -6004,13 +6000,13 @@ fn state_domains_pair_aliases_fail_before_execution_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_joint_snapshots_run_in_all_backends() {
+fn state_domains_joint_snapshots_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "joint.jk",
         include_str!("fixtures/state_domain_joint_snapshots.jk"),
     );
-    work.assert_all_backends("joint.jk", &[], b"joint snapshots ok\n", 0);
+    work.assert_native("joint.jk", &[], b"joint snapshots ok\n", 0);
 }
 
 #[test]
@@ -6040,13 +6036,13 @@ fn state_domains_joint_snapshots_reject_dependency_extraction_and_invalid_projec
 
 #[test]
 #[cfg(unix)]
-fn state_domains_pair_commits_run_in_all_backends() {
+fn state_domains_pair_commits_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "pair_commits.jk",
         include_str!("fixtures/state_domain_pair_commits.jk"),
     );
-    work.assert_all_backends("pair_commits.jk", &[], b"pair commits ok\n", 0);
+    work.assert_native("pair_commits.jk", &[], b"pair commits ok\n", 0);
 }
 #[test]
 fn state_domains_pair_commits_reject_forgery_reuse_and_unproved_constructors() {
@@ -6096,10 +6092,10 @@ fn state_domains_pair_commits_reject_single_or_duplicate_snapshot_dependencies()
 
 #[test]
 #[cfg(unix)]
-fn state_domains_many_transfer_and_readonly_fourth_conflict_run_in_all_backends() {
+fn state_domains_many_transfer_and_readonly_fourth_conflict_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write("many.jk", include_str!("fixtures/state_domain_many.jk"));
-    work.assert_all_backends("many.jk", &[], b"multi-domain transfer ok\n", 0);
+    work.assert_native("many.jk", &[], b"multi-domain transfer ok\n", 0);
 }
 
 #[test]
@@ -6157,10 +6153,10 @@ fn state_domains_many_reject_missing_or_duplicate_members_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn admission_fifo_close_and_cancellation_run_in_all_backends() {
+fn admission_fifo_close_and_cancellation_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write("admission.jk", include_str!("fixtures/admission.jk"));
-    work.assert_all_backends("admission.jk", &[], b"admission ok\n", 0);
+    work.assert_native("admission.jk", &[], b"admission ok\n", 0);
 }
 
 #[test]
@@ -6441,10 +6437,10 @@ fn script_scalar_bridge_runs_in_all_host_and_script_backends() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_nested_graphs_run_in_all_backends() {
+fn state_domains_nested_graphs_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write("nested.jk", include_str!("fixtures/state_domain_nested.jk"));
-    work.assert_all_backends("nested.jk", &[], b"nested domains ok\n", 0);
+    work.assert_native("nested.jk", &[], b"nested domains ok\n", 0);
 }
 
 #[test]
@@ -7299,10 +7295,10 @@ fn main() @suspends {{
 
 #[test]
 #[cfg(unix)]
-fn domain_value_packets_run_in_all_backends() {
+fn domain_value_packets_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write("values.jk", include_str!("fixtures/state_domain_values.jk"));
-    work.assert_all_backends("values.jk", &[], b"", 0);
+    work.assert_native("values.jk", &[], b"", 0);
 }
 
 #[test]
@@ -7406,183 +7402,88 @@ fn domain_value_packets_bound_fields_depth_and_zero_lane_records() {
             depth == 8,
         ));
     }
+    // The same bounded-value contract serves every operation. Exercise all
+    // accepted shapes in one program each; check input/output overflow once per
+    // shape. Per-API invalid-contract tests below cover operation wiring.
     for (definitions, ty, value, assertion, accepted) in cases {
         let work = Workspace::new();
-        work.write(
-            "create_bound.jk",
-            &format!(
-                r#"import joky/domain import joky/check
+        let declarations = format!(
+            r#"import joky/domain import joky/check import joky/task
 {definitions}
-struct State {{initial:{ty}}}
-fn make(p:{ty})->State {{State{{initial:p}}}}
-fn read(s:&State)->{ty} {{s.initial}}
-fn main() @suspends {{
-    let owner=domain.create(make,{value})
-    let p=domain.read_from(owner.read_handle(),read).unwrap()
-    let message="domain constructor bounds"
-    check.assert({assertion},&message)
-}}"#
-            ),
+struct State {{payload:{ty}, n:Int32}}
+fn seed(n:Int32)->State {{State{{payload:{value},n:n}}}}
+fn make(p:{ty})->State {{State{{payload:p,n:0}}}}
+fn read(s:&State)->{ty} {{s.payload}}
+fn pair(a:&State,b:&State)->{ty} {{a.payload}}
+fn count(s:&State)->Int32 {{s.n}}
+fn turn(s:&mut State,p:{ty})->{ty} {{s.n=s.n+1; p}}
+fn query(s:&State,n:Int32)->{ty} {{s.payload}}
+fn echo(p:{ty}) @suspends ->Int32 {{task.yield_now(); verify(p); 42}}
+fn reply(n:Int32) @suspends ->{ty} {{task.yield_now(); {value}}}
+fn tick(s:&mut State,p:{ty}) {{verify(p); s.n=s.n+1}}
+fn verify(p:{ty}) {{let message="domain value bounds"; check.assert({assertion},&message)}}
+"#
         );
-        if accepted {
-            work.assert_all_backends("create_bound.jk", &[], b"", 0);
-        } else {
-            failure(
-                &work.cli(&["build", "create_bound.jk"]),
-                "bounded value signature",
-            );
-        }
-
-        for (input_type, input_value, result_type, result_body, check) in [
-            (ty.as_str(), value.as_str(), "Int32", "42", "p==42"),
-            (
-                "Int32",
-                "0",
-                ty.as_str(),
-                value.as_str(),
-                assertion.as_str(),
-            ),
-        ] {
-            let work = Workspace::new();
-            work.write(
-                "request_bound.jk",
-                &format!(
-                    r#"import joky/domain import joky/task import joky/check
-{definitions}
-struct State {{n:Int32}}
-fn make(n:Int32)->State {{State{{n:n}}}}
-fn echo(input:{input_type}) @suspends -> {result_type} {{task.yield_now(); {result_body}}}
-fn main() @suspends {{
-    let owner=domain.create(make,0)
-    let message="request bounds"
-    let p=domain.request(owner.handle(),echo,{input_value}).unwrap()
-    check.assert({check},&message)
-    let p=domain.request_read(owner.read_handle(),echo,{input_value}).unwrap()
-    check.assert({check},&message)
-}}"#
-                ),
-            );
-            if accepted {
-                work.assert_all_backends("request_bound.jk", &[], b"", 0);
-            } else {
-                failure(
-                    &work.cli(&["build", "request_bound.jk"]),
-                    "bounded value signature",
+        if !accepted {
+            for invocation in [
+                format!("domain.create(make,{value});"),
+                "let owner=domain.create(seed,0); domain.query_from(owner.read_handle(),query,0);"
+                    .to_owned(),
+            ] {
+                work.write(
+                    "bound.jk",
+                    &format!("{declarations} fn main() @suspends {{ {invocation} }}"),
                 );
-            }
-        }
-
-        let timer_work = Workspace::new();
-        timer_work.write("timer_bound.jk",&format!(r#"import joky/domain import joky/check import joky/task
-{definitions}
-struct State {{n:Int32}}
-fn make(n:Int32)->State {{State{{n:n}}}}
-fn read(s:&State)->Int32 {{s.n}}
-fn tick(s:&mut State,p:{ty}) {{let message="timer bounds"; check.assert({assertion},&message); s.n=s.n+1}}
-fn main() @suspends {{
-    let o=domain.create(make,0); let timer=domain.timer(); let t=timer.handle()
-    domain.after(t,o.handle(),0,tick,{value}).unwrap()
-    while match t.status() {{Active=>true,_=>false}} {{task.yield_now()}}
-    let message="timer completion"; check.assert(domain.read_from(o.read_handle(),read).unwrap()==1,&message)
-    domain.every(t,o.handle(),100000,tick,{value}).unwrap(); t.cancel()
-}}"#));
-        if accepted {
-            timer_work.assert_all_backends("timer_bound.jk", &[], b"", 0);
-        } else {
-            failure(
-                &timer_work.cli(&["build", "timer_bound.jk"]),
-                "bounded value input",
-            );
-        }
-
-        for (projection, body) in [
-            ("fn project(a:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_from(a.read_handle(),project); let p=saved.value()"),
-            ("fn project(a:&State,b:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_pair(a.read_handle(),b.read_handle(),project); let p=saved.value()"),
-            ("fn project(a:&State)->PAYLOAD {VALUE}", "var access=domain.access_set(); access.include(a.read_handle()); let saved=domain.snapshot_set(access); let p=domain.read_snapshot(&saved,a.read_handle(),project)"),
-        ] {
-            let work=Workspace::new();
-            let projection=projection.replace("PAYLOAD",&ty).replace("VALUE",&value);
-            work.write("snapshot_bound.jk",&format!(r#"import joky/domain import joky/check
-{definitions}
-struct State {{n:Int32}}
-fn make(n:Int32)->State {{State{{n:n}}}}
-{projection}
-fn main() @suspends {{
-    let a=domain.create(make,0); let b=domain.create(make,0)
-    {body}
-    let message="snapshot result bounds"; check.assert({assertion},&message)
-}}"#));
-            if accepted {work.assert_all_backends("snapshot_bound.jk",&[],b"",0);}
-            else {failure(&work.cli(&["build","snapshot_bound.jk"]),"bounded value signature");}
-        }
-
-        let candidate_calls = [
-            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read), a.handle(), make, VALUE); var receipt=domain.commit_to(a.handle(),next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
-            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), seed, 0); let next=domain.candidate_pair_from(first, b.handle(), make, VALUE); var receipt=domain.commit_pair_to(a.handle(),b.handle(),next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
-            "var access=domain.access_set(); access.include(a.read_handle()); let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,VALUE); var receipt=domain.commit_set(next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
-            "var access=domain.access_set(); access.include(a.read_handle()); access.include(b.read_handle()); let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0); let next=domain.candidate_set_add(first,b.handle(),make,VALUE); var receipt=domain.commit_set(next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
-        ];
-        for (index, call) in candidate_calls.iter().enumerate() {
-            let work = Workspace::new();
-            let target = if index == 1 || index == 3 { "b" } else { "a" };
-            let call = call.replace("VALUE", &value);
-            work.write(
-                "candidate_bound.jk",
-                &format!(
-                    r#"import joky/domain import joky/check
-{definitions}
-struct State {{ok:Bool}}
-fn seed(n:Int32)->State {{State{{ok:false}}}}
-fn make(p:{ty})->State {{State{{ok:{assertion}}}}}
-fn read(s:&State)->Bool {{s.ok}}
-fn total(a:&State,b:&State)->Bool {{a.ok && b.ok}}
-fn main() @suspends {{
-    let a=domain.create(seed,0); let b=domain.create(seed,0)
-    let message="candidate input bounds"
-    {call}
-    check.assert(domain.read_from({target}.read_handle(),read).unwrap(),&message)
-}}"#
-                ),
-            );
-            if accepted {
-                work.assert_all_backends("candidate_bound.jk", &[], b"", 0);
-            } else {
-                failure(
-                    &work.cli(&["build", "candidate_bound.jk"]),
-                    "bounded value signature",
-                );
-            }
-        }
-
-        for (access, receiver, body, expected) in [
-            ("write_to(owner.handle()", "&mut State", "s.n=s.n+1; p", 1),
-            ("query_from(owner.read_handle()", "&State", "p", 0),
-        ] {
-            let work = Workspace::new();
-            work.write(
-                "bound.jk",
-                &format!(
-                    r#"import joky/domain import joky/check
-{definitions}
-struct State {{n:Int32}}
-fn make(n:Int32)->State {{State{{n:n}}}}
-fn turn(s:{receiver},p:{ty})->{ty} {{{body}}}
-fn read(s:&State)->Int32 {{s.n}}
-fn main() @suspends {{
-    let owner=domain.create(make,0)
-    let p=domain.{access},turn,{value}).unwrap()
-    let message="domain value bounds"
-    check.assert({assertion},&message)
-    check.assert(domain.read_from(owner.read_handle(),read).unwrap()=={expected},&message)
-}}"#
-                ),
-            );
-            if accepted {
-                work.assert_all_backends("bound.jk", &[], b"", 0);
-            } else {
                 failure(&work.cli(&["build", "bound.jk"]), "bounded value signature");
             }
+            continue;
         }
+        work.write("bound.jk", &format!(r#"{declarations}
+fn main() @suspends {{
+    let a=domain.create(make,{value}); let b=domain.create(seed,0)
+    let message="domain value bounds"
+    verify(domain.read_from(a.read_handle(),read).unwrap())
+    verify(domain.write_to(a.handle(),turn,{value}).unwrap())
+    verify(domain.query_from(a.read_handle(),query,0).unwrap())
+    check.assert(domain.request(a.handle(),echo,{value}).unwrap()==42,&message)
+    check.assert(domain.request_read(a.read_handle(),echo,{value}).unwrap()==42,&message)
+    verify(domain.request(a.handle(),reply,0).unwrap())
+    verify(domain.request_read(a.read_handle(),reply,0).unwrap())
+    {{ let saved=domain.snapshot_from(a.read_handle(),read); verify(saved.value()) }}
+    {{ let saved=domain.snapshot_pair(a.read_handle(),b.read_handle(),pair); verify(saved.value()) }}
+    {{
+        var access=domain.access_set(); access.include(a.read_handle())
+        let saved=domain.snapshot_set(access)
+        verify(domain.read_snapshot(&saved,a.read_handle(),read))
+    }}
+    {{
+        let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read),a.handle(),make,{value})
+        var receipt=domain.commit_to(a.handle(),next)
+        check.assert(match receipt.wait(){{Ok(_)=>true,_=>false}},&message)
+    }}
+    {{
+        let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),pair),a.handle(),seed,0)
+        let next=domain.candidate_pair_from(first,b.handle(),make,{value})
+        var receipt=domain.commit_pair_to(a.handle(),b.handle(),next)
+        check.assert(match receipt.wait(){{Ok(_)=>true,_=>false}},&message)
+    }}
+    {{
+        var access=domain.access_set(); access.include(a.read_handle()); access.include(b.read_handle())
+        let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,{value})
+        let next=domain.candidate_set_add(first,b.handle(),make,{value})
+        var receipt=domain.commit_set(next)
+        check.assert(match receipt.wait(){{Ok(_)=>true,_=>false}},&message)
+    }}
+    verify(domain.read_from(a.read_handle(),read).unwrap())
+    verify(domain.read_from(b.read_handle(),read).unwrap())
+    let timer=domain.timer(); let t=timer.handle()
+    domain.after(t,a.handle(),0,tick,{value}).unwrap()
+    while match t.status() {{Active=>true,_=>false}} {{task.yield_now()}}
+    check.assert(domain.read_from(a.read_handle(),count).unwrap()==1,&message)
+    domain.every(t,a.handle(),100000,tick,{value}).unwrap(); t.cancel()
+}}
+"#));
+        work.assert_all_backends("bound.jk", &[], b"", 0);
     }
 }
 
@@ -7619,13 +7520,13 @@ fn main() @suspends {{let owner=domain.create(make,1); {invocation};}}"#
 
 #[test]
 #[cfg(unix)]
-fn domain_queries_run_in_all_backends() {
+fn domain_queries_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "queries.jk",
         include_str!("fixtures/state_domain_queries.jk"),
     );
-    work.assert_all_backends("queries.jk", &[], b"", 0);
+    work.assert_native("queries.jk", &[], b"", 0);
 }
 
 #[test]
@@ -8328,13 +8229,13 @@ let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total); {candi
 
 #[test]
 #[cfg(unix)]
-fn state_domains_storage_owning_graphs_run_in_all_backends() {
+fn state_domains_storage_owning_graphs_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "storage.jk",
         include_str!("fixtures/state_domain_storage.jk"),
     );
-    work.assert_all_backends("storage.jk", &[], b"", 0);
+    work.assert_native("storage.jk", &[], b"", 0);
 }
 
 #[test]
@@ -8413,10 +8314,10 @@ fn state_domains_storage_editor_and_multi_failures_run_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn state_domains_when_syntax_and_methods_run_in_all_backends() {
+fn state_domains_when_syntax_and_methods_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write("when.jk", include_str!("fixtures/state_domain_when.jk"));
-    work.assert_all_backends("when.jk", &[], b"", 0);
+    work.assert_native("when.jk", &[], b"", 0);
 }
 
 #[test]
@@ -8638,13 +8539,13 @@ pub fn update(h:domain.WriteHandle<S>,n:Int32) @suspends ->Int32 {when "更新"(
 
 #[test]
 #[cfg(unix)]
-fn pure_enum_domain_values_run_in_all_backends() {
+fn pure_enum_domain_values_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "enum_values.jk",
         include_str!("fixtures/state_domain_enum_values.jk"),
     );
-    work.assert_all_backends("enum_values.jk", &[], b"", 0);
+    work.assert_native("enum_values.jk", &[], b"", 0);
 }
 
 #[cfg(unix)]
@@ -8853,13 +8754,13 @@ fn pure_composite_pending_script_results_keep_the_starting_contract() {
 
 #[test]
 #[cfg(unix)]
-fn pure_composite_domain_values_run_in_all_backends() {
+fn pure_composite_domain_values_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "composites.jk",
         include_str!("fixtures/state_domain_composite_values.jk"),
     );
-    work.assert_all_backends("composites.jk", &[], b"", 0);
+    work.assert_native("composites.jk", &[], b"", 0);
 }
 
 #[cfg(unix)]
@@ -9576,24 +9477,24 @@ fn postfix_unwrap_tasks_and_closures_match_native_execution() {
 
 #[test]
 #[cfg(unix)]
-fn owned_text_domain_values_run_in_all_backends() {
+fn owned_text_domain_values_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "text_values.jk",
         include_str!("fixtures/state_domain_text_values.jk"),
     );
-    work.assert_all_backends("text_values.jk", &[], b"", 0);
+    work.assert_native("text_values.jk", &[], b"", 0);
 }
 
 #[test]
 #[cfg(unix)]
-fn owned_array_domain_values_run_in_all_backends() {
+fn owned_array_domain_values_run_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "array_values.jk",
         include_str!("fixtures/state_domain_array_values.jk"),
     );
-    work.assert_all_backends("array_values.jk", &[], b"", 0);
+    work.assert_native("array_values.jk", &[], b"", 0);
 }
 
 #[test]
@@ -9710,21 +9611,21 @@ fn owned_script_rejects_mismatched_and_hooked_contracts() {
 }
 
 #[test]
-fn suspending_borrows_execute_in_all_backends() {
+fn suspending_borrows_execute_in_standalone_aot() {
     let work = Workspace::new();
     work.write("borrows.jk", include_str!("fixtures/suspending_borrows.jk"));
-    work.assert_all_backends("borrows.jk", &[], b"", 0);
+    work.assert_native("borrows.jk", &[], b"", 0);
 }
 
 #[test]
-fn suspending_borrows_cleanup_in_all_backends() {
+fn suspending_borrows_cleanup_in_standalone_aot() {
     let work = Workspace::new();
     let source = include_str!("fixtures/suspending_borrow_cleanup.jk").replace(
         "extern fn record_drop(id: Int32)",
         "fn record_drop(id: Int32) { println(id) }",
     );
     work.write("cleanup.jk", &source);
-    work.assert_all_backends(
+    work.assert_native(
         "cleanup.jk",
         &[],
         b"2\n42\n1\n2\n42\n2\n42\n2\n42\n2\n42\n",

@@ -115,15 +115,9 @@ fn local_field_borrows_reject_overlap_escapes_and_unsupported_roots() {
         ("fn f() { let p = Point { x: 1, y: 2 }; &p.absent; }", "Unknown field"),
     ] {
         let source = format!("{PREFIX}{body}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let error = VmEngine::with_mode(mode).load_source(&source).expect_err(body);
-            assert!(error.message().contains(message), "{mode:?}: {error}\n{source}");
-            assert!(error.span().is_some());
-        }
-        let ast = crate::parser::parse(&source).unwrap();
-        let error = crate::aot::AotCompiler::new("field-rejection").unwrap()
-            .compile_module(&ast).expect_err(body);
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert!(error.message().contains(message), "{error}\n{source}");
+        assert!(error.span().is_some());
     }
 }
 

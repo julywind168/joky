@@ -218,23 +218,5 @@ fn ordered_arrays_reject_conflicting_views_and_invalid_capabilities() {
     }
 }
 fn reject(source: &str) {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        assert!(
-            VmEngine::with_mode(mode).load_source(source).is_err(),
-            "{mode:?}: {source}"
-        );
-    }
-    let ast = crate::TypeRegistry::default().resolve_with_modules(
-        &crate::parser::parse(source).unwrap(),
-        &crate::ModuleSources::new(),
-    );
-    if let Ok(ast) = ast {
-        assert!(
-            crate::aot::AotCompiler::new("invalid-ordered-array")
-                .unwrap()
-                .compile_module(&ast)
-                .is_err(),
-            "{source}"
-        );
-    }
+    super::support::frontend_error(source, &crate::ModuleSources::new());
 }

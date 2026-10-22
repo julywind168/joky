@@ -48,19 +48,9 @@ fn borrowed_arrays_keep_storage_live_and_release_loans_at_last_use() {
 }
 
 fn rejects(source: &str, message: &str) {
-    let ast = crate::parser::parse(source).unwrap();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        let error = vm.load_module(&ast).expect_err(source);
-        assert!(
-            error.message().contains(message),
-            "{mode:?}: {source}\n{error}"
-        );
-        assert!(error.span().is_some());
-    }
-    let mut compiler = crate::aot::AotCompiler::new("invalid-borrowed-array").unwrap();
-    let error = compiler.compile_module(&ast).expect_err(source);
+    let error = super::support::frontend_error(source, &crate::ModuleSources::new());
     assert!(error.message().contains(message), "{source}\n{error}");
+    assert!(error.span().is_some());
 }
 
 const PREFIX: &str = r#"

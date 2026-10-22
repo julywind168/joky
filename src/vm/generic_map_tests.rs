@@ -1,7 +1,6 @@
 use super::{support::generic_fixture_entries, VmEngine, VmMode};
 use crate::{
-    aot::AotCompiler, runtime::arena::LIVE, ErrorCode, FunctionSignature, ModuleSources, Type,
-    TypeRegistry,
+    runtime::arena::LIVE, ErrorCode, FunctionSignature, ModuleSources, Type, TypeRegistry,
 };
 const SOURCE: &str = include_str!("../../tests/fixtures/generic_map.jk");
 thread_local! { static EVENTS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) }; }
@@ -96,25 +95,9 @@ fn generic_map_propagates_protocol_failures_and_cleans_incoming_and_stored_value
     }
 }
 fn rejected(source: &str, modules: &ModuleSources, expected: &str) {
-    let ast = match TypeRegistry::default()
-        .resolve_with_modules(&crate::parser::parse(source).unwrap(), modules)
-    {
-        Ok(ast) => ast,
-        Err(e) => {
-            assert!(e.message().contains(expected), "{source}: {e}");
-            return;
-        }
-    };
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let e = VmEngine::with_mode(mode).load_module(&ast).unwrap_err();
-        assert!(e.message().contains(expected), "{source}: {e}");
-        assert!(e.span().is_some());
-    }
-    let e = AotCompiler::new("bad-map")
-        .unwrap()
-        .compile_module(&ast)
-        .unwrap_err();
-    assert!(e.message().contains(expected), "{source}: {e}");
+    let error = super::support::frontend_error(source, modules);
+    assert!(error.message().contains(expected), "{source}: {error}");
+    assert!(error.span().is_some());
 }
 #[test]
 fn generic_map_rejects_reference_bearing_keys() {

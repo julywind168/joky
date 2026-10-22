@@ -37,7 +37,7 @@ fn generic_impls_preserve_self_and_inference_across_backends() {
 }
 
 #[test]
-fn generic_impl_errors_preserve_the_previous_module() {
+fn generic_impl_rejects_invalid_contracts() {
     let declarations = "struct Pair<T> { left: T, right: T } struct Split<A, B> { first: A, second: B } struct Marker<T> {} enum Choice<T> { None, Some(T) } ";
     for (body, code) in [
         ("impl<T> Int32 {}", ErrorCode::TypeMismatch),
@@ -78,19 +78,9 @@ fn generic_impl_errors_preserve_the_previous_module() {
         ("impl<T> Pair<T> { fn f(self) @suspends {} } fn f() { Pair { left: 1, right: 2 }.f() }", ErrorCode::InvalidCall),
     ] {
         let source = format!("// 🙂\n{declarations}{body}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source("fn answer() -> Int32 { 42 }").unwrap();
-            let version = vm.module_version();
-            let error = vm.load_source(&source).unwrap_err();
-            assert_eq!(error.code(), code, "{source}: {error}");
-            assert!(error.span().is_some_and(|span| span.slice(&source).is_some()), "{error}");
-            assert_eq!(vm.module_version(), version);
-            assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
-        }
-        let mut aot = crate::aot::AotCompiler::new("bad_generic_impl").unwrap();
-        let error = aot.compile_module(&crate::parser::parse(&source).unwrap()).unwrap_err();
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert_eq!(error.code(), code, "{source}: {error}");
+        assert!(error.span().is_some_and(|span| span.slice(&source).is_some()), "{error}");
     }
 }
 
