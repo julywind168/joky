@@ -308,11 +308,21 @@ impl Type {
         self.reference_type()
             .is_some_and(|r| r.target.is_resource_owner())
     }
-    /// The type permits a whole-object loan across suspension; provenance must
-    /// additionally prove that it is not an interior container view.
+    /// Storage that can stay borrowed while its owning activation is suspended.
+    /// Provenance and loan checking keep the owner alive and prevent relocation.
     pub(crate) fn is_suspend_safe_view(&self) -> bool {
-        self.reference_type()
-            .is_some_and(|r| r.target.is_suspend_safe_owner())
+        self.reference_type().is_some_and(|r| {
+            let target = match &r.target {
+                Self::BufferElement(element) | Self::BufferSlice(element) => element,
+                target => target,
+            };
+            target.is_suspend_safe_owner()
+                || target.is_copy_storage_value()
+                    && !target.contains_references()
+                    && !target.contains_fixed_array()
+                    && !target.contains_closures()
+                    && !target.contains_dyn()
+        })
     }
     pub(crate) fn is_buffer_view(&self) -> bool {
         self.reference_type()

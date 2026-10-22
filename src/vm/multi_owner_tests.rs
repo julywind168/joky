@@ -211,7 +211,6 @@ fn multi_owner_contracts_reject_partial_moves_and_hidden_borrows() {
         ("fn bad() { let b = Buffers.new::<Int32>(); let t = (b, 1); let again = b }", "moved"),
         ("fn bad() { let b = Buffers.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Buffers.new::<Int32>() ; (*(&b)); }", "non-Copy"),
-        ("fn tick() @suspends {} fn bad() @suspends { let b = Buffers.new::<Int32>(); let r = b.first.borrow_ref(0); tick(); let value = *r }", "suspension"),
         ("extern fn host(b: &Buffers<Int32>)", "host ABI"),
     ] {
         let source = format!("{SOURCE}\n{body}").replace("extern fn record_drop(value: Int32)", "fn record_drop(value: Int32) {}");

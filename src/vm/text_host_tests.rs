@@ -126,26 +126,3 @@ fn text_host_cps_parameters_beyond_sixty_four_keep_slots_and_owners() {
         arena::LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }
-
-#[test]
-fn interior_text_borrows_cannot_cross_parallel_or_race() {
-    for boundary in ["parallel", "race"] {
-        let source = format!("import joky/array.{{type Array}} import joky/task fn pause() @suspends {{ task.yield_now() }} fn run() @suspends -> UInt64 {{ var texts = Array.new::<String>(); texts.push(\"hello\"); let view = texts.borrow_ref(0); {boundary} {{ | pause() }}; view.byte_length() }}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let error = VmEngine::with_mode(mode).load_source(&source).unwrap_err();
-            assert_eq!(error.code(), crate::ErrorCode::InvalidCall);
-            assert_eq!(
-                error.message(),
-                "An interior element or Slice borrow cannot remain live across suspension"
-            );
-        }
-        let error = crate::aot::AotCompiler::new("borrow-boundary")
-            .unwrap()
-            .compile_module(&crate::parser::parse(&source).unwrap())
-            .unwrap_err();
-        assert_eq!(
-            error.message(),
-            "An interior element or Slice borrow cannot remain live across suspension"
-        );
-    }
-}

@@ -85,6 +85,8 @@ mod structured_value_tests;
 #[cfg(test)]
 mod support;
 #[cfg(test)]
+mod suspending_borrow_tests;
+#[cfg(test)]
 mod task_scope_tests;
 #[cfg(test)]
 mod tuples_tests;

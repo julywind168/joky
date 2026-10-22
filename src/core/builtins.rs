@@ -123,11 +123,6 @@ impl Builtin {
             _ => 0,
         }
     }
-
-    /// Network adapters pin scalar output places until synchronous stop.
-    pub(crate) fn pins_outputs(&self) -> bool {
-        matches!(self, Self::Tcp(_) | Self::Dns)
-    }
 }
 
 /// External registration ABI is independent of the compiler-owned contract.

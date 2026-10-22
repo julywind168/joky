@@ -198,6 +198,11 @@ fn async_borrowing_completion_race_and_real_c_layouts() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = fixture.vm(mode);
         for (name, read, timer, starts, completed, cancelled) in [
+            ("local_sequential", true, false, 1, 1, 0),
+            ("local_race", false, true, 1, 0, 1),
+            ("local_race", true, false, 1, 1, 0),
+            ("element_sequential", true, false, 1, 1, 0),
+            ("local_scope", true, false, 1, 1, 0),
             ("sequential", true, false, 1, 1, 0),
             ("race_timeout", false, true, 1, 0, 1),
             ("race_timeout", true, false, 1, 1, 0),
@@ -225,6 +230,20 @@ fn async_borrowing_completion_race_and_real_c_layouts() {
             assert!(task.resume().is_err());
             drop(task);
             assert_eq!(fixture.count(1) + fixture.count(3), starts);
+        }
+        for name in ["local_sequential", "element_sequential", "local_scope"] {
+            fixture.reset();
+            let mut vm = fixture.vm(mode);
+            let task = vm.call_async(name, &[]).unwrap();
+            assert_eq!(task.status(), ContinuationStatus::Pending);
+            fixture.tick();
+            vm.load_source("fn replacement() {}").unwrap();
+            drop(vm);
+            drop(task);
+            assert_eq!(fixture.count(3), 1, "{mode:?}: {name}");
+            assert_eq!(fixture.count(5), 0);
+            fixture.tick();
+            live(0);
         }
         for (name, starts, completed, cancelled) in [
             ("unstarted", 0, 0, 0),
@@ -373,7 +392,6 @@ fn async_borrowing_rejects_conflicts_bad_layouts_and_legacy_bindings() {
         "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1, mode: 0 }); race { | host_io(p) | host_io(p) } }",
         "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1, mode: 0 }); parallel { | host_io(p) | read_unit(p) } }",
         "fn touch(p: &mut AsyncPoint) -> &mut AsyncPoint { p.value = 9; p } fn bad() @suspends { let p = alloc(AsyncPoint { value: 1, mode: 0 }); race { | host_io(p) | host_io(touch(p)) } }",
-        "fn bad() @suspends { var p = AsyncPoint { value: 1, mode: 0 }; host_io(&mut p) }",
         "fn bad() { let p = alloc(AsyncPoint { value: 1, mode: 0 }); host_io(p) }",
         "extern fn other(p: &AsyncPoint) @suspends -> &AsyncPoint",
         "extern fn other(p: &AsyncPoint, raw: Ptr) @suspends",

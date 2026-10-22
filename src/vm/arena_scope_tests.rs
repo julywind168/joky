@@ -69,7 +69,7 @@ fn reject_structured_borrow(source: &str) {
 }
 
 #[test]
-fn scope_and_race_allocation_capability_retains_input_loans_after_completion() {
+fn scope_and_race_retained_parameters_keep_input_loans_after_completion() {
     let prefix = r#"
         struct Point { x: Int32 }
         struct Stored { point: &Point }
@@ -77,7 +77,6 @@ fn scope_and_race_allocation_capability_retains_input_loans_after_completion() {
         fn indirect(p: &Point) @suspends { store(p) }
         fn nested(p: &Point) @suspends { parallel { | indirect(p) } }
         fn generic<T: Copy>(p: &T) @suspends { alloc((p,)); }
-        fn exclusive(p: &mut Point) @suspends { alloc(42); }
         fn aggregate(p: (Option<&Point>,)) @suspends { alloc(p); }
     "#;
     for body in [
@@ -85,8 +84,6 @@ fn scope_and_race_allocation_capability_retains_input_loans_after_completion() {
         "parallel { | indirect(p) }; p.x = 2;",
         "parallel { | nested(p) }; p.x = 2;",
         "parallel { | generic(p) }; p.x = 2;",
-        "parallel { | exclusive(p) }; p.x = 2;",
-        "parallel { | exclusive(p) }; p.x;",
         "parallel { | aggregate((Some((&*p)),)) }; p.x = 2;",
         "parallel { | store(p) | store(p) }; p.x = 2;",
     ] {

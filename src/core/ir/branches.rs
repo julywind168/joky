@@ -52,7 +52,20 @@ impl FunctionPlan {
         });
         self.emit(Op::TaskScopeEnter);
         self.local_scopes.push(Vec::new());
-        let flow = self.expr_expected(body, vars, functions, suspends, types, expected)?;
+        // This block's lexical lifetime includes its join. Planning it as an
+        // ordinary nested block would end its locals before children finish.
+        let flow = if let Expr::Block { exprs, .. } = body.as_ref() {
+            self.sequence(
+                exprs,
+                expected,
+                &mut vars.clone(),
+                functions,
+                suspends,
+                types,
+            )?
+        } else {
+            self.expr_expected(body, vars, functions, suspends, types, expected)?
+        };
         let flow = match flow {
             Flow::Value(value) => {
                 let ty = slot_type(&value);

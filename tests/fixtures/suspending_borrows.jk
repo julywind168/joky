@@ -1,0 +1,216 @@
+import joky/task
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/list.{type List}
+import joky/set.{type Set}
+import joky/slice as slices.{type Slice}
+import joky/element as elements.{type Element}
+
+struct Pair { left: Int32, right: Int32 }
+struct Holder { value: &Int32 }
+struct Packet { text: String, tag: Int32 }
+type Packets = Array<Packet>
+trait Read { fn read(&self) @noescape -> Int32 }
+impl Read for Pair { fn read(&self) -> Int32 { self.left + self.right } }
+
+fn later() @suspends -> Int32 { task.yield_now(); 1 }
+fn read(value: &Int32) @suspends @noescape -> Int32 {
+    task.yield_now()
+    *value
+}
+fn add(value: &mut Int32, amount: Int32) @suspends @noescape {
+    task.yield_now()
+    *value += amount
+    task.yield_now()
+}
+fn allocated_read(value: &Int32) @suspends -> Int32 {
+    let unrelated = alloc(1)
+    task.yield_now()
+    *value + *unrelated - 1
+}
+fn allocated_write(value: &mut Int32) @suspends {
+    let unrelated = alloc(1)
+    task.yield_now()
+    *value += *unrelated
+}
+fn mixed(prefix: (Int32, Int32), local: &Int32, stored: &Int32) @suspends -> Int32 {
+    alloc(Holder { value: stored })
+    task.yield_now()
+    *local + prefix.0 + prefix.1
+}
+fn sum(value: &Int32, amount: Int32) @noescape -> Int32 { *value + amount }
+fn identity<T>(value: &T) -> &T { value }
+fn relay(value: &Int32) @suspends -> &Int32 { task.yield_now(); value }
+fn inspect(value: &Packet) @suspends -> Int32 {
+    task.yield_now()
+    value.tag + int32(value.text.byte_length())
+}
+fn item(values: &Packets, depth: Int32) -> &Packet {
+    if depth == 0 { values.borrow_ref(0) } else { item(values, depth - 1) }
+}
+fn slice_read(values: &Slice<Int32>) @suspends -> Int32 {
+    task.yield_now()
+    slices.get(values, 0)!
+}
+fn slice_write(values: &mut Slice<Int32>) @suspends {
+    let item = slices.borrow_mut_ref(values, 0)
+    add(item, 1)
+}
+fn packet_slice(values: &Slice<Packet>) @suspends -> Int32 {
+    task.yield_now()
+    inspect(slices.borrow_ref(values, 0))
+}
+fn element_read(value: &Element<Int32>) @suspends -> Int32 {
+    task.yield_now()
+    elements.read(value)
+}
+fn element_write(value: &mut Element<Int32>) @suspends {
+    task.yield_now()
+    elements.write(value, 42)
+}
+fn hold(value: &mut Int32) @suspends {
+    *value = 42
+    while true { task.yield_now() }
+}
+fn instant() @suspends {}
+
+fn locals() @suspends {
+    var value = 40
+    let view = &mut value
+    task.yield_now()
+    add(view, 2)
+    assert(value == 42, "mutable local survives repeated suspension")
+    let holder = Holder { value: &value }
+    task.yield_now()
+    assert(read(holder.value) == 42, "aggregate preserves local provenance")
+    assert(sum(&value, later()) == 43, "earlier argument stays borrowed")
+    let callback: fn(&Int32) @suspends @noescape -> Int32 = read
+    assert(callback(&value) == 42, "indirect borrowed call")
+    assert(read(relay(&value)) == 42, "returned reference keeps the original lifetime")
+    var pair = Pair { left: 20, right: 20 }
+    parallel { | add(&mut pair.left, 1) | add(&mut pair.right, 1) }
+    assert(pair.left + pair.right == 42, "independent local fields")
+    let borrowed_pair = &pair
+    task.yield_now()
+    assert(borrowed_pair.read() == 42, "borrowed trait receiver")
+    let option = Some(42)
+    let borrowed_option = &option
+    task.yield_now()
+    assert(match borrowed_option { Some(n) => n == 42, None => false }, "borrowed match")
+    let results = parallel { | allocated_read(&value) | allocated_read(&value) }
+    assert(results.0 == 42 && results.1 == 42, "allocation does not retain a short borrow")
+    let stored = &*(alloc(0))
+    let results = parallel { | mixed((0, 0), &value, stored) }
+    assert(results.0 == 42, "retention follows source parameters across aggregate slots")
+    scope {
+        let view = &value
+        branch { assert(mixed((0, 0), view, stored) == 42, "dynamic parameter retention") }
+    }
+    parallel { | allocated_write(&mut value) }
+    assert(value == 43, "allocation does not retain a mutable branch input")
+    value = 42
+    scope {
+        let view = &mut value
+        branch { allocated_write(view) }
+    }
+    assert(value == 43, "dynamic allocation releases its mutable loan at join")
+    value = 42
+    scope {
+        let view = &mut value
+        branch { add(view, 1) }
+        task.yield_now()
+    }
+    assert(value == 43, "join releases the child loan")
+    race { | hold(&mut value) | instant() }
+    assert(value == 42, "cancellation preserves completed writes")
+    scope {
+        var scoped = 41
+        let view = &mut scoped
+        branch { add(view, 1) }
+    }
+    var count = 0
+    while count < 3 {
+        var local = 41
+        scope { let r = &mut local; branch { add(r, 1) } }
+        assert(local == 42, "loop reuses storage only after join")
+        count += 1
+    }
+}
+
+fn containers() @suspends {
+    var values = [41, 2]
+    let view = values.borrow_mut_ref(0)
+    add(view, 1)
+    values.push(3)
+    let slice = values.slice(0, 2)
+    let subslice = slices.slice(slice, 0, 1)
+    task.yield_now()
+    assert(slice_read(subslice) == 42, "subslice pins original storage")
+    let result = parallel { | read(values.borrow_ref(0)) | slice_read(values.slice(0, 1)) }
+    assert(result.0 == 42 && result.1 == 42, "shared element and slice branches")
+    scope {
+        let view = values.slice_mut(0, 1)
+        branch { slice_write(view) }
+        task.yield_now()
+    }
+    assert(values[0] == 43, "mutable slice child")
+    element_write(values.borrow_mut(0))
+    assert(element_read(values.borrow(0)) == 42, "Element uses the same lifetime rule")
+    let indexed = &values[0]
+    task.yield_now()
+    assert(*indexed == 42, "index borrow")
+    values[0] = later()
+    assert(values[0] == 1, "index reservation survives suspending RHS")
+    match &mut values {
+        [first, ..tail] => {
+            add(first, 41)
+            task.yield_now()
+            assert(slices.len(tail) == 2, "sequence pattern views")
+        }
+        [] => panic("missing elements")
+    }
+    values.clear()
+
+    var packets = [Packet { text: "ok", tag: 40 }]
+    let selected = identity(item(&packets, 2))
+    task.yield_now()
+    assert(inspect(selected) == 42, "recursive and generic helper views")
+    let text = &selected.text
+    task.yield_now()
+    assert(text.byte_length() == 2, "nested owner field")
+    let bytes = text.bytes()
+    task.yield_now()
+    parallel { | instant() }
+    assert(slices.get(bytes, 0)! == uint8(111), "text bytes remain pinned across suspension")
+    assert(packet_slice(packets.slice(0, 1)) == 42, "owning element slice")
+    packets.clear()
+    let texts = ["hello"]
+    match &texts {
+        [text] => {
+            parallel { | instant() }
+            race { | instant() }
+            assert(text.byte_length() == 5, "matched text survives concurrency boundaries")
+        }
+        _ => panic("missing text")
+    }
+
+    var map = Map.new::<Int32, Int32>()
+    map.insert(1, 41)
+    add(map.borrow_mut_ref(1), 1)
+    assert(read(map.borrow_ref(1)) == 42, "Map value borrow")
+    assert(element_read(map.borrow(1)) == 42, "Map Element borrow")
+    map.clear()
+    var list = List.new::<Int32>()
+    list.push_back(41)
+    add(list.borrow_mut_ref(0), 1)
+    assert(read(list.borrow_ref(0)) == 42, "List element borrow")
+    assert(element_read(list.borrow(0)) == 42, "List Element borrow")
+    list.clear()
+    var set = Set.new::<Int32>()
+    set.insert(42)
+    assert(slice_read(set.elements()) == 42, "Set view")
+    set.clear()
+}
+
+fn exercise() @suspends -> Int32 { locals(); containers(); 42 }
+fn main() @suspends { assert(exercise() == 42, "suspending borrows") }

@@ -5,6 +5,33 @@ extern fn host_four(a: &Int32, b: &Int64, c: &UInt32, d: &UInt64) @suspends -> U
 extern fn timeout() @suspends
 extern fn after_stop(value: Int32) -> Int32
 
+fn local_sequential() @suspends -> Int32 {
+    var p = AsyncPoint { value: 40, mode: 0 }
+    host_io(&mut p)
+    after_stop(p.value + 1)
+}
+fn local_race() @suspends -> Int32 {
+    var p = AsyncPoint { value: 40, mode: 0 }
+    race { | host_io(&mut p) | timeout() }
+    p.value = 42
+    after_stop(p.value)
+}
+fn element_sequential() @suspends -> Int32 {
+    var points = [AsyncPoint { value: 40, mode: 0 }]
+    host_io(&mut points[0])
+    let result = points[0].value + 1
+    points.clear()
+    after_stop(result)
+}
+fn local_scope() @suspends -> Int32 {
+    scope {
+        var p = AsyncPoint { value: 40, mode: 0 }
+        let view = &mut p
+        branch { host_io(view) }
+    }
+    after_stop(42)
+}
+
 fn sequential() @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 40, mode: 0 })
     host_io(p)

@@ -199,7 +199,7 @@ fn ordered_arrays_reject_conflicting_views_and_invalid_capabilities() {
             format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1); {operation}; slices.borrow_ref(region, 0).id; }}"),
             format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1); let child = slices.slice_mut(region, 0, 1); {operation}; slices.len(child); }}"),
             format!("fn bad(values: Array<Resource>) {{ values.release(); {operation}; }}"),
-            format!("fn pause() @suspends {{}} fn bad(values: &mut Array<Resource>) @suspends {{ let item = values.borrow_ref(0); pause(); let id = item.id; {operation}; }}"),
+            format!("fn pause() @suspends {{}} fn bad(values: &mut Array<Resource>) @suspends {{ let item = values.borrow_ref(0); pause(); {operation}; let id = item.id; }}"),
         ] {
             reject(&format!("{prefix} {body}"));
         }

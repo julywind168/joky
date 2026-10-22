@@ -433,8 +433,6 @@ fn owning_string_s2_rejects_moves_conflicting_loans_and_private_bridges() {
         "fn f() { let a = \"text\"; a.release(); a.byte_length(); }",
         "fn f() { var a = \"text\"; let view = &a; a = \"next\"; view.byte_length(); }",
         "fn f() -> &String { let a = \"text\" &a }",
-        "import joky/slice as slices import joky/task fn pause() @suspends { task.yield_now() } fn f() @suspends { let a = \"text\"; let view = a.bytes(); parallel { | pause() }; slices.len(view); }",
-        "import joky/slice as slices import joky/task fn f() @suspends { let a = \"text\"; let view = a.bytes(); task.yield_now(); slices.len(view); }",
         "fn f(a: &String) @suspends -> &String { a }",
         "import joky/string.{freeze_utf8} fn f() {}",
         "import joky/string fn f() { let text = \"text\"; string.copy_text(&text); }",

@@ -130,8 +130,6 @@ fn array_patterns_reject_invalid_types_coverage_and_borrows() {
         ("fn bad(a: Array<Int32>) -> Int32 { match a { [x, ..x] => x, _ => 0 } }", ErrorCode::DuplicateDefinition),
         ("fn bad() -> Int32 { let a = [1]; match a { [x] => x, _ => 0 }; int32(a.len()) }", ErrorCode::InvalidAssignment),
         ("fn bad() -> Int32 { var a = [1,2]; match &a { [x, ..tail] => { a.push(3); int32(slices.len(tail)) }, _ => 0 } }", ErrorCode::InvalidAssignment),
-        ("fn pause() @suspends {} fn observe(value: &String) {} fn bad() @suspends { let a = [\"x\"]; match &a { [x] => { pause(); observe(x) }, _ => {} } }", ErrorCode::InvalidCall),
-        ("fn pause() @suspends {} fn bad() @suspends { let a = [1]; match &a { [..tail] => { pause(); slices.len(tail); } } }", ErrorCode::InvalidCall),
         ("fn bad() -> &Slice<Int32> { let a = [1,2]; match &a { [..tail] => tail } }", ErrorCode::InvalidAssignment),
         ("fn bad() -> Int32 { var a = [1,2]; match &mut a { [x, y] => { a.push(3); *x + *y }, _ => 0 } }", ErrorCode::InvalidAssignment),
         ("fn bad() -> Int32 { var a = [1,2]; match &mut a { [x, y] => { let z = a.borrow_mut_ref(0); *x + *y + *z }, _ => 0 } }", ErrorCode::InvalidAssignment),

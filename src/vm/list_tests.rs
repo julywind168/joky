@@ -507,7 +507,6 @@ fn list_rejects_copy_conflicts_escapes_private_storage_and_aliases() {
         "fn bad(m: &mut List<Int32>, other: &mut List<Int32>) { let a=other.borrow(0); m.append(other); element.read(a); }",
         "fn bad(m: List<String>) { let value=m.borrow_ref(0); m.into_array(); value.byte_length(); }",
         "fn bad() { var m=List.new::<&Int32>(); let p=alloc(42); m.push_back((&*p)); let out=m.into_array(); out.release() ; (*(p) = 0) }",
-        "fn pause() @suspends {} fn bad() @suspends -> Int32 { var m=List.new::<Int32>(); m.push_back(1); let v=m.borrow(0); pause(); element.read(v) }",
     ] { rejected(body, &modules); }
     for body in [
         "import views fn bad(m: &mut views.Sequence<Int32>) { let v=views.view(m,0); m.reverse(); element.read(v); }",

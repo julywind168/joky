@@ -861,7 +861,6 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
         ("fn bad() { var b = Batch.new::<&Int32>(); let p = 42; b.add(&p) }", "local borrow"),
         ("fn bad() { let b = Batch.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Batch.new::<Int32>() ; (*(&b)); }", "non-Copy"),
-        ("fn tick() @suspends {} fn bad() @suspends { let b = Batch.new::<Int32>(); let r = b.values.borrow_ref(0); tick(); let value = *r }", "suspension"),
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
     ] {
         let source = format!("{OWNED_SOURCE}\n{body}");
@@ -967,7 +966,6 @@ fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
         ("fn bad() { let b = Batch.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Batch.new::<Int32>() ; (*(&b)); }", "non-Copy"),
         ("fn bad() { var b = Batch.new::<Int32>(); let r = &b; (*(&mut b) = Batch.new::<Int32>()); r.values.len(); }", "borrow"),
-        ("fn tick() @suspends {} fn bad() @suspends { let b = Batch.new::<Int32>(); let r = b.values.borrow_ref(0); tick(); let value = *r }", "suspension"),
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
         ("struct Invalid { values: Array<Int32>, tag: &Int32 } fn bad() {}", "reference-free Copy"),
         ("struct Invalid<T> { values: Array<T>, tag: &Int32 } fn bad() {}", "reference-free Copy"),

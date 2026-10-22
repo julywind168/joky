@@ -146,6 +146,10 @@ fn async_borrowing_executes_in_standalone_native_code() {
     "#,
     );
     for name in [
+        "local_sequential",
+        "local_race",
+        "element_sequential",
+        "local_scope",
         "sequential",
         "race_timeout",
         "nested",
@@ -164,6 +168,11 @@ fn async_borrowing_executes_in_standalone_native_code() {
     }
     harness.push_str("int main(void) { for (int run = 0; run < 10; ++run) {\n");
     for (name, read, timer, starts, completed, cancelled) in [
+        ("local_sequential", 1, 0, 1, 1, 0),
+        ("local_race", 0, 1, 1, 0, 1),
+        ("local_race", 1, 0, 1, 1, 0),
+        ("element_sequential", 1, 0, 1, 1, 0),
+        ("local_scope", 1, 0, 1, 1, 0),
         ("sequential", 1, 0, 1, 1, 0),
         ("race_timeout", 0, 1, 1, 0, 1),
         ("race_timeout", 1, 0, 1, 1, 0),
@@ -180,7 +189,14 @@ fn async_borrowing_executes_in_standalone_native_code() {
             "check({name}, {slots}, {read}, {timer}, {starts}, {completed}, {cancelled});\n"
         ));
     }
-    for name in ["sequential", "nested", "shared"] {
+    for name in [
+        "sequential",
+        "nested",
+        "shared",
+        "local_sequential",
+        "element_sequential",
+        "local_scope",
+    ] {
         let slots = compiler.cps_frame_slots(name).unwrap();
         let expected = if name == "shared" { 2 } else { 1 };
         harness.push_str(&format!(

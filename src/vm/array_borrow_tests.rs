@@ -156,8 +156,6 @@ fn borrowed_arrays_do_not_expose_owning_values_storage_or_host_capabilities() {
             "fn bad(a: &mut Slice<Int32>) { (*(a) = 0); }",
             "value target",
         ),
-        ("fn bad(a: &Element<Int32>) @suspends {}", "synchronous"),
-        ("fn bad(a: &Slice<Int32>) @suspends {}", "synchronous"),
         ("extern fn host(a: &Slice<Int32>) fn bad() {}", "host ABI"),
         (
             "extern fn host() -> &Element<Int32> fn bad() {}",

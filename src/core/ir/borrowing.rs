@@ -347,6 +347,24 @@ fn call_arguments<'a>(
     }
 }
 
+/// Task branches use the same parameter retention contract as ordinary calls.
+/// Being able to allocate does not itself extend a non-retaining input loan.
+fn retained_child_arguments(info: &FunctionInfo, name: &str, args: &[Option<Slot>]) -> Vec<Slot> {
+    if !info.uses_arena && !args.iter().flatten().any(|arg| writable_buffer(&arg.ty)) {
+        return Vec::new();
+    }
+    call_arguments(info, name, args)
+        .into_iter()
+        .filter(|(index, _)| index.map_or(!info.noescape, |i| info.parameter_retained(i)))
+        .flat_map(|(_, arg)| arg.iter().flat_map(refs))
+        .filter(|arg| {
+            arg.ty.reference_type().is_some()
+                && !arg.ty.contains_buffers()
+                && !arg.ty.contains_fixed_array()
+        })
+        .collect()
+}
+
 fn merge(target: &mut Reference, value: &Reference) -> bool {
     let before = (
         target.origins.len(),
@@ -975,6 +993,12 @@ fn analyze(
                 .chain(input.retained.values().map(|(r, _)| r))
                 .chain(
                     input
+                        .regions
+                        .values()
+                        .flat_map(|r| r.values().map(|(r, _)| r)),
+                )
+                .chain(
+                    input
                         .arena_retained
                         .values()
                         .flat_map(|r| r.values().map(|(r, _)| r)),
@@ -1266,20 +1290,12 @@ fn analyze(
                 "A dyn view cannot remain live across suspension or enter concurrency",
             ));
         }
-        // Places and compiler-only write reservations survive a poll. Source
-        // loans to Copy locals must end before yielding. Reference-free whole
-        // owners have stable storage; interior views are checked separately.
-        // Checked network output lanes are pinned UInt64 places. The private adapter
-        // retains them only until synchronous stop, before parent-place cleanup.
-        let checked_output = |index: &usize| {
-            matches!(&plan.ops[pc], Op::Call { name, args, .. }
-            if functions[name].builtin.as_ref().is_some_and(crate::core::builtins::Builtin::pins_outputs) && args.iter().flatten().any(|arg| arg.index == *index)
-            && types[index].reference_type().is_some_and(|r| r.mutable && r.target == Type::UInt64))
-        };
+        // Local places live in stable activation storage. Interior views remain
+        // pinned by their owner loans, which forbid relocation and early cleanup.
+        // Storage eligibility does not grant permission to retain a reference.
         if suspending
             && live[pc].iter().any(|index| {
                 !local_places.contains(index)
-                    && !checked_output(index)
                     && !types[index].is_suspend_safe_view()
                     && state.get(index).is_some_and(|value| {
                         !value.invalid
@@ -1298,6 +1314,7 @@ fn analyze(
             && live[pc].iter().any(|index| {
                 types[index].reference_type().is_some()
                     && !local_places.contains(index)
+                    && !types[index].is_suspend_safe_view()
                     && state
                         .get(index)
                         .is_some_and(|value| !value.invalid && value.interior)
@@ -1313,6 +1330,7 @@ fn analyze(
             && live[pc].iter().any(|index| {
                 types[index].reference_type().is_some()
                     && !types[index].is_buffer_view()
+                    && !types[index].is_suspend_safe_view()
                     && state.get(index).is_some_and(|value| {
                         !value.invalid && value.storage && value.has_root(&owner_roots)
                     })
@@ -1746,6 +1764,7 @@ fn analyze(
                 }) || state
                     .arena_retained
                     .values()
+                    .chain(state.regions.values())
                     .flat_map(|region| region.values())
                     .any(|(value, _)| value.has_root(&roots))
                 {
@@ -2088,18 +2107,11 @@ fn analyze(
                         &[],
                     )?;
                 }
-                // Validate all branches before retaining any inputs. Ordinary
-                // loans end at the join; allocation-capable branches impose
-                // the same task-long storage contract as sequential calls.
-                for arg in branches
-                    .iter()
-                    .filter(|branch| functions[&branch.name].uses_arena)
-                    .flat_map(|branch| branch.args.iter().flatten())
-                    .flat_map(refs)
-                    .filter(|arg| {
-                        arg.ty.reference_type().is_some() && !arg.ty.is_suspend_safe_view()
-                    })
-                {
+                // Validate all branches before retaining any inputs. Short loans
+                // end at the join; only retained parameters impose task storage.
+                for arg in branches.iter().flat_map(|branch| {
+                    retained_child_arguments(&functions[&branch.name], &branch.name, &branch.args)
+                }) {
                     let value = state[&arg.index].clone();
                     check_storage(&arg, &state)?;
                     retain(
@@ -2165,8 +2177,8 @@ fn analyze(
             }
             // A dynamic branch registration snapshots its captures here while
             // the parent body keeps running. Reference captures stay live as
-            // scope-tagged loans until the scope's join; allocation-capable
-            // entries impose the same task-long storage contract as calls.
+            // scope-tagged loans until the scope's join; retained parameters
+            // impose the same task-long storage contract as ordinary calls.
             Op::TaskBranch {
                 scope,
                 entry,
@@ -2214,9 +2226,6 @@ fn analyze(
                     .filter(|c| c.ty.reference_type().is_some())
                 {
                     let value = state[&capture.index].clone();
-                    if !capture.ty.is_suspend_safe_view() {
-                        check_storage(capture, &state)?;
-                    }
                     retain_region(
                         &mut state,
                         *scope,
@@ -2224,15 +2233,16 @@ fn analyze(
                         value,
                         capture.ty.reference_type().unwrap().mutable,
                     );
-                    if functions[entry].uses_arena && !capture.ty.is_suspend_safe_view() {
-                        let value = state[&capture.index].clone();
-                        retain(
-                            &mut state,
-                            (loan, capture.index),
-                            value,
-                            capture.ty.reference_type().unwrap().mutable,
-                        );
-                    }
+                }
+                for capture in retained_child_arguments(&functions[entry], entry, captures) {
+                    check_storage(&capture, &state)?;
+                    let value = state[&capture.index].clone();
+                    retain(
+                        &mut state,
+                        (loan, capture.index),
+                        value,
+                        capture.ty.reference_type().unwrap().mutable,
+                    );
                 }
                 for capture in capture_refs
                     .iter()

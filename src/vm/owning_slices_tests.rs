@@ -186,7 +186,6 @@ fn owning_slices_reject_conflicting_loans_and_escapes() {
         "fn bad() -> &Resource { let values = Array.new::<Resource>(); slices.borrow_ref(values.slice(0, 0), 0) }",
         "fn bad(values: Array<Resource>) -> &Slice<Resource> { values.slice(0, 0) }",
         "struct Stored { view: &Slice<Resource> } fn bad() {}",
-        "fn bad(values: &Slice<Resource>) @suspends -> UInt64 { slices.len(values) }",
         "fn bad(values: &mut Slice<Resource>, next: Resource) { let item = slices.borrow_ref(values, 0); mem.replace(slices.borrow_mut_ref(values, 0), next); item.id; }",
         "fn bad(values: &Slice<Resource>) { alloc(slices.borrow_ref(values, 0)); }",
     ] {

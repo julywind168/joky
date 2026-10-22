@@ -113,31 +113,84 @@ fn indexing_rejects_invalid_types_moves_and_borrows() {
     let types = crate::TypeRegistry::default();
     let prefix = "import joky/array.{type Array} import joky/fixed_array.{type FixedArray}\n";
     for (source, code) in [
-        ("fn bad() { let a = [1]; a[0] = 2 }", ErrorCode::InvalidAssignment),
-        ("fn bad() { let a = [1]; let r = &mut a[0] }", ErrorCode::InvalidAssignment),
-        ("fn bad(a: &Array<Int32>) { a[0] = 2 }", ErrorCode::InvalidAssignment),
-        ("fn bad() { let a = [1]; let i = 0; a[i]; }", ErrorCode::TypeMismatch),
+        (
+            "fn bad() { let a = [1]; a[0] = 2 }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { let a = [1]; let r = &mut a[0] }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad(a: &Array<Int32>) { a[0] = 2 }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { let a = [1]; let i = 0; a[i]; }",
+            ErrorCode::TypeMismatch,
+        ),
         ("fn bad() { let a = [1]; a[-1]; }", ErrorCode::TypeMismatch),
-        ("fn bad() { let a = [1]; a[true]; }", ErrorCode::TypeMismatch),
-        ("fn bad() { let a = [1]; a[0] = true; }", ErrorCode::InvalidAssignment),
+        (
+            "fn bad() { let a = [1]; a[true]; }",
+            ErrorCode::TypeMismatch,
+        ),
+        (
+            "fn bad() { let a = [1]; a[0] = true; }",
+            ErrorCode::InvalidAssignment,
+        ),
         ("fn bad() { let a = 1; a[0]; }", ErrorCode::TypeMismatch),
-        ("fn bad() { var a = [1]; a[0] = true; }", ErrorCode::TypeMismatch),
-        ("fn bad() { var a = [1]; a[0] = { a.push(2); 3 }; }", ErrorCode::InvalidAssignment),
-        ("fn bad() { var a = [1]; a[0] = { a[0] = 2; 3 }; }", ErrorCode::InvalidAssignment),
-        ("fn bad() { let a = [\"owned\"]; let moved = a[0] }", ErrorCode::InvalidAssignment),
-        ("fn bad() { var a = [\"owned\"]; a[0] = a[0] }", ErrorCode::InvalidAssignment),
-        ("fn bad() -> &Int32 { let a = [1]; &a[0] }", ErrorCode::InvalidAssignment),
-        ("fn bad() -> &Int32 { &[1][0] }", ErrorCode::InvalidAssignment),
-        ("fn bad() { var a = [1,2]; let x = &mut a[0]; let y = &mut a[1]; *x + *y; }", ErrorCode::InvalidAssignment),
-        ("fn bad() { var a = [1]; let r = &a[0]; a.push(2); *r; }", ErrorCode::InvalidAssignment),
-        ("fn bad() { var a = [1]; let r = &a[0]; a[0] = 2; *r; }", ErrorCode::InvalidAssignment),
-        ("fn bad() { let value = &*(alloc(1)); let a = [value]; let r = &a[0] }", ErrorCode::TypeMismatch),
-        ("fn bad() { let value = &*(alloc(1)); var a = [value]; let r = &mut a[0] }", ErrorCode::TypeMismatch),
-        ("fn pause() @suspends {} fn bad() @suspends -> Int32 { let a = [1]; let r = &a[0]; pause(); *r }", ErrorCode::InvalidCall),
-        ("fn pause() @suspends -> Int32 { 42 } fn bad() @suspends { var a = [1]; a[0] = pause() }", ErrorCode::InvalidCall),
+        (
+            "fn bad() { var a = [1]; a[0] = true; }",
+            ErrorCode::TypeMismatch,
+        ),
+        (
+            "fn bad() { var a = [1]; a[0] = { a.push(2); 3 }; }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { var a = [1]; a[0] = { a[0] = 2; 3 }; }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { let a = [\"owned\"]; let moved = a[0] }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { var a = [\"owned\"]; a[0] = a[0] }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() -> &Int32 { let a = [1]; &a[0] }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() -> &Int32 { &[1][0] }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { var a = [1,2]; let x = &mut a[0]; let y = &mut a[1]; *x + *y; }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { var a = [1]; let r = &a[0]; a.push(2); *r; }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { var a = [1]; let r = &a[0]; a[0] = 2; *r; }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn bad() { let value = &*(alloc(1)); let a = [value]; let r = &a[0] }",
+            ErrorCode::TypeMismatch,
+        ),
+        (
+            "fn bad() { let value = &*(alloc(1)); var a = [value]; let r = &mut a[0] }",
+            ErrorCode::TypeMismatch,
+        ),
     ] {
         let source = format!("{prefix}{source}");
-        let result = crate::parser::parse(&source).map_err(crate::Error::from)
+        let result = crate::parser::parse(&source)
+            .map_err(crate::Error::from)
             .and_then(|module| PreparedModule::new(&module, &types, &BindingRegistry::default()))
             .and_then(|prepared| prepared.plan(&Default::default()));
         let error = result.err().unwrap_or_else(|| panic!("accepted {source}"));

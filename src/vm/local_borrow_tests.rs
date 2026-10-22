@@ -112,7 +112,6 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         ("fn f() { let p = alloc(42); &p; }", "Copy data"),
         ("fn f() { let x = 42; let h = Holder { view: &x }; &h; }", "Copy data"),
         ("fn f() { let x = alloc(42); copy((&*x)); }", "Copy data"),
-        ("fn worker(p: &Int32) @suspends {} fn f() @suspends { let x = 42; parallel { | worker(&x) } }", "suspension"),
     ] {
         let source = format!("{prefix}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

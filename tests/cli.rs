@@ -3677,42 +3677,38 @@ fn cps_local_borrows_print_and_resume_in_all_backends() {
 }
 
 #[test]
-fn cps_local_borrows_reject_live_loans_at_suspension() {
+fn cps_local_borrows_allow_live_loans_at_suspension() {
     let work = Workspace::new();
-    for body in [
+    let bodies = [
         "let x = 42; let r = &x; yield_now(); println(r)",
         "let x = 42; let r = &x; let h = Holder { value: r }; yield_now(); println(h.value)",
         "let x = 42; read(x, later());",
+        "assert(read(41, later()) == 42, \"temporary borrow survives argument suspension\")",
         "let x = 42; read(&x, later());",
         "let x = 42; consume(&x)",
         "let x = 42; parallel { | consume(&x) }",
         "let x = 42; let r = &x; scope { branch { yield_now() } }; println(r)",
         "let x = 42; let r = &x; scope { branch { println(r) } }",
-    ] {
-        work.write(
-            "invalid.jk",
-            &format!(
-                r#"
-            import joky/task.{{yield_now}}
-            struct Holder {{ value: &Int32 }}
-            fn consume(value: &Int32) @suspends {{}}
-            fn later() @suspends -> Int32 {{ yield_now(); 1 }}
-            fn read(value: &Int32, other: Int32) @noescape -> Int32 {{ (*value) + other }}
-            fn main() @suspends {{ {body} }}
-        "#
-            ),
-        );
-        for args in [
-            vec!["run", "invalid.jk"],
-            vec!["run", "--interpreter", "invalid.jk"],
-            vec!["build", "invalid.jk"],
-        ] {
-            failure(
-                &work.cli(&args),
-                "local borrow cannot remain live across suspension",
-            );
-        }
+    ];
+    let mut source = String::from(
+        r#"
+        import joky/task.{yield_now}
+        struct Holder { value: &Int32 }
+        fn consume(value: &Int32) @suspends { yield_now(); assert(*value == 42, "borrowed input") }
+        fn later() @suspends -> Int32 { yield_now(); 1 }
+        fn read(value: &Int32, other: Int32) @noescape -> Int32 { *value + other }
+    "#,
+    );
+    for (index, body) in bodies.iter().enumerate() {
+        source.push_str(&format!("fn case_{index}() @suspends {{ {body} }}\n"));
     }
+    source.push_str("fn main() @suspends {\n");
+    for index in 0..bodies.len() {
+        source.push_str(&format!("case_{index}()\n"));
+    }
+    source.push('}');
+    work.write("locals.jk", &source);
+    work.assert_all_backends("locals.jk", &[], b"42\n42\n42\n42\n", 0);
 }
 
 #[test]
@@ -3866,7 +3862,6 @@ fn automatic_shared_arguments_preserve_borrowing_boundaries() {
         "fn read(value: &Int32) @noescape -> &Int32 { value } fn main() { read(42); }",
         "fn consume(value: String) {} fn main() { let text = \"owned\"; consume(text); println(text) }",
         "fn both(value: &String, other: &mut String) @noescape {} fn main() { var text = \"owned\"; both(text, &mut text) }",
-        "fn pair(value: &Int32, n: Int32) @noescape {} fn later() @suspends -> Int32 { 42 } fn main() @suspends { pair(7, later()) }",
     ] {
         work.write("contract.jk", source);
         let output = work.cli(&["build", "contract.jk"]);
@@ -9712,4 +9707,27 @@ fn owned_script_rejects_mismatched_and_hooked_contracts() {
             "Script contracts require",
         );
     }
+}
+
+#[test]
+fn suspending_borrows_execute_in_all_backends() {
+    let work = Workspace::new();
+    work.write("borrows.jk", include_str!("fixtures/suspending_borrows.jk"));
+    work.assert_all_backends("borrows.jk", &[], b"", 0);
+}
+
+#[test]
+fn suspending_borrows_cleanup_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/suspending_borrow_cleanup.jk").replace(
+        "extern fn record_drop(id: Int32)",
+        "fn record_drop(id: Int32) { println(id) }",
+    );
+    work.write("cleanup.jk", &source);
+    work.assert_all_backends(
+        "cleanup.jk",
+        &[],
+        b"2\n42\n1\n2\n42\n2\n42\n2\n42\n2\n42\n",
+        0,
+    );
 }
