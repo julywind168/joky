@@ -4,7 +4,7 @@ import joky/element.{type Element}
 import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer as storage
-import joky/check.{assert}
+import joky/check.{panic}
 import joky/eq.{type Eq, type BorrowEq}
 import joky/hash.{type Hash, type BorrowHash}
 import joky/internal/types
@@ -116,10 +116,10 @@ pub fn capacity<K, V>(table: &Map<K, V>) -> UInt64 {
 // No unchecked arithmetic produces a buffer capacity or a probe bound.
 fn bucket_count(required: UInt64, limit: UInt64) -> UInt64 {
     if required == 0 { return 0 }
-    if limit < 8 { assert(false, "Map capacity exceeds the supported limit") }
+    if limit < 8 { panic("Map capacity exceeds the supported limit") }
     var count: UInt64 = 8
     while required > load_limit(count) {
-        if count > limit / 2 { assert(false, "Map capacity exceeds the supported limit") }
+        if count > limit / 2 { panic("Map capacity exceeds the supported limit") }
         count = count + count
     }
     count
@@ -133,7 +133,7 @@ fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
     var positions = Array.with_capacity::<UInt64>(positions_capacity)
     i = 0
     while i < len(table) {
-        let cached_hash = table.hashes.get(i).unwrap_or(0)
+        let cached_hash = table.hashes[i]
         let position = index_position(&buckets, cached_hash)
         buckets.set(position, Bucket.Full(i))
         positions.push(position)
@@ -146,17 +146,17 @@ fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
 }
 pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
     let length = len(table)
-    if additional > 18446744073709551615 - length { assert(false, "Map capacity exceeds the supported limit") }
+    if additional > 18446744073709551615 - length { panic("Map capacity exceeds the supported limit") }
     let required = length + additional
     let payload_limit = minimum(storage.capacity_limit::<K>(), storage.capacity_limit::<V>())
     let limit = minimum(payload_limit, storage.capacity_limit::<UInt64>())
-    if required > limit { assert(false, "Map capacity exceeds the supported limit") }
+    if required > limit { panic("Map capacity exceeds the supported limit") }
     let count = table.buckets.len()
     let target = bucket_count(required, storage.capacity_limit::<Bucket>())
     table.keys.reserve(additional)
     table.values.reserve(additional)
     table.hashes.reserve(additional)
-    if table.deleted > 18446744073709551615 - required { assert(false, "Map capacity exceeds the supported limit") }
+    if table.deleted > 18446744073709551615 - required { panic("Map capacity exceeds the supported limit") }
     if target > count {
         rehash(table, target, required)
     } else {
@@ -172,12 +172,12 @@ fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UI
     var position = cached_hash & mask
     var probes: UInt64 = 0
     while probes < count {
-        let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
+        let bucket = table.buckets.get(position)!
         match bucket {
             Bucket.Empty => { return None }
             Bucket.Deleted => {}
             Bucket.Full(i) => {
-                let stored_hash = table.hashes.get(i).unwrap_or(0)
+                let stored_hash = table.hashes[i]
                 if stored_hash == cached_hash && BorrowEq.eq_ref(arrays.borrow_ref(&table.keys, i), key) {
                     return Some(i)
                 }
@@ -195,7 +195,7 @@ pub fn get<K: Copy + Eq + Hash, V: Copy>(table: &Map<K, V>, key: K) -> Option<V>
 fn require_entry<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> UInt64 {
     match find(table, key, BorrowHash.hash_ref(key)) {
         Some(i) => i
-        None => { assert(false, "Map key not found"); 0 }
+        None => panic("Map key not found")
     }
 }
 pub fn borrow<K: Copy + Eq + Hash, V: Copy>(table: &Map<K, V>, key: K) -> &Element<V> {
@@ -237,7 +237,7 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UIn
     var position = cached_hash & mask
     var probes: UInt64 = 0
     while probes < count {
-        match buckets.get(position).unwrap_or(Bucket.Empty) {
+        match buckets.get(position)! {
             Bucket.Full(_) => {}
             Bucket.Empty => { return position }
             Bucket.Deleted => { return position }
@@ -245,8 +245,7 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UIn
         position = (position + 1) & mask
         probes = probes + 1
     }
-    assert(false, "Map index has no free bucket")
-    0
+    panic("Map index has no free bucket")
 }
 pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
     types.require_reference_free::<K>()
@@ -257,7 +256,7 @@ pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value:
     }
     reserve(table, 1)
     let position = index_position(&table.buckets, cached_hash)
-    let reused = match table.buckets.get(position).unwrap_or(Bucket.Empty) {
+    let reused = match table.buckets.get(position)! {
         Bucket.Deleted => true, Bucket.Empty => false, Bucket.Full(_) => false
     }
     let i = len(table)
@@ -270,7 +269,7 @@ pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value:
     None
 }
 fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
-    let position = table.positions.get(i).unwrap_or(0)
+    let position = table.positions[i]
     let value = table.values.swap_remove(i)
     // Repair the index before the removed key can run a fallible destructor.
     let removed_key = table.keys.swap_remove(i)
@@ -278,7 +277,7 @@ fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
     table.buckets.set(position, Bucket.Deleted)
     table.deleted = table.deleted + 1
     if i < len(table) {
-        let moved_position = table.positions.get(i).unwrap_or(0)
+        let moved_position = table.positions[i]
         table.buckets.set(moved_position, Bucket.Full(i));
     }
     value

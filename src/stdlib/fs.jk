@@ -151,10 +151,7 @@ fn read_remaining(file: &mut File, max_bytes: Option<UInt64>) @suspends -> Resul
         let limit: UInt64 = if remaining == 0 { 1 } else {
             if remaining < 65536 { remaining } else { 65536 }
         }
-        let chunk = match file.read(limit) {
-            Ok(bytes) => bytes
-            Err(error) => { return Err(error) }
-        }
+        let chunk = file.read(limit)?
         if chunk.is_empty() { return Ok(output) }
         if remaining == 0 {
             return Err(IoError { kind: ErrorKind.LimitExceeded, message: "File content exceeds read_all_limited limit" })

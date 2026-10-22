@@ -38,10 +38,9 @@ fn owning_values() -> Int32 {
 }
 fn borrowed_values() -> Int32 {
     var counts = Map.new::<Int32, Int32>(); counts.insert(1, 20)
-    let count = counts.borrow_mut(1)
-    let previous = element.read(count)
-    element.write(count, previous + 22)
-    element.read(count)
+    let count = counts.borrow_mut_ref(1)
+    *count += 22
+    *count
 }
 fn shared_values() -> Int32 {
     var values = Map.new::<Int32, &Int32>(); values.insert(1, &*alloc(42))

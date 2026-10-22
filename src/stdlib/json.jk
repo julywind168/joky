@@ -133,7 +133,7 @@ impl Number {
     }
     pub fn as_text(&self) -> &String { &self.text }
     pub fn to_i64(&self) -> results.Result<Int64, NumberError> {
-        if let results.Err(failure) = integer_end(&self.text) { return results.Err(failure) }
+        integer_end(&self.text)?
         let negative = byte_at(self.text.bytes(), 0) == 45
         let start: UInt64 = if negative { 1 } else { 0 }
         let limit: UInt64 = if negative { 9223372036854775808 } else { 9223372036854775807 }
@@ -147,7 +147,7 @@ impl Number {
         }
     }
     pub fn to_u64(&self) -> results.Result<UInt64, NumberError> {
-        if let results.Err(failure) = integer_end(&self.text) { return results.Err(failure) }
+        integer_end(&self.text)?
         if byte_at(self.text.bytes(), 0) == 45 { return results.Err(error(NumberErrorKind.OutOfRange, 0)) }
         magnitude(&self.text, 0, 18446744073709551615)
     }
@@ -261,17 +261,13 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> results.Result<(
             let escaped = byte_at(bytes, offset)
             offset = offset + 1
             if escaped == 117 {
-                scalar = match hex_quad(input, offset, source_offset) {
-                    results.Ok(value) => value, results.Err(failure) => { return results.Err(failure) }
-                }
+                scalar = hex_quad(input, offset, source_offset)?
                 offset = offset + 4
                 if scalar >= 0xd800 && scalar <= 0xdbff {
                     if length - offset < 2 || byte_at(bytes, offset) != 92 || byte_at(bytes, offset + 1) != 117 {
                         return results.Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
                     }
-                    let second = match hex_quad(input, offset + 2, offset) {
-                        results.Ok(value) => value, results.Err(failure) => { return results.Err(failure) }
-                    }
+                    let second = hex_quad(input, offset + 2, offset)?
                     if second < 0xdc00 || second > 0xdfff {
                         return results.Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
                     }
@@ -336,9 +332,7 @@ fn attach(frame: &mut DecodeFrame, child: Value, offset: UInt64) -> results.Resu
     }
 }
 fn read_key(input: &String, start: UInt64, limit: UInt64, frame: &mut DecodeFrame) -> results.Result<UInt64, DecodeError> {
-    let (name, next) = match read_string(input, start, limit) {
-        results.Ok(pair) => pair, results.Err(failure) => { return results.Err(failure) }
-    }
+    let (name, next) = read_string(input, start, limit)?
     match frame {
         Fields((fields, key)) => {
             if fields.contains_key_by_ref(&name) { return results.Err(decode_error(DecodeErrorKind.DuplicateKey, start)) }
@@ -358,9 +352,7 @@ fn read_scalar(input: &String, start: UInt64, limits: Limits) -> results.Result<
     }
     if byte == 110 || byte == 116 || byte == 102 {
         let token = if byte == 110 { "null" } else { if byte == 116 { "true" } else { "false" } }
-        let next = match literal(input, start, &token) {
-            results.Ok(next) => next, results.Err(failure) => { return results.Err(failure) }
-        }
+        let next = literal(input, start, &token)?
         let value = if byte == 110 { Value.Null } else { Value.Boolean(byte == 116) }
         return results.Ok((value, next))
     }
@@ -391,9 +383,7 @@ fn decode_step(input: &String, decoder: &mut Decoder) -> results.Result<Bool, De
         let child = mem.replace(&mut decoder.result, Value.Null)
         let top = decoder.stack.len() - 1
         let current = decoder.offset
-        let next_mode = match attach(decoder.stack.borrow_mut_ref(top), child, current) {
-            results.Ok(next) => next, results.Err(failure) => { return results.Err(failure) }
-        }
+        let next_mode = attach(decoder.stack.borrow_mut_ref(top), child, current)?
         decoder.mode = next_mode
         return results.Ok(false)
     }
@@ -422,9 +412,7 @@ fn decode_step(input: &String, decoder: &mut Decoder) -> results.Result<Bool, De
         }
         if byte != 34 { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, decoder.offset)) }
         let top = decoder.stack.len() - 1
-        let next = match read_key(input, decoder.offset, decoder.limits.max_string_bytes, decoder.stack.borrow_mut_ref(top)) {
-            results.Ok(next) => next, results.Err(failure) => { return results.Err(failure) }
-        }
+        let next = read_key(input, decoder.offset, decoder.limits.max_string_bytes, decoder.stack.borrow_mut_ref(top))?
         decoder.offset = next
         decoder.mode = 4
         return results.Ok(false)
@@ -456,9 +444,7 @@ fn decode_step(input: &String, decoder: &mut Decoder) -> results.Result<Bool, De
         decoder.allow_end = true
         return results.Ok(false)
     }
-    let (value, next) = match read_scalar(input, decoder.offset, decoder.limits) {
-        results.Ok(pair) => pair, results.Err(failure) => { return results.Err(failure) }
-    }
+    let (value, next) = read_scalar(input, decoder.offset, decoder.limits)?
     mem.replace(&mut decoder.result, value);
     decoder.offset = next
     decoder.mode = 1
@@ -473,9 +459,7 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> results.Result<Valu
     var decoder = Decoder { stack: arrays.Array.new::<DecodeFrame>(), result: Value.Null,
         offset: 0, nodes: 0, mode: 0, allow_end: false, limits: limits }
     while true {
-        let done = match decode_step(input, &mut decoder) {
-            results.Ok(done) => done, results.Err(failure) => { return results.Err(failure) }
-        }
+        let done = decode_step(input, &mut decoder)?
         if done { return results.Ok(mem.replace(&mut decoder.result, Value.Null)) }
     }
     results.Err(decode_error(DecodeErrorKind.UnexpectedEof, decoder.offset))
@@ -558,12 +542,12 @@ fn write_escaped(encoder: &mut Encoder, rune: Rune) -> results.Result<Unit, Enco
 }
 fn write_string(encoder: &mut Encoder, text: &String) -> results.Result<Unit, EncodeError> {
     if text.byte_length() > encoder.limits.max_string_bytes { return results.Err(EncodeError.StringLimit) }
-    if let results.Err(error) = write_mark(encoder, '"') { return results.Err(error) }
+    write_mark(encoder, '"')?
     var offset: UInt64 = 0
     while offset < text.byte_length() {
         match text.next_rune(offset) {
             options.Some((rune, next)) => {
-                if let results.Err(error) = write_escaped(encoder, rune) { return results.Err(error) }
+                write_escaped(encoder, rune)?
                 offset = next
             }
             options.None => { return results.Err(EncodeError.StringLimit) }
@@ -574,9 +558,7 @@ fn write_string(encoder: &mut Encoder, text: &String) -> results.Result<Unit, En
 fn write_key(encoder: &mut Encoder, parent: &Value, index: UInt64) -> results.Result<Unit, EncodeError> {
     match parent {
         Object(fields) => {
-            if let results.Err(error) = write_string(encoder, slices.borrow_ref(fields.keys(), index)) {
-                return results.Err(error)
-            }
+            write_string(encoder, slices.borrow_ref(fields.keys(), index))?
             write_mark(encoder, ':')
         }
         _ => results.Ok({})
@@ -610,14 +592,14 @@ fn write_close(encoder: &mut Encoder, value: &Value) -> results.Result<Unit, Enc
 fn encode_step(root: &Value, encoder: &mut Encoder) -> results.Result<Bool, EncodeError> {
     if encoder.visiting {
         let value = path_value(root, &encoder.path)
-        if let results.Err(error) = write_value(encoder, value) { return results.Err(error) }
+        write_value(encoder, value)?
         if child_count(value) > 0 {
-            if let results.Err(error) = write_key(encoder, value, 0) { return results.Err(error) }
+            write_key(encoder, value, 0)?
             encoder.path.push(0)
         } else {
             match value {
-                Array(_) => { if let results.Err(error) = write_close(encoder, value) { return results.Err(error) } }
-                Object(_) => { if let results.Err(error) = write_close(encoder, value) { return results.Err(error) } }
+                Array(_) => { write_close(encoder, value)? }
+                Object(_) => { write_close(encoder, value)? }
                 _ => {}
             }
             encoder.visiting = false
@@ -628,12 +610,12 @@ fn encode_step(root: &Value, encoder: &mut Encoder) -> results.Result<Bool, Enco
     let index = encoder.path.take_last()
     let parent = path_value(root, &encoder.path)
     if index + 1 < child_count(parent) {
-        if let results.Err(error) = write_mark(encoder, ',') { return results.Err(error) }
-        if let results.Err(error) = write_key(encoder, parent, index + 1) { return results.Err(error) }
+        write_mark(encoder, ',')?
+        write_key(encoder, parent, index + 1)?
         encoder.path.push(index + 1)
         encoder.visiting = true
     } else {
-        if let results.Err(error) = write_close(encoder, parent) { return results.Err(error) }
+        write_close(encoder, parent)?
     }
     results.Ok(false)
 }
@@ -643,9 +625,7 @@ pub fn encode_with_limits(value: &Value, limits: Limits) -> results.Result<Strin
     var encoder = Encoder { output: strings.StringBuilder.new(), path: arrays.Array.new::<UInt64>(),
         nodes: 0, visiting: true, limits: limits }
     while true {
-        let done = match encode_step(value, &mut encoder) {
-            results.Ok(done) => done, results.Err(error) => { return results.Err(error) }
-        }
+        let done = encode_step(value, &mut encoder)?
         if done { return results.Ok(encoder.output.finish()) }
     }
     results.Err(EncodeError.InvalidLimits)

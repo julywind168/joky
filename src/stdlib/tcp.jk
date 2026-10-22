@@ -3,7 +3,6 @@ import joky/array.{type Array}
 import joky/result.{type Result}
 import joky/option.{type Option}
 import joky/string.{type Utf8Error}
-import joky/integer
 import joky/mem
 
 extern fn __joky_task_yield_now() @suspends
@@ -11,15 +10,15 @@ extern fn __joky_task_yield_now() @suspends
 pub struct Address { high: UInt64, low: UInt64, endpoint: UInt64 }
 impl Address {
     pub fn ipv4(ip: UInt32, port: UInt16) -> Self {
-        Address { high: 0, low: ip.to_u64().unwrap_or(0), endpoint: 4 | (port.to_u64().unwrap_or(0) << 8) }
+        Address { high: 0, low: uint64(ip), endpoint: 4 | (uint64(port) << 8) }
     }
     // Network-order upper/lower halves, e.g. ::1 is (0, 1).
     pub fn ipv6(high: UInt64, low: UInt64, port: UInt16) -> Self {
-        Address { high: high, low: low, endpoint: 6 | (port.to_u64().unwrap_or(0) << 8) }
+        Address { high: high, low: low, endpoint: 6 | (uint64(port) << 8) }
     }
-    pub fn port(self) -> UInt16 { ((self.endpoint >> 8) & 65535).to_u16().unwrap_or(0) }
-    pub fn scope_id(self) -> UInt32 { (self.endpoint >> 32).to_u32().unwrap_or(0) }
-    pub fn with_scope(self, index: UInt32) -> Self { Address { high: self.high, low: self.low, endpoint: (self.endpoint & 0xffffff) | (index.to_u64().unwrap_or(0) << 32) } }
+    pub fn port(self) -> UInt16 { uint16((self.endpoint >> 8) & 65535) }
+    pub fn scope_id(self) -> UInt32 { uint32(self.endpoint >> 32) }
+    pub fn with_scope(self, index: UInt32) -> Self { Address { high: self.high, low: self.low, endpoint: (self.endpoint & 0xffffff) | (uint64(index) << 32) } }
     pub fn is_ipv6(self) -> Bool { (self.endpoint & 255) == 6 }
     pub fn high(self) -> UInt64 { self.high }
     pub fn low(self) -> UInt64 { self.low }
@@ -43,7 +42,7 @@ impl IoError {
         if code == 11 { return ErrorKind.WriteZero }
         ErrorKind.Other
     }
-    pub fn os_code(self) -> UInt32 { (self.code >> 32).to_u32().unwrap_or(0) }
+    pub fn os_code(self) -> UInt32 { uint32(self.code >> 32) }
 }
 pub enum Shutdown { Read, Write, Both }
 pub struct TcpStream { owner: tcp.StreamOwner }
@@ -105,7 +104,7 @@ fn decode_line(bytes: Array<UInt8>) -> Result<String, ReadError> {
     var bytes = bytes
     let length = bytes.len() - 1
     bytes.truncate(length)
-    if length > 0 && bytes.get(length - 1).unwrap_or(0) == 13 { bytes.truncate(length - 1) }
+    if length > 0 && bytes[length - 1] == 13 { bytes.truncate(length - 1) }
     match String.from_utf8(bytes) { Ok(line) => Result.Ok(line), Err(error) => Result.Err(ReadError.InvalidUtf8(error)) }
 }
 struct ReceiveBuffer {
@@ -135,7 +134,7 @@ impl ReceiveBuffer {
         if self.bytes.is_empty() { self.state = ReadState.Eof }
         Result.Ok({})
     }
-    fn byte_at(&self, index: UInt64) -> UInt8 { self.bytes.get(self.offset + index).unwrap_or(0) }
+    fn byte_at(&self, index: UInt64) -> UInt8 { self.bytes[self.offset + index] }
     fn take_into(&mut self, result: &mut Array<UInt8>, length: UInt64) {
         var index: UInt64 = 0
         while index < length { result.push(self.byte_at(index)); index = index + 1 }
@@ -159,37 +158,37 @@ impl BufferedTcp {
         var progress = progress
         if progress.is_complete() { return Result.Ok(progress.finish(ReadStatus.Done)) }
         while true {
-            let needs_fill = match self.buffer.needs_fill() { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+            let needs_fill = self.buffer.needs_fill()?
             if needs_fill {
                 let capacity = self.buffer.capacity
                 let result = self.stream.read(capacity)
-                match self.buffer.publish(result) { Ok(_) => {}, Err(error) => { return Result.Err(error) } }
+                self.buffer.publish(result)?
             }
-            let status = match progress.advance(&mut self.buffer) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+            let status = progress.advance(&mut self.buffer)?
             match status { More => __joky_task_yield_now(), _ => { return Result.Ok(progress.finish(status)) } }
         }
         Result.Ok(Option.None)
     }
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
-        let progress = match ReadProgress.new(ReadMode.Partial, limit) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
-        match self.read_frame(progress) { Ok(Some(bytes)) => Result.Ok(bytes), Ok(None) => Result.Ok(Array.new::<UInt8>()), Err(error) => Result.Err(error) }
+        let progress = ReadProgress.new(ReadMode.Partial, limit)?
+        Result.Ok(match self.read_frame(progress)? { Some(bytes) => bytes, None => Array.new::<UInt8>() })
     }
     pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        let progress = match ReadProgress.new(ReadMode.Exact, length) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+        let progress = ReadProgress.new(ReadMode.Exact, length)?
         self.read_frame(progress)
     }
     pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        let progress = match ReadProgress.new(ReadMode.Until(delimiter), limit) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+        let progress = ReadProgress.new(ReadMode.Until(delimiter), limit)?
         self.read_frame(progress)
     }
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
-        let bytes = match self.read_until(10, limit) { Ok(Some(bytes)) => bytes, Ok(None) => { return Result.Ok(Option.None) }, Err(error) => { return Result.Err(error) } }
-        match decode_line(bytes) { Ok(line) => Result.Ok(Option.Some(line)), Err(error) => Result.Err(error) }
+        let bytes = match self.read_until(10, limit)? { Some(bytes) => bytes, None => { return Result.Ok(Option.None) } }
+        Result.Ok(Option.Some(decode_line(bytes)?))
     }
     // Truncation counts all consumed bytes in the message, including its header.
     pub fn read_message(&mut self, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
-        let header = match self.read_exact(4) { Ok(Some(header)) => header, Ok(None) => { return Result.Ok(Option.None) }, Err(error) => { return Result.Err(error) } }
+        let header = match self.read_exact(4)? { Some(header) => header, None => { return Result.Ok(Option.None) } }
         let length = message_length(header)
         if length > limit { return Result.Err(ReadError.LimitExceeded) }
         match self.read_exact(length) {
@@ -209,7 +208,8 @@ impl BufferedTcp {
     pub fn write_message(&mut self, bytes: Array<UInt8>, limit: UInt64) @suspends -> Result<Unit, IoError> {
         let (bytes, length) = byte_length(bytes)
         if limit > 1048576 || length > limit { return Result.Err(IoError { code: 9 }) }
-        match self.stream.write_all(message_header(length)) { Ok(_) => self.stream.write_all(bytes), Err(error) => Result.Err(error) }
+        self.stream.write_all(message_header(length))?
+        self.stream.write_all(bytes)
     }
     pub fn close(self) @suspends -> Result<Unit, IoError> { self.stream.close() }
 }
@@ -233,37 +233,37 @@ impl BufferedTcpReader {
         var progress = progress
         if progress.is_complete() { return Result.Ok(progress.finish(ReadStatus.Done)) }
         while true {
-            let needs_fill = match self.buffer.needs_fill() { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+            let needs_fill = self.buffer.needs_fill()?
             if needs_fill {
                 let capacity = self.buffer.capacity
                 let result = self.stream.read(capacity)
-                match self.buffer.publish(result) { Ok(_) => {}, Err(error) => { return Result.Err(error) } }
+                self.buffer.publish(result)?
             }
-            let status = match progress.advance(&mut self.buffer) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+            let status = progress.advance(&mut self.buffer)?
             match status { More => __joky_task_yield_now(), _ => { return Result.Ok(progress.finish(status)) } }
         }
         Result.Ok(Option.None)
     }
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
-        let progress = match ReadProgress.new(ReadMode.Partial, limit) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
-        match self.read_frame(progress) { Ok(Some(bytes)) => Result.Ok(bytes), Ok(None) => Result.Ok(Array.new::<UInt8>()), Err(error) => Result.Err(error) }
+        let progress = ReadProgress.new(ReadMode.Partial, limit)?
+        Result.Ok(match self.read_frame(progress)? { Some(bytes) => bytes, None => Array.new::<UInt8>() })
     }
     pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        let progress = match ReadProgress.new(ReadMode.Exact, length) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+        let progress = ReadProgress.new(ReadMode.Exact, length)?
         self.read_frame(progress)
     }
     pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        let progress = match ReadProgress.new(ReadMode.Until(delimiter), limit) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
+        let progress = ReadProgress.new(ReadMode.Until(delimiter), limit)?
         self.read_frame(progress)
     }
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
-        let bytes = match self.read_until(10, limit) { Ok(Some(bytes)) => bytes, Ok(None) => { return Result.Ok(Option.None) }, Err(error) => { return Result.Err(error) } }
-        match decode_line(bytes) { Ok(line) => Result.Ok(Option.Some(line)), Err(error) => Result.Err(error) }
+        let bytes = match self.read_until(10, limit)? { Some(bytes) => bytes, None => { return Result.Ok(Option.None) } }
+        Result.Ok(Option.Some(decode_line(bytes)?))
     }
     // Truncation counts all consumed bytes in the message, including its header.
     pub fn read_message(&mut self, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
-        let header = match self.read_exact(4) { Ok(Some(header)) => header, Ok(None) => { return Result.Ok(Option.None) }, Err(error) => { return Result.Err(error) } }
+        let header = match self.read_exact(4)? { Some(header) => header, None => { return Result.Ok(Option.None) } }
         let length = message_length(header)
         if length > limit { return Result.Err(ReadError.LimitExceeded) }
         match self.read_exact(length) {
@@ -289,17 +289,17 @@ fn message_length(header: Array<UInt8>) -> UInt64 {
     var length: UInt64 = 0
     var index: UInt64 = 0
     while index < 4 {
-        length = length * 256 + header.get(index).unwrap_or(0).to_u64().unwrap_or(0)
+        length = length * 256 + uint64(header[index])
         index = index + 1
     }
     length
 }
 fn message_header(length: UInt64) -> Array<UInt8> {
     var header = Array.with_capacity::<UInt8>(4)
-    header.push(((length >> 24) & 255).to_u8().unwrap_or(0))
-    header.push(((length >> 16) & 255).to_u8().unwrap_or(0))
-    header.push(((length >> 8) & 255).to_u8().unwrap_or(0))
-    header.push((length & 255).to_u8().unwrap_or(0))
+    header.push(uint8((length >> 24) & 255))
+    header.push(uint8((length >> 16) & 255))
+    header.push(uint8((length >> 8) & 255))
+    header.push(uint8(length & 255))
     header
 }
 
@@ -363,10 +363,7 @@ impl TcpStream {
         while offset < length {
             let (original, part) = write_chunk(remaining, offset)
             remaining = original
-            let count = match self.write(part) {
-                Ok(count) => count
-                Err(error) => { return Result.Err(error) }
-            }
+            let count = self.write(part)?
             if count == 0 { return Result.Err(IoError { code: 11 }) }
             offset = offset + count
             if offset < length { __joky_task_yield_now() }
@@ -419,17 +416,15 @@ impl TcpWriter {
         let (bytes, length) = byte_length(bytes)
         var remaining = bytes
         if length == 0 {
-            return match self.write(remaining) { Ok(_) => Result.Ok({}), Err(error) => Result.Err(error) }
+            self.write(remaining)?
+            return Result.Ok({})
         }
         if length > 1048576 { return Result.Err(IoError { code: 9 }) }
         var offset: UInt64 = 0
         while offset < length {
             let (original, part) = write_chunk(remaining, offset)
             remaining = original
-            let count = match self.write(part) {
-                Ok(count) => count
-                Err(error) => { return Result.Err(error) }
-            }
+            let count = self.write(part)?
             if count == 0 { return Result.Err(IoError { code: 11 }) }
             offset = offset + count
             if offset < length { __joky_task_yield_now() }
@@ -440,7 +435,8 @@ impl TcpWriter {
     pub fn write_message(&mut self, bytes: Array<UInt8>, limit: UInt64) @suspends -> Result<Unit, IoError> {
         let (bytes, length) = byte_length(bytes)
         if limit > 1048576 || length > limit { return Result.Err(IoError { code: 9 }) }
-        match self.write_all(message_header(length)) { Ok(_) => self.write_all(bytes), Err(error) => Result.Err(error) }
+        self.write_all(message_header(length))?
+        self.write_all(bytes)
     }
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> { writer_addr(&mut self.owner, 0) }
     pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> { writer_addr(&mut self.owner, 1) }
@@ -495,7 +491,7 @@ fn write_chunk(bytes: Array<UInt8>, offset: UInt64) -> (Array<UInt8>, Array<UInt
     var chunk = Array.with_capacity::<UInt8>(length)
     var index: UInt64 = 0
     while index < length {
-        chunk.push(bytes.get(offset + index).unwrap_or(0))
+        chunk.push(bytes[offset + index])
         index = index + 1
     }
     (bytes, chunk)

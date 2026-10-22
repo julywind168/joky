@@ -106,7 +106,7 @@ impl Context {
         Ok({})
     }
     pub fn container(&mut self) -> Result<Unit, MappingError> {
-        if let Err(error) = self.scalar() { return Err(error) }
+        self.scalar()?
         if self.depth == self.options.limits.max_depth { return Err(self.error(MappingErrorKind.DepthLimit)) }
         self.depth = self.depth + 1
         Ok({})
@@ -141,7 +141,7 @@ impl Context {
         match self.container() { Err(error) => Err(error), Ok(_) => Ok(maps.new::<String, Value>()) }
     }
     pub fn read_object(&mut self, value: Value) -> Result<Map<String, Value>, MappingError> {
-        if let Err(error) = self.container() { return Err(error) }
+        self.container()?
         match value { Object(fields) => Ok(fields), _ => Err(self.error(MappingErrorKind.ExpectedObject)) }
     }
     pub fn put_field<T: ToJson>(&mut self, fields: &mut Map<String, Value>, name: String, value: &T) @noescape -> Result<Unit, MappingError> {
@@ -212,7 +212,7 @@ fn number_error(context: &Context, error: NumberError) -> MappingError {
     context.error(kind)
 }
 fn read_number(value: Value, context: &mut Context) -> Result<Number, MappingError> {
-    if let Err(error) = context.scalar() { return Err(error) }
+    context.scalar()?
     match value {
         Number(number) => {
             match context.number(&number) { Err(error) => Err(error), Ok(_) => Ok(number) }
@@ -257,7 +257,7 @@ impl ToJson for Unit {
 }
 impl FromJson for Unit {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         match value { Null => Ok({}), _ => Err(context.error(MappingErrorKind.ExpectedNull)) }
     }
 }
@@ -268,19 +268,19 @@ impl ToJson for Bool {
 }
 impl FromJson for Bool {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         match value { Boolean(value) => Ok(value), _ => Err(context.error(MappingErrorKind.ExpectedBoolean)) }
     }
 }
 impl ToJson for String {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         match context.string(self) { Err(error) => Err(error), Ok(_) => Ok(Value.Text(self.clone())) }
     }
 }
 impl FromJson for String {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         match value {
             Text(text) => { match context.string(&text) { Err(error) => Err(error), Ok(_) => Ok(text) } }
             _ => Err(context.error(MappingErrorKind.ExpectedString))
@@ -289,8 +289,8 @@ impl FromJson for String {
 }
 impl ToJson for Number {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
-        if let Err(error) = context.number(self) { return Err(error) }
+        context.scalar()?
+        context.number(self)?
         match Number.from_text(self.as_text()) { Ok(number) => Ok(Value.Number(number)), Err(error) => Err(number_error(context, error)) }
     }
 }
@@ -313,7 +313,7 @@ impl<T: FromJson> FromJson for Option<T> {
 }
 impl<T: ToJson> ToJson for Array<T> {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.container() { return Err(error) }
+        context.container()?
         var values = arrays.new::<Value>()
         var index: UInt64 = 0
         while index < arrays.len(self) {
@@ -328,7 +328,7 @@ impl<T: ToJson> ToJson for Array<T> {
 }
 impl<T: FromJson> FromJson for Array<T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        if let Err(error) = context.container() { return Err(error) }
+        context.container()?
         var input = match value { Array(values) => values, _ => { return Err(context.error(MappingErrorKind.ExpectedArray)) } }
         // Reverse once, then move from the tail in source order without shifting.
         var index: UInt64 = 0
@@ -348,13 +348,11 @@ impl<T: FromJson> FromJson for Array<T> {
 }
 impl<K: ObjectKey, T: ToJson> ToJson for Map<K, T> {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        var fields = match context.object() { Ok(fields) => fields, Err(error) => { return Err(error) } }
+        var fields = context.object()?
         var index: UInt64 = 0
         while index < maps.len(self) {
             let name = ObjectKey.to_key(slices.borrow_ref(maps.keys(self), index))
-            if let Err(error) = context.put_field(&mut fields, name, slices.borrow_ref(maps.values(self), index)) {
-                return Err(error)
-            }
+            context.put_field(&mut fields, name, slices.borrow_ref(maps.values(self), index))?
             index = index + 1
         }
         Ok(Value.Object(fields))
@@ -362,7 +360,7 @@ impl<K: ObjectKey, T: ToJson> ToJson for Map<K, T> {
 }
 impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        var fields = match context.read_object(value) { Ok(fields) => fields, Err(error) => { return Err(error) } }
+        var fields = context.read_object(value)?
         var output = maps.new::<K, T>()
         while let Some((name, value)) = maps.pop(&mut fields) {
             arrays.push(&mut context.path, PathSegment.Field(name))
@@ -388,13 +386,13 @@ impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
 
 impl ToJson for Int8 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int8 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_i8() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -402,13 +400,13 @@ impl FromJson for Int8 {
 
 impl ToJson for Int16 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int16 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_i16() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -416,13 +414,13 @@ impl FromJson for Int16 {
 
 impl ToJson for Int32 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int32 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_i32() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -430,13 +428,13 @@ impl FromJson for Int32 {
 
 impl ToJson for Int64 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int64 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_i64() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -444,13 +442,13 @@ impl FromJson for Int64 {
 
 impl ToJson for UInt8 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt8 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_u8() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -458,13 +456,13 @@ impl FromJson for UInt8 {
 
 impl ToJson for UInt16 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt16 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_u16() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -472,13 +470,13 @@ impl FromJson for UInt16 {
 
 impl ToJson for UInt32 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt32 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_u32() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -486,13 +484,13 @@ impl FromJson for UInt32 {
 
 impl ToJson for UInt64 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt64 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         match value.to_u64() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
@@ -500,14 +498,14 @@ impl FromJson for UInt64 {
 
 impl ToJson for Float32 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         let number = match Number.from_f64(float64(*self)) { Ok(number) => number, Err(error) => { return Err(number_error(context, error)) } }
         write_number(number, context)
     }
 }
 impl FromJson for Float32 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_f64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         let result = float32(value)
         if !result.is_finite() { return Err(context.error(MappingErrorKind.OutOfRange)) }
@@ -517,14 +515,14 @@ impl FromJson for Float32 {
 
 impl ToJson for Float64 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        if let Err(error) = context.scalar() { return Err(error) }
+        context.scalar()?
         let number = match Number.from_f64(float64(*self)) { Ok(number) => number, Err(error) => { return Err(number_error(context, error)) } }
         write_number(number, context)
     }
 }
 impl FromJson for Float64 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let number = read_number(value, context)?
         let value = match number.to_f64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         let result = float64(value)
         if !result.is_finite() { return Err(context.error(MappingErrorKind.OutOfRange)) }

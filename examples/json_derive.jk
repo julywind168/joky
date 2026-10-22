@@ -1,7 +1,7 @@
 import joky/json/typed
 import joky/result.{Ok, Err}
 import joky/option.{type Option}
-import joky/check.{assert}
+import joky/check.{assert, panic}
 
 #derive(ToJson, FromJson)
 struct User { name: String, age: UInt8, nickname: Option<String> }
@@ -14,14 +14,14 @@ fn main() {
             println(user.age)
             match typed.encode(&user) {
                 Ok(output) => { ensure(typed.decode::<User>(&output).is_ok()) }
-                Err(_) => { ensure(false) }
+                Err(_) => panic("typed JSON example")
             }
         }
-        Err(_) => { ensure(false) }
+        Err(_) => panic("typed JSON example")
     }
     let invalid = "{{\"name\":\"Ada\",\"age\":256}}"
     match typed.decode::<User>(&invalid) {
         Err(typed.CodecError.Mapping(error)) => { println(error.pointer()) }
-        _ => { ensure(false) }
+        _ => panic("typed JSON example")
     }
 }
