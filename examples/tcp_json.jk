@@ -1,12 +1,12 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
-import joky/json as json.{type Value, type Number, type Limits}
+import joky/json.{type Value, type Number, type Limits}
 import joky/array.{type Array}
 import joky/option.{type Option}
 import joky/mem
 import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "JSON message session"; assert(ok, &message) }
+fn ensure(ok: Bool) { assert(ok, "JSON message session") }
 fn limits() -> Limits {
     var value = Limits.defaults()
     value.max_input_bytes = 65536; value.max_output_bytes = 65536
@@ -56,8 +56,7 @@ fn exchange(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends ->
         let output = match json.decode_bytes_with_limits(bytes, limits()) {
             Err(_) => envelope("error", 0, Value.Text("invalid-json"))
             Ok(value) => {
-                let request = "request"
-                match message_id(&value, &request) {
+                match message_id(&value, "request") {
                     Some(_) => { replies = replies + 1; reply(value) }
                     None => envelope("error", 0, Value.Text("invalid-request"))
                 }

@@ -589,8 +589,8 @@ fn write_value(encoder: &mut Encoder, value: &Value) -> results.Result<Unit, Enc
     if encoder.nodes == encoder.limits.max_nodes { return results.Err(EncodeError.NodeLimit) }
     encoder.nodes = encoder.nodes + 1
     match value {
-        Null => { let text = "null"; write_text(encoder, &text) }
-        Boolean(value) => { let text = if value { "true" } else { "false" }; write_text(encoder, &text) }
+        Null => write_text(encoder, "null")
+        Boolean(value) => write_text(encoder, if value { "true" } else { "false" })
         Number(number) => {
             let text = number.as_text()
             if text.byte_length() > encoder.limits.max_number_bytes { return results.Err(EncodeError.NumberLimit) }

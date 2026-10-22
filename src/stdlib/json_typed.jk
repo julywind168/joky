@@ -1,5 +1,5 @@
 // Typed mapping is ordinary source code over the bounded JSON value codec.
-import joky/json as json.{type Value, type Number, type Limits, type DecodeError, type EncodeError, type NumberError}
+import joky/json.{type Value, type Number, type Limits, type DecodeError, type EncodeError, type NumberError}
 import joky/array as arrays.{type Array}
 import joky/map as maps.{type Map}
 import joky/option.{type Option, Some, None}
@@ -34,8 +34,8 @@ impl MappingError {
                     while offset < name.byte_length() {
                         match name.next_rune(offset) {
                             Some((rune, next)) => {
-                                if rune == '~' { let escaped = "~0"; output.push_str(&escaped) } else {
-                                    if rune == '/' { let escaped = "~1"; output.push_str(&escaped) } else { output.push(rune) }
+                                if rune == '~' { output.push_str("~0") } else {
+                                    if rune == '/' { output.push_str("~1") } else { output.push(rune) }
                                 }
                                 offset = next
                             }

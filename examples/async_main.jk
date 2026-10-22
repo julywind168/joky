@@ -1,5 +1,5 @@
 import joky/io.{println}
-import joky/task as task
+import joky/task
 
 fn report_int32(value: Int32) { println(value) }
 

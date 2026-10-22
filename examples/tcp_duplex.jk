@@ -4,7 +4,7 @@ import joky/integer
 import joky/string
 import joky/task
 
-fn ensure(ok: Bool) { let message = "Duplex message session"; assert(ok, &message) }
+fn ensure(ok: Bool) { assert(ok, "Duplex message session") }
 // Receive commands independently of the server's unsolicited pushes.
 fn commands(reader: &mut BufferedTcpReader) @suspends {
     var expected: Int32 = 1

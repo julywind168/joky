@@ -83,12 +83,10 @@ pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
     let source = bytes(text)
     let length = slices.len(source)
     if offset > length {
-        let message = "String.next_rune offset is out of bounds"
-        check.assert(false, &message)
+        check.assert(false, "String.next_rune offset is out of bounds")
     }
     if !boundary(source, offset) {
-        let message = "String.next_rune offset is not a UTF-8 boundary"
-        check.assert(false, &message)
+        check.assert(false, "String.next_rune offset is not a UTF-8 boundary")
     }
     if offset == length { return None }
     match decode(source, offset) { Ok(value) => Some(value), Err(_) => None }

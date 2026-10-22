@@ -1,4 +1,4 @@
-import joky/dns as dns
+import joky/dns
 import joky/check.{assert}
 import joky/string
 
@@ -8,8 +8,7 @@ fn main() @suspends -> Int32 {
         Ok(addresses) => addresses
         Err(error) => { println(error.message); return 1 }
     }
-    let message = "localhost returns at least one address"
-    assert(addresses.len() > 0, &message)
+    assert(addresses.len() > 0, "localhost returns at least one address")
     println("localhost resolved")
     0
 }

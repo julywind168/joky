@@ -55,8 +55,7 @@ pub fn capacity<T>(list: &List<T>) -> UInt64 {
 pub fn reserve<T>(list: &mut List<T>, additional: UInt64) {
     let length = len(list)
     if additional > 18446744073709551615 - length {
-        let message = "List capacity overflow"
-        assert(false, &message)
+        assert(false, "List capacity overflow")
     }
     let required = length + additional
     list.values.reserve(additional)
@@ -68,13 +67,13 @@ pub fn reserve<T>(list: &mut List<T>, additional: UInt64) {
 fn required_slot(slot: Option<UInt64>) -> UInt64 {
     match slot {
         Some(slot) => slot
-        None => { let message = "Invalid List link"; assert(false, &message); 0 }
+        None => { assert(false, "Invalid List link"); 0 }
     }
 }
 fn links<T>(list: &List<T>, slot: UInt64) -> Links {
     match list.slots.get(slot) {
         Some(NodeSlot.Used(value)) => value
-        _ => { let message = "Invalid List slot"; assert(false, &message); Links { prev: None, next: None, value_index: 0 } }
+        _ => { assert(false, "Invalid List slot"); Links { prev: None, next: None, value_index: 0 } }
     }
 }
 // Walk from the closer endpoint. Missing positions are ordinary query misses.
@@ -96,8 +95,7 @@ fn find<T>(list: &List<T>, index: UInt64) -> Option<UInt64> {
 fn value_index<T>(list: &List<T>, index: UInt64) -> UInt64 {
     let found = find(list, index)
     if found.is_none() {
-        let message = "List index out of bounds"
-        assert(false, &message)
+        assert(false, "List index out of bounds")
     }
     links(list, required_slot(found)).value_index
 }
@@ -107,7 +105,7 @@ fn insert_between<T>(list: &mut List<T>, prev: Option<UInt64>, next: Option<UInt
         Some(slot) => {
             let next_free = match list.slots.get(slot) {
                 Some(NodeSlot.Free(next)) => next
-                _ => { let message = "Invalid List free slot"; assert(false, &message); None }
+                _ => { assert(false, "Invalid List free slot"); None }
             }
             list.free = next_free
             slot

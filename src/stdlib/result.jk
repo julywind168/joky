@@ -9,7 +9,7 @@ impl<T, E> Result<T, E> {
     fn unwrap(self) -> T {
         match self {
             Ok(value) => value
-            Err(_) => { let message = "Called Result.unwrap on Err"; check.panic(&message) }
+            Err(_) => { check.panic("Called Result.unwrap on Err") }
         }
     }
 
