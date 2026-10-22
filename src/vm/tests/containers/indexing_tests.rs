@@ -40,6 +40,31 @@ fn cleaned() {
         }
     });
 }
+
+#[test]
+fn indexing_private_enum_arrays_without_prelude() {
+    // Set reaches Map's private Bucket array through an imported generic owner.
+    // Without the prelude, its element can still be a shallow nominal type.
+    let source = r#"
+        import joky/set.{type Set}
+        fn check() -> Int32 {
+            var values = Set.new::<Int32>()
+            values.insert(42)
+            if values.contains(42) && !values.contains(7) { 42 } else { 0 }
+        }
+    "#;
+    let registry = crate::TypeRegistry::new().with_prelude(false);
+    let parsed = crate::parser::parse(source).unwrap();
+    let normalized = registry.resolve_aliases(&parsed).unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_module(&normalized).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42, "{mode:?}");
+        arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+    crate::backends::aot::tests::assert_sync_int32(&normalized, "check", 42);
+}
+
 struct Restore(usize);
 impl Drop for Restore {
     fn drop(&mut self) {

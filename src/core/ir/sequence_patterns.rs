@@ -137,6 +137,10 @@ impl FunctionPlan {
         args: Vec<Slot>,
         ty: Type,
     ) -> Result<Option<Slot>, Error> {
+        // Array arguments can retain only a nominal identity after reference
+        // normalization. Storage operations need the complete element layout,
+        // just like explicit buffer intrinsics do.
+        let element = self.pointee(element, &self.type_registry)?;
         let dst = if ty == Type::Unit {
             None
         } else {
@@ -147,7 +151,7 @@ impl FunctionPlan {
         }
         self.emit(Op::Buffer(BufferOp::Storage {
             intrinsic,
-            element: element.clone(),
+            element,
             args,
             dst: dst.clone(),
         }));

@@ -172,7 +172,7 @@ fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UI
     var position = cached_hash & mask
     var probes: UInt64 = 0
     while probes < count {
-        let bucket = table.buckets.get(position)!
+        let bucket = table.buckets[position]
         match bucket {
             Bucket.Empty => { return None }
             Bucket.Deleted => {}
@@ -237,7 +237,7 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UIn
     var position = cached_hash & mask
     var probes: UInt64 = 0
     while probes < count {
-        match buckets.get(position)! {
+        match buckets[position] {
             Bucket.Full(_) => {}
             Bucket.Empty => { return position }
             Bucket.Deleted => { return position }
@@ -256,7 +256,7 @@ pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value:
     }
     reserve(table, 1)
     let position = index_position(&table.buckets, cached_hash)
-    let reused = match table.buckets.get(position)! {
+    let reused = match table.buckets[position] {
         Bucket.Deleted => true, Bucket.Empty => false, Bucket.Full(_) => false
     }
     let i = len(table)
