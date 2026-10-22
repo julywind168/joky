@@ -23,20 +23,10 @@ struct RoomEntry { name: String, status: RoomStatus, waiters: Array<outbox.Handl
 struct Catalog { rooms: Array<RoomEntry> }
 struct Context { host: Host }
 enum Command { Welcome, Balance, Join(String), Leave, Say(String), Invalid, Disconnect, Notice(String) }
-struct Recipient { route: Route, first: Bool, second: Bool }
-struct Plan { origin: Route, recipients: Array<Recipient>, first: String, second: String, account: Account, membership: Bool }
-struct RoomView { name: String, members: Array<Route> }
 fn make_catalog(_: Unit) -> Catalog { Catalog { rooms: Array.new::<RoomEntry>() } }
 fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>() } }
 fn make_account(account: Account) -> Account { account }
 fn account_view(state: &Account) -> Account { *state }
-fn room_view(state: &Room) -> RoomView {
-    var members = Array.new::<Route>()
-    var i: UInt64 = 0
-    while i < state.members.len() { members.push(state.members.get(i)!); i += 1 }
-    RoomView { name: state.name.clone(), members: members }
-}
-fn empty_room() -> RoomView { RoomView { name: "", members: Array.new::<Route>() } }
 fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
     if message.is_empty() { "{kind} {room} {id}\n" }
     else { "{kind} {room} {id} {message}\n" }
@@ -100,23 +90,24 @@ fn finish_room(state: &mut Catalog, key: UInt64) -> Array<outbox.Handle> {
     waiters
 }
 fn ensure_room(ctx: Context, name: &String) @suspends -> UInt64 {
-    let catalog = domain.lookup_write::<Catalog>(ctx.host.directory, 1)!
+    let catalog = match domain.lookup_write::<Catalog>(ctx.host.directory, 1) { Some(handle) => handle, None => return 0 }
     var ready = outbox.create(1, 0)
     let waiter = ready.handle()
-    while true {
-        var access = domain.access_set(); access.include(catalog.read_only())
-        let snapshot = domain.snapshot_set(access)
-        let (key, available) = domain.query_snapshot(&snapshot, catalog.read_only(), find_room, name.clone())
-        if available { return key }
-        var batch = outbox.batch(if key == 0 { 1 } else { 0 }, 0)
-        if key == 0 { outbox.stage(&mut batch, ctx.host.requests, Array.new::<UInt8>())! }
-        let candidate = domain.edit_snapshot(snapshot, catalog, reserve_room, (name.clone(), waiter)).with_outbox(batch)
-        var receipt = domain.commit_set(candidate)
-        let result = receipt.wait()
-        match result { Err(Conflict) => continue, _ => { result!; } }
-        ready.receive();
-        return domain.query_from(catalog.read_only(), find_room, name.clone())!.0
+    let request = ctx.host.requests
+    let room_name = name.clone()
+    let result = when "resolve room" (mut catalog) {
+        let (key, available) = find_room(catalog, room_name.clone())
+        if available { key }
+        else {
+            reserve_room(catalog, (room_name, waiter))
+            if key == 0 { let signal = Array.new::<UInt8>(); outbox.emit(request, &signal) }
+            0
+        }
     }
+    let key = match result { Ok(key) => key, Err(_) => return 0 }
+    if key != 0 { return key }
+    ready.receive();
+    match domain.query_from(catalog.read_only(), find_room, name.clone()) { Ok((key, true)) => key, _ => 0 }
 }
 fn next_room(host: Host) @suspends -> Option<RoomInit> {
     let catalog = domain.lookup_write::<Catalog>(host.directory, 1)!
@@ -136,72 +127,22 @@ fn open_room(input: RoomKey) @suspends {
     var i: UInt64 = 0
     while i < waiters.len() { outbox.close(waiters.get(i)!); i += 1 }
 }
-fn append(recipients: &mut Array<Recipient>, route: Route, first: Bool, second: Bool, excluded: &Array<UInt64>) {
-    if !contains(excluded, route.id) { recipients.push(Recipient { route: route, first: first, second: second }) }
+fn deliver(route: Route, message: &String, excluded: &Array<UInt64>) {
+    if route.live && !contains(excluded, route.id) {
+        let bytes = message.clone().into_bytes()
+        outbox.emit(route.output, &bytes)
+    }
 }
-fn broadcast(recipients: &mut Array<Recipient>, room: &RoomView, first: Bool, skip: UInt64, excluded: &Array<UInt64>) {
+fn broadcast(room: &Room, message: &String, skip: UInt64, excluded: &Array<UInt64>) {
+    let bytes = message.clone().into_bytes()
     var i: UInt64 = 0
     while i < room.members.len() {
         let route = room.members.get(i)!
-        if route.live && route.id != skip { append(recipients, route, first, !first, excluded) }
+        if route.live && route.id != skip && !contains(excluded, route.id) { outbox.emit(route.output, &bytes) }
         i += 1
     }
 }
 fn say_message(room: &String, id: UInt64, text: &String) -> String { event("message", room, id, text) }
-fn plan(account: Account, old: &RoomView, next: &RoomView, next_key: UInt64, command: &Command, excluded: &Array<UInt64>) -> Plan {
-    var updated = account
-    var recipients = Array.new::<Recipient>()
-    var first = ""
-    var second = ""
-    var membership = false
-    let id = account.route.id
-    match command {
-        Join(_) => {
-            if account.room == next_key { first = "error already joined\n" }
-            else {
-                first = event("left", &old.name, id, "")
-                second = event("joined", &next.name, id, "")
-                broadcast(&mut recipients, old, true, 0, excluded)
-                broadcast(&mut recipients, next, false, 0, excluded)
-                append(&mut recipients, account.route, false, true, excluded)
-                updated.room = next_key
-                membership = true
-            }
-        },
-        Leave => {
-            if account.room == 0 { first = "error join a room first\n" }
-            else {
-                first = event("left", &old.name, id, "")
-                broadcast(&mut recipients, old, true, 0, excluded)
-                updated.room = 0
-                membership = true
-            }
-        },
-        Say(text) => {
-            if account.room == 0 { first = "error join a room first\n" }
-            else if account.balance_cents < 100 { first = "error insufficient balance\n" }
-            else {
-                first = say_message(&old.name, id, text)
-                broadcast(&mut recipients, old, true, 0, excluded)
-                updated.balance_cents -= 100
-            }
-        },
-        Disconnect => {
-            first = event("left", &old.name, id, "")
-            broadcast(&mut recipients, old, true, id, excluded)
-            updated.room = 0
-            updated.route.live = false
-            membership = account.room != 0
-        },
-        Welcome => { first = "welcome {id}\n" },
-        Balance => { let yuan = account.balance_cents / 100; first = "balance {yuan}\n" },
-        Notice(text) => { first = text.clone() },
-        Invalid => { first = "error use join <room>, leave, say <message>, or balance\n" }
-    }
-    if recipients.is_empty() && updated.route.live { append(&mut recipients, account.route, true, false, excluded) }
-    Plan { origin: account.route, recipients: recipients, first: first, second: second, account: updated, membership: membership }
-}
-fn apply_account(state: &mut Account, account: Account) { *state = account }
 fn remove_member(state: &mut Room, id: UInt64) {
     var i: UInt64 = 0
     while i < state.members.len() {
@@ -218,42 +159,93 @@ fn add_member(state: &mut Room, route: Route) {
     }
     state.members.push(route)
 }
-fn size(plan: &Plan) -> (UInt64, UInt64) {
-    var messages: UInt64 = 0
-    var bytes: UInt64 = 0
+fn member(room: &Room, id: UInt64) -> Bool {
     var i: UInt64 = 0
-    while i < plan.recipients.len() {
-        let recipient = plan.recipients.get(i)!
-        let a: UInt64 = if recipient.first { 1 } else { 0 }
-        let b: UInt64 = if recipient.second { 1 } else { 0 }
-        messages += a + b
-        bytes += a * plan.first.byte_length() + b * plan.second.byte_length()
+    while i < room.members.len() {
+        let route = room.members.get(i)!
+        if route.live && route.id == id { return true }
         i += 1
     }
-    (messages + if plan.account.route.live { 0 } else { 1 }, bytes)
+    false
 }
-fn stage(plan: &Plan) @suspends -> outbox.Batch {
-    let (messages, bytes) = size(plan)
-    var batch = outbox.batch(messages, bytes)
-    var i: UInt64 = 0
-    while i < plan.recipients.len() {
-        let recipient = plan.recipients.get(i)!
-        if recipient.first { outbox.stage(&mut batch, recipient.route.output, plan.first.clone().into_bytes()); }
-        if recipient.second { outbox.stage(&mut batch, recipient.route.output, plan.second.clone().into_bytes()); }
-        i += 1
+enum Retry { Changed, Stopped }
+fn changes_membership(command: &Command) -> Bool {
+    match command { Join(_) => true, Leave => true, Disconnect => true, _ => false }
+}
+fn speak(account: &mut Account, old: &Room, expected: UInt64, command: &Command, excluded: &Array<UInt64>) -> Result<Route, Retry> {
+    if !account.route.live { return Err(Retry.Stopped) }
+    if account.room != expected { return Err(Retry.Changed) }
+    if expected != 0 && !member(old, account.route.id) { return Err(Retry.Stopped) }
+    let route = account.route
+    let id = route.id
+    match command {
+        Say(text) => {
+            if account.room == 0 { deliver(route, "error join a room first\n", excluded) }
+            else if account.balance_cents < 100 { deliver(route, "error insufficient balance\n", excluded) }
+            else {
+                account.balance_cents -= 100
+                let message = say_message(&old.name, id, text)
+                broadcast(old, &message, 0, excluded)
+            }
+        },
+        Welcome => { let message = "welcome {id}\n"; deliver(route, &message, excluded) },
+        Balance => { let yuan = account.balance_cents / 100; let message = "balance {yuan}\n"; deliver(route, &message, excluded) },
+        Notice(text) => { deliver(route, text, excluded) },
+        Invalid => { deliver(route, "error use join <room>, leave, say <message>, or balance\n", excluded) },
+        _ => return Err(Retry.Stopped)
     }
-    if !plan.account.route.live { outbox.stage(&mut batch, plan.origin.stop, Array.new::<UInt8>()); }
-    batch
+    Ok(route)
 }
-
-fn captured_room(snapshot: &domain.SnapshotSet, handle: Option<domain.WriteHandle<Room>>) @suspends -> RoomView {
-    match handle { Some(handle) => domain.read_snapshot(snapshot, handle.read_only(), room_view), None => empty_room() }
+// All decisions, mutations and message construction run in the selected operation version.
+fn change_membership(account: &mut Account, old: &mut Room, next: &mut Room, expected: UInt64, next_key: UInt64, command: &Command, excluded: &Array<UInt64>) -> Result<Route, Retry> {
+    if !account.route.live { return Err(Retry.Stopped) }
+    if account.room != expected { return Err(Retry.Changed) }
+    if expected != 0 && !member(old, account.route.id) { return Err(Retry.Stopped) }
+    let route = account.route
+    let id = route.id
+    match command {
+        Join(_) => {
+            if account.room == next_key { deliver(route, "error already joined\n", excluded) }
+            else {
+                if account.room != 0 {
+                    let message = event("left", &old.name, id, "")
+                    broadcast(old, &message, 0, excluded)
+                    remove_member(old, id)
+                }
+                let message = event("joined", &next.name, id, "")
+                broadcast(next, &message, 0, excluded)
+                deliver(route, &message, excluded)
+                add_member(next, route)
+                account.room = next_key
+            }
+        },
+        Leave => {
+            if account.room == 0 { deliver(route, "error join a room first\n", excluded) }
+            else {
+                let message = event("left", &old.name, id, "")
+                broadcast(old, &message, 0, excluded)
+                remove_member(old, id)
+                account.room = 0
+            }
+        },
+        Disconnect => {
+            if account.room != 0 {
+                let message = event("left", &old.name, id, "")
+                broadcast(old, &message, id, excluded)
+                remove_member(old, id)
+            }
+            account.room = 0
+            account.route.live = false
+            let signal = Array.new::<UInt8>()
+            outbox.emit(route.stop, &signal)
+        },
+        _ => return Err(Retry.Stopped)
+    }
+    Ok(route)
 }
 fn room_handle(ctx: Context, key: UInt64) @suspends -> Option<domain.WriteHandle<Room>> {
     if key == 0 { None } else { domain.lookup_write::<Room>(ctx.host.rooms, key) }
 }
-// Bind each operation to its account lifetime. Closing the owner cancels its
-// outstanding domain requests without serializing requests or publication.
 struct Request { ctx: Context, id: UInt64, command: Command, excluded: Array<UInt64> }
 fn split_request(input: Request) -> (Context, UInt64, Command, Array<UInt64>) {
     let Request { ctx, id, command, excluded } = input
@@ -262,63 +254,97 @@ fn split_request(input: Request) -> (Context, UInt64, Command, Array<UInt64>) {
 fn publish(ctx: Context, id: UInt64, command: Command, excluded: &Array<UInt64>) @suspends -> Bool {
     let account = match domain.lookup_write::<Account>(ctx.host.accounts, id) { Some(handle) => handle, None => return false }
     let input = Request { ctx: ctx, id: id, command: command, excluded: copy_ids(excluded) }
-    let result = domain.request(account, execute, input)
-    match result { Ok(value) => value, Err(Closed) => false, Err(Cancelled) => false, _ => result! }
+    match domain.request(account, execute, input) { Ok(value) => value, Err(_) => false }
 }
-fn prepare(ctx: Context, account: domain.WriteHandle<Account>, next_key: UInt64, command: &Command, excluded: &Array<UInt64>) @suspends -> Option<(domain.CandidateSet, Plan)> {
-    let before = domain.read_from(account.read_only(), account_view)!
-    let old_handle = room_handle(ctx, before.room)
-    let next_handle = room_handle(ctx, next_key)
-    var access = domain.access_set(); access.include(account.read_only())
-    match old_handle { Some(handle) => access.include(handle.read_only()), None => {} }
-    if next_key != before.room { match next_handle { Some(handle) => access.include(handle.read_only()), None => {} } }
-    let snapshot = domain.snapshot_set(access)
-    let frozen = domain.read_snapshot(&snapshot, account.read_only(), account_view)
-    if frozen.room != before.room { return None }
-    let old = captured_room(&snapshot, old_handle)
-    let next = captured_room(&snapshot, next_handle)
-    let prepared = plan(frozen, &old, &next, next_key, command, excluded)
-    let batch = stage(&prepared)
-    var candidate = domain.edit_snapshot(snapshot, account, apply_account, prepared.account)
-    if prepared.membership {
-        match old_handle { Some(handle) => { candidate = domain.edit_candidate(candidate, handle, remove_member, frozen.route.id) }, None => {} }
-        match next_handle { Some(handle) => { candidate = domain.edit_candidate(candidate, handle, add_member, prepared.origin) }, None => {} }
+fn attempt(ctx: Context, account: domain.WriteHandle<Account>, expected: UInt64, next_key: UInt64, command: &Command, excluded: &Array<UInt64>) @suspends -> Result<Result<Route, Retry>, domain.DomainAccessError> {
+    let old_handle = room_handle(ctx, expected)
+    let next_handle = if next_key == expected { None } else { room_handle(ctx, next_key) }
+    if expected != 0 && old_handle.is_none() { return Err(domain.DomainAccessError.Closed) }
+    if next_key != 0 && next_key != expected && next_handle.is_none() { return Err(domain.DomainAccessError.Closed) }
+    let command = command.clone()
+    let excluded = copy_ids(excluded)
+    if !changes_membership(&command) {
+        return match old_handle {
+            Some(old) => when "send" (mut account, old) {
+                speak(account, old, expected, &command, &excluded)
+            },
+            None => when "unjoined" (mut account) {
+                let empty = make_room("")
+                speak(account, &empty, expected, &command, &excluded)
+            }
+        }
     }
-    Some((candidate.with_outbox(batch), prepared))
+    match old_handle {
+        Some(old) => match next_handle {
+            Some(next) => when "move" (mut account, mut old, mut next) {
+                change_membership(account, old, next, expected, next_key, &command, &excluded)
+            },
+            None => when "in room" (mut account, mut old) {
+                var empty = make_room("")
+                change_membership(account, old, &mut empty, expected, next_key, &command, &excluded)
+            }
+        },
+        None => match next_handle {
+            Some(next) => when "first join" (mut account, mut next) {
+                var empty = make_room("")
+                change_membership(account, &mut empty, next, expected, next_key, &command, &excluded)
+            },
+            None => when "account" (mut account) {
+                var old = make_room("")
+                var next = make_room("")
+                change_membership(account, &mut old, &mut next, expected, next_key, &command, &excluded)
+            }
+        }
+    }
+}
+fn target_member(room: &Room, token: UInt64) -> UInt64 {
+    var i: UInt64 = 0
+    while i < room.members.len() {
+        let route = room.members.get(i)!
+        if route.live && route.output.identity() == token { return route.id }
+        i += 1
+    }
+    0
+}
+fn slow_client(ctx: Context, value: Account, next_key: UInt64, token: UInt64) @suspends -> UInt64 {
+    if value.route.output.identity() == token { return value.route.id }
+    match room_handle(ctx, value.room) {
+        Some(room) => { let id = domain.query_from(room.read_only(), target_member, token).unwrap_or(0); if id != 0 { return id } }, None => {}
+    }
+    match room_handle(ctx, next_key) {
+        Some(room) => domain.query_from(room.read_only(), target_member, token).unwrap_or(0), None => 0
+    }
 }
 fn execute(input: Request) @suspends -> Bool {
     let (ctx, id, command, excluded) = split_request(input)
-    let next_key = match &command { Join(name) => ensure_room(ctx, name), _ => 0 }
-    let account = domain.lookup_write::<Account>(ctx.host.accounts, id)!
-    while true {
-        let value = domain.read_from(account.read_only(), account_view)!
+    var tries: UInt64 = 0
+    while tries < 64 {
+        tries += 1
+        // Directory resolution and room creation belong to the complete retry boundary.
+        let next_key = match &command { Join(name) => ensure_room(ctx, name), _ => 0 }
+        if match &command { Join(_) => next_key == 0, _ => false } { return false }
+        let account = match domain.lookup_write::<Account>(ctx.host.accounts, id) { Some(handle) => handle, None => return false }
+        let value = match domain.read_from(account.read_only(), account_view) { Ok(value) => value, Err(_) => return false }
         if !value.route.live { return false }
-        let (candidate, prepared) = match prepare(ctx, account, next_key, &command, &excluded) { Some(value) => value, None => continue }
-        if !prepared.origin.live { return false }
-        var receipt = domain.commit_set(candidate)
-        let result = receipt.wait()
-        match result {
-            Err(Conflict) => continue,
-            Err(OutboxFull) => {}, Err(OutboxClosed) => {},
-            _ => {
-                result!
-                match &command { Disconnect => { outbox.close(prepared.origin.stop); outbox.close(prepared.origin.output) }, _ => {} }
+        let result = attempt(ctx, account, value.room, next_key, &command, &excluded)
+        let failed = match result {
+            Ok(Ok(route)) => {
+                match &command { Disconnect => { outbox.close(route.stop); outbox.close(route.output) }, _ => {} }
                 return true
-            }
+            },
+            Ok(Err(Changed)) => continue,
+            Err(OutboxFull(token)) => token, Err(OutboxClosed(token)) => token,
+            _ => return false
         }
-        let failed = receipt.failed_outbox()!
-        var slow: UInt64 = 0
-        var i: UInt64 = 0
-        while i < prepared.recipients.len() {
-            let route = prepared.recipients.get(i)!.route
-            if route.output.identity() == failed { slow = route.id }
-            i += 1
-        }
+        let slow = slow_client(ctx, value, next_key, failed)
+        if slow == 0 { return false }
         var ancestors = copy_ids(&excluded)
         match &command { Disconnect => ancestors.push(id), _ => {} }
-        if slow != 0 { publish(ctx, slow, Command.Disconnect, &ancestors); }
+        publish(ctx, slow, Command.Disconnect, &ancestors);
     }
+    false
 }
+
 fn parse(line: String) -> Command {
     let separator = line.find(" ").unwrap_or(line.byte_length())
     let verb = line.substring(0, separator)!

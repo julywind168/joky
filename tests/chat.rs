@@ -331,15 +331,27 @@ fn chat_real_tcp_on_all_backends() {
     );
         assert_eq!(
             logic
-                .matches("if !prepared.origin.live { return false }")
+                .matches("if !value.route.live { return false }")
                 .count(),
             1
         );
         let logic = logic.replace(
-            "if !prepared.origin.live { return false }",
-            "if !prepared.origin.live { return false }\n        pause_send(ctx, &command)",
+            "if !value.route.live { return false }",
+            "if !value.route.live { return false }\n        pause_send(ctx, &command)",
         );
         std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
+        let next = logic
+            .replace(
+                "event(\"message\", room, id, text)",
+                "event(\"probe-v2\", room, id, text)",
+            )
+            .replace("account.balance_cents < 100", "account.balance_cents < 200")
+            .replace(
+                "account.balance_cents -= 100",
+                "account.balance_cents -= 200",
+            );
+        assert_ne!(next, logic);
+        std::fs::write(work.path().join("chat_logic_next.jk"), next).unwrap();
         let binary = work.path().join("chat");
         let built = Command::new(env!("CARGO_BIN_EXE_joky"))
             .arg("build")

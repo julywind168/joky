@@ -1218,4 +1218,5 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 
 有状态服务计划的 S2a 已统一 `when`／句柄方法的候选执行：标准顶层业务 Result.Err 丢弃候选，
 成功发布才推进修订；普通 false 与 Ok(false) 正常提交。显式原地短操作保留旧规则。
-消息登记与 chat 业务迁移继续按[实施计划](stateful-service-ergonomics.md)推进。
+S2b 已提供受检的 `outbox.emit`，与候选状态一起原子发布；S2c 将 chat 的收费与成员变更
+移入具名业务操作，目录依赖解析进入有界重算。进度及验证见[实施计划](stateful-service-ergonomics.md)。

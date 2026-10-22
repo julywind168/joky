@@ -18,7 +18,7 @@ fn pause_send(ctx: Context, command: &Command) @suspends {
     let first = domain.write_to(state, arm_probe, handle)!
     if !first { return }
     signal_probe(state)
-    // The host publishes while this business request and its candidate are alive.
+    // The host publishes while this old business flow is resolving its next operation.
     resume.receive();
 }
 fn set_probe_resume(state: &mut ProbeState, resume: outbox.Handle) { state.resume = resume }
@@ -40,9 +40,9 @@ fn verify_online(input: Probe) @suspends {
     let stop = outbox.create(1, 0)
     let alice = test_account(f.ctx, 1, 1, queue.handle(), stop.handle())
     check.assert(process(f.ctx, 1, "say queued"), "queue an old-version message")
-    check.assert(process(f.ctx, 1, "say paused"), "in-flight operation retries after publication")
-    check.assert(domain.read_from(sync.read_handle(), probe_view)!.attempts == 2, "publication rejects exactly the old candidate")
-    check.assert(balance(&alice) == 300, "two successful sends cost exactly two yuan")
+    check.assert(process(f.ctx, 1, "say paused"), "old flow enters the published operation")
+    check.assert(domain.read_from(sync.read_handle(), probe_view)!.attempts == 1, "operation selects current code after dependency resolution")
+    check.assert(balance(&alice) == 200, "old flow uses the published two-yuan fee once")
     // This old continuation creates another root after the publication boundary.
     let late_queue = outbox.create(4, 256)
     let late = test_account(f.ctx, 2, 0, late_queue.handle(), stop.handle())
@@ -58,7 +58,7 @@ fn verify_online(input: Probe) @suspends {
     check.assert(publish(f.ctx, 1, Command.Notice("sentinel\n"), &excluded), "sentinel committed")
     // No receive ran before publication: the old queue survived intact and in order.
     expect_message(&mut queue, "message r 1 queued\n")
-    expect_message(&mut queue, "message r 1 paused\n")
+    expect_message(&mut queue, "probe-v2 r 1 paused\n")
     expect_message(&mut queue, "sentinel\n")
 }
 fn resume_probe(directory: domain.DirectoryHandle) @suspends {

@@ -1,3 +1,11 @@
+struct RoomView { name: String, members: Array<Route> }
+fn room_view(state: &Room) -> RoomView {
+    var members = Array.new::<Route>()
+    var i: UInt64 = 0
+    while i < state.members.len() { members.push(state.members.get(i)!); i += 1 }
+    RoomView { name: state.name.clone(), members: members }
+}
+fn apply_account(state: &mut Account, account: Account) { *state = account }
 // Test owners stay local, independently of the production owning directories.
 struct Fixture { directory: domain.Directory, rooms: domain.Directory, accounts: domain.Directory, requests: outbox.Mailbox, catalog: domain.Owner<Catalog>, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Context }
 fn seed_catalog(state: &mut Catalog, _: Unit) {
@@ -164,9 +172,7 @@ fn verify_atomic_disconnect_signal() @suspends {
     let alice = test_account(f.ctx, 1, 1, output.handle(), control.handle())
     let command = Command.Disconnect
     let excluded = Array.new::<UInt64>()
-    let (candidate, plan) = prepare(f.ctx, alice.handle(), 0, &command, &excluded)!
-    var receipt = domain.commit_set(candidate)
-    receipt.wait()!
+    attempt(f.ctx, alice.handle(), 1, 0, &command, &excluded)!!
     // No post-commit close ran: the commit itself must wake the connection.
     let notification = control.receive()!
     check.assert(notification.is_empty(), "disconnect control signal is part of the commit")
@@ -209,7 +215,27 @@ fn verify_wide_broadcast() @suspends {
     let alice = domain.lookup_write::<Account>(f.ctx.host.accounts, 1)!
     check.assert(domain.read_from(alice.read_only(), account_view)!.balance_cents == 400, "wide broadcast costs one yuan")
 }
+fn verify_room_resolution_changes_before_operation() @suspends {
+    let f = fixture()
+    var queue = outbox.create(8, 1024)
+    let control = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, queue.handle(), control.handle())
+    let before = domain.read_from(alice.read_handle(), account_view)!
+    check.assert(process(f.ctx, 1, "join other"), "concurrent room change")
+    expect_message(&mut queue, "left r 1\n")
+    expect_message(&mut queue, "joined other 1\n")
+    let command = Command.Say("stale" )
+    let excluded = Array.new::<UInt64>()
+    match attempt(f.ctx, alice.handle(), before.room, 0, &command, &excluded) {
+        Ok(Err(Changed)) => {}, _ => { check.assert(false, "stale resolution rejects before charging") }
+    }
+    check.assert(balance(&alice) == 500, "rejected resolution never charges")
+    check.assert(process(f.ctx, 1, "say resolved"), "resolve current membership")
+    expect_message(&mut queue, "message other 1 resolved\n")
+    check.assert(balance(&alice) == 400, "recalculation charges exactly once")
+}
 fn verify_chat_queue_domain() @suspends {
+    verify_room_resolution_changes_before_operation()
     verify_conflicts_and_independence()
     verify_balance_race()
     verify_message_capacity()
