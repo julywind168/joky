@@ -59,19 +59,14 @@ impl TypeRegistry {
             let ty = self
                 .resolve_scoped(&equality.ty, root, &[])
                 .map_err(|e| e.with_span(equality.span))?;
-            if !self.bounds_hold(
-                &associated.bounds,
-                scope,
-                &ty,
-                &crate::core::types::Substitutions::default(),
-            )? {
+            if !self.bounds_hold(&associated.bounds, scope, &ty, &Substitutions::default())? {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     "Dyn associated equality does not satisfy the item's declared capabilities",
                 )
                 .with_span(equality.span));
             }
-            equalities.push(crate::core::types::AssociatedEquality {
+            equalities.push(AssociatedEquality {
                 ty,
                 ..equality.clone()
             });
@@ -111,7 +106,7 @@ impl TypeRegistry {
             .insert(self_id, (parameter.clone(), Arc::new(scope.clone())));
         let substitutions = [(id, Type::Parameter(parameter.clone()))]
             .into_iter()
-            .collect::<crate::core::types::Substitutions>();
+            .collect::<Substitutions>();
         for method in &declaration.methods {
             let incompatible = |reason: &str| {
                 bad(format!(

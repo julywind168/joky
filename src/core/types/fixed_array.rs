@@ -1,6 +1,5 @@
 //! Compact fixed-array normalization and bounded inline work accounting.
 use super::*;
-use crate::core::types::{ConstArgument, FixedArrayType, ParameterKind};
 use std::{collections::HashSet, sync::Arc};
 
 pub(crate) const MAX_LENGTH: u64 = 65_536;
@@ -223,7 +222,6 @@ pub(super) fn weight(ty: &Type) -> Result<u64, Error> {
 mod tests {
     use super::*;
     use crate::core::types::memory_layout::{MemoryLayoutShape, MemoryLayoutTarget};
-    use crate::core::types::GenericArgument;
     use crate::parser::ast::Item;
 
     fn normalized(source: &str) -> Result<Module, Error> {

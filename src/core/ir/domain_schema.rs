@@ -1,6 +1,6 @@
 //! Freeze finite domain storage definitions while the compiler still owns nominals.
-use crate::core::types::{EnumVariant, RecordField};
-use crate::{core::ir::FunctionPlan, parser::ast::*, Error};
+use crate::core::types::{EnumType, EnumVariant, RecordField, RecordType, TupleType, Type};
+use crate::{core::ir::FunctionPlan, Error};
 use std::sync::Arc;
 
 pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {

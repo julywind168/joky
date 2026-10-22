@@ -1,7 +1,6 @@
 //! Declaration-scoped associated-type binding and bounded static trait solving.
 use super::*;
 use crate::core::imports::ImportScope;
-use crate::core::types::{TraitBound, TypeParameter, TypeProjection};
 use crate::parser::ast::{ImplDef, TraitDef};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -25,7 +24,7 @@ enum Obligation {
     Normalize(TypeProjection),
     Binding(TypeProjection),
     Implements(Type, u64),
-    Alias(String, Vec<crate::core::types::GenericArgument>),
+    Alias(String, Vec<GenericArgument>),
 }
 #[derive(Clone, Debug)]
 enum Answer {
@@ -85,7 +84,7 @@ impl TypeRegistry {
     pub(super) fn with_alias_obligation<T>(
         &self,
         name: &str,
-        arguments: &[crate::core::types::GenericArgument],
+        arguments: &[GenericArgument],
         f: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error> {
         if self.trait_work.borrow().active.is_empty() {
@@ -269,7 +268,7 @@ impl TypeRegistry {
                         &associated.bounds,
                         declaration_scope,
                         &ty,
-                        &crate::core::types::Substitutions::default(),
+                        &Substitutions::default(),
                     )? {
                         return Err(error(
                             ErrorCode::TypeMismatch,
@@ -318,7 +317,7 @@ impl TypeRegistry {
                     &associated.bounds,
                     declaration_scope,
                     &ty,
-                    &crate::core::types::Substitutions::default(),
+                    &Substitutions::default(),
                 )? {
                     return Err(error(
                         ErrorCode::TypeMismatch,
@@ -896,7 +895,7 @@ impl TypeRegistry {
         &self,
         implementation: &ImplDef,
         actual: &Type,
-    ) -> Result<Option<crate::core::types::Substitutions>, Error> {
+    ) -> Result<Option<Substitutions>, Error> {
         let scope = implementation
             .scope
             .as_ref()
@@ -912,7 +911,7 @@ impl TypeRegistry {
         if !same {
             return Ok(None);
         }
-        let mut substitutions = crate::core::types::Substitutions::default();
+        let mut substitutions = Substitutions::default();
         super::unify(
             &target,
             actual,
@@ -938,7 +937,7 @@ impl TypeRegistry {
         bounds: &[TraitBound],
         scope: &ImportScope,
         actual: &Type,
-        substitutions: &crate::core::types::Substitutions,
+        substitutions: &Substitutions,
     ) -> Result<bool, Error> {
         for bound in bounds {
             let id = self.trait_id(&bound.name, scope, bound.span)?;
@@ -996,7 +995,7 @@ impl TypeRegistry {
         &self,
         parameter: &TypeParameter,
         actual: &Type,
-        substitutions: &crate::core::types::Substitutions,
+        substitutions: &Substitutions,
     ) -> Result<bool, Error> {
         let scope = self
             .trait_environment
@@ -1013,7 +1012,7 @@ impl TypeRegistry {
         &self,
         parameter: &TypeParameter,
         actual: &Type,
-        substitutions: &crate::core::types::Substitutions,
+        substitutions: &Substitutions,
         span: Span,
     ) -> Result<(), Error> {
         if parameter.bounds.iter().all(|b| b.equalities.is_empty()) {

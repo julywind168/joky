@@ -1,5 +1,9 @@
 //! Expand JSON derives into ordinary, hygienic trait implementations before binding.
-use crate::parser::ast::*;
+use crate::core::types::{ParameterKind, Type, TypeApplication, TypeParameter};
+use crate::parser::ast::{
+    AttributeValue, Expr, FieldInit, FnDef, ImplDef, Import, Literal, MatchArm, MethodCall, Module,
+    NoEscape, Param, Pattern, PayloadPattern, RecordDef, UnaryOp,
+};
 use crate::{Error, ErrorCode, ErrorPhase, Span};
 use std::sync::Arc;
 

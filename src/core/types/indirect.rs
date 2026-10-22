@@ -1,10 +1,9 @@
 //! Finite nominal identities behind references. Definitions stay in the module's
 //! nominal table, so recursive object types do not create reference-count cycles.
 use super::*;
-use crate::core::types::{EnumType, RecordType};
 use std::sync::Arc;
 
-pub(super) fn shallow(ty: &Type, arguments: Vec<crate::core::types::GenericArgument>) -> Type {
+pub(super) fn shallow(ty: &Type, arguments: Vec<GenericArgument>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
             array: r.array,
@@ -316,7 +315,7 @@ pub(crate) fn materialize(
     struct Cache {
         records: HashMap<*const RecordType, Type>,
         enums: HashMap<*const EnumType, Type>,
-        tuples: HashMap<*const crate::core::types::TupleType, Type>,
+        tuples: HashMap<*const TupleType, Type>,
     }
     fn visit(
         ty: &Type,
@@ -491,18 +490,16 @@ pub(crate) fn validate_elements(
 
 // Alias targets can still contain unresolved names. Substitute their syntax
 // before resolving, without prematurely asking for an inline value layout.
-pub(crate) fn substitute_syntax(ty: &Type, arguments: &crate::core::types::Substitutions) -> Type {
+pub(crate) fn substitute_syntax(ty: &Type, arguments: &Substitutions) -> Type {
     match ty {
-        Type::FixedArray(a) => Type::FixedArray(Arc::new(crate::core::types::FixedArrayType {
+        Type::FixedArray(a) => Type::FixedArray(Arc::new(FixedArrayType {
             element: substitute_syntax(&a.element, arguments),
             length: arguments.constant(&a.length),
         })),
-        Type::FixedArrayInit(a) => {
-            Type::FixedArrayInit(Arc::new(crate::core::types::FixedArrayType {
-                element: substitute_syntax(&a.element, arguments),
-                length: arguments.constant(&a.length),
-            }))
-        }
+        Type::FixedArrayInit(a) => Type::FixedArrayInit(Arc::new(FixedArrayType {
+            element: substitute_syntax(&a.element, arguments),
+            length: arguments.constant(&a.length),
+        })),
         Type::Function(signature) => Type::function_with_contract(
             signature
                 .signature
@@ -533,7 +530,7 @@ pub(crate) fn substitute_syntax(ty: &Type, arguments: &crate::core::types::Subst
                 .map(|t| substitute_syntax(t, arguments))
                 .collect(),
         ),
-        Type::Applied(a) => Type::Applied(Arc::new(crate::core::types::TypeApplication {
+        Type::Applied(a) => Type::Applied(Arc::new(TypeApplication {
             name: a.name.clone(),
             arguments: a
                 .arguments
@@ -560,10 +557,9 @@ pub(crate) fn substitute_syntax(ty: &Type, arguments: &crate::core::types::Subst
 }
 
 pub(crate) fn substitute_argument_syntax(
-    a: &crate::core::types::GenericArgument,
-    s: &crate::core::types::Substitutions,
-) -> crate::core::types::GenericArgument {
-    use crate::core::types::GenericArgument;
+    a: &GenericArgument,
+    s: &Substitutions,
+) -> GenericArgument {
     match a {
         GenericArgument::Type(t) => GenericArgument::Type(substitute_syntax(t, s)),
         GenericArgument::Const(c) => GenericArgument::Const(s.constant(c)),

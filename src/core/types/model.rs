@@ -2,6 +2,7 @@
 //!
 //! Parsed annotations and resolved types share identities and storage metadata;
 //! AST declarations and expressions remain in `parser::ast`.
+use super::walk::{TypeEdges, TypeWalk};
 use crate::Span;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -162,7 +163,7 @@ impl Eq for DynTraitType {}
 
 impl Type {
     pub(crate) fn contains_fixed_array(&self) -> bool {
-        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Fields)
+        TypeWalk::new(self, TypeEdges::Fields)
             .any(|t| matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_)))
     }
     pub(crate) fn is_explicit_arena(&self) -> bool {
@@ -170,8 +171,7 @@ impl Type {
     }
 
     pub(crate) fn contains_explicit_arena(&self) -> bool {
-        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Fields)
-            .any(Type::is_explicit_arena)
+        TypeWalk::new(self, TypeEdges::Fields).any(Type::is_explicit_arena)
     }
 
     pub(crate) fn is_domain_capability(&self) -> bool {
@@ -190,11 +190,9 @@ impl Type {
             | Self::Projection(_)
             | Self::Buffer(_)
             | Self::BufferElement(_)
-            | Self::BufferSlice(_) => crate::core::types::walk::TypeWalk::new(
-                self,
-                crate::core::types::walk::TypeEdges::Fields,
-            )
-            .any(|ty| matches!(ty, Self::DynTrait(_))),
+            | Self::BufferSlice(_) => {
+                TypeWalk::new(self, TypeEdges::Fields).any(|ty| matches!(ty, Self::DynTrait(_)))
+            }
             _ => false,
         }
     }
@@ -211,8 +209,7 @@ impl Type {
         self.closure_info().is_some() || self.is_callable_parameter()
     }
     pub(crate) fn contains_closures(&self) -> bool {
-        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Storage)
-            .any(Type::is_closure_value)
+        TypeWalk::new(self, TypeEdges::Storage).any(Type::is_closure_value)
     }
     pub(crate) fn closure_info(&self) -> Option<&ClosureInfo> {
         match self {
@@ -1137,11 +1134,8 @@ impl Type {
         match self {
             Self::FixedArray(_) | Self::FixedArrayInit(_) => true,
             Self::Record(_) | Self::Tuple(_) | Self::Enum(_) => {
-                crate::core::types::walk::TypeWalk::new(
-                    self,
-                    crate::core::types::walk::TypeEdges::Inline,
-                )
-                .any(|t| matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_)))
+                TypeWalk::new(self, TypeEdges::Inline)
+                    .any(|t| matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_)))
             }
             _ => false,
         }

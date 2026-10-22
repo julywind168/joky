@@ -1,5 +1,9 @@
 //! Import scopes bind public spellings to declarations, independently of locals.
-use crate::{parser::ast::*, Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
+use crate::core::types::Type;
+use crate::{
+    parser::ast::{FnDef, Import, ImportMemberKind, IntrinsicAttribute, Item, Module},
+    Error, ErrorCode, ErrorPhase, Span, TypeRegistry,
+};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},

@@ -22,6 +22,11 @@ handwritten frame layout for the opaque C frame. Record complete frame sizes
 when registering generated entries, and retain every reachable code owner while
 a continuation can still execute. Keep failure outcomes distinct from completion.
 
+Import shared types from `core::types` inside the compiler; `parser::ast` re-exports
+preserve public compatibility. Import syntax nodes explicitly outside the parser.
+Type predicates describe storage capabilities; IR borrowing analysis checks actual
+loans and lifetimes, and `types::memory_layout` computes target-specific byte layouts.
+
 Keep backend-independent semantic checks in `core::ir`. Native code generation
 belongs in `backends::native`, shared by JIT and AOT. Direct and CPS lowering,
 and JIT and AOT backends, must agree on types, scope and evaluation order.

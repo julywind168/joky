@@ -195,7 +195,7 @@ impl TypeRegistry {
             if !same {
                 continue;
             }
-            let mut substitutions = crate::core::types::Substitutions::default();
+            let mut substitutions = Substitutions::default();
             super::super::unify(
                 &target,
                 ty,
@@ -273,13 +273,11 @@ impl TypeRegistry {
                                                 return Err(error(ErrorCode::TypeMismatch, "Conflicting associated-type equalities in JSON derive").with_span(span));
                                             }
                                         } else {
-                                            inferred.1.equalities.push(
-                                                crate::core::types::AssociatedEquality {
-                                                    name: equality.name.clone(),
-                                                    ty,
-                                                    span,
-                                                },
-                                            );
+                                            inferred.1.equalities.push(AssociatedEquality {
+                                                name: equality.name.clone(),
+                                                ty,
+                                                span,
+                                            });
                                         }
                                     }
                                     continue;

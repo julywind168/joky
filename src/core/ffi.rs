@@ -1,5 +1,11 @@
 //! Synchronous C references and opaque Ptr values, separate from the legacy host ABI.
-use crate::{parser::ast::*, Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry};
+use crate::core::types::{ConstArgument, FixedArrayType, Type};
+use crate::{
+    parser::ast::{
+        Attribute, AttributeArgument, AttributeValue, ExternFnDecl, Item, Module, RecordDef,
+    },
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry,
+};
 use std::collections::HashMap;
 
 /// The initial portable adapter supports zero through four pointer inputs.

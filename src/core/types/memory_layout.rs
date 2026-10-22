@@ -3,7 +3,7 @@
 //! These descriptions do not allocate storage, change existing lowering, or
 //! establish C compatibility. Query resolved types after alias normalization and
 //! specialization; a stored type parameter has no concrete byte layout yet.
-use crate::core::types::{EnumType, RecordType, TupleType, Type};
+use super::{ConstArgument, EnumType, FixedArrayType, RecordType, TupleType, Type};
 use std::{collections::HashMap, sync::Arc};
 
 const MAX_MEMBERS: usize = 65_536;
@@ -121,7 +121,7 @@ pub struct VariantMemoryLayout {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum AggregateKey {
-    Array(*const crate::core::types::FixedArrayType),
+    Array(*const FixedArrayType),
     Record(*const RecordType),
     Enum(*const EnumType),
     Tuple(*const TupleType),
@@ -197,7 +197,7 @@ impl LayoutContext {
             if !self.visiting.insert(key) {
                 return Err(MemoryLayoutError::RecursiveType);
             }
-            let crate::core::types::ConstArgument::Value(length) = array.length else {
+            let ConstArgument::Value(length) = array.length else {
                 return Err(MemoryLayoutError::UnsupportedType);
             };
             if length > super::fixed_array::MAX_LENGTH {
