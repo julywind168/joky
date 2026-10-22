@@ -136,7 +136,9 @@ shutdown
 按关注点阅读示例：
 
 - [chat_contract.jk](examples/chat_contract.jk)：共享类型、入口契约和 `defaults()` 配置。
-- [chat_logic.jk](examples/chat_logic.jk)：状态与业务；收费看 `speak`，换房看 `change_membership`。
+- [chat_logic.jk](examples/chat_logic.jk)：从 `dispatch`／`handle_line` 进入；收费看 `say`，
+  换房看 `join`，离开与断线看 `leave`。重试／淘汰集中在 `run_command`／`retry_command`，
+  房间创建、就绪与回收集中在文件后半部分。
 - [chat.jk](examples/chat.jk)：连接生命周期、房间初始化和服务启动。
 - [chat_admin.jk](examples/chat_admin.jk)：独立的发布与停机协议。
 

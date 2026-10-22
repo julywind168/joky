@@ -6,7 +6,6 @@ import joky/task
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 
-
 struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 #state
 struct Account { route: Route, room: UInt64, balance_cents: UInt64 }
@@ -21,10 +20,8 @@ fn make_catalog(_: Unit) -> Catalog { Catalog { rooms: Array.new::<RoomEntry>() 
 fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>(), retired: false } }
 fn make_account(account: Account) -> Account { account }
 fn account_view(state: &Account) -> Account { *state }
-fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
-    if message.is_empty() { "{kind} {room} {id}\n" }
-    else { "{kind} {room} {id} {message}\n" }
-}
+
+// Protocol: decode once, then run one command through bounded recovery.
 impl Command {
     fn clone(&self) -> Command {
         match self {
@@ -34,18 +31,287 @@ impl Command {
         }
     }
 }
-fn copy_ids(ids: &Array<UInt64>) -> Array<UInt64> {
-    var copy = Array.new::<UInt64>()
-    var i: UInt64 = 0
-    while i < ids.len() { copy.push(ids.get(i)!); i += 1 }
-    copy
-}
-fn contains(ids: &Array<UInt64>, id: UInt64) -> Bool {
-    var i: UInt64 = 0
-    while i < ids.len() { if ids.get(i)! == id { return true }; i += 1 }
-    false
+fn parse(line: String) -> Command {
+    let separator = line.find(" ").unwrap_or(line.byte_length())
+    let verb = line.substring(0, separator)!
+    let argument = if separator < line.byte_length() { line.substring(separator + 1, line.byte_length())! } else { "" }
+    if verb.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() {
+        Command.Join(argument)
+    } else if line.equals("balance") { Command.Balance }
+    else if line.equals("leave") { Command.Leave }
+    else if verb.equals("say") && !argument.is_empty() { Command.Say(argument) }
+    else { Command.Invalid }
 }
 
+fn handle_line(ctx: Host, id: UInt64, line: String) @suspends -> Bool {
+    run_command(ctx, id, parse(line))
+}
+fn split(request: Call) -> (Host, UInt64, Action) {
+    let Call { host, id, action } = request
+    (host, id, action)
+}
+fn dispatch(request: Call) @suspends -> Bool {
+    let (ctx, id, action) = split(request)
+    match action {
+        Action.Welcome => run_command(ctx, id, Command.Welcome),
+        Action.Line(line) => handle_line(ctx, id, line),
+        Action.Disconnect => run_command(ctx, id, Command.Disconnect)
+    }
+}
+
+// Command operations keep validation, business rules and messages in one version.
+enum Retry { Changed, Stopped }
+type Attempt = Result<Result<Route, Retry>, domain.DomainAccessError>
+fn check_account(account: &Account, expected: UInt64) -> Result<Route, Retry> {
+    if !account.route.live { Err(Retry.Stopped) }
+    else if account.room != expected { Err(Retry.Changed) }
+    else { Ok(account.route) }
+}
+fn check_member(account: &Account, room: &Room, expected: UInt64) -> Result<Route, Retry> {
+    let route = check_account(account, expected)?
+    if member(room, route.id) { Ok(route) } else { Err(Retry.Stopped) }
+}
+fn reply(account: domain.WriteHandle<Account>, command: &Command, excluded: &Array<UInt64>) @suspends -> Attempt {
+    let command = command.clone()
+    let excluded = copy_ids(excluded)
+    when "reply" (mut account) {
+        if !account.route.live { Result.Err::<Route, Retry>(Retry.Stopped) }
+        else {
+            let id = account.route.id
+            let message = match command {
+                Welcome => "welcome {id}\n",
+                Balance => { let yuan = account.balance_cents / 100; "balance {yuan}\n" },
+                _ => "error use join <room>, leave, say <message>, or balance\n"
+            }
+            deliver(account.route, &message, &excluded)
+            Result.Ok::<Route, Retry>(account.route)
+        }
+    }
+}
+fn say(ctx: Host, account: domain.WriteHandle<Account>, expected: UInt64, text: &String, excluded: &Array<UInt64>) @suspends -> Attempt {
+    let text = text.clone()
+    let excluded = copy_ids(excluded)
+    if expected == 0 {
+        return when "outside" (mut account) {
+            let route = check_account(account, expected)?
+            deliver(route, "error join a room first\n", &excluded)
+            Result.Ok::<Route, Retry>(route)
+        }
+    }
+    let room = match room_handle(ctx, expected) { Some(room) => room, None => return Err(domain.DomainAccessError.Closed) }
+    when "say" (mut account, room) {
+        let route = check_member(account, room, expected)?
+        if account.balance_cents < 100 { deliver(route, "error insufficient balance\n", &excluded) }
+        else {
+            account.balance_cents -= 100
+            let message = say_message(&room.name, route.id, &text)
+            broadcast(room, &message, 0, &excluded)
+        }
+        Result.Ok::<Route, Retry>(route)
+    }
+}
+fn enter(account: &mut Account, room: &mut Room, key: UInt64, name: &String, excluded: &Array<UInt64>) -> Result<Route, Retry> {
+    if room.retired || !room.name.equals(name) { return Err(Retry.Changed) }
+    let route = account.route
+    let message = event("joined", &room.name, route.id, "")
+    broadcast(room, &message, 0, excluded)
+    deliver(route, &message, excluded)
+    add_member(room, route)
+    account.room = key
+    Ok(route)
+}
+fn depart(account: &mut Account, room: &mut Room, closing: Bool, excluded: &Array<UInt64>) {
+    let id = account.route.id
+    let message = event("left", &room.name, id, "")
+    broadcast(room, &message, if closing { id } else { 0 }, excluded)
+    remove_member(room, id)
+    account.room = 0
+}
+fn join(ctx: Host, account: domain.WriteHandle<Account>, expected: UInt64, key: UInt64, name: &String, excluded: &Array<UInt64>) @suspends -> Attempt {
+    let next = match room_handle(ctx, key) { Some(room) => room, None => return Err(domain.DomainAccessError.Closed) }
+    let name = name.clone()
+    let excluded = copy_ids(excluded)
+    if expected == key {
+        return when "already joined" (mut account, next) {
+            let route = check_member(account, next, expected)?
+            deliver(route, "error already joined\n", &excluded)
+            Result.Ok::<Route, Retry>(route)
+        }
+    }
+    if expected == 0 {
+        return when "join" (mut account, mut next) {
+            check_account(account, expected)?
+            enter(account, next, key, &name, &excluded)
+        }
+    }
+    let old = match room_handle(ctx, expected) { Some(room) => room, None => return Err(domain.DomainAccessError.Closed) }
+    when "move" (mut account, mut old, mut next) {
+        check_member(account, old, expected)?
+        depart(account, old, false, &excluded)
+        enter(account, next, key, &name, &excluded)
+    }
+}
+fn stop(account: &mut Account) {
+    account.route.live = false
+    let signal = Array.new::<UInt8>()
+    outbox.emit(account.route.stop, &signal)
+}
+fn leave(ctx: Host, account: domain.WriteHandle<Account>, expected: UInt64, closing: Bool, excluded: &Array<UInt64>) @suspends -> Attempt {
+    let excluded = copy_ids(excluded)
+    if expected == 0 {
+        return when "outside" (mut account) {
+            let route = check_account(account, expected)?
+            if closing { stop(account) } else { deliver(route, "error join a room first\n", &excluded) }
+            Result.Ok::<Route, Retry>(route)
+        }
+    }
+    let room = match room_handle(ctx, expected) { Some(room) => room, None => return Err(domain.DomainAccessError.Closed) }
+    when "leave" (mut account, mut room) {
+        let route = check_member(account, room, expected)?
+        depart(account, room, closing, &excluded)
+        if closing { stop(account) }
+        Result.Ok::<Route, Retry>(route)
+    }
+}
+
+// Recovery: retry complete resolutions and remove slow recipients before replay.
+struct Request { ctx: Host, id: UInt64, command: Command, excluded: Array<UInt64> }
+fn split_request(input: Request) -> (Host, UInt64, Command, Array<UInt64>) {
+    let Request { ctx, id, command, excluded } = input
+    (ctx, id, command, excluded)
+}
+enum Step { Done(Bool), Slow(UInt64) }
+struct Work { id: UInt64, command: Command }
+fn split_work(work: Work) -> (UInt64, Command) { let Work { id, command } = work; (id, command) }
+fn run_command(ctx: Host, id: UInt64, command: Command) @suspends -> Bool {
+    var pending = Array.new::<Work>()
+    pending.push(Work { id: id, command: command })
+    var excluded = Array.new::<UInt64>()
+    var evictions: UInt64 = 0
+    var answer = false
+    while !pending.is_empty() {
+        let (current, command) = split_work(pending.pop()!)
+        let account = match domain.lookup_write::<Account>(ctx.accounts, current) { Some(h) => h, None => return false }
+        let input = Request { ctx: ctx, id: current, command: command.clone(), excluded: copy_ids(&excluded) }
+        let step = match domain.request(account, retry_command, input) { Ok(step) => step, Err(_) => return false }
+        match step {
+            Done(value) => {
+                if !value && !pending.is_empty() {
+                    // A failed eviction cannot silently turn into a skipped recipient.
+                    forget(Client { host: ctx, id: current })
+                    if domain.lookup_write::<Account>(ctx.accounts, current).is_some() { return false }
+                }
+                answer = value
+            },
+            Slow(slow) => {
+                if evictions >= ctx.config.max_evictions || contains(&excluded, slow) { return false }
+                evictions += 1
+                match &command { Disconnect => { if !contains(&excluded, current) { excluded.push(current) } }, _ => {} }
+                excluded.push(slow)
+                pending.push(Work { id: current, command: command })
+                pending.push(Work { id: slow, command: Command.Disconnect })
+            }
+        }
+    }
+    answer
+}
+fn target_member(room: &Room, token: UInt64) -> UInt64 {
+    var i: UInt64 = 0
+    while i < room.members.len() {
+        let route = room.members.get(i)!
+        if route.live && route.output.identity() == token { return route.id }
+        i += 1
+    }
+    0
+}
+fn slow_client(ctx: Host, value: Account, next_key: UInt64, token: UInt64) @suspends -> UInt64 {
+    if value.route.output.identity() == token { return value.route.id }
+    match room_handle(ctx, value.room) {
+        Some(room) => { let id = domain.query_from(room.read_only(), target_member, token).unwrap_or(0); if id != 0 { return id } }, None => {}
+    }
+    match room_handle(ctx, next_key) {
+        Some(room) => domain.query_from(room.read_only(), target_member, token).unwrap_or(0), None => 0
+    }
+}
+fn retry_command(input: Request) @suspends -> Step {
+    let (ctx, id, command, excluded) = split_request(input)
+    var tries: UInt64 = 0
+    while tries < ctx.config.retries {
+        tries += 1
+        // Directory resolution and room creation belong to the complete retry boundary.
+        let next_key = match &command { Join(name) => ensure_room(ctx, name), _ => 0 }
+        if match &command { Join(_) => next_key == 0, _ => false } { return Step.Done(false) }
+        let account = match domain.lookup_write::<Account>(ctx.accounts, id) { Some(handle) => handle, None => return Step.Done(false) }
+        let value = match domain.read_from(account.read_only(), account_view) { Ok(value) => value, Err(_) => return Step.Done(false) }
+        if !value.route.live { return Step.Done(false) }
+        let result = match &command {
+            Say(text) => say(ctx, account, value.room, text, &excluded),
+            Join(name) => join(ctx, account, value.room, next_key, name, &excluded),
+            Leave => leave(ctx, account, value.room, false, &excluded),
+            Disconnect => leave(ctx, account, value.room, true, &excluded),
+            _ => reply(account, &command, &excluded)
+        }
+        let failed = match result {
+            Ok(Ok(route)) => {
+                match &command { Disconnect => { outbox.close(route.stop); outbox.close(route.output) }, _ => {} }
+                match &command { Join(_) => reclaim(ctx, value.room), Leave => reclaim(ctx, value.room), Disconnect => reclaim(ctx, value.room), _ => {} }
+                return Step.Done(true)
+            },
+            Ok(Err(Changed)) => continue,
+            Err(Closed) => continue,
+            Err(OutboxFull(token)) => token, Err(OutboxClosed(token)) => token,
+            _ => return Step.Done(false)
+        }
+        let slow = slow_client(ctx, value, next_key, failed)
+        if slow == 0 { return Step.Done(false) }
+        return Step.Slow(slow)
+    }
+    Step.Done(false)
+}
+
+// Membership cleanup has no queue dependency, including after a failed Script call.
+fn forget(client: Client) @suspends {
+    let ctx = client.host
+    let id = client.id
+    var tries: UInt64 = 0
+    while tries < ctx.config.retries {
+        tries += 1
+        let account = match domain.lookup_write::<Account>(ctx.accounts, id) { Some(h) => h, None => return }
+        let value = match domain.read_from(account.read_only(), account_view) { Ok(v) => v, Err(_) => return }
+        let key = value.room
+        let removed = match room_handle(ctx, key) {
+            Some(room) => when "forget member" (mut account, mut room) {
+                if account.room != key { false }
+                else { remove_member(room, id); account.room = 0; account.route.live = false; true }
+            },
+            None => when "forget account" (mut account) {
+                if account.room != key { false }
+                else { account.room = 0; account.route.live = false; true }
+            }
+        }
+        if removed.unwrap_or(false) {
+            outbox.close(value.route.stop); outbox.close(value.route.output)
+            ctx.accounts.remove(id, account.read_only());
+            reclaim(ctx, key)
+            return
+        }
+    }
+}
+
+// Room lifetime: reserve, create, publish readiness, and retire by identity.
+fn init_account(input: AccountInit) @suspends {
+    let initial = Account { route: Route { live: true, id: input.id, output: input.output, stop: input.stop }, room: 0, balance_cents: 500 }
+    let owner = domain.create(make_account, initial)
+    input.host.accounts.insert(input.id, owner.handle())!
+    input.owners.insert_owned(input.id, owner)!
+}
+fn initialize(host: Host) @suspends {
+    host.directory.insert_owned(1, domain.create(make_catalog, {}))!
+}
+
+fn room_handle(ctx: Host, key: UInt64) @suspends -> Option<domain.WriteHandle<Room>> {
+    if key == 0 { None } else { domain.lookup_write::<Room>(ctx.rooms, key) }
+}
 // Catalog writes only resolve/create rooms. Ordinary sends never read this root.
 fn find_room(state: &Catalog, name: String) -> (UInt64, Bool) {
     var i: UInt64 = 0
@@ -55,21 +321,6 @@ fn find_room(state: &Catalog, name: String) -> (UInt64, Bool) {
         i += 1
     }
     (0, false)
-}
-fn reserve_room(state: &mut Catalog, input: (String, outbox.Handle)) -> Bool {
-    let (name, waiter) = input
-    let (key, _) = find_room(state, name.clone())
-    if key == 0 {
-        var waiters = Array.new::<outbox.Handle>(); waiters.push(waiter)
-        state.rooms.push(RoomEntry { name: name, status: RoomStatus.Pending, waiters: waiters })
-        true
-    } else {
-        let entry = state.rooms.borrow_mut_ref(key - 1)
-        let restart = match entry.status { Dormant => true, _ => false }
-        if restart { entry.status = RoomStatus.Pending }
-        entry.waiters.push(waiter)
-        restart
-    }
 }
 fn take_room(state: &mut Catalog, host: Host) -> Option<RoomInit> {
     var i: UInt64 = 0
@@ -83,27 +334,29 @@ fn take_room(state: &mut Catalog, host: Host) -> Option<RoomInit> {
     }
     None
 }
-fn finish_room(state: &mut Catalog, key: UInt64) -> Array<outbox.Handle> {
+fn finish_room(state: &mut Catalog, result: (UInt64, Bool)) -> Array<outbox.Handle> {
+    let (key, available) = result
     let entry = state.rooms.borrow_mut_ref(key - 1)
-    entry.status = RoomStatus.Ready
+    entry.status = if available { RoomStatus.Ready } else { RoomStatus.Dormant }
     var waiters = Array.new::<outbox.Handle>()
     mem.swap(&mut entry.waiters, &mut waiters)
     waiters
 }
-fn waiter_count(catalog: &Catalog, key: UInt64) -> UInt64 {
-    let entry = catalog.rooms.borrow_ref(key - 1)
-    entry.waiters.len()
-}
 fn resolve_room(catalog: &mut Catalog, room_name: String, waiter: outbox.Handle, request: outbox.Handle, limit: UInt64, clients: UInt64) -> Result<UInt64, Unit> {
     let (key, available) = find_room(catalog, room_name.clone())
-    if available { Ok(key) }
-    else if key == 0 && catalog.rooms.len() >= limit { Err({}) }
-    else if key != 0 && waiter_count(catalog, key) >= clients { Err({}) }
-    else {
-        reserve_room(catalog, (room_name, waiter));
-        let signal = Array.new::<UInt8>(); outbox.emit(request, &signal)
-        Ok(0)
+    if available { return Ok(key) }
+    if key == 0 {
+        if catalog.rooms.len() >= limit { return Err({}) }
+        var waiters = Array.new::<outbox.Handle>(); waiters.push(waiter)
+        catalog.rooms.push(RoomEntry { name: room_name, status: RoomStatus.Pending, waiters: waiters })
+    } else {
+        let entry = catalog.rooms.borrow_mut_ref(key - 1)
+        if entry.waiters.len() >= clients { return Err({}) }
+        if match entry.status { Dormant => true, _ => false } { entry.status = RoomStatus.Pending }
+        entry.waiters.push(waiter)
     }
+    let signal = Array.new::<UInt8>(); outbox.emit(request, &signal)
+    Ok(0)
 }
 fn room_ready(ready: &mut outbox.Mailbox) @suspends { ready.receive(); }
 fn discard_waiter(catalog: &mut Catalog, input: (String, UInt64)) {
@@ -146,27 +399,16 @@ fn init_room(input: RoomInit) @suspends {
     let (host, key, name) = split_room(input)
     host.rooms.insert_owned(key, domain.create(make_room, name))!
 }
-fn open_room(input: RoomKey) @suspends {
-    let catalog = domain.lookup_write::<Catalog>(input.host.directory, 1)!
-    let waiters = domain.write_to(catalog, finish_room, input.key)!
+fn complete_room(input: RoomKey, available: Bool) @suspends -> Result<Unit, domain.DomainAccessError> {
+    let catalog = match domain.lookup_write::<Catalog>(input.host.directory, 1) { Some(h) => h, None => return Err(domain.DomainAccessError.Closed) }
+    let key = input.key
+    let waiters = when "complete room" (mut catalog) { finish_room(catalog, (key, available)) }?
     var i: UInt64 = 0
     while i < waiters.len() { outbox.close(waiters.get(i)!); i += 1 }
+    Ok({})
 }
-fn fail_room(input: RoomKey) @suspends {
-    let catalog = match domain.lookup_write::<Catalog>(input.host.directory, 1) { Some(h) => h, None => return }
-    let key = input.key
-    let waiters = when "fail room" (mut catalog) {
-        let entry = catalog.rooms.borrow_mut_ref(key - 1)
-        entry.status = RoomStatus.Dormant
-        var waiters = Array.new::<outbox.Handle>()
-        mem.swap(&mut entry.waiters, &mut waiters)
-        waiters
-    }
-    match waiters { Ok(waiters) => {
-        var i: UInt64 = 0
-        while i < waiters.len() { outbox.close(waiters.get(i)!); i += 1 }
-    }, Err(_) => {} }
-}
+fn open_room(input: RoomKey) @suspends { complete_room(input, true)!; }
+fn fail_room(input: RoomKey) @suspends { complete_room(input, false); }
 fn empty(room: &Room) -> Bool {
     var i: UInt64 = 0
     while i < room.members.len() { if room.members.get(i)!.live { return false }; i += 1 }
@@ -186,6 +428,24 @@ fn reclaim(ctx: Host, key: UInt64) @suspends {
     }
     if retired.unwrap_or(false) { ctx.rooms.remove(key, room.read_only()); }
 }
+
+// State and message helpers used inside atomic operations.
+fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
+    if message.is_empty() { "{kind} {room} {id}\n" }
+    else { "{kind} {room} {id} {message}\n" }
+}
+fn copy_ids(ids: &Array<UInt64>) -> Array<UInt64> {
+    var copy = Array.new::<UInt64>()
+    var i: UInt64 = 0
+    while i < ids.len() { copy.push(ids.get(i)!); i += 1 }
+    copy
+}
+fn contains(ids: &Array<UInt64>, id: UInt64) -> Bool {
+    var i: UInt64 = 0
+    while i < ids.len() { if ids.get(i)! == id { return true }; i += 1 }
+    false
+}
+
 fn deliver(route: Route, message: &String, excluded: &Array<UInt64>) {
     if route.live && !contains(excluded, route.id) {
         let bytes = message.clone().into_bytes()
@@ -226,278 +486,4 @@ fn member(room: &Room, id: UInt64) -> Bool {
         i += 1
     }
     false
-}
-enum Retry { Changed, Stopped }
-fn changes_membership(command: &Command) -> Bool {
-    match command { Join(_) => true, Leave => true, Disconnect => true, _ => false }
-}
-fn speak(account: &mut Account, old: &Room, expected: UInt64, command: &Command, excluded: &Array<UInt64>) -> Result<Route, Retry> {
-    if !account.route.live { return Err(Retry.Stopped) }
-    if account.room != expected { return Err(Retry.Changed) }
-    if expected != 0 && !member(old, account.route.id) { return Err(Retry.Stopped) }
-    let route = account.route
-    let id = route.id
-    match command {
-        Say(text) => {
-            if account.room == 0 { deliver(route, "error join a room first\n", excluded) }
-            else if account.balance_cents < 100 { deliver(route, "error insufficient balance\n", excluded) }
-            else {
-                account.balance_cents -= 100
-                let message = say_message(&old.name, id, text)
-                broadcast(old, &message, 0, excluded)
-            }
-        },
-        Welcome => { let message = "welcome {id}\n"; deliver(route, &message, excluded) },
-        Balance => { let yuan = account.balance_cents / 100; let message = "balance {yuan}\n"; deliver(route, &message, excluded) },
-        Invalid => { deliver(route, "error use join <room>, leave, say <message>, or balance\n", excluded) },
-        _ => return Err(Retry.Stopped)
-    }
-    Ok(route)
-}
-// All decisions, mutations and message construction run in the selected operation version.
-fn change_membership(account: &mut Account, old: &mut Room, next: &mut Room, expected: UInt64, next_key: UInt64, command: &Command, excluded: &Array<UInt64>) -> Result<Route, Retry> {
-    if !account.route.live { return Err(Retry.Stopped) }
-    if account.room != expected { return Err(Retry.Changed) }
-    if expected != 0 && !member(old, account.route.id) { return Err(Retry.Stopped) }
-    let route = account.route
-    let id = route.id
-    match command {
-        Join(name) => {
-            if account.room != next_key && (next.retired || !next.name.equals(name)) { return Err(Retry.Changed) }
-            if account.room == next_key { deliver(route, "error already joined\n", excluded) }
-            else {
-                if account.room != 0 {
-                    let message = event("left", &old.name, id, "")
-                    broadcast(old, &message, 0, excluded)
-                    remove_member(old, id)
-                }
-                let message = event("joined", &next.name, id, "")
-                broadcast(next, &message, 0, excluded)
-                deliver(route, &message, excluded)
-                add_member(next, route)
-                account.room = next_key
-            }
-        },
-        Leave => {
-            if account.room == 0 { deliver(route, "error join a room first\n", excluded) }
-            else {
-                let message = event("left", &old.name, id, "")
-                broadcast(old, &message, 0, excluded)
-                remove_member(old, id)
-                account.room = 0
-            }
-        },
-        Disconnect => {
-            if account.room != 0 {
-                let message = event("left", &old.name, id, "")
-                broadcast(old, &message, id, excluded)
-                remove_member(old, id)
-            }
-            account.room = 0
-            account.route.live = false
-            let signal = Array.new::<UInt8>()
-            outbox.emit(route.stop, &signal)
-        },
-        _ => return Err(Retry.Stopped)
-    }
-    Ok(route)
-}
-fn room_handle(ctx: Host, key: UInt64) @suspends -> Option<domain.WriteHandle<Room>> {
-    if key == 0 { None } else { domain.lookup_write::<Room>(ctx.rooms, key) }
-}
-struct Request { ctx: Host, id: UInt64, command: Command, excluded: Array<UInt64> }
-fn split_request(input: Request) -> (Host, UInt64, Command, Array<UInt64>) {
-    let Request { ctx, id, command, excluded } = input
-    (ctx, id, command, excluded)
-}
-enum Step { Done(Bool), Slow(UInt64) }
-struct Work { id: UInt64, command: Command }
-fn split_work(work: Work) -> (UInt64, Command) { let Work { id, command } = work; (id, command) }
-fn publish(ctx: Host, id: UInt64, command: Command, excluded: &Array<UInt64>) @suspends -> Bool {
-    var pending = Array.new::<Work>()
-    pending.push(Work { id: id, command: command })
-    var excluded = copy_ids(excluded)
-    var evictions: UInt64 = 0
-    var answer = false
-    while !pending.is_empty() {
-        let (current, command) = split_work(pending.pop()!)
-        let account = match domain.lookup_write::<Account>(ctx.accounts, current) { Some(h) => h, None => return false }
-        let input = Request { ctx: ctx, id: current, command: command.clone(), excluded: copy_ids(&excluded) }
-        let step = match domain.request(account, execute, input) { Ok(step) => step, Err(_) => return false }
-        match step {
-            Done(value) => {
-                if !value && !pending.is_empty() {
-                    // A failed eviction cannot silently turn into a skipped recipient.
-                    forget(Client { host: ctx, id: current })
-                    if domain.lookup_write::<Account>(ctx.accounts, current).is_some() { return false }
-                }
-                answer = value
-            },
-            Slow(slow) => {
-                if evictions >= ctx.config.max_evictions || contains(&excluded, slow) { return false }
-                evictions += 1
-                match &command { Disconnect => { if !contains(&excluded, current) { excluded.push(current) } }, _ => {} }
-                excluded.push(slow)
-                pending.push(Work { id: current, command: command })
-                pending.push(Work { id: slow, command: Command.Disconnect })
-            }
-        }
-    }
-    answer
-}
-fn attempt(ctx: Host, account: domain.WriteHandle<Account>, expected: UInt64, next_key: UInt64, command: &Command, excluded: &Array<UInt64>) @suspends -> Result<Result<Route, Retry>, domain.DomainAccessError> {
-    let old_handle = room_handle(ctx, expected)
-    let next_handle = if next_key == expected { None } else { room_handle(ctx, next_key) }
-    if expected != 0 && old_handle.is_none() { return Err(domain.DomainAccessError.Closed) }
-    if next_key != 0 && next_key != expected && next_handle.is_none() { return Err(domain.DomainAccessError.Closed) }
-    let command = command.clone()
-    let excluded = copy_ids(excluded)
-    if !changes_membership(&command) {
-        return match old_handle {
-            Some(old) => when "send" (mut account, old) {
-                speak(account, old, expected, &command, &excluded)
-            },
-            None => when "unjoined" (mut account) {
-                let empty = make_room("")
-                speak(account, &empty, expected, &command, &excluded)
-            }
-        }
-    }
-    match old_handle {
-        Some(old) => match next_handle {
-            Some(next) => when "move" (mut account, mut old, mut next) {
-                change_membership(account, old, next, expected, next_key, &command, &excluded)
-            },
-            None => when "in room" (mut account, mut old) {
-                var empty = make_room("")
-                change_membership(account, old, &mut empty, expected, next_key, &command, &excluded)
-            }
-        },
-        None => match next_handle {
-            Some(next) => when "first join" (mut account, mut next) {
-                var empty = make_room("")
-                change_membership(account, &mut empty, next, expected, next_key, &command, &excluded)
-            },
-            None => when "account" (mut account) {
-                var old = make_room("")
-                var next = make_room("")
-                change_membership(account, &mut old, &mut next, expected, next_key, &command, &excluded)
-            }
-        }
-    }
-}
-fn target_member(room: &Room, token: UInt64) -> UInt64 {
-    var i: UInt64 = 0
-    while i < room.members.len() {
-        let route = room.members.get(i)!
-        if route.live && route.output.identity() == token { return route.id }
-        i += 1
-    }
-    0
-}
-fn slow_client(ctx: Host, value: Account, next_key: UInt64, token: UInt64) @suspends -> UInt64 {
-    if value.route.output.identity() == token { return value.route.id }
-    match room_handle(ctx, value.room) {
-        Some(room) => { let id = domain.query_from(room.read_only(), target_member, token).unwrap_or(0); if id != 0 { return id } }, None => {}
-    }
-    match room_handle(ctx, next_key) {
-        Some(room) => domain.query_from(room.read_only(), target_member, token).unwrap_or(0), None => 0
-    }
-}
-fn execute(input: Request) @suspends -> Step {
-    let (ctx, id, command, excluded) = split_request(input)
-    var tries: UInt64 = 0
-    while tries < ctx.config.retries {
-        tries += 1
-        // Directory resolution and room creation belong to the complete retry boundary.
-        let next_key = match &command { Join(name) => ensure_room(ctx, name), _ => 0 }
-        if match &command { Join(_) => next_key == 0, _ => false } { return Step.Done(false) }
-        let account = match domain.lookup_write::<Account>(ctx.accounts, id) { Some(handle) => handle, None => return Step.Done(false) }
-        let value = match domain.read_from(account.read_only(), account_view) { Ok(value) => value, Err(_) => return Step.Done(false) }
-        if !value.route.live { return Step.Done(false) }
-        let result = attempt(ctx, account, value.room, next_key, &command, &excluded)
-        let failed = match result {
-            Ok(Ok(route)) => {
-                match &command { Disconnect => { outbox.close(route.stop); outbox.close(route.output) }, _ => {} }
-                if changes_membership(&command) { reclaim(ctx, value.room) }
-                return Step.Done(true)
-            },
-            Ok(Err(Changed)) => continue,
-            Err(Closed) => continue,
-            Err(OutboxFull(token)) => token, Err(OutboxClosed(token)) => token,
-            _ => return Step.Done(false)
-        }
-        let slow = slow_client(ctx, value, next_key, failed)
-        if slow == 0 { return Step.Done(false) }
-        return Step.Slow(slow)
-    }
-    Step.Done(false)
-}
-
-fn parse(line: String) -> Command {
-    let separator = line.find(" ").unwrap_or(line.byte_length())
-    let verb = line.substring(0, separator)!
-    let argument = if separator < line.byte_length() { line.substring(separator + 1, line.byte_length())! } else { "" }
-    if verb.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() {
-        Command.Join(argument)
-    } else if line.equals("balance") { Command.Balance }
-    else if line.equals("leave") { Command.Leave }
-    else if verb.equals("say") && !argument.is_empty() { Command.Say(argument) }
-    else { Command.Invalid }
-}
-
-fn process(ctx: Host, id: UInt64, line: String) @suspends -> Bool {
-    let excluded = Array.new::<UInt64>()
-    publish(ctx, id, parse(line), &excluded)
-}
-fn split(request: Call) -> (Host, UInt64, Action) {
-    let Call { host, id, action } = request
-    (host, id, action)
-}
-fn dispatch(request: Call) @suspends -> Bool {
-    let (ctx, id, action) = split(request)
-    let excluded = Array.new::<UInt64>()
-    match action {
-        Action.Welcome => publish(ctx, id, Command.Welcome, &excluded),
-        Action.Line(line) => process(ctx, id, line),
-        Action.Disconnect => publish(ctx, id, Command.Disconnect, &excluded)
-    }
-}
-fn init_account(input: AccountInit) @suspends {
-    let initial = Account { route: Route { live: true, id: input.id, output: input.output, stop: input.stop }, room: 0, balance_cents: 500 }
-    let owner = domain.create(make_account, initial)
-    input.host.accounts.insert(input.id, owner.handle())!
-    input.owners.insert_owned(input.id, owner)!
-}
-fn initialize(host: Host) @suspends {
-    host.directory.insert_owned(1, domain.create(make_catalog, {}))!
-}
-
-// Membership cleanup has no queue dependency, including after a failed Script call.
-fn forget(client: Client) @suspends {
-    let ctx = client.host
-    let id = client.id
-    var tries: UInt64 = 0
-    while tries < ctx.config.retries {
-        tries += 1
-        let account = match domain.lookup_write::<Account>(ctx.accounts, id) { Some(h) => h, None => return }
-        let value = match domain.read_from(account.read_only(), account_view) { Ok(v) => v, Err(_) => return }
-        let key = value.room
-        let removed = match room_handle(ctx, key) {
-            Some(room) => when "forget member" (mut account, mut room) {
-                if account.room != key { false }
-                else { remove_member(room, id); account.room = 0; account.route.live = false; true }
-            },
-            None => when "forget account" (mut account) {
-                if account.room != key { false }
-                else { account.room = 0; account.route.live = false; true }
-            }
-        }
-        if removed.unwrap_or(false) {
-            outbox.close(value.route.stop); outbox.close(value.route.output)
-            ctx.accounts.remove(id, account.read_only());
-            reclaim(ctx, key)
-            return
-        }
-    }
 }

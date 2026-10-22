@@ -423,8 +423,8 @@ fn chat_real_tcp_on_all_backends() {
             1
         );
         let logic = logic.replace(
-            "Action.Line(line) => process(ctx, id, line),",
-            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; process(ctx, id, line) },",
+            "Action.Line(line) => handle_line(ctx, id, line),",
+            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; handle_line(ctx, id, line) },",
         );
         let logic = logic.replace(
             "if !value.route.live { return Step.Done(false) }",

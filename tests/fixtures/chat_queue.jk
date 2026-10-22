@@ -74,23 +74,23 @@ fn verify_conflicts_and_independence() @suspends {
     check.assert(balance(&alice) == 400, "unrelated state writes do not conflict")
     expect_message(&mut queue, "independent\n")
 }
-fn paid_send(ctx: Host) @suspends { check.assert(process(ctx, 1, "say concurrent"), "concurrent send handled") }
+fn paid_send(ctx: Host) @suspends { check.assert(handle_line(ctx, 1, "say concurrent"), "concurrent send handled") }
 fn verify_balance_race() @suspends {
     let f = fixture()
     var queue = outbox.create(16, 1024)
     let control = outbox.create(1, 0)
     let alice = test_account(f.ctx, 1, 0, queue.handle(), control.handle())
-    check.assert(process(f.ctx, 1, "say outside"), "error is a handled command")
+    check.assert(handle_line(f.ctx, 1, "say outside"), "error is a handled command")
     expect_message(&mut queue, "error join a room first\n")
     check.assert(balance(&alice) == 500, "no-room send is free")
-    check.assert(process(f.ctx, 1, "join r"), "join")
+    check.assert(handle_line(f.ctx, 1, "join r"), "join")
     expect_message(&mut queue, "joined r 1\n")
     parallel { | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) }
     var i: UInt64 = 0
     while i < 5 { expect_message(&mut queue, "message r 1 concurrent\n"); i += 1 }
     expect_message(&mut queue, "error insufficient balance\n")
     check.assert(balance(&alice) == 0, "six concurrent sends spend only five yuan")
-    check.assert(process(f.ctx, 1, "balance"), "query balance")
+    check.assert(handle_line(f.ctx, 1, "balance"), "query balance")
     expect_message(&mut queue, "balance 0\n")
 }
 fn verify_message_capacity() @suspends {
@@ -107,18 +107,18 @@ fn verify_message_capacity() @suspends {
     domain.write_to(alice.handle(), fund_capacity_test, {})!
     var i: UInt64 = 0
     while i < 64 {
-        check.assert(process(f.ctx, 1, "say fill"), "fill slow target")
+        check.assert(handle_line(f.ctx, 1, "say fill"), "fill slow target")
         expect_message(&mut alice_queue, "message r 1 fill\n")
         i += 1
     }
-    check.assert(process(f.ctx, 1, "say retry"), "retry after eviction")
+    check.assert(handle_line(f.ctx, 1, "say retry"), "retry after eviction")
     expect_message(&mut alice_queue, "left r 2\n")
     expect_message(&mut alice_queue, "message r 1 retry\n")
     check.assert(balance(&alice) == 3500, "failed full batch never double-charges")
     check.assert(bob_stop.receive().is_none(), "evicted session wakes")
     check.assert(bob_queue.receive().is_none(), "evicted output closes")
     check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "evicted account inactive")
-    check.assert(process(f.ctx, 3, "say alive"), "unrelated room survives")
+    check.assert(handle_line(f.ctx, 3, "say alive"), "unrelated room survives")
     expect_message(&mut carol_queue, "message other 3 alive\n")
     check.assert(balance(&carol) == 400, "other account pays independently")
 }
@@ -139,11 +139,11 @@ fn verify_byte_capacity() @suspends {
     let count = 65536 / expected.byte_length()
     i = 0
     while i < count {
-        check.assert(process(f.ctx, 1, "say {payload}"), "fill byte budget")
+        check.assert(handle_line(f.ctx, 1, "say {payload}"), "fill byte budget")
         expect_message(&mut alice_queue, expected.clone())
         i += 1
     }
-    check.assert(process(f.ctx, 1, "say {payload}"), "retry byte overflow")
+    check.assert(handle_line(f.ctx, 1, "say {payload}"), "retry byte overflow")
     expect_message(&mut alice_queue, "left r 2\n")
     expect_message(&mut alice_queue, expected.clone())
     check.assert(balance(&alice) == 10000 - (count + 1) * 100, "byte retry charges once")
@@ -158,11 +158,10 @@ fn verify_simultaneous_capacity() @suspends {
     var bob_stop = outbox.create(1, 0)
     let alice = test_account(f.ctx, 1, 1, alice_queue.handle(), alice_stop.handle())
     let bob = test_account(f.ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
-    check.assert(process(f.ctx, 1, "say full"), "first queued send")
-    check.assert(process(f.ctx, 1, "say full"), "second queued send")
-    let excluded = Array.new::<UInt64>()
-    check.assert(publish(f.ctx, 1, Command.Disconnect, &excluded), "iterative cleanup terminates")
-    check.assert(!publish(f.ctx, 1, Command.Disconnect, &excluded), "disconnect is idempotent")
+    check.assert(handle_line(f.ctx, 1, "say full"), "first queued send")
+    check.assert(handle_line(f.ctx, 1, "say full"), "second queued send")
+    check.assert(run_command(f.ctx, 1, Command.Disconnect), "iterative cleanup terminates")
+    check.assert(!run_command(f.ctx, 1, Command.Disconnect), "disconnect is idempotent")
     check.assert(alice_stop.receive().is_none() && bob_stop.receive().is_none(), "both sessions wake")
     check.assert(alice_queue.receive().is_none() && bob_queue.receive().is_none(), "both queues close")
     check.assert(balance(&alice) == 300 && balance(&bob) == 500, "disconnect is free")
@@ -172,15 +171,20 @@ fn verify_atomic_disconnect_signal() @suspends {
     let output = outbox.create(4, 256)
     var control = outbox.create(1, 0)
     let alice = test_account(f.ctx, 1, 1, output.handle(), control.handle())
-    let command = Command.Disconnect
     let excluded = Array.new::<UInt64>()
-    attempt(f.ctx, alice.handle(), 1, 0, &command, &excluded)!!
+    leave(f.ctx, alice.handle(), 1, true, &excluded)!!
     // No post-commit close ran: the commit itself must wake the connection.
     let notification = control.receive()!
     check.assert(notification.is_empty(), "disconnect control signal is part of the commit")
     check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "signal accompanies account removal")
     let view = domain.read_from(f.room.read_handle(), room_view)!
     check.assert(!view.members.get(0)!.live, "signal accompanies room removal")
+    let outside_output = outbox.create(1, 64)
+    var outside_control = outbox.create(1, 0)
+    let outside = test_account(f.ctx, 2, 0, outside_output.handle(), outside_control.handle())
+    leave(f.ctx, outside.handle(), 0, true, &excluded)!!
+    check.assert(outside_control.receive()!.is_empty(), "unjoined disconnect also commits its control signal")
+    check.assert(!domain.read_from(outside.read_handle(), account_view)!.route.live, "unjoined disconnect marks account inactive")
 }
 fn verify_closed_output() @suspends {
     let f = fixture()
@@ -191,7 +195,7 @@ fn verify_closed_output() @suspends {
     let alice = test_account(f.ctx, 1, 1, queue.handle(), stop.handle())
     let bob = test_account(f.ctx, 2, 1, closed.handle(), closed_stop.handle())
     outbox.close(closed.handle())
-    check.assert(process(f.ctx, 1, "say retry"), "closed target evicted")
+    check.assert(handle_line(f.ctx, 1, "say retry"), "closed target evicted")
     expect_message(&mut queue, "left r 2\n")
     expect_message(&mut queue, "message r 1 retry\n")
     check.assert(closed_stop.receive().is_none(), "closed output signals session")
@@ -209,7 +213,7 @@ fn verify_wide_broadcast() @suspends {
         queues.push(queue)
         i += 1
     }
-    check.assert(process(f.ctx, 1, "say beyond256"), "wide broadcast committed")
+    check.assert(handle_line(f.ctx, 1, "say beyond256"), "wide broadcast committed")
     while !queues.is_empty() {
         var queue = queues.pop()!
         expect_message(&mut queue, "message r 1 beyond256\n")
@@ -223,20 +227,21 @@ fn verify_room_resolution_changes_before_operation() @suspends {
     let control = outbox.create(1, 0)
     let alice = test_account(f.ctx, 1, 1, queue.handle(), control.handle())
     let before = domain.read_from(alice.read_handle(), account_view)!
-    check.assert(process(f.ctx, 1, "join other"), "concurrent room change")
+    check.assert(handle_line(f.ctx, 1, "join other"), "concurrent room change")
     expect_message(&mut queue, "left r 1\n")
     expect_message(&mut queue, "joined other 1\n")
-    let command = Command.Say("stale" )
     let excluded = Array.new::<UInt64>()
-    match attempt(f.ctx, alice.handle(), before.room, 0, &command, &excluded) {
+    let text = "stale"
+    match say(f.ctx, alice.handle(), before.room, &text, &excluded) {
         Ok(Err(Changed)) => {}, _ => { check.assert(false, "stale resolution rejects before charging") }
     }
     check.assert(balance(&alice) == 500, "rejected resolution never charges")
-    check.assert(process(f.ctx, 1, "say resolved"), "resolve current membership")
+    check.assert(handle_line(f.ctx, 1, "say resolved"), "resolve current membership")
     expect_message(&mut queue, "message other 1 resolved\n")
     check.assert(balance(&alice) == 400, "recalculation charges exactly once")
 }
 fn verify_chat_queue_domain() @suspends {
+    verify_move_rollback()
     verify_retired_rooms_and_cleanup_budget()
     verify_unavailable_control_eviction()
     verify_room_resolution_changes_before_operation()
@@ -259,29 +264,33 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     var queue = outbox.create(8, 1024)
     let stop = outbox.create(1, 0)
     let alice = test_account(ctx, 1, 1, queue.handle(), stop.handle())
-    check.assert(process(ctx, 1, "leave"), "leave before reclaim")
+    check.assert(handle_line(ctx, 1, "leave"), "leave before reclaim")
     expect_message(&mut queue, "left r 1\n")
     check.assert(room_handle(ctx, 1).is_none(), "empty root removed from directory")
     let old = f.room.handle()
     check.assert(when(old) { old.retired }!, "old root cannot accept a new join")
     let beyond = "beyond-capacity"
     check.assert(ensure_room(ctx, &beyond) == 0, "catalog names have an explicit bound")
-    let signal = outbox.create(1, 0)
-    check.assert(domain.write_to(f.catalog.handle(), reserve_room, ("r", signal.handle()))!, "dormant name restarts creation")
+    var signal = outbox.create(1, 0)
+    let catalog = f.catalog.handle()
+    let waiter = signal.handle()
+    let request = f.ctx.requests
+    let restarted = when "restart room" (mut catalog) { resolve_room(catalog, "r", waiter, request, 2, 512) }
+    check.assert(restarted!! == 0, "dormant name restarts creation")
     let input = next_room(host)!
     init_room(input)
     open_room(RoomKey { host: host, key: 1 })
+    check.assert(signal.receive().is_none(), "ready room wakes its waiter")
     check.assert(!host.rooms.remove(1, old.read_only()), "old cleanup cannot delete a replacement")
-    check.assert(process(ctx, 1, "join r"), "join replacement room")
+    check.assert(handle_line(ctx, 1, "join r"), "join replacement room")
     expect_message(&mut queue, "joined r 1\n")
     let bob_queue = outbox.create(1, 64)
     let bob_stop = outbox.create(1, 0)
     let bob = test_account(ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
-    check.assert(process(ctx, 2, "balance"), "fill another recipient")
+    check.assert(handle_line(ctx, 2, "balance"), "fill another recipient")
     host.config.max_evictions = 0
     let bounded = host
-    let excluded = Array.new::<UInt64>()
-    check.assert(!publish(bounded, 1, Command.Disconnect, &excluded), "eviction budget refuses work without recursion")
+    check.assert(!run_command(bounded, 1, Command.Disconnect), "eviction budget refuses work without recursion")
     check.assert(domain.read_from(alice.read_handle(), account_view)!.route.live, "refused operation did not partially disconnect")
     forget(Client { host: host, id: 1 })
     check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "cleanup does not depend on queue space")
@@ -293,11 +302,17 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     let waiting = host
     let missing = "no-manager"
     check.assert(ensure_room(waiting, &missing) == 0, "room creation has a bounded wait")
-    let catalog = f.catalog.handle()
-    check.assert(when(catalog) { waiter_count(catalog, 3) == 0 }!, "timed out waiter is removed")
+    check.assert(when(catalog) { let entry = catalog.rooms.borrow_ref(2); entry.waiters.is_empty() }!, "timed out waiter is removed")
     let pending = next_room(host)!
     fail_room(RoomKey { host: host, key: pending.key })
     check.assert(when(catalog) { let entry = catalog.rooms.borrow_ref(2); match entry.status { Dormant => true, _ => false } }!, "failed room can be retried")
+    var failed_waiter = outbox.create(1, 0)
+    let waiter = failed_waiter.handle()
+    let restarted = when "retry failed room" (mut catalog) { resolve_room(catalog, "no-manager", waiter, request, 3, 512) }
+    check.assert(restarted!! == 0, "failed name can register a new waiter")
+    let pending = next_room(host)!
+    fail_room(RoomKey { host: host, key: pending.key })
+    check.assert(failed_waiter.receive().is_none(), "failed room wakes its waiter")
 }
 
 fn member_value(room: &Room, id: UInt64) -> Bool { member(room, id) }
@@ -310,10 +325,40 @@ fn verify_unavailable_control_eviction() @suspends {
     let slow_stop = outbox.create(1, 0)
     let alice = test_account(f.ctx, 1, 1, output.handle(), stop.handle())
     let bob = test_account(f.ctx, 2, 1, slow_output.handle(), slow_stop.handle())
-    check.assert(process(f.ctx, 2, "balance"), "fill slow queue")
+    check.assert(handle_line(f.ctx, 2, "balance"), "fill slow queue")
     outbox.close(slow_stop.handle())
-    check.assert(process(f.ctx, 1, "say after-cleanup"), "failed eviction falls back to state-only cleanup")
+    check.assert(handle_line(f.ctx, 1, "say after-cleanup"), "failed eviction falls back to state-only cleanup")
     expect_message(&mut output, "message r 1 after-cleanup\n")
     check.assert(balance(&alice) == 400, "retry charges only after cleanup")
     check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "excluded recipient must actually be removed")
+}
+
+fn retire_test_room(room: &mut Room, _: Unit) { room.retired = true }
+fn verify_move_rollback() @suspends {
+    let f = fixture()
+    var output = outbox.create(8, 1024)
+    let stop = outbox.create(1, 0)
+    var next_output = outbox.create(1, 128)
+    let next_stop = outbox.create(1, 0)
+    let alice = test_account(f.ctx, 1, 1, output.handle(), stop.handle())
+    let bob = test_account(f.ctx, 2, 2, next_output.handle(), next_stop.handle())
+    check.assert(handle_line(f.ctx, 2, "balance"), "fill destination queue")
+    let name = "other"
+    let excluded = Array.new::<UInt64>()
+    match join(f.ctx, alice.handle(), 1, 2, &name, &excluded) {
+        Err(OutboxFull(_)) => {}, _ => { check.assert(false, "move fails atomically on destination backpressure") }
+    }
+    expect_message(&mut next_output, "balance 5\n")
+    domain.write_to(f.other.handle(), retire_test_room, {})!
+    match join(f.ctx, alice.handle(), 1, 2, &name, &excluded) {
+        Ok(Err(Changed)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
+    }
+    check.assert(domain.read_from(alice.read_handle(), account_view)!.room == 1, "failed moves preserve account room")
+    check.assert(domain.query_from(f.room.read_handle(), member_value, 1)!, "failed moves preserve old membership")
+    check.assert(!domain.query_from(f.other.read_handle(), member_value, 1)!, "failed moves never add destination membership")
+    check.assert(balance(&alice) == 500 && balance(&bob) == 500, "failed moves do not charge")
+    check.assert(run_command(f.ctx, 1, Command.Welcome), "sentinel after rejected moves")
+    expect_message(&mut output, "welcome 1\n")
+    check.assert(handle_line(f.ctx, 2, "balance"), "sentinel after rejected arrival")
+    expect_message(&mut next_output, "balance 5\n")
 }
