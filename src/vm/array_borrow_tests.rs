@@ -68,7 +68,7 @@ const PREFIX: &str = r#"
     import joky/element as element.{type Element}
     import joky/slice as slices.{type Slice}
     fn consume(a: Array<Int32>) {}
-    fn at<T>(a: &Array<T>) -> &Element<T> { array.borrow(a, 0) }
+    fn at<T: Copy>(a: &Array<T>) -> &Element<T> { array.borrow(a, 0) }
     fn part<T>(a: &mut Array<T>) -> &mut Slice<T> { array.slice_mut(a, 0, 1) }
     fn choose(a: &Array<Int32>, b: &Array<Int32>, flag: Bool) -> &Element<Int32> {
         if flag { array.borrow(a, 0) } else { array.borrow(b, 0) }
@@ -78,28 +78,28 @@ const PREFIX: &str = r#"
 #[test]
 fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
     for body in [
-        "let r = at(&a) array.push(&mut a, 7) element.read(r);",
-        "let r = at(&a) array.pop(&mut a); element.read(r);",
-        "let r = at(&a) array.set(&mut a, 0, 7); element.read(r);",
-        "let r = at(&a) array.reserve(&mut a, 0) element.read(r);",
-        "let r = at(&a) consume(a) element.read(r);",
-        "let r = at(&a) a = array.new::<Int32>() element.read(r);",
-        "let r = array.borrow_mut(&mut a, 0) array.get(&a, 0); element.write(r, 7)",
+        "let r = at(&a); array.push(&mut a, 7); element.read(r);",
+        "let r = at(&a); array.pop(&mut a); element.read(r);",
+        "let r = at(&a); array.set(&mut a, 0, 7); element.read(r);",
+        "let r = at(&a); array.reserve(&mut a, 0); element.read(r);",
+        "let r = at(&a); consume(a); element.read(r);",
+        "let r = at(&a); a = array.new::<Int32>(); element.read(r);",
+        "let r = array.borrow_mut(&mut a, 0); array.get(&a, 0); element.write(r, 7)",
         "element.write(array.borrow_mut(&mut a, 0), array.get(&a, 0).unwrap_or(0))",
         "slices.set(array.slice_mut(&mut a, 0, 1), 0, array.get(&a, 0).unwrap_or(0));",
-        "let r = array.slice_mut(&mut a, 0, 1) element.write(slices.borrow_mut(r, 0), slices.get(r, 0).unwrap_or(0))",
-        "let r = array.borrow_mut(&mut a, 0) let s = array.borrow_mut(&mut a, 1) element.write(r, 7) element.write(s, 9)",
-        "let r = array.slice(&a, 0, 1) array.push(&mut a, 7) slices.len(r);",
-        "let r = array.slice(&a, 0, 0) consume(a) slices.len(r);",
-        "let r = part(&mut a) array.get(&a, 0); slices.set(r, 0, 7);",
-        "let r = part(&mut a) let child = slices.borrow_mut(r, 0) slices.get(r, 0); element.write(child, 7)",
-        "let r = part(&mut a) let child = slices.slice(r, 0, 1) slices.set(r, 0, 7); slices.len(child);",
-        "let r = array.borrow_mut(&mut a, 0) let shared = (&*r) element.write(r, 7) element.read(shared);",
-        "var b = array.new::<Int32>() array.push(&mut b, 9) let r = choose(&a, &b, true) array.push(&mut b, 7) element.read(r);",
-        "let r = { var b = array.new::<Int32>() array.push(&mut b, 7) at(&b) } element.read(r);",
-        "let r = { var b = array.new::<Int32>() array.push(&mut b, 7) array.slice(&b, 0, 1) } slices.len(r);",
+        "let r = array.slice_mut(&mut a, 0, 1); element.write(slices.borrow_mut(r, 0), slices.get(r, 0).unwrap_or(0))",
+        "let r = array.borrow_mut(&mut a, 0); let s = array.borrow_mut(&mut a, 1); element.write(r, 7); element.write(s, 9)",
+        "let r = array.slice(&a, 0, 1); array.push(&mut a, 7); slices.len(r);",
+        "let r = array.slice(&a, 0, 0); consume(a); slices.len(r);",
+        "let r = part(&mut a); array.get(&a, 0); slices.set(r, 0, 7);",
+        "let r = part(&mut a); let child = slices.borrow_mut(r, 0); slices.get(r, 0); element.write(child, 7)",
+        "let r = part(&mut a); let child = slices.slice(r, 0, 1); slices.set(r, 0, 7); slices.len(child);",
+        "let r = array.borrow_mut(&mut a, 0); let shared = (&*r); element.write(r, 7); element.read(shared);",
+        "var b = array.new::<Int32>(); array.push(&mut b, 9); let r = choose(&a, &b, true); array.push(&mut b, 7); element.read(r);",
+        "let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); at(&b) }; element.read(r);",
+        "let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); array.slice(&b, 0, 1) }; slices.len(r);",
     ] {
-        let source = format!("{PREFIX} fn bad() {{ var a = array.new::<Int32>() array.push(&mut a, 42) {body} }}");
+        let source = format!("{PREFIX} fn bad() {{ var a = array.new::<Int32>(); array.push(&mut a, 42); {body} }}");
         rejects(&source, "live borrow");
     }
     for source in [
@@ -111,18 +111,18 @@ fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
     }
     rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Element<Int32> {{ at(&a) }}"), "live borrow");
     rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Slice<Int32> {{ array.slice(&a, 0, 1) }}"), "live borrow");
-    rejects(&format!("{PREFIX} fn bad(a: &mut Array<Int32>) {{ let r = array.borrow_mut(a, 0) let moved = r element.write(r, 0) }}"), "moved");
+    rejects(&format!("{PREFIX} fn bad(a: &mut Array<Int32>) {{ let r = array.borrow_mut(a, 0); let moved = r; element.write(r, 0) }}"), "moved");
 }
 
 #[test]
 fn borrowed_arrays_preserve_storage_restrictions_through_element_and_slice_writes() {
     for (body, message) in [
-        ("let x = 42 let item = array.borrow_mut(&mut a, 0) element.write(item, &x)", "local borrow"),
-        ("let x = 42 let region = array.slice_mut(&mut a, 0, 1) slices.set(region, 0, &x);", "local borrow"),
-        ("let p = alloc(42) let item = array.borrow_mut(&mut a, 0) element.write(item, (&*p)) ; (*(p) = 0)", "retained"),
-        ("let p = alloc(42) let region = array.slice_mut(&mut a, 0, 1) slices.set(region, 0, (&*p)); array.pop(&mut a); (*(p) = 0)", "retained"),
+        ("let x = 42; let item = array.borrow_mut(&mut a, 0); element.write(item, &x)", "local borrow"),
+        ("let x = 42; let region = array.slice_mut(&mut a, 0, 1); slices.set(region, 0, &x);", "local borrow"),
+        ("let p = alloc(42); let item = array.borrow_mut(&mut a, 0); element.write(item, (&*p)) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42); let region = array.slice_mut(&mut a, 0, 1); slices.set(region, 0, (&*p)); array.pop(&mut a); (*(p) = 0)", "retained"),
     ] {
-        rejects(&format!("{PREFIX} fn bad() {{ var a = array.new::<&Int32>() array.push(&mut a, (&*(alloc(0)))) {body} }}"), message);
+        rejects(&format!("{PREFIX} fn bad() {{ var a = array.new::<&Int32>(); array.push(&mut a, (&*(alloc(0)))); {body} }}"), message);
     }
 }
 
@@ -241,9 +241,9 @@ fn borrowed_arrays_cross_module_aliases_preserve_views_and_consumer_types() {
         pub type Span<T> = &Slice<T>
         pub type Item<T> = &Element<T>
         pub fn range<T>(a: &Array<T>) -> Span<T> { array.slice(a, 0, 1) }
-        pub fn first<T>(s: Span<T>) -> Item<T> { slices.borrow(s, 0) }
-        pub fn copy<T>(e: Item<T>) -> T { element.read(e) }
-        pub fn update<T>(e: &mut Element<T>, value: T) { element.write(e, value) }
+        pub fn first<T: Copy>(s: Span<T>) -> Item<T> { slices.borrow(s, 0) }
+        pub fn copy<T: Copy>(e: Item<T>) -> T { element.read(e) }
+        pub fn update<T: Copy>(e: &mut Element<T>, value: T) { element.write(e, value) }
     "#,
         )
         .unwrap();
@@ -271,8 +271,8 @@ fn borrowed_arrays_cross_module_aliases_preserve_views_and_consumer_types() {
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
         LIVE.with(|n| assert_eq!(n.get(), 0));
         for (body, message) in [
-            ("var a = array.new::<Int32>() array.push(&mut a, 42) let item = v.first(v.range(&a)) array.push(&mut a, 7) v.copy(item);", "live borrow"),
-            ("var a = array.new::<&Int32>() array.push(&mut a, (&*(alloc(0)))) let local = 42 v.update(array.borrow_mut(&mut a, 0), &local)", "local borrow"),
+            ("var a = array.new::<Int32>(); array.push(&mut a, 42); let item = v.first(v.range(&a)); array.push(&mut a, 7); v.copy(item);", "live borrow"),
+            ("var a = array.new::<&Int32>(); array.push(&mut a, (&*(alloc(0)))); let local = 42; v.update(array.borrow_mut(&mut a, 0), &local)", "local borrow"),
         ] {
             let bad = format!("import joky/array as array import views as v fn bad() {{ {body} }}");
             let error = vm.load_source_with_modules(&bad, &modules).unwrap_err();

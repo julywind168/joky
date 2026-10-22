@@ -1,3 +1,4 @@
+import joky/string
 import joky/option.{type Option}
 import joky/result.{type Result}
 import joky/array as array.{type Array}
@@ -28,11 +29,19 @@ fn fail_result(x: Int32) -> Result<Int32, Int64> { Result.Ok(x / 0) }
 fn to_wide(x: Int32) -> Int64 { int64(x) }
 fn arena_increment(x: Int32) -> Int32 { let value = alloc(x + 1) ; (*value) }
 fn read_ref(value: &Int32) -> Int32 { (*value) }
+fn read_local(value: &Int32) @noescape -> Int32 { *value }
+fn borrow_reader() -> fn(&Int32) @noescape -> Int32 { read_ref }
 fn bump(value: &mut Int32) { (*(value) = (*value) + 1) }
 fn return_ref(x: Int32) -> &Int32 { (&*(alloc(x))) }
 
 fn function_basic() -> Int32 {
     let f: fn(Int32) -> Int32 = increment
+    if (f)(41) != 42 || choose()(41) != 42 { return 0 }
+    if (if true { increment } else { decrement })(41) != 42 { return 0 }
+    if { increment }(41) != 42 { return 0 }
+    if Option.Some(increment)!(41) != 42 { return 0 }
+    if [increment][0](41) != 42 { return 0 }
+    if (|| { increment })()(41) != 42 { return 0 }
     let same = identity::<Int32>
     let higher = identity::<fn(Int32) -> Int32>
     let forwarded = higher(increment)
@@ -41,14 +50,14 @@ fn function_basic() -> Int32 {
     if apply(same(40), f) != 41 { return 0 }
     let selected = if true { increment } else { decrement }
     if selected(41) != 42 { return 0 }
-    let chosen = choose() chosen(41)
+    let chosen = choose(); chosen(41)
 }
 fn function_order() -> Int32 {
     var f = increment
-    let first = f({ f = decrement 41 })
+    let first = (f)({ f = decrement; 41 })
     if first != 42 || f(43) != 42 { return 0 }
     var n = 0
-    while n < 4 { f = if n < 2 { increment } else { decrement } n = f(n) + 2 }
+    while n < 4 { f = if n < 2 { increment } else { decrement }; n = f(n) + 2 }
     if n != 4 { return 0 }
     42
 }
@@ -76,10 +85,10 @@ fn function_layouts() -> Int32 {
     if signed(-9223372036854775808) != -9223372036854775808 { return 0 }
     let scalar = identity::<Bool>
     if !scalar(true) { return 0 }
-    let unit = nothing unit()
-    let empty = accept_empty let value = empty(Empty {})
-    let f = with_unit if f({}, 41, {}) != 42 { return 0 }
-    let create = make_pair let read = read_pair
+    let unit = nothing; unit()
+    let empty = accept_empty; let value = empty(Empty {})
+    let f = with_unit; if f({}, 41, {}) != 42 { return 0 }
+    let create = make_pair; let read = read_pair
     read(create(42))
 }
 fn function_combinators() -> Int32 {
@@ -97,15 +106,29 @@ fn function_combinators() -> Int32 {
     Result.Ok::<Int32, Int64>(40).map(increment).and_then(make_result).unwrap_or(0)
 }
 fn function_arena() -> Int32 {
+    let owning_identity = identity::<String>
+    let owned = owning_identity("ownership")
+    if owned.byte_length() != 9 { return 0 }
+    let local = 42
+    let promised = read_local
+    if promised(local) != 42 { return 0 }
+    let inferred: fn(&Int32) @noescape -> Int32 = read_ref
+    if inferred(&local) != 42 || borrow_reader()(local) != 42 { return 0 }
+    let forwarded = identity::<fn(&Int32) @noescape -> Int32>(promised)
+    if forwarded(local) != 42 { return 0 }
+    let closure: fn(&Int32) @noescape -> Int32 = |value: &Int32| { *value }
+    if closure(local) != 42 { return 0 }
+    let weak: fn(&Int32) -> Int32 = promised
+    if weak(alloc(42)) != 42 { return 0 }
     let f = arena_increment
     if f(41) != 42 { return 0 }
     let value = alloc(41)
-    let update = bump update(value)
+    let update = bump; update(value)
     let read = read_ref
     let create = return_ref
     read(create(42))
 }
-fn function_failure() -> Int32 { let f = fail_if_called f(42) }
+fn function_failure() -> Int32 { let f = fail_if_called; f(42) }
 
 extern fn pause(x: Int32) @suspends -> Int32
 fn function_task() @suspends -> Int32 {
@@ -115,11 +138,16 @@ fn function_task() @suspends -> Int32 {
 }
 fn function_task_order() @suspends -> Int32 {
     var f = increment
-    f({ f = decrement pause(41) })
+    (f)({ f = decrement; pause(41) })
+}
+fn borrowed_pause(value: &String) @suspends @noescape -> Int32 {
+    pause(40) + int32(value.byte_length())
 }
 fn function_task_aggregate() @suspends -> Int32 {
     let f = make_pair
-    let value = f(pause(42))
+    let text = "ok"
+    let read: fn(&String) @noescape @suspends -> Int32 = borrowed_pause
+    let value = f(read(&text))
     value.number == 42;
     read_pair(value)
 }

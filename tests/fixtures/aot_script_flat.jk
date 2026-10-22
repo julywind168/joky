@@ -1,11 +1,11 @@
 import joky/vm
 import joky/check
-fn assert(ok: Bool) { let message = "Script flat contracts" check.assert(ok, &message) }
+fn assert(ok: Bool) { let message = "Script flat contracts"; check.assert(ok, &message) }
 struct Input { high: UInt64, low: Int8, flag: Bool, rune: Rune, unit: Unit }
 struct Reply { high: UInt64, low: Int8, flag: Bool, rune: Rune, scale: Float64 }
 struct Widths { a: UInt8, b: UInt16, c: UInt32, d: Int16, e: Int32, f: Float32 }
 struct Empty {}
-fn source() -> String { "import joky/task\nstruct Input {{ high: UInt64, low: Int8, flag: Bool, rune: Rune, unit: Unit }}\nstruct Reply {{ high: UInt64, low: Int8, flag: Bool, rune: Rune, scale: Float64 }}\nfn run(input: Input) @suspends -> Reply {{\n    task.yield_now()\n    Reply {{ high: input.high, low: input.low, flag: input.flag, rune: input.rune, scale: 0.5 }}\n}}\nfn empty(input: Unit) @suspends -> Unit {{ task.yield_now() }}\nstruct Widths {{ a: UInt8, b: UInt16, c: UInt32, d: Int16, e: Int32, f: Float32 }}\nstruct Empty {{}}\nfn widths(input: Widths) @suspends -> Widths {{ task.yield_now() input }}\nfn zero(input: Empty) @suspends -> Empty {{ task.yield_now() input }}\nfn float(input: Float32) @suspends -> Float32 {{ task.yield_now() input }}\nfn scalar(input: Int64) @suspends -> Int64 {{ task.yield_now() input }}\n" }
+fn source() -> String { "import joky/task\nstruct Input {{ high: UInt64, low: Int8, flag: Bool, rune: Rune, unit: Unit }}\nstruct Reply {{ high: UInt64, low: Int8, flag: Bool, rune: Rune, scale: Float64 }}\nfn run(input: Input) @suspends -> Reply {{\n    task.yield_now()\n    Reply {{ high: input.high, low: input.low, flag: input.flag, rune: input.rune, scale: 0.5 }}\n}}\nfn empty(input: Unit) @suspends -> Unit {{ task.yield_now() }}\nstruct Widths {{ a: UInt8, b: UInt16, c: UInt32, d: Int16, e: Int32, f: Float32 }}\nstruct Empty {{}}\nfn widths(input: Widths) @suspends -> Widths {{ task.yield_now(); input }}\nfn zero(input: Empty) @suspends -> Empty {{ task.yield_now(); input }}\nfn float(input: Float32) @suspends -> Float32 {{ task.yield_now(); input }}\nfn scalar(input: Int64) @suspends -> Int64 {{ task.yield_now(); input }}\n" }
 fn main() @suspends {
     let h = vm.Vm.interpreter()
     let code = source()

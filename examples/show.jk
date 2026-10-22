@@ -15,7 +15,7 @@ fn main() {
     let player = Player { name: "Joky", score: 42 }
     let message = "player={player}, next={player.score + 1}"
     println(message)
-    var scores = Array.new::<Int32>() scores.push(41) scores.push(42)
-    print("scores=") println(scores)
+    var scores = Array.new::<Int32>(); scores.push(41); scores.push(42)
+    print("scores="); println(scores)
     println(player)
 }

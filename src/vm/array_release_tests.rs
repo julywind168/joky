@@ -63,7 +63,7 @@ fn released_arrays_refund_exact_header_payload_and_bookkeeping_charges() {
         fn growth() -> Int32 {
             var a = array.new::<Int32>()
             var i = 0
-            while i < 33 { array.push(&mut a, i) i = i + 1 }
+            while i < 33 { array.push(&mut a, i); i = i + 1 }
             array.release(a)
             42
         }
@@ -112,26 +112,26 @@ fn released_arrays_reject_double_release_views_and_live_borrows() {
         import joky/slice as slices
     "#;
     for (body, message) in [
-        ("array.release(a) array.release(a)", "moved"),
-        ("array.release(a) array.len(&a);", "moved"),
-        ("let moved = a array.release(a)", "moved"),
-        ("let r = &a array.release(a) array.len(r);", "live borrow"),
+        ("array.release(a); array.release(a)", "moved"),
+        ("array.release(a); array.len(&a);", "moved"),
+        ("let moved = a; array.release(a)", "moved"),
+        ("let r = &a; array.release(a); array.len(r);", "live borrow"),
         (
-            "let r = array.borrow(&a, 0) array.release(a) element.read(r);",
+            "let r = array.borrow(&a, 0); array.release(a); element.read(r);",
             "live borrow",
         ),
         (
-            "let r = array.slice_mut(&mut a, 0, 1) array.release(a) slices.set(r, 0, 1);",
+            "let r = array.slice_mut(&mut a, 0, 1); array.release(a); slices.set(r, 0, 1);",
             "live borrow",
         ),
         ("array.release(&a)", ""),
         ("array.release(array.slice(&a, 0, 1))", ""),
         ("array.release(array.borrow_mut(&mut a, 0))", ""),
-        ("if true { array.release(a) } array.release(a)", "moved"),
+        ("if true { array.release(a) }; array.release(a)", "moved"),
     ] {
-        rejects(&format!("{prefix} fn bad() {{ var a = array.new::<Int32>() array.push(&mut a, 42) {body} }}"), message);
+        rejects(&format!("{prefix} fn bad() {{ var a = array.new::<Int32>(); array.push(&mut a, 42); {body} }}"), message);
     }
-    rejects(&format!("{prefix} fn bad() {{ let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) array.release(a) ; (*(p) = 0) }}"), "retained");
+    rejects(&format!("{prefix} fn bad() {{ let p = alloc(42); var a = array.new::<&Int32>(); array.push(&mut a, (&*p)); array.release(a) ; (*(p) = 0) }}"), "retained");
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn released_arrays_cross_module_aliases_preserve_consumption_without_allocation_
         vm.load_source_with_modules(source, &modules).unwrap();
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
         LIVE.with(|n| assert_eq!(n.get(), 0));
-        let bad = "import joky/array as array import dispose as d fn bad() { let a = array.new::<Int32>() d.discard(a) d.discard(a) }";
+        let bad = "import joky/array as array import dispose as d fn bad() { let a = array.new::<Int32>(); d.discard(a); d.discard(a) }";
         assert!(vm
             .load_source_with_modules(bad, &modules)
             .unwrap_err()

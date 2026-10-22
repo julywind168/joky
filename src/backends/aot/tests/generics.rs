@@ -28,29 +28,29 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
                 if !valid || wide != 0xffff_ffff_ffff_ffff { 1 / 0; }
                 saved
             }
-            fn delayed<T>(value: Value<T>, n: UInt64) @suspends -> Value<T> {
+            fn delayed<T: Copy>(value: Value<T>, n: UInt64) @suspends -> Value<T> {
                 var saved = value
-                let result = Option.None::<Bool>.zip(Option.Some({ saved = hold_enum(Deferred.value(value), n).unwrap(value) saved }))
+                let result = Option.None::<Bool>.zip(Option.Some({ saved = hold_enum(Deferred.value(value), n).unwrap(value); saved }))
                 saved
             }
             fn keep<T>(a: T, b: T) -> T { a }
-            fn bad<T>(value: T, n: UInt64) -> T { let (saved, extra) = Deferred.Value(value).bad(false, n) saved.unwrap(value) }
-            fn bad_delayed<T>(value: T, n: UInt64) @suspends -> T {
+            fn bad<T: Copy>(value: T, n: UInt64) -> T { let (saved, extra) = Deferred.Value(value).bad(false, n); saved.unwrap(value) }
+            fn bad_delayed<T: Copy>(value: T, n: UInt64) @suspends -> T {
                 let err: Result<Unit, Bool> = Err(false)
                 let result = err.and::<T>(Ok(Option.Some(value).unwrap_or(bad(value, delay(n)))))
                 value
             }
-            fn branch_task<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
-            fn bad_branch<T>(value: T) @suspends { bad_delayed(value, 64); record(99); }
+            fn branch_task<T: Copy>(value: T, n: UInt64) @suspends { let _ = delayed(value, n); record(n); }
+            fn bad_branch<T: Copy>(value: T) @suspends { bad_delayed(value, 64); record(99); }
             fn pending(n: UInt64) @suspends -> UInt64 {
                 var pair = Pair { low: -1, high: n }
-                let saved = Option.Some(pair).or(Option.Some(delayed({ pair.high = 0 pair }, record(n)))).unwrap_or(pair)
+                let saved = Option.Some(pair).or(Option.Some(delayed({ pair.high = 0; pair }, record(n)))).unwrap_or(pair)
                 let new = delayed(saved, 3)
                 new.high + uint64(new.low) + pair.high
             }
             fn failure(n: UInt64) @suspends -> UInt64 { bad_delayed((42, true), n); record(99) }
-            fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { low: 1, high: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
-            fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) } record(99) }
+            fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { low: 1, high: 2 }, 7) | branch_task::<Unit>({}, 8) }; 42 }
+            fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) }; record(99) }
         "#);
         let fixture = ScratchDir::new("generics");
         let dir = fixture.path();
@@ -166,15 +166,15 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
         r#"
             import model.{type Saved as Alias, make, first}
             struct Hidden<T> { wrong: T }
-            fn check() -> Int32 { let p: Alias<Int64> = make(int64(42)) int32(first(p)) }
-            fn wide() -> UInt64 { let value: UInt64 = 0xffff_ffff_ffff_ffff first(make(value)) }
+            fn check() -> Int32 { let p: Alias<Int64> = make(int64(42)); int32(first(p)) }
+            fn wide() -> UInt64 { let value: UInt64 = 0xffff_ffff_ffff_ffff; first(make(value)) }
         "#,
         r#"
             import model.{type Pair as Renamed}
             struct Pair<T> { wrong: T }
             fn helper<T>(value: T) -> Bool { false }
-            fn check() -> Int32 { let (value, valid) = Renamed.make(0, 42).swap().zip(true) if valid { value } else { 0 } }
-            fn wide() -> UInt64 { let (value, extra) = model.Pair::<UInt64>.zip::<Unit>(model.Pair::<UInt64>.make(0xffff_ffff_ffff_ffff, 0), {}) value }
+            fn check() -> Int32 { let (value, valid) = Renamed.make(0, 42).swap().zip(true); if valid { value } else { 0 } }
+            fn wide() -> UInt64 { let (value, extra) = model.Pair::<UInt64>.zip::<Unit>(model.Pair::<UInt64>.make(0xffff_ffff_ffff_ffff, 0), {}); value }
         "#,
     ] {
         for suspends in [false, true] {
@@ -198,7 +198,7 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
                 pub fn first<T>(p: Saved<T>) -> T { p.value }
                 fn helper<T>(value: T) -> T { value }
                 pub struct Pair<T> { left: T, right: T }
-                impl<T> Pair<T> {
+                impl<T: Copy> Pair<T> {
                     pub fn make(left: T, right: T) -> Self { Self { left: left, right: right } }
                     fn private(self) -> T { self.left }
                     pub fn first(self) -> T { self.private() }

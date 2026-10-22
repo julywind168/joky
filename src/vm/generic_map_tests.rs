@@ -156,14 +156,14 @@ fn generic_map_rejects_reference_bearing_keys() {
 #[test]
 fn generic_map_rejects_missing_bounds_private_storage_and_conflicting_loans() {
     for (body,expected) in [
-        ("struct Key { n: Int32 } impl Eq for Key { fn eq(self, other: Self) -> Bool { true } } fn bad() { var m = Map.new::<Key,Int32>() m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
-        ("struct Key { n: Int32 } impl Hash for Key { fn hash(self) -> UInt64 { 0 } } fn bad() { var m = Map.new::<Key,Int32>() m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
-        ("fn bad<K,V>(m: &Map<K,V>,k: K) -> Bool { m.contains_key(k) }","does not satisfy trait bound"),
+        ("struct Key { n: Int32 } impl Eq for Key { fn eq(self, other: Self) -> Bool { true } } fn bad() { var m = Map.new::<Key,Int32>(); m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
+        ("struct Key { n: Int32 } impl Hash for Key { fn hash(self) -> UInt64 { 0 } } fn bad() { var m = Map.new::<Key,Int32>(); m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
+        ("fn bad<K: Copy,V>(m: &Map<K,V>,k: K) -> Bool { m.contains_key(k) }","does not satisfy trait bound"),
         ("fn bad(m: &Map<Int32,Int32>) { m.keys; }","private"),
         ("fn bad(m: &Map<Int32,Int32>) { maps.invariant(m); }","invariant"),
         ("fn bad(m: &maps.Bucket) {}","Bucket"),
-        ("fn bad() { var m = Map.new::<Int32,Int32>() let loan = &m m.insert(1,2) loan.len(); }","borrow"),
-        ("fn bad() { let m = Map.new::<Int32,Int32>() m.release() m.len(); }","moved"),
+        ("fn bad() { var m = Map.new::<Int32,Int32>(); let loan = &m; m.insert(1,2); loan.len(); }","borrow"),
+        ("fn bad() { let m = Map.new::<Int32,Int32>(); m.release(); m.len(); }","moved"),
         ("fn bad(m: &Map<Int32,Array<Int32>>) { m.get(1); }","Copy"),
     ] {
         rejected(&format!("import joky/map as maps.{{type Map}} import joky/array.{{type Array}} import joky/eq.{{type Eq}} import joky/hash.{{type Hash}} {body}"),&ModuleSources::new(),expected);
@@ -186,10 +186,10 @@ fn generic_map_cross_module_aliases_and_conditional_impls_preserve_identity() {
     "#).unwrap();
     let source = r#"import keys fn test()->Int32 {
         var m: keys.Dictionary<Int32> = keys.make::<Int32>()
-        keys.put(&mut m,1,20) keys.put(&mut m,1,42)
+        keys.put(&mut m,1,20); keys.put(&mut m,1,42)
         let result=m.get(keys.Key { value: 1 }).unwrap_or(0)
-        let loan=&m let n=loan.len()
-        m.clear() m.release()
+        let loan=&m; let n=loan.len()
+        m.clear(); m.release()
         if n==1 { result } else { 0 }
     }"#;
     let ast = TypeRegistry::default()

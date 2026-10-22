@@ -6,7 +6,7 @@ import joky/string
 fn main() @suspends -> Int32 {
     let addresses = match dns.lookup("localhost", 443) {
         Ok(addresses) => addresses
-        Err(error) => { println(error.message) return 1 }
+        Err(error) => { println(error.message); return 1 }
     }
     let message = "localhost returns at least one address"
     assert(addresses.len() > 0, &message)

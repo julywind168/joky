@@ -22,16 +22,18 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
             impl<T> Pair<T> {{
                 const BASE: Int32 = 1
                 pub const SIZE: Int32 = Self.BASE + 1
+            }}
+            impl<T: Copy> Pair<T> {{
                 pub fn make(left: T, right: T) {effect} -> Self {{ Self {{ left: helper(left), right: right }} }}
                 fn private(self) {effect} -> T {{ self.left }}
                 pub fn first(self) {effect} -> T {{ self.private() }}
                 pub fn swap(self) {effect} -> Self {{ Self.make(self.right, self.left) }}
-                fn private_zip<U>(self, value: U) {effect} -> (T, U) {{
+                fn private_zip<U: Copy>(self, value: U) {effect} -> (T, U) {{
                     let wrapped: Choice<U> = wrap(helper(value))
                     let p = Self.make(self.private(), self.right)
                     (p.first(), wrapped.unwrap(value))
                 }}
-                pub fn zip<U>(self, value: U) {effect} -> (T, U) {{ self.private_zip::<U>(value) }}
+                pub fn zip<U: Copy>(self, value: U) {effect} -> (T, U) {{ self.private_zip::<U>(value) }}
             }}
             impl<T> Choice<T> {{
                 pub fn some(value: T) {effect} -> Self {{ Self.Some(value) }}
@@ -102,8 +104,8 @@ fn generic_impl_imports_enforce_visibility_identity_and_template_errors() {
         "import a fn bad(p: a.Pair<Int64>) { a.Pair::<Int64>.private_zip::<Bool>(p, true) }",
         "import a import b fn bad(p: b.Pair<Int32>) { a.Pair.zip::<Int32, Bool>(p, true) }",
         "import a import b fn bad(p: a.Pair<Int32>, v: b.Pair<Bool>) { p.zip::<a.Pair<Bool>>(v) }",
-        "import a fn bad() { let a = 1 a.Pair.make(1, 2) }",
-        "import a.{type Pair as Saved} fn bad() { let Saved = 1 Saved.make(1, 2) }",
+        "import a fn bad() { let a = 1; a.Pair.make(1, 2) }",
+        "import a.{type Pair as Saved} fn bad() { let Saved = 1; Saved.make(1, 2) }",
         "import a impl<T> a.Pair<T> { fn first(self) -> T { self.left } }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -138,8 +140,8 @@ fn generic_aliases_keep_definition_scope_through_diamond_imports_and_renaming() 
             type Local<T> = (T, T)
             struct Hidden<T> {{ value: Local<T> }}
             pub type Value<T> = Hidden<T>
-            pub fn make<T>(value: T) {effect} -> Value<T> {{ Hidden {{ value: (value, value) }} }}
-            pub fn first<T>(value: Value<T>) {effect} -> T {{ let (a, b) = value.value a }}
+            pub fn make<T: Copy>(value: T) {effect} -> Value<T> {{ Hidden {{ value: (value, value) }} }}
+            pub fn first<T>(value: Value<T>) {effect} -> T {{ let (a, b) = value.value; a }}
         "#
         );
         let left = format!(
@@ -235,7 +237,7 @@ fn generic_records_keep_identity_and_definition_scope_across_diamond_imports() {
             pub struct Pair<T> {{ pub left: T, pub right: T }}
             struct Hidden<T> {{ value: T }}
             pub type Numbers = Pair<Int64>
-            pub fn make<T>(value: T) {effect} -> Pair<T> {{
+            pub fn make<T: Copy>(value: T) {effect} -> Pair<T> {{
                 let hidden = Hidden::<T> {{ value: value }}
                 Pair {{ left: hidden.value, right: value }}
             }}
@@ -418,9 +420,9 @@ fn private_declarations_and_members_do_not_escape_their_module() {
         "import model fn answer() -> Int32 { model.Public.hidden(model.make()) }",
         "import model as m fn answer() -> Int32 { model.Public.value(m.make()) }",
         "import model.{type Public} fn answer() -> Int32 { Public.SECRET }",
-        "import model fn answer() -> Int32 { let x: model.Hidden = model.Hidden.Secret(42) 0 }",
-        "import model fn answer() -> Int32 { let x = model.Hidden.Secret(42) 0 }",
-        "import model fn answer() -> Int32 { let x = model.HiddenRecord { value: 42 } x.value }",
+        "import model fn answer() -> Int32 { let x: model.Hidden = model.Hidden.Secret(42); 0 }",
+        "import model fn answer() -> Int32 { let x = model.Hidden.Secret(42); 0 }",
+        "import model fn answer() -> Int32 { let x = model.HiddenRecord { value: 42 }; x.value }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
@@ -463,7 +465,7 @@ fn module_qualified_members_and_public_aliases_preserve_type_visibility() {
     );
     check("import model as m impl Int32 { const COPIED: Int32 = m.Pair.VALUE } fn answer() -> Int32 { Int32.COPIED }", &modules, 42);
     for source in [
-        "import model as m fn answer() -> Int32 { let p = m.Alias { a: 42 } p.a }",
+        "import model as m fn answer() -> Int32 { let p = m.Alias { a: 42 }; p.a }",
         "import model as m fn answer() -> Int32 { m.Alias.VALUE }",
     ] {
         assert!(VmEngine::new_interpreter()
@@ -480,8 +482,8 @@ fn host_imports_keep_the_defining_modules_alias_and_binding() {
         import joky/vm as host
         pub fn value() -> Int32 {
             let h = host.Vm.interpreter()
-            { let vm_text = "fn answer() -> Int32 {{ 42 }}" host.load_source(h, &vm_text) }
-            let result = { let vm_text = "answer" host.call_int32_0(h, &vm_text) }
+            { let vm_text = "fn answer() -> Int32 {{ 42 }}"; host.load_source(h, &vm_text) }
+            let result = { let vm_text = "answer"; host.call_int32_0(h, &vm_text) }
             host.close(h)
             result
         }
@@ -606,7 +608,7 @@ fn pending_host_calls_preserve_imported_error_sources_after_reload() {
         }
     }
     let dependency =
-        "extern fn wait() @suspends pub fn value() @suspends -> Int32 { wait() 42 / 0 }";
+        "extern fn wait() @suspends pub fn value() @suspends -> Int32 { wait(); 42 / 0 }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let modules = sources(&[("app/math", dependency)]);
         let mut vm = VmEngine::with_mode(mode);
@@ -839,17 +841,17 @@ fn record_fields_default_private_and_require_pub_for_cross_module_access() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source_with_modules(
-            "import counter.{type Counter, touch} fn main() -> Int32 { var c = Counter.new() touch(&mut c) c.step = 2 c.bump() c.bump() c.read() }",
+            "import counter.{type Counter, touch} fn main() -> Int32 { var c = Counter.new(); touch(&mut c); c.step = 2; c.bump(); c.bump(); c.read() }",
             &modules,
         )
         .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(vm.call_int32_0("main").unwrap(), 5);
     }
     for body in [
-        "fn main() -> Int32 { let c = counter.Counter.new() c.value }",
-        "fn main() -> Int32 { var c = counter.Counter.new() c.value = 1 0 }",
-        "fn main() -> Int32 { let c = counter.Counter.new() let r = &c.value 0 }",
-        "fn main() -> Int32 { let c = counter.Counter { value: 1, step: 1 } 0 }",
+        "fn main() -> Int32 { let c = counter.Counter.new(); c.value }",
+        "fn main() -> Int32 { var c = counter.Counter.new(); c.value = 1; 0 }",
+        "fn main() -> Int32 { let c = counter.Counter.new(); let r = &c.value; 0 }",
+        "fn main() -> Int32 { let c = counter.Counter { value: 1, step: 1 }; 0 }",
     ] {
         let error = VmEngine::with_mode(VmMode::Jit)
             .load_source_with_modules(&format!("import counter.{{type Counter}} {body}"), &modules)

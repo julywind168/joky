@@ -61,7 +61,7 @@ fn unary_and_bool_operands_resume_once_with_snapshots_after_reload() {
             var flag = true
             var test = flag == !delayed_bool((flag = false; record(-1)))
             var extra = 0
-            while test { extra = record(42) test = false }
+            while test { extra = record(42); test = false }
             result + extra
         }
     "#;

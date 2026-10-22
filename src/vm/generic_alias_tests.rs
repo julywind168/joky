@@ -16,12 +16,12 @@ fn generic_alias_pending_snapshots_survive_reload_failure_and_cancellation() {
         fn save<T>(p: PairOf<T>, n: Int32) @suspends -> Snapshot<T> { (p, delayed_value(record(n))) }
         fn pending() @suspends -> Int32 {
             var p = original()
-            let (saved, stamp) = save(p, { p = (9, 8) 7 })
+            let (saved, stamp) = save(p, { p = (9, 8); 7 })
             let (a, b) = saved
             let (c, d) = p
             if a == 4294967295 && b == -7 && c == 9 && d == 8 && stamp == 8 { 42 } else { 0 }
         }
-        fn failing() @suspends -> Int32 { let (saved, stamp) = save(original(), -1) 42 / stamp + record(99) }
+        fn failing() @suspends -> Int32 { let (saved, stamp) = save(original(), -1); 42 / stamp + record(99) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
@@ -117,7 +117,7 @@ fn generic_alias_errors_are_checked_when_unused_and_preserve_the_loaded_module()
         ("fn f(x: Drop<Option<vm.Function>>) {}", ErrorCode::TypeMismatch),
         ("type Plain = Int32 fn f(x: Plain<Bool>) {}", ErrorCode::UnknownType),
         ("fn f(x: PairOf<Int32>) -> PairOf<Bool> { x }", ErrorCode::TypeMismatch),
-        ("fn bad<T>(x: PairOf<T>) -> Int32 { let (a, b) = x a + b }", ErrorCode::TypeMismatch),
+        ("fn bad<T>(x: PairOf<T>) -> Int32 { let (a, b) = x; a + b }", ErrorCode::TypeMismatch),
         ("struct R<T> { value: T } type A<T> = R<T> fn f() { let a = A::<Int32> { value: 1 } }", ErrorCode::UnknownType),
         ("type A<T> = Option<T> fn f() { A.Some::<Int32>(1) }", ErrorCode::UnknownName),
         ("type A<T> = Option<T> fn f(x: A<Int32>) -> Int32 { match x { A.None => 0, A.Some(n) => n } }", ErrorCode::InvalidPattern),

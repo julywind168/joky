@@ -1,7 +1,7 @@
 import joky/domain
 import joky/task
 import joky/check
-fn assert(ok: Bool) { let message="joint snapshot" check.assert(ok,&message) }
+fn assert(ok: Bool) { let message="joint snapshot"; check.assert(ok,&message) }
 struct State { n:Int32 }
 struct Rules { limit:Int32 }
 fn make(n:Int32)->State { State{n:n} }
@@ -13,7 +13,7 @@ fn bits(a:&State,b:&Rules)->UInt64 { 18446744073709551615 }
 fn nan(a:&State,b:&Rules)->Float64 { Float64.from_bits(9221120237041090626) }
 fn read(a:&State)->Int32 { a.n }
 fn change(b:&mut Rules,n:Int32) { b.limit=n }
-fn fail(b:&mut Rules,n:Int32)->Int32 { b.limit=99 1/n }
+fn fail(b:&mut Rules,n:Int32)->Int32 { b.limit=99; 1/n }
 fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n).unwrap() }
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,7)
@@ -66,4 +66,4 @@ fn lifecycle() @suspends ->Int32 {
     assert(large.value()==18446744073709551615)
     24
 }
-fn main() @suspends { assert(lifecycle()==24) println("joint snapshots ok") }
+fn main() @suspends { assert(lifecycle()==24); println("joint snapshots ok") }

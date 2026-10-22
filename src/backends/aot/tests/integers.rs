@@ -106,7 +106,7 @@ fn int64_native_objects_preserve_direct_cps_and_host_full_width_values() {
             extern fn record64(value: Int64) -> Int64
             fn direct64(value: Int64) -> Int64 { value + 1 }
             fn pending64(value: Int64) @suspends -> Int64 { direct64(delayed64(record64(value))) }
-            fn failed64() @suspends -> Int64 { let n = delayed64(-1) 3000000000 / n }
+            fn failed64() @suspends -> Int64 { let n = delayed64(-1); 3000000000 / n }
         "#,
         );
         let fixture = ScratchDir::new("int64");
@@ -197,8 +197,8 @@ fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
             fn native64(n: UInt64) -> UInt64 { host64(n) / 2 }
             fn pending32(n: UInt32) @suspends -> UInt32 { host32(delay32({}, host32(n), {})) }
             fn pending64(n: UInt64) @suspends -> UInt64 { host64(delay64({}, host64(n), {})) }
-            fn fail32() @suspends -> UInt32 { let d = delay32({}, 4294967295, {}) 4294967295 / d }
-            fn fail64() @suspends -> UInt64 { let d = delay64({}, 18446744073709551615, {}) 18446744073709551615 / d }
+            fn fail32() @suspends -> UInt32 { let d = delay32({}, 4294967295, {}); 4294967295 / d }
+            fn fail64() @suspends -> UInt64 { let d = delay64({}, 18446744073709551615, {}); 18446744073709551615 / d }
         "#);
         let fixture = ScratchDir::new("unsigned");
         let dir = fixture.path();
@@ -308,8 +308,8 @@ fn uint8_native_objects_preserve_arithmetic_abi_and_pending_values() {
             fn native64(n: UInt64) -> UInt64 { host64(n) / 2 }
             fn pending32(n: UInt8) @suspends -> UInt8 { host32(delay32({}, host32(n), {})) }
             fn pending64(n: UInt64) @suspends -> UInt64 { host64(delay64({}, host64(n), {})) }
-            fn fail32() @suspends -> UInt8 { let d = delay32({}, 255, {}) 255 / d }
-            fn fail64() @suspends -> UInt64 { let d = delay64({}, 18446744073709551615, {}) 18446744073709551615 / d }
+            fn fail32() @suspends -> UInt8 { let d = delay32({}, 255, {}); 255 / d }
+            fn fail64() @suspends -> UInt64 { let d = delay64({}, 18446744073709551615, {}); 18446744073709551615 / d }
         "#);
         let fixture = ScratchDir::new("unsigned");
         let dir = fixture.path();
@@ -427,13 +427,13 @@ fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
             fn shru64(a: UInt64, n: UInt64) -> UInt64 { a >> n }
             fn pending(n: UInt64) @suspends -> UInt64 {
                 var value = n
-                let bits = value & delay({ value = 0 record(n) })
+                let bits = value & delay({ value = 0; record(n) })
                 ~bits ^ (value | 3 << 1)
             }
             fn failure(n: UInt64) @suspends -> UInt64 { shlu64(1, delay(n)) | record(99) }
             fn bad_branch(n: UInt64) @suspends { shru64(1, delay(n)); }
             fn other(n: UInt64) @suspends { record(delay(n)); }
-            fn bad_scope() @suspends -> UInt64 { parallel { | bad_branch(64 | 0) | other(1 | 2) } record(99) }
+            fn bad_scope() @suspends -> UInt64 { parallel { | bad_branch(64 | 0) | other(1 | 2) }; record(99) }
         "#);
         let fixture = ScratchDir::new("bitwise");
         let dir = fixture.path();
@@ -553,7 +553,7 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
             fn reinterpret(n: UInt64) -> Int64 { int64(n) }
             fn pending(n: UInt64) @suspends -> UInt64 {
                 var value = n
-                let pair = (int32(value), uint32(delay({ value = 0 record(n) })))
+                let pair = (int32(value), uint32(delay({ value = 0; record(n) })))
                 let (signed, unsigned) = pair
                 uint64(int64(signed) + int64(unsigned)) ^ uint64(int32(delay(3))) ^ value
             }
@@ -562,7 +562,7 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
             fn bad(n: UInt64) -> UInt64 { 1 << n }
             fn failure(n: UInt64) @suspends -> UInt64 { record(uint64(int32(bad(delay(n))))) }
             fn branch_task(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
-            fn scoped() @suspends -> UInt64 { parallel { | branch_task(uint64(-1)) | branch_task(uint64(42)) } 42 }
+            fn scoped() @suspends -> UInt64 { parallel { | branch_task(uint64(-1)) | branch_task(uint64(42)) }; 42 }
         "#);
         let fixture = ScratchDir::new("conversions");
         let dir = fixture.path();

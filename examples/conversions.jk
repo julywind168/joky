@@ -2,11 +2,11 @@ import joky/io.{println}
 
 fn main() {
     let bits: UInt32 = 0xffff_ffff
-    { let displayed: Int32 = int32(bits) println(&displayed) }
-    { let displayed: Int64 = int64(bits) println(&displayed) }
-    { let displayed: UInt32 = uint32(-1) println(&displayed) }
-    { let displayed: UInt64 = uint64(-1) println(&displayed) }
+    println(int32(bits))
+    println(int64(bits))
+    println(uint32(-1))
+    println(uint64(-1))
     let wide: UInt64 = 0x1_0000_002a
-    { let displayed: Int32 = int32(wide) println(&displayed) }
-    { let displayed: Int64 = int64(0x7fff_ffff + 1) println(&displayed) }
+    println(int32(wide))
+    println(int64(0x7fff_ffff + 1))
 }

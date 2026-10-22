@@ -191,7 +191,7 @@ fn text_ffi_temporary_budget_is_refunded_and_replacement_keeps_old_code_alive() 
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         fixture.register(&mut vm);
-        let source = format!("{} fn repeat() -> Int32 {{ let s = \"abc\"; var i = 0; while i < 1000 {{ let t = cstring(&s); t.release(); i = i + 1; }} i }}", model::SOURCE);
+        let source = format!("{} fn repeat() -> Int32 {{ let s = \"abc\"; var i = 0; while i < 1000 {{ let t = cstring(&s); t.release(); i = i + 1; }}; i }}", model::SOURCE);
         vm.load_source(&source).unwrap();
         struct Restore(usize);
         impl Drop for Restore {

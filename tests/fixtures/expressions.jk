@@ -13,7 +13,7 @@ fn expression_not(value: Bool) -> Bool { !value }
 fn expression_bit(value: Bool) -> Int32 {
     var active = value
     var result = 0
-    while active { result = 1 active = false }
+    while active { result = 1; active = false }
     result
 }
 
@@ -31,9 +31,9 @@ fn expression_bool_loops(a: Int32, b: Int32) -> Int32 {
     var x = a != 0
     let y = b != 0
     var result = 0
-    while x == y { result = result + 10 x = !x }
+    while x == y { result = result + 10; x = !x }
     x = a != 0
-    while x != y { result = result + 1 x = !x }
+    while x != y { result = result + 1; x = !x }
     result
 }
 

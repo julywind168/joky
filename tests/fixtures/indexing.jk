@@ -4,8 +4,8 @@ import joky/slice.{type Slice}
 import joky/string
 import joky/task
 fn check(value: Bool) { assert(value, "indexing regression") }
-fn at<T>(values: &Array<T>, i: UInt64) -> T { values[i] }
-fn fixed_at<T, const N: UInt64>(values: &FixedArray<T, N>, i: UInt64) -> T { values[i] }
+fn at<T: Copy>(values: &Array<T>, i: UInt64) -> T { values[i] }
+fn fixed_at<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, i: UInt64) -> T { values[i] }
 fn borrowed<T>(values: &Array<T>, i: UInt64) -> &T { &values[i] }
 fn set<T>(values: &mut Array<T>, i: UInt64, value: T) { values[i] = value }
 fn slice_set<T>(values: &mut Slice<T>, i: UInt64, value: T) { values[i] = value }

@@ -10,7 +10,7 @@ impl Eq for Unit { fn eq(self, other: Self) -> Bool { true } }
 
 // Borrowed equality must not retain either argument beyond this call.
 pub trait BorrowEq { fn eq_ref(&self, other: &Self) @noescape -> Bool }
-impl<T: Eq> BorrowEq for T {
+impl<T: Copy + Eq> BorrowEq for T {
     fn eq_ref(&self, other: &Self) -> Bool { Eq.eq((*self), (*other)) }
 }
 impl BorrowEq for String {

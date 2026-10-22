@@ -413,7 +413,7 @@ fn wake_vm(mode: VmMode) -> VmEngine {
         )
         .unwrap();
     }
-    vm.load_source("import joky/task extern fn wait(value:&mut Int32) @suspends fn main() @suspends -> Int32 {let value=alloc(42) wait(value) 42} fn timer_race() @suspends -> Int32 {let value=alloc(42) race { | wait(value) | task.sleep_ms(10000) } 42}").unwrap();
+    vm.load_source("import joky/task extern fn wait(value:&mut Int32) @suspends fn main() @suspends -> Int32 {let value=alloc(42); wait(value); 42} fn timer_race() @suspends -> Int32 {let value=alloc(42); race { | wait(value) | task.sleep_ms(10000) }; 42}").unwrap();
     vm
 }
 fn reset_wake(mode: u8) {

@@ -138,8 +138,8 @@ fn borrowed_dyn_qualification_does_not_restrict_static_traits() {
 fn borrowed_dyn_v1_boundaries_are_shared_by_all_backends() {
     let base = "import joky/mem\ntrait Read { fn value(&self) @noescape -> Int32; fn change(&mut self) @noescape {} } struct Counter { value: Int32 } impl Read for Counter { fn value(&self) -> Int32 { self.value } } fn use_view(v: &dyn Read) {} fn use_mut(v: &mut dyn Read) {}";
     for (body, expected) in [
-        ("fn f() { var c = Counter { value: 1 } let v: &dyn Read = &c; c.value = 2; use_view(v) }", "borrow"),
-        ("fn f() { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; let w = v; use_mut(v); use_mut(w) }", "moved"),
+        ("fn f() { var c = Counter { value: 1 }; let v: &dyn Read = &c; c.value = 2; use_view(v) }", "borrow"),
+        ("fn f() { var c = Counter { value: 1 }; let v: &mut dyn Read = &mut c; let w = v; use_mut(v); use_mut(w) }", "moved"),
         ("fn f() { let v: &dyn Read = &Counter { value: 1 } }", "temporary borrowing"),
         ("fn f() -> &dyn Read { let c = Counter { value: 1 } &c }", "cannot be returned"),
         ("struct Hidden { v: &dyn Read }", "Dyn views cannot be stored"),
@@ -193,7 +193,7 @@ fn accepted(source: &str) {
 
 #[test]
 fn borrowed_dyn_v2_executes_default_override_and_exclusive_slots() {
-    let source = "trait Read { type Item; fn value(&self) @noescape -> Int32; fn doubled(&self) @noescape -> Int32 { self.value() * 2 } fn change(&mut self, n: Int32) @noescape; } struct Counter { value: Int32 } struct Other { value: Int32 } impl Read for Counter { type Item = Int32; fn value(&self) -> Int32 { self.value } fn change(&mut self, n: Int32) { self.value = n } } impl Read for Other { type Item = Int32; fn value(&self) -> Int32 { self.value + 1 } fn doubled(&self) -> Int32 { self.value() * 2 } fn change(&mut self, n: Int32) { self.value = n - 1 } } fn inspect(v: &dyn Read<Item = Int32>) @noescape -> Int32 { v.doubled() } fn update(v: &mut dyn Read<Item = Int32>) @noescape { v.change(21); Read.change(v, 21) } fn answer() -> Int32 { var a = Counter { value: 1 } var b = Other { value: 1 } let v: &mut dyn Read<Item = Int32> = &mut a; update(v); update(v); inspect(v) + inspect(&b) - 4 }";
+    let source = "trait Read { type Item; fn value(&self) @noescape -> Int32; fn doubled(&self) @noescape -> Int32 { self.value() * 2 } fn change(&mut self, n: Int32) @noescape; } struct Counter { value: Int32 } struct Other { value: Int32 } impl Read for Counter { type Item = Int32; fn value(&self) -> Int32 { self.value } fn change(&mut self, n: Int32) { self.value = n } } impl Read for Other { type Item = Int32; fn value(&self) -> Int32 { self.value + 1 } fn doubled(&self) -> Int32 { self.value() * 2 } fn change(&mut self, n: Int32) { self.value = n - 1 } } fn inspect(v: &dyn Read<Item = Int32>) @noescape -> Int32 { v.doubled() } fn update(v: &mut dyn Read<Item = Int32>) @noescape { v.change(21); Read.change(v, 21) } fn answer() -> Int32 { var a = Counter { value: 1 }; var b = Other { value: 1 }; let v: &mut dyn Read<Item = Int32> = &mut a; update(v); update(v); inspect(v) + inspect(&b) - 4 }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source)
@@ -480,7 +480,7 @@ fn borrowed_dyn_v2_method_allocation_failure_restores_budget() {
         }
     }
     let _reset = Reset(crate::runtime::arena::LIMIT.with(|n| n.get()));
-    let source = format!("trait Make {{ fn text(&self) @noescape -> String {{ \"{}\" }} }} struct Empty {{}} impl Make for Empty {{}} fn answer() -> Int32 {{ let e = Empty {{}} let v: &dyn Make = &e let text = v.text() int32(text.byte_length()) }}", "x".repeat(42));
+    let source = format!("trait Make {{ fn text(&self) @noescape -> String {{ \"{}\" }} }} struct Empty {{}} impl Make for Empty {{}} fn answer() -> Int32 {{ let e = Empty {{}}; let v: &dyn Make = &e; let text = v.text(); int32(text.byte_length()) }}", "x".repeat(42));
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(&source).unwrap();
@@ -498,7 +498,7 @@ fn borrowed_dyn_v2_method_allocation_failure_restores_budget() {
 fn borrowed_dyn_v2_import_aliases_private_signatures_and_diagnostics() {
     let mut modules = crate::ModuleSources::new();
     modules.insert("base", "type Number = Int32; pub trait Read { type Item; fn value(&self, n: Number) @noescape -> Self.Item; fn default_value(&self) @noescape -> Self.Item { self.value(1) } } pub struct Counter { value: Number } impl Read for Counter { type Item = Int32; fn value(&self, n: Number) -> Int32 { self.value / n } } pub fn make() -> Counter { Counter { value: 42 } } pub type View = &dyn Read<Item = Number>;").unwrap();
-    let source = "import base as b.{type Read as Renamed}; fn inspect(v: b.View) @noescape -> Int32 { Renamed.default_value(v) } fn answer() -> Int32 { let c = b.make() let v: &dyn Renamed<Item = Int32> = &c inspect(v) } fn failure() -> Int32 { let c = b.make() let v: b.View = &c v.value(0) }";
+    let source = "import base as b.{type Read as Renamed}; fn inspect(v: b.View) @noescape -> Int32 { Renamed.default_value(v) } fn answer() -> Int32 { let c = b.make(); let v: &dyn Renamed<Item = Int32> = &c; inspect(v) } fn failure() -> Int32 { let c = b.make(); let v: b.View = &c; v.value(0) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source_with_modules(source, &modules)
@@ -530,9 +530,9 @@ fn borrowed_dyn_v2_rejects_dynamic_call_aliases_and_invalid_arguments() {
         ("fn f(v: &dyn Read) { v.value() }", "Argument count mismatch"),
         ("fn f(v: &dyn Read) { v.value(true) }", "Argument type mismatch"),
         ("fn f(v: &dyn Read) { Read.value::<Int32>(v, true) }", "do not accept type arguments"),
-        ("fn f() { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c v.change(&c.value) }", "borrow"),
-        ("fn f(flag: Bool) { var a = Counter { value: 1 } var b = Counter { value: 2 } let v: &dyn Read = if flag { &a } else { &b } a.value = 3 let n = 1 v.value(&n); }", "borrow"),
-        ("fn f(flag: Bool) { var a = Counter { value: 1 } var b = Counter { value: 2 } let v: &dyn Read = if flag { &a } else { &b } b.value = 3 let n = 1 v.value(&n); }", "borrow"),
+        ("fn f() { var c = Counter { value: 1 }; let v: &mut dyn Read = &mut c; v.change(&c.value) }", "borrow"),
+        ("fn f(flag: Bool) { var a = Counter { value: 1 }; var b = Counter { value: 2 }; let v: &dyn Read = if flag { &a } else { &b }; a.value = 3; let n = 1; v.value(&n); }", "borrow"),
+        ("fn f(flag: Bool) { var a = Counter { value: 1 }; var b = Counter { value: 2 }; let v: &dyn Read = if flag { &a } else { &b }; b.value = 3; let n = 1; v.value(&n); }", "borrow"),
         ("fn f(v: &dyn Read) { let method = v.value; }", "Bound dyn methods"),
     ] { rejected(&format!("{base} {body}"), message); }
 }
@@ -597,14 +597,14 @@ fn borrowed_dyn_v3_reborrows_helpers_fields_and_all_sources_execute() {
 #[test]
 fn borrowed_dyn_match_rejects_conflicting_origins_and_permissions() {
     for body in [
-        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { Choice.First => &c, Choice.Second => &o }; c.value = 3; inspect(v); }",
-        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { Choice.First => &c, Choice.Second => &o }; o.value = 3; inspect(v); }",
-        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: MutView = match choice { Choice.First => &mut c, Choice.Second => &mut o }; let shared = &*v; update(&mut *v, 3); inspect(shared); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 }; var o = Other { value: 2 }; let v: View = match choice { Choice.First => &c, Choice.Second => &o }; c.value = 3; inspect(v); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 }; var o = Other { value: 2 }; let v: View = match choice { Choice.First => &c, Choice.Second => &o }; o.value = 3; inspect(v); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 }; var o = Other { value: 2 }; let v: MutView = match choice { Choice.First => &mut c, Choice.Second => &mut o }; let shared = &*v; update(&mut *v, 3); inspect(shared); }",
     ] {
         rejected(&format!("{COMPOSITION}\n{body}"), "borrow");
     }
     rejected(
-        &format!("{COMPOSITION}\nfn bad(choice: Choice) {{ var c = Counter {{ value: 1 }} let o = Other {{ value: 2 }} let v: MutView = match choice {{ Choice.First => &mut c, Choice.Second => &o }}; update(v, 3); }}"),
+        &format!("{COMPOSITION}\nfn bad(choice: Choice) {{ var c = Counter {{ value: 1 }}; let o = Other {{ value: 2 }}; let v: MutView = match choice {{ Choice.First => &mut c, Choice.Second => &o }}; update(v, 3); }}"),
         "shared borrow",
     );
 }
@@ -617,13 +617,13 @@ fn borrowed_dyn_v3_reborrows_reject_permission_conflicts_and_escape() {
         ("fn f(v: &mut dyn Read) @noescape { let s = &*v; update(v); inspect(s); }", "borrow"),
         ("fn f(v: &mut dyn Read) @noescape { let s = &mut *v; inspect(v); update(s); }", "borrow"),
         ("fn pair(a: &mut dyn Read, b: &dyn Read) @noescape {} fn f(v: &mut dyn Read) @noescape { pair(&mut *v, &*v) }", "borrow"),
-        ("fn f() { let v: &dyn Read = { let c = Counter { value: 1 } let v: &dyn Read = &c; &*v }; inspect(v); }", "outlive"),
+        ("fn f() { let v: &dyn Read = { let c = Counter { value: 1 }; let v: &dyn Read = &c; &*v }; inspect(v); }", "outlive"),
         ("fn f(v: &dyn Read) @noescape { let capture = || -> Int32 { inspect(&*v) }; capture(); }", "captured"),
         ("fn f() { let c = Counter { value: 1 }; &*c; }", "requires a checked reference"),
-        ("fn f(flag: Bool) { var a = Counter { value: 1 } var b = Counter { value: 2 } var c = Counter { value: 3 } let v: &dyn Read = if flag { &a } else { if flag { &b } else { &c } }; c.value = 4; inspect(&*v); }", "borrow"),
-        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; let s = &*v; wait(); inspect(s); }", "across suspension"),
+        ("fn f(flag: Bool) { var a = Counter { value: 1 }; var b = Counter { value: 2 }; var c = Counter { value: 3 }; let v: &dyn Read = if flag { &a } else { if flag { &b } else { &c } }; c.value = 4; inspect(&*v); }", "borrow"),
+        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 }; let v: &mut dyn Read = &mut c; let s = &*v; wait(); inspect(s); }", "across suspension"),
         ("fn wait() @suspends {} fn f(v: &dyn Read) @noescape { parallel { | inspect(&*v); | wait(); } }", "@suspends"),
-        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; parallel { | wait(); | wait(); } inspect(&*v); }", "concurrency"),
+        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 }; let v: &mut dyn Read = &mut c; parallel { | wait(); | wait(); }; inspect(&*v); }", "concurrency"),
     ] { rejected(&format!("{base} {body}"), message); }
 }
 
@@ -977,7 +977,7 @@ fn borrowed_dyn_v4_old_table_survives_argument_evaluation_and_failed_reload() {
 
 #[test]
 fn borrowed_dyn_v3_erasure_does_not_allocate() {
-    let source = "struct Empty {} trait Read { fn value(&self) @noescape -> Int32 { 42 } } impl Read for Empty {} fn answer() -> Int32 { let e = Empty {} let v: &dyn Read = &e let copy = &*v; copy.value() }";
+    let source = "struct Empty {} trait Read { fn value(&self) @noescape -> Int32 { 42 } } impl Read for Empty {} fn answer() -> Int32 { let e = Empty {}; let v: &dyn Read = &e; let copy = &*v; copy.value() }";
     struct Reset(usize);
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -1033,7 +1033,7 @@ fn borrowed_dyn_qualification_shares_exact_obligation_boundary() {
         } else {
             level[0].clone()
         };
-        let program = format!("{source} impl Read for Empty {{ type Item = {root} }} fn answer() -> Int32 {{ let e = Empty {{}} let v: &dyn Read<Item = {root}> = &e; v.read() }}");
+        let program = format!("{source} impl Read for Empty {{ type Item = {root} }} fn answer() -> Int32 {{ let e = Empty {{}}; let v: &dyn Read<Item = {root}> = &e; v.read() }}");
         if overflow {
             rejected(&program, "256 obligations");
         } else {

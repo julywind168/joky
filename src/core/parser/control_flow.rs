@@ -224,6 +224,11 @@ impl Parser {
                 continue;
             }
             stmts.push(self.parse_expr()?);
+            if !matches!(self.peek(), TokenKind::RBrace | TokenKind::Eof)
+                && !self.at_expression_break()
+            {
+                return Err(self.error("Expected ';' or a newline between expressions".into()));
+            }
         }
         self.expect(&TokenKind::RBrace)?;
         self.allow_record = previous;

@@ -74,7 +74,7 @@ fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
     for source in [
         "type Wrong = Array<&String> fn f() {}",
         "struct Box { value: &Array<Int32> } fn f() {}",
-        "fn f(a: Array<Int32>) { let pair = (a, 1) let again = a }",
+        "fn f(a: Array<Int32>) { let pair = (a, 1); let again = a }",
         "fn f(a: &Array<Int32>) { let bad = (a, 1) }",
         "fn id<T>(value: T) -> T { value } fn f(a: &Array<Int32>) { let bad = id(a) }",
     ] {
@@ -84,11 +84,11 @@ fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
 
 #[test]
 fn buffer_moves_cover_bindings_arguments_returns_and_reinitialization() {
-    accepts("fn f(input: Array<Int32>) -> Array<Int32> { let a = input let b = a forward(b) }");
-    accepts("fn f(input: Array<Int32>, next: Array<Int32>) { var a = input consume(a) a = next write(&mut a) }");
+    accepts("fn f(input: Array<Int32>) -> Array<Int32> { let a = input; let b = a; forward(b) }");
+    accepts("fn f(input: Array<Int32>, next: Array<Int32>) { var a = input; consume(a); a = next; write(&mut a) }");
     accepts("fn f(a: Array<Int32>, b: Array<Int32>, flag: Bool) -> Array<Int32> { if flag { a } else { b } }");
-    rejects("fn f(a: Array<Int32>) { let b = a consume(a) }", "moved");
-    rejects("fn f(a: Array<Int32>) { consume(a) consume(a) }", "moved");
+    rejects("fn f(a: Array<Int32>) { let b = a; consume(a) }", "moved");
+    rejects("fn f(a: Array<Int32>) { consume(a); consume(a) }", "moved");
     rejects(
         "fn twice(a: Array<Int32>, b: Array<Int32>) {} fn f(a: Array<Int32>) { twice(a, a) }",
         "moved",
@@ -108,18 +108,18 @@ fn buffer_moves_cover_bindings_arguments_returns_and_reinitialization() {
 
 #[test]
 fn buffer_borrows_end_at_last_use_and_reborrow_in_helpers() {
-    accepts("fn f(input: Array<Int32>) { var a = input let r = &a let s = r read(r); read(s); write(&mut a) grow(&mut a) write(&mut a) }");
-    accepts("fn f(a: &mut Array<Int32>) { write(a) grow(a) write(a) }");
-    accepts("fn f(input: Array<Int32>) { var a = input let m = &mut a let s = (&*m) read(s); write(m) }");
+    accepts("fn f(input: Array<Int32>) { var a = input; let r = &a; let s = r; read(r); read(s); write(&mut a); grow(&mut a); write(&mut a) }");
+    accepts("fn f(a: &mut Array<Int32>) { write(a); grow(a); write(a) }");
+    accepts("fn f(input: Array<Int32>) { var a = input; let m = &mut a; let s = (&*m); read(s); write(m) }");
     accepts("fn f(a: &Array<Int32>) -> &Array<Int32> { view(a) }");
     accepts("fn f(a: &mut Array<Int32>) -> &mut Array<Int32> { exclusive(a) }");
     rejects("fn f(a: Array<Int32>) { write(&mut a) }", "var binding");
     rejects(
-        "fn f(input: Array<Int32>) { var a = input let r = &a write(&mut a) read(r); }",
+        "fn f(input: Array<Int32>) { var a = input; let r = &a; write(&mut a); read(r); }",
         "live borrow",
     );
     rejects(
-        "fn f(input: Array<Int32>) { var a = input let r = &mut a read(&a); write(r) }",
+        "fn f(input: Array<Int32>) { var a = input; let r = &mut a; read(&a); write(r) }",
         "live borrow",
     );
 }
@@ -127,15 +127,15 @@ fn buffer_borrows_end_at_last_use_and_reborrow_in_helpers() {
 #[test]
 fn live_buffer_views_block_moves_overwrite_and_lexical_escape() {
     rejects(
-        "fn f(a: Array<Int32>) { let r = &a consume(a) read(r); }",
+        "fn f(a: Array<Int32>) { let r = &a; consume(a); read(r); }",
         "live borrow",
     );
     rejects(
-        "fn f(input: Array<Int32>, b: Array<Int32>) { var a = input let r = &a a = b read(r); }",
+        "fn f(input: Array<Int32>, b: Array<Int32>) { var a = input; let r = &a; a = b; read(r); }",
         "live borrow",
     );
     rejects(
-        "fn f(a: Array<Int32>) { let r = { let local = a; &local } read(r); }",
+        "fn f(a: Array<Int32>) { let r = { let local = a; &local }; read(r); }",
         "live borrow",
     );
     rejects(
@@ -155,14 +155,14 @@ fn live_buffer_views_block_moves_overwrite_and_lexical_escape() {
 
 #[test]
 fn buffer_loans_follow_returned_views_and_argument_evaluation_order() {
-    accepts("fn dependent(a: &Array<Int32>, p: &Int32) -> &Array<Int32> { a } fn f(input: Array<Int32>) { var a = input var n = 1 let r = dependent(&a, &n) n = 2 read(r); }");
-    accepts("fn dependent(a: &Array<Int32>, p: &Int32) -> &Array<Int32> { a } fn f(input: Array<Int32>) { var a = input var n = 1 let r = dependent(&a, &n) read(r); n = 2 }");
+    accepts("fn dependent(a: &Array<Int32>, p: &Int32) -> &Array<Int32> { a } fn f(input: Array<Int32>) { var a = input; var n = 1; let r = dependent(&a, &n); n = 2; read(r); }");
+    accepts("fn dependent(a: &Array<Int32>, p: &Int32) -> &Array<Int32> { a } fn f(input: Array<Int32>) { var a = input; var n = 1; let r = dependent(&a, &n); read(r); n = 2 }");
     rejects(
-        "fn f(input: Array<Int32>) { var a = input let r = view(&a) write(&mut a) read(r); }",
+        "fn f(input: Array<Int32>) { var a = input; let r = view(&a); write(&mut a); read(r); }",
         "live borrow",
     );
-    rejects("fn pair(a: &mut Array<Int32>, b: Int32) {} fn f(input: Array<Int32>) { var a = input pair(&mut a, read(&a)) }", "live borrow");
-    accepts("fn pair(a: &mut Array<Int32>, b: Int32) {} fn f(input: Array<Int32>) { var a = input let n = read(&a) pair(&mut a, n) }");
+    rejects("fn pair(a: &mut Array<Int32>, b: Int32) {} fn f(input: Array<Int32>) { var a = input; pair(&mut a, read(&a)) }", "live borrow");
+    accepts("fn pair(a: &mut Array<Int32>, b: Int32) {} fn f(input: Array<Int32>) { var a = input; let n = read(&a); pair(&mut a, n) }");
     rejects(
         "fn pair(a: &Array<Int32>, b: Array<Int32>) {} fn f(a: Array<Int32>) { pair(&a, a) }",
         "live borrow",
@@ -172,27 +172,27 @@ fn buffer_loans_follow_returned_views_and_argument_evaluation_order() {
 #[test]
 fn buffer_flow_checks_branches_loops_break_continue_and_early_returns() {
     rejects(
-        "fn f(a: Array<Int32>, flag: Bool) { if flag { consume(a) } consume(a) }",
+        "fn f(a: Array<Int32>, flag: Bool) { if flag { consume(a) }; consume(a) }",
         "moved",
     );
     rejects(
         "fn f(a: Array<Int32>, flag: Bool) { while flag { consume(a) } }",
         "moved",
     );
-    accepts("fn f(input: Array<Int32>, flag: Bool) -> Array<Int32> { var a = input while flag { a = forward(a) } a }");
-    accepts("fn f(input: Array<Int32>, flag: Bool) -> Array<Int32> { var a = input while flag { let b = a a = forward(b) if flag { continue } break } a }");
-    accepts("fn f(a: Array<Int32>, flag: Bool) -> Array<Int32> { if flag { return a } a }");
-    accepts("fn f(a: Array<Int32>, flag: Bool) { while flag { consume(a) break } }");
+    accepts("fn f(input: Array<Int32>, flag: Bool) -> Array<Int32> { var a = input; while flag { a = forward(a) }; a }");
+    accepts("fn f(input: Array<Int32>, flag: Bool) -> Array<Int32> { var a = input; while flag { let b = a; a = forward(b); if flag { continue }; break }; a }");
+    accepts("fn f(a: Array<Int32>, flag: Bool) -> Array<Int32> { if flag { return a }; a }");
+    accepts("fn f(a: Array<Int32>, flag: Bool) { while flag { consume(a); break } }");
 }
 
 #[test]
 fn buffer_allocation_effect_is_distinct_from_inferred_reference_retention() {
     let plan =
-        plan("fn f(input: Array<Int32>) { var a = input grow(&mut a) grow(&mut a) }").unwrap();
+        plan("fn f(input: Array<Int32>) { var a = input; grow(&mut a); grow(&mut a) }").unwrap();
     assert!(plan.functions["grow"].uses_arena);
     assert!(plan.functions["f"].uses_arena);
-    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input let p = alloc(1) mixed(&mut a, p) (*(p) = 2) }");
-    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input var n = 0 mixed(&mut a, &mut n) }");
+    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input; let p = alloc(1); mixed(&mut a, p); (*(p) = 2) }");
+    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input; var n = 0; mixed(&mut a, &mut n) }");
     rejects("fn f(a: &Array<Int32>) { let p = alloc(a) }", "Copy data");
 }
 

@@ -17,8 +17,8 @@ fn flood(writer: &mut TcpWriter, text: &String) @suspends {
     ensure(writer.shutdown().is_ok())
 }
 fn pushed(reader: &mut BufferedTcpReader) @suspends {
-    let bytes = match reader.read_message(65536) { Ok(Some(bytes)) => bytes, _ => { ensure(false) return } }
-    let value = match json.decode_bytes_with_limits(bytes, limits()) { Ok(value) => value, _ => { ensure(false) return } }
+    let bytes = match reader.read_message(65536) { Ok(Some(bytes)) => bytes, _ => { ensure(false); return } }
+    let value = match json.decode_bytes_with_limits(bytes, limits()) { Ok(value) => value, _ => { ensure(false); return } }
     let kind = "push"
     ensure(message_id(&value, &kind).unwrap_or(0) == 99)
 }

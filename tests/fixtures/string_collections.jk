@@ -56,7 +56,7 @@ fn shapes<T>() -> Int32 {
     if optional.is_some() { return 2 }
     let result: Result<(String, StringBuilder), Pair> = Ok(("🙂", builder))
     match pass(result) {
-        Ok((first, second)) => { let text = second.finish() if first.byte_length() != 4 || text.byte_length() != 3 { return 3 } }
+        Ok((first, second)) => { let text = second.finish(); if first.byte_length() != 4 || text.byte_length() != 3 { return 3 } }
         Err(_) => { return 4 }
     }
     let result: Result<StringBuilder, Pair> = Err(pair(3))
@@ -65,7 +65,7 @@ fn shapes<T>() -> Int32 {
 }
 fn arrays<T>() -> String {
     var parts = Array.new::<String>()
-    parts.push("a") parts.push("中") parts.push("🙂")
+    parts.push("a"); parts.push("中"); parts.push("🙂")
     parts.swap(0, 2)
     let old = parts.replace(1, "é").unwrap_or("")
     if old.byte_length() != 3 { return "bad replace" }
@@ -87,7 +87,7 @@ fn arrays<T>() -> String {
 }
 fn array_records<T>() -> Int32 {
     var values = Array.new::<Pair>()
-    values.push(pair(10)) values.push(pair(11)) values.push(pair(12))
+    values.push(pair(10)); values.push(pair(11)); values.push(pair(12))
     values.reserve(10)
     values.swap(0, 2)
     values.set(1, pair(13))
@@ -102,7 +102,7 @@ fn array_records<T>() -> Int32 {
 }
 fn nested<T>() -> Int32 {
     var inner = Array.new::<String>()
-    inner.push("中") inner.push("🙂")
+    inner.push("中"); inner.push("🙂")
     var outer = Array.new::<Array<String>>()
     outer.push(inner)
     var table = Map.new::<Int32, Array<String>>()
@@ -119,7 +119,7 @@ fn nested<T>() -> Int32 {
 }
 fn map_values<T>() -> Int32 {
     var table = Map.new::<Int32, String>()
-    table.insert(0, "a") table.insert(1, "中") table.insert(2, "🙂")
+    table.insert(0, "a"); table.insert(1, "中"); table.insert(2, "🙂")
     let old = table.insert(1, "é").unwrap_or("")
     if old.byte_length() != 3 { return 1 }
     let old = mem.replace(table.borrow_mut_ref(1), "tail")
@@ -129,12 +129,12 @@ fn map_values<T>() -> Int32 {
     let entries = table.into_entries()
     var entries = entries
     var length: UInt64 = 0
-    while !entries.is_empty() { let (_, value) = entries.take_last() length = length + value.byte_length() }
+    while !entries.is_empty() { let (_, value) = entries.take_last(); length = length + value.byte_length() }
     if length != 8 { return 4 }
     var table = Map.new::<Int32, String>()
     table.insert(0, "中")
     match table.pop() { Some((key, value)) => { if key != 0 || value.byte_length() != 3 { return 5 } }, None => { return 6 } }
-    table.insert(1, "🙂") table.clear() table.release()
+    table.insert(1, "🙂"); table.clear(); table.release()
     42
 }
 fn builders<T>() -> Int32 {
@@ -155,14 +155,14 @@ fn builders<T>() -> Int32 {
 }
 fn tracked_failure<T>() -> Int32 {
     var values = Array.new::<Pair>()
-    values.push(pair(20)) values.push(pair(21))
+    values.push(pair(20)); values.push(pair(21))
     values.reserve(10)
     let result: Result<(String, StringBuilder), Pair> = Ok(("tail", StringBuilder.new()))
     let bad = 1 / 0
     42
 }
 fn partial_failure<T>() -> Int32 {
-    let value = Pair { left: { let source = pair(30) source.left.clone() }, right: { let bad = 1 / 0 "tail" }, id: 31 }
+    let value = Pair { left: { let source = pair(30); source.left.clone() }, right: { let bad = 1 / 0; "tail" }, id: 31 }
     42
 }
 fn bulk_work<T>() -> Int32 {
@@ -180,13 +180,13 @@ fn bulk_work<T>() -> Int32 {
 struct Construction { seed: String, builder: StringBuilder, tag: Int32 }
 fn enum_arrays<T>() -> Int32 {
     var values = Array.new::<Shape>()
-    values.push(Shape.Text(pair(50))) values.push(Shape.Empty)
+    values.push(Shape.Text(pair(50))); values.push(Shape.Empty)
     var builder = StringBuilder.new()
     builder.push('🙂')
     values.push(Shape.Builder(builder))
     values.reserve(10)
     match values.take_last() {
-        Builder(value) => { let text = value.finish() if text.byte_length() != 4 { return 1 } }
+        Builder(value) => { let text = value.finish(); if text.byte_length() != 4 { return 1 } }
         _ => { return 2 }
     }
     values.swap(0, 1)

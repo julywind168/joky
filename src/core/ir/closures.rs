@@ -289,6 +289,7 @@ impl FunctionPlan {
             let dst = self.slot(Type::Function(Arc::new(crate::parser::ast::FunctionType {
                 signature: signature.clone(),
                 suspends: false,
+                noescape: pointer.noescape,
             })))?;
             self.emit(Op::FunctionRef(
                 dst.clone(),

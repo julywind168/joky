@@ -11,15 +11,15 @@ import joky/integer
 import joky/float
 import joky/task
 
-fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) decoded::<T>("null") }
+        Err(_) => { ensure(false); decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
@@ -32,7 +32,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
         _ => { ensure(false) }
     }
 }
@@ -58,7 +58,7 @@ fn main() {
     match typed.decode::<Map<Key, UInt8>>(&collision) {
         Err(Mapping(error)) => {
             ensure(code(error.kind) == 12)
-            let path = error.pointer() let a = "/a" let b = "/b"
+            let path = error.pointer(); let a = "/a"; let b = "/b"
             ensure(path.equals(&a) || path.equals(&b))
         }
         _ => { ensure(false) }

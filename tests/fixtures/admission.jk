@@ -2,9 +2,9 @@ import joky/admission
 import joky/domain
 import joky/task
 import joky/check
-fn assert(ok:Bool) { let text="admission" check.assert(ok,&text) }
+fn assert(ok:Bool) { let text="admission"; check.assert(ok,&text) }
 fn take(h:admission.Handle) @suspends -> admission.Permit {
-    match h.acquire() { Ok(p)=>p, Err(_)=>{ assert(false) take(h) } }
+    match h.acquire() { Ok(p)=>p, Err(_)=>{ assert(false); take(h) } }
 }
 struct Order { value:Int32 }
 fn order(n:Int32)->Order { Order{value:n} }
@@ -16,7 +16,7 @@ fn worker(h:admission.Handle,s:domain.WriteHandle<Order>,n:Int32) @suspends {
     task.yield_now()
     permit.release()
 }
-fn wait_cancel(h:admission.Handle) @suspends { let p=take(h) p.release() assert(false) }
+fn wait_cancel(h:admission.Handle) @suspends { let p=take(h); p.release(); assert(false) }
 fn win_cancel() @suspends { task.yield_now() }
 fn closed_handle() @suspends ->admission.Handle {
     let pool=admission.create(1,1)
@@ -62,4 +62,4 @@ fn lifecycle() @suspends ->Int32 {
     next.release()
     24
 }
-fn main() @suspends { assert(lifecycle()==24) println("admission ok") }
+fn main() @suspends { assert(lifecycle()==24); println("admission ok") }

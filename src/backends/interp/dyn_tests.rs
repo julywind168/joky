@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn borrowed_dyn_v4_interpreter_checks_table_slot_signature_and_function_id() {
-    let ast = crate::parser::parse("struct Empty {} trait Read { fn value(&self) @noescape -> Int32 { 42 } } impl Read for Empty {} fn answer() -> Int32 { let e = Empty {} let v: &dyn Read = &e; v.value() }").unwrap();
+    let ast = crate::parser::parse("struct Empty {} trait Read { fn value(&self) @noescape -> Int32 { 42 } } impl Read for Empty {} fn answer() -> Int32 { let e = Empty {}; let v: &dyn Read = &e; v.value() }").unwrap();
     let types = TypeRegistry::default().with_prelude(false);
     let prepared = PreparedModule::new(&ast, &types, &Default::default()).unwrap();
     let plan = prepared.plan(&HashMap::new()).unwrap();

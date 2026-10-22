@@ -9,15 +9,15 @@ import joky/integer
 import joky/float
 import joky/task
 
-fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) decoded::<T>("null") }
+        Err(_) => { ensure(false); decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
         _ => { ensure(false) }
     }
 }
@@ -43,11 +43,11 @@ fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String
 fn containers() {
     let values = decoded::<Array<String>>("[\"first\",\"你🙂\",\"last\"]")
     ensure(values.len() == 3)
-    let first = "first" let last = "last"
-    ensure(values.borrow_ref(0).equals(&first)) ensure(values.borrow_ref(2).equals(&last))
+    let first = "first"; let last = "last"
+    ensure(values.borrow_ref(0).equals(&first)); ensure(values.borrow_ref(2).equals(&last))
     let recovered = decoded::<Array<String>>(encoded(&values))
-    ensure(recovered.borrow_ref(0).equals(&first)) ensure(recovered.borrow_ref(2).equals(&last))
-    let absent = decoded::<Option<Array<String>>>("null") ensure(absent.is_none())
-    let empty = decoded::<Array<String>>("[]") ensure(empty.is_empty())
+    ensure(recovered.borrow_ref(0).equals(&first)); ensure(recovered.borrow_ref(2).equals(&last))
+    let absent = decoded::<Option<Array<String>>>("null"); ensure(absent.is_none())
+    let empty = decoded::<Array<String>>("[]"); ensure(empty.is_empty())
 }
 fn main() { containers() }

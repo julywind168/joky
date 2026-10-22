@@ -126,4 +126,4 @@ fn group_8() {
     model("{{\"é\":1,\"e\\u0301\":2}}", 3928483594911448242, 43)
     model("[[],{{}},\"\",null,true,false]", 5435676591649657196, 44)
 }
-fn main() { group_0() group_1() group_2() group_3() group_4() group_5() group_6() group_7() group_8() }
+fn main() { group_0(); group_1(); group_2(); group_3(); group_4(); group_5(); group_6(); group_7(); group_8() }

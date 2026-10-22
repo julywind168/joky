@@ -12,7 +12,7 @@ struct ContextualField { private: Int32 }
 impl<T> Batch<T> {
     fn new() -> Self { Self { values: Array.new::<T>() } }
     fn add(&mut self, value: T) { array.push(&mut self.values, value) }
-    fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
+
     fn view(&self) -> &Array<T> { &self.values }
     fn edit(&mut self) -> &mut Array<T> { &mut self.values }
     fn into_array(self) -> Array<T> { self.values }
@@ -67,7 +67,7 @@ fn methods_flow(flag: Bool) -> Int32 {
     var batch = if flag { Batch { values: values } } else { Batch { values: array.new::<Int32>() } }
     batch = Batch.new::<Int32>()
     var i = 0
-    while i < 3 { batch.add(14) i = i + 1 }
+    while i < 3 { batch.add(14); i = i + 1 }
     let answer = batch.get(0).unwrap_or(0) + batch.get(1).unwrap_or(0) + batch.get(2).unwrap_or(0)
     batch.release()
     answer
@@ -76,4 +76,8 @@ fn methods_answer() -> Int32 {
     if (ContextualField { private: 42 }).private != 42 { return 0 }
     if methods_all() != 42 || methods_wrapped() != 42 || methods_references() != 42 || methods_flow(true) != 42 || methods_flow(false) != 42 { return 0 }
     42
+}
+
+impl<T: Copy> Batch<T> {
+    fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
 }

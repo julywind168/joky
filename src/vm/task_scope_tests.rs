@@ -40,13 +40,13 @@ fn scheduling_rounds_poll_nested_bodies_and_children_once() {
     }
     for entry in [
         "parallel { | helper(9, 1) | helper(8, 2) }",
-        "scope { branch { helper(9, 1) } branch { helper(8, 2) } }",
+        "scope { branch { helper(9, 1) }; branch { helper(8, 2) } }",
         "race { | helper(9, 1) | helper(8, 2) }",
     ] {
         let source = format!(
             "extern fn pending(id: Int32) @suspends
              fn helper(body: Int32, child: Int32) @suspends {{
-                 scope {{ branch {{ pending(child) }} pending(body) }}
+                 scope {{ branch {{ pending(child) }}; pending(body) }}
              }}
              fn main() @suspends {{ {entry} }}"
         );
@@ -484,7 +484,7 @@ fn branch_results_stay_unit() {
     let value_body = format!(
         "{HOSTS}
 fn main() @suspends {{
-    scope {{ branch {{ delayed_value(1) 42 }} }}
+    scope {{ branch {{ delayed_value(1); 42 }} }}
 }}
 "
     );

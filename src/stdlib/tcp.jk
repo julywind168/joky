@@ -79,7 +79,7 @@ impl ReadProgress {
         match self.mode {
             Until(delimiter) => {
                 count = 0
-                while count < length && !found { found = buffer.byte_at(count) == delimiter count = count + 1 }
+                while count < length && !found { found = buffer.byte_at(count) == delimiter; count = count + 1 }
             }
             Exact => { if self.bytes.is_empty() { self.bytes.reserve(limit) } }
             Partial => { self.bytes.reserve(length) }
@@ -126,7 +126,7 @@ impl ReceiveBuffer {
     fn publish(&mut self, result: Result<Array<UInt8>, IoError>) -> Result<Unit, ReadError> {
         let bytes = match result {
             Ok(bytes) => bytes
-            Err(error) => { self.state = ReadState.Failed(error) return Result.Err(ReadError.Io(error)) }
+            Err(error) => { self.state = ReadState.Failed(error); return Result.Err(ReadError.Io(error)) }
         }
         // Keep the offset in range even if cancellation splits publication.
         self.offset = 0
@@ -137,7 +137,7 @@ impl ReceiveBuffer {
     fn byte_at(&self, index: UInt64) -> UInt8 { self.bytes.get(self.offset + index).unwrap_or(0) }
     fn take_into(&mut self, result: &mut Array<UInt8>, length: UInt64) {
         var index: UInt64 = 0
-        while index < length { result.push(self.byte_at(index)) index = index + 1 }
+        while index < length { result.push(self.byte_at(index)); index = index + 1 }
         self.offset = self.offset + length
     }
 }
@@ -487,7 +487,7 @@ impl TcpListener {
     }
 }
 
-fn byte_length(bytes: Array<UInt8>) -> (Array<UInt8>, UInt64) { let length = bytes.len() (bytes, length) }
+fn byte_length(bytes: Array<UInt8>) -> (Array<UInt8>, UInt64) { let length = bytes.len(); (bytes, length) }
 fn write_chunk(bytes: Array<UInt8>, offset: UInt64) -> (Array<UInt8>, Array<UInt8>) {
     let remaining = bytes.len() - offset
     let length = if remaining < 16384 { remaining } else { 16384 }

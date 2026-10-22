@@ -25,7 +25,7 @@ impl FromJson for User {
         Ok(User { name: name, age: age, nickname: nickname })
     }
 }
-fn ensure(ok: Bool) { let message = "typed JSON example" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON example"; assert(ok, &message) }
 fn main() {
     let input = "{{\"name\":\"Ada\",\"age\":37}}"
     match typed.decode::<User>(&input) {

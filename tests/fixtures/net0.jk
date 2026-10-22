@@ -11,7 +11,7 @@ import joky/check.{assert}
 }
 extern fn net0_read(request: &mut NetRequest) @suspends -> Int32
 extern fn net0_event(value: Int32)
-fn ensure(condition: Bool) { let message = "NET0 contract violation" assert(condition, &message) }
+fn ensure(condition: Bool) { let message = "NET0 contract violation"; assert(condition, &message) }
 struct Packet { bytes: Array<UInt8> }
 impl Drop for Packet { fn drop(&mut self) { net0_event(20) } }
 struct PendingBytes { bytes: Array<UInt8> }
@@ -22,7 +22,7 @@ fn request(mode: Int32) -> &mut NetRequest {
         b0: 0, b1: 0, b2: 0, b3: 0 })
 }
 fn pending_bytes() -> Array<UInt8> {
-    var bytes = Array.new::<UInt8>() bytes.push(99)
+    var bytes = Array.new::<UInt8>(); bytes.push(99)
     bytes
 }
 fn finish_read(bytes: Array<UInt8>, req: &NetRequest, count: Int32) -> Result<Array<UInt8>, IoError> {
@@ -34,7 +34,7 @@ fn finish_read(bytes: Array<UInt8>, req: &NetRequest, count: Int32) -> Result<Ar
     if count < 0 { return Err(IoError.ReadFailed(req.received)) }
     ensure(count == 4 && req.received == 4)
     var output = Array.new::<UInt8>()
-    output.push(req.b0) output.push(req.b1) output.push(req.b2) output.push(req.b3)
+    output.push(req.b0); output.push(req.b1); output.push(req.b2); output.push(req.b3)
     Ok(output)
 }
 fn classify(result: Result<Array<UInt8>, IoError>) -> Array<UInt8> {
@@ -42,8 +42,8 @@ fn classify(result: Result<Array<UInt8>, IoError>) -> Array<UInt8> {
         Ok(bytes) => bytes
         Err(error) => {
             match error {
-                IoError.UnexpectedEof(n) => { ensure(n == 2) net0_event(12) }
-                IoError.ReadFailed(n) => { ensure(n == 2) net0_event(13) }
+                IoError.UnexpectedEof(n) => { ensure(n == 2); net0_event(12) }
+                IoError.ReadFailed(n) => { ensure(n == 2); net0_event(13) }
             }
             Array.new::<UInt8>()
         }
@@ -67,12 +67,12 @@ fn check_packet(bytes: Array<UInt8>) -> Int32 {
     ensure(packet.bytes.get(2).unwrap_or(0) == 255 && packet.bytes.get(3).unwrap_or(0) == 42)
     42
 }
-fn check_empty(bytes: Array<UInt8>) -> Int32 { ensure(bytes.is_empty()) 42 }
+fn check_empty(bytes: Array<UInt8>) -> Int32 { ensure(bytes.is_empty()); 42 }
 fn data() @suspends -> Int32 { check_packet(receive(0)) }
 fn eof() @suspends -> Int32 { check_empty(receive(0)) }
 fn domain_error() @suspends -> Int32 { check_empty(receive(3)) }
-fn startup_failure() @suspends -> Int32 { receive(1); net0_event(99) 0 }
-fn pending_failure() @suspends -> Int32 { receive(2); net0_event(99) 0 }
+fn startup_failure() @suspends -> Int32 { receive(1); net0_event(99); 0 }
+fn pending_failure() @suspends -> Int32 { receive(2); net0_event(99); 0 }
 fn discard_read() @suspends { receive(0); }
 fn timeout() @suspends -> Int32 {
     race { | discard_read() | task.sleep_ms(10) }
@@ -83,10 +83,10 @@ fn fail_now() {
     let message = "NET0 parent failure"
     assert(false, &message)
 }
-fn fail_later() @suspends { task.sleep_ms(10) fail_now() }
+fn fail_later() @suspends { task.sleep_ms(10); fail_now() }
 fn sibling_failure() @suspends -> Int32 {
     parallel { | discard_read() | fail_later() }
-    net0_event(99) 0
+    net0_event(99); 0
 }
 fn instant() @suspends {}
 fn unstarted() @suspends -> Int32 {

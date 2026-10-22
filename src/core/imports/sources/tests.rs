@@ -272,7 +272,7 @@ fn intrinsic_annotations_bind_renamed_definitions_and_keep_error_locations() {
     let source = r#"import joky/string.{duplicate}
         import joky/check.{verify, stop}
         fn copy() -> String { duplicate("copied once") }
-        fn success() -> Int32 { verify(true, "Unused error") 42 }
+        fn success() -> Int32 { verify(true, "Unused error"); 42 }
         fn failure() -> Int32 { stop("Renamed panic") }"#;
     let file = crate::SourceFile::new("consumer.jk", source);
     let mut parsed = crate::parser::parse_with_source(source, file.id()).unwrap();

@@ -5,7 +5,10 @@ impl<T> Pair<T> {
     const SIZE: Int32 = 2
     fn make(left: T, right: T) -> Self { Self { left: left, right: right } }
     fn first(self) -> T { self.left }
-    fn swap(self) -> Self { Self.make(self.right, self.left) }
+    fn swap(self) -> Self {
+        let Pair { left, right } = self
+        Self.make(right, left)
+    }
 }
 
 enum Maybe<T> { None, Some(T) }
@@ -17,12 +20,12 @@ impl<T> Maybe<T> {
     }
 }
 
-fn first_of<T>(value: T) -> T { Pair.make(value, value).first() }
+fn first_of<T: Copy>(value: T) -> T { Pair.make(value, value).first() }
 fn main() {
-    { let displayed: Int32 = Pair.make(20, 42).swap().first() println(&displayed) }
-    { let displayed: Int64 = Pair::<Int64>.make(4294967295, 0).first() println(&displayed) }
-    { let displayed: UInt64 = Pair.make::<UInt64>(0xffff_ffff_ffff_ffff, 0).first() println(&displayed) }
-    { let displayed: Int32 = Maybe.some(first_of(42)).unwrap(0) println(&displayed) }
-    { let displayed: Int32 = Maybe.none::<Int32>().unwrap(7) println(&displayed) }
-    { let displayed: Int32 = Pair.SIZE println(&displayed) }
+    println(Pair.make(20, 42).swap().first())
+    println(Pair::<Int64>.make(4294967295, 0).first())
+    println(Pair.make::<UInt64>(0xffff_ffff_ffff_ffff, 0).first())
+    println(Maybe.some(first_of(42)).unwrap(0))
+    println(Maybe.none::<Int32>().unwrap(7))
+    println(Pair.SIZE)
 }

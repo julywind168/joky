@@ -8,8 +8,8 @@ fn main() {
     values.insert(0, resource(20))
     values.insert(0, resource(22))
     values.insert(1, resource(21))
-    match values.remove(1) { Some(item) => { let displayed: Int32 = item.id println(&displayed) }, None => { let displayed: Int32 = 0 println(&displayed) } }
-    { let displayed: Int32 = values.borrow_ref(0).id println(&displayed) }
-    { let displayed: Int32 = values.borrow_ref(1).id println(&displayed) }
-    { let displayed: Int32 = if values.insert(99, resource(0)) { 1 } else { 0 } println(&displayed) }
+    match values.remove(1) { Some(item) => println(item.id), None => println(0) }
+    println(values.borrow_ref(0).id)
+    println(values.borrow_ref(1).id)
+    println(if values.insert(99, resource(0)) { 1 } else { 0 })
 }

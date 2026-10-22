@@ -30,28 +30,28 @@ pub fn test_invariant<T>(list: &List<T>) -> Bool {
         match list.slots.get(slot) {
             Some(NodeSlot.Used(node)) => {
                 if !same_slot(node.prev, previous) { return false }
-                previous = current current = node.next
+                previous = current; current = node.next
             }
             _ => return false
         }
         visited = visited + 1
     }
     if visited != length || !same_slot(previous, list.tail) { return false }
-    current = list.tail previous = None visited = 0
+    current = list.tail; previous = None; visited = 0
     while current.is_some() {
         if visited >= length { return false }
         let slot = required_slot(current)
         match list.slots.get(slot) {
             Some(NodeSlot.Used(node)) => {
                 if !same_slot(node.next, previous) { return false }
-                previous = current current = node.prev
+                previous = current; current = node.prev
             }
             _ => return false
         }
         visited = visited + 1
     }
     if visited != length || !same_slot(previous, list.head) { return false }
-    current = list.free visited = 0
+    current = list.free; visited = 0
     while current.is_some() {
         if visited >= count - length { return false }
         match list.slots.get(required_slot(current)) {

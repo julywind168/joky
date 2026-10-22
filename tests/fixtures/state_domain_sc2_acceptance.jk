@@ -2,7 +2,7 @@ import joky/domain
 import joky/task
 import joky/check
 import joky/array.{type Array}
-fn assert(value: Bool) { let message = "SC2 acceptance" check.assert(value, &message) }
+fn assert(value: Bool) { let message = "SC2 acceptance"; check.assert(value, &message) }
 struct Room { title: String, scores: Array<Int32>, total: Int32 }
 fn make(total: Int32) -> Room {
     var scores = Array.new::<Int32>()
@@ -54,4 +54,4 @@ fn lifecycle() @suspends -> Int32 {
     assert(committed.identity() != 0 && conflict.identity() != committed.identity())
     24
 }
-fn main() @suspends { assert(lifecycle() == 24) println("SC2 acceptance ok") }
+fn main() @suspends { assert(lifecycle() == 24); println("SC2 acceptance ok") }

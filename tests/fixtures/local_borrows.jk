@@ -6,7 +6,7 @@ enum Choice { Missing, Value(Wide) }
 
 fn increment(p: &mut Int32) { (*(p) = (*p) + 1); }
 fn inspect(p: &Int32) -> Int32 { (*p) }
-fn echo<T>(value: T) -> T { (*(&value)) }
+fn echo<T: Copy>(value: T) -> T { (*(&value)) }
 fn reborrow(p: &mut Int32) -> &mut Int32 { p }
 fn pair(a: Int32, b: Int32) -> Int32 { a + b }
 fn touch(point: &mut Point) { point.x = point.x + 1; }

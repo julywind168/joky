@@ -5,7 +5,7 @@ struct State { owner: Node, text: String }
 fn create() -> State { State { owner: node.self(), text: "owned" } }
 impl Drop for State {
     fn drop(&mut self) {
-        if node.is_valid(self.owner) { let name = "Dropped" node.set_name(self.owner, &name) }
+        if node.is_valid(self.owner) { let name = "Dropped"; node.set_name(self.owner, &name) }
     }
 }
 fn task_signal() @suspends {
@@ -18,5 +18,5 @@ fn task_emitter() @suspends {
     let target = node.get_node(node.self(), &path)
     node.wait_signal(node.signal(target, &name))
 }
-fn task_bad() @suspends { task.next_frame() let divisor = 0 let value = 1 / divisor println(value) }
+fn task_bad() @suspends { task.next_frame(); let divisor = 0; let value = 1 / divisor; println(value) }
 fn task_real(seconds: Float64) @suspends { task.sleep_real(seconds) }

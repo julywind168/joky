@@ -149,6 +149,15 @@ impl FunctionInfo {
         }
     }
 
+    fn function_type(&self) -> Type {
+        Type::function_with_contract(
+            self.signature.params.clone(),
+            self.signature.ret.clone(),
+            self.suspends,
+            self.noescape,
+        )
+    }
+
     pub(crate) fn parameter_noescape(&self, index: usize) -> bool {
         self.noescape
             || self.noescape_params.contains(&index)
@@ -1041,14 +1050,13 @@ impl ModulePlan {
             bodies.insert(name, body);
         }
         for (index, signature) in generics.borrow().callables.iter().enumerate() {
-            functions.insert(
-                format!("__joky_indirect_{index}"),
-                FunctionInfo::indirect(
-                    signature.signature.clone(),
-                    signature.suspends,
-                    Span::empty(0),
-                ),
+            let mut info = FunctionInfo::indirect(
+                signature.signature.clone(),
+                signature.suspends,
+                Span::empty(0),
             );
+            info.noescape = signature.noescape;
+            functions.insert(format!("__joky_indirect_{index}"), info);
         }
         for (index, signature) in generics.borrow().abstract_callables.iter().enumerate() {
             let mut info = FunctionInfo::indirect(signature.clone(), false, Span::empty(0));
@@ -1944,11 +1952,14 @@ impl FunctionPlan {
         }
         if let Some((name, info)) = self.function_value_info(expr, vars, functions, types, true)? {
             self.check_drop_call(&name, expr.span())?;
-            let target = self.slot(Type::function_with_effect(
-                info.signature.params,
-                info.signature.ret,
-                info.suspends,
-            ))?;
+            let mut ty = info.function_type();
+            if let (Type::Function(actual), Some(Type::Function(expected))) = (&ty, expected) {
+                if actual.signature == expected.signature && actual.suspends == expected.suspends {
+                    // The completed borrow analysis verifies this requested contract.
+                    ty = Type::Function(expected.clone());
+                }
+            }
+            let target = self.slot(ty)?;
             self.emit(Op::FunctionRef(target.clone(), name));
             return Ok(Flow::Value(Some(target)));
         }
@@ -2439,10 +2450,9 @@ impl FunctionPlan {
                 Ok(Flow::Value(Some(dst)))
             }
             Expr::MethodCall(_) => unreachable!("method calls resolve before expression planning"),
-            Expr::Invoke { callee, args, span } => {
-                self.invoke_expr(callee, args, *span, vars, functions, suspends, types)
+            Expr::Invoke { .. } | Expr::Call { .. } => {
+                self.call_expr(expr, vars, functions, suspends, types)
             }
-            Expr::Call { .. } => self.call_expr(expr, vars, functions, suspends, types),
             Expr::Scope { .. } => self.scope_expr(expr, vars, functions, suspends, types),
             Expr::TaskScope { .. } => {
                 self.task_scope_expr(expr, vars, functions, suspends, types, expected)

@@ -1,7 +1,7 @@
 import joky/domain
 import joky/task
 import joky/check
-fn assert(ok:Bool) { let message="atomic pair commit" check.assert(ok,&message) }
+fn assert(ok:Bool) { let message="atomic pair commit"; check.assert(ok,&message) }
 struct State { n:Int32, wide:UInt64, real:Float64 }
 struct Rules { limit:Int32 }
 fn make(n:Int32)->State { State{n:n,wide:18446744073709551615,real:Float64.from_bits(9221120237041090626)} }
@@ -11,7 +11,7 @@ fn read(a:&State)->Int32 { a.n }
 fn read_rules(b:&Rules)->Int32 { b.limit }
 fn valid(a:&State)->Bool { a.wide==18446744073709551615 && a.real.to_bits()==9221120237041090626 }
 fn set_rules(b:&mut Rules,n:Int32) { b.limit=n }
-fn fail(b:&mut Rules,n:Int32)->Int32 { b.limit=99 1/n }
+fn fail(b:&mut Rules,n:Int32)->Int32 { b.limit=99; 1/n }
 fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n).unwrap() }
 fn revision(result:Result<(UInt64,UInt64),domain.CommitError>,a:UInt64,b:UInt64)->Bool {
     match result { Ok((x,y))=>x==a && y==b, _=>false }
@@ -72,4 +72,4 @@ fn lifecycle() @suspends ->Int32 {
     assert(revision(receipt.wait(),1,2))
     24
 }
-fn main() @suspends { assert(lifecycle()==24) println("pair commits ok") }
+fn main() @suspends { assert(lifecycle()==24); println("pair commits ok") }

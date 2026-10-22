@@ -1,7 +1,7 @@
 import joky/domain
 import joky/task
 import joky/check
-fn assert(value: Bool) { let message = "domain pair" check.assert(value, &message) }
+fn assert(value: Bool) { let message = "domain pair"; check.assert(value, &message) }
 struct Wallet { count: Int32 }
 struct Rules { maximum: Int32 }
 fn make(count: Int32) -> Wallet { Wallet { count: count } }
@@ -24,9 +24,9 @@ fn fail_both(first: &mut Wallet, second: &mut Wallet, zero: Int32) -> Int32 {
     second.count = 888
     1 / zero
 }
-fn fail_mixed(first: &Wallet, second: &mut Wallet, zero: Int32) -> Int32 { second.count = 999 first.count / zero }
+fn fail_mixed(first: &Wallet, second: &mut Wallet, zero: Int32) -> Int32 { second.count = 999; first.count / zero }
 fn fail_read(first: &Wallet, second: &Wallet, zero: Int32) -> Int32 { (first.count + second.count) / zero }
-fn add(wallet: &mut Wallet, amount: Int32) -> Int32 { wallet.count = wallet.count + amount wallet.count }
+fn add(wallet: &mut Wallet, amount: Int32) -> Int32 { wallet.count = wallet.count + amount; wallet.count }
 struct Wide { bits: UInt64, real: Float64 }
 fn wide(bits: UInt64) -> Wide { Wide { bits: bits, real: Float64.from_bits(9221120237041090626) } }
 fn bits(first: &Wide, second: &Wide) -> UInt64 { first.bits }
@@ -61,4 +61,4 @@ fn lifecycle() @suspends -> Int32 {
     assert(domain.read_pair(low.read_handle(), high.read_handle(), bits).unwrap() == 18446744073709551615)
     24
 }
-fn main() @suspends { assert(lifecycle() == 24) println("domain pairs ok") }
+fn main() @suspends { assert(lifecycle() == 24); println("domain pairs ok") }

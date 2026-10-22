@@ -25,7 +25,7 @@ fn resource(id: Int32) -> Resource {
 }
 fn apply<F: FnOnce() -> Int32>(f: F) -> Int32 { f() }
 fn unused() -> Int32 {
-    let a = resource(1) let b = resource(2)
+    let a = resource(1); let b = resource(2)
     let f = move || { a.id + b.id }
     42
 }
@@ -53,7 +53,7 @@ fn consumed_helper() -> Int32 {
     result
 }
 fn failure() -> Int32 {
-    let a = resource(1) let b = resource(2)
+    let a = resource(1); let b = resource(2)
     let f = move || -> Int32 {
         let value = a.id + b.id
         let message = "Closure failure"
@@ -74,12 +74,12 @@ fn cancellation_work() -> Int32 {
 fn closure_task() @suspends -> Int32 { cancellation_work() }
 
 fn consume_last() -> Int32 {
-    let a = resource(1) let b = resource(2) let c = resource(3)
-    let f = move || { let value = a.id + b.id let transferred = c value + transferred.id + 36 }
+    let a = resource(1); let b = resource(2); let c = resource(3)
+    let f = move || { let value = a.id + b.id; let transferred = c; value + transferred.id + 36 }
     f()
 }
 fn consuming_failure() -> Int32 {
-    let a = resource(1) let b = resource(2) let c = resource(3)
+    let a = resource(1); let b = resource(2); let c = resource(3)
     let f = move || {
         let value = a.id + b.id
         let message = "Closure failure"
@@ -91,12 +91,12 @@ fn consuming_failure() -> Int32 {
 }
 
 fn cleanup_failure() -> Int32 {
-    let a = resource(4) let b = resource(5) let c = resource(1)
+    let a = resource(4); let b = resource(5); let c = resource(1)
     let f = move || { a.id + b.id + c.id }
     42
 }
 fn failure_before_cleanup_failure() -> Int32 {
-    let a = resource(4) let b = resource(5) let c = resource(1)
+    let a = resource(4); let b = resource(5); let c = resource(1)
     let f = move || {
         let value = a.id + b.id + c.id
         let message = "Closure failure"
@@ -105,10 +105,10 @@ fn failure_before_cleanup_failure() -> Int32 {
     }
     f()
 }
-fn argument_event(tag: Int32, value: Int32) -> Int32 { closure_event(tag) value }
+fn argument_event(tag: Int32, value: Int32) -> Int32 { closure_event(tag); value }
 fn argument_order() -> Int32 {
     let offset = 1
-    let f = |a: Int32, b: Int32| { closure_event(400) a + b + offset }
+    let f = |a: Int32, b: Int32| { closure_event(400); a + b + offset }
     closure_event(100)
     f(argument_event(200, 20), argument_event(300, 21))
 }
@@ -119,7 +119,7 @@ fn failed_argument() -> Int32 {
 }
 fn consuming_argument_failure() -> Int32 {
     let a = resource(1)
-    let f = move |x: Int32| { let owned = a owned.id + x }
+    let f = move |x: Int32| { let owned = a; owned.id + x }
     f(failed_argument())
 }
 

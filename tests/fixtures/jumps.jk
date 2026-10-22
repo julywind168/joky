@@ -2,7 +2,7 @@ fn return_value(x: Int32) -> Int32 { return x + 1 }
 fn return_unit() { return; }
 fn return_bool(x: Bool) -> Bool { return !x }
 fn return_flag(x: Int32) -> Int32 { if return_bool(x == 0) { 1 } else { 0 } }
-fn return_text(x: Bool) -> String { if x { return "yes" } return "no" }
+fn return_text(x: Bool) -> String { if x { return "yes" }; return "no" }
 fn return_multiline() -> Int32 { return (
     42
     )
@@ -25,12 +25,12 @@ fn return_short_circuit(x: Int32) -> Int32 {
     0
 }
 fn return_initializer() -> Int32 { let unused: Bool = (return 42) }
-fn return_assignment() -> Int32 { var x = 0 x = (return 42) }
+fn return_assignment() -> Int32 { var x = 0; x = (return 42) }
 fn return_unary() -> Int32 { -(return 42) }
 fn return_nested() -> Int32 { return return 42 }
 fn return_trailing() -> Int32 { return 42; }
 fn return_condition() -> Int32 { while (return 42) {} }
-fn break_only_condition() -> Int32 { while (break) {} 42 }
+fn break_only_condition() -> Int32 { while (break) {}; 42 }
 fn diverging_condition(n: Int32) -> Int32 {
     var i = 0
     while (i = i + 1; if i < n { continue } else { break }) {}
@@ -46,7 +46,7 @@ fn break_in_return() -> Int32 {
 }
 fn continue_in_return() -> Int32 {
     var i = 0
-    while i < 3 { i = i + 1 return (continue) }
+    while i < 3 { i = i + 1; return (continue) }
     i
 }
 fn return_or_diverge(n: Int32) -> Int32 {
@@ -78,7 +78,7 @@ fn return_loop(n: Int32) -> Int32 {
     i
 }
 fn nested_breaks() -> Int32 {
-    var i = 0 var total = 0
+    var i = 0; var total = 0
     while i < 3 {
         i = i + 1
         var j = 0
@@ -92,7 +92,7 @@ fn nested_breaks() -> Int32 {
     total
 }
 fn break_join() -> Int32 {
-    var i = 0 var total = 0
+    var i = 0; var total = 0
     while true {
         i = i + 1
         let value = if i < 4 { i } else { break }
@@ -101,7 +101,7 @@ fn break_join() -> Int32 {
     total
 }
 fn continue_condition() -> Int32 {
-    var i = 0 var total = 0
+    var i = 0; var total = 0
     while (i = i + 1; if i == 2 { continue } else { i < 5 }) {
         total = total + i
     }
@@ -121,7 +121,7 @@ fn continue_and_break_paths() -> Int32 {
     i
 }
 fn short_circuit_jumps() -> Int32 {
-    var i = 0 var sum = 0
+    var i = 0; var sum = 0
     while true {
         i = i + 1
         i == 2 && (continue);

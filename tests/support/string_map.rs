@@ -35,7 +35,7 @@ pub fn groups() -> Vec<Group> {
 }
 
 fn model_group() -> Group {
-    let mut source = String::from("import joky/map.{type Map} import joky/check.{assert} fn probe() -> Int32 { var m = Map.new::<String, Int32>() let message = \"String key model\"\n");
+    let mut source = String::from("import joky/map.{type Map} import joky/check.{assert} fn probe() -> Int32 { var m = Map.new::<String, Int32>(); let message = \"String key model\"\n");
     let mut model = std::collections::BTreeMap::new();
     let mut seed = 31_u32;
     for step in 0..160 {
@@ -44,7 +44,7 @@ fn model_group() -> Group {
         let key = format!("key-{id}-中🙂");
         if step % 5 == 0 {
             let expected = model.remove(&key).unwrap_or(-1);
-            source.push_str(&format!("{{ let query = \"{key}\" assert(m.remove_by_ref(&query).unwrap_or(-1) == {expected}, &message) }}\n"));
+            source.push_str(&format!("{{ let query = \"{key}\"; assert(m.remove_by_ref(&query).unwrap_or(-1) == {expected}, &message) }}\n"));
         } else {
             let expected = model.insert(key.clone(), step).unwrap_or(-1);
             source.push_str(&format!(
@@ -57,7 +57,7 @@ fn model_group() -> Group {
         }
     }
     for (key, value) in model {
-        source.push_str(&format!("{{ let query = \"{key}\" assert(m.get_by_ref(&query).unwrap_or(-1) == {value}, &message) }}\n"));
+        source.push_str(&format!("{{ let query = \"{key}\"; assert(m.get_by_ref(&query).unwrap_or(-1) == {value}, &message) }}\n"));
     }
     source.push_str("42 }");
     // Bound each function's reference-analysis work while preserving one table.
@@ -75,7 +75,7 @@ fn model_group() -> Group {
         calls.push_str(&format!("stage_{index}(&mut m)\n"));
     }
     split.push_str(&format!(
-        "fn probe() -> Int32 {{ var m = Map.new::<String, Int32>() {calls} 42 }}"
+        "fn probe() -> Int32 {{ var m = Map.new::<String, Int32>(); {calls}; 42 }}"
     ));
     source = split;
     Group {

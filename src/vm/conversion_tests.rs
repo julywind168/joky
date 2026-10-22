@@ -150,7 +150,7 @@ fn integer_conversion_diagnostics_preserve_spans_and_failed_reload() {
             "fn f() -> Int64 { int32(1) }",
         ),
         (
-            "fn f() { let n: Int64 = 1 int32(n) + n }",
+            "fn f() { let n: Int64 = 1; int32(n) + n }",
             ErrorCode::TypeMismatch,
             "int32(n) + n",
         ),
@@ -281,7 +281,7 @@ fn integer_conversions_preserve_pending_snapshots_failures_and_cancellation() {
         extern fn delay(n: UInt64) @suspends -> UInt64
         fn pending(n: UInt64) @suspends -> UInt64 {
             var value = n
-            let pair = (int32(value), uint32(delay({ value = 0 record(n) })))
+            let pair = (int32(value), uint32(delay({ value = 0; record(n) })))
             let (signed, unsigned) = pair
             let wide = int64(signed) + int64(unsigned)
             uint64(wide) ^ uint64(int32(delay(3))) ^ value
@@ -295,9 +295,9 @@ fn integer_conversions_preserve_pending_snapshots_failures_and_cancellation() {
         fn discarded(n: UInt64) -> UInt64 { int32(bad(n)); record(99) }
         fn lazy(n: UInt64) -> UInt64 { if true || int32(bad(n)) == 0 { 42 } else { 0 } }
         fn branch_task(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
-        fn scoped() @suspends -> UInt64 { parallel { | branch_task(uint64(-1)) | branch_task(uint64(42)) } 42 }
+        fn scoped() @suspends -> UInt64 { parallel { | branch_task(uint64(-1)) | branch_task(uint64(42)) }; 42 }
         fn failed_branch(n: UInt64) @suspends { int32(bad(delay(n))); }
-        fn failed_scope() @suspends -> UInt64 { parallel { | failed_branch(uint64(64)) | branch_task(uint64(7)) } record(99) }
+        fn failed_scope() @suspends -> UInt64 { parallel { | failed_branch(uint64(64)) | branch_task(uint64(7)) }; record(99) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         READY.with(|ready| ready.set(false));

@@ -197,12 +197,12 @@ fn unsigned_literals_reject_overflow_negation_and_implicit_conversions() {
             "outside Int32 range",
         ),
         (
-            "fn f() { let n = 1 let u: UInt32 = n }",
+            "fn f() { let n = 1; let u: UInt32 = n }",
             "let u: UInt32 = n",
             "annotation mismatch",
         ),
         (
-            "fn f(n: UInt32) { var u: UInt64 = 0 u = n }",
+            "fn f(n: UInt32) { var u: UInt64 = 0; u = n }",
             "u = n",
             "Assignment type mismatch",
         ),
@@ -350,7 +350,7 @@ fn unsigned_host_adapters_preserve_bits_and_erase_unit_arguments() {
                     extern fn pair(a: {ty}, b: {ty}, unit: Unit)
                     fn f() -> {ty} {{
                         let n = identity({{}}, value({{}}), {{}})
-                        sink({{}}, n) pair(n, 1, {{}})
+                        sink({{}}, n); pair(n, 1, {{}})
                         add(n, {{}}, 1)
                     }}
                 "#
@@ -429,7 +429,7 @@ fn unsigned_pending_snapshots_survive_reload_drop_failure_and_cancellation() {
                 fn child(n: {ty}) @suspends -> ({ty}, E) {{ (delay({{}}, n, {{}}), E.Value(Number {{ value: n }})) }}
                 fn pending(n: {ty}) @suspends -> {ty} {{
                     var value = n
-                    let (saved, (after, e)) = (value, child({{ value = value + 2 record(n) }}))
+                    let (saved, (after, e)) = (value, child({{ value = value + 2; record(n) }}))
                     let original = match e {{ Empty => 0, Value(number) => number.value }}
                     saved + direct(after) + value + original
                 }}
@@ -439,7 +439,7 @@ fn unsigned_pending_snapshots_survive_reload_drop_failure_and_cancellation() {
                     42
                 }}
                 fn sibling(n: {ty}) @suspends {{ record(delay({{}}, n, {{}})); }}
-                fn scoped() @suspends -> {ty} {{ parallel {{ | sibling({high}) | sibling({max}) }} 42 }}
+                fn scoped() @suspends -> {ty} {{ parallel {{ | sibling({high}) | sibling({max}) }}; 42 }}
                 fn unit(n: {ty}) @suspends {{ delay({{}}, n, {{}}); }}
             "#
             );
@@ -531,7 +531,7 @@ fn unsigned_interpreter_poll_budgets_preserve_width_and_order() {
             u64::MAX
         };
         let mut vm = VmEngine::new_interpreter();
-        vm.load_source(&format!("fn looped(n: {ty}) @suspends -> {ty} {{ var value = n var i: {ty} = 0 while i < 20 {{ value = value + 1 i = i + 1 }} value }}")).unwrap();
+        vm.load_source(&format!("fn looped(n: {ty}) @suspends -> {ty} {{ var value = n; var i: {ty} = 0; while i < 20 {{ value = value + 1; i = i + 1 }}; value }}")).unwrap();
         vm.set_interpreter_limits(super::InterpreterLimits {
             max_frames: 8,
             instruction_budget: Some(10000),

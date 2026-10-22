@@ -5,7 +5,7 @@ import joky/integer
 import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "Split buffered TCP preserves framing and independent directions" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "Split buffered TCP preserves framing and independent directions"; assert(ok, &message) }
 fn pair() @suspends -> Result<(TcpStream, TcpStream), IoError> {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(value) => value, Err(error) => { return Result.Err(error) } }
     let address = match listener.local_addr() { Ok(value) => value, Err(error) => { return Result.Err(error) } }
@@ -16,7 +16,7 @@ fn pair() @suspends -> Result<(TcpStream, TcpStream), IoError> {
 fn payload(length: UInt64) -> Array<UInt8> {
     var bytes = Array.with_capacity::<UInt8>(length)
     var index: UInt64 = 0
-    while index < length { bytes.push((index & 255).to_u8().unwrap_or(0)) index = index + 1 }
+    while index < length { bytes.push((index & 255).to_u8().unwrap_or(0)); index = index + 1 }
     bytes
 }
 fn send(writer: &mut TcpWriter) @suspends {
@@ -29,14 +29,14 @@ fn send(writer: &mut TcpWriter) @suspends {
     match writer.write_message(payload(0), 0) { Err(error) => { ensure(match error.kind() { NotConnected => true, _ => false }) }, _ => ensure(false) }
 }
 fn receive(reader: &mut BufferedTcpReader) @suspends {
-    let empty = match reader.read_message(0) { Ok(Some(bytes)) => bytes, _ => { ensure(false) return } }
+    let empty = match reader.read_message(0) { Ok(Some(bytes)) => bytes, _ => { ensure(false); return } }
     ensure(empty.is_empty())
     // Inspect the wire header independently of read_message.
-    let header = match reader.read_exact(4) { Ok(Some(bytes)) => bytes, _ => { ensure(false) return } }
+    let header = match reader.read_exact(4) { Ok(Some(bytes)) => bytes, _ => { ensure(false); return } }
     ensure(header.get(0).unwrap_or(1) == 0 && header.get(1).unwrap_or(1) == 0 && header.get(2).unwrap_or(0) == 1 && header.get(3).unwrap_or(0) == 2)
-    let body = match reader.read_exact(258) { Ok(Some(bytes)) => bytes, _ => { ensure(false) return } }
+    let body = match reader.read_exact(258) { Ok(Some(bytes)) => bytes, _ => { ensure(false); return } }
     ensure(body.len() == 258 && body.get(255).unwrap_or(0) == 255 && body.get(257).unwrap_or(0) == 1)
-    let large = match reader.read_message(32769) { Ok(Some(bytes)) => bytes, _ => { ensure(false) return } }
+    let large = match reader.read_message(32769) { Ok(Some(bytes)) => bytes, _ => { ensure(false); return } }
     ensure(large.len() == 32769 && large.get(32767).unwrap_or(0) == 255 && large.get(32768).unwrap_or(1) == 0)
     match reader.read_message(0) { Ok(None) => {}, _ => ensure(false) }
     ensure(reader.is_eof())
@@ -65,8 +65,8 @@ fn sweep() @suspends -> Int32 {
     let (stream, peer) = match pair() { Ok(value) => value, _ => { return 1 } }
     var peer = peer
     var bytes = "x;ok\n".into_bytes()
-    bytes.push(0) bytes.push(0) bytes.push(0) bytes.push(2) bytes.push(0) bytes.push(255)
-    bytes.push(255) bytes.push(10) bytes.push(122)
+    bytes.push(0); bytes.push(0); bytes.push(0); bytes.push(2); bytes.push(0); bytes.push(255)
+    bytes.push(255); bytes.push(10); bytes.push(122)
     ensure(peer.write_all(bytes).is_ok())
     ensure(peer.shutdown(Shutdown.Write).is_ok())
     var buffered = match BufferedTcp.with_capacity(stream, 16) { Ok(value) => value, _ => { return 2 } }
@@ -96,7 +96,7 @@ fn pending() @suspends -> Int32 {
     let (stream, peer) = match pair() { Ok(value) => value, _ => { return 1 } }
     var peer = peer
     var prefix = Array.new::<UInt8>()
-    prefix.push(0) prefix.push(0) prefix.push(0) prefix.push(3) prefix.push(42)
+    prefix.push(0); prefix.push(0); prefix.push(0); prefix.push(3); prefix.push(42)
     ensure(peer.write_all(prefix).is_ok())
     var (reader, writer) = BufferedTcp.new(stream).split()
     parallel { | wait(&mut reader) | task.sleep_ms(100000) }
@@ -108,7 +108,7 @@ fn cancel() @suspends -> Int32 {
     let (stream, peer) = match pair() { Ok(value) => value, _ => { return 1 } }
     var peer = peer
     var prefix = Array.new::<UInt8>()
-    prefix.push(0) prefix.push(0) prefix.push(0) prefix.push(3) prefix.push(42)
+    prefix.push(0); prefix.push(0); prefix.push(0); prefix.push(3); prefix.push(42)
     ensure(peer.write_all(prefix).is_ok())
     var (reader, writer) = BufferedTcp.new(stream).split()
     race { | wait(&mut reader) | task.sleep_ms(2) }
@@ -156,7 +156,7 @@ fn truncated() @suspends -> Int32 {
     var count: UInt64 = 0
     while count < 7 {
         var data = Array.new::<UInt8>()
-        data.push(0) data.push(0) data.push(0) data.push(3) data.push(11) data.push(22)
+        data.push(0); data.push(0); data.push(0); data.push(3); data.push(11); data.push(22)
         data.truncate(count)
         var reader = match reader(data, 1) { Ok(value) => value, _ => { return 1 } }
         if count == 0 { match reader.read_message(3) { Ok(None) => {}, _ => { return 2 } } }
@@ -168,20 +168,20 @@ fn truncated() @suspends -> Int32 {
 }
 fn fragments(writer: &mut TcpWriter) @suspends {
     var first = Array.new::<UInt8>()
-    first.push(0) first.push(0)
+    first.push(0); first.push(0)
     ensure(writer.write_all(first).is_ok())
     task.sleep_ms(2)
     var next = Array.new::<UInt8>()
-    next.push(0) next.push(3) next.push(11)
+    next.push(0); next.push(3); next.push(11)
     ensure(writer.write_all(next).is_ok())
     task.sleep_ms(2)
     var last = Array.new::<UInt8>()
-    last.push(22) last.push(33)
+    last.push(22); last.push(33)
     ensure(writer.write_all(last).is_ok())
     ensure(writer.shutdown().is_ok())
 }
 fn message(reader: &mut BufferedTcpReader) @suspends {
-    let bytes = match reader.read_message(3) { Ok(Some(value)) => value, _ => { ensure(false) return } }
+    let bytes = match reader.read_message(3) { Ok(Some(value)) => value, _ => { ensure(false); return } }
     ensure(bytes.len() == 3 && bytes.get(0).unwrap_or(0) == 11 && bytes.get(1).unwrap_or(0) == 22 && bytes.get(2).unwrap_or(0) == 33)
     match reader.read_message(3) { Ok(None) => {}, _ => ensure(false) }
 }
@@ -212,7 +212,7 @@ fn send_maximum(writer: &mut TcpWriter) @suspends {
     ensure(writer.shutdown().is_ok())
 }
 fn receive_maximum(reader: &mut BufferedTcpReader) @suspends {
-    let bytes = match reader.read_message(1048576) { Ok(Some(value)) => value, _ => { ensure(false) return } }
+    let bytes = match reader.read_message(1048576) { Ok(Some(value)) => value, _ => { ensure(false); return } }
     ensure(bytes.len() == 1048576 && bytes.get(1048575).unwrap_or(0) == 255)
     match reader.read_message(0) { Ok(None) => {}, _ => ensure(false) }
 }

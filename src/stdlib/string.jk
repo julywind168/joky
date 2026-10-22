@@ -99,7 +99,7 @@ pub fn rune_count(text: &String) -> UInt64 {
     var count: UInt64 = 0
     while offset < byte_length(text) {
         match next_rune(text, offset) {
-            Some((_, next)) => { offset = next count = count + 1 }
+            Some((_, next)) => { offset = next; count = count + 1 }
             None => { return count }
         }
     }

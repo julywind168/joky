@@ -31,8 +31,8 @@ fn fused_signed_comparisons_cover_both_paths_and_integer_boundaries() {
         let source = format!(
             r#"
             fn f(a: Int32, b: Int32) -> Int32 {{
-                var x = a var y = b var result = 0
-                while x {symbol} y {{ result = 1 x = {stop_a} y = {stop_b} }}
+                var x = a; var y = b; var result = 0
+                while x {symbol} y {{ result = 1; x = {stop_a}; y = {stop_b} }}
                 result
             }}
         "#
@@ -68,8 +68,8 @@ fn fused_immediate_comparisons_and_materialized_bools_agree() {
         let source = format!(
             r#"
             fn f(a: Int32) -> Int32 {{
-                var x = a var result = 0
-                while x {symbol} 0 {{ result = 1 x = {stop} }}
+                var x = a; var result = 0
+                while x {symbol} 0 {{ result = 1; x = {stop} }}
                 result
             }}
         "#
@@ -146,7 +146,7 @@ fn comparison_results_with_other_uses_stay_materialized() {
 #[test]
 fn comparison_fusion_preserves_branch_entries_and_terminal_targets() {
     let mut function = compile(
-        "fn f(a: Int32, b: Int32) -> Int32 { var x = a x + b }",
+        "fn f(a: Int32, b: Int32) -> Int32 { var x = a; x + b }",
         "f",
         false,
     );
@@ -182,7 +182,7 @@ fn comparison_fusion_preserves_branch_entries_and_terminal_targets() {
 
     // Entry into the comparison is safe; removal must map the old terminal PC.
     let mut function = compile(
-        "fn f(a: Int32, b: Int32) -> Int32 { var x = a x + b }",
+        "fn f(a: Int32, b: Int32) -> Int32 { var x = a; x + b }",
         "f",
         false,
     );
@@ -229,8 +229,8 @@ fn bool_equality_matches_before_and_after_branch_fusion() {
         let source = format!(
             r#"
             fn f(a: Bool, b: Bool) -> Int32 {{
-                var x = a var y = b var result = 0
-                while x {symbol} y {{ result = 1 x = {stop} }}
+                var x = a; var y = b; var result = 0
+                while x {symbol} y {{ result = 1; x = {stop} }}
                 result
             }}
         "#

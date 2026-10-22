@@ -5,7 +5,7 @@ import joky/result.{type Result}
 import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "TCP exact, delimited and UTF-8 reads" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "TCP exact, delimited and UTF-8 reads"; assert(ok, &message) }
 fn bytes(text: String) -> Array<UInt8> { text.into_bytes() }
 fn pair() @suspends -> Result<(TcpStream, TcpStream), IoError> {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return Result.Err(error) } }
@@ -22,7 +22,7 @@ fn reader(data: Array<UInt8>, capacity: UInt64) @suspends -> Result<BufferedTcp,
     BufferedTcp.with_capacity(stream, capacity)
 }
 fn expect_line(buffered: &mut BufferedTcp, limit: UInt64, expected: String) @suspends {
-    let line = match buffered.read_line(limit) { Ok(Some(line)) => line, _ => { ensure(false) return } }
+    let line = match buffered.read_line(limit) { Ok(Some(line)) => line, _ => { ensure(false); return } }
     ensure(line.equals(&expected))
 }
 fn exact() @suspends -> Int32 {
@@ -188,9 +188,9 @@ fn produce(peer: &mut TcpStream) @suspends {
     ensure(peer.shutdown(Shutdown.Write).is_ok())
 }
 fn consume(buffered: &mut BufferedTcp) @suspends {
-    let exact = match buffered.read_exact(5) { Ok(Some(data)) => data, _ => { ensure(false) return } }
+    let exact = match buffered.read_exact(5) { Ok(Some(data)) => data, _ => { ensure(false); return } }
     ensure(exact.len() == 5 && exact.get(2).unwrap_or(0) == 99 && exact.get(4).unwrap_or(0) == 101)
-    let end = match buffered.read_until(10, 1) { Ok(Some(data)) => data, _ => { ensure(false) return } }
+    let end = match buffered.read_until(10, 1) { Ok(Some(data)) => data, _ => { ensure(false); return } }
     ensure(end.len() == 1 && end.get(0).unwrap_or(0) == 10)
     expect_line(buffered, 5, "你")
     expect_line(buffered, 1, "")

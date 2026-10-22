@@ -29,27 +29,27 @@ fn custom_keys() -> Int32 {
     old.unwrap_or(0) + scores.remove(Coordinate { x: 3, y: 7 }).unwrap_or(0)
 }
 fn owning_values() -> Int32 {
-    var row = Array.new::<Int32>() row.push(20) row.push(22)
-    var rows = Map.new::<Int32, Array<Int32>>() rows.insert(1, row)
+    var row = Array.new::<Int32>(); row.push(20); row.push(22)
+    var rows = Map.new::<Int32, Array<Int32>>(); rows.insert(1, row)
     // Remove transfers the owner; release the Map before using the returned row.
     let moved = match rows.remove(1) { Some(value) => value, None => return 0 }
     rows.release()
     moved.get(0).unwrap_or(0) + moved.get(1).unwrap_or(0)
 }
 fn borrowed_values() -> Int32 {
-    var counts = Map.new::<Int32, Int32>() counts.insert(1, 20)
+    var counts = Map.new::<Int32, Int32>(); counts.insert(1, 20)
     let count = counts.borrow_mut(1)
     let previous = element.read(count)
     element.write(count, previous + 22)
     element.read(count)
 }
 fn shared_values() -> Int32 {
-    var values = Map.new::<Int32, &Int32>() values.insert(1, &*alloc(42))
+    var values = Map.new::<Int32, &Int32>(); values.insert(1, &*alloc(42))
     let copy = element.read(values.borrow(1))
     values.release();
     *copy
 }
 fn main() {
-    { let displayed: Int32 = frequencies() println(&displayed) } { let displayed: Int32 = custom_keys() println(&displayed) } { let displayed: Int32 = owning_values() println(&displayed) }
-    { let displayed: Int32 = borrowed_values() println(&displayed) } { let displayed: Int32 = shared_values() println(&displayed) }
+    println(frequencies()); println(custom_keys()); println(owning_values())
+    println(borrowed_values()); println(shared_values())
 }

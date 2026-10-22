@@ -6,7 +6,7 @@ import joky/check.{assert}
 extern fn record(value: Int32) -> Int32
 extern fn delayed_value(value: Int32) @suspends -> Int32
 
-fn ensure(value: Bool) { let message = "race value contract" assert(value, &message) }
+fn ensure(value: Bool) { let message = "race value contract"; assert(value, &message) }
 struct Tracked { id: Int32, text: String }
 impl Drop for Tracked {
     fn drop(&mut self) {
@@ -21,7 +21,7 @@ fn make(id: Int32) -> Tracked {
 }
 fn relay<T>(value: T, polls: Int32) @suspends -> T {
     var n = 0
-    while n < polls { task.yield_now() n = n + 1 }
+    while n < polls { task.yield_now(); n = n + 1 }
     value
 }
 fn scalar() @suspends -> Int32 {
@@ -99,10 +99,10 @@ fn results() @suspends -> Int32 {
     let a: Result<Tracked, Tracked> = Ok(make(1))
     let b: Result<Tracked, Tracked> = Err(make(2))
     let value = race { | relay(a, 2) | relay(b, 1) }
-    match value { Ok(_) => 0, Err(owner) => { ensure(owner.id == 2) 42 } }
+    match value { Ok(_) => 0, Err(owner) => { ensure(owner.id == 2); 42 } }
 }
 fn nested_value() @suspends -> Tracked {
-    scope { branch { task.yield_now() record(200); } }
+    scope { branch { task.yield_now(); record(200); } }
     race { | relay(make(1), 1) | relay(make(2), 2) }
 }
 fn nested() @suspends -> Int32 {
@@ -118,7 +118,7 @@ fn indirect() @suspends -> Int32 {
     42
 }
 struct Worker { id: Int32 }
-impl Worker { fn work(self) @suspends -> Int32 { task.yield_now() self.id } }
+impl Worker { fn work(self) @suspends -> Int32 { task.yield_now(); self.id } }
 fn members() @suspends -> Int32 {
     let a = Worker { id: 42 }
     let b = Worker { id: 0 }
@@ -149,7 +149,7 @@ fn winner_failure() @suspends -> Int32 {
     record(100);
     42
 }
-fn fail_branch() @suspends -> Tracked { task.yield_now() ensure(false) make(1) }
+fn fail_branch() @suspends -> Tracked { task.yield_now(); ensure(false); make(1) }
 fn branch_failure() @suspends -> Int32 {
     let value = race { | fail_branch() | relay(make(2), 3) }
     record(100);
@@ -168,7 +168,7 @@ fn generic_context() @suspends -> Int32 {
 }
 
 fn unit_fast() @suspends { task.yield_now() }
-fn unit_slow(value: Tracked) @suspends { task.yield_now() task.yield_now() }
+fn unit_slow(value: Tracked) @suspends { task.yield_now(); task.yield_now() }
 fn cleanup_failure_unit() @suspends -> Int32 {
     race { | unit_fast() | unit_slow(make(9)) }
     record(100);

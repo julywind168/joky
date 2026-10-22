@@ -65,10 +65,10 @@ fn string_builder_s3_encodes_scalar_width_boundaries() {
             scalars.push(scalar);
         }
     }
-    let mut source = String::from("import joky/string.{type StringBuilder} fn text() -> String { var builder = StringBuilder.new() ");
+    let mut source = String::from("import joky/string.{type StringBuilder} fn text() -> String { var builder = StringBuilder.new(); ");
     let mut expected = String::new();
     for scalar in scalars {
-        source.push_str(&format!("builder.push('\\u{{{scalar:x}}}') "));
+        source.push_str(&format!("builder.push('\\u{{{scalar:x}}}'); "));
         expected.push(char::from_u32(scalar).unwrap());
     }
     source.push_str("builder.finish() }");
@@ -85,15 +85,15 @@ fn string_builder_s3_encodes_scalar_width_boundaries() {
 fn string_builder_s3_rejects_private_storage_moves_and_conflicting_borrows() {
     let prefix = "import joky/string.{type StringBuilder} ";
     for body in [
-        "fn f() { let b = StringBuilder.new() b.push('a') }",
-        "fn f() { var b = StringBuilder.new() b.finish().release() b.push('a') }",
-        "fn f() { var b = StringBuilder.new() b.release() b.clear() }",
-        "fn f() { var b = StringBuilder.new() let other = b b.clear() other.release() }",
-        "fn f() { var b = StringBuilder.new() let shared = &b b.push('a') shared.byte_length(); }",
+        "fn f() { let b = StringBuilder.new(); b.push('a') }",
+        "fn f() { var b = StringBuilder.new(); b.finish().release(); b.push('a') }",
+        "fn f() { var b = StringBuilder.new(); b.release(); b.clear() }",
+        "fn f() { var b = StringBuilder.new(); let other = b; b.clear(); other.release() }",
+        "fn f() { var b = StringBuilder.new(); let shared = &b; b.push('a'); shared.byte_length(); }",
         "fn f(b: &StringBuilder) { b.push('a') }",
-        "fn f() { var b = StringBuilder.new() b.data.push(255) }",
+        "fn f() { var b = StringBuilder.new(); b.data.push(255) }",
         "import joky/array.{type Array} fn f() -> StringBuilder { StringBuilder { data: Array.new::<UInt8>() } }",
-        "fn tick() @suspends {} fn f(b: StringBuilder) @suspends -> &StringBuilder { let r = &b tick() r }",
+        "fn tick() @suspends {} fn f(b: StringBuilder) @suspends -> &StringBuilder { let r = &b; tick(); r }",
         "fn f(b: &mut StringBuilder) @suspends -> &mut StringBuilder { b }",
     ] {
         let source = format!("{prefix}{body}");
@@ -135,7 +135,7 @@ fn string_builder_s3_growth_charges_old_and_new_payloads_at_the_peak() {
 fn string_builder_s3_module_aliases_and_function_values_preserve_owners() {
     let source = r#"
         import parts/text as parts
-        fn text() -> String { let build = parts.build build() }
+        fn text() -> String { let build = parts.build; build() }
     "#;
     let mut modules = crate::ModuleSources::new();
     modules
@@ -241,7 +241,7 @@ fn string_builder_s3_interpreter_cancellation_cleans_sync_helpers() {
             }
             builder.finish()
         }
-        fn run() @suspends -> Int32 { let text = build() text.release() 42 }
+        fn run() @suspends -> Int32 { let text = build(); text.release(); 42 }
     "#;
     let mut vm = parity_vm(source, VmMode::Interpreter);
     assert_cancellation(

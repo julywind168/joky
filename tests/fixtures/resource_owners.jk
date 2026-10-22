@@ -4,24 +4,24 @@ import joky/mem
 import joky/task
 extern fn make(input: UInt64) -> Socket
 fn borrowed(socket: &Socket) -> Int32 { 42 }
-fn borrow_sync() -> Int32 { let socket=make(1) borrowed(&socket) }
+fn borrow_sync() -> Int32 { let socket=make(1); borrowed(&socket) }
 fn borrow() @suspends -> Int32 { borrow_sync() }
 fn boxed() -> Result<Socket,Int32> { Ok(make(1)) }
 fn inspect(value: Result<Socket,Int32>) -> Int32 { match value { Ok(socket) => 42, Err(_) => 0 } }
-fn relay<T>(value: T) @suspends -> T { task.yield_now() task.yield_now() value }
-fn result() @suspends -> Int32 { let value=relay(boxed()) task.yield_now() inspect(value) }
+fn relay<T>(value: T) @suspends -> T { task.yield_now(); task.yield_now(); value }
+fn result() @suspends -> Int32 { let value=relay(boxed()); task.yield_now(); inspect(value) }
 struct Pair { tag: UInt8, a: Socket, b: Socket }
 fn pair_value() -> Pair { Pair { tag: 255, a: make(1), b: make(2) } }
 fn pair_inspect(value: Pair) -> Int32 { if value.tag == 255 { 42 } else { 0 } }
 fn pair() @suspends -> Int32 { pair_inspect(relay(pair_value())) }
-fn array_value() -> Array<Socket> { var a=Array.new::<Socket>() a.push(make(1)) a.push(make(2)) a }
+fn array_value() -> Array<Socket> { var a=Array.new::<Socket>(); a.push(make(1)); a.push(make(2)); a }
 fn array_inspect(value: Array<Socket>) -> Int32 { if value.len() == 2 { 42 } else { 0 } }
 fn array_task() @suspends -> Int32 { array_inspect(relay(array_value())) }
-fn partial() @suspends -> Int32 { let a=make(1) let b=make(99) 42 }
+fn partial() @suspends -> Int32 { let a=make(1); let b=make(99); 42 }
 fn hold(socket: Socket) @suspends { task.yield_now() }
 fn instant() @suspends {}
-fn unstarted() @suspends -> Int32 { race { | instant() | hold(make(1)) } 42 }
-fn dynamic() @suspends -> Int32 { scope { var n: UInt64=1 while n<4 { let socket=make(n) branch { hold(socket) } n=n+1 } task.yield_now() } 42 }
+fn unstarted() @suspends -> Int32 { race { | instant() | hold(make(1)) }; 42 }
+fn dynamic() @suspends -> Int32 { scope { var n: UInt64=1; while n<4 { let socket=make(n); branch { hold(socket) }; n=n+1 }; task.yield_now() }; 42 }
 struct State { socket: Socket, id: Int32 }
 fn create() -> State { State { socket: make(1), id: 42 } }
 impl State { pub fn read(&self) -> Int32 { self.id } }

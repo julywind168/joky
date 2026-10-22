@@ -31,7 +31,7 @@ fn generic_arrays_preserve_consumer_nominal_types_through_imported_aliases() {
             values
         }
         pub fn forward<T>(values: Batch<T>) -> Batch<T> { values }
-        pub fn first<T>(values: &Batch<T>, fallback: T) -> T {
+        pub fn first<T: Copy>(values: &Batch<T>, fallback: T) -> T {
             array.get(values, 0).unwrap_or(fallback)
         }
     "#,
@@ -158,8 +158,8 @@ fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
         .0
         .pad_to_align();
     for (body, budget) in [
-        ("let a = array.with_capacity::<Unit>(1024) if array.capacity(&a) == 1024 { 42 } else { 0 }", control),
-        ("var a = array.with_capacity::<Mixed>(1) array.push(&mut a, Mixed { small: true, wide: 4294967297, tail: false }) if array.len(&a) == 1 { 42 } else { 0 }", control + mixed.size() + record),
+        ("let a = array.with_capacity::<Unit>(1024); if array.capacity(&a) == 1024 { 42 } else { 0 }", control),
+        ("var a = array.with_capacity::<Mixed>(1); array.push(&mut a, Mixed { small: true, wide: 4294967297, tail: false }); if array.len(&a) == 1 { 42 } else { 0 }", control + mixed.size() + record),
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
@@ -209,12 +209,12 @@ fn generic_arrays_reject_noncopy_elements_and_preserve_template_ownership() {
     for (body, message) in [
         ("fn bad(a: Array<&mut Int32>) {}", "Copy"),
         ("fn bad(a: Array<&Array<Int32>>) {}", "Copy"),
-        ("fn make<T>(value: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, value) a } fn bad() { let x = 42 make(&x); }", "local borrow"),
-        ("fn bad<T>(a: Array<T>) { let b = a array.len(&a); }", "moved"),
+        ("fn make<T>(value: T) -> Array<T> { var a = array.new::<T>(); array.push(&mut a, value); a } fn bad() { let x = 42; make(&x); }", "local borrow"),
+        ("fn bad<T>(a: Array<T>) { let b = a; array.len(&a); }", "moved"),
         ("fn bad<T>(a: Array<T>) -> &Array<T> { &a }", "borrowed input"),
-        ("fn view<T>(a: &Array<T>) -> &Array<T> { a } fn bad<T>(a: &mut Array<T>, value: T) { let r = view(a) array.push(a, value) array.len(r); }", "borrow"),
+        ("fn view<T>(a: &Array<T>) -> &Array<T> { a } fn bad<T>(a: &mut Array<T>, value: T) { let r = view(a); array.push(a, value); array.len(r); }", "borrow"),
         ("fn bad() { let a = array.new() }", "Cannot infer"),
-        ("fn bad() { var a = array.new::<Int64>() array.push::<Bool>(&mut a, true) }", "Conflicting types"),
+        ("fn bad() { var a = array.new::<Int64>(); array.push::<Bool>(&mut a, true) }", "Conflicting types"),
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -348,20 +348,20 @@ fn arrays_preserve_ownership_through_source_module_aliases() {
             r#"
         import joky/array as array.{type Array}
         pub type Numbers = Array<Int32>
-        pub fn make() -> Numbers { var a = array.new::<Int32>() array.push(&mut a, 42) a }
+        pub fn make() -> Numbers { var a = array.new::<Int32>(); array.push(&mut a, 42); a }
         pub fn forward(a: Numbers) -> Numbers { a }
         pub fn read(a: &Numbers) -> Int32 { array.get(a, 0).unwrap_or(0) }
     "#,
         )
         .unwrap();
-    let source = "import numbers as n.{type Numbers} fn check() -> Int32 { let a: Numbers = n.make() let moved = n.forward(a) n.read(&moved) }";
+    let source = "import numbers as n.{type Numbers} fn check() -> Int32 { let a: Numbers = n.make(); let moved = n.forward(a); n.read(&moved) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.set_prelude_enabled(false);
         vm.load_source_with_modules(source, &modules).unwrap();
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
         let invalid =
-            "import numbers as n fn check() { let a = n.make() n.forward(a); n.read(&a); }";
+            "import numbers as n fn check() { let a = n.make(); n.forward(a); n.read(&a); }";
         assert!(vm
             .load_source_with_modules(invalid, &modules)
             .unwrap_err()
@@ -396,33 +396,33 @@ fn arrays_reject_capability_escapes_and_invalid_storage() {
         fn view(a: &Array<Int32>) -> &Array<Int32> { a }
     "#;
     for source in [
-        "fn bad() { let a = array.new::<Int32>() consume(a) consume(a) }",
-        "fn pair(a: Array<Int32>, b: Array<Int32>) {} fn bad() { let a = array.new::<Int32>() pair(a, a) }",
-        "fn bad() { var a = array.new::<Int32>() let r = view(&a) array.push(&mut a, 1) array.len(r); }",
-        "fn bad() { let a = array.new::<Int32>() let r = &a consume(a) array.len(r); }",
-        "fn bad() { var a = array.new::<Int32>() let r = &a a = array.new::<Int32>() array.len(r); }",
-        "fn bad() { var a = array.new::<Int32>() array.push(&mut a, array.get(&a, 0).unwrap_or(0)) }",
+        "fn bad() { let a = array.new::<Int32>(); consume(a); consume(a) }",
+        "fn pair(a: Array<Int32>, b: Array<Int32>) {} fn bad() { let a = array.new::<Int32>(); pair(a, a) }",
+        "fn bad() { var a = array.new::<Int32>(); let r = view(&a); array.push(&mut a, 1); array.len(r); }",
+        "fn bad() { let a = array.new::<Int32>(); let r = &a; consume(a); array.len(r); }",
+        "fn bad() { var a = array.new::<Int32>(); let r = &a; a = array.new::<Int32>(); array.len(r); }",
+        "fn bad() { var a = array.new::<Int32>(); array.push(&mut a, array.get(&a, 0).unwrap_or(0)) }",
         "fn bad() -> &Array<Int32> { let a = array.new::<Int32>() &a }",
         "fn bad(a: Array<Int32>) -> &Array<Int32> { &a }",
         "fn bad(a: &Array<Int32>) -> Array<Int32> { a }",
-        "fn bad() { let a = array.new::<Int32>() let r = { let b = a &b } array.len(r); }",
-        "fn bad(flag: Bool) { let a = array.new::<Int32>() if flag { consume(a) } consume(a) }",
-        "fn bad() { let a = array.new::<Int32>() var i = 0 while i < 2 { consume(a) i = i + 1 } }",
+        "fn bad() { let a = array.new::<Int32>(); let r = { let b = a &b }; array.len(r); }",
+        "fn bad(flag: Bool) { let a = array.new::<Int32>(); if flag { consume(a) }; consume(a) }",
+        "fn bad() { let a = array.new::<Int32>(); var i = 0; while i < 2 { consume(a); i = i + 1 } }",
         "type Wrong = Array<&String> fn bad() {}",
         "struct Box { value: Array<Int32>, extra: &Int32 } fn bad() {}",
         "struct Box { value: &Array<Int32> } fn bad() {}",
-        "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) array.len(&a); }",
-        "fn bad() { let a = array.new::<Int32>() let pair = (&a, 1) }",
-        "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>() id(&a); }",
-        "fn bad() { let a = array.new::<Int32>() alloc(a); }",
+        "fn bad() { let a = array.new::<Int32>(); let pair = (a, 1); array.len(&a); }",
+        "fn bad() { let a = array.new::<Int32>(); let pair = (&a, 1) }",
+        "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>(); id(&a); }",
+        "fn bad() { let a = array.new::<Int32>(); alloc(a); }",
         "fn bad() { let a = array.new::<Int32>() ; (*(&a)); }",
-        "fn bad() { var a = array.new::<Int32>() let r = &a; (*(&mut a) = array.new::<Int32>()); array.len(r); }",
+        "fn bad() { var a = array.new::<Int32>(); let r = &a; (*(&mut a) = array.new::<Int32>()); array.len(r); }",
         "fn bad() { let a = array.new::<Int32>() ; (&*a); }",
         "fn bad(a: &Array<&Int32>) @suspends {}",
-        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() parallel { | branch_task(&a) } }",
-        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() race { | branch_task(&a) } }",
-        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() parallel { | branch_task(a) } }",
-        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() race { | branch_task(a) } }",
+        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); parallel { | branch_task(&a) } }",
+        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); race { | branch_task(&a) } }",
+        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); parallel { | branch_task(a) } }",
+        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); race { | branch_task(a) } }",
         "extern fn host(a: Array<Int32>) fn bad() {}",
         "unsafe extern \"C\" fn host(a: &Array<Int32>) fn bad() {}",
         "fn bad() { array.allocate(1); }",
@@ -567,7 +567,7 @@ fn arrays_sync_helpers_release_storage_before_the_async_root_finishes() {
                 )
                 .unwrap();
             }
-            vm.load_source(&format!("{SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let answer = array_growth() pause() answer }}")).unwrap();
+            vm.load_source(&format!("{SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let answer = array_growth(); pause(); answer }}")).unwrap();
             let mut task = vm.call_async("task", &[]).unwrap();
             assert!(!task.is_finished());
             LIVE.with(|n| assert_eq!(n.get(), 0)); // The synchronous owner has left its scope.
@@ -620,29 +620,29 @@ fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
         enum Choice { Empty, Item(&Int32) }
         fn replace<T>(a: &mut Array<T>, p: T) { array.set(a, 0, p); }
         fn forward<T>(a: Array<T>) -> Array<T> { a }
-        fn make<T>(p: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, p) a }
-        fn first<T>(a: &Array<T>) -> Option<T> { array.get(a, 0) }
-        fn copy<T>(a: &mut Array<T>, b: &Array<T>) { match array.get(b, 0) { None => {}, Some(p) => replace(a, p) } }
-        fn consume<T>(a: Array<T>, p: T) { var b = a replace(&mut b, p) }
+        fn make<T>(p: T) -> Array<T> { var a = array.new::<T>(); array.push(&mut a, p); a }
+        fn first<T: Copy>(a: &Array<T>) -> Option<T> { array.get(a, 0) }
+        fn copy<T: Copy>(a: &mut Array<T>, b: &Array<T>) { match array.get(b, 0) { None => {}, Some(p) => replace(a, p) } }
+        fn consume<T>(a: Array<T>, p: T) { var b = a; replace(&mut b, p) }
     "#;
     for (body, message) in [
-        ("let x = 42 var a = array.new::<&Int32>() array.push(&mut a, &x)", "local borrow"),
-        ("let x = 42 var a = array.with_capacity::<&Int32>(1) array.set(&mut a, 0, &x);", "local borrow"),
-        ("let x = 42 var a = array.new::<&Int32>() replace(&mut a, &x)", "local borrow"),
-        ("let x = 42 let a = array.new::<&Int32>() consume(a, &x)", "local borrow"),
-        ("let x = 42 var a = array.new::<Item>() array.push(&mut a, Item { value: &x })", "local borrow"),
-        ("let x = 42 var a = array.new::<Choice>() array.push(&mut a, Choice.Item(&x))", "local borrow"),
-        ("let x = 42 var a = array.new::<(Bool, &Int32)>() array.push(&mut a, (true, &x))", "local borrow"),
-        ("let x = 42 let a = make(&x) let b = forward(a)", "local borrow"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) ; (*(p) = 0)", "retained"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() replace(&mut a, (&*p)) ; (*(p) = 0)", "retained"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() array.set(&mut a, 0, (&*p)); (*(p) = 0)", "retained"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) array.pop(&mut a); (*(p) = 0)", "retained"),
-        ("let p = alloc(42) let q = (&*(alloc(7))) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) array.set(&mut a, 0, q); (*(p) = 0)", "retained"),
-        ("let p = alloc(42) { var a = array.new::<&Int32>() array.push(&mut a, (&*p)) } ; (*(p) = 0)", "retained"),
-        ("let p = alloc(42) let a = make((&*p)) let b = forward(a) first(&b); (*(p) = 0)", "retained"),
-        ("let p = alloc(42) let a = make((&*p)) var b = array.new::<&Int32>() copy(&mut b, &a) ; (*(p) = 0)", "retained"),
-        ("let p = alloc(42) let a = make(Item { value: (&*p) }) first(&a); (*(p) = 0)", "retained"),
+        ("let x = 42; var a = array.new::<&Int32>(); array.push(&mut a, &x)", "local borrow"),
+        ("let x = 42; var a = array.with_capacity::<&Int32>(1); array.set(&mut a, 0, &x);", "local borrow"),
+        ("let x = 42; var a = array.new::<&Int32>(); replace(&mut a, &x)", "local borrow"),
+        ("let x = 42; let a = array.new::<&Int32>(); consume(a, &x)", "local borrow"),
+        ("let x = 42; var a = array.new::<Item>(); array.push(&mut a, Item { value: &x })", "local borrow"),
+        ("let x = 42; var a = array.new::<Choice>(); array.push(&mut a, Choice.Item(&x))", "local borrow"),
+        ("let x = 42; var a = array.new::<(Bool, &Int32)>(); array.push(&mut a, (true, &x))", "local borrow"),
+        ("let x = 42; let a = make(&x); let b = forward(a)", "local borrow"),
+        ("let p = alloc(42); var a = array.new::<&Int32>(); array.push(&mut a, (&*p)) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42); var a = array.new::<&Int32>(); replace(&mut a, (&*p)) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42); var a = array.new::<&Int32>(); array.set(&mut a, 0, (&*p)); (*(p) = 0)", "retained"),
+        ("let p = alloc(42); var a = array.new::<&Int32>(); array.push(&mut a, (&*p)); array.pop(&mut a); (*(p) = 0)", "retained"),
+        ("let p = alloc(42); let q = (&*(alloc(7))); var a = array.new::<&Int32>(); array.push(&mut a, (&*p)); array.set(&mut a, 0, q); (*(p) = 0)", "retained"),
+        ("let p = alloc(42); { var a = array.new::<&Int32>(); array.push(&mut a, (&*p)) } ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42); let a = make((&*p)); let b = forward(a); first(&b); (*(p) = 0)", "retained"),
+        ("let p = alloc(42); let a = make((&*p)); var b = array.new::<&Int32>(); copy(&mut b, &a) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42); let a = make(Item { value: (&*p) }); first(&a); (*(p) = 0)", "retained"),
     ] {
         let source = format!("{prefix} fn bad() {{ {body} }}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -667,9 +667,9 @@ fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
             r#"
         import joky/array as array.{type Array}
         pub type Batch<T> = Array<T>
-        pub fn make<T>(p: T) -> Batch<T> { var a = array.new::<T>() array.push(&mut a, p) a }
+        pub fn make<T>(p: T) -> Batch<T> { var a = array.new::<T>(); array.push(&mut a, p); a }
         pub fn forward<T>(a: Batch<T>) -> Batch<T> { a }
-        pub fn first<T>(a: &Batch<T>) -> Option<T> { array.get(a, 0) }
+        pub fn first<T: Copy>(a: &Batch<T>) -> Option<T> { array.get(a, 0) }
         pub fn replace<T>(a: &mut Batch<T>, p: T) { array.set(a, 0, p); }
     "#,
         )
@@ -677,7 +677,7 @@ fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
     let source = r#"
         import collections as c.{type Batch}
         struct Point { x: Int32 }
-        struct Holder<T> { value: &T }
+        struct Holder<T: Copy> { value: &T }
         fn check() -> Int32 {
             let point = (&*(alloc(Point { x: 42 })))
             let copied = {
@@ -697,9 +697,9 @@ fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
         for bad in [
-            "let x = 42 var a = c.make((&*(alloc(0)))) c.replace(&mut a, &x)",
-            "let p = alloc(42) let a = c.forward(c.make((&*p))) c.first(&a); (*(p) = 0)",
-            "let p = alloc(42) var a = c.make((&*(alloc(0)))) c.replace(&mut a, (&*p)) ; (*(p) = 0)",
+            "let x = 42; var a = c.make((&*(alloc(0)))); c.replace(&mut a, &x)",
+            "let p = alloc(42); let a = c.forward(c.make((&*p))); c.first(&a); (*(p) = 0)",
+            "let p = alloc(42); var a = c.make((&*(alloc(0)))); c.replace(&mut a, (&*p)) ; (*(p) = 0)",
         ] {
             let bad = format!("import collections as c fn bad() {{ {bad} }}");
             assert!(
@@ -798,7 +798,7 @@ fn reference_arrays_copied_elements_live_through_async_root_suspension() {
                 )
                 .unwrap();
             }
-            vm.load_source(&format!("{REFERENCE_SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let value = refs_return() pause() ; (*value) }}")).unwrap();
+            vm.load_source(&format!("{REFERENCE_SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let value = refs_return(); pause() ; (*value) }}")).unwrap();
             let mut task = vm.call_async("task", &[]).unwrap();
             assert!(!task.is_finished());
             LIVE.with(|n| assert!(n.get() > 0));
@@ -832,14 +832,14 @@ fn owning_array_methods_preserve_moves_views_and_element_provenance() {
 #[test]
 fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() {
     for (body, message) in [
-        ("fn bad() { let a = Array.new::<Int32>() let b = a a.len(); }", "moved"),
-        ("fn bad() { var a = Array.new::<Int32>() a.push(a.get(0).unwrap_or(0)) }", "borrow"),
-        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() b.add(1) r.len(); }", "borrow"),
-        ("fn bad() { let b = Batch.new::<Int32>() let a = b.values b.get(0); }", "moved"),
-        ("fn bad() { let b = Batch.new::<Int32>() let a = b.values let c = b.values }", "moved"),
-        ("fn bad() { let b = Batch.new::<Int32>() b.values.push(1) }", "var binding"),
-        ("fn bad() { let a = Array.new::<Int32>() a.storage; }", "private"),
-        ("fn bad() { var a = Array.new::<Int32>() let x = &mut a.storage }", "private"),
+        ("fn bad() { let a = Array.new::<Int32>(); let b = a; a.len(); }", "moved"),
+        ("fn bad() { var a = Array.new::<Int32>(); a.push(a.get(0).unwrap_or(0)) }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let r = b.view(); b.add(1); r.len(); }", "borrow"),
+        ("fn bad() { let b = Batch.new::<Int32>(); let a = b.values; b.get(0); }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>(); let a = b.values; let c = b.values }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>(); b.values.push(1) }", "var binding"),
+        ("fn bad() { let a = Array.new::<Int32>(); a.storage; }", "private"),
+        ("fn bad() { var a = Array.new::<Int32>(); let x = &mut a.storage }", "private"),
         ("fn bad(a: &mut Array<Int32>) { let x = &mut a.storage }", "private"),
         ("fn bad(a: Array<Int32>) -> Array<Int32> { Array { storage: a } }", "private"),
         ("fn bad(b: &Batch<Int32>) -> Array<Int32> { b.values }", "borrowed wrapper"),
@@ -857,11 +857,11 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
         ("type View = &Later struct Later { value: Array<Int32> } extern fn host(value: View) fn bad() {}", "host ABI"),
         ("fn bad() { let a = Array.new::<&Batch<Int32>>() }", "Copy"),
         ("struct Extra { value: Batch<Int32>, reference: &Int32 } fn bad() {}", "reference-free Copy"),
-        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add((&*p)) ; (*(p) = 0) }", "retained"),
-        ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
-        ("fn bad() { let b = Batch.new::<Int32>() alloc(b); }", "Copy"),
+        ("fn bad() { var b = Batch.new::<&Int32>(); let p = alloc(42); b.add((&*p)) ; (*(p) = 0) }", "retained"),
+        ("fn bad() { var b = Batch.new::<&Int32>(); let p = 42; b.add(&p) }", "local borrow"),
+        ("fn bad() { let b = Batch.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Batch.new::<Int32>() ; (*(&b)); }", "non-Copy"),
-        ("fn tick() @suspends {} fn bad() @suspends { let b = Batch.new::<Int32>() let r = b.values.borrow_ref(0) tick() let value = *r }", "suspension"),
+        ("fn tick() @suspends {} fn bad() @suspends { let b = Batch.new::<Int32>(); let r = b.values.borrow_ref(0); tick(); let value = *r }", "suspension"),
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
     ] {
         let source = format!("{OWNED_SOURCE}\n{body}");
@@ -946,39 +946,39 @@ fn mixed_owners_preserve_metadata_and_nested_moves() {
 #[test]
 fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
     for (body, message) in [
-        ("fn bad() -> UInt64 { let b = Batch.new::<Int32>() let a = b.values b.version }", "moved"),
-        ("fn bad() { var b = Batch.new::<Int32>() let a = b.values b.version = 3 }", "moved"),
-        ("fn bad() { var b = Batch.new::<Int32>() b.release() b.sorted = true }", "moved"),
-        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() b.version = 1 r.len(); }", "borrow"),
-        ("fn bad() { var b = Batch.new::<Int32>() let r = b.edit() let n = b.version r.len(); }", "borrow"),
-        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() let a = b.values r.len(); }", "borrow"),
-        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() b = Batch.new::<Int32>() r.len(); }", "borrow"),
-        ("fn bad() { var b = Batch.new::<Int32>() b.version = { b.release() 4 } }", "borrow"),
-        ("fn bad() { var b = Batch.new::<Int32>() b.values = { b.release() Array.new::<Int32>() } }", "moved"),
-        ("fn bad() { var b = Batch.new::<Int32>() let a = b.values b.values = Array.new::<Int32>() }", "moved"),
-        ("fn bad(flag: Bool) -> UInt64 { let b = Batch.new::<Int32>() if flag { b.release() } b.version }", "moved"),
-        ("fn bad() { let b = Batch.new::<Int32>() var i = 0 while i < 2 { b.release() i = i + 1 } }", "moved"),
-        ("fn bad() { let b = Batch.new::<Int32>() b.version = 1 }", "immutable"),
+        ("fn bad() -> UInt64 { let b = Batch.new::<Int32>(); let a = b.values; b.version }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let a = b.values; b.version = 3 }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>(); b.release(); b.sorted = true }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let r = b.view(); b.version = 1; r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let r = b.edit(); let n = b.version; r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let r = b.view(); let a = b.values; r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let r = b.view(); b = Batch.new::<Int32>(); r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>(); b.version = { b.release(); 4 } }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>(); b.values = { b.release(); Array.new::<Int32>() } }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let a = b.values; b.values = Array.new::<Int32>() }", "moved"),
+        ("fn bad(flag: Bool) -> UInt64 { let b = Batch.new::<Int32>(); if flag { b.release() }; b.version }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>(); var i = 0; while i < 2 { b.release(); i = i + 1 } }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>(); b.version = 1 }", "immutable"),
         ("fn bad(b: &Batch<Int32>) { b.version = 1 }", "shared"),
         ("fn bad(b: &Batch<Int32>) -> Array<Int32> { b.values }", "borrowed wrapper"),
         ("fn bad(b: &mut Batch<Int32>) { b.values = Array.new::<Int32>() }", "borrowed wrapper"),
         ("fn bad() -> &Array<Int32> { let b = Batch.new::<Int32>(); &b.values }", "borrowed input"),
-        ("fn bad() { let b = Batch.new::<Int32>() let r = &b.version }", "Only owning fields"),
-        ("fn bad() { let b = Batch.new::<Int32>() alloc(b); }", "Copy"),
+        ("fn bad() { let b = Batch.new::<Int32>(); let r = &b.version }", "Only owning fields"),
+        ("fn bad() { let b = Batch.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Batch.new::<Int32>() ; (*(&b)); }", "non-Copy"),
-        ("fn bad() { var b = Batch.new::<Int32>() let r = &b; (*(&mut b) = Batch.new::<Int32>()) r.values.len(); }", "borrow"),
-        ("fn tick() @suspends {} fn bad() @suspends { let b = Batch.new::<Int32>() let r = b.values.borrow_ref(0) tick() let value = *r }", "suspension"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let r = &b; (*(&mut b) = Batch.new::<Int32>()); r.values.len(); }", "borrow"),
+        ("fn tick() @suspends {} fn bad() @suspends { let b = Batch.new::<Int32>(); let r = b.values.borrow_ref(0); tick(); let value = *r }", "suspension"),
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
         ("struct Invalid { values: Array<Int32>, tag: &Int32 } fn bad() {}", "reference-free Copy"),
         ("struct Invalid<T> { values: Array<T>, tag: &Int32 } fn bad() {}", "reference-free Copy"),
         ("fn bad() { let g = GenericMeta { meta: (&*(alloc(0))), values: Array.new::<Int32>() } }", "reference-free Copy"),
         ("struct Invalid { tag: &Int32, owner: Later } struct Later { values: Array<Int32> } fn bad() {}", "reference-free Copy"),
-        ("fn bad() { let w = Wrapper { batch: Batch.new::<Int32>() } let a = w.batch.values w.batch.version; }", "moved"),
-        ("fn bad() { var w = Wrapper { batch: Batch.new::<Int32>() } let r = w.batch.view() w.batch.version = 0 r.len(); }", "borrow"),
-        ("fn bad() { let b = Batch.new::<Int32>(); let r = { let c = b; &c.values } r.len(); }", "borrow"),
+        ("fn bad() { let w = Wrapper { batch: Batch.new::<Int32>() }; let a = w.batch.values; w.batch.version; }", "moved"),
+        ("fn bad() { var w = Wrapper { batch: Batch.new::<Int32>() }; let r = w.batch.view(); w.batch.version = 0; r.len(); }", "borrow"),
+        ("fn bad() { let b = Batch.new::<Int32>(); let r = { let c = b; &c.values }; r.len(); }", "borrow"),
 
-        ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
-        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add((&*p)) ; (*(p) = 0) }", "retained"),
+        ("fn bad() { var b = Batch.new::<&Int32>(); let p = 42; b.add(&p) }", "local borrow"),
+        ("fn bad() { var b = Batch.new::<&Int32>(); let p = alloc(42); b.add((&*p)) ; (*(p) = 0) }", "retained"),
     ] {
         let source = format!("{MIXED_SOURCE}\n{body}");
         let ast = crate::parser::parse(&source).unwrap();

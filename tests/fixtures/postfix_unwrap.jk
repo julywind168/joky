@@ -28,7 +28,7 @@ fn check() -> Int32 {
     let a = Maybe.Some(Maybe.Some((40, 2)))!!
     if a.0 + a.1 != 42 || !Maybe.Some(true)! { return 9 }
     var calls = 0
-    let once = { calls = calls + 1 Maybe.Some(42) }!
+    let once = { calls = calls + 1; Maybe.Some(42) }!
     if calls != 1 || once != 42 || force(Maybe.Some(42)) != 42 { return 10 }
     42
 }

@@ -70,7 +70,7 @@ fn shared_argument_cancellation(sweep: super::support::CancellationSweep) {
         extern fn record(value: Int32) -> Int32
         struct Item { value: Int32, text: String }
         impl Drop for Item { fn drop(&mut self) { record(2); } }
-        fn make() -> Item { record(1) Item { value: 42, text: "owned" } }
+        fn make() -> Item { record(1); Item { value: 42, text: "owned" } }
         fn inspect(value: &Item) @noescape -> Int32 { value.value }
         fn helper() -> Int32 { inspect(make()) }
         fn main() @suspends -> Int32 { helper() }
@@ -140,7 +140,7 @@ fn interpolation_allocation_failures_reclaim_every_temporary() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(
-            r#"fn text() -> String { let value = "owned" "prefix={value}:{42}:{1.5}" }"#,
+            r#"fn text() -> String { let value = "owned"; "prefix={value}:{42}:{1.5}" }"#,
         )
         .unwrap();
         let mut complete = false;
@@ -164,7 +164,7 @@ fn interpolation_reports_original_expression_spans_and_rejects_missing_show() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         for source in [
-            "struct Missing {} fn text() -> String { let value = Missing {} \"{value}\" }",
+            "struct Missing {} fn text() -> String { let value = Missing {}; \"{value}\" }",
             "fn text() -> String { \"{missing}\" }",
         ] {
             let error = vm.load_source(source).unwrap_err();
@@ -204,7 +204,7 @@ fn interpolation_failure_drops_temporary_once_and_preserves_primary_error() {
             extern fn record_drop()
             struct Resource { text: String }
             impl Drop for Resource { fn drop(&mut self) { record_drop() } }
-            impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) 1 / 0; } }
+            impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text); 1 / 0; } }
             fn make() -> Resource { Resource { text: "owned" } }
             fn text() -> String { "prefix {make()} unreachable" }
         "#).unwrap();

@@ -191,27 +191,27 @@ fn multi_owner_cleanup_keeps_code_after_reload_and_vm_drop() {
 #[test]
 fn multi_owner_contracts_reject_partial_moves_and_hidden_borrows() {
     for (body, message) in [
-        ("fn bad() { let b = Buffers.new::<Int32>() let a = b.second b.version; }", "moved"),
-        ("fn bad() { var b = Buffers.new::<Int32>() let a = b.second b.first = Array.new::<Int32>() }", "moved"),
-        ("fn bad() { let b = Buffers.new::<Int32>() let a = b.second let c = &b.first }", "moved"),
-        ("struct Wrapper { values: Buffers<Int32> } fn bad() { let w = Wrapper { values: Buffers.new::<Int32>() } let a = w.values.second let b = w }", "moved"),
-        ("fn bad() { let b = Buffers.new::<Int32>() let c = b b.version; }", "moved"),
-        ("fn bad() { let b = Buffers.new::<Int32>() let c = b let a = &b.second }", "moved"),
-        ("fn bad() { var b = Buffers.new::<Int32>() let a = &b.second b = Buffers.new::<Int32>() a.len(); }", "borrow"),
-        ("fn bad() { var b = Buffers.new::<Int32>() let a = &mut b.second b.first.push(1) a.len(); }", "borrow"),
-        ("fn bad() { let b = Buffers.new::<Int32>() let a = &b.second let c = b a.len(); }", "borrow"),
+        ("fn bad() { let b = Buffers.new::<Int32>(); let a = b.second; b.version; }", "moved"),
+        ("fn bad() { var b = Buffers.new::<Int32>(); let a = b.second; b.first = Array.new::<Int32>() }", "moved"),
+        ("fn bad() { let b = Buffers.new::<Int32>(); let a = b.second; let c = &b.first }", "moved"),
+        ("struct Wrapper { values: Buffers<Int32> } fn bad() { let w = Wrapper { values: Buffers.new::<Int32>() }; let a = w.values.second; let b = w }", "moved"),
+        ("fn bad() { let b = Buffers.new::<Int32>(); let c = b; b.version; }", "moved"),
+        ("fn bad() { let b = Buffers.new::<Int32>(); let c = b; let a = &b.second }", "moved"),
+        ("fn bad() { var b = Buffers.new::<Int32>(); let a = &b.second; b = Buffers.new::<Int32>(); a.len(); }", "borrow"),
+        ("fn bad() { var b = Buffers.new::<Int32>(); let a = &mut b.second; b.first.push(1); a.len(); }", "borrow"),
+        ("fn bad() { let b = Buffers.new::<Int32>(); let a = &b.second; let c = b; a.len(); }", "borrow"),
         ("fn bad(b: &Buffers<Int32>) -> Array<Int32> { b.second }", "borrowed wrapper"),
         ("fn bad(b: &mut Buffers<Int32>) { b.second = Array.new::<Int32>() }", "borrowed wrapper"),
         ("fn bad() -> &Array<Int32> { let b = Buffers.new::<Int32>(); &b.second }", "borrowed input"),
-        ("fn bad() { var b = Buffers.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
-        ("fn bad() { var b = Buffers.new::<&Int32>() let p = alloc(42) b.add((&*p)) ; (*(p) = 0) }", "retained"),
-        ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>() let p = 42 store(&mut b, &p) }", "local borrow"),
-        ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>() let p = alloc(42) store(&mut b, (&*p)) ; (*(p) = 0) }", "retained"),
+        ("fn bad() { var b = Buffers.new::<&Int32>(); let p = 42; b.add(&p) }", "local borrow"),
+        ("fn bad() { var b = Buffers.new::<&Int32>(); let p = alloc(42); b.add((&*p)) ; (*(p) = 0) }", "retained"),
+        ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>(); let p = 42; store(&mut b, &p) }", "local borrow"),
+        ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>(); let p = alloc(42); store(&mut b, (&*p)) ; (*(p) = 0) }", "retained"),
         ("struct Invalid { a: Array<Int32>, b: Array<Int64>, p: &Int32 }", "reference-free Copy"),
-        ("fn bad() { let b = Buffers.new::<Int32>() let t = (b, 1) let again = b }", "moved"),
-        ("fn bad() { let b = Buffers.new::<Int32>() alloc(b); }", "Copy"),
+        ("fn bad() { let b = Buffers.new::<Int32>(); let t = (b, 1); let again = b }", "moved"),
+        ("fn bad() { let b = Buffers.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Buffers.new::<Int32>() ; (*(&b)); }", "non-Copy"),
-        ("fn tick() @suspends {} fn bad() @suspends { let b = Buffers.new::<Int32>() let r = b.first.borrow_ref(0) tick() let value = *r }", "suspension"),
+        ("fn tick() @suspends {} fn bad() @suspends { let b = Buffers.new::<Int32>(); let r = b.first.borrow_ref(0); tick(); let value = *r }", "suspension"),
         ("extern fn host(b: &Buffers<Int32>)", "host ABI"),
     ] {
         let source = format!("{SOURCE}\n{body}").replace("extern fn record_drop(value: Int32)", "fn record_drop(value: Int32) {}");
@@ -249,7 +249,7 @@ fn multi_owner_generic_drop_preserves_private_module_identity() {
         let mut vm = vm(mode);
         vm.set_prelude_enabled(false);
         vm.load_source_with_modules(
-            "import owned struct Tag { flag: Bool } fn check() -> Int32 { let value = owned.move_value(owned.make::<Tag>()) 42 }", &modules
+            "import owned struct Tag { flag: Bool } fn check() -> Int32 { let value = owned.move_value(owned.make::<Tag>()); 42 }", &modules
         ).unwrap_or_else(|e| panic!("{e}"));
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
@@ -257,7 +257,7 @@ fn multi_owner_generic_drop_preserves_private_module_identity() {
         LIVE.with(|n| assert_eq!(n.get(), 0));
         let error = vm
             .load_source_with_modules(
-                "import owned fn bad() { let value = owned.make::<Int32>() let x = value.second }",
+                "import owned fn bad() { let value = owned.make::<Int32>(); let x = value.second }",
                 &modules,
             )
             .unwrap_err();

@@ -9,6 +9,6 @@ fn main() {
         bodies = bodies + 1;
         999
     }
-    println(&checks);
-    println(&bodies);
+    println(checks);
+    println(bodies);
 }

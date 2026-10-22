@@ -6,14 +6,14 @@ import joky/option.{type Option, Some, None}
 pub type Slice<T> = storage.Slice<T>
 pub fn len<T>(values: &Slice<T>) -> UInt64 { storage.slice_len(values) }
 pub fn is_empty<T>(values: &Slice<T>) -> Bool { len(values) == 0 }
-pub fn get<T>(values: &Slice<T>, index: UInt64) -> Option<T> {
+pub fn get<T: Copy>(values: &Slice<T>, index: UInt64) -> Option<T> {
     if index < len(values) { Some(storage.slice_load(values, index)) } else { None }
 }
-pub fn set<T>(values: &mut Slice<T>, index: UInt64, next: T) -> Bool {
-    if index < len(values) { storage.slice_store(values, index, next) true } else { false }
+pub fn set<T: Copy>(values: &mut Slice<T>, index: UInt64, next: T) -> Bool {
+    if index < len(values) { storage.slice_store(values, index, next); true } else { false }
 }
-pub fn borrow<T>(values: &Slice<T>, index: UInt64) -> &Element<T> { storage.slice_borrow(values, index) }
-pub fn borrow_mut<T>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> { storage.slice_borrow_mut(values, index) }
+pub fn borrow<T: Copy>(values: &Slice<T>, index: UInt64) -> &Element<T> { storage.slice_borrow(values, index) }
+pub fn borrow_mut<T: Copy>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> { storage.slice_borrow_mut(values, index) }
 pub fn slice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.subslice(values, start, end) }
 pub fn slice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.subslice_mut(values, start, end) }
 

@@ -12,16 +12,16 @@ fn player(score:Int32)->Player {
     Player{name:"玩家",score:score,tags:tags}
 }
 fn make(score:Int32)->Room {
-    var players=Array.new::<Player>() players.push(player(score))
-    var roster=Map.new::<Int32,Player>() roster.insert(7,player(score));
+    var players=Array.new::<Player>(); players.push(player(score))
+    var roster=Map.new::<Int32,Player>(); roster.insert(7,player(score));
     Room{host:player(score),players:players,roster:roster,title:"房间",flags:(3,"live"),mode:Mode.Active(9)}
 }
 fn read(room:&Room)->Int32 {room.host.score}
 fn add(room:&mut Room,value:Int32)->Int32 {
     room.host.score=room.host.score+value
     let score=room.host.score
-    { let player=room.players.borrow_mut_ref(0) player.score=score }
-    { let player=room.roster.borrow_mut_ref(7) player.score=score }
+    { let player=room.players.borrow_mut_ref(0); player.score=score }
+    { let player=room.roster.borrow_mut_ref(7); player.score=score }
     room.host.score
 }
 fn version()->Int32 {1}

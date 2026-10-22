@@ -18,11 +18,11 @@ fn task_motion() @suspends {
 	scope {
 		branch {
 			let method = "step"
-			while true { task.next_frame() task.call(&method) }
+			while true { task.next_frame(); task.call(&method) }
 		}
 		branch {
 			let method = "reverse"
-			while true { task.sleep_game(0.8) task.call(&method) }
+			while true { task.sleep_game(0.8); task.call(&method) }
 		}
 	}
 }

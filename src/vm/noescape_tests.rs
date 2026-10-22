@@ -41,7 +41,7 @@ fn noescape_inference_handles_allocating_mutual_recursion_and_implicit_arguments
             if n == 0 { (*value) } else { first(value, n - 1) }
         }
         fn first(value: &Int32, n: Int32) -> Int32 { second(value, n) }
-        fn probe() -> Int32 { let value = 42 first(value, 5) }
+        fn probe() -> Int32 { let value = 42; first(value, 5) }
     "#,
         42,
     );
@@ -58,7 +58,7 @@ fn noescape_inference_preserves_return_sources_and_excludes_only_proven_paramete
         fn identity(value: &Int32) -> &Int32 { value }
         fn probe() -> Int32 {
             let value = (&*(alloc(42)))
-            let result = { let ignored = 9 choose(value, &ignored) }
+            let result = { let ignored = 9; choose(value, &ignored) }
             let local = 2;
             (*result) + (*(identity(&local)))
         }
@@ -74,7 +74,7 @@ fn noescape_inference_checks_generic_bodies_and_references_inside_aggregates() {
         import joky/string
         fn unused<T>(value: T) -> UInt64 { string.byte_length("abc") }
         struct Input { value: &Int32 }
-        fn read<T>(value: &T) -> T { let unused = alloc(0) ; (*value) }
+        fn read<T: Copy>(value: &T) -> T { let unused = alloc(0) ; (*value) }
         fn wrapper(input: Input) -> Int32 { read(input.value) }
         fn probe() -> Int32 {
             let value = 21
@@ -88,15 +88,15 @@ fn noescape_inference_checks_generic_bodies_and_references_inside_aggregates() {
 #[test]
 fn noescape_inference_rejects_retention_forwarding_and_implicit_escaping_borrows() {
     for source in [
-        "struct Saved { value: &Int32 } fn retain(value: &Int32) { let saved = alloc(Saved { value: value }) } fn first(value: &Int32, n: Int32) { if n == 0 { retain(value) } else { second(value, n - 1) } } fn second(value: &Int32, n: Int32) { first(value, n) } fn probe() { let local = 42 first(&local, 2) }",
-        "fn store<T>(x: T) { let saved = alloc((x,)) } fn forward(value: &Int32) { store(Some(value)) } fn probe() { let local = 42 forward(&local) }",
-        "fn store<T>(x: T) { let saved = alloc((x,)) } fn unused<U>(value: &Int32) @noescape { store(Some(value)) } fn probe() {}",
+        "struct Saved { value: &Int32 } fn retain(value: &Int32) { let saved = alloc(Saved { value: value }) } fn first(value: &Int32, n: Int32) { if n == 0 { retain(value) } else { second(value, n - 1) } } fn second(value: &Int32, n: Int32) { first(value, n) } fn probe() { let local = 42; first(&local, 2) }",
+        "fn store<T: Copy>(x: T) { let saved = alloc((x,)) } fn forward(value: &Int32) { store(Some(value)) } fn probe() { let local = 42; forward(&local) }",
+        "fn store<T: Copy>(x: T) { let saved = alloc((x,)) } fn unused<U>(value: &Int32) @noescape { store(Some(value)) } fn probe() {}",
         "fn identity(value: &Int32) -> &Int32 { value } fn probe() { identity(42); }",
-        "fn identity(value: &Int32) -> &Int32 { value } fn probe() -> &Int32 { let local = 42 identity(&local) }",
+        "fn identity(value: &Int32) -> &Int32 { value } fn probe() -> &Int32 { let local = 42; identity(&local) }",
         "fn choose(a: &Int32, b: &Int32) -> &Int32 { b } fn bad(value: &Int32) @noescape -> &Int32 { choose(value, value) }",
         "struct Saved { value: &Int32 } fn bad<T>(value: &T) @noescape -> &T { value } fn probe() {}",
-        "import joky/array.{type Array} fn save(out: &mut Array<&Int32>, value: &Int32) { out.push(value) } fn probe() { var out = Array.new::<&Int32>() let local = 42 save(&mut out, &local) }",
-        "trait Query { fn get(&self) -> Int32 } fn read<T: Query>(value: &T) { let local = 1 value.get(); } fn implicit<T: Query>(value: T) -> Int32 { value.get() }",
+        "import joky/array.{type Array} fn save(out: &mut Array<&Int32>, value: &Int32) { out.push(value) } fn probe() { var out = Array.new::<&Int32>(); let local = 42; save(&mut out, &local) }",
+        "trait Query { fn get(&self) -> Int32 } fn read<T: Copy + Query>(value: &T) { let local = 1; value.get(); } fn implicit<T: Copy + Query>(value: T) -> Int32 { value.get() }",
     ] {
         rejects(source);
     }
@@ -108,7 +108,7 @@ fn noescape_inference_keeps_indirect_calls_conservative() {
         r#"
         fn read(value: &Int32) -> Int32 { (*value) }
         fn invoke(f: fn(&Int32) -> Int32, value: &Int32) -> Int32 { f(value) }
-        fn probe() -> Int32 { let local = 42 invoke(read, &local) }
+        fn probe() -> Int32 { let local = 42; invoke(read, &local) }
     "#,
     );
 }
@@ -119,8 +119,8 @@ fn noescape_inference_admits_instance_methods_but_not_retaining_or_unknown_host_
         #repr(C) struct State { count: Int32 }
         struct Saved { state: &State }
         fn make() -> State { State { count: 0 } }
-        fn update(state: &mut State) { let unused = alloc(0) state.count = state.count + 1 }
-        fn tick(state: &mut State) -> Int32 { update(state) state.count }
+        fn update(state: &mut State) { let unused = alloc(0); state.count = state.count + 1 }
+        fn tick(state: &mut State) -> Int32 { update(state); state.count }
         fn retain(state: &State) { let saved = alloc(Saved { state: state }) }
         fn forward(state: &State) { retain(state) }
         unsafe extern "C" fn unknown(state: &State)
@@ -164,7 +164,7 @@ fn noescape_inference_admits_instance_methods_but_not_retaining_or_unknown_host_
 fn noescape_inference_consumes_returned_views_without_retaining_the_input() {
     executes(
         r#"
-        fn identity(value: &Int32) -> &Int32 { let unused = alloc(0) value }
+        fn identity(value: &Int32) -> &Int32 { let unused = alloc(0); value }
         fn read(value: &Int32) -> Int32 { (*(identity(value))) }
         fn text_size(value: &String) -> Int32 { int32(value.byte_length()) }
         struct Point { value: Int32 }
@@ -205,7 +205,7 @@ fn noescape_inference_maps_aggregate_lanes_to_source_parameters() {
         }
         fn probe() -> Int32 {
             let value = 42
-            let result = { let ignored = 1 choose((1, 2), Empty {}, {}, &value, ignored) };
+            let result = { let ignored = 1; choose((1, 2), Empty {}, {}, &value, ignored) };
             (*result)
         }
     "#,
@@ -220,8 +220,8 @@ fn noescape_inference_follows_imported_private_generic_helpers() {
         .insert(
             "helpers",
             r#"
-        fn read<T>(value: &T) -> T { let unused = alloc(0) ; (*value) }
-        pub fn inspect<T>(value: &T) -> T { read(value) }
+        fn read<T: Copy>(value: &T) -> T { let unused = alloc(0) ; (*value) }
+        pub fn inspect<T: Copy>(value: &T) -> T { read(value) }
     "#,
         )
         .unwrap();

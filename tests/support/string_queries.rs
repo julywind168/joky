@@ -85,21 +85,21 @@ pub fn cases() -> Cases {
     for (index, bytes) in corpus.iter().enumerate() {
         let name = format!("utf8_{index}");
         cases.source.push_str(&format!(
-            "\nfn {name}() -> Int32 {{ var data = Array.new::<UInt8>() "
+            "\nfn {name}() -> Int32 {{ var data = Array.new::<UInt8>(); "
         ));
         for byte in bytes {
-            cases.source.push_str(&format!("data.push({byte}) "));
+            cases.source.push_str(&format!("data.push({byte}); "));
         }
         cases.source.push_str("match text.from_utf8(data) { ");
         match std::str::from_utf8(bytes) {
             Ok(value) => {
-                cases.source.push_str(&format!("Err(_) => 1, Ok(value) => {{ let expected = {} if !value.equals(&expected) {{ return 2 }} if value.rune_count() != {} {{ return 3 }} ", literal(value), value.chars().count()));
+                cases.source.push_str(&format!("Err(_) => 1, Ok(value) => {{ let expected = {}; if !value.equals(&expected) {{ return 2 }}; if value.rune_count() != {} {{ return 3 }}; ", literal(value), value.chars().count()));
                 for (offset, scalar) in value.char_indices() {
                     let next = offset + scalar.len_utf8();
-                    cases.source.push_str(&format!("match value.next_rune({offset}) {{ Some((rune, next)) => {{ if rune.to_u32() != {} || next != {next} {{ return 4 }} }}, None => {{ return 5 }} }} ", u32::from(scalar)));
+                    cases.source.push_str(&format!("match value.next_rune({offset}) {{ Some((rune, next)) => {{ if rune.to_u32() != {} || next != {next} {{ return 4 }} }}, None => {{ return 5 }} }}; ", u32::from(scalar)));
                 }
                 cases.source.push_str(
-                    "if value.next_rune(value.byte_length()).is_some() { return 6 } 42 }",
+                    "if value.next_rune(value.byte_length()).is_some() { return 6 }; 42 }",
                 );
             }
             Err(error) => {
@@ -108,7 +108,7 @@ pub fn cases() -> Cases {
                 } else {
                     "UnexpectedEnd"
                 };
-                cases.source.push_str(&format!("Ok(_) => 7, Err(error) => {{ if error.offset != {} {{ return 8 }} match error.code {{ text.Utf8ErrorCode.{code} => 42, _ => 9 }} }}", error.valid_up_to()));
+                cases.source.push_str(&format!("Ok(_) => 7, Err(error) => {{ if error.offset != {} {{ return 8 }}; match error.code {{ text.Utf8ErrorCode.{code} => 42, _ => 9 }} }}", error.valid_up_to()));
             }
         }
         cases.source.push_str("} }\n");
@@ -118,9 +118,9 @@ pub fn cases() -> Cases {
         for start in 0..=value.len() + 1 {
             for end in 0..=value.len() + 1 {
                 let name = format!("substring_{text_index}_{start}_{end}");
-                cases.source.push_str(&format!("fn {name}() -> Int32 {{ let original = {} let result = original.substring({start}, {end}) original.release() match result {{ ", literal(value)));
+                cases.source.push_str(&format!("fn {name}() -> Int32 {{ let original = {}; let result = original.substring({start}, {end}); original.release(); match result {{ ", literal(value)));
                 if let Some(expected) = value.get(start..end) {
-                    cases.source.push_str(&format!("None => 1, Some(value) => {{ let expected = {} if value.equals(&expected) {{ 42 }} else {{ 2 }} }}", literal(expected)));
+                    cases.source.push_str(&format!("None => 1, Some(value) => {{ let expected = {}; if value.equals(&expected) {{ 42 }} else {{ 2 }} }}", literal(expected)));
                 } else {
                     cases.source.push_str("None => 42, Some(_) => 3");
                 }
@@ -171,7 +171,7 @@ pub fn cases() -> Cases {
         for (index, value) in values.into_iter().enumerate() {
             let name = format!("decimal_{ty}_{index}");
             cases.source.push_str(&format!(
-                "fn {name}() -> String {{ let value: {ty} = {value} value.to_string() }}\n"
+                "fn {name}() -> String {{ let value: {ty} = {value}; value.to_string() }}\n"
             ));
             cases.strings.push((name, value));
         }

@@ -25,21 +25,21 @@ fn contexts() -> Wide {
     p.narrow = p.narrow >> 31
     p.wide = p.wide >> 63
     var (a, (b,)): (Wide, (Word,)) = (~0, (~0,))
-    a = a >> 63 b = b >> 31
-    let c = 1 | { let n: Wide = 2 n }
+    a = a >> 63; b = b >> 31
+    let c = 1 | { let n: Wide = 2; n }
     let d = if false { ~0 } else { a }
     if snapshot.narrow == max32() && snapshot.wide == 0x8000_0000_0000_0000 { a + p.wide + c + d } else { 0 }
 }
 fn snapshots() -> Word {
     var value: Word = 0b1010
-    let a = value & { value = 0b0101 value }
-    let b = value | { value = 0b1010 value }
-    let c = value << { value = 1 value }
+    let a = value & { value = 0b0101; value }
+    let b = value | { value = 0b1010; value }
+    let c = value << { value = 1; value }
     a + b + c + value
 }
 fn loops() -> Wide {
-    var bits: Wide = 0 var i: Wide = 0
-    while i < 64 { bits = bits | 1 << i i = i + 1 }
+    var bits: Wide = 0; var i: Wide = 0
+    while i < 64 { bits = bits | 1 << i; i = i + 1 }
     bits
 }
 fn precedence() -> Bool {

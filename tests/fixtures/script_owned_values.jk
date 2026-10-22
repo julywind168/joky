@@ -27,7 +27,7 @@ fn main() @suspends -> Int32 {
     let second = values.borrow_ref(1)
     assert(second.text.is_none() && second.number == 9)
     var nested = Array.new::<Array<String>>()
-    var inner = Array.new::<String>() inner.push("nested") inner.push("") nested.push(inner)
+    var inner = Array.new::<String>(); inner.push("nested"); inner.push(""); nested.push(inner)
     let nested = engine.call::<Array<Array<String>>,Array<Array<String>>>("nested", nested)
     assert(nested.borrow_ref(0).borrow_ref(0).equals("nested"))
     assert(nested.borrow_ref(0).borrow_ref(1).is_empty())

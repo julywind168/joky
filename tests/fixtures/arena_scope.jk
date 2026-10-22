@@ -52,7 +52,7 @@ fn scope_graph() @suspends -> Int32 {
     parallel { | read_node(root, 0) | read_node(next(root), 1) }
     root.value + next(root).value
 }
-fn generic_view<T>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
+fn generic_view<T: Copy>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
 fn scope_aggregate() @suspends -> Int32 {
     let p = alloc(Point { x: 41 })
     let values = (Some((&*p)),)

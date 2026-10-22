@@ -58,28 +58,28 @@ fn borrowed_receivers_reject_invalid_syntax() {
 #[test]
 fn borrowed_receivers_reject_conflicts_escapes_and_unsupported_places() {
     for (body, message) in [
-        ("fn bad() { let c = Counter { value: 1 } c.add(1) }", "var binding"),
-        ("fn bad() { var c = Counter { value: 1 } let view = c.view() c.add(1) view.read(); }", "borrow"),
-        ("fn bad() { var c = Counter { value: 1 } let view = c.exclusive() c.read(); view.add(1) }", "borrow"),
-        ("fn bad() { var c = Counter { value: 1 } c.add(c.read()) }", "borrow"),
-        ("fn bad() { var c = Counter { value: 1 } c.add({ c.value = 2 1 }) }", "borrow"),
-        ("fn bad() { var c = Counter { value: 1 } let view = c.view() c = Counter { value: 2 } view.read(); }", "borrow"),
-        ("fn bad() -> &Counter { let c = Counter { value: 1 } c.view() }", "local"),
-        ("fn bad() { let view = { let c = Counter { value: 1 } c.view() } view.read(); }", "local"),
-        ("fn bad() { let c = (&*(alloc(Counter { value: 1 }))) c.add(1) }", "Argument type mismatch"),
-        ("fn bad() { var c = Counter { value: 1 } let p = &mut c let moved = p p.add(1) moved.read(); }", "moved"),
+        ("fn bad() { let c = Counter { value: 1 }; c.add(1) }", "var binding"),
+        ("fn bad() { var c = Counter { value: 1 }; let view = c.view(); c.add(1); view.read(); }", "borrow"),
+        ("fn bad() { var c = Counter { value: 1 }; let view = c.exclusive(); c.read(); view.add(1) }", "borrow"),
+        ("fn bad() { var c = Counter { value: 1 }; c.add(c.read()) }", "borrow"),
+        ("fn bad() { var c = Counter { value: 1 }; c.add({ c.value = 2; 1 }) }", "borrow"),
+        ("fn bad() { var c = Counter { value: 1 }; let view = c.view(); c = Counter { value: 2 }; view.read(); }", "borrow"),
+        ("fn bad() -> &Counter { let c = Counter { value: 1 }; c.view() }", "local"),
+        ("fn bad() { let view = { let c = Counter { value: 1 }; c.view() }; view.read(); }", "local"),
+        ("fn bad() { let c = (&*(alloc(Counter { value: 1 }))); c.add(1) }", "Argument type mismatch"),
+        ("fn bad() { var c = Counter { value: 1 }; let p = &mut c; let moved = p; p.add(1); moved.read(); }", "moved"),
         ("fn bad() { Counter { value: 1 }.add(1); }", "temporary borrowing"),
         ("fn bad() { let view = Counter { value: 1 }.view(); view.read(); }", "Implicit borrowing"),
         ("fn bad() { let view = &Counter { value: 1 }; view.read(); }", "temporary borrowing"),
-        ("fn pause() @suspends {} fn bad() @suspends { let c = Counter { value: 1 } let r = &c pause() r.read(); }", "suspension"),
-        ("fn bad() { let c = Counter { value: 1 } Counter.view(c); }", "Implicit borrowing"),
+        ("fn pause() @suspends {} fn bad() @suspends { let c = Counter { value: 1 }; let r = &c; pause(); r.read(); }", "suspension"),
+        ("fn bad() { let c = Counter { value: 1 }; Counter.view(c); }", "Implicit borrowing"),
         ("fn bad() { Counter.add(alloc(Counter { value: 0 }), true) }", "Argument type mismatch"),
-        ("fn bad() { let c = alloc(ValueCounter { value: 1 }) c.read(); }", "by-value method"),
+        ("fn bad() { let c = alloc(ValueCounter { value: 1 }); c.read(); }", "by-value method"),
         ("impl Counter { fn bad(&self) { self.value = 0 } }", "shared reference"),
         ("impl Counter { fn bad(&self) -> &mut Self { self } }", "Return type mismatch"),
-        ("struct Saved { view: &Counter } impl Counter { fn keep(&self) { alloc(Saved { view: self }); } } fn bad() { let c = Counter { value: 1 } c.keep() }", "retained"),
-        ("struct Holder { item: Counter } fn bad() { let p = alloc(Holder { item: Counter { value: 1 } }) let view = p.item.view(); view.read(); }", "Implicit borrowing"),
-        ("struct View { value: &Counter } impl View { fn leak(&self) -> &Counter { self.value } } fn bad() { let c: &Counter = alloc(Counter { value: 1 }) let view = View { value: c } view.leak(); }", "Implicit borrowing"),
+        ("struct Saved { view: &Counter } impl Counter { fn keep(&self) { alloc(Saved { view: self }); } } fn bad() { let c = Counter { value: 1 }; c.keep() }", "retained"),
+        ("struct Holder { item: Counter } fn bad() { let p = alloc(Holder { item: Counter { value: 1 } }); let view = p.item.view(); view.read(); }", "Implicit borrowing"),
+        ("struct View { value: &Counter } impl View { fn leak(&self) -> &Counter { self.value } } fn bad() { let c: &Counter = alloc(Counter { value: 1 }); let view = View { value: c }; view.leak(); }", "Implicit borrowing"),
         ("fn bad<T>(value: T) { value.read(); }", "no method"),
     ] {
         let source = format!("{SOURCE} {body}");
@@ -106,7 +106,7 @@ fn borrowed_receivers_preserve_definition_scope_visibility_and_consumer_types() 
             r#"
         pub struct Cell<T> { pub value: T }
         fn keep<T>(value: T) -> T { value }
-        impl<T> Cell<T> {
+        impl<T: Copy> Cell<T> {
             fn hidden(&self) -> T { keep(self.value) }
             pub fn read(&self) -> T { self.hidden() }
             pub fn set(&mut self, value: T) { self.value = keep(value) }
@@ -151,8 +151,8 @@ fn borrowed_receivers_preserve_definition_scope_visibility_and_consumer_types() 
         vm.load_source_with_modules(source, &modules).unwrap();
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
         for bad in [
-            "import cells fn bad() { let c = cells.Cell { value: 42 } c.hidden(); }",
-            "import cells struct Cell<T> { value: T } fn bad() { let c = Cell { value: 42 } cells.Cell.read(&c); }",
+            "import cells fn bad() { let c = cells.Cell { value: 42 }; c.hidden(); }",
+            "import cells struct Cell<T> { value: T } fn bad() { let c = Cell { value: 42 }; cells.Cell.read(&c); }",
         ] {
             assert!(vm.load_source_with_modules(bad, &modules).is_err());
             assert_eq!(vm.call_int32_0("check").unwrap(), 42);
@@ -200,7 +200,7 @@ fn borrowed_receivers_preserve_evaluation_order_pending_errors_and_cancellation(
             fn wait(&mut self, value: Int32) @suspends {{ self.add(delay(value)) }}
             fn fail(&self) @suspends -> Int32 {{ self.value / delay(0) }}
         }}
-        fn receiver(value: &mut Counter) -> &mut Counter {{ record(1) value }}
+        fn receiver(value: &mut Counter) -> &mut Counter {{ record(1); value }}
         fn pending() @suspends -> Int32 {{
             let c = alloc(Counter {{ value: 20 }})
             receiver(c).wait(record(22))

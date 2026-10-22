@@ -7,9 +7,9 @@ fn move_point(p: &mut Point) { p.x = p.x + 1 }
 fn x(p: &Point) -> Int32 { p.x }
 fn select(flag: Bool, a: &Point, b: &Point) -> &Point { if flag { a } else { b } }
 fn forward(p: &mut Point) -> &mut Point { p }
-fn make_value<T>(value: T) -> &mut T { alloc(value) }
+fn make_value<T: Copy>(value: T) -> &mut T { alloc(value) }
 fn generic_write<T>(p: &mut T, value: T) { (*(p) = value) }
-fn generic_read<T>(p: &T) -> T { (*p) }
+fn generic_read<T: Copy>(p: &T) -> T { (*p) }
 
 fn arena_compute() -> Int32 {
     let a = make(1)

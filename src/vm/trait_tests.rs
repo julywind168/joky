@@ -7,10 +7,10 @@ fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
         struct Id { value: Int32 }
         impl Eq for Id { fn eq(&self, other: &Self) -> Bool { self.value == other.value } }
         struct Pair<T> { left: T, right: T }
-        impl<T: Eq> Eq for Pair<T> {
+        impl<T: Copy + Eq> Eq for Pair<T> {
             fn eq(&self, other: &Self) -> Bool {
-                let left = self.left let right = other.left
-                let a = alloc(left) let b = alloc(right)
+                let left = self.left; let right = other.left
+                let a = alloc(left); let b = alloc(right)
                 Eq.eq(a, b)
             }
         }
@@ -184,7 +184,7 @@ fn static_traits_keep_identity_and_definition_scope_across_diamond_imports() {
         struct Local { n: Int32 }
         impl Saved for Local { fn read(self) -> Int32 { self.n } }
         fn check() -> Int32 {
-            let a = left.make() let z = right.make()
+            let a = left.make(); let z = right.make()
             let x = foreign.Value { n: 42 }
             if Saved.read(a) + z.read() == 42 && b.read(x) == 42 && b.private_bound(Id { value: 42 }) == 42 {
                 b.read(Local { n: 42 })
@@ -234,18 +234,18 @@ fn static_traits_preserve_borrowing_and_conservative_template_effects() {
         impl Read for Id { fn read(&self) -> Int32 { self.value } }
         impl Set for Id { fn set(&mut self, n: Int32) { self.value = n } }
         impl View for Id { fn view(&self) -> &Self { self } }
-        fn view<T: View>(x: &T) -> &T { x.view() }
+        fn view<T: Copy + View>(x: &T) -> &T { x.view() }
     "#;
     for (extra, message) in [
-        ("fn bad() { let x = Id { value: 1 } x.set(42) }", "var binding"),
-        ("fn bad() { var x = Id { value: 1 } let r = x.view() x.set(42) r.read(); }", "borrow"),
-        ("fn bad() { var x = Id { value: 1 } x.set(x.read()) }", "borrow"),
-        ("fn bad() -> &Id { let x = Id { value: 1 } view(&x) }", "local"),
-        ("fn bad<T: View>(x: T) -> &T { view(&x) }", "local"),
-        ("fn bad<T: Read>(x: T) -> Int32 { x.read() }", "retained"),
-        ("fn bad() { let x = (&*(alloc(Id { value: 1 }))) x.set(42) }", "Argument type mismatch"),
-        ("fn pause() @suspends {} fn bad() @suspends { let x = Id { value: 1 } let r = &x pause() r.read(); }", "suspension"),
-        ("trait Save { fn save(&self) } struct Holder { p: &Id } impl Save for Id { fn save(&self) { alloc(Holder { p: self }); } } fn save<T: Save>(x: &T) { x.save() } fn bad() { let x = Id { value: 1 } save(&x) }", "retained"),
+        ("fn bad() { let x = Id { value: 1 }; x.set(42) }", "var binding"),
+        ("fn bad() { var x = Id { value: 1 }; let r = x.view(); x.set(42); r.read(); }", "borrow"),
+        ("fn bad() { var x = Id { value: 1 }; x.set(x.read()) }", "borrow"),
+        ("fn bad() -> &Id { let x = Id { value: 1 }; view(&x) }", "local"),
+        ("fn bad<T: Copy + View>(x: T) -> &T { view(&x) }", "local"),
+        ("fn bad<T: Copy + Read>(x: T) -> Int32 { x.read() }", "retained"),
+        ("fn bad() { let x = (&*(alloc(Id { value: 1 }))); x.set(42) }", "Argument type mismatch"),
+        ("fn pause() @suspends {} fn bad() @suspends { let x = Id { value: 1 }; let r = &x; pause(); r.read(); }", "suspension"),
+        ("trait Save { fn save(&self) } struct Holder { p: &Id } impl Save for Id { fn save(&self) { alloc(Holder { p: self }); } } fn save<T: Save>(x: &T) { x.save() } fn bad() { let x = Id { value: 1 }; save(&x) }", "retained"),
         ("trait Wait { fn wait(&self) @suspends } fn bad<T: Wait>(x: &T) { x.wait() }", "suspend"),
     ] {
         let source = format!("{base} {extra}");
@@ -269,7 +269,7 @@ fn static_traits_keep_by_value_receivers_free_of_spurious_local_borrows() {
         impl Borrowed for Id { fn read(&self) -> Int32 { self.value } }
         impl Id { fn read(self) -> Int32 { self.value } }
         fn generic<T: Value>(x: T) @suspends -> Int32 { x.read() }
-        fn concrete() @suspends -> Int32 { let x = Id { value: 42 } x.read() }
+        fn concrete() @suspends -> Int32 { let x = Id { value: 42 }; x.read() }
         fn bound() @suspends -> Int32 { generic(Id { value: 42 }) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -315,7 +315,7 @@ fn static_traits_do_not_expose_private_inherent_methods_through_trait_impls() {
         import base
         pub trait Read { fn read(&self) -> Int32 }
         impl Read for base.Id { fn read(&self) -> Int32 { self.value } }
-        pub fn check() -> Int32 { let x = base.Id { value: 42 } x.read() }
+        pub fn check() -> Int32 { let x = base.Id { value: 42 }; x.read() }
     "#,
         )
         .unwrap();
@@ -427,7 +427,7 @@ fn trait_defaults_execute_final_static_methods_in_all_backends() {
         }
         fn read<T: Measure>(value: &T) @noescape -> Int32 { value.recurse(3) }
         fn test() -> Int32 {
-            let a = A {} let b = B {}
+            let a = A {}; let b = B {}
             a.noop()
             read(&a) + read(&b)
         }
@@ -469,7 +469,7 @@ fn trait_defaults_support_all_receivers_and_mutual_recursion() {
             fn create() -> Self
             fn advance(&mut self) @noescape
             fn finish(self) -> Int32
-            fn twice(&mut self) @noescape { self.advance() self.advance() }
+            fn twice(&mut self) @noescape { self.advance(); self.advance() }
             fn consume(self) -> Int32 { self.finish() }
             fn even(&self, n: Int32) @noescape -> Bool {
                 if n == 0 { true } else { self.odd(n - 1) }
@@ -545,7 +545,7 @@ fn associated_types_execute_concrete_and_generic_projections() {
             fn next(&self) -> Int32 { 42 }
         }
         fn take<S: Source>(s: &S) @noescape -> S.Item { s.next() }
-        fn test() -> Int32 { let c = Counter {} take(&c) }
+        fn test() -> Int32 { let c = Counter {}; take(&c) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -573,7 +573,7 @@ fn associated_types_compose_equalities_owners_and_defaults() {
             fn next(&self) -> String { "forty-two" }
         }
         fn take<S: Source>(s: &S) @noescape -> S.Item { s.next() }
-        fn test() -> Int32 { let c = C {} c.skip() let text = take(&c) if text.byte_length() == 9 { 42 } else { 0 } }
+        fn test() -> Int32 { let c = C {}; c.skip(); let text = take(&c); if text.byte_length() == 9 { 42 } else { 0 } }
         "#,
         r#"
         import joky/option.{type Option, Some}
@@ -586,20 +586,20 @@ fn associated_types_compose_equalities_owners_and_defaults() {
         }
         fn take<S: Source<Item = U>, U>(s: &S) @noescape -> Option<U> { s.next() }
         fn first<S: Source<Item = Int32>>(s: &S) @noescape -> Int32 { take::<S,Int32>(s).unwrap_or(0) }
-        fn test() -> Int32 { let c = C {} first(&c) }
+        fn test() -> Int32 { let c = C {}; first(&c) }
         "#,
         r#"
         trait Value { fn value(&self) @noescape -> Int32 }
         impl Value for Int32 { fn value(&self) -> Int32 { (*self) } }
         trait Source { type Item: Value
             fn next(&self) @noescape -> Self.Item
-            fn read(&self) @noescape -> Int32 { let value = self.next() value.value() }
+            fn read(&self) @noescape -> Int32 { let value = self.next(); value.value() }
         }
         struct C {}
         impl Source for C { type Item = Int32
             fn next(&self) -> Int32 { 42 }
         }
-        fn test() -> Int32 { let c = C {} c.read() }
+        fn test() -> Int32 { let c = C {}; c.read() }
         "#,
         r#"
         trait Left { type Item }
@@ -615,11 +615,11 @@ fn associated_types_compose_equalities_owners_and_defaults() {
             fn next(&self) @noescape -> Self.Item
         }
         struct Box<T> { value: T }
-        impl<T> Source for Box<T> { type Item = T
+        impl<T: Copy> Source for Box<T> { type Item = T
             fn next(&self) -> T { self.value }
         }
         type Output = <Box<Int32> as Source>::Item
-        fn test() -> Output { let b = Box { value: 42 } b.next() }
+        fn test() -> Output { let b = Box { value: 42 }; b.next() }
         "#,
     ];
     for (index, source) in cases.iter().enumerate() {
@@ -656,7 +656,7 @@ fn associated_types_reject_invalid_definitions_and_uses_in_all_backends() {
         "trait S { type Item } fn bad<T: S<Item = _>>() {}",
         "trait S { type Item: M } trait M {} struct C {} impl S for C { type Item = Int32 }",
         "trait S { type Item } struct C {} impl S for C { type Item = String } fn need<T: S<Item = Int32>>() {} fn bad() { need::<C>() }",
-        "trait S { type Item; fn next(&self) @noescape -> Self.Item } struct C {} impl S for C { type Item = String; fn next(&self) -> String { \"x\" } } fn bad(c: &C) { let x = c.next() let a = x let b = x }",
+        "trait S { type Item; fn next(&self) @noescape -> Self.Item } struct C {} impl S for C { type Item = String; fn next(&self) -> String { \"x\" } } fn bad(c: &C) { let x = c.next(); let a = x; let b = x }",
         "trait S { type Item } fn bad<T: S>(x: T.Item) -> Int32 { x + 1 }",
     ];
     for source in cases {
@@ -732,7 +732,7 @@ fn associated_types_preserve_definition_scopes_and_diamond_identities() {
         fn read_int(value: &dyn p.Source<Item = Int32>) @noescape -> Int32 { value.forwarded() }
         fn read_bool(value: &dyn p.Source<Item = Bool>) @noescape -> Bool { value.forwarded() }
         fn test() -> Int32 {
-            let c = i.C {} let d = other.C {}
+            let c = i.C {}; let d = other.C {}
             let integer: &dyn p.Source<Item = Int32> = &c
             let boolean: &dyn p.Source<Item = Bool> = &d
             if p.take(&d) && read_bool(boolean) { p.take(&c) + read_int(integer) - 42 } else { 0 }
@@ -753,11 +753,11 @@ fn associated_types_preserve_definition_scopes_and_diamond_identities() {
 #[test]
 fn associated_types_resolve_forward_layouts_and_identity_equalities() {
     let cases = [
-        "trait S { type Item } struct Outer { value: C.Item } struct C {} struct Value { n: Int32 } impl S for C { type Item = Value } fn test() -> Int32 { let x = Outer { value: Value { n: 42 } } x.value.n }",
-        "trait S { type Item } struct Outer { first: A.Item, second: B.Item } struct A {} struct B {} struct V1 { n: Int32 } struct V2 { n: Int32 } impl S for A { type Item = (V1,) } impl S for B { type Item = (V2,) } fn test() -> Int32 { let x = Outer { first: (V1 { n: 20 },), second: (V2 { n: 22 },) } let (a,) = x.first let (b,) = x.second a.n + b.n }",
+        "trait S { type Item } struct Outer { value: C.Item } struct C {} struct Value { n: Int32 } impl S for C { type Item = Value } fn test() -> Int32 { let x = Outer { value: Value { n: 42 } }; x.value.n }",
+        "trait S { type Item } struct Outer { first: A.Item, second: B.Item } struct A {} struct B {} struct V1 { n: Int32 } struct V2 { n: Int32 } impl S for A { type Item = (V1,) } impl S for B { type Item = (V2,) } fn test() -> Int32 { let x = Outer { first: (V1 { n: 20 },), second: (V2 { n: 22 },) }; let (a,) = x.first; let (b,) = x.second; a.n + b.n }",
         "trait S { type Item } struct C {} impl S for C { type Item = Int32 } fn id<T: S<Item = T.Item>>(x: T.Item) -> T.Item { x } fn test() -> Int32 { id::<C>(42) }",
         "trait S { type Item } type A = C.Item struct C {} impl S for C { type Item = Int32 } fn test() -> A { 42 }",
-        "trait S { type Item } struct C {} impl S for C { type Item = Self } fn test() -> Int32 { let c: C.Item = C {} 42 }",
+        "trait S { type Item } struct C {} impl S for C { type Item = Self } fn test() -> Int32 { let c: C.Item = C {}; 42 }",
     ];
     for source in cases {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -1069,6 +1069,7 @@ fn associated_types_share_the_256_obligation_budget_with_trait_proofs() {
         let source = format!("{source} fn test() -> <C<{root}> as S>::Item {{ 42 }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(false);
             if overflow {
                 let error = vm.load_source(&source).unwrap_err();
                 assert_eq!(error.code(), crate::ErrorCode::ResourceLimit, "{error}");
@@ -1077,19 +1078,18 @@ fn associated_types_share_the_256_obligation_budget_with_trait_proofs() {
                 assert_eq!(vm.call_int32_0("test").unwrap(), 42);
             }
         }
-        let ast = crate::parser::parse(&source).unwrap();
+        // Keep the exact obligation budget independent of standard-library templates.
+        let mut types = crate::TypeRegistry::default();
+        types.set_prelude_enabled(false);
+        let ast = types.resolve_with_modules(
+            &crate::parser::parse(&source).unwrap(),
+            &crate::ModuleSources::new(),
+        );
         if overflow {
-            assert_eq!(
-                crate::aot::AotCompiler::new("wide-projection")
-                    .unwrap()
-                    .compile_module(&ast)
-                    .unwrap_err()
-                    .code(),
-                crate::ErrorCode::ResourceLimit
-            );
+            assert_eq!(ast.unwrap_err().code(), crate::ErrorCode::ResourceLimit);
         } else {
             #[cfg(unix)]
-            crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
+            crate::backends::aot::tests::assert_sync_int32(&ast.unwrap(), "test", 42);
         }
     }
 }
@@ -1108,7 +1108,7 @@ fn associated_types_support_blanket_impls_without_equality_specialization() {
         struct C {}
         impl Marker for C {}
         fn read<T: Marker>(x: &T) @noescape -> <T as Source>::Item { Source.get(x) }
-        fn test() -> Int32 { let c = C {} read(&c) }
+        fn test() -> Int32 { let c = C {}; read(&c) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -1142,7 +1142,7 @@ fn trait_defaults_keep_effect_contracts_and_implementation_privacy() {
         "trait S { fn run(&self) @suspends {} } struct C {} impl S for C { fn run(&self) {} }",
         "trait S { fn run(&self) {} } struct C {} impl S for C { fn run(&self) @suspends {} }",
         "trait S { type Item; fn next(&self) @noescape -> Self.Item } struct C { value:Int32 } impl S for C { type Item = &Int32; fn next(&self) -> &Int32 { &self.value } }",
-        "trait S { type Item; fn next(&self) -> Self.Item } struct C { value:Int32 } impl S for C { type Item = &Int32; fn next(&self) -> &Int32 { &self.value } } fn bad() -> C.Item { let c = C { value:42 } c.next() }",
+        "trait S { type Item; fn next(&self) -> Self.Item } struct C { value:Int32 } impl S for C { type Item = &Int32; fn next(&self) -> &Int32 { &self.value } } fn bad() -> C.Item { let c = C { value:42 }; c.next() }",
     ] {
         for mode in [VmMode::Jit,VmMode::Interpreter] { assert!(VmEngine::with_mode(mode).load_source(source).is_err(),"{source}"); }
         assert!(crate::aot::AotCompiler::new("bad-default-effect").unwrap().compile_module(&crate::parser::parse(source).unwrap()).is_err(),"{source}");

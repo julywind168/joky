@@ -65,7 +65,7 @@ fn extend_text(value: &mut StringBuilder) @suspends {
 fn query(text: &String, n: Int32) @noescape -> Int32 {
     if text.byte_length() == 5 { n } else { 0 }
 }
-fn later() @suspends -> Int32 { task.yield_now() 42 }
+fn later() @suspends -> Int32 { task.yield_now(); 42 }
 fn exercise_text() @suspends {
     var builder = StringBuilder.new()
     extend_text(&mut builder)

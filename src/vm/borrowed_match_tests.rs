@@ -175,20 +175,20 @@ fn borrowed_matches_reject_conflicting_access_and_escaping_views() {
         struct Resource { id: Int32, values: Array<Int32> }
         fn make() -> Resource { Resource { id: 1, values: Array.new::<Int32>() } }
         fn select(value: &Option<Resource>) -> &Resource {
-            match value { Some(resource) => resource, None => { let fail = 1 << 32 return select(value) } }
+            match value { Some(resource) => resource, None => { let fail = 1 << 32; return select(value) } }
         }
     "#;
     for (body, message) in [
-        ("fn bad() -> Int32 { var value = Some(make()) let r = select(&value) value = None r.id }", "borrow"),
-        ("fn bad() -> Int32 { let value = Some(make()) let r = select(&value) let moved = value r.id }", "borrow"),
-        ("fn bad() -> Int32 { var value = Some(make()) match &value { Some(r) => { value = None r.id }, None => 0 } }", "borrow"),
-        ("fn bad(a: &mut Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)) a.reserve(10) r.id }", "borrow"),
-        ("fn bad(a: &mut Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)) a.pop(); r.id }", "borrow"),
-        ("fn bad(a: &mut Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)) a.push(None) r.id }", "borrow"),
-        ("fn bad(a: Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)) a.release() r.id }", "borrow"),
+        ("fn bad() -> Int32 { var value = Some(make()); let r = select(&value); value = None; r.id }", "borrow"),
+        ("fn bad() -> Int32 { let value = Some(make()); let r = select(&value); let moved = value; r.id }", "borrow"),
+        ("fn bad() -> Int32 { var value = Some(make()); match &value { Some(r) => { value = None; r.id }, None => 0 } }", "borrow"),
+        ("fn bad(a: &mut Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)); a.reserve(10); r.id }", "borrow"),
+        ("fn bad(a: &mut Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)); a.pop(); r.id }", "borrow"),
+        ("fn bad(a: &mut Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)); a.push(None); r.id }", "borrow"),
+        ("fn bad(a: Array<Option<Resource>>) -> Int32 { let r = select(a.borrow_ref(0)); a.release(); r.id }", "borrow"),
         ("fn bad(value: Option<Resource>, fallback: &Resource) -> &Resource { select(&value) }", "outlive"),
-        ("fn bad(fallback: &Resource) -> &Resource { let value = Some(make()) match &value { Some(r) => r, None => fallback } }", "outlive"),
-        ("fn bad() -> Int32 { let r = { let value = Some(make()) select(&value) } r.id }", "outlive"),
+        ("fn bad(fallback: &Resource) -> &Resource { let value = Some(make()); match &value { Some(r) => r, None => fallback } }", "outlive"),
+        ("fn bad() -> Int32 { let r = { let value = Some(make()); select(&value) }; r.id }", "outlive"),
         ("fn bad() -> Int32 { match { let value = Some(make()); &value } { Some(r) => r.id, None => 0 } }", "outlive"),
     ] {
         let ast = crate::parser::parse(&format!("{prefix}{body}")).unwrap();
@@ -221,8 +221,8 @@ fn borrowed_matches_keep_shared_type_and_pattern_restrictions() {
         "fn bad(value: &Option<Resource>) { match value { Some(r) => { let pair = (r, 1) }, None => {} } }",
         "fn bad(value: &Option<Resource>) { match value { Some(r) => { alloc(r); }, None => {} } }",
         "fn bad(value: &Option<Resource>) { match value { Some(r) => { (*r); }, None => {} } }",
-        "fn bad(value: &Option<Resource>) @suspends -> &Option<Resource> { match value { Some(_) => {}, None => {} } value }",
-        "fn pause() @suspends {} fn bad() @suspends -> Int32 { let value = Some(42) let r = &value pause() match r { Some(x) => x, None => 0 } }",
+        "fn bad(value: &Option<Resource>) @suspends -> &Option<Resource> { match value { Some(_) => {}, None => {} }; value }",
+        "fn pause() @suspends {} fn bad() @suspends -> Int32 { let value = Some(42); let r = &value; pause(); match r { Some(x) => x, None => 0 } }",
         "extern fn host(value: &Option<Resource>) fn bad() {}",
     ] {
         let ast = crate::parser::parse(&format!("{prefix}{body}")).unwrap();
@@ -284,8 +284,8 @@ fn borrowed_matches_suspend_without_replaying_branch_effects() {
 #[test]
 fn borrowed_matches_preserve_module_privacy_and_returned_dependencies() {
     for (body, message) in [
-        ("fn bad() -> Int32 { var value = p.make() let r = p.select(&value) value = p.Parcel.Empty r.inspect() }", "borrow"),
-        ("fn bad() { let value = p.make() match &value { Item(r) => { let hidden = &r.values }, Empty => {} } }", "private"),
+        ("fn bad() -> Int32 { var value = p.make(); let r = p.select(&value); value = p.Parcel.Empty; r.inspect() }", "borrow"),
+        ("fn bad() { let value = p.make(); match &value { Item(r) => { let hidden = &r.values }, Empty => {} } }", "private"),
     ] {
         let source = format!("import match_library as p\n{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

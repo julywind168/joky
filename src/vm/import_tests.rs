@@ -88,7 +88,7 @@ fn integer_and_option_dependencies_share_identity_in_either_import_order() {
         ("import joky/option as opt.{type Option as Maybe, Some, None} import joky/integer", 10),
         ("import joky/prelude import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", prelude_impl_count),
     ] {
-        let source = format!("{imports} fn make(n: Int32) -> Maybe<UInt64> {{ n.to_u64() }} fn check() -> Int32 {{ let n: opt.Option<UInt64> = make(42) match n {{ Some(n) => int32(n), None => 0 }} }}");
+        let source = format!("{imports} fn make(n: Int32) -> Maybe<UInt64> {{ n.to_u64() }} fn check() -> Int32 {{ let n: opt.Option<UInt64> = make(42); match n {{ Some(n) => int32(n), None => 0 }} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
             vm.set_prelude_enabled(false);
@@ -167,7 +167,7 @@ fn constructors_and_module_aliases_obey_local_shadowing_without_capturing_other_
             false && (let Present = 0; true);
             let value = Present(method)
             let matched = match make(42) { Present(n) => n, None => 0 }
-            let local = { let Some = 7 Some }
+            let local = { let Some = 7; Some }
             match value { Some(n) => n + matched - 42 + local - 7, None => 0 }
         }
     "#;
@@ -189,9 +189,9 @@ fn host_module_aliases_and_selected_call_forms_keep_canonical_abi_bindings() {
             let vm = 99
             let h: Engine = Engine.new()
             let same: &engine.Vm = &h
-            let name = "next" register(same, &name, next)
-            let code = "extern fn next(n: Int32) -> Int32 fn value() -> Int32 {{ next(41) }}" engine.load_source(h, &code)
-            let entry = "value" let a = invoke(h, &entry)
+            let name = "next"; register(same, &name, next)
+            let code = "extern fn next(n: Int32) -> Int32 fn value() -> Int32 {{ next(41) }}"; engine.load_source(h, &code)
+            let entry = "value"; let a = invoke(h, &entry)
             let b = engine.call_int32_0(h, &entry)
             close(h)
             a + b - 42
@@ -293,12 +293,12 @@ fn import_errors_are_located_and_do_not_publish_partial_modules() {
         ),
         (
             true,
-            "fn f() { let Some = 1 Some(42) }",
+            "fn f() { let Some = 1; Some(42) }",
             ErrorCode::InvalidCall,
         ),
         (
             true,
-            "import joky/vm as v fn f() { let v = 1 v.create() }",
+            "import joky/vm as v fn f() { let v = 1; v.create() }",
             ErrorCode::UnknownName,
         ),
         (
@@ -318,7 +318,7 @@ fn import_errors_are_located_and_do_not_publish_partial_modules() {
         ),
         (
             true,
-            "import joky/vm.{close as new} fn f() { let new = 1 new() }",
+            "import joky/vm.{close as new} fn f() { let new = 1; new() }",
             ErrorCode::InvalidCall,
         ),
         (

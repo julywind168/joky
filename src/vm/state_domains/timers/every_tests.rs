@@ -4,7 +4,7 @@ const AUTO: &str = r#"#state struct Room{value:Int32}
 impl Room {#every(10) fn tick(&mut self){self.value+=1}}
 fn make(value:Int32)->Room{Room{value:value}}
 fn read(room:&Room)->Int32{room.value}
-fn local()->Int32{var room=make(0) room.tick() room.value}"#;
+fn local()->Int32{var room=make(0); room.tick(); room.value}"#;
 fn setup_auto(mode: VmMode, source: &str, tasks: usize) -> (VmEngine, Rc<ManualClock>) {
     let mut vm = VmEngine::with_mode(mode);
     let clock = Rc::new(ManualClock {

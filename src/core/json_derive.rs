@@ -188,7 +188,11 @@ fn implementation(
     let type_params: Vec<_> = record
         .type_params
         .iter()
-        .map(|p| Arc::new(TypeParameter::new(p.name.clone(), p.span)))
+        .map(|p| {
+            let mut parameter = TypeParameter::new(p.name.clone(), p.span);
+            parameter.copy = p.copy;
+            Arc::new(parameter)
+        })
         .collect();
     let substitutions: crate::core::types::Substitutions = record
         .type_params

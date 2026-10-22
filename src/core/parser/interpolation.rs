@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn interpolation_lexes_nested_braces_strings_comments_and_utf8_spans() {
-        let source = "fn text() -> String { \"界 {({ let x = \\\"quoted\\\" x })}\" }";
+        let source = "fn text() -> String { \"界 {({ let x = \\\"quoted\\\"; x })}\" }";
         // Ordinary quotes inside an expression need no outer-string escaping.
         let source = source.replace("\\\"", "\"");
         let id = crate::SourceId::from_raw(7);

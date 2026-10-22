@@ -17,7 +17,7 @@ fn element_identity<T>(value: T) -> T { value }
 fn elements_growth() -> Int32 {
     var values = Array.new::<ElementResource>()
     var i = 1
-    while i <= 5 { values.push(element_resource(i)) i = i + 1 }
+    while i <= 5 { values.push(element_resource(i)); i = i + 1 }
     let last = element_identity(values.take_last())
     if last.id == 5 && last.values.get(0).unwrap_or(0) == 5 && values.len() == 4 { 42 } else { 0 }
 }
@@ -211,7 +211,7 @@ fn enums_early_exit() -> Int32 {
 }
 fn enums_failure() -> Int32 {
     let value = Message.Resource(element_resource(1))
-    match value { Resource(item) => { let fail = 1 << 32 item.id }, _ => 0 }
+    match value { Resource(item) => { let fail = 1 << 32; item.id }, _ => 0 }
 }
 fn enums_cleanup_failure() -> Int32 {
     let first: Option<FailingElement> = Option.Some(failing_element(1))
@@ -230,13 +230,13 @@ fn enums_transitions() -> Int32 {
     var values = Array.new::<ElementResource>()
     values.push(selected)
     let result = values.pop()
-    match result { None => 0, Some(item) => { record_drop(-item.id) 42 } }
+    match result { None => 0, Some(item) => { record_drop(-item.id); 42 } }
 }
 fn enums_task() @suspends -> Int32 { enums_transitions() }
 
 struct FailingEnumContainer { message: Message, id: Int32 }
 impl Drop for FailingEnumContainer {
-    fn drop(&mut self) { record_drop(self.id) if self.id == 2 { let fail = 1 << 32 } }
+    fn drop(&mut self) { record_drop(self.id); if self.id == 2 { let fail = 1 << 32 } }
 }
 fn enums_empty_replacement_failure() -> Int32 {
     var values = Array.new::<FailingEnumContainer>()
@@ -408,7 +408,7 @@ fn tuples_ctor_return() -> Int32 {
 fn tuples_loop() -> Int32 {
     var pair = (element_resource(1), element_resource(2))
     var i = 3
-    while i <= 5 { pair = (element_resource(i), element_resource(i + 1)) i = i + 2 }
+    while i <= 5 { pair = (element_resource(i), element_resource(i + 1)); i = i + 2 }
     let (left, right) = pair
     if left.id + right.id == 11 { 42 } else { 0 }
 }

@@ -20,14 +20,14 @@ fn wide_frame(x: Int32) @suspends -> Int32 {
     saved.run(value - 1)
 }
 fn id<T>(x: T) -> T { x }
-fn async_id<T>(x: T) @suspends -> T { let _ = delayed_value(0) x }
+fn async_id<T>(x: T) @suspends -> T { let _ = delayed_value(0); x }
 fn apply<T, U>(value: T, transform: Async<T, U>) @suspends -> U { transform(value) }
 fn holder() -> Holder<Int32> { Holder { run: wide_frame } }
-fn choose() @suspends -> Async<Int32, Int32> { let _ = delayed_value(0) plus }
+fn choose() @suspends -> Async<Int32, Int32> { let _ = delayed_value(0); plus }
 fn pair(x: Int32) @suspends -> Pair {
     Pair { number: int64(delayed_value(x)), flag: true, run: plus }
 }
-fn empty(x: Empty) @suspends -> Empty { let _ = delayed_value(0) x }
+fn empty(x: Empty) @suspends -> Empty { let _ = delayed_value(0); x }
 fn wide(before: Unit, x: Int64, y: UInt64, flag: Bool, after: Empty) @suspends -> (UInt64, Int64, Bool) {
     let _ = delayed_value(0)
     (y, x, flag)
@@ -38,7 +38,7 @@ fn branch_task(x: Int32) @suspends {
     record(x + 200);
 }
 fn fast(x: Int32) @suspends { record(x + 300); }
-fn fail_branch(x: Int32) @suspends { let _ = delayed_value(x) fail_now() }
+fn fail_branch(x: Int32) @suspends { let _ = delayed_value(x); fail_now() }
 fn recursive(n: Int32) @suspends -> Int32 {
     if n == 0 { return delayed_value(41) }
     let next = recursive
@@ -75,7 +75,7 @@ fn suspending_storage() @suspends -> Int32 {
 }
 fn suspending_order() @suspends -> Int32 {
     var f = plus
-    let first = f({ f = minus record(1); delayed_value(40) })
+    let first = f({ f = minus; record(1); delayed_value(40) })
     if first != 42 { return 0 }
     f(43)
 }
@@ -92,7 +92,7 @@ fn suspending_aggregates() @suspends -> Int32 {
 }
 fn suspending_scope() @suspends -> Int32 {
     var f = branch_task
-    parallel { | f({ f = fast record(1) }) | f(2) }
+    parallel { | f({ f = fast; record(1) }) | f(2) }
     42
 }
 fn suspending_race() @suspends -> Int32 {
@@ -108,7 +108,7 @@ fn suspending_nested_scope() @suspends -> Int32 {
     parallel { | f(1) | f(2) }
     42
 }
-fn suspending_recursive() @suspends -> Int32 { let f = recursive f(20) }
+fn suspending_recursive() @suspends -> Int32 { let f = recursive; f(20) }
 fn suspending_failure() @suspends -> Int32 {
     let f = fail_branch
     f(0)
@@ -125,4 +125,4 @@ fn reload_target(x: Int32) @suspends -> Int32 {
     let value = delayed_value((*saved))
     value + 1
 }
-fn suspending_reload() @suspends -> Int32 { let f = reload_target f(40) }
+fn suspending_reload() @suspends -> Int32 { let f = reload_target; f(40) }

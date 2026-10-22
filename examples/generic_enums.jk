@@ -14,11 +14,11 @@ fn checked_divide(a: Int32, b: Int32) -> Result<Int32, Bool> {
 }
 
 fn main() {
-    { let displayed: Int32 = unwrap_or(Option.Some(42), 0) println(&displayed) }
+    println(unwrap_or(Option.Some(42), 0))
     let absent: Option<Int32> = Option.None
-    { let displayed: Int32 = unwrap_or(absent, 7) println(&displayed) }
+    println(unwrap_or(absent, 7))
     let nested: Option<Option<UInt64>> = Option.Some(Option.Some(0xffff_ffff_ffff_ffff))
-    { let displayed: UInt64 = unwrap_or(unwrap_or(nested, Option.None), 0) println(&displayed) }
-    { let displayed: Int32 = match checked_divide(84, 2) { Ok(n) => n, Err(reason) => -1 } println(&displayed) }
-    { let displayed: Int32 = match checked_divide(84, 0) { Ok(n) => n, Err(reason) => -1 } println(&displayed) }
+    println(unwrap_or(unwrap_or(nested, Option.None), 0))
+    println(match checked_divide(84, 2) { Ok(n) => n, Err(reason) => -1 })
+    println(match checked_divide(84, 0) { Ok(n) => n, Err(reason) => -1 })
 }

@@ -6,7 +6,7 @@ fn ensure(condition: Bool, message: String) { assert(condition, &message) }
 fn from_mask(mask: UInt32) -> Set<Int32> {
     var set = Set.new::<Int32>()
     var i = 0
-    while i < 8 { if (mask & (1 << uint32(i))) != 0 { set.insert(i); } i = i + 1 }
+    while i < 8 { if (mask & (1 << uint32(i))) != 0 { set.insert(i); }; i = i + 1 }
     set
 }
 fn membership(set: &Set<Int32>) -> UInt32 {
@@ -18,7 +18,7 @@ fn membership(set: &Set<Int32>) -> UInt32 {
         ensure(value >= 0 && value < 8, "Set model domain")
         let bit: UInt32 = 1 << uint32(value)
         ensure((mask & bit) == 0, "Set model duplicate member")
-        mask = mask | bit i = i + 1
+        mask = mask | bit; i = i + 1
     }
     // Compare a view against all borrowed queries without depending on order.
     var value = 0
@@ -30,13 +30,13 @@ fn membership(set: &Set<Int32>) -> UInt32 {
 }
 fn apply(current: Set<Int32>, op: Int32, value: Int32, other_mask: UInt32) -> (Set<Int32>, Int32) {
     var set = current
-    if op == 0 { let added = set.insert(value) return (set, if added { 1 } else { 0 }) }
-    if op == 1 { let removed = set.remove(value) return (set, if removed { 1 } else { 0 }) }
-    if op == 2 { let present = set.contains(value) return (set, if present { 1 } else { 0 }) }
-    if op == 3 { set.reserve(uint64(other_mask & 15)) return (set, 0) }
-    if op == 4 { set.clear() return (set, 0) }
+    if op == 0 { let added = set.insert(value); return (set, if added { 1 } else { 0 }) }
+    if op == 1 { let removed = set.remove(value); return (set, if removed { 1 } else { 0 }) }
+    if op == 2 { let present = set.contains(value); return (set, if present { 1 } else { 0 }) }
+    if op == 3 { set.reserve(uint64(other_mask & 15)); return (set, 0) }
+    if op == 4 { set.clear(); return (set, 0) }
     if op == 5 { return (set.union(from_mask(other_mask)), 0) }
-    if op == 6 { let other = from_mask(other_mask) return (set.intersection(&other), 0) }
+    if op == 6 { let other = from_mask(other_mask); return (set.intersection(&other), 0) }
     (set.symmetric_difference(from_mask(other_mask)), 0)
 }
 fn model(seed: UInt32, steps: Int32) -> Int32 {
@@ -50,7 +50,7 @@ fn model(seed: UInt32, steps: Int32) -> Int32 {
         let other_mask = (rng >> 24) & 255
         let (next, result) = apply(set, op, value, other_mask)
         set = next
-        record_int(result) record_int(int32(set.len())) record_int(int32(membership(&set)))
+        record_int(result); record_int(int32(set.len())); record_int(int32(membership(&set)))
         step = step + 1
     }
     42
@@ -58,7 +58,7 @@ fn model(seed: UInt32, steps: Int32) -> Int32 {
 fn algebra_row(a: UInt32, limit: UInt32) -> Int32 {
     var b: UInt32 = 0
     while b < limit {
-            let left = from_mask(a) let right = from_mask(b)
+            let left = from_mask(a); let right = from_mask(b)
             ensure(left.is_subset(&right) == ((a & b) == a), "Set subset matrix")
             ensure(left.is_disjoint(&right) == ((a & b) == 0), "Set disjoint matrix")
             ensure(left.is_subset(&left) && left.is_disjoint(&left) == (a == 0), "Set self matrix")
@@ -78,6 +78,6 @@ fn algebra_row(a: UInt32, limit: UInt32) -> Int32 {
 
 fn algebra_matrix(limit: UInt32) -> Int32 {
     var a: UInt32 = 0
-    while a < limit { algebra_row(a, limit) a = a + 1 }
+    while a < limit { algebra_row(a, limit); a = a + 1 }
     42
 }

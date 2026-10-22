@@ -9,15 +9,15 @@ import joky/integer
 import joky/float
 import joky/task
 
-fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) decoded::<T>("null") }
+        Err(_) => { ensure(false); decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
         _ => { ensure(false) }
     }
 }
@@ -71,13 +71,13 @@ impl FromJson for Loop {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> { context.read::<Self>(value) }
 }
 fn dispatch() {
-    var options = Options.defaults() options.limits.max_depth = 2
+    var options = Options.defaults(); options.limits.max_depth = 2
     let value = Recover {}
-    let output = match typed.encode_with_options(&value, options) { Ok(output) => output, Err(_) => { ensure(false) "" } }
-    let expected = "{{\"good\":[]}}" ensure(output.equals(&expected))
-    options.limits.max_nodes = 3 limited(&value, options, 8, "/good")
-    let duplicate = Duplicate {} limited(&duplicate, Options.defaults(), 12, "/same")
-    let looping = Loop {} limited(&looping, Options.defaults(), 16, "")
+    let output = match typed.encode_with_options(&value, options) { Ok(output) => output, Err(_) => { ensure(false); "" } }
+    let expected = "{{\"good\":[]}}"; ensure(output.equals(&expected))
+    options.limits.max_nodes = 3; limited(&value, options, 8, "/good")
+    let duplicate = Duplicate {}; limited(&duplicate, Options.defaults(), 12, "/same")
+    let looping = Loop {}; limited(&looping, Options.defaults(), 16, "")
     bad::<Loop>("null", 16, "")
 }
 fn main() { dispatch() }

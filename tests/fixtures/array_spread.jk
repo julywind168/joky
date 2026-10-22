@@ -4,11 +4,11 @@ import joky/slice.{type Slice}
 import joky/string
 import joky/task
 fn check(value: Bool) { assert(value, "array spread regression") }
-fn typed<T>(first: T, rest: Array<T>) -> T { rest[0] }
+fn typed<T: Copy>(first: T, rest: Array<T>) -> T { rest[0] }
 fn count<T>(values: Array<T>) -> UInt64 { values.len() }
-fn width<T, const N: UInt64>(values: FixedArray<T, N>) -> UInt64 { values.len() }
-fn copy<T>(values: &Array<T>) -> Array<T> { [..values] }
-fn copy_fixed<T, const N: UInt64>(values: &FixedArray<T, N>) -> Array<T> { [..values] }
+fn width<T: Copy, const N: UInt64>(values: FixedArray<T, N>) -> UInt64 { values.len() }
+fn copy<T: Copy>(values: &Array<T>) -> Array<T> { [..values] }
+fn copy_fixed<T: Copy, const N: UInt64>(values: &FixedArray<T, N>) -> Array<T> { [..values] }
 fn copy_slice(values: &Slice<Int32>) -> Array<Int32> { [..values] }
 fn move_all<T>(values: Array<T>) -> Array<T> { [..values] }
 fn marked(n: Int32, order: &mut Int32) -> Int32 { *order = *order * 10 + n; n }

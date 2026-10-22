@@ -55,7 +55,7 @@ fn contexts() -> Bool {
     p.small = 2147483648
     p.large = 9223372036854775808
     var (a, (b,)): (Word, (Wide,)) = (4294967295, (18446744073709551615,))
-    a = 0 b = 1
+    a = 0; b = 1
     let (x, y) = unwrap(wrap_choice(branch_task(true)))
     let (z, w) = unwrap(Choice.Empty)
     let (sum64, sum32) = many(18446744073709551615, 4294967295, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, {}, Empty {}, -1, true)
@@ -70,15 +70,15 @@ fn operands(n: Wide) -> Wide {
     a + b + c + d
 }
 fn looping(n: Wide) -> Wide {
-    var result = n var i: Word = 0
-    while i < 5 { i = i + 1 if i == 2 { continue } result = result + 1 if i == 4 { break } }
+    var result = n; var i: Word = 0
+    while i < 5 { i = i + 1; if i == 2 { continue }; result = result + 1; if i == 4 { break } }
     result
 }
-fn recurse(n: Word) -> Word { if n == 0 { return 4294967295 } recurse(n - 1) + 1 }
+fn recurse(n: Word) -> Word { if n == 0 { return 4294967295 }; recurse(n - 1) + 1 }
 fn snapshots() -> Wide {
     var n: Wide = 18446744073709551615
-    let (a, b) = (n, { n = n + 1 n })
-    add64(a, { n = n + 1 b }) + n
+    let (a, b) = (n, { n = n + 1; n })
+    add64(a, { n = n + 1; b }) + n
 }
 fn check() -> Int32 {
     let (eq, ne, lt, le, gt, ge) = flags(max64(), 1)

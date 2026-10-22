@@ -45,6 +45,17 @@ impl FunctionPlan {
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         if let (Flow::Value(Some(src)), Some(Type::Function(expected))) = (&flow, expected) {
+            if let Type::Function(actual) = &src.ty {
+                if actual.signature == expected.signature
+                    && actual.suspends == expected.suspends
+                    && actual.noescape
+                    && !expected.noescape
+                {
+                    let dst = self.slot(Type::Function(expected.clone()))?;
+                    self.emit(Op::Copy(dst.clone(), src.clone()));
+                    return Ok(Flow::Value(Some(dst)));
+                }
+            }
             if let Some(closure) = src.ty.closure_info() {
                 if expected.suspends
                     || expected.signature != closure.signature
@@ -501,9 +512,7 @@ impl FunctionPlan {
                 }
                 return Ok(Some(Flow::Value(None)));
             }
-            if !target.is_copy_value()
-                && !matches!(target, Type::Parameter(_) | Type::Projection(_))
-            {
+            if !target.is_copy_value() {
                 return Err(type_error(
                     &expr.span(),
                     ErrorCode::InvalidAssignment,
@@ -971,6 +980,22 @@ pub(super) fn check_module(
                 }
             }
             if let Op::FunctionRef(slot, name) = op {
+                if let Type::Function(contract) = &slot.ty {
+                    let target = &functions[name];
+                    if contract.noescape
+                        && target
+                            .signature
+                            .params
+                            .iter()
+                            .enumerate()
+                            .any(|(index, ty)| {
+                                ty.contains_references() && !target.parameter_noescape(index)
+                            })
+                    {
+                        return Err(type_error(span, ErrorCode::InvalidCall,
+                            "Function value does not satisfy @noescape: an argument loan may escape"));
+                    }
+                }
                 if !matches!(slot.ty, Type::Function(_))
                     && (functions[name].uses_arena || reference_capability.contains(name))
                 {

@@ -11,5 +11,5 @@ fn sum(n: Int32) -> Int32 {
 }
 
 fn main() {
-    { let displayed: Int32 = sum(10) println(&displayed) }
+    println(sum(10))
 }

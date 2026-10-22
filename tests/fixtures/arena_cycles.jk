@@ -53,9 +53,9 @@ fn cycle_mutual() -> Int32 {
     }
 }
 
-type View<T> = &GenericNode<T>
-struct GenericNode<T> { value: T, next: Option<View<T>> }
-fn generic_cycle<T>(value: T) -> View<T> {
+type View<T: Copy> = &GenericNode<T>
+struct GenericNode<T: Copy> { value: T, next: Option<View<T>> }
+fn generic_cycle<T: Copy>(value: T) -> View<T> {
     graph {
         let node = graph.alloc(GenericNode { value: value, next: None })
         graph.link(node.next, node)

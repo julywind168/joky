@@ -70,7 +70,7 @@ fn jumps_resume_without_replaying_conditions_operands_or_return_values() {
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn record(x: Int32) -> Int32
         fn compute() @suspends -> Int32 {
-            var i = 0 var total = 0
+            var i = 0; var total = 0
             while delayed_value(record(i)) < 10 {
                 i = i + 1
                 if i == 2 { continue }

@@ -7,16 +7,16 @@ extern fn pause() @suspends
 fn folded64() -> Float64 { 1.0 + 1.1102230246251565e-16 }
 fn folded32() -> Float32 { 1.0 + 5.9604645e-8 }
 fn folded_tiny() -> Float64 { 2.2250738585072014e-308 * 0.5 }
-fn add64(a: Float64, b: Float64) -> Float64 { dirty() a + b }
-fn add32(a: Float32, b: Float32) -> Float32 { dirty() a + b }
-fn half(a: Float64) -> Float64 { dirty() a * 0.5 }
-fn half32(a: Float32) -> Float32 { dirty() a * 0.5 }
+fn add64(a: Float64, b: Float64) -> Float64 { dirty(); a + b }
+fn add32(a: Float32, b: Float32) -> Float32 { dirty(); a + b }
+fn half(a: Float64) -> Float64 { dirty(); a * 0.5 }
+fn half32(a: Float32) -> Float32 { dirty(); a * 0.5 }
 fn indirect(a: Float64, b: Float64) -> Float64 {
     let f = add64
     f(a, b)
 }
 fn closure_borrowed64(a: Float64, b: Float64) -> Float64 {
-    let f = |x: Float64| { dirty() x + b }
+    let f = |x: Float64| { dirty(); x + b }
     f(a)
 }
 fn closure_move32(a: Float32, b: Float32) -> Float32 {
@@ -44,7 +44,7 @@ fn update(state: &mut State) @noescape -> Float64 {
     state.value
 }
 impl Drop for State {
-    fn drop(&mut self) { dirty() observe(self.value * 0.5) }
+    fn drop(&mut self) { dirty(); observe(self.value * 0.5) }
 }
 fn cleanup(a: Float64) -> Float64 {
     let local = State { value: a, text: "task" }

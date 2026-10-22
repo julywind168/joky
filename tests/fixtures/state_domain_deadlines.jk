@@ -4,7 +4,7 @@ import joky/check
 struct State { title: String, count: Int32 }
 fn make(count: Int32) -> State { State { title: "room", count: count } }
 fn read(state: &State) -> Int32 { state.count }
-fn assert(value: Bool) { let message = "domain deadline" check.assert(value, &message) }
+fn assert(value: Bool) { let message = "domain deadline"; check.assert(value, &message) }
 fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, 7)
     let reader = owner.read_handle()
@@ -32,4 +32,4 @@ fn lifecycle() @suspends -> Int32 {
     assert(match rejected.wait() { Err(Expired) => true, _ => false })
     24
 }
-fn main() @suspends { assert(lifecycle() == 24) println("domain deadlines ok") }
+fn main() @suspends { assert(lifecycle() == 24); println("domain deadlines ok") }

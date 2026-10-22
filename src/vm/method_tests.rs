@@ -134,7 +134,7 @@ fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
             ErrorCode::UnknownName,
         ),
         (
-            "impl Int32 { fn f() {} } fn test() { let n = 1 n.f() }",
+            "impl Int32 { fn f() {} } fn test() { let n = 1; n.f() }",
             ErrorCode::InvalidCall,
         ),
         (
@@ -207,10 +207,10 @@ fn method_receivers_preserve_snapshot_order_context_shadowing_and_recursion() {
         impl Int32 { fn add(self, other: Int32) -> Int32 { self + other } }
         fn check() -> Int32 {
             var pair = Pair { x: 20 }
-            if pair.add({ pair.x = 1 22 }) != 42 { return 1 }
+            if pair.add({ pair.x = 1; 22 }) != 42 { return 1 }
             if pair.x != 1 { return 2 }
-            if { pair.x = 2 pair }.add(40) != 42 { return 3 }
-            if pair.x.add({ pair.x = 1 40 }) != 42 { return 4 }
+            if { pair.x = 2; pair }.add(40) != 42 { return 3 }
+            if pair.x.add({ pair.x = 1; 40 }) != 42 { return 4 }
             let Pair = pair
             if Pair.add(41) != 42 { return 5 }
             if Pair.recurse(20) != 1 { return 6 }
@@ -268,18 +268,18 @@ fn methods_preserve_pending_receivers_snapshots_failures_scopes_and_owners() {
                 self.to_u64()
             }
             fn branch_task(self) @suspends { record(delay(self)); }
-            fn fail(self) @suspends -> Int32 { let divisor = delay(self) 1 / divisor }
+            fn fail(self) @suspends -> Int32 { let divisor = delay(self); 1 / divisor }
         }
         fn pending(n: Int32) @suspends -> Int32 {
             var pair = Pair { x: record(n) }
-            let result = pair.add({ pair.x = 99 record(2) })
+            let result = pair.add({ pair.x = 99; record(2) })
             result.x + pair.x
         }
         fn receiver() @suspends -> Int32 {
             match delay(42).receive(record(7)) { Some(n) => int32(n), None => -1 }
         }
         fn failure() @suspends -> Int32 { 0.fail() + record(99) }
-        fn scoped() @suspends -> Int32 { parallel { | 1.branch_task() | 2.branch_task() } 42 }
+        fn scoped() @suspends -> Int32 { parallel { | 1.branch_task() | 2.branch_task() }; 42 }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         READY.with(|v| v.set(false));
@@ -403,8 +403,8 @@ fn methods_resolve_local_vm_names_and_calls_inside_implementations() {
             fn register_int32(self) -> Int32 { self.n }
             fn use_vm(self) -> Int32 {
                 let handle = vm.Vm.interpreter()
-                { let vm_text = "fn answer() -> Int32 {{ 42 }}" vm.load_source(handle, &vm_text) }
-                let result = { let vm_text = "answer" vm.call_int32_0(handle, &vm_text) }
+                { let vm_text = "fn answer() -> Int32 {{ 42 }}"; vm.load_source(handle, &vm_text) }
+                let result = { let vm_text = "answer"; vm.call_int32_0(handle, &vm_text) }
                 vm.close(handle)
                 result
             }

@@ -53,7 +53,7 @@ fn mem_owners() -> Int32 {
 }
 struct Wrapper { data: Array<Int32> }
 impl Drop for Wrapper { fn drop(&mut self) { record_drop(self.data.get(0).unwrap_or(0)) } }
-fn wrapper(id: Int32) -> Wrapper { var a = Array.new::<Int32>() a.push(id) Wrapper { data: a } }
+fn wrapper(id: Int32) -> Wrapper { var a = Array.new::<Int32>(); a.push(id); Wrapper { data: a } }
 fn mem_wrappers() -> Int32 {
     var a = wrapper(1)
     var b = wrapper(2)
@@ -106,7 +106,7 @@ fn mem_drop_shared() -> Int32 {
 }
 fn mem_assignment_failure() -> Int32 {
     var value = resource(1);
-    *(&mut value) = { let next = resource(2) let fail = 1 / 0 next }
+    *(&mut value) = { let next = resource(2); let fail = 1 / 0; next }
     0
 }
 fn mem_transition() -> Int32 {
@@ -142,7 +142,7 @@ fn mem_fields() -> Int32 {
     42
 }
 struct Failing { id: Int32, data: Array<Int32> }
-impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) let fail = 1 / 0 } }
+impl Drop for Failing { fn drop(&mut self) { record_drop(self.id); let fail = 1 / 0 } }
 fn failing(id: Int32) -> Failing { Failing { id: id, data: Array.new::<Int32>() } }
 fn mem_assignment_drop_failure() -> Int32 {
     var value = failing(1);

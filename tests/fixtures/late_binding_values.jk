@@ -4,7 +4,7 @@ import joky/check
 struct Room { n:Int32 }
 struct Input { pub amount:Int32, tag:UInt64 }
 struct Reply { pub value:Int32, tag:UInt64 }
-fn assert(ok:Bool) { let message="late binding Script" check.assert(ok,&message) }
+fn assert(ok:Bool) { let message="late binding Script"; check.assert(ok,&message) }
 fn make(input:Input)->Room { Room{n:input.amount} }
 fn read(room:&Room)->Int32 {room.n}
 fn sum(a:&Room,b:&Room)->Reply {Reply{value:a.n+b.n,tag:18446744073709551615}}

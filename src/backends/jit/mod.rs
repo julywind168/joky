@@ -278,7 +278,7 @@ mod tests {
             extern fn identity(value: Bool) -> Bool
             fn f(value: Bool) @suspends -> Bool {
                 let saved: Bool = identity(value)
-                let local = { let saved = false yield_once() saved }
+                let local = { let saved = false; yield_once(); saved }
                 yield_once()
                 yield_once()
                 saved

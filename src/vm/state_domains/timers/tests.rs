@@ -254,7 +254,7 @@ fn domain_timers_reject_changed_contracts_without_mutation() {
             for replacement in [
                 r#"fn unused(){}"#,
                 r#"fn tick(room:&mut Room,amount:UInt64) {room.value=999}
-fn wire(owner:domain.WriteHandle<Room>) @suspends {let amount:UInt64=1 domain.write_to(owner,tick,amount).unwrap()}"#,
+fn wire(owner:domain.WriteHandle<Room>) @suspends {let amount:UInt64=1; domain.write_to(owner,tick,amount).unwrap()}"#,
             ] {
                 let (mut vm, _, domain, timer) = setup(mode);
                 arm(&vm, &domain, &timer, false, 0).unwrap();
@@ -266,7 +266,7 @@ fn wire(owner:domain.WriteHandle<Room>) @suspends {let amount:UInt64=1 domain.wr
 struct Room {{value:Int32}}
 fn make(value:Int32)->Room {{Room{{value:value}}}}
 fn read(room:&Room)->Int32 {{room.value}}
-fn main() @suspends {{ let room=domain.create(make,0) domain.read_from(room.read_handle(),read).unwrap(); }}
+fn main() @suspends {{ let room=domain.create(make,0); domain.read_from(room.read_handle(),read).unwrap(); }}
 {replacement}"#
                 ))
                 .unwrap_or_else(|e| panic!("{e}"));
@@ -288,7 +288,7 @@ fn domain_timers_failure_quarantines_target_and_stops_periodic_work() {
         let (mut vm, clock, domain, timer) = setup(mode);
         vm.load_source(&SOURCE.replace(
             "room.value=room.value+amount",
-            "let message=\"tick failed\" check.assert(false,&message) room.value=amount",
+            "let message=\"tick failed\"; check.assert(false,&message); room.value=amount",
         ))
         .unwrap();
         vm.publish_domain_code().unwrap();
@@ -620,7 +620,7 @@ fn domain_timer_values_cancel_close_and_quarantine_failures() {
         }
         let source = VALUES.replace(
             "room.value=room.value+p.amount",
-            "room.value=99 room.value=room.value/(p.amount-p.amount)",
+            "room.value=99; room.value=room.value/(p.amount-p.amount)",
         );
         let (vm, clock, domain, timer) = setup_source(mode, &source);
         arm_values(&vm, &domain, &timer, true, 1).unwrap();

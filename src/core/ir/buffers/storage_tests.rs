@@ -108,27 +108,27 @@ fn buffer_storage_executes_moves_growth_and_initialized_prefix() {
 fn buffer_storage_rejects_bounds_and_overflow_without_leaking() {
     for (body, code, message) in [
         (
-            "let b = allocate(1) load(&b, 0);",
+            "let b = allocate(1); load(&b, 0);",
             ErrorCode::RuntimeError,
             "initialized prefix",
         ),
         (
-            "var b = allocate(1) store(&mut b, 0, 42);",
+            "var b = allocate(1); store(&mut b, 0, 42);",
             ErrorCode::RuntimeError,
             "initialized prefix",
         ),
         (
-            "var b = allocate(0) initialize_next(&mut b, 42);",
+            "var b = allocate(0); initialize_next(&mut b, 42);",
             ErrorCode::RuntimeError,
             "exceeds capacity",
         ),
         (
-            "var b = allocate(2) initialize_next(&mut b, 42) truncate(&mut b, 2);",
+            "var b = allocate(2); initialize_next(&mut b, 42); truncate(&mut b, 2);",
             ErrorCode::RuntimeError,
             "cannot increase",
         ),
         (
-            "let b = allocate(2) load(&b, 18446744073709551615);",
+            "let b = allocate(2); load(&b, 18446744073709551615);",
             ErrorCode::RuntimeError,
             "initialized prefix",
         ),
@@ -143,7 +143,7 @@ fn buffer_storage_rejects_bounds_and_overflow_without_leaking() {
             "64 MiB",
         ),
     ] {
-        let ast = module(&format!("fn check() -> Int32 {{ {body} 42 }}"));
+        let ast = module(&format!("fn check() -> Int32 {{ {body}; 42 }}"));
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
             vm.load_module(&ast).unwrap();

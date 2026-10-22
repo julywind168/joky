@@ -14,8 +14,8 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 }
 
 fn main() {
-    { let displayed: Int32 = sum_until(0, 5) println(&displayed) }
-    { let displayed: Int32 = sum_until(3, 5) println(&displayed) }
-    { let displayed: Int32 = sum_until(10, 5) println(&displayed) }
+    println(sum_until(0, 5))
+    println(sum_until(3, 5))
+    println(sum_until(10, 5))
     return
 }

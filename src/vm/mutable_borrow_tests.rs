@@ -73,25 +73,25 @@ fn mutable_borrows_reject_aliases_moves_and_storage_escape() {
         struct Resource { id: Int32, values: Array<Int32> }
         fn identity<T>(value: &mut T) -> &mut T { value }
         fn scalar(value: &mut Option<(Resource, Int32)>) -> &mut Int32 {
-            match value { Some((_, n)) => n, None => { let fail = 1 << 32 return scalar(value) } }
+            match value { Some((_, n)) => n, None => { let fail = 1 << 32; return scalar(value) } }
         }
     "#;
     for (body, message) in [
-        ("fn bad(value: &mut Option<Int32>) { let moved = value match value { _ => {} } }", "moved"),
-        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_mut_ref(0) a.reserve(10) r.id }", "borrow"),
-        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_mut_ref(0) let other = a.borrow_mut_ref(1) other.id = 2 r.id }", "borrow"),
-        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_mut_ref(0) let other = a.borrow_ref(0) r.id = 2 other.id }", "borrow"),
-        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_ref(0) let other = a.borrow_mut_ref(0) other.id = 2 r.id }", "borrow"),
-        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = identity(a.borrow_mut_ref(0)) a.pop(); r.id }", "borrow"),
-        ("fn bad(a: Array<Resource>) -> Int32 { var values = a let r = values.borrow_mut_ref(0) values.release() r.id }", "borrow"),
-        ("fn bad(value: &mut Option<Resource>) -> Int32 { let r = match value { Some(r) => r, None => return 0 } let moved = r r.id }", "moved"),
-        ("fn bad(value: &mut Option<(Resource, Int32)>) -> Int32 { let r = scalar(value) let other = scalar(value) ; (*(other) = 1) ; (*r) }", "borrow"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = scalar(a.borrow_mut_ref(0)) a.pop(); (*r) }", "borrow"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = (&*(scalar(a.borrow_mut_ref(0)))) a.reserve(10) ; (*r) }", "borrow"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) { let r = (&*(scalar(a.borrow_mut_ref(0)))) alloc(Some(r)); }", "retained"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>, store: &mut Array<&Int32>) { let r = (&*(scalar(a.borrow_mut_ref(0)))) store.push(r) }", "retained"),
-        ("fn bad(a: Array<Resource>) -> &mut Resource { var values = a values.borrow_mut_ref(0) }", "return"),
-        ("fn bad(a: Option<(Resource, Int32)>) -> &mut Int32 { var value = a scalar(&mut value) }", "outlive"),
+        ("fn bad(value: &mut Option<Int32>) { let moved = value; match value { _ => {} } }", "moved"),
+        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_mut_ref(0); a.reserve(10); r.id }", "borrow"),
+        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_mut_ref(0); let other = a.borrow_mut_ref(1); other.id = 2; r.id }", "borrow"),
+        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_mut_ref(0); let other = a.borrow_ref(0); r.id = 2; other.id }", "borrow"),
+        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = a.borrow_ref(0); let other = a.borrow_mut_ref(0); other.id = 2; r.id }", "borrow"),
+        ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = identity(a.borrow_mut_ref(0)); a.pop(); r.id }", "borrow"),
+        ("fn bad(a: Array<Resource>) -> Int32 { var values = a; let r = values.borrow_mut_ref(0); values.release(); r.id }", "borrow"),
+        ("fn bad(value: &mut Option<Resource>) -> Int32 { let r = match value { Some(r) => r, None => return 0 }; let moved = r; r.id }", "moved"),
+        ("fn bad(value: &mut Option<(Resource, Int32)>) -> Int32 { let r = scalar(value); let other = scalar(value) ; (*(other) = 1) ; (*r) }", "borrow"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = scalar(a.borrow_mut_ref(0)); a.pop(); (*r) }", "borrow"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = (&*(scalar(a.borrow_mut_ref(0)))); a.reserve(10) ; (*r) }", "borrow"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) { let r = (&*(scalar(a.borrow_mut_ref(0)))); alloc(Some(r)); }", "retained"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>, store: &mut Array<&Int32>) { let r = (&*(scalar(a.borrow_mut_ref(0)))); store.push(r) }", "retained"),
+        ("fn bad(a: Array<Resource>) -> &mut Resource { var values = a; values.borrow_mut_ref(0) }", "return"),
+        ("fn bad(a: Option<(Resource, Int32)>) -> &mut Int32 { var value = a; scalar(&mut value) }", "outlive"),
         ("fn bad(value: &mut Option<Option<Int32>>) { match value { Some(inner) => match inner { Some(n) => { (*(inner) = None) ; (*(n) = 1) }, None => {} }, None => {} } }", "borrow"),
     ] {
         let source = format!("{prefix}{body}");
@@ -268,17 +268,17 @@ fn mutable_borrows_keep_owner_and_reference_boundaries() {
     for body in [
         "fn bad(a: &Array<Resource>) { a.borrow_mut_ref(0); }",
         "fn bad(a: &mut Array<(Int32, &Int32)>) { a.borrow_mut_ref(0); }",
-        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0) let moved = r.values }",
-        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0) r.values = Array.new::<Int32>() }",
+        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0); let moved = r.values }",
+        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0); r.values = Array.new::<Int32>() }",
         "fn bad(a: &mut Array<Resource>) { (*(a.borrow_mut_ref(0))); }",
         "fn bad(a: &mut Array<Resource>) { alloc(a.borrow_mut_ref(0)); }",
         "fn bad(a: &mut Array<Resource>) { let pair = (a.borrow_mut_ref(0), 1) }",
-        "fn pause() @suspends {} fn bad(a: &mut Array<Resource>) @suspends { let item = a.borrow_mut_ref(0) pause() item.id = 2 }",
+        "fn pause() @suspends {} fn bad(a: &mut Array<Resource>) @suspends { let item = a.borrow_mut_ref(0); pause(); item.id = 2 }",
         "fn helper<T>(value: &mut Option<T>) @suspends {} fn bad(value: &mut Option<Resource>) { helper(value) }",
         "fn bad(value: &Option<Resource>) { match value { Some(r) => { r.id = 2 }, None => {} } }",
         "fn bad(value: &mut Option<Resource>) { match value { Some(r) => r.values.release(), None => {} } }",
         "fn bad(value: &mut Option<(Resource, Int32)>) { match value { Some((r, n)) => { (*(value) = None); r.id; }, None => {} } }",
-        "fn bad() { let value = alloc(Some((&*(alloc(1))))) match value { Some(r) => { let used = r }, None => {} } }",
+        "fn bad() { let value = alloc(Some((&*(alloc(1))))); match value { Some(r) => { let used = r }, None => {} } }",
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -294,8 +294,8 @@ fn mutable_borrows_keep_owner_and_reference_boundaries() {
 #[test]
 fn mutable_borrows_preserve_module_privacy_and_dependencies() {
     for (body, message) in [
-        ("fn bad() -> Int32 { var values = p.make() let r = p.payload(p.element(&mut values)) values.pop(); r.inspect() }", "borrow"),
-        ("fn bad() { var values = p.make() match p.element(&mut values) { Item(r) => r.values.push(1), Empty => {} } }", "private"),
+        ("fn bad() -> Int32 { var values = p.make(); let r = p.payload(p.element(&mut values)); values.pop(); r.inspect() }", "borrow"),
+        ("fn bad() { var values = p.make(); match p.element(&mut values) { Item(r) => r.values.push(1), Empty => {} } }", "private"),
     ] {
         let source = format!("import mutable_library as p\n{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

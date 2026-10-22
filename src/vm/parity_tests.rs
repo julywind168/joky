@@ -29,8 +29,8 @@ fn jit_and_interpreter_match_cps_scope_results_and_poll_order() {
     let source = r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn record(x: Int32) -> Int32
-        fn left(value: Int32) @suspends { delayed_value(value) {} }
-        fn right(value: Int32) @suspends { delayed_value(value) {} }
+        fn left(value: Int32) @suspends { delayed_value(value); {} }
+        fn right(value: Int32) @suspends { delayed_value(value); {} }
         fn all(x: Int32) @suspends -> Int32 {
             let y = delayed_value(x)
             parallel { | left(y) | right(y + 1) }

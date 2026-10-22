@@ -124,7 +124,7 @@ struct S{n:Int32,text:String}
 fn make(n:Int32)->S{S{n:n,text:"state"}}
 fn read(s:&S)->Int32{s.n}
 fn operation(a:domain.WriteHandle<S>,b:domain.WriteHandle<S>,c:domain.ReadHandle<S>,zero:Int32) @suspends ->Int32 {
-    when "update" (mut a,mut b,c) {mem.swap(&mut a.text,&mut b.text) a.n=c.n b.n=99 a.n/zero}.unwrap()
+    when "update" (mut a,mut b,c) {mem.swap(&mut a.text,&mut b.text); a.n=c.n; b.n=99; a.n/zero}.unwrap()
 }"#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for before_entry in [true, false] {

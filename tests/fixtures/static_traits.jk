@@ -18,9 +18,9 @@ fn make<T: Factory>(value: Int32) -> T { Factory.make::<T>(value) }
 fn forward<T: Read + Marker>(value: T) -> Int32 { read(value) }
 fn identity<T: View>(value: &T) -> &T { value.view() }
 struct Pair<T> { left: T, right: T }
-impl<T: Read> Read for Pair<T> { fn read(self) -> Int32 { self.left.read() + self.right.read() } }
+impl<T: Copy + Read> Read for Pair<T> { fn read(self) -> Int32 { self.left.read() + self.right.read() } }
 impl<T: Marker> Marker for Pair<T> {}
-impl<T: Read> Pair<T> { fn sum(self) -> Int32 { self.read() } }
+impl<T: Copy + Read> Pair<T> { fn sum(self) -> Int32 { self.read() } }
 enum Choice<T> { Present(T), Absent }
 impl<T: Read> Read for Choice<T> { fn read(self) -> Int32 { match self { Present(value) => value.read(), Absent => 0 } } }
 struct Wide { value: Int64, valid: Bool }
@@ -52,13 +52,13 @@ impl First for Both { fn value(self) -> Int32 { 20 } }
 impl Second for Both { fn value(self) -> Int32 { 22 } }
 impl Both { fn value(self) -> Int32 { 999 } }
 fn first<T: First>(x: T) -> Int32 { x.value() }
-fn both<T: First + Second>(x: T) -> Int32 { First.value(x) + Second.value(x) }
+fn both<T: Copy + First + Second>(x: T) -> Int32 { First.value(x) + Second.value(x) }
 fn trait_dispatch() -> Int32 {
     let x = Both {}
     if x.value() == 999 && first(x) == 20 { both(x) } else { 0 }
 }
 trait Later { fn later(&mut self, value: Int32) @suspends -> Int32 }
 extern fn pause(value: Int32) @suspends -> Int32
-impl Later for Id { fn later(&mut self, value: Int32) @suspends -> Int32 { self.value = self.value + pause(value) self.value } }
-fn later<T: Later>(x: &mut T, value: Int32) @suspends -> Int32 { x.later(value) }
+impl Later for Id { fn later(&mut self, value: Int32) @suspends -> Int32 { self.value = self.value + pause(value); self.value } }
+fn later<T: Copy + Later>(x: &mut T, value: Int32) @suspends -> Int32 { x.later(value) }
 fn trait_task() @suspends -> Int32 { later(alloc(Id { value: 20 }), 22) }

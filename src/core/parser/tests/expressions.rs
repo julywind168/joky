@@ -29,15 +29,15 @@ fn tuples_distinguish_grouping_lists_and_irrefutable_patterns() {
         matches!(&elements[0], Expr::Sequence { exprs, trailing: false, .. } if exprs.len() == 2)
     );
     for source in [
-        "fn f() { let (x) = 1 let (_, (y,)) = (x, (2,)) }",
+        "fn f() { let (x) = 1\n let (_, (y,)) = (x, (2,)) }",
         "fn f() { var (x, (_, y)) = (1, (2, 3)) }",
         "fn f(p: ((Int32))) -> (Int32) { (p) }",
-        "fn f() { let _ = 1 var _ = 2 }",
+        "fn f() { let _ = 1\n var _ = 2 }",
         "fn f(p: (Unit,)) -> (Unit,) { ({},) }",
         "fn f() { let pair = (R { x: 1 }, E.Value(2)) }",
         "fn f(p: (Int32, Bool)) { let (x, y) = p; (x, y) }",
-        "fn f() { let p = (1,2) p.0 }",
-        "fn f() { let p = ((1,),) p.0.0 }",
+        "fn f() { let p = (1,2)\n p.0 }",
+        "fn f() { let p = ((1,),)\n p.0.0 }",
     ] {
         assert!(parse(source).is_ok(), "{source}");
     }
@@ -115,7 +115,8 @@ fn trailing_commas_preserve_sequences_and_optional_semicolons() {
             extern fn pick(x: Int32, y: Int32,)
             fn f(x: Int32, // A comment does not replace a comma.
                  y: Int32,) {
-                let a = 1 let b = 2
+                let a = 1
+ let b = 2
                 pick(a; b, pick(x, y,),)
                 pick((a; b), (x; y;),)
             }
@@ -156,7 +157,7 @@ fn trailing_commas_preserve_sequences_and_optional_semicolons() {
             assert_eq!(args.len(), 2);
         }
     }
-    parse("fn empty() {} fn single(x: Int32,) { empty() single(x,) }").unwrap();
+    parse("fn empty() {} fn single(x: Int32,) { empty()\n single(x,) }").unwrap();
 }
 
 #[test]
@@ -320,7 +321,7 @@ fn incomplete_semicolon_expressions_report_located_errors() {
 
 #[test]
 fn mutable_bindings_loops_and_assignments_preserve_utf8_spans() {
-    let source = "fn f() { var 数: Int32 = 0 while 数 < 2 + 1 { 数 = 数 + 1 } }";
+    let source = "fn f() { var 数: Int32 = 0\n while 数 < 2 + 1 { 数 = 数 + 1 } }";
     let module = parse(source).unwrap();
     let Item::FnDef(function) = &module.items[0] else {
         panic!("expected function")
@@ -369,7 +370,7 @@ fn malformed_mutable_bindings_and_loops_return_parse_errors() {
         ("fn f() { while }", "Expected an expression"),
         ("fn f() { 1 = 2 }", "Assignment target must be a variable"),
         ("fn f() { f() = 2 }", "Assignment target must be a variable"),
-        ("fn f() { var x = 0 x = }", "Expected an expression"),
+        ("fn f() { var x = 0\n x = }", "Expected an expression"),
     ] {
         let error = parse(source).unwrap_err();
         assert!(error.message.contains(message), "{source}: {error}");

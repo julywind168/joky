@@ -225,12 +225,12 @@ fn string_storage_probe_pending_sync_helper_survives_reload_and_cancellation() {
 #[test]
 fn string_storage_probe_rejects_moves_escaping_views_and_private_storage() {
     for (body, message) in [
-        ("fn bad() { let t = probe.finish(probe.builder()) probe.release(t) probe.sum(&t); }", "moved"),
-        ("fn bad() { let b = probe.builder() probe.finish(b); probe.finish(b); }", "moved"),
-        ("fn bad() { let t = probe.finish(probe.builder()) let v = probe.view(&t) probe.release(t) slices.len(v); }", "borrow"),
-        ("fn bad() -> &Slice<Int32> { let t = probe.finish(probe.builder()) probe.view(&t) }", "borrowed input"),
+        ("fn bad() { let t = probe.finish(probe.builder()); probe.release(t); probe.sum(&t); }", "moved"),
+        ("fn bad() { let b = probe.builder(); probe.finish(b); probe.finish(b); }", "moved"),
+        ("fn bad() { let t = probe.finish(probe.builder()); let v = probe.view(&t); probe.release(t); slices.len(v); }", "borrow"),
+        ("fn bad() -> &Slice<Int32> { let t = probe.finish(probe.builder()); probe.view(&t) }", "borrowed input"),
         ("fn bad(t: &probe.TextProbe) { t.data.len(); }", "private"),
-        ("fn bad() { let t = probe.finish(probe.builder()) let copy = t probe.sum(&t); }", "moved"),
+        ("fn bad() { let t = probe.finish(probe.builder()); let copy = t; probe.sum(&t); }", "moved"),
     ] {
         let source = format!("import probe import joky/slice as slices.{{type Slice}} {body}");
         rejects(&source, &modules(), message);

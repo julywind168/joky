@@ -38,7 +38,7 @@ fn terminal_and_adjacent_loop_labels_complete_in_direct_and_cps_execution() {
     let source = r#"
         extern fn record(x: Int32) -> Int32
         fn empty() { while false {} }
-        fn adjacent() { while false { while false {} } while false {} }
+        fn adjacent() { while false { while false {} }; while false {} }
         fn counted(n: Int32) {
             var i = 0
             while i < n {
@@ -132,7 +132,7 @@ fn signed_int32_comparisons_cover_true_false_and_boundaries() {
         fn {name}(a: Int32, b: Int32) -> Int32 {{
             var result = 0
             var test = a {operator} b
-            while test {{ result = 1 test = false }}
+            while test {{ result = 1; test = false }}
             result
         }}
         "#
@@ -178,7 +178,7 @@ fn loops_resume_without_replaying_mutations_or_argument_effects() {
             var total = 0
             while i < n {
                 let before = record(i + 100)
-                total = total + delayed_value({ i = i + 1 i })
+                total = total + delayed_value({ i = i + 1; i })
                 record(before)
             }
             total
@@ -285,11 +285,11 @@ fn loop_conditions_can_suspend_and_scope_children_restart_each_iteration() {
     let source = r#"
         extern fn record(x: Int32) -> Int32
         extern fn delayed_value(x: Int32) @suspends -> Int32
-        fn branch_task(x: Int32) @suspends { delayed_value(x) {} }
+        fn branch_task(x: Int32) @suspends { delayed_value(x); {} }
         fn compute() @suspends -> Int32 {
             var i = 0
             while delayed_value(record(i)) <= 2 {
-                parallel { | branch_task(i + 10) | branch_task({ i = i + 1 i + 20 }) }
+                parallel { | branch_task(i + 10) | branch_task({ i = i + 1; i + 20 }) }
                 record(i + 30)
             }
             i
@@ -375,12 +375,12 @@ fn mutable_reads_are_snapshots_across_suspending_operands_and_scope_arguments() 
     let source = r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
         fn pair(a: Int32, b: Int32) -> Int32 { (a * 10) + b }
-        fn branch_task(x: Int32) @suspends { delayed_value(x) {} }
+        fn branch_task(x: Int32) @suspends { delayed_value(x); {} }
         fn compute() @suspends -> Int32 {
             var x = 1
-            let saved = x + delayed_value({ x = 2 x })
-            let args = pair(x, delayed_value({ x = 3 x }))
-            parallel { | branch_task(x) | branch_task({ x = 4 x }) }
+            let saved = x + delayed_value({ x = 2; x })
+            let args = pair(x, delayed_value({ x = 3; x }))
+            parallel { | branch_task(x) | branch_task({ x = 4; x }) }
             (saved * 100) + args
         }
     "#;

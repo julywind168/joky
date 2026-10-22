@@ -222,8 +222,8 @@ fn owned_map_rejects_copy_reads_and_reuse_after_moves() {
     let prefix = "import joky/map.{type Map} import joky/array.{type Array}";
     for (body, message) in [
         ("fn bad(m: &Map<Int32, Array<Int32>>) { m.get(0); }", "Copy"),
-        ("fn bad(m: Map<Int32, Int32>) { m.release() m.len(); }", "moved"),
-        ("fn bad(m: &mut Map<Int32, Array<Int32>>) { let a = Array.new::<Int32>() m.insert(0, a); m.insert(1, a); }", "moved"),
+        ("fn bad(m: Map<Int32, Int32>) { m.release(); m.len(); }", "moved"),
+        ("fn bad(m: &mut Map<Int32, Array<Int32>>) { let a = Array.new::<Int32>(); m.insert(0, a); m.insert(1, a); }", "moved"),
     ] {
         let source = format!("{prefix} {body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

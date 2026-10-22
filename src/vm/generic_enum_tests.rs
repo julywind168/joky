@@ -65,7 +65,7 @@ fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
         ("fn f() { Option.Some::<Int32> }", ErrorCode::InvalidCall),
         ("fn f() { Option.Some::<Int32>(1,2) }", ErrorCode::InvalidCall),
         ("fn f() { Option.Missing::<Int32> }", ErrorCode::UnknownName),
-        ("fn f() { let a: Option<Int32> = Option.None let b: Option<Bool> = a }", ErrorCode::TypeMismatch),
+        ("fn f() { let a: Option<Int32> = Option.None; let b: Option<Bool> = a }", ErrorCode::TypeMismatch),
         ("fn bad<T>(x: Option<T>) -> T { match x { Some(n) => n + n, None => 0 } }", ErrorCode::TypeMismatch),
         ("fn bad<T>(x: Option<T>) -> Int32 { match x { None => 0 } }", ErrorCode::NonExhaustiveMatch),
         ("enum Other<T> { None, Some(T) } fn f(x: Option<Int32>) { match x { Other.None => {}, Some(n) => {} } }", ErrorCode::InvalidPattern),
@@ -213,7 +213,7 @@ fn generic_enum_constructors_preserve_context_scope_and_evaluation_order() {
             vm.load_source(shadowed).unwrap_err().code(),
             ErrorCode::TypeMismatch
         );
-        let field = "struct R { n: Int32 } fn f() { var r = R { n: 1 } r.n::<Int32> = 2 }";
+        let field = "struct R { n: Int32 } fn f() { var r = R { n: 1 }; r.n::<Int32> = 2 }";
         assert_eq!(
             vm.load_source(field).unwrap_err().code(),
             ErrorCode::InvalidAssignment

@@ -41,11 +41,11 @@ fn exhaustive_async_owner_borrows_cancel_every_instruction() {
 #[test]
 fn async_owner_borrows_reject_live_views_and_conflicts() {
     for body in [
-        "let item = values.borrow_ref(0) task.yield_now() let n = *item",
-        "let region = values.slice(0, 1) task.yield_now() slices.len(region);",
-        "let item = values.borrow_ref(0) values.push(9) let n = *item",
+        "let item = values.borrow_ref(0); task.yield_now(); let n = *item",
+        "let region = values.slice(0, 1); task.yield_now(); slices.len(region);",
+        "let item = values.borrow_ref(0); values.push(9); let n = *item",
     ] {
-        let source = format!("import joky/array.{{type Array}} import joky/task import joky/slice as slices fn bad() @suspends {{ var values = Array.new::<Int32>() values.push(42) {body} }}");
+        let source = format!("import joky/array.{{type Array}} import joky/task import joky/slice as slices fn bad() @suspends {{ var values = Array.new::<Int32>(); values.push(42); {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             assert!(
                 VmEngine::with_mode(mode).load_source(&source).is_err(),
@@ -158,16 +158,16 @@ fn net5a_detached_owners_keep_alias_and_escape_checks() {
         struct Buckets { left: Array<Int32>, right: Array<Int32> }
         fn pair() -> (Array<Int32>, Array<Int32>) { (Array.new::<Int32>(), Array.new::<Int32>()) }
         fn relay(values: Array<Int32>) -> (Array<Int32>, Array<Int32>) { (values, Array.new::<Int32>()) }
-        fn append(values: &mut Array<Int32>) @suspends { task.yield_now() values.push(42) }
+        fn append(values: &mut Array<Int32>) @suspends { task.yield_now(); values.push(42) }
     "#;
     for (body, message) in [
-        ("fn bad() @suspends { var (a, b) = pair() parallel { | append(&mut a) | append(&mut a) } }", "conflicts"),
-        ("fn bad() { var (a, b) = pair() let view = &a let (c, d) = relay(a) view.len(); }", "conflicts"),
+        ("fn bad() @suspends { var (a, b) = pair(); parallel { | append(&mut a) | append(&mut a) } }", "conflicts"),
+        ("fn bad() { var (a, b) = pair(); let view = &a; let (c, d) = relay(a); view.len(); }", "conflicts"),
         ("fn bad(input: &Array<Int32>) -> &Array<Int32> { let (a, b) = pair(); return &a }", "conflicts"),
-        ("fn bad() { let (a, b) = pair() let moved = a a.len(); }", "moved"),
-        ("fn first(values: Array<&Int32>) -> Option<&Int32> { let (values, _) = (values, Array.new::<Int32>()) values.get(0) } fn bad() { var values = Array.new::<&Int32>() values.push(&*(alloc(0))) let local = 42 let _ = first({ values.push(&local) values }) }", "local borrow"),
-        ("fn first(value: &Int32) -> Option<&Int32> { var values = Array.new::<&Int32>() values.push(value) let (values, _) = (values, Array.new::<Int32>()) values.get(0) } fn bad() -> Option<&Int32> { let local = 42 first(&local) }", "local"),
-        ("fn bad() @suspends { let (left, right) = pair() var buckets = Buckets { left: left, right: right } parallel { | append(&mut buckets.left) | append(&mut buckets.right) } }", "conflicts"),
+        ("fn bad() { let (a, b) = pair(); let moved = a; a.len(); }", "moved"),
+        ("fn first(values: Array<&Int32>) -> Option<&Int32> { let (values, _) = (values, Array.new::<Int32>()); values.get(0) } fn bad() { var values = Array.new::<&Int32>(); values.push(&*(alloc(0))); let local = 42; let _ = first({ values.push(&local); values }) }", "local borrow"),
+        ("fn first(value: &Int32) -> Option<&Int32> { var values = Array.new::<&Int32>(); values.push(value); let (values, _) = (values, Array.new::<Int32>()); values.get(0) } fn bad() -> Option<&Int32> { let local = 42; first(&local) }", "local"),
+        ("fn bad() @suspends { let (left, right) = pair(); var buckets = Buckets { left: left, right: right }; parallel { | append(&mut buckets.left) | append(&mut buckets.right) } }", "conflicts"),
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -245,27 +245,27 @@ fn async_owner_views_reject_interior_aliases_and_escapes() {
         fn view<T>(values: &Array<T>) -> &T { values.borrow_ref(0) }
         fn identity<T>(value: &T) -> &T { value }
         fn inner(value: &Packet) -> &Array<Int32> { &value.bytes }
-        fn read(value: &Packet) @suspends { task.yield_now() let n = value.tag }
-        fn write(value: &mut Packet) @suspends { task.yield_now() value.tag = 2 }
+        fn read(value: &Packet) @suspends { task.yield_now(); let n = value.tag }
+        fn write(value: &mut Packet) @suspends { task.yield_now(); value.tag = 2 }
     "#;
     for body in [
-        "fn bad(values: &Packets) @suspends { let r = values.borrow_ref(0) task.yield_now() let n = r.tag }",
+        "fn bad(values: &Packets) @suspends { let r = values.borrow_ref(0); task.yield_now(); let n = r.tag }",
         "fn bad(values: &Packets) @suspends { read(view(values)) }",
-        "fn bad(values: &Packets) @suspends { let r = identity(view(values)) task.yield_now() let n = r.tag }",
-        "fn bad(values: &Packets) @suspends { let r = inner(view(values)) task.yield_now() r.len(); }",
+        "fn bad(values: &Packets) @suspends { let r = identity(view(values)); task.yield_now(); let n = r.tag }",
+        "fn bad(values: &Packets) @suspends { let r = inner(view(values)); task.yield_now(); r.len(); }",
         "fn choose(values: &Packets, p: &Packet, flag: Bool) -> &Packet { if flag { p } else { view(values) } } fn bad(values: &Packets, p: &Packet) @suspends { read(choose(values, p, false)) }",
         "fn left(values: &Packets, n: Int32) -> &Packet { if n == 0 { view(values) } else { right(values, n - 1) } } fn right(values: &Packets, n: Int32) -> &Packet { left(values, n) } fn bad(values: &Packets) @suspends { read(right(values, 2)) }",
         "fn bad(values: &Packets) @suspends { parallel { | read(view(values)) } }",
-        "fn bad(values: &Packets) @suspends { let r = view(values) scope { branch { read(r) } } }",
-        "fn bad(values: &Array<Int32>) @suspends { let r = values.slice(0, 1) task.yield_now() slices.len(r); }",
-        "fn bad() @suspends { var value = make() parallel { | write(&mut value) | read(&value) } }",
-        "fn bad() @suspends { var value = make() parallel { | write(&mut value) | write(&mut value) } }",
-        "fn bad() @suspends { var value = make() scope { let r = &mut value branch { write(r) } value.tag = 3 } }",
-        "fn bad() @suspends { var value = make() scope { let r = &value branch { read(r) } let moved = value } }",
-        "fn bad() @suspends { let r = { let value = make() &value } read(r) }",
-        "fn bad(value: &Packet) @suspends -> &Packet { task.yield_now() value }",
+        "fn bad(values: &Packets) @suspends { let r = view(values); scope { branch { read(r) } } }",
+        "fn bad(values: &Array<Int32>) @suspends { let r = values.slice(0, 1); task.yield_now(); slices.len(r); }",
+        "fn bad() @suspends { var value = make(); parallel { | write(&mut value) | read(&value) } }",
+        "fn bad() @suspends { var value = make(); parallel { | write(&mut value) | write(&mut value) } }",
+        "fn bad() @suspends { var value = make(); scope { let r = &mut value; branch { write(r) }; value.tag = 3 } }",
+        "fn bad() @suspends { var value = make(); scope { let r = &value; branch { read(r) }; let moved = value } }",
+        "fn bad() @suspends { let r = { let value = make() &value }; read(r) }",
+        "fn bad(value: &Packet) @suspends -> &Packet { task.yield_now(); value }",
         "fn bad(value: &Packet) @suspends { alloc(value); }",
-        "extern fn host(value: &Packet) @suspends fn bad() @suspends { let value = make() host(&value) }",
+        "extern fn host(value: &Packet) @suspends fn bad() @suspends { let value = make(); host(&value) }",
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();

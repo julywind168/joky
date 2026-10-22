@@ -127,11 +127,11 @@ impl FunctionPlan {
             };
             types.validate(ty).map_err(|e| e.with_span(span))?;
             validate_nominal_type(ty, &self.nominals, &span)?;
-            if !ty.is_copy_storage_value() {
+            if !ty.is_copy_storage_value() && !ty.is_owner() {
                 return Err(type_error(
                     &span,
                     ErrorCode::TypeMismatch,
-                    "Generic function values require Copy type arguments",
+                    "Generic function values require Copy or owning type arguments",
                 ));
             }
             context.members.traits.check_bounds(parameter, ty, span)?;
@@ -234,11 +234,15 @@ impl FunctionPlan {
         }
         // Snapshot before evaluating arguments: an argument may mutate the callee's binding.
         let target = self.snapshot(&Some(value))?.unwrap();
+        let contract_name = self.indirect_contract(&signature);
+        let mut contract =
+            FunctionInfo::indirect(signature.signature.clone(), signature.suspends, span);
+        contract.noescape = signature.noescape;
         let Some(args) = self.checked_arguments(
             "function value",
             args,
             &signature.signature.params,
-            None,
+            Some((&contract_name, &contract)),
             span,
             |i| args.get(i + 1),
             vars,

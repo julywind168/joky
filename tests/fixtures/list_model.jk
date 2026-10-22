@@ -25,18 +25,18 @@ fn model(seed: UInt32, steps: Int32) -> Int32 {
         if op == 5 { result = list.remove(index).unwrap_or(0) }
         if op == 6 { result = list.replace(index, value).unwrap_or(0) }
         if op == 7 { list.reverse() }
-        if op == 8 { list.clear() peak = 0 }
+        if op == 8 { list.clear(); peak = 0 }
         if op == 9 { list.reserve(index) }
         if op == 10 { result = list.get(index).unwrap_or(0) }
         if op == 11 { result = list.front().unwrap_or(0) }
         if op == 12 { result = list.back().unwrap_or(0) }
-        if op >= 13 { let length = list.len() result = if list.insert(length, value) { 1 } else { 0 } }
+        if op >= 13 { let length = list.len(); result = if list.insert(length, value) { 1 } else { 0 } }
         if list.len() > peak { peak = list.len() }
         let message = "List model invariant"
         assert(lists.test_invariant(&list) && lists.test_slot_count(&list) == peak, &message)
-        record_int(-2147483648) record_int(result) record_int(int32(list.len()))
+        record_int(-2147483648); record_int(result); record_int(int32(list.len()))
         var i: UInt64 = 0
-        while i < list.len() { record_int(list.get(i).unwrap_or(0)) i = i + 1 }
+        while i < list.len() { record_int(list.get(i).unwrap_or(0)); i = i + 1 }
         step = step + 1
     }
     42

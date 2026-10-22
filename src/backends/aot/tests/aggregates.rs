@@ -12,7 +12,7 @@ fn transparent_aliases_use_the_existing_native_and_cps_abis() {
         extern fn context_value(value: Context) -> Count
         extern fn wait_value(value: Count) @suspends -> Count
         extern fn inspect_alias_text(value: Text) -> Count
-        fn alias_opaque() -> Count { let value: Context = context() context_value(value) }
+        fn alias_opaque() -> Count { let value: Context = context(); context_value(value) }
         fn alias_suspended(value: Count) @suspends -> Count {
             let saved: Text = alias_string()
             let result: Count = wait_value(value)

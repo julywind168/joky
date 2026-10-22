@@ -1,18 +1,18 @@
 struct Pair<T> { left: T, right: T }
 struct Marker<T> {}
 enum Choice<T> { None, Some(T) }
-impl<T> Pair<T> {
+impl<T: Copy> Pair<T> {
     fn make(left: T, right: T) -> Self { Self { left: left, right: right } }
     fn first(self) -> T { self.left }
-    fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
+    fn zip<U: Copy>(self, other: Pair<U>) -> Pair<(T, U)> {
         Pair { left: (self.left, other.left), right: (self.right, other.right) }
     }
-    fn replace<U>(self, a: U, b: U) -> Pair<U> { Pair.make(a, b) }
+    fn replace<U: Copy>(self, a: U, b: U) -> Pair<U> { Pair.make(a, b) }
     fn hold<U>(self, ignored: U) -> Self { self }
     fn combine<U>(value: T, other: U) -> (T, U) { (value, other) }
     fn invoke<U>(self, value: U) -> (T, U) { Self.combine::<U>(self.first(), value) }
     fn recur<U>(self, value: U, count: Int32) -> (T, U) {
-        if count == 0 { (Self).combine(self.left, value) } else { self.recur::<U>(value, count - 1) }
+        if count == 0 { (Self).combine(self.first(), value) } else { self.recur::<U>(value, count - 1) }
     }
     fn marker<U>(self) -> Marker<(T, U)> { Marker {} }
 }
@@ -35,7 +35,7 @@ impl<T> Choice<T> {
         }
     }
 }
-fn through<T, U>(pair: Pair<T>, value: U) -> (T, U) { pair.invoke(value) }
+fn through<T: Copy, U>(pair: Pair<T>, value: U) -> (T, U) { pair.invoke(value) }
 fn wide() -> UInt64 { Pair.make(1, 2).replace::<UInt64>(0xffff_ffff_ffff_ffff, 0).first() }
 fn check() -> Int32 {
     let p = Pair.make(42, 0)
@@ -58,10 +58,10 @@ fn check() -> Int32 {
     let concrete = Bool.identity::<Int64>(4294967295)
     let unit = p.replace({}, {}).first()
     var mutable = Pair.make(5, 6)
-    let saved = mutable.hold({ mutable.left = 9 true })
+    let saved = mutable.hold({ mutable.left = 9; true })
     let zipped = match Choice.Some(42).zip::<Bool>(Choice.Some(true)) {
         Choice.None => 0
-        Choice.Some(pair) => { let (value, valid) = pair if valid { value } else { 0 } }
+        Choice.Some(pair) => { let (value, valid) = pair; if valid { value } else { 0 } }
     }
     let none = match Choice.None::<Int64>.zip(Choice.Some(true)) { Choice.None => true, Choice.Some(pair) => false }
     let (value, valid) = selected

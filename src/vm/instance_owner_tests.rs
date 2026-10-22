@@ -385,7 +385,7 @@ fn persistent_instances_owning_reentry_keeps_active_storage_alive_until_close_ex
             )
             .unwrap();
         }
-        vm.load_source(&format!("{OWNERS}\nextern fn callback() -> Int32\nfn owner_invoke(state: &mut State) @noescape -> Int32 {{ let result = callback() mem.replace(&mut state.text, \"updated\"); result }}")).unwrap();
+        vm.load_source(&format!("{OWNERS}\nextern fn callback() -> Int32\nfn owner_invoke(state: &mut State) @noescape -> Int32 {{ let result = callback(); mem.replace(&mut state.text, \"updated\"); result }}")).unwrap();
         let vm = Rc::new(vm);
         let a = vm.create_instance("make_owner", &[]).unwrap();
         events(&[-1]);

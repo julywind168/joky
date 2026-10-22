@@ -312,7 +312,7 @@ mod tests {
             assert!(ty.scalar_types().is_empty());
             assert!(ty.storage_scalars().is_err());
             assert_eq!(ty.place_copy_program().len(), 2);
-            let source = format!("import joky/fixed_array as fixed fn check() -> UInt64 {{ let a = fixed.repeat::<UInt8,{n}>(7) a.len() }}");
+            let source = format!("import joky/fixed_array as fixed fn check() -> UInt64 {{ let a = fixed.repeat::<UInt8,{n}>(7); a.len() }}");
             let module = crate::parser::parse(&source).unwrap();
             let prepared =
                 PreparedModule::new(&module, &registry, &BindingRegistry::default()).unwrap();

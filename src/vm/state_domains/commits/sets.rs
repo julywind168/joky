@@ -719,7 +719,7 @@ mod tests {
     use crate::vm::{state_domain_tests::SOURCE, VmMode};
     fn setup(mode: VmMode, n: usize) -> (VmEngine, Vec<DomainOwner>) {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(&format!("{SOURCE}\nfn sum4(a:&State,b:&State,c:&State,d:&State)->Int32{{a.count+b.count+c.count+d.count}}\nfn write3(a:&mut State,b:&mut State,c:&mut State,d:&State,n:Int32)->Int32{{a.count=n b.count=n+1 c.count=n+2 d.count}}\nfn fail3(a:&mut State,b:&mut State,c:&mut State,d:&State,n:Int32)->Int32{{a.count=99 b.count=99 c.count=99 d.count/n}}\nfn broken_make(n:Int32)->State{{make(1/n)}}")).unwrap_or_else(|e|panic!("{e}"));
+        vm.load_source(&format!("{SOURCE}\nfn sum4(a:&State,b:&State,c:&State,d:&State)->Int32{{a.count+b.count+c.count+d.count}}\nfn write3(a:&mut State,b:&mut State,c:&mut State,d:&State,n:Int32)->Int32{{a.count=n; b.count=n+1; c.count=n+2; d.count}}\nfn fail3(a:&mut State,b:&mut State,c:&mut State,d:&State,n:Int32)->Int32{{a.count=99; b.count=99; c.count=99; d.count/n}}\nfn broken_make(n:Int32)->State{{make(1/n)}}")).unwrap_or_else(|e|panic!("{e}"));
         let owners = (0..n)
             .map(|i| {
                 vm.create_domain("make", &[InstanceValue::Int32(i as i32 + 1)])

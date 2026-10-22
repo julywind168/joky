@@ -9,10 +9,10 @@ fn swap<T, U>(pair: (T, U)) -> (U, T) {
 struct Reading { value: UInt64, valid: Bool }
 
 fn main() {
-    { let displayed: Int32 = identity(42) println(&displayed) }
-    { let displayed: Int64 = identity::<Int64>(4294967295) println(&displayed) }
+    println(identity(42))
+    println(identity::<Int64>(4294967295))
     let reading = identity(Reading { value: 0xffff_ffff_ffff_ffff, valid: true })
-    { let displayed: UInt64 = reading.value println(&displayed) }
+    println(reading.value)
     let (valid, value) = swap((first(7, reading), reading.valid))
-    if valid { println(&value) }
+    if valid { println(value) }
 }

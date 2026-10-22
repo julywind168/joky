@@ -19,15 +19,15 @@ fn update(s:&mut State,p:Input)->Result<String,Failure> {
         None=>Result.Ok(mem.replace(&mut s.text,text))
     }
 }
-fn tick(s:&mut State,text:String) {s.ticks+=1 edit(s,text)}
+fn tick(s:&mut State,text:String) {s.ticks+=1; edit(s,text)}
 fn count(s:&State)->Int32 {s.ticks}
 fn pair(a:&State,b:&State)->(String,String) {(a.text.clone(),b.text.clone())}
 fn request(p:Input) @suspends ->Result<String,Failure> {
     task.yield_now()
     domain.write(update,p).unwrap()
 }
-fn echo(text:String) @suspends ->String {task.yield_now() text}
-fn slow(text:String) @suspends ->String {task.sleep_ms(10000) text}
+fn echo(text:String) @suspends ->String {task.yield_now(); text}
+fn slow(text:String) @suspends ->String {task.sleep_ms(10000); text}
 fn pending(h:domain.WriteHandle<State>) @suspends {domain.request(h,slow,"cancel me");}
 fn ready() @suspends {task.yield_now()}
 impl State {
@@ -64,7 +64,7 @@ fn verify_values(x:domain.WriteHandle<State>,y:domain.WriteHandle<State>) @suspe
 }
 fn verify_snapshots(x:domain.WriteHandle<State>,y:domain.WriteHandle<State>) @suspends {
     let saved=domain.snapshot_from(x.read_only(),read)
-    let one=saved.value() let two=saved.value()
+    let one=saved.value(); let two=saved.value()
     assert(one.equals("async") && two.equals("async"))
     let candidate=domain.candidate_from(saved,x,make,"candidate")
     var receipt=domain.commit_to(x,candidate)
@@ -72,25 +72,25 @@ fn verify_snapshots(x:domain.WriteHandle<State>,y:domain.WriteHandle<State>) @su
     let both=domain.snapshot_pair(x.read_only(),y.read_only(),pair)
     let (left,right)=both.value()
     assert(left.equals("candidate") && right.equals("captured"))
-    var set=domain.access_set() set.include(x.read_only()) set.include(y.read_only())
+    var set=domain.access_set(); set.include(x.read_only()); set.include(y.read_only())
     let snap=domain.snapshot_set(set)
     assert(domain.read_snapshot(&snap,x.read_only(),read).equals("candidate"))
     let candidate=domain.edit_snapshot(snap,x,edit,"edited")
     let candidate=domain.edit_candidate(candidate,y,edit,"")
-    var receipt=domain.commit_set(candidate) assert(receipt.wait().is_ok())
+    var receipt=domain.commit_set(candidate); assert(receipt.wait().is_ok())
     assert(x.value().unwrap().equals("edited") && y.value().unwrap().equals(""))
 }
 fn verify_timer(x:domain.WriteHandle<State>) @suspends {
-    let timer=domain.timer() let t=timer.handle()
+    let timer=domain.timer(); let t=timer.handle()
     domain.every(t,x,1,tick,"repeated🙂").unwrap()
     while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep_ms(1)}
-    t.cancel() timer.close()
+    t.cancel(); timer.close()
     assert(x.value().unwrap().equals("repeated🙂"))
 }
 fn lifecycle() @suspends ->Int32 {
-    let a=domain.create(make,"初始🙂") let b=domain.create(make,"")
-    let x=a.handle() let y=b.handle()
-    verify_values(x,y) verify_snapshots(x,y) verify_timer(x)
+    let a=domain.create(make,"初始🙂"); let b=domain.create(make,"")
+    let x=a.handle(); let y=b.handle()
+    verify_values(x,y); verify_snapshots(x,y); verify_timer(x)
     race {|pending(x)|ready()};
     a.close()
     match x.replace("closed input") {Err(Closed)=>{},_=>assert(false)}

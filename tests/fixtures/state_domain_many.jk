@@ -1,7 +1,7 @@
 import joky/domain
 import joky/task
 import joky/check
-fn assert(ok:Bool) { let text="multi-domain transfer" check.assert(ok,&text) }
+fn assert(ok:Bool) { let text="multi-domain transfer"; check.assert(ok,&text) }
 struct Player { room:Int32 }
 struct Room { count:Int32 }
 struct Rules { allowed:Int32 }
@@ -12,7 +12,7 @@ fn location(p:&Player)->Int32 { p.room }
 fn count(r:&Room)->Int32 { r.count }
 fn allowed(r:&Rules)->Int32 { r.allowed }
 fn change(r:&mut Rules,n:Int32) { r.allowed=n }
-fn fail(r:&mut Rules,n:Int32)->Int32 { r.allowed=99 1/n }
+fn fail(r:&mut Rules,n:Int32)->Int32 { r.allowed=99; 1/n }
 fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n).unwrap() }
 fn capture(p:domain.ReadHandle<Player>,a:domain.ReadHandle<Room>,b:domain.ReadHandle<Room>,r:domain.ReadHandle<Rules>) @suspends -> domain.SnapshotSet {
     var set=domain.access_set()
@@ -96,4 +96,4 @@ fn lifecycle() @suspends ->Int32 {
     assert(domain.read_snapshot(&old,pr,location)==1)
     24
 }
-fn main() @suspends { assert(lifecycle()==24) println("multi-domain transfer ok") }
+fn main() @suspends { assert(lifecycle()==24); println("multi-domain transfer ok") }

@@ -25,7 +25,7 @@ fn owner_count(state: &State) @noescape -> Int32 { state.count }
 fn owner_length(state: &State) @noescape -> UInt64 { state.values.len() }
 fn owner_grow(state: &mut State, count: Int32) @noescape {
     var index = 0
-    while index < count { state.values.push(resource(10 + index)) index = index + 1 }
+    while index < count { state.values.push(resource(10 + index)); index = index + 1 }
 }
 fn owner_clear(state: &mut State) @noescape { state.values.clear() }
 fn owner_fail(state: &mut State) @noescape -> Int32 { mem.replace(&mut state.text, "failure"); 1 / 0 }
@@ -34,7 +34,7 @@ fn make_wrapper() -> Wrapper { Wrapper { text: "wrapped" } }
 fn wrapper_touch(state: &mut Wrapper) @noescape -> Int32 { mem.replace(&mut state.text, "new"); 42 }
 
 struct Broken { first: Resource, second: Resource }
-impl Drop for Broken { fn drop(&mut self) { record_drop(3) 1 / 0; } }
+impl Drop for Broken { fn drop(&mut self) { record_drop(3); 1 / 0; } }
 fn make_broken() -> Broken { Broken { first: resource(4), second: resource(5) } }
 fn broken_touch(state: &Broken) @noescape -> Int32 { state.first.id }
 struct Generic<T> { id: Int32, values: Array<T> }
@@ -46,8 +46,8 @@ fn make_generic() -> Generic<String> {
 }
 fn generic_touch(state: &Generic<String>) @noescape -> UInt64 { state.values.len() }
 
-fn failed_construct() -> State { let broken = make_broken() make_owner() }
-fn failed_touch(state: &mut State) @noescape -> Int32 { let broken = make_broken() state.count }
+fn failed_construct() -> State { let broken = make_broken(); make_owner() }
+fn failed_touch(state: &mut State) @noescape -> Int32 { let broken = make_broken(); state.count }
 fn owner_empty_choice(state: &mut State) @noescape { mem.replace(&mut state.nested, ("nested", Choice.Empty)); }
 struct Tree { values: Array<Array<Array<String>>> }
 fn branch_task() -> Array<Array<String>> {
@@ -62,5 +62,5 @@ fn make_tree() -> Tree {
     values.push(branch_task())
     Tree { values: values }
 }
-fn tree_replace(state: &mut Tree) @noescape -> UInt64 { state.values.replace(0, branch_task()) state.values.len() }
+fn tree_replace(state: &mut Tree) @noescape -> UInt64 { state.values.replace(0, branch_task()); state.values.len() }
 fn tree_count(state: &Tree) @noescape -> UInt64 { state.values.len() }

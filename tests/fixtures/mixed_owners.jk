@@ -9,7 +9,7 @@ impl<T> Batch<T> {
         self.version = self.version + 1
         self.sorted = false
     }
-    fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
+
     fn view(&self) -> &Array<T> { &self.values }
     fn edit(&mut self) -> &mut Array<T> { &mut self.values }
     fn into_array(self) -> Array<T> { self.values }
@@ -90,4 +90,8 @@ fn mixed_metadata() -> Int32 {
 fn mixed_all() -> Int32 {
     if mixed_answer() != 42 || mixed_flow(true) != 42 || mixed_flow(false) != 42 || mixed_references() != 42 || mixed_metadata() != 42 { return 0 }
     42
+}
+
+impl<T: Copy> Batch<T> {
+    fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
 }

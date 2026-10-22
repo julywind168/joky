@@ -21,10 +21,10 @@ fn read(s:&State)->Option<(Int32,Int32)> {Option.Some((s.n,s.n+1))}
 fn pair(a:&State,b:&State)->(Pair<Int32>,Unit) {(Pair{left:a.n,right:b.n},{})}
 fn query(s:&State,value:(Int32,Bool))->Pair<Int32> {Pair{left:s.n+value.0,right:s.n}}
 fn write_pair(a:&mut State,b:&mut State,value:Input)->Result<Pair<Int32>,Fault> {
-    let result=update(a,value) b.n=a.n result
+    let result=update(a,value); b.n=a.n; result
 }
 fn request(value:Input) @suspends ->Result<Pair<Int32>,Fault> {
-    task.yield_now() domain.write(update,value).unwrap()
+    task.yield_now(); domain.write(update,value).unwrap()
 }
 fn request_read(value:(Int32,Bool)) @suspends ->Pair<Int32> {domain.query(query,value).unwrap()}
 fn tick(s:&mut State,value:Input) {update(s,value);}
@@ -36,12 +36,12 @@ impl State {
 }
 fn summing(s:&State,a:(Int32,Bool),b:Pair<Int32>)->Int32 {s.n+a.0+b.left+b.right}
 fn lifecycle() @suspends ->Int32 {
-    let a=domain.create(make,input(10)) let b=domain.create(make,input(0))
-    let x=a.handle() let y=b.handle()
+    let a=domain.create(make,input(10)); let b=domain.create(make,input(0))
+    let x=a.handle(); let y=b.handle()
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==10)
     assert(x.sum((1,true),Pair{left:2,right:3}).unwrap()==16)
     assert(x.apply(input(12)).unwrap().unwrap().left==12)
-    var captured=input(13) captured.left.1=false
+    var captured=input(13); captured.left.1=false
     let offset=(1,true)
     match when "business error" (mut x,y) {update(x,captured)} {Ok(Err(Denied))=>{},_=>assert(false)}
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==13)
@@ -58,28 +58,28 @@ fn lifecycle() @suspends ->Int32 {
     let saved=domain.snapshot_from(x.read_only(),read)
     assert(saved.value().unwrap_or((-1,-1)).0==16)
     let candidate=domain.candidate_from(saved,x,make,input(20))
-    var receipt=domain.commit_to(x,candidate) assert(receipt.wait().is_ok())
+    var receipt=domain.commit_to(x,candidate); assert(receipt.wait().is_ok())
     let saved=domain.snapshot_pair(x.read_only(),y.read_only(),pair)
-    var copied=saved.value() copied.0.left=99
+    var copied=saved.value(); copied.0.left=99
     assert(saved.value().0.left==20 && copied.0.left==99)
-    var access=domain.access_set() access.include(x.read_only()) access.include(y.read_only())
+    var access=domain.access_set(); access.include(x.read_only()); access.include(y.read_only())
     let saved=domain.snapshot_set(access)
     assert(domain.read_snapshot(&saved,x.read_only(),read).unwrap_or((-1,-1)).0==20)
     let candidate=domain.candidate_set_from(saved,x,make,input(21))
     let candidate=domain.candidate_set_add(candidate,y,make,input(1))
-    var receipt=domain.commit_set(candidate) assert(receipt.wait().is_ok())
-    var access=domain.access_set() access.include(x.read_only()) access.include(y.read_only())
+    var receipt=domain.commit_set(candidate); assert(receipt.wait().is_ok())
+    var access=domain.access_set(); access.include(x.read_only()); access.include(y.read_only())
     let saved=domain.snapshot_set(access)
     let candidate=domain.edit_snapshot(saved,x,edit,(22,Empty::<Bool>{}))
     let candidate=domain.edit_candidate(candidate,y,edit,(0,Empty::<Bool>{}))
-    var receipt=domain.commit_set(candidate) assert(receipt.wait().is_ok())
+    var receipt=domain.commit_set(candidate); assert(receipt.wait().is_ok())
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==22 && y.value().unwrap().unwrap_or((-1,-1)).0==0)
-    let timer=domain.timer() let t=timer.handle()
+    let timer=domain.timer(); let t=timer.handle()
     domain.after(t,x,0,tick,input(30)).unwrap()
     while match t.status() {Active=>true,_=>false} {task.yield_now()}
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==30)
-    timer.close() a.close()
+    timer.close(); a.close()
     match x.apply(input(0)) {Err(Closed)=>{},_=>assert(false)}
-    b.close() 24
+    b.close(); 24
 }
 fn main() @suspends {assert(lifecycle()==24)}

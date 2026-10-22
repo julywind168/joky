@@ -10,23 +10,23 @@ fn main() {
     input.push(0xb8)
     input.push(0xad)
     match String.from_utf8(input) {
-        Err(error) => { { let displayed: Int32 = int32(error.offset) println(&displayed) } }
+        Err(error) => { println(int32(error.offset)) }
         Ok(value) => {
             let suffix = "🙂e\u{301}"
             let combined = text.concat(&value, &suffix)
             let piece = combined.substring(0, 7).unwrap_or("")
-            { let displayed: Int32 = int32(piece.byte_length()) println(&displayed) }
-            { let displayed: Int32 = int32(combined.rune_count()) println(&displayed) }
+            println(int32(piece.byte_length()))
+            println(int32(combined.rune_count()))
             var offset: UInt64 = 0
             while offset < combined.byte_length() {
                 match combined.next_rune(offset) {
-                    Some((rune, next)) => { { let displayed: Int32 = int32(rune.to_u32()) println(&displayed) } offset = next }
+                    Some((rune, next)) => { println(int32(rune.to_u32())); offset = next }
                     None => { return }
                 }
             }
             let number: Int64 = -9223372036854775808
             let decimal = number.to_string()
-            { let displayed: Int32 = int32(decimal.byte_length()) println(&displayed) }
+            println(int32(decimal.byte_length()))
         }
     }
 }

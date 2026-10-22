@@ -3,7 +3,7 @@ import joky/array.{type Array}
 import joky/check
 import joky/string.{type Utf8ErrorCode}
 
-fn expect(value: Bool) { let message = "File convenience assertion failed" check.assert(value, &message) }
+fn expect(value: Bool) { let message = "File convenience assertion failed"; check.assert(value, &message) }
 fn readable(path: String) @suspends -> fs.File { fs.open(path, fs.OpenOptions.new()).unwrap() }
 fn writable(path: String) @suspends -> fs.File {
     var options = fs.OpenOptions.new()

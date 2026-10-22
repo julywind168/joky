@@ -41,8 +41,8 @@ const PREFIX: &str = r#"
     fn same(value: &mut Int32) -> &mut Int32 { value }
     fn view(value: &Int32) -> &Int32 { value }
     fn allocate(value: &Int32) { alloc((value,)); }
-    fn copy<T>(value: &T) -> T { (*value) }
-    fn store<T>(value: &T) { alloc((value,)); }
+    fn copy<T: Copy>(value: &T) -> T { (*value) }
+    fn store<T: Copy>(value: &T) { alloc((value,)); }
     fn choose(a: &Int32, b: &Int32, flag: Bool) -> &Int32 { if flag { a } else { b } }
 "#;
 
@@ -292,7 +292,7 @@ fn local_field_borrows_preserve_imported_alias_and_generic_contracts() {
         pub type View = &Int32
         pub fn bump(value: &mut Int32) { (*(value) = (*value) + 1); }
         pub fn view(value: View) -> View { value }
-        pub fn first<T>(value: Stats<T>) -> T { (*(&value.hp)) }
+        pub fn first<T: Copy>(value: Stats<T>) -> T { (*(&value.hp)) }
         pub fn allocate(value: View) { alloc((value,)); }
     "#,
         )

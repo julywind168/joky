@@ -9,7 +9,7 @@ trait Factory {
         record(10)
         42 / divisor
     }
-    fn ordered(&self, left: Int32, right: Int32) @noescape -> Int32 { record(30) left + right }
+    fn ordered(&self, left: Int32, right: Int32) @noescape -> Int32 { record(30); left + right }
     fn consume(&self, item: Self.Item, divisor: Int32) @noescape -> Int32
 }
 struct Resource { values: Array<Int32>, id: Int32 }
@@ -75,8 +75,8 @@ fn dyn_local_between_pending() @suspends -> Int32 {
     result
 }
 extern fn delayed_value(value: Int32) @suspends -> Int32
-fn dyn_pending() @suspends -> Int32 { dyn_success() delayed_value(41) }
-fn dyn_after_pending() @suspends -> Int32 { delayed_value(41) dyn_success() }
+fn dyn_pending() @suspends -> Int32 { dyn_success(); delayed_value(41) }
+fn dyn_after_pending() @suspends -> Int32 { delayed_value(41); dyn_success() }
 
 fn dyn_order() -> Int32 {
     let p = Producer { values: Array.new::<Int32>(), id: 7 }

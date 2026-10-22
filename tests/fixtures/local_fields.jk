@@ -130,7 +130,7 @@ fn field_shadow() -> Int32 {
     inspect(before) + inspect(after)
 }
 fn read_parameter(p: Point) -> Int32 { inspect(&p.x) + inspect(&p.y) }
-fn first<T>(value: Wrapper<T>) -> T { (*(&value.first)) }
+fn first<T: Copy>(value: Wrapper<T>) -> T { (*(&value.first)) }
 fn field_parameters() -> Int32 { first(Wrapper { first: read_parameter(Point { x: 20, y: 22 }), second: 0 }) }
 fn field_pattern() -> Int32 {
     var (p, q) = (Point { x: 20, y: 0 }, Point { x: 20, y: 0 })

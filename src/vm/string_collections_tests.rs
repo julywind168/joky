@@ -86,15 +86,15 @@ fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
 #[test]
 fn string_s5_rejects_copy_get_moves_conflicting_views_and_suspension() {
     for source in [
-        "import joky/array.{type Array} fn f() { let a = Array.new::<String>() a.get(0); }",
-        "import joky/array.{type Array} fn f() { let a = Array.new::<StringBuilder>() a.get(0); }",
-        "import joky/map.{type Map} fn f() { let a = Map.new::<Int32, String>() a.get(0); }",
-        "import joky/array.{type Array} fn f() { let a = Array.new::<String>() let b = a a.release() b.release() }",
-        "import joky/array.{type Array} fn f() { var a = Array.new::<String>() a.push(\"中\") let b = a.borrow_ref(0) a.clear() b.byte_length(); }",
-        "import joky/array.{type Array} import joky/slice fn f() { var a = Array.new::<String>() a.push(\"中\") let b = a.borrow_ref(0).bytes() a.clear() slice.len(b); }",
-        "import joky/array.{type Array} fn f() -> &String { var a = Array.new::<String>() a.push(\"中\") a.borrow_ref(0) }",
+        "import joky/array.{type Array} fn f() { let a = Array.new::<String>(); a.get(0); }",
+        "import joky/array.{type Array} fn f() { let a = Array.new::<StringBuilder>(); a.get(0); }",
+        "import joky/map.{type Map} fn f() { let a = Map.new::<Int32, String>(); a.get(0); }",
+        "import joky/array.{type Array} fn f() { let a = Array.new::<String>(); let b = a; a.release(); b.release() }",
+        "import joky/array.{type Array} fn f() { var a = Array.new::<String>(); a.push(\"中\"); let b = a.borrow_ref(0); a.clear(); b.byte_length(); }",
+        "import joky/array.{type Array} import joky/slice fn f() { var a = Array.new::<String>(); a.push(\"中\"); let b = a.borrow_ref(0).bytes(); a.clear(); slice.len(b); }",
+        "import joky/array.{type Array} fn f() -> &String { var a = Array.new::<String>(); a.push(\"中\"); a.borrow_ref(0) }",
         "struct Mixed { text: String, reference: &Int32 } fn f() {}",
-        "fn pass<T>(x: T) -> T { x } fn f() { let x = Some(\"中\") pass(x); x.is_some(); }",
+        "fn pass<T>(x: T) -> T { x } fn f() { let x = Some(\"中\"); pass(x); x.is_some(); }",
         "struct Pair { left: String, right: &Int32 } fn f(a: Pair) @suspends {}",
         "import joky/string.{type StringBuilder} fn f(a: &Option<StringBuilder>) @suspends -> &Option<StringBuilder> { a }",
         "unsafe extern \"C\" fn f(a: String)",

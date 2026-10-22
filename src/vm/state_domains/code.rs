@@ -517,9 +517,9 @@ fn make(n: Int32) -> State { State { n: n } }
 fn rules(n: Int32) -> Rules { Rules { n: n } }
 fn read(s: &State) -> Int32 { s.n }
 fn allowed(s: &Rules) -> Int32 { s.n }
-fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = a.n + n + b.n a.n }
+fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = a.n + n + b.n; a.n }
 fn many(a: &mut State, b: &mut State, c: &mut State, d: &Rules, n: Int32) -> Int32 {
-    a.n = a.n + n + d.n b.n = b.n + n c.n = c.n + n a.n
+    a.n = a.n + n + d.n; b.n = b.n + n; c.n = c.n + n; a.n
 }
 "#;
     const RULES: &str = r#"
@@ -618,15 +618,15 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
     fn state_domain_code_publication_rejects_incompatible_access_abi_before_writes() {
         use InstanceValue::Int32;
         let entry =
-            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = a.n + n + b.n a.n }";
+            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = a.n + n + b.n; a.n }";
         let replacements = [
-            "fn renamed(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = 999 a.n }",
-            "fn pair(a: &mut State, b: &Rules, n: Bool) -> Int32 { a.n = 999 a.n }",
-            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Bool { a.n = 999 true }",
+            "fn renamed(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = 999; a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Bool) -> Int32 { a.n = 999; a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Bool { a.n = 999; true }",
             "fn pair(a: &State, b: &Rules, n: Int32) -> Int32 { a.n }",
-            "fn pair(a: &mut State, b: &mut Rules, n: Int32) -> Int32 { a.n = 999 b.n = 999 a.n }",
-            "fn pair(a: &mut State, b: &Rules, n: Int32, extra: Int32) -> Int32 { a.n = 999 a.n }",
-            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = 999 println(n) a.n }",
+            "fn pair(a: &mut State, b: &mut Rules, n: Int32) -> Int32 { a.n = 999; b.n = 999; a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Int32, extra: Int32) -> Int32 { a.n = 999; a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = 999; println(n); a.n }",
         ];
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             for replacement in replacements {
@@ -827,8 +827,8 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
                     let prepare = if many {
                         r#"
     var set = domain.access_set()
-    set.include(a.read_handle()) set.include(b.read_handle())
-    set.include(c.read_handle()) set.include(r.read_handle())
+    set.include(a.read_handle()); set.include(b.read_handle())
+    set.include(c.read_handle()); set.include(r.read_handle())
     let view = domain.snapshot_set(set)
     let n = domain.read_snapshot(&view, r.read_handle(), allowed)
     let first = domain.candidate_set_from(view, a.handle(), make, n + 10)
@@ -950,7 +950,7 @@ fn project(state: &State, input: Input) -> Answer { Answer { value: state.value 
 fn probe(_: Int32) @suspends -> Int32 {
     let owner = domain.create(make, 9)
     task.sleep_ms(1000)
-    var access = domain.access_set() access.include(owner.read_handle())
+    var access = domain.access_set(); access.include(owner.read_handle())
     let snapshot = domain.snapshot_set(access)
     let answer = domain.query_snapshot(&snapshot, owner.read_handle(), project, Input { delta: 5 })
     answer.value

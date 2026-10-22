@@ -5,7 +5,7 @@ import joky/mem
 import joky/array.{type Array}
 import joky/map.{type Map}
 
-fn assert(condition: Bool) { let message = "HR1 domain" check.assert(condition, &message) }
+fn assert(condition: Bool) { let message = "HR1 domain"; check.assert(condition, &message) }
 enum Status { Idle, Ready(Int32) }
 struct Profile { name: String, score: Int32, details: (String, Int32), status: Status }
 struct Player { profile: Profile, inventory: Array<String> }
@@ -73,4 +73,4 @@ fn lifecycle() @suspends -> Int32 {
     assert(match receipt.wait() { Ok(version) => version == 1, _ => false })
     24
 }
-fn main() @suspends { assert(lifecycle() == 24) println("nested domains ok") }
+fn main() @suspends { assert(lifecycle() == 24); println("nested domains ok") }

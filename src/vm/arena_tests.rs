@@ -256,7 +256,7 @@ fn arena_graphs_reject_permission_loss_and_unsealed_publication() {
         "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); x.next = Some((&*p)); p.x = 2; }",
         "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); (*(x) = Link { value: 1, next: Some((&*p)) }); p.x = 2; }",
         "fn store(p: &Point) { let unused = alloc(Link { value: 0, next: Some(p) }); } fn f() { let p = alloc(Point { x: 1 }); store(p); p.x = 2; }",
-        "fn store<T>(x: T) { let unused = alloc((x,)); } fn forward(p: &Point) { store(Some(p)); } fn f() { let p = alloc(Point { x: 1 }); forward(p); p.x = 2; }",
+        "fn store<T: Copy>(x: T) { let unused = alloc((x,)); } fn forward(p: &Point) { store(Some(p)); } fn f() { let p = alloc(Point { x: 1 }); forward(p); p.x = 2; }",
         "fn f() { let x = alloc(Link { value: 0, next: None }); let view = (&*x); x.value = 2; }",
         "fn f() -> Int32 { let x = alloc(Link { value: 0, next: None }); let view = (&*x); x.value }",
         "fn f() { let x = alloc(Link { value: 0, next: None }); let view = (&*x); (*(x) = Link { value: 1, next: None }); }",
@@ -298,16 +298,16 @@ fn arena_graphs_cross_module_generic_aliases_preserve_storage_contracts() {
         .insert(
             "graph",
             r#"
-        pub struct Node<T> { pub value: T, next: Option<&Node<T>> }
-        pub type Head<T> = Option<&Node<T>>
-        pub fn push<T>(head: Head<T>, value: T) -> &Node<T> {
+        pub struct Node<T: Copy> { pub value: T, next: Option<&Node<T>> }
+        pub type Head<T: Copy> = Option<&Node<T>>
+        pub fn push<T: Copy>(head: Head<T>, value: T) -> &Node<T> {
             (&*(alloc(Node { value: value, next: head })))
         }
         pub fn sum(head: Head<Int32>) -> Int32 {
             match head { None => 0, Some(node) => node.value + sum(node.next) }
         }
         pub fn keep(value: &Int32) { let stored = alloc((value,)); }
-        pub fn copy<T>(value: &T) -> T { (*value) }
+        pub fn copy<T: Copy>(value: &T) -> T { (*value) }
     "#,
         )
         .unwrap();

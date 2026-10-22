@@ -7,7 +7,7 @@ struct Bits { pub high:UInt64, low:Int8, real:Float64 }
 struct Init { count:Int32, bits:Bits, empty:Empty, unit:Unit }
 struct State { count:Int32, high:UInt64, low:Int8, real:Float64 }
 struct Owned { initial:Init, title:String, values:Array<UInt64> }
-fn require(ok:Bool) {let message="domain value constructors" check.assert(ok,&message)}
+fn require(ok:Bool) {let message="domain value constructors"; check.assert(ok,&message)}
 fn input(n:Int32)->Init {Init{count:n,bits:Bits{high:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626)},empty:Empty{},unit:{}}}
 fn make_owned(p:Init)->Owned {
     var values=Array.new::<UInt64>()
@@ -16,7 +16,7 @@ fn make_owned(p:Init)->Owned {
 }
 fn make(p:Init)->State {State{count:p.count,high:p.bits.high,low:p.bits.low,real:p.bits.real}}
 fn inspect(s:&State)->Init {Init{count:s.count,bits:Bits{high:s.high,low:s.low,real:s.real},empty:Empty{},unit:{}}}
-fn owned_ok(s:&Owned)->Bool {let expected="constructed" s.title.equals(&expected) && s.values.get(0).unwrap_or(0)==s.initial.bits.high}
+fn owned_ok(s:&Owned)->Bool {let expected="constructed"; s.title.equals(&expected) && s.values.get(0).unwrap_or(0)==s.initial.bits.high}
 fn make_empty(p:Empty)->Empty {Empty{}}
 fn read_empty(s:&Empty)->Empty {Empty{}}
 struct Scalar { n:Int32 }
@@ -33,7 +33,7 @@ fn total(a:&State,b:&Scalar)->Int32 {a.count+b.n}
 fn make_scalar(p:Init)->Scalar {Scalar{n:p.count}}
 fn snapshot_set(a:domain.ReadHandle<State>,b:domain.ReadHandle<Scalar>,c:domain.ReadHandle<Scalar>) @suspends ->domain.SnapshotSet {
     var access=domain.access_set()
-    access.include(c) access.include(a) access.include(b)
+    access.include(c); access.include(a); access.include(b)
     domain.snapshot_set(access)
 }
 fn put_scalar(s:&mut Scalar,n:Int32) {s.n=n}
@@ -51,7 +51,7 @@ fn lifecycle() @suspends ->Int32 {
     let c=domain.create(make_scalar,input(11))
     var evaluations=0
     var p=input(20)
-    let single=domain.candidate_from(domain.snapshot_from(a.read_handle(),read_state), a.handle(), make, {task.yield_now() evaluations=evaluations+1 p})
+    let single=domain.candidate_from(domain.snapshot_from(a.read_handle(),read_state), a.handle(), make, {task.yield_now(); evaluations=evaluations+1; p})
     p=input(99)
     require(domain.read_from(a.read_handle(),read_state).unwrap()==7)
     var receipt=domain.commit_to(a.handle(),single)
@@ -62,7 +62,7 @@ fn lifecycle() @suspends ->Int32 {
     var conflict=domain.commit_to(a.handle(),stale)
     require(match conflict.wait() {Err(Conflict)=>true,_=>false})
     let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), make, input(21))
-    let pair=domain.candidate_pair_from(first, b.handle(), make_scalar, {task.yield_now() evaluations=evaluations+1 input(30)})
+    let pair=domain.candidate_pair_from(first, b.handle(), make_scalar, {task.yield_now(); evaluations=evaluations+1; input(30)})
     var receipt2=domain.commit_pair_to(a.handle(),b.handle(),pair)
     require(match receipt2.wait() {Ok((x,y))=>x==2 && y==2,_=>false})
     let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), make, input(101))
@@ -71,8 +71,8 @@ fn lifecycle() @suspends ->Int32 {
     var conflict2=domain.commit_pair_to(a.handle(),b.handle(),pair)
     require(match conflict2.wait() {Err(Conflict)=>true,_=>false})
     require(domain.read_pair(a.read_handle(),b.read_handle(),total).unwrap()==51)
-    let set=domain.candidate_set_from(snapshot_set(a.read_handle(),b.read_handle(),c.read_handle()),a.handle(),make,{task.yield_now() evaluations=evaluations+1 input(22)})
-    let set=domain.candidate_set_add(set,b.handle(),make_scalar,{task.yield_now() evaluations=evaluations+1 input(31)})
+    let set=domain.candidate_set_from(snapshot_set(a.read_handle(),b.read_handle(),c.read_handle()),a.handle(),make,{task.yield_now(); evaluations=evaluations+1; input(22)})
+    let set=domain.candidate_set_add(set,b.handle(),make_scalar,{task.yield_now(); evaluations=evaluations+1; input(31)})
     var receipt3=domain.commit_set(set)
     require(match receipt3.wait() {Ok(_)=>true,_=>false})
     require(receipt3.revision(a.read_handle()).unwrap().unwrap_or(0)==3 && receipt3.revision(b.read_handle()).unwrap().unwrap_or(0)==4)
@@ -91,12 +91,12 @@ fn lifecycle() @suspends ->Int32 {
     let generic=domain.candidate_from(domain.snapshot_from(b.read_handle(),read), b.handle(), make_generic::<Init>, input(5))
     var receipt5=domain.commit_to(b.handle(),generic)
     require(match receipt5.wait() {Ok(n)=>n==5,_=>false})
-    a.close() b.close() c.close() empty.close()
+    a.close(); b.close(); c.close(); empty.close()
     24
 }
 fn empty_unit(s:&Empty) {}
-fn fail_make(p:Init)->State {let temporary=make_owned(p) let n=100/p.count make(input(n))}
-fn fail_scalar(p:Init)->Scalar {let temporary=make_owned(p) Scalar{n:100/p.count}}
+fn fail_make(p:Init)->State {let temporary=make_owned(p); let n=100/p.count; make(input(n))}
+fn fail_scalar(p:Init)->Scalar {let temporary=make_owned(p); Scalar{n:100/p.count}}
 fn construct_single() @suspends ->Int32 {
     let a=domain.create(make,input(7))
     let candidate=domain.candidate_from(domain.snapshot_from(a.read_handle(),read_state), a.handle(), make, input(24))

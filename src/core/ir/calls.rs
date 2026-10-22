@@ -202,6 +202,9 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
+        if let Expr::Invoke { callee, args, span } = expr {
+            return self.invoke_expr(callee, args, *span, vars, functions, suspends, types);
+        }
         let Expr::Call {
             callee,
             type_args,

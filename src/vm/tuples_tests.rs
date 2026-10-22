@@ -89,12 +89,12 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Duplicate binding",
         ),
         (
-            "fn f() { let (x, y) = (1, 2) x = 3 }",
+            "fn f() { let (x, y) = (1, 2); x = 3 }",
             ErrorCode::InvalidAssignment,
             "immutable",
         ),
         (
-            "fn f() { var (x, y) = (1, 2) x = true }",
+            "fn f() { var (x, y) = (1, 2); x = true }",
             ErrorCode::TypeMismatch,
             "Assignment type",
         ),
@@ -109,17 +109,17 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "annotation expects",
         ),
         (
-            "fn f() { let _ = 1 _; }",
+            "fn f() { let _ = 1; _; }",
             ErrorCode::UnknownName,
             "Undefined variable",
         ),
         (
-            "fn f() { let (_, _) = (1, 2) _ = 3 }",
+            "fn f() { let (_, _) = (1, 2); _ = 3 }",
             ErrorCode::UnknownName,
             "Undefined variable",
         ),
         (
-            "fn f() { { let (x, y) = (1, 2) } x; }",
+            "fn f() { { let (x, y) = (1, 2) }; x; }",
             ErrorCode::UnknownName,
             "Undefined variable",
         ),
@@ -196,7 +196,7 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Comparison operands",
         ),
         (
-            "fn f() { let p = (1,) p.x; }",
+            "fn f() { let p = (1,); p.x; }",
             ErrorCode::UnknownName,
             "Tuple member",
         ),
@@ -263,7 +263,7 @@ fn tuple_construction_and_destructuring_resume_once_after_reload_and_cancellatio
         fn empty() @suspends -> (Unit, Unit) { (delayed_value(0);, {}) }
         fn pending() @suspends -> Int32 {
             var n = 1
-            var (saved, (value, flag), unit) = (n, build({ n = 9 7 }), {})
+            var (saved, (value, flag), unit) = (n, build({ n = 9; 7 }), {})
             saved = saved + 1
             let (again, _) = direct(value)
             let _ = empty()
@@ -348,8 +348,8 @@ fn tuple_elements_and_destructured_initializers_resolve_imported_calls() {
         type Count = Int32
         fn run() -> Int32 {
             let h = vm.Vm.new()
-            { let vm_text = "fn f() -> Int32 {{ 21 }}" vm.load_source(h, &vm_text) }
-            let (a, (b,)): (Count, (Count,)) = ({ let vm_text = "f" vm.call_int32_0(h, &vm_text) }, ({ let vm_text = "f" vm.call_int32_0(h, &vm_text) },))
+            { let vm_text = "fn f() -> Int32 {{ 21 }}"; vm.load_source(h, &vm_text) }
+            let (a, (b,)): (Count, (Count,)) = ({ let vm_text = "f"; vm.call_int32_0(h, &vm_text) }, ({ let vm_text = "f"; vm.call_int32_0(h, &vm_text) },))
             vm.close(h)
             a + b
         }
@@ -371,7 +371,7 @@ fn wide_tuples_keep_parameter_order_and_mutable_leaves_across_backends() {
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let source = format!("type Wide = (Unit, Bool, ({fields}), Unit)\nfn pass(value: Wide, delta: Int32) -> Wide {{ var (unit, flag, ({names}), tail) = value x13 = x13 + delta; (unit, flag, ({names}), tail) }}\nfn run() -> Int32 {{ let original = ({{}}, true, ({values}), {{}}) let (_, flag, ({names}), _) = pass(original, -20) let (_, _, (first, _, _, _, _, _, _, _, _, _, _, _, _, last), _) = original if flag {{ first + last + x0 + x7 + x13 }} else {{ 0 }} }}");
+    let source = format!("type Wide = (Unit, Bool, ({fields}), Unit)\nfn pass(value: Wide, delta: Int32) -> Wide {{ var (unit, flag, ({names}), tail) = value; x13 = x13 + delta; (unit, flag, ({names}), tail) }}\nfn run() -> Int32 {{ let original = ({{}}, true, ({values}), {{}}); let (_, flag, ({names}), _) = pass(original, -20); let (_, _, (first, _, _, _, _, _, _, _, _, _, _, _, _, last), _) = original; if flag {{ first + last + x0 + x7 + x13 }} else {{ 0 }} }}");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
             let source = with_suspends(&source, suspends, Suspends::Typed);

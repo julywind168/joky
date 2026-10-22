@@ -60,15 +60,15 @@ fn indirect()->Int32 {
     let g=fixed.borrow_ref::<Int32,3>
     *slices.borrow_ref(f(&a),1)+*g(&a,1)
 }
-fn view<T,const N:UInt64>(a:&FixedArray<T,N>)->&Slice<T> { fixed.slice(a,0,N) }
-fn read<T>(r:&T)->T { *r }
-fn generic()->Int32 { let a=row(42) read(slices.borrow_ref(view(&a),2)) }
+fn view<T: Copy,const N:UInt64>(a:&FixedArray<T,N>)->&Slice<T> { fixed.slice(a,0,N) }
+fn read<T: Copy>(r:&T)->T { *r }
+fn generic()->Int32 { let a=row(42); read(slices.borrow_ref(view(&a),2)) }
 fn bad_index()->Int32 { let a=row(1); *a.borrow_ref(3) }
-fn bad_mut_index()->Int32 { var a=row(1); *a.borrow_mut_ref(18446744073709551615)=42 0 }
-fn bad_range()->Int32 { let a=row(1) slices.len(a.slice(2,1)); 0 }
-fn bad_end()->Int32 { var a=row(1) slices.len(a.slice_mut(0,4)); 0 }
+fn bad_mut_index()->Int32 { var a=row(1); *a.borrow_mut_ref(18446744073709551615)=42; 0 }
+fn bad_range()->Int32 { let a=row(1); slices.len(a.slice(2,1)); 0 }
+fn bad_end()->Int32 { var a=row(1); slices.len(a.slice_mut(0,4)); 0 }
 fn bad_empty()->Int32 { let a=fixed.repeat::<Int32,0>(1); *a.borrow_ref(0) }
-fn bad_zero_size()->Int32 { let a=fixed.repeat::<Unit,3>({}) a.borrow_ref(3); 0 }
+fn bad_zero_size()->Int32 { let a=fixed.repeat::<Unit,3>({}); a.borrow_ref(3); 0 }
 fn shared_views()->Int32 {
     var a=Array.new::<Int32>()
     a.push(21)

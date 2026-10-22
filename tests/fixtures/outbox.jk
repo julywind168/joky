@@ -5,12 +5,12 @@ import joky/check
 import joky/task
 import joky/mem
 
-fn assert(ok:Bool) { let message="outbox" check.assert(ok,&message) }
+fn assert(ok:Bool) { let message="outbox"; check.assert(ok,&message) }
 struct State { value:Int32 }
 fn make(n:Int32)->State { State{value:n} }
 fn read(s:&State)->Int32 { s.value }
-fn change(s:&mut State,n:Int32)->Int32 { s.value=n n }
-fn bytes(n:UInt8)->Array<UInt8> { var bytes=Array.new::<UInt8>() bytes.push(n) bytes.push(0) bytes.push(255) bytes }
+fn change(s:&mut State,n:Int32)->Int32 { s.value=n; n }
+fn bytes(n:UInt8)->Array<UInt8> { var bytes=Array.new::<UInt8>(); bytes.push(n); bytes.push(0); bytes.push(255); bytes }
 fn staged(h:outbox.Handle,n:UInt8) @suspends ->outbox.Batch {
     var batch=outbox.batch(2,6)
     assert(match outbox.stage(&mut batch,h,bytes(n)) { Ok(_) => true, _ => false })
@@ -88,7 +88,7 @@ fn many() @suspends {
     let lh=left.handle()
     let rh=right.handle()
     var access=domain.access_set()
-    access.include(a.read_handle()) access.include(b.read_handle()) access.include(c.read_handle())
+    access.include(a.read_handle()); access.include(b.read_handle()); access.include(c.read_handle())
     let snapshot=domain.snapshot_set(access)
     let set=domain.candidate_set_from(snapshot,a.handle(),make,10)
     let set=domain.candidate_set_add(set,b.handle(),make,20)
@@ -101,7 +101,7 @@ fn many() @suspends {
     assert(rejected.failed_outbox()! == rh.identity())
     assert(domain.read_from(a.read_handle(),read).unwrap()==1 && domain.read_from(b.read_handle(),read).unwrap()==2 && domain.read_from(c.read_handle(),read).unwrap()==3)
     var access=domain.access_set()
-    access.include(a.read_handle()) access.include(b.read_handle()) access.include(c.read_handle())
+    access.include(a.read_handle()); access.include(b.read_handle()); access.include(c.read_handle())
     let snapshot=domain.snapshot_set(access)
     let set=domain.candidate_set_from(snapshot,a.handle(),make,11)
     let set=domain.candidate_set_add(set,b.handle(),make,21)
@@ -113,7 +113,7 @@ fn many() @suspends {
     let received=match left.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }
     assert(received.get(0).unwrap_or(0)==11)
     assert(match right.receive() { Some(bytes) => bytes.is_empty(), None => false })
-    outbox.close(lh) outbox.close(rh)
+    outbox.close(lh); outbox.close(rh)
 }
 fn pairs() @suspends {
     let a=domain.create(make,11)
@@ -140,7 +140,7 @@ fn pairs() @suspends {
     assert(match pair_rejected.wait() { Err(OutboxFull) => true, _ => false })
     assert(pair_rejected.failed_outbox()! == rh.identity())
     assert(domain.read_from(a.read_handle(),read).unwrap()==12 && domain.read_from(b.read_handle(),read).unwrap()==22)
-    outbox.close(lh) outbox.close(rh)
+    outbox.close(lh); outbox.close(rh)
 }
 
 fn cancelled_and_expired() @suspends {
@@ -152,7 +152,7 @@ fn cancelled_and_expired() @suspends {
     var cancelled=domain.commit_to(h,next)
     cancelled.cancel()
     // Instruction slicing can let publication win before cancel executes.
-    let published=match cancelled.wait() { Err(Cancelled)=>false, Ok(_)=>true, _=>{assert(false) false} }
+    let published=match cancelled.wait() { Err(Cancelled)=>false, Ok(_)=>true, _=>{assert(false); false} }
     if published {
         let received=match queue.receive() { Some(bytes)=>bytes, None=>Array.new::<UInt8>() }
         assert(received.get(0).unwrap_or(0)==7)

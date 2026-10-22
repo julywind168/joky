@@ -6,16 +6,16 @@ import joky/drop.{type Drop}
 struct Item { id: Int32, text: String }
 impl Show for Item {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        let prefix = "Item(" output.push_str(&prefix)
-        let id = self.id id.show(output)
-        output.push(':') output.push_str(&self.text) output.push(')')
+        let prefix = "Item("; output.push_str(&prefix)
+        let id = self.id; id.show(output)
+        output.push(':'); output.push_str(&self.text); output.push(')')
     }
 }
 pub fn render<T: Show>(value: &T) @noescape -> String { "<{value}>" }
 pub fn scalar_text() -> String {
-    let i8: Int8 = -128 let i16: Int16 = -32768 let i32 = -2147483648 let i64: Int64 = -9223372036854775808
-    let u8: UInt8 = 255 let u16: UInt16 = 65535 let u32: UInt32 = 4294967295 let u64: UInt64 = 18446744073709551615
-    let f32: Float32 = 1.5 let f64 = -0.0 let flag = true let rune = '界' let unit = {}
+    let i8: Int8 = -128; let i16: Int16 = -32768; let i32 = -2147483648; let i64: Int64 = -9223372036854775808
+    let u8: UInt8 = 255; let u16: UInt16 = 65535; let u32: UInt32 = 4294967295; let u64: UInt64 = 18446744073709551615
+    let f32: Float32 = 1.5; let f64 = -0.0; let flag = true; let rune = '界'; let unit = {}
     "{i8}|{i16}|{i32}|{i64}|{u8}|{u16}|{u32}|{u64}|{f32}|{f64}|{flag}|{rune}|{unit}|{Float64.NAN}|{Float64.INFINITY}"
 }
 pub fn custom_text() -> String {
@@ -24,7 +24,7 @@ pub fn custom_text() -> String {
     "{first}|{item}|{item.text}"
 }
 pub fn array_text() -> String {
-    var values = Array.new::<Item>() values.push(Item { id: 1, text: "one" }) values.push(Item { id: 2, text: "two" })
+    var values = Array.new::<Item>(); values.push(Item { id: 1, text: "one" }); values.push(Item { id: 2, text: "two" })
     let first = display.to_text(&values)
     "{first}|{values}"
 }
@@ -42,7 +42,7 @@ fn next(value: &mut Int32) @noescape -> Int32 { (*(value) = (*value) + 1) ; (*va
 pub fn evaluation_text() -> String {
     var counter = 0
     let VALUE = "kept"
-    let text = "{{x}}={next(&mut counter)}:{next(&mut counter)}:{"[{counter}]"}:{VALUE}:{({ let value = "block" value })}"
+    let text = "{{x}}={next(&mut counter)}:{next(&mut counter)}:{"[{counter}]"}:{VALUE}:{({ let value = "block"; value })}"
     "{text}:{counter}:{VALUE}"
 }
 pub fn reference_text(text: &String) @noescape -> String { "{text}" }

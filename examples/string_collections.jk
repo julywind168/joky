@@ -7,14 +7,14 @@ fn main() {
     let input = "|中||🙂|"
     let separator = "|"
     match input.split(&separator) {
-        Err(text.SplitError.EmptySeparator) => { { let displayed: Int32 = -1 println(&displayed) } }
+        Err(text.SplitError.EmptySeparator) => { println(-1) }
         Ok(parts) => {
             input.release()
-            { let displayed: Int32 = int32(parts.len()) println(&displayed) }
+            println(int32(parts.len()))
             let joined = text.join(&parts, &separator)
             parts.release()
-            { let displayed: Int32 = int32(joined.byte_length()) println(&displayed) }
-            { let displayed: Int32 = int32(joined.rune_count()) println(&displayed) }
+            println(int32(joined.byte_length()))
+            println(int32(joined.rune_count()))
         }
     }
 }

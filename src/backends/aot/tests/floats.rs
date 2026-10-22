@@ -211,8 +211,8 @@ fn aot_float_externs_and_repr_c_match_real_c_code() {
 fn aot_suspending_floats_keep_bits_across_cps_polls() {
     let source = r#"
         import joky/task
-        fn square(v: Float64) @suspends -> Float64 { task.yield_now() v * v }
-        fn bump(v: Float32) @suspends -> Float32 { task.yield_now() v + 0.25 }
+        fn square(v: Float64) @suspends -> Float64 { task.yield_now(); v * v }
+        fn bump(v: Float32) @suspends -> Float32 { task.yield_now(); v + 0.25 }
     "#;
     let ast = crate::parser::parse(source).unwrap();
     let fixture = ScratchDir::new("float-cps");

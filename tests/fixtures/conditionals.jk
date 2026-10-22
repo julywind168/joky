@@ -17,7 +17,7 @@ fn conditional_nested(a: Int32, b: Int32) -> Int32 {
 }
 
 fn conditional_unit(flag: Bool) { if flag {} }
-fn conditional_empty() { if true {} else {} if false {} }
+fn conditional_empty() { if true {} else {}; if false {} }
 fn conditional_flag(flag: Bool) -> Bool { if flag { false } else { true } }
 fn conditional_text(flag: Bool) -> String { if flag { "yes" } else { "no" } }
 

@@ -48,20 +48,20 @@ pub fn pop<T>(set: &mut Set<T>) -> Option<T> {
 pub fn contains<T: BorrowEq + BorrowHash>(set: &Set<T>, value: &T) @noescape(value) -> Bool { set.items.contains_key_by_ref(value) }
 pub fn insert<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: T) -> Bool { set.items.insert(value, {}).is_none() }
 pub fn remove<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: &T) @noescape(value) -> Bool { set.items.remove_by_ref(value).is_some() }
-pub fn from_array<T: BorrowEq + BorrowHash>(values: Array<T>) -> Set<T> { var set = new::<T>() extend(&mut set, values) set }
+pub fn from_array<T: BorrowEq + BorrowHash>(values: Array<T>) -> Set<T> { var set = new::<T>(); extend(&mut set, values); set }
 pub fn extend<T: BorrowEq + BorrowHash>(set: &mut Set<T>, values: Array<T>) {
     var values = values
     let count = values.len()
     reserve(set, count)
     // Tail consumption follows the input order, retaining its first equal instance.
     var i: UInt64 = 0
-    while i < count / 2 { values.swap(i, count - 1 - i) i = i + 1 }
-    while !values.is_empty() { let value = values.take_last() insert(set, value) }
+    while i < count / 2 { values.swap(i, count - 1 - i); i = i + 1 }
+    while !values.is_empty() { let value = values.take_last(); insert(set, value) }
 }
 pub fn into_array<T>(set: Set<T>) -> Array<T> {
     var entries = set.items.into_entries()
     var values = Array.with_capacity::<T>(entries.len())
-    while !entries.is_empty() { let (value, _) = entries.take_last() values.push(value) }
+    while !entries.is_empty() { let (value, _) = entries.take_last(); values.push(value) }
     values
 }
 pub fn is_subset<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bool {

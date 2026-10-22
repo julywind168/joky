@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn borrowed_dyn_v2_preserves_erasure_and_table_descriptors() {
         for borrow in ["&", "&mut "] {
-            let source = format!("{BASE} fn use_view(value: {borrow}dyn Read<Item = Int32>) @noescape {{}} fn answer() -> Int32 {{ var counter = Counter {{ value: 42 }} let view: {borrow}dyn Read<Item = Int32> = {borrow}counter use_view(view) 42 }}");
+            let source = format!("{BASE} fn use_view(value: {borrow}dyn Read<Item = Int32>) @noescape {{}} fn answer() -> Int32 {{ var counter = Counter {{ value: 42 }}; let view: {borrow}dyn Read<Item = Int32> = {borrow}counter; use_view(view); 42 }}");
             let plan = checked(&source).unwrap_or_else(|e| panic!("{e}\n{source}"));
             let erased = &plan.bodies["answer"].dyn_erasures;
             assert_eq!(erased.len(), 1);
@@ -535,7 +535,7 @@ mod tests {
             ),
             ("&missing", "&dyn Read<Item = Int32>", "no applicable impl"),
         ] {
-            let source = format!("{BASE} fn answer() {{ var counter = Counter {{ value: 42 }} let missing = 1 let view: {binding} = {value} }}");
+            let source = format!("{BASE} fn answer() {{ var counter = Counter {{ value: 42 }}; let missing = 1; let view: {binding} = {value} }}");
             let error = match checked(&source) {
                 Ok(_) => panic!("accepted {source}"),
                 Err(e) => e,

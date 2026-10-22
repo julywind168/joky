@@ -12,24 +12,24 @@ fn resource(id: Int32) -> Resource {
 fn manage_copy() -> Int32 {
     var values = Array.with_capacity::<UInt64>(8)
     if values.swap(0, 0) { return 0 }
-    values.clear() values.truncate(18446744073709551615)
-    values.push(18446744073709551615) values.push(20) values.push(42)
+    values.clear(); values.truncate(18446744073709551615)
+    values.push(18446744073709551615); values.push(20); values.push(42)
     if !array.swap(&mut values, 0, 2) || values.get(2).unwrap_or(0) != 18446744073709551615 { return 0 }
     if !values.swap(1, 1) || values.get(1).unwrap_or(0) != 20 { return 0 }
     if values.swap(0, 3) || values.swap(3, 0) || values.swap(18446744073709551615, 18446744073709551615) { return 0 }
-    values.truncate(3) shorten(&mut values, 4) values.truncate(18446744073709551615)
+    values.truncate(3); shorten(&mut values, 4); values.truncate(18446744073709551615)
     if values.len() != 3 || values.capacity() != 8 { return 0 }
     array.truncate(&mut values, 1)
     let result = int32(values.get(0).unwrap_or(0))
     empty(&mut values)
     if !values.is_empty() || values.capacity() != 8 { return 0 }
-    values.clear() values.push(20) values.push(22)
+    values.clear(); values.push(20); values.push(22)
     if values.len() == 2 && values.capacity() == 8 { result } else { 0 }
 }
 fn manage_owned() -> Int32 {
     var values = Array.with_capacity::<Resource>(4)
-    values.push(resource(1)) values.push(resource(2)) values.push(resource(3))
-    values.truncate(3) values.truncate(4) values.truncate(18446744073709551615)
+    values.push(resource(1)); values.push(resource(2)); values.push(resource(3))
+    values.truncate(3); values.truncate(4); values.truncate(18446744073709551615)
     if !values.swap(1, 1) { return 0 }
     if !exchange(&mut values, 0, 2) { return 0 }
     if values.swap(0, 3) || values.swap(3, 0) { return 0 }
@@ -43,7 +43,7 @@ fn manage_owned() -> Int32 {
 }
 fn manage_enum_tuple() -> Int32 {
     var values = Array.new::<Option<(Resource, Resource)>>()
-    values.push(Some((resource(1), resource(2)))) values.push(None)
+    values.push(Some((resource(1), resource(2)))); values.push(None)
     values.swap(0, 1)
     values.truncate(1)
     if !values.pop().unwrap_or(None).is_none() { return 0 }
@@ -52,20 +52,20 @@ fn manage_enum_tuple() -> Int32 {
 }
 fn manage_wrapper() -> Int32 {
     var values = Array.new::<Array<Int32>>()
-    var a = Array.new::<Int32>() a.push(20)
-    var b = Array.new::<Int32>() b.push(22)
-    values.push(a) values.push(b)
+    var a = Array.new::<Int32>(); a.push(20)
+    var b = Array.new::<Int32>(); b.push(22)
+    values.push(a); values.push(b)
     values.swap(0, 1)
     let result = values.borrow_ref(0).get(0).unwrap_or(0) + values.borrow_ref(1).get(0).unwrap_or(0)
-    values.truncate(1) values.clear()
+    values.truncate(1); values.clear()
     result
 }
 struct Pair { a: UInt64, b: Bool, c: Unit }
 fn manage_zero_and_aggregate() -> Int32 {
     var zero = Array.new::<Unit>()
-    zero.push({}) zero.push({})
+    zero.push({}); zero.push({})
     if !zero.swap(0, 1) || !zero.swap(1, 1) || zero.swap(0, 2) { return 0 }
-    zero.truncate(1) zero.clear()
+    zero.truncate(1); zero.clear()
     if zero.swap(0, 0) { return 0 }
     var values = Array.new::<Pair>()
     values.push(Pair { a: 18446744073709551615, b: false, c: {} })
@@ -79,19 +79,19 @@ fn manage_zero_and_aggregate() -> Int32 {
 }
 fn manage_references() -> Int32 {
     var values = Array.new::<&Int32>()
-    values.push((&*(alloc(20)))) values.push((&*(alloc(22))))
+    values.push((&*(alloc(20)))); values.push((&*(alloc(22))))
     values.swap(0, 1)
     let a = values.get(0)
     let b = values.get(1)
-    values.truncate(1) values.clear() values.release()
+    values.truncate(1); values.clear(); values.release()
     match a { Some(x) => match b { Some(y) => (*x) + (*y), None => 0 }, None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) {
         record_drop(self.id)
-        if self.id == 2 { let n = 32 let _ = 1 << n }
-        let zero = 0 let _ = 1 / zero
+        if self.id == 2 { let n = 32; let _ = 1 << n }
+        let zero = 0; let _ = 1 / zero
     }
 }
 fn manage_clear_failure() -> Int32 {
@@ -123,16 +123,16 @@ fn manage_budget() -> Int32 {
 }
 fn manage_evaluation() -> Int32 {
     var values = Array.new::<Int32>()
-    values.push(42) values.push(20)
-    values.swap({ record_drop(10) 0 }, { record_drop(20) 1 })
-    values.truncate({ record_drop(30) 1 })
+    values.push(42); values.push(20)
+    values.swap({ record_drop(10); 0 }, { record_drop(20); 1 })
+    values.truncate({ record_drop(30); 1 })
     let result = values.pop().unwrap_or(0) + 22
     values.clear()
     result
 }
 fn manage_transitions() -> Int32 {
     var values = Array.new::<Resource>()
-    values.push(resource(1)) values.push(resource(2)) values.push(resource(3))
+    values.push(resource(1)); values.push(resource(2)); values.push(resource(3))
     values.swap(0, 2)
     values.truncate(1)
     values.push(resource(4))

@@ -93,11 +93,11 @@ fn function_values_reject_invalid_signatures_bounds_effects_and_host_escapes() {
             "mismatch",
         ),
         (
-            "fn id(x: Int32) -> Int32 { x } fn bad() { let f = id f(true); }",
+            "fn id(x: Int32) -> Int32 { x } fn bad() { let f = id; f(true); }",
             "mismatch",
         ),
         (
-            "fn id(x: Int32) -> Int32 { x } fn bad() { let f = id f(); }",
+            "fn id(x: Int32) -> Int32 { x } fn bad() { let f = id; f(); }",
             "count",
         ),
         (
@@ -109,11 +109,11 @@ fn function_values_reject_invalid_signatures_bounds_effects_and_host_escapes() {
             "Non-generic",
         ),
         (
-            "fn id(x: Int32) -> Int32 { x } fn bad() { let f = id f::<Int32>(1); }",
+            "fn id(x: Int32) -> Int32 { x } fn bad() { let f = id; f::<Int32>(1); }",
             "do not accept",
         ),
         (
-            "fn async_fn() @suspends {} fn bad() { let f = async_fn f() }",
+            "fn async_fn() @suspends {} fn bad() { let f = async_fn; f() }",
             "@suspends",
         ),
         (
@@ -129,10 +129,26 @@ fn function_values_reject_invalid_signatures_bounds_effects_and_host_escapes() {
             "trait Mark {} fn need<T: Mark>(x: T) -> T { x } fn bad() { let f = need::<Int32> }",
             "does not satisfy",
         ),
-        ("fn bad() { let id = 42 id(1); }", "not a function"),
+        ("fn bad() { let id = 42; id(1); }", "not a function"),
         (
-            "fn bad(f: fn(&Int32) -> Int32) -> Int32 { let x = 42 f(&x) }",
+            "fn bad(f: fn(&Int32) -> Int32) -> Int32 { let x = 42; f(&x) }",
             "retained",
+        ),
+        (
+            "fn escape(x: &Int32) -> &Int32 { x } fn bad() { let f: fn(&Int32) @noescape -> &Int32 = escape }",
+            "does not satisfy @noescape",
+        ),
+        (
+            "fn escape(x: &Int32) -> &Int32 { x } fn relay(x: &Int32) -> &Int32 { escape(x) } fn bad() { let f: fn(&Int32) @noescape -> &Int32 = relay }",
+            "does not satisfy @noescape",
+        ),
+        (
+            "fn bad(f: fn(&Int32) -> Int32) { let promised: fn(&Int32) @noescape -> Int32 = f }",
+            "mismatch",
+        ),
+        (
+            "fn escape(x: &Int32) -> &Int32 { x } fn bad() { let f: fn(&Int32) @noescape -> &Int32 = |value: &Int32| { escape(value) } }",
+            "does not satisfy @noescape",
         ),
         ("fn bad<T>(x: T) { x(); }", "not a function"),
         ("fn bad(f: fn() -> Int32) -> Bool { f == f }", "operands"),
@@ -158,7 +174,7 @@ fn function_values_reject_invalid_signatures_bounds_effects_and_host_escapes() {
 fn function_values_keep_private_definition_scopes_and_imported_identities() {
     let mut modules = crate::ModuleSources::new();
     modules.insert("helpers", "pub struct Number { pub n: Int32 } fn hidden(x: Number) -> Int32 { x.n } pub fn get() -> fn(Number) -> Int32 { hidden } pub fn identity<T>(x: T) -> T { x } pub fn inc(x: Int32) -> Int32 { x + 1 }").unwrap();
-    let source = "import helpers as h.{inc as plus} fn main() -> Int32 { let f = h.get() let same = h.identity::<h.Number> if plus(41) != 42 { return 0 } let g = plus if g(41) != 42 { return 0 } f(same(h.Number { n: 42 })) }";
+    let source = "import helpers as h.{inc as plus} fn main() -> Int32 { let f = h.get(); let same = h.identity::<h.Number>; if plus(41) != 42 { return 0 }; let g = plus; if g(41) != 42 { return 0 }; f(same(h.Number { n: 42 })) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source_with_modules(source, &modules).unwrap();
@@ -181,9 +197,9 @@ fn language_function_values_keep_legacy_native_registration_abi() {
         fn main() -> Int32 {
             let f = increment
             let handle = vm.Vm.new()
-            { let vm_text = "increment" vm.register_int32_1(handle, &vm_text, increment) }
-            { let vm_text = "extern fn increment(x: Int32) -> Int32 fn go() -> Int32 {{ increment(41) }}" vm.load_source(handle, &vm_text) }
-            let result = { let vm_text = "go" vm.call_int32_0(handle, &vm_text) }
+            { let vm_text = "increment"; vm.register_int32_1(handle, &vm_text, increment) }
+            { let vm_text = "extern fn increment(x: Int32) -> Int32 fn go() -> Int32 {{ increment(41) }}"; vm.load_source(handle, &vm_text) }
+            let result = { let vm_text = "go"; vm.call_int32_0(handle, &vm_text) }
             vm.close(handle)
             if result == f(41) { result } else { 0 }
         }

@@ -11,7 +11,7 @@ fn read(s:&S)->Int32{s.n}
 fn apply(a:&mut S,b:&mut S,input:Input<Int32>)->Output {
     match input {
         Skip=>Output.Rejected(Failure.Denied),
-        Add(n)=>{a.n+=int32(n) b.n+=int32(n) Output.Accepted(a.n)}
+        Add(n)=>{a.n+=int32(n); b.n+=int32(n); Output.Accepted(a.n)}
     }
 }
 fn operation(a:domain.WriteHandle<S>,b:domain.WriteHandle<S>,input:Input<Int32>) @suspends ->Output {

@@ -160,7 +160,7 @@ fn module_constant_expressions_reject_unsupported_forms() {
     // shadowing case is a positive test.
     assert_eq!(
         evaluate(
-            "const A: Int32 = 1 fn main() -> Int32 { let A = 2 A }",
+            "const A: Int32 = 1 fn main() -> Int32 { let A = 2; A }",
             &ModuleSources::new()
         ),
         2

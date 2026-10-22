@@ -4,7 +4,7 @@ import joky/check
 import joky/mem
 import joky/array.{type Array}
 
-fn assert(condition: Bool) { let message = "owned domain" check.assert(condition, &message) }
+fn assert(condition: Bool) { let message = "owned domain"; check.assert(condition, &message) }
 struct State { title: String, players: Array<Int32>, flags: Array<Bool>, value: Int32 }
 fn make(value: Int32) -> State {
     var players = Array.new::<Int32>()
@@ -34,7 +34,7 @@ fn change(state: &mut State, value: Int32) -> Int32 {
 }
 struct TextOnly { title: String }
 fn text(value: Int32) -> TextOnly { TextOnly { title: if value == 1 { "first" } else { "second" } } }
-fn text_ok(state: &TextOnly) -> Bool { let value = "second" state.title.equals(&value) }
+fn text_ok(state: &TextOnly) -> Bool { let value = "second"; state.title.equals(&value) }
 fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, 7)
     let handle = owner.handle()
@@ -60,4 +60,4 @@ fn lifecycle() @suspends -> Int32 {
     assert(match receipt.wait() { Ok(version) => version == 1, _ => false })
     24
 }
-fn main() @suspends { assert(lifecycle() == 24) println("owned domains ok") }
+fn main() @suspends { assert(lifecycle() == 24); println("owned domains ok") }

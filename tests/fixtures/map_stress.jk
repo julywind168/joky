@@ -18,33 +18,33 @@ impl Hash for Key {
 struct Value { id: Int32, data: Array<Int32> }
 impl Drop for Value { fn drop(&mut self) { record_int(self.id) } }
 fn value(id: Int32) -> Value {
-    var data = Array.with_capacity::<Int32>(1) data.push(id)
+    var data = Array.with_capacity::<Int32>(1); data.push(id)
     let result = Value { id: id, data: data }
     record_int(-id)
     result
 }
 fn validate(m: &Map<Key, Value>, model: &Array<Int32>, seen: &mut Array<Int32>, step: Int32) -> Int32 {
-    { let assertion_condition = maps.test_invariant(m) let assertion_message = "Stress index invariant" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = maps.test_invariant(m); let assertion_message = "Stress index invariant"; assert(assertion_condition, &assertion_message) }
     let keys = m.keys()
     let values = m.values()
-    { let assertion_condition = slices.len(keys) == m.len() && slices.len(values) == m.len() let assertion_message = "Stress slice lengths" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = slices.len(keys) == m.len() && slices.len(values) == m.len(); let assertion_message = "Stress slice lengths"; assert(assertion_condition, &assertion_message) }
     var i: UInt64 = 0
     var digest = 0
     while i < m.len() {
         let key = slices.get(keys, i).unwrap_or(Key { id: -1, distribution: 0 })
-        { let assertion_condition = key.id >= 0 && key.id < 64 let assertion_message = "Stress key domain" assert(assertion_condition, &assertion_message) }
+        { let assertion_condition = key.id >= 0 && key.id < 64; let assertion_message = "Stress key domain"; assert(assertion_condition, &assertion_message) }
         let slot = uint64(key.id)
-        { let assertion_condition = seen.get(slot).unwrap_or(-1) != step let assertion_message = "Stress duplicate key" assert(assertion_condition, &assertion_message) }
+        { let assertion_condition = seen.get(slot).unwrap_or(-1) != step; let assertion_message = "Stress duplicate key"; assert(assertion_condition, &assertion_message) }
         seen.set(slot, step)
         let v = slices.borrow_ref(values, i)
-        { let assertion_condition = model.get(slot).unwrap_or(0) == v.id && v.data.get(0).unwrap_or(0) == v.id let assertion_message = "Stress owner contents" assert(assertion_condition, &assertion_message) }
+        { let assertion_condition = model.get(slot).unwrap_or(0) == v.id && v.data.get(0).unwrap_or(0) == v.id; let assertion_message = "Stress owner contents"; assert(assertion_condition, &assertion_message) }
         digest = digest + v.id * (key.id + 1)
         i = i + 1
     }
     var count = 0
     i = 0
-    while i < 64 { if model.get(i).unwrap_or(0) != 0 { count = count + 1 } i = i + 1 }
-    { let assertion_condition = int32(m.len()) == count let assertion_message = "Stress model length" assert(assertion_condition, &assertion_message) }
+    while i < 64 { if model.get(i).unwrap_or(0) != 0 { count = count + 1 }; i = i + 1 }
+    { let assertion_condition = int32(m.len()) == count; let assertion_message = "Stress model length"; assert(assertion_condition, &assertion_message) }
     digest
 }
 fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
@@ -52,7 +52,7 @@ fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
     var model = Array.new::<Int32>()
     var seen = Array.new::<Int32>()
     var i = 0
-    while i < 64 { model.push(0) seen.push(-1) i = i + 1 }
+    while i < 64 { model.push(0); seen.push(-1); i = i + 1 }
     var rng = seed
     var step = 0
     while step < steps {
@@ -60,8 +60,8 @@ fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
         let phase = step & 255
         var id = int32((rng >> 8) & 63)
         var op = int32((rng >> 16) & 7)
-        if phase < 64 { id = phase op = 0 }
-        if phase >= 64 && phase < 120 { id = phase - 64 op = 2 }
+        if phase < 64 { id = phase; op = 0 }
+        if phase >= 64 && phase < 120 { id = phase - 64; op = 2 }
         if phase == 120 { op = 4 }
         if phase == 255 { op = 5 }
         let key = Key { id: id, distribution: distribution }
@@ -69,29 +69,29 @@ fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
         let expected = model.get(slot).unwrap_or(0)
         var result = 0
         if op == 0 || op == 1 || op == 7 {
-            { let old = m.insert(key, value(step + 1)) result = match old { Some(v) => v.id, None => 0 } }
-            { let assertion_condition = result == expected let assertion_message = "Stress replaced owner" assert(assertion_condition, &assertion_message) }
+            { let old = m.insert(key, value(step + 1)); result = match old { Some(v) => v.id, None => 0 } }
+            { let assertion_condition = result == expected; let assertion_message = "Stress replaced owner"; assert(assertion_condition, &assertion_message) }
             model.set(slot, step + 1);
         }
         if op == 2 {
-            { let old = m.remove(key) result = match old { Some(v) => v.id, None => 0 } }
-            { let assertion_condition = result == expected let assertion_message = "Stress removed owner" assert(assertion_condition, &assertion_message) }
+            { let old = m.remove(key); result = match old { Some(v) => v.id, None => 0 } }
+            { let assertion_condition = result == expected; let assertion_message = "Stress removed owner"; assert(assertion_condition, &assertion_message) }
             model.set(slot, 0);
         }
         if op == 3 || op == 6 {
             if m.contains_key(key) { result = m.borrow_ref(key).id }
-            { let assertion_condition = result == expected let assertion_message = "Stress lookup" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = result == expected; let assertion_message = "Stress lookup"; assert(assertion_condition, &assertion_message) }
         }
         if op == 4 { m.reserve(if phase == 120 { 64 } else { uint64(rng & 31) }) }
-        if phase == 119 { { let assertion_condition = maps.test_deleted_count(&m) == 56 let assertion_message = "Stress tombstone density" assert(assertion_condition, &assertion_message) } }
-        if phase == 120 { { let assertion_condition = maps.test_deleted_count(&m) == 0 let assertion_message = "Stress same-size rehash" assert(assertion_condition, &assertion_message) } }
+        if phase == 119 { { let assertion_condition = maps.test_deleted_count(&m) == 56; let assertion_message = "Stress tombstone density"; assert(assertion_condition, &assertion_message) } }
+        if phase == 120 { { let assertion_condition = maps.test_deleted_count(&m) == 0; let assertion_message = "Stress same-size rehash"; assert(assertion_condition, &assertion_message) } }
         if op == 5 {
             m.clear()
             i = 0
-            while i < 64 { model.set(uint64(i), 0) i = i + 1 }
+            while i < 64 { model.set(uint64(i), 0); i = i + 1 }
         }
         let digest = validate(&m, &model, &mut seen, step)
-        record_int(Int32.MIN) record_int(step) record_int(result) record_int(int32(m.len())) record_int(digest)
+        record_int(Int32.MIN); record_int(step); record_int(result); record_int(int32(m.len())); record_int(digest)
         step = step + 1
     }
     42

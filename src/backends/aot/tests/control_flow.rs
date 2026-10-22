@@ -188,12 +188,12 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
             after
             value
         }
-        fn bool_identity(value: Bool) -> Bool { let saved: Bool = value saved }
+        fn bool_identity(value: Bool) -> Bool { let saved: Bool = value; saved }
         fn compute(x: Int32) -> Int32 {
             let unit: Unit = {}
             identity(unit)
-            let saved: Int32 = { let x = x + 1 x }
-            pick({ record(1) unit }, record(saved + x), { record(2) unit })
+            let saved: Int32 = { let x = x + 1; x }
+            pick({ record(1); unit }, record(saved + x), { record(2); unit })
         }
     "#,
     )

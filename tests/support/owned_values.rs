@@ -7,13 +7,13 @@ import joky/array.{{type Array}}
 import joky/option.{{type Option}}
 import joky/result.{{type Result}}
 {types}
-fn text(value:String) @suspends ->String {{task.yield_now() value}}
-fn length(value:String) @suspends ->UInt64 {{task.yield_now() value.byte_length()}}
-fn items(value:Array<Item>) @suspends ->Result<Array<Item>,String> {{task.yield_now() Result.Ok(value)}}
-fn nested(value:Array<Array<String>>) @suspends ->Array<Array<String>> {{task.yield_now() value}}
+fn text(value:String) @suspends ->String {{task.yield_now(); value}}
+fn length(value:String) @suspends ->UInt64 {{task.yield_now(); value.byte_length()}}
+fn items(value:Array<Item>) @suspends ->Result<Array<Item>,String> {{task.yield_now(); Result.Ok(value)}}
+fn nested(value:Array<Array<String>>) @suspends ->Array<Array<String>> {{task.yield_now(); value}}
 fn empty(_:Unit) @suspends ->Array<String> {{Array.new::<String>()}}
-fn absent(value:Option<String>) @suspends ->Option<String> {{task.yield_now() value}}
-fn reply(value:Result<String,String>) @suspends ->Result<String,String> {{task.yield_now() value}}
+fn absent(value:Option<String>) @suspends ->Option<String> {{task.yield_now(); value}}
+fn reply(value:Result<String,String>) @suspends ->Result<String,String> {{task.yield_now(); value}}
 "#
     );
     let quoted = format!("{:?}", script.replace('{', "{{").replace('}', "}}"));

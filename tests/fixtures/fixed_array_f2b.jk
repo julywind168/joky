@@ -12,7 +12,7 @@ fn nested() -> Int32 {
     match b.get(0) { Some(r) => first(&r), None => 0 }
 }
 struct Packet { lead: UInt8, values: Row, tail: Int64 }
-fn rewrite(p:Packet) -> Packet { var q=p q.values=row(7) q }
+fn rewrite(p:Packet) -> Packet { var q=p; q.values=row(7); q }
 fn records() -> Int32 {
     let p=Packet{lead:2,values:row(40),tail:3}
     let q=rewrite(p)
@@ -47,7 +47,7 @@ fn indirect()->Int32 {
 fn dynamic() -> Int32 {
     var a=Array.new::<Row>()
     var i=0
-    while i<20 { a.push(row(i)) i=i+1 }
+    while i<20 { a.push(row(i)); i=i+1 }
     let saved=match a.get(0) {Some(r)=>r,None=>row(-1)}
     a.set(0,row(42))
     a.reserve(64)
@@ -68,7 +68,7 @@ fn make_row(index:UInt64)->Row { row(int32(index)+40) }
 fn generated()->Int32 {
     let a=fixed.from_fn::<Row,3>(make_row)
     var counter=0
-    let b=fixed.from_fn::<Row,3>(|index:UInt64| { counter=counter+1 row(40+int32(index)) })
+    let b=fixed.from_fn::<Row,3>(|index:UInt64| { counter=counter+1; row(40+int32(index)) })
     if counter!=3 {return 0}
     let r=match a.get(2) {Some(r)=>r,None=>row(0)}
     let s=match b.get(2) {Some(r)=>r,None=>row(0)}

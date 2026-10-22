@@ -8,7 +8,7 @@ struct Input { amount:Int32, bits:Bits }
 struct Reply { value:Int32, bits:Bits }
 struct Empty {}
 struct Owned { text:String, n:Int32 }
-fn require(ok:Bool) {let message="domain queries" check.assert(ok,&message)}
+fn require(ok:Bool) {let message="domain queries"; check.assert(ok,&message)}
 fn make(n:Int32)->State {State{n:n}}
 fn owned(n:Int32)->Owned {Owned{text:"owned",n:n}}
 fn bits()->Bits {Bits{high:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626)}}
@@ -42,8 +42,8 @@ fn failing_packet(s:&State,p:Input)->Reply {Reply{value:s.n/p.amount,bits:p.bits
 fn fail_scalar(n:Int32) @suspends ->Int32 {domain.query(failing,n).unwrap()}
 fn fail_packet(n:Int32) @suspends ->Int32 {domain.query(failing_packet,Input{amount:n,bits:bits()}).unwrap().value}
 fn lifecycle() @suspends ->Int32 {
-    let a=domain.create(make,20) let b=domain.create(make,1)
-    let ar=a.read_handle() let br=b.read_handle()
+    let a=domain.create(make,20); let b=domain.create(make,1)
+    let ar=a.read_handle(); let br=b.read_handle()
     let snap=domain.snapshot_pair(ar,br,sum)
     let input=Input{amount:3,bits:bits()}
     require(domain.query_from(ar,scalar,3).unwrap()==23)
@@ -57,8 +57,8 @@ fn lifecycle() @suspends ->Int32 {
     require(domain.query_pair(ar,ar,pair,3).unwrap()==43)
     verify(domain.query_pair(ar,ar,pair_packet,input).unwrap(),43)
     var count=0
-    require(domain.query_from(ar,scalar,{task.yield_now() count=count+1 count}).unwrap()==21)
-    domain.query_from(ar,unit,{task.yield_now() count=count+1}).unwrap();
+    require(domain.query_from(ar,scalar,{task.yield_now(); count=count+1; count}).unwrap()==21)
+    domain.query_from(ar,unit,{task.yield_now(); count=count+1}).unwrap();
     require(count==2)
     domain.query_from(ar,empty,Empty{}).unwrap();
     require(domain.query_from(ar,echo::<Int32>,42).unwrap()==42)
@@ -70,7 +70,7 @@ fn lifecycle() @suspends ->Int32 {
     require(domain.read_from(ar,read).unwrap()==20)
     let c=domain.create(owned,2)
     verify(domain.query_from(c.read_handle(),query_owned,input).unwrap(),10)
-    c.close() b.close() a.close()
+    c.close(); b.close(); a.close()
     require(match domain.query_from(ar,scalar,3) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
     require(match domain.query_from(ar,packet,input) {Err(domain.DomainAccessError.Closed)=>true,_=>false})
     require(match domain.query_pair(ar,br,pair,3) {Err(domain.DomainAccessError.Closed)=>true,_=>false})

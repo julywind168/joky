@@ -615,9 +615,9 @@ mod tests {
             let source = JokyText::new(
                 r#"
                 import joky/task
-                fn run(n: Int32) @suspends -> Int32 { task.yield_now() n + 1 }
+                fn run(n: Int32) @suspends -> Int32 { task.yield_now(); n + 1 }
                 fn wrong(n: UInt32) @suspends -> Int32 { 1 / 0 }
-                fn result(n: Int32) @suspends -> Bool { let bad = 1 / 0 true }
+                fn result(n: Int32) @suspends -> Bool { let bad = 1 / 0; true }
                 fn sync(n: Int32) -> Int32 { 1 / 0 }
             "#,
             );

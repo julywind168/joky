@@ -112,21 +112,21 @@ fn map_iteration_rejects_conflicting_views_and_reused_consumed_inputs() {
     for body in [
         "fn bad(m: &Map<Int32,Int32>) { slices.set(m.keys(),0,1); }",
         "fn bad(m: &Map<Int32,Int32>) { m.values_mut(); }",
-        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.keys() m.insert(1,2) slices.len(v); }",
-        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values() m.pop() slices.len(v); }",
-        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values_mut() m.keys() slices.set(v,0,1); }",
-        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values_mut() m.values_mut() slices.set(v,0,1); }",
-        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values() m.extend(Array.new::<(Int32,Int32)>()) slices.len(v); }",
-        "fn bad(m: Map<Int32,Int32>) { let v=m.values() m.into_entries() slices.len(v); }",
-        "fn bad() -> &Slice<Int32> { let m=Map.new::<Int32,Int32>() m.keys() }",
-        "fn bad() -> &Slice<Int32> { let m=Map.new::<Int32,Int32>() m.values() }",
-        "fn bad() { let input=Array.new::<(Int32,Int32)>() Map.from_entries(input) input.len(); }",
-        "fn bad(m: &mut Map<Int32,Int32>) { let input=Array.new::<(Int32,Int32)>() m.extend(input) input.len(); }",
-        "fn bad(m: Map<Int32,Int32>) { m.into_entries() m.len(); }",
+        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.keys(); m.insert(1,2); slices.len(v); }",
+        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values(); m.pop(); slices.len(v); }",
+        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values_mut(); m.keys(); slices.set(v,0,1); }",
+        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values_mut(); m.values_mut(); slices.set(v,0,1); }",
+        "fn bad(m: &mut Map<Int32,Int32>) { let v=m.values(); m.extend(Array.new::<(Int32,Int32)>()); slices.len(v); }",
+        "fn bad(m: Map<Int32,Int32>) { let v=m.values(); m.into_entries(); slices.len(v); }",
+        "fn bad() -> &Slice<Int32> { let m=Map.new::<Int32,Int32>(); m.keys() }",
+        "fn bad() -> &Slice<Int32> { let m=Map.new::<Int32,Int32>(); m.values() }",
+        "fn bad() { let input=Array.new::<(Int32,Int32)>(); Map.from_entries(input); input.len(); }",
+        "fn bad(m: &mut Map<Int32,Int32>) { let input=Array.new::<(Int32,Int32)>(); m.extend(input); input.len(); }",
+        "fn bad(m: Map<Int32,Int32>) { m.into_entries(); m.len(); }",
         "fn bad(m: &Map<Int32,Array<Int32>>) { slices.get(m.values(),0); }",
-        "fn bad(m: &mut Map<Int32,&Int32>) { let n=42 slices.set(m.values_mut(),0,&n); }",
-        "fn bad(m: &mut Map<Int32,&Int32>) { let n=42 var input=Array.new::<(Int32,&Int32)>() input.push((1,&n)) m.extend(input); }",
-        "fn bad() { let p=alloc(42) var input=Array.new::<(Int32,&Int32)>() input.push((1,(&*p))) let m=Map.from_entries(input) let output=m.into_entries() output.release() ; (*(p) = 0) }",
+        "fn bad(m: &mut Map<Int32,&Int32>) { let n=42; slices.set(m.values_mut(),0,&n); }",
+        "fn bad(m: &mut Map<Int32,&Int32>) { let n=42; var input=Array.new::<(Int32,&Int32)>(); input.push((1,&n)); m.extend(input); }",
+        "fn bad() { let p=alloc(42); var input=Array.new::<(Int32,&Int32)>(); input.push((1,(&*p))); let m=Map.from_entries(input); let output=m.into_entries(); output.release() ; (*(p) = 0) }",
     ] { rejected(body); }
 }
 #[test]
@@ -281,23 +281,23 @@ fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
             var round = 0
             while round < 12 {
                 var i = 0
-                while i < 9 { m.insert(Key { id: i }, i * 10) i = i + 1 }
+                while i < 9 { m.insert(Key { id: i }, i * 10); i = i + 1 }
                 m.remove(Key { id: 4 })
-                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "Before pop" assert(assertion_condition, &assertion_message) }
+                { let assertion_condition = maps.test_invariant(&m); let assertion_message = "Before pop"; assert(assertion_condition, &assertion_message) }
                 while !m.is_empty() {
                     match m.pop() {
                         Some((key, value)) => {
-                            { let assertion_condition = value == key.id * 10 && !m.contains_key(key) let assertion_message = "Popped contents" assert(assertion_condition, &assertion_message) }
-                            { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After pop" assert(assertion_condition, &assertion_message) }
+                            { let assertion_condition = value == key.id * 10 && !m.contains_key(key); let assertion_message = "Popped contents"; assert(assertion_condition, &assertion_message) }
+                            { let assertion_condition = maps.test_invariant(&m); let assertion_message = "After pop"; assert(assertion_condition, &assertion_message) }
                         }
-                        None => { { let assertion_condition = false let assertion_message = "Unexpected empty map" assert(assertion_condition, &assertion_message) } }
+                        None => { { let assertion_condition = false; let assertion_message = "Unexpected empty map"; assert(assertion_condition, &assertion_message) } }
                     }
                 }
-                { let assertion_condition = m.pop().is_none() && maps.test_invariant(&m) let assertion_message = "After draining" assert(assertion_condition, &assertion_message) }
+                { let assertion_condition = m.pop().is_none() && maps.test_invariant(&m); let assertion_message = "After draining"; assert(assertion_condition, &assertion_message) }
                 m.reserve(20)
-                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After rehash" assert(assertion_condition, &assertion_message) }
-                m.insert(Key { id: 10 }, 42) m.clear()
-                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After reuse" assert(assertion_condition, &assertion_message) }
+                { let assertion_condition = maps.test_invariant(&m); let assertion_message = "After rehash"; assert(assertion_condition, &assertion_message) }
+                m.insert(Key { id: 10 }, 42); m.clear()
+                { let assertion_condition = maps.test_invariant(&m); let assertion_message = "After reuse"; assert(assertion_condition, &assertion_message) }
                 round = round + 1
             }
             42

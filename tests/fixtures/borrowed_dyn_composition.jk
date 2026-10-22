@@ -38,9 +38,9 @@ fn dyn_reborrow() -> Int32 {
     let result = twice(&mut *v)
     if result == 42 && v.value() == 21 { c.value * 2 } else { 0 }
 }
-fn dyn_generic_reborrow() -> Int32 { var o = Other { value: 0 } generic(&mut o) }
+fn dyn_generic_reborrow() -> Int32 { var o = Other { value: 0 }; generic(&mut o) }
 struct Pair { left: Counter, right: Other }
-fn together(a: MutView, b: View) @noescape -> Int32 { update(&mut *a, 21) a.value() + b.value() }
+fn together(a: MutView, b: View) @noescape -> Int32 { update(&mut *a, 21); a.value() + b.value() }
 fn dyn_fields() -> Int32 {
     var p = Pair { left: Counter { value: 0 }, right: Other { value: 20 } }
     let left: MutView = &mut p.left

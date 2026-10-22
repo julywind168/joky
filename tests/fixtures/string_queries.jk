@@ -30,9 +30,9 @@ fn combined() -> String {
 }
 fn signed_min() -> String { Int64.MIN.to_string() }
 fn unsigned_max() -> String { UInt64.MAX.to_string() }
-fn concat_empty() -> String { let left = "" let right = "" left.concat(&right) }
-fn concat_empty_left() -> String { let left = "" let right = "🙂" left.concat(&right) }
-fn concat_empty_right() -> String { let left = "中" let right = "" left.concat(&right) }
+fn concat_empty() -> String { let left = ""; let right = ""; left.concat(&right) }
+fn concat_empty_left() -> String { let left = ""; let right = "🙂"; left.concat(&right) }
+fn concat_empty_right() -> String { let left = "中"; let right = ""; left.concat(&right) }
 fn queries() -> Int32 {
     let value = "aé中🙂\0e\u{301}"
     if value.rune_count() != 7 { return 1 }
@@ -58,8 +58,8 @@ fn queries() -> Int32 {
     }
     42
 }
-fn bad_offset() -> Int32 { let value = "中" value.next_rune(1); 42 }
-fn huge_offset() -> Int32 { let value = "中" value.next_rune(UInt64.MAX); 42 }
+fn bad_offset() -> Int32 { let value = "中"; value.next_rune(1); 42 }
+fn huge_offset() -> Int32 { let value = "中"; value.next_rune(UInt64.MAX); 42 }
 fn overflow() -> Int32 {
     var data = "中".into_bytes()
     data.reserve(UInt64.MAX)

@@ -45,11 +45,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         struct State { count: Int32 }
         fn create() -> State { State { count: 0 } }
         fn increment_state(state: &mut State) @noescape -> Int32 {
-            state.count = state.count + 1 state.count
+            state.count = state.count + 1; state.count
         }
         fn read(state: &State) @noescape -> Int32 { state.count }
         extern fn increment() -> Int32
-        fn work() @suspends -> Int32 { increment(); task.sleep_ms(16) increment() }
+        fn work() @suspends -> Int32 { increment(); task.sleep_ms(16); increment() }
     "#,
     )?;
     let owner = vm.create_instance("create", &[])?;

@@ -10,17 +10,17 @@ impl<T> Key<T> {
     fn eq(self, other: Self) -> Bool { false }
     fn hash(self) -> UInt64 { 0 }
 }
-fn same<K: Equal + Hashed>(a: K, b: K) -> Bool { a.eq(b) && a.hash() == b.hash() }
+fn same<K: Copy + Equal + Hashed>(a: K, b: K) -> Bool { a.eq(b) && a.hash() == b.hash() }
 fn protocols() -> Int32 {
-    { let assertion_condition = Hashed.hash(int32(0)) == 0 && Hashed.hash(int32(1)) == 6238072747940578789 let assertion_message = "Small hash vectors" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = Hashed.hash(int32(42)) == 12058926934050108962 let assertion_message = "Hash 42" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = Hashed.hash(Int32.MAX) == 8876943580449041804 && Hashed.hash(Int32.MIN) == 11926543287740443804 let assertion_message = "Int32 hash vectors" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = Hashed.hash(Int64.MAX) == 6514504133438201533 && Hashed.hash(Int64.MIN) == 2720858781877447050 let assertion_message = "Int64 hash vectors" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = Hashed.hash(UInt32.MAX) == 10030294862651378044 let assertion_message = "UInt32 hash vector" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = Hashed.hash(int32(-1)) == 13029008266876403067 && Hashed.hash(UInt64.MAX) == 13029008266876403067 let assertion_message = "Unsigned conversion" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = Hashed.hash(false) == 0 && Hashed.hash(true) == 6238072747940578789 && Hashed.hash({}) == 0 let assertion_message = "Bool and Unit hashes" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = same(Key { value: int32(42) }, Key { value: int32(42) }) let assertion_message = "Fixed trait method" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = !same(Key { value: int32(42) }, Key { value: int32(43) }) let assertion_message = "Unequal records" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Hashed.hash(int32(0)) == 0 && Hashed.hash(int32(1)) == 6238072747940578789; let assertion_message = "Small hash vectors"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Hashed.hash(int32(42)) == 12058926934050108962; let assertion_message = "Hash 42"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Hashed.hash(Int32.MAX) == 8876943580449041804 && Hashed.hash(Int32.MIN) == 11926543287740443804; let assertion_message = "Int32 hash vectors"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Hashed.hash(Int64.MAX) == 6514504133438201533 && Hashed.hash(Int64.MIN) == 2720858781877447050; let assertion_message = "Int64 hash vectors"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Hashed.hash(UInt32.MAX) == 10030294862651378044; let assertion_message = "UInt32 hash vector"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Hashed.hash(int32(-1)) == 13029008266876403067 && Hashed.hash(UInt64.MAX) == 13029008266876403067; let assertion_message = "Unsigned conversion"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = Hashed.hash(false) == 0 && Hashed.hash(true) == 6238072747940578789 && Hashed.hash({}) == 0; let assertion_message = "Bool and Unit hashes"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = same(Key { value: int32(42) }, Key { value: int32(42) }); let assertion_message = "Fixed trait method"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = !same(Key { value: int32(42) }, Key { value: int32(43) }); let assertion_message = "Unequal records"; assert(assertion_condition, &assertion_message) }
     42
 }
 fn main() { record_int(protocols()) }

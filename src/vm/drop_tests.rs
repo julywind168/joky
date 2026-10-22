@@ -156,13 +156,13 @@ fn drop_transfers_are_atomic_at_every_interpreter_pause() {
 fn drop_contracts_reject_explicit_calls_and_partial_moves() {
     let prefix = "import joky/array.{type Array} import joky/drop.{type Drop} struct R { values: Array<Int32> } impl Drop for R { fn drop(&mut self) {} } fn make() -> R { R { values: Array.new::<Int32>() } }";
     let cases = [
-        format!("{prefix} fn bad() {{ var r = make() r.drop() }}"),
-        format!("{prefix} fn bad() {{ var r = make() Drop.drop(&mut r) }}"),
-        format!("{prefix} fn bad() {{ var r = make() let f = R.drop f(&mut r) }}"),
-        format!("{prefix} fn bad() {{ let r = make() let v = r.values }}"),
+        format!("{prefix} fn bad() {{ var r = make(); r.drop() }}"),
+        format!("{prefix} fn bad() {{ var r = make(); Drop.drop(&mut r) }}"),
+        format!("{prefix} fn bad() {{ var r = make(); let f = R.drop; f(&mut r) }}"),
+        format!("{prefix} fn bad() {{ let r = make(); let v = r.values }}"),
         format!("{prefix} fn bad() {{ let v = make().values }}"),
-        format!("{prefix} fn bad() {{ var r = make() r.values = Array.new::<Int32>() }}"),
-        format!("{prefix} struct Outer {{ inner: R }} fn bad() {{ var r = Outer {{ inner: make() }} r.inner.values = Array.new::<Int32>() }}"),
+        format!("{prefix} fn bad() {{ var r = make(); r.values = Array.new::<Int32>() }}"),
+        format!("{prefix} struct Outer {{ inner: R }} fn bad() {{ var r = Outer {{ inner: make() }}; r.inner.values = Array.new::<Int32>() }}"),
         "import joky/drop.{type Drop} struct R { id: Int32 } impl Drop for R { fn drop(&mut self) {} }".into(),
         "import joky/drop.{type Drop} import joky/array.{type Array} struct R { a: Array<Int32> } impl Drop for R { fn drop(&self) {} }".into(),
         "import joky/drop.{type Drop} import joky/array.{type Array} struct R { a: Array<Int32> } impl Drop for R { fn drop(&mut self) -> Int32 { 1 } }".into(),
@@ -186,7 +186,7 @@ fn user_trait_named_drop_is_ordinary_and_builtin_needs_no_prelude() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.set_prelude_enabled(false);
-        vm.load_source("trait Drop { fn drop(&self) -> Int32 } struct R { id: Int32 } impl Drop for R { fn drop(&self) -> Int32 { self.id } } fn check() -> Int32 { let r = R { id: 42 } r.drop() }").unwrap();
+        vm.load_source("trait Drop { fn drop(&self) -> Int32 } struct R { id: Int32 } impl Drop for R { fn drop(&self) -> Int32 { self.id } } fn check() -> Int32 { let r = R { id: 42 }; r.drop() }").unwrap();
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
         unsafe {
             vm.register_fn(
@@ -223,7 +223,7 @@ fn drop_hooks_preserve_private_generic_definition_scope() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = vm(mode);
         vm.load_source_with_modules(
-            "import resource fn check() -> Int32 { let r = resource.make::<Int32>(7) 42 }",
+            "import resource fn check() -> Int32 { let r = resource.make::<Int32>(7); 42 }",
             &modules,
         )
         .unwrap_or_else(|e| panic!("{e}"));
@@ -245,7 +245,7 @@ fn recursive_drop_is_bounded_and_releases_every_buffer() {
             struct R { values: Array<Int32> }
             impl Drop for R { fn drop(&mut self) { let next = make() } }
             fn make() -> R { R { values: Array.new::<Int32>() } }
-            fn check() -> Int32 { let value = make() 42 }
+            fn check() -> Int32 { let value = make(); 42 }
         "#,
         )
         .unwrap_or_else(|e| panic!("{e}"));
@@ -260,7 +260,7 @@ fn recursive_drop_is_bounded_and_releases_every_buffer() {
 fn interpreter_drop_cannot_bypass_instruction_limits() {
     let mut vm = vm(VmMode::Interpreter);
     vm.load_source(&format!(
-        "{SOURCE} struct Looping {{ values: Array<Int32> }} impl Drop for Looping {{ fn drop(&mut self) {{ while true {{}} }} }} fn check() -> Int32 {{ let first = resource(1) let second = Looping {{ values: Array.new::<Int32>() }} 42 }}"
+        "{SOURCE} struct Looping {{ values: Array<Int32> }} impl Drop for Looping {{ fn drop(&mut self) {{ while true {{}} }} }} fn check() -> Int32 {{ let first = resource(1); let second = Looping {{ values: Array.new::<Int32>() }}; 42 }}"
     )).unwrap_or_else(|e| panic!("{e}"));
     EVENTS.with(|events| events.borrow_mut().clear());
     let error = vm.call_int32_0("check").unwrap_err();

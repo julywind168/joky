@@ -4,9 +4,9 @@ struct Counter { value: UInt64 }
 fn main() {
     let small: UInt32 = 4294967295
     let counter = Counter { value: 18446744073709551615 }
-    println(&small)
-    { let displayed: UInt64 = counter.value println(&displayed) }
-    { let displayed: UInt64 = counter.value / 2 println(&displayed) }
-    { let displayed: UInt32 = small + 1 println(&displayed) }
-    { let displayed: UInt64 = counter.value + 1 println(&displayed) }
+    println(small)
+    println(counter.value)
+    println(counter.value / 2)
+    println(small + 1)
+    println(counter.value + 1)
 }

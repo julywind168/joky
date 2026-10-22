@@ -47,8 +47,8 @@ fn registered_jit_function_outlives_its_vm_in_both_target_modes() {
             fn add(a: Int32, b: Int32) -> Int32 {{ a + b }}
             fn prepare() @suspends {{
                 let child = {constructor}()
-                {{ let vm_text = "add" vm.register_int32_2(child, &vm_text, add) }}
-                {{ let vm_text = "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{{{ add(20, 22) }}}}" vm.load_source(child, &vm_text) }}
+                {{ let vm_text = "add"; vm.register_int32_2(child, &vm_text, add) }}
+                {{ let vm_text = "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{{{ add(20, 22) }}}}"; vm.load_source(child, &vm_text) }}
                 task.sleep_ms(60000)
             }}
         "#
@@ -128,7 +128,7 @@ fn nested_vm_calls_release_the_registry_borrow_before_execution() {
                 text(
                     r#"
             import joky/vm
-            fn f() -> Int32 { let child = vm.Vm.new() vm.close(child) }
+            fn f() -> Int32 { let child = vm.Vm.new(); vm.close(child) }
         "#
                 )
                 .as_ptr()
@@ -188,8 +188,8 @@ fn handled_nested_division_does_not_poison_outer_or_later_calls() {
                 import joky/vm
                 fn handled() -> Int32 {{
                     let child = {nested}()
-                    {{ let vm_text = "fn bad() -> Int32 {{{{ 7 / 0 }}}}" vm.load_source(child, &vm_text) }}
-                    {{ let vm_text = "bad" vm.call_int32_0(child, &vm_text) }}
+                    {{ let vm_text = "fn bad() -> Int32 {{{{ 7 / 0 }}}}"; vm.load_source(child, &vm_text) }}
+                    {{ let vm_text = "bad"; vm.call_int32_0(child, &vm_text) }}
                     let failed = vm.error_code()
                     vm.close(child)
                     failed + 41
@@ -306,7 +306,7 @@ fn pending(n: Int32) @suspends -> Int32 {
     task.sleep_ms(60000)
     42
 }
-fn fail(n: Int32) @suspends -> Int32 { task.yield_now() 1 / n }
+fn fail(n: Int32) @suspends -> Int32 { task.yield_now(); 1 / n }
 fn wrong(n: Int32) @suspends -> Bool { true }
 "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -378,7 +378,7 @@ fn script_bridge_cancellation(
     flat: bool,
 ) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
-    let script = "import joky/domain import joky/task struct S { n: Int32 } fn make(n:Int32)->S { S{n:n} } fn read(s:&S)->Int32{s.n} fn work(n:Int32) @suspends ->Int32 { let s=domain.create(make,42) task.yield_now() domain.read_from(s.read_handle(),read).unwrap() }";
+    let script = "import joky/domain import joky/task struct S { n: Int32 } fn make(n:Int32)->S { S{n:n} } fn read(s:&S)->Int32{s.n} fn work(n:Int32) @suspends ->Int32 { let s=domain.create(make,42); task.yield_now(); domain.read_from(s.read_handle(),read).unwrap() }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut host = VmEngine::with_mode(mode);
         let source = if flat {
@@ -388,8 +388,8 @@ fn script_bridge_cancellation(
                     "struct Message { n:Int32 } fn work(n:Message) @suspends ->Message",
                 )
                 .replace(
-                    "task.yield_now() domain.read_from(s.read_handle(),read).unwrap()",
-                    "task.yield_now() Message { n:domain.read_from(s.read_handle(),read).unwrap() }",
+                    "task.yield_now(); domain.read_from(s.read_handle(),read).unwrap()",
+                    "task.yield_now(); Message { n:domain.read_from(s.read_handle(),read).unwrap() }",
                 );
             script_call_source(&script, mode, "work")
                 .replace(
@@ -398,7 +398,7 @@ fn script_bridge_cancellation(
                 )
                 .replace(
                     "h.call::<Int32, Int32>(\"work\", 0)",
-                    "let reply = h.call::<Message, Message>(\"work\", Message { n:0 }) reply.n",
+                    "let reply = h.call::<Message, Message>(\"work\", Message { n:0 }); reply.n",
                 )
         } else {
             script_call_source(script, mode, "work")
@@ -476,7 +476,7 @@ fn script_scalar_bridge_uses_host_clock_without_polling_early() {
         for script_mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut host = VmEngine::with_mode(host_mode);
             host.load_source(&script_call_source(
-                "import joky/task fn work(n:Int32) @suspends ->Int32 { task.sleep_ms(50) 42 }",
+                "import joky/task fn work(n:Int32) @suspends ->Int32 { task.sleep_ms(50); 42 }",
                 script_mode,
                 "work",
             ))
@@ -520,14 +520,14 @@ fn script_flat_bridge_checks_contract_before_running_target() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for target in [
             "fn work(n:UInt32) @suspends ->Int32 { 1/0 }",
-            "fn work(n:Int32) @suspends ->UInt32 { let fail=1/0 0 }",
+            "fn work(n:Int32) @suspends ->UInt32 { let fail=1/0; 0 }",
             "fn work(n:Int32) ->Int32 { 1/0 }",
             "fn work(n:Int32, other:Int32) @suspends ->Int32 { 1/0 }",
-            "struct Message { other:Int32 } fn work(n:Message) @suspends ->Message { let fail=1/0 n }",
+            "struct Message { other:Int32 } fn work(n:Message) @suspends ->Message { let fail=1/0; n }",
         ] {
             let mut source = script_call_source(target, mode, "work").replace("import joky/vm", "import joky/vm struct Message { n:Int32 }");
             source = source.replace("h.call::<Int32, Int32>(\"work\", 0)", if target.contains("struct Message") {
-                "let reply = h.call::<Message, Message>(\"work\", Message { n:0 }) reply.n"
+                "let reply = h.call::<Message, Message>(\"work\", Message { n:0 }); reply.n"
             } else { "h.call::<Int32, Int32>(\"work\", 0)" });
             let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
             let mut host = VmEngine::with_mode(mode);
@@ -580,10 +580,10 @@ fn migration_cancellation(
     .replace('{', "{{")
     .replace('}', "}}");
     let prepare = if incremental {
-        r#"let method="start" let advance="advance"
+        r#"let method="start"; let advance="advance"
     assert(vm.begin_migration(h,vm.domain_schema(h),&next,&method,&advance)==0)
     var status=vm.step_migration(h,2)
-    while status==1 {task.yield_now() status=vm.step_migration(h,2)}
+    while status==1 {task.yield_now(); status=vm.step_migration(h,2)}
     assert(status==0)"#
     } else {
         r#"let method="upgrade"
@@ -591,7 +591,7 @@ fn migration_cancellation(
     };
     let source = format!(
         r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="migration cancellation" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="migration cancellation"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
     let next={next:?}
@@ -729,25 +729,25 @@ fn batch_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhau
         .replace('}', "}}");
     let source = format!(
         r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="migration batch cancellation" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="migration batch cancellation"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
-    let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty=""
+    let next={next:?}; let start="start"; let advance="advance"; let ledger="upgrade_ledger"; let empty=""
     assert(vm.begin_migration_batch(h,&next)==0)
     task.yield_now()
     assert(vm.stage_migration(h,&start,&advance)==0)
     task.yield_now()
     assert(vm.stage_migration(h,&ledger,&empty)==0)
     var status=vm.step_migration(h,2)
-    while status==1 {{task.yield_now() status=vm.step_migration(h,2)}}
+    while status==1 {{task.yield_now(); status=vm.step_migration(h,2)}}
     assert(status==0)
     task.yield_now()
     assert(vm.publish_migration(h)==0)
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==194)
 }}
 fn main() @suspends ->Int32 {{
-    let owner=domain.directory(4) let directory=owner.handle()
-    let h=vm.Vm.interpreter() let old={old:?}
+    let owner=domain.directory(4); let directory=owner.handle()
+    let h=vm.Vm.interpreter(); let old={old:?}
     assert(vm.load_source(h,&old)==0)
     race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.close(h)==0)
@@ -787,10 +787,10 @@ fn vm_resources_move_return_and_drop_on_success_or_failure() {
                 vm.load_source(moved.value, &source)
                 vm.call_int32_0(moved.value, &name) / fail
             }
-            fn early() -> Int32 { let engine = make() return 42 }
-            fn close() -> Int32 { let engine = vm.Vm.new() engine.close() }
+            fn early() -> Int32 { let engine = make(); return 42 }
+            fn close() -> Int32 { let engine = vm.Vm.new(); engine.close() }
             fn status() -> Int32 {
-                { let engine = make() let invalid = "fn broken(" vm.load_source(engine.value, &invalid) }
+                { let engine = make(); let invalid = "fn broken("; vm.load_source(engine.value, &invalid) }
                 vm.error_code()
             }
         "#,
@@ -831,10 +831,10 @@ fn vm_resource_factory_rolls_back_when_owner_allocation_fails() {
 #[test]
 fn vm_resource_rejects_copy_double_close_and_close_during_borrow() {
     for body in [
-        "let h = vm.Vm.new() let moved = h vm.module_count(h)",
-        "let h = vm.Vm.new() h.close() h.close()",
-        "let h = vm.Vm.new() parallel { | h.call::<Int32,Int32>(\"run\",0) | h.close() };",
-        "let h = vm.Vm.new() let raw = h.owner",
+        "let h = vm.Vm.new(); let moved = h; vm.module_count(h)",
+        "let h = vm.Vm.new(); h.close(); h.close()",
+        "let h = vm.Vm.new(); parallel { | h.call::<Int32,Int32>(\"run\",0) | h.close() };",
+        "let h = vm.Vm.new(); let raw = h.owner",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut host = VmEngine::with_mode(mode);
@@ -998,8 +998,8 @@ fn exchange(value:Array<Result<String,String>>) @suspends ->Array<Result<String,
     format!(
         r#"import joky/vm import joky/array.{{type Array}} import joky/result.{{type Result}}
 fn main() @suspends ->Int32 {{
-    let h=vm.Vm.{create}() h.load_source({quoted})!
-    var values=Array.new::<Result<String,String>>() values.push(Result.Err("input🙂"))
+    let h=vm.Vm.{create}(); h.load_source({quoted})!
+    var values=Array.new::<Result<String,String>>(); values.push(Result.Err("input🙂"))
     let result=h.call::<Array<Result<String,String>>,Array<Result<String,String>>>("exchange",values)
     h.close();
     if result.len()==2 {{42}} else {{0}}

@@ -4,9 +4,9 @@ const OLD: &str = r#"import joky/domain
 struct Room { score:Int32 }
 fn make(score:Int32)->Room { Room{score:score} }
 fn read(room:&Room)->Int32 {room.score}
-fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value room.score}
+fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value; room.score}
 fn version()->Int32 {1}
-fn wire() @suspends { let room=domain.create(make,10) domain.read_from(room.read_handle(),read).unwrap(); domain.write_to(room.handle(),add,1).unwrap(); }
+fn wire() @suspends { let room=domain.create(make,10); domain.read_from(room.read_handle(),read).unwrap(); domain.write_to(room.handle(),add,1).unwrap(); }
 "#;
 const NEW: &str = r#"import joky/domain
 struct Room { score:Int64, level:Int32 }
@@ -98,7 +98,7 @@ fn migration_conflicts_failures_cancellation_and_schema_identity_preserve_old_ro
         assert!(prepare(&vm, &registry, &owners, 0, NEW, "upgrade").is_err());
         for source in [
             NEW.replace("int64(old.score)","int64(old.missing)"),
-            NEW.replace("fn upgrade(old:&PreviousState)->Room {", "fn upgrade(old:&PreviousState)->Room {let message=\"failed migration\" check.assert(false,&message) ").replace("import joky/domain","import joky/domain import joky/check"),
+            NEW.replace("fn upgrade(old:&PreviousState)->Room {", "fn upgrade(old:&PreviousState)->Room {let message=\"failed migration\"; check.assert(false,&message) ").replace("import joky/domain","import joky/domain import joky/check"),
             format!("{NEW}\nstruct PreviousState {{score:Int32}}"),
             NEW.replace("old:&PreviousState","old:&mut PreviousState"),
         ] {
@@ -456,14 +456,14 @@ fn migration_schema_change_only_behind_array_storage_is_visible() {
     let old = r#"import joky/array.{type Array}
 struct Player { name:String,score:Int32 }
 struct Room {players:Array<Player>}
-fn make(n:Int32)->Room {var players=Array.new::<Player>() players.push(Player{name:"test",score:n}) Room{players:players}}
+fn make(n:Int32)->Room {var players=Array.new::<Player>(); players.push(Player{name:"test",score:n}); Room{players:players}}
 fn read(s:&Room)->Int32 {s.players.borrow_ref(0).score}"#;
     let next = r#"import joky/array as items.{type Array}
 struct Player { name:String,score:Int64 }
 struct Room {players:Array<Player>}
 fn upgrade(s:&PreviousState)->Room {
     let old=s.players.borrow_ref(0)
-    var players=Array.new::<Player>() players.push(Player{name:old.name.clone(),score:int64(old.score)}) Room{players:players}
+    var players=Array.new::<Player>(); players.push(Player{name:old.name.clone(),score:int64(old.score)}); Room{players:players}
 }
 fn read(s:&Room)->Int64 {s.players.borrow_ref(0).score}"#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

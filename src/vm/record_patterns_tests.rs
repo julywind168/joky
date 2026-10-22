@@ -186,19 +186,19 @@ fn record_patterns_destructure_public_fields_across_modules() {
 fn record_patterns_enforce_field_visibility_across_modules() {
     for (body, message) in [
         (
-            "fn bad() -> Int32 { var value = make(1) let p.Parcel { tag, payload } = value tag }",
+            "fn bad() -> Int32 { var value = make(1); let p.Parcel { tag, payload } = value; tag }",
             "private",
         ),
         (
-            "fn bad() -> Int32 { var value = make(1) let p.Parcel { tag, payload: _ } = value tag }",
+            "fn bad() -> Int32 { var value = make(1); let p.Parcel { tag, payload: _ } = value; tag }",
             "private",
         ),
         (
-            "fn bad() -> Int32 { var value = make(1) let p.Parcel { tag } = value tag }",
+            "fn bad() -> Int32 { var value = make(1); let p.Parcel { tag } = value; tag }",
             "not visible here",
         ),
         (
-            "fn bad() -> Int32 { let value = sealed(1) let p.Sealed { code } = value code }",
+            "fn bad() -> Int32 { let value = sealed(1); let p.Sealed { code } = value; code }",
             "not visible here",
         ),
     ] {
@@ -236,36 +236,36 @@ fn record_patterns_reject_drop_ancestors_mut_and_suspension() {
         // Moving an owning field whose own Drop transfers with it stays legal;
         // opening that field and moving its interior is rejected.
         (
-            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { left: Resource { id, .. }, .. } = r id }",
+            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { left: Resource { id, .. }, .. } = r; id }",
             "implementing Drop",
         ),
         (
-            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { left, .. } = r let Resource { values, .. } = left int32(values.len()) }",
+            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { left, .. } = r; let Resource { values, .. } = left; int32(values.len()) }",
             "implementing Drop",
         ),
         // Copying Copy fields and ignoring owners keeps the record's own Drop.
         (
-            "fn good() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { tag, .. } = r tag }",
+            "fn good() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { tag, .. } = r; tag }",
             "unused",
         ),
         (
-            "fn good2() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { left, .. } = r left.id }",
+            "fn good2() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { left, .. } = r; left.id }",
             "unused",
         ),
         (
-            "fn bad() @suspends -> Int32 { let h = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { tag, .. } = h tag }",
+            "fn bad() @suspends -> Int32 { let h = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { tag, .. } = h; tag }",
             "synchronous function",
         ),
         (
-            "fn bad() @suspends -> Int32 { let p = Point { x: 1, y: 2 } let Point { x, .. } = &p x }",
+            "fn bad() @suspends -> Int32 { let p = Point { x: 1, y: 2 }; let Point { x, .. } = &p; x }",
             "synchronous function",
         ),
         (
-            "fn bad() -> Int32 { var p = Point { x: 1, y: 2 } let view = &mut p let Point { x, .. } = view x }",
+            "fn bad() -> Int32 { var p = Point { x: 1, y: 2 }; let view = &mut p; let Point { x, .. } = view; x }",
             "Exclusive references cannot be destructured",
         ),
         (
-            "fn bad() -> Int32 { var p = Point { x: 1, y: 2 } let view = &mut p let Point { x, y } = view x }",
+            "fn bad() -> Int32 { var p = Point { x: 1, y: 2 }; let view = &mut p; let Point { x, y } = view; x }",
             "Exclusive references cannot be destructured",
         ),
     ] {

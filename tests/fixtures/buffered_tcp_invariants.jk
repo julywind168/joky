@@ -87,7 +87,7 @@ pub fn buffered_messages_probe(stream: TcpStream) @suspends -> Int32 {
     var buffered = match BufferedTcp.with_capacity(stream, 16) { Ok(b) => b, _ => { return 1 } }
     if __tcp_close_stream(&mut buffered.stream.owner) != 0 { return 2 }
     buffered.buffer.state = ReadState.Eof
-    buffered.buffer.bytes.push(255) buffered.buffer.bytes.push(255) buffered.buffer.bytes.push(255) buffered.buffer.bytes.push(255)
+    buffered.buffer.bytes.push(255); buffered.buffer.bytes.push(255); buffered.buffer.bytes.push(255); buffered.buffer.bytes.push(255)
     buffered.buffer.bytes.push(42)
     match buffered.read_message(1048577) { Err(InvalidLimit) => {}, _ => { return 3 } }
     if buffered.buffered_len() != 5 { return 4 }
@@ -98,7 +98,7 @@ pub fn buffered_messages_probe(stream: TcpStream) @suspends -> Int32 {
     match buffered.read_message(0) { Ok(None) => {}, _ => { return 9 } }
     buffered.buffer.offset = 0
     buffered.buffer.bytes.truncate(0)
-    buffered.buffer.bytes.push(0) buffered.buffer.bytes.push(0) buffered.buffer.bytes.push(0) buffered.buffer.bytes.push(3)
+    buffered.buffer.bytes.push(0); buffered.buffer.bytes.push(0); buffered.buffer.bytes.push(0); buffered.buffer.bytes.push(3)
     buffered.buffer.bytes.push(42)
     buffered.buffer.state = ReadState.Failed(IoError { code: 8 })
     match buffered.read_message(3) { Err(Io(error)) => { match error.kind() { PermissionDenied => {}, _ => { return 10 } } }, _ => { return 11 } }
@@ -110,7 +110,7 @@ pub fn buffered_messages_probe(stream: TcpStream) @suspends -> Int32 {
 pub fn buffered_split_probe(stream: TcpStream) @suspends -> Int32 {
     var buffered = match BufferedTcp.with_capacity(stream, 16) { Ok(value) => value, _ => { return 1 } }
     buffered.buffer.bytes.push(99)
-    buffered.buffer.bytes.push(0) buffered.buffer.bytes.push(0) buffered.buffer.bytes.push(0) buffered.buffer.bytes.push(1)
+    buffered.buffer.bytes.push(0); buffered.buffer.bytes.push(0); buffered.buffer.bytes.push(0); buffered.buffer.bytes.push(1)
     buffered.buffer.bytes.push(42)
     buffered.buffer.offset = 1
     buffered.buffer.state = ReadState.Failed(IoError { code: 8 })
@@ -125,12 +125,12 @@ pub fn buffered_split_probe(stream: TcpStream) @suspends -> Int32 {
 }
 pub fn buffered_split_eof_probe(stream: TcpStream) @suspends -> Int32 {
     var buffered = BufferedTcp.new(stream)
-    buffered.buffer.bytes.push(99) buffered.buffer.bytes.push(120) buffered.buffer.bytes.push(10)
+    buffered.buffer.bytes.push(99); buffered.buffer.bytes.push(120); buffered.buffer.bytes.push(10)
     buffered.buffer.offset = 1
     buffered.buffer.state = ReadState.Eof
     var (reader, writer) = buffered.split()
     if !reader.is_eof() || reader.buffered_len() != 2 || reader.capacity() != 16384 { return 1 }
-    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x" if !line.equals(&expected) { return 2 } }, _ => { return 3 } }
+    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x"; if !line.equals(&expected) { return 2 } }, _ => { return 3 } }
     match reader.read_exact(1) { Ok(None) => {}, _ => { return 4 } }
     match reader.read_message(1) { Ok(None) => {}, _ => { return 5 } }
     if !writer.write_message(message_header(0), 4).is_ok() { return 6 }
@@ -138,11 +138,11 @@ pub fn buffered_split_eof_probe(stream: TcpStream) @suspends -> Int32 {
 }
 pub fn buffered_split_shutdown_probe(stream: TcpStream) @suspends -> Int32 {
     var buffered = BufferedTcp.new(stream)
-    buffered.buffer.bytes.push(99) buffered.buffer.bytes.push(120) buffered.buffer.bytes.push(10)
+    buffered.buffer.bytes.push(99); buffered.buffer.bytes.push(120); buffered.buffer.bytes.push(10)
     buffered.buffer.offset = 1
     var (reader, writer) = buffered.split()
     if !reader.shutdown().is_ok() || reader.is_eof() || reader.buffered_len() != 2 { return 1 }
-    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x" if !line.equals(&expected) { return 2 } }, _ => { return 3 } }
+    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x"; if !line.equals(&expected) { return 2 } }, _ => { return 3 } }
     match reader.read_exact(1) { Ok(None) => {}, _ => { return 4 } }
     if !reader.is_eof() || !writer.write_message(message_header(0), 4).is_ok() { return 5 }
     42
@@ -150,7 +150,7 @@ pub fn buffered_split_shutdown_probe(stream: TcpStream) @suspends -> Int32 {
 pub fn buffered_split_messages_probe(stream: TcpStream) @suspends -> Int32 {
     var buffered = match BufferedTcp.with_capacity(stream, 16) { Ok(value) => value, _ => { return 1 } }
     buffered.buffer.bytes.push(99)
-    buffered.buffer.bytes.push(255) buffered.buffer.bytes.push(255) buffered.buffer.bytes.push(255) buffered.buffer.bytes.push(255)
+    buffered.buffer.bytes.push(255); buffered.buffer.bytes.push(255); buffered.buffer.bytes.push(255); buffered.buffer.bytes.push(255)
     buffered.buffer.bytes.push(42)
     buffered.buffer.offset = 1
     buffered.buffer.state = ReadState.Eof

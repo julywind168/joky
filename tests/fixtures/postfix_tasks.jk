@@ -16,7 +16,7 @@ fn step(ok: Bool) @suspends -> Result<Int32, String> {
 }
 fn scoped() @suspends -> Option<Int32> {
     scope {
-        branch { task.yield_now() record(30); }
+        branch { task.yield_now(); record(30); }
         None::<Int32>?;
         Some(0)
     }

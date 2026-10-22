@@ -15,6 +15,6 @@ fn answer() -> Int32 {
 }
 
 fn main() -> Int32 {
-    { let displayed: Int32 = answer() println(&displayed) } // 42
+    println(answer()) // 42
     0
 }

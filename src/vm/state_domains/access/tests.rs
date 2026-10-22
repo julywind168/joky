@@ -8,8 +8,8 @@ struct State { n:Int32 }
 struct Packet { n:Int32 }
 fn make(n:Int32)->State {State{n:n}}
 fn read(s:&State)->Int32 {s.n}
-fn scalar(s:&mut State,n:Int32)->Int32 {s.n=n n}
-fn packet(s:&mut State,p:Packet)->Packet {s.n=p.n p}
+fn scalar(s:&mut State,n:Int32)->Int32 {s.n=n; n}
+fn packet(s:&mut State,p:Packet)->Packet {s.n=p.n; p}
 fn query_scalar(s:&State,n:Int32)->Int32 {s.n+n}
 fn query_packet(s:&State,p:Packet)->Packet {Packet{n:s.n+p.n}}
 fn run_query_scalar(n:Int32) @suspends ->Int32 {

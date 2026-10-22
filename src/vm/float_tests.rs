@@ -323,11 +323,11 @@ fn float_call_entries_validate_signatures() {
 fn float_literals_outside_finite_range_are_rejected() {
     for (source, message) in [
         (
-            "fn main() -> Int32 { let x: Float32 = 1.0e39 0 }",
+            "fn main() -> Int32 { let x: Float32 = 1.0e39; 0 }",
             "finite range",
         ),
         (
-            "fn main() -> Int32 { let x: Float64 = 1.0e309 0 }",
+            "fn main() -> Int32 { let x: Float64 = 1.0e309; 0 }",
             "finite range",
         ),
     ] {
@@ -349,7 +349,7 @@ fn invalid_float_operations_are_rejected() {
         "fn main() { let x = 1.0 << 2 }",
         "fn main() { let x = ~1.0 }",
         "fn main() { let x = !1.0 }",
-        "fn main() { let x: Int32 = 1 let y: Float64 = 1.0 + x }",
+        "fn main() { let x: Int32 = 1; let y: Float64 = 1.0 + x }",
     ] {
         let mut vm = VmEngine::with_mode(VmMode::Interpreter);
         assert!(vm.load_source(source).is_err(), "{source}");

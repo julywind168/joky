@@ -6,19 +6,19 @@ import joky/integer
 import joky/mem
 import joky/task
 
-fn checked(result: Result<Unit, IoError>) { let message = "split TCP status" assert(result.is_ok(), &message) }
+fn checked(result: Result<Unit, IoError>) { let message = "split TCP status"; assert(result.is_ok(), &message) }
 fn connected() @suspends -> (TcpStream, TcpStream) {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(value) => value, Err(_) => { let message = "bind" assert(false, &message) return connected() } }
-    let address = match listener.local_addr() { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint" assert(false, &message) return connected() } }
-    let client = match TcpStream.connect(address) { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint" assert(false, &message) return connected() } }
-    let server = match listener.accept() { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint" assert(false, &message) return connected() } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(value) => value, Err(_) => { let message = "bind"; assert(false, &message); return connected() } }
+    let address = match listener.local_addr() { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint"; assert(false, &message); return connected() } }
+    let client = match TcpStream.connect(address) { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint"; assert(false, &message); return connected() } }
+    let server = match listener.accept() { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint"; assert(false, &message); return connected() } }
     checked(listener.close())
     (client, server)
 }
 fn payload(length: UInt64) -> Array<UInt8> {
     var bytes = Array.with_capacity::<UInt8>(length)
     var index: UInt64 = 0
-    while index < length { bytes.push((index & 255).to_u8().unwrap_or(0)) index = index + 1 }
+    while index < length { bytes.push((index & 255).to_u8().unwrap_or(0)); index = index + 1 }
     bytes
 }
 fn send(writer: &mut TcpWriter, length: UInt64) @suspends {
@@ -39,7 +39,7 @@ fn receive(reader: &mut TcpReader, length: UInt64) @suspends {
     let message = "split TCP ordered bytes and EOF"
     var offset: UInt64 = 0
     while true {
-        let bytes = match reader.read(127) { Ok(value) => value, Err(_) => { assert(false, &message) return } }
+        let bytes = match reader.read(127) { Ok(value) => value, Err(_) => { assert(false, &message); return } }
         if bytes.len() == 0 { break }
         var index: UInt64 = 0
         while index < bytes.len() {
@@ -56,8 +56,8 @@ fn duplex() @suspends {
     var (read_client, write_client) = client.split()
     var (read_server, write_server) = server.split()
     let message = "split endpoints retain their addresses"
-    let local_read = match read_client.local_addr() { Ok(value) => value, Err(_) => { assert(false, &message) return } }
-    let local_write = match write_client.local_addr() { Ok(value) => value, Err(_) => { assert(false, &message) return } }
+    let local_read = match read_client.local_addr() { Ok(value) => value, Err(_) => { assert(false, &message); return } }
+    let local_write = match write_client.local_addr() { Ok(value) => value, Err(_) => { assert(false, &message); return } }
     assert(local_read.port() == local_write.port(), &message)
     assert(read_client.peer_addr().is_ok() && write_client.peer_addr().is_ok(), &message)
     parallel {
@@ -87,7 +87,7 @@ fn eof_reply() @suspends {
     discard_writer(writer)
     var total: UInt64 = 0
     while true {
-        let bytes = match client.read(8) { Ok(bytes) => bytes, Err(_) => { assert(false, &message) return } }
+        let bytes = match client.read(8) { Ok(bytes) => bytes, Err(_) => { assert(false, &message); return } }
         if bytes.len() == 0 { break }
         total = total + bytes.len()
     }

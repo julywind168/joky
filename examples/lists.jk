@@ -5,14 +5,14 @@ import joky/string
 
 fn main() {
     var words = List.new::<String>()
-    words.push_back("first") words.push_front("before") words.push_back("last")
+    words.push_back("first"); words.push_front("before"); words.push_back("last")
     words.remove(1)
     // Logical position zero follows the links, including after a reversal.
     words.reverse()
     println(words.borrow_ref(0))
-    var input = Array.new::<String>() input.push("extra")
+    var input = Array.new::<String>(); input.push("extra")
     words.extend(input)
-    var other = List.new::<String>() other.push_back("tail")
+    var other = List.new::<String>(); other.push_back("tail")
     words.append(&mut other)
     println(other.len())
     // Export in logical order; the dense internal payload order is private.

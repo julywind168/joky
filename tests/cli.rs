@@ -122,7 +122,7 @@ fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
     );
     work.write(
         "success.jk",
-        "import probe fn main() { probe.report(probe.success()) probe.report(probe.transfer()) }",
+        "import probe fn main() { probe.report(probe.success()); probe.report(probe.transfer()) }",
     );
     work.assert_all_backends("success.jk", &[], b"-1\n1\n42\n901\n903\n42\n", 0);
     for (entry, expected, message) in [
@@ -176,13 +176,13 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
     }
     source.push_str(
         r#"
-        let nul = "\u{0}Z" let expected = "\0Z"
+        let nul = "\u{0}Z"; let expected = "\0Z"
         let message = "NUL must preserve following bytes"
         check.assert(nul.equals(&expected), &message)
-        let slash = "\u{5c}u{41}" let expected = "\\u{41}"
+        let slash = "\u{5c}u{41}"; let expected = "\\u{41}"
         let message = "Escape must decode once"
         check.assert(slash.equals(&expected), &message)
-        let newline = "\u{a}" let expected = "\n"
+        let newline = "\u{a}"; let expected = "\n"
         let message = "Encoded newline is allowed"
         check.assert(newline.equals(&expected), &message)
         report_int32(42)
@@ -225,7 +225,7 @@ fn uint8_storage_arithmetic_and_failures_match_all_backends() {
     let work = Workspace::new();
     let mut source = String::from("import joky/io.{println}\n");
     source.push_str(include_str!("fixtures/uint8.jk"));
-    source.push_str("\nfn expect(condition: Bool) { if !condition { let message = \"Byte arithmetic mismatch\" assert(false, &message) } }\nfn report_int32(value: Int32) { println(&value) }\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { { let assertion_condition = byte_check() == 42 let assertion_message = \"Byte fixture\" assert(assertion_condition, &assertion_message) }\n");
+    source.push_str("\nfn expect(condition: Bool) { if !condition { let message = \"Byte arithmetic mismatch\"; assert(false, &message) } }\nfn report_int32(value: Int32) { println(&value) }\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { { let assertion_condition = byte_check() == 42; let assertion_message = \"Byte fixture\"; assert(assertion_condition, &assertion_message) }\n");
     for a in [0u8, 1, 3, 127, 128, 254, 255] {
         for b in [0u8, 1, 3, 127, 128, 254, 255] {
             for (name, expected) in [
@@ -279,11 +279,11 @@ fn float_literals_arithmetic_and_semantics_match_all_backends() {
     work.assert_all_backends("floats.jk", &[], b"", 42);
     for (source, message) in [
         (
-            "fn main() -> Int32 { let x: Float32 = 1.0e39 0 }",
+            "fn main() -> Int32 { let x: Float32 = 1.0e39; 0 }",
             "finite range",
         ),
         (
-            "fn main() -> Int32 { let x: Float64 = 1.0e309 0 }",
+            "fn main() -> Int32 { let x: Float64 = 1.0e309; 0 }",
             "finite range",
         ),
         (
@@ -291,7 +291,7 @@ fn float_literals_arithmetic_and_semantics_match_all_backends() {
             "same type",
         ),
         (
-            "fn main() { let x: Int32 = 1 let y: Float64 = 1.0 + x }",
+            "fn main() { let x: Int32 = 1; let y: Float64 = 1.0 + x }",
             "same type",
         ),
         ("fn main() { let x = 1.0 & 2.0 }", "numeric type"),
@@ -324,15 +324,15 @@ fn float_math_checked_conversions_and_formatting_match_all_backends() {
     work.assert_all_backends("float_math.jk", &[], b"", 42);
     for (source, message) in [
         (
-            "fn main() -> Int32 { let x = 1.to_bits() 0 }",
+            "fn main() -> Int32 { let x = 1.to_bits(); 0 }",
             "has no method 'to_bits'",
         ),
         (
-            "fn main() -> Int32 { let x = Float64.from_bits(1.5) 0 }",
+            "fn main() -> Int32 { let x = Float64.from_bits(1.5); 0 }",
             "Argument type mismatch",
         ),
         (
-            "fn main() -> Int32 { let x = 1.5.trunc_to_i32() + 1 0 }",
+            "fn main() -> Int32 { let x = 1.5.trunc_to_i32() + 1; 0 }",
             "same supported numeric type",
         ),
     ] {
@@ -354,7 +354,7 @@ fn float_hosts_and_vm_float_calls_match_all_backends() {
     // identical across the JIT, interpreter and built artifacts.
     work.write(
         "floats.jk",
-        "import joky/io.{println} fn report_float64(value: Float64) { println(&value) }\nfn main() { report_float64(2.5) report_float64(-0.75) }",
+        "import joky/io.{println} fn report_float64(value: Float64) { println(&value) }\nfn main() { report_float64(2.5); report_float64(-0.75) }",
     );
     work.assert_all_backends("floats.jk", &[], b"2.5\n-0.75\n", 0);
     // vm.call_float64_1 reaches an interpreter VM from every host backend.
@@ -364,8 +364,8 @@ fn float_hosts_and_vm_float_calls_match_all_backends() {
         import joky/vm as host
         fn main() -> Int32 {
             let h = host.Vm.interpreter()
-            { let vm_text = "fn twice(v: Float64) -> Float64 {{ v * 2.0 }}" host.load_source(h, &vm_text) }
-            let result = { let vm_text = "twice" host.call_float64_1(h, &vm_text, 2.5) }
+            { let vm_text = "fn twice(v: Float64) -> Float64 {{ v * 2.0 }}"; host.load_source(h, &vm_text) }
+            let result = { let vm_text = "twice"; host.call_float64_1(h, &vm_text, 2.5) }
             host.close(h)
             if result != 5.0 { 1 } else { 0 }
         }
@@ -387,31 +387,31 @@ fn narrow_integers_match_all_backends_and_reject_bad_literals() {
     work.assert_all_backends("narrow_integers.jk", &[], b"", 42);
     for (source, message) in [
         (
-            "fn main() -> Int32 { let x: Int8 = 128 0 }",
+            "fn main() -> Int32 { let x: Int8 = 128; 0 }",
             "outside Int8 range",
         ),
         (
-            "fn main() -> Int32 { let x: Int8 = -129 0 }",
+            "fn main() -> Int32 { let x: Int8 = -129; 0 }",
             "outside Int8 range",
         ),
         (
-            "fn main() -> Int32 { let x: Int16 = -32769 0 }",
+            "fn main() -> Int32 { let x: Int16 = -32769; 0 }",
             "outside Int16 range",
         ),
         (
-            "fn main() -> Int32 { let x: UInt16 = 65536 0 }",
+            "fn main() -> Int32 { let x: UInt16 = 65536; 0 }",
             "outside UInt16 range",
         ),
         (
-            "fn main() -> Int32 { let x: UInt16 = -1 0 }",
+            "fn main() -> Int32 { let x: UInt16 = -1; 0 }",
             "Unary `-` is not supported for UInt16",
         ),
         (
-            "fn main() -> Int32 { let x: Int8 = 1 let y: Int16 = 2 if x < y { 0 } else { 1 } }",
+            "fn main() -> Int32 { let x: Int8 = 1; let y: Int16 = 2; if x < y { 0 } else { 1 } }",
             "the same type",
         ),
         (
-            "fn main() -> Int32 { let x: UInt16 = 1 if -x == 0 { 0 } else { 1 } }",
+            "fn main() -> Int32 { let x: UInt16 = 1; if -x == 0 { 0 } else { 1 } }",
             "Unary `-` operand",
         ),
     ] {
@@ -425,7 +425,7 @@ fn narrow_integers_match_all_backends_and_reject_bad_literals() {
     // Runtime traps surface with the shared diagnostics in every backend.
     work.write(
         "traps.jk",
-        "fn main() -> Int32 { let a: Int8 = 1 let b: Int8 = 0 int32(a / b) }",
+        "fn main() -> Int32 { let a: Int8 = 1; let b: Int8 = 0; int32(a / b) }",
     );
     for args in [
         vec!["run", "traps.jk"],
@@ -435,7 +435,7 @@ fn narrow_integers_match_all_backends_and_reject_bad_literals() {
     }
     work.write(
         "shift.jk",
-        "fn main() -> Int32 { let a: Int16 = 1 let n: Int16 = 16 int32(a << n) }",
+        "fn main() -> Int32 { let a: Int16 = 1; let n: Int16 = 16; int32(a << n) }",
     );
     for args in [
         vec!["run", "shift.jk"],
@@ -718,8 +718,8 @@ fn user_files_share_host_imports_including_aot() {
         import joky/vm as host
         pub fn value() -> Int32 {
             let h = host.Vm.interpreter()
-            { let vm_text = "fn answer() -> Int32 {{ 42 }}" host.load_source(h, &vm_text) }
-            let result = { let vm_text = "answer" host.call_int32_0(h, &vm_text) }
+            { let vm_text = "fn answer() -> Int32 {{ 42 }}"; host.load_source(h, &vm_text) }
+            let result = { let vm_text = "answer"; host.call_int32_0(h, &vm_text) }
             host.close(h)
             result
         }
@@ -830,9 +830,9 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
         fn next(value: Count) -> Count { value + 1 }
         fn main() {
             let engine: Handle = vm.Vm.new()
-            { let vm_text = "next" vm.register_int32_1(engine, &vm_text, next) }
-            { let vm_text = "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count {{ next(41) }}" vm.load_source(engine, &vm_text) }
-            report_int32({ let vm_text = "value" vm.call_int32_0(engine, &vm_text) })
+            { let vm_text = "next"; vm.register_int32_1(engine, &vm_text, next) }
+            { let vm_text = "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count {{ next(41) }}"; vm.load_source(engine, &vm_text) }
+            report_int32({ let vm_text = "value"; vm.call_int32_0(engine, &vm_text) })
             vm.close(engine);
         }
     "#);
@@ -987,7 +987,7 @@ fn division_errors_and_wrapping_match_all_execution_modes() {
         assert!(String::from_utf8_lossy(&output.stderr)
             .contains(&format!("bytes {start}..{}", start + 5)));
     }
-    work.write("wrapping.jk", "import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn divide(a: Int32, b: Int32) -> Int32 { a / b } fn main() { report_int32(divide(-2147483648, -1)) report_int32(divide(-7, 3)) report_int32(divide(7, -3)) }");
+    work.write("wrapping.jk", "import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn divide(a: Int32, b: Int32) -> Int32 { a / b } fn main() { report_int32(divide(-2147483648, -1)); report_int32(divide(-7, 3)); report_int32(divide(7, -3)) }");
     work.assert_all_backends("wrapping.jk", &[], b"-2147483648\n-2\n-2\n", 0);
 }
 
@@ -1028,7 +1028,7 @@ fn newline_boundaries_and_method_chains_match_all_frontends() {
     ];
     let calls = names
         .iter()
-        .map(|name| format!("{{ let value = {name}() println(&value) }}\n"))
+        .map(|name| format!("{{ let value = {name}(); println(&value) }}\n"))
         .collect::<String>();
     let output = b"42\n-42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n";
     for effect in ["", " @suspends"] {
@@ -1303,7 +1303,7 @@ fn task_scope_rounds_follow_calls_and_static_branches() {
 import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
 fn helper(id: Int32) @suspends {
     scope {
-        branch { report_int32(id) yield_now() report_int32(id + 1) }
+        branch { report_int32(id); yield_now(); report_int32(id + 1) }
         yield_now()
         report_int32(id + 2)
         yield_now()
@@ -1335,7 +1335,7 @@ import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
 fn main() @suspends {
     scope {
         branch {
-            branch { branch { report_int32(3) } yield_now() report_int32(2) }
+            branch { branch { report_int32(3) }; yield_now(); report_int32(2) }
             report_int32(1)
             return
         }
@@ -1354,7 +1354,7 @@ fn task_scope_captures_callees_and_method_receivers() {
         "captures.jk",
         r#"import joky/task.{yield_now}
 import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
-fn say() @suspends { yield_now() report_int32(1) }
+fn say() @suspends { yield_now(); report_int32(1) }
 fn other() @suspends { report_int32(2) }
 fn main() @suspends {
     let f = say
@@ -1362,7 +1362,7 @@ fn main() @suspends {
     scope {
         branch { f() }
         branch { report_int32(int32(text.byte_length())) }
-        branch { let f = other f() }
+        branch { let f = other; f() }
     }
 }
 "#,
@@ -1414,7 +1414,7 @@ fn built_program_matches_jit_output_and_avoids_native_symbol_collisions() {
         r#"
         import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         fn printf(x: Int32) -> Int32 { x + 1 }
-        fn pick(unit: Unit, value: Int32) -> Int32 { unit value }
+        fn pick(unit: Unit, value: Int32) -> Int32 { unit; value }
         fn main() { report_int32(pick({}, printf(41))) }
     "#,
     );
@@ -1556,17 +1556,17 @@ fn standard_library_reports_failures_and_keeps_the_previous_module() {
         fn identity(text: String) -> String { text }
         fn main() -> Int32 {
             let engine = vm.Vm.new()
-            report_int32({ let vm_text = identity(source()) vm.load_source(engine, &vm_text) })
-            report_int32({ let vm_text = "value" vm.call_int32_0(engine, &vm_text) })
-            report_int32({ let vm_text = "fn value() -> Bool {{ 42 }}" vm.reload_source(engine, &vm_text) })
+            report_int32({ let vm_text = identity(source()); vm.load_source(engine, &vm_text) })
+            report_int32({ let vm_text = "value"; vm.call_int32_0(engine, &vm_text) })
+            report_int32({ let vm_text = "fn value() -> Bool {{ 42 }}"; vm.reload_source(engine, &vm_text) })
             report_int32(vm.error_code())
             vm.print_error()
-            report_int32({ let vm_text = "value" vm.call_int32_0(engine, &vm_text) })
-            report_int32({ let vm_text = "missing" vm.call_int32_0(engine, &vm_text) })
+            report_int32({ let vm_text = "value"; vm.call_int32_0(engine, &vm_text) })
+            report_int32({ let vm_text = "missing"; vm.call_int32_0(engine, &vm_text) })
             report_int32(vm.error_code())
             vm.print_error()
-            report_int32({ let vm_text = "import joky/vm fn nested() -> Int32 {{ let child = vm.Vm.new() vm.close(child) }}" vm.load_source(engine, &vm_text) })
-            report_int32({ let vm_text = "nested" vm.call_int32_0(engine, &vm_text) })
+            report_int32({ let vm_text = "import joky/vm fn nested() -> Int32 {{ let child = vm.Vm.new(); vm.close(child) }}"; vm.load_source(engine, &vm_text) })
+            report_int32({ let vm_text = "nested"; vm.call_int32_0(engine, &vm_text) })
             report_int32(vm.close(engine))
             vm.error_code()
         }
@@ -1611,7 +1611,7 @@ fn imports_and_standard_library_calls_are_checked_before_execution() {
             "Undeclared function",
         ),
         (
-            "import joky/vm fn main() { let h = vm.Vm.new() vm.load_source(h, 42) }",
+            "import joky/vm fn main() { let h = vm.Vm.new(); vm.load_source(h, 42) }",
             "Argument type mismatch",
         ),
         (
@@ -1623,11 +1623,11 @@ fn imports_and_standard_library_calls_are_checked_before_execution() {
             "Argument count mismatch",
         ),
         (
-            "import joky/vm fn main() { let h = vm.Vm.new() { let vm_text = \"missing\" vm.register_int32_0(h, &vm_text, missing) } }",
+            "import joky/vm fn main() { let h = vm.Vm.new(); { let vm_text = \"missing\"; vm.register_int32_0(h, &vm_text, missing) } }",
             "not defined in this module",
         ),
         (
-            "import joky/vm fn host(value: String) -> Int32 { 1 } fn main() { let h = vm.Vm.new() { let vm_text = \"host\" vm.register_int32_1(h, &vm_text, host) } }",
+            "import joky/vm fn host(value: String) -> Int32 { 1 } fn main() { let h = vm.Vm.new(); { let vm_text = \"host\"; vm.register_int32_1(h, &vm_text, host) } }",
             "must be a synchronous Int32 function",
         ),
         (
@@ -1758,7 +1758,7 @@ fn records_run_and_build_with_nominal_type_diagnostics() {
             "Missing field `x`",
         ),
         (
-            "struct P { x: Int32 } fn main() { let p = P { x: 1 } p.x = 2 }",
+            "struct P { x: Int32 } fn main() { let p = P { x: 1 }; p.x = 2 }",
             "invalid_assignment",
         ),
         ("struct P {} fn main() -> P { P {} }", "Entry point must be"),
@@ -1822,7 +1822,7 @@ fn tuples_run_and_build_with_pattern_diagnostics() {
         ("fn main() { let (x, y) = (1,) }", "type_mismatch"),
         ("fn main() { let (x, x) = (1, 2) }", "duplicate_definition"),
         (
-            "fn main() { let (x, y) = (1, 2) x = 3 }",
+            "fn main() { let (x, y) = (1, 2); x = 3 }",
             "invalid_assignment",
         ),
         ("fn main() -> (Int32,) { (1,) }", "Entry point must be"),
@@ -1859,7 +1859,7 @@ fn int64_literals_output_and_failures_match_all_frontends() {
             "outside Int64 range",
         ),
         (
-            "fn main() { let n = 1 let wide: Int64 = n }",
+            "fn main() { let n = 1; let wide: Int64 = n }",
             "annotation mismatch",
         ),
         (
@@ -1913,7 +1913,7 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
             "not supported for UInt64",
         ),
         (
-            "fn main() { let n = 1 let u: UInt32 = n }",
+            "fn main() { let n = 1; let u: UInt32 = n }",
             "annotation mismatch",
         ),
         ("fn main() -> UInt32 { 0 }", "Entry point must be"),
@@ -2228,7 +2228,7 @@ fn generic_aliases_run_build_and_report_template_errors() {
     );
     work.write(
         "model.jk",
-        "pub type PairOf<T> = (T, T) pub fn duplicate<T>(n: T) -> PairOf<T> { (n, n) }",
+        "pub type PairOf<T> = (T, T) pub fn duplicate<T: Copy>(n: T) -> PairOf<T> { (n, n) }",
     );
     work.write(
         "imported_alias.jk",
@@ -2236,8 +2236,8 @@ fn generic_aliases_run_build_and_report_template_errors() {
         import model as m.{type PairOf as Duo}
         import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         type PairOf<T> = m.PairOf<T>
-        fn first<T>(p: PairOf<T>) -> T { let (a, b) = p a }
-        fn show() { let p: Duo<Int32> = m.duplicate(42) report_int32(first(p)) }
+        fn first<T>(p: PairOf<T>) -> T { let (a, b) = p; a }
+        fn show() { let p: Duo<Int32> = m.duplicate(42); report_int32(first(p)) }
         fn main() { show() }
     "#,
     );
@@ -2291,7 +2291,7 @@ fn option_result_methods_run_and_build_with_explicit_or_default_imports() {
         "option_result.jk",
         include_str!("../examples/option_result.jk"),
     );
-    work.write("std_values.jk", &format!("import joky/io.{{println}}\n{}\n fn report_int32(value: Int32) {{ println(&value) }} fn report_uint64(value: UInt64) {{ println(&value) }} fn main() {{ report_int32(check()) report_uint64(wide()) }}", include_str!("fixtures/option_result_methods.jk")));
+    work.write("std_values.jk", &format!("import joky/io.{{println}}\n{}\n fn report_int32(value: Int32) {{ println(&value) }} fn report_uint64(value: UInt64) {{ println(&value) }} fn main() {{ report_int32(check()); report_uint64(wide()) }}", include_str!("fixtures/option_result_methods.jk")));
     work.write("result_only.jk", "import joky/result as r import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn main() { report_int32(r.Result.Ok::<Int32, Bool>(42).ok().unwrap_or(0)) }");
     for (file, program, expected, no_prelude) in [
         (
@@ -2414,7 +2414,7 @@ fn generic_impls_run_build_and_report_template_errors() {
         include_str!("../examples/generic_impls.jk"),
     );
     work.write("model.jk", "pub struct Pair<T> { left: T, right: T } impl<T> Pair<T> { pub fn make(left: T, right: T) -> Self { Self { left: left, right: right } } pub fn first(self) -> T { self.left } }");
-    work.write("imported_impl.jk", "import model as m.{type Pair as Renamed} import joky/io.{println} fn report_int64(value: Int64) { println(&value) } fn main() { report_int64(m.Pair::<Int64>.make(4294967295, 0).first()) report_int64(Renamed.make::<Int64>(42, 0).first()) }");
+    work.write("imported_impl.jk", "import model as m.{type Pair as Renamed} import joky/io.{println} fn report_int64(value: Int64) { println(&value) } fn main() { report_int64(m.Pair::<Int64>.make(4294967295, 0).first()); report_int64(Renamed.make::<Int64>(42, 0).first()) }");
     work.write(
         "shared_impl.jk",
         &format!(
@@ -2599,11 +2599,11 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
     // also run in the interpreter.
     for register in [false, true] {
         let initialization = if register {
-            "let name = \"next\" register(h, &name, next) let code = \"extern fn next(n: Int32) -> Int32 fn answer() -> Int32 {{ next(41) }}\" v.load_source(h, &code)"
+            "let name = \"next\"; register(h, &name, next); let code = \"extern fn next(n: Int32) -> Int32 fn answer() -> Int32 {{ next(41) }}\"; v.load_source(h, &code)"
         } else {
-            "let code = \"fn answer() -> Int32 {{ 42 }}\" v.load_source(h, &code)"
+            "let code = \"fn answer() -> Int32 {{ 42 }}\"; v.load_source(h, &code)"
         };
-        let source = format!("import joky/vm as v.{{type Vm as Engine, register_int32_1 as register, call_int32_0 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7 let h: Engine = Engine.new() {initialization} let entry = \"answer\" let answer = invoke(h, &entry) close(h) answer }}");
+        let source = format!("import joky/vm as v.{{type Vm as Engine, register_int32_1 as register, call_int32_0 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7; let h: Engine = Engine.new(); {initialization}; let entry = \"answer\"; let answer = invoke(h, &entry); close(h); answer }}");
         work.write("host_alias.jk", &source);
         let output = work.cli(&["run", "host_alias.jk"]);
         assert_eq!(output.status.code(), Some(42), "{output:?}");
@@ -2651,7 +2651,7 @@ fn borrowed_receiver_example_matches_all_frontends_and_reports_conflicts() {
     let output = Command::new(work.path().join("methods")).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
-    work.write("bad.jk", "struct Counter { value: Int32 } impl Counter { fn set(&mut self) { self.value = 1 } } fn main() { let c = Counter { value: 0 } c.set() }");
+    work.write("bad.jk", "struct Counter { value: Int32 } impl Counter { fn set(&mut self) { self.value = 1 } } fn main() { let c = Counter { value: 0 }; c.set() }");
     let output = work.cli(&["build", "bad.jk", "-o", "bad"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("var binding"));
@@ -2731,7 +2731,7 @@ fn function_value_example_matches_all_frontends_and_rejects_signature_mismatches
     assert_eq!(output.stdout, b"42\n");
     work.write(
         "bad.jk",
-        "fn id(x: Int32) -> Int32 { x } fn main() { let f = id f(true); }",
+        "fn id(x: Int32) -> Int32 { x } fn main() { let f = id; f(true); }",
     );
     let output = work.cli(&["build", "bad.jk", "-o", "bad"]);
     assert!(!output.status.success());
@@ -2890,9 +2890,11 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
         pub fn empty_node() -> Node { Node { next: None } }
         impl<T> Batch<T> {
             pub fn new() -> Self { Self { version: 0, values: Array.new::<T>(), sorted: true } }
-            pub fn push(&mut self, value: T) { self.values.push(value) self.version = self.version + 1 self.sorted = false }
-            pub fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
+            pub fn push(&mut self, value: T) { self.values.push(value); self.version = self.version + 1; self.sorted = false }
             pub fn release(self) { self.values.release() }
+        }
+        impl<T: Copy> Batch<T> {
+            pub fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
         }
     "#,
     );
@@ -2917,7 +2919,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
             var b = bridge.make(Point { value: 20 })
             b.push(Point { value: 22 })
             let answer = b.get(0).unwrap_or(Point { value: 0 }).value + b.get(1).unwrap_or(Point { value: 0 }).value
-            if b.version != 2 || b.sorted { report_int32(0) return }
+            if b.version != 2 || b.sorted { report_int32(0); return }
             b.release()
             let secret = Secret.new(answer)
             report_int32(secret.get())
@@ -2925,20 +2927,20 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     "#);
     work.assert_all_backends("main.jk", &[], b"42\n", 0);
     for body in [
-        "fn main() { let b = Batch.new::<Int32>() b.values; }",
-        "fn main() { var b = Batch.new::<Int32>() b.values.push(42) }",
+        "fn main() { let b = Batch.new::<Int32>(); b.values; }",
+        "fn main() { var b = Batch.new::<Int32>(); b.values.push(42) }",
         "fn main() { let b = Batch { values: array.new::<Int32>() } }",
         "fn hidden<T>(b: Batch<T>) { b.values; } fn main() {}",
         "fn hidden<T>(b: &Batch<T>) { let r = &b.values } fn main() {}",
         "fn hidden<T>(b: &mut Batch<T>) { let r = &mut b.values } fn main() {}",
-        "fn main() { let s = Secret.new(42) s.value; }",
-        "fn main() { var s = Secret.new(42) s.value = 0 }",
-        "fn main() { var s = Secret.new(42) let r = &mut s.value }",
-        "fn main() { let s = alloc(Secret.new(42)) s.value; }",
-        "fn main() { let s = alloc(Secret.new(42)) s.value = 0 }",
+        "fn main() { let s = Secret.new(42); s.value; }",
+        "fn main() { var s = Secret.new(42); s.value = 0 }",
+        "fn main() { var s = Secret.new(42); let r = &mut s.value }",
+        "fn main() { let s = alloc(Secret.new(42)); s.value; }",
+        "fn main() { let s = alloc(Secret.new(42)); s.value = 0 }",
         "fn main() { let s = Secret { value: 42 } }",
         "fn hidden<T>(s: Secret) -> Int32 { s.value } fn main() {}",
-        "fn main() { graph { let a = graph.alloc(collections.empty_node()) graph.link(a.next, a) a }; }",
+        "fn main() { graph { let a = graph.alloc(collections.empty_node()); graph.link(a.next, a); a }; }",
     ] {
         work.write(
             "invalid.jk",
@@ -3589,7 +3591,7 @@ fn check_map_stress_in_standalone_aot(steps: i32) {
     for distribution in 0..3 {
         for seed in oracle::SEEDS {
             source.push_str(&format!(
-                " stress({seed},{distribution},{steps}) record_int(-2147483647) "
+                " stress({seed},{distribution},{steps}); record_int(-2147483647); "
             ));
         }
     }
@@ -3629,16 +3631,16 @@ fn show_print_and_interpolation_match_all_backends() {
         import show as samples
         import joky/io.{print, println}
         fn main() {
-            let scalar = samples.scalar_text() println(&scalar)
-            let custom = samples.custom_text() println(&custom)
-            let array = samples.array_text() println(&array)
-            let option = samples.option_text() println(&option)
-            let result = samples.result_text() println(&result)
-            let order = samples.evaluation_text() println(&order)
-            let empty = "" print(&empty)
-            let prefix = "tail=" print(&prefix)
-            let rune = '\0' print(&rune)
-            let flag = false println(&flag)
+            let scalar = samples.scalar_text(); println(&scalar)
+            let custom = samples.custom_text(); println(&custom)
+            let array = samples.array_text(); println(&array)
+            let option = samples.option_text(); println(&option)
+            let result = samples.result_text(); println(&result)
+            let order = samples.evaluation_text(); println(&order)
+            let empty = ""; print(&empty)
+            let prefix = "tail="; print(&prefix)
+            let rune = '\0'; print(&rune)
+            let flag = false; println(&flag)
         }
     "#,
     );
@@ -3678,14 +3680,14 @@ fn cps_local_borrows_print_and_resume_in_all_backends() {
 fn cps_local_borrows_reject_live_loans_at_suspension() {
     let work = Workspace::new();
     for body in [
-        "let x = 42 let r = &x yield_now() println(r)",
-        "let x = 42 let r = &x let h = Holder { value: r } yield_now() println(h.value)",
-        "let x = 42 read(x, later());",
-        "let x = 42 read(&x, later());",
-        "let x = 42 consume(&x)",
-        "let x = 42 parallel { | consume(&x) }",
-        "let x = 42 let r = &x scope { branch { yield_now() } } println(r)",
-        "let x = 42 let r = &x scope { branch { println(r) } }",
+        "let x = 42; let r = &x; yield_now(); println(r)",
+        "let x = 42; let r = &x; let h = Holder { value: r }; yield_now(); println(h.value)",
+        "let x = 42; read(x, later());",
+        "let x = 42; read(&x, later());",
+        "let x = 42; consume(&x)",
+        "let x = 42; parallel { | consume(&x) }",
+        "let x = 42; let r = &x; scope { branch { yield_now() } }; println(r)",
+        "let x = 42; let r = &x; scope { branch { println(r) } }",
     ] {
         work.write(
             "invalid.jk",
@@ -3694,7 +3696,7 @@ fn cps_local_borrows_reject_live_loans_at_suspension() {
             import joky/task.{{yield_now}}
             struct Holder {{ value: &Int32 }}
             fn consume(value: &Int32) @suspends {{}}
-            fn later() @suspends -> Int32 {{ yield_now() 1 }}
+            fn later() @suspends -> Int32 {{ yield_now(); 1 }}
             fn read(value: &Int32, other: Int32) @noescape -> Int32 {{ (*value) + other }}
             fn main() @suspends {{ {body} }}
         "#
@@ -3736,7 +3738,7 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
         fn add(value: &Int32, other: Int32) @noescape(value) -> Int32 { (*value) + other }
         fn noop(value: Unit) {}
         fn echo<T: Show>(value: &T) @noescape -> String { "<{value}>" }
-        fn make() -> Item { println("make") Item { text: "temporary" } }
+        fn make() -> Item { println("make"); Item { text: "temporary" } }
         fn main() {
             let count = 42
             let message = "count={count}, next={count + 1}"
@@ -3758,7 +3760,7 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
             println(inspect(pair))
             println(sum(Point { x: 19, y: 23 }))
             var n = 1
-            println(read(n, { n = 2 n }))
+            println(read(n, { n = 2; n }))
             println(n)
             println(first::<UInt8>(7, 8))
             println(add(40, 2))
@@ -3777,19 +3779,19 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
         "async_auto.jk",
         r#"
         import joky/task.{yield_now}
-        fn main() @suspends { println("before") yield_now() println("after") }
+        fn main() @suspends { println("before"); yield_now(); println("after") }
     "#,
     );
     work.assert_all_backends("async_auto.jk", &[], b"before\nafter\n", 0);
     work.write(
         "explicit_auto.jk",
-        "import joky/io.{print, println} fn main() { print(42) println(43) }",
+        "import joky/io.{print, println} fn main() { print(42); println(43) }",
     );
     work.assert_all_backends("explicit_auto.jk", &["--no-prelude"], b"4243\n", 0);
     work.assert_all_backends("explicit_auto.jk", &[], b"4243\n", 0);
     work.write(
         "qualified_io.jk",
-        "import joky/prelude as p fn main() { p.print(42) p.println(43) }",
+        "import joky/prelude as p fn main() { p.print(42); p.println(43) }",
     );
     work.assert_all_backends("qualified_io.jk", &["--no-prelude"], b"4243\n", 0);
     work.write("no_io.jk", "fn main() { println(42) }");
@@ -3811,7 +3813,7 @@ fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
         import joky/drop.{type Drop}
         struct Resource { text: String }
         impl Drop for Resource { fn drop(&mut self) { println("drop") } }
-        fn make() -> Resource { println("make") Resource { text: "owned" } }
+        fn make() -> Resource { println("make"); Resource { text: "owned" } }
         fn inspect(value: &Resource) @noescape -> String { value.text.clone() }
         fn explode(value: &Resource) @noescape { 1 / 0; }
         fn pair(value: &Resource, ignored: Int32) @noescape {}
@@ -3819,16 +3821,16 @@ fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
     "#;
     work.write(
         "lifetime.jk",
-        &format!("{definitions} fn main() {{ let result = inspect(make()) println(result) }}"),
+        &format!("{definitions} fn main() {{ let result = inspect(make()); println(result) }}"),
     );
     work.assert_all_backends("lifetime.jk", &[], b"make\ndrop\nowned\n", 0);
-    let failing_drop = definitions.replace("println(\"drop\") }", "println(\"drop\") 1 / 0; }");
+    let failing_drop = definitions.replace("println(\"drop\") }", "println(\"drop\"); 1 / 0; }");
     for (definitions, entry) in [
         (definitions, "explode(make())"),
         (definitions, "pair(make(), fail())"),
         (
             failing_drop.as_str(),
-            "let result = inspect(make()) println(result)",
+            "let result = inspect(make()); println(result)",
         ),
     ] {
         work.write(
@@ -3858,12 +3860,12 @@ fn automatic_shared_arguments_preserve_borrowing_boundaries() {
     let work = Workspace::new();
     for source in [
         "fn read(value: &Int32) -> &Int32 { value } fn main() { read(42); }",
-        "fn edit(value: &mut Int32) @noescape {} fn main() { var n = 42 edit(n) }",
+        "fn edit(value: &mut Int32) @noescape {} fn main() { var n = 42; edit(n) }",
         "fn read(value: &Int32) @suspends {} fn main() @suspends { read(42) }",
-        "fn read(value: &Int32) @noescape {} fn main() { let f = read f(42) }",
+        "fn read(value: &Int32) @noescape {} fn main() { let f: fn(&Int32) -> Unit = read; f(42) }",
         "fn read(value: &Int32) @noescape -> &Int32 { value } fn main() { read(42); }",
-        "fn consume(value: String) {} fn main() { let text = \"owned\" consume(text) println(text) }",
-        "fn both(value: &String, other: &mut String) @noescape {} fn main() { var text = \"owned\" both(text, &mut text) }",
+        "fn consume(value: String) {} fn main() { let text = \"owned\"; consume(text); println(text) }",
+        "fn both(value: &String, other: &mut String) @noescape {} fn main() { var text = \"owned\"; both(text, &mut text) }",
         "fn pair(value: &Int32, n: Int32) @noescape {} fn later() @suspends -> Int32 { 42 } fn main() @suspends { pair(7, later()) }",
     ] {
         work.write("contract.jk", source);
@@ -3886,10 +3888,10 @@ fn show_map_and_explicit_io_work_without_prelude_in_all_backends() {
         fn main() {
             var values = Map.new::<Int32, String>()
             values.insert(42, "hello")
-            let message = "map={values}" println(message)
+            let message = "map={values}"; println(message)
             println(values)
             values.remove(42)
-            let empty = "{values}" println(empty)
+            let empty = "{values}"; println(empty)
         }
     "#,
     );
@@ -3917,7 +3919,7 @@ fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
         ),
         (r#"fn main() { "{missing}" }"#, "missing"),
         (
-            r#"struct Missing {} fn main() { let value = Missing {} "{value}" }"#,
+            r#"struct Missing {} fn main() { let value = Missing {}; "{value}" }"#,
             "Show",
         ),
         (r#"fn main() { f"{42}" }"#, "remove the `f` prefix"),
@@ -3935,10 +3937,10 @@ fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
         import joky/drop.{type Drop}
         import joky/io.{println}
         struct Resource { text: String }
-        impl Drop for Resource { fn drop(&mut self) { let event = "drop" println(&event) } }
-        impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) 1 / 0; } }
+        impl Drop for Resource { fn drop(&mut self) { let event = "drop"; println(&event) } }
+        impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text); 1 / 0; } }
         fn make() -> Resource { Resource { text: "owned" } }
-        fn main() { let message = "{make()}" println(&message) }
+        fn main() { let message = "{make()}"; println(&message) }
     "#);
     success(&work.cli(&["build", "failure.jk"]));
     for output in [
@@ -3964,8 +3966,8 @@ fn show_print_from_sync_segment_in_cps_main_matches_all_backends() {
         r#"
         import joky/io.{println}
         import joky/task
-        fn report(value: Int32) { let message = "value={value}" println(&message) }
-        fn main() @suspends { report(41) task.yield_now() report(42) }
+        fn report(value: Int32) { let message = "value={value}"; println(&message) }
+        fn main() @suspends { report(41); task.yield_now(); report(42) }
     "#,
     );
     work.assert_all_backends("async.jk", &[], b"value=41\nvalue=42\n", 0);
@@ -4158,11 +4160,11 @@ fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
     );
     for (source, message) in [
         (
-            "struct A { x: Int32 } struct B { x: Int32 } fn unused<T>(v: A) -> Int32 { let B { x } = v x } fn main() {}",
+            "struct A { x: Int32 } struct B { x: Int32 } fn unused<T>(v: A) -> Int32 { let B { x } = v; x } fn main() {}",
             "requires B",
         ),
         (
-            "struct Pair<T> { x: T } fn unused<T>(v: Pair<T>) -> T { let Pair::<Int32> { x } = v x } fn main() {}",
+            "struct Pair<T> { x: T } fn unused<T>(v: Pair<T>) -> T { let Pair::<Int32> { x } = v; x } fn main() {}",
             "requires Pair",
         ),
         (
@@ -4190,7 +4192,7 @@ fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
             "`..` must be the last",
         ),
         (
-            "struct User { name: String, score: Int32 } fn main() -> Int32 { let u = User { name: \"a\", score: 1 } let User { score, .. } = u u.score }",
+            "struct User { name: String, score: Int32 } fn main() -> Int32 { let u = User { name: \"a\", score: 1 }; let User { score, .. } = u; u.score }",
             "moved or uninitialized",
         ),
     ] {
@@ -4273,13 +4275,13 @@ fn list_example_and_cross_module_aliases_run_in_all_backends() {
         import joky/element as element
         import joky/io.{println}
         fn main() {
-            var input=Array.new::<Int32>() input.push(20) input.push(22)
+            var input=Array.new::<Int32>(); input.push(20); input.push(22)
             var list=chains.import_array(input)
             element.write(chains.edit(&mut list,0),20)
             let sum=element.read(chains.view(&list,0))+chains.copied(&list,1).unwrap_or(0)
             list.reverse()
             let output=chains.export(list)
-            println(&sum) println(output.get(0).unwrap_or(0))
+            println(&sum); println(output.get(0).unwrap_or(0))
         }
     "#,
     );
@@ -4306,7 +4308,7 @@ fn set_example_and_cross_module_aliases_run_in_all_backends() {
         import joky/io.{println}
         import joky/string
         fn main() {
-            var input=Array.new::<String>() input.push("apple") input.push("apple")
+            var input=Array.new::<String>(); input.push("apple"); input.push("apple")
             var set=groups.import_array(input)
             var query="apple"
             println(groups.contains(&set,query))
@@ -4893,7 +4895,7 @@ fn exhaustive_net4c_buffered_tcp_maximum_messages_in_standalone_aot() {
         .replace("fn main()", "fn ordinary_messages()");
     work.write(
         "maximum_messages.jk",
-        &format!("{source}\nfn main() @suspends -> Int32 {{ ensure(maximum() == 42) 0 }}"),
+        &format!("{source}\nfn main() @suspends -> Int32 {{ ensure(maximum() == 42); 0 }}"),
     );
     work.assert_native("maximum_messages.jk", &[], b"", 0);
 }
@@ -5123,9 +5125,9 @@ fn json1a_expanding_types_and_live_owner_loans_remain_rejected() {
     let work = Workspace::new();
     for (source, code) in [
         ("import joky/array.{type Array} enum Bad<T> { Items(Array<Bad<(T,)>>) } fn main() {}", "resource_limit"),
-        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { var values = Array.new::<Value>() values.push(Value.Nil) let view = values.borrow_ref(0) values.push(Value.Nil) match view { Nil => {}, _ => {} } }", "invalid_assignment"),
-        ("import joky/array.{type Array} import joky/mem enum Value { Nil, Items(Array<Value>) } fn main() { var value = Value.Items(Array.new::<Value>()) let view = &value let old = mem.replace(&mut value, Value.Nil) match view { Nil => {}, _ => {} } }", "invalid_assignment"),
-        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { let values = Array.new::<Value>() values.get(0) }", "type_mismatch"),
+        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { var values = Array.new::<Value>(); values.push(Value.Nil); let view = values.borrow_ref(0); values.push(Value.Nil); match view { Nil => {}, _ => {} } }", "invalid_assignment"),
+        ("import joky/array.{type Array} import joky/mem enum Value { Nil, Items(Array<Value>) } fn main() { var value = Value.Items(Array.new::<Value>()); let view = &value; let old = mem.replace(&mut value, Value.Nil); match view { Nil => {}, _ => {} } }", "invalid_assignment"),
+        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { let values = Array.new::<Value>(); values.get(0) }", "type_mismatch"),
         ("import joky/array.{type Array} struct Shared { reference: &Int32 } enum Value { Nil, Items(Array<Value>), Hidden(Array<Shared>) } fn main() {}", "type_mismatch"),
         ("struct First<T, U> { value: T } enum Bad { Pair((First<Int32, Bad>, First<Bad, Int32>)) } fn main() {}", "recursive_type"),
         ("import joky/array.{type Array} struct Outer { values: Array<Holder> } struct Holder { reference: &Int32 } fn bad(value: Outer) @suspends {} fn main() {}", "invalid_call"),
@@ -5150,9 +5152,9 @@ fn json1b_number_invariants_and_unique_value_ownership_are_enforced() {
     let work = Workspace::new();
     for (source, diagnostic) in [
         ("import joky/json.{type Number} fn main() { let number = Number { text: \"NaN\" } }", "private"),
-        ("import joky/json as json fn main() { let text = \"1\" json.parse_float64(&text) }", "unknown_name"),
-        ("import joky/json.{type Number} fn main() { let number = Number.from_i64(1) number.text }", "private"),
-        ("import joky/json.{type Value} import joky/array.{type Array} fn main() { let values = Array.new::<Value>() values.get(0) }", "type_mismatch"),
+        ("import joky/json as json fn main() { let text = \"1\"; json.parse_float64(&text) }", "unknown_name"),
+        ("import joky/json.{type Number} fn main() { let number = Number.from_i64(1); number.text }", "private"),
+        ("import joky/json.{type Value} import joky/array.{type Array} fn main() { let values = Array.new::<Value>(); values.get(0) }", "type_mismatch"),
     ] {
         work.write("invalid.jk", source);
         failure(&work.cli(&["build", "invalid.jk"]), diagnostic);
@@ -5206,7 +5208,7 @@ fn json3_native_peer_fragmentation_errors_and_terminal_frames_in_standalone_aot(
         let source = endpoint::source().replace("extern fn sent()", "fn sent() {}");
         work.write(
             "session.jk",
-            &format!("{source}\nfn main() @suspends -> Int32 {{ ensure({entry} == 42) 0 }}"),
+            &format!("{source}\nfn main() @suspends -> Int32 {{ ensure({entry} == 42); 0 }}"),
         );
         // The VM test holds this gate until writes really stall; CLI checks wire parity.
         let mut peer = peer;
@@ -5340,7 +5342,7 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
     work.assert_all_backends("entry.jk", &[], b"", 0);
     work.write(
         "private.jk",
-        "import model fn main() { let value = model.make() value.data; }",
+        "import model fn main() { let value = model.make(); value.data; }",
     );
     failure(&work.cli(&["build", "private.jk"]), "private");
 }
@@ -5551,7 +5553,7 @@ fn vm_call_rejects_invalid_private_contracts_and_removed_scalar_entry() {
         ("extern fn __vm_call() @suspends fn main() {}", "VM call requires its exact"),
         ("fn __vm_call() {} fn main() {}", "VM runtime names require"),
         ("fn __joky_vm_call() {} fn main() {}", "Reserved runtime function name"),
-        ("import joky/vm fn main() @suspends { let h = vm.Vm.new() vm.call_async_int32(&h, \"run\", 0) }", "Undeclared function"),
+        ("import joky/vm fn main() @suspends { let h = vm.Vm.new(); vm.call_async_int32(&h, \"run\", 0) }", "Undeclared function"),
     ] {
         work.write("invalid_vm_call.jk", source);
         failure(&work.cli(&["build", "invalid_vm_call.jk"]), message);
@@ -5704,11 +5706,11 @@ fn state_domains_snapshots_reject_forgery_and_unchecked_projections() {
         fn read(state: &State) -> Int32 { state.count }
     "#;
     for case in [
-        "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let raw=snapshot.storage }",
-        "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let moved=snapshot snapshot.value(); moved.value(); }",
-        "import joky/array.{type Array} fn project(state: &State) -> Array<Ptr> { Array.new::<Ptr>() } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
-        "fn project(state: &mut State) -> Int32 { state.count=99 state.count } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
-        "fn main() @suspends { let owner=domain.create(make,1) let operation=read domain.snapshot_from(owner.read_handle(),operation); }",
+        "fn main() @suspends { let owner=domain.create(make,1); let snapshot=domain.snapshot_from(owner.read_handle(),read); let raw=snapshot.storage }",
+        "fn main() @suspends { let owner=domain.create(make,1); let snapshot=domain.snapshot_from(owner.read_handle(),read); let moved=snapshot; snapshot.value(); moved.value(); }",
+        "import joky/array.{type Array} fn project(state: &State) -> Array<Ptr> { Array.new::<Ptr>() } fn main() @suspends { let owner=domain.create(make,1); domain.snapshot_from(owner.read_handle(),project); }",
+        "fn project(state: &mut State) -> Int32 { state.count=99; state.count } fn main() @suspends { let owner=domain.create(make,1); domain.snapshot_from(owner.read_handle(),project); }",
+        "fn main() @suspends { let owner=domain.create(make,1); let operation=read; domain.snapshot_from(owner.read_handle(),operation); }",
         "fn main() @suspends { let factory=domain.snapshot_from::<State,Int32> }",
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
@@ -5721,7 +5723,7 @@ fn state_domains_snapshots_reject_forgery_and_unchecked_projections() {
 }
 
 #[test]
-fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
+fn state_domains_sc1_checks_proofs_and_generic_request_values() {
     let work = Workspace::new();
     let prefix = r#"
         import joky/domain
@@ -5735,10 +5737,9 @@ fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
         }
     "#;
     for (case, diagnostic) in [
-        ("fn bad(s: &State) -> Int32 { let f = identity f(s.count) } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
-        ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count) s.count } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
-        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), \"owned\"); }", "Copy type arguments"),
-        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, Ptr.null())); }", "bounded value"),
+        ("fn bad(s: &State) -> Int32 { let f = identity; f(s.count) } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
+        ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count); s.count } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
+        ("fn main() @suspends { let o = domain.create(make, 1); relay(o.handle(), (1, Ptr.null())); }", "bounded value"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
@@ -5748,6 +5749,17 @@ fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_before_build() {
         assert!(!error.contains("panicked"), "{error}");
         assert!(output.stdout.is_empty());
     }
+    work.write(
+        "owned_request.jk",
+        &format!(
+            r#"{prefix} fn main() @suspends {{
+            let owner = domain.create(make, 1)
+            let text = relay(owner.handle(), "owned").unwrap()
+            println(text)
+        }}"#
+        ),
+    );
+    work.assert_all_backends("owned_request.jk", &[], b"owned\n", 0);
 }
 
 #[test]
@@ -5826,21 +5838,21 @@ fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
         fn make(value: Int32) -> State { State { count: value } }
         fn read(state: &State) -> Int32 { state.count }
     "#;
-    let start = "let owner = domain.create(make, 1) let handle = owner.handle() let snapshot = domain.snapshot_from(handle.read_only(), read)";
+    let start = "let owner = domain.create(make, 1); let handle = owner.handle(); let snapshot = domain.snapshot_from(handle.read_only(), read)";
     for (extra, body) in [
-        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) snapshot.value();"),
-        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) domain.commit_to(handle, candidate); domain.commit_to(handle, candidate);"),
-        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) let storage = candidate.storage"),
-        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) domain.commit_to(handle.read_only(), candidate);"),
-        ("", "let constructor = make domain.candidate_from(snapshot, handle, constructor, 2);"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2); snapshot.value();"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2); domain.commit_to(handle, candidate); domain.commit_to(handle, candidate);"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2); let storage = candidate.storage"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2); domain.commit_to(handle.read_only(), candidate);"),
+        ("", "let constructor = make; domain.candidate_from(snapshot, handle, constructor, 2);"),
         ("fn other(value: Int32) -> Other { Other { count: value } }", "domain.candidate_from(snapshot, handle, other, 2);"),
         ("import joky/array.{type Array} fn owns(value: Array<Ptr>) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, handle, owns, Array.new::<Ptr>());"),
-        ("fn noisy(value: Int32) -> State { println(value) make(value) }", "domain.candidate_from(snapshot, handle, noisy, 2);"),
+        ("fn noisy(value: Int32) -> State { println(value); make(value) }", "domain.candidate_from(snapshot, handle, noisy, 2);"),
         ("fn pending(value: Int32) @suspends -> State { make(value) }", "domain.candidate_from(snapshot, handle, pending, 2);"),
         ("", "let factory = domain.candidate_from::<State, Int32, State, Int32>"),
-        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2) let receipt = domain.commit_to(handle, candidate) let storage = receipt.storage"),
+        ("", "let candidate = domain.candidate_from(snapshot, handle, make, 2); let receipt = domain.commit_to(handle, candidate); let storage = receipt.storage"),
     ] {
-        work.write("rejected.jk", &format!("{prefix}\n{extra}\nfn main() @suspends {{ {start} {body} }}"));
+        work.write("rejected.jk", &format!("{prefix}\n{extra}\nfn main() @suspends {{ {start}; {body} }}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success(), "accepted {body}");
@@ -5862,7 +5874,7 @@ fn state_domains_owned_roots_reject_hooks_and_unsafe_graphs() {
     let work = Workspace::new();
     for definitions in [
         "import joky/drop.{type Drop} struct State { title: String } impl Drop for State { fn drop(&mut self) {} } fn make(n: Int32) -> State { State { title: \"owned\" } }",
-        "import joky/drop.{type Drop} struct Temp { title: String } impl Drop for Temp { fn drop(&mut self) {} } struct State { title: String } fn make(n: Int32) -> State { let temporary = Temp { title: \"temp\" } State { title: \"owned\" } }",
+        "import joky/drop.{type Drop} struct Temp { title: String } impl Drop for Temp { fn drop(&mut self) {} } struct State { title: String } fn make(n: Int32) -> State { let temporary = Temp { title: \"temp\" }; State { title: \"owned\" } }",
         "import joky/array.{type Array} import joky/drop.{type Drop} struct Item { name: String } impl Drop for Item { fn drop(&mut self) {} } struct State { items: Array<Item> } fn make(n: Int32) -> State { State { items: Array.new::<Item>() } }",
         "import joky/map.{type Map} import joky/drop.{type Drop} struct Item { name: String } impl Drop for Item { fn drop(&mut self) {} } struct State { items: Map<Int32,Item> } fn make(n: Int32) -> State { State { items: Map.new::<Int32,Item>() } }",
         "import joky/array.{type Array} struct Item { pointer: Ptr } struct State { items: Array<Item> } fn make(n: Int32) -> State { State { items: Array.new::<Item>() } }",
@@ -5914,7 +5926,7 @@ fn state_domains_deadlines_reject_forgery_before_build() {
     for source in [
         "import joky/domain fn main() @suspends { let d = domain.CommitDeadline { storage: 1 } }",
         "extern fn __domain_deadline_after(n: UInt64) @suspends -> domain.DeadlineOwner fn main() @suspends { let d = __domain_deadline_after(1) }",
-        "import joky/domain struct State { n: Int32 } fn make(n: Int32) -> State { State { n:n } } fn read(s: &State) -> Int32 { s.n } fn main() @suspends { let o=domain.create(make,1) let c=domain.candidate_from(domain.snapshot_from(o.read_handle(),read), o.handle(), make, 2) let d=0 let r=domain.commit_before(o.handle(),c,&d) }",
+        "import joky/domain struct State { n: Int32 } fn make(n: Int32) -> State { State { n:n } } fn read(s: &State) -> Int32 { s.n } fn main() @suspends { let o=domain.create(make,1); let c=domain.candidate_from(domain.snapshot_from(o.read_handle(),read), o.handle(), make, 2); let d=0; let r=domain.commit_before(o.handle(),c,&d) }",
     ] {
         work.write("forged.jk", source);
         let output = work.cli(&["build", "forged.jk"]);
@@ -5955,18 +5967,18 @@ fn state_domains_pairs_run_in_all_backends() {
 #[test]
 fn state_domains_pairs_reject_unproved_entries_and_capability_mismatches() {
     let work = Workspace::new();
-    let prefix = "import joky/domain struct S { n:Int32 } fn make(n:Int32)->S { S { n:n } } fn read(a:&S,b:&S)->Int32 { a.n+b.n } fn write(a:&mut S,b:&mut S,n:Int32)->Int32 { a.n=n b.n=n n }";
+    let prefix = "import joky/domain struct S { n:Int32 } fn make(n:Int32)->S { S { n:n } } fn read(a:&S,b:&S)->Int32 { a.n+b.n } fn write(a:&mut S,b:&mut S,n:Int32)->Int32 { a.n=n; b.n=n; n }";
     for (extra, body) in [
         ("", "domain.write_pair(a.read_handle(),b.handle(),write,1).unwrap();"),
         ("", "domain.read_pair(a.read_handle(),b.read_handle(),write).unwrap();"),
-        ("", "let f=read domain.read_pair(a.read_handle(),b.read_handle(),f).unwrap();"),
+        ("", "let f=read; domain.read_pair(a.read_handle(),b.read_handle(),f).unwrap();"),
         ("", "let f=domain.read_pair::<S,S,Int32>"),
-        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),noisy).unwrap();"),
+        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n); b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),noisy).unwrap();"),
         ("fn pending(a:&S,b:&S) @suspends -> Int32 { a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),pending).unwrap();"),
         ("fn escape(a:&S,b:&S)->&S { a }", "domain.read_pair(a.read_handle(),b.read_handle(),escape).unwrap();"),
-        ("import joky/drop.{type Drop} struct Hook { n:Int32 } impl Drop for Hook { fn drop(&mut self) {} } fn hook(a:&S,b:&S)->Int32 { let x=Hook{n:1} a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),hook).unwrap();"),
+        ("import joky/drop.{type Drop} struct Hook { n:Int32 } impl Drop for Hook { fn drop(&mut self) {} } fn hook(a:&S,b:&S)->Int32 { let x=Hook{n:1}; a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),hook).unwrap();"),
     ] {
-        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1); let b=domain.create(make,2); {body} }}"));
         for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
             let output=work.cli(&args);
             let error=String::from_utf8_lossy(&output.stderr);
@@ -5982,15 +5994,15 @@ fn state_domains_pair_aliases_fail_before_execution_in_all_backends() {
     let work = Workspace::new();
     for (operation, call) in [
         (
-            "fn mutate(a:&mut S,b:&mut S,n:Int32)->Int32 { a.n=1 b.n=2 n }",
+            "fn mutate(a:&mut S,b:&mut S,n:Int32)->Int32 { a.n=1; b.n=2; n }",
             "domain.write_pair(a.handle(),a.handle(),mutate,0)",
         ),
         (
-            "fn mutate(a:&S,b:&mut S,n:Int32)->Int32 { b.n=a.n+n n }",
+            "fn mutate(a:&S,b:&mut S,n:Int32)->Int32 { b.n=a.n+n; n }",
             "domain.update_pair(a.read_handle(),a.handle(),mutate,0)",
         ),
     ] {
-        work.write("alias.jk", &format!("import joky/domain import joky/check struct S {{ n:Int32 }} fn make(n:Int32)->S {{ S{{n:n}} }} fn read(s:&S)->Int32 {{s.n}} {operation} fn main() @suspends {{ let a=domain.create(make,3) let message=\"alias rejection\" check.assert(match {call} {{ Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false }},&message) check.assert(domain.read_from(a.read_handle(),read).unwrap()==3,&message) }}"));
+        work.write("alias.jk", &format!("import joky/domain import joky/check struct S {{ n:Int32 }} fn make(n:Int32)->S {{ S{{n:n}} }} fn read(s:&S)->Int32 {{s.n}} {operation} fn main() @suspends {{ let a=domain.create(make,3); let message=\"alias rejection\"; check.assert(match {call} {{ Err(domain.DomainAccessError.InvalidAccess)=>true,_=>false }},&message); check.assert(domain.read_from(a.read_handle(),read).unwrap()==3,&message) }}"));
         work.assert_all_backends("alias.jk", &[], b"", 0);
     }
 }
@@ -6011,17 +6023,17 @@ fn state_domains_joint_snapshots_reject_dependency_extraction_and_invalid_projec
     let work = Workspace::new();
     let prefix = "import joky/domain struct S { n:Int32 } fn make(n:Int32)->S { S{n:n} } fn project(a:&S,b:&S)->Int32 { a.n+b.n }";
     for (extra, body) in [
-        ("", "let f=project let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),f)"),
+        ("", "let f=project; let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),f)"),
         ("", "let f=domain.snapshot_pair::<S,S,Int32>"),
-        ("fn mutating(a:&S,b:&mut S)->Int32 { b.n=3 a.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),mutating)"),
+        ("fn mutating(a:&S,b:&mut S)->Int32 { b.n=3; a.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),mutating)"),
         ("import joky/array.{type Array} fn owning(a:&S,b:&S)->Array<Ptr> { Array.new::<Ptr>() }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),owning)"),
-        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),noisy)"),
+        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n); b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),noisy)"),
         ("fn pending(a:&S,b:&S) @suspends ->Int32 { a.n+b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),pending)"),
-        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let raw=s.storage"),
-        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let c=domain.candidate_from(s, a.handle(), make, 2) s.value();"),
+        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project); let raw=s.storage"),
+        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project); let c=domain.candidate_from(s, a.handle(), make, 2); s.value();"),
         ("", "let s=domain.Snapshot::<S,Int32>{storage:1}"),
     ] {
-        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1); let b=domain.create(make,2); {body} }}"));
         for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
             let output=work.cli(&args);
             let error=String::from_utf8_lossy(&output.stderr);
@@ -6048,15 +6060,15 @@ fn state_domains_pair_commits_reject_forgery_reuse_and_unproved_constructors() {
     for (extra, body) in [
         ("", "let p=domain.CandidatePair::<S,S>{storage:1}"),
         ("", "let f=domain.candidate_pair_from::<S,S,Int32>"),
-        ("", "let f=make let p=domain.candidate_pair_from(c, b.handle(), f, 2)"),
-        ("fn noisy(n:Int32)->S { println(n) make(n) }", "let p=domain.candidate_pair_from(c, b.handle(), noisy, 2)"),
+        ("", "let f=make; let p=domain.candidate_pair_from(c, b.handle(), f, 2)"),
+        ("fn noisy(n:Int32)->S { println(n); make(n) }", "let p=domain.candidate_pair_from(c, b.handle(), noisy, 2)"),
         ("fn pending(n:Int32) @suspends ->S { make(n) }", "let p=domain.candidate_pair_from(c, b.handle(), pending, 2)"),
-        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let p2=domain.candidate_pair_from(c, b.handle(), make, 3)"),
-        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let r=domain.commit_pair_to(a.read_handle(),b.handle(),p)"),
-        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let r=domain.commit_pair_to(a.handle(),b.handle(),p) let r2=domain.commit_pair_to(a.handle(),b.handle(),p)"),
-        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2) let raw=p.storage"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2); let p2=domain.candidate_pair_from(c, b.handle(), make, 3)"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2); let r=domain.commit_pair_to(a.read_handle(),b.handle(),p)"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2); let r=domain.commit_pair_to(a.handle(),b.handle(),p); let r2=domain.commit_pair_to(a.handle(),b.handle(),p)"),
+        ("", "let p=domain.candidate_pair_from(c, b.handle(), make, 2); let raw=p.storage"),
     ] {
-        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) let c=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), make, 3) {body} }}"));
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1); let b=domain.create(make,2); let c=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), make, 3); {body} }}"));
         for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
             let output=work.cli(&args);
             let error=String::from_utf8_lossy(&output.stderr);
@@ -6073,7 +6085,7 @@ fn state_domains_pair_commits_reject_single_or_duplicate_snapshot_dependencies()
         "domain.snapshot_from(a.read_handle(),read)",
         "domain.snapshot_pair(a.read_handle(),a.read_handle(),total)",
     ] {
-        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(a:&S)->Int32{{a.n}} fn total(a:&S,b:&S)->Int32{{a.n+b.n}} fn main() @suspends {{ let a=domain.create(make,1) let c=domain.candidate_from({snapshot}, a.handle(), make, 2) let p=domain.candidate_pair_from(c, a.handle(), make, 3) }}"));
+        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(a:&S)->Int32{{a.n}} fn total(a:&S,b:&S)->Int32{{a.n+b.n}} fn main() @suspends {{ let a=domain.create(make,1); let c=domain.candidate_from({snapshot}, a.handle(), make, 2); let p=domain.candidate_pair_from(c, a.handle(), make, 3) }}"));
         let rejected = |output: std::process::Output| {
             assert!(!output.status.success());
             assert!(
@@ -6104,18 +6116,18 @@ fn state_domains_many_reject_forgery_reuse_and_unproved_entries() {
         ("", "let x=domain.SnapshotSet{storage:1}"),
         ("", "let x=domain.CandidateSet{storage:1}"),
         ("", "let f=domain.read_snapshot::<S,Int32>"),
-        ("", "let f=read domain.read_snapshot(&s,a.read_handle(),f);"),
-        ("fn noisy(s:&S)->Int32{println(s.n) s.n}", "domain.read_snapshot(&s,a.read_handle(),noisy);"),
-        ("fn mutating(s:&mut S)->Int32{s.n=3 s.n}", "domain.read_snapshot(&s,a.read_handle(),mutating);"),
+        ("", "let f=read; domain.read_snapshot(&s,a.read_handle(),f);"),
+        ("fn noisy(s:&S)->Int32{println(s.n); s.n}", "domain.read_snapshot(&s,a.read_handle(),noisy);"),
+        ("fn mutating(s:&mut S)->Int32{s.n=3; s.n}", "domain.read_snapshot(&s,a.read_handle(),mutating);"),
         ("fn pending(s:&S) @suspends ->Int32{s.n}", "domain.read_snapshot(&s,a.read_handle(),pending);"),
         ("", "let c=domain.candidate_set_from(s,a.read_handle(),make,3)"),
-        ("", "let f=make let c=domain.candidate_set_from(s,a.handle(),f,3)"),
-        ("fn noisy(n:Int32)->S{println(n) make(n)}", "let c=domain.candidate_set_from(s,a.handle(),noisy,3)"),
-        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3) s.check();"),
-        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3) let d=domain.candidate_set_add(c,b.handle(),make,4) let e=domain.commit_set(c)"),
-        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3) let r=domain.commit_set(c) let r2=domain.commit_set(c)"),
+        ("", "let f=make; let c=domain.candidate_set_from(s,a.handle(),f,3)"),
+        ("fn noisy(n:Int32)->S{println(n); make(n)}", "let c=domain.candidate_set_from(s,a.handle(),noisy,3)"),
+        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3); s.check();"),
+        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3); let d=domain.candidate_set_add(c,b.handle(),make,4); let e=domain.commit_set(c)"),
+        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3); let r=domain.commit_set(c); let r2=domain.commit_set(c)"),
     ] {
-        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let s=domain.snapshot_set(access) {body} }}"));
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1); let b=domain.create(make,2); var access=domain.access_set(); access.include(a.read_handle()); access.include(b.read_handle()); let s=domain.snapshot_set(access); {body} }}"));
         for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
             let output=work.cli(&args);
             let error=String::from_utf8_lossy(&output.stderr);
@@ -6131,11 +6143,11 @@ fn state_domains_many_reject_missing_or_duplicate_members_in_all_backends() {
     let work = Workspace::new();
     for (body, diagnostic) in [
         ("let s=domain.snapshot_set(domain.access_set())", "Empty domain access set"),
-        ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,b.read_handle(),read);", "Projection domain is absent"),
-        ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) let c=domain.candidate_set_from(s,b.handle(),make,3)", "Candidate target is absent"),
-        ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) let c=domain.candidate_set_from(s,a.handle(),make,3) let d=domain.candidate_set_add(c,a.handle(),make,4)", "cannot repeat a writable domain"),
+        ("var access=domain.access_set(); access.include(a.read_handle()); let s=domain.snapshot_set(access); domain.read_snapshot(&s,b.read_handle(),read);", "Projection domain is absent"),
+        ("var access=domain.access_set(); access.include(a.read_handle()); let s=domain.snapshot_set(access); let c=domain.candidate_set_from(s,b.handle(),make,3)", "Candidate target is absent"),
+        ("var access=domain.access_set(); access.include(a.read_handle()); let s=domain.snapshot_set(access); let c=domain.candidate_set_from(s,a.handle(),make,3); let d=domain.candidate_set_add(c,a.handle(),make,4)", "cannot repeat a writable domain"),
     ] {
-        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(s:&S)->Int32{{s.n}} struct Owned{{s:String}} fn make_owned(n:Int32)->Owned{{Owned{{s:\"text\"}}}} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
+        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(s:&S)->Int32{{s.n}} struct Owned{{s:String}} fn make_owned(n:Int32)->Owned{{Owned{{s:\"text\"}}}} fn main() @suspends {{ let a=domain.create(make,1); let b=domain.create(make,2); {body} }}"));
         let rejected = |output: std::process::Output| {
             assert!(!output.status.success(), "{body}");
             let error = String::from_utf8_lossy(&output.stderr);
@@ -6163,11 +6175,11 @@ fn admission_rejects_forgery_copy_and_hidden_storage() {
         "let pool=admission.Pool{storage:1}",
         "let permit=admission.Permit{storage:1}",
         "let handle=admission.Handle{token:1}",
-        "let pool=admission.create(1,1) let raw=pool.storage",
-        "let pool=admission.create(1,1) let h=pool.handle() let raw=h.token",
-        "let pool=admission.create(1,1) let p=pool.handle().acquire().unwrap() p.release() p.release()",
-        "let pool=admission.create(1,1) let another=pool pool.close()",
-        "let pool=admission.create(1,1) let p=pool.handle().acquire().unwrap() let raw=p.storage",
+        "let pool=admission.create(1,1); let raw=pool.storage",
+        "let pool=admission.create(1,1); let h=pool.handle(); let raw=h.token",
+        "let pool=admission.create(1,1); let p=pool.handle().acquire().unwrap(); p.release(); p.release()",
+        "let pool=admission.create(1,1); let another=pool; pool.close()",
+        "let pool=admission.create(1,1); let p=pool.handle().acquire().unwrap(); let raw=p.storage",
     ] {
         work.write("invalid.jk",&format!("import joky/admission fn main() @suspends {{ {body} }}"));
         for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
@@ -6261,9 +6273,9 @@ fn arithmetic_assignment_and_remainder_run_on_all_backends() {
         }
         source.insert_str(0, "import joky/io.{println}\n");
         source.push_str(if suspends {
-            "\nfn main() @suspends { let result = compute(); println(&result) let zero = constant(); println(&zero) }"
+            "\nfn main() @suspends { let result = compute(); println(&result); let zero = constant(); println(&zero) }"
         } else {
-            "\nfn main() { let result = compute(); println(&result) let zero = constant(); println(&zero) }"
+            "\nfn main() { let result = compute(); println(&result); let zero = constant(); println(&zero) }"
         });
         work.write("arithmetic.jk", &source);
         work.assert_all_backends("arithmetic.jk", &[], b"42\n0\n", 0);
@@ -6336,7 +6348,7 @@ fn conditional_patterns_run_on_all_backends() {
             0,
         );
     }
-    let source = format!("import joky/task as task\n{fixture}\nfn main() @suspends {{ if let Some(value) = Some(owned(9)) {{ task.yield_now(); let invalid = 1 % 0 }} record(999); }}");
+    let source = format!("import joky/task as task\n{fixture}\nfn main() @suspends {{ if let Some(value) = Some(owned(9)) {{ task.yield_now(); let invalid = 1 % 0 }}; record(999); }}");
     work.write("pattern_failure.jk", &source);
     for args in [
         ["run", "pattern_failure.jk"].as_slice(),
@@ -6455,7 +6467,7 @@ fn state_domains_nested_string_keys_run_in_all_backends() {
         )
         .replace(
             "fn inspect(state: &State) -> Bool {",
-            "fn inspect(state: &State) -> Bool { let first = \"first\" let second = \"second\"",
+            "fn inspect(state: &State) -> Bool { let first = \"first\"; let second = \"second\"",
         )
         .replace("rooms.remove(2)", "rooms.remove_by_ref(&second)")
         .replace("rooms.borrow_ref(1)", "rooms.value_ref(&first)")
@@ -6503,7 +6515,7 @@ fn script_flat_bridge_rejects_unsupported_caller_contracts_before_build() {
             "Input { inner:Inner{n:\"owned\"} }",
         ),
     ] {
-        work.write("rejected.jk", &format!("import joky/vm {definitions} fn main() @suspends {{ let h=vm.Vm.new() h.call::<{ty}, Int32>(\"run\", {value}); }}"));
+        work.write("rejected.jk", &format!("import joky/vm {definitions} fn main() @suspends {{ let h=vm.Vm.new(); h.call::<{ty}, Int32>(\"run\", {value}); }}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success());
@@ -6524,7 +6536,7 @@ fn script_flat_bridge_enforces_record_field_limit() {
             .collect::<Vec<_>>()
             .join(",");
         let definition = format!("struct Packet {{ {fields} }}");
-        let target = format!("import joky/task {definition} fn run(p:Packet) @suspends ->Packet {{ task.yield_now() p }}")
+        let target = format!("import joky/task {definition} fn run(p:Packet) @suspends ->Packet {{ task.yield_now(); p }}")
             .replace('{', "{{").replace('}', "}}");
         for create in ["new", "interpreter"] {
             let work = Workspace::new();
@@ -6582,7 +6594,7 @@ fn make(n:Int32)->State { State{n:n} }
 fn read(s:&State)->Int32{s.n}
 fn send(target:outbox.Handle) @suspends ->Int32 {
     let state=domain.create(make,0)
-    var bytes=Array.new::<UInt8>() bytes.push(255)
+    var bytes=Array.new::<UInt8>(); bytes.push(255)
     var batch=outbox.batch(1,1)
     outbox.stage(&mut batch,target,bytes);
     let candidate=domain.candidate_from(domain.snapshot_from(state.read_handle(),read), state.handle(), make, 1).with_outbox(batch)
@@ -6635,7 +6647,7 @@ fn directory_lookup_rejects_unsupported_types_and_private_witnesses() {
         ),
     ] {
         for operation in ["lookup", "lookup_write"] {
-            work.write("invalid.jk", &format!("import joky/domain {definitions} fn main() @suspends {{ let table=domain.directory(1) domain.{operation}::<{state}>(table.handle(),1); }}"));
+            work.write("invalid.jk", &format!("import joky/domain {definitions} fn main() @suspends {{ let table=domain.directory(1); domain.{operation}::<{state}>(table.handle(),1); }}"));
             failure(
                 &work.cli(&["build", "invalid.jk"]),
                 "Directory lookup requires a supported non-generic state record",
@@ -6727,7 +6739,7 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     let message="directory reload"
     var attempts:Int32=0
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
-        attempts=attempts+1 check.assert(attempts<1000,&message) task.yield_now()
+        attempts=attempts+1; check.assert(attempts<1000,&message); task.yield_now()
     }}
     check.assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42,&message)
     let next={next:?}
@@ -6824,8 +6836,8 @@ fn domain_timers_reject_unsafe_contracts_in_all_frontends() {
         "import joky/domain fn main() @suspends { let timer=domain.TimerHandle{identity:1} }".to_owned(),
         "extern fn __timer_create(n:Int32) @suspends -> domain.TimerOwner fn main() @suspends { let timer=__timer_create(1) }".to_owned(),
         "extern fn forge() -> domain.TimerOwner fn main() {let timer=forge()}".to_owned(),
-        "import joky/domain import joky/array.{type Array} struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:Array<Ptr>){} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,Array.new::<Ptr>());}".to_owned(),
-        "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} extern fn external(value:Int32) fn tick(room:&mut Room,value:Int32){external(value)} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,1);}".to_owned(),
+        "import joky/domain import joky/array.{type Array} struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:Array<Ptr>){} fn main() @suspends{let room=domain.create(make,0); let timer=domain.timer(); domain.after(timer.handle(),room.handle(),0,tick,Array.new::<Ptr>());}".to_owned(),
+        "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} extern fn external(value:Int32) fn tick(room:&mut Room,value:Int32){external(value)} fn main() @suspends{let room=domain.create(make,0); let timer=domain.timer(); domain.after(timer.handle(),room.handle(),0,tick,1);}".to_owned(),
     ] {
         work.write("bad_timer.jk", &source);
         for args in [vec!["run","bad_timer.jk"],vec!["run","--interpreter","bad_timer.jk"],vec!["build","bad_timer.jk"]] {
@@ -6864,11 +6876,11 @@ fn assert_script_migration(old: &str, next: &str) {
             "migrate.jk",
             &format!(
                 r#"import joky/domain import joky/vm import joky/check import joky/task
-fn assert(ok:Bool) {{let message="Script migration" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="Script migration"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts:Int32=0
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
-        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+        attempts=attempts+1; assert(attempts<1000); task.yield_now()
     }}
     let schema=vm.domain_schema(h)
     assert(schema!=0)
@@ -6926,11 +6938,11 @@ fn script_incremental_migration_yields_conflicts_cancels_and_publishes() {
             "incremental.jk",
             &format!(
                 r#"import joky/domain import joky/vm import joky/check import joky/task
-fn assert(ok:Bool) {{let message="incremental migration" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="incremental migration"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
     let schema=vm.domain_schema(h)
-    let next={next:?} let start="start" let advance="advance" let version="version"
+    let next={next:?}; let start="start"; let advance="advance"; let version="version"
     assert(vm.begin_migration(h,0,&next,&start,&advance)==1)
     assert(vm.begin_migration(h,schema,&next,&start,&advance)==0)
     assert(vm.begin_migration(h,schema,&next,&start,&advance)==1)
@@ -6970,8 +6982,8 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==46)
 }}
 fn main() @suspends {{
-    let owner=domain.directory(1) let directory=owner.handle()
-    let h=vm.Vm.{create}() let source={source:?}
+    let owner=domain.directory(1); let directory=owner.handle()
+    let h=vm.Vm.{create}(); let source={source:?}
     assert(vm.load_source(h,&source)==0)
     race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
@@ -6995,10 +7007,10 @@ fn script_migration_batch_is_atomic_across_types_and_read_dependencies() {
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("batch.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="migration batch" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="migration batch"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{task.yield_now()}}
-    let next={next:?} let start="start" let advance="advance" let ledger="upgrade_ledger" let empty="" let version="version"
+    let next={next:?}; let start="start"; let advance="advance"; let ledger="upgrade_ledger"; let empty=""; let version="version"
     assert(vm.domain_schema(h)==0)
     assert(vm.begin_migration_batch(h,&next)==0)
     assert(vm.begin_migration_batch(h,&next)==1)
@@ -7041,8 +7053,8 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==195)
 }}
 fn main() @suspends {{
-    let owner=domain.directory(4) let directory=owner.handle()
-    let h=vm.Vm.{create}() let old={old:?}
+    let owner=domain.directory(4); let directory=owner.handle()
+    let h=vm.Vm.{create}(); let old={old:?}
     assert(vm.load_source(h,&old)==0)
     race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
@@ -7066,11 +7078,11 @@ fn script_multi_domain_late_binding_and_module_diagnostics_run_in_all_backends()
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("late_binding.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="late binding host" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="late binding host"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
-        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+        attempts=attempts+1; assert(attempts<1000); task.yield_now()
     }}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
@@ -7139,7 +7151,7 @@ fn server_reload_keeps_tcp_tick_and_atomic_replies_in_all_backends() {
 fn script_nested_bridge_preserves_lanes_and_rejects_changed_inner_contracts() {
     let definitions = "struct Empty {} struct Bits { high:UInt64, low:Int8, flag:Bool, real:Float64 } struct Packet { bits:Bits, empty:Empty, unit:Unit }";
     let target = format!(
-        "import joky/task {definitions} fn run(p:Packet) @suspends ->Packet {{task.yield_now() p}}"
+        "import joky/task {definitions} fn run(p:Packet) @suspends ->Packet {{task.yield_now(); p}}"
     );
     let input = "Packet{bits:Bits{high:18446744073709551615,low:-128,flag:true,real:Float64.from_bits(9221120237041090626)},empty:Empty{},unit:{}}";
     for create in ["new", "interpreter"] {
@@ -7149,7 +7161,7 @@ fn script_nested_bridge_preserves_lanes_and_rejects_changed_inner_contracts() {
             r#"import joky/vm import joky/check
 {definitions}
 fn main() @suspends {{
-    let h=vm.Vm.{create}() let source={source}
+    let h=vm.Vm.{create}(); let source={source}
     let message="nested Script lanes"
     check.assert(vm.load_source(h,&source)==0,&message)
     let reply=h.call::<Packet,Packet>("run",{input})
@@ -7260,7 +7272,7 @@ fn script_nested_bridge_bounds_total_fields_and_depth() {
     }
     for (definitions, ty, value, assertion, accepted) in cases {
         let target = format!(
-            "import joky/task {definitions} fn run(p:{ty}) @suspends ->{ty} {{task.yield_now() p}}"
+            "import joky/task {definitions} fn run(p:{ty}) @suspends ->{ty} {{task.yield_now(); p}}"
         )
         .replace('{', "{{")
         .replace('}', "}}");
@@ -7271,7 +7283,7 @@ fn script_nested_bridge_bounds_total_fields_and_depth() {
                 r#"import joky/vm import joky/check
 {definitions}
 fn main() @suspends {{
-    let h=vm.Vm.interpreter() let source={target:?} let message="nested limits"
+    let h=vm.Vm.interpreter(); let source={target:?}; let message="nested limits"
     check.assert(vm.load_source(h,&source)==0,&message)
     let p=h.call::<{ty},{ty}>("run",{value})
     check.assert({assertion},&message)
@@ -7319,11 +7331,11 @@ fn domain_value_packets_keep_old_flows_and_bind_new_script_operations_in_all_bac
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("values_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="domain values reload" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="domain values reload"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
-        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+        attempts=attempts+1; assert(attempts<1000); task.yield_now()
     }}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
@@ -7334,9 +7346,9 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
 }}
 fn main() @suspends {{
-    let h=vm.Vm.{create}() let source={old:?}
+    let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
-    let owner=domain.directory(2) let directory=owner.handle()
+    let owner=domain.directory(2); let directory=owner.handle()
     parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
@@ -7444,7 +7456,7 @@ fn main() @suspends {{
 {definitions}
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
-fn echo(input:{input_type}) @suspends -> {result_type} {{task.yield_now() {result_body}}}
+fn echo(input:{input_type}) @suspends -> {result_type} {{task.yield_now(); {result_body}}}
 fn main() @suspends {{
     let owner=domain.create(make,0)
     let message="request bounds"
@@ -7471,13 +7483,13 @@ fn main() @suspends {{
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 fn read(s:&State)->Int32 {{s.n}}
-fn tick(s:&mut State,p:{ty}) {{let message="timer bounds" check.assert({assertion},&message) s.n=s.n+1}}
+fn tick(s:&mut State,p:{ty}) {{let message="timer bounds"; check.assert({assertion},&message); s.n=s.n+1}}
 fn main() @suspends {{
-    let o=domain.create(make,0) let timer=domain.timer() let t=timer.handle()
+    let o=domain.create(make,0); let timer=domain.timer(); let t=timer.handle()
     domain.after(t,o.handle(),0,tick,{value}).unwrap()
     while match t.status() {{Active=>true,_=>false}} {{task.yield_now()}}
-    let message="timer completion" check.assert(domain.read_from(o.read_handle(),read).unwrap()==1,&message)
-    domain.every(t,o.handle(),100000,tick,{value}).unwrap() t.cancel()
+    let message="timer completion"; check.assert(domain.read_from(o.read_handle(),read).unwrap()==1,&message)
+    domain.every(t,o.handle(),100000,tick,{value}).unwrap(); t.cancel()
 }}"#));
         if accepted {
             timer_work.assert_all_backends("timer_bound.jk", &[], b"", 0);
@@ -7489,9 +7501,9 @@ fn main() @suspends {{
         }
 
         for (projection, body) in [
-            ("fn project(a:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_from(a.read_handle(),project) let p=saved.value()"),
-            ("fn project(a:&State,b:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let p=saved.value()"),
-            ("fn project(a:&State)->PAYLOAD {VALUE}", "var access=domain.access_set() access.include(a.read_handle()) let saved=domain.snapshot_set(access) let p=domain.read_snapshot(&saved,a.read_handle(),project)"),
+            ("fn project(a:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_from(a.read_handle(),project); let p=saved.value()"),
+            ("fn project(a:&State,b:&State)->PAYLOAD {VALUE}", "let saved=domain.snapshot_pair(a.read_handle(),b.read_handle(),project); let p=saved.value()"),
+            ("fn project(a:&State)->PAYLOAD {VALUE}", "var access=domain.access_set(); access.include(a.read_handle()); let saved=domain.snapshot_set(access); let p=domain.read_snapshot(&saved,a.read_handle(),project)"),
         ] {
             let work=Workspace::new();
             let projection=projection.replace("PAYLOAD",&ty).replace("VALUE",&value);
@@ -7501,19 +7513,19 @@ struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 {projection}
 fn main() @suspends {{
-    let a=domain.create(make,0) let b=domain.create(make,0)
+    let a=domain.create(make,0); let b=domain.create(make,0)
     {body}
-    let message="snapshot result bounds" check.assert({assertion},&message)
+    let message="snapshot result bounds"; check.assert({assertion},&message)
 }}"#));
             if accepted {work.assert_all_backends("snapshot_bound.jk",&[],b"",0);}
             else {failure(&work.cli(&["build","snapshot_bound.jk"]),"bounded value signature");}
         }
 
         let candidate_calls = [
-            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read), a.handle(), make, VALUE) var receipt=domain.commit_to(a.handle(),next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
-            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), seed, 0) let next=domain.candidate_pair_from(first, b.handle(), make, VALUE) var receipt=domain.commit_pair_to(a.handle(),b.handle(),next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
-            "var access=domain.access_set() access.include(a.read_handle()) let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
-            "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,VALUE) var receipt=domain.commit_set(next) check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
+            "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read), a.handle(), make, VALUE); var receipt=domain.commit_to(a.handle(),next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
+            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), seed, 0); let next=domain.candidate_pair_from(first, b.handle(), make, VALUE); var receipt=domain.commit_pair_to(a.handle(),b.handle(),next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
+            "var access=domain.access_set(); access.include(a.read_handle()); let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,VALUE); var receipt=domain.commit_set(next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
+            "var access=domain.access_set(); access.include(a.read_handle()); access.include(b.read_handle()); let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0); let next=domain.candidate_set_add(first,b.handle(),make,VALUE); var receipt=domain.commit_set(next); check.assert(match receipt.wait(){Ok(_)=>true,_=>false},&message)",
         ];
         for (index, call) in candidate_calls.iter().enumerate() {
             let work = Workspace::new();
@@ -7530,7 +7542,7 @@ fn make(p:{ty})->State {{State{{ok:{assertion}}}}}
 fn read(s:&State)->Bool {{s.ok}}
 fn total(a:&State,b:&State)->Bool {{a.ok && b.ok}}
 fn main() @suspends {{
-    let a=domain.create(seed,0) let b=domain.create(seed,0)
+    let a=domain.create(seed,0); let b=domain.create(seed,0)
     let message="candidate input bounds"
     {call}
     check.assert(domain.read_from({target}.read_handle(),read).unwrap(),&message)
@@ -7548,7 +7560,7 @@ fn main() @suspends {{
         }
 
         for (access, receiver, body, expected) in [
-            ("write_to(owner.handle()", "&mut State", "s.n=s.n+1 p", 1),
+            ("write_to(owner.handle()", "&mut State", "s.n=s.n+1; p", 1),
             ("query_from(owner.read_handle()", "&State", "p", 0),
         ] {
             let work = Workspace::new();
@@ -7603,7 +7615,7 @@ fn domain_value_packets_reject_unsafe_inputs_and_results() {
 struct State {{n:Int32}} struct Packet {{text:Array<Ptr>}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 {operation}
-fn main() @suspends {{let owner=domain.create(make,1) {invocation};}}"#
+fn main() @suspends {{let owner=domain.create(make,1); {invocation};}}"#
             ),
         );
         failure(&work.cli(&["build", &file]), "bounded value signature");
@@ -7627,7 +7639,7 @@ fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
     for (name, operation, invocation) in [
         (
             "mutable",
-            "fn query(s:&mut State,n:Int32)->Int32{s.n=n n}",
+            "fn query(s:&mut State,n:Int32)->Int32{s.n=n; n}",
             "domain.query_from(h,query,1)",
         ),
         (
@@ -7643,16 +7655,16 @@ fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
         (
             "dynamic",
             "fn query(s:&State,n:Int32)->Int32{s.n+n}",
-            "{let operation=query domain.query_from(h,operation,1)}",
+            "{let operation=query; domain.query_from(h,operation,1)}",
         ),
         (
             "intrinsic_value",
             "fn query(s:&State,n:Int32)->Int32{s.n+n}",
-            "{let q=domain.query_from::<State,Int32,Int32> q(h,query,1)}",
+            "{let q=domain.query_from::<State,Int32,Int32>; q(h,query,1)}",
         ),
         (
             "pair_mutable",
-            "fn query(a:&State,b:&mut State,n:Int32)->Int32{b.n=n a.n}",
+            "fn query(a:&State,b:&mut State,n:Int32)->Int32{b.n=n; a.n}",
             "domain.query_pair(h,h,query,1)",
         ),
     ] {
@@ -7664,7 +7676,7 @@ fn domain_queries_reject_invalid_permissions_payloads_and_dynamic_operations() {
 struct State {{n:Int32}} struct Packet {{text:Array<Ptr>}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 {operation}
-fn main() @suspends {{let owner=domain.create(make,1) let h=owner.read_handle() {invocation};}}"#
+fn main() @suspends {{let owner=domain.create(make,1); let h=owner.read_handle(); {invocation};}}"#
             ),
         );
         let output = work.cli(&["build", &file]);
@@ -7736,7 +7748,7 @@ fn domain_create_values_reject_unsafe_payloads_and_unproved_constructors() {
             "host",
             "struct Init{n:Int32}",
             "Init{n:1}",
-            "fn make(p:Init)->State{println(\"host\") State{n:p.n}}",
+            "fn make(p:Init)->State{println(\"host\"); State{n:p.n}}",
             "proved synchronous",
         ),
     ] {
@@ -7823,18 +7835,18 @@ fn domain_candidate_values_reject_unproved_and_non_value_inputs() {
         (
             "struct Init{n:Int32}",
             "Init{n:1}",
-            "fn make(p:Init)->State{println(p.n) State{n:p.n}}",
+            "fn make(p:Init)->State{println(p.n); State{n:p.n}}",
             "proved synchronous",
         ),
     ] {
         for body in [
             "let next=domain.candidate_from(domain.snapshot_from(a.read_handle(),read), a.handle(), make, INPUT)",
-            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), seed, 0) let next=domain.candidate_pair_from(first, b.handle(), make, INPUT)",
-            "var access=domain.access_set() access.include(a.read_handle()) let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,INPUT)",
-            "var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0) let next=domain.candidate_set_add(first,b.handle(),make,INPUT)",
+            "let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), seed, 0); let next=domain.candidate_pair_from(first, b.handle(), make, INPUT)",
+            "var access=domain.access_set(); access.include(a.read_handle()); let next=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,INPUT)",
+            "var access=domain.access_set(); access.include(a.read_handle()); access.include(b.read_handle()); let first=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),seed,0); let next=domain.candidate_set_add(first,b.handle(),make,INPUT)",
         ] {
             let body=body.replace("INPUT",input);
-            work.write("candidate_invalid.jk", &format!("import joky/domain import joky/array.{{type Array}} struct State{{n:Int32}} {definition} {constructor} fn seed(n:Int32)->State{{State{{n:n}}}} fn read(s:&State)->Int32{{s.n}} fn total(a:&State,b:&State)->Int32{{a.n+b.n}} fn main() @suspends {{let a=domain.create(seed,0) let b=domain.create(seed,0) {body}}}"));
+            work.write("candidate_invalid.jk", &format!("import joky/domain import joky/array.{{type Array}} struct State{{n:Int32}} {definition} {constructor} fn seed(n:Int32)->State{{State{{n:n}}}} fn read(s:&State)->Int32{{s.n}} fn total(a:&State,b:&State)->Int32{{a.n+b.n}} fn main() @suspends {{let a=domain.create(seed,0); let b=domain.create(seed,0); {body}}}"));
             failure(&work.cli(&["build","candidate_invalid.jk"]),expected);
         }
     }
@@ -7850,11 +7862,11 @@ fn domain_candidate_values_pin_modules_and_conflict_after_publication() {
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("candidate_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="candidate versions" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="candidate versions"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while !h.call::<domain.DirectoryHandle,Bool>("ready",directory) {{
-        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+        attempts=attempts+1; assert(attempts<1000); task.yield_now()
     }}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
@@ -7863,9 +7875,9 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
 }}
 fn main() @suspends {{
-    let h=vm.Vm.{create}() let source={old:?}
+    let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
-    let owner=domain.directory(1) let directory=owner.handle()
+    let owner=domain.directory(1); let directory=owner.handle()
     parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
@@ -7925,9 +7937,9 @@ fn domain_snapshot_values_reject_invalid_results_and_projections() {
         for (params,body) in [
             ("a:&State","let s=domain.snapshot_from(a.read_handle(),project)"),
             ("a:&State,b:&State","let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project)"),
-            ("a:&State","var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,a.read_handle(),project);"),
+            ("a:&State","var access=domain.access_set(); access.include(a.read_handle()); let s=domain.snapshot_set(access); domain.read_snapshot(&s,a.read_handle(),project);"),
         ] {
-            work.write("invalid_snapshot.jk",&format!("import joky/domain import joky/array.{{type Array}} {definitions} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params})->{ty}{{{value}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+            work.write("invalid_snapshot.jk",&format!("import joky/domain import joky/array.{{type Array}} {definitions} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params})->{ty}{{{value}}} fn main() @suspends {{let a=domain.create(make,1); let b=domain.create(make,2); {body}}}"));
             failure(&work.cli(&["build","invalid_snapshot.jk"]),"bounded value signature");
         }
     }
@@ -7939,10 +7951,10 @@ fn domain_snapshot_values_reject_invalid_results_and_projections() {
         for (params,body) in [
             (format!("a:{receiver}"),"let s=domain.snapshot_from(a.read_handle(),project)"),
             (format!("a:&State,b:{receiver}"),"let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project)"),
-            (format!("a:{receiver}"),"var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,a.read_handle(),project);"),
+            (format!("a:{receiver}"),"var access=domain.access_set(); access.include(a.read_handle()); let s=domain.snapshot_set(access); domain.read_snapshot(&s,a.read_handle(),project);"),
         ] {
             let extra=if params.contains("b:&mut") {"b.n=5"} else {extra};
-            work.write("invalid_snapshot.jk",&format!("import joky/domain import joky/array.{{type Array}} struct Payload{{n:Int32}} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params}) {modifier} ->Payload{{{extra} Payload{{n:a.n}}}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+            work.write("invalid_snapshot.jk",&format!("import joky/domain import joky/array.{{type Array}} struct Payload{{n:Int32}} struct State{{n:Int32}} fn make(n:Int32)->State{{State{{n:n}}}} fn project({params}) {modifier} ->Payload{{{extra}; Payload{{n:a.n}}}} fn main() @suspends {{let a=domain.create(make,1); let b=domain.create(make,2); {body}}}"));
             failure(&work.cli(&["build","invalid_snapshot.jk"]),expected);
         }
     }
@@ -7960,11 +7972,11 @@ fn domain_snapshot_values_keep_frozen_results_across_publication() {
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
         work.write("snapshot_reload.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="snapshot versions" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="snapshot versions"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while !h.call::<domain.DirectoryHandle,Bool>("ready",directory) {{
-        attempts=attempts+1 assert(attempts<1000) task.yield_now()
+        attempts=attempts+1; assert(attempts<1000); task.yield_now()
     }}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
@@ -7972,9 +7984,9 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
 }}
 fn main() @suspends {{
-    let h=vm.Vm.{create}() let source={old:?}
+    let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
-    let owner=domain.directory(1) let directory=owner.handle()
+    let owner=domain.directory(1); let directory=owner.handle()
     parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
@@ -8017,7 +8029,7 @@ fn domain_request_values_reject_invalid_contracts() {
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 fn work(input:{input}) @suspends -> {output} {{{body}}}
-fn main() @suspends {{let owner=domain.create(make,0) domain.request(owner.handle(),work,{argument});}}
+fn main() @suspends {{let owner=domain.create(make,0); domain.request(owner.handle(),work,{argument});}}
 "#));
             let output = work.cli(&["build", "rejected_request.jk"]);
             assert!(!output.status.success());
@@ -8057,19 +8069,19 @@ fn domain_request_values_pin_started_tasks_and_check_new_contracts() {
         for create in ["new", "interpreter"] {
             let work = Workspace::new();
             work.write("request_reload.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="request publication" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="request publication"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
-    while !h.call::<domain.DirectoryHandle,Bool>("ready",directory) {{attempts=attempts+1 assert(attempts<1000) task.yield_now()}}
+    while !h.call::<domain.DirectoryHandle,Bool>("ready",directory) {{attempts=attempts+1; assert(attempts<1000); task.yield_now()}}
     let next={new:?}
     assert(vm.load_source(h,&next)==0)
     assert(vm.publish_domain_code(h)==1)
     assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
 }}
 fn main() @suspends {{
-    let h=vm.Vm.{create}() let source={old:?}
+    let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
-    let owner=domain.directory(1) let directory=owner.handle()
+    let owner=domain.directory(1); let directory=owner.handle()
     parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
@@ -8120,7 +8132,7 @@ fn domain_timer_values_reject_invalid_inputs_and_effects() {
             "struct P{n:Int32}",
             "P",
             "P{n:1}",
-            "let text=\"timer\" io.print(&text)",
+            "let text=\"timer\"; io.print(&text)",
             "",
         ),
     ] {
@@ -8129,7 +8141,7 @@ fn domain_timer_values_reject_invalid_inputs_and_effects() {
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 fn tick(s:&mut State,p:{ty}) {effect} {{{body}}}
-fn main() @suspends {{let o=domain.create(make,0) let t=domain.timer() domain.after(t.handle(),o.handle(),0,tick,{value});}}"#));
+fn main() @suspends {{let o=domain.create(make,0); let t=domain.timer(); domain.after(t.handle(),o.handle(),0,tick,{value});}}"#));
         let output = work.cli(&["build", "rejected_timer.jk"]);
         assert!(!output.status.success());
         let error = String::from_utf8_lossy(&output.stderr);
@@ -8141,9 +8153,9 @@ fn main() @suspends {{let o=domain.create(make,0) let t=domain.timer() domain.af
     work.write("generic_timer_effect.jk",r#"import joky/domain import joky/array.{type Array} import joky/io
 struct State {n:Int32} struct P {n:Int32}
 fn make(n:Int32)->State {State{n:n}}
-fn tick<T>(s:&mut State,p:T) {let text="timer" io.print(&text)}
+fn tick<T>(s:&mut State,p:T) {let text="timer"; io.print(&text)}
 fn arm<T>(t:domain.TimerHandle,h:domain.WriteHandle<State>,p:T) @suspends {domain.after(t,h,0,tick::<T>,p);}
-fn main() @suspends {let o=domain.create(make,0) let t=domain.timer() arm(t.handle(),o.handle(),P{n:1});}
+fn main() @suspends {let o=domain.create(make,0); let t=domain.timer(); arm(t.handle(),o.handle(),P{n:1});}
 "#);
     failure(
         &work.cli(&["build", "generic_timer_effect.jk"]),
@@ -8159,9 +8171,9 @@ struct Payload {pub step:Int32,tag:UInt64}
 fn make(value:Int32)->Room {Room{value:value}}
 fn read(room:&Room)->Int32 {room.value}
 fn tick(room:&mut Room,p:Payload) {room.value=room.value+p.step}
-fn assert(ok:Bool) {let message="timer record publication" check.assert(ok,&message)}
+fn assert(ok:Bool) {let message="timer record publication"; check.assert(ok,&message)}
 fn hold(t:domain.TimerHandle) @suspends {
-    let room=domain.create(make,10) let h=room.handle()
+    let room=domain.create(make,10); let h=room.handle()
     var p=Payload{step:2,tag:18446744073709551615}
     assert(domain.after(t,h,100000,tick,p).is_ok())
     while match t.status(){Active=>true,_=>false} {task.yield_now()}
@@ -8191,14 +8203,14 @@ fn hold(t:domain.TimerHandle) @suspends {
         for create in ["new", "interpreter"] {
             let work = Workspace::new();
             work.write("timer_reload.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
-fn assert(ok:Bool) {{let message="timer host" check.assert(ok,&message)}}
+fn assert(ok:Bool) {{let message="timer host"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,t:domain.TimerHandle) @suspends {{
     while match t.status(){{Idle=>true,_=>false}} {{task.yield_now()}}
-    let next={next:?} assert(vm.load_source(h,&next)==0) assert(vm.publish_domain_code(h)==1) t.cancel()
+    let next={next:?}; assert(vm.load_source(h,&next)==0); assert(vm.publish_domain_code(h)==1); t.cancel()
 }}
 fn main() @suspends {{
-    let timer=domain.timer() let t=timer.handle()
-    let h=vm.Vm.{create}() let source={source:?}
+    let timer=domain.timer(); let t=timer.handle()
+    let h=vm.Vm.{create}(); let source={source:?}
     assert(vm.load_source(h,&source)==0)
     parallel {{ | h.call::<domain.TimerHandle,Unit>("hold",t) | control(&h,t) }};
     assert(vm.module_count(h)==1)
@@ -8233,8 +8245,8 @@ fn state_domains_submission_contract_runs_in_all_backends() {
         &format!(
             r#"{example}
 fn main() @suspends ->Int32 {{
-    let owner=domain.create(make,0) let mailbox=outbox.create(1,4096)
-    var receipt=update(owner.handle(),mailbox.handle()) receipt.wait().unwrap();
+    let owner=domain.create(make,0); let mailbox=outbox.create(1,4096)
+    var receipt=update(owner.handle(),mailbox.handle()); receipt.wait().unwrap();
     domain.read_from(owner.read_handle(),read).unwrap()-42
 }}"#
         ),
@@ -8247,7 +8259,7 @@ fn state_domains_submission_targets_reject_missing_members_before_construction()
     for pair in [false, true] {
         let work = Workspace::new();
         let prepare = if pair {
-            "let first=domain.candidate_from(snapshot,a.handle(),make,2) domain.candidate_pair_from(first,c.handle(),broken,0);"
+            "let first=domain.candidate_from(snapshot,a.handle(),make,2); domain.candidate_pair_from(first,c.handle(),broken,0);"
         } else {
             "domain.candidate_from(snapshot,c.handle(),broken,0);"
         };
@@ -8260,7 +8272,7 @@ fn make(n:Int32)->S {{S{{n:n}}}}
 fn broken(n:Int32)->S {{make(1/n)}}
 fn sum(a:&S,b:&S)->Int32 {{a.n+b.n}}
 fn main() @suspends {{
-    let a=domain.create(make,1) let b=domain.create(make,2) let c=domain.create(make,3)
+    let a=domain.create(make,1); let b=domain.create(make,2); let c=domain.create(make,3)
     let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),sum)
     {prepare}
 }}"#
@@ -8293,7 +8305,7 @@ fn state_domains_submission_targets_require_matching_write_capabilities() {
         ("b.handle()", true),
     ] {
         let candidate = if pair {
-            format!("let first=domain.candidate_from(snapshot,b.handle(),rules,3) domain.candidate_pair_from(first,{target},make,4);")
+            format!("let first=domain.candidate_from(snapshot,b.handle(),rules,3); domain.candidate_pair_from(first,{target},make,4);")
         } else {
             format!("domain.candidate_from(snapshot,{target},make,3);")
         };
@@ -8304,8 +8316,8 @@ fn state_domains_submission_targets_require_matching_write_capabilities() {
 struct S {{n:Int32}} struct T {{n:Int32}}
 fn make(n:Int32)->S {{S{{n:n}}}} fn rules(n:Int32)->T {{T{{n:n}}}}
 fn total(a:&S,b:&T)->Int32 {{a.n+b.n}}
-fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(rules,2)
-let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total) {candidate}}}"#
+fn main() @suspends {{let a=domain.create(make,1); let b=domain.create(rules,2)
+let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total); {candidate}}}"#
             ),
         );
         let output = work.cli(&["build", "permission.jk"]);
@@ -8361,14 +8373,14 @@ fn state_domains_storage_editors_reject_invalid_contracts() {
         ),
         (
             "",
-            "let f=edit domain.edit_snapshot(snapshot,owner.handle(),f,2);",
+            "let f=edit; domain.edit_snapshot(snapshot,owner.handle(),f,2);",
         ),
         (
             "",
-            "let c=domain.edit_snapshot(snapshot,owner.handle(),edit,2) snapshot.check();",
+            "let c=domain.edit_snapshot(snapshot,owner.handle(),edit,2); snapshot.check();",
         ),
     ] {
-        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{let owner=domain.create(make,1) var set=domain.access_set() set.include(owner.read_handle()) let snapshot=domain.snapshot_set(set) {body}}}"));
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{let owner=domain.create(make,1); var set=domain.access_set(); set.include(owner.read_handle()); let snapshot=domain.snapshot_set(set); {body}}}"));
         let output = work.cli(&["build", "invalid.jk"]);
         assert!(!output.status.success(), "{body}");
         let error = String::from_utf8_lossy(&output.stderr);
@@ -8391,7 +8403,7 @@ fn state_domains_storage_editor_and_multi_failures_run_in_all_backends() {
         "domain.update_pair(a.read_handle(),b.handle(),fail_mixed,0).unwrap();",
         "let candidate=domain.edit_snapshot(capture(a.read_handle(),b.read_handle(),b.read_handle()),a.handle(),broken,0)",
     ] {
-        work.write("failure.jk", &format!("{source} fn broken(s:&mut State,n:Int32){{edit(s,1/n);}} fn main() @suspends {{let a=domain.create(make,1) let b=domain.create(make,2) {body}}}"));
+        work.write("failure.jk", &format!("{source} fn broken(s:&mut State,n:Int32){{edit(s,1/n);}} fn main() @suspends {{let a=domain.create(make,1); let b=domain.create(make,2); {body}}}"));
         let rejected=|output:std::process::Output| {
             assert!(!output.status.success());
             let error=String::from_utf8_lossy(&output.stderr);
@@ -8416,13 +8428,13 @@ fn state_domains_when_syntax_and_methods_run_in_all_backends() {
 #[cfg(unix)]
 fn state_domains_when_access_boundaries_run_in_all_backends() {
     let mut source = String::from("import joky/domain import joky/mem import joky/check import joky/array.{type Array} struct S{n:Int32,text:String} fn make(n:Int32)->S{S{n:n,text:\"owned\"}} fn assert(ok:Bool){check.assert(ok,\"when boundary\")} ");
-    source.push_str("fn push(owners:&mut Array<domain.Owner<S>>,n:Int32) @suspends ->domain.WriteHandle<S>{let o=domain.create(make,n) let h=o.handle() owners.push(o) h} ");
+    source.push_str("fn push(owners:&mut Array<domain.Owner<S>>,n:Int32) @suspends ->domain.WriteHandle<S>{let o=domain.create(make,n); let h=o.handle(); owners.push(o); h} ");
     for count in [1, 2, 3, 8, 64] {
         source.push_str(&format!(
-            "fn run{count}() @suspends {{var owners=Array.new::<domain.Owner<S>>() "
+            "fn run{count}() @suspends {{var owners=Array.new::<domain.Owner<S>>(); "
         ));
         for i in 0..count {
-            source.push_str(&format!("let h{i}=push(&mut owners,{i}) "));
+            source.push_str(&format!("let h{i}=push(&mut owners,{i}); "));
         }
         let accesses = (0..count)
             .map(|i| format!("mut h{i}"))
@@ -8430,16 +8442,16 @@ fn state_domains_when_access_boundaries_run_in_all_backends() {
             .join(",");
         source.push_str(&format!("let r=when ({accesses}) {{"));
         for i in 0..count {
-            source.push_str(&format!("h{i}.n+=1 "));
+            source.push_str(&format!("h{i}.n+=1; "));
             if i > 0 {
-                source.push_str(&format!("mem.swap(&mut h0.text,&mut h{i}.text) "));
+                source.push_str(&format!("mem.swap(&mut h0.text,&mut h{i}.text); "));
             }
         }
-        source.push_str("h0.n} assert(r.unwrap()==1) ");
+        source.push_str("h0.n}; assert(r.unwrap()==1) ");
 
         source.push_str("} ");
     }
-    source.push_str("fn main() @suspends {run1() run2() run3() run8() run64()}");
+    source.push_str("fn main() @suspends {run1(); run2(); run3(); run8(); run64()}");
     let work = Workspace::new();
     work.write("many_when.jk", &source);
     work.assert_all_backends("many_when.jk", &[], b"", 0);
@@ -8467,29 +8479,29 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ("", "when (h) {return 1};", "cannot contain return"),
         ("", "while true {when (h) {break};}", "break"),
         ("", "when (h) {when (h) {}};", "cannot be nested"),
-        ("", "let ro=h.read_only() when (mut ro) {};", "WriteHandle"),
+        ("", "let ro=h.read_only(); when (mut ro) {};", "WriteHandle"),
         ("", "when (h) {h.n=2};", "shared"),
         ("", "when (mut h) {println(1)};", "proved synchronous"),
         (
             "",
-            "let text=\"owned\" let view=&text when (h) {view};",
+            "let text=\"owned\"; let view=&text; when (h) {view};",
             "value packet",
         ),
         (
             "",
-            "let text=\"owned\" let view=&text when (h) {view.byte_length()};",
+            "let text=\"owned\"; let view=&text; when (h) {view.byte_length()};",
             "value packet",
         ),
-        ("", "var n=1 let r=&n when (h) {*r};", "value packet"),
+        ("", "var n=1; let r=&n; when (h) {*r};", "value packet"),
         (
             "fn get(n:Int32)->Int32{n}",
-            "let f=get when (h) {f(h.n)};",
+            "let f=get; when (h) {f(h.n)};",
             "value packet",
         ),
         ("", "when (h) {&h.n};", "bounded value"),
         (
             "impl S {fn add(&mut self,n:Int32){self.n+=n}}",
-            "let ro=h.read_only() ro.add(2);",
+            "let ro=h.read_only(); ro.add(2);",
             "WriteHandle",
         ),
         (
@@ -8517,7 +8529,7 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
             "nongeneric",
         ),
     ] {
-        work.write("invalid_when.jk", &format!("{prefix} {extra} fn main() @suspends {{let o=domain.create(make,1) let h=o.handle() {body}}}"));
+        work.write("invalid_when.jk", &format!("{prefix} {extra} fn main() @suspends {{let o=domain.create(make,1); let h=o.handle(); {body}}}"));
         let output = work.cli(&["build", "invalid_when.jk"]);
         assert!(!output.status.success(), "{body} {extra}");
         let error = String::from_utf8_lossy(&output.stderr);
@@ -8527,13 +8539,13 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         );
     }
     let bindings = (0..65)
-        .map(|i| format!("let h{i}=o.handle() "))
+        .map(|i| format!("let h{i}=o.handle(); "))
         .collect::<String>();
     let accesses = (0..65)
         .map(|i| format!("h{i}"))
         .collect::<Vec<_>>()
         .join(",");
-    work.write("too_many_when.jk", &format!("{prefix} fn main() @suspends {{let o=domain.create(make,1) {bindings} when({accesses}){{}};}}"));
+    work.write("too_many_when.jk", &format!("{prefix} fn main() @suspends {{let o=domain.create(make,1); {bindings}; when({accesses}){{}};}}"));
     failure(&work.cli(&["build", "too_many_when.jk"]), "1 to 64");
 }
 
@@ -8556,17 +8568,17 @@ fn assert(ok:Bool) {{check.assert(ok,"when Script")}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
     while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
-        attempts+=1 assert(attempts<1000) task.yield_now()
+        attempts+=1; assert(attempts<1000); task.yield_now()
     }}
-    let second={second:?} assert(vm.load_source(h,&second)==0) assert(vm.publish_domain_code(h)==2)
-    let third={third:?} assert(vm.load_source(h,&third)==0) assert(vm.publish_domain_code(h)==2)
+    let second={second:?}; assert(vm.load_source(h,&second)==0); assert(vm.publish_domain_code(h)==2)
+    let third={third:?}; assert(vm.load_source(h,&third)==0); assert(vm.publish_domain_code(h)==2)
     assert(h.call::<domain.DirectoryHandle,Bool>("release",directory))
 }}
 fn main() @suspends {{
-    let h=vm.Vm.{create}() let source={old:?} assert(vm.load_source(h,&source)==0)
-    let owner=domain.directory(2) let directory=owner.handle()
+    let h=vm.Vm.{create}(); let source={old:?}; assert(vm.load_source(h,&source)==0)
+    let owner=domain.directory(2); let directory=owner.handle()
     parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
-    assert(vm.module_count(h)==1) assert(vm.close(h)==0)
+    assert(vm.module_count(h)==1); assert(vm.close(h)==0)
 }}"#));
         work.assert_all_backends("when_reload.jk", &[], b"", 0);
     }
@@ -8586,7 +8598,7 @@ fn state_domains_when_capture_limits_include_the_outer_packet() {
             .map(|i| format!("f{i}:1"))
             .collect::<Vec<_>>()
             .join(",");
-        let code = format!("struct P{index}{{{names}}} fn run{index}() @suspends {{let o=domain.create(make,1) let h=o.handle() let p=P{index}{{{values}}} let r=when(h){{p.f0+h.n}} assert(r.unwrap()==2)}}");
+        let code = format!("struct P{index}{{{names}}} fn run{index}() @suspends {{let o=domain.create(make,1); let h=o.handle(); let p=P{index}{{{values}}}; let r=when(h){{p.f0+h.n}}; assert(r.unwrap()==2)}}");
         if fields == 63 {
             accepted.push_str(&code);
         } else {
@@ -8613,9 +8625,9 @@ impl S {pub fn value(&self)->Int32{self.n}}
 pub fn probe(h:domain.ReadHandle<S>) @suspends ->Int32{h.value().unwrap()}
 pub fn update(h:domain.WriteHandle<S>,n:Int32) @suspends ->Int32 {when "更新"(mut h){h.n+=n;h.n}.unwrap()}
 "#);
-    work.write("imports.jk", "import room import joky/domain fn main() @suspends ->Int32 {let o=domain.create(room.make,1) room.update(o.handle(),2); room.probe(o.read_handle())+o.read_handle().value().unwrap()}");
+    work.write("imports.jk", "import room import joky/domain fn main() @suspends ->Int32 {let o=domain.create(room.make,1); room.update(o.handle(),2); room.probe(o.read_handle())+o.read_handle().value().unwrap()}");
     work.assert_all_backends("imports.jk", &[], b"", 6);
-    work.write("failure.jk", "import room import joky/domain fn main() @suspends {let a=domain.create(room.make,1) let b=domain.create(room.make,2) let x=a.handle() let y=b.handle() let zero=0 when(mut x,mut y){x.n=10 y.n=20 x.n/zero};}");
+    work.write("failure.jk", "import room import joky/domain fn main() @suspends {let a=domain.create(room.make,1); let b=domain.create(room.make,2); let x=a.handle(); let y=b.handle(); let zero=0; when(mut x,mut y){x.n=10; y.n=20; x.n/zero};}");
     for args in [
         ["run", "failure.jk"].as_slice(),
         ["run", "--interpreter", "failure.jk"].as_slice(),
@@ -8663,7 +8675,7 @@ fn pure_enum_contract_limits_and_rejections() {
             .collect::<Vec<_>>()
             .join(",");
         let work = Workspace::new();
-        work.write("limit.jk", &format!("import joky/domain enum E{{{variants}}} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{E.V0}}.unwrap();}}"));
+        work.write("limit.jk", &format!("import joky/domain enum E{{{variants}}} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0); let h=owner.handle(); when(h){{E.V0}}.unwrap();}}"));
         // One tag plus every variant counts, even with zero payload lanes.
         if count == 63 {
             work.assert_all_backends("limit.jk", &[], b"", 0);
@@ -8683,7 +8695,7 @@ fn pure_enum_contract_limits_and_rejections() {
             value = format!("E{i}.Value({value})");
         }
         let work = Workspace::new();
-        work.write("depth.jk", &format!("import joky/domain {definitions} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{{value}}}.unwrap();}}"));
+        work.write("depth.jk", &format!("import joky/domain {definitions} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0); let h=owner.handle(); when(h){{{value}}}.unwrap();}}"));
         if depth == 8 {
             work.assert_all_backends("depth.jk", &[], b"", 0);
         } else {
@@ -8706,7 +8718,7 @@ fn pure_enum_contract_limits_and_rejections() {
         ("enum E{Empty,Value(fn()->Int32)}", "E", "E.Empty"),
     ] {
         let work = Workspace::new();
-        work.write("reject.jk",&format!("import joky/vm {definitions} fn main() @suspends {{let h=vm.Vm.new() h.call::<{ty},Int32>(\"echo\",{value});}}"));
+        work.write("reject.jk",&format!("import joky/vm {definitions} fn main() @suspends {{let h=vm.Vm.new(); h.call::<{ty},Int32>(\"echo\",{value});}}"));
         failure(
             &work.cli(&["build", "reject.jk"]),
             "Script contracts require",
@@ -8752,7 +8764,7 @@ fn pure_enum_script_rejects_changed_input_and_result_contracts() {
             let script = format!("{changed} {body}");
             let quote = format!("{:?}", script.replace('{', "{{").replace('}', "}}"));
             let work = Workspace::new();
-            work.write("mismatch.jk",&format!("import joky/vm import joky/check {types} fn main() @suspends {{let h=vm.Vm.{create}() let source={quote} check.assert(vm.load_source(h,&source)==0,\"load enum script\") h.call::<{input},{output}>(\"exchange\",{value});}}"));
+            work.write("mismatch.jk",&format!("import joky/vm import joky/check {types} fn main() @suspends {{let h=vm.Vm.{create}(); let source={quote}; check.assert(vm.load_source(h,&source)==0,\"load enum script\"); h.call::<{input},{output}>(\"exchange\",{value});}}"));
             for args in [
                 vec!["run", "mismatch.jk"],
                 vec!["run", "--interpreter", "mismatch.jk"],
@@ -8808,9 +8820,9 @@ fn reload(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
     match domain.lookup::<State>(d,1) {{Some(handle)=>assert(d.remove(1,handle)),None=>assert(false)}}
 }}
 fn main() @suspends {{
-    let h=vm.Vm.{create}() let old={old}
+    let h=vm.Vm.{create}(); let old={old}
     assert(vm.load_source(h,&old)==0)
-    let directory=domain.directory(1) let d=directory.handle()
+    let directory=domain.directory(1); let d=directory.handle()
     parallel {{ | call(&h,d) | reload(&h,d) }}
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
@@ -8880,7 +8892,7 @@ fn pure_composite_contract_limits_and_rejections() {
                 vec![if element == "Unit" { "{}" } else { "1" }; count].join(",")
             );
             let work = Workspace::new();
-            work.write("limit.jk",&format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() let result:{ty}=when(h){{{value}}}.unwrap();}}"));
+            work.write("limit.jk",&format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0); let h=owner.handle(); let result:{ty}=when(h){{{value}}}.unwrap();}}"));
             if count == 64 {
                 work.assert_all_backends("limit.jk", &[], b"", 0);
             } else {
@@ -8895,7 +8907,7 @@ fn pure_composite_contract_limits_and_rejections() {
             argument = format!("Marker<{argument}>");
         }
         let work = Workspace::new();
-        work.write("depth.jk", &format!("import joky/domain struct Marker<T>{{}} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{Marker::<{argument}>{{}}}}.unwrap();}}"));
+        work.write("depth.jk", &format!("import joky/domain struct Marker<T>{{}} struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0); let h=owner.handle(); when(h){{Marker::<{argument}>{{}}}}.unwrap();}}"));
         if depth == 8 {
             work.assert_all_backends("depth.jk", &[], b"", 0);
         } else {
@@ -8908,7 +8920,7 @@ fn pure_composite_contract_limits_and_rejections() {
             value = format!("({value},)");
         }
         let work = Workspace::new();
-        work.write("tuple_depth.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() when(h){{{value}}}.unwrap();}}"));
+        work.write("tuple_depth.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0); let h=owner.handle(); when(h){{{value}}}.unwrap();}}"));
         if depth == 8 {
             work.assert_all_backends("tuple_depth.jk", &[], b"", 0);
         } else {
@@ -8919,7 +8931,7 @@ fn pure_composite_contract_limits_and_rejections() {
     for count in [63, 64] {
         let value = format!("({})", vec!["{}"; count].join(","));
         let work = Workspace::new();
-        work.write("capture.jk",&format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0) let h=owner.handle() let captured={value} when(h){{captured}}.unwrap();}}"));
+        work.write("capture.jk",&format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn main() @suspends {{let owner=domain.create(make,0); let h=owner.handle(); let captured={value}; when(h){{captured}}.unwrap();}}"));
         if count == 63 {
             work.assert_all_backends("capture.jk", &[], b"", 0);
         } else {
@@ -8935,7 +8947,7 @@ fn pure_composite_contract_limits_and_rejections() {
         ("Marker<&Int32>", "Marker::<&Int32>{}"),
     ] {
         let work = Workspace::new();
-        work.write("reject.jk",&format!("import joky/vm struct Cell<T>{{value:T}} struct Marker<T>{{}} fn main() @suspends {{let h=vm.Vm.new() h.call::<{ty},Int32>(\"echo\",{value});}}"));
+        work.write("reject.jk",&format!("import joky/vm struct Cell<T>{{value:T}} struct Marker<T>{{}} fn main() @suspends {{let h=vm.Vm.new(); h.call::<{ty},Int32>(\"echo\",{value});}}"));
         failure(
             &work.cli(&["build", "reject.jk"]),
             "Script contracts require",
@@ -8988,7 +9000,7 @@ fn pure_composite_script_rejects_changed_input_and_result_contracts() {
             let script = format!("{changed} {body}");
             let quote = format!("{:?}", script.replace('{', "{{").replace('}', "}}"));
             let work = Workspace::new();
-            work.write("mismatch.jk",&format!("import joky/vm import joky/check {types} fn main() @suspends {{let h=vm.Vm.{create}() let source={quote} check.assert(vm.load_source(h,&source)==0,\"load composite script\") h.call::<{input},{output}>(\"exchange\",{value});}}"));
+            work.write("mismatch.jk",&format!("import joky/vm import joky/check {types} fn main() @suspends {{let h=vm.Vm.{create}(); let source={quote}; check.assert(vm.load_source(h,&source)==0,\"load composite script\"); h.call::<{input},{output}>(\"exchange\",{value});}}"));
             for args in [
                 vec!["run", "mismatch.jk"],
                 vec!["run", "--interpreter", "mismatch.jk"],
@@ -9328,7 +9340,7 @@ fn every_declarations_run_in_all_backends() {
         "every.jk",
         &include_str!("fixtures/domain_every.jk")
             .replace("#every(100000)", "#every(1)")
-            .replace("{lifecycle()}", "{lifecycle() live() failure()}"),
+            .replace("{lifecycle()}", "{lifecycle(); live(); failure()}"),
     );
     work.assert_all_backends("every.jk", &[], b"", 0);
 }
@@ -9346,10 +9358,10 @@ fn every_declarations_reject_invalid_entries() {
         "fn tick(&mut self,dt:Int32){}",
         "fn tick(&mut self,p:String){}",
         "fn tick(&mut self,t:&mut Room){}",
-        "fn tick(&mut self){let n=self.value io.println(&n)}",
+        "fn tick(&mut self){let n=self.value; io.println(&n)}",
         "fn tick(&mut self){helper(self)}",
     ] {
-        work.write("invalid.jk", &format!("import joky/io #state struct Room{{value:Int32}} fn helper(s:&mut Room){{let n=s.value io.println(&n)}} impl Room{{#every(1) {method}}} fn main(){{}}"));
+        work.write("invalid.jk", &format!("import joky/io #state struct Room{{value:Int32}} fn helper(s:&mut Room){{let n=s.value; io.println(&n)}} impl Room{{#every(1) {method}}} fn main(){{}}"));
         failure(&work.cli(&["build", "invalid.jk"]), "#every requires");
     }
     for source in [
@@ -9389,7 +9401,7 @@ impl Room{#every(100000) fn tick(&mut self){self.value=10}}
 fn make(n:Int32)->Room{Room{value:n}}
 fn read(room:&Room)->Int32{room.value}
 fn hold(d:domain.DirectoryHandle) @suspends {
- let room=domain.create(make,10) d.insert(0,room.handle()).unwrap()
+ let room=domain.create(make,10); d.insert(0,room.handle()).unwrap()
  while true{task.yield_now()}
 }
 fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {
@@ -9422,14 +9434,14 @@ fn status(d:domain.DirectoryHandle) @suspends ->Int32 {
 fn assert(ok:Bool){{check.assert(ok,"automatic periodic publication")}}
 fn control(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
  while h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1{{task.yield_now()}}
- let next={next} assert(vm.load_source(h,&next)==0)
- assert(vm.publish_domain_code(h)==1) assert(vm.module_count(h)==2)
+ let next={next}; assert(vm.load_source(h,&next)==0)
+ assert(vm.publish_domain_code(h)==1); assert(vm.module_count(h)==2)
  while h.call::<domain.DirectoryHandle,Int32>("probe",d)!={expected}{{task.yield_now()}}
  assert(h.call::<domain.DirectoryHandle,Int32>("status",d)=={status})
 }}
 fn main() @suspends {{
- let owner=domain.directory(1) let d=owner.handle() let h=vm.Vm.{create}()
- let source={old} assert(vm.load_source(h,&source)==0)
+ let owner=domain.directory(1); let d=owner.handle(); let h=vm.Vm.{create}()
+ let source={old}; assert(vm.load_source(h,&source)==0)
  race{{| h.call::<domain.DirectoryHandle,Unit>("hold",d) | control(&h,d)}};
  assert(vm.module_count(h)==1)
  assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1)
@@ -9452,7 +9464,7 @@ fn every_declarations_migration_runs_in_all_host_and_script_backends() {
 impl Room{#every(100000) fn tick(&mut self){self.value+=1}}
 fn make(n:Int32)->Room{Room{value:n}}
 fn read(room:&Room)->Int32{room.value}
-fn hold(d:domain.DirectoryHandle) @suspends {let room=domain.create(make,10) d.insert(0,room.handle()).unwrap() while true{task.yield_now()}}
+fn hold(d:domain.DirectoryHandle) @suspends {let room=domain.create(make,10); d.insert(0,room.handle()).unwrap(); while true{task.yield_now()}}
 fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {match domain.lookup::<Room>(d,0){Some(h)=>domain.read_from(h,read).unwrap(),None=>-1}}"#;
     let next = r#"import joky/domain
 #state struct Room{value:Int64}
@@ -9470,15 +9482,15 @@ fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {match domain.lookup::<Room
 fn assert(ok:Bool){{check.assert(ok,"automatic migration")}}
 fn control(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
  while h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1{{task.yield_now()}}
- let schema=vm.domain_schema(h) let next={next}
+ let schema=vm.domain_schema(h); let next={next}
  assert(vm.prepare_migration(h,schema,&next,"upgrade")==0)
  assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==10)
  assert(vm.publish_migration(h)==0)
  while h.call::<domain.DirectoryHandle,Int32>("probe",d)!=42{{task.yield_now()}}
 }}
 fn main() @suspends {{
- let owner=domain.directory(1) let d=owner.handle() let h=vm.Vm.{create}()
- let old={old} assert(vm.load_source(h,&old)==0)
+ let owner=domain.directory(1); let d=owner.handle(); let h=vm.Vm.{create}()
+ let old={old}; assert(vm.load_source(h,&old)==0)
  race{{| h.call::<domain.DirectoryHandle,Unit>("hold",d) | control(&h,d)}};
  assert(vm.module_count(h)==1)
  assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1)
@@ -9532,7 +9544,7 @@ fn postfix_unwrap_cleanup_matches_native_execution() {
     let work = Workspace::new();
     let source = include_str!("fixtures/postfix_cleanup.jk").replace(
         "extern fn record(n: Int32) -> Int32",
-        "import joky/io.{println}\nfn record(n: Int32) -> Int32 { println(n) n }",
+        "import joky/io.{println}\nfn record(n: Int32) -> Int32 { println(n); n }",
     );
     work.write(
         "cleanup.jk",
@@ -9561,9 +9573,9 @@ fn postfix_unwrap_tasks_and_closures_match_native_execution() {
     let work = Workspace::new();
     let source = include_str!("fixtures/postfix_tasks.jk").replace(
         "extern fn record(n: Int32) -> Int32",
-        "import joky/io.{println}\nfn record(n: Int32) -> Int32 { println(n) n }",
+        "import joky/io.{println}\nfn record(n: Int32) -> Int32 { println(n); n }",
     );
-    work.write("tasks.jk", &format!("{source}\nfn main() @suspends {{ record(check()) record(closure_check()) println(inferred(\"context\")!) }}"));
+    work.write("tasks.jk", &format!("{source}\nfn main() @suspends {{ record(check()); record(closure_check()); println(inferred(\"context\")!) }}"));
     work.assert_native("tasks.jk", &[], b"10\n20\n10\n30\n42\n42\n42\n", 0);
 }
 
@@ -9615,7 +9627,7 @@ fn make(n:Int32)->S{S{n:n}}
         ),
         ("", "Map<Int32,Int32>", "Map.new::<Int32,Int32>()"),
     ] {
-        work.write("unsafe.jk", &format!("{prefix} {definitions} fn read(s:&S)->{ty}{{{value}}} fn main() @suspends {{let o=domain.create(make,1) domain.read_from(o.read_handle(),read);}}"));
+        work.write("unsafe.jk", &format!("{prefix} {definitions} fn read(s:&S)->{ty}{{{value}}} fn main() @suspends {{let o=domain.create(make,1); domain.read_from(o.read_handle(),read);}}"));
         for args in [
             vec!["run", "unsafe.jk"],
             vec!["run", "--interpreter", "unsafe.jk"],
@@ -9631,7 +9643,7 @@ fn make(n:Int32)->S{S{n:n}}
             );
         }
     }
-    work.write("moved.jk", &format!("{prefix} fn echo(s:&S,a:Array<String>)->Array<String>{{a}} fn main() @suspends {{let o=domain.create(make,1) let a=Array.new::<String>() domain.query_from(o.read_handle(),echo,a); a.len();}}"));
+    work.write("moved.jk", &format!("{prefix} fn echo(s:&S,a:Array<String>)->Array<String>{{a}} fn main() @suspends {{let o=domain.create(make,1); let a=Array.new::<String>(); domain.query_from(o.read_handle(),echo,a); a.len();}}"));
     failure(&work.cli(&["build", "moved.jk"]), "moved");
 }
 
@@ -9667,15 +9679,15 @@ fn owned_script_rejects_mismatched_and_hooked_contracts() {
     let imports = "import joky/array.{type Array} import joky/option.{type Option} import joky/drop.{type Drop}";
     for create in ["new", "interpreter"] {
         for (types, script, input, output, value) in [
-            ("", "fn exchange(v:Array<String>) @suspends ->String {let bad=1/0 \"\"}", "String", "String", "\"input\""),
-            ("", "fn exchange(v:String) @suspends ->Option<String> {let bad=1/0 Option.None}", "String", "String", "\"input\""),
+            ("", "fn exchange(v:Array<String>) @suspends ->String {let bad=1/0; \"\"}", "String", "String", "\"input\""),
+            ("", "fn exchange(v:String) @suspends ->Option<String> {let bad=1/0; Option.None}", "String", "String", "\"input\""),
             ("struct Item{text:String}", "struct Item{renamed:String} fn exchange(v:Array<Item>) @suspends ->Unit {let bad=1/0}", "Array<Item>", "Unit", "Array.new::<Item>()"),
             ("struct Item{text:String}", "struct Item{text:String} impl Drop for Item{fn drop(&mut self){}} fn exchange(v:Array<Item>) @suspends ->Unit {let bad=1/0}", "Array<Item>", "Unit", "Array.new::<Item>()"),
         ] {
             let script=format!("{imports} {script}");
             let quoted=format!("{:?}",script.replace('{',"{{").replace('}',"}}"));
             let work=Workspace::new();
-            work.write("reject.jk",&format!("import joky/vm {imports} {types} fn main() @suspends {{let h=vm.Vm.{create}() h.load_source({quoted})! h.call::<{input},{output}>(\"exchange\",{value});}}"));
+            work.write("reject.jk",&format!("import joky/vm {imports} {types} fn main() @suspends {{let h=vm.Vm.{create}(); h.load_source({quoted})!; h.call::<{input},{output}>(\"exchange\",{value});}}"));
             for args in [vec!["run","reject.jk"],vec!["run","--interpreter","reject.jk"]] {
                 let output=work.cli(&args);
                 assert!(!output.status.success());
@@ -9694,7 +9706,7 @@ fn owned_script_rejects_mismatched_and_hooked_contracts() {
         ("(Option<Item>,)", "(Option.None,)"),
     ] {
         let work = Workspace::new();
-        work.write("reject.jk",&format!("import joky/vm {imports} struct Item{{text:String}} impl Drop for Item{{fn drop(&mut self){{}}}} fn main() @suspends {{let h=vm.Vm.new() h.call::<{ty},Unit>(\"exchange\",{value});}}"));
+        work.write("reject.jk",&format!("import joky/vm {imports} struct Item{{text:String}} impl Drop for Item{{fn drop(&mut self){{}}}} fn main() @suspends {{let h=vm.Vm.new(); h.call::<{ty},Unit>(\"exchange\",{value});}}"));
         failure(
             &work.cli(&["build", "reject.jk"]),
             "Script contracts require",

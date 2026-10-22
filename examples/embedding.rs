@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fn mul(x: Int32, y: Int32) -> Int32 { x * y }
         fn div(x: Int32, y: Int32) -> Int32 { x / y }
         fn double_add(x: Int32, y: Int32) -> Int32 { add(x, y) + add(x, y) }
-        fn compute(x: Int32) -> Int32 { let a = x + 5 a * 2 }
+        fn compute(x: Int32) -> Int32 { let a = x + 5; a * 2 }
     "#,
     )?;
     assert_eq!(vm.call_int32_2("add", 10, 20)?, 30);

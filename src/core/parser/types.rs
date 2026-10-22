@@ -55,12 +55,18 @@ impl Parser {
                     self.expect_list_separator()?;
                 }
                 self.expect(&TokenKind::RParen)?;
-                let suspends = self.parse_suspends_attr()?;
+                let (suspends, noescape, names) = self.parse_fn_attrs()?;
+                if !names.is_empty() {
+                    return Err(
+                        self.error("Function types use @noescape without parameter names".into())
+                    );
+                }
                 self.expect(&TokenKind::Arrow)?;
-                Ok(Type::function_with_effect(
+                Ok(Type::function_with_contract(
                     params,
                     self.parse_type()?,
                     suspends,
+                    noescape,
                 ))
             }
             TokenKind::Amp => {
@@ -254,7 +260,7 @@ impl Parser {
                     self.advance();
                 }
                 let parameter = self.expect_ident()?;
-                if matches!(parameter.as_str(), "_" | "Fn" | "FnMut" | "FnOnce")
+                if matches!(parameter.as_str(), "_" | "Copy" | "Fn" | "FnMut" | "FnOnce")
                     || type_params.iter().any(|p| p.name == parameter)
                 {
                     return Err(Diagnostic::at(
@@ -275,12 +281,19 @@ impl Parser {
                     self.expect(&TokenKind::TyUInt64)?;
                 }
                 if !constant && self.peek() == &TokenKind::Colon {
-                    if !allow_bounds {
-                        return Err(self.error("Trait bounds are currently supported on functions and implementations only".into()));
-                    }
                     self.advance();
                     loop {
-                        if matches!(self.peek(), TokenKind::Ident(name) if matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce"))
+                        if matches!(self.peek(), TokenKind::Ident(name) if name == "Copy") {
+                            self.advance();
+                            if parameter.copy {
+                                return Err(self.error("Duplicate Copy bound".into()));
+                            }
+                            parameter.copy = true;
+                        } else if !allow_bounds {
+                            return Err(self.error(
+                                "Only Copy bounds are supported on type declarations".into(),
+                            ));
+                        } else if matches!(self.peek(), TokenKind::Ident(name) if matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce"))
                         {
                             let name = self.expect_ident()?;
                             self.expect(&TokenKind::LParen)?;
@@ -341,6 +354,9 @@ impl Parser {
                         }
                         self.advance();
                     }
+                }
+                if parameter.copy && parameter.callable.is_some() {
+                    return Err(self.error("Copy cannot be combined with callable bounds".into()));
                 }
                 type_params.push(std::sync::Arc::new(parameter));
                 if self.peek() != &TokenKind::Comma {

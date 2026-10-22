@@ -341,11 +341,11 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_pending_descriptors() {
         import joky/check
         import joky/task
         extern fn delayed_echo(text: String) @suspends -> String
-        fn echo(text: String) -> String { let copy = text.clone() text.release() copy }
+        fn echo(text: String) -> String { let copy = text.clone(); text.release(); copy }
         fn pending(text: String) @suspends -> String { delayed_echo(text) }
-        fn failure(text: String) -> String { let message = "Text root failure" check.assert(false, &message) text }
-        fn forward(text: String) @suspends -> String { task.yield_now() text }
-        fn language(text: String) @suspends -> String { let step = forward step(text) }
+        fn failure(text: String) -> String { let message = "Text root failure"; check.assert(false, &message); text }
+        fn forward(text: String) @suspends -> String { task.yield_now(); text }
+        fn language(text: String) @suspends -> String { let step = forward; step(text) }
         fn ready(text: String) @suspends { text.release() }
         fn forever(text: String) @suspends { while true { task.yield_now() } }
         fn compete() @suspends -> Int32 {

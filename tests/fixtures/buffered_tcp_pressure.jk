@@ -5,12 +5,12 @@ import joky/task
 import joky/integer
 extern fn sent(count: Int32)
 
-fn checked(ok: Bool) { let status = "Bounded message send" assert(ok, &status) }
+fn checked(ok: Bool) { let status = "Bounded message send"; assert(ok, &status) }
 fn payload(index: UInt8) -> Array<UInt8> {
     var bytes = Array.with_capacity::<UInt8>(65536)
     bytes.push(index)
     var i: UInt64 = 1
-    while i < 65536 { bytes.push(42) i = i + 1 }
+    while i < 65536 { bytes.push(42); i = i + 1 }
     bytes
 }
 fn send(connection: &mut BufferedTcp) @suspends {

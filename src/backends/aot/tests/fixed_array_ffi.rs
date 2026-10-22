@@ -218,7 +218,7 @@ fn fixed_array_f4_rejects_incompatible_c_boundaries() {
         "unsafe extern \"C\" fn bad(x:&FixedArray<Int32,3>) fn f(){let a=fixed.repeat::<Int32,4>(1); unsafe{bad(&a)}}",
         "unsafe extern \"C\" fn bad(x:&FixedArray<FixedArray<Int32,2>,3>) fn f(){let a=fixed.repeat::<FixedArray<Int32,3>,2>(fixed.repeat::<Int32,3>(1)); unsafe{bad(&a)}}",
         "unsafe extern \"C\" fn bad(x:&mut Row) fn f(){let a=fixed.repeat::<Int32,4>(1); unsafe{bad(&a)}}",
-        "unsafe extern \"C\" fn bad(x:&mut Row) fn f(){var a=fixed.repeat::<Int32,4>(1); let r=&a; unsafe{bad(&mut a)} r.len();}",
+        "unsafe extern \"C\" fn bad(x:&mut Row) fn f(){var a=fixed.repeat::<Int32,4>(1); let r=&a; unsafe{bad(&mut a)}; r.len();}",
         "unsafe extern \"C\" fn bad(x:&mut Row,y:&Int32) fn f(){var a=fixed.repeat::<Int32,4>(1); unsafe{bad(&mut a,a.borrow_ref(0))}}",
     ].into_iter().map(str::to_owned).collect();
     for element in [

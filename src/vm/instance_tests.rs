@@ -205,7 +205,7 @@ fn persistent_instances_reject_reentry_and_defer_close_until_receiver_returns() 
             )
             .unwrap();
         }
-        vm.load_source(&format!("{SOURCE}\nextern fn callback() -> Int32\nfn invoke(state: &mut State) @noescape -> Int32 {{ let n = callback() state.count = n state.count }}")).unwrap();
+        vm.load_source(&format!("{SOURCE}\nextern fn callback() -> Int32\nfn invoke(state: &mut State) @noescape -> Int32 {{ let n = callback(); state.count = n; state.count }}")).unwrap();
         let vm = Rc::new(vm);
         let a = vm
             .create_instance("make", &[V::Int32(0), V::Float64(0.0)])

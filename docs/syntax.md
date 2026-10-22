@@ -106,7 +106,7 @@ fn sum(n: Int32) -> Int32 {
 }
 
 fn main() {
-    { let displayed: Int32 = sum(10) println(&displayed) }
+    println(sum(10))
 }
 ```
 
@@ -215,12 +215,12 @@ fn increment(start: Int32) -> Int32 {
 但声明、赋值、调用和控制流都不强制以分号结束。
 
 1. 块按源码顺序执行其中的表达式，丢弃非末尾表达式的值，以末尾表达式为结果；空块为 Unit。
-2. 没有分号时，只要语法可以确定表达式边界，就可以继续写下一个表达式；不要求换行。
-   例如 `let x = 1 let y = 2 x + y` 可以写在一行，也可以分行。
+2. 独立表达式之间必须有分号或换行。
+   同一行写 `let x = 1; let y = 2; x + y`；分行时可以省略分号。
 3. 完整表达式后的换行分隔下一项，但不丢弃值；行首 `-`、`*`、`&` 作为新表达式的一元运算符。
    不完整的表达式可续行，例如 `1 +` 换行接 `2`；圆括号和实参列表内部换行为空白，列表仍须用逗号分隔。
    嵌套花括号恢复换行分隔。下一行以 `.` 开头时继续字段或方法链，可跨注释与空行；分号会结束该链。
-   圆括号外，调用名称与 `(`、记录构造名称与 `{` 在同一行；参数和字段内容可跨行。
+   圆括号外，被调用表达式与 `(`、记录构造名称与 `{` 在同一行；参数和字段内容可跨行。
 4. 尾随分号丢弃最后一个正常值，序列正常结果为 Unit；不吸收 return、break 或 continue。
    连续分号允许作为空连接，不产生副作用；单独的分号不产生有用值。
 5. 声明、赋值、while 和 branch 本身返回 Unit；scope 返回主体末值，parallel 返回按源码顺序的结果元组（全 Unit 分支仍返回 Unit），race 返回获胜分支的值。尾随分号丢弃正常结果。
@@ -731,7 +731,7 @@ enum Value {
 
 **已实现**最小泛型函数：类型参数、从实参局部推导、显式 `::<...>` 调用、定义时刚性检查，
 以及三后端共用的有界编译期实例化。普通调用的类型实参支持 Copy 与拥有者，包括 String 和 StringBuilder；
-独立泛型函数值仍限 Copy 类型实参，opaque 类型实参不支持。静态 trait 约束及参数化记录、枚举与透明别名已实现。
+独立泛型函数值使用相同的实参范围，opaque 类型实参不支持。无约束参数按移动检查；复制需要显式 `T: Copy`。静态 trait 约束及参数化记录、枚举与透明别名已实现。
 
 ```joky
 fn identity<T>(value: T) -> T { value }
@@ -767,7 +767,7 @@ fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
 模板已选中的 trait 不会在单态化时被新增方法替换。全部调用静态分派，不引入 vtable。
 必需方法与关联类型必须完整，默认方法可覆盖，签名一致；trait 或被实现的名义类型须属于实现模块；相同 trait / 名义类型不允许重叠实现。
 trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法继承 trait 可见性。
-借用规则保持不变，抽象调用默认采用保守存储效果；同步函数体自动推导参数不逃逸保证，方法仍可声明受检查的 `@noescape` 接口契约。
+借用规则保持不变，抽象调用默认采用保守存储效果；函数体自动推导参数不逃逸保证，函数类型和方法可声明受检查的 `@noescape` 接口契约；该属性可与 `@suspends` 组合。
 单参数 blanket impl 可提供通用协议适配，重叠匹配报错，不开放特化。
 详情、编译限额与示例见[静态 trait 与泛型约束](language.md#静态-trait-与泛型约束)。
 
@@ -792,7 +792,8 @@ F2 已实现独立数组值、嵌套与无引用 Copy 聚合组合，F3 已实�
 ### 10.6 函数值、闭包能力与挂起效果
 
 **已实现**同步及挂起无捕获函数值、Copy 存储、泛型函数显式取值、名称 / 字段间接调用及三后端执行。
-函数返回值先绑定再调用，不增加连续括号后缀，保留现有表达式序列边界。
+调用后缀适用于任意表达式，支持 `(f)(x)`、`factory()(x)`、下标及解包结果调用；
+同一行独立表达式须用分号分隔，跨行仍遵守既有换行规则。
 间接调用保守检查失败、分配和引用保留效果，函数值不跨宿主 ABI；完整规则见[函数值](language.md#函数值)。
 挂起函数值已接入 Pending / 恢复 / 取消及 parallel/race 分支；同步闭包及 Fn / FnMut / FnOnce 已实现。
 
@@ -979,10 +980,10 @@ Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef | TraitDef
 ImplDef      = "impl", [ BoundedTypeParameters ], [ Name, "for" ], Type, "{", { ImplMember, { ";" } }, "}" ;
 ImplMember   = [ "pub" ], (MethodDef | ConstDef) | AssociatedDef ;
 TraitDef     = "trait", Identifier, "{", { (TraitMethod | AssociatedDecl), { ";" } }, "}" ;
-TraitMethod  = "fn", Identifier, MethodParams, [ Effect ], [ Result ], [ Block ] ;
+TraitMethod  = "fn", Identifier, MethodParams, { Effect }, [ Result ], [ Block ] ;
 AssociatedDecl = "type", Identifier, [ ":", Name, { "+", Name } ] ;
 AssociatedDef  = "type", Identifier, "=", Type ;
-MethodDef    = "fn", Identifier, [ BoundedTypeParameters ], MethodParams, [ Effect ], [ Result ], Block ;
+MethodDef    = "fn", Identifier, [ BoundedTypeParameters ], MethodParams, { Effect }, [ Result ], Block ;
 MethodParams = "(", [ (Receiver | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 Receiver     = [ "&", [ "mut" ] ], "self" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
@@ -992,13 +993,14 @@ VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
 RecordDef    = "struct", Identifier, [ TypeParameters ], "{", { RecordField, [ "," ] }, "}" ;
 RecordField  = [ "pub" ], Identifier, ":", Type ;
 TypeAlias    = "type", Identifier, [ TypeParameters ], "=", Type ;
-Function     = "fn", Identifier, [ BoundedTypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
-TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
+Function     = "fn", Identifier, [ BoundedTypeParameters ], Parameters, { Effect }, [ Result ], Block ;
+TypeParameters = "<", StorageParameter, { ",", StorageParameter }, [ "," ], ">" ;
+StorageParameter = Identifier, [ ":", "Copy" ] ;
 BoundedTypeParameters = "<", TypeParameter, { ",", TypeParameter }, [ "," ], ">" ;
 TypeParameter = Identifier, [ ":", Bound, { "+", Bound } ] ;
 TraitBound   = Name, [ "<", AssociatedEquality, { ",", AssociatedEquality }, [ "," ], ">" ] ;
 AssociatedEquality = Identifier, "=", Type ;
-Bound        = TraitBound | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", "->", Type ;
+Bound        = "Copy" | TraitBound | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", "->", Type ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
 CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
 CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
@@ -1010,7 +1012,8 @@ Type         = RefType | FunctionType | DynType | TypeAtom, { ".", Identifier } 
 DynType      = "dyn", TraitBound ;
 QualifiedProjection = "<", Type, "as", Name, ">", "::", Identifier ;
 TypeAtom     = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | "Ptr" | Name, [ AppliedArguments ] | TypeGroup | TupleType | QualifiedProjection ;
-FunctionType = "fn", "(", [ Type, { ",", Type }, [ "," ] ], ")", [ Effect ], "->", Type ;
+FunctionType = "fn", "(", [ Type, { ",", Type }, [ "," ] ], ")", { FunctionEffect }, "->", Type ;
+FunctionEffect = "@", ("suspends" | "noescape") ;
 RefType      = "&", [ "mut" ], Type ;
 AppliedArguments = "<", Type, { ",", Type }, [ "," ], ">" ;
 TypeGroup    = "(", Type, ")" ;
@@ -1024,7 +1027,7 @@ Digit        = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
 HexDigit     = Digit | "a" | "b" | "c" | "d" | "e" | "f" | "A" | "B" | "C" | "D" | "E" | "F" ;
 BinaryDigit  = "0" | "1" ;
 
-Block        = "{", { ";" | Expression }, "}" ;
+Block        = "{", { ";" | Newline }, [ Expression, { Newline, Expression } ], { ";" | Newline }, "}" ;
 BlockForm    = Block | UnsafeBlock | If | While | Parallel | Match | Graph ;
 UnsafeBlock  = "unsafe", Block ;
 Graph        = "graph", Block ;
@@ -1053,14 +1056,12 @@ CompareOp    = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 Addition     = Product, { ("+" | "-"), Product } ;
 Product      = Unary, { ("*" | "/" | "%"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postfix ;
-Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] | "[", Expression, "]" | "!" | "?" } ;
+Postfix      = Primary, { Arguments | ".", Identifier, [ TypeArguments ], [ Arguments ] | "[", Expression, "]" | "!" | "?" } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
 Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ Result ], Block ;
 AnonymousParam = Identifier, [ ":", Type ] ;
-GroupedAnonymous = "(", (Anonymous | GroupedAnonymous), ")" ;
-ImmediateAnonymous = GroupedAnonymous, Arguments ;
 TaskForm     = TaskScope | TaskBranch ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;

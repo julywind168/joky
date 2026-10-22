@@ -808,7 +808,8 @@ mod tests {
             .expect("a noncapturing closure needs two entries");
         assert_eq!(error.code(), ErrorCode::ResourceLimit);
         assert_eq!(error.message(), "Generated function limit 4096 exceeded (1 generic instances + 4094 closure entries, requesting 2 more)");
-        source.push_str("fn captured() { let x = 1 let f = || { x } } fn cached() { keep(2, 0); }");
+        source
+            .push_str("fn captured() { let x = 1; let f = || { x } } fn cached() { keep(2, 0); }");
         plan(&source).unwrap();
 
         for (extra, requested, marked) in [

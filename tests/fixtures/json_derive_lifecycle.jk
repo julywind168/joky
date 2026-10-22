@@ -13,15 +13,15 @@ import joky/task
 struct User { name: String, age: UInt8, nickname: Option<String> }
 #derive(FromJson)
 struct Batch { value: Array<User> }
-fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) decoded::<T>("null") }
+        Err(_) => { ensure(false); decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
@@ -34,7 +34,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
         _ => { ensure(false) }
     }
 }
@@ -49,15 +49,15 @@ fn structs() {
     let original = user()
     let output = encoded(&original)
     let recovered = decoded::<User>(output)
-    ensure(original.name.equals(&recovered.name)) ensure(recovered.age == 37)
-    match &recovered.nickname { Some(text) => { let expected = "Ada" ensure(text.equals(&expected)) }, None => { ensure(false) } }
+    ensure(original.name.equals(&recovered.name)); ensure(recovered.age == 37)
+    match &recovered.nickname { Some(text) => { let expected = "Ada"; ensure(text.equals(&expected)) }, None => { ensure(false) } }
     let missing = decoded::<User>("{{\"name\":\"Ada\",\"age\":37}}")
     ensure(missing.nickname.is_none())
     let null = decoded::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":null}}")
     ensure(null.nickname.is_none())
     let unknown = "{{\"name\":\"Ada\",\"age\":37,\"extra\":[{{\"x\":\"owned\"}}]}}"
     ensure(typed.decode::<User>(&unknown).is_ok())
-    var options = Options.defaults() options.reject_unknown_fields = true
+    var options = Options.defaults(); options.reject_unknown_fields = true
     match typed.decode_with_options::<User>(&unknown, options) { Err(error) => mapping(error, 2, "/extra"), Ok(_) => { ensure(false) } }
     bad::<User>("{{\"age\":37}}", 1, "/name")
     bad::<User>("{{\"name\":\"Ada\",\"age\":256}}", 5, "/age")
@@ -87,4 +87,4 @@ fn json_derive_work() @suspends -> Int32 {
     ensure(recovered.age == 37)
     json_derive_failure()
 }
-fn main() { structs() ensure(json_derive_probe() == 42) ensure(json_derive_failure() == 42) }
+fn main() { structs(); ensure(json_derive_probe() == 42); ensure(json_derive_failure() == 42) }

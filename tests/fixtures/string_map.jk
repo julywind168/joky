@@ -37,7 +37,7 @@ fn query_lifetime<Tag>() -> Int32 {
     assert(value.byte_length() == 6, &message)
     let query2 = "key"
     let old = mem.replace(m.value_mut(&query2), "next")
-    old.release() query2.release()
+    old.release(); query2.release()
     let entries = m.into_entries()
     assert(entries.len() == 1, &message)
     42

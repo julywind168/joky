@@ -7,7 +7,7 @@ fn probe_view(state: &ProbeState) -> ProbeState { *state }
 fn probe_ready(state: &mut ProbeState, _: Unit) {}
 fn arm_probe(state: &mut ProbeState, handle: outbox.Handle) -> Bool {
     state.attempts += 1
-    if state.attempts == 1 { state.resume = handle true } else { false }
+    if state.attempts == 1 { state.resume = handle; true } else { false }
 }
 fn pause_send(ctx: Context, command: &Command) @suspends {
     let pause = match command { Say(text) => text.equals("paused"), _ => false }
@@ -24,7 +24,7 @@ fn pause_send(ctx: Context, command: &Command) @suspends {
 fn set_probe_resume(state: &mut ProbeState, resume: outbox.Handle) { state.resume = resume }
 fn signal_probe(state: domain.WriteHandle<ProbeState>) @suspends {
     let value = domain.read_from(state.read_only(), probe_view)!
-    var access = domain.access_set() access.include(state.read_only())
+    var access = domain.access_set(); access.include(state.read_only())
     let snapshot = domain.snapshot_set(access)
     var batch = outbox.batch(1, 0)
     outbox.stage(&mut batch, value.ready, Array.new::<UInt8>())!

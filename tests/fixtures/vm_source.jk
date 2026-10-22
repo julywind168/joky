@@ -3,8 +3,8 @@ import joky/fs
 import joky/domain
 import joky/task
 import joky/check
-fn expect(ok:Bool){let message="VM source convenience assertion failed" check.assert(ok,&message)}
-fn answer(h:&vm.Vm)->Int32 {let name="answer" vm.call_int32_0(h,&name)}
+fn expect(ok:Bool){let message="VM source convenience assertion failed"; check.assert(ok,&message)}
+fn answer(h:&vm.Vm)->Int32 {let name="answer"; vm.call_int32_0(h,&name)}
 fn failure(h:&vm.Vm,path:String,kind:Int32) @suspends {
     match h.publish_file(path.clone()) {
         Ok(_) => expect(false)
@@ -13,7 +13,7 @@ fn failure(h:&vm.Vm,path:String,kind:Int32) @suspends {
             expect(match error.kind {
                 vm.LoadErrorKind.Io(_) => kind==1
                 vm.LoadErrorKind.Utf8(_) => kind==2
-                vm.LoadErrorKind.Compile(diagnostic) => {expect(diagnostic.message.byte_length()>0) kind==3}
+                vm.LoadErrorKind.Compile(diagnostic) => {expect(diagnostic.message.byte_length()>0); kind==3}
                 vm.LoadErrorKind.Incompatible(_) => kind==4
                 _ => false
             })

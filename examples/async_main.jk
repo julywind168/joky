@@ -1,7 +1,7 @@
 import joky/io.{println}
 import joky/task as task
 
-fn report_int32(value: Int32) { println(&value) }
+fn report_int32(value: Int32) { println(value) }
 
 fn increment(value: Int32) @suspends -> Int32 {
     task.sleep_ms(1)

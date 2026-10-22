@@ -137,12 +137,12 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "Ambiguous enum constructor",
         ),
         (
-            "enum E { A } fn f() -> E { let E = 1 E.A }",
+            "enum E { A } fn f() -> E { let E = 1; E.A }",
             ErrorCode::TypeMismatch,
             "has no fields",
         ),
         (
-            "enum E { A(Int32) } fn f() -> E { let E = 1 E.A(1) }",
+            "enum E { A(Int32) } fn f() -> E { let E = 1; E.A(1) }",
             ErrorCode::UnknownName,
             "has no method",
         ),
@@ -222,12 +222,12 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "immutable",
         ),
         (
-            "enum E { A } fn f(e: E) { match e { _ => let inside = 1 } inside; }",
+            "enum E { A } fn f(e: E) { match e { _ => let inside = 1 }; inside; }",
             ErrorCode::UnknownName,
             "inside",
         ),
         (
-            "enum E { A } fn f(e: E) { match { let inside = e inside } { _ => {} } inside; }",
+            "enum E { A } fn f(e: E) { match { let inside = e; inside } { _ => {} }; inside; }",
             ErrorCode::UnknownName,
             "inside",
         ),
@@ -257,7 +257,7 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "@suspends",
         ),
         (
-            "enum E { A } fn f(e: E) -> Int32 { match e { A => return 1 } 2 }",
+            "enum E { A } fn f(e: E) -> Int32 { match e { A => return 1 }; 2 }",
             ErrorCode::UnreachableCode,
             "Unreachable expression",
         ),
@@ -313,7 +313,7 @@ fn enum_payloads_and_match_arms_suspend_without_replay_or_lost_ownership() {
         fn failing() @suspends -> Int32 {
             match build(-1) { Pair(p) => 1 / p.x, _ => record(99) }
         }
-        fn child(e: E) @suspends { let p = build(read(e)) record(read(p)); }
+        fn child(e: E) @suspends { let p = build(read(e)); record(read(p)); }
         fn scoped() @suspends -> Int32 {
             parallel { | child(E.Number(2)) | child(E.Number(3)) }
             42
@@ -385,9 +385,9 @@ fn enum_constructors_and_match_bodies_respect_import_resolution() {
         enum E { Empty, Value(Count) }
         fn run() -> Int32 {
             let h = vm.Vm.new()
-            { let vm_text = "fn f() -> Int32 {{ 42 }}" vm.load_source(h, &vm_text) }
-            let result = match E.Value({ let vm_text = "f" vm.call_int32_0(h, &vm_text) }) {
-                Value(n) => { let x: Count = { let vm_text = "f" vm.call_int32_0(h, &vm_text) } n + x }
+            { let vm_text = "fn f() -> Int32 {{ 42 }}"; vm.load_source(h, &vm_text) }
+            let result = match E.Value({ let vm_text = "f"; vm.call_int32_0(h, &vm_text) }) {
+                Value(n) => { let x: Count = { let vm_text = "f"; vm.call_int32_0(h, &vm_text) }; n + x }
                 _ => 0
             }
             vm.close(h)
@@ -408,11 +408,11 @@ fn wide_enums_keep_typed_payload_lanes_across_register_and_stack_arguments() {
     for n in 0..12 {
         source.push_str(&format!("f{n}: Int32, "));
     }
-    source.push_str("} enum E { Empty, Payload(Wide), Flag(Bool), Number(Int32) }\nfn pass(e: E, n: Int32) -> E { match e { Payload(p) => { var copy = p copy.f11 = copy.f11 + n E.Payload(copy) }, _ => e } }\nfn run() -> Int32 { var e = E.Payload(Wide { flag: true, ");
+    source.push_str("} enum E { Empty, Payload(Wide), Flag(Bool), Number(Int32) }\nfn pass(e: E, n: Int32) -> E { match e { Payload(p) => { var copy = p; copy.f11 = copy.f11 + n; E.Payload(copy) }, _ => e } }\nfn run() -> Int32 { var e = E.Payload(Wide { flag: true, ");
     for n in 0..12 {
         source.push_str(&format!("f{n}: {n}, "));
     }
-    source.push_str("}) let saved = e e = E.Empty let empty = pass(e, 0) e = E.Flag(false) let flag = pass(e, 0) e = E.Number(-3) let value = pass(saved, -20) match value { Payload(p) => if p.flag { p.f0 + p.f7 + p.f11 } else { 0 }, _ => 0 } }");
+    source.push_str("}); let saved = e; e = E.Empty; let empty = pass(e, 0); e = E.Flag(false); let flag = pass(e, 0); e = E.Number(-3); let value = pass(saved, -20); match value { Payload(p) => if p.flag { p.f0 + p.f7 + p.f11 } else { 0 }, _ => 0 } }");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
             let source = with_suspends(&source, suspends, Suspends::All);

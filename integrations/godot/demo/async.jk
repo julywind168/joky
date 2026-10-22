@@ -69,7 +69,7 @@ fn task_race(seconds: Float64) @suspends {
 }
 fn task_group(seconds: Float64) @suspends {
     scope {
-        branch { task.sleep_real(seconds); let method = "bump_reals" task.call(&method) }
+        branch { task.sleep_real(seconds); let method = "bump_reals"; task.call(&method) }
         branch { task.sleep_game(100.0) }
         task.next_frame()
     }

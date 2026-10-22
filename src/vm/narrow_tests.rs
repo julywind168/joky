@@ -130,8 +130,8 @@ fn narrow_division_and_shift_traps_report_failures() {
 fn narrow_integers_survive_suspension() {
     let source = r#"
         import joky/task
-        fn echo8(v: Int8) @suspends -> Int8 { task.yield_now() v }
-        fn echou16(v: UInt16) @suspends -> UInt16 { task.yield_now() v }
+        fn echo8(v: Int8) @suspends -> Int8 { task.yield_now(); v }
+        fn echou16(v: UInt16) @suspends -> UInt16 { task.yield_now(); v }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -203,14 +203,14 @@ fn narrow_c_references_write_back() {
         vm.load_source(
             "unsafe extern \"C\" fn c_bump8(p: &mut Int8)\n\
              unsafe extern \"C\" fn c_bump32(p: &mut Int32)\n\
-             fn narrow() -> Int32 { var v: Int8 = -128 unsafe { c_bump8(&mut v) } int32(v) }",
+             fn narrow() -> Int32 { var v: Int8 = -128; unsafe { c_bump8(&mut v) }; int32(v) }",
         )
         .unwrap();
         assert_eq!(vm.call_int32_0("narrow").unwrap(), -127, "{mode:?}");
         // Compare with the established Int32 lane on the same path.
         vm.load_source(
             "unsafe extern \"C\" fn c_bump32(p: &mut Int32)\n\
-             fn wide() -> Int32 { var w: Int32 = 41 unsafe { c_bump32(&mut w) } w }",
+             fn wide() -> Int32 { var w: Int32 = 41; unsafe { c_bump32(&mut w) }; w }",
         )
         .unwrap();
         assert_eq!(vm.call_int32_0("wide").unwrap(), 42, "{mode:?}");

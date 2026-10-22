@@ -36,7 +36,7 @@ fn unchanged(state: &mut Account, _: Unit) { state.balance_cents += 0 }
 fn fund_capacity_test(state: &mut Account, _: Unit) { state.balance_cents = 10000 }
 fn candidate(ctx: Context, account: domain.WriteHandle<Account>, text: String) @suspends -> domain.CandidateSet {
     let room = room_handle(ctx, 1)!
-    var access = domain.access_set() access.include(account.read_only()) access.include(room.read_only())
+    var access = domain.access_set(); access.include(account.read_only()); access.include(room.read_only())
     let snapshot = domain.snapshot_set(access)
     var value = domain.read_snapshot(&snapshot, account.read_only(), account_view)
     value.balance_cents -= 100
@@ -76,7 +76,7 @@ fn verify_balance_race() @suspends {
     expect_message(&mut queue, "joined r 1\n")
     parallel { | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) }
     var i: UInt64 = 0
-    while i < 5 { expect_message(&mut queue, "message r 1 concurrent\n") i += 1 }
+    while i < 5 { expect_message(&mut queue, "message r 1 concurrent\n"); i += 1 }
     expect_message(&mut queue, "error insufficient balance\n")
     check.assert(balance(&alice) == 0, "six concurrent sends spend only five yuan")
     check.assert(process(f.ctx, 1, "balance"), "query balance")
@@ -122,7 +122,7 @@ fn verify_byte_capacity() @suspends {
     domain.write_to(alice.handle(), fund_capacity_test, {})!
     var builder = StringBuilder.new()
     var i: UInt64 = 0
-    while i < 4091 { builder.push('x') i += 1 }
+    while i < 4091 { builder.push('x'); i += 1 }
     let payload = builder.finish()
     let expected = "message r 1 {payload}\n"
     let count = 65536 / expected.byte_length()

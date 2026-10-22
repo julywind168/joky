@@ -91,7 +91,7 @@ fn panic_uses_bound_identity_and_preserves_alias_call_sites() {
             "Prelude panic"
         );
         vm.load_source(
-            "import joky/check fn test() -> Int32 { check.assert(false, \"Literal require\") 0 }",
+            "import joky/check fn test() -> Int32 { check.assert(false, \"Literal require\"); 0 }",
         )
         .unwrap();
         assert_eq!(
@@ -121,10 +121,10 @@ fn panic_uses_bound_identity_and_preserves_alias_call_sites() {
         for (source, code) in [
             ("fn test() { panic(42) }", ErrorCode::TypeMismatch),
             ("fn test() { panic() }", ErrorCode::InvalidCall),
-            ("fn test() -> Int32 { panic(\"stop\") 42 }", ErrorCode::UnreachableCode),
+            ("fn test() -> Int32 { panic(\"stop\"); 42 }", ErrorCode::UnreachableCode),
             ("fn add(a: Int32, b: Int32) -> Int32 { a+b } fn test() -> Int32 { add(panic(\"stop\"), 42) }", ErrorCode::UnreachableCode),
             ("fn fail() { panic(\"stop\") } fn test() -> Int32 { fail() }", ErrorCode::TypeMismatch),
-            ("fn test() -> Int32 { let fail = panic let message = \"stop\" fail(&message) }", ErrorCode::TypeMismatch),
+            ("fn test() -> Int32 { let fail = panic; let message = \"stop\"; fail(&message) }", ErrorCode::TypeMismatch),
         ] {
             assert_eq!(vm.load_source(source).unwrap_err().code(), code, "{mode:?}: {source}");
         }
@@ -237,12 +237,12 @@ fn checked_failure_preserves_messages_locations_order_and_cleanup() {
 #[test]
 fn checked_failure_aliases_and_signature_checks_use_bound_identity() {
     let mut modules = crate::ModuleSources::new();
-    modules.insert("checks", "import joky/check.{assert as ensure} pub fn validate() { let message = \"Module failure\" ensure(false, &message) }").unwrap();
+    modules.insert("checks", "import joky/check.{assert as ensure} pub fn validate() { let message = \"Module failure\"; ensure(false, &message) }").unwrap();
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.set_prelude_enabled(false);
         vm.load_source_with_modules(
-            "import checks fn test() -> Int32 { checks.validate() 0 }",
+            "import checks fn test() -> Int32 { checks.validate(); 0 }",
             &modules,
         )
         .unwrap();
@@ -253,13 +253,13 @@ fn checked_failure_aliases_and_signature_checks_use_bound_identity() {
         assert_eq!(file.name(), "checks.jk");
         assert_eq!(span.slice(file.text()), Some("ensure(false, &message)"));
         for source in [
-            "import joky/check fn bad() { { let assertion_condition = 0 let assertion_message = \"error\" check.assert(assertion_condition, &assertion_message) } }",
+            "import joky/check fn bad() { { let assertion_condition = 0; let assertion_message = \"error\"; check.assert(assertion_condition, &assertion_message) } }",
             "import joky/check fn bad() { check.assert(false, 0) }",
             "import joky/check fn bad() { check.assert(false) }",
         ] {
             assert!(vm.load_source(source).is_err());
         }
-        vm.load_source("fn assert(condition: Bool, message: String) {} fn test() -> Int32 { assert(false, \"ordinary\") 42 }").unwrap();
+        vm.load_source("fn assert(condition: Bool, message: String) {} fn test() -> Int32 { assert(false, \"ordinary\"); 42 }").unwrap();
         assert_eq!(vm.call_int32_0("test").unwrap(), 42);
     }
 }
@@ -271,14 +271,14 @@ fn checked_failure_native_call_sites_preserve_the_first_error_after_cleanup_and_
         import joky/array.{type Array}
         import joky/drop.{type Drop}
         struct Resource { data: Array<Int32> }
-        impl Drop for Resource { fn drop(&mut self) { { let assertion_condition = false let assertion_message = "Secondary drop failure" assert(assertion_condition, &assertion_message) } } }
-        fn fail() { { let assertion_condition = false let assertion_message = "Primary failure" assert(assertion_condition, &assertion_message) } }
+        impl Drop for Resource { fn drop(&mut self) { { let assertion_condition = false; let assertion_message = "Secondary drop failure"; assert(assertion_condition, &assertion_message) } } }
+        fn fail() { { let assertion_condition = false; let assertion_message = "Primary failure"; assert(assertion_condition, &assertion_message) } }
         fn middle() {
             let resource = Resource { data: Array.new::<Int32>() }
             let indirect = fail
             indirect()
         }
-        fn test() -> Int32 { middle() 0 }
+        fn test() -> Int32 { middle(); 0 }
     "#;
     let mut vm = VmEngine::new();
     vm.load_source_with_modules(source, &crate::ModuleSources::new())

@@ -126,7 +126,7 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
 
 #[test]
 fn records_parse_fields_places_and_condition_boundaries() {
-    let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2, x: 1, } p.x = 3 if p.x == 3 {} while (点 { x: 1, y: 2 }).x < 0 {} }";
+    let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2, x: 1, }\n p.x = 3\n if p.x == 3 {}\n while (点 { x: 1, y: 2 }).x < 0 {} }";
     let module = parse(source).unwrap();
     let record = &module.records[0];
     assert_eq!(record.name_span.slice(source), Some("点"));
@@ -144,19 +144,19 @@ fn records_parse_fields_places_and_condition_boundaries() {
     assert!(matches!(&exprs[3], Expr::While { .. }));
     // A following ordinary block stays separate. An empty or field-shaped
     // brace after a name is always a constructor outside conditions.
-    assert!(parse("fn f() { let x = 1 { let y = x y } }").is_ok());
-    assert!(parse("fn f() { let x = 1 x {} }").is_ok());
+    assert!(parse("fn f() { let x = 1\n { let y = x\n y } }").is_ok());
+    assert!(parse("fn f() { let x = 1\n x {} }").is_ok());
     for source in [
         "struct P {} import joky/vm",
         "struct P { ,x: Int32 }",
         "struct P { x: Int32,, y: Int32 }",
         "struct P { x: }",
         "struct P",
-        "struct P {} fn f() { P { , } }",
+        "struct P {} fn f() { P\n { , } }",
         "struct P {} fn f() { P { x: 1,, } }",
         "struct P {} fn f() { P { x: 1; y: 2 } }",
         "fn f() { make().x = 1 }",
-        "fn f() { let p = 1 p.x(1 2) }",
+        "fn f() { let p = 1\n p.x(1 2) }",
         "fn f() { struct P {} }",
     ] {
         assert!(parse(source).is_err(), "{source}");
@@ -165,7 +165,7 @@ fn records_parse_fields_places_and_condition_boundaries() {
 
 #[test]
 fn type_aliases_keep_source_spans_and_allow_forward_declarations() {
-    let source = "// 🙂\nimport joky/vm; type 数 = Later\nfn f(x: 数,) -> Later { let y: 数 = x y } type Later = Int32; type Handle = vm.Function";
+    let source = "// 🙂\nimport joky/vm; type 数 = Later\nfn f(x: 数,) -> Later { let y: 数 = x\n y } type Later = Int32; type Handle = vm.Function";
     let module = parse(source).unwrap();
     assert_eq!(module.imports.len(), 1);
     assert_eq!(module.items.len(), 1);
@@ -494,7 +494,7 @@ fn match_arms_use_commas_or_real_newlines_like_record_fields() {
 
 #[test]
 fn conditional_patterns_preserve_spans_and_match_payload_syntax() {
-    let source = "fn f() { if let Some((None, Point { x, .. })) = value { x; } else if let None = value {} while let Some(n) = next() { n } }";
+    let source = "fn f() { if let Some((None, Point { x, .. })) = value { x; } else if let None = value {}\n while let Some(n) = next() { n } }";
     let module = parse(source).unwrap();
     let Item::FnDef(function) = &module.items[0] else {
         panic!()
@@ -547,7 +547,7 @@ fn conditional_patterns_preserve_spans_and_match_payload_syntax() {
         "fn f() { while let Some(n) == value {} }",
         "fn f() { if let Some(n) = value {} else let None = value {} }",
         "fn f() { if let Some(n) = value && let Some(m) = other {} }",
-        "fn f() { while let Some(n) = value {} else {} }",
+        "fn f() { while let Some(n) = value {}\n else {} }",
     ] {
         assert!(parse(source).is_err(), "{source}");
     }

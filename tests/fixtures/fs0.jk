@@ -48,5 +48,5 @@ fn queued_reuse() @suspends -> Int32 {
     if fs0_closed(1) != 0 { return 0 }
     operation(1)
 }
-fn timer() @suspends -> Int32 { task.sleep_ms(10) 42 }
+fn timer() @suspends -> Int32 { task.sleep_ms(10); 42 }
 fn immediate() @suspends -> Int32 { 42 }

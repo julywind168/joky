@@ -368,7 +368,7 @@ fn bind(
                 ));
             }
             if member.kind == ImportMemberKind::Type {
-                if matches!(name, "Fn" | "FnMut" | "FnOnce") {
+                if matches!(name, "Copy" | "Fn" | "FnMut" | "FnOnce") {
                     return Err(error(
                         member.span,
                         ErrorCode::ReservedName,

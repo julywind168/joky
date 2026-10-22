@@ -15,7 +15,7 @@ fn task_resolve(count: Int32) @suspends {
     while index < count {
         let addresses = match dns.lookup("localhost", 443) {
             Ok(addresses) => addresses
-            Err(_) => { assert(false, &message) return }
+            Err(_) => { assert(false, &message); return }
         }
         assert(addresses.len() > 0, &message)
         task.call(&method)

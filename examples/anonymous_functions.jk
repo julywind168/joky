@@ -16,6 +16,6 @@ fn main() {
 
     let value = "closure"
     let take = move || -> String { value }
-    let result = apply(0, move |x| { let owned = take() owned })
+    let result = apply(0, move |x| { let owned = take(); owned })
     println(result)
 }

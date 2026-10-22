@@ -113,7 +113,7 @@ impl TypeRegistry {
                 }
                 if matches!(
                     associated.name.as_str(),
-                    "Self" | "Fn" | "FnMut" | "FnOnce" | "_"
+                    "Self" | "Copy" | "Fn" | "FnMut" | "FnOnce" | "_"
                 ) {
                     return Err(
                         error(ErrorCode::ReservedName, "Reserved associated type name")
@@ -923,7 +923,9 @@ impl TypeRegistry {
             let Some(actual) = substitutions.get(&p.id) else {
                 return Ok(None);
             };
-            if !self.bounds_hold(&p.bounds, scope, actual, &substitutions)? {
+            if (p.copy && !actual.is_copy_storage_value())
+                || !self.bounds_hold(&p.bounds, scope, actual, &substitutions)?
+            {
                 return Ok(None);
             }
         }
@@ -1002,7 +1004,8 @@ impl TypeRegistry {
             .map_or(self.trait_environment.root.as_ref(), |(_, scope)| {
                 scope.as_ref()
             });
-        self.bounds_hold(&parameter.bounds, scope, actual, substitutions)
+        Ok((!parameter.copy || actual.is_copy_storage_value())
+            && self.bounds_hold(&parameter.bounds, scope, actual, substitutions)?)
     }
 
     pub(crate) fn check_associated_bounds(

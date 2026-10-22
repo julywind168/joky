@@ -348,7 +348,7 @@ fn async_borrowing_interpreter_limits_stop_active_operations() {
         fixture.reset();
         let mut vm = fixture.register(VmMode::Interpreter, None);
         vm.set_interpreter_limits(limits).unwrap();
-        vm.load_source(&format!("{SOURCE} fn recurse() @suspends {{ recurse() }} fn limited() @suspends -> Int32 {{ let p = alloc(AsyncPoint {{ value: 1, mode: 0 }}); parallel {{ | host_io(p) | recurse() }} 0 }}")).unwrap();
+        vm.load_source(&format!("{SOURCE} fn recurse() @suspends {{ recurse() }} fn limited() @suspends -> Int32 {{ let p = alloc(AsyncPoint {{ value: 1, mode: 0 }}); parallel {{ | host_io(p) | recurse() }}; 0 }}")).unwrap();
         let result = vm.call_async("limited", &[]);
         if let Ok(mut task) = result {
             for _ in 0..500 {

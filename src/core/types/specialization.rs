@@ -11,7 +11,7 @@ use std::sync::Arc;
 fn owner_classifications(ty: &Type) -> BTreeSet<(u64, bool)> {
     TypeWalk::new(ty, TypeEdges::Arguments)
         .filter_map(|ty| match ty {
-            Type::Record(record) => Some((record.id, !record.owners.is_empty())),
+            Type::Record(record) => Some((record.id, ty.is_owner())),
             _ => None,
         })
         .collect()
@@ -366,7 +366,7 @@ pub(crate) fn substitute(
                 if let Some(ty) = cache.functions.get(&key) {
                     return Ok(ty.clone());
                 }
-                let ty = Type::function_with_effect(
+                let ty = Type::function_with_contract(
                     signature
                         .signature
                         .params
@@ -375,6 +375,7 @@ pub(crate) fn substitute(
                         .collect::<Result<_, _>>()?,
                     visit(&signature.signature.ret, substitutions, types, cache)?,
                     signature.suspends,
+                    signature.noescape,
                 );
                 cache.functions.insert(key, ty.clone());
                 ty
@@ -601,6 +602,7 @@ pub(crate) fn unify(
 
             (Type::Function(a), Type::Function(b))
                 if a.suspends == b.suspends
+                    && (!a.noescape || b.noescape)
                     && a.signature.params.len() == b.signature.params.len() =>
             {
                 if functions.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {

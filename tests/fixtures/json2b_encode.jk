@@ -6,16 +6,16 @@ import joky/mem
 import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "JSON2b encoder contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "JSON2b encoder contract"; assert(ok, &message) }
 fn error_code(error: EncodeError) -> Int32 {
     match error { InvalidLimits => 1, OutputLimit => 2, DepthLimit => 3
         NodeLimit => 4, StringLimit => 5, NumberLimit => 6 }
 }
 fn encoded(value: &Value) -> String {
-    match json.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match json.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn decoded(input: &String) -> Value {
-    match json.decode(input) { Ok(value) => value, Err(_) => { ensure(false) Value.Null } }
+    match json.decode(input) { Ok(value) => value, Err(_) => { ensure(false); Value.Null } }
 }
 fn exact(input: String, expected: String) {
     let value = decoded(&input)
@@ -39,10 +39,10 @@ fn limited(input: String, limits: Limits, expected: Int32) {
 }
 fn positive() {
     ensure(error_code(EncodeError.NumberLimit) == 6)
-    exact("null", "null") exact("true", "true") exact("false", "false")
+    exact("null", "null"); exact("true", "true"); exact("false", "false")
     exact(" \n[ null, true, false, [ ], {{ }} ]\t", "[null,true,false,[],{{}}]")
     exact("18446744073709551616", "18446744073709551616")
-    exact("1e400", "1e400") exact("-0.1200E+004", "-0.1200E+004") exact("-0", "-0")
+    exact("1e400", "1e400"); exact("-0.1200E+004", "-0.1200E+004"); exact("-0", "-0")
     exact("\"\"", "\"\"")
     exact("\"你\\uD83D\\uDE42\\u2028\\u2029\"", "\"你🙂\u{2028}\u{2029}\"")
     exact("\"\\ud800\\udc00\\uDBFF\\uDFFF\"", "\"\u{10000}\u{10ffff}\"")
@@ -52,8 +52,8 @@ fn positive() {
     exact("{{\"\": null}}", "{{\"\":null}}")
     var controls = StringBuilder.new()
     var scalar: UInt32 = 0
-    while scalar < 32 { controls.push(Rune.from_u32(scalar).unwrap_or('\0')) scalar = scalar + 1 }
-    controls.push('"') controls.push('\\') controls.push('/') controls.push('你')
+    while scalar < 32 { controls.push(Rune.from_u32(scalar).unwrap_or('\0')); scalar = scalar + 1 }
+    controls.push('"'); controls.push('\\'); controls.push('/'); controls.push('你')
     let value = Value.Text(controls.finish())
     let output = encoded(&value)
     match json.decode(&output) {
@@ -66,44 +66,44 @@ fn positive() {
 fn boundaries() {
     var limits = Limits.defaults()
     limits.max_output_bytes = 4
-    limited("\"a\"", limits, 0) limited("\"ab\"", limits, 0) limited("\"abc\"", limits, 2)
+    limited("\"a\"", limits, 0); limited("\"ab\"", limits, 0); limited("\"abc\"", limits, 2)
     limits.max_output_bytes = 0
-    limited("null", limits, 2) limited("\"\"", limits, 2)
-    limits.max_output_bytes = 7 limited("\"\\u0000\"", limits, 2)
-    limits.max_output_bytes = 8 limited("\"\\u0000\"", limits, 0)
-    limits.max_output_bytes = 9 limited("\"\\u0000\"", limits, 0)
-    limits.max_output_bytes = 4 limited("\"你\"", limits, 2)
-    limits.max_output_bytes = 5 limited("\"你\"", limits, 0)
-    limits.max_output_bytes = 6 limited("\"你\"", limits, 0)
-    limits.max_output_bytes = 5 limited("[null]", limits, 2)
-    limits.max_output_bytes = 6 limited("[null]", limits, 0)
-    limits.max_output_bytes = 5 limited("{{\"\":0}}", limits, 2)
-    limits.max_output_bytes = 6 limited("{{\"\":0}}", limits, 0)
-    limits.max_output_bytes = 7 limited("{{\"\":0}}", limits, 0)
-    limits = Limits.defaults() limits.max_depth = 2
-    limited("[]", limits, 0) limited("[{{}}]", limits, 0) limited("[[[]]]", limits, 3)
+    limited("null", limits, 2); limited("\"\"", limits, 2)
+    limits.max_output_bytes = 7; limited("\"\\u0000\"", limits, 2)
+    limits.max_output_bytes = 8; limited("\"\\u0000\"", limits, 0)
+    limits.max_output_bytes = 9; limited("\"\\u0000\"", limits, 0)
+    limits.max_output_bytes = 4; limited("\"你\"", limits, 2)
+    limits.max_output_bytes = 5; limited("\"你\"", limits, 0)
+    limits.max_output_bytes = 6; limited("\"你\"", limits, 0)
+    limits.max_output_bytes = 5; limited("[null]", limits, 2)
+    limits.max_output_bytes = 6; limited("[null]", limits, 0)
+    limits.max_output_bytes = 5; limited("{{\"\":0}}", limits, 2)
+    limits.max_output_bytes = 6; limited("{{\"\":0}}", limits, 0)
+    limits.max_output_bytes = 7; limited("{{\"\":0}}", limits, 0)
+    limits = Limits.defaults(); limits.max_depth = 2
+    limited("[]", limits, 0); limited("[{{}}]", limits, 0); limited("[[[]]]", limits, 3)
     limits.max_depth = 0
-    limited("null", limits, 0) limited("[]", limits, 3)
-    limits = Limits.defaults() limits.max_nodes = 3
-    limited("[0]", limits, 0) limited("[0,{{}}]", limits, 0) limited("[0,0,0]", limits, 4)
+    limited("null", limits, 0); limited("[]", limits, 3)
+    limits = Limits.defaults(); limits.max_nodes = 3
+    limited("[0]", limits, 0); limited("[0,{{}}]", limits, 0); limited("[0,0,0]", limits, 4)
     limited("{{\"a\":null,\"b\":null}}", limits, 0)
-    limits.max_nodes = 0 limited("null", limits, 4)
-    limits = Limits.defaults() limits.max_string_bytes = 4
-    limited("\"你\"", limits, 0) limited("\"🙂\"", limits, 0) limited("\"你ab\"", limits, 5)
+    limits.max_nodes = 0; limited("null", limits, 4)
+    limits = Limits.defaults(); limits.max_string_bytes = 4
+    limited("\"你\"", limits, 0); limited("\"🙂\"", limits, 0); limited("\"你ab\"", limits, 5)
     limited("{{\"abcde\":0}}", limits, 5)
     limits.max_string_bytes = 0
-    limited("{{\"\":\"\"}}", limits, 0) limited("\"a\"", limits, 5)
-    limits = Limits.defaults() limits.max_number_bytes = 3
-    limited("10", limits, 0) limited("100", limits, 0) limited("1000", limits, 6)
-    limits.max_number_bytes = 0 limited("0", limits, 6) limited("null", limits, 0)
-    limits = Limits.defaults() limits.max_input_bytes = 0
+    limited("{{\"\":\"\"}}", limits, 0); limited("\"a\"", limits, 5)
+    limits = Limits.defaults(); limits.max_number_bytes = 3
+    limited("10", limits, 0); limited("100", limits, 0); limited("1000", limits, 6)
+    limits.max_number_bytes = 0; limited("0", limits, 6); limited("null", limits, 0)
+    limits = Limits.defaults(); limits.max_input_bytes = 0
     limited("[null]", limits, 0)
-    limits.max_input_bytes = 1048577 limited("null", limits, 1)
-    limits = Limits.defaults() limits.max_output_bytes = 1048577 limited("null", limits, 1)
-    limits = Limits.defaults() limits.max_depth = 129 limited("null", limits, 1)
-    limits = Limits.defaults() limits.max_nodes = 65537 limited("null", limits, 1)
-    limits = Limits.defaults() limits.max_string_bytes = 262145 limited("null", limits, 1)
-    limits = Limits.defaults() limits.max_number_bytes = 1025 limited("null", limits, 1)
+    limits.max_input_bytes = 1048577; limited("null", limits, 1)
+    limits = Limits.defaults(); limits.max_output_bytes = 1048577; limited("null", limits, 1)
+    limits = Limits.defaults(); limits.max_depth = 129; limited("null", limits, 1)
+    limits = Limits.defaults(); limits.max_nodes = 65537; limited("null", limits, 1)
+    limits = Limits.defaults(); limits.max_string_bytes = 262145; limited("null", limits, 1)
+    limits = Limits.defaults(); limits.max_number_bytes = 1025; limited("null", limits, 1)
 }
 fn tree(depth: UInt64) -> Value {
     var value = Value.Null
@@ -117,15 +117,15 @@ fn tree(depth: UInt64) -> Value {
     value
 }
 fn tree_child(value: &Value) -> &Value {
-    match value { Array(items) => { ensure(items.len() == 1) items.borrow_ref(0) }, _ => value }
+    match value { Array(items) => { ensure(items.len() == 1); items.borrow_ref(0) }, _ => value }
 }
 fn tree_container(value: &Value) -> Bool {
-    match value { Array(_) => true, Null => false, _ => { ensure(false) false } }
+    match value { Array(_) => true, Null => false, _ => { ensure(false); false } }
 }
 fn tree_depth(root: &Value) -> UInt64 {
     var value = root
     var depth: UInt64 = 0
-    while tree_container(value) { value = tree_child(value) depth = depth + 1 }
+    while tree_container(value) { value = tree_child(value); depth = depth + 1 }
     depth
 }
 fn deep() {
@@ -154,14 +154,14 @@ fn inspect(value: &Value) {
         Object(fields) => {
             ensure(fields.len() == 2)
             let key = "text"
-            match fields.value_ref(&key) { Text(text) => { let expected = "你\0\n🙂" ensure(text.equals(&expected)) }, _ => { ensure(false) } }
+            match fields.value_ref(&key) { Text(text) => { let expected = "你\0\n🙂"; ensure(text.equals(&expected)) }, _ => { ensure(false) } }
             let key = "items"
             match fields.value_ref(&key) {
                 Array(items) => {
                     ensure(items.len() == 2)
                     match items.borrow_ref(0) { Null => {}, _ => { ensure(false) } }
                     match items.borrow_ref(1) {
-                        Number(number) => { let expected = "18446744073709551616" ensure(number.as_text().equals(&expected)) }
+                        Number(number) => { let expected = "18446744073709551616"; ensure(number.as_text().equals(&expected)) }
                         _ => { ensure(false) }
                     }
                 }
@@ -181,7 +181,7 @@ fn json2b_probe() -> Int32 {
 }
 fn json2b_failure() -> Int32 {
     let value = owned_tree()
-    var limits = Limits.defaults() limits.max_output_bytes = 12
+    var limits = Limits.defaults(); limits.max_output_bytes = 12
     match json.encode_with_limits(&value, limits) { Err(OutputLimit) => {}, _ => { ensure(false) } }
     inspect(&value)
     42
@@ -202,7 +202,7 @@ fn json2b_cancel_work() @suspends -> Int32 {
     let value = decoded(&input)
     let output = encoded(&value)
     task.yield_now()
-    var limits = Limits.defaults() limits.max_output_bytes = 3
+    var limits = Limits.defaults(); limits.max_output_bytes = 3
     match json.encode_with_limits(&value, limits) { Err(OutputLimit) => {}, _ => { ensure(false) } }
     task.yield_now()
     ensure(encoded(&value).equals(&output))
@@ -214,7 +214,7 @@ fn mutable_input() {
     match &mut value { Object(fields) => { fields.insert("after", Value.Boolean(true)); }, _ => { ensure(false) } }
     let recovered = decoded(&output)
     inspect(&recovered)
-    var limits = Limits.defaults() limits.max_output_bytes = 0
+    var limits = Limits.defaults(); limits.max_output_bytes = 0
     match json.encode_with_limits(&value, limits) { Err(OutputLimit) => {}, _ => { ensure(false) } }
     match &mut value {
         Object(fields) => {
@@ -229,4 +229,4 @@ fn mutable_input() {
     let recovered_after_release = decoded(&output)
     inspect(&recovered_after_release)
 }
-fn main() @suspends { positive() boundaries() deep() mutable_input() json2b_probe(); json2b_failure(); json2b_work(); json2b_cancel_work(); }
+fn main() @suspends { positive(); boundaries(); deep(); mutable_input(); json2b_probe(); json2b_failure(); json2b_work(); json2b_cancel_work(); }

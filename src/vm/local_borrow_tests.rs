@@ -35,7 +35,7 @@ fn local_borrows_read_and_update_the_original_binding() {
         fn increase(p: &mut Point) { p.x = p.x + 1; }
         fn bump(p: &mut Int32) { (*(p) = (*p) + 1); }
         fn view(p: &Point) -> &Point { p }
-        fn copy<T>(value: T) -> T { (*(&value)) }
+        fn copy<T: Copy>(value: T) -> T { (*(&value)) }
     "#;
     for body in [
         "var p = Point { x: 41 }; increase(&mut p); p.x",
@@ -75,8 +75,8 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         fn pair(a: &mut Int32, b: &Int32) {}
         fn allocate(p: &Int32) { alloc(Holder { view: p }); }
         fn indirect(p: &Int32) { allocate(p); }
-        fn store<T>(p: &T) { alloc((p,)); }
-        fn copy<T>(value: T) -> T { (*(&value)) }
+        fn store<T: Copy>(p: &T) { alloc((p,)); }
+        fn copy<T: Copy>(value: T) -> T { (*(&value)) }
     "#;
     for (body, message) in [
         ("fn f() { var x = 1; let r = &x; x = 2; (*r); }", "borrow"),
@@ -296,8 +296,8 @@ fn local_borrows_imports_and_aliases_preserve_local_origins() {
         pub type View = &Point
         pub fn update(p: &mut Point) { p.x = p.x + 1; }
         pub fn same(p: View) -> View { p }
-        pub fn echo<T>(value: T) -> T { (*(&value)) }
-        pub fn allocate<T>(value: &T) { alloc((value,)); }
+        pub fn echo<T: Copy>(value: T) -> T { (*(&value)) }
+        pub fn allocate<T: Copy>(value: &T) { alloc((value,)); }
     "#,
         )
         .unwrap();

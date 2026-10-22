@@ -62,7 +62,7 @@ impl Parser {
     }
 
     /// Language functions may promise not to retain or return argument loans.
-    fn parse_fn_attrs(&mut self) -> Result<(bool, bool, Vec<String>), Diagnostic> {
+    pub(super) fn parse_fn_attrs(&mut self) -> Result<(bool, bool, Vec<String>), Diagnostic> {
         let (mut suspends, mut noescape) = (false, false);
         let mut names = Vec::new();
         while self.peek() == &TokenKind::At {
@@ -86,9 +86,6 @@ impl Parser {
                 }
                 attr => return Err(self.error(format!("Unknown or duplicate attribute @{attr}"))),
             }
-        }
-        if suspends && (noescape || !names.is_empty()) {
-            return Err(self.error("@noescape functions must be synchronous".into()));
         }
         Ok((suspends, noescape, names))
     }
@@ -258,8 +255,8 @@ impl Parser {
         let start = self.peek_span().start();
         self.expect(&TokenKind::Trait)?;
         let name = self.expect_ident()?;
-        if matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce") {
-            return Err(self.error("Callable bound names are reserved".into()));
+        if matches!(name.as_str(), "Copy" | "Fn" | "FnMut" | "FnOnce") {
+            return Err(self.error("Builtin capability names are reserved".into()));
         }
         let mut parameter = TypeParameter::new("Self".into(), self.peek_span());
         parameter.bounds.push(TraitBound {

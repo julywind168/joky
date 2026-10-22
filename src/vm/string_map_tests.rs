@@ -22,7 +22,7 @@ fn string_s6_noescape_rejects_retention_return_forwarding_and_trait_violations()
         "struct Saved { value: &Int32 } fn bad(value: &Int32) @noescape { let stored = alloc(Saved { value: value }) }",
         "struct Saved { value: &Int32 } fn retain(value: &Int32) { let stored = alloc(Saved { value: value }) } fn bad(value: &Int32) @noescape { retain(value) }",
         "import joky/array.{type Array} fn bad(out: &mut Array<&Int32>, value: &Int32) @noescape(value) { out.push(value) }",
-        "trait Query { fn check(&self) @noescape -> Bool } struct Key { n: Int32 } struct Saved { key: &Key } impl Query for Key { fn check(&self) -> Bool { let stored = alloc(Saved { key: self }) true } } fn f() {}",
+        "trait Query { fn check(&self) @noescape -> Bool } struct Key { n: Int32 } struct Saved { key: &Key } impl Query for Key { fn check(&self) -> Bool { let stored = alloc(Saved { key: self }); true } } fn f() {}",
         "trait Query { fn check(&self, other: &Int32) @noescape(other) -> &Int32 } struct Key { n: Int32 } impl Query for Key { fn check(&self, renamed: &Int32) -> &Int32 { renamed } } fn f() {}",
         "fn escaped(a: &Int32, b: &Int32) @noescape(a) -> &Int32 { b } fn bad(value: &Int32) @noescape -> &Int32 { escaped(value, value) }",
         "fn forward<T>(value: &T) @noescape -> &T { value } fn f() {}",
@@ -34,13 +34,13 @@ fn string_s6_noescape_rejects_retention_return_forwarding_and_trait_violations()
 #[test]
 fn string_s6_key_loans_block_structural_changes_and_mutation() {
     for body in [
-        "let keys = m.keys() m.clear() slice.len(keys);",
-        "let keys = m.keys() let old = mem.replace(&mut m, Map.new::<String, Int32>()) slice.len(keys);",
-        "let keys = m.keys() let key = slice.borrow_ref(keys, 0) m.insert(\"b\", 1) key.byte_length();",
-        "let keys = m.keys() slice.borrow_mut_ref(keys, 0);",
-        "let query = \"a\" let value = m.value_ref(&query) m.remove_by_ref(&query) ; (*value);",
+        "let keys = m.keys(); m.clear(); slice.len(keys);",
+        "let keys = m.keys(); let old = mem.replace(&mut m, Map.new::<String, Int32>()); slice.len(keys);",
+        "let keys = m.keys(); let key = slice.borrow_ref(keys, 0); m.insert(\"b\", 1); key.byte_length();",
+        "let keys = m.keys(); slice.borrow_mut_ref(keys, 0);",
+        "let query = \"a\"; let value = m.value_ref(&query); m.remove_by_ref(&query) ; (*value);",
     ] {
-        let source = format!("import joky/mem import joky/map.{{type Map}} import joky/slice fn f() {{ var m = Map.new::<String, Int32>() m.insert(\"a\", 1) {body} }}");
+        let source = format!("import joky/mem import joky/map.{{type Map}} import joky/slice fn f() {{ var m = Map.new::<String, Int32>(); m.insert(\"a\", 1); {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let error = VmEngine::with_mode(mode).load_source(&source).unwrap_err();
             assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::TypeMismatch), "{source}: {error}");
@@ -54,7 +54,7 @@ fn string_s6_noescape_recursion_and_blanket_protocols_are_general() {
     let source = r#"
         trait Value { fn value(self) -> Int32 }
         trait Query { fn query(&self) @noescape -> Int32 }
-        impl<T: Value> Query for T { fn query(&self) -> Int32 { Value.value((*self)) } }
+        impl<T: Copy + Value> Query for T { fn query(&self) -> Int32 { Value.value((*self)) } }
         impl Value for Int32 { fn value(self) -> Int32 { self } }
         fn recurse(value: &Int32, n: Int32) @noescape -> Int32 {
             if n == 0 { Query.query(value) } else { recurse(value, n - 1) }
@@ -63,7 +63,7 @@ fn string_s6_noescape_recursion_and_blanket_protocols_are_general() {
         fn probe() -> Int32 {
             let value = 42
             let result = recurse(&value, 8)
-            let loan = { let ignored = 9 choose(&value, &ignored) }
+            let loan = { let ignored = 9; choose(&value, &ignored) }
             if (*loan) == result { result } else { 0 }
         }
     "#;

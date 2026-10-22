@@ -31,7 +31,7 @@ fn text_ffi_c_fixture_runs_in_independent_aot_process() {
         harness.push_str(&format!("{{ text_ffi_reset(); const uint8_t expected[] = {{{bytes}}}; JokyOwnedTextV2 output = {{0}}; if (__joky_user_text_v2_{name}(&output) || joky_runtime_error_code() || output.byte_length != {} || (output.byte_length && memcmp(output.data, expected, output.byte_length)) || calls != 1 || frees != {frees}) {{ fprintf(stderr, \"{name} failed\\n\"); return 1; }} joky_string_result_free_v2(&output); }}\n", expected.len()));
     }
     for &(name, _, calls, frees) in model::FAILURES {
-        harness.push_str(&format!("{{ text_ffi_reset(); JokyOwnedTextV2 output = {{0}}; if (!__joky_user_text_v2_{name}(&output) || !joky_runtime_error_code() || output.data || calls != {calls} || frees != {frees}) {{ fprintf(stderr, \"{name} failed: calls=%d frees=%d\\n\", calls, frees); return 2; }} joky_runtime_error_clear(); }}\n"));
+        harness.push_str(&format!("{{ text_ffi_reset(); JokyOwnedTextV2 output = {{0}}; if (!__joky_user_text_v2_{name}(&output) || !joky_runtime_error_code() || output.data || calls != {calls} || frees != {frees}) {{ fprintf(stderr, \"{name} failed: calls=%d frees=%d\\n\", calls, frees); return 2; }}; joky_runtime_error_clear(); }}\n"));
     }
     harness.push_str("text_ffi_reset(); partial_input_failure(); if (!joky_runtime_error_code() || calls || frees) return 4; joky_runtime_error_clear(); if (length_text() != 12 || scalar_and_unit() != 42 || four_texts() != 15 || joky_runtime_error_code()) return 3; return 0; }\n");
     std::fs::write(&host, harness).unwrap();

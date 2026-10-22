@@ -18,7 +18,7 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
         impl Equality for Key { fn eq(self, other: Self) -> Bool { self.value == other.value } }
         impl Hashing for Key { fn hash(self) -> UInt64 { Hashing.hash(self.value) } }
         pub type Alias = Key
-        pub fn compare<K: Equality + Hashing>(a: K, b: K) -> Bool { a.eq(b) && a.hash() == b.hash() }
+        pub fn compare<K: Copy + Equality + Hashing>(a: K, b: K) -> Bool { a.eq(b) && a.hash() == b.hash() }
     "#).unwrap();
     let source = format!(
         r#"import keys
@@ -44,7 +44,7 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
 #[test]
 fn standard_key_protocols_reject_missing_requirements_and_wrong_signatures() {
     for (body, expected) in [
-        ("struct Key { n: Int32 } fn f<K: Eq + Hash>(k: K) -> Bool { k.eq(k) } fn test() { f(Key { n: 1 }) }", "does not satisfy trait bound"),
+        ("struct Key { n: Int32 } fn f<K: Copy + Eq + Hash>(k: K) -> Bool { k.eq(k) } fn test() { f(Key { n: 1 }) }", "does not satisfy trait bound"),
         ("fn f<K>(k: K) -> UInt64 { Hash.hash(k) }", "does not satisfy trait bound"),
         ("struct Key {} impl Hash for Key { fn hash(self) -> Int32 { 0 } }", "Signature does not match trait method"),
         ("struct Key {} impl Eq for Key { fn eq(self, other: &Self) -> Bool { true } }", "Signature does not match trait method"),

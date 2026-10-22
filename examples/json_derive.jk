@@ -5,7 +5,7 @@ import joky/check.{assert}
 
 #derive(ToJson, FromJson)
 struct User { name: String, age: UInt8, nickname: Option<String> }
-fn ensure(ok: Bool) { let message = "typed JSON example" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON example"; assert(ok, &message) }
 fn main() {
     let input = "{{\"name\":\"Ada\",\"age\":37}}"
     match typed.decode::<User>(&input) {

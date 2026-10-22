@@ -108,11 +108,7 @@ impl FunctionPlan {
             return self.hint(&call, vars, functions, types, default);
         }
         if let Ok(Some((_, info))) = self.function_value_info(expr, vars, functions, types, false) {
-            return Some(Type::function_with_effect(
-                info.signature.params,
-                info.signature.ret,
-                info.suspends,
-            ));
+            return Some(info.function_type());
         }
         if let Expr::Invoke { callee, .. } = expr {
             if let Some(ty) = self.type_hint(callee, vars, functions, types) {

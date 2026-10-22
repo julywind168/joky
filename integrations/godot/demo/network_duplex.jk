@@ -20,16 +20,16 @@ fn record_send(state: &mut State) { state.sent = state.sent + 1 }
 fn record_receive(state: &mut State) { state.received = state.received + 1 }
 fn finish(state: &mut State) { state.completed = state.completed + 1 }
 fn timeout(state: &mut State) { state.timed_out = state.timed_out + 1 }
-fn ensure(ok: Bool) { let message = "Godot duplex session" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "Godot duplex session"; assert(ok, &message) }
 fn receive(reader: &mut BufferedTcpReader) @suspends {
     while true {
         let bytes = match reader.read_message(1) {
             Ok(Some(bytes)) => bytes
-            Ok(None) => { let method = "stop" task.call(&method) return }
-            Err(_) => { ensure(false) return }
+            Ok(None) => { let method = "stop"; task.call(&method); return }
+            Err(_) => { ensure(false); return }
         }
         // An empty frame ends the protocol; other frames are server pushes.
-        if bytes.is_empty() { let method = "stop" task.call(&method) return }
+        if bytes.is_empty() { let method = "stop"; task.call(&method); return }
         ensure(bytes.get(0).unwrap_or(0) == 42)
         let method = "record_receive"
         task.call(&method)
@@ -55,11 +55,11 @@ fn session(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
     task.call(&method)
 }
 fn task_session(port: Int32, deadline_ms: Int32) @suspends {
-    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false) return } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     race { | session(&mut reader, &mut writer) | clock.sleep_ms(deadline_ms.to_u64().unwrap_or(0)) }
     let completed = "completed"
-    if task.read_int32(&completed) == 0 { let method = "timeout" task.call(&method) }
+    if task.read_int32(&completed) == 0 { let method = "timeout"; task.call(&method) }
     // A timeout may interrupt framing: end both directions rather than retry.
     reader.close();
     writer.close();

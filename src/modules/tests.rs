@@ -338,7 +338,7 @@ fn registry_types_and_native_signatures_match_across_backends() {
     }
     .unwrap();
     let registry = Rc::new(registry);
-    let source = "import user/tokens as t.{type Token as Handle, create as make} fn answer() -> Int32 { let token: Handle = make() let same: t.Token = token t.value(same) }";
+    let source = "import user/tokens as t.{type Token as Handle, create as make} fn answer() -> Int32 { let token: Handle = make(); let same: t.Token = token; t.value(same) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode_and_registry(mode, registry.clone());
         vm.load_source(source).unwrap();
@@ -399,7 +399,7 @@ fn imported_aliases_preserve_pending_calls_and_owners_after_reload() {
             frame_slots: Some(4),
         });
         let mut vm = VmEngine::with_mode_and_registry(mode, registry(binding));
-        vm.load_source("import user/math as m.{next as plus} fn answer() @suspends -> Int32 { let math = 99 match Some(plus(40)) { Some(n) => m.next(n), None => 0 } }").unwrap();
+        vm.load_source("import user/math as m.{next as plus} fn answer() @suspends -> Int32 { let math = 99; match Some(plus(40)) { Some(n) => m.next(n), None => 0 } }").unwrap();
         let mut task = vm.call_async("answer", &[]).unwrap();
         assert!(!task.is_finished());
         task.resume().unwrap();

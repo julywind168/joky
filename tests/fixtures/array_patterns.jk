@@ -5,12 +5,12 @@ import joky/slice as slices.{type Slice}
 import joky/task
 
 fn check(ok: Bool) { assert(ok, "array literal/pattern regression") }
-fn width<T, const N: UInt64>(values: FixedArray<T, N>) -> UInt64 { N }
+fn width<T: Copy, const N: UInt64>(values: FixedArray<T, N>) -> UInt64 { N }
 fn first<T>(values: Array<T>) -> T {
     match values { [head, ..] => head, [] => panic("empty") }
 }
-fn pair<T>(values: FixedArray<T, 2>) -> T { let [first, last] = values; first }
-fn matched_pair<T>(values: FixedArray<T, 2>) -> T { match values { [first, last] => first } }
+fn pair<T: Copy>(values: FixedArray<T, 2>) -> T { let [first, last] = values; first }
+fn matched_pair<T: Copy>(values: FixedArray<T, 2>) -> T { match values { [first, last] => first } }
 fn byte_values() -> Array<UInt8> { [1, 255] }
 fn fixed_values(flag: Bool) -> FixedArray<Bool, 2> {
     if flag { [true, false] } else { [false, true] }

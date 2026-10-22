@@ -429,15 +429,15 @@ fn owning_string_s2_optional_results_replacement_and_function_values() {
 #[test]
 fn owning_string_s2_rejects_moves_conflicting_loans_and_private_bridges() {
     for source in [
-        "fn f() { let a = \"text\" let b = a a.release() b.release() }",
-        "fn f() { let a = \"text\" a.release() a.byte_length(); }",
-        "fn f() { var a = \"text\" let view = &a a = \"next\" view.byte_length(); }",
+        "fn f() { let a = \"text\"; let b = a; a.release(); b.release() }",
+        "fn f() { let a = \"text\"; a.release(); a.byte_length(); }",
+        "fn f() { var a = \"text\"; let view = &a; a = \"next\"; view.byte_length(); }",
         "fn f() -> &String { let a = \"text\" &a }",
-        "import joky/slice as slices import joky/task fn pause() @suspends { task.yield_now() } fn f() @suspends { let a = \"text\" let view = a.bytes() parallel { | pause() } slices.len(view); }",
-        "import joky/slice as slices import joky/task fn f() @suspends { let a = \"text\" let view = a.bytes() task.yield_now() slices.len(view); }",
+        "import joky/slice as slices import joky/task fn pause() @suspends { task.yield_now() } fn f() @suspends { let a = \"text\"; let view = a.bytes(); parallel { | pause() }; slices.len(view); }",
+        "import joky/slice as slices import joky/task fn f() @suspends { let a = \"text\"; let view = a.bytes(); task.yield_now(); slices.len(view); }",
         "fn f(a: &String) @suspends -> &String { a }",
         "import joky/string.{freeze_utf8} fn f() {}",
-        "import joky/string fn f() { let text = \"text\" string.copy_text(&text); }",
+        "import joky/string fn f() { let text = \"text\"; string.copy_text(&text); }",
         "unsafe extern \"C\" fn f(a: String)",
         "fn __joky_string_from_view_v2() {}",
         "fn __joky_user_text_v2_f() {}",
@@ -467,9 +467,9 @@ fn owning_string_s2_budget_failures_clean_inputs_clones_and_pending_frames() {
     let _restore = Restore(crate::runtime::arena::LIMIT.with(|limit| limit.get()));
     let source = r#"
         import joky/task
-        fn echo(text: String) -> String { let next = text.clone() text.release() next }
-        fn pending(text: String) @suspends -> String { let next = text.clone() task.yield_now() text.release() next }
-        fn failure() -> String { let message = "Primary text failure" assert(false, &message) "unreachable" }
+        fn echo(text: String) -> String { let next = text.clone(); text.release(); next }
+        fn pending(text: String) @suspends -> String { let next = text.clone(); task.yield_now(); text.release(); next }
+        fn failure() -> String { let message = "Primary text failure"; assert(false, &message); "unreachable" }
     "#;
     // Keep the fixture independent of whether the VM enables the prelude.
     let source = format!("import joky/check.{{assert}} {source}");
@@ -632,9 +632,9 @@ fn owning_string_s2_root_cleanup_failure_discards_text() {
         import joky/check.{assert}
         struct Resource { data: Array<UInt8> }
         impl Drop for Resource {
-            fn drop(&mut self) { let message = "Text cleanup failure" assert(false, &message) }
+            fn drop(&mut self) { let message = "Text cleanup failure"; assert(false, &message) }
         }
-        fn text() -> String { let resource = Resource { data: Array.new::<UInt8>() } "discarded" }
+        fn text() -> String { let resource = Resource { data: Array.new::<UInt8>() }; "discarded" }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(source, mode);

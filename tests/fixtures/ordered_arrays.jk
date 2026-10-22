@@ -49,16 +49,16 @@ fn ordered_enum_tuple() -> Int32 {
 }
 fn ordered_wrapper() -> Int32 {
     var values = Array.new::<Array<Int32>>()
-    var a = Array.new::<Int32>() a.push(20)
-    var b = Array.new::<Int32>() b.push(22)
-    values.insert(0, a) values.insert(0, b)
+    var a = Array.new::<Int32>(); a.push(20)
+    var b = Array.new::<Int32>(); b.push(22)
+    values.insert(0, a); values.insert(0, b)
     let old = values.remove(0)
     match old { Some(item) => item.get(0).unwrap_or(0) + values.borrow_ref(0).get(0).unwrap_or(0), None => 0 }
 }
 struct Pair { a: UInt64, b: Bool, c: Unit }
 fn ordered_zero_and_aggregate() -> Int32 {
     var zero = Array.new::<Unit>()
-    zero.insert(0, {}) zero.insert(0, {}) zero.insert(1, {})
+    zero.insert(0, {}); zero.insert(0, {}); zero.insert(1, {})
     if zero.remove(1).is_none() || zero.len() != 2 { return 0 }
     if zero.remove(0).is_none() || zero.remove(0).is_none() { return 0 }
     if zero.insert(1, {}) || zero.remove(0).is_some() { return 0 }
@@ -71,14 +71,14 @@ fn ordered_zero_and_aggregate() -> Int32 {
 }
 fn ordered_references() -> Int32 {
     var values = Array.new::<&Int32>()
-    values.insert(0, (&*(alloc(20)))) values.insert(0, (&*(alloc(22))))
+    values.insert(0, (&*(alloc(20)))); values.insert(0, (&*(alloc(22))))
     let old = values.remove(1)
     let remaining = values.get(0)
     values.release()
     match old { Some(a) => match remaining { Some(b) => (*a) + (*b), None => 0 }, None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
-impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) let zero = 0 let _ = 1 / zero } }
+impl Drop for Failing { fn drop(&mut self) { record_drop(self.id); let zero = 0; let _ = 1 / zero } }
 fn ordered_drop_failure() -> Int32 {
     var values = Array.new::<Failing>()
     values.insert(0, Failing { id: 1, values: Array.new::<Int32>() })
@@ -96,7 +96,7 @@ fn ordered_invalid_failure() -> Int32 {
 fn ordered_rhs_failure() -> Int32 {
     var values = Array.new::<Resource>()
     values.insert(0, resource(1))
-    values.insert(0, { let item = resource(2) let zero = 0 let _ = 1 / zero item });
+    values.insert(0, { let item = resource(2); let zero = 0; let _ = 1 / zero; item });
     42
 }
 fn ordered_transitions() -> Int32 {
@@ -113,6 +113,6 @@ fn ordered_transitions() -> Int32 {
 fn ordered_task() @suspends -> Int32 { ordered_transitions() }
 fn ordered_evaluation() -> Int32 {
     var values = Array.new::<Int32>()
-    values.insert({ record_drop(10) 0 }, { record_drop(20) 42 })
-    values.remove({ record_drop(30) 0 }).unwrap_or(0)
+    values.insert({ record_drop(10); 0 }, { record_drop(20); 42 })
+    values.remove({ record_drop(30); 0 }).unwrap_or(0)
 }

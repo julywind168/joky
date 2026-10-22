@@ -5,7 +5,7 @@ import joky/integer
 import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "TCP length-prefixed messages" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "TCP length-prefixed messages"; assert(ok, &message) }
 fn pair() @suspends -> Result<(TcpStream, TcpStream), IoError> {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return Result.Err(error) } }
     let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return Result.Err(error) } }
@@ -39,8 +39,8 @@ fn payload(length: UInt64) -> Array<UInt8> {
 }
 fn merged() @suspends -> Int32 {
     var data = header(0)
-    data.push(0) data.push(0) data.push(0) data.push(3)
-    data.push(0) data.push(255) data.push(42)
+    data.push(0); data.push(0); data.push(0); data.push(3)
+    data.push(0); data.push(255); data.push(42)
     var buffered = match reader(data, 1) { Ok(b) => b, _ => { return 1 } }
     match buffered.read_message(1048577) { Err(InvalidLimit) => {}, _ => { return 2 } }
     let empty = match buffered.read_message(0) { Ok(Some(data)) => data, _ => { return 3 } }
@@ -71,7 +71,7 @@ fn truncated() @suspends -> Int32 {
     while count < 3 {
         var data = header(3)
         var index: UInt64 = 0
-        while index < count { data.push(42) index = index + 1 }
+        while index < count { data.push(42); index = index + 1 }
         var buffered = match reader(data, 1) { Ok(b) => b, _ => { return 4 } }
         match buffered.read_message(3) { Err(UnexpectedEof(n)) => { ensure(n == 4 + count) }, _ => { return 5 } }
         match buffered.read_message(3) { Ok(None) => {}, _ => { return 6 } }
@@ -121,19 +121,19 @@ fn produce(peer: &mut TcpStream) @suspends {
     ensure(peer.write_all(first).is_ok())
     task.sleep_ms(2)
     var next = Array.new::<UInt8>()
-    next.push(0) next.push(3) next.push(11)
+    next.push(0); next.push(3); next.push(11)
     ensure(peer.write_all(next).is_ok())
     task.sleep_ms(2)
     var last = Array.new::<UInt8>()
-    last.push(22) last.push(33)
-    last.push(0) last.push(0) last.push(0) last.push(0)
+    last.push(22); last.push(33)
+    last.push(0); last.push(0); last.push(0); last.push(0)
     ensure(peer.write_all(last).is_ok())
     ensure(peer.shutdown(Shutdown.Write).is_ok())
 }
 fn consume(buffered: &mut BufferedTcp) @suspends {
-    let data = match buffered.read_message(3) { Ok(Some(data)) => data, _ => { ensure(false) return } }
+    let data = match buffered.read_message(3) { Ok(Some(data)) => data, _ => { ensure(false); return } }
     ensure(data.len() == 3 && data.get(0).unwrap_or(0) == 11 && data.get(1).unwrap_or(0) == 22 && data.get(2).unwrap_or(0) == 33)
-    let empty = match buffered.read_message(0) { Ok(Some(data)) => data, _ => { ensure(false) return } }
+    let empty = match buffered.read_message(0) { Ok(Some(data)) => data, _ => { ensure(false); return } }
     ensure(empty.is_empty())
     match buffered.read_message(3) { Ok(None) => {}, _ => { ensure(false) } }
 }
@@ -223,11 +223,11 @@ fn send_maximum(writer: &mut BufferedTcp) @suspends {
     ensure(writer.write_message(payload(1048576), 1048576).is_ok())
 }
 fn receive_maximum(reader: &mut BufferedTcp) @suspends {
-    let prefix = match reader.read_exact(4) { Ok(Some(data)) => data, _ => { ensure(false) return } }
+    let prefix = match reader.read_exact(4) { Ok(Some(data)) => data, _ => { ensure(false); return } }
     ensure(prefix.get(0).unwrap_or(1) == 0 && prefix.get(1).unwrap_or(0) == 16 && prefix.get(2).unwrap_or(1) == 0 && prefix.get(3).unwrap_or(1) == 0)
-    let body = match reader.read_exact(1048576) { Ok(Some(data)) => data, _ => { ensure(false) return } }
+    let body = match reader.read_exact(1048576) { Ok(Some(data)) => data, _ => { ensure(false); return } }
     ensure(body.len() == 1048576 && body.get(1048575).unwrap_or(0) == 255)
-    let message = match reader.read_message(1048576) { Ok(Some(data)) => data, _ => { ensure(false) return } }
+    let message = match reader.read_message(1048576) { Ok(Some(data)) => data, _ => { ensure(false); return } }
     ensure(message.len() == 1048576 && message.get(1048575).unwrap_or(0) == 255)
 }
 fn maximum() @suspends -> Int32 {

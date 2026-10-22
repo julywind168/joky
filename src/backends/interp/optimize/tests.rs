@@ -56,7 +56,7 @@ pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, E
 fn jump_merges_and_mutable_snapshots_match_unoptimized_execution() {
     let source = r#"
         fn f(seed: Int32, n: Int32) -> Int32 {
-            var x = seed var total = 0 var i = 0
+            var x = seed; var total = 0; var i = 0
             while i < n {
                 i = i + 1
                 i == 2 && (continue);
@@ -115,7 +115,7 @@ fn jump_merges_and_mutable_snapshots_match_unoptimized_execution() {
 fn conditional_joins_and_short_circuit_writes_match_unoptimized_execution() {
     let source = r#"
         fn f(seed: Int32, n: Int32) -> Int32 {
-            var x = seed var y = 0 var i = 0
+            var x = seed; var y = 0; var i = 0
             while i < n && i < 8 {
                 let saved = x
                 x = if i < 3 { x * 3 + 1 } else if x < 0 { -x } else { x + 7 }
@@ -158,7 +158,7 @@ fn conditional_joins_and_short_circuit_writes_match_unoptimized_execution() {
 fn unary_assignments_preserve_in_place_operands_and_wrapping() {
     for optimized in [false, true] {
         let function = Rc::new(compile(
-            "fn f(a: Int32) -> Int32 { var x = a var i = 0 while i < 1 { x = -x i = i + 1 } x }",
+            "fn f(a: Int32) -> Int32 { var x = a; var i = 0; while i < 1 { x = -x; i = i + 1 }; x }",
             "f",
             optimized,
         ));
@@ -172,7 +172,7 @@ fn unary_assignments_preserve_in_place_operands_and_wrapping() {
             assert_eq!(run(function.clone(), &[value]), Ok(value.wrapping_neg()));
         }
         let function = Rc::new(compile(
-            "fn f(a: Bool) -> Bool { var x = a var i = 0 while i < 1 { x = !x i = i + 1 } x }",
+            "fn f(a: Bool) -> Bool { var x = a; var i = 0; while i < 1 { x = !x; i = i + 1 }; x }",
             "f",
             optimized,
         ));
@@ -201,7 +201,7 @@ fn unary_assignments_preserve_in_place_operands_and_wrapping() {
 #[test]
 fn scalar_assignments_eliminate_snapshot_and_writeback_copies() {
     let function = compile(
-        "fn f(n: Int32) -> Int32 { var x = n var i = 0 while i < 1 { x = x + x i = i + 1 } x }",
+        "fn f(n: Int32) -> Int32 { var x = n; var i = 0; while i < 1 { x = x + x; i = i + 1 }; x }",
         "f",
         true,
     );
@@ -244,7 +244,7 @@ fn copy_facts_expire_when_sources_change_or_control_flow_merges() {
                     x = x + y
                     j = j + 1
                 }
-                y = saved + { x = x + 1 x }
+                y = saved + { x = x + 1; x }
                 i = i + 1
             }
             before + middle + x + y
@@ -284,7 +284,7 @@ fn direct_destinations_keep_other_uses_of_the_temporary() {
 
 #[test]
 fn optimized_division_keeps_failures_and_signed_wrapping() {
-    let source = "fn f(a: Int32, b: Int32) -> Int32 { var x = a var i = 0 while i < 1 { x = x / b i = i + 1 } x }";
+    let source = "fn f(a: Int32, b: Int32) -> Int32 { var x = a; var i = 0; while i < 1 { x = x / b; i = i + 1 }; x }";
     let function = Rc::new(compile(source, "f", true));
     assert_eq!(run(function.clone(), &[i32::MIN, -1]), Ok(i32::MIN));
     assert_eq!(run(function.clone(), &[-7, 2]), Ok(-3));
@@ -319,7 +319,7 @@ fn copy_removal_remaps_branch_entries_and_terminal_targets() {
 
 #[test]
 fn direct_destinations_do_not_cross_jump_targets() {
-    let mut function = compile("fn f(seed: Int32) -> Int32 { var x = seed x }", "f", false);
+    let mut function = compile("fn f(seed: Int32) -> Int32 { var x = seed; x }", "f", false);
     function.code = vec![
         Instruction::Jump(2),
         Instruction::Const {
@@ -381,18 +381,18 @@ fn generated_mutation_sequences_match_unoptimized_execution() {
     // overwrites, saved values and operand-side assignments within one block.
     let mut state = 0x5267_u32;
     for case in 0..96 {
-        let mut source = String::from("fn f(seed: Int32) -> Int32 { var a = seed var b = seed + 1 var c = seed - 1 let saved = a\n");
+        let mut source = String::from("fn f(seed: Int32) -> Int32 { var a = seed; var b = seed + 1; var c = seed - 1; let saved = a\n");
         for _ in 0..24 {
             state = state.wrapping_mul(1664525).wrapping_add(1013904223);
             source.push_str(match (state >> 16) % 8 {
                 0 => "a = b\n",
                 1 => "b = a + c\n",
-                2 => "c = b + { b = b + 1 b }\n",
-                3 => "a = a + { a = c c }\n",
+                2 => "c = b + { b = b + 1; b }\n",
+                3 => "a = a + { a = c; c }\n",
                 4 => "b = c\n",
                 5 => "c = c * 3\n",
-                6 => "{ let old = a a = b b = old }\n",
-                _ => "{ let old = b b = a c = old + c }\n",
+                6 => "{ let old = a; a = b; b = old }\n",
+                _ => "{ let old = b; b = a; c = old + c }\n",
             });
         }
         source.push_str("a + b + c + saved }");
@@ -494,7 +494,7 @@ fn immediate_facts_expire_at_writes_and_control_flow_boundaries() {
             var k = 3
             var x = 10
             var i = 0
-            while i < n { x = x + k k = k + 1 i = i + 1 }
+            while i < n { x = x + k; k = k + 1; i = i + 1 }
             let saved = k
             k = k + 2
             x = x + k
@@ -508,7 +508,7 @@ fn immediate_facts_expire_at_writes_and_control_flow_boundaries() {
     }
     // The literal must survive when its only remaining use is the return.
     let function = Rc::new(compile(
-        "fn f(a: Int32) -> Int32 { let k = 7 a + k k }",
+        "fn f(a: Int32) -> Int32 { let k = 7; a + k; k }",
         "f",
         true,
     ));
@@ -829,7 +829,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
 fn integer_conversion_in_place_updates_preserve_source_tags_and_snapshots() {
     let source = r#"
         fn f(n: Int32) -> Int32 {
-            var value = n var wide: Int64 = 0 var i = 0
+            var value = n; var wide: Int64 = 0; var i = 0
             while i < 4 {
                 let saved = int64(value)
                 value = int32(int64(value) + 4294967297)

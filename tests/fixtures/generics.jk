@@ -6,15 +6,23 @@ fn identity<T>(value: T) -> T { value }
 fn first<T, U>(left: T, right: U) -> T { left }
 fn choose<T>(left: T, right: T, flag: Bool) -> T { if flag { left } else { right } }
 fn swap<T, U>(pair: (T, U)) -> (U, T) { let (a, b) = pair; (b, a) }
-fn duplicate<T>(value: T) -> (T, T) { (value, value) }
+fn duplicate<T: Copy>(value: T) -> (T, T) { (value, value) }
 fn compose<T>(value: T) -> T { identity::<T>(identity(value)) }
 fn rotate<T, U>(pair: (T, U)) -> (T, U) { swap(swap(pair)) }
-fn mutable<T>(a: T, b: T) -> T { var x: T = a let saved = x x = b saved }
-fn recurse<T>(value: T, count: Int32) -> T { if count == 0 { return value } recurse(value, count - 1) }
+fn mutable<T>(a: T, b: T) -> T { var x: T = a; let saved = x; x = b; saved }
+fn recurse<T>(value: T, count: Int32) -> T { if count == 0 { return value }; recurse(value, count - 1) }
 fn even<T>(value: T, count: Int32) -> T { if count == 0 { value } else { odd(value, count - 1) } }
 fn odd<U>(value: U, count: Int32) -> U { if count == 0 { value } else { even(value, count - 1) } }
 fn unused<T>() -> Int32 { 7 }
 fn discard<T>(value: T) -> Unit { let _ = value }
+struct CopyBox<T: Copy> { value: T }
+enum CopyChoice<T: Copy> { Empty, Value(T) }
+type CopyPair<T: Copy> = (T, T)
+fn bounded<T: Copy>(value: T) -> CopyPair<T> {
+    let boxed = CopyBox { value: value }
+    let choice = CopyChoice.Value(boxed.value)
+    match choice { Empty => (value, value), Value(saved) => (saved, boxed.value) }
+}
 fn fixed<T>(n: Int32) -> Int32 { n + 1 }
 fn inferred() -> Int32 {
     let wide: Int64 = 4294967295
@@ -38,7 +46,7 @@ fn aggregates() -> Int32 {
     let (saved, _) = duplicate(e)
     let value = match saved {
         Empty => 0
-        Value(payload) => { let (pair, flag) = rotate(payload) if flag { pair.low } else { 0 } }
+        Value(payload) => { let (pair, flag) = rotate(payload); if flag { pair.low } else { 0 } }
     }
     let pair = compose(p)
     let empty = identity(Empty {})
@@ -51,8 +59,8 @@ fn aggregates() -> Int32 {
 }
 fn snapshots() -> Int32 {
     var p = Pair { low: 7, high: 8 }
-    let saved = mutable(p, { p.low = 99 p })
-    var n: Int64 = 0 var i = 0
+    let saved = mutable(p, { p.low = 99; p })
+    var n: Int64 = 0; var i = 0
     while i < 5 {
         let old = identity(n)
         n = choose(old, n + 1, false)
@@ -61,7 +69,8 @@ fn snapshots() -> Int32 {
     if saved.low == 7 && p.low == 99 && n == 5 { 42 } else { -1 }
 }
 fn check() -> Int32 {
+    let (left, right) = bounded(21)
     if inferred() == 42 && aggregates() == 42 && snapshots() == 42 &&
         recurse(identity(42), 12) == 42 && even(42, 13) == 42 &&
-        unused::<Bool>() == 7 && fixed::<Unit>(41) == 42 { 42 } else { -1 }
+        unused::<Bool>() == 7 && fixed::<Unit>(41) == 42 && left + right == 42 { 42 } else { -1 }
 }

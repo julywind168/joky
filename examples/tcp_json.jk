@@ -6,19 +6,19 @@ import joky/mem
 import joky/check.{assert}
 import joky/task
 
-fn ensure(ok: Bool) { let message = "JSON message session" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "JSON message session"; assert(ok, &message) }
 fn limits() -> Limits {
     var value = Limits.defaults()
-    value.max_input_bytes = 65536 value.max_output_bytes = 65536
-    value.max_depth = 16 value.max_nodes = 4096 value.max_string_bytes = 32768
+    value.max_input_bytes = 65536; value.max_output_bytes = 65536
+    value.max_depth = 16; value.max_nodes = 4096; value.max_string_bytes = 32768
     value
 }
 fn decoded(text: String) -> Value {
-    match json.decode_with_limits(&text, limits()) { Ok(value) => value, Err(_) => { ensure(false) Value.Null } }
+    match json.decode_with_limits(&text, limits()) { Ok(value) => value, Err(_) => { ensure(false); Value.Null } }
 }
 fn envelope(kind: String, id: UInt64, payload: Value) -> Value {
     var items = Array.new::<Value>()
-    items.push(Value.Text(kind)) items.push(Value.Number(Number.from_u64(id))) items.push(payload)
+    items.push(Value.Text(kind)); items.push(Value.Number(Number.from_u64(id))); items.push(payload)
     Value.Array(items)
 }
 // Only integer IDs and exactly three fields belong to this application protocol.
@@ -58,7 +58,7 @@ fn exchange(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends ->
             Ok(value) => {
                 let request = "request"
                 match message_id(&value, &request) {
-                    Some(_) => { replies = replies + 1 reply(value) }
+                    Some(_) => { replies = replies + 1; reply(value) }
                     None => envelope("error", 0, Value.Text("invalid-request"))
                 }
             }
@@ -69,7 +69,7 @@ fn exchange(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends ->
     replies
 }
 fn serve(listener: &mut TcpListener) @suspends {
-    let stream = match listener.accept() { Ok(stream) => stream, _ => { ensure(false) return } }
+    let stream = match listener.accept() { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     ensure(exchange(&mut reader, &mut writer) == 2)
     reader.close(); writer.close();
@@ -87,8 +87,8 @@ fn send(writer: &mut TcpWriter) @suspends {
 fn receive(reader: &mut BufferedTcpReader) @suspends {
     var index: Int32 = 0
     while true {
-        let bytes = match reader.read_message(65536) { Ok(Some(bytes)) => bytes, Ok(None) => { break }, Err(_) => { ensure(false) return } }
-        let value = match json.decode_bytes_with_limits(bytes, limits()) { Ok(value) => value, Err(_) => { ensure(false) return } }
+        let bytes = match reader.read_message(65536) { Ok(Some(bytes)) => bytes, Ok(None) => { break }, Err(_) => { ensure(false); return } }
+        let value = match json.decode_bytes_with_limits(bytes, limits()) { Ok(value) => value, Err(_) => { ensure(false); return } }
         let kind = if index == 0 { "push" } else if index == 1 || index == 3 { "error" } else { "reply" }
         let expected: UInt64 = if index == 2 { 1 } else if index == 4 { 2 } else { 0 }
         ensure(message_id(&value, &kind).unwrap_or(99) == expected)
@@ -98,7 +98,7 @@ fn receive(reader: &mut BufferedTcpReader) @suspends {
     ensure(index == 5)
 }
 fn client(address: Address) @suspends {
-    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { ensure(false) return } }
+    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     parallel { | receive(&mut reader) | send(&mut writer) }
     reader.close(); writer.close();

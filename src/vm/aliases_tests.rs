@@ -49,11 +49,11 @@ fn aliases_match_canonical_types_in_direct_and_cps_execution() {
         }
         // Type and value namespaces are separate; aliases are not constructors.
         let vm = parity_vm(
-            "type Count = Int32 fn Count() -> Count { let Count: Count = 42 Count }",
+            "type Count = Int32 fn Count() -> Count { let Count: Count = 42; Count }",
             mode,
         );
         assert_eq!(vm.call_int32_0("Count").unwrap(), 42);
-        let vm = parity_vm("import joky/vm type Handle = vm.Vm fn compute() -> Int32 { let h: Handle = vm.Vm.interpreter() vm.close(h) }", mode);
+        let vm = parity_vm("import joky/vm type Handle = vm.Vm fn compute() -> Int32 { let h: Handle = vm.Vm.interpreter(); vm.close(h) }", mode);
         assert_eq!(vm.call_int32_0("compute").unwrap(), 0);
     }
 }
@@ -133,7 +133,7 @@ fn alias_host_signatures_are_checked_after_normalization() {
             )
             .unwrap();
         }
-        vm.load_source("type Context = Host.Context type Count = Int32 extern fn context() -> Context extern fn context_value(c: Context) -> Count extern fn record(x: Count) -> Count fn compute() -> Count { let ctx: Context = context() record(context_value(ctx)) }").unwrap();
+        vm.load_source("type Context = Host.Context type Count = Int32 extern fn context() -> Context extern fn context_value(c: Context) -> Count extern fn record(x: Count) -> Count fn compute() -> Count { let ctx: Context = context(); record(context_value(ctx)) }").unwrap();
         assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
         EVENTS.with(|e| assert_eq!(*e.borrow(), [42]));
         let version = vm.module_version();
@@ -159,7 +159,7 @@ fn alias_reload_keeps_old_tasks_and_does_not_register_source_types() {
             extern fn record(x: Value) -> Value
             fn current() -> Value { 42 }
             fn branch_task() @suspends -> Nothing { let n: Value = delayed_value(record(7)); record(n); }
-            fn pending() @suspends -> Value { parallel { | branch_task() } 42 }
+            fn pending() @suspends -> Value { parallel { | branch_task() }; 42 }
             fn failing() @suspends -> Value { let n: Value = delayed_value(record(-1)); 7 / n }
         "#,
             mode,

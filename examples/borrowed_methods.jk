@@ -15,5 +15,5 @@ fn main() {
     let previous = view.get()
     // The returned shared reference is no longer used, so mutation is allowed.
     counter.add(21)
-    if previous == 21 { { let displayed: Int32 = Counter.get(&counter) println(&displayed) } }
+    if previous == 21 { println(Counter.get(&counter)) }
 }

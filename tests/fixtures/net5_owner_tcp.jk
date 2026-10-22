@@ -37,7 +37,7 @@ fn receive(stream: &mut TcpStream) @suspends {
     while true {
         let bytes = match stream.read(2) {
             Ok(value) => value
-            Err(_) => { assert(false, &message) return }
+            Err(_) => { assert(false, &message); return }
         }
         if bytes.len() == 0 { break }
         var i: UInt64 = 0

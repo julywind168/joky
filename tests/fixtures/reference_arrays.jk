@@ -1,19 +1,19 @@
 import joky/array as array.{type Array}
 import joky/option.{type Option, Some, None}
 
-struct RefPair<T> { flag: Bool, first: &T, second: &T }
-struct RefNode<T> { value: T, next: Option<&RefNode<T>> }
+struct RefPair<T: Copy> { flag: Bool, first: &T, second: &T }
+struct RefNode<T: Copy> { value: T, next: Option<&RefNode<T>> }
 enum RefEvent { Empty, Value((Bool, &Int32, Int64)) }
 
 fn refs_forward<T>(values: Array<T>) -> Array<T> { values }
 fn refs_view<T>(values: &Array<T>) -> &Array<T> { values }
-fn refs_first<T>(values: &Array<T>) -> Option<T> { array.get(values, 0) }
+fn refs_first<T: Copy>(values: &Array<T>) -> Option<T> { array.get(values, 0) }
 fn refs_make<T>(value: T) -> Array<T> {
     var values = array.new::<T>()
     array.push(&mut values, value)
     refs_forward(values)
 }
-fn refs_copy<T>(destination: &mut Array<T>, source: &Array<T>) {
+fn refs_copy<T: Copy>(destination: &mut Array<T>, source: &Array<T>) {
     var index: UInt64 = 0
     while index < array.len(source) {
         match array.get(source, index) {
@@ -23,7 +23,7 @@ fn refs_copy<T>(destination: &mut Array<T>, source: &Array<T>) {
         index = index + 1
     }
 }
-fn refs_clone<T>(source: &Array<T>) -> Array<T> {
+fn refs_clone<T: Copy>(source: &Array<T>) -> Array<T> {
     var result = array.new::<T>()
     refs_copy(&mut result, source)
     result
@@ -36,7 +36,7 @@ fn reference_array_growth() -> Int32 {
     var values = refs_make(first)
     let copied = refs_first(refs_view(&values))
     var i = 0
-    while i < 40 { array.push(&mut values, second) i = i + 1 }
+    while i < 40 { array.push(&mut values, second); i = i + 1 }
     if !refs_set(&mut values, second) { return 0 }
     let popped = array.pop(&mut values)
     array.reserve(&mut values, 128)
@@ -66,7 +66,7 @@ fn reference_array_records() -> Int32 {
     let pair = RefPair { flag: true, first: a, second: b }
     var values = refs_make(pair)
     var i = 0
-    while i < 12 { array.push(&mut values, pair) i = i + 1 }
+    while i < 12 { array.push(&mut values, pair); i = i + 1 }
     let result = array.pop(&mut values)
     array.set(&mut values, 0, RefPair { flag: false, first: b, second: a });
     match result {

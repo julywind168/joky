@@ -162,7 +162,17 @@ impl TypeRegistry {
     ) -> Result<(), Error> {
         use crate::parser::ast::{ConstArgument, GenericArgument, ParameterKind};
         match (p.kind, a) {
-            (ParameterKind::Type, GenericArgument::Type(t)) => self.validate(t),
+            (ParameterKind::Type, GenericArgument::Type(t)) => {
+                self.validate(t)?;
+                if p.copy && !t.is_copy_storage_value() {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::TypeCheck,
+                        ErrorCode::TypeMismatch,
+                        format!("Type '{t}' does not satisfy Copy bound for '{}'", p.name),
+                    ));
+                }
+                Ok(())
+            }
             (ParameterKind::Const, GenericArgument::Const(ConstArgument::Value(_))) => Ok(()),
             (ParameterKind::Const, GenericArgument::Const(ConstArgument::Parameter(c)))
                 if c.kind == ParameterKind::Const && self.parameters.contains_key(&c.id) =>
@@ -682,7 +692,7 @@ impl TypeRegistry {
             }
             let message = match ty {
                 Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
-                    if !element.is_buffer_element() || (matches!(ty, Type::BufferElement(_)) && element.is_owner())
+                    if !element.is_buffer_element() || (matches!(ty, Type::BufferElement(_)) && element.is_owner() && !matches!(element.as_ref(), Type::Parameter(_) | Type::Projection(_)))
                     {
                         return Err(Error::new_with_code(
                             ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
@@ -2013,7 +2023,7 @@ mod tests {
     fn aliases_normalize_types_without_changing_the_source_or_registry() {
         let mut types = TypeRegistry::new();
         types.register_opaque("Host.Context").unwrap();
-        let source = "type Count = Total type Total = Int32 type Context = Host.Context extern fn host(x: Count) -> Context fn f(x: Count) -> Total { let y: Total = x y }";
+        let source = "type Count = Total type Total = Int32 type Context = Host.Context extern fn host(x: Count) -> Context fn f(x: Count) -> Total { let y: Total = x\n y }";
         let module = crate::parser::parse(source).unwrap();
         let resolved = types.resolve_aliases(&module).unwrap();
         assert!(resolved.type_aliases.is_empty());

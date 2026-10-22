@@ -6,7 +6,7 @@ import joky/check.{assert}
 extern fn record(value: Int32) -> Int32
 extern fn delayed_value(value: Int32) @suspends -> Int32
 
-fn ensure(value: Bool) { let message = "structured value contract" assert(value, &message) }
+fn ensure(value: Bool) { let message = "structured value contract"; assert(value, &message) }
 struct Tracked { id: Int32, text: String }
 impl Drop for Tracked { fn drop(&mut self) { record(self.id); if self.id == 9 { ensure(false) } } }
 fn make(id: Int32) -> Tracked {
@@ -16,26 +16,26 @@ fn make(id: Int32) -> Tracked {
 }
 fn relay<T>(value: T, polls: Int32) @suspends -> T {
     var n = 0
-    while n < polls { task.yield_now() n = n + 1 }
+    while n < polls { task.yield_now(); n = n + 1 }
     value
 }
 fn unit() @suspends { task.yield_now() }
 fn scope_scalar() @suspends -> Int32 {
-    let value: Int8 = scope { branch { task.yield_now() record(10); } 42 }
+    let value: Int8 = scope { branch { task.yield_now(); record(10); }; 42 }
     ensure(value == 42)
     let wide = 1 + scope { relay::<Int64>(41, 1) }
     ensure(wide == 42)
     42
 }
 fn scope_owned() @suspends -> Int32 {
-    let value = scope { branch { task.yield_now() record(10); } make(1) }
+    let value = scope { branch { task.yield_now(); record(10); }; make(1) }
     record(100);
     task.yield_now()
     ensure(value.id == 1 && value.text.byte_length() == 7)
     42
 }
 fn scope_return_value() @suspends -> Tracked {
-    scope { branch { task.yield_now() record(10); } return make(1) }
+    scope { branch { task.yield_now(); record(10); }; return make(1) }
 }
 fn scope_return() @suspends -> Int32 {
     let value = scope_return_value()
@@ -43,7 +43,7 @@ fn scope_return() @suspends -> Int32 {
     42
 }
 fn scope_failure() @suspends -> Int32 {
-    let value = scope { branch { task.yield_now() ensure(false) } make(1) }
+    let value = scope { branch { task.yield_now(); ensure(false) }; make(1) }
     record(100);
     42
 }
@@ -109,7 +109,7 @@ fn results() @suspends -> Int32 {
     42
 }
 fn nested_value() @suspends -> (Tracked, Tracked) {
-    scope { branch { task.yield_now() } parallel { | relay(make(1), 0) | relay(make(2), 2) } }
+    scope { branch { task.yield_now() }; parallel { | relay(make(1), 0) | relay(make(2), 2) } }
 }
 fn nested() @suspends -> Int32 {
     let ((a, b), c) = parallel { | nested_value() | relay(make(3), 0) }
@@ -136,19 +136,19 @@ fn repeat() @suspends -> Int32 {
     }
     42
 }
-fn fail_branch() @suspends -> Tracked { task.yield_now() ensure(false) make(2) }
+fn fail_branch() @suspends -> Tracked { task.yield_now(); ensure(false); make(2) }
 fn branch_failure() @suspends -> Int32 {
     let value = parallel { | relay(make(1), 0) | fail_branch() }
     record(100);
     42
 }
-fn fail_return() @suspends -> Tracked { let bad = make(9) task.yield_now() make(2) }
+fn fail_return() @suspends -> Tracked { let bad = make(9); task.yield_now(); make(2) }
 fn cleanup_failure() @suspends -> Int32 {
     let value = parallel { | relay(make(1), 0) | fail_return() }
     record(100);
     42
 }
-fn choose<T>(value: T) @suspends -> T { scope { branch { unit() } value } }
+fn choose<T>(value: T) @suspends -> T { scope { branch { unit() }; value } }
 fn pair<T, U>(a: T, b: U) @suspends -> (T, U) { parallel { | relay(a, 0) | relay(b, 1) } }
 fn generic_context() @suspends -> Int32 {
     let (a, b) = pair(choose(make(1)), 41)
@@ -172,7 +172,7 @@ fn scope_control_flow() @suspends -> Int32 {
     42
 }
 struct Worker { id: Int32 }
-impl Worker { fn work(self) @suspends -> Int32 { task.yield_now() self.id } }
+impl Worker { fn work(self) @suspends -> Int32 { task.yield_now(); self.id } }
 fn members() @suspends -> Int32 {
     let a = Worker { id: 40 }
     let b = Worker { id: 2 }

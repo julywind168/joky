@@ -11,9 +11,9 @@ fn safe_divide(value: Int32, divisor: Int32) -> Int32 {
 }
 
 fn main() {
-    { let displayed: Int32 = classify(-5) println(&displayed) }
-    { let displayed: Int32 = classify(0) println(&displayed) }
-    { let displayed: Int32 = classify(5) println(&displayed) }
-    { let displayed: Int32 = safe_divide(12, 0) println(&displayed) }
-    { let displayed: Int32 = safe_divide(12, 3) println(&displayed) }
+    println(classify(-5))
+    println(classify(0))
+    println(classify(5))
+    println(safe_divide(12, 0))
+    println(safe_divide(12, 3))
 }

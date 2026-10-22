@@ -2,7 +2,7 @@ import joky/domain
 import joky/task
 import joky/check
 
-fn assert(condition: Bool) { let message = "SC1 acceptance" check.assert(condition, &message) }
+fn assert(condition: Bool) { let message = "SC1 acceptance"; check.assert(condition, &message) }
 struct State { count: Int32, scale: Float64 }
 fn make(input: Bool) -> State { State { count: if input { 0 } else { 99 }, scale: 0.5 } }
 fn increment(state: &mut State, input: Int8) -> Bool {
@@ -11,15 +11,15 @@ fn increment(state: &mut State, input: Int8) -> Bool {
 }
 fn count(state: &State) -> Int32 { state.count }
 fn scale(state: &State) -> Float64 { state.scale }
-fn reset(state: &mut State, input: Unit) -> Rune { state.count = 0 '中' }
+fn reset(state: &mut State, input: Unit) -> Rune { state.count = 0; '中' }
 fn work(input: UInt64) @suspends -> Bool {
     let accepted = domain.write(increment, 7).unwrap()
     task.yield_now()
     task.yield_now()
     accepted && input == 18446744073709551615 && domain.read(count).unwrap() == 1
 }
-fn query(input: Unit) @suspends -> Float64 { task.yield_now() domain.read(scale).unwrap() }
-fn broken(zero: Int32) @suspends -> UInt8 { let value = 1 / zero 0 }
+fn query(input: Unit) @suspends -> Float64 { task.yield_now(); domain.read(scale).unwrap() }
+fn broken(zero: Int32) @suspends -> UInt8 { let value = 1 / zero; 0 }
 fn success(handle: domain.WriteHandle<State>) @suspends {
     assert(domain.request(handle, work, 18446744073709551615).unwrap_or(false))
 }
@@ -53,6 +53,6 @@ fn scenario() @suspends -> Int32 {
 }
 fn main() @suspends {
     var cycle = 0
-    while cycle < 8 { assert(scenario() == 42) cycle = cycle + 1 }
+    while cycle < 8 { assert(scenario() == 42); cycle = cycle + 1 }
     println("SC1 acceptance ok")
 }

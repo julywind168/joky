@@ -3,7 +3,9 @@ import joky/io.{println}
 struct Pair<T> { left: T, right: T }
 impl<T> Pair<T> {
     fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
-        Pair { left: (self.left, other.left), right: (self.right, other.right) }
+        let Pair { left, right } = self
+        let Pair { left: other_left, right: other_right } = other
+        Pair { left: (left, other_left), right: (right, other_right) }
     }
     fn combine<U>(left: T, right: U) -> (T, U) { (left, right) }
 }
@@ -13,19 +15,19 @@ fn main() {
     let flags = Pair { left: true, right: false }
     let combined = pair.zip::<Bool>(flags)
     let (number, flag) = combined.left
-    if flag { println(&number) }
+    if flag { println(number) }
     let (wide, valid) = Pair::<Int64>.combine::<Bool>(4294967295, true)
-    if valid { println(&wide) }
+    if valid { println(wide) }
     let (number, valid) = Pair.combine::<Int32, Bool>(7, true)
-    if valid { println(&number) }
+    if valid { println(number) }
 
     // These ordinary methods evaluate both operands before entering the body.
     let optional = Some(42).zip(Some(true))
     match optional {
-        None => { let displayed: Int32 = 0 println(&displayed) }
-        Some(pair) => { let (n, valid) = pair if valid { println(&n) } }
+        None => println(0)
+        Some(pair) => { let (n, valid) = pair; if valid { println(n) } }
     }
     let result: Result<Int32, Bool> = Ok(7)
     let next = result.and::<Int64>(Ok(4294967295))
-    match next { Ok(n) => println(&n), Err(error) => { let displayed: Int32 = 0 println(&displayed) } }
+    match next { Ok(n) => println(n), Err(error) => println(0) }
 }

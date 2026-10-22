@@ -144,9 +144,11 @@ fn state_domains_storage_many_owned_roots_preserve_unique_cleanup() {
             .collect::<Vec<_>>()
             .join(",");
         let swaps = (1..count)
-            .map(|i| format!("mem.swap(s0,s{i}) "))
+            .map(|i| format!("mem.swap(s0,s{i}); "))
             .collect::<String>();
-        source.push_str(&format!(" fn move{count}({params})->Int32{{{swaps} s0.n}}"));
+        source.push_str(&format!(
+            " fn move{count}({params})->Int32{{{swaps}; s0.n}}"
+        ));
     }
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);

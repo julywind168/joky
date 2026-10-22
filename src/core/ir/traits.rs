@@ -95,6 +95,16 @@ impl Traits {
     }
 
     pub fn check_bounds(&self, p: &TypeParameter, actual: &Type, span: Span) -> Result<(), Error> {
+        if p.copy && !actual.is_copy_storage_value() {
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                format!(
+                    "Type '{actual}' does not satisfy Copy bound for '{}'",
+                    p.name
+                ),
+            ));
+        }
         for &id in self.bounds.get(&p.id).into_iter().flatten() {
             if !self.satisfies(actual, id).map_err(|e| e.with_span(span))? {
                 let name = &self

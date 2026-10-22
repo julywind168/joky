@@ -27,7 +27,7 @@ fn fixed_array_f1_invalid_constants_and_value_operations_are_rejected() {
     for source in [
         "fn f<const N: UInt64>() -> UInt64 { N } fn check() { f::<-1>(); }",
         "fn f<const N: UInt64>() -> UInt64 { N } fn check() { f::<18446744073709551616>(); }",
-        "fn f<const N: UInt64>() -> UInt64 { N } fn check() { let n: UInt64 = 3 f::<n>(); }",
+        "fn f<const N: UInt64>() -> UInt64 { N } fn check() { let n: UInt64 = 3; f::<n>(); }",
         "const N: UInt64 = 3 fn f<const M: UInt64>() -> UInt64 { M } fn check() { f::<N>(); }",
         "struct S {} impl S { const N: UInt64 = 3 } fn f<const M: UInt64>() -> UInt64 { M } fn check() { f::<S.N>(); }",
         "fn f<const N: UInt64>() -> UInt64 { N } fn check() { f::<1 + 2>(); }",
@@ -49,7 +49,7 @@ fn fixed_array_f1_invalid_constants_and_value_operations_are_rejected() {
         "import joky/internal/fixed_array fn f() {}",
         "fn f<const N: UInt64>() -> UInt64 { N } fn check() { f(); }",
         "fn f<const N: UInt64,T>(x:T) -> UInt64 { N } fn check() { f::<3>(4); }",
-        "fn f<const N: UInt64>() -> UInt64 { N } fn check() { let f = f f(); }",
+        "fn f<const N: UInt64>() -> UInt64 { N } fn check() { let f = f; f(); }",
         "fn f<T>() {} fn check() { f::<3>(); }",
         "type Alias<const N: UInt64> = Int32 fn f(x: &Alias<Int32>) {}",
         "type Alias<T> = Int32 fn f(x: &Alias<4>) {}",

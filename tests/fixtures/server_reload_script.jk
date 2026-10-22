@@ -12,7 +12,7 @@ struct Room { score:Int32 }
 struct Ledger { total:Int32 }
 #state
 struct Clock { ticks:Int32, last:Int32, waiting:Int32 }
-fn assert(ok:Bool) {let message="reload server Script" check.assert(ok,&message)}
+fn assert(ok:Bool) {let message="reload server Script"; check.assert(ok,&message)}
 fn version()->Int32 {1}
 fn room(score:Int32)->Room {Room{score:score}}
 fn ledger(total:Int32)->Ledger {Ledger{total:total}}
@@ -23,9 +23,9 @@ impl Clock {
     fn wait_for_publish(&mut self,previous:Int32) {self.waiting=previous}
 }
 fn balance(a:&Room,b:&Ledger)->Int32 {if b.total==a.score*2 {a.score} else {-100}}
-fn tick(s:&mut Clock,n:Int32) {s.ticks=s.ticks+n s.last=version()}
+fn tick(s:&mut Clock,n:Int32) {s.ticks=s.ticks+n; s.last=version()}
 fn hold(ctx:Context) @suspends {
-    let a=domain.create(room,0) let b=domain.create(ledger,0) let c=domain.create(clock,0)
+    let a=domain.create(room,0); let b=domain.create(ledger,0); let c=domain.create(clock,0)
     assert(ctx.directory.insert(1,a.handle()).is_ok())
     assert(ctx.directory.insert(2,b.handle()).is_ok())
     assert(ctx.directory.insert(3,c.handle()).is_ok())
@@ -76,7 +76,7 @@ fn request(ctx:Context) @suspends ->Int32 {
     assert(value>0 && value<256)
     let first=domain.candidate_from(snapshot, a, room, value)
     let pair=domain.candidate_pair_from(first, b, ledger, value*2)
-    var bytes=Array.new::<UInt8>() bytes.push(value.to_u8().unwrap_or(0))
+    var bytes=Array.new::<UInt8>(); bytes.push(value.to_u8().unwrap_or(0))
     var batch=outbox.batch(1,1)
     assert(outbox.stage(&mut batch,ctx.output,bytes).is_ok())
     var receipt=domain.commit_pair_to(a,b,pair.with_outbox(batch))

@@ -40,7 +40,7 @@ fn access_error(status:Int32) -> DomainAccessError {
     DomainAccessError.ResourceLimit
 }
 #intrinsic("domain.finish_scalar")
-fn finish_scalar<R>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:UInt64,write:Bool,query:Bool) @suspends -> Result<R,DomainAccessError> {
+fn finish_scalar<R: Copy>(module:domain.Module,first:domain.Handle,second:domain.Handle,count:UInt64,name:String,input:UInt64,write:Bool,query:Bool) @suspends -> Result<R,DomainAccessError> {
     let (status,bits) = if count == 2 { __domain_pair(module,first,second,name,input) }
         else if query { __domain_query_at(module,first,name,input) }
         else if write { __domain_write_at(module,first,name,input) }
@@ -49,7 +49,7 @@ fn finish_scalar<R>(module:domain.Module,first:domain.Handle,second:domain.Handl
     Result.Ok(unpack::<R>(bits))
 }
 #intrinsic("domain.finish_current_scalar")
-fn finish_current_scalar<R>(name:String,input:UInt64,write:Bool,query:Bool) @suspends -> Result<R,DomainAccessError> {
+fn finish_current_scalar<R: Copy>(name:String,input:UInt64,write:Bool,query:Bool) @suspends -> Result<R,DomainAccessError> {
     let (status,bits) = if query { __domain_query_scalar(name,input) }
         else if write { __domain_write_scalar(name,input) } else { __domain_read_scalar(name) }
     if status != 0 { return Result.Err(access_error(status)) }
@@ -58,9 +58,9 @@ fn finish_current_scalar<R>(name:String,input:UInt64,write:Bool,query:Bool) @sus
 
 // Only trusted call-site lowering can encode or decode a checked scalar type.
 #intrinsic("domain.pack")
-fn pack<A>(value: A) -> UInt64
+fn pack<A: Copy>(value: A) -> UInt64
 #intrinsic("domain.unpack")
-fn unpack<R>(bits: UInt64) -> R
+fn unpack<R: Copy>(bits: UInt64) -> R
 #intrinsic("domain.read")
 pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> Result<R,DomainAccessError> {
     finish_current_value::<Unit,R>("",{})
@@ -121,7 +121,7 @@ pub enum RequestError { Failed, Cancelled, Closed, ResourceLimit, InvalidAccess,
 impl<S> Owner<S> {
     pub fn handle(&self) @suspends -> WriteHandle<S> { WriteHandle::<S> { token: __domain_handle(&self.value) } }
     pub fn read_handle(&self) @suspends -> ReadHandle<S> { self.handle().read_only() }
-    pub fn close(self) @suspends { var value = self.value __domain_close(&mut value) }
+    pub fn close(self) @suspends { var value = self.value; __domain_close(&mut value) }
 }
 impl<S> WriteHandle<S> {
     pub fn read_only(self) -> ReadHandle<S> { ReadHandle::<S> { token: readonly(self.token) } }
@@ -149,7 +149,7 @@ pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, 
     finish_value::<A,R>(module(),handle.token,handle.token,1,"",input)
 }
 #intrinsic("domain.finish_request")
-fn finish_request<R>(module: domain.Module, token: domain.Handle, name: String, input: UInt64) @suspends -> Result<R, RequestError> {
+fn finish_request<R: Copy>(module: domain.Module, token: domain.Handle, name: String, input: UInt64) @suspends -> Result<R, RequestError> {
     let (status, bits) = __domain_request(module, token, name, input)
     if status == 0 { return Result.Ok(unpack::<R>(bits)) }
     if status == 1 { return Result.Err(RequestError.Failed) }

@@ -2,5 +2,5 @@
 import joky/internal/buffer as storage
 
 pub type Element<T> = storage.Element<T>
-pub fn read<T>(value: &Element<T>) -> T { storage.element_load(value) }
-pub fn write<T>(value: &mut Element<T>, next: T) { storage.element_store(value, next) }
+pub fn read<T: Copy>(value: &Element<T>) -> T { storage.element_load(value) }
+pub fn write<T: Copy>(value: &mut Element<T>, next: T) { storage.element_store(value, next) }

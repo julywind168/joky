@@ -7,11 +7,11 @@ struct BorrowPair<T> { tag: Bool, left: T, right: T }
 struct BorrowEmpty {}
 enum BorrowEvent { Empty, Value((Bool, &Int32, Int64)) }
 
-fn borrowed_at<T>(values: &Array<T>, index: UInt64) -> &Element<T> { array.borrow(values, index) }
-fn borrowed_at_mut<T>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { array.borrow_mut(values, index) }
+fn borrowed_at<T: Copy>(values: &Array<T>, index: UInt64) -> &Element<T> { array.borrow(values, index) }
+fn borrowed_at_mut<T: Copy>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { array.borrow_mut(values, index) }
 fn borrowed_range<T>(values: &Array<T>, start: UInt64, end: UInt64) -> &Slice<T> { array.slice(values, start, end) }
 fn borrowed_range_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { array.slice_mut(values, start, end) }
-fn borrowed_first<T>(values: &mut Slice<T>) -> &mut Element<T> { slices.borrow_mut(values, 0) }
+fn borrowed_first<T: Copy>(values: &mut Slice<T>) -> &mut Element<T> { slices.borrow_mut(values, 0) }
 fn borrowed_pair_range(values: &Array<BorrowPair<&Int32>>) -> &Slice<BorrowPair<&Int32>> { array.slice(values, 0, 1) }
 fn borrowed_event(values: &mut Array<BorrowEvent>) -> &mut Element<BorrowEvent> { array.borrow_mut(values, 0) }
 
@@ -112,7 +112,7 @@ fn borrowed_array_enums() -> Int32 {
     array.pop(&mut values);
     match copied {
         Empty => 0
-        Value(payload) => { let (flag, value, wide) = payload if flag && wide == 4294967297 { (*value) } else { 0 } }
+        Value(payload) => { let (flag, value, wide) = payload; if flag && wide == 4294967297 { (*value) } else { 0 } }
     }
 }
 

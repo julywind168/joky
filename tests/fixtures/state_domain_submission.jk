@@ -14,13 +14,13 @@ fn sum(a:&State,b:&State)->Int32 {a.n+b.n}
 fn read(a:&State)->Int32 {a.n}
 fn read_rules(a:&Rules)->Int32 {a.limit}
 fn change(a:&mut State,n:Int32) {a.n=n}
-fn assert(ok:Bool) {let message="submission contract" check.assert(ok,&message)}
+fn assert(ok:Bool) {let message="submission contract"; check.assert(ok,&message)}
 fn choose<B,R>(snapshot:domain.Snapshot<B,R>,target:domain.WriteHandle<Rules>,n:Int32) @suspends ->domain.Candidate<Rules> {
     domain.candidate_from(snapshot,target,rules,n)
 }
 fn batch(target:outbox.Handle) @suspends ->outbox.Batch {
     var batch=outbox.batch(1,1)
-    var bytes=Array.new::<UInt8>() bytes.push(7)
+    var bytes=Array.new::<UInt8>(); bytes.push(7)
     assert(outbox.stage(&mut batch,target,bytes).is_ok())
     batch
 }
@@ -29,8 +29,8 @@ fn wait_pair(r:&mut domain.PairCommitReceipt) @suspends {r.wait();}
 fn wait_set(r:&mut domain.SetCommitReceipt) @suspends {r.wait();}
 fn stop_wait() @suspends {}
 fn lifecycle() @suspends ->Int32 {
-    let a=domain.create(make,1) let b=domain.create(rules,10)
-    let ah=a.handle() let bh=b.handle() let ar=a.read_handle()
+    let a=domain.create(make,1); let b=domain.create(rules,10)
+    let ah=a.handle(); let bh=b.handle(); let ar=a.read_handle()
     // The second, differently typed dependency can be the sole write target.
     let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total)
     let candidate=choose(snapshot,bh,20)
@@ -55,7 +55,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(domain.read_from(b.read_handle(),read_rules).unwrap()==30)
     let other=domain.create(make,5)
     var accesses=domain.access_set()
-    accesses.include(a.read_handle()) accesses.include(b.read_handle()) accesses.include(other.read_handle())
+    accesses.include(a.read_handle()); accesses.include(b.read_handle()); accesses.include(other.read_handle())
     let snapshot=domain.snapshot_set(accesses)
     let candidate=domain.candidate_set_from(snapshot,bh,rules,40)
     let candidate=domain.candidate_set_add(candidate,ah,make_value,Input{n:4})
@@ -69,7 +69,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(match mailbox.receive(){Some(bytes)=>bytes.get(0).unwrap_or(0)==7,None=>false})
     domain.write_to(ah,change,8).unwrap()
     assert(receipt.revision(a.read_handle()).unwrap().unwrap_or(0)==3)
-    a.close() b.close() receipt.cancel()
+    a.close(); b.close(); receipt.cancel()
     assert(receipt.wait().is_ok())
     assert(receipt.revision(ar).unwrap().unwrap_or(0)==3)
     assert(single.wait().unwrap()==1)

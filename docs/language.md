@@ -258,7 +258,7 @@ Copy 局部记录的不同字段可以分别借用后交换；拥有记录字段
 - 分支和循环进行保守的来源、移动及最后使用分析；arena 对象仍按整对象检查冲突，局部字段规则见下节。
   跨函数按签名合并引用输入的依赖，不分析被调函数体来放宽权限。
   循环重复执行同一分配点可能保守合并来源；分析超出预算会报编译错误。
-- 可定义 `type View = &Point` 或 `fn read<T>(p: &T) -> T`，T 仍要求 Copy。
+- 可定义 `type View = &Point` 或 `fn read<T: Copy>(p: &T) -> T`。
   普通 `&T` 可以作为 Copy 类型实参、元组元素、记录字段或枚举载荷；`&mut T` 不可以。
   数组视图 `&Array<Int32>` 另有不可存储限制，见[数值动态数组](#数值动态数组)。
   仍不支持引用到引用，如 `&&T` 或 `&mut &T`。
@@ -1182,8 +1182,9 @@ fn example() -> Int64 {
   参数遮蔽同名模块类型；不能把被遮蔽的模块记录或枚举当作该参数的构造函数。
 - **普通泛型调用的类型实参允许 Copy 类型及拥有者**：支持的整数、Rune、Bool、Unit、函数值、共享引用、记录、枚举和元组，拥有者包括 String、StringBuilder 和数组。
   透明别名按目标类型处理；数组视图、独占引用和宿主 opaque 类型不能绑定到 T。
-  拥有型实参在特化后重新检查移动：依赖重复复制参数的模板仅能用于 Copy 实例，用户 trait 约束不能绕过这些限制。
-  独立泛型函数值的类型实参仍限 Copy；拥有型实参可通过普通函数包装后取得函数值。
+  无约束 T 按可移动值检查；重复使用、从共享引用按值读取等复制操作需要声明 `T: Copy`。
+  缺失约束在模板定义时拒绝，不会等到 String 等拥有型实参出现才报错。
+  独立泛型函数值使用相同规则，`identity::<String>` 合法。
   泛型函数可声明固定类型的 String / opaque 参数或返回值，它们遵循各自宿主与生命周期规则。
 - 推导先收集实参中已有的类型，再为仍未确定的整数字面量默认 Int32；例如 `first(1, true)`
   得到 `T = Int32, U = Bool`。重复出现的同一类型参数必须完全一致，没有隐式宽化。
@@ -1193,7 +1194,13 @@ fn example() -> Int64 {
   及其他无法局部推导的情况需要显式类型实参；不做跨绑定或全局约束求解。
 - **所有泛型函数在定义时检查，包括未使用的函数**。T 是任意允许的值类型，不能对它执行算术、
   比较、整数转换、未知字段访问或构造；`fn bad<T>(x: T) -> T { x + x }` 因缺少能力约束而报错。
-  可以传递、复制、返回 T，操作显式元组结构，并调用其他泛型函数；固定 Int32 等类型上的操作不受影响。
+  可以移动、返回 T，操作显式元组结构，并调用满足约束的其他泛型函数；固定 Int32 等类型上的操作不受影响。
+  `Copy` 是编译器内建的结构能力，不能由用户实现；它可与普通 trait 约束组合，如 `T: Copy + Eq`。
+  记录、枚举与透明别名也支持 `T: Copy`，例如 `struct Pair<T: Copy> { left: T, right: T }`；实例化时检查约束。
+  类型声明暂不支持普通 trait 或 callable 约束；`Copy` 也不能与 `Fn` / `FnMut` / `FnOnce` 组合。
+  仅复制元素的接口（例如 Array.get、List.front 和 Slice.get）要求 Copy，拥有型元素通过借用或移出接口访问。
+- 复制模板应明确写出能力：`fn duplicate<T: Copy>(value: T) -> (T, T) { (value, value) }`。
+  分支、循环、别名及聚合中的重复移动也在定义时检查；关联类型未确定时同样不假定 Copy。
 - 同步及 `@suspends` 泛型调用共用现有求值顺序、快照、失败、Pending、取消与代码保活机制。
   普通函数不能调用挂起函数；`parallel` 分支须调用挂起函数，返回按源码顺序组成的结果元组（全 Unit 时仍为 Unit）。
 - 编译期按“函数声明 + 具体类型实参”缓存实例。别名复用实例，不同名义类型分别实例化；
@@ -1232,6 +1239,7 @@ impl<T, const N: UInt64> Tag<T, N> {
 F1 已支持该类型及透明别名、嵌套形状、Copy 记录/元组/枚举中的布局元数据，
 长度属于类型身份。元素限固定数值、Bool、Rune、Unit 及递归无引用 Copy 聚合；
 Ptr、函数值、opaque、引用、拥有者和闭包不能作为元素，零长度与 phantom 参数也不能绕过检查。
+在泛型声明中使用 `FixedArray<T, N>` 时，T 必须声明 `Copy`；具体元素的无引用布局仍在实例化时检查。
 
 **F2 已支持数组值及聚合组合。** T 可以是上述元素，包含有限的 Copy 记录、元组、枚举和嵌套数组；
 数组及含数组的 Copy 聚合具有值语义，赋值、同步直接/函数值间接参数和返回、整数组解引用读取得到独立副本。
@@ -1295,8 +1303,9 @@ fn example() -> Int32 {
 - 调用沿用 `f(args)` 和记录函数字段 `holder.run(args)`；先读取并快照被调用值，再从左到右计算实参。
   实参修改原绑定或挂起后恢复，不会更换已经选中的目标。函数值局部绑定优先于同名函数；
   非函数局部值不改变原有普通函数名和整数转换内建函数的查找规则。
-- 保留已有可选分号和相邻表达式序列语法。首版不增加任意表达式的连续括号调用：
-  返回函数值时写 `let selected = choose()`，再 `selected(41)`；不要把 `choose()(41)` 当作间接调用。
+- 调用后缀适用于任何表达式：`(f)(41)`、`choose()(41)`、`callbacks[0](41)` 和
+  `optional!(41)` 都调用求得的函数值。每层调用先求出目标，再从左到右计算实参；
+  不可调用的值报类型错误。同一行的独立表达式须用分号分隔，换行规则见后文。
 - 参数和返回类型的别名、泛型替换、跨模块名义身份都递归检查。共享函数类型图缓存比较与替换，
   函数类型嵌套最多 256 层，引用目标中的函数类型展开另限 32 层；递归函数类型别名
   和包含自身签名的递归值布局仍拒绝。
@@ -1317,8 +1326,8 @@ fn example() -> Int32 {
 旧的 `fn(...) { ... }` 与 `move fn(...) { ... }` 匿名写法不再支持，具名函数与 `fn(...) -> T` 类型保持原语法。
 `||` 在表达式起始位置引入零参数闭包，在已有左操作数后表示逻辑或；闭包体必须用块。
 已知函数类型或 callable bound 可给参数提供上下文；单独的 `let f = |x| { x + 1 }`
-缺少输入类型而拒绝。立即调用写 `(|x: Int32| { x + 1 })(41)`，仅开放直接匿名字面量，
-`factory()(x)` 和 `(f)(x)` 保持既有表达式序列语义。
+缺少输入类型而拒绝。立即调用写 `(|x: Int32| { x + 1 })(41)`；与其他表达式共用调用后缀，
+`factory()(x)` 和 `(f)(x)` 同样表示函数调用。
 
 ```joky
 fn apply<T, U, F: FnOnce(T) -> U>(value: T, transform: F) -> U { transform(value) }
@@ -1358,6 +1367,26 @@ fn example() -> Int32 {
 泛型实例与隐藏闭包入口合计最多 4096 个，生成依赖深度最多 32；环境类型深度沿用 256 层，
 稳定局部存储沿用每函数 64 KiB 限制。示例见 [anonymous_functions.jk](../examples/anonymous_functions.jk)。
 
+### 函数值的借用契约
+
+函数类型可在参数列表后声明 `@noescape`，表示输入借用既不会被返回，也不会被保存：
+
+```joky
+fn read(value: &Int32) -> Int32 { *value }
+fn example() -> Int32 {
+    let f: fn(&Int32) @noescape -> Int32 = read
+    let value = 42
+    f(value)
+}
+```
+
+编译器根据目标函数体检查契约；返回或保存输入借用的函数不能转成该类型。
+声明本身带 `@noescape` 的函数在无注解取值时保留契约。没有声明契约的函数可在直接取值时
+通过上述类型注解请求检查；先保存到普通函数类型会丢失该保证，之后不能给未知函数值补强契约。
+零捕获闭包转换、别名、泛型替换以及函数值的存储与返回保留该效果。
+具有契约的函数值可转换成同签名的普通函数值；反方向需要可检查的目标函数。
+函数类型没有参数名，因此只接受无参数的 `@noescape`。函数声明的按参数契约继续用于直接调用。
+
 ### 挂起函数值
 
 挂起函数类型写作 `fn(T) @suspends -> U`，`@suspends` 位于参数列表之后、箭头之前。
@@ -1381,7 +1410,8 @@ fn compute() @suspends -> Int32 {
 - `parallel` / `race` 分支可以调用挂起函数值，包括记录函数字段；parallel 返回按源码顺序组成的结果元组，
   race 要求各分支返回相同的无引用类型，结果为获胜分支的值。
   各分支的目标与实参按源码顺序求值，在开始轮询任何分支前完成快照；失败和取消沿用现有结构化规则。
-- 挂起函数值继承间接调用的保守分配和引用保留契约；不放宽局部借用、独占借用或宿主 ABI 限制。
+- 挂起函数值默认保守地处理引用保留；可写 `fn(&String) @suspends @noescape -> R` 声明不逃逸。
+  局部借用、独占借用及宿主 ABI 仍遵循原有存储和生命周期限制。
   语言包装函数可调用异步借用宿主；取消仍先终止宿主访问，再释放任务存储。
 - Option / Result 的 `map`、`map_err`、`and_then` 仍接受同步回调；挂起回调需要独立的挂起包装函数。
 - CLI 可直接执行挂起 main，包括挂起函数值调用；内置等待见 `joky/task`。
@@ -1667,7 +1697,7 @@ fn borrowed_example() -> Int32 {
 
 ### 泛型固有 impl
 
-Copy 参数化记录和枚举可声明 `impl<T, U> Type<T, U> { ... }`。
+参数化记录和枚举可声明 `impl<T, U> Type<T, U> { ... }`。
 类型实参必须按 impl 形参的声明顺序各出现一次，覆盖目标的全部类型参数；
 形参名可以不同于记录 / 枚举定义，例如 `impl<V> Pair<V>`。
 
@@ -1677,7 +1707,10 @@ impl<T> Pair<T> {
     const SIZE: Int32 = 2
     fn make(left: T, right: T) -> Self { Self { left: left, right: right } }
     fn first(self) -> T { self.left }
-    fn swap(self) -> Self { Self.make(self.right, self.left) }
+    fn swap(self) -> Self {
+        let Pair { left, right } = self
+        Self.make(right, left)
+    }
 }
 fn example() -> Int64 {
     let p = Pair.make(0, int64(42))
@@ -1685,7 +1718,7 @@ fn example() -> Int64 {
 }
 ```
 
-- impl 类型参数覆盖目标、成员签名和方法体，离开 impl 后不可用；每个成员体均按刚性 Copy 参数检查，
+- impl 类型参数覆盖目标、成员签名和方法体，离开 impl 后不可用；每个成员体均按声明的 Copy / 移动能力检查，
   包括未调用的方法。可操作 `Pair<T>` 的已声明字段和方法，不能假定无约束 T 具有算术或成员能力。
 - `Self` 携带当前 impl 的全部参数，支持类型注解、`Self { ... }`、`Self.make(...)`、
   `Self.SIZE` 和枚举的 `Self.Some(value)` / `Self.None`；不再为 Self 单独提供类型实参。
@@ -1714,7 +1747,9 @@ impl 参数作用于所有成员，方法参数只作用于本方法的签名和
 struct Pair<T> { left: T, right: T }
 impl<T> Pair<T> {
     fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
-        Pair { left: (self.left, other.left), right: (self.right, other.right) }
+        let Pair { left, right } = self
+        let Pair { left: other_left, right: other_right } = other
+        Pair { left: (left, other_left), right: (right, other_right) }
     }
     fn combine<U>(value: T, other: U) -> (T, U) { (value, other) }
 }
@@ -1922,11 +1957,12 @@ fn example() -> Bool {
 返回值仍依赖未被排除的输入来源，不会因为省略属性而改变成禁止返回引用。
 
 语言函数和 trait 方法仍可在参数列表后写可选的 `@noescape`，保证全部借用实参不被返回或保留；
-`@noescape(key, other)` 只约束指定参数。属性不能与 `@suspends` 组合，不能用于 extern
-或函数值类型。它不承诺无分配、无失败或无副作用。显式契约始终检查，不会在推导失败后静默降级。
+`@noescape(key, other)` 只约束指定参数。属性可与 `@suspends` 组合，不能用于 extern。
+它不承诺无分配、无失败或无副作用，也不放宽借用跨挂起的存储要求。
+显式契约始终检查，不会在推导失败后静默降级。
 无函数体的 trait 声明不能推导，需用契约向泛型调用者提供保证；公共库可用契约固定接口要求。
 实现方法继承 trait 声明，允许实现参数改名；递归调用也必须通过函数体检查。
-函数值不会携带此保证，间接调用继续采用原有保守效果。
+函数类型可用 `fn(&T) @noescape -> R` 保留全部参数不逃逸的契约，详见函数值章节。
 因此 `fn inspect<T: Eq>(x: T) { x.eq(&x); }` 不能把局部借用交给未知实现；可改为接收引用参数，
 由具体调用处检查存储条件，或使用 arena 对象。单态化后根据实际方法体计算效果，纯实现仍可接受同步局部借用，
 释放操作仍区分 `needs_arena` 与真正分配的 `uses_arena`。
@@ -2508,8 +2544,8 @@ import joky/io.{println}
 
 let zipped = Some((resource(20), resource(22)))
 match &zipped {
-    Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
-    None => { let displayed: Int32 = 0 println(&displayed) }
+    Some((left, right)) => println(left.id + right.id)
+    None => println(0)
 }
 let moved = zipped
 ```
@@ -2524,7 +2560,7 @@ let moved = zipped
   已有独占引用也可显式 `&*p` 后使用上述共享匹配规则。
 - 现有引用边界不变：局部借用与拥有型资源引用限同步使用；符合 arena 存储规则的 Copy 枚举共享引用
   可在 `@suspends` 中匹配，挂起恢复保留绑定且不重复执行分支副作用。
-  泛型函数仍按具体实例检查：从共享匹配中返回按值 `T` 的 helper 只适用于 Copy 实例。
+  从共享匹配中返回按值 `T` 的泛型 helper 必须声明 `T: Copy`。
 
 完整示例见 [borrowed_matches.jk](../examples/borrowed_matches.jk)。
 
@@ -2663,7 +2699,7 @@ fn answer() -> Int32 {
   `let (_, _) = value` 仍执行初始化器的全部副作用、失败和挂起；被丢弃项仍做类型检查。
   迁移旧的 `let _ = ...` 后读取 `_` 的写法时，需要为该绑定改一个实际名称。
 - 元组元素是表达式，支持分号序列，例如 `(first(); 1, 2)` 有两个元素。
-  `;` 仍可省略；圆括号外，调用名称与 `(` 必须在同一行，换行后的 `(value)` 是下一表达式。
+  不同表达式之间须用分号或换行分隔；圆括号外，被调用表达式与 `(` 必须在同一行，换行后的 `(value)` 是下一表达式。
   若返回元组前一项以名称结束，写 `let (x, flag) = pair; (x + 1, flag)`，
   或用 `return (x + 1, flag)` 明确边界，不把分号规定为通用终止符。
 - Copy 元组支持同步/CPS 参数、返回值、if/match 合并、递归及 parallel 参数，挂起恢复不重放前面的元素。
@@ -2899,7 +2935,7 @@ fn fallback(value: Option<Int32>) -> Int32 {
 }
 fn drain(values: &mut Array<Int32>) {
     while let Some(n) = values.pop() {
-        println(&n)
+        println(n)
     }
 }
 ```
@@ -2933,7 +2969,8 @@ while (checks = checks + 1; checks < 4) {
 ```
 
 结束时 `checks` 为 4，`bodies` 为 3。同一行可以写 `var x = 1; x = x + 1;`，
-也可以写成 `var x = 1 x = x + 1`；语法可区分的相邻表达式不要求换行或分号。
+同一行的独立表达式必须用分号分隔，`var x = 1 x = x + 1` 会报错。
+`f(x)(y)` 连续调用两次；若要丢弃第一次调用结果再求值 y，写 `f(x); (y)`。
 完整表达式后的换行分隔下一表达式，不插入丢弃值的分号。`5` 换行接 `-2` 是两个表达式，
 块的结果为 -2；`let r = &mut *p` 后可直接换行写 `*r = *r - 1`。
 未完整的表达式继续解析：`1 +` 换行接 `2` 仍是加法，`let value =` 后也可换行写初始化值。
@@ -2950,7 +2987,7 @@ let length = text
 ```
 
 `.` 之前有分号时链条已结束，不能用 `.method()` 开始下一表达式。
-圆括号外，普通调用或方法名与调用的 `(` 必须在同一行；
+圆括号外，被调用表达式或方法名与调用的 `(` 必须在同一行；
 `f` 换行接 `(42)` 是两个表达式，`f(` 后的参数可以跨行。
 二元运算符放在前一行末尾，或把完整计算放入圆括号；行首的 `-`、`*`、`&` 开始新的独立表达式。
 
@@ -4040,7 +4077,7 @@ fn main() -> Int32 {
     let source = "fn add(x: Int32, y: Int32) -> Int32 {{ x + y }}"
     let name = "add"
     vm.load_source(engine, &source)
-    { let displayed: Int32 = vm.call_int32_2(engine, &name, 20, 22) println(&displayed) }
+    println(vm.call_int32_2(engine, &name, 20, 22))
     vm.close(engine)
 }
 ```
@@ -4383,7 +4420,7 @@ C 嵌入接口见 [include/joky_vm.h](../include/joky_vm.h)，可运行示例为
 import joky/io.{println}
 import joky/task as task
 
-fn report_int32(value: Int32) { println(&value) }
+fn report_int32(value: Int32) { println(value) }
 fn main() @suspends {
     task.yield_now()
     task.sleep_ms(10)
@@ -4561,7 +4598,7 @@ fn main() {
 自动推导或显式契约提供的不逃逸保证时，可以省略 `&`。泛型推断从输入值推断 T，
 仍检查 trait 约束；已经是引用的输入沿用原有引用转换规则，不再包一层引用。
 `&mut T` 实参继续显式写 `&mut`；按值形参继续按 Copy 或移动规则处理。
-函数值类型不携带 noescape 契约，间接调用及挂起函数不提供此自动转换。
+具有 `@noescape` 契约的同步函数值也支持此自动转换；挂起调用仍要求显式引用。
 
 拥有型局部/拥有字段直接临时借用，打印不移动输入。Copy 输入在各自实参位置求值并复制到
 临时存储；拥有型表达式结果只求值一次，移动到临时绑定后借用。实参从左到右求值，

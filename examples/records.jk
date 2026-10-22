@@ -15,6 +15,6 @@ fn main() {
     var p = Point { x: 1, y: 2 }
     let saved = p
     p.x = 10
-    { let displayed: Int32 = saved.x println(&displayed) }
-    { let displayed: Int32 = translate(p, 32).x println(&displayed) }
+    println(saved.x)
+    println(translate(p, 32).x)
 }

@@ -117,7 +117,7 @@ fn uint8_pending_survives_reload_drop_and_cancellation() {
             )
             .unwrap();
         }
-        vm.load_source("extern fn delay_byte(value: UInt8) @suspends -> UInt8 fn task(value: UInt8) @suspends -> UInt8 { let saved = value let next = delay_byte(value) saved + next }").unwrap();
+        vm.load_source("extern fn delay_byte(value: UInt8) @suspends -> UInt8 fn task(value: UInt8) @suspends -> UInt8 { let saved = value; let next = delay_byte(value); saved + next }").unwrap();
         POLLS.with(|polls| polls.set(0));
         let mut task = vm.call_async_uint8("task", &[128]).unwrap();
         let cancelled = vm.call_async_uint8("task", &[255]).unwrap();
@@ -146,14 +146,14 @@ fn rune_literals_validate_scalars_and_preserve_scalar_identity() {
             let ascii = 'a'
             let chinese = '中'
             let emoji = '\u{1F642}'
-            { let assertion_condition = ascii == 'a' let assertion_message = "ASCII rune" assert(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0).is_some() let assertion_message = "NUL rune" assert(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0x10ffff).is_some() let assertion_message = "Upper scalar" assert(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0xd800).is_none() let assertion_message = "Surrogate rejected" assert(assertion_condition, &assertion_message) }
-            { let assertion_condition = Rune.from_u32(0x110000).is_none() let assertion_message = "Out of range rejected" assert(assertion_condition, &assertion_message) }
-            { let assertion_condition = ascii.to_u32() == 97 let assertion_message = "Rune conversion" assert(assertion_condition, &assertion_message) }
-            { let assertion_condition = chinese == '中' let assertion_message = "Unicode rune" assert(assertion_condition, &assertion_message) }
-            { let assertion_condition = emoji == '\u{1F642}' let assertion_message = "Emoji rune" assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = ascii == 'a'; let assertion_message = "ASCII rune"; assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0).is_some(); let assertion_message = "NUL rune"; assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0x10ffff).is_some(); let assertion_message = "Upper scalar"; assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0xd800).is_none(); let assertion_message = "Surrogate rejected"; assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0x110000).is_none(); let assertion_message = "Out of range rejected"; assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = ascii.to_u32() == 97; let assertion_message = "Rune conversion"; assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = chinese == '中'; let assertion_message = "Unicode rune"; assert(assertion_condition, &assertion_message) }
+            { let assertion_condition = emoji == '\u{1F642}'; let assertion_message = "Emoji rune"; assert(assertion_condition, &assertion_message) }
             if ascii == 'a' { 97 } else { 0 }
         }
     "#;
@@ -215,7 +215,7 @@ fn rune_storage_constants_and_pending_values_preserve_valid_scalars() {
     );
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(&format!("{}\nfn pending() @suspends -> Int32 {{ let scalar = task('🙂') if scalar == '🙂' {{ 42 }} else {{ 0 }} }}",
+        vm.load_source(&format!("{}\nfn pending() @suspends -> Int32 {{ let scalar = task('🙂'); if scalar == '🙂' {{ 42 }} else {{ 0 }} }}",
             include_str!("../../tests/fixtures/rune.jk"))).unwrap();
         assert_eq!(vm.call_int32_0("rune_check").unwrap(), 42, "{mode:?}");
         assert_eq!(

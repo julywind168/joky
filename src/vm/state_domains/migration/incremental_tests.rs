@@ -172,7 +172,7 @@ fn migration_incremental_rejects_unsafe_steps_and_reclaims_runtime_failures() {
             .replace("import joky/domain", "import joky/domain import joky/check")
             .replace(
                 "count=count+1",
-                "count=count+1 let message=\"step failure\" check.assert(false,&message)",
+                "count=count+1; let message=\"step failure\"; check.assert(false,&message)",
             );
         let mut plan = start(&vm, &owners, &failing).unwrap();
         assert!(step(&vm, &registry, &owners, &mut plan, 2).is_err());

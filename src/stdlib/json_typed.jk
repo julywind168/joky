@@ -28,14 +28,14 @@ impl MappingError {
         while index < arrays.len(&self.path) {
             output.push('/')
             match arrays.borrow_ref(&self.path, index) {
-                Index(value) => { let text = value.to_string() output.push_str(&text) }
+                Index(value) => { let text = value.to_string(); output.push_str(&text) }
                 Field(name) => {
                     var offset: UInt64 = 0
                     while offset < name.byte_length() {
                         match name.next_rune(offset) {
                             Some((rune, next)) => {
-                                if rune == '~' { let escaped = "~0" output.push_str(&escaped) } else {
-                                    if rune == '/' { let escaped = "~1" output.push_str(&escaped) } else { output.push(rune) }
+                                if rune == '~' { let escaped = "~0"; output.push_str(&escaped) } else {
+                                    if rune == '/' { let escaped = "~1"; output.push_str(&escaped) } else { output.push(rune) }
                                 }
                                 offset = next
                             }

@@ -79,13 +79,13 @@ fn dyn_branch_false() -> Int32 { dyn_branches(false) }
 struct Empty {}
 trait Zero { fn value(&self) @noescape -> Int32 { 42 } }
 impl Zero for Empty {}
-fn dyn_zero() -> Int32 { let empty = Empty {} let v: &dyn Zero = &empty v.value() }
+fn dyn_zero() -> Int32 { let empty = Empty {}; let v: &dyn Zero = &empty; v.value() }
 
 fn nothing() {}
 
 trait Produce { type Item; fn make(&self) @noescape -> Self.Item }
 impl Produce for Empty { type Item = Option<Int32>; fn make(&self) -> Option<Int32> { Option.Some(42) } }
-fn dyn_enum() -> Int32 { let e = Empty {} let v: &dyn Produce<Item = Option<Int32>> = &e v.make().unwrap_or(0) }
+fn dyn_enum() -> Int32 { let e = Empty {}; let v: &dyn Produce<Item = Option<Int32>> = &e; v.make().unwrap_or(0) }
 
 impl Counter { fn value(&self) -> Int32 { 999 } }
 trait Unrelated { fn value(&self) -> Int32 }

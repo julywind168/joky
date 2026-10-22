@@ -7,14 +7,14 @@ enum Event { Empty, Number(Int64), Pair((Bool, Int32, Int64)) }
 
 fn array_forward<T>(values: Array<T>) -> Array<T> { values }
 fn array_view<T>(values: &Array<T>) -> &Array<T> { values }
-fn array_twice<T>(value: T) -> Array<T> {
+fn array_twice<T: Copy>(value: T) -> Array<T> {
     var values = array.with_capacity::<T>(1)
     array.push(&mut values, value)
     array.push(&mut values, value)
     array.reserve(&mut values, 9)
     array_forward(values)
 }
-fn array_wrapped<T>(value: T) -> Array<Pair<T>> {
+fn array_wrapped<T: Copy>(value: T) -> Array<Pair<T>> {
     array_twice(Pair { flag: true, left: value, right: value })
 }
 
@@ -79,7 +79,7 @@ fn generic_array_enums() -> Int32 {
     }
     if last != -4294967297 { return 0 }
     let middle = match array.pop(&mut values).unwrap_or(Event.Empty) {
-        Pair(payload) => { let (flag, small, wide) = payload if !flag && wide == 99 { small } else { 0 } }
+        Pair(payload) => { let (flag, small, wide) = payload; if !flag && wide == 99 { small } else { 0 } }
         Empty => 0
         Number(_) => 0
     }
@@ -94,7 +94,7 @@ fn generic_array_zero_size() -> Int32 {
     var units = array.new::<Unit>()
     if !array.get(&units, 0).is_none() || array.set(&mut units, 0, {}) { return 0 }
     var i = 0
-    while i < 20 { array.push(&mut units, {}) i = i + 1 }
+    while i < 20 { array.push(&mut units, {}); i = i + 1 }
     array.reserve(&mut units, 100)
     if !array.set(&mut units, 19, {}) || array.len(&units) != 20 { return 0 }
     while i > 0 {

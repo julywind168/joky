@@ -88,6 +88,22 @@ impl FunctionPlan {
         } else {
             values[0].clone().unwrap()
         };
+        if checking && !packing {
+            // Decoding produces independent owners even before their concrete
+            // schema and number of lanes are known.
+            for (index, lane) in dst.iter().flat_map(Slot::scalars).enumerate() {
+                if lane.ty.is_owner() {
+                    self.emit(Op::DomainOwner {
+                        owner: lane.ty.clone(),
+                        packet: packet.clone(),
+                        index,
+                        value: lane.clone(),
+                        decode: true,
+                    });
+                    self.register_owner(lane, None);
+                }
+            }
+        }
         let lanes: Vec<_> = if checking {
             Vec::new()
         } else if packing {

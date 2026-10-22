@@ -174,13 +174,13 @@ fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
     for operation in ["values.swap(0, 1)", "values.truncate(1)", "values.clear()"] {
         for body in [
             format!("fn bad(values: &Array<Resource>) {{ {operation}; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_ref(0) {operation}; item.id; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_mut_ref(0) {operation}; item.id = 1; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1) {operation}; slices.borrow_ref(region, 0).id; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1) let child = slices.slice_mut(region, 0, 1) {operation}; slices.len(child); }}"),
-            format!("fn bad(values: Array<Resource>) {{ values.release() {operation}; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_ref(0); {operation}; item.id; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_mut_ref(0); {operation}; item.id = 1; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1); {operation}; slices.borrow_ref(region, 0).id; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1); let child = slices.slice_mut(region, 0, 1); {operation}; slices.len(child); }}"),
+            format!("fn bad(values: Array<Resource>) {{ values.release(); {operation}; }}"),
             format!("fn bad(values: &mut Array<&Int32>) @suspends {{ {operation}; }}"),
-            format!("fn bad(values: &mut Array<Int32>) {{ let item = values.borrow(0) {operation}; element.read(item); }}"),
+            format!("fn bad(values: &mut Array<Int32>) {{ let item = values.borrow(0); {operation}; element.read(item); }}"),
         ] {
             reject(&format!("{prefix} {body}"));
         }
@@ -188,9 +188,9 @@ fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
     for body in [
         "fn bad(values: &mut Array<Resource>) { values.swap(-1, 0); }",
         "fn bad(values: &mut Array<Resource>) { values.truncate(-1); }",
-        "fn bad(values: &mut Array<Int32>) { values.swap(0, { values.clear() 0 }); }",
-        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.push((&*p)) values.clear() ; (*(p) = 2); }",
-        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.push((&*p)) values.truncate(0) ; (*(p) = 2); }",
+        "fn bad(values: &mut Array<Int32>) { values.swap(0, { values.clear(); 0 }); }",
+        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1); values.push((&*p)); values.clear() ; (*(p) = 2); }",
+        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1); values.push((&*p)); values.truncate(0) ; (*(p) = 2); }",
     ] {
         reject(&format!("{prefix} {body}"));
     }

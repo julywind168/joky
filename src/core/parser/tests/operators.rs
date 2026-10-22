@@ -147,7 +147,7 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
         assert!(error.message.contains(message), "{source}: {error}");
         assert!(error.span.slice(&source).is_some());
     }
-    parse("fn f() { if true {}\nelse {} parallel { | f() | f() } }").unwrap();
+    parse("fn f() { if true {}\nelse {}\n parallel { | f() | f() } }").unwrap();
 }
 
 #[test]

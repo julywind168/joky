@@ -14,8 +14,8 @@ enum Option<T> { None, Some(T) }
 enum Choice<T> { Empty, Value(PairOf<T>) }
 struct Data<T> { pair: Alias<T> }
 fn id<T>(value: Identity<T>) -> T { value }
-fn make_pair<T>(value: T) -> Alias<T> { (value, value) }
-fn first<T>(value: PairOf<T>) -> T { let (a, b) = value a }
+fn make_pair<T: Copy>(value: T) -> Alias<T> { (value, value) }
+fn first<T>(value: PairOf<T>) -> T { let (a, b) = value; a }
 fn reverse<A, B>(value: (A, B)) -> Swapped<A, B> { let (a, b) = value; (b, a) }
 fn ignore<T>(value: T) -> Ignore<T> { 42 }
 fn recurse<T>(value: PairOf<T>, n: Int32) -> Alias<T> { if n == 0 { value } else { recurse(value, n - 1) } }

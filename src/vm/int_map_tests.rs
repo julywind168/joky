@@ -74,7 +74,7 @@ fn int_map_empty_queries_replacement_and_reserved_inserts_reuse_buffers() {
             42
         }}
         fn no_alloc_replace() -> Int32 {{
-            var m = Map.with_capacity::<Int32, Int32>(6) m.insert(1, 20)
+            var m = Map.with_capacity::<Int32, Int32>(6); m.insert(1, 20)
             let cap = m.capacity()
             deny_allocations()
             let old = m.insert(1, 22)
@@ -82,11 +82,11 @@ fn int_map_empty_queries_replacement_and_reserved_inserts_reuse_buffers() {
             old.unwrap_or(0) + 22
         }}
         fn no_alloc_reserve() -> Int32 {{
-            var m = Map.new::<Int32, Int32>() m.reserve(20)
+            var m = Map.new::<Int32, Int32>(); m.reserve(20)
             let cap = m.capacity()
             deny_allocations()
             var i = 0
-            while i < 20 {{ m.insert(i, i) i = i + 1 }}
+            while i < 20 {{ m.insert(i, i); i = i + 1 }}
             if m.capacity() == cap && maps.test_invariant(&m) {{ 42 }} else {{ 0 }}
         }}
     "#

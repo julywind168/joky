@@ -184,8 +184,8 @@ fn arena_suspension_preserves_borrow_checks_and_rejects_host_escapes() {
 #[test]
 fn arena_suspension_reference_helpers_stay_private_and_immediate_tasks_release() {
     let source = r#"
-        fn make<T>(value: T) -> &mut T { alloc(value) }
-        fn read<T>(view: &T) @suspends -> T { (*view) }
+        fn make<T: Copy>(value: T) -> &mut T { alloc(value) }
+        fn read<T: Copy>(view: &T) @suspends -> T { (*view) }
         fn empty() @suspends -> Option<&Int32> { None }
         fn aggregate(view: (Option<&Int32>,)) @suspends {}
         fn f() @suspends -> Int32 { let p = make(42); read(p) }

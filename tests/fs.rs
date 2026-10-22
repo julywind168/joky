@@ -59,7 +59,7 @@ fn filesystem_cli_and_standalone_aot() {
     let work = scratch::ScratchDir::new("fs-cli");
     let source = include_str!("fixtures/fs.jk").replace("fn run()", "fn main()");
     let source = source.replace("fn main()", "fn roundtrip()");
-    let source = format!("{source}\nfn main() @suspends -> Int32 {{ let n=roundtrip() if n != 42 {{ return n }} boundaries() }}");
+    let source = format!("{source}\nfn main() @suspends -> Int32 {{ let n=roundtrip(); if n != 42 {{ return n }}; boundaries() }}");
     let path = work.path().join("main.jk");
     std::fs::write(&path, source).unwrap();
     for interpreter in [false, true] {
@@ -281,7 +281,7 @@ fn filesystem_c_header_and_default_aot_embedding() {
     let work = scratch::ScratchDir::new("fs-header");
     let source = r#"import joky/fs
     fn missing() @suspends -> Int32 { match fs.open("absent",fs.OpenOptions.new()) {
-        Ok(f) => { let ignored=f.close() 1 }, Err(e) => match e.kind {fs.ErrorKind.Unsupported => 42,_ => 2}
+        Ok(f) => { let ignored=f.close(); 1 }, Err(e) => match e.kind {fs.ErrorKind.Unsupported => 42,_ => 2}
     }}"#;
     let mut compiler = joky::aot::AotCompiler::new("fs-header").unwrap();
     compiler
@@ -420,7 +420,7 @@ fn filesystem_internal_resources_reject_forgery_and_wrong_signatures() {
         "extern fn __fs_open(path: String, flags: UInt64) -> fs.OutcomeOwner",
         "extern fn __fs_read(file: &mut fs.FileOwner, limit: Int32) @suspends -> fs.OutcomeOwner",
         "extern fn __fs_code(result: &mut fs.FileOwner) @suspends -> UInt64",
-        "import joky/fs fn duplicate(file: fs.File) { let a=file let b=file }",
+        "import joky/fs fn duplicate(file: fs.File) { let a=file; let b=file }",
         "import joky/fs fn forge() -> fs.File { fs.File {owner: 1} }",
     ];
     for source in cases {
@@ -505,13 +505,13 @@ fn filesystem_shared_service_enforces_quota_across_vms() {
     use joky::runtime::executor::{HostExecutor, TaskGroup};
     let source = r#"import joky/fs import joky/task
         fn hold() @suspends -> Int32 {
-            var options=fs.OpenOptions.new() options.write=true options.create=true
+            var options=fs.OpenOptions.new(); options.write=true; options.create=true
             let file=match fs.open("held",options) {Ok(file)=>file,Err(e)=>{return 1}}
             task.sleep_ms(60000)
-            let ignored=file.close() 42
+            let ignored=file.close(); 42
         }
         fn busy() @suspends -> Int32 { match fs.open("held",fs.OpenOptions.new()) {
-            Ok(file)=>{let ignored=file.close() 0},Err(e)=>match e.kind{fs.ErrorKind.Busy=>42,_=>1}
+            Ok(file)=>{let ignored=file.close(); 0},Err(e)=>match e.kind{fs.ErrorKind.Busy=>42,_=>1}
         }}"#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let work = scratch::ScratchDir::new("fs-shared");

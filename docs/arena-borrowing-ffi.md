@@ -59,7 +59,7 @@ struct Point { x: Int32, y: Int32 }
 fn run() {
     let point = alloc(Point { x: 1, y: 2 })
     point.x = 3
-    { let displayed: Int32 = point.x println(&displayed) }
+    println(point.x)
 }
 ```
 
@@ -117,7 +117,7 @@ fn make_point() -> &mut Point {
 
 fn run() {
     let point = make_point()
-    { let displayed: Int32 = point.x println(&displayed) }
+    println(point.x)
 }
 ```
 
@@ -155,7 +155,7 @@ fn move_twice(point: &mut Point) {
 fn run() {
     let point = alloc(Point { x: 1, y: 2 })
     move_twice(point)
-    { let displayed: Int32 = point.x println(&displayed) }
+    println(point.x)
 }
 ```
 
@@ -392,7 +392,7 @@ fn sum(list: Option<&Node>) -> Int32 {
 fn run() {
     let first = push(None, 1)
     let second = push(Some(first), 2)
-    { let displayed: Int32 = sum(Some(second)) println(&displayed) }
+    println(sum(Some(second)))
 }
 ```
 

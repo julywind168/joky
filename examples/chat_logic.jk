@@ -34,7 +34,7 @@ fn account_view(state: &Account) -> Account { *state }
 fn room_view(state: &Room) -> RoomView {
     var members = Array.new::<Route>()
     var i: UInt64 = 0
-    while i < state.members.len() { members.push(state.members.get(i)!) i += 1 }
+    while i < state.members.len() { members.push(state.members.get(i)!); i += 1 }
     RoomView { name: state.name.clone(), members: members }
 }
 fn empty_room() -> RoomView { RoomView { name: "", members: Array.new::<Route>() } }
@@ -54,12 +54,12 @@ impl Command {
 fn copy_ids(ids: &Array<UInt64>) -> Array<UInt64> {
     var copy = Array.new::<UInt64>()
     var i: UInt64 = 0
-    while i < ids.len() { copy.push(ids.get(i)!) i += 1 }
+    while i < ids.len() { copy.push(ids.get(i)!); i += 1 }
     copy
 }
 fn contains(ids: &Array<UInt64>, id: UInt64) -> Bool {
     var i: UInt64 = 0
-    while i < ids.len() { if ids.get(i)! == id { return true } i += 1 }
+    while i < ids.len() { if ids.get(i)! == id { return true }; i += 1 }
     false
 }
 
@@ -77,9 +77,9 @@ fn reserve_room(state: &mut Catalog, input: (String, outbox.Handle)) {
     let (name, waiter) = input
     let (key, _) = find_room(state, name.clone())
     if key == 0 {
-        var waiters = Array.new::<outbox.Handle>() waiters.push(waiter)
+        var waiters = Array.new::<outbox.Handle>(); waiters.push(waiter)
         state.rooms.push(RoomEntry { name: name, status: RoomStatus.Pending, waiters: waiters })
-    } else { let entry = state.rooms.borrow_mut_ref(key - 1) entry.waiters.push(waiter) }
+    } else { let entry = state.rooms.borrow_mut_ref(key - 1); entry.waiters.push(waiter) }
 }
 fn take_room(state: &mut Catalog, host: Host) -> Option<RoomInit> {
     var i: UInt64 = 0
@@ -105,7 +105,7 @@ fn ensure_room(ctx: Context, name: &String) @suspends -> UInt64 {
     var ready = outbox.create(1, 0)
     let waiter = ready.handle()
     while true {
-        var access = domain.access_set() access.include(catalog.read_only())
+        var access = domain.access_set(); access.include(catalog.read_only())
         let snapshot = domain.snapshot_set(access)
         let (key, available) = domain.query_snapshot(&snapshot, catalog.read_only(), find_room, name.clone())
         if available { return key }
@@ -140,7 +140,7 @@ fn open_room(input: RoomKey) @suspends {
     let catalog = domain.lookup_write::<Catalog>(input.host.directory, 1)!
     let waiters = domain.write_to(catalog, finish_room, input.key)!
     var i: UInt64 = 0
-    while i < waiters.len() { outbox.close(waiters.get(i)!) i += 1 }
+    while i < waiters.len() { outbox.close(waiters.get(i)!); i += 1 }
 }
 fn append(recipients: &mut Array<Recipient>, route: Route, first: Bool, second: Bool, excluded: &Array<UInt64>) {
     if !contains(excluded, route.id) { recipients.push(Recipient { route: route, first: first, second: second }) }
@@ -200,7 +200,7 @@ fn plan(account: Account, old: &RoomView, next: &RoomView, next_key: UInt64, com
             membership = account.room != 0
         },
         Welcome => { first = "welcome {id}\n" },
-        Balance => { let yuan = account.balance_cents / 100 first = "balance {yuan}\n" },
+        Balance => { let yuan = account.balance_cents / 100; first = "balance {yuan}\n" },
         Notice(text) => { first = text.clone() },
         Invalid => { first = "error use join <room>, leave, say <message>, or balance\n" }
     }
@@ -275,7 +275,7 @@ fn prepare(ctx: Context, account: domain.WriteHandle<Account>, next_key: UInt64,
     let before = domain.read_from(account.read_only(), account_view)!
     let old_handle = room_handle(ctx, before.room)
     let next_handle = room_handle(ctx, next_key)
-    var access = domain.access_set() access.include(account.read_only())
+    var access = domain.access_set(); access.include(account.read_only())
     match old_handle { Some(handle) => access.include(handle.read_only()), None => {} }
     if next_key != before.room { match next_handle { Some(handle) => access.include(handle.read_only()), None => {} } }
     let snapshot = domain.snapshot_set(access)
@@ -308,7 +308,7 @@ fn execute(input: Request) @suspends -> Bool {
             Err(OutboxFull) => {}, Err(OutboxClosed) => {},
             _ => {
                 result!
-                match &command { Disconnect => { outbox.close(prepared.origin.stop) outbox.close(prepared.origin.output) }, _ => {} }
+                match &command { Disconnect => { outbox.close(prepared.origin.stop); outbox.close(prepared.origin.output) }, _ => {} }
                 return true
             }
         }
@@ -357,7 +357,7 @@ fn dispatch(request: Call) @suspends -> UInt64 {
         Notice(text) => if publish(ctx, id, Command.Notice(text), &excluded) { 1 } else { 0 },
         Release => {
             match domain.lookup_write::<Account>(host.accounts, id) {
-                Some(account) => { let value = domain.read_from(account.read_only(), account_view)! outbox.close(value.lifetime) },
+                Some(account) => { let value = domain.read_from(account.read_only(), account_view)!; outbox.close(value.lifetime) },
                 None => {}
             }
             0
@@ -380,7 +380,7 @@ fn hold(input: Bootstrap) @suspends {
     let owner = domain.create(make_catalog, {})
     let catalog = owner.handle()
     input.host.directory.insert(1, catalog)!
-    var access = domain.access_set() access.include(catalog.read_only())
+    var access = domain.access_set(); access.include(catalog.read_only())
     let snapshot = domain.snapshot_set(access)
     var batch = outbox.batch(1, 0)
     outbox.stage(&mut batch, input.ready, Array.new::<UInt8>())!

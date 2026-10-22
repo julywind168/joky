@@ -83,7 +83,7 @@ fn outbox_pending_receive_wakes_on_close_and_cancels_without_polling() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for cancel in [false, true] {
             let mut vm = VmEngine::with_mode(mode);
-            vm.load_source("import joky/outbox fn wait() @suspends ->Int32 { var q=outbox.create(2,16) match q.receive() { None=>42, Some(_)=>0 } }").unwrap();
+            vm.load_source("import joky/outbox fn wait() @suspends ->Int32 { var q=outbox.create(2,16); match q.receive() { None=>42, Some(_)=>0 } }").unwrap();
             let baseline = crate::runtime::arena::LIVE.with(Cell::get);
             let group = TaskGroup::new();
             vm.executor
@@ -210,7 +210,7 @@ fn run() @suspends ->Int32 {
     let state=domain.create(make,7)
     let queue=outbox.create(1,1)
     var batch=outbox.batch(1,1)
-    var bytes=Array.new::<UInt8>() bytes.push(99)
+    var bytes=Array.new::<UInt8>(); bytes.push(99)
     outbox.stage(&mut batch,queue.handle(),bytes);
     let next=domain.candidate_from(domain.snapshot_from(state.read_handle(),read), state.handle(), make, 99).with_outbox(batch)
     outbox_test_ready(); task.yield_now()

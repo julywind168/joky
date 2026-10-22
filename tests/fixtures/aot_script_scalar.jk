@@ -1,9 +1,9 @@
 import joky/vm
 import joky/task
 import joky/check
-fn assert(ok: Bool) { let message = "AOT Script scalar probe" check.assert(ok, &message) }
-fn v1() -> String { "import joky/domain\nimport joky/task\nstruct Room {{ n: Int32 }}\nfn make(n: Int32) -> Room {{ Room {{ n: n }} }}\nfn phase(s: &Room) -> Int32 {{ 1 }}\nfn add(s: &mut Room, n: Int32) -> Int32 {{ s.n = s.n + n s.n }}\nfn session(n: Int32) @suspends -> Int32 {{\n    let version = 1\n    let room = domain.create(make, 0)\n    var i: Int32 = 0\n    while domain.read_from(room.read_handle(), phase).unwrap() == 1 && i < 10000 {{\n        task.yield_now()\n        i = i + 1\n    }}\n    version * 100 + domain.write_to(room.handle(), add, n).unwrap()\n}}\nfn waiting(n: Int32) @suspends -> Int32 {{\n    let room = domain.create(make, n)\n    task.sleep_ms(60000)\n    domain.read_from(room.read_handle(), phase).unwrap()\n}}\nfn bad(n: Int32) @suspends -> Int32 {{ task.yield_now() 1 / n }}\nfn wrong(n: Int32) @suspends -> Bool {{ true }}\n" }
-fn v2() -> String { "import joky/domain\nimport joky/task\nstruct Room {{ n: Int32 }}\nfn make(n: Int32) -> Room {{ Room {{ n: n }} }}\nfn phase(s: &Room) -> Int32 {{ 2 }}\nfn add(s: &mut Room, n: Int32) -> Int32 {{ s.n = s.n + n * 10 s.n }}\nfn session(n: Int32) @suspends -> Int32 {{\n    let version = 2\n    let room = domain.create(make, 0)\n    var i: Int32 = 0\n    while domain.read_from(room.read_handle(), phase).unwrap() == 1 && i < 10000 {{\n        task.yield_now()\n        i = i + 1\n    }}\n    version * 100 + domain.write_to(room.handle(), add, n).unwrap()\n}}\nfn waiting(n: Int32) @suspends -> Int32 {{\n    let room = domain.create(make, n)\n    task.sleep_ms(60000)\n    domain.read_from(room.read_handle(), phase).unwrap()\n}}\nfn bad(n: Int32) @suspends -> Int32 {{ task.yield_now() 1 / n }}\nfn wrong(n: Int32) @suspends -> Bool {{ true }}\n" }
+fn assert(ok: Bool) { let message = "AOT Script scalar probe"; check.assert(ok, &message) }
+fn v1() -> String { "import joky/domain\nimport joky/task\nstruct Room {{ n: Int32 }}\nfn make(n: Int32) -> Room {{ Room {{ n: n }} }}\nfn phase(s: &Room) -> Int32 {{ 1 }}\nfn add(s: &mut Room, n: Int32) -> Int32 {{ s.n = s.n + n; s.n }}\nfn session(n: Int32) @suspends -> Int32 {{\n    let version = 1\n    let room = domain.create(make, 0)\n    var i: Int32 = 0\n    while domain.read_from(room.read_handle(), phase).unwrap() == 1 && i < 10000 {{\n        task.yield_now()\n        i = i + 1\n    }}\n    version * 100 + domain.write_to(room.handle(), add, n).unwrap()\n}}\nfn waiting(n: Int32) @suspends -> Int32 {{\n    let room = domain.create(make, n)\n    task.sleep_ms(60000)\n    domain.read_from(room.read_handle(), phase).unwrap()\n}}\nfn bad(n: Int32) @suspends -> Int32 {{ task.yield_now(); 1 / n }}\nfn wrong(n: Int32) @suspends -> Bool {{ true }}\n" }
+fn v2() -> String { "import joky/domain\nimport joky/task\nstruct Room {{ n: Int32 }}\nfn make(n: Int32) -> Room {{ Room {{ n: n }} }}\nfn phase(s: &Room) -> Int32 {{ 2 }}\nfn add(s: &mut Room, n: Int32) -> Int32 {{ s.n = s.n + n * 10; s.n }}\nfn session(n: Int32) @suspends -> Int32 {{\n    let version = 2\n    let room = domain.create(make, 0)\n    var i: Int32 = 0\n    while domain.read_from(room.read_handle(), phase).unwrap() == 1 && i < 10000 {{\n        task.yield_now()\n        i = i + 1\n    }}\n    version * 100 + domain.write_to(room.handle(), add, n).unwrap()\n}}\nfn waiting(n: Int32) @suspends -> Int32 {{\n    let room = domain.create(make, n)\n    task.sleep_ms(60000)\n    domain.read_from(room.read_handle(), phase).unwrap()\n}}\nfn bad(n: Int32) @suspends -> Int32 {{ task.yield_now(); 1 / n }}\nfn wrong(n: Int32) @suspends -> Bool {{ true }}\n" }
 fn run(h: &vm.Vm) @suspends { assert(h.call::<Int32, Int32>("session", 1) == 110) }
 fn upgrade(h: &vm.Vm) @suspends {
     task.yield_now()
@@ -21,7 +21,7 @@ fn upgrade(h: &vm.Vm) @suspends {
     }
     assert(count == 1)
 }
-fn winner() @suspends { task.yield_now() task.yield_now() }
+fn winner() @suspends { task.yield_now(); task.yield_now() }
 fn waiting(h: &vm.Vm) @suspends { h.call::<Int32, Int32>("waiting", 1); }
 fn main() @suspends {
     let h = vm.Vm.interpreter()

@@ -55,7 +55,7 @@ pub enum Type {
     Named(String),
     /// An unresolved application of a generic record, enum or alias.
     Applied(Arc<TypeApplication>),
-    /// A rigid, declaration-local Copy type parameter; never an executable value tag.
+    /// A rigid, declaration-local type parameter; never an executable value tag.
     Parameter(Arc<TypeParameter>),
     Projection(Arc<TypeProjection>),
     /// A resolved module-local nominal record with a finite scalar layout.
@@ -102,6 +102,8 @@ impl Eq for TypeProjection {}
 pub struct FunctionType {
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
+    /// No argument loan may be retained or returned.
+    pub noescape: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -235,9 +237,18 @@ impl Type {
         Self::function_with_effect(params, ret, false)
     }
     pub fn function_with_effect(params: Vec<Type>, ret: Type, suspends: bool) -> Self {
+        Self::function_with_contract(params, ret, suspends, false)
+    }
+    pub fn function_with_contract(
+        params: Vec<Type>,
+        ret: Type,
+        suspends: bool,
+        noescape: bool,
+    ) -> Self {
         Self::Function(Arc::new(FunctionType {
             signature: crate::FunctionSignature::new(params, ret),
             suspends,
+            noescape,
         }))
     }
     pub(crate) fn contains_functions(&self) -> bool {
@@ -248,15 +259,22 @@ impl Type {
                     .is_some_and(|r| r.target.contains_functions())
         })
     }
+    // Rigid unknowns model a movable owner during definition checking. Concrete
+    // substitution replaces these symbolic lanes before any backend sees them.
     pub(crate) fn is_buffer(&self) -> bool {
-        matches!(self, Self::Buffer(_) | Self::String | Self::Resource(_))
+        matches!(
+            self,
+            Self::Buffer(_) | Self::String | Self::Resource(_) | Self::Projection(_)
+        ) || matches!(self, Self::Parameter(p) if p.callable.is_none() && !p.copy)
     }
     /// A movable buffer capability, including aggregates with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
-        self.is_buffer()
-            || matches!(self, Self::Record(r) if !r.owners.is_empty())
-            || matches!(self, Self::Enum(e) if !e.owners.is_empty())
-            || matches!(self, Self::Tuple(t) if !t.owners.is_empty())
+        match self {
+            Self::Record(r) => !r.owners.is_empty() || r.scalars.iter().any(Type::is_buffer),
+            Self::Enum(e) => !e.owners.is_empty() || e.scalars.iter().any(Type::is_buffer),
+            Self::Tuple(t) => !t.owners.is_empty() || t.scalars.iter().any(Type::is_buffer),
+            _ => self.is_buffer(),
+        }
     }
     /// Mixed records, enums and tuples borrow their inline storage. One-field wrapper chains
     /// retain the buffer handle representation used by Array.
@@ -309,7 +327,7 @@ impl Type {
                 return false;
             }
             match ty {
-                Type::String | Type::Resource(_) => true,
+                Type::String | Type::Resource(_) | Type::Parameter(_) | Type::Projection(_) => true,
                 Type::Buffer(element) => {
                     if element.is_owner() {
                         safe_storage(element)
@@ -400,6 +418,8 @@ impl Type {
                         ty,
                         Self::String
                             | Self::Resource(_)
+                            | Self::Parameter(_)
+                            | Self::Projection(_)
                             | Self::Record(_)
                             | Self::Enum(_)
                             | Self::Tuple(_)
@@ -542,11 +562,14 @@ impl std::fmt::Display for Type {
                         }
                         display(param, f, remaining)?;
                     }
-                    f.write_str(if signature.suspends {
-                        ") @suspends -> "
-                    } else {
-                        ") -> "
-                    })?;
+                    f.write_str(")")?;
+                    if signature.suspends {
+                        f.write_str(" @suspends")?;
+                    }
+                    if signature.noescape {
+                        f.write_str(" @noescape")?;
+                    }
+                    f.write_str(" -> ")?;
                     display(&signature.signature.ret, f, remaining)
                 }
                 Type::Float32 => f.write_str("Float32"),
@@ -1623,6 +1646,7 @@ impl std::fmt::Display for GenericArgument {
 pub struct TypeParameter {
     pub kind: ParameterKind,
     pub(crate) callable: Option<Arc<CallableBound>>,
+    pub copy: bool,
     pub name: String,
     pub bounds: Vec<TraitBound>,
     pub span: Span,
@@ -1643,6 +1667,7 @@ impl TypeParameter {
             kind: ParameterKind::Type,
             bounds: Vec::new(),
             callable: None,
+            copy: false,
         }
     }
 }
@@ -2054,7 +2079,9 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
                 pending.push((&a.element, &b.element));
             }
             (Type::Function(a), Type::Function(b)) => {
-                if a.suspends != b.suspends || a.signature.params.len() != b.signature.params.len()
+                if a.suspends != b.suspends
+                    || a.noescape != b.noescape
+                    || a.signature.params.len() != b.signature.params.len()
                 {
                     return false;
                 }

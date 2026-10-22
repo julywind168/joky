@@ -172,7 +172,7 @@ fn generic_impl_and_method_pending_receivers_survive_reload_failure_and_cancella
         }
         fn pending() @suspends -> Int32 {
             var p = original()
-            let frame = p.build::<(Bool, UInt64)>({ p.left = 9 (true, 0xffff_ffff_ffff_ffff) }, 7)
+            let frame = p.build::<(Bool, UInt64)>({ p.left = 9; (true, 0xffff_ffff_ffff_ffff) }, 7)
             let (saved, extra) = frame.value
             let (valid, wide) = extra
             if saved.first() == 4294967295 && saved.right == -7 &&
@@ -221,7 +221,7 @@ fn generic_impl_and_method_pending_receivers_survive_reload_failure_and_cancella
 
 #[test]
 fn generic_impl_specialization_reuses_instances_and_bounds_growth() {
-    let mut reused = "struct Marker<T> {} impl<T> Marker<T> { fn count(self) -> Int32 { 1 } } fn check() -> Int32 { let marker = Marker::<Bool> {}".to_owned();
+    let mut reused = "struct Marker<T> {} impl<T> Marker<T> { fn count(self) -> Int32 { 1 } } fn check() -> Int32 { let marker = Marker::<Bool> {};".to_owned();
     for _ in 0..4097 {
         reused.push_str(" marker.count();");
     }
@@ -234,7 +234,7 @@ fn generic_impl_specialization_reuses_instances_and_bounds_growth() {
     for index in 0..4097 {
         many.push_str(&format!(" fn f{index}(self) {{}}"));
     }
-    many.push_str(" } fn check() { let marker = Marker::<Bool> {}");
+    many.push_str(" } fn check() { let marker = Marker::<Bool> {};");
     for index in 0..4097 {
         many.push_str(&format!(" marker.f{index}();"));
     }

@@ -10,7 +10,7 @@ impl Room {
 fn make(value:Int32)->Room {Room{value:value,text:"periodic state"}}
 fn read(room:&Room)->Int32 {room.value}
 fn assert(ok:Bool) {check.assert(ok,"automatic periodic operation")}
-fn local()->Int32 {var room=make(0) room.tick() room.value}
+fn local()->Int32 {var room=make(0); room.tick(); room.value}
 #state
 struct Failing {value:Int32}
 impl Failing {
@@ -19,13 +19,13 @@ impl Failing {
 }
 fn make_failing(value:Int32)->Failing {Failing{value:value}}
 fn failure() @suspends {
-    let room=domain.create(make_failing,10) let h=room.read_handle()
+    let room=domain.create(make_failing,10); let h=room.read_handle()
     while match domain.periodic_status(h,"tick"){Active=>true,_=>false} {task.yield_now()}
     assert(match domain.periodic_status(h,"tick"){Failed=>true,_=>false})
     room.close()
 }
 fn live() @suspends {
-    let room=domain.create(make,0) let h=room.read_handle()
+    let room=domain.create(make,0); let h=room.read_handle()
     assert(match domain.periodic_status(h,"tick"){Active=>true,_=>false})
     while domain.read_from(h,read).unwrap()<1 {task.yield_now()}
     room.close()
@@ -33,12 +33,12 @@ fn live() @suspends {
 }
 fn lifecycle() @suspends {
     assert(local()==1)
-    let room=domain.create(make,10) let h=room.read_handle()
+    let room=domain.create(make,10); let h=room.read_handle()
     assert(match domain.periodic_status(h,"tick"){Active=>true,_=>false})
     assert(match domain.periodic_status(h,"missing"){InvalidAccess=>true,_=>false})
     room.close()
     assert(match domain.periodic_status(h,"tick"){Closed=>true,_=>false})
-    let dangling={let other=domain.create(make,1) other.read_handle()}
+    let dangling={let other=domain.create(make,1); other.read_handle()}
     assert(match domain.periodic_status(dangling,"tick"){Closed=>true,_=>false})
 }
 fn main() @suspends {lifecycle()}

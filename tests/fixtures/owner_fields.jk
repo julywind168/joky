@@ -5,7 +5,7 @@ extern fn record_drop(value: Int32)
 
 struct Part<T> { flag: Bool, id: Int32, values: Array<T> }
 impl<T> Drop for Part<T> {
-    fn drop(&mut self) { let length = self.values.len() record_drop(self.id) }
+    fn drop(&mut self) { let length = self.values.len(); record_drop(self.id) }
 }
 fn part<T>(id: Int32) -> Part<T> { Part { flag: true, id: id, values: Array.new::<T>() } }
 fn tracked<T>(id: Int32) -> Part<T> {
@@ -17,12 +17,12 @@ struct Pack { tag: Int32, first: Part<Int32>, flag: Bool, middle: Part<Int64>, e
 fn pack(start: Int32) -> Pack {
     Pack { tag: 42, first: part::<Int32>(start), flag: true, middle: part::<Int64>(start + 1), empty: {}, last: part::<Bool>(start + 2) }
 }
-fn fields_first() -> Int32 { let p = pack(1) let chosen = p.first 41 + chosen.id }
-fn fields_middle() -> Int32 { let p = pack(1) let chosen = p.middle 40 + chosen.id }
-fn fields_last() -> Int32 { let p = pack(1) let chosen = p.last 39 + chosen.id }
-fn fields_temporary() -> Int32 { let chosen = pack(1).middle 40 + chosen.id }
-fn select_middle() -> Part<Int64> { let p = pack(1) p.middle }
-fn fields_return() -> Int32 { let chosen = select_middle() 40 + chosen.id }
+fn fields_first() -> Int32 { let p = pack(1); let chosen = p.first; 41 + chosen.id }
+fn fields_middle() -> Int32 { let p = pack(1); let chosen = p.middle; 40 + chosen.id }
+fn fields_last() -> Int32 { let p = pack(1); let chosen = p.last; 39 + chosen.id }
+fn fields_temporary() -> Int32 { let chosen = pack(1).middle; 40 + chosen.id }
+fn select_middle() -> Part<Int64> { let p = pack(1); p.middle }
+fn fields_return() -> Int32 { let chosen = select_middle(); 40 + chosen.id }
 fn fields_reinitialize() -> Int32 {
     var p = pack(1)
     let chosen = p.middle
@@ -46,8 +46,8 @@ fn fields_replace_edges() -> Int32 {
 }
 struct Nest { head: Part<Int32>, inner: Pack, tail: Part<Int32> }
 fn nest() -> Nest { Nest { head: part::<Int32>(9), inner: pack(1), tail: part::<Int32>(8) } }
-fn fields_nested() -> Int32 { let p = nest() let chosen = p.inner.middle 40 + chosen.id }
-fn fields_nested_temporary() -> Int32 { let chosen = nest().inner.middle 40 + chosen.id }
+fn fields_nested() -> Int32 { let p = nest(); let chosen = p.inner.middle; 40 + chosen.id }
+fn fields_nested_temporary() -> Int32 { let chosen = nest().inner.middle; 40 + chosen.id }
 fn fields_nested_replace() -> Int32 {
     var p = nest()
     p.inner.middle = part::<Int64>(4)
@@ -58,8 +58,8 @@ struct Group { id: Int32, inner: Pack }
 impl Drop for Group { fn drop(&mut self) { record_drop(self.id) } }
 struct Groups { first: Part<Int32>, group: Group, last: Part<Int32> }
 fn groups() -> Groups { Groups { first: part::<Int32>(9), group: Group { id: 10, inner: pack(1) }, last: part::<Int32>(8) } }
-fn fields_subtree() -> Int32 { let p = groups() let chosen = p.group chosen.inner.tag }
-fn fields_subtree_temporary() -> Int32 { let chosen = groups().group chosen.inner.tag }
+fn fields_subtree() -> Int32 { let p = groups(); let chosen = p.group; chosen.inner.tag }
+fn fields_subtree_temporary() -> Int32 { let chosen = groups().group; chosen.inner.tag }
 fn fields_subtree_replace() -> Int32 {
     var p = groups()
     p.group = Group { id: 20, inner: pack(4) }
@@ -67,11 +67,11 @@ fn fields_subtree_replace() -> Int32 {
 }
 fn fields_rhs_failure() -> Int32 {
     var p = pack(1)
-    p.middle = { let temporary = part::<Int64>(4) let bad = 1 << 32 part::<Int64>(5) }
+    p.middle = { let temporary = part::<Int64>(4); let bad = 1 << 32; part::<Int64>(5) }
     42
 }
 struct Bomb { id: Int32, values: Array<Int32> }
-impl Drop for Bomb { fn drop(&mut self) { record_drop(self.id) let bad = 1 / 0 } }
+impl Drop for Bomb { fn drop(&mut self) { record_drop(self.id); let bad = 1 / 0 } }
 struct BombPack { first: Part<Int32>, middle: Bomb, last: Part<Int32> }
 fn fields_drop_failure() -> Int32 {
     var p = BombPack { first: part::<Int32>(1), middle: Bomb { id: 2, values: Array.new::<Int32>() }, last: part::<Int32>(3) }
@@ -80,7 +80,7 @@ fn fields_drop_failure() -> Int32 {
 }
 fn fields_original_failure() -> Int32 {
     var p = BombPack { first: part::<Int32>(1), middle: Bomb { id: 2, values: Array.new::<Int32>() }, last: part::<Int32>(3) }
-    p.middle = { let bad = 1 << 32 Bomb { id: 4, values: Array.new::<Int32>() } }
+    p.middle = { let bad = 1 << 32; Bomb { id: 4, values: Array.new::<Int32>() } }
     42
 }
 struct Refs { first: Array<Int32>, second: Array<&Int32> }
@@ -128,10 +128,10 @@ fn fields_loop() -> Int32 {
     }
     42
 }
-fn choose(flag: Bool) -> Part<Int64> { let p = pack(1) if flag { p.middle } else { p.middle } }
-fn fields_branch_true() -> Int32 { let p = choose(true) p.id + 40 }
-fn fields_branch_false() -> Int32 { let p = choose(false) p.id + 40 }
-fn fields_early() -> Int32 { let p = pack(1) { let selected = p.middle return selected.id + 40 } }
+fn choose(flag: Bool) -> Part<Int64> { let p = pack(1); if flag { p.middle } else { p.middle } }
+fn fields_branch_true() -> Int32 { let p = choose(true); p.id + 40 }
+fn fields_branch_false() -> Int32 { let p = choose(false); p.id + 40 }
+fn fields_early() -> Int32 { let p = pack(1); { let selected = p.middle; return selected.id + 40 } }
 struct Single { values: Array<Int32> }
 fn single() -> Single { Single { values: Array.new::<Int32>() } }
 fn fields_transparent() -> Int32 {
@@ -152,8 +152,8 @@ fn fields_rhs_metadata() -> Int32 {
 fn bomb_pack(start: Int32) -> BombPack {
     BombPack { first: part::<Int32>(start), middle: Bomb { id: start + 1, values: Array.new::<Int32>() }, last: part::<Int32>(start + 2) }
 }
-fn fields_extract_failure() -> Int32 { let p = bomb_pack(1) let selected = p.first 42 }
-fn fields_extract_original_failure() -> Int32 { let p = bomb_pack(1) let selected = p.middle 1 << 32 }
+fn fields_extract_failure() -> Int32 { let p = bomb_pack(1); let selected = p.first; 42 }
+fn fields_extract_original_failure() -> Int32 { let p = bomb_pack(1); let selected = p.middle; 1 << 32 }
 fn fields_reinitialize_failure() -> Int32 {
     var p = bomb_pack(1)
     let selected = p.first

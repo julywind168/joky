@@ -4,7 +4,7 @@ import joky/check
 struct Room { score:Int32 }
 fn make(score:Int32)->Room { Room{score:score} }
 fn read(room:&Room)->Int32 {room.score}
-fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value room.score}
+fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value; room.score}
 fn version()->Int32 {1}
 fn hold(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,42)

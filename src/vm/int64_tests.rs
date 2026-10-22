@@ -132,19 +132,19 @@ fn int64_rejects_overflow_and_implicit_conversion_before_publication() {
             "(9223372036854775808)",
         ),
         (
-            "fn f() -> Int64 { let n = 42 n }",
+            "fn f() -> Int64 { let n = 42; n }",
             "Return type mismatch",
-            "fn f() -> Int64 { let n = 42 n }",
+            "fn f() -> Int64 { let n = 42; n }",
         ),
         (
-            "fn f() { let n = 42 let wide: Int64 = n }",
+            "fn f() { let n = 42; let wide: Int64 = n }",
             "annotation mismatch",
             "let wide: Int64 = n",
         ),
         (
-            "fn f() -> Int64 { let n = 42 n + 1 }",
+            "fn f() -> Int64 { let n = 42; n + 1 }",
             "Return type mismatch",
-            "fn f() -> Int64 { let n = 42 n + 1 }",
+            "fn f() -> Int64 { let n = 42; n + 1 }",
         ),
         (
             "fn f(a: Int32, b: Int64) -> Int64 { a + b }",
@@ -162,14 +162,14 @@ fn int64_rejects_overflow_and_implicit_conversion_before_publication() {
             "n",
         ),
         (
-            "fn f() { var n = 1 let wide: Int64 = 1 n = wide }",
+            "fn f() { var n = 1; let wide: Int64 = 1; n = wide }",
             "Assignment type mismatch",
             "n = wide",
         ),
         (
-            "fn f() -> Int64 { let n = 1 if true { 1 } else { n } }",
+            "fn f() -> Int64 { let n = 1; if true { 1 } else { n } }",
             "Return type mismatch",
-            "fn f() -> Int64 { let n = 1 if true { 1 } else { n } }",
+            "fn f() -> Int64 { let n = 1; if true { 1 } else { n } }",
         ),
     ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -274,7 +274,7 @@ fn int64_suspensions_keep_full_width_snapshots_across_reload_failure_and_cancel(
         fn child(n: Int64) @suspends -> (Int64, E) { (delay(n), E.Value(Wide { value: n })) }
         fn pending(n: Int64) @suspends -> Int64 {
             var value = n
-            let (saved, (after, e)) = (value, child({ value = value + 2 record(n) }))
+            let (saved, (after, e)) = (value, child({ value = value + 2; record(n) }))
             let original = match e { Empty => 0, Value(wide) => wide.value }
             saved + direct(after) + value + original
         }
@@ -284,7 +284,7 @@ fn int64_suspensions_keep_full_width_snapshots_across_reload_failure_and_cancel(
             42
         }
         fn sibling(n: Int64) @suspends { record(delay(n)); }
-        fn scoped() @suspends -> Int64 { parallel { | sibling(3000000000) | sibling(-4000000000) } 42 }
+        fn scoped() @suspends -> Int64 { parallel { | sibling(3000000000) | sibling(-4000000000) }; 42 }
         fn unit(n: Int64) @suspends { delay(n); }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -387,18 +387,18 @@ fn int64_context_preserves_shadowing_sequence_order_and_default_boundaries() {
     let source = r#"
         enum E { Empty, Value(Int64) }
         fn f(n: Int64) -> Int64 {
-            let a = 3000000000 + { let (x,): (Int64,) = (n,) x }
+            let a = 3000000000 + { let (x,): (Int64,) = (n,); x }
             let b = 3000000000 + { let n = 2; let wide: Int64 = 7; wide }
             let c = if true { { return a + b } } else { n }
             c
         }
-        fn defaulted() -> Int32 { let n = (1 + 2) n }
+        fn defaulted() -> Int32 { let n = (1 + 2); n }
         fn negative() -> Int64 { --9223372036854775808 }
-        fn shadow(n: Int64) -> Int32 { let result = if true { 1 } else { let n = (2; 3); n } result }
+        fn shadow(n: Int64) -> Int32 { let result = if true { 1 } else { let n = (2; 3); n }; result }
         fn arm(e: E) -> Int64 { match e { Empty => 3000000000, Value(n) => n } }
         fn sequencing(n: Int64) -> Int64 { (let x: Int64 = n; 3000000000) + x }
         fn nested_match(n: Int64) -> Int64 { 3000000000 + match E.Value(n) { Empty => 0, Value(value) => value } }
-        fn grouped_shadow(n: Int64) -> Int32 { let result = (let n = 2; 1) + n result }
+        fn grouped_shadow(n: Int64) -> Int32 { let result = (let n = 2; 1) + n; result }
         fn small() -> Int32 { -2147483648 }
         fn double_neg() -> Int32 { --2147483648 }
         fn widen_min() -> Int64 { -2147483648 }
@@ -427,7 +427,7 @@ fn int64_context_preserves_shadowing_sequence_order_and_default_boundaries() {
 fn int64_interpreter_yields_and_bounds_recursion_without_truncation() {
     use super::InterpreterLimits;
     let mut vm = VmEngine::new_interpreter();
-    vm.load_source("fn looped(n: Int64) @suspends -> Int64 { var i: Int64 = 0 var value = n while i < 20 { value = value + 1000000000 i = i + 1 } value } fn recurse(n: Int64) @suspends -> Int64 { recurse(n + 1) }").unwrap();
+    vm.load_source("fn looped(n: Int64) @suspends -> Int64 { var i: Int64 = 0; var value = n; while i < 20 { value = value + 1000000000; i = i + 1 }; value } fn recurse(n: Int64) @suspends -> Int64 { recurse(n + 1) }").unwrap();
     vm.set_interpreter_limits(InterpreterLimits {
         max_frames: 8,
         instruction_budget: Some(10000),

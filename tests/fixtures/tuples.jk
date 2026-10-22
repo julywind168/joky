@@ -20,16 +20,16 @@ fn basic() -> Int32 {
 fn nested() -> Int32 {
     let value: Nested = (inspect(4), ({}, Empty {}))
     let ((n, flag), (unit, empty)) = value
-    unit empty
+    unit; empty
     let boxed = Box { pair: (n + 1, flag) }
     match Choice.Value(boxed.pair) {
-        Value(payload) => { let (n, flag) = payload if flag { n } else { 0 } }
+        Value(payload) => { let (n, flag) = payload; if flag { n } else { 0 } }
         Choice.None => -1
     }
 }
 fn snapshots() -> Int32 {
     var n = 1
-    let (a, b) = (n, { n = 9 n })
+    let (a, b) = (n, { n = 9; n })
     var tuple = (a, b)
     let saved = tuple
     tuple = (3, 4)
@@ -51,19 +51,19 @@ fn shadowing() -> Int32 {
     let x = 1
     let y = 2
     let (x, y) = (y, x)
-    let z = { let (x, y) = (7, 8) x + y }
+    let z = { let (x, y) = (7, 8); x + y }
     x * 100 + y * 10 + z
 }
 fn effects() -> Int32 {
     var count = 0
     let (_, _, unit, empty) = (
-        { count = count + 1 count },
-        { count = count + 10 count },
+        { count = count + 1; count },
+        { count = count + 10; count },
         { count = count + 100 },
-        { count = count + 1000 Empty {} },
+        { count = count + 1000; Empty {} },
     )
-    unit empty
-    let _: Int32 = { count = count + 1 count }
+    unit; empty
+    let _: Int32 = { count = count + 1; count }
     let (n,) = (count; count + 2,)
     n
 }
@@ -73,7 +73,7 @@ fn sequence_boundaries() -> Int32 {
     a * 10 + b
 }
 fn zero() -> (Unit, Empty) { ({}, Empty {}) }
-fn zero_result(flag: Bool) -> (Unit, Empty) { if flag { return zero() } zero() }
+fn zero_result(flag: Bool) -> (Unit, Empty) { if flag { return zero() }; zero() }
 fn zero_calls() -> Int32 {
     let (unit, empty) = zero_result(true)
     let copy = (unit, empty)

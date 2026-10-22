@@ -6,7 +6,7 @@ extern fn record_drop(value: Int32)
 
 struct Leaf<T> { id: Int32, values: Array<T> }
 impl<T> Drop for Leaf<T> {
-    fn drop(&mut self) { let length = self.values.len() record_drop(self.id) }
+    fn drop(&mut self) { let length = self.values.len(); record_drop(self.id) }
 }
 fn leaf<T>(id: Int32) -> Leaf<T> { Leaf { id: id, values: Array.new::<T>() } }
 fn tracked_leaf<T>(id: Int32) -> Leaf<T> {
@@ -37,7 +37,7 @@ fn pass(value: Pair) -> Pair { value }
 struct Empty { unit: Unit }
 fn select(unit: Unit, empty: Empty, first: Pair, tag: Unit, second: Pair) -> Pair { first }
 
-fn multi_scope() -> Int32 { let first = pair(10) let second = pair(20) 42 }
+fn multi_scope() -> Int32 { let first = pair(10); let second = pair(20); 42 }
 fn multi_move() -> Int32 {
     let first = pair(10)
     var value = pass(first)
@@ -48,7 +48,7 @@ fn multi_move() -> Int32 {
     value.second.values.push(8)
     42
 }
-fn multi_replace() -> Int32 { var value = pair(10) value = pair(20) 42 }
+fn multi_replace() -> Int32 { var value = pair(10); value = pair(20); 42 }
 fn multi_reinitialize() -> Int32 {
     var first = pair(10)
     let second = first
@@ -61,8 +61,8 @@ fn multi_reinitialize_failure() -> Int32 {
     first = pair(20)
     1 / 0
 }
-fn multi_call() -> Int32 { let value = select({}, Empty { unit: {} }, pair(10), {}, pair(20)) 42 }
-fn multi_early() -> Int32 { let a = pair(10) { let b = pair(20) return 42 } }
+fn multi_call() -> Int32 { let value = select({}, Empty { unit: {} }, pair(10), {}, pair(20)); 42 }
+fn multi_early() -> Int32 { let a = pair(10); { let b = pair(20); return 42 } }
 fn multi_loop() -> Int32 {
     var i = 1
     while i < 4 {
@@ -74,7 +74,7 @@ fn multi_loop() -> Int32 {
     42
 }
 struct Envelope { left: Pair, right: Pair, tail: Leaf<Int32> }
-impl Drop for Envelope { fn drop(&mut self) { record_drop(1) self.right.first.id = 29 } }
+impl Drop for Envelope { fn drop(&mut self) { record_drop(1); self.right.first.id = 29 } }
 struct Wrapped { inner: Envelope }
 fn multi_nested() -> Int32 {
     let value = Wrapped { inner: Envelope { right: pair(20), tail: leaf::<Int32>(3), left: pair(10) } }
@@ -103,7 +103,7 @@ fn multi_argument_failure() -> Int32 {
     42
 }
 struct Failing { first: Leaf<Int32>, second: Leaf<Int64> }
-impl Drop for Failing { fn drop(&mut self) { record_drop(9) let bad = 1 / 0 } }
+impl Drop for Failing { fn drop(&mut self) { record_drop(9); let bad = 1 / 0 } }
 fn multi_failing_hook() -> Int32 {
     let before = pair(10)
     let failed = Failing { first: leaf::<Int32>(1), second: leaf::<Int64>(2) }
@@ -122,7 +122,7 @@ fn failed_return() -> Pair {
     let failed = Failing { first: leaf::<Int32>(1), second: leaf::<Int64>(2) }
     pair(10)
 }
-fn multi_failed_return() -> Int32 { let value = failed_return() 42 }
+fn multi_failed_return() -> Int32 { let value = failed_return(); 42 }
 fn multi_transitions() -> Int32 {
     var value = select({}, Empty { unit: {} }, tracked_pair(10), {}, tracked_pair(20))
     value = tracked_pair(30)
@@ -135,7 +135,7 @@ struct Buffers<T> { first: Array<Int32>, second: Array<T>, version: UInt64 }
 impl<T> Buffers<T> {
     fn new() -> Buffers<T> { Buffers { first: Array.new::<Int32>(), second: Array.new::<T>(), version: 1 } }
     fn add(&mut self, value: T) { self.second.push(value) }
-    fn get(&self) -> Option<T> { self.second.get(0) }
+
 }
 fn multi_references() -> Int32 {
     let p = (&*(alloc(42)))
@@ -152,4 +152,8 @@ fn multi_reuse_budget() -> Int32 {
         i = i + 1
     }
     42
+}
+
+impl<T: Copy> Buffers<T> {
+    fn get(&self) -> Option<T> { self.second.get(0) }
 }

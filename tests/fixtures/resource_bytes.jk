@@ -7,29 +7,29 @@ extern fn write(socket: &mut Socket, bytes: Array<UInt8>) @suspends -> UInt64
 fn inspect(bytes: Array<UInt8>) -> Int32 {
     if bytes.len()==4 && bytes.get(0).unwrap_or(1)==0 && bytes.get(1).unwrap_or(0)==255 && bytes.get(2).unwrap_or(0)==42 && bytes.get(3).unwrap_or(0)==128 {42} else {0}
 }
-fn payload(count: UInt64) -> Array<UInt8> { var bytes=Array.new::<UInt8>() var n:UInt64=0 while n<count { bytes.push(if n==0 {0} else {255}) n=n+1 } bytes }
-fn receive() @suspends -> Int32 { var socket=byte_make(1) let bytes=read(&mut socket,4) task.yield_now() inspect(bytes) }
-fn eof() @suspends -> Int32 { var socket=byte_make(1) let first=read(&mut socket,4) let next=read(&mut socket,4) if empty(next) {inspect(first)} else {0} }
+fn payload(count: UInt64) -> Array<UInt8> { var bytes=Array.new::<UInt8>(); var n:UInt64=0; while n<count { bytes.push(if n==0 {0} else {255}); n=n+1 }; bytes }
+fn receive() @suspends -> Int32 { var socket=byte_make(1); let bytes=read(&mut socket,4); task.yield_now(); inspect(bytes) }
+fn eof() @suspends -> Int32 { var socket=byte_make(1); let first=read(&mut socket,4); let next=read(&mut socket,4); if empty(next) {inspect(first)} else {0} }
 fn empty(bytes: Array<UInt8>) -> Bool {bytes.len()==0}
-fn send() @suspends -> Int32 { var socket=byte_make(1) if write(&mut socket,payload(4))==2 {42} else {0} }
-fn empty_write() @suspends -> Int32 { var socket=byte_make(1) if write(&mut socket,payload(0))==0 {42} else {0} }
-fn zero_read() @suspends -> Int32 { var socket=byte_make(1) inspect(read(&mut socket,0)) }
-fn oversized() @suspends -> Int32 { var socket=byte_make(1) inspect(read(&mut socket,1048577)) }
-fn bad_count() @suspends -> Int32 { var socket=byte_make(1) inspect(read(&mut socket,7)) }
-fn zero_progress() @suspends -> Int32 { var socket=byte_make(1) let count=write(&mut socket,payload(6)) 42 }
+fn send() @suspends -> Int32 { var socket=byte_make(1); if write(&mut socket,payload(4))==2 {42} else {0} }
+fn empty_write() @suspends -> Int32 { var socket=byte_make(1); if write(&mut socket,payload(0))==0 {42} else {0} }
+fn zero_read() @suspends -> Int32 { var socket=byte_make(1); inspect(read(&mut socket,0)) }
+fn oversized() @suspends -> Int32 { var socket=byte_make(1); inspect(read(&mut socket,1048577)) }
+fn bad_count() @suspends -> Int32 { var socket=byte_make(1); inspect(read(&mut socket,7)) }
+fn zero_progress() @suspends -> Int32 { var socket=byte_make(1); let count=write(&mut socket,payload(6)); 42 }
 fn hold(socket: &mut Socket) @suspends { let bytes=read(socket,4) }
 fn instant() @suspends {}
-fn cancel_reuse() @suspends -> Int32 { var socket=byte_make(1) race { | hold(&mut socket) | instant() } inspect(read(&mut socket,4)) }
-fn unstarted() @suspends -> Int32 { var socket=byte_make(1) race { | instant() | hold(&mut socket) } inspect(read(&mut socket,4)) }
+fn cancel_reuse() @suspends -> Int32 { var socket=byte_make(1); race { | hold(&mut socket) | instant() }; inspect(read(&mut socket,4)) }
+fn unstarted() @suspends -> Int32 { var socket=byte_make(1); race { | instant() | hold(&mut socket) }; inspect(read(&mut socket,4)) }
 struct Pair { socket:Socket, tag:UInt8 }
-fn field() @suspends -> Int32 { var pair=Pair {socket:byte_make(1),tag:255} inspect(read(&mut pair.socket,4)) }
-fn indirect() @suspends -> Int32 { var socket=byte_make(1) let reader=read_helper inspect(reader(&mut socket,4)) }
-fn independent() @suspends -> Int32 { var a=byte_make(1) var b=byte_make(1) parallel { | hold(&mut a) | hold(&mut b) } 42 }
+fn field() @suspends -> Int32 { var pair=Pair {socket:byte_make(1),tag:255}; inspect(read(&mut pair.socket,4)) }
+fn indirect() @suspends -> Int32 { var socket=byte_make(1); let reader=read_helper; inspect(reader(&mut socket,4)) }
+fn independent() @suspends -> Int32 { var a=byte_make(1); var b=byte_make(1); parallel { | hold(&mut a) | hold(&mut b) }; 42 }
 
 fn read_helper(socket:&mut Socket, limit:UInt64) @suspends -> Array<UInt8> { read(socket,limit) }
 
 fn dynamic() @suspends -> Int32 {
     var socket=byte_make(1)
-    scope { let view=&mut socket branch { hold(view) } task.yield_now() }
+    scope { let view=&mut socket; branch { hold(view) }; task.yield_now() }
     if empty(read(&mut socket,4)) {42} else {0}
 }

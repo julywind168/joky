@@ -90,7 +90,7 @@ fn generic_library_method_arguments_remain_eager_when_pending_or_failing() {
 
 #[test]
 fn generic_method_instances_reuse_complete_arguments_and_bound_growth() {
-    let mut reused = "struct Marker<T> {} impl<T> Marker<T> { fn count<U>(self, value: U) -> Int32 { 1 } } fn check() -> Int32 { let marker = Marker::<Bool> {}".to_owned();
+    let mut reused = "struct Marker<T> {} impl<T> Marker<T> { fn count<U>(self, value: U) -> Int32 { 1 } } fn check() -> Int32 { let marker = Marker::<Bool> {};".to_owned();
     for _ in 0..4097 {
         reused.push_str(" marker.count(true);");
     }
@@ -104,7 +104,7 @@ fn generic_method_instances_reuse_complete_arguments_and_bound_growth() {
     for n in 0..4097 {
         many.push_str(&format!(" struct Item{n} {{}}"));
     }
-    many.push_str(" fn check() { let marker = Marker::<Bool> {}");
+    many.push_str(" fn check() { let marker = Marker::<Bool> {};");
     for n in 0..4097 {
         many.push_str(&format!(" marker.keep(Item{n} {{}});"));
     }

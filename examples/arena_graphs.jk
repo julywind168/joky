@@ -20,9 +20,9 @@ fn evaluate(tree: &Expr) -> Int32 {
 fn main() -> Int32 {
     let first = push(None, 20)
     let second = push(Some(first), 22)
-    { let displayed: Int32 = sum(Some(second)) println(&displayed) } // 42
+    println(sum(Some(second))) // 42
     let leaf = &*alloc(Expr.Number(21))
     let tree = &*alloc(Expr.Add((leaf, leaf)))
-    { let displayed: Int32 = evaluate(tree) println(&displayed) }    // 42
+    println(evaluate(tree))    // 42
     0
 }

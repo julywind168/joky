@@ -120,7 +120,7 @@ fn float_math_survives_suspension() {
 fn float_to_text_respects_interpreter_budgets() {
     use super::InterpreterLimits;
     let mut vm = VmEngine::new_interpreter();
-    vm.load_source("fn make() -> Int32 { let text = 1.5.to_text() 0 }")
+    vm.load_source("fn make() -> Int32 { let text = 1.5.to_text(); 0 }")
         .unwrap();
     vm.set_interpreter_limits(InterpreterLimits {
         instruction_budget: Some(0),
@@ -275,7 +275,7 @@ fn float_references_join_borrowing_protocol() {
         }
         vm.load_source(
             "extern fn host(p: &mut Float64) @suspends\n\
-             fn run() @suspends -> Float64 { let p = alloc(2.5); host(p)(*p) }",
+             fn run() @suspends -> Float64 { let p = alloc(2.5); host(p);(*p) }",
         )
         .unwrap();
         let task = vm.call_async_float64("run", &[]).unwrap();

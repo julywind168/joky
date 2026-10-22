@@ -3,7 +3,7 @@ import joky/task
 import joky/check
 struct State {n:Int32}
 struct Init {n:Int32}
-fn assert(ok:Bool) {let message="candidate input versions" check.assert(ok,&message)}
+fn assert(ok:Bool) {let message="candidate input versions"; check.assert(ok,&message)}
 fn make(p:Init)->State {State{n:p.n}}
 fn read(s:&State)->Int32 {s.n}
 fn total(a:&State,b:&State)->Int32 {a.n+b.n}
@@ -15,7 +15,7 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     let first=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total), a.handle(), make, Init{n:21})
     let pair=domain.candidate_pair_from(first, b.handle(), make, Init{n:30})
     var access=domain.access_set()
-    access.include(c.read_handle()) access.include(b.read_handle()) access.include(a.read_handle())
+    access.include(c.read_handle()); access.include(b.read_handle()); access.include(a.read_handle())
     let set=domain.candidate_set_from(domain.snapshot_set(access),a.handle(),make,Init{n:22})
     let set=domain.candidate_set_add(set,b.handle(),make,Init{n:31})
     assert(directory.insert(1,a.handle()).is_ok())

@@ -64,12 +64,12 @@ fn generic_templates_are_checked_before_instantiation_even_when_unused() {
             "x.field",
         ),
         (
-            "fn bad<T>(x: T) -> T { let (a, b) = x a }",
+            "fn bad<T>(x: T) -> T { let (a, b) = x; a }",
             ErrorCode::TypeMismatch,
             "(a, b)",
         ),
         (
-            "fn bad<T>(x: T) -> T { var y: T = x y = 1 y }",
+            "fn bad<T>(x: T) -> T { var y: T = x; y = 1; y }",
             ErrorCode::TypeMismatch,
             "y = 1",
         ),
@@ -114,7 +114,7 @@ fn generic_templates_are_checked_before_instantiation_even_when_unused() {
             "wait(x)",
         ),
         (
-            "fn bad<T>(x: T) -> T { return x x }",
+            "fn bad<T>(x: T) -> T { return x; x }",
             ErrorCode::UnreachableCode,
             "x",
         ),
@@ -237,7 +237,7 @@ fn generic_inference_handles_literal_tuples_unit_and_local_type_shadowing() {
     let source = r#"
         type T = Int32
         fn id<T>(x: T) -> T { x }
-        fn head<T>(pair: (Int64, T)) -> T { let (_, x) = pair x }
+        fn head<T>(pair: (Int64, T)) -> T { let (_, x) = pair; x }
         fn pair<T, U>(x: (T, U), y: (U, T)) -> (T, U) { x }
         fn run() -> Int32 {
             let a = id(if true { 42 } else { 0 })
@@ -291,21 +291,21 @@ fn generic_pending_calls_keep_snapshots_failures_and_owners_after_reload_and_can
         fn id<T>(value: T) -> T { value }
         enum Deferred<T> { Empty, Value(T) }
             fn hold_enum<T>(value: Deferred<T>, n: UInt64) @suspends -> Deferred<T> { delay(n); value }
-            fn delayed<T>(value: T, n: UInt64) @suspends -> T { let wrapped = hold_enum(Deferred.Value(value), n) match wrapped { Empty => value, Value(saved) => saved } }
+            fn delayed<T: Copy>(value: T, n: UInt64) @suspends -> T { let wrapped = hold_enum(Deferred.Value(value), n); match wrapped { Empty => value, Value(saved) => saved } }
         fn first<T>(a: T, b: T) -> T { a }
         fn failing<T>(value: T, n: UInt64) -> T { 1 << n; value }
         fn nested_failure<T>(value: T, n: UInt64) @suspends -> T { failing(value, delay(n)) }
-        fn branch_task<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
+        fn branch_task<T: Copy>(value: T, n: UInt64) @suspends { let _ = delayed(value, n); record(n); }
         fn bad_branch<T>(value: T) @suspends { nested_failure(value, 64); record(99); }
         fn pending(n: UInt64) @suspends -> UInt64 {
             var p = Pair { a: n, b: 1 }
-            let old = first(p, delayed({ p.a = 0 p }, record(n)))
+            let old = first(p, delayed({ p.a = 0; p }, record(n)))
             let new = delayed(id(old), 3)
             new.a + new.b + p.a
         }
         fn failure(n: UInt64) @suspends -> UInt64 { nested_failure(id(42), n); record(99) }
-        fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { a: 1, b: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
-        fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) } record(99) }
+        fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { a: 1, b: 2 }, 7) | branch_task::<Unit>({}, 8) }; 42 }
+        fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) }; record(99) }
         fn sync(n: UInt64) -> UInt64 { failing(42, n); record(99) }
         fn lazy(n: UInt64) -> UInt64 { if true || failing(42, n) == 0 { 42 } else { 0 } }
     "#;
@@ -396,7 +396,7 @@ fn generic_recursion_uses_iterative_interpreter_frames_on_a_small_native_stack()
                 .unwrap();
                 let source = format!(
                     "fn descend<T>(x: T, n: Int32) {attribute} -> T {{ if n == 0 {{ x }} else {{ descend(x, n - 1) }} }}
-                     fn run(n: Int32) {attribute} -> Int32 {{ let (x, valid) = descend((42, true), n) if valid {{ x }} else {{ 0 }} }}"
+                     fn run(n: Int32) {attribute} -> Int32 {{ let (x, valid) = descend((42, true), n); if valid {{ x }} else {{ 0 }} }}"
                 );
                 vm.load_source(&source).unwrap();
                 if attribute.is_empty() {
@@ -418,7 +418,7 @@ fn generic_aggregate_recursion_preserves_poll_and_resource_limits() {
     let mut vm = VmEngine::new_interpreter();
     vm.load_source(
         "fn descend<T>(x: T, n: Int32) @suspends -> T { if n == 0 { x } else { descend(x, n - 1) } }
-         fn run(n: Int32) @suspends -> Int32 { let (x, valid) = descend((42, true), n) if valid { x } else { 0 } }",
+         fn run(n: Int32) @suspends -> Int32 { let (x, valid) = descend((42, true), n); if valid { x } else { 0 } }",
     ).unwrap();
     vm.set_interpreter_limits(InterpreterLimits {
         max_frames: 64,
@@ -465,7 +465,7 @@ fn generic_aggregate_recursion_preserves_poll_and_resource_limits() {
 #[test]
 fn generic_templates_need_concrete_wrappers_at_native_function_boundaries() {
     let invalid = "import joky/vm fn id<T>(x: T) -> T { x }
-        fn run() { let child = vm.Vm.new() vm.register_int32_1(child, \"id\", id) }";
+        fn run() { let child = vm.Vm.new(); vm.register_int32_1(child, \"id\", id) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         assert!(VmEngine::with_mode(mode).load_source(invalid).is_err());
     }
@@ -481,9 +481,9 @@ fn generic_templates_need_concrete_wrappers_at_native_function_boundaries() {
         fn concrete(x: Int32) -> Int32 { id(x) }
         fn run() -> Int32 {
             let child = vm.Vm.interpreter()
-            { let vm_text = "id" vm.register_int32_1(child, &vm_text, concrete) }
-            { let vm_text = "extern fn id(x: Int32) -> Int32 fn run() -> Int32 {{ id(42) }}" vm.load_source(child, &vm_text) }
-            let result = { let vm_text = "run" vm.call_int32_0(child, &vm_text) }
+            { let vm_text = "id"; vm.register_int32_1(child, &vm_text, concrete) }
+            { let vm_text = "extern fn id(x: Int32) -> Int32 fn run() -> Int32 {{ id(42) }}"; vm.load_source(child, &vm_text) }
+            let result = { let vm_text = "run"; vm.call_int32_0(child, &vm_text) }
             vm.close(child)
             result
         }
@@ -532,5 +532,30 @@ fn generic_parameters_are_rejected_by_host_registration_without_replacing_entrie
         )
         .unwrap();
         assert_eq!(vm.call_uint64_1("run", u64::MAX).unwrap(), u64::MAX);
+    }
+}
+
+#[test]
+fn generic_copy_contracts_reject_invalid_templates_before_instantiation() {
+    for (source, message) in [
+        ("fn bad<T>(x: T) -> (T, T) { (x, x) }", "moved"),
+        ("fn bad<T>(x: T) -> T { let alias = x; x }", "moved"),
+        ("fn bad<T>(x: &T) -> T { *x }", "Copy"),
+        ("fn duplicate<T: Copy>(x: T) -> (T, T) { (x, x) } fn bad<T>(x: T) -> (T, T) { duplicate(x) }", "Copy bound"),
+        ("fn consume<T>(x: T) {} fn bad<T>(x: T, n: Int32) { var i = 0; while i < n { consume(x); i += 1 } }", "moved"),
+        ("fn bad<T>(x: T, flag: Bool) -> T { if flag { let _ = x }; x }", "moved"),
+        ("struct Box<T> { value: T } fn bad<T>(x: Box<T>) -> (Box<T>, Box<T>) { (x, x) }", "moved"),
+        ("trait Item { type Value } fn bad<T: Item>(x: T.Value) -> (T.Value, T.Value) { (x, x) }", "moved"),
+        ("fn duplicate<T: Copy>(x: T) -> (T, T) { (x, x) } fn bad() { let pair = duplicate(\"owned\") }", "Copy bound"),
+        ("struct Box<T: Copy> { value: T } fn bad(x: Box<String>) {}", "Copy bound"),
+        ("enum Choice<T: Copy> { Empty, Value(T) } fn bad(x: Choice<String>) {}", "Copy bound"),
+        ("type Pair<T: Copy> = (T, T) fn bad(x: Pair<String>) {}", "Copy bound"),
+        ("trait Mark {} impl<T: Copy> Mark for T {} fn need<T: Mark>(x: T) {} fn bad() { need(\"owned\") }", "does not satisfy trait bound"),
+        ("struct Box<T> { value: T } impl<T: Copy> Box<T> { fn copied(&self) -> T { self.value } } fn bad(x: &Box<String>) { x.copied() }", "Copy bound"),
+        ("fn bad<F: Copy + Fn() -> Int32>(f: F) {}", "Copy cannot be combined"),
+        ("import joky/fixed_array.{type FixedArray} fn bad<T>(values: FixedArray<T, 2>) -> T { let [first, last] = values; first }", "Copy"),
+    ] {
+        let error = super::support::frontend_error(source, &crate::ModuleSources::new());
+        assert!(error.message().contains(message), "{source}: {error}");
     }
 }

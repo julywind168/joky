@@ -3,5 +3,5 @@ import joky/io.{println}
 import app/math.{add}
 
 fn main() {
-    { let displayed: Int32 = add(20, 22) println(&displayed) }
+    println(add(20, 22))
 }

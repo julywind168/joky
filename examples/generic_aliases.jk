@@ -4,8 +4,8 @@ type PairOf<T> = (T, T)
 type MaybePair<T> = Option<Pair<T>>
 struct Pair<T> { left: T, right: T }
 
-fn duplicate<T>(value: T) -> PairOf<T> { (value, value) }
-fn first<T>(values: PairOf<T>) -> T { let (a, b) = values a }
+fn duplicate<T: Copy>(value: T) -> PairOf<T> { (value, value) }
+fn first<T>(values: PairOf<T>) -> T { let (a, b) = values; a }
 fn unwrap<T>(value: MaybePair<T>, fallback: T) -> T {
     match value { Some(p) => p.left, None => fallback }
 }
@@ -13,13 +13,13 @@ fn unwrap<T>(value: MaybePair<T>, fallback: T) -> T {
 fn main() {
     // Transparent aliases use the target's inference and constructors.
     let numbers: PairOf<Int64> = (4294967295, 7)
-    { let displayed: Int64 = first(numbers) println(&displayed) }
-    { let displayed: Int32 = first(duplicate(42)) println(&displayed) }
+    println(first(numbers))
+    println(first(duplicate(42)))
 
     let maybe: MaybePair<UInt64> = Some(Pair { left: 0xffff_ffff_ffff_ffff, right: 0 })
-    { let displayed: UInt64 = unwrap(maybe, uint64(0)) println(&displayed) }
+    println(unwrap(maybe, uint64(0)))
 
     // The same value also has the fully expanded type.
     let direct: Option<Pair<UInt64>> = maybe
-    { let displayed: UInt64 = unwrap(direct, uint64(0)) println(&displayed) }
+    println(unwrap(direct, uint64(0)))
 }

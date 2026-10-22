@@ -5,7 +5,7 @@ import joky/mem
 import joky/array.{type Array}
 import joky/map.{type Map}
 
-fn assert(condition: Bool) { let message = "HR1 domain" check.assert(condition, &message) }
+fn assert(condition: Bool) { let message = "HR1 domain"; check.assert(condition, &message) }
 enum Status { Idle, Ready(Int32) }
 struct Profile { name: String, score: Int32, details: (String, Int32), status: Status }
 struct Player { profile: Profile, inventory: Array<String> }
@@ -56,23 +56,23 @@ fn update(state:&mut State,input:EditInput) { edit(state,input.value); }
 fn swap_states(a:&mut State,b:&mut State,input:Unit) { mem.swap(a,b) }
 fn sum(a:&State,b:&State)->Int32 { a.value+b.value }
 fn copy_value(a:&State,b:&mut State,value:Int32)->Int32 { edit(b,a.value+value) }
-fn fail_swap(a:&mut State,b:&mut State,zero:Int32)->Int32 { mem.swap(a,b) 1/zero }
+fn fail_swap(a:&mut State,b:&mut State,zero:Int32)->Int32 { mem.swap(a,b); 1/zero }
 fn fail_mixed(a:&State,b:&mut State,zero:Int32)->Int32 { edit(b,99); a.value/zero }
 fn capture(a:domain.ReadHandle<State>,b:domain.ReadHandle<State>,c:domain.ReadHandle<State>) @suspends ->domain.SnapshotSet {
     var accesses=domain.access_set()
-    accesses.include(a) accesses.include(b) accesses.include(c) accesses.include(a)
+    accesses.include(a); accesses.include(b); accesses.include(c); accesses.include(a)
     domain.snapshot_set(accesses)
 }
 fn narrow(handle:domain.WriteHandle<State>)->domain.ReadHandle<State> {handle.read_only()}
 struct TextOnly {text:String}
 fn text(n:Int32)->TextOnly {TextOnly{text:if n==1 {"first"} else {"single"}}}
 fn text_swap(a:&mut TextOnly,b:&mut TextOnly,input:Unit) {mem.swap(a,b)}
-fn text_valid(state:&TextOnly)->Bool {let expected="single" state.text.equals(&expected)}
+fn text_valid(state:&TextOnly)->Bool {let expected="single"; state.text.equals(&expected)}
 fn text_pair(a:&TextOnly,b:&TextOnly)->Bool {text_valid(a) && text_valid(b)}
 fn lifecycle() @suspends ->Int32 {
-    let a=domain.create(make,1) let b=domain.create(make,2) let c=domain.create(make,3)
-    let ah=a.handle() let bh=b.handle() let ch=c.handle()
-    let ar=narrow(ah) let br=bh.read_only() let cr=ch.read_only()
+    let a=domain.create(make,1); let b=domain.create(make,2); let c=domain.create(make,3)
+    let ah=a.handle(); let bh=b.handle(); let ch=c.handle()
+    let ar=narrow(ah); let br=bh.read_only(); let cr=ch.read_only()
     let projected=domain.snapshot_pair(ar,br,sum)
     assert(projected.value()==3)
     let old=capture(ar,br,cr)
@@ -108,7 +108,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(domain.read_from(ar,inspect).unwrap() && domain.read_from(br,inspect).unwrap())
     let single=domain.create(text,0)
     let sh=single.handle()
-    var accesses=domain.access_set() accesses.include(sh.read_only())
+    var accesses=domain.access_set(); accesses.include(sh.read_only())
     let frozen=domain.snapshot_set(accesses)
     assert(domain.read_snapshot(&frozen,sh.read_only(),text_valid))
     assert(domain.read_pair(sh.read_only(),sh.read_only(),text_pair).unwrap())
@@ -117,7 +117,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(!domain.read_from(sh.read_only(),text_valid).unwrap())
     assert(domain.read_from(another.read_handle(),text_valid).unwrap())
     assert(domain.read_snapshot(&frozen,sh.read_only(),text_valid))
-    a.close() b.close() c.close()
+    a.close(); b.close(); c.close()
     let closed=narrow(ah)
     assert(domain.read_from(closed,read).is_err())
     assert(domain.read_snapshot(&old,ar,inspect))

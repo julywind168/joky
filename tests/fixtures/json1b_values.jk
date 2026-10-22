@@ -6,11 +6,11 @@ import joky/mem
 import joky/task
 import joky/check.{assert}
 
-fn ensure(ok: Bool) { let message = "JSON1b value contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "JSON1b value contract"; assert(ok, &message) }
 fn number(text: String) -> Number {
     match Number.from_text(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) Number.from_i64(0) }
+        Err(_) => { ensure(false); Number.from_i64(0) }
     }
 }
 fn code(error: NumberError) -> Int32 {
@@ -21,7 +21,7 @@ fn code(error: NumberError) -> Int32 {
 fn invalid(text: String, offset: UInt64) {
     match Number.from_text(&text) {
         Ok(_) => { ensure(false) }
-        Err(error) => { ensure(error.offset == offset) ensure(code(error) == 1) }
+        Err(error) => { ensure(error.offset == offset); ensure(code(error) == 1) }
     }
 }
 fn signed(text: String, expected: Int64) {
@@ -36,14 +36,14 @@ fn signed_error(text: String, expected: Int32, offset: UInt64) {
     let value = number(text)
     match value.to_i64() {
         Ok(_) => { ensure(false) }
-        Err(error) => { ensure(error.offset == offset) ensure(code(error) == expected) }
+        Err(error) => { ensure(error.offset == offset); ensure(code(error) == expected) }
     }
 }
 fn unsigned_error(text: String, expected: Int32, offset: UInt64) {
     let value = number(text)
     match value.to_u64() {
         Ok(_) => { ensure(false) }
-        Err(error) => { ensure(error.offset == offset) ensure(code(error) == expected) }
+        Err(error) => { ensure(error.offset == offset); ensure(code(error) == expected) }
     }
 }
 fn floating(text: String, expected: UInt64) {
@@ -51,14 +51,14 @@ fn floating(text: String, expected: UInt64) {
     match value.to_f64() { Ok(actual) => { ensure(actual.to_bits() == expected) }, Err(_) => { ensure(false) } }
 }
 fn numbers() {
-    invalid("", 0) invalid("-", 1) invalid("+1", 0) invalid("01", 1) invalid("-01", 2)
-    invalid(".1", 0) invalid("1.", 2) invalid("1e", 2) invalid("1e+", 3) invalid("1e-x", 3)
-    invalid("1  ", 1) invalid(" 1", 0) invalid("1\0", 1) invalid("NaN", 0) invalid("inf", 0)
-    invalid("１", 0) invalid("1.2.3", 3) invalid("0x1", 1)
+    invalid("", 0); invalid("-", 1); invalid("+1", 0); invalid("01", 1); invalid("-01", 2)
+    invalid(".1", 0); invalid("1.", 2); invalid("1e", 2); invalid("1e+", 3); invalid("1e-x", 3)
+    invalid("1  ", 1); invalid(" 1", 0); invalid("1\0", 1); invalid("NaN", 0); invalid("inf", 0)
+    invalid("１", 0); invalid("1.2.3", 3); invalid("0x1", 1)
     let spelling = "-0.1200E+004"
     let value = number(spelling.clone())
     ensure(value.as_text().equals(&spelling))
-    signed("0", 0) signed("-0", 0)
+    signed("0", 0); signed("-0", 0)
     signed("9223372036854775807", 9223372036854775807)
     signed("-9223372036854775808", -9223372036854775808)
     unsigned("18446744073709551615", 18446744073709551615)
@@ -66,8 +66,8 @@ fn numbers() {
     signed_error("9223372036854775808", 3, 18)
     signed_error("-9223372036854775809", 3, 19)
     unsigned_error("18446744073709551616", 3, 19)
-    unsigned_error("-0", 3, 0) unsigned_error("-1", 3, 0)
-    signed_error("1.0", 2, 1) unsigned_error("1e0", 2, 1)
+    unsigned_error("-0", 3, 0); unsigned_error("-1", 3, 0)
+    signed_error("1.0", 2, 1); unsigned_error("1e0", 2, 1)
     signed_error("18446744073709551616000.0", 2, 23)
     unsigned_error("-1.0", 2, 2)
     floating("9007199254740991", 0x433fffffffffffff)
@@ -75,8 +75,8 @@ fn numbers() {
     floating("9007199254740995", 0x4340000000000002)
     floating("0.1", 0x3fb999999999999a)
     floating("1.25e2", 0x405f400000000000)
-    floating("5e-324", 1) floating("2e-324", 0) floating("-2e-324", 0x8000000000000000)
-    floating("-0", 0x8000000000000000) floating("-0.000E+99", 0x8000000000000000)
+    floating("5e-324", 1); floating("2e-324", 0); floating("-2e-324", 0x8000000000000000)
+    floating("-0", 0x8000000000000000); floating("-0.000E+99", 0x8000000000000000)
     floating("1.7976931348623157e308", 0x7fefffffffffffff)
     let huge = number("1e400")
     match huge.to_f64() { Err(error) => { ensure(code(error) == 3) }, Ok(_) => { ensure(false) } }
@@ -113,14 +113,14 @@ fn numbers() {
     var builder = StringBuilder.new()
     builder.push('1')
     index = 1
-    while index < 1024 { builder.push('0') index = index + 1 }
+    while index < 1024 { builder.push('0'); index = index + 1 }
     let at_limit = builder.finish()
     ensure(Number.from_text(&at_limit).is_ok())
     var builder = StringBuilder.from(&at_limit)
     builder.push('0')
     let over_limit = builder.finish()
     match Number.from_text(&over_limit) {
-        Err(error) => { ensure(error.offset == 1024) ensure(code(error) == 5) }
+        Err(error) => { ensure(error.offset == 1024); ensure(code(error) == 5) }
         Ok(_) => { ensure(false) }
     }
 }
@@ -184,7 +184,7 @@ fn values() @suspends {
         _ => { ensure(false) }
     }
 }
-fn main() @suspends { numbers() values() }
+fn main() @suspends { numbers(); values() }
 
 fn json_probe() -> Int32 {
     let value = number("0.1000e+1")

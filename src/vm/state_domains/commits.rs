@@ -1144,7 +1144,7 @@ mod tests {
     fn state_domains_candidate_values_failures_leave_live_root_usable() {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(&format!("{OWNED} struct Input {{n:Int32,zero:Int32}} fn from_value(p:Input)->State{{make(p.n)}} fn broken_value(p:Input)->State{{let temporary=make(p.n) make(1/p.zero)}}")).unwrap();
+            vm.load_source(&format!("{OWNED} struct Input {{n:Int32,zero:Int32}} fn from_value(p:Input)->State{{make(p.n)}} fn broken_value(p:Input)->State{{let temporary=make(p.n); make(1/p.zero)}}")).unwrap();
             let owner = vm
                 .create_domain("make", &[InstanceValue::Int32(7)])
                 .unwrap();

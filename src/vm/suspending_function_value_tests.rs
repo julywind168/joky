@@ -135,15 +135,15 @@ fn suspending_function_values_reject_effect_erasure_and_invalid_boundaries() {
         ("fn bad(f: fn() @suspends -> Int32) -> Int32 { f() }", "@suspends"),
         ("fn a() @suspends -> Int32 { 42 } fn bad() { let f: fn() -> Int32 = a }", "mismatch"),
         ("fn a() -> Int32 { 42 } fn bad() { let f: fn() @suspends -> Int32 = a }", "mismatch"),
-        ("fn a() @suspends -> Int32 { 42 } fn bad() @suspends { var f = a f = bad; }", "mismatch"),
+        ("fn a() @suspends -> Int32 { 42 } fn bad() @suspends { var f = a; f = bad; }", "mismatch"),
         ("fn same<T>(a: T, b: T) {} fn a() @suspends {} fn b() {} fn bad() { same(a, b) }", "conflicting"),
         ("fn apply<T>(f: fn(T) -> T, x: T) -> T { f(x) } fn a(x: Int32) @suspends -> Int32 { x } fn bad() { apply(a, 1); }", "mismatch"),
         ("fn bad<T>(x: T, f: fn(T) @suspends -> T) -> T { f(x) }", "@suspends"),
         ("extern fn delayed_value(x: Int32) @suspends -> Int32 fn bad() { let f = delayed_value }", "language function"),
         ("extern fn host(f: fn() @suspends -> Int32)", "host ABI"),
         ("struct Holder { f: fn() @suspends -> Int32 } unsafe extern \"C\" fn host(x: &Holder)", "host ABI"),
-        ("fn a() {} fn bad() @suspends { let f = a race { | f() } }", "@suspends"),
-        ("fn bad(f: fn(&mut Int32) @suspends -> Unit) @suspends -> Int32 { let p = alloc(1) f(p) ; (*p) }", "borrow"),
+        ("fn a() {} fn bad() @suspends { let f = a; race { | f() } }", "@suspends"),
+        ("fn bad(f: fn(&mut Int32) @suspends -> Unit) @suspends -> Int32 { let p = alloc(1); f(p) ; (*p) }", "borrow"),
         ("trait Mark {} fn bounded<T: Mark>(x: T) @suspends -> T { x } fn bad() { let f = bounded::<Int32> }", "does not satisfy"),
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -168,7 +168,7 @@ fn suspending_function_values_reject_effect_erasure_and_invalid_boundaries() {
 fn suspending_function_values_preserve_alias_effects_and_private_import_scopes() {
     let mut modules = crate::ModuleSources::new();
     modules.insert("helpers", "pub type Async<T> = fn(T) @suspends -> T fn hidden(x: Int32) @suspends -> Int32 { x + 1 } pub fn get() -> Async<Int32> { hidden } pub fn identity<T>(x: T) @suspends -> T { x }").unwrap();
-    let source = "import helpers as h fn main() @suspends -> Int32 { let get = h.get let f = get() let same = h.identity::<h.Async<Int32>> let value = same(f) value(41) }";
+    let source = "import helpers as h fn main() @suspends -> Int32 { let get = h.get; let f = get(); let same = h.identity::<h.Async<Int32>>; let value = same(f); value(41) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         vm.load_source_with_modules(source, &modules).unwrap();

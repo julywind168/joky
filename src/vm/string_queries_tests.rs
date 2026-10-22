@@ -45,15 +45,15 @@ fn string_s4_matches_utf8_substring_rune_and_decimal_models() {
 #[test]
 fn string_s4_rejects_byte_view_escape_writes_moves_and_private_freezing() {
     for source in [
-        "import joky/slice.{type Slice} fn f() -> &Slice<UInt8> { let text = \"中\" text.bytes() }",
-        "import joky/slice.{type Slice} fn view(text: &String) -> &Slice<UInt8> { text.bytes() } fn f() -> &Slice<UInt8> { let text = \"中\" view(&text) }",
-        "import joky/slice fn f() { let text = \"中\" slice.set(text.bytes(), 0, 255); }",
-        "import joky/slice fn f() { let text = \"中\" let view = text.bytes() text.release() slice.len(view); }",
-        "import joky/slice fn f() { let text = \"中\" let view = text.bytes() text.into_bytes().release() slice.len(view); }",
-        "import joky/slice fn f() { var text = \"中\" let view = text.bytes() text = \"next\" slice.len(view); }",
-        "import joky/mem\nimport joky/slice fn f() { var text = \"中\" let view = text.bytes() mem.replace(&mut text, \"next\").release() slice.len(view); }",
-        "import joky/slice fn f() @suspends { let text = \"中\" let view = text.bytes() parallel {} slice.len(view); }",
-        "import joky/array.{type Array} fn f() { let data = Array.new::<UInt8>() String.from_utf8(data); data.release() }",
+        "import joky/slice.{type Slice} fn f() -> &Slice<UInt8> { let text = \"中\"; text.bytes() }",
+        "import joky/slice.{type Slice} fn view(text: &String) -> &Slice<UInt8> { text.bytes() } fn f() -> &Slice<UInt8> { let text = \"中\"; view(&text) }",
+        "import joky/slice fn f() { let text = \"中\"; slice.set(text.bytes(), 0, 255); }",
+        "import joky/slice fn f() { let text = \"中\"; let view = text.bytes(); text.release(); slice.len(view); }",
+        "import joky/slice fn f() { let text = \"中\"; let view = text.bytes(); text.into_bytes().release(); slice.len(view); }",
+        "import joky/slice fn f() { var text = \"中\"; let view = text.bytes(); text = \"next\"; slice.len(view); }",
+        "import joky/mem\nimport joky/slice fn f() { var text = \"中\"; let view = text.bytes(); mem.replace(&mut text, \"next\").release(); slice.len(view); }",
+        "import joky/slice fn f() @suspends { let text = \"中\"; let view = text.bytes(); parallel {}; slice.len(view); }",
+        "import joky/array.{type Array} fn f() { let data = Array.new::<UInt8>(); String.from_utf8(data); data.release() }",
         "import joky/string.{freeze_utf8} fn f() {}",
     ] {
         let error = super::support::frontend_error(source, &crate::ModuleSources::new());

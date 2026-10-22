@@ -35,7 +35,7 @@ fn server_reload_lifecycle_boundaries_release_tcp_domains_tasks_and_modules() {
             }
             let source = fixture::source(create).replace(
                 "fn checkpoint(phase:Int32) @suspends {task.yield_now()}",
-                "extern fn record_phase(phase:Int32) fn checkpoint(phase:Int32) @suspends {record_phase(phase) task.yield_now()}",
+                "extern fn record_phase(phase:Int32) fn checkpoint(phase:Int32) @suspends {record_phase(phase); task.yield_now()}",
             );
             host.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
             for cut in 1..=9 {

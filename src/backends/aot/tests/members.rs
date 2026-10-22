@@ -69,18 +69,18 @@ fn method_native_pending_arguments_keep_snapshots_and_do_not_replay_effects() {
             fn add(self, n: Int32) @suspends -> Pair { Pair { x: self.x + delay(n) } }
         }
         impl Int32 {
-            fn receive(self, other: Int32) @suspends -> Option<UInt64> { delay(other) self.to_u64() }
+            fn receive(self, other: Int32) @suspends -> Option<UInt64> { delay(other); self.to_u64() }
             fn branch_task(self) @suspends { record(delay(self)); }
         }
         fn pending() @suspends -> Int32 {
             var pair = Pair { x: record(40) }
-            let result = pair.add({ pair.x = 99 record(2) })
+            let result = pair.add({ pair.x = 99; record(2) })
             result.x + pair.x
         }
         fn receiver() @suspends -> Int32 {
             match delay(42).receive(record(7)) { Some(n) => int32(n), None => -1 }
         }
-        fn scoped() @suspends -> Int32 { parallel { | 1.branch_task() | 2.branch_task() } 42 }
+        fn scoped() @suspends -> Int32 { parallel { | 1.branch_task() | 2.branch_task() }; 42 }
         fn failure() @suspends -> Int32 { (1 / delay(0)).to_i32(); record(99) }
     "#;
     let fixture = ScratchDir::new("method_pending");
@@ -203,7 +203,7 @@ fn borrowed_receivers_execute_in_standalone_native_code_and_pending_frames() {
         {}
         extern fn pause() @suspends -> Int32
         impl Counter {{
-            fn later(&mut self) @suspends -> Int32 {{ self.add(pause()) self.read() }}
+            fn later(&mut self) @suspends -> Int32 {{ self.add(pause()); self.read() }}
         }}
         fn task() @suspends -> Int32 {{ alloc(Counter {{ value: 20 }}).later() }}
     "#,

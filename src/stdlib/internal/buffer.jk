@@ -17,7 +17,7 @@ fn capacity<T>(buffer: &Buffer<T>) -> UInt64
 #intrinsic("buffer.capacity_limit")
 fn capacity_limit<T>() -> UInt64
 #intrinsic("buffer.load")
-fn load<T>(buffer: &Buffer<T>, index: UInt64) -> T
+fn load<T: Copy>(buffer: &Buffer<T>, index: UInt64) -> T
 #intrinsic("buffer.store")
 fn store<T>(buffer: &mut Buffer<T>, index: UInt64, value: T)
 #intrinsic("buffer.initialize_next")
@@ -30,31 +30,31 @@ fn replace<T>(destination: &mut Buffer<T>, source: Buffer<T>)
 fn release<T>(buffer: Buffer<T>)
 
 #intrinsic("buffer.borrow")
-fn borrow<T>(buffer: &Buffer<T>, index: UInt64) -> &Element<T>
+fn borrow<T: Copy>(buffer: &Buffer<T>, index: UInt64) -> &Element<T>
 #intrinsic("buffer.borrow_ref")
 fn borrow_ref<T>(buffer: &Buffer<T>, index: UInt64) -> &T
 #intrinsic("buffer.borrow_mut_ref")
 fn borrow_mut_ref<T>(buffer: &mut Buffer<T>, index: UInt64) -> &mut T
 #intrinsic("buffer.borrow_mut")
-fn borrow_mut<T>(buffer: &mut Buffer<T>, index: UInt64) -> &mut Element<T>
+fn borrow_mut<T: Copy>(buffer: &mut Buffer<T>, index: UInt64) -> &mut Element<T>
 #intrinsic("buffer.slice")
 fn slice<T>(buffer: &Buffer<T>, start: UInt64, end: UInt64) -> &Slice<T>
 #intrinsic("buffer.slice_mut")
 fn slice_mut<T>(buffer: &mut Buffer<T>, start: UInt64, end: UInt64) -> &mut Slice<T>
 #intrinsic("buffer.element_load")
-fn element_load<T>(value: &Element<T>) -> T
+fn element_load<T: Copy>(value: &Element<T>) -> T
 #intrinsic("buffer.element_store")
-fn element_store<T>(value: &mut Element<T>, next: T)
+fn element_store<T: Copy>(value: &mut Element<T>, next: T)
 #intrinsic("buffer.slice_len")
 fn slice_len<T>(values: &Slice<T>) -> UInt64
 #intrinsic("buffer.slice_load")
-fn slice_load<T>(values: &Slice<T>, index: UInt64) -> T
+fn slice_load<T: Copy>(values: &Slice<T>, index: UInt64) -> T
 #intrinsic("buffer.slice_store")
-fn slice_store<T>(values: &mut Slice<T>, index: UInt64, next: T)
+fn slice_store<T: Copy>(values: &mut Slice<T>, index: UInt64, next: T)
 #intrinsic("buffer.slice_borrow")
-fn slice_borrow<T>(values: &Slice<T>, index: UInt64) -> &Element<T>
+fn slice_borrow<T: Copy>(values: &Slice<T>, index: UInt64) -> &Element<T>
 #intrinsic("buffer.slice_borrow_mut")
-fn slice_borrow_mut<T>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T>
+fn slice_borrow_mut<T: Copy>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T>
 #intrinsic("buffer.subslice")
 fn subslice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T>
 #intrinsic("buffer.subslice_mut")

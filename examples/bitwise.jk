@@ -2,12 +2,12 @@ import joky/io.{println}
 
 fn main() {
     let flags: UInt32 = 0b1010_0000 | 0b0000_0011
-    println(&flags)
-    { let displayed: UInt32 = flags & 0x0f println(&displayed) }
-    { let displayed: UInt32 = ~flags & 0xff println(&displayed) }
+    println(flags)
+    println(flags & 0x0f)
+    println(~flags & 0xff)
     let high: UInt64 = 1 << 63
-    println(&high)
-    { let displayed: UInt64 = high >> 63 println(&displayed) }
+    println(high)
+    println(high >> 63)
     let signed: Int32 = -0x8000_0000
-    { let displayed: Int32 = signed >> 31 println(&displayed) }
+    println(signed >> 31)
 }

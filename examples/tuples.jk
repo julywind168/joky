@@ -8,12 +8,12 @@ fn inspect(n: Int32) -> Inspection {
 
 fn main() {
     let (value, positive) = inspect(42)
-    if positive { println(&value) }
+    if positive { println(value) }
 
     var (x, y) = (1, 2)
     x = x + 10
-    { let displayed: Int32 = x + y println(&displayed) }
+    println(x + y)
 
     let (_, (last,)) = (false, (7,))
-    println(&last)
+    println(last)
 }

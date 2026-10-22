@@ -5,11 +5,11 @@ impl Counter {
     fn view(&self) -> &Self { self }
     fn exclusive(&mut self) -> &mut Self { self }
     fn recurse(&mut self, n: Int32) {
-        if n > 0 { self.add(1) self.recurse(n - 1) }
+        if n > 0 { self.add(1); self.recurse(n - 1) }
     }
 }
 struct Cell<T> { value: T }
-impl<T> Cell<T> {
+impl<T: Copy> Cell<T> {
     fn read(&self) -> T { self.value }
     fn set(&mut self, value: T) { self.value = value }
     fn view(&self) -> &Self { self }
@@ -26,7 +26,7 @@ impl Wide {
 struct ValueCounter { value: Int32 }
 impl ValueCounter { fn read(self) -> Int32 { self.value } }
 enum Choice<T> { Missing, Present(T) }
-impl<T> Choice<T> {
+impl<T: Copy> Choice<T> {
     fn replace(&mut self, value: T) { (*(self) = Self.Present(value)) }
     fn read(&self, fallback: T) -> T {
         match (*self) { Missing => fallback, Present(value) => value }

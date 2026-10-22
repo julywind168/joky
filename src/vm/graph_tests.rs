@@ -42,16 +42,16 @@ fn arena_cycles_support_imports_aliases_and_preresolved_modules() {
             "graph",
             r#"
         import joky/option as optional
-        pub type Link<T> = optional.Option<&Node<T>>
-        pub struct Node<T> { value: T, next: Link<T> }
-        pub fn make<T>(value: T) -> &Node<T> {
+        pub type Link<T: Copy> = optional.Option<&Node<T>>
+        pub struct Node<T: Copy> { value: T, next: Link<T> }
+        pub fn make<T: Copy>(value: T) -> &Node<T> {
             graph {
                 let a = graph.alloc(Node { value: value, next: optional.None })
                 graph.link(a.next, a)
                 a
             }
         }
-        pub fn read<T>(node: &Node<T>) -> T {
+        pub fn read<T: Copy>(node: &Node<T>) -> T {
             match node.next { optional.None => node.value, optional.Some(next) => next.value }
         }
         pub fn link(value: Int32) -> Int32 { value }

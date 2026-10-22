@@ -3,17 +3,17 @@ import joky/task
 import joky/check
 struct State {n:Int32}
 struct Reply {pub n:Int32,tag:UInt64}
-fn assert(ok:Bool) {let message="snapshot record versions" check.assert(ok,&message)}
+fn assert(ok:Bool) {let message="snapshot record versions"; check.assert(ok,&message)}
 fn make(n:Int32)->State {State{n:n}}
 fn one(s:&State)->Reply {Reply{n:s.n,tag:18446744073709551615}}
 fn two(a:&State,b:&State)->Reply {Reply{n:a.n+b.n,tag:18446744073709551615}}
 fn verify(p:Reply,n:Int32) {assert(p.n==n && p.tag==18446744073709551615)}
 fn hold(directory:domain.DirectoryHandle) @suspends {
-    let a=domain.create(make,7) let b=domain.create(make,10)
-    let ar=a.read_handle() let br=b.read_handle()
+    let a=domain.create(make,7); let b=domain.create(make,10)
+    let ar=a.read_handle(); let br=b.read_handle()
     let single=domain.snapshot_from(ar,one)
     let joint=domain.snapshot_pair(ar,br,two)
-    var access=domain.access_set() access.include(ar) access.include(br)
+    var access=domain.access_set(); access.include(ar); access.include(br)
     let set=domain.snapshot_set(access)
     assert(directory.insert(1,a.handle()).is_ok())
     while domain.lookup::<State>(directory,1).is_some() {task.yield_now()}
@@ -28,7 +28,7 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     let fresh_pair=domain.snapshot_pair(ar,br,two)
     verify(fresh.value(),107)
     verify(fresh_pair.value(),117)
-    a.close() b.close()
+    a.close(); b.close()
     verify(domain.read_snapshot(&set,ar,one),7)
     verify(single.value(),7)
 }

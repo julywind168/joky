@@ -72,7 +72,7 @@ fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
                 }
                 harness.push_str(&format!("{{ const uint8_t expected[] = {{{bytes}}}; JokyOwnedTextV2 output = {{0}}; if (__joky_user_text_v2_{name}(&output) || joky_runtime_error_code() || output.byte_length != {length} || ({length} && memcmp(output.data, expected, {length}))) {{ fprintf(stderr, \"{name} failed\\n\"); return 1; }} joky_string_result_free_v2(&output); }}\n"));
             } else if entry.failure {
-                harness.push_str(&format!("if ({name}() != 0 || !joky_runtime_error_code()) {{ fprintf(stderr, \"{name} failed\\n\"); return 2; }} joky_runtime_error_clear();\n"));
+                harness.push_str(&format!("if ({name}() != 0 || !joky_runtime_error_code()) {{ fprintf(stderr, \"{name} failed\\n\"); return 2; }}; joky_runtime_error_clear();\n"));
             } else {
                 harness.push_str(&format!("if ({name}() != 42 || joky_runtime_error_code()) {{ fprintf(stderr, \"{name} failed\\n\"); return 3; }}\n"));
             }

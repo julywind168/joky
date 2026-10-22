@@ -93,7 +93,7 @@ fn array_replace_replacement_preserves_cleanup_without_budget_headroom() {
         }}
         fn probe_no_allocation() -> Int32 {{
             var values = Array.with_capacity::<Resource>(3)
-            values.push(resource(1)) values.push(resource(2)) values.push(resource(3))
+            values.push(resource(1)); values.push(resource(2)); values.push(resource(3))
             let next = resource(4)
             deny_allocations()
             let old = values.replace(1, next)
@@ -176,10 +176,10 @@ fn array_replace_rejects_conflicting_views_and_consumed_values() {
     let prefix = "import joky/array.{type Array} import joky/element as e";
     for body in [
         "fn bad(a: &Array<Int32>) { a.replace(0, 1); }",
-        "fn bad(a: &mut Array<Int32>) { let v = a.borrow(0) a.replace(0, 1); e.read(v); }",
-        "fn bad(a: &mut Array<Array<Int32>>) { let v = a.borrow_ref(0) a.replace(0, Array.new::<Int32>()); v.len(); }",
-        "fn bad(a: &mut Array<Array<Int32>>) { let v = Array.new::<Int32>() a.replace(0, v); v.len(); }",
-        "fn bad(a: &mut Array<&Int32>) { let p = alloc(1) a.replace(0, (&*p)); (*(p) = 2); }",
+        "fn bad(a: &mut Array<Int32>) { let v = a.borrow(0); a.replace(0, 1); e.read(v); }",
+        "fn bad(a: &mut Array<Array<Int32>>) { let v = a.borrow_ref(0); a.replace(0, Array.new::<Int32>()); v.len(); }",
+        "fn bad(a: &mut Array<Array<Int32>>) { let v = Array.new::<Int32>(); a.replace(0, v); v.len(); }",
+        "fn bad(a: &mut Array<&Int32>) { let p = alloc(1); a.replace(0, (&*p)); (*(p) = 2); }",
     ] {
         let source = format!("{prefix} {body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

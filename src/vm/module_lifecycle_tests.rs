@@ -132,9 +132,9 @@ fn direct_and_cps_share_unit_bindings_shadowing_and_evaluation_order() {
                 let unit: Unit = {{}}
                 identity(unit)
                 let x: Int32 = 10
-                let nested = {{ let x = 20 x }}
+                let nested = {{ let x = 20; x }}
                 let x: Int32 = x + 1
-                pick({{ record(1) identity(unit) }}, record(x + nested), {{ record(2) unit }})
+                pick({{ record(1); identity(unit) }}, record(x + nested), {{ record(2); unit }})
             }}
         "#
         );

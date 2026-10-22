@@ -19,19 +19,19 @@ fn fail_write(state: &mut State, zero: Int32) @noescape -> Int32 {
     state.count = 99
     state.count / zero
 }
-fn rejected(state: &mut State) @noescape -> Bool { state.count = 17 false }
+fn rejected(state: &mut State) @noescape -> Bool { state.count = 17; false }
 struct Other { count: Int32 }
 fn wrong(state: &Other) @noescape -> Int32 { state.count }
 fn pending() @suspends -> Int32 { 1 }
 fn request(delta: Int32) @suspends -> Int32 { domain.write(add, delta).unwrap() }
 fn query() @suspends -> Int32 { domain.read(read).unwrap() }
 fn broken(zero: Int32) @suspends -> Int32 { 1 / zero }
-fn idle() @suspends -> Int32 { task.sleep_ms(10000) 1 }
+fn idle() @suspends -> Int32 { task.sleep_ms(10000); 1 }
 fn request_unit() @suspends { request(1000); }
 fn ready_unit() @suspends {}
 fn broken_unit() @suspends { broken(0); }
-fn raced() @suspends -> Int32 { race { | request_unit() | ready_unit() } 0 }
-fn faulty() @suspends -> Int32 { parallel { | request_unit() | broken_unit() } 0 }
+fn raced() @suspends -> Int32 { race { | request_unit() | ready_unit() }; 0 }
+fn faulty() @suspends -> Int32 { parallel { | request_unit() | broken_unit() }; 0 }
 fn doubled(delta: Int32) @suspends -> Int32 {
     let first = domain.write(add, delta).unwrap()
     task.yield_now()
@@ -173,8 +173,8 @@ fn state_domains_reject_generic_and_host_entries() {
             fn nested() -> Nested { Nested { value: make() } }
             fn generic() -> Generic<Int32> { Generic { value: 1 } }
             fn host_helper(value: Int32) { io.println(&value) }
-            fn host(state: &State) @noescape -> Int32 { host_helper(state.count) state.count }
-            fn host_make() -> State { host_helper(1) make() }
+            fn host(state: &State) @noescape -> Int32 { host_helper(state.count); state.count }
+            fn host_make() -> State { host_helper(1); make() }
             fn indirect(state: &State, value: Int32) @noescape -> Int32 {
                 let f: fn(Int32) -> Int32 = identity
                 f(value) + state.count
@@ -350,7 +350,7 @@ fn state_domains_source_requests_cancel_without_poisoning_the_room() {
 fn state_domains_source_operations_require_checked_direct_entries() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for operation in [
-            "fn bad(s: &State) -> Int32 { io.println(&s.count) s.count }",
+            "fn bad(s: &State) -> Int32 { io.println(&s.count); s.count }",
             "fn bad(s: &State) -> &Int32 { &s.count }",
             "fn bad(s: &State) @suspends -> Int32 { s.count }",
         ] {
@@ -393,7 +393,7 @@ fn state_domains_reentrant_close_waits_for_active_poll_and_stop() {
             vm.register_suspending_fn("hold", FunctionSignature::new(vec![], Type::Unit), hold)
                 .unwrap();
         }
-        vm.load_source(&format!("{SOURCE} extern fn close_owner() extern fn hold() @suspends fn close_in_poll() @suspends -> Int32 {{ close_owner() 1 }} fn close_in_stop() @suspends -> Int32 {{ hold() 1 }}")).unwrap();
+        vm.load_source(&format!("{SOURCE} extern fn close_owner() extern fn hold() @suspends fn close_in_poll() @suspends -> Int32 {{ close_owner(); 1 }} fn close_in_stop() @suspends -> Int32 {{ hold(); 1 }}")).unwrap();
         for name in ["close_in_poll", "close_in_stop"] {
             let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
             let owner = Rc::new(
@@ -515,7 +515,7 @@ fn state_domains_effect_proof_and_intrinsic_identity_cannot_be_bypassed() {
             struct State { count: Int32 }
             fn read(s: &State) -> Int32 { s.count }
             fn helper(n: Int32) { io.println(&n) }
-            fn bad(s: &State) -> Int32 { helper(s.count) s.count }
+            fn bad(s: &State) -> Int32 { helper(s.count); s.count }
         "#;
         vm.load_source(prefix).unwrap_or_else(|e| panic!("{e}"));
         let error = vm
@@ -531,7 +531,7 @@ fn state_domains_effect_proof_and_intrinsic_identity_cannot_be_bypassed() {
         );
         let error = vm
             .load_source(&format!(
-                "{prefix} fn run() @suspends -> Int32 {{ let f = domain.read::<State> f(read) }}"
+                "{prefix} fn run() @suspends -> Int32 {{ let f = domain.read::<State>; f(read) }}"
             ))
             .unwrap_err();
         assert!(
@@ -540,7 +540,7 @@ fn state_domains_effect_proof_and_intrinsic_identity_cannot_be_bypassed() {
         );
         assert!(vm
             .load_source(&format!(
-                "{prefix} fn run() @suspends -> Int32 {{ let f = read domain.read(f).unwrap() }}"
+                "{prefix} fn run() @suspends -> Int32 {{ let f = read; domain.read(f).unwrap() }}"
             ))
             .is_err());
     }
@@ -564,7 +564,7 @@ fn state_domains_nested_continuations_cannot_inherit_a_supervised_capability() {
             )
             .unwrap();
         }
-        vm.load_source(&format!("{SOURCE} extern fn nested() -> Int32 fn outer() @suspends -> Int32 {{ if nested() != 1 {{ return -1 }} domain.write(add, 1).unwrap() }}")).unwrap_or_else(|e| panic!("{e}"));
+        vm.load_source(&format!("{SOURCE} extern fn nested() -> Int32 fn outer() @suspends -> Int32 {{ if nested() != 1 {{ return -1 }}; domain.write(add, 1).unwrap() }}")).unwrap_or_else(|e| panic!("{e}"));
         for foreign in [false, true] {
             let mut other = VmEngine::with_mode(mode);
             other.load_source(SOURCE).unwrap();
@@ -791,13 +791,13 @@ fn state_domains_source_limits_and_code_versions_stay_bound_to_the_executor() {
 #[test]
 fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
     let cases=[
-        "fn bad() @suspends { let o=domain.create(make,1) let copy=o o.close() copy.close() }",
-        "fn bad() @suspends { let o=domain.create(make,1) domain.write_to(o.read_handle(),add,1).unwrap(); }",
-        "fn bad() @suspends { let o=domain.create(make,1) let token=o.handle().token }",
-        "fn bad() @suspends { let f=make let o=domain.create(f,1) }",
-        "fn owned(value: String) @suspends -> String { value } fn bad() @suspends { let o=domain.create(make,1) let text=\"text\" domain.request(o.handle(),owned,text); text.byte_length(); }",
-        "fn pair(value: Int32) @suspends -> (Int32, Ptr) { (value, Ptr.null()) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
-        "import joky/array.{type Array} fn data(state: &State) -> Array<Ptr> {Array.new::<Ptr>()} fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data).unwrap(); }",
+        "fn bad() @suspends { let o=domain.create(make,1); let copy=o; o.close(); copy.close() }",
+        "fn bad() @suspends { let o=domain.create(make,1); domain.write_to(o.read_handle(),add,1).unwrap(); }",
+        "fn bad() @suspends { let o=domain.create(make,1); let token=o.handle().token }",
+        "fn bad() @suspends { let f=make; let o=domain.create(f,1) }",
+        "fn owned(value: String) @suspends -> String { value } fn bad() @suspends { let o=domain.create(make,1); let text=\"text\"; domain.request(o.handle(),owned,text); text.byte_length(); }",
+        "fn pair(value: Int32) @suspends -> (Int32, Ptr) { (value, Ptr.null()) } fn bad() @suspends { let o=domain.create(make,1); domain.request(o.handle(),pair,1); }",
+        "import joky/array.{type Array} fn data(state: &State) -> Array<Ptr> {Array.new::<Ptr>()} fn bad() @suspends { let o=domain.create(make,1); domain.read_from(o.read_handle(),data).unwrap(); }",
         "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
     ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -853,7 +853,7 @@ fn state_domains_cancelled_source_request_publishes_after_cleanup() {
     let source = format!(
         "{SOURCE}\n{}",
         r#"
-        fn delayed_input(input: UInt64) @suspends -> UInt64 { task.sleep_ms(10000) input }
+        fn delayed_input(input: UInt64) @suspends -> UInt64 { task.sleep_ms(10000); input }
         fn controller() @suspends -> Int32 {
             let owner = domain.create(make, 1)
             match domain.request(owner.handle(), delayed_input, 18446744073709551615) {
@@ -1771,7 +1771,7 @@ import joky/task
 struct State { text:String }
 fn make(text:String)->State {State{text:text}}
 fn read(s:&State)->String {s.text.clone()}
-fn echo(text:String) @suspends ->String {task.yield_now() text}
+fn echo(text:String) @suspends ->String {task.yield_now(); text}
 fn probe() @suspends ->Int32 {
     let owner=domain.create(make,"initial🙂")
     let saved=domain.snapshot_from(owner.read_handle(),read)
@@ -1879,12 +1879,12 @@ import joky/option.{type Option}
 struct State { n:Int32 }
 fn make(a:Array<Array<String>>)->State {State{n:a.len().to_i32()!}}
 fn read(s:&State)->Array<Option<String>> {
-    var a=Array.new::<Option<String>>() a.push(Option.Some("nested🙂")) a.push(Option.None) a
+    var a=Array.new::<Option<String>>(); a.push(Option.Some("nested🙂")); a.push(Option.None); a
 }
-fn echo(a:Array<Option<String>>) @suspends ->Array<Option<String>> {task.yield_now() a}
+fn echo(a:Array<Option<String>>) @suspends ->Array<Option<String>> {task.yield_now(); a}
 fn probe() @suspends ->Int32 {
-    var inner=Array.new::<String>() inner.push("first") inner.push("second")
-    var outer=Array.new::<Array<String>>() outer.push(inner)
+    var inner=Array.new::<String>(); inner.push("first"); inner.push("second")
+    var outer=Array.new::<Array<String>>(); outer.push(inner)
     let owner=domain.create(make,outer)
     let saved=domain.snapshot_from(owner.read_handle(),read)
     let a=saved.value()

@@ -63,9 +63,9 @@ fn graph_mutual() -> Int32 {
     let last = (&*(alloc(First { value: 21, next: Some(second) })))
     match last.next { None => 0, Some(s) => last.value + s.previous.value }
 }
-type GenericView<T> = GenericNode<T>
-struct GenericNode<T> { value: T, next: Option<&GenericView<T>> }
-fn generic_push<T>(head: Option<&GenericNode<T>>, value: T) -> &GenericNode<T> {
+type GenericView<T: Copy> = GenericNode<T>
+struct GenericNode<T: Copy> { value: T, next: Option<&GenericView<T>> }
+fn generic_push<T: Copy>(head: Option<&GenericNode<T>>, value: T) -> &GenericNode<T> {
     (&*(alloc(GenericNode { value: value, next: head })))
 }
 fn graph_generic_node() -> Int32 {
@@ -130,15 +130,15 @@ fn graph_option_method() -> Int32 {
     let maybe = Some(leaf)
     maybe.unwrap_or(leaf).value
 }
-fn copy_value<T>(value: &T) -> T { (*value) }
+fn copy_value<T: Copy>(value: &T) -> T { (*value) }
 fn point_view() -> &Point { (&*(alloc(Point { x: 42 }))) }
 fn graph_read_copy() -> Int32 { copy_value(point_view()).x }
-struct WithCopy<T> { pointer: &T, value: T }
+struct WithCopy<T: Copy> { pointer: &T, value: T }
 fn graph_inferred_record() -> Int32 {
     let pair = WithCopy { pointer: point_view(), value: Point { x: 42 } }
     pair.value.x
 }
-enum WithCopyEnum<T> { Pair((&T, T)) }
+enum WithCopyEnum<T: Copy> { Pair((&T, T)) }
 fn graph_inferred_enum() -> Int32 {
     match WithCopyEnum.Pair((point_view(), Point { x: 42 })) {
         Pair(pair) => { let (pointer, value) = pair; value.x }
@@ -161,7 +161,7 @@ fn graph_read_enum() -> Int32 {
 fn holder_view() -> &Holder<Point> { (&*(alloc(Holder { value: Point { x: 42 } }))) }
 fn graph_read_nested() -> Int32 { copy_value(holder_view()).value.x }
 fn forward_nested<T>(value: &Option<Holder<T>>) -> &Option<Holder<T>> { value }
-fn read_nested<T>(value: &Option<Holder<T>>, fallback: T) -> T {
+fn read_nested<T: Copy>(value: &Option<Holder<T>>, fallback: T) -> T {
     match (*(forward_nested(value))) {
         None => fallback
         Some(holder) => holder.value
@@ -171,7 +171,7 @@ fn graph_forward_nested() -> Int32 {
     read_nested((&*(alloc(Some(Holder { value: 42 })))), 0)
 }
 fn forward_enum<T>(value: &Holder<Option<T>>) -> &Holder<Option<T>> { value }
-fn read_nested_enum<T>(value: &Holder<Option<T>>, fallback: T) -> T {
+fn read_nested_enum<T: Copy>(value: &Holder<Option<T>>, fallback: T) -> T {
     match forward_enum(value).value { None => fallback, Some(v) => v }
 }
 fn graph_forward_enum() -> Int32 {

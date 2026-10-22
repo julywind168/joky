@@ -8,5 +8,5 @@ fn apply<T, U>(value: T, transform: fn(T) -> U) -> U { transform(value) }
 fn main() {
     let transform: fn(Int32) -> Int32 = increment
     let value = apply(39, transform)
-    { let displayed: Int32 = Option.Some(value).map(increment).and_then(optional).unwrap_or(0) println(&displayed) }
+    println(Option.Some(value).map(increment).and_then(optional).unwrap_or(0))
 }

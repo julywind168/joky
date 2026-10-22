@@ -139,7 +139,7 @@ fn native_function_references_fail_during_loading() {
     let source = r#"
         import joky/vm
         fn value() -> Int32 { 42 }
-        fn f() { let child = vm.Vm.interpreter(); { let vm_text = "value" vm.register_int32_0(child, &vm_text, value) }; }
+        fn f() { let child = vm.Vm.interpreter(); { let vm_text = "value"; vm.register_int32_0(child, &vm_text, value) }; }
     "#;
     let error = vm.load_source(source).unwrap_err();
     assert_eq!(error.code(), ErrorCode::AbiError);
@@ -189,8 +189,8 @@ fn builtin_two_argument_vm_call_has_an_interpreter_adapter() {
         import joky/vm
         fn f() -> Int32 {
             let child = vm.Vm.interpreter()
-            { let vm_text = "fn sum(a: Int32,b: Int32) -> Int32 {{ a+b }}" vm.load_source(child, &vm_text) }
-            let result = { let vm_text = "sum" vm.call_int32_2(child, &vm_text, 20, 22) }
+            { let vm_text = "fn sum(a: Int32,b: Int32) -> Int32 {{ a+b }}"; vm.load_source(child, &vm_text) }
+            let result = { let vm_text = "sum"; vm.call_int32_2(child, &vm_text, 20, 22) }
             vm.close(child)
             result
         }
@@ -235,7 +235,7 @@ fn deep_calls_return_on_a_small_native_stack() {
             let mut vm = VmEngine::new_interpreter();
             vm.set_interpreter_limits(InterpreterLimits { max_frames: 6000, ..Default::default() }).unwrap();
             let annotation = if suspends { "@suspends" } else { "" };
-            vm.load_source(&format!("fn f(n: Int32) {annotation} -> Int32 {{ var value=0; var k=n; while k>0 {{ value=f(k-1)+1; k=0; }} value }}")).unwrap();
+            vm.load_source(&format!("fn f(n: Int32) {annotation} -> Int32 {{ var value=0; var k=n; while k>0 {{ value=f(k-1)+1; k=0; }}; value }}")).unwrap();
             if suspends { assert_eq!(vm.call_async("f", &[5000]).unwrap().cps_result(), Some(5000)); }
             else { assert_eq!(vm.call_int32_1("f", 5000).unwrap(), 5000); }
         }
@@ -248,7 +248,7 @@ fn deep_nested_scopes_resume_or_cancel_without_recursive_drop() {
         for cancel in [false, true] {
             let mut vm = engine(VmMode::Interpreter);
             vm.set_interpreter_limits(InterpreterLimits { max_frames: 6000, ..Default::default() }).unwrap();
-            vm.load_source("extern fn wait(n: Int32) @suspends fn f(n: Int32) @suspends { var k=n; while k>0 { parallel { | f(k-1) } k=0; } wait(n) }").unwrap();
+            vm.load_source("extern fn wait(n: Int32) @suspends fn f(n: Int32) @suspends { var k=n; while k>0 { parallel { | f(k-1) }; k=0; }; wait(n) }").unwrap();
             let mut task = vm.call_async("f", &[3000]).unwrap();
             assert!(!task.is_finished());
             drop(vm);
@@ -344,7 +344,7 @@ fn jump_paths_survive_single_instruction_timeslices() {
             r#"
             extern fn record(x: Int32) -> Int32
             fn f() @suspends -> Int32 {
-                var i = 0 var total = 0
+                var i = 0; var total = 0
                 while (record(i); i < 10) {
                     i = i + 1
                     if i == 2 { continue }
@@ -408,7 +408,7 @@ fn poll_budget_yields_without_replaying_calls_assignments_or_scope_branches() {
         vm.load_source(
             r#"
             extern fn record(x: Int32) -> Int32
-            fn count(n: Int32) -> Int32 { var i=0; while i<n { i=i+1; } i }
+            fn count(n: Int32) -> Int32 { var i=0; while i<n { i=i+1; }; i }
             fn branch_task(n: Int32) @suspends { record(count(n)); }
             fn f() @suspends -> Int32 {
                 var i=0; while i<3 { record(i); i=i+1; }
@@ -619,7 +619,7 @@ fn frame_capacity_is_reused_after_completed_calls_and_scopes() {
         ..Default::default()
     })
     .unwrap();
-    vm.load_source("fn unit() @suspends {} fn value() -> Int32 { 1 } fn f() @suspends -> Int32 { var n=0; while n<2000 { parallel { | unit() } n=n+value(); } n }").unwrap();
+    vm.load_source("fn unit() @suspends {} fn value() -> Int32 { 1 } fn f() @suspends -> Int32 { var n=0; while n<2000 { parallel { | unit() }; n=n+value(); }; n }").unwrap();
     assert_eq!(vm.call_async("f", &[]).unwrap().cps_result(), Some(2000));
 }
 
@@ -632,7 +632,7 @@ fn budget_exhaustion_is_shared_by_nested_calls_and_scope_branches() {
         ..Default::default()
     })
     .unwrap();
-    vm.load_source("extern fn record(n: Int32) -> Int32 fn work() { var n=0; while n<100 { n=n+1; } } fn branch_task() @suspends { work() } fn f() @suspends { parallel { | branch_task() | branch_task() } record(9); }").unwrap();
+    vm.load_source("extern fn record(n: Int32) -> Int32 fn work() { var n=0; while n<100 { n=n+1; } } fn branch_task() @suspends { work() } fn f() @suspends { parallel { | branch_task() | branch_task() }; record(9); }").unwrap();
     let mut task = vm.call_async("f", &[]).unwrap();
     for _ in 0..20 {
         if task.is_finished() {
@@ -867,8 +867,8 @@ fn interpreter_preserves_cps_frames_and_scope_branches() {
     let vm = parity_vm(
         r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
-        fn left(value: Int32) @suspends { delayed_value(value) {} }
-        fn right(value: Int32) @suspends { delayed_value(value) {} }
+        fn left(value: Int32) @suspends { delayed_value(value); {} }
+        fn right(value: Int32) @suspends { delayed_value(value); {} }
         fn all(x: Int32) @suspends -> Int32 {
             let y = delayed_value(x)
             parallel { | left(y) | right(y + 1) }

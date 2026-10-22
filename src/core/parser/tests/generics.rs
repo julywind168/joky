@@ -6,7 +6,7 @@ mod generic_tests {
 
     #[test]
     fn generic_parameters_have_function_local_identity_and_explicit_calls_keep_spans() {
-        let source = "// 🙂\nfn id<T,>(x: T) -> T { x } fn next<T>(x: T) -> T { id::<T,>(x) } fn run() { (id::<(Int64, Bool),>((1, true))) 8 >> 1 1 < 2 }";
+        let source = "// 🙂\nfn id<T,>(x: T) -> T { x } fn next<T>(x: T) -> T { id::<T,>(x) } fn run() { (id::<(Int64, Bool),>((1, true)))\n 8 >> 1\n 1 < 2 }";
         let module = parse(source).unwrap();
         let Item::FnDef(first) = &module.items[0] else {
             panic!()
@@ -72,7 +72,7 @@ mod generic_enum_tests {
 
     #[test]
     fn generic_enum_type_applications_split_closers_without_changing_shift_tokens() {
-        let source = "// 🙂\nenum Option<T,> { None, Some(T) } fn f(x: Option<Option<Int32>>) { let a: Option<Option<Int32>>=x Option.None::<Option<Int32>> Option.Some::<Option<Int32>,>(x) 8 >> 1 8 >= 1 }";
+        let source = "// 🙂\nenum Option<T,> { None, Some(T) } fn f(x: Option<Option<Int32>>) { let a: Option<Option<Int32>>=x\n Option.None::<Option<Int32>>\n Option.Some::<Option<Int32>,>(x)\n 8 >> 1\n 8 >= 1 }";
         let module = parse(source).unwrap();
         let definition = &module.enums[0];
         assert_eq!(definition.type_params.len(), 1);
@@ -98,7 +98,7 @@ mod generic_enum_tests {
             "enum E<> { A }",
             "enum E<T,T> { A }",
             "enum E<_> { A }",
-            "enum E<T: Copy> { A(T) }",
+            "enum E<T: Show> { A(T) }",
             "fn f(x: E<>) {}",
             "fn f(x: E<Int32 Bool>) {}",
             "fn f(x: E<E<Int32>) {}",
@@ -117,7 +117,7 @@ mod generic_record_tests {
 
     #[test]
     fn generic_record_parameters_and_explicit_constructors_preserve_scope_and_spans() {
-        let source = "// 🙂\npub struct Pair<T, U,> { left: T, right: U } struct Plain { value: T } fn f() { let p: Pair<Int32, Pair<Bool, Unit>>=Pair::<Int32, Pair<Bool, Unit>> { left: 1, right: Pair { left: true, right: {} } } app.Pair::<Int64, Bool> { left: 42, right: true }.left 8 >> 1 }";
+        let source = "// 🙂\npub struct Pair<T, U,> { left: T, right: U } struct Plain { value: T } fn f() { let p: Pair<Int32, Pair<Bool, Unit>>=Pair::<Int32, Pair<Bool, Unit>> { left: 1, right: Pair { left: true, right: {} } }\n app.Pair::<Int64, Bool> { left: 42, right: true }.left\n 8 >> 1 }";
         let module = parse(source).unwrap();
         let record = &module.records[0];
         assert!(record.public);
@@ -154,8 +154,8 @@ mod generic_record_tests {
             "struct S<> {}",
             "struct S<T,T> {}",
             "struct S<_> {}",
-            "struct S<T: Copy> { value: T }",
-            "type Alias<T: Copy> = T",
+            "struct S<T: Show> { value: T }",
+            "type Alias<T: Show> = T",
             "impl<T: Copy +> Pair<T> {}",
             "impl Pair<Int32> {}",
         ] {
@@ -170,7 +170,7 @@ mod generic_alias_tests {
 
     #[test]
     fn generic_alias_parameters_keep_declaration_scope_and_source_spans() {
-        let source = "// 🙂\npub type PairOf<T,> = (T, T) type Identity<T> = T type Plain = T fn f(x: PairOf<Identity<Int32>>) { let p: PairOf<Identity<Int32>>=x 8 >> 1 }";
+        let source = "// 🙂\npub type PairOf<T,> = (T, T) type Identity<T> = T type Plain = T fn f(x: PairOf<Identity<Int32>>) { let p: PairOf<Identity<Int32>>=x\n 8 >> 1 }";
         let module = parse(source).unwrap();
         let alias = &module.type_aliases[0];
         assert!(alias.public);
@@ -201,7 +201,7 @@ mod generic_alias_tests {
             "type X<T, T> = T",
             "type X<_> = Int32",
             "type X<T U> = T",
-            "type X<T: Copy> = T",
+            "type X<T: Show> = T",
             "type X<T = Int32> = T",
             "type X<T>",
             "type X<T> =",

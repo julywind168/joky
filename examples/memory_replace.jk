@@ -12,13 +12,13 @@ fn exchange<T>(value: &mut T, next: T) -> T {
 fn main() {
     var pending = Some(resource(42))
     match pending.take() {
-        Some(item) => { let displayed: Int32 = item.id println(&displayed) }
-        None => { let displayed: Int32 = 0 println(&displayed) }
+        Some(item) => println(item.id)
+        None => println(0)
     }
-    { let displayed: Int32 = if pending.is_none() { 1 } else { 0 } println(&displayed) }
+    println(if pending.is_none() { 1 } else { 0 })
 
     var resources = Array.new::<Resource>()
     resources.push(resource(20))
     let previous = exchange(resources.borrow_mut_ref(0), resource(22))
-    { let displayed: Int32 = previous.id + resources.borrow_ref(0).id println(&displayed) }
+    println(previous.id + resources.borrow_ref(0).id)
 }

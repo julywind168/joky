@@ -9,13 +9,13 @@ fn error_code<T>(value: Outcome<T, Int32>) -> Int32 {
 }
 fn wide() -> UInt64 {
     let value = Maybe.Some::<UInt64>(0xffff_ffff_ffff_ffff).zip(Maybe.Some({}))
-    match value { None => 0, Some(pair) => { let (n, unit) = pair n } }
+    match value { None => 0, Some(pair) => { let (n, unit) = pair; n } }
 }
 fn check() -> Int32 {
     let both = opt.Option::<Int64>.zip::<Bool>(Maybe.Some(4294967295), Maybe.Some(true))
     let present = match both {
         None => false
-        Some(pair) => { let (n, valid) = pair n == 4294967295 && valid }
+        Some(pair) => { let (n, valid) = pair; n == 4294967295 && valid }
     }
     let none_left = Maybe.None::<Int64>.zip(Maybe.Some(true))
     let none_right = Maybe.Some(42).zip(Maybe.None::<Unit>)
@@ -24,10 +24,10 @@ fn check() -> Int32 {
     if !present || !missing(none_left) || !missing(none_right) || !missing(neither) || missing(nested) { return 1 }
 
     var events = 0
-    let eager_none = Maybe.None::<Int32>.zip({ events = events + 1 Maybe.Some(true) })
+    let eager_none = Maybe.None::<Int32>.zip({ events = events + 1; Maybe.Some(true) })
     var receiver = Maybe.Some(42)
-    let snapshot = receiver.zip({ receiver = Maybe.None::<Int32> Maybe.Some(true) })
-    let saved = match snapshot { None => 0, Some(pair) => { let (n, valid) = pair if valid { n } else { 0 } } }
+    let snapshot = receiver.zip({ receiver = Maybe.None::<Int32>; Maybe.Some(true) })
+    let saved = match snapshot { None => 0, Some(pair) => { let (n, valid) = pair; if valid { n } else { 0 } } }
     if events != 1 || !missing(eager_none) || !missing(receiver) || saved != 42 { return 2 }
 
     let ok: Outcome<Int32, Int32> = Outcome.Ok(42)
@@ -36,7 +36,7 @@ fn check() -> Int32 {
     let failed: Outcome<Bool, Int32> = Outcome.Err(9)
     let accepted = match ok.and(next) { Ok(valid) => valid, Err(code) => false }
     if !accepted || error_code(ok.and(failed)) != 9 || error_code(err.and(next)) != 7 || error_code(err.and(failed)) != 7 { return 3 }
-    let eager_error = err.and::<Unit>({ events = events + 1 Outcome.Err(99) })
+    let eager_error = err.and::<Unit>({ events = events + 1; Outcome.Err(99) })
     let typed = res.Result::<Int32, Int32>.and::<UInt64>(ok, Outcome.Ok(0xffff_ffff_ffff_ffff))
     let all_explicit = Outcome.and::<Int32, Int32, Unit>(ok, Outcome.Ok({}))
     let typed_wide = match typed { Ok(n) => n, Err(code) => 0 }

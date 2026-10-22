@@ -7,25 +7,25 @@ struct Input { amount:Int32, bits:Bits }
 struct Reply { accepted:Bool, remaining:Int32, bits:Bits }
 struct Empty {}
 struct Owned { label:String, balance:Int32 }
-fn require(ok:Bool) {let message="domain values" check.assert(ok,&message)}
+fn require(ok:Bool) {let message="domain values"; check.assert(ok,&message)}
 fn make(n:Int32)->Wallet {Wallet{balance:n}}
 fn owned(n:Int32)->Owned {Owned{label:"owned",balance:n}}
 fn bits()->Bits {Bits{high:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626)}}
 fn reply(n:Int32,b:Bits)->Reply {Reply{accepted:true,remaining:n,bits:b}}
 fn read(w:&Wallet)->Reply {reply(w.balance,bits())}
-fn add(w:&mut Wallet,input:Input)->Reply {w.balance=w.balance+input.amount reply(w.balance,input.bits)}
+fn add(w:&mut Wallet,input:Input)->Reply {w.balance=w.balance+input.amount; reply(w.balance,input.bits)}
 fn scalar_input(w:&mut Wallet,n:Int32)->Reply {reply(w.balance+n,bits())}
 fn scalar_result(w:&mut Wallet,input:Input)->Int32 {w.balance+input.amount}
 fn unit_input(w:&mut Wallet,input:Unit)->Reply {reply(w.balance,bits())}
 fn transfer(a:&mut Wallet,b:&mut Wallet,input:Input)->Reply {
-    a.balance=a.balance-input.amount b.balance=b.balance+input.amount
+    a.balance=a.balance-input.amount; b.balance=b.balance+input.amount
     reply(a.balance,input.bits)
 }
-fn update(a:&Wallet,b:&mut Wallet,input:Input)->Reply {b.balance=a.balance+input.amount reply(b.balance,input.bits)}
+fn update(a:&Wallet,b:&mut Wallet,input:Input)->Reply {b.balance=a.balance+input.amount; reply(b.balance,input.bits)}
 fn sum(a:&Wallet,b:&Wallet)->Reply {reply(a.balance+b.balance,bits())}
-fn change_owned(w:&mut Owned,input:Input)->Reply {w.balance=w.balance+input.amount reply(w.balance,input.bits)}
+fn change_owned(w:&mut Owned,input:Input)->Reply {w.balance=w.balance+input.amount; reply(w.balance,input.bits)}
 fn read_owned(w:&Owned)->Reply {reply(w.balance+int32(w.label.byte_length()),bits())}
-fn empty(w:&mut Wallet,input:Empty)->Empty {w.balance=w.balance+1 Empty{}}
+fn empty(w:&mut Wallet,input:Empty)->Empty {w.balance=w.balance+1; Empty{}}
 fn unit(w:&mut Wallet,input:Unit) {w.balance=w.balance+1}
 fn read_empty(w:&Wallet)->Empty {Empty{}}
 fn read_unit(w:&Wallet) {}
@@ -40,7 +40,7 @@ fn verify(r:Reply,n:Int32) {
     require(r.bits.real.to_bits()==9221120237041090626)
 }
 fn lifecycle() @suspends ->Int32 {
-    let a=domain.create(make,20) let b=domain.create(make,5)
+    let a=domain.create(make,20); let b=domain.create(make,5)
     let input=Input{amount:3,bits:bits()}
     verify(domain.write_to(a.handle(),add,input).unwrap(),23)
     verify(domain.read_from(a.read_handle(),read).unwrap(),23)
@@ -60,7 +60,7 @@ fn lifecycle() @suspends ->Int32 {
     let c=domain.create(owned,1)
     verify(domain.write_to(c.handle(),change_owned,input).unwrap(),4)
     verify(domain.read_from(c.read_handle(),read_owned).unwrap(),9)
-    c.close() b.close() a.close()
+    c.close(); b.close(); a.close()
     24
 }
 

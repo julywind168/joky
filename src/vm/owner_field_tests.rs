@@ -195,32 +195,32 @@ fn owner_field_cleanup_keeps_code_after_reload_and_vm_drop() {
 #[test]
 fn owner_fields_reject_consumed_records_and_conflicting_borrows() {
     for (body, message) in [
-        ("fn bad() { var p = Single { values: Array.new::<Int32>() } let x = p.values p.values = Array.new::<Int32>() }", "moved"),
-        ("fn bad() { var p = Single { values: Array.new::<Int32>() } p.values = { let x = p Array.new::<Int32>() } }", "moved"),
-        ("fn bad() { let p = pack(1) let x = p.middle p.tag; }", "moved"),
-        ("fn bad() { let p = pack(1) let x = p.first let y = p.last }", "moved"),
-        ("fn bad() { let p = pack(1) let x = p.last let y = p.first }", "moved"),
-        ("fn bad() { let p = pack(1) let x = p.middle let y = p }", "moved"),
-        ("fn bad() { var p = pack(1) let x = p.middle p.first = part::<Int32>(4) }", "moved"),
-        ("fn bad() { var p = pack(1) let x = p.middle p.tag = 5 }", "moved"),
-        ("fn bad() { let p = pack(1) let x = p.middle let y = &p.last }", "moved"),
-        ("fn bad() { var p = pack(1) p.middle = { let x = p part::<Int64>(4) } }", "moved"),
-        ("fn bad() { var p = pack(1) p.middle = p.middle }", "moved"),
-        ("fn bad() { var p = pack(1) p.middle = { let x = p.last part::<Int64>(4) } }", "moved"),
-        ("fn bad() { let p = nest() let x = p.inner.middle p.head.id; }", "moved"),
-        ("fn bad() { let p = nest() let x = p.inner.middle p.inner.tag; }", "moved"),
-        ("fn bad() { var p = pack(1) let view = &p.first p.middle = part::<Int64>(4) view.id; }", "borrow"),
-        ("fn bad() { var p = pack(1) let view = &mut p.middle p.middle = part::<Int64>(4) view.id; }", "borrow"),
-        ("fn bad() { var p = pack(1) let view = &p.last let x = p.first view.id; }", "borrow"),
+        ("fn bad() { var p = Single { values: Array.new::<Int32>() }; let x = p.values; p.values = Array.new::<Int32>() }", "moved"),
+        ("fn bad() { var p = Single { values: Array.new::<Int32>() }; p.values = { let x = p; Array.new::<Int32>() } }", "moved"),
+        ("fn bad() { let p = pack(1); let x = p.middle; p.tag; }", "moved"),
+        ("fn bad() { let p = pack(1); let x = p.first; let y = p.last }", "moved"),
+        ("fn bad() { let p = pack(1); let x = p.last; let y = p.first }", "moved"),
+        ("fn bad() { let p = pack(1); let x = p.middle; let y = p }", "moved"),
+        ("fn bad() { var p = pack(1); let x = p.middle; p.first = part::<Int32>(4) }", "moved"),
+        ("fn bad() { var p = pack(1); let x = p.middle; p.tag = 5 }", "moved"),
+        ("fn bad() { let p = pack(1); let x = p.middle; let y = &p.last }", "moved"),
+        ("fn bad() { var p = pack(1); p.middle = { let x = p; part::<Int64>(4) } }", "moved"),
+        ("fn bad() { var p = pack(1); p.middle = p.middle }", "moved"),
+        ("fn bad() { var p = pack(1); p.middle = { let x = p.last; part::<Int64>(4) } }", "moved"),
+        ("fn bad() { let p = nest(); let x = p.inner.middle; p.head.id; }", "moved"),
+        ("fn bad() { let p = nest(); let x = p.inner.middle; p.inner.tag; }", "moved"),
+        ("fn bad() { var p = pack(1); let view = &p.first; p.middle = part::<Int64>(4); view.id; }", "borrow"),
+        ("fn bad() { var p = pack(1); let view = &mut p.middle; p.middle = part::<Int64>(4); view.id; }", "borrow"),
+        ("fn bad() { var p = pack(1); let view = &p.last; let x = p.first; view.id; }", "borrow"),
         ("fn bad(p: &Pack) -> Part<Int64> { p.middle }", "borrowed wrapper"),
         ("fn bad(p: &mut Pack) { p.middle = part::<Int64>(4) }", "borrowed wrapper"),
-        ("fn bad() { let p = groups() let x = p.group.inner.middle }", "Drop"),
+        ("fn bad() { let p = groups(); let x = p.group.inner.middle }", "Drop"),
         ("fn bad() { let x = groups().group.inner.middle }", "Drop"),
-        ("fn bad() { var p = groups() p.group.inner.middle = part::<Int64>(4) }", "Drop"),
-        ("fn bad() { let local = 42 var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second.push(&local) let x = p.second }", "local borrow"),
-        ("fn bad() { let local = 42 var next = Array.new::<&Int32>() next.push(&local) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second = next }", "local borrow"),
-        ("fn bad() { let value = alloc(42) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second.push((&*value)) let x = p.second ; (*(value) = 0) }", "retained"),
-        ("fn bad() { let value = alloc(42) var next = Array.new::<&Int32>() next.push((&*value)) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second = next ; (*(value) = 0) }", "retained"),
+        ("fn bad() { var p = groups(); p.group.inner.middle = part::<Int64>(4) }", "Drop"),
+        ("fn bad() { let local = 42; var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }; p.second.push(&local); let x = p.second }", "local borrow"),
+        ("fn bad() { let local = 42; var next = Array.new::<&Int32>(); next.push(&local); var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }; p.second = next }", "local borrow"),
+        ("fn bad() { let value = alloc(42); var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }; p.second.push((&*value)); let x = p.second ; (*(value) = 0) }", "retained"),
+        ("fn bad() { let value = alloc(42); var next = Array.new::<&Int32>(); next.push((&*value)); var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }; p.second = next ; (*(value) = 0) }", "retained"),
     ] {
         let source = format!("{SOURCE}\n{body}").replace("extern fn record_drop(value: Int32)", "fn record_drop(value: Int32) {}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -260,7 +260,7 @@ fn owner_fields_preserve_generic_private_module_identity() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = vm(mode);
         vm.load_source_with_modules(
-            "import owned struct Tag { flag: Bool } fn extract() -> Int32 { let p = owned.extract(owned.make::<Tag>()) p.id + 40 } fn replace() -> Int32 { let p = owned.replace(owned.make::<Tag>()) 42 }", &modules
+            "import owned struct Tag { flag: Bool } fn extract() -> Int32 { let p = owned.extract(owned.make::<Tag>()); p.id + 40 } fn replace() -> Int32 { let p = owned.replace(owned.make::<Tag>()); 42 }", &modules
         ).unwrap_or_else(|e| panic!("{e}"));
         for (name, expected) in [("extract", vec![1, 2]), ("replace", vec![2, 1, 3])] {
             EVENTS.with(|events| events.borrow_mut().clear());
@@ -269,8 +269,8 @@ fn owner_fields_preserve_generic_private_module_identity() {
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
         for body in [
-            "let value = owned.make::<Int32>() let x = value.second",
-            "var value = owned.make::<Int32>() value.second = owned.extract(owned.make::<Int32>())",
+            "let value = owned.make::<Int32>(); let x = value.second",
+            "var value = owned.make::<Int32>(); value.second = owned.extract(owned.make::<Int32>())",
         ] {
             let error = vm
                 .load_source_with_modules(&format!("import owned fn bad() {{ {body} }}"), &modules)
@@ -300,7 +300,7 @@ fn owner_fields_keep_hooks_when_registration_allocation_fails() {
         )
         .unwrap();
     }
-    vm.load_source(&format!("{SOURCE}\nextern fn restrict_allocations()\nfn fail() -> Int32 {{ let p = pack(1) restrict_allocations() let selected = p.middle 42 }}")).unwrap();
+    vm.load_source(&format!("{SOURCE}\nextern fn restrict_allocations()\nfn fail() -> Int32 {{ let p = pack(1); restrict_allocations(); let selected = p.middle; 42 }}")).unwrap();
     let _reset = ResetLimit;
     EVENTS.with(|events| events.borrow_mut().clear());
     let error = vm.call_int32_0("fail").unwrap_err();

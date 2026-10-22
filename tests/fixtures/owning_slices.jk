@@ -14,7 +14,7 @@ fn resource(id: Int32) -> Resource {
 
 fn slice_shared() -> Int32 {
     var values = Array.new::<Resource>()
-    values.push(resource(11)) values.push(resource(12)) values.push(resource(13))
+    values.push(resource(11)); values.push(resource(12)); values.push(resource(13))
     let region = values.slice(1, 3)
     let nested = tail(region)
     let a = first(region)
@@ -25,7 +25,7 @@ fn slice_shared() -> Int32 {
 }
 fn slice_mutable() -> Int32 {
     var values = Array.new::<Resource>()
-    values.push(resource(11)) values.push(resource(12)) values.push(resource(13))
+    values.push(resource(11)); values.push(resource(12)); values.push(resource(13))
     let region = values.slice_mut(0, 3)
     let child = tail_mut(region)
     let old = mem.replace(first_mut(child), resource(14))
@@ -99,11 +99,11 @@ fn slice_drop_failure() -> Int32 {
 }
 struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing {
-    fn drop(&mut self) { record_drop(self.id) let zero = 0 let _ = 1 / zero }
+    fn drop(&mut self) { record_drop(self.id); let zero = 0; let _ = 1 / zero }
 }
 fn slice_transitions() -> Int32 {
     var values = Array.new::<Resource>()
-    values.push(resource(11)) values.push(resource(12))
+    values.push(resource(11)); values.push(resource(12))
     let region = values.slice_mut(0, 2)
     let child = tail_mut(region)
     let old = mem.replace(first_mut(child), resource(13))

@@ -89,7 +89,7 @@ extern fn __vm_source(owner: &vm.Owner, name: String, source: String, publish: B
 fn source_result(value: &Vm, path: String, source: String, publish: Bool) @suspends -> Result<UInt64, LoadError> {
     var packet = storage.allocate::<UInt64>(5)
     var index: UInt64 = 0
-    while index < 5 { storage.initialize_next(&mut packet, 0) index += 1 }
+    while index < 5 { storage.initialize_next(&mut packet, 0); index += 1 }
     let message = __vm_source(&value.owner, path.clone(), source, publish, &mut packet)
     let code = storage.load(&packet, 0)
     if code == 0 { return Ok(storage.load(&packet, 4)) }

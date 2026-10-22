@@ -164,7 +164,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         fn aot_expression(x: Int32) @suspends -> Int32 {
             var active = (x < 0) == !(wait_value(x) > 0)
             var result = -x
-            while active { result = result + -wait_value(2) * 2 active = false }
+            while active { result = result + -wait_value(2) * 2; active = false }
             result
         }
         fn aot_conditional(x: Int32) @suspends -> Int32 {
@@ -174,9 +174,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             } else { wait_value(20) }
             selected + wait_value(30)
         }
-        fn loop_branch(x: Int32) @suspends { wait_value(x) {} }
+        fn loop_branch(x: Int32) @suspends { wait_value(x); {} }
         fn aot_jumps(n: Int32) @suspends -> Int32 {
-            var i = 0 var total = 0
+            var i = 0; var total = 0
             while wait_value(i) <= n {
                 i = i + 1
                 if i == 2 { continue }
@@ -192,7 +192,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             var checks = 0;
             while (checks = checks + 1; wait_value(i) <= n) {
                 parallel { | loop_branch(i) | loop_branch(i + 10) }
-                total = total + wait_value({ i = i + 1 i })
+                total = total + wait_value({ i = i + 1; i })
             }
             total + (checks - (n + 1))
         }

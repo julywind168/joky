@@ -503,7 +503,7 @@ pub(crate) fn substitute_syntax(ty: &Type, arguments: &crate::core::types::Subst
                 length: arguments.constant(&a.length),
             }))
         }
-        Type::Function(signature) => Type::function_with_effect(
+        Type::Function(signature) => Type::function_with_contract(
             signature
                 .signature
                 .params
@@ -512,6 +512,7 @@ pub(crate) fn substitute_syntax(ty: &Type, arguments: &crate::core::types::Subst
                 .collect(),
             substitute_syntax(&signature.signature.ret, arguments),
             signature.suspends,
+            signature.noescape,
         ),
         Type::DynTrait(d) => {
             let mut d = d.as_ref().clone();

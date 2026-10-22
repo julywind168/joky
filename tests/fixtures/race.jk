@@ -79,7 +79,7 @@ impl Point {
         record(self.x);
     }
 }
-fn generic<T>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
+fn generic<T: Copy>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
 fn race_generic() @suspends -> Int32 {
     let p = alloc(Point { x: 42 })
     let values = (Some((&*p)),)

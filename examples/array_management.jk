@@ -5,14 +5,14 @@ struct Resource { id: Int32, values: Array<Int32> }
 fn resource(id: Int32) -> Resource { Resource { id: id, values: Array.new::<Int32>() } }
 fn main() {
     var values = Array.with_capacity::<Resource>(4)
-    values.push(resource(20)) values.push(resource(21)) values.push(resource(22))
+    values.push(resource(20)); values.push(resource(21)); values.push(resource(22))
     values.swap(0, 2)
-    { let displayed: Int32 = values.borrow_ref(0).id println(&displayed) }
+    println(values.borrow_ref(0).id)
     values.truncate(1)
-    { let displayed: Int32 = int32(values.len()) println(&displayed) }
+    println(int32(values.len()))
     values.clear()
-    { let displayed: Int32 = int32(values.capacity()) println(&displayed) }
+    println(int32(values.capacity()))
     values.push(resource(42))
-    { let displayed: Int32 = values.borrow_ref(0).id println(&displayed) }
-    { let displayed: Int32 = if values.swap(0, 99) { 1 } else { 0 } println(&displayed) }
+    println(values.borrow_ref(0).id)
+    println(if values.swap(0, 99) { 1 } else { 0 })
 }

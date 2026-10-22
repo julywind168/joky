@@ -14,8 +14,8 @@ fn unwrap_or<T>(value: Option<T>, fallback: T) -> T { match value { None => fall
 fn choose<T>(a: T, b: T) -> T { a }
 fn ok<T, E>(value: T) -> Result<T, E> { Result.Ok(value) }
 fn convert<T>(value: Option<T>) -> Result<T, Bool> { match value { Some(n) => Result.Ok(n), None => Result.Err(false) } }
-fn duplicate<T>(value: Option<T>) -> (Option<T>, Option<T>) { (value, value) }
-fn replace<T>(a: Option<T>, b: Option<T>) -> Option<T> { var value = a let saved = value value = b saved }
+fn duplicate<T: Copy>(value: Option<T>) -> (Option<T>, Option<T>) { (value, value) }
+fn replace<T>(a: Option<T>, b: Option<T>) -> Option<T> { var value = a; let saved = value; value = b; saved }
 fn recurse<T>(value: Option<T>, n: Int32) -> Option<T> { if n == 0 { value } else { recurse(value, n - 1) } }
 fn wide() -> Wide { unwrap_or::<Wide>(Option.Some(0xffff_ffff_ffff_ffff), 0) }
 fn check() -> Int32 {
@@ -28,7 +28,7 @@ fn check() -> Int32 {
     let d = Result.Err::<Int32, Bool>(false)
     let pair = Pair { low: -1, high: high }
     var holder = Holder { value: some(pair) }
-    let saved = choose(holder.value, { holder.value = Option.None holder.value })
+    let saved = choose(holder.value, { holder.value = Option.None; holder.value })
     let prior = replace(saved, none::<Pair>())
     let (left, right) = duplicate(prior)
     let p = unwrap_or(recurse(left, 5), pair)
@@ -36,7 +36,7 @@ fn check() -> Int32 {
     let empty = Option.Some(Empty {})
     let ph = Phantom.Value::<(Unit, Empty)>
     let wrapped: Wrapper<Pair> = Wrapper.Wrapped(Option.Some((p, true)))
-    let w = match wrapped { Empty => 0, Wrapped(inner) => { let (q, valid) = unwrap_or(inner, (pair, false)) if valid { q.low } else { 0 } } }
+    let w = match wrapped { Empty => 0, Wrapped(inner) => { let (q, valid) = unwrap_or(inner, (pair, false)); if valid { q.low } else { 0 } } }
     let r = convert(id(a))
     let answer = match r { Ok(n) => n, Err(error) => 0 }
     let other: Result<Int32, Bool> = ok::<Int32, Bool>(9)

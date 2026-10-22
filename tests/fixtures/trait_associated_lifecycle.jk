@@ -32,6 +32,6 @@ impl Factory for Producer {
     type Item = String
     fn make(id: Int32) -> String { "owned across suspension" }
 }
-fn default_discard() -> Int32 { Factory.discard::<DropProducer>(7) 42 }
+fn default_discard() -> Int32 { Factory.discard::<DropProducer>(7); 42 }
 fn default_task() @suspends -> Int32 { Factory.run::<Producer>(7) }
 fn default_failure() -> Int32 { Factory.fail::<DropProducer>(7, 0) }

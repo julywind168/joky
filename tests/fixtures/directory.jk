@@ -7,8 +7,8 @@ import joky/task
 struct Room { value:Int32 }
 fn make(value:Int32)->Room { Room{value:value} }
 fn read(room:&Room)->Int32 { room.value }
-fn update(room:&mut Room,value:Int32)->Int32 { room.value=value value }
-fn assert(ok:Bool) { let message="directory routing" check.assert(ok,&message) }
+fn update(room:&mut Room,value:Int32)->Int32 { room.value=value; value }
+fn assert(ok:Bool) { let message="directory routing"; check.assert(ok,&message) }
 fn value(directory:domain.DirectoryHandle,key:UInt64) @suspends ->Int32 {
     match domain.lookup::<Room>(directory,key) { Some(room)=>domain.read_from(room,read).unwrap(),None=>-1 }
 }
@@ -60,15 +60,15 @@ fn route() @suspends {
 fn weak() @suspends {
     let table=domain.directory(1)
     let directory=table.handle()
-    { let room=domain.create(make,1) assert(directory.insert(1,room.handle()).is_ok()) }
+    { let room=domain.create(make,1); assert(directory.insert(1,room.handle()).is_ok()) }
     assert(domain.lookup::<Room>(directory,1).is_none())
     let room=domain.create(make,2)
-    let dangling={ let other=domain.directory(1) let h=other.handle() assert(h.insert(1,room.handle()).is_ok()) h }
+    let dangling={ let other=domain.directory(1); let h=other.handle(); assert(h.insert(1,room.handle()).is_ok()); h }
     assert(domain.lookup::<Room>(dangling,1).is_none())
     assert(domain.read_from(room.read_handle(),read).unwrap()==2)
 }
 struct Catalog { values:Array<Int32> }
-fn catalog(value:Int32)->Catalog { var values=Array.new::<Int32>() values.push(value) Catalog{values:values} }
+fn catalog(value:Int32)->Catalog { var values=Array.new::<Int32>(); values.push(value); Catalog{values:values} }
 fn first(catalog:&Catalog)->Int32 { catalog.values.get(0).unwrap_or(-1) }
 fn owned() @suspends {
     let table=domain.directory(1)
@@ -107,4 +107,4 @@ fn typed_only() @suspends {
     p.close()
     assert(find::<Profile>(directory,1).is_none())
 }
-fn main() @suspends ->Int32 { route() task.yield_now() weak() owned() typed_only() println("directory ok") 0 }
+fn main() @suspends ->Int32 { route(); task.yield_now(); weak(); owned(); typed_only(); println("directory ok"); 0 }

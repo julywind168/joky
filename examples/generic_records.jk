@@ -14,19 +14,19 @@ fn main() {
     var p = pair(42, 7)
     let saved = p
     p.left = 9
-    { let displayed: Int32 = first(saved) println(&displayed) }
-    { let displayed: Int32 = p.left println(&displayed) }
+    println(first(saved))
+    println(p.left)
 
     // A later concrete field determines the earlier literal's type.
     let inferred = Pair { left: 4294967295, right: int64(7) }
-    { let displayed: Int64 = inferred.left println(&displayed) }
+    println(inferred.left)
 
     let nested: Holder<UInt64> = Holder {
         value: Some(Pair { left: 0xffff_ffff_ffff_ffff, right: 0 })
     }
-    { let displayed: UInt64 = match nested.value { Some(p) => p.left, None => 0 } println(&displayed) }
+    println(match nested.value { Some(p) => p.left, None => 0 })
     let explicit = Pair::<Int64> { left: 42, right: 0 }
-    { let displayed: Int64 = first(explicit) println(&displayed) }
+    println(first(explicit))
 
     // Phantom arguments need context or explicit type arguments.
     let marker: Marker<Int32> = Marker {}

@@ -1,5 +1,52 @@
 use super::*;
 
+#[test]
+fn same_line_expressions_require_a_separator() {
+    for source in [
+        "fn f() { let x = 1 x }",
+        "fn f() { first() second() }",
+        "fn f() { while false {} 42 }",
+        "fn f() { 1 /* same line */ 2 }",
+    ] {
+        let error = parse(source).unwrap_err();
+        assert!(
+            error.message.contains("Expected ';' or a newline"),
+            "{error}"
+        );
+    }
+    for source in [
+        "fn f() { let x = 1; x }",
+        "fn f() { let x = 1\nx }",
+        "fn f() { first(); second() }",
+        "fn f() { while false {}; 42 }",
+        "fn f() { 1 /* real\nnewline */ 2 }",
+    ] {
+        parse(source).unwrap();
+    }
+}
+
+#[test]
+fn call_suffixes_apply_to_all_expressions() {
+    for source in [
+        "fn f() { (callback)(41) }",
+        "fn f() { choose()(41) }",
+        "fn f() { callbacks[0](41) }",
+        "fn f() { optional!(41) }",
+        "fn f() { (if true { first } else { second })(41) }",
+        "fn f() { { callback }(41) }",
+        "fn f() { (|x: Int32| { x + 1 })(41) }",
+    ] {
+        let module = parse(source).unwrap();
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!()
+        };
+        assert!(matches!(&exprs[..], [Expr::Invoke { .. }]), "{source}");
+    }
+}
+
 fn block(source: &str) -> Vec<Expr> {
     let mut parser = Parser::from_source(source).unwrap();
     let Expr::Block { exprs, .. } = parser.parse_block().unwrap() else {

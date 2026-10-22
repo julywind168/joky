@@ -14,14 +14,14 @@ fn first<T>(value: Pair<T>) -> T { value.left }
 fn choose<T>(a: T, b: T) -> T { a }
 fn pick<T>(a: Pair<T>, b: T) -> T { a.left }
 fn unwrap<T>(value: Option<T>, fallback: T) -> T { match value { None => fallback, Some(n) => n } }
-fn replace<T>(value: Pair<T>, next: T) -> Pair<T> { var p = value let saved = p p.left = next saved }
+fn replace<T: Copy>(value: Pair<T>, next: T) -> Pair<T> { var p = value; let saved = p; p.left = next; saved }
 fn recurse<T>(value: Pair<T>, n: Int32) -> Pair<T> { if n == 0 { value } else { recurse(value, n - 1) } }
-fn local<T>(value: T) -> T { let p = Pair { left: value, right: value } p.left }
+fn local<T: Copy>(value: T) -> T { let p = Pair { left: value, right: value }; p.left }
 fn explicit<T>(value: T) -> Cell<T> { Cell::<T> { value: value } }
 fn phantom<T>() -> Marker<T> { Marker {} }
 fn split<A, B>(a: A, b: B) -> Split<A, B> { Split { second: b, first: a } }
 fn read_tag<T, Tag>(p: Tagged<T, Tag>) -> T { p.value }
-fn wide() -> Wide { let p: WidePair = Pair { left: 0xffff_ffff_ffff_ffff, right: 0 } first(p) }
+fn wide() -> Wide { let p: WidePair = Pair { left: 0xffff_ffff_ffff_ffff, right: 0 }; first(p) }
 fn check() -> Int32 {
     let inferred = Pair { left: 4294967295, right: int64(7) }
     let reversed = Pair { right: int64(8), left: 4294967295 }
@@ -39,9 +39,9 @@ fn check() -> Int32 {
     let u = id(unit)
     let e = id(empty)
     var p = pair(1, 2)
-    let saved = choose(p, { p.left = 9 p })
+    let saved = choose(p, { p.left = 9; p })
     let before = replace(saved, 8)
-    let field_copy = Pair { right: p.left, left: { p.left = 7 p.left } }
+    let field_copy = Pair { right: p.left, left: { p.left = 7; p.left } }
     var inner = Cell { value: p }
     let old_inner = inner
     inner.value.right = 8

@@ -26,8 +26,8 @@ fn scope_aot_lowering_emits_all_branch_frames() {
     let ast = crate::parser::parse(
         r#"
         extern fn wait_value(x: Int32) @suspends -> Int32
-        fn left(x: Int32) @suspends { wait_value(x) {} }
-        fn right(x: Int32) @suspends { wait_value(x) {} }
+        fn left(x: Int32) @suspends { wait_value(x); {} }
+        fn right(x: Int32) @suspends { wait_value(x); {} }
         fn all() @suspends -> Int32 {
             parallel {
                 | left(1)

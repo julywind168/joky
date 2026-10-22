@@ -100,12 +100,12 @@ pub fn bulk_group() -> Group {
     for (index, (text, separator)) in cases.iter().enumerate() {
         let parts = text.split(separator).collect::<Vec<_>>();
         let name = format!("bulk_{index}");
-        group.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {} let separator = {} let parts = input.split(&separator).unwrap_or(Array.new::<String>()) input.release() if parts.len() != {} {{ return 1 }} ", literal(text), literal(separator), parts.len()));
+        group.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {}; let separator = {}; let parts = input.split(&separator).unwrap_or(Array.new::<String>()); input.release(); if parts.len() != {} {{ return 1 }}; ", literal(text), literal(separator), parts.len()));
         for (index, part) in parts.iter().enumerate() {
-            group.source.push_str(&format!("{{ let expected = {} if !parts.borrow_ref({index}).equals(&expected) {{ return 2 }} }} ", literal(part)));
+            group.source.push_str(&format!("{{ let expected = {}; if !parts.borrow_ref({index}).equals(&expected) {{ return 2 }} }}; ", literal(part)));
         }
         let joined = parts.join(separator);
-        group.source.push_str(&format!("let joined = text.join(&parts, &separator) parts.release() separator.release() let expected = {} if !joined.equals(&expected) {{ return 3 }} 42 }}", literal(&joined)));
+        group.source.push_str(&format!("let joined = text.join(&parts, &separator); parts.release(); separator.release(); let expected = {}; if !joined.equals(&expected) {{ return 3 }}; 42 }}", literal(&joined)));
         group.entries.push(Entry {
             name,
             text: None,
@@ -120,14 +120,14 @@ pub fn bulk_group() -> Group {
         ("join_empty_parts", vec!["", "", ""], "|"),
     ] {
         group.source.push_str(&format!(
-            "\nfn {name}() -> String {{ var parts = Array.new::<String>() "
+            "\nfn {name}() -> String {{ var parts = Array.new::<String>(); "
         ));
         for value in &values {
             group
                 .source
-                .push_str(&format!("parts.push({}) ", literal(value)));
+                .push_str(&format!("parts.push({}); ", literal(value)));
         }
-        group.source.push_str(&format!("let separator = {} let result = text.join(&parts, &separator) parts.release() separator.release() result }}", literal(separator)));
+        group.source.push_str(&format!("let separator = {}; let result = text.join(&parts, &separator); parts.release(); separator.release(); result }}", literal(separator)));
         group.entries.push(Entry {
             name: name.into(),
             text: Some(values.join(separator)),
@@ -135,7 +135,7 @@ pub fn bulk_group() -> Group {
             failure: false,
         });
     }
-    group.source.push_str("\nfn empty_separator() -> Int32 { let input = \"中🙂\" let separator = \"\" let result = input.split(&separator) if input.byte_length() != 7 { return 1 } match result { Err(text.SplitError.EmptySeparator) => 42, Ok(_) => 2 } }");
+    group.source.push_str("\nfn empty_separator() -> Int32 { let input = \"中🙂\"; let separator = \"\"; let result = input.split(&separator); if input.byte_length() != 7 { return 1 }; match result { Err(text.SplitError.EmptySeparator) => 42, Ok(_) => 2 } }");
     group.entries.push(Entry {
         name: "empty_separator".into(),
         text: None,

@@ -16,7 +16,7 @@ fn clean() {
 fn json_typed_context_and_key_contracts_are_checked_in_all_backends() {
     for source in [
         "import joky/json/typed.{type Context} fn alter(context: &mut Context) { context.nodes = 0 }",
-        "import joky/json/typed as typed import joky/map.{type Map} fn main() { let value = Map.new::<Int32, String>() typed.encode(&value); }",
+        "import joky/json/typed as typed import joky/map.{type Map} fn main() { let value = Map.new::<Int32, String>(); typed.encode(&value); }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             assert!(VmEngine::with_mode(mode).load_source(source).is_err());

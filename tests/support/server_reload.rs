@@ -32,7 +32,7 @@ pub fn source(create: &str) -> String {
 fn start(old:&PreviousRoom)->Room {Room{score:int64(old.score),copied:0}}
 fn advance(next:&mut Room,old:&PreviousRoom,budget:UInt64)->Bool {
     var n:UInt64=0
-    while n<budget && next.copied<4 {next.copied=next.copied+1 n=n+1}
+    while n<budget && next.copied<4 {next.copied=next.copied+1; n=n+1}
     next.copied==4
 }
 fn upgrade_ledger(old:&PreviousLedger)->Ledger {Ledger{total:int64(old.total),generation:1}}

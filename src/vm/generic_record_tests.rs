@@ -116,15 +116,15 @@ fn generic_record_errors_leave_the_previous_module_published() {
             ErrorCode::UnknownName,
         ),
         (
-            "fn f() { let p: Pair<Int32> = Pair { left: 1, right: 2 } let q: Pair<Int64> = p }",
+            "fn f() { let p: Pair<Int32> = Pair { left: 1, right: 2 }; let q: Pair<Int64> = p }",
             ErrorCode::TypeMismatch,
         ),
         (
-            "fn f() { let p = Pair { left: 1, right: 2 } p.left = 3 }",
+            "fn f() { let p = Pair { left: 1, right: 2 }; p.left = 3 }",
             ErrorCode::InvalidAssignment,
         ),
         (
-            "fn f() { var p = Pair { left: 1, right: 2 } p.left = true }",
+            "fn f() { var p = Pair { left: 1, right: 2 }; p.left = true }",
             ErrorCode::TypeMismatch,
         ),
         (
@@ -212,7 +212,7 @@ fn generic_record_pending_values_survive_reload_failure_and_cancellation() {
         }
         fn pending() @suspends -> Int32 {
             var p = original()
-            let frame = build(p, { p.left = 9 7 })
+            let frame = build(p, { p.left = 9; 7 })
             if frame.value.left == 4294967295 && frame.value.right == -7 &&
                 p.left == 9 && frame.stamp == 8 { 42 } else { 0 }
         }

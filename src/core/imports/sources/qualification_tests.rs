@@ -38,9 +38,9 @@ fn plain_copy_qualification_executes_legal_layouts_on_both_vms() {
         enum Choice { Empty, Full(UInt64) }
         type Alias = Key
         fn test() -> Int32 {
-            q.guard::<Int32>() q.guard::<Int64>() q.guard::<UInt32>() q.guard::<UInt64>()
-            q.guard::<Bool>() q.guard::<Unit>() q.guard::<Key>() q.guard::<Alias>()
-            q.guard::<Choice>() q.guard::<(Int32, Bool)>()
+            q.guard::<Int32>(); q.guard::<Int64>(); q.guard::<UInt32>(); q.guard::<UInt64>()
+            q.guard::<Bool>(); q.guard::<Unit>(); q.guard::<Key>(); q.guard::<Alias>()
+            q.guard::<Choice>(); q.guard::<(Int32, Bool)>()
             42
         }
     "#;
@@ -116,7 +116,7 @@ fn plain_copy_qualification_follows_cross_module_concrete_arguments() {
         .message()
         .contains("reference-free Copy storage value"));
     let fake =
-        "fn require_plain_copy<T>() {} fn test() -> Int32 { require_plain_copy::<&Int32>() 42 }";
+        "fn require_plain_copy<T>() {} fn test() -> Int32 { require_plain_copy::<&Int32>(); 42 }";
     let mut vm = VmEngine::new();
     vm.load_source(fake).unwrap();
     assert_eq!(vm.call_int32_0("test").unwrap(), 42);

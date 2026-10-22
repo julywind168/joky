@@ -153,7 +153,7 @@ fn exhaustive_resource_owners_cancel_at_each_instruction() {
 #[test]
 fn resource_owners_reject_copy_forgery_and_unchecked_abi() {
     for source in [
-        "fn take(s: Socket) {} fn bad() { let s=make(1) take(s) take(s) }",
+        "fn take(s: Socket) {} fn bad() { let s=make(1); take(s); take(s) }",
         "fn copy<T: Copy>(s: T) {} fn bad() { copy(make(1)) }",
         "fn bad() -> Socket { 1 }",
         "extern fn leak(s: Socket) fn bad() { leak(make(1)) }",

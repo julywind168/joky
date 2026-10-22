@@ -23,7 +23,7 @@ fn scope_and_race_reject_overlapping_loans_and_conflicting_argument_evaluation()
         fn tick(id: Int32) @suspends {}
         fn change(p: &mut Point) -> Int32 { p.x = 2; p.x }
         fn view(p: &Point) -> &Point { p }
-        fn aggregate<T>(p: (Option<&T>,)) @suspends {}
+        fn aggregate<T: Copy>(p: (Option<&T>,)) @suspends {}
         fn nested(p: &mut Point) @suspends { parallel { | write(p) } }
     "#;
     for body in [
@@ -76,7 +76,7 @@ fn scope_and_race_allocation_capability_retains_input_loans_after_completion() {
         fn store(p: &Point) @suspends { alloc(Stored { point: p }); }
         fn indirect(p: &Point) @suspends { store(p) }
         fn nested(p: &Point) @suspends { parallel { | indirect(p) } }
-        fn generic<T>(p: &T) @suspends { alloc((p,)); }
+        fn generic<T: Copy>(p: &T) @suspends { alloc((p,)); }
         fn exclusive(p: &mut Point) @suspends { alloc(42); }
         fn aggregate(p: (Option<&Point>,)) @suspends { alloc(p); }
     "#;
@@ -307,8 +307,8 @@ fn arena_scope_imported_aliases_preserve_branch_and_storage_contracts() {
         pub fn make(x: Int32) -> &mut Point { alloc(Point { x: x }) }
         pub fn read(p: View) @suspends { p.x; }
         pub fn write(p: &mut Point) @suspends { p.x = p.x + 1; }
-        pub fn keep<T>(p: &T) @suspends { alloc((p,)); }
-        pub fn nested<T>(p: &T) @suspends { parallel { | keep(p) } }
+        pub fn keep<T: Copy>(p: &T) @suspends { alloc((p,)); }
+        pub fn nested<T: Copy>(p: &T) @suspends { parallel { | keep(p) } }
         pub fn allocate() @suspends { alloc(42); }
     "#,
         )

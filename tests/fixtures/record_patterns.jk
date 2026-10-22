@@ -190,13 +190,13 @@ fn loops_with_destructuring() -> Int32 {
 fn failing_construction() -> Int32 {
     let Holder { left, right, .. } = Holder {
         left: Resource { id: 1, values: Array.new::<Int32>() }
-        right: { record_drop(9) let fail = 1 << 32 Resource { id: 2, values: Array.new::<Int32>() } }
+        right: { record_drop(9); let fail = 1 << 32; Resource { id: 2, values: Array.new::<Int32>() } }
         tag: 5
     }
     left.id + right.id
 }
 fn failing_rhs_keeps_bindings_out() -> Int32 {
-    let Point { x, y } = { record_drop(8) point(1 / 0, 2) }
+    let Point { x, y } = { record_drop(8); point(1 / 0, 2) }
     x + y
 }
 fn cancellation_inner() -> Int32 {

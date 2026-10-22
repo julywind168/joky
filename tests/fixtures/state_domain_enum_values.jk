@@ -14,7 +14,7 @@ fn make(input:Option<Int32>)->State {State{n:input.unwrap_or(0)}}
 fn update(s:&mut State,input:Command)->Result<Int32,Rejection> {
     match input {
         Read=>Result.Ok(s.n),
-        Set(n)=>{s.n=n Result.Ok(n)},
+        Set(n)=>{s.n=n; Result.Ok(n)},
         Reject(e)=>Result.Err(e)
     }
 }
@@ -41,7 +41,7 @@ impl State {
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,Option.Some(10))
     let b=domain.create(make,Option.None::<Int32>)
-    let x=a.handle() let y=b.handle()
+    let x=a.handle(); let y=b.handle()
     assert(x.value().unwrap().unwrap_or(-1)==10)
     assert(x.apply(Command.Set(12)).unwrap().unwrap()==12)
     let command=Command.Reject(Rejection.Limit(4))
@@ -66,7 +66,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(receipt.wait().is_ok())
     let saved=domain.snapshot_pair(x.read_only(),y.read_only(),pair)
     assert(saved.value().unwrap_or(-1)==34)
-    var access=domain.access_set() access.include(x.read_only()) access.include(y.read_only())
+    var access=domain.access_set(); access.include(x.read_only()); access.include(y.read_only())
     let saved=domain.snapshot_set(access)
     assert(domain.read_snapshot(&saved,x.read_only(),read).unwrap_or(-1)==20)
     let candidate=domain.edit_snapshot(saved,x,edit,Option.Some(21))
@@ -74,7 +74,7 @@ fn lifecycle() @suspends ->Int32 {
     var receipt=domain.commit_set(candidate)
     assert(receipt.wait().is_ok())
     assert(x.value().unwrap().unwrap_or(-1)==21 && y.value().unwrap().unwrap_or(-1)==0)
-    let timer=domain.timer() let t=timer.handle()
+    let timer=domain.timer(); let t=timer.handle()
     domain.after(t,x,0,tick,Command.Set(30)).unwrap()
     while match t.status() {Active=>true,_=>false} {task.yield_now()}
     assert(x.value().unwrap().unwrap_or(-1)==30)

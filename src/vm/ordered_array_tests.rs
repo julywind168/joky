@@ -194,24 +194,24 @@ fn ordered_arrays_reject_conflicting_views_and_invalid_capabilities() {
     ] {
         for body in [
             format!("fn bad(values: &Array<Resource>) {{ {operation}; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_ref(0) {operation}; item.id; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_mut_ref(0) {operation}; item.id = 1; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1) {operation}; slices.borrow_ref(region, 0).id; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1) let child = slices.slice_mut(region, 0, 1) {operation}; slices.len(child); }}"),
-            format!("fn bad(values: Array<Resource>) {{ values.release() {operation}; }}"),
-            format!("fn pause() @suspends {{}} fn bad(values: &mut Array<Resource>) @suspends {{ let item = values.borrow_ref(0) pause() let id = item.id {operation}; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_ref(0); {operation}; item.id; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_mut_ref(0); {operation}; item.id = 1; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1); {operation}; slices.borrow_ref(region, 0).id; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1); let child = slices.slice_mut(region, 0, 1); {operation}; slices.len(child); }}"),
+            format!("fn bad(values: Array<Resource>) {{ values.release(); {operation}; }}"),
+            format!("fn pause() @suspends {{}} fn bad(values: &mut Array<Resource>) @suspends {{ let item = values.borrow_ref(0); pause(); let id = item.id; {operation}; }}"),
         ] {
             reject(&format!("{prefix} {body}"));
         }
     }
     for body in [
-        "fn bad(values: &mut Array<Int32>) { let item = values.borrow(0) values.remove(0); element.read(item); }",
-        "fn bad(values: &mut Array<Int32>) { let item = values.borrow(0) values.insert(0, 1); element.read(item); }",
+        "fn bad(values: &mut Array<Int32>) { let item = values.borrow(0); values.remove(0); element.read(item); }",
+        "fn bad(values: &mut Array<Int32>) { let item = values.borrow(0); values.insert(0, 1); element.read(item); }",
         "fn bad(values: &mut Array<Resource>) { values.remove(-1); }",
-        "fn bad(values: &mut Array<Resource>) { let item = Resource { id: 1, values: Array.new::<Int32>() } values.insert(0, item) values.insert(0, item); }",
-        "fn bad(values: &mut Array<Resource>) -> &Resource { let old = values.remove(0) match &old { Some(item) => item, None => values.borrow_ref(0) } }",
-        "fn bad(values: &mut Array<&Int32>) { let x = 42 values.insert(0, &x); }",
-        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.insert(0, (&*p)) values.remove(0); (*(p) = 2); }",
+        "fn bad(values: &mut Array<Resource>) { let item = Resource { id: 1, values: Array.new::<Int32>() }; values.insert(0, item); values.insert(0, item); }",
+        "fn bad(values: &mut Array<Resource>) -> &Resource { let old = values.remove(0); match &old { Some(item) => item, None => values.borrow_ref(0) } }",
+        "fn bad(values: &mut Array<&Int32>) { let x = 42; values.insert(0, &x); }",
+        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1); values.insert(0, (&*p)); values.remove(0); (*(p) = 2); }",
         "fn bad(values: &mut Array<Resource>) { values.insert(0, values.remove(0).unwrap_or(Resource { id: 0, values: Array.new::<Int32>() })); }",
     ] {
         reject(&format!("{prefix} {body}"));

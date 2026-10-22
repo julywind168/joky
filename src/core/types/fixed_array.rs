@@ -17,13 +17,8 @@ impl Type {
         TypeWalk::new(self, TypeEdges::Fields).all(|ty| match ty {
             Type::Record(r) => r.owners.is_empty() && r.closure.is_none(),
             Type::Enum(e) => e.owners.is_empty(),
-            Type::Tuple(_)
-            | Type::FixedArray(_)
-            | Type::Unit
-            | Type::Bool
-            | Type::Rune
-            | Type::Parameter(_)
-            | Type::Projection(_) => true,
+            Type::Tuple(_) | Type::FixedArray(_) | Type::Unit | Type::Bool | Type::Rune => true,
+            Type::Parameter(p) => p.copy,
             _ => ty.integer().is_some() || ty.is_float(),
         })
     }
@@ -94,10 +89,10 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
                 Type::Enum(e) => e.owners.is_empty() && !e.indirect,
                 Type::Parameter(p) => {
                     p.kind == ParameterKind::Type
+                        && p.copy
                         && p.callable.is_none()
                         && registry.parameters.contains_key(&p.id)
                 }
-                Type::Projection(_) => true,
                 _ => false,
             };
             if !allowed {

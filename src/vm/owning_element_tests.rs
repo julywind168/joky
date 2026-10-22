@@ -172,12 +172,12 @@ fn owning_elements_reject_copy_reads_views_and_hidden_capabilities() {
         "fn bad(a: &Array<Resource>) { a.get(0); }",
         "fn bad(a: &Array<Resource>) { a.borrow(0); }",
         "fn bad(a: &mut Array<Resource>) { a.borrow_mut(0); }",
-        "fn bad() { var a = Array.new::<Resource>() let value = Resource { values: Array.new::<Int32>() } a.push(value) a.push(value) }",
+        "fn bad() { var a = Array.new::<Resource>(); let value = Resource { values: Array.new::<Int32>() }; a.push(value); a.push(value) }",
         "fn bad(a: &Array<Resource>) -> Resource { a.take_last() }",
         "fn bad(a: &Array<Resource>) @suspends -> &Array<Resource> { a }",
-        "fn bad(a: Array<Resource>) { let reference = &a a.release() reference.len(); }",
-        "fn bad() { var a = Array.new::<Resource>() a.push(Resource { values: Array.new::<Int32>() }) let reference = &a a.take_last(); reference.len(); }",
-        "fn bad() { var a = Array.new::<Resource>() let view = &a a.set(0, Resource { values: Array.new::<Int32>() }) view.len(); }",
+        "fn bad(a: Array<Resource>) { let reference = &a; a.release(); reference.len(); }",
+        "fn bad() { var a = Array.new::<Resource>(); a.push(Resource { values: Array.new::<Int32>() }); let reference = &a; a.take_last(); reference.len(); }",
+        "fn bad() { var a = Array.new::<Resource>(); let view = &a; a.set(0, Resource { values: Array.new::<Int32>() }); view.len(); }",
         "fn bad(a: Array<&Array<Int32>>) {}",
         "struct SharedOwner { values: Array<&Int32> } fn bad(a: Array<SharedOwner>) {}",
         "fn bad(a: Array<Resource>) { alloc(a); }",
@@ -252,7 +252,7 @@ fn owning_elements_cleanup_after_allocation_and_snapshot_failures() {
         crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
     }
     let mut vm = vm(VmMode::Interpreter);
-    vm.load_source(&format!("{SOURCE}\n fn snapshot_failure() -> Int32 {{ var values = Array.new::<ElementResource>() values.push(element_resource(1)) record_drop(-99) let result = values.take_last() result.id }}")).unwrap();
+    vm.load_source(&format!("{SOURCE}\n fn snapshot_failure() -> Int32 {{ var values = Array.new::<ElementResource>(); values.push(element_resource(1)); record_drop(-99); let result = values.take_last(); result.id }}")).unwrap();
     EVENTS.with(|events| events.borrow_mut().clear());
     assert_eq!(
         vm.call_int32_0("snapshot_failure").unwrap_err().code(),
@@ -267,7 +267,7 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
     modules.insert("collections", r#"
         import joky/array.{type Array}
         pub type Batch<T> = Array<T>
-        pub fn make<T>(value: T) -> Batch<T> { var values = Array.new::<T>() values.push(value) values }
+        pub fn make<T>(value: T) -> Batch<T> { var values = Array.new::<T>(); values.push(value); values }
         pub fn take<T>(values: &mut Batch<T>) -> T { values.take_last() }
         pub fn view<T>(values: &Batch<T>) -> &T { values.borrow_ref(0) }
         pub enum Parcel<T> { Empty, Item(T) }
@@ -388,10 +388,10 @@ fn owning_enums_survive_interpreter_boundaries_and_allocation_failure() {
 fn owning_enums_reject_reuse_and_invalid_payloads() {
     let prefix = "import joky/array.{type Array} import joky/drop.{type Drop} enum Message { Empty, Item(Array<Int32>) } ";
     for body in [
-        "fn bad(value: Message) { let next = value let again = value }",
-        "fn bad(value: Message) { match value { Empty => {}, Item(_) => {} } let again = value }",
+        "fn bad(value: Message) { let next = value; let again = value }",
+        "fn bad(value: Message) { match value { Empty => {}, Item(_) => {} }; let again = value }",
         "fn bad(value: Message) { match value { _ => value } }",
-        "fn bad(value: Message) { match value { Empty => {}, Item(item) => { let first = item let second = item } } }",
+        "fn bad(value: Message) { match value { Empty => {}, Item(item) => { let first = item; let second = item } } }",
         "enum Bad { Owned(Array<Int32>), Shared(&Int32) } fn bad() {}",
         "enum Bad { View(&Array<Int32>) } fn bad() {}",
         "struct Hidden { view: &Option<Array<Int32>> } fn bad() {}",
@@ -453,7 +453,7 @@ fn owning_enum_snapshots_and_failed_return_preserve_drop_responsibility() {
             let trigger = LimitTrigger {{ values: Array.new::<Int32>() }}
             Message.Resource(element_resource(1))
         }}
-        fn enum_result_snapshot_failure() -> Int32 {{ let value = send_enum() match value {{ _ => 42 }} }}
+        fn enum_result_snapshot_failure() -> Int32 {{ let value = send_enum(); match value {{ _ => 42 }} }}
         fn enum_match_snapshot_failure() -> Int32 {{
             let value = Message.Resource(element_resource(1))
             record_drop(-99)
@@ -489,10 +489,10 @@ fn owning_enum_snapshots_and_failed_return_preserve_drop_responsibility() {
 fn owning_tuples_reject_reuse_views_and_async_borrows() {
     let prefix = "import joky/array.{type Array} import joky/option.{type Option} ";
     for body in [
-        "fn bad() { let a = Array.new::<Int32>() let pair = (a, a) }",
-        "fn bad(pair: (Array<Int32>, Int32)) { let (a, _) = pair let again = pair }",
-        "fn bad(pair: (Array<Int32>, Int32)) { let (a, _) = pair a.release() a.release() }",
-        "fn inspect(pair: &(Array<Int32>, Int32)) -> Int32 { 42 } fn bad(pair: (Array<Int32>, Int32)) { let view = &pair let (_, _) = pair inspect(view); }",
+        "fn bad() { let a = Array.new::<Int32>(); let pair = (a, a) }",
+        "fn bad(pair: (Array<Int32>, Int32)) { let (a, _) = pair; let again = pair }",
+        "fn bad(pair: (Array<Int32>, Int32)) { let (a, _) = pair; a.release(); a.release() }",
+        "fn inspect(pair: &(Array<Int32>, Int32)) -> Int32 { 42 } fn bad(pair: (Array<Int32>, Int32)) { let view = &pair; let (_, _) = pair; inspect(view); }",
         "fn bad(pair: &(Array<Int32>, Int32)) { let (a, _) = pair }",
         "fn bad(a: Array<Int32>, r: &Int32) { let pair = (a, r) }",
         "fn bad(a: &Array<Int32>) { let pair = (a, 1) }",
@@ -607,7 +607,7 @@ fn owning_tuple_snapshots_and_failed_return_preserve_drop_responsibility() {
             let trigger = TupleLimitTrigger {{ values: Array.new::<Int32>() }}
             (element_resource(1), 42)
         }}
-        fn tuple_result_snapshot_failure() -> Int32 {{ let (_, answer) = send_tuple() answer }}
+        fn tuple_result_snapshot_failure() -> Int32 {{ let (_, answer) = send_tuple(); answer }}
         fn tuple_binding_snapshot_failure() -> Int32 {{
             let pair = (element_resource(1), 42)
             record_drop(-99)
@@ -618,7 +618,7 @@ fn owning_tuple_snapshots_and_failed_return_preserve_drop_responsibility() {
             let failure = failing_element(2)
             (element_resource(1), 42)
         }}
-        fn tuple_failed_return_entry() -> Int32 {{ let (_, answer) = tuple_failed_return() answer }}
+        fn tuple_failed_return_entry() -> Int32 {{ let (_, answer) = tuple_failed_return(); answer }}
     "#
     ))
     .unwrap();
@@ -652,31 +652,31 @@ fn owning_element_borrows_reject_mutation_moves_and_escape() {
         fn inner(value: &Resource) -> &Array<Int32> { &value.values }
     "#;
     for body in [
-        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0) a.push(make()) r.id }",
-        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0) a.reserve(10) r.id }",
-        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0) a.set(0, make()) r.id }",
-        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0) a.pop(); r.id }",
-        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0) a.take_last(); r.id }",
-        "fn bad(a: Array<Resource>) { let r = a.borrow_ref(0) a.release() r.id }",
-        "fn bad(a: Array<Resource>) { let r = a.borrow_ref(0) let next = a r.id }",
-        "fn bad(input: Array<Resource>, other: Array<Resource>) { var a = input let r = a.borrow_ref(0) a = other r.id }",
-        "fn bad(a: &mut Array<Resource>, flag: Bool) { let r = a.borrow_ref(0) if flag { a.reserve(10) } r.id }",
-        "fn bad(a: &mut Array<Resource>, flag: Bool) { let r = a.borrow_ref(0) while flag { a.set(0, make()) break } r.id }",
-        "fn bad(a: &mut Array<Resource>) { let r = view(a) let copy = r a.reserve(10) copy.id }",
-        "fn bad(a: &mut Array<Resource>) { let r = inner(view(a)) a.take_last(); r.len() }",
-        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0) r.id = 2 }",
-        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0) r.values.push(2) }",
-        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0) let value = r.values value.len() }",
-        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0) let m = &mut r.values m.push(2) }",
+        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0); a.push(make()); r.id }",
+        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0); a.reserve(10); r.id }",
+        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0); a.set(0, make()); r.id }",
+        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0); a.pop(); r.id }",
+        "fn bad(a: &mut Array<Resource>) { let r = a.borrow_ref(0); a.take_last(); r.id }",
+        "fn bad(a: Array<Resource>) { let r = a.borrow_ref(0); a.release(); r.id }",
+        "fn bad(a: Array<Resource>) { let r = a.borrow_ref(0); let next = a; r.id }",
+        "fn bad(input: Array<Resource>, other: Array<Resource>) { var a = input; let r = a.borrow_ref(0); a = other; r.id }",
+        "fn bad(a: &mut Array<Resource>, flag: Bool) { let r = a.borrow_ref(0); if flag { a.reserve(10) }; r.id }",
+        "fn bad(a: &mut Array<Resource>, flag: Bool) { let r = a.borrow_ref(0); while flag { a.set(0, make()); break }; r.id }",
+        "fn bad(a: &mut Array<Resource>) { let r = view(a); let copy = r; a.reserve(10); copy.id }",
+        "fn bad(a: &mut Array<Resource>) { let r = inner(view(a)); a.take_last(); r.len() }",
+        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0); r.id = 2 }",
+        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0); r.values.push(2) }",
+        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0); let value = r.values; value.len() }",
+        "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0); let m = &mut r.values; m.push(2) }",
         "fn bad(a: &Array<Resource>) { (*(a.borrow_ref(0))) }",
         "fn bad(a: &Array<Resource>) { alloc(a.borrow_ref(0)); }",
         "fn bad(a: &Array<Resource>) { let pair = (a.borrow_ref(0), 1) }",
         "struct Saved { value: &Resource } fn bad() {}",
         "fn bad(a: Array<Resource>) -> &Resource { a.borrow_ref(0) }",
-        "fn bad(a: &Array<Resource>) -> &Resource { var local = Array.new::<Resource>() local.push(make()) local.borrow_ref(0) }",
-        "fn bad(a: &Array<Resource>) { let r = { var local = Array.new::<Resource>() local.push(make()) local.borrow_ref(0) } r.id }",
+        "fn bad(a: &Array<Resource>) -> &Resource { var local = Array.new::<Resource>(); local.push(make()); local.borrow_ref(0) }",
+        "fn bad(a: &Array<Resource>) { let r = { var local = Array.new::<Resource>(); local.push(make()); local.borrow_ref(0) }; r.id }",
         "fn bad(a: &Resource) @suspends -> &Resource { a }",
-        "fn tick() @suspends {} fn bad() @suspends -> Int32 { var a = Array.new::<Resource>() a.push(make()) let r = a.borrow_ref(0) tick() r.id }",
+        "fn tick() @suspends {} fn bad() @suspends -> Int32 { var a = Array.new::<Resource>(); a.push(make()); let r = a.borrow_ref(0); tick(); r.id }",
         "extern fn host(value: &Resource) fn bad() {}",
         "unsafe extern \"C\" fn host(value: &Resource) fn bad() {}",
         "fn bad(a: &Array<(Int32, &Int32)>) { a.borrow_ref(0); }",

@@ -35,8 +35,8 @@ fn exercise() @suspends -> Int32 {
         iteration = local
     }
     // Compiler-only write reservations also retain stable frame addresses.
-    count = { yield_now() count }
-    point.value = { yield_now() point.value + 1 }
+    count = { yield_now(); count }
+    point.value = { yield_now(); point.value + 1 }
     let matched = match &option { Some(value) => value, None => 0 }
     let field = (*(&point.value))
     let tuple = (count, point.flag)
@@ -44,7 +44,7 @@ fn exercise() @suspends -> Int32 {
     let unit = {};
     (*(&unit))
     // A call that suspends can occur before this call's borrow begins.
-    let after = read({ yield_now() count }, 0)
+    let after = read({ yield_now(); count }, 0)
     let depth = recurse(3)
     if initial == 42 && inspect(&point) == 43 && field == 43 && after == 42 &&
         depth == 3 && matched == 42 && point.read() == 43 && point.get() == 43 &&

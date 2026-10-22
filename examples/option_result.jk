@@ -2,19 +2,19 @@ import joky/io.{println}
 
 fn main() {
     let maybe = Some(42)
-    if maybe.is_some() { { let displayed: Int32 = maybe.unwrap_or(0) println(&displayed) } }
-    { let displayed: Int32 = None::<Int32>.or(Some(7)).unwrap_or(0) println(&displayed) }
-    { let displayed: Int64 = maybe.and::<Int64>(Some(4294967295)).unwrap_or(0) println(&displayed) }
+    if maybe.is_some() { println(maybe.unwrap_or(0)) }
+    println(None::<Int32>.or(Some(7)).unwrap_or(0))
+    println(maybe.and::<Int64>(Some(4294967295)).unwrap_or(0))
 
     let result: Result<Int32, Bool> = Ok(42)
-    { let displayed: Int32 = result.ok().unwrap_or(0) println(&displayed) }
+    println(result.ok().unwrap_or(0))
     let failed: Result<Int32, Bool> = Err(false)
-    if failed.is_err() { { let displayed: Int32 = failed.unwrap_or(9) println(&displayed) } }
+    if failed.is_err() { println(failed.unwrap_or(9)) }
     let recovered = failed.or::<Unit>(Ok(7))
-    { let displayed: Int32 = recovered.unwrap_or(0) println(&displayed) }
+    println(recovered.unwrap_or(0))
 
     // Defaults and alternatives are eager, even if the receiver succeeds.
     var evaluated = 0
-    let retained = maybe.unwrap_or({ evaluated = evaluated + 1 0 })
-    println(&evaluated)
+    let retained = maybe.unwrap_or({ evaluated = evaluated + 1; 0 })
+    println(evaluated)
 }

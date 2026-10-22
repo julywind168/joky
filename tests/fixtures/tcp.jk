@@ -3,7 +3,7 @@ import joky/array.{type Array}
 import joky/result.{type Result}
 import joky/check.{assert}
 import joky/task
-fn assert_ok(result: Result<Unit, IoError>) { let message = "TCP status" assert(result.is_ok(), &message) }
+fn assert_ok(result: Result<Unit, IoError>) { let message = "TCP status"; assert(result.is_ok(), &message) }
 fn check_bytes(bytes: Array<UInt8>, expected: UInt64) {
     let message = "TCP bytes"
     assert(bytes.len() == expected, &message)
@@ -34,7 +34,7 @@ fn check_tail(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
     }
     i
 }
-fn payload() -> Array<UInt8> { var bytes = Array.new::<UInt8>() bytes.push(0) bytes.push(128) bytes.push(255) bytes.push(42) bytes }
+fn payload() -> Array<UInt8> { var bytes = Array.new::<UInt8>(); bytes.push(0); bytes.push(128); bytes.push(255); bytes.push(42); bytes }
 fn client(address: Address) @suspends -> Int32 {
     var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { return 5 } }
     let peer = match stream.peer_addr() { Ok(peer) => peer, Err(error) => { return 6 } }
@@ -85,9 +85,9 @@ fn reuse() @suspends -> Int32 {
     parallel { | serve(&mut listener) | send(bound) }
     42
 }
-fn main() @suspends -> Int32 { addresses() if ipv4() != 42 {return 1} if ipv6() != 42 {return 2} if errors() != 42 {return 3} if reuse() != 42 {return 4} if all() != 42 {return 5} 0 }
+fn main() @suspends -> Int32 { addresses(); if ipv4() != 42 {return 1}; if ipv6() != 42 {return 2}; if errors() != 42 {return 3}; if reuse() != 42 {return 4}; if all() != 42 {return 5}; 0 }
 
-fn assert_value(value: Int32) { let message = "TCP roundtrip" assert(value == 42, &message) }
+fn assert_value(value: Int32) { let message = "TCP roundtrip"; assert(value == 42, &message) }
 fn serve(listener: &mut TcpListener) @suspends { assert_value(server(listener)) }
 fn send(address: Address) @suspends { assert_value(client(address)) }
 fn wait_accept(listener: &mut TcpListener) @suspends { listener.accept(); }
@@ -99,7 +99,7 @@ fn addresses() {
 }
 
 fn send_all(address: Address) @suspends {
-    var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { assert_value(0) return } }
+    var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { assert_value(0); return } }
     assert_ok(stream.write_all(payload()))
     assert_ok(stream.shutdown(Shutdown.Write))
 }

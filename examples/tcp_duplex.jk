@@ -4,13 +4,13 @@ import joky/integer
 import joky/string
 import joky/task
 
-fn ensure(ok: Bool) { let message = "Duplex message session" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "Duplex message session"; assert(ok, &message) }
 // Receive commands independently of the server's unsolicited pushes.
 fn commands(reader: &mut BufferedTcpReader) @suspends {
     var expected: Int32 = 1
     while expected <= 3 {
-        let bytes = match reader.read_message(16) { Ok(Some(bytes)) => bytes, _ => { ensure(false) return } }
-        let text = match String.from_utf8(bytes) { Ok(text) => text, _ => { ensure(false) return } }
+        let bytes = match reader.read_message(16) { Ok(Some(bytes)) => bytes, _ => { ensure(false); return } }
+        let text = match String.from_utf8(bytes) { Ok(text) => text, _ => { ensure(false); return } }
         let command = expected.to_string()
         ensure(text.equals(&command))
         expected = expected + 1
@@ -27,7 +27,7 @@ fn pushes(writer: &mut TcpWriter) @suspends {
     ensure(writer.shutdown().is_ok())
 }
 fn serve(listener: &mut TcpListener) @suspends {
-    let stream = match listener.accept() { Ok(stream) => stream, _ => { ensure(false) return } }
+    let stream = match listener.accept() { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     parallel { | commands(&mut reader) | pushes(&mut writer) }
     reader.close();
@@ -48,9 +48,9 @@ fn receive(reader: &mut BufferedTcpReader) @suspends {
         let bytes = match reader.read_message(16) {
             Ok(Some(bytes)) => bytes
             Ok(None) => { break }
-            Err(_) => { ensure(false) return }
+            Err(_) => { ensure(false); return }
         }
-        let text = match String.from_utf8(bytes) { Ok(text) => text, _ => { ensure(false) return } }
+        let text = match String.from_utf8(bytes) { Ok(text) => text, _ => { ensure(false); return } }
         let value = expected.to_string()
         ensure(text.equals(&value))
         println(text)
@@ -59,7 +59,7 @@ fn receive(reader: &mut BufferedTcpReader) @suspends {
     ensure(expected == 4)
 }
 fn client(address: Address) @suspends {
-    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { ensure(false) return } }
+    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     // Both halves stay owned by this task until the entire session ends.
     parallel { | receive(&mut reader) | send(&mut writer) }

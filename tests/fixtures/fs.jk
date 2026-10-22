@@ -24,7 +24,7 @@ fn run() @suspends -> Int32 {
 }
 fn malformed() @suspends -> Int32 {
     match fs.open("bad", fs.OpenOptions.new()) {
-        Ok(file) => { let ignored = file.close() 0 }
+        Ok(file) => { let ignored = file.close(); 0 }
         Err(error) => match error.kind { fs.ErrorKind.SystemFailure => 42, _ => 1 }
     }
 }

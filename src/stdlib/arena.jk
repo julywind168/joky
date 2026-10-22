@@ -3,10 +3,10 @@ pub type Arena = arena.Arena
 
 impl Arena {
     pub fn new() -> Self { new() }
-    pub fn alloc<T>(&self, value: T) -> &mut T { allocate(self, value) }
+    pub fn alloc<T: Copy>(&self, value: T) -> &mut T { allocate(self, value) }
 }
 
 #intrinsic("arena.new")
 fn new() -> Arena
 #intrinsic("arena.alloc")
-fn allocate<T>(arena: &Arena, value: T) -> &mut T
+fn allocate<T: Copy>(arena: &Arena, value: T) -> &mut T

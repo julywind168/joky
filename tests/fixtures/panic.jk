@@ -13,9 +13,9 @@ impl Drop for Resource {
     }
 }
 
-fn mark(n: Int32) -> Int32 { record_int(n) n }
+fn mark(n: Int32) -> Int32 { record_int(n); n }
 fn add(a: Int32, b: Int32) -> Int32 { a + b }
-fn message() -> String { record_int(10) "Primary panic {42}" }
+fn message() -> String { record_int(10); "Primary panic {42}" }
 fn choose(ok: Bool) -> UInt64 { if ok { 18446744073709551615 } else { panic("if failure") } }
 fn choose_reverse(ok: Bool) -> Int32 { if !ok { panic("reverse failure") } else { 42 } }
 fn choose_semicolon(ok: Bool) -> UInt64 { if ok { 18446744073709551615 } else { panic("semicolon failure"); } }
@@ -33,7 +33,7 @@ fn panic_success() -> Int32 {
     assert(true, result)
     assert(true, &result)
     assert(result.byte_length() == 12, "Borrow preserves input")
-    if false { let moved = result panic(moved) }
+    if false { let moved = result; panic(moved) }
     assert(result.byte_length() == 12, "Diverging move")
     42
 }

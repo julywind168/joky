@@ -7,11 +7,11 @@ struct Room { players:Array<Player>, score:Int32 }
 fn make(score:Int32)->Room {
     var players=Array.new::<Player>()
     var i:UInt64=0
-    while i<12 {players.push(Player{name:"玩家",score:score+int32(i)}) i=i+1}
+    while i<12 {players.push(Player{name:"玩家",score:score+int32(i)}); i=i+1}
     Room{players:players,score:score}
 }
 fn read(room:&Room)->Int32 {room.score}
-fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value room.score}
+fn add(room:&mut Room,value:Int32)->Int32 {room.score=room.score+value; room.score}
 fn version()->Int32 {1}
 fn hold(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,42)

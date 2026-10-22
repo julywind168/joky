@@ -60,7 +60,7 @@ fn record_suspensions_keep_snapshots_through_reload_failure_and_cancellation() {
         fn empty() @suspends -> Empty { delayed_value(0); Empty {} }
         fn pending() @suspends -> Int32 {
             var p = original()
-            let q = build(p, { p.x = 9 7 })
+            let q = build(p, { p.x = 9; 7 })
             let r = pass(q)
             r.x * 100 + r.y * 10 + p.x
         }
@@ -75,7 +75,7 @@ fn record_suspensions_keep_snapshots_through_reload_failure_and_cancellation() {
         }
         fn scoped() @suspends -> Int32 {
             var p = original()
-            parallel { | child(p, 1) | child({ p.x = 9 p }, 2) }
+            parallel { | child(p, 1) | child({ p.x = 9; p }, 2) }
             empty()
             p.x
         }
@@ -162,14 +162,14 @@ fn invalid_records_have_consistent_diagnostics_before_publication() {
             ("struct P { x: Int32 } fn f() -> P { P { x: true } }", ErrorCode::TypeMismatch, "expects Int32"),
             ("struct P {} type A = P fn f() -> P { A {} }", ErrorCode::UnknownType, "Unknown record constructor"),
             ("struct P {} struct Q {} fn f() -> P { Q {} }", ErrorCode::TypeMismatch, "Return type mismatch"),
-            ("struct P { x: Int32 } fn f() { let p = P { x: 1 } p.x = 2 }", ErrorCode::InvalidAssignment, "immutable binding"),
-            ("struct P { x: Int32 } fn f() { var p = P { x: 1 } p.x = true }", ErrorCode::TypeMismatch, "Field assignment"),
+            ("struct P { x: Int32 } fn f() { let p = P { x: 1 }; p.x = 2 }", ErrorCode::InvalidAssignment, "immutable binding"),
+            ("struct P { x: Int32 } fn f() { var p = P { x: 1 }; p.x = true }", ErrorCode::TypeMismatch, "Field assignment"),
             ("struct P { x: Int32 } fn f() -> Int32 { P { x: 1 }.y }", ErrorCode::UnknownName, "Unknown field `y`"),
             ("fn f() -> Int32 { 1.x }", ErrorCode::TypeMismatch, "has no fields"),
             ("struct P {} fn f() -> Bool { P {} == P {} }", ErrorCode::TypeMismatch, "Comparison operands"),
             ("struct P {} extern fn host(p: P)", ErrorCode::AbiError, "host ABI"),
             ("struct P {} extern fn host() @suspends -> P", ErrorCode::AbiError, "host ABI"),
-            ("import joky/vm struct P {} fn f() { let vm = P {} vm.create(); }", ErrorCode::UnknownName, "has no method"),
+            ("import joky/vm struct P {} fn f() { let vm = P {}; vm.create(); }", ErrorCode::UnknownName, "has no method"),
             ("struct P { x: Int32, y: Int32 } fn f() -> P { P { x: return P { x: 1, y: 2 }, y: 3 } }", ErrorCode::UnreachableCode, "Unreachable expression"),
         ] {
             let source = format!("// 🙂\n{source}");
@@ -192,12 +192,12 @@ fn wide_record_parameters_and_mixed_fields_match_all_call_conventions() {
     for n in 0..12 {
         source.push_str(&format!("f{n}: Int32, "));
     }
-    source.push_str("after: Unit }\nfn pass(x: Wide, delta: Int32) -> Wide { var y = x y.f11 = y.f11 + delta y }\nfn run() -> Int32 { let p = Wide { before: {}, flag: true, ");
+    source.push_str("after: Unit }\nfn pass(x: Wide, delta: Int32) -> Wide { var y = x; y.f11 = y.f11 + delta; y }\nfn run() -> Int32 { let p = Wide { before: {}, flag: true, ");
     for n in 0..12 {
         source.push_str(&format!("f{n}: {n}, "));
     }
     source.push_str(
-        "after: {} } let q = pass(p, -20) if q.flag { q.f0 + q.f7 + q.f11 } else { 0 } }",
+        "after: {} }; let q = pass(p, -20); if q.flag { q.f0 + q.f7 + q.f11 } else { 0 } }",
     );
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {

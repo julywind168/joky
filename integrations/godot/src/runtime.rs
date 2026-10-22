@@ -233,7 +233,7 @@ mod tests {
             fn unsupported(path: String) @suspends -> Bool {
                 match fs.open(path, fs.OpenOptions.new()) {
                     Err(error) => match error.kind { fs.ErrorKind.Unsupported => true, _ => false }
-                    Ok(file) => { let ignored = file.close() false }
+                    Ok(file) => { let ignored = file.close(); false }
                 }
             }
             fn probe() @suspends -> Int32 {

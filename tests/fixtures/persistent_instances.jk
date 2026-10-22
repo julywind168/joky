@@ -25,7 +25,7 @@ fn fail(state: &mut State, divisor: Int32) -> Int32 {
 fn bad_make(divisor: Int32) -> State { make(42 / divisor, 0.0) }
 fn other(state: &Other) -> Int32 { state.count }
 struct SavedState { state: &State }
-fn escaping(state: &State) -> Int32 { let saved = alloc(SavedState { state: state }) state.count }
+fn escaping(state: &State) -> Int32 { let saved = alloc(SavedState { state: state }); state.count }
 fn borrowed(state: &State) -> &State { state }
 fn suspended(state: &State) @suspends -> Int32 { state.count }
 
@@ -40,7 +40,7 @@ fn nested() -> Nested { Nested { choice: Choice.Pair((65535, -0.0)), letter: 'ç•
 fn letter(state: &Nested) -> Rune { state.letter }
 fn byte(state: &Nested) -> UInt8 { state.byte }
 fn choice(state: &Nested) -> UInt16 {
-    match state.choice { Choice.Empty => 0, Choice.Pair(pair) => { let (value, unused) = pair value } }
+    match state.choice { Choice.Empty => 0, Choice.Pair(pair) => { let (value, unused) = pair; value } }
 }
 struct Empty {}
 fn empty() -> Empty { Empty {} }

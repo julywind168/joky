@@ -9,15 +9,15 @@ import joky/integer
 import joky/float
 import joky/task
 
-fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) decoded::<T>("null") }
+        Err(_) => { ensure(false); decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
         _ => { ensure(false) }
     }
 }
@@ -41,29 +41,29 @@ fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String
     match typed.encode_with_options(value, options) { Err(error) => mapping(error, expected, path), Ok(_) => { ensure(false) } }
 }
 fn numeric() {
-    let value = decoded::<Int8>("-128") ensure(value == -128)
-    let text = "-128" ensure(encoded(&value).equals(&text))
-    let value = decoded::<Int8>("127") ensure(value == 127)
-    let text = "127" ensure(encoded(&value).equals(&text))
-    bad::<Int8>("-129", 5, "") bad::<Int8>("128", 5, "")
-    bad::<Int8>("1.0", 4, "") bad::<Int8>("1e0", 4, "")
-    let value = decoded::<Int16>("-32768") ensure(value == -32768)
-    let text = "-32768" ensure(encoded(&value).equals(&text))
-    let value = decoded::<Int16>("32767") ensure(value == 32767)
-    let text = "32767" ensure(encoded(&value).equals(&text))
-    bad::<Int16>("-32769", 5, "") bad::<Int16>("32768", 5, "")
-    bad::<Int16>("1.0", 4, "") bad::<Int16>("1e0", 4, "")
-    let value = decoded::<Int32>("-2147483648") ensure(value == -2147483648)
-    let text = "-2147483648" ensure(encoded(&value).equals(&text))
-    let value = decoded::<Int32>("2147483647") ensure(value == 2147483647)
-    let text = "2147483647" ensure(encoded(&value).equals(&text))
-    bad::<Int32>("-2147483649", 5, "") bad::<Int32>("2147483648", 5, "")
-    bad::<Int32>("1.0", 4, "") bad::<Int32>("1e0", 4, "")
-    let value = decoded::<Int64>("-9223372036854775808") ensure(value == -9223372036854775808)
-    let text = "-9223372036854775808" ensure(encoded(&value).equals(&text))
-    let value = decoded::<Int64>("9223372036854775807") ensure(value == 9223372036854775807)
-    let text = "9223372036854775807" ensure(encoded(&value).equals(&text))
-    bad::<Int64>("-9223372036854775809", 5, "") bad::<Int64>("9223372036854775808", 5, "")
-    bad::<Int64>("1.0", 4, "") bad::<Int64>("1e0", 4, "")
+    let value = decoded::<Int8>("-128"); ensure(value == -128)
+    let text = "-128"; ensure(encoded(&value).equals(&text))
+    let value = decoded::<Int8>("127"); ensure(value == 127)
+    let text = "127"; ensure(encoded(&value).equals(&text))
+    bad::<Int8>("-129", 5, ""); bad::<Int8>("128", 5, "")
+    bad::<Int8>("1.0", 4, ""); bad::<Int8>("1e0", 4, "")
+    let value = decoded::<Int16>("-32768"); ensure(value == -32768)
+    let text = "-32768"; ensure(encoded(&value).equals(&text))
+    let value = decoded::<Int16>("32767"); ensure(value == 32767)
+    let text = "32767"; ensure(encoded(&value).equals(&text))
+    bad::<Int16>("-32769", 5, ""); bad::<Int16>("32768", 5, "")
+    bad::<Int16>("1.0", 4, ""); bad::<Int16>("1e0", 4, "")
+    let value = decoded::<Int32>("-2147483648"); ensure(value == -2147483648)
+    let text = "-2147483648"; ensure(encoded(&value).equals(&text))
+    let value = decoded::<Int32>("2147483647"); ensure(value == 2147483647)
+    let text = "2147483647"; ensure(encoded(&value).equals(&text))
+    bad::<Int32>("-2147483649", 5, ""); bad::<Int32>("2147483648", 5, "")
+    bad::<Int32>("1.0", 4, ""); bad::<Int32>("1e0", 4, "")
+    let value = decoded::<Int64>("-9223372036854775808"); ensure(value == -9223372036854775808)
+    let text = "-9223372036854775808"; ensure(encoded(&value).equals(&text))
+    let value = decoded::<Int64>("9223372036854775807"); ensure(value == 9223372036854775807)
+    let text = "9223372036854775807"; ensure(encoded(&value).equals(&text))
+    bad::<Int64>("-9223372036854775809", 5, ""); bad::<Int64>("9223372036854775808", 5, "")
+    bad::<Int64>("1.0", 4, ""); bad::<Int64>("1e0", 4, "")
 }
 fn main() { numeric() }

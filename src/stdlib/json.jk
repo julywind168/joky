@@ -295,7 +295,7 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> results.Result<(
             }
         } else {
             match input.next_rune(offset) {
-                options.Some((rune, next)) => { scalar = rune.to_u32() offset = next }
+                options.Some((rune, next)) => { scalar = rune.to_u32(); offset = next }
                 options.None => { return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, offset)) }
             }
         }
@@ -325,7 +325,7 @@ fn finish_container(frame: DecodeFrame) -> Value {
 }
 fn attach(frame: &mut DecodeFrame, child: Value, offset: UInt64) -> results.Result<UInt32, DecodeError> {
     match frame {
-        Items(items) => { items.push(child) results.Ok(2) }
+        Items(items) => { items.push(child); results.Ok(2) }
         Fields((fields, key)) => {
             match mem.replace(key, options.None) {
                 options.Some(name) => { fields.insert(name, child); }
@@ -545,11 +545,11 @@ fn write_escaped(encoder: &mut Encoder, rune: Rune) -> results.Result<Unit, Enco
     let width: UInt64 = if suffix != '\0' { 2 } else { if scalar < 32 { 6 } else { rune_width(scalar) } }
     if !output_room(encoder, width) { return results.Err(EncodeError.OutputLimit) }
     if suffix != '\0' {
-        encoder.output.push('\\') encoder.output.push(suffix)
+        encoder.output.push('\\'); encoder.output.push(suffix)
     } else {
         if scalar < 32 {
-            encoder.output.push('\\') encoder.output.push('u')
-            encoder.output.push('0') encoder.output.push('0')
+            encoder.output.push('\\'); encoder.output.push('u')
+            encoder.output.push('0'); encoder.output.push('0')
             encoder.output.push(hex_rune(scalar / 16))
             encoder.output.push(hex_rune(scalar - (scalar / 16) * 16))
         } else { encoder.output.push(rune) }
@@ -589,8 +589,8 @@ fn write_value(encoder: &mut Encoder, value: &Value) -> results.Result<Unit, Enc
     if encoder.nodes == encoder.limits.max_nodes { return results.Err(EncodeError.NodeLimit) }
     encoder.nodes = encoder.nodes + 1
     match value {
-        Null => { let text = "null" write_text(encoder, &text) }
-        Boolean(value) => { let text = if value { "true" } else { "false" } write_text(encoder, &text) }
+        Null => { let text = "null"; write_text(encoder, &text) }
+        Boolean(value) => { let text = if value { "true" } else { "false" }; write_text(encoder, &text) }
         Number(number) => {
             let text = number.as_text()
             if text.byte_length() > encoder.limits.max_number_bytes { return results.Err(EncodeError.NumberLimit) }

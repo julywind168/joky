@@ -2,20 +2,20 @@ import joky/drop.{type Drop}
 import joky/fixed_array as fixed
 extern fn note(value: Int32)
 struct Guard { id: Int32, owned: String }
-impl Drop for Guard { fn drop(&mut self) { note(self.id) if self.id == -2 { let message = "callback cleanup failed" assert(false, &message) } } }
+impl Drop for Guard { fn drop(&mut self) { note(self.id); if self.id == -2 { let message = "callback cleanup failed"; assert(false, &message) } } }
 fn construct() -> Int32 {
     let guard = Guard { id: -1, owned: "callback" }
-    let a = fixed.from_fn::<Int32, 4>(move |index: UInt64| { note(int32(index) + 1) 42 + guard.id + 1 })
+    let a = fixed.from_fn::<Int32, 4>(move |index: UInt64| { note(int32(index) + 1); 42 + guard.id + 1 })
     match a.get(3) { Some(value) => value, None => 0 }
 }
 fn zero_env() -> Int32 {
     let guard = Guard { id: -1, owned: "empty" }
-    let a = fixed.from_fn::<Int32, 0>(move |index: UInt64| { note(int32(index) + 1) guard.id })
+    let a = fixed.from_fn::<Int32, 0>(move |index: UInt64| { note(int32(index) + 1); guard.id })
     if a.is_empty() { 42 } else { 0 }
 }
 fn fail_init() -> Int32 {
     let guard = Guard { id: -1, owned: "failed" }
-    let a = fixed.from_fn::<Int32, 4>(move |index: UInt64| { note(int32(index) + 1) guard.id / (int32(index) - 2) })
+    let a = fixed.from_fn::<Int32, 4>(move |index: UInt64| { note(int32(index) + 1); guard.id / (int32(index) - 2) })
     note(99)
     0
 }
@@ -38,7 +38,7 @@ fn task() @suspends -> Int32 { construct() }
 
 fn fail_cleanup() -> Int32 {
     let guard = Guard { id: -2, owned: "cleanup" }
-    let a = fixed.from_fn::<Int32,1>(move |index: UInt64| { note(int32(index) + 1) guard.id })
+    let a = fixed.from_fn::<Int32,1>(move |index: UInt64| { note(int32(index) + 1); guard.id })
     note(99)
     0
 }

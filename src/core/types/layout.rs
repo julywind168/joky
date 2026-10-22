@@ -85,7 +85,7 @@ pub(super) fn resolve<'a>(
     let mut names = HashMap::new();
     for (index, &declaration) in declarations.iter().enumerate() {
         let name = declaration.name();
-        if matches!(name, "Fn" | "FnMut" | "FnOnce")
+        if matches!(name, "Copy" | "Fn" | "FnMut" | "FnOnce")
             || registry.contains(name)
             || primitive_type(name).is_some()
             || names.insert(name, index).is_some()

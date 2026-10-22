@@ -214,7 +214,7 @@ fn domain_value_packets_reject_preflight_failures_and_isolate_only_writes_on_bod
         read(&mut vm, b.read_handle(), 20);
         let failing = format!("import joky/check {}", SOURCE
             .replace("b:&mut State", "b:&State")
-            .replace("b.n=b.n+input.inner.tag", "let message=\"value operation failure\" check.assert(input.inner.delta==0,&message)"));
+            .replace("b.n=b.n+input.inner.tag", "let message=\"value operation failure\"; check.assert(input.inner.delta==0,&message)"));
         vm.load_source(&failing).unwrap();
         assert_eq!(vm.publish_domain_code().unwrap(), 2);
         let (mut request, output) = enqueue_value(&vm, a.write_handle(), b.read_handle());
@@ -349,7 +349,7 @@ fn owned_text_domain_packets_rebind_without_retaining_input_pointers() {
     const SOURCE: &str = r#"
 struct State {n:Int32}
 fn make(n:Int32)->State {State{n:n}}
-fn turn(s:&mut State,text:String)->String {s.n+=1 text}
+fn turn(s:&mut State,text:String)->String {s.n+=1; text}
 "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for compatible in [true, false] {
@@ -373,11 +373,11 @@ fn turn(s:&mut State,text:String)->String {s.n+=1 text}
             )
             .unwrap();
             let next = if compatible {
-                SOURCE.replace("s.n+=1 text", "s.n+=10 \"new\"")
+                SOURCE.replace("s.n+=1; text", "s.n+=10; \"new\"")
             } else {
                 SOURCE
                     .replace("text:String", "text:Int32")
-                    .replace("s.n+=1 text", "s.n+=10 \"new\"")
+                    .replace("s.n+=1; text", "s.n+=10; \"new\"")
             };
             vm.load_source(&next).unwrap();
             assert_eq!(vm.publish_domain_code().unwrap(), 1);
@@ -403,8 +403,8 @@ fn owned_text_domain_decode_failure_rejects_before_mutating_or_poisoning_roots()
     const SOURCE: &str = r#"
 struct State {n:Int32}
 fn make(n:Int32)->State {State{n:n}}
-fn turn(s:&mut State,text:String)->Int32 {s.n+=1 s.n}
-fn pair(a:&mut State,b:&mut State,text:String)->Int32 {a.n+=1 b.n+=1 a.n}
+fn turn(s:&mut State,text:String)->Int32 {s.n+=1; s.n}
+fn pair(a:&mut State,b:&mut State,text:String)->Int32 {a.n+=1; b.n+=1; a.n}
 "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for many in [false, true] {
@@ -465,7 +465,7 @@ fn owned_text_domain_result_delivery_failure_is_not_an_admission_rejection() {
         r#"
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
-fn turn(s:&mut State)->String {{s.n+=1 "{}"}}
+fn turn(s:&mut State)->String {{s.n+=1; "{}"}}
 "#,
         "result".repeat(512)
     );
@@ -536,7 +536,7 @@ fn owned_array_domain_packets_rebind_without_retaining_input_pointers() {
 import joky/array.{type Array}
 struct State {n:Int32}
 fn make(n:Int32)->State {State{n:n}}
-fn turn(s:&mut State,text:Array<String>)->Array<String> {s.n+=1 text}
+fn turn(s:&mut State,text:Array<String>)->Array<String> {s.n+=1; text}
 "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for compatible in [true, false] {
@@ -561,13 +561,13 @@ fn turn(s:&mut State,text:Array<String>)->Array<String> {s.n+=1 text}
             .unwrap();
             let next = if compatible {
                 SOURCE.replace(
-                    "s.n+=1 text",
-                    "s.n+=10 var reply=text reply.push(\"new\") reply",
+                    "s.n+=1; text",
+                    "s.n+=10; var reply=text; reply.push(\"new\"); reply",
                 )
             } else {
                 SOURCE
                     .replace("text:Array<String>", "text:Array<Int32>")
-                    .replace("s.n+=1 text", "s.n+=10 Array.new::<String>()")
+                    .replace("s.n+=1; text", "s.n+=10; Array.new::<String>()")
             };
             vm.load_source(&next).unwrap();
             assert_eq!(vm.publish_domain_code().unwrap(), 1);

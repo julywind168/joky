@@ -3,7 +3,7 @@ import joky/io.{println}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { { let displayed: Int32 = self.id println(&displayed) } } }
+impl Drop for Resource { fn drop(&mut self) { println(self.id) } }
 fn resource(id: Int32) -> Resource {
     var values = Array.new::<Int32>()
     values.push(id)
@@ -12,11 +12,11 @@ fn resource(id: Int32) -> Resource {
 fn main() {
     let zipped = Some(resource(1)).zip(Some(resource(2)))
     match zipped {
-        None => { let displayed: Int32 = 0 println(&displayed) }
-        Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
+        None => println(0)
+        Some((left, right)) => println(left.id + right.id)
     }
     // Discarded members are cleaned up before the retained binding is used.
     let (_, (kept, answer)) = (resource(4), (resource(5), 42))
-    println(&answer)
-    { let displayed: Int32 = kept.values.get(0).unwrap_or(0) println(&displayed) }
+    println(answer)
+    println(kept.values.get(0).unwrap_or(0))
 }

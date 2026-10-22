@@ -2363,6 +2363,29 @@ fn analyze(
                         // stored: allocation does not turn their temporary loans
                         // into task-long retention. Return dependencies still
                         // carry their full origins through indirect calls.
+                        let symbolic_borrow = arg.ty.reference_type().is_some_and(|r| {
+                            r.target.scalar_types().iter().any(|ty| {
+                                matches!(ty, Type::Parameter(_) | Type::Projection(_))
+                                    && ty.is_buffer()
+                            })
+                        });
+                        if symbolic_borrow {
+                            // An unknown pointee may specialize to ordinary Copy
+                            // storage, so its borrow can be retained. Keep that
+                            // possibility in the effect summary without treating
+                            // the symbolic owner lane as concrete buffer storage.
+                            if escaped.is_none()
+                                && retained_inputs.contains(&arg.index)
+                                && state[&arg.index].has_root(&argument_roots)
+                            {
+                                return Err(type_error(
+                                    span,
+                                    ErrorCode::InvalidAssignment,
+                                    "@noescape function cannot retain an argument borrow",
+                                ));
+                            }
+                            continue;
+                        }
                         if arg.ty.contains_buffers()
                             || arg.ty.contains_fixed_array()
                             || !retained_inputs.contains(&arg.index)

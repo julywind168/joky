@@ -247,7 +247,7 @@ import joky/task
 import joky/drop.{type Drop}
 struct State { count: Int32, text: String }
 fn create() -> State { State { count: 0, text: "state" } }
-fn add(self: &mut State, n: Int32) @noescape -> Int32 { self.count = self.count + n self.count }
+fn add(self: &mut State, n: Int32) @noescape -> Int32 { self.count = self.count + n; self.count }
 fn read(self: &State) @noescape -> Int32 { self.count }
 fn fail_state(self: &mut State, n: Int32) @noescape -> Int32 {
     mem.replace(&mut self.text, "changed");
@@ -265,11 +265,11 @@ extern fn wait() @suspends
 extern fn event(n: Int32)
 extern fn close_owner()
 extern fn hold(value: &mut Int32) @suspends
-fn held() @suspends { change(1); let temp = "task" let value = alloc(42) hold(value) temp.release() }
+fn held() @suspends { change(1); let temp = "task"; let value = alloc(42); hold(value); temp.release() }
 impl Drop for State { fn drop(&mut self) { event(99) } }
-fn flow() @suspends -> Int32 { let n = change(1) wait() change(n) }
-fn closing() @suspends { scope { branch { wait() } close_owner() task.yield_now() } }
-fn bad() @suspends { task.yield_now() let n = 1 / 0 }
+fn flow() @suspends -> Int32 { let n = change(1); wait(); change(n) }
+fn closing() @suspends { scope { branch { wait() }; close_owner(); task.yield_now() } }
+fn bad() @suspends { task.yield_now(); let n = 1 / 0 }
 "#;
 #[test]
 fn instance_tasks_use_short_access_and_pinned_modules_after_reload() {
@@ -375,7 +375,7 @@ fn host_executor_checks_mixed_scalar_inputs_and_does_not_run_rejected_roots() {
             import joky/task
             extern fn event(n: Int32)
             fn mixed(a: Int8, u: Unit, b: UInt64, c: Float64, d: Bool, r: Rune) @suspends -> Float64 {
-                event(if r == 'A' { 65 } else { 64 }) task.yield_now() if d { c + float64(a) + float64(b) } else { 0.0 }
+                event(if r == 'A' { 65 } else { 64 }); task.yield_now(); if d { c + float64(a) + float64(b) } else { 0.0 }
             }
         "#,
         );
@@ -459,8 +459,8 @@ fn host_executor_failure_cancels_ready_siblings_before_their_next_poll() {
             r#"
             import joky/task
             extern fn event(n: Int32)
-            fn bad() @suspends { task.yield_now() let n = 1 / 0 }
-            fn sibling() @suspends { task.yield_now() event(99) }
+            fn bad() @suspends { task.yield_now(); let n = 1 / 0 }
+            fn sibling() @suspends { task.yield_now(); event(99) }
         "#,
         );
         let executor = HostExecutor::default();
@@ -609,7 +609,7 @@ fn host_executor_preserves_external_wakes_across_sliced_siblings_without_spinnin
             event(value)
             wait()
         }
-        fn run() @suspends -> Int32 { parallel { | wait() | sibling() } 42 }
+        fn run() @suspends -> Int32 { parallel { | wait() | sibling() }; 42 }
     "#;
     for (mode, budget) in [
         (VmMode::Jit, None),
@@ -758,7 +758,7 @@ fn instance_identity_is_scoped_to_poll_and_disposal_for_each_owner() {
             )
             .unwrap();
         }
-        vm.load_source("import joky/drop.{type Drop} struct State { n: Int32, text: String } fn create() -> State { State { n: 0, text: \"owned\" } } extern fn identity_cleanup() impl Drop for State { fn drop(&mut self) { identity_cleanup() } } extern fn probe(n: &Int32) @suspends fn work() @suspends { let n = alloc(42) probe(n) }").unwrap();
+        vm.load_source("import joky/drop.{type Drop} struct State { n: Int32, text: String } fn create() -> State { State { n: 0, text: \"owned\" } } extern fn identity_cleanup() impl Drop for State { fn drop(&mut self) { identity_cleanup() } } extern fn probe(n: &Int32) @suspends fn work() @suspends { let n = alloc(42); probe(n) }").unwrap();
         let a = vm.create_instance("create", &[]).unwrap();
         let b = vm.create_instance("create", &[]).unwrap();
         let ta = vm.spawn_instance_task(a, "work", &[]).unwrap();
@@ -805,7 +805,7 @@ fn instance_task_poll_limits_do_not_relax_synchronous_state_limits() {
         )
         .unwrap();
     }
-    vm.load_source("struct State { n: Int32 } fn create() -> State { State { n: 0 } } fn spin(s: &mut State) @noescape -> Int32 { var n = 0 while n < 1000 { n = n + 1 } s.n = n n } extern fn limited_state_access() -> Int32 fn long() @suspends -> Int32 { var n = 0 while n < 1000 { n = n + 1 } n } fn bad() @suspends -> Int32 { limited_state_access() }").unwrap();
+    vm.load_source("struct State { n: Int32 } fn create() -> State { State { n: 0 } } fn spin(s: &mut State) @noescape -> Int32 { var n = 0; while n < 1000 { n = n + 1 }; s.n = n; n } extern fn limited_state_access() -> Int32 fn long() @suspends -> Int32 { var n = 0; while n < 1000 { n = n + 1 }; n } fn bad() @suspends -> Int32 { limited_state_access() }").unwrap();
     let id = vm.create_instance("create", &[]).unwrap();
     let limits = super::InterpreterLimits {
         max_frames: 16,

@@ -25,5 +25,5 @@ fn main() {
     counter.skip()
     let answer = first(&mut counter)
     let text = Show.to_text(&answer)
-    println(&text)
+    println(text)
 }

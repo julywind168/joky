@@ -18,12 +18,12 @@ fn status(result: Result<Int32, domain.RequestError>) -> Int32 {
 }
 struct State { count: Int32, scale: Float64, flag: Bool }
 fn make(count: Int32) -> State { State { count: count, scale: 0.5, flag: true } }
-fn add(state: &mut State, delta: Int32) -> Int32 { state.count = state.count + delta state.count }
+fn add(state: &mut State, delta: Int32) -> Int32 { state.count = state.count + delta; state.count }
 fn read(state: &State) -> Int32 {
     if state.scale != 0.5 || !state.flag { return -999 }
     state.count
 }
-fn fail_write(state: &mut State, zero: Int32) -> Int32 { state.count = 99 state.count / zero }
+fn fail_write(state: &mut State, zero: Int32) -> Int32 { state.count = 99; state.count / zero }
 fn work(delta: Int32) @suspends -> Int32 {
     domain.write(add, delta).unwrap()
     task.yield_now()
@@ -35,7 +35,7 @@ fn wrong_request(input: Int32) @suspends -> Int32 { domain.read(wrong_read).unwr
 fn broken(zero: Int32) @suspends -> Int32 { 1 / zero }
 fn poison(zero: Int32) @suspends -> Int32 { domain.write(fail_write, zero).unwrap() }
 fn echo(value: Int32) @suspends -> Int32 { value }
-fn delayed(delta: Int32) @suspends -> Int32 { task.sleep_ms(10000) domain.write(add, delta).unwrap() }
+fn delayed(delta: Int32) @suspends -> Int32 { task.sleep_ms(10000); domain.write(add, delta).unwrap() }
 fn launch(handle: domain.WriteHandle<State>, delta: Int32) @suspends {
     assert(domain.request(handle, work, delta).is_ok(), "request completed")
 }
@@ -76,7 +76,7 @@ fn main() @suspends {
     assert(domain.read_from(reader, read).unwrap() == 15, "race cancelled pending work")
     parallel { | wait_for_close(handle) | close_owner(owner) }
     assert(status(domain.request(handle, work, 1)) == 3, "closed handles stay invalid")
-    let stale = { let temporary = domain.create(make, 1) temporary.handle() }
+    let stale = { let temporary = domain.create(make, 1); temporary.handle() }
     assert(status(domain.request(stale, work, 1)) == 3, "drop closes state")
     let other = domain.create(make, 7)
     let poisoned = domain.create(make, 5)

@@ -11,51 +11,51 @@ fn increment(value: UInt8) -> UInt8 { value + 1 }
 fn invoke(f: fn(UInt8) -> UInt8, value: UInt8) -> UInt8 { f(value) }
 fn check_conversions() {
     let byte: Byte = 255
-    { let assertion_condition = int32(byte) == 255 && int64(byte) == 255 let assertion_message = "Byte widening" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = uint32(byte) == 255 && uint64(byte) == 255 let assertion_message = "Unsigned byte widening" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = uint8(-1) == 255 && uint8(256) == 0 && uint8(257) == 1 let assertion_message = "Wrapping byte narrowing" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = int32(byte) == 255 && int64(byte) == 255; let assertion_message = "Byte widening"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = uint32(byte) == 255 && uint64(byte) == 255; let assertion_message = "Unsigned byte widening"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = uint8(-1) == 255 && uint8(256) == 0 && uint8(257) == 1; let assertion_message = "Wrapping byte narrowing"; assert(assertion_condition, &assertion_message) }
     let wide: Int64 = -9223372036854775808
-    { let assertion_condition = uint8(wide) == 0 let assertion_message = "Signed minimum narrowing" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = uint8(wide) == 0; let assertion_message = "Signed minimum narrowing"; assert(assertion_condition, &assertion_message) }
     let maximum: UInt64 = UInt64.MAX
-    { let assertion_condition = uint8(maximum) == 255 let assertion_message = "Unsigned maximum narrowing" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = (-1 < 0) && (256 > 255) let assertion_message = "Checked signed byte range" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = uint8(255) == 255 let assertion_message = "Checked byte upper bound" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = maximum > 255 && wide < 0 let assertion_message = "Checked wide byte range" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = uint8(maximum) == 255; let assertion_message = "Unsigned maximum narrowing"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = (-1 < 0) && (256 > 255); let assertion_message = "Checked signed byte range"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = uint8(255) == 255; let assertion_message = "Checked byte upper bound"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = maximum > 255 && wide < 0; let assertion_message = "Checked wide byte range"; assert(assertion_condition, &assertion_message) }
     let unsigned: UInt32 = 256
-    { let assertion_condition = unsigned > 255 let assertion_message = "Checked unsigned byte range" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = int32(byte) == 255 let assertion_message = "Checked byte widening" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = uint32(byte) == 255 let assertion_message = "Checked unsigned byte widening" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = uint8(byte) == 255 let assertion_message = "Checked byte identity" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = UInt8.MIN == 0 && UInt8.MAX == 255 let assertion_message = "Byte constants" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = (-1).to_u8().is_none() && (256).to_u8().is_none() let assertion_message = "Checked byte narrowing" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = (255).to_u8().unwrap_or(0) == 255 let assertion_message = "Checked byte upper bound" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = wide.to_u8().is_none() && maximum.to_u8().is_none() let assertion_message = "Checked wide narrowing" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = unsigned.to_u8().is_none() let assertion_message = "Checked unsigned narrowing" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = byte.to_i32().unwrap_or(0) == 255 && byte.to_i64().unwrap_or(0) == 255 let assertion_message = "Checked signed widening" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = byte.to_u32().unwrap_or(0) == 255 && byte.to_u64().unwrap_or(0) == 255 let assertion_message = "Checked unsigned widening" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = byte.to_u8().unwrap_or(0) == 255 let assertion_message = "Checked identity" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = unsigned > 255; let assertion_message = "Checked unsigned byte range"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = int32(byte) == 255; let assertion_message = "Checked byte widening"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = uint32(byte) == 255; let assertion_message = "Checked unsigned byte widening"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = uint8(byte) == 255; let assertion_message = "Checked byte identity"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = UInt8.MIN == 0 && UInt8.MAX == 255; let assertion_message = "Byte constants"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = (-1).to_u8().is_none() && (256).to_u8().is_none(); let assertion_message = "Checked byte narrowing"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = (255).to_u8().unwrap_or(0) == 255; let assertion_message = "Checked byte upper bound"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = wide.to_u8().is_none() && maximum.to_u8().is_none(); let assertion_message = "Checked wide narrowing"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = unsigned.to_u8().is_none(); let assertion_message = "Checked unsigned narrowing"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = byte.to_i32().unwrap_or(0) == 255 && byte.to_i64().unwrap_or(0) == 255; let assertion_message = "Checked signed widening"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = byte.to_u32().unwrap_or(0) == 255 && byte.to_u64().unwrap_or(0) == 255; let assertion_message = "Checked unsigned widening"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = byte.to_u8().unwrap_or(0) == 255; let assertion_message = "Checked identity"; assert(assertion_condition, &assertion_message) }
 }
 fn check_storage() {
     var bytes = Array.with_capacity::<Byte>(3)
     bytes.push(0)
     bytes.push(128)
     bytes.push(255)
-    { let assertion_condition = bytes.get(0).unwrap_or(1) == 0 && bytes.get(1).unwrap_or(0) == 128 && bytes.get(2).unwrap_or(0) == 255 let assertion_message = "Byte array roundtrip" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = bytes.set(1, 42) let assertion_message = "Byte store" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = bytes.get(0).unwrap_or(1) == 0 && bytes.get(1).unwrap_or(0) == 128 && bytes.get(2).unwrap_or(0) == 255; let assertion_message = "Byte array roundtrip"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = bytes.set(1, 42); let assertion_message = "Byte store"; assert(assertion_condition, &assertion_message) }
     let view = bytes.slice(0, 3)
-    { let assertion_condition = slices.get(view, 1).unwrap_or(0) == 42 && slices.get(view, 2).unwrap_or(0) == 255 let assertion_message = "Byte slice roundtrip" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = slices.set(bytes.slice_mut(0, 3), 0, 17) let assertion_message = "Byte slice store" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = slices.get(view, 1).unwrap_or(0) == 42 && slices.get(view, 2).unwrap_or(0) == 255; let assertion_message = "Byte slice roundtrip"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = slices.set(bytes.slice_mut(0, 3), 0, 17); let assertion_message = "Byte slice store"; assert(assertion_condition, &assertion_message) }
     bytes.push(64)
-    { let assertion_condition = bytes.get(0).unwrap_or(0) == 17 && bytes.get(3).unwrap_or(0) == 64 let assertion_message = "Byte array growth" assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = bytes.remove(1).unwrap_or(0) == 42 && bytes.pop().unwrap_or(0) == 64 let assertion_message = "Byte array transfer" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = bytes.get(0).unwrap_or(0) == 17 && bytes.get(3).unwrap_or(0) == 64; let assertion_message = "Byte array growth"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = bytes.remove(1).unwrap_or(0) == 42 && bytes.pop().unwrap_or(0) == 64; let assertion_message = "Byte array transfer"; assert(assertion_condition, &assertion_message) }
     let pair = Pair { first: 128, second: 255 }
     var pairs = Array.new::<Pair>()
     pairs.push(pair)
     let result = pairs.get(0).unwrap_or(Pair { first: 0, second: 0 })
-    { let assertion_condition = result.first == 128 && result.second == 255 let assertion_message = "Adjacent byte fields" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = result.first == 128 && result.second == 255; let assertion_message = "Adjacent byte fields"; assert(assertion_condition, &assertion_message) }
     let choice = Choice.Value((identity::<UInt8>(255), 42))
     let answer = match choice { Choice.Empty => 0, Choice.Value((byte, wide)) => if byte == 255 { int32(wide) } else { 0 } }
-    { let assertion_condition = answer == 42 && invoke(increment, 255) == 0 let assertion_message = "Byte aggregate and indirect calls" assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = answer == 42 && invoke(increment, 255) == 0; let assertion_message = "Byte aggregate and indirect calls"; assert(assertion_condition, &assertion_message) }
 }
 fn byte_check() -> Int32 {
     check_conversions()

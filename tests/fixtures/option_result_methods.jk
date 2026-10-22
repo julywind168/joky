@@ -55,18 +55,18 @@ fn check() -> Int32 {
 
     // All arguments run, including unused alternatives and defaults.
     var events = 0
-    let a = present.unwrap_or({ events = events + 1 0 })
-    let b = absent.and({ events = events + 1 Maybe.Some(true) })
-    let c = present.or({ events = events + 1 absent })
-    let d = good.unwrap_or({ events = events + 1 0 })
-    let e = good.or({ events = events + 1 failed })
-    let f = bad.and::<Bool>({ events = events + 1 Outcome.Ok(true) })
+    let a = present.unwrap_or({ events = events + 1; 0 })
+    let b = absent.and({ events = events + 1; Maybe.Some(true) })
+    let c = present.or({ events = events + 1; absent })
+    let d = good.unwrap_or({ events = events + 1; 0 })
+    let e = good.or({ events = events + 1; failed })
+    let f = bad.and::<Bool>({ events = events + 1; Outcome.Ok(true) })
     if events != 6 || a != 42 || !b.is_none() || c.unwrap_or(0) != 42 ||
         d != 42 || e.unwrap_or(0) != 42 || f.err().unwrap_or(0) != 7 { return 13 }
     var receiver = present
-    let snapshot = receiver.or({ receiver = absent Maybe.Some(7) })
+    let snapshot = receiver.or({ receiver = absent; Maybe.Some(7) })
     var outcome = good
-    let kept = outcome.or::<Unit>({ outcome = bad Outcome.Err({}) })
+    let kept = outcome.or::<Unit>({ outcome = bad; Outcome.Err({}) })
     if snapshot.unwrap_or(0) != 42 || !receiver.is_none() || kept.unwrap_or(0) != 42 || outcome.err().unwrap_or(0) != 7 { return 14 }
     if good.unwrap() != 42 || from_result.unwrap().wide != wide() { return 15 }
     empty.unwrap();

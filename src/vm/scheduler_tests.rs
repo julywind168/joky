@@ -65,8 +65,8 @@ fn nested_calls_preserve_temporaries_and_resume_without_replaying_side_effects()
 fn scope_polls_all_branches_and_waits_for_each_completion() {
     let vm = vm(r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
-        fn left(value: Int32) @suspends { delayed_value(value) {} }
-        fn right(value: Int32) @suspends { delayed_value(value) {} }
+        fn left(value: Int32) @suspends { delayed_value(value); {} }
+        fn right(value: Int32) @suspends { delayed_value(value); {} }
         fn all() @suspends -> Int32 {
             parallel {
                 | left(1)
@@ -116,7 +116,7 @@ fn scope_failure_stops_polling_and_releases_siblings() {
     let vm = vm(r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn fail_now() @suspends
-        fn pending() @suspends { delayed_value(1) {} }
+        fn pending() @suspends { delayed_value(1); {} }
         fn failed() @suspends { fail_now() }
         fn all() @suspends { parallel { | pending() | failed() } }
     "#);

@@ -3,11 +3,11 @@ import joky/array.{type Array}
 import joky/option.{type Option}
 import joky/element.{type Element as Cell}
 pub type Sequence<T> = Chain<T>
-pub fn view<T>(list: &Sequence<T>, index: UInt64) -> &Cell<T> { lists.borrow(list, index) }
-pub fn edit<T>(list: &mut Sequence<T>, index: UInt64) -> &mut Cell<T> { lists.borrow_mut(list, index) }
+pub fn view<T: Copy>(list: &Sequence<T>, index: UInt64) -> &Cell<T> { lists.borrow(list, index) }
+pub fn edit<T: Copy>(list: &mut Sequence<T>, index: UInt64) -> &mut Cell<T> { lists.borrow_mut(list, index) }
 pub fn owned<T>(list: &Sequence<T>, index: UInt64) -> &T { list.borrow_ref(index) }
 pub fn owned_mut<T>(list: &mut Sequence<T>, index: UInt64) -> &mut T { list.borrow_mut_ref(index) }
-pub fn copied<T>(list: &Sequence<T>, index: UInt64) -> Option<T> { list.get(index) }
+pub fn copied<T: Copy>(list: &Sequence<T>, index: UInt64) -> Option<T> { list.get(index) }
 pub fn removed<T>(list: &mut Sequence<T>, index: UInt64) -> Option<T> { list.remove(index) }
 pub fn put<T>(list: &mut Sequence<T>, value: T) { list.push_back(value) }
 pub fn export<T>(list: Sequence<T>) -> Array<T> { list.into_array() }

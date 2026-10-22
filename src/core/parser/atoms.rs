@@ -398,7 +398,6 @@ impl Parser {
     }
 
     pub(super) fn parse_postfix(&mut self) -> Result<Expr, Diagnostic> {
-        let grouped = self.peek() == &TokenKind::LParen;
         // A graph body does not need the identifier/record atom planner on
         // its recursive path. Preserve ordinary condition bindings named graph.
         let mut expr = if self.allow_record
@@ -412,27 +411,24 @@ impl Parser {
         } else {
             self.parse_atom()?
         };
-        if matches!(expr, Expr::AnonymousFunction(_))
-            && grouped
-            && !self.at_expression_break()
-            && self.peek() == &TokenKind::LParen
-        {
-            let args = self.parse_call_arguments()?;
-            let span = self.span(expr.span().start(), self.last_span.end());
-            expr = Expr::Invoke {
-                callee: Box::new(expr),
-                args,
-                span,
-            };
-        }
         // A leading dot explicitly continues a field or method chain across lines.
         while self.peek() == &TokenKind::Dot
             || !self.at_expression_break()
                 && matches!(
                     self.peek(),
-                    TokenKind::LBracket | TokenKind::Bang | TokenKind::Question
+                    TokenKind::LParen | TokenKind::LBracket | TokenKind::Bang | TokenKind::Question
                 )
         {
+            if self.peek() == &TokenKind::LParen {
+                let args = self.parse_call_arguments()?;
+                let span = self.span(expr.span().start(), self.last_span.end());
+                expr = Expr::Invoke {
+                    callee: Box::new(expr),
+                    args,
+                    span,
+                };
+                continue;
+            }
             if matches!(self.peek(), TokenKind::Bang | TokenKind::Question) {
                 let op = if self.peek() == &TokenKind::Bang {
                     UnaryOp::Unwrap

@@ -6,7 +6,7 @@ struct Empty {}
 struct Bits { pub high:UInt64, low:Int8, real:Float64 }
 struct Init { count:Int32, bits:Bits, empty:Empty, unit:Unit }
 struct State { initial:Init, title:String, values:Array<UInt64> }
-fn require(ok:Bool) {let message="domain value constructors" check.assert(ok,&message)}
+fn require(ok:Bool) {let message="domain value constructors"; check.assert(ok,&message)}
 fn input(n:Int32)->Init {Init{count:n,bits:Bits{high:18446744073709551615,low:-128,real:Float64.from_bits(9221120237041090626)},empty:Empty{},unit:{}}}
 fn make(p:Init)->State {
     var values=Array.new::<UInt64>()
@@ -14,7 +14,7 @@ fn make(p:Init)->State {
     State{initial:p,title:"constructed",values:values}
 }
 fn inspect(s:&State)->Init {s.initial}
-fn owned_ok(s:&State)->Bool {let expected="constructed" s.title.equals(&expected) && s.values.get(0).unwrap_or(0)==s.initial.bits.high}
+fn owned_ok(s:&State)->Bool {let expected="constructed"; s.title.equals(&expected) && s.values.get(0).unwrap_or(0)==s.initial.bits.high}
 fn make_empty(p:Empty)->Empty {Empty{}}
 fn read_empty(s:&Empty)->Empty {Empty{}}
 struct Scalar { n:Int32 }
@@ -28,20 +28,20 @@ fn verify(p:Init,n:Int32) {
 fn lifecycle() @suspends ->Int32 {
     var evaluations=0
     var p=input(23)
-    let a=domain.create(make,{task.yield_now() evaluations=evaluations+1 p})
+    let a=domain.create(make,{task.yield_now(); evaluations=evaluations+1; p})
     p=input(99)
     verify(domain.read_from(a.read_handle(),inspect).unwrap(),23)
     require(domain.read_from(a.read_handle(),owned_ok).unwrap())
-    let b=domain.create(make,{task.yield_now() evaluations=evaluations+1 p})
+    let b=domain.create(make,{task.yield_now(); evaluations=evaluations+1; p})
     verify(domain.read_from(b.read_handle(),inspect).unwrap(),99)
-    let c=domain.create(make_empty,{evaluations=evaluations+1 Empty{}})
+    let c=domain.create(make_empty,{evaluations=evaluations+1; Empty{}})
     domain.read_from(c.read_handle(),read_empty).unwrap();
     let d=domain.create(make_unit,{evaluations=evaluations+1})
     require(domain.read_from(d.read_handle(),read).unwrap()==7)
     let e=domain.create(make_generic::<Init>,p)
     require(domain.read_from(e.read_handle(),read).unwrap()==8)
     require(evaluations==4)
-    a.close() b.close() c.close() d.close() e.close()
+    a.close(); b.close(); c.close(); d.close(); e.close()
     24
 }
 fn fail_make(p:Init)->State {
@@ -49,6 +49,6 @@ fn fail_make(p:Init)->State {
     let n=100 / p.count
     make(input(n))
 }
-fn failure() @suspends ->Int32 {let owner=domain.create(fail_make,input(0)) 0}
-fn construct() @suspends ->Int32 {let owner=domain.create(make,input(24)) 24}
+fn failure() @suspends ->Int32 {let owner=domain.create(fail_make,input(0)); 0}
+fn construct() @suspends ->Int32 {let owner=domain.create(make,input(24)); 24}
 fn main() @suspends {require(lifecycle()==24)}

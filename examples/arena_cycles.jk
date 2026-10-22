@@ -16,12 +16,12 @@ fn make_pair() -> &Node {
 
 fn main() -> Int32 {
     let root = make_pair()
-    { let displayed: Int32 = next(root).value + next(next(root)).value println(&displayed) }
+    println(next(root).value + next(next(root)).value)
     let self_link = graph {
         let node = graph.alloc(Node { value: 42, next: None })
         graph.link(node.next, node)
         node
     }
-    { let displayed: Int32 = next(next(self_link)).value println(&displayed) }
+    println(next(next(self_link)).value)
     0
 }

@@ -27,7 +27,7 @@ fn reload(engine: &vm.Vm, host: Host, id: UInt64) @suspends {
     // Publication neither acquires a business permit nor drains any output mailbox.
     let message = match engine.publish_file(script_path()) {
         Ok(_) => "reloaded\n",
-        Err(error) => { report(error) "reload failed\n" }
+        Err(error) => { report(error); "reload failed\n" }
     }
     call(engine, host, id, Action.Notice(message));
 }
@@ -109,7 +109,7 @@ fn manage(engine: &vm.Vm, host: Host, requests: &mut outbox.Mailbox) @suspends -
 fn serve(engine: &vm.Vm, host: Host, ready: &mut outbox.Mailbox) @suspends -> Int32 {
     ready.receive()!
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
-        Ok(listener) => listener, Err(_) => { println("Could not bind chat listener") return 1 }
+        Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
     println(listener.local_addr()!.port())
     var next_id: UInt64 = 1
@@ -129,7 +129,7 @@ fn bootstrap(engine: &vm.Vm, input: Bootstrap) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.new()
-    match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { report(error) return 1 } }
+    match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { report(error); return 1 } }
     let directory = domain.directory(1)
     let rooms = domain.directory(4096)
     let accounts = domain.directory(4096)

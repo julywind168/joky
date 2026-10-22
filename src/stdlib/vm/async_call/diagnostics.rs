@@ -106,7 +106,7 @@ mod tests {
             } else {
                 "interpreter"
             };
-            let script = "import joky/domain import joky/task struct Room { n:Int32 } fn make(n:Int32)->Room {Room{n:n}} fn work(n:Int32) @suspends ->Int32 {let room=domain.create(make,n) task.sleep_ms(100000) 42}";
+            let script = "import joky/domain import joky/task struct Room { n:Int32 } fn make(n:Int32)->Room {Room{n:n}} fn work(n:Int32) @suspends ->Int32 {let room=domain.create(make,n); task.sleep_ms(100000); 42}";
             let escaped = script.replace('{', "{{").replace('}', "}}");
             let mut host = VmEngine::with_mode(mode);
             host.load_source(&format!(

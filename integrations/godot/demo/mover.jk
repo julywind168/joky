@@ -33,9 +33,9 @@ fn physics(state: &State) -> Int32 { state.physics }
 fn elapsed(state: &State) -> Float64 { state.elapsed }
 fn target_valid(state: &State) -> Bool { node.is_valid(state.target) }
 fn forget_target(state: &mut State) { node.queue_free(state.target) }
-fn rename(state: &State) { let name = "Renamed" node.set_name(node.self(), &name) }
+fn rename(state: &State) { let name = "Renamed"; node.set_name(node.self(), &name) }
 fn label_size(state: &State) -> UInt64 { state.label.byte_length() }
 fn invalid_position(state: &State) {
 	node.set_position(node.self(), Vector2 { x: 0.0, y: 1.0e300 })
 }
-fn stale_access(state: &State) { let name = "Stale" node.set_name(state.target, &name) }
+fn stale_access(state: &State) { let name = "Stale"; node.set_name(state.target, &name) }

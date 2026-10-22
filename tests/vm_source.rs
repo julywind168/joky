@@ -121,7 +121,7 @@ fn vm_source_named_diagnostics_and_staged_file_capability() {
         let source = r#"import joky/fs
 fn run() @suspends ->Bool {
     match fs.open("Cargo.toml",fs.OpenOptions.new()) {
-        Ok(file)=>{file.close().unwrap() true}
+        Ok(file)=>{file.close().unwrap(); true}
         Err(_)=>false
     }
 }"#;

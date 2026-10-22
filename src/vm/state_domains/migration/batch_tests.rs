@@ -176,7 +176,7 @@ fn migration_batch_late_failure_and_counter_exhaustion_never_publish_earlier_roo
             let registry = vm.domains.clone();
             let baseline = registry.borrow().usage();
             let source = if failure == "constructor" {
-                NEW.replace("import joky/domain","import joky/domain import joky/check").replace("Ledger{text:old.text.clone(),total:int64(old.total),generation:1}","let copy=old.text.clone() let message=\"late failure\" check.assert(false,&message) Ledger{text:copy,total:int64(old.total),generation:1}")
+                NEW.replace("import joky/domain","import joky/domain import joky/check").replace("Ledger{text:old.text.clone(),total:int64(old.total),generation:1}","let copy=old.text.clone(); let message=\"late failure\"; check.assert(false,&message); Ledger{text:copy,total:int64(old.total),generation:1}")
             } else {
                 NEW.into()
             };

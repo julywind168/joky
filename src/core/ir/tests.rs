@@ -34,7 +34,7 @@ fn code_dependencies_execute_indirect_methods_and_cleanup_in_all_backends() {
             let callback = d.callback()
             callback(view.read())
         }
-        fn failure() -> Int32 { let owner = d.owner(0) 42 }
+        fn failure() -> Int32 { let owner = d.owner(0); 42 }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -65,7 +65,7 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         extern fn host() -> Int32
         fn first(x: Int32) -> Int32 { second(x) }
         fn second(x: Int32) -> Int32 { if x == 0 { 7 / x } else { first(x - 1) } }
-        fn pure(x: Int32) -> Int32 { var i = 0 while i < x { i = i + 1 } i }
+        fn pure(x: Int32) -> Int32 { var i = 0; while i < x { i = i + 1 }; i }
         fn pure_call(x: Int32) -> Int32 { pure(x) }
         fn bits(x: Int32) -> Int32 { ~(x & 3) | x ^ 1 }
         fn shift(x: Int32) -> Int32 { 1 << x }
@@ -137,19 +137,19 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
     };
     for attribute in ["", "@suspends"] {
         for (body, code, marked) in [
-            ("let x = 1 x = 2", ErrorCode::InvalidAssignment, "x = 2"),
+            ("let x = 1; x = 2", ErrorCode::InvalidAssignment, "x = 2"),
             ("p = 2", ErrorCode::InvalidAssignment, "p = 2"),
             ("x = 2", ErrorCode::UnknownName, "x = 2"),
-            ("var x = 1 x = true", ErrorCode::TypeMismatch, "x = true"),
+            ("var x = 1; x = true", ErrorCode::TypeMismatch, "x = true"),
             (
                 "var x: Bool = 1",
                 ErrorCode::TypeMismatch,
                 "var x: Bool = 1",
             ),
-            ("var x = 1 x = {}", ErrorCode::TypeMismatch, "x = {}"),
-            ("var x = {} x = 1", ErrorCode::TypeMismatch, "x = 1"),
+            ("var x = 1; x = {}", ErrorCode::TypeMismatch, "x = {}"),
+            ("var x = {}; x = 1", ErrorCode::TypeMismatch, "x = 1"),
             (
-                "var x = 1 { let x = 2 x = 3 }",
+                "var x = 1; { let x = 2; x = 3 }",
                 ErrorCode::InvalidAssignment,
                 "x = 3",
             ),
@@ -170,9 +170,9 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
                 ErrorCode::UnknownName,
                 "x",
             ),
-            ("while false { var x = 1 } x", ErrorCode::UnknownName, "x"),
+            ("while false { var x = 1 }; x", ErrorCode::UnknownName, "x"),
             (
-                "while { var x = 1 false } { x }",
+                "while { var x = 1; false } { x }",
                 ErrorCode::UnknownName,
                 "x",
             ),
@@ -227,7 +227,7 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
                 "local",
             ),
             (
-                "if true { let local = 1 } local",
+                "if true { let local = 1 }; local",
                 ErrorCode::UnknownName,
                 "local",
             ),
@@ -253,12 +253,12 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
                 "local",
             ),
             (
-                "var x = 0 false && (x = 1)",
+                "var x = 0; false && (x = 1)",
                 ErrorCode::TypeMismatch,
                 "(x = 1)",
             ),
             (
-                "let x = 1 if false { x = 2 }",
+                "let x = 1; if false { x = 2 }",
                 ErrorCode::InvalidAssignment,
                 "x = 2",
             ),
@@ -266,7 +266,7 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
             ("{} >= 1", ErrorCode::TypeMismatch, "{} >= 1"),
             ("(1 < 2) < 3", ErrorCode::TypeMismatch, "(1 < 2) < 3"),
             (
-                "var x = 1 var y = 2 x = y = 3",
+                "var x = 1; var y = 2; x = y = 3",
                 ErrorCode::TypeMismatch,
                 "x = y = 3",
             ),
@@ -341,11 +341,11 @@ fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() 
                 "(continue)",
             ),
             ("Int32", "return 1; 2", ErrorCode::UnreachableCode, "2"),
-            ("Int32", "return 1 2", ErrorCode::UnreachableCode, "2"),
+            ("Int32", "return 1; 2", ErrorCode::UnreachableCode, "2"),
             ("Int32", "{ return 1; }; 2", ErrorCode::UnreachableCode, "2"),
             (
                 "Int32",
-                "if true { return 1 } else { return 2 } 3",
+                "if true { return 1 } else { return 2 }; 3",
                 ErrorCode::UnreachableCode,
                 "3",
             ),
@@ -394,7 +394,7 @@ fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() 
             ),
             (
                 "Unit",
-                "while true { continue 2 }",
+                "while true { continue; 2 }",
                 ErrorCode::UnreachableCode,
                 "2",
             ),
@@ -412,7 +412,7 @@ fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() 
             ),
             (
                 "Unit",
-                "while (continue) {} 2",
+                "while (continue) {}; 2",
                 ErrorCode::UnreachableCode,
                 "2",
             ),
@@ -424,7 +424,7 @@ fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() 
             ),
             (
                 "Int32",
-                "let x = 1 x = (return 2)",
+                "let x = 1; x = (return 2)",
                 ErrorCode::InvalidAssignment,
                 "x = (return 2)",
             ),
@@ -697,7 +697,7 @@ fn tuple_diagnostics_locate_pattern_leaves_and_constructor_exits() {
             ErrorCode::TypeMismatch,
         ),
         (
-            "fn f() { let (x,) = (1,) x = 2 }",
+            "fn f() { let (x,) = (1,); x = 2 }",
             "x = 2",
             ErrorCode::InvalidAssignment,
         ),

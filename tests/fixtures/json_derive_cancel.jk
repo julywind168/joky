@@ -13,15 +13,15 @@ import joky/task
 struct TextRecord { value: String }
 #derive(ToJson, FromJson)
 struct SmallRecord { value: UInt8 }
-fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) decoded::<T>("null") }
+        Err(_) => { ensure(false); decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
@@ -34,7 +34,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
         _ => { ensure(false) }
     }
 }
@@ -49,7 +49,7 @@ fn json_derive_cancel_work() @suspends -> Int32 {
     let text = encoded(&value)
     task.yield_now()
     let recovered = decoded::<TextRecord>(text)
-    let expected = "owned" ensure(recovered.value.equals(&expected))
+    let expected = "owned"; ensure(recovered.value.equals(&expected))
     bad::<SmallRecord>("{{\"value\":256}}", 5, "/value")
     42
 }

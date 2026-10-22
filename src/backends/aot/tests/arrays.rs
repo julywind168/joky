@@ -8,9 +8,9 @@ fn buffer_storage_executes_and_reports_failures_in_standalone_native_code() {
         "{} {}",
         crate::core::ir::BUFFER_TEST_SOURCE,
         r#"
-        fn bounds_fail() -> Int32 { let b = allocate(2) load(&b, 0) }
-        fn overflow_fail() -> Int32 { let b = allocate(18446744073709551615) 1 }
-        fn budget_fail() -> Int32 { let b = allocate(16777216) 1 }
+        fn bounds_fail() -> Int32 { let b = allocate(2); load(&b, 0) }
+        fn overflow_fail() -> Int32 { let b = allocate(18446744073709551615); 1 }
+        fn budget_fail() -> Int32 { let b = allocate(16777216); 1 }
     "#
     );
     let ast = crate::core::ir::buffer_test_module(&source);

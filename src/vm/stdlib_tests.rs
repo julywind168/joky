@@ -62,7 +62,7 @@ fn option_result_defaults_resume_once_after_reload_failure_and_cancel() {
     ] {
         let pending = expression.replace("VALUE", "delayed_value(record(7))");
         let failing = expression.replace("VALUE", "42 / delayed_value(record(-1))");
-        let source = format!("extern fn delayed_value(n: Int32) @suspends -> Int32 extern fn record(n: Int32) -> Int32 fn pending() @suspends -> Int32 {{ {pending} }} fn failing() @suspends -> Int32 {{ let value = {failing} record(99); value }}");
+        let source = format!("extern fn delayed_value(n: Int32) @suspends -> Int32 extern fn record(n: Int32) -> Int32 fn pending() @suspends -> Int32 {{ {pending} }} fn failing() @suspends -> Int32 {{ let value = {failing}; record(99); value }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = parity_vm("", mode);
             vm.load_source_with_modules(&source, &crate::ModuleSources::new())
@@ -197,8 +197,8 @@ fn option_result_lazy_defaults_reject_wrong_callbacks_and_consumed_owners() {
         "fn bad() { Some(1).unwrap_or_else(|| { true }); }",
         "fn bad() { None::<Int32>.unwrap_or_else(|x: Int32| { x }); }",
         "fn bad() { Err::<Int32, Bool>(false).unwrap_or_else(|x: Int32| { x }); }",
-        "fn bad() { let value = Some(\"owned\") let taken = value.unwrap_or_else(|| { \"fallback\" }) value.is_some(); }",
-        "fn bad() { let fallback = \"owned\" let take = move || { fallback } Some(\"kept\").unwrap_or_else(take) take(); }",
+        "fn bad() { let value = Some(\"owned\"); let taken = value.unwrap_or_else(|| { \"fallback\" }); value.is_some(); }",
+        "fn bad() { let fallback = \"owned\"; let take = move || { fallback }; Some(\"kept\").unwrap_or_else(take); take(); }",
         "fn wait() @suspends -> Int32 { 42 } fn bad() { Some(1).unwrap_or_else(wait); }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -256,10 +256,10 @@ fn postfix_unwrap_rejects_wrong_types_and_consumed_owners() {
         "fn bad() -> Result<Int32, Unit> { Ok(Some(1)?) }",
         "fn bad() -> Option<Int32> { Some(Result.Ok::<Int32, Unit>(1)?) }",
         "fn bad(x: Result<Int32, String>) -> Result<Int32, Bool> { Ok(x?) }",
-        "fn bad() { let x = Some(\"owned\") let y = x! x!; }",
-        "fn bad() -> Option<String> { let x = Some(\"owned\") let y = x? Some(x!) }",
+        "fn bad() { let x = Some(\"owned\"); let y = x!; x!; }",
+        "fn bad() -> Option<String> { let x = Some(\"owned\"); let y = x?; Some(x!) }",
         "fn bad(x: &Option<Int32>) -> Int32 { x! }",
-        "fn bad() -> &Int32 { let n = 42 Some(&n)! }",
+        "fn bad() -> &Int32 { let n = 42; Some(&n)! }",
         "fn bad() { let f = || -> Int32 { Some(1)? } }",
     ] {
         let mut vm = VmEngine::new_interpreter();

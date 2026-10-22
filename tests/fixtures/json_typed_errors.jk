@@ -9,15 +9,15 @@ import joky/integer
 import joky/float
 import joky/task
 
-fn ensure(ok: Bool) { let message = "typed JSON contract" assert(ok, &message) }
+fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
         Ok(value) => value
-        Err(_) => { ensure(false) decoded::<T>("null") }
+        Err(_) => { ensure(false); decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false); "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
         _ => { ensure(false) }
     }
 }
@@ -45,10 +45,10 @@ fn main() {
     bad::<Map<String, UInt8>>("{{\"\":300}}", 5, "/")
     bad::<Array<UInt8>>("[0,1,300]", 5, "/2")
     bad::<Array<UInt8>>("{{}}", 15, "")
-    bad::<Bool>("0", 18, "") bad::<Unit>("false", 17, "")
-    let unit = decoded::<Unit>("null") ensure(encoded(&unit).byte_length() == 4)
-    ensure(decoded::<Bool>("true")) ensure(!decoded::<Bool>("false"))
+    bad::<Bool>("0", 18, ""); bad::<Unit>("false", 17, "")
+    let unit = decoded::<Unit>("null"); ensure(encoded(&unit).byte_length() == 4)
+    ensure(decoded::<Bool>("true")); ensure(!decoded::<Bool>("false"))
     let number = decoded::<Number>("-0.1200E+004")
-    let text = "-0.1200E+004" ensure(encoded(&number).equals(&text))
+    let text = "-0.1200E+004"; ensure(encoded(&number).equals(&text))
 
 }

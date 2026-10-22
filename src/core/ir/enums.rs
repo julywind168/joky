@@ -287,7 +287,9 @@ impl FunctionPlan {
             self.place_write(&result, 0, Some(tag_slot));
         }
         for scalar in result.scalars().filter(|_| !result.ty.is_place()) {
-            if matches!(scalar.ty, Type::Parameter(_) | Type::Projection(_)) {
+            if matches!(scalar.ty, Type::Parameter(_) | Type::Projection(_))
+                && !scalar.ty.is_owner()
+            {
                 continue;
             }
             let value = match scalar.ty {
@@ -312,7 +314,9 @@ impl FunctionPlan {
                 | Type::Function(_)
                 | Type::Buffer(_)
                 | Type::String
-                | Type::Resource(_) => Constant::NullPtr,
+                | Type::Resource(_)
+                | Type::Parameter(_)
+                | Type::Projection(_) => Constant::NullPtr,
                 Type::Reference(_) => {
                     if cfg!(target_pointer_width = "64") {
                         Constant::UInt64(0)

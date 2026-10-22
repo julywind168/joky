@@ -30,8 +30,8 @@ fn snapshots() -> Int32 {
     let saved = x
     var copy = x
     copy = 9
-    let arithmetic = x + { x = 2 10 }
-    let arguments = pair(x, { x = 3 x })
+    let arithmetic = x + { x = 2; 10 }
+    let arguments = pair(x, { x = 3; x })
     (saved * 10000) + (copy * 1000) + (arithmetic * 100) + arguments
 }
 
@@ -43,18 +43,18 @@ fn shadowing() -> Int32 {
         var x = x + 1
         x = 100
     }
-    { let x = 90 x }
+    { let x = 90; x }
     (initial * 10) + x
 }
 
 fn condition_effects() -> Int32 {
     var checks = 0
     var bodies = 0
-    while { checks = checks + 1 checks < 4 } {
+    while { checks = checks + 1; checks < 4 } {
         bodies = bodies + 1
         999
     }
-    while { checks = checks + 1 false } { bodies = 100 }
+    while { checks = checks + 1; false } { bodies = 100 }
     (checks * 10) + bodies
 }
 
@@ -79,7 +79,7 @@ fn unit_values() {
 
 fn comparison_snapshot() -> Int32 {
     var x = 1
-    let before = x < { x = 2 x }
+    let before = x < { x = 2; x }
     var running = before
     var result = 0
     while running {

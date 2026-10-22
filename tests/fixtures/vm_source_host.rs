@@ -11,7 +11,7 @@ fn answer()->Int32 {1}
 fn files(_:Int32) @suspends ->Bool {
     match fs.open("old.jk",fs.OpenOptions.new()) {
         Err(e)=>match e.kind {fs.ErrorKind.Unsupported=>true,_=>false}
-        Ok(f)=>{f.close().unwrap() false}
+        Ok(f)=>{f.close().unwrap(); false}
     }
 }
 fn hold(directory:domain.DirectoryHandle) @suspends {

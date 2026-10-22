@@ -184,15 +184,15 @@ fn race_requires_suspending_calls_with_matching_reference_free_results() {
             "race branches must be @suspends functions",
         ),
         (
-            "fn value(x: &Int32) @suspends -> &Int32 { x } fn f() @suspends { let p = alloc(1) race { | value(p) }; }",
+            "fn value(x: &Int32) @suspends -> &Int32 { x } fn f() @suspends { let p = alloc(1); race { | value(p) }; }",
             "race results must not contain references",
         ),
         (
-            "struct View { value: &Int32 } fn value(x: &Int32) @suspends -> View { View { value: x } } fn f() @suspends { let p = alloc(1) race { | value(p) }; }",
+            "struct View { value: &Int32 } fn value(x: &Int32) @suspends -> View { View { value: x } } fn f() @suspends { let p = alloc(1); race { | value(p) }; }",
             "race results must not contain references",
         ),
         (
-            "fn a() @suspends -> Int32 { 1 } fn b() @suspends -> Bool { true } fn f() @suspends { let first = a let second = b race { | first() | second() }; }",
+            "fn a() @suspends -> Int32 { 1 } fn b() @suspends -> Bool { true } fn f() @suspends { let first = a; let second = b; race { | first() | second() }; }",
             "same type",
         ),
     ] {
@@ -312,8 +312,8 @@ fn race_imports_keep_generic_borrows_and_first_completion_semantics() {
             r#"
         pub struct Point { pub x: Int32 }
         pub fn write(p: &mut Point, value: Int32) @suspends { p.x = value; }
-        pub fn keep<T>(value: &T) @suspends { alloc((value,)); }
-        pub fn nested<T>(value: &T) @suspends { race { | keep(value) } }
+        pub fn keep<T: Copy>(value: &T) @suspends { alloc((value,)); }
+        pub fn nested<T: Copy>(value: &T) @suspends { race { | keep(value) } }
     "#,
         )
         .unwrap();
