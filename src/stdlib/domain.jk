@@ -489,6 +489,7 @@ extern fn __directory_create(capacity:UInt64) @suspends -> domain.DirectoryOwner
 extern fn __directory_handle(owner:&domain.DirectoryOwner) @suspends -> UInt64
 extern fn __directory_close(directory:UInt64) @suspends
 extern fn __directory_insert(directory:UInt64, key:UInt64, target:domain.Handle) @suspends -> Int32
+extern fn __directory_insert_owned(directory:UInt64, key:UInt64, target:&mut domain.StateOwner) @suspends -> Int32
 extern fn __directory_replace(directory:UInt64, key:UInt64, expected:domain.Handle, target:domain.Handle) @suspends -> Int32
 extern fn __directory_remove(directory:UInt64, key:UInt64, expected:domain.Handle) @suspends -> Bool
 extern fn __directory_lookup(module:domain.Module, directory:UInt64, key:UInt64, operation:String, writable:Bool) @suspends -> domain.Handle
@@ -516,6 +517,12 @@ fn directory_status(status:Int32) -> Result<Unit,DirectoryError> {
     Err(DirectoryError.Conflict)
 }
 impl DirectoryHandle {
+    // Consumes the owner on every outcome; a failed insertion closes its state.
+    // Successful insertion transfers close responsibility to the directory.
+    pub fn insert_owned<S>(self, key:UInt64, target:Owner<S>) @suspends -> Result<Unit,DirectoryError> {
+        var value=target.value
+        directory_status(__directory_insert_owned(self.identity,key,&mut value))
+    }
     pub fn insert<S>(self, key:UInt64, target:WriteHandle<S>) @suspends -> Result<Unit,DirectoryError> {
         directory_status(__directory_insert(self.identity,key,target.token))
     }

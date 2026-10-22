@@ -6,12 +6,11 @@ import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTc
 
 // Keep these entry contracts identical in the host and each published version.
 struct Host { directory: domain.DirectoryHandle, rooms: domain.DirectoryHandle, accounts: domain.DirectoryHandle, requests: outbox.Handle }
-enum Action { Welcome, Line(String), Disconnect, Notice(String), Release }
+enum Action { Welcome, Line(String), Disconnect, Notice(String) }
 struct Call { host: Host, id: UInt64, action: Action }
-struct Bootstrap { host: Host, ready: outbox.Handle }
-struct RoomInit { host: Host, key: UInt64, name: String, ready: outbox.Handle }
+struct RoomInit { host: Host, key: UInt64, name: String }
 struct RoomKey { host: Host, key: UInt64 }
-struct AccountInit { host: Host, id: UInt64, output: outbox.Handle, stop: outbox.Handle, ready: outbox.Handle }
+struct AccountInit { host: Host, owners: domain.DirectoryHandle, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 fn script_path() -> String { "examples/chat_logic.jk" }
 fn report(error: vm.LoadError) {
     match error.kind {
@@ -54,60 +53,39 @@ fn session(engine: &vm.Vm, host: Host, id: UInt64, queue: outbox.Mailbox, contro
     // Retain both mailbox owners until membership removal has committed.
     race { | receive(engine, host, id, reader) | send(&mut queue, writer) | stop(&mut control) }
     call(engine, host, id, Action.Disconnect);
-    call(engine, host, id, Action.Release);
 }
-fn account(engine: &vm.Vm, input: AccountInit) @suspends { engine.call::<AccountInit, Unit>("hold_account", input) }
-fn connected(engine: &vm.Vm, host: Host, id: UInt64, ready: outbox.Mailbox, queue: outbox.Mailbox, control: outbox.Mailbox, stream: TcpStream) @suspends {
-    var ready = ready
-    ready.receive();
+fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream) @suspends {
+    // The connection owns its account even when the session is cancelled.
+    let owners = domain.directory(1)
+    let queue = outbox.create(64, 65536)
+    let control = outbox.create(1, 0)
+    let input = AccountInit { host: host, owners: owners.handle(), id: id, output: queue.handle(), stop: control.handle() }
+    engine.call::<AccountInit, Unit>("init_account", input)
     refresh(engine)
     call(engine, host, id, Action.Welcome);
     session(engine, host, id, queue, control, stream)
 }
-fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream) @suspends {
-    let queue = outbox.create(64, 65536)
-    let control = outbox.create(1, 0)
-    let ready = outbox.create(1, 0)
-    let input = AccountInit { host: host, id: id, output: queue.handle(), stop: control.handle(), ready: ready.handle() }
-    parallel {
-        | account(engine, input)
-        | connected(engine, host, id, ready, queue, control, stream)
-    }
-}
 // Creation may have started in an older module while publication was in flight.
 // Bring newly created roots to the current module before exposing them to clients.
 fn refresh(engine: &vm.Vm) { assert(vm.publish_domain_code(engine) >= 0, "Could not publish code for a newly created state") }
-fn room_input(input: RoomInit, signal: outbox.Handle) -> RoomInit {
-    let RoomInit { host, key, name, ready } = input
-    RoomInit { host: host, key: key, name: name, ready: signal }
-}
-fn room_owner(engine: &vm.Vm, input: RoomInit) @suspends { engine.call::<RoomInit, Unit>("hold_room", input) }
-fn room_ready(engine: &vm.Vm, input: RoomKey, ready: &mut outbox.Mailbox) @suspends {
-    ready.receive();
-    refresh(engine)
-    engine.call::<RoomKey, Unit>("open_room", input)
-}
 fn room(engine: &vm.Vm, input: RoomInit) @suspends {
-    var ready = outbox.create(1, 0)
     let key = RoomKey { host: input.host, key: input.key }
-    let input = room_input(input, ready.handle())
-    parallel { | room_owner(engine, input) | room_ready(engine, key, &mut ready) }
+    engine.call::<RoomInit, Unit>("init_room", input)
+    refresh(engine)
+    engine.call::<RoomKey, Unit>("open_room", key)
 }
 fn manage(engine: &vm.Vm, host: Host, requests: &mut outbox.Mailbox) @suspends -> Int32 {
-    scope {
+    while true {
+        let request = requests.receive()
+        if request.is_none() { break }
         while true {
-            let request = requests.receive()
-            if request.is_none() { break }
-            while true {
-                let pending = engine.call::<Host, Option<RoomInit>>("next_room", host)
-                match pending { Some(input) => { branch { room(engine, input) } }, None => break }
-            }
+            let pending = engine.call::<Host, Option<RoomInit>>("next_room", host)
+            match pending { Some(input) => room(engine, input), None => break }
         }
     }
     0
 }
-fn serve(engine: &vm.Vm, host: Host, ready: &mut outbox.Mailbox) @suspends -> Int32 {
-    ready.receive()!
+fn serve(engine: &vm.Vm, host: Host) @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
@@ -123,10 +101,6 @@ fn serve(engine: &vm.Vm, host: Host, ready: &mut outbox.Mailbox) @suspends -> In
     }
     0
 }
-fn bootstrap(engine: &vm.Vm, input: Bootstrap) @suspends -> Int32 {
-    engine.call::<Bootstrap, Unit>("hold", input)
-    0
-}
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.new()
     match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { report(error); return 1 } }
@@ -135,11 +109,9 @@ fn main() @suspends -> Int32 {
     let accounts = domain.directory(4096)
     var requests = outbox.create(4096, 0)
     let host = Host { directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
-    var ready = outbox.create(1, 0)
-    let input = Bootstrap { host: host, ready: ready.handle() }
+    engine.call::<Host, Unit>("initialize", host)
     race {
-        | bootstrap(&engine, input)
-        | serve(&engine, host, &mut ready)
+        | serve(&engine, host)
         | manage(&engine, host, &mut requests)
     }
 }

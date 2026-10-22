@@ -1,4 +1,4 @@
-//! Executor-local routing capabilities never retain domain roots or code modules.
+//! Executor-local routes optionally own state independently of creating tasks.
 use super::commits::{adopt, lease, Stored};
 use super::*;
 use crate::runtime::{buffer::Buffer, domain::Operation};
@@ -7,6 +7,7 @@ struct Entry {
     key: u64,
     handle: DomainHandle,
     token: u64,
+    owner: Option<DomainOwner>,
 }
 pub(super) struct Table {
     entries: Vec<Entry>,
@@ -24,17 +25,23 @@ impl Drop for Owner {
         if let Some(registry) = self.registry.upgrade() {
             registry.borrow_mut().directories.remove(&self.token);
         }
-        self.table.borrow_mut().close();
+        close_table(&self.table);
     }
 }
 impl Table {
-    fn close(&mut self) {
-        self.closed = true;
-        self.entries.clear();
-    }
     fn position(&self, key: u64) -> Result<usize, usize> {
         self.entries.binary_search_by_key(&key, |entry| entry.key)
     }
+}
+fn close_table(table: &RefCell<Table>) {
+    let entries = {
+        let mut table = table.borrow_mut();
+        table.closed = true;
+        std::mem::take(&mut table.entries)
+    };
+    // Closing domains cancels tasks and may release other directory resources.
+    // Never run that cleanup while holding a table or registry borrow.
+    drop(entries);
 }
 fn create(registry: &Rc<RefCell<Domains>>, capacity: u64) -> Result<Owner, Error> {
     let capacity = usize::try_from(capacity).map_err(|_| limited("Directory capacity overflow"))?;
@@ -92,28 +99,93 @@ fn insert(
     expected: Option<u64>,
     token: u64,
 ) -> u64 {
+    insert_entry(registry, directory, key, expected, token, None)
+}
+fn insert_owned(
+    registry: &Rc<RefCell<Domains>>,
+    directory: u64,
+    key: u64,
+    owner: DomainOwner,
+) -> u64 {
+    let token = {
+        let domains = registry.borrow();
+        let Ok(domain) = domains.get(owner.handle) else {
+            return 4;
+        };
+        domain.source_token * 2 + 1
+    };
+    insert_entry(registry, directory, key, None, token, Some(owner))
+}
+fn prune(registry: &Rc<RefCell<Domains>>, table: &RefCell<Table>) {
+    let mut index = 0;
+    loop {
+        let stale = {
+            let table = table.borrow();
+            let Some(entry) = table.entries.get(index) else {
+                break;
+            };
+            registry.borrow().get(entry.handle).is_err()
+        };
+        if stale {
+            let entry = table.borrow_mut().entries.remove(index);
+            drop(entry);
+        } else {
+            index += 1;
+        }
+    }
+}
+fn insert_entry(
+    registry: &Rc<RefCell<Domains>>,
+    directory: u64,
+    key: u64,
+    expected: Option<u64>,
+    token: u64,
+    owner: Option<DomainOwner>,
+) -> u64 {
     let Some(table) = table(registry, directory) else {
         return 1;
     };
     let Ok(handle) = source::handle(registry, token) else {
         return 4;
     };
-    let mut table = table.borrow_mut();
     if let Some(expected) = expected {
+        let mut table = table.borrow_mut();
         let Ok(index) = table.position(key) else {
             return 5;
         };
         if table.entries[index].token / 2 != expected / 2 {
             return 5;
         }
-        table.entries[index] = Entry { key, handle, token };
+        // A permissions-only replacement must not close the state it still routes.
+        let owner = if table.entries[index].token / 2 == token / 2 {
+            table.entries[index].owner.take()
+        } else {
+            owner
+        };
+        let previous = std::mem::replace(
+            &mut table.entries[index],
+            Entry {
+                key,
+                handle,
+                token,
+                owner,
+            },
+        );
+        drop(table);
+        drop(previous);
         return 0;
     }
     // Reclaim dead routes before enforcing capacity, including routes never looked up.
-    let domains = registry.borrow();
-    table
-        .entries
-        .retain(|entry| domains.get(entry.handle).is_ok());
+    prune(registry, &table);
+    // Retired owners can cancel tasks that own this directory or the new target.
+    // Validate again after cleanup before publishing the route.
+    if table.borrow().closed {
+        return 1;
+    }
+    if source::handle(registry, token).is_err() {
+        return 4;
+    }
+    let mut table = table.borrow_mut();
     let index = match table.position(key) {
         Ok(_) => return 3,
         Err(index) => index,
@@ -121,7 +193,15 @@ fn insert(
     if table.entries.len() == table.capacity {
         return 2;
     }
-    table.entries.insert(index, Entry { key, handle, token });
+    table.entries.insert(
+        index,
+        Entry {
+            key,
+            handle,
+            token,
+            owner,
+        },
+    );
     0
 }
 fn remove(registry: &Rc<RefCell<Domains>>, directory: u64, key: u64, expected: u64) -> bool {
@@ -135,7 +215,9 @@ fn remove(registry: &Rc<RefCell<Domains>>, directory: u64, key: u64, expected: u
     if table.entries[index].token / 2 != expected / 2 {
         return false;
     }
-    table.entries.remove(index);
+    let entry = table.entries.remove(index);
+    drop(table);
+    drop(entry);
     true
 }
 fn lookup(
@@ -156,7 +238,10 @@ fn lookup(
     let entry = &table.entries[index];
     let domains = registry.borrow();
     let Ok(domain) = domains.get(entry.handle) else {
-        table.entries.remove(index);
+        drop(domains);
+        let entry = table.entries.remove(index);
+        drop(table);
+        drop(entry);
         return Ok(0);
     };
     if writable && !entry.handle.writable {
@@ -183,7 +268,7 @@ fn lookup(
 pub(super) fn shutdown(registry: &Rc<RefCell<Domains>>) {
     let tables = std::mem::take(&mut registry.borrow_mut().directories);
     for table in tables.into_values().filter_map(|table| table.upgrade()) {
-        table.borrow_mut().close();
+        close_table(&table);
     }
 }
 /// # Safety
@@ -207,17 +292,23 @@ pub(super) unsafe fn poll(
             Ok(owner.token)
         }
         Operation::DirectoryClose => {
-            if let Some(table) = registry
+            let table = registry
                 .borrow_mut()
                 .directories
                 .remove(&slots[0])
-                .and_then(|table| table.upgrade())
-            {
-                table.borrow_mut().close();
+                .and_then(|table| table.upgrade());
+            if let Some(table) = table {
+                close_table(&table);
             }
             Ok(0)
         }
         Operation::DirectoryInsert => Ok(insert(registry, slots[0], slots[1], None, slots[2])),
+        Operation::DirectoryInsertOwned => Ok(insert_owned(
+            registry,
+            slots[0],
+            slots[1],
+            source::take_owner(slots[2])?,
+        )),
         Operation::DirectoryReplace => Ok(insert(
             registry,
             slots[0],

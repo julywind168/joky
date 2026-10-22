@@ -1,4 +1,4 @@
-// Test owners stay local, independently of the production connection holders.
+// Test owners stay local, independently of the production owning directories.
 struct Fixture { directory: domain.Directory, rooms: domain.Directory, accounts: domain.Directory, requests: outbox.Mailbox, catalog: domain.Owner<Catalog>, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Context }
 fn seed_catalog(state: &mut Catalog, _: Unit) {
     state.rooms.push(RoomEntry { name: "r", status: RoomStatus.Ready, waiters: Array.new::<outbox.Handle>() })
@@ -20,7 +20,7 @@ fn fixture() @suspends -> Fixture {
     Fixture { directory: directory, rooms: rooms, accounts: accounts, requests: requests, catalog: catalog, room: room, other: other, ctx: Context { host: host } }
 }
 fn test_account(ctx: Context, id: UInt64, key: UInt64, output: outbox.Handle, stop: outbox.Handle) @suspends -> domain.Owner<Account> {
-    let value = Account { route: Route { live: true, id: id, output: output, stop: stop }, room: key, balance_cents: 500, lifetime: stop }
+    let value = Account { route: Route { live: true, id: id, output: output, stop: stop }, room: key, balance_cents: 500 }
     let owner = domain.create(make_account, value)
     ctx.host.accounts.insert(id, owner.handle())!
     if key != 0 { domain.write_to(room_handle(ctx, key)!, add_member, value.route)! }
@@ -32,6 +32,7 @@ fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
     check.assert(text.equals(&expected), "mailbox message and ordering")
 }
 fn balance(owner: &domain.Owner<Account>) @suspends -> UInt64 { domain.read_from(owner.read_handle(), account_view)!.balance_cents }
+fn ready(state: &mut Catalog, _: Unit) {}
 fn unchanged(state: &mut Account, _: Unit) { state.balance_cents += 0 }
 fn fund_capacity_test(state: &mut Account, _: Unit) { state.balance_cents = 10000 }
 fn candidate(ctx: Context, account: domain.WriteHandle<Account>, text: String) @suspends -> domain.CandidateSet {

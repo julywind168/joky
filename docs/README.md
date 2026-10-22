@@ -19,6 +19,7 @@
 - [Arena、隐式生命周期与 FFI 设计](arena-borrowing-ffi.md)
 - [服务端状态域与任务并发设计草案](server-concurrency.md)
 - [状态域语法糖草案](state-domain-syntax.md)
+- [有状态服务的编程模型与实施计划](stateful-service-ergonomics.md)
 - [文件运行时设计与开发计划](file-runtime.md)
 
 ## 开发记录与专项验收

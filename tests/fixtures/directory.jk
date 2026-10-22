@@ -107,4 +107,58 @@ fn typed_only() @suspends {
     p.close()
     assert(find::<Profile>(directory,1).is_none())
 }
-fn main() @suspends ->Int32 { route(); task.yield_now(); weak(); owned(); typed_only(); println("directory ok"); 0 }
+fn install(directory:domain.DirectoryHandle,key:UInt64,n:Int32) @suspends ->domain.ReadHandle<Room> {
+    let room=domain.create(make,n)
+    let handle=room.read_handle()
+    assert(directory.insert_owned(key,room).is_ok())
+    handle
+}
+fn transferred() @suspends {
+    let table=domain.directory(1)
+    let directory=table.handle()
+    let first_handle=install(directory,1,10)
+    // Initialization has returned: the directory now keeps the domain alive.
+    task.yield_now()
+    assert(value(directory,1)==10)
+    let other=domain.create(make,20)
+    let other_handle=other.read_handle()
+    assert(!directory.remove(1,other_handle))
+    assert(match directory.insert_owned(1,other) { Err(Occupied)=>true,_=>false })
+    assert(domain.read_from(other_handle,read).is_err())
+    let excess=domain.create(make,30)
+    let excess_handle=excess.read_handle()
+    assert(match directory.insert_owned(2,excess) { Err(Full)=>true,_=>false })
+    assert(domain.read_from(excess_handle,read).is_err())
+    // Changing only access keeps ownership; replacing the target closes it.
+    assert(directory.replace_read(1,first_handle,first_handle).is_ok())
+    assert(value(directory,1)==10)
+    assert(domain.lookup_write::<Room>(directory,1).is_none())
+    let replacement=domain.create(make,40)
+    let replacement_handle=replacement.read_handle()
+    assert(directory.replace(1,first_handle,replacement.handle()).is_ok())
+    assert(domain.read_from(first_handle,read).is_err())
+    assert(!directory.remove(1,first_handle))
+    assert(value(directory,1)==40)
+    assert(directory.remove(1,replacement_handle))
+    assert(domain.read_from(replacement_handle,read).unwrap()==40)
+    let removed=install(directory,3,50)
+    assert(directory.remove(3,removed))
+    assert(domain.read_from(removed,read).is_err())
+    let closed=install(directory,4,60)
+    table.close()
+    assert(domain.read_from(closed,read).is_err())
+    let rejected=domain.create(make,70)
+    let rejected_handle=rejected.read_handle()
+    assert(match directory.insert_owned(5,rejected) { Err(Closed)=>true,_=>false })
+    assert(domain.read_from(rejected_handle,read).is_err())
+    let dropped={
+        let temporary=domain.directory(1)
+        let state=domain.create(catalog,73)
+        let handle=state.read_handle()
+        assert(temporary.handle().insert_owned(1,state).is_ok())
+        assert(domain.read_from(handle,first).unwrap()==73)
+        handle
+    }
+    assert(domain.read_from(dropped,first).is_err())
+}
+fn main() @suspends ->Int32 { transferred(); route(); task.yield_now(); weak(); owned(); typed_only(); println("directory ok"); 0 }

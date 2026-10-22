@@ -6,16 +6,15 @@ import joky/option.{type Option, Some, None}
 
 // Keep these entry contracts identical in the host and each published version.
 struct Host { directory: domain.DirectoryHandle, rooms: domain.DirectoryHandle, accounts: domain.DirectoryHandle, requests: outbox.Handle }
-enum Action { Welcome, Line(String), Disconnect, Notice(String), Release }
+enum Action { Welcome, Line(String), Disconnect, Notice(String) }
 struct Call { host: Host, id: UInt64, action: Action }
-struct Bootstrap { host: Host, ready: outbox.Handle }
-struct RoomInit { host: Host, key: UInt64, name: String, ready: outbox.Handle }
+struct RoomInit { host: Host, key: UInt64, name: String }
 struct RoomKey { host: Host, key: UInt64 }
-struct AccountInit { host: Host, id: UInt64, output: outbox.Handle, stop: outbox.Handle, ready: outbox.Handle }
+struct AccountInit { host: Host, owners: domain.DirectoryHandle, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 
 struct Route { live: Bool, id: UInt64, output: outbox.Handle, stop: outbox.Handle }
 #state
-struct Account { route: Route, room: UInt64, balance_cents: UInt64, lifetime: outbox.Handle }
+struct Account { route: Route, room: UInt64, balance_cents: UInt64 }
 #state
 struct Room { name: String, members: Array<Route> }
 enum RoomStatus { Pending, Starting, Ready }
@@ -87,7 +86,7 @@ fn take_room(state: &mut Catalog, host: Host) -> Option<RoomInit> {
         let entry = state.rooms.borrow_mut_ref(i)
         if match entry.status { Pending => true, _ => false } {
             entry.status = RoomStatus.Starting
-            return Some(RoomInit { host: host, key: i + 1, name: entry.name.clone(), ready: host.requests })
+            return Some(RoomInit { host: host, key: i + 1, name: entry.name.clone() })
         }
         i += 1
     }
@@ -123,17 +122,13 @@ fn next_room(host: Host) @suspends -> Option<RoomInit> {
     let catalog = domain.lookup_write::<Catalog>(host.directory, 1)!
     domain.write_to(catalog, take_room, host)!
 }
-fn split_room(input: RoomInit) -> (Host, UInt64, String, outbox.Handle) {
-    let RoomInit { host, key, name, ready } = input
-    (host, key, name, ready)
+fn split_room(input: RoomInit) -> (Host, UInt64, String) {
+    let RoomInit { host, key, name } = input
+    (host, key, name)
 }
-fn hold_room(input: RoomInit) @suspends {
-    let (host, key, name, signal) = split_room(input)
-    let owner = domain.create(make_room, name)
-    host.rooms.insert(key, owner.handle())!
-    outbox.close(signal)
-    var lifetime = outbox.create(1, 0)
-    lifetime.receive();
+fn init_room(input: RoomInit) @suspends {
+    let (host, key, name) = split_room(input)
+    host.rooms.insert_owned(key, domain.create(make_room, name))!
 }
 fn open_room(input: RoomKey) @suspends {
     let catalog = domain.lookup_write::<Catalog>(input.host.directory, 1)!
@@ -351,39 +346,23 @@ fn dispatch(request: Call) @suspends -> UInt64 {
     match action {
         Welcome => if publish(ctx, id, Command.Welcome, &excluded) { 1 } else { 0 },
         Line(line) => if process(ctx, id, line) { 1 } else { 0 },
-        Disconnect => { publish(ctx, id, Command.Disconnect, &excluded); 0 },
-        Notice(text) => if publish(ctx, id, Command.Notice(text), &excluded) { 1 } else { 0 },
-        Release => {
+        Disconnect => {
+            publish(ctx, id, Command.Disconnect, &excluded);
             match domain.lookup_write::<Account>(host.accounts, id) {
-                Some(account) => { let value = domain.read_from(account.read_only(), account_view)!; outbox.close(value.lifetime) },
+                Some(account) => { host.accounts.remove(id, account.read_only()); },
                 None => {}
             }
             0
-        }
+        },
+        Notice(text) => if publish(ctx, id, Command.Notice(text), &excluded) { 1 } else { 0 }
     }
 }
-fn hold_account(input: AccountInit) @suspends {
-    var lifetime = outbox.create(1, 0)
-    let initial = Account { route: Route { live: true, id: input.id, output: input.output, stop: input.stop }, room: 0, balance_cents: 500, lifetime: lifetime.handle() }
+fn init_account(input: AccountInit) @suspends {
+    let initial = Account { route: Route { live: true, id: input.id, output: input.output, stop: input.stop }, room: 0, balance_cents: 500 }
     let owner = domain.create(make_account, initial)
-    let account = owner.handle()
-    input.host.accounts.insert(input.id, account)!
-    outbox.close(input.ready)
-    lifetime.receive();
-    input.host.accounts.remove(input.id, account.read_only());
-    owner.close()
+    input.host.accounts.insert(input.id, owner.handle())!
+    input.owners.insert_owned(input.id, owner)!
 }
-fn ready(state: &mut Catalog, _: Unit) {}
-fn hold(input: Bootstrap) @suspends {
-    let owner = domain.create(make_catalog, {})
-    let catalog = owner.handle()
-    input.host.directory.insert(1, catalog)!
-    var access = domain.access_set(); access.include(catalog.read_only())
-    let snapshot = domain.snapshot_set(access)
-    var batch = outbox.batch(1, 0)
-    outbox.stage(&mut batch, input.ready, Array.new::<UInt8>())!
-    var receipt = domain.commit_set(domain.edit_snapshot(snapshot, catalog, ready, {}).with_outbox(batch))
-    receipt.wait()!
-    var lifetime = outbox.create(1, 0)
-    lifetime.receive();
+fn initialize(host: Host) @suspends {
+    host.directory.insert_owned(1, domain.create(make_catalog, {}))!
 }

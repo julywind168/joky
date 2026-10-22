@@ -274,9 +274,21 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     }
     departures.sort();
     assert_eq!(departures, ["left 123 16\n", "left 123 17\n"]);
+    // Empty rooms retain their state, but no initializer task or interpreter frames.
+    // One connection crosses the former parked-owner frame limit by changing rooms.
+    let mut previous = "房间".to_owned();
+    for index in 0..224 {
+        let room = format!("retained-{index}");
+        carol.send(format!("join {room}\n"));
+        carol.expect(&format!("left {previous} 3\n"));
+        carol.expect(&format!("joined {room} 3\n"));
+        previous = room;
+    }
+    carol.send("balance\n");
+    carol.expect("balance 4\n");
     // Native backends also cross the former 256-message batch boundary.
-    // Account/room owner tasks also consume the interpreter's 1024 live-frame budget;
-    // 40 TCP members leave headroom, while verify_wide_broadcast still covers 260 targets.
+    // Interpreter sessions still have a 1024 live-frame budget; 40 TCP members
+    // leave headroom, while verify_wide_broadcast covers 260 targets directly.
     let mut peers: Vec<_> = (20..20 + members)
         .map(|id| Peer::connect(port, id))
         .collect();

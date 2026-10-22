@@ -95,6 +95,7 @@ pub(crate) enum Operation {
     When,
     PeriodicStatus,
     CommitFailedOutbox,
+    DirectoryInsertOwned,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,6 +139,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__directory_handle" => Operation::DirectoryHandle,
         "__directory_close" => Operation::DirectoryClose,
         "__directory_insert" => Operation::DirectoryInsert,
+        "__directory_insert_owned" => Operation::DirectoryInsertOwned,
         "__directory_replace" => Operation::DirectoryReplace,
         "__directory_remove" => Operation::DirectoryRemove,
         "__directory_lookup" => Operation::DirectoryLookup,
@@ -343,6 +345,10 @@ impl Operation {
             Self::DirectoryHandle => (vec![Type::reference(directory, false)], i),
             Self::DirectoryClose => (vec![i], Type::Unit),
             Self::DirectoryInsert => (vec![i.clone(), i, token], Type::Int32),
+            Self::DirectoryInsertOwned => (
+                vec![i.clone(), i, Type::reference(owner, true)],
+                Type::Int32,
+            ),
             Self::DirectoryReplace => (vec![i.clone(), i, token.clone(), token], Type::Int32),
             Self::DirectoryRemove => (vec![i.clone(), i, token], Type::Bool),
             Self::DirectoryLookup => (vec![m, i.clone(), i, text, Type::Bool], token),
@@ -696,6 +702,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         90 => Operation::When,
         91 => Operation::PeriodicStatus,
         92 => Operation::CommitFailedOutbox,
+        93 => Operation::DirectoryInsertOwned,
 
         _ => {
             super::error::record_error(Error::new_with_code(

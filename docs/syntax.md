@@ -4,6 +4,8 @@
 不表示这些能力已经实现，也不要求在 v0.1 一次完成全部类型机制。
 本文随实现推进标记已完成的子集，其余条目仍是设计目标。
 当前可用语法以[语言与内置模块](language.md)为准，执行与 ABI 边界见[架构说明](architecture.md)。
+状态归属、事务操作与热更新边界的易用性收敛见
+[有状态服务的编程模型与实施计划](stateful-service-ergonomics.md)，以聊天室发言和换房为验收对象。
 Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](arena-borrowing-ffi.md)。
 跨调用持久状态及 Godot 解释器脚本接入见
 [持久实例与数值专项计划](persistent-instances-numerics.md)；数值线 N0–N4 已全部实现

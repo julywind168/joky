@@ -797,18 +797,19 @@ fn main() @suspends {
 #[test]
 #[cfg(unix)]
 fn directory_script_routing_survives_code_publication_in_all_backends() {
-    let source = r#"import joky/domain import joky/task import joky/check
+    let source = r#"import joky/domain import joky/check
 struct Room { value:Int32 }
 fn make(value:Int32)->Room { Room{value:value} }
 fn read(room:&Room)->Int32 { room.value }
-fn hold(directory:domain.DirectoryHandle) @suspends {
+fn install(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,42)
+    let handle=room.read_handle()
     let message="directory register"
-    check.assert(directory.insert(7,room.handle()).is_ok(),&message)
-    while domain.lookup::<Room>(directory,7).is_some() { task.yield_now() }
+    check.assert(directory.insert_owned(7,room).is_ok(),&message)
+    check.assert(directory.insert_read(8,handle).is_ok(),&message)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
-    match domain.lookup::<Room>(directory,7) { Some(room)=>domain.read_from(room,read).unwrap(),None=>-1 }
+    match domain.lookup::<Room>(directory,8) { Some(room)=>domain.read_from(room,read).unwrap(),None=>-1 }
 }
 fn remove(directory:domain.DirectoryHandle) @suspends ->Bool {
     match domain.lookup::<Room>(directory,7) { Some(room)=>directory.remove(7,room),None=>false }
@@ -818,17 +819,19 @@ fn remove(directory:domain.DirectoryHandle) @suspends ->Bool {
     let next = next.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("directory_script.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+        work.write(
+            "directory_script.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/check
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     let message="directory reload"
-    var attempts:Int32=0
-    while h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1 {{
-        attempts=attempts+1; check.assert(attempts<1000,&message); task.yield_now()
-    }}
     check.assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==42,&message)
+    check.assert(vm.module_count(h)==1,&message)
     let next={next:?}
     check.assert(vm.load_source(h,&next)==0,&message)
+    check.assert(vm.module_count(h)==2,&message)
     check.assert(vm.publish_domain_code(h)==1,&message)
+    check.assert(vm.module_count(h)==1,&message)
     check.assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==142,&message)
     check.assert(h.call::<domain.DirectoryHandle,Bool>("remove",directory),&message)
 }}
@@ -839,13 +842,16 @@ fn main() @suspends {{
     let source={source:?}
     let message="directory Script"
     check.assert(vm.load_source(h,&source)==0,&message)
-    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    h.call::<domain.DirectoryHandle,Unit>("install",directory)
+    control(&h,directory)
     check.assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1,&message)
     check.assert(vm.close(h)==0,&message)
     owner.close()
     println("directory Script ok")
 }}
-"#));
+"#
+            ),
+        );
         work.assert_all_backends("directory_script.jk", &[], b"directory Script ok\n", 0);
     }
 }

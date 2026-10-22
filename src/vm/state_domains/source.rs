@@ -15,7 +15,7 @@ pub(super) fn next_token() -> Result<u64, Error> {
     .map_err(|_| limited("Source domain identities exhausted"))
 }
 struct Owner {
-    domain: DomainOwner,
+    domain: Option<DomainOwner>,
     _charge: ExternalCharge,
 }
 // A snapshot owns copied result lanes and opaque versions, never the state root.
@@ -73,7 +73,7 @@ fn adopt(arena: &mut Arena, domain: DomainOwner) -> Result<u64, Error> {
     let charge = arena.reserve_external(std::mem::size_of::<Owner>())?;
     let token = NonNull::new(
         Box::into_raw(Box::new(Owner {
-            domain,
+            domain: Some(domain),
             _charge: charge,
         }))
         .cast(),
@@ -186,6 +186,19 @@ unsafe fn owner(frame: &CpsFrame) -> Result<crate::runtime::resource::ResourceLe
         .as_mut()
         .ok_or_else(|| invalid("Null domain owner"))?;
     pointer.resource_mut()?.lease()
+}
+/// Move close responsibility without retaining the creating task or its arena.
+///
+/// # Safety
+/// `pointer` must name a live source domain owner resource. The compiler-owned
+/// adapter must hold its exclusive reference until this synchronous call returns.
+pub(super) unsafe fn take_owner(pointer: u64) -> Result<DomainOwner, Error> {
+    let lease = commits::lease(pointer)?;
+    let owner = &mut *lease.token().cast::<Owner>();
+    owner
+        .domain
+        .take()
+        .ok_or_else(|| invalid("Domain owner was already transferred"))
 }
 pub(super) struct RequestOutput {
     pub layout: Option<(usize, usize)>,
@@ -764,6 +777,7 @@ pub(crate) unsafe fn poll(
         | Operation::DirectoryHandle
         | Operation::DirectoryClose
         | Operation::DirectoryInsert
+        | Operation::DirectoryInsertOwned
         | Operation::DirectoryReplace
         | Operation::DirectoryRemove
         | Operation::DirectoryLookup
@@ -869,7 +883,12 @@ pub(crate) unsafe fn poll(
             let lease = owner(frame)?;
             let owner = &*lease.token().cast::<Owner>();
             let domains = registry.borrow();
-            let domain = domains.get(owner.domain.handle)?;
+            let handle = owner
+                .domain
+                .as_ref()
+                .ok_or_else(|| invalid("Domain owner was already transferred"))?
+                .handle;
+            let domain = domains.get(handle)?;
             domain.source_token * 2 + 1
         }
         Operation::ReadOnly => {
@@ -879,7 +898,11 @@ pub(crate) unsafe fn poll(
         Operation::Close => {
             let lease = owner(frame)?;
             let owner = &*lease.token().cast::<Owner>();
-            if !owner.domain.close() {
+            let domain = owner
+                .domain
+                .as_ref()
+                .ok_or_else(|| invalid("Domain owner was already transferred"))?;
+            if !domain.close() {
                 frame.wake = Some(crate::runtime::driver::Wake::Immediate);
                 return Ok(None);
             }

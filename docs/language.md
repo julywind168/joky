@@ -3761,27 +3761,40 @@ AcquireError 包含 Full、Closed、WaitLimit；容量非法、整数溢出或�
 域目录按 `UInt64` 业务 ID 查找状态域。`Directory` 唯一拥有目录存储，`DirectoryHandle`
 是可复制、可通过 `Vm.call` 平面记录契约传递的访问能力。模块不因此获得可变全局状态；
 AOT 服务作用域持有 Directory，把句柄传给 Script 或业务上下文即可。
-目录既不保活目标域，也不保活 Script 模块。它可以包含不同状态类型，但查找必须给出
-受编译器检查的具名只读投影 `fn(&S) -> R`，其中 R 是标量；投影只用于确定 S，查找不执行它。
+目录可以包含不同状态类型，查找通过显式状态类型参数检查布局和访问权限。
+普通 `insert` / `insert_read` 仅保存弱路由；`insert_owned` 消费域 Owner，将关闭责任交给目录。
+拥有条目使状态保留到条目移除或目录关闭，无需挂起一个初始化任务来持有状态。
 
-以下操作均为 `@suspends`，但每次目录访问在一个运行时调用内完成，不等待容量或调用用户代码。
+以下操作均为 `@suspends`，每次目录访问在一个运行时调用内完成，不等待容量。
+删除、替换或关闭拥有条目时还会按域关闭协议取消关联工作并释放状态。
 
 | API | 语义 |
 | --- | --- |
 | `domain.directory(capacity: UInt64) -> Directory` | 创建正容量的有界目录，预分配条目存储并计入执行器共享状态预算 |
 | `Directory.handle(&self) -> DirectoryHandle` | 返回当前执行器内的非拥有能力，身份不复用 |
-| `Directory.close(self)` | 关闭并释放目录；离开所有者作用域也会关闭，不关闭目标域 |
+| `Directory.close(self)` | 关闭并释放目录及其拥有的域；离开所有者作用域也会关闭，普通弱条目的目标不受影响 |
 | `DirectoryHandle.insert(key, WriteHandle<S>)` | 插入可写域；存活的同名键返回 Occupied，不覆盖 |
 | `DirectoryHandle.insert_read(key, ReadHandle<S>)` | 插入只读域，不可通过查找提升为写权限 |
+| `DirectoryHandle.insert_owned(key, Owner<S>)` | 消费唯一所有者并插入拥有型可写条目；成功后由目录关闭域，失败时关闭传入域 |
 | `DirectoryHandle.replace(key, expected: ReadHandle<S>, target: WriteHandle<T>)` | 仅在当前条目指向 expected 域时替换，否则 Conflict |
 | `DirectoryHandle.replace_read(key, expected: ReadHandle<S>, target: ReadHandle<T>)` | 条件替换为只读域 |
-| `DirectoryHandle.remove(key, expected: ReadHandle<S>) -> Bool` | 仅删除仍指向 expected 域的条目，避免旧路由清理误删另一个域的新路由 |
+| `DirectoryHandle.remove(key, expected: ReadHandle<S>) -> Bool` | 仅删除仍指向 expected 域的条目；拥有条目同时关闭域，避免旧路由清理误删另一个域的新路由 |
 | `domain.lookup::<S>(directory, key) -> Option<ReadHandle<S>>` | 检查存活与状态布局兼容性，返回只读句柄 |
 | `domain.lookup_write::<S>(directory, key) -> Option<WriteHandle<S>>` | 同上，且要求注册的目标具有写权限 |
 
 插入和替换返回 `Result<Unit, DirectoryError>`，错误有 `Closed`、`Full`、`Occupied`、
 `InvalidTarget`、`Conflict`。关闭或来自其他执行器的目录视为 Closed；目标必须属于当前执行器且
 存活、健康。关闭/失效域的旧条目在查找时移除，插入前也会统一清理，以回收未再查找条目的容量。
+
+`insert_owned` 不返还失败的 Owner；无论结果如何，调用者都不能再次使用已移入的所有者。
+同一个域只能有一个所有者，但可以另建弱路由。替换拥有条目为另一个域会关闭旧域，
+新目标仍是弱路由；替换为同一域（包括收窄为只读）保留原关闭责任。
+拥有条目的关闭会使所有指向该域的句柄失效，并取消所属请求，不只影响本目录内的路由。
+目录本身仍是独占资源；`DirectoryHandle` 不延长目录寿命。
+
+拥有条目不保存初始化 continuation 的代码。兼容发布可更新域的当前实现，
+已结束初始化流程的旧模块可在其他持有者释放后退役。交接本身不执行代码发布：
+旧流程在发布期间创建状态的情况仍需在对业务开放前完成相应的发布校验。
 
 查找在目录关闭、跨执行器、键不存在、域关闭/隔离或缺少写权限时返回 None；目标存在但与
 显式指定的 S 不兼容时产生 `TypeMismatch` 运行时错误，不返回错误类型的句柄。
@@ -3794,11 +3807,13 @@ import joky/domain
 struct Room { members: Int32 }
 fn open(n: Int32) -> Room { Room { members: n } }
 fn count(room: &Room) -> Int32 { room.members }
+fn install(directory: domain.DirectoryHandle) @suspends {
+    directory.insert_owned(1001, domain.create(open, 3))!
+}
 fn main() @suspends {
     let rooms = domain.directory(1024)
     let directory = rooms.handle()
-    let room = domain.create(open, 3)
-    directory.insert(1001, room.handle());
+    install(directory)
     match domain.lookup::<Room>(directory, 1001) {
         Some(handle) => { println(domain.read_from(handle, count).unwrap()) }
         None => { println("room unavailable") }
