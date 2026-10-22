@@ -305,10 +305,6 @@ pub(crate) struct StandardLibrary {
 }
 
 impl StandardLibrary {
-    pub(crate) fn enum_identity(&self, path: &str, name: &str) -> Option<u64> {
-        self.modules.get(path)?.exports.types.get(name)?.declaration
-    }
-
     pub(super) fn new() -> Self {
         Self::from_sources(SOURCES).expect("valid embedded source modules")
     }

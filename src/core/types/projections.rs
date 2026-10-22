@@ -41,6 +41,10 @@ pub(super) struct Work {
 }
 
 impl TypeRegistry {
+    pub(crate) fn standard_success_variant(&self, id: u64) -> Option<&'static str> {
+        self.trait_environment.root.standard_enums.get(&id).copied()
+    }
+
     pub(super) fn solving_traits(&self) -> bool {
         !self.trait_work.borrow().active.is_empty()
     }

@@ -42,6 +42,9 @@ pub(crate) struct TraitBinding {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ImportScope {
+    /// Trusted declaration identities travel with normalized modules, including
+    /// when another registry compiles them without loading its own stdlib cache.
+    pub standard_enums: BTreeMap<u64, &'static str>,
     pub types: BTreeMap<String, TypeBinding>,
     pub traits: BTreeMap<String, TraitBinding>,
     /// Bare names retain every candidate; type-qualified lookup bypasses this map.
@@ -137,6 +140,18 @@ fn bind(
         ));
     }
     let mut scope = ImportScope::default();
+    for (path, name, success) in [
+        ("joky/option", "Option", "Some"),
+        ("joky/result", "Result", "Ok"),
+    ] {
+        if let Some(id) = libraries
+            .get(path)
+            .and_then(|module| module.exports.types.get(name))
+            .and_then(|binding| binding.declaration)
+        {
+            scope.standard_enums.insert(id, success);
+        }
+    }
     let mut required = BTreeSet::new();
     let mut seen_paths = BTreeSet::new();
     let mut explicit_types = BTreeSet::new();

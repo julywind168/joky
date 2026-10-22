@@ -6,14 +6,7 @@ use patterns::{CheckedPattern, Kind};
 // Declaration identity survives aliases and disabled preludes. User enums with
 // the same spelling or variant shape do not acquire compiler semantics.
 pub(super) fn success_variant(enumeration: &EnumType, types: &TypeRegistry) -> Option<usize> {
-    let library = types.standard.get()?;
-    let name = if library.enum_identity("joky/option", "Option") == Some(enumeration.id) {
-        "Some"
-    } else if library.enum_identity("joky/result", "Result") == Some(enumeration.id) {
-        "Ok"
-    } else {
-        return None;
-    };
+    let name = types.standard_success_variant(enumeration.id)?;
     enumeration.variants.iter().position(|v| v.name == name)
 }
 

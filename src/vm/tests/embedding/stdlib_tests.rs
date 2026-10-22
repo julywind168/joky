@@ -248,6 +248,27 @@ fn postfix_unwrap_and_propagation_preserve_values() {
 }
 
 #[test]
+fn postfix_unwrap_normalized_modules_keep_standard_enum_identity() {
+    let parsed =
+        parser::parse(include_str!("../../../../tests/fixtures/postfix_unwrap.jk")).unwrap();
+    let registry = crate::TypeRegistry::new().with_prelude(false);
+    let normalized = registry.resolve_aliases(&parsed).unwrap();
+    let normalized = registry.resolve_aliases(&normalized).unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_module(&normalized).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+        // A separate stdlib cache must not replace the module's identities.
+        vm.load_source("fn unrelated() -> Int32 { Some(7)! }")
+            .unwrap();
+        assert_eq!(vm.call_int32_0("unrelated").unwrap(), 7);
+        vm.load_module(&normalized).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+    }
+    crate::backends::aot::tests::assert_sync_int32(&normalized, "check", 42);
+}
+
+#[test]
 fn postfix_unwrap_rejects_wrong_types_and_consumed_owners() {
     for source in [
         "fn bad() -> Int32 { 1! }",
