@@ -120,12 +120,23 @@ fn create(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<
     })
 }
 fn batch(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<Batch, Error> {
-    let max_messages = size(messages)?;
-    let max_bytes = size(bytes)?;
     let domains = registry.borrow();
     if domains.shutting_down {
         return Err(invalid("Outbox executor is closed"));
     }
+    new_batch(
+        domains.identity,
+        domains.budget.clone(),
+        size(messages)?,
+        size(bytes)?,
+    )
+}
+fn new_batch(
+    identity: u64,
+    budget: Rc<Budget>,
+    max_messages: usize,
+    max_bytes: usize,
+) -> Result<Batch, Error> {
     let overhead = max_messages
         .checked_mul(
             std::mem::size_of::<Staged>()
@@ -134,9 +145,9 @@ fn batch(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<B
         )
         .and_then(|n| n.checked_add(std::mem::size_of::<Batch>()))
         .ok_or_else(|| limited("Outbox batch capacity overflow"))?;
-    let charge = reads::Charge::new(domains.budget.clone(), overhead)?;
+    let charge = reads::Charge::new(budget, overhead)?;
     Ok(Batch {
-        registry: domains.identity,
+        registry: identity,
         max_messages,
         max_bytes,
         bytes: 0,
@@ -173,7 +184,14 @@ impl Batch {
         if let Some(status) = self.failure {
             return Ok(if status == Status::OutboxFull { 1 } else { 2 });
         }
-        let charge = reads::Charge::new(domains.budget.clone(), bytes.len())?;
+        self.record(domains.budget.clone(), token, bytes)?;
+        Ok(0)
+    }
+    fn record(&mut self, budget: Rc<Budget>, token: u64, bytes: &[u8]) -> Result<(), Error> {
+        if self.messages.len() == self.max_messages || bytes.len() > self.max_bytes - self.bytes {
+            return Err(limited("Operation message budget exceeded"));
+        }
+        let charge = reads::Charge::new(budget, bytes.len())?;
         let mut copy = vector(bytes.len())?;
         copy.extend_from_slice(bytes);
         self.messages.push(Staged {
@@ -184,7 +202,7 @@ impl Batch {
             },
         });
         self.bytes += bytes.len();
-        Ok(0)
+        Ok(())
     }
     pub(super) fn prepare(&mut self, domains: &Domains) -> Result<(), Status> {
         if self.registry != domains.identity {
@@ -414,3 +432,65 @@ unsafe fn poll_inner(
 
 #[cfg(test)]
 mod tests;
+
+// Generated synchronous code only records bytes here. It never borrows the
+// registry held by the FIFO executor or observes live mailbox state.
+struct Staging {
+    identity: u64,
+    budget: Rc<Budget>,
+    messages: usize,
+    bytes: usize,
+    batch: Option<Batch>,
+}
+thread_local! {
+    static STAGING: RefCell<Option<Staging>> = const { RefCell::new(None) };
+}
+pub(super) struct Session;
+impl Session {
+    pub(super) fn enter(domains: &Domains) -> Self {
+        STAGING.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            assert!(slot.is_none(), "Transaction effects cannot reenter");
+            *slot = Some(Staging {
+                identity: domains.identity,
+                budget: domains.budget.clone(),
+                messages: domains.limits.max_operation_messages,
+                bytes: domains.limits.max_operation_bytes,
+                batch: None,
+            });
+        });
+        Self
+    }
+    pub(super) fn finish(self) -> Option<Batch> {
+        STAGING.with(|slot| slot.borrow_mut().take().and_then(|staging| staging.batch))
+    }
+}
+impl Drop for Session {
+    fn drop(&mut self) {
+        STAGING.with(|slot| {
+            slot.borrow_mut().take();
+        });
+    }
+}
+/// The buffer is a live shared UInt8 buffer from compiler-checked code.
+pub(crate) unsafe fn emit(token: u64, bytes: &Buffer) -> Result<(), Error> {
+    STAGING.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let staging = slot
+            .as_mut()
+            .ok_or_else(|| invalid("outbox.emit requires a when operation"))?;
+        if staging.batch.is_none() {
+            staging.batch = Some(new_batch(
+                staging.identity,
+                staging.budget.clone(),
+                staging.messages,
+                staging.bytes,
+            )?);
+        }
+        staging
+            .batch
+            .as_mut()
+            .unwrap()
+            .record(staging.budget.clone(), token, bytes.bytes()?)
+    })
+}

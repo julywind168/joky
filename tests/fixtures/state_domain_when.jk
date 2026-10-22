@@ -1,6 +1,7 @@
 import joky/check
 import joky/domain
 import joky/mem
+import joky/outbox
 import joky/array.{type Array}
 
 fn assert(ok:Bool) { check.assert(ok,"when") }
@@ -92,4 +93,46 @@ fn lifecycle() @suspends ->Int32 {
     c.close()
     when(24)
 }
-fn main() @suspends { assert(lifecycle()==24) }
+fn notify(state:&mut State, target:outbox.Handle, bytes:&Array<UInt8>) {
+    state.n+=1
+    outbox.emit(target,bytes)
+}
+fn messages() @suspends {
+    let owner=domain.create(make,1)
+    let h=owner.handle()
+    var first=outbox.create(2,8)
+    var second=outbox.create(1,8)
+    let a=first.handle()
+    let b=second.handle()
+    let bytes="one".into_bytes()
+    let denied=when "deny message" (mut h) {
+        notify(h,a,&bytes)
+        let result:Result<Unit,Int32>=Err(7)
+        result
+    }
+    assert(denied.unwrap().is_err())
+    assert(h.value().unwrap()==1)
+    let bytes="two".into_bytes()
+    when "publish message" (mut h) {notify(h,b,&bytes)}.unwrap()
+    assert(h.value().unwrap()==2)
+    let bytes="bad".into_bytes()
+    match when "full message" (mut h) {notify(h,a,&bytes); notify(h,b,&bytes)} {
+        Err(OutboxFull(target))=>{assert(target==b.identity())}, _=>{assert(false)}
+    }
+    assert(h.value().unwrap()==2)
+    outbox.close(b)
+    let bytes="bad".into_bytes()
+    match when "closed message" (mut h) {notify(h,a,&bytes); notify(h,b,&bytes)} {
+        Err(OutboxClosed(target))=>{assert(target==b.identity())}, _=>{assert(false)}
+    }
+    assert(h.value().unwrap()==2)
+    let bytes="ok".into_bytes()
+    when "publish ordered" (mut h) {notify(h,a,&bytes); outbox.emit(a,&bytes)}.unwrap()
+    assert(h.value().unwrap()==3)
+    let one=first.receive()!
+    let two=first.receive()!
+    assert(one.len()==2 && two.len()==2)
+    assert(one.get(0)! ==111 && two.get(1)! ==107)
+    owner.close()
+}
+fn main() @suspends { assert(lifecycle()==24); messages() }

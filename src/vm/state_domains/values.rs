@@ -148,13 +148,21 @@ pub(super) unsafe fn poll(
             return Ok(None);
         };
         if let Some(rejection) = rejection {
-            return Ok(Some(rejection as u64));
+            return Ok(Some(if many {
+                access::reply(frame, op, rejection.status(), rejection.payload())
+            } else {
+                rejection.status()
+            }));
         }
         match outcome {
             DomainOutcome::Value(InstanceValue::Unit) => {
                 let packet = &mut *(frame.slots[packet_slot] as *mut Buffer);
                 write_packet(arena, packet, &wait.output.borrow())?;
-                Ok(Some(0))
+                Ok(Some(if many {
+                    access::reply(frame, op, 0, 0)
+                } else {
+                    0
+                }))
             }
             DomainOutcome::Failed(error) => Err(error),
             _ => Err(invalid("Domain value operation was cancelled or closed")),
@@ -170,10 +178,16 @@ pub(super) unsafe fn poll(
                 let tokens = (0..packet.len().min(64))
                     .map(|i| Ok(packet.load(i)?.cast::<u64>().read()))
                     .collect::<Result<Vec<_>, Error>>()?;
-                return Ok(Some(access::source_tokens(registry, &tokens, &error) as u64));
+                let rejection = access::source_tokens(registry, &tokens, &error);
+                return Ok(Some(access::reply(
+                    frame,
+                    op,
+                    rejection.status(),
+                    rejection.payload(),
+                )));
             }
             Ok(Some(
-                access::source_rejection(registry, frame, op, &error) as u64
+                access::source_rejection(registry, frame, op, &error).status(),
             ))
         }
         result => result,

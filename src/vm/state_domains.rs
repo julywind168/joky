@@ -26,6 +26,7 @@ pub(crate) mod diagnostics;
 mod directory;
 pub(crate) mod migration;
 mod outbox;
+pub(crate) use outbox::emit;
 mod pairs;
 mod reads;
 mod storage;
@@ -54,6 +55,8 @@ pub struct DomainLimits {
     pub max_domains: usize,
     pub max_state_bytes: usize,
     pub max_requests: usize,
+    pub max_operation_messages: usize,
+    pub max_operation_bytes: usize,
     /// Logical request storage: entry, function name and scalar input storage.
     pub max_request_bytes: usize,
 }
@@ -63,6 +66,8 @@ impl Default for DomainLimits {
             max_domains: 4096,
             max_state_bytes: 64 * 1024 * 1024,
             max_requests: 4096,
+            max_operation_messages: 1024,
+            max_operation_bytes: 1024 * 1024,
             max_request_bytes: 4 * 1024 * 1024,
         }
     }

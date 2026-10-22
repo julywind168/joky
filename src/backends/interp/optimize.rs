@@ -244,6 +244,10 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
             visit(condition);
             visit(message);
         }
+        Instruction::OutboxEmit { token, bytes } => {
+            visit(token);
+            visit(bytes);
+        }
         Instruction::Panic { message } => visit(message),
         Instruction::Float { src, .. } | Instruction::DomainBits { src, .. } => visit(src),
         Instruction::Copy { src, .. } => visit(src),
@@ -360,7 +364,8 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::TaskScopeEnter
         | Instruction::TaskBranch { .. }
         | Instruction::TaskJoin => {}
-        Instruction::Assert { .. }
+        Instruction::OutboxEmit { .. }
+        | Instruction::Assert { .. }
         | Instruction::Panic { .. }
         | Instruction::Branch { .. }
         | Instruction::BranchCompare { .. }

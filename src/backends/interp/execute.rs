@@ -1848,6 +1848,18 @@ fn run_frame(
                 };
                 frame.pc += 1;
             }
+            Instruction::OutboxEmit { token, bytes } => {
+                let Value::UInt64(token) = frame.slots[*token] else {
+                    unreachable!()
+                };
+                let Value::Reference(bytes) = frame.slots[*bytes] else {
+                    unreachable!()
+                };
+                if let Err(error) = unsafe { crate::runtime::domain::emit(token, &*bytes.cast()) } {
+                    return Step::Failed(error);
+                }
+                frame.pc += 1;
+            }
             Instruction::Assert { message, .. } | Instruction::Panic { message } => {
                 let passed = if let Instruction::Assert { condition, .. } = instruction {
                     let Value::Bool(condition) = frame.slots[*condition] else {

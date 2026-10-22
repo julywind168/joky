@@ -286,6 +286,10 @@ pub(crate) enum Op {
         message: Slot,
     },
     /// Report failure and leave through cleanup; there is no normal successor.
+    OutboxEmit {
+        token: Slot,
+        bytes: Slot,
+    },
     Panic {
         message: Slot,
     },
@@ -1090,7 +1094,8 @@ impl ModulePlan {
                             !elements.is_empty()
                                 || hooks.iter().any(|hook| functions[&hook.name].may_fail)
                         }) || match op {
-                            Op::Assert { .. }
+                            Op::OutboxEmit { .. }
+                            | Op::Assert { .. }
                             | Op::Panic { .. }
                             | Op::Alloc { .. }
                             | Op::ArenaNew { .. }
@@ -1445,6 +1450,41 @@ impl FunctionPlan {
                     plan.result = dst;
                 }
             }
+            return Ok(plan);
+        }
+        if matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::OutboxEmit)) {
+            let buffer = Type::Buffer(std::sync::Arc::new(Type::UInt8));
+            let valid_bytes = f.params.get(1).is_some_and(|p| {
+                p.ty.reference_type().is_some_and(|r| {
+                    !r.mutable
+                        && matches!(&r.target, Type::Record(record) if record.array)
+                        && r.target.scalar_types() == [buffer.clone()]
+                })
+            });
+            if f.suspends
+                || f.ret_ty != Type::Unit
+                || f.params.len() != 2
+                || f.params[0].ty != Type::UInt64
+                || !valid_bytes
+            {
+                return Err(type_error(
+                    &f.span,
+                    ErrorCode::InvalidCall,
+                    "Invalid outbox emit signature",
+                ));
+            }
+            // Array's single owner lane borrows the buffer header directly.
+            // The signature check above excludes mixed and inline owning records.
+            plan.emit(Op::OutboxEmit {
+                token: Slot {
+                    index: 0,
+                    ty: Type::UInt64,
+                },
+                bytes: Slot {
+                    index: 1,
+                    ty: f.params[1].ty.clone(),
+                },
+            });
             return Ok(plan);
         }
         if matches!(

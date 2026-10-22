@@ -39,6 +39,7 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             }
             (SourceKind::Arena, "arena.new") => ArenaNew,
             (SourceKind::Arena, "arena.alloc") => ArenaAlloc,
+            (SourceKind::BufferLibrary, "outbox.emit") => OutboxEmit,
             (SourceKind::Check, "check.assert") => Assert,
             (SourceKind::Check, "check.panic") => Panic,
             (SourceKind::Text, "text.clone") => TextClone,

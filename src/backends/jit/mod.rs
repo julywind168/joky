@@ -108,6 +108,10 @@ pub(crate) fn compile(
     for (name, ptr) in crate::runtime::error::symbols() {
         builder.symbol(name, ptr);
     }
+    builder.symbol(
+        "__joky_outbox_emit_v1",
+        crate::runtime::domain::emit_native as *const u8,
+    );
     for (name, ptr) in crate::runtime::buffer::symbols()
         .into_iter()
         .chain(crate::runtime::arena::symbols())

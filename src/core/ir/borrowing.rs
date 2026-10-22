@@ -155,6 +155,7 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             }
             _ => (vec![], vec![]),
         },
+        Op::OutboxEmit { bytes, .. } => (refs(bytes), vec![]),
         Op::Assert { message, .. } | Op::Panic { message } => (refs(message), vec![]),
         Op::Closure(op) => match op.as_ref() {
             closures::ClosureOp::BorrowCapture { dst, reference } => (refs(reference), refs(dst)),

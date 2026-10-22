@@ -97,6 +97,10 @@ enum Instruction {
         condition: usize,
         message: usize,
     },
+    OutboxEmit {
+        token: usize,
+        bytes: usize,
+    },
     Panic {
         message: usize,
     },
@@ -493,6 +497,10 @@ fn lower_unoptimized(
             Op::Assert { condition, message } => Instruction::Assert {
                 condition: condition.index,
                 message: message.index,
+            },
+            Op::OutboxEmit { token, bytes } => Instruction::OutboxEmit {
+                token: token.index,
+                bytes: bytes.index,
             },
             Op::Panic { message } => Instruction::Panic {
                 message: message.index,

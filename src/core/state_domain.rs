@@ -127,13 +127,70 @@ pub(crate) fn infer(
     functions: &mut HashMap<String, FunctionInfo>,
     bodies: &HashMap<String, FunctionPlan>,
 ) {
+    let safe = safe_bodies(functions, bodies, false);
+    let transactions = safe_bodies(functions, bodies, true);
+    for (name, info) in functions {
+        info.domain_request_entry = info.suspends
+            && info.signature.params.len() == 1
+            && bodies.get(name).is_some_and(|body| {
+                body.domain_value(&info.signature.params[0])
+                    && body.domain_value(&info.signature.ret)
+            });
+        info.script_entry &= info.domain_request_entry;
+        let pair = safe.contains(name)
+            && pair_eligible(info)
+            && info.signature.params[..access_count(info)]
+                .iter()
+                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
+        let values = (safe.contains(name)
+            || name.starts_with("$when/") && transactions.contains(name))
+            && value_eligible(info)
+            && info.signature.params[..access_count(info)]
+                .iter()
+                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
+        // Reuse the typed lane bridge, without changing persistent-instance eligibility.
+        let migration = safe.contains(name)
+            && migration_eligible(info)
+            && state_root(&info.signature.ret, &bodies[name])
+            && state_root(
+                &info.signature.params[0].reference_type().unwrap().target,
+                &bodies[name],
+            );
+        let step = safe.contains(name)
+            && migration_step_eligible(info)
+            && info.signature.params[..2]
+                .iter()
+                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
+        let constructor = safe.contains(name)
+            && constructor_eligible(info)
+            && state_root(&info.signature.ret, &bodies[name]);
+        info.instance_entry |= pair || migration || step || values || constructor;
+        info.domain_entry = constructor
+            || values
+            || step
+            || pair
+            || migration
+            || safe.contains(name)
+                && ((super::instance::constructor(info)
+                    && state_root(&info.signature.ret, &bodies[name]))
+                    || super::instance::receiver(info)
+                        .is_some_and(|ty| state_root(ty, &bodies[name])));
+    }
+}
+
+fn safe_bodies(
+    functions: &HashMap<String, FunctionInfo>,
+    bodies: &HashMap<String, FunctionPlan>,
+    transactional: bool,
+) -> HashSet<String> {
     let mut safe: HashSet<_> = bodies
         .iter()
         .filter(|(name, body)| {
             !functions[*name].suspends
                 && !body.is_destructor
                 && body.ops.iter().all(|op| {
-                    storage_op(op, body)
+                    (transactional && matches!(op, Op::OutboxEmit { .. }))
+                        || storage_op(op, body)
                         || matches!(
                             op,
                             Op::Copy(..)
@@ -181,50 +238,5 @@ pub(crate) fn infer(
             safe.remove(&name);
         }
     }
-    for (name, info) in functions {
-        info.domain_request_entry = info.suspends
-            && info.signature.params.len() == 1
-            && bodies.get(name).is_some_and(|body| {
-                body.domain_value(&info.signature.params[0])
-                    && body.domain_value(&info.signature.ret)
-            });
-        info.script_entry &= info.domain_request_entry;
-        let pair = safe.contains(name)
-            && pair_eligible(info)
-            && info.signature.params[..access_count(info)]
-                .iter()
-                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
-        let values = safe.contains(name)
-            && value_eligible(info)
-            && info.signature.params[..access_count(info)]
-                .iter()
-                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
-        // Reuse the typed lane bridge, without changing persistent-instance eligibility.
-        let migration = safe.contains(name)
-            && migration_eligible(info)
-            && state_root(&info.signature.ret, &bodies[name])
-            && state_root(
-                &info.signature.params[0].reference_type().unwrap().target,
-                &bodies[name],
-            );
-        let step = safe.contains(name)
-            && migration_step_eligible(info)
-            && info.signature.params[..2]
-                .iter()
-                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
-        let constructor = safe.contains(name)
-            && constructor_eligible(info)
-            && state_root(&info.signature.ret, &bodies[name]);
-        info.instance_entry |= pair || migration || step || values || constructor;
-        info.domain_entry = constructor
-            || values
-            || step
-            || pair
-            || migration
-            || safe.contains(name)
-                && ((super::instance::constructor(info)
-                    && state_root(&info.signature.ret, &bodies[name]))
-                    || super::instance::receiver(info)
-                        .is_some_and(|ty| state_root(ty, &bodies[name])));
-    }
+    safe
 }

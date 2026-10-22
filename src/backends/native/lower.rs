@@ -629,6 +629,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, types::I64, ptr, ptr],
             vec![],
         ),
+        ("__joky_outbox_emit_v1", vec![types::I64, ptr], vec![]),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
     ] {
         let mut sig = module.make_signature();
@@ -2315,6 +2316,14 @@ fn lower_ops(
                     .ins()
                     .call(refs["__joky_cps_release_children"], &[frame]);
                 check_call(builder, refs, Some(frame), None);
+            }
+            Op::OutboxEmit { token, bytes } => {
+                let token = slots.read(builder, token);
+                let bytes = slots.read(builder, bytes);
+                builder
+                    .ins()
+                    .call(refs["__joky_outbox_emit_v1"], &[token, bytes]);
+                check_call(builder, refs, mode.frame(), mode.cleanup());
             }
             Op::Panic { message } => {
                 let message = slots.read(builder, message);

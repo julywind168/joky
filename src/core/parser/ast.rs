@@ -761,6 +761,7 @@ pub(crate) enum DomainAccessKind {
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
+    OutboxEmit,
     FixedArrayBegin,
     FixedArrayWriteNext,
     FixedArrayFinish,

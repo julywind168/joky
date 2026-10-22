@@ -336,3 +336,95 @@ fn outbox_large_batches_aggregate_targets_and_preserve_each_fifo() {
     drop((outgoing, rejected, owners));
     assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
 }
+
+#[test]
+fn state_domains_when_messages_rollback_on_traps_limits_and_business_rejection() {
+    const SOURCE: &str = r#"
+import joky/domain import joky/outbox
+struct S { n:Int32 }
+fn make(n:Int32)->S{S{n:n}}
+fn read(s:&S)->Int32{s.n}
+fn operation(h:domain.WriteHandle<S>,target:outbox.Handle,zero:Int32) @suspends {
+    when "emit" (mut h) {
+        h.n+=1
+        let bytes="payload".into_bytes()
+        outbox.emit(target,&bytes)
+        let result:Result<Int32,Int32>=Err(1/zero)
+        result
+    };
+}
+"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for case in [
+            "reject",
+            "trap",
+            "message_limit",
+            "byte_limit",
+            "allocation",
+        ] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let queue = create(&vm.domains, 2, 32).unwrap();
+            let baseline = vm.domains.borrow().budget.bytes.get();
+            let live = crate::runtime::arena::LIVE.with(Cell::get);
+            let output = Rc::new(RefCell::new(vec![0; 3]));
+            let mut request = pairs::submit_values(
+                &vm.domains,
+                &[owner.write_handle()],
+                vm.current.as_ref().unwrap(),
+                "$when/named/4:main/9:operation/4:656d6974",
+                vec![queue.token, u64::from(case != "trap")],
+                pairs::ValueOutput {
+                    words: output,
+                    snapshot: false,
+                },
+                vm.interpreter_limits(),
+            )
+            .unwrap();
+            vm.set_domain_limits(DomainLimits {
+                max_operation_messages: if case == "message_limit" { 0 } else { 2 },
+                max_operation_bytes: if case == "byte_limit" { 0 } else { 32 },
+                max_state_bytes: if case == "allocation" {
+                    baseline
+                } else {
+                    64 * 1024 * 1024
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            vm.poll_tasks(10000).unwrap();
+            let (result, rejection) = request.take_access_result().unwrap();
+            if case == "reject" {
+                assert!(matches!(result, DomainOutcome::Value(InstanceValue::Unit)));
+                assert!(rejection.is_none());
+            } else if case == "trap" {
+                assert!(
+                    matches!(result, DomainOutcome::Failed(e) if e.message().contains("Division by zero"))
+                );
+                assert!(rejection.is_none());
+            } else {
+                assert_eq!(rejection, Some(access::Rejection::ResourceLimit), "{case}");
+            }
+            drop(request);
+            assert!(queue.queue.borrow().messages.is_empty(), "{case}");
+            assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+            assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline, "{case}");
+            assert_eq!(crate::runtime::arena::LIVE.with(Cell::get), live, "{case}");
+            vm.set_domain_limits(Default::default()).unwrap();
+            let mut read = vm
+                .queue_domain_call(owner.read_handle(), "read", &[])
+                .unwrap();
+            vm.poll_tasks(1000).unwrap();
+            assert!(matches!(
+                read.take_result(),
+                Some(DomainOutcome::Value(InstanceValue::Int32(7)))
+            ));
+            drop(queue);
+            owner.close();
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}

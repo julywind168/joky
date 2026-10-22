@@ -21,6 +21,7 @@ fn describe(instruction: &Instruction) -> String {
         } => format!("DomainBits r{dst}, r{src}, decode={decode}"),
         Instruction::Float { .. } => "float".into(),
         Instruction::Assert { condition, message } => format!("assert %{condition}, %{message}"),
+        Instruction::OutboxEmit { token, bytes } => format!("outbox.emit %{token}, %{bytes}"),
         Instruction::Panic { message } => format!("panic %{message}"),
         Instruction::IndirectCall(call) => {
             format!("IndirectCall r{}, {:?}", call.callee, call.args)

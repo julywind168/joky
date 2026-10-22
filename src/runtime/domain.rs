@@ -269,7 +269,7 @@ impl Operation {
         )
     }
     pub(crate) fn status_payload(self) -> bool {
-        matches!(self, Self::Request | Self::SetRevisionChecked)
+        matches!(self, Self::Request | Self::SetRevisionChecked | Self::When)
             || (self.access() && !matches!(self, Self::Values | Self::CurrentValues | Self::When))
     }
     pub(crate) fn signature(self) -> FunctionSignature {
@@ -295,7 +295,7 @@ impl Operation {
                     Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), false),
                     Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
                 ],
-                Type::Int32,
+                Type::tuple(vec![Type::Int32, Type::UInt64]),
             ),
             Self::CurrentValues => (
                 vec![
@@ -730,3 +730,13 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
     }
 }
 pub(crate) use crate::vm::state_domains::source::poll;
+
+pub(crate) use crate::vm::state_domains::emit;
+/// # Safety
+/// The compiler supplies a live shared UInt8 buffer.
+#[export_name = "__joky_outbox_emit_v1"]
+pub(crate) unsafe extern "C" fn emit_native(token: u64, bytes: *const super::buffer::Buffer) {
+    if let Err(error) = emit(token, &*bytes) {
+        super::error::record_error(error);
+    }
+}

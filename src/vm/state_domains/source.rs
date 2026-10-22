@@ -709,7 +709,7 @@ unsafe fn wait(
                 return Ok(None);
             };
             if let Some(rejection) = rejection {
-                Ok(access::reply(frame, op, rejection as u64, 0))
+                Ok(access::reply(frame, op, rejection.status(), 0))
             } else {
                 match outcome {
                     DomainOutcome::Value(value) => Ok(access::reply(frame, op, 0, value.bits())),
@@ -747,12 +747,12 @@ pub(crate) unsafe fn poll(
     let executor = crate::runtime::executor::current_executor()
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
-    if op.access() && op.status_payload() {
+    if op.access() && op.status_payload() && op != Operation::When {
         let initial = frame.state == 0;
         let result = match wait(arena, frame, &registry, op) {
             Err(error) if initial => {
                 let rejection = access::source_rejection(&registry, frame, op, &error);
-                Ok(Some(access::reply(frame, op, rejection as u64, 0)))
+                Ok(Some(access::reply(frame, op, rejection.status(), 0)))
             }
             result => result,
         };

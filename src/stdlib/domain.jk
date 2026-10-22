@@ -33,7 +33,7 @@ fn finish_current_value<A,R>(name:String,input:A) @suspends -> Result<R,DomainAc
 
 // In-place access rejects before entry; candidate operations may also reject
 // resource exhaustion after calculation without publishing state.
-pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit }
+pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit, OutboxFull(UInt64), OutboxClosed(UInt64) }
 fn access_error(status:Int32) -> DomainAccessError {
     if status == 1 { return DomainAccessError.Closed }
     if status == 2 { return DomainAccessError.DomainFailed }
@@ -630,12 +630,14 @@ pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, 
 }
 
 // Compiler-generated when and handle-method calls use a variable-size access packet.
-extern fn __domain_when(module:domain.Module,name:String,handles:&Buffer<UInt64>,packet:&mut Buffer<UInt64>) @suspends -> Int32
+extern fn __domain_when(module:domain.Module,name:String,handles:&Buffer<UInt64>,packet:&mut Buffer<UInt64>) @suspends -> (Int32,UInt64)
 #intrinsic("domain.finish_when")
 fn finish_when<H,A,R>(module:domain.Module,name:String,handles:H,input:A) @suspends -> Result<R,DomainAccessError> {
     let access=pack_value(handles)
     var packet=pack_value(input)
-    let status=__domain_when(module,name,&access.storage,&mut packet.storage)
+    let (status,target)=__domain_when(module,name,&access.storage,&mut packet.storage)
+    if status==6 { return Err(DomainAccessError.OutboxFull(target)) }
+    if status==7 { return Err(DomainAccessError.OutboxClosed(target)) }
     if status != 0 { return Err(access_error(status)) }
     Ok(unpack_value::<R>(&packet))
 }

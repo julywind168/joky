@@ -2007,7 +2007,8 @@ fn state_domains_when_access_boundaries_run_in_all_backends() {
 #[test]
 fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
     let work = Workspace::new();
-    let prefix = "import joky/domain struct S{n:Int32} fn make(n:Int32)->S{S{n:n}}";
+    let prefix =
+        "import joky/domain import joky/outbox struct S{n:Int32} fn make(n:Int32)->S{S{n:n}}";
     for (extra, body, expected) in [
         ("", "when \"\" (h) {h.n};", "must not be empty"),
         ("", "when () {};", "1 to 64"),
@@ -2029,6 +2030,11 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ("", "let ro=h.read_only(); when (mut ro) {};", "WriteHandle"),
         ("", "when (h) {h.n=2};", "shared"),
         ("", "when (mut h) {println(1)};", "proved synchronous"),
+        (
+            "fn emit(s:&mut S,target:outbox.Handle){let bytes=\"x\".into_bytes(); outbox.emit(target,&bytes)}",
+            "let q=outbox.create(1,8); domain.write_to(h,emit,q.handle());",
+            "proved",
+        ),
         (
             "",
             "let text=\"owned\"; let view=&text; when (h) {view};",

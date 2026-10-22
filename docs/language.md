@@ -3153,6 +3153,13 @@ fn main() @suspends -> Int32 {
   捕获函数值或让状态引用逃逸。首版不支持块内闭包及 `return`；`break`、`continue` 只能作用于块内循环。
   `scope { branch { ... } }` 中的块仍归属于外层具名函数。`parallel`／`race` 的分支仍须为函数调用，
   可通过具名辅助函数包含 `when`。
+- `outbox.emit(handle, &bytes)` 在当前操作内登记 `Array<UInt8>` 消息，可通过同步业务辅助函数调用。
+  它复制字节到有界暂存批次，不执行 I/O；正常成功时所有目标容量验证、状态替换与消息入队
+  在同一轮完成，再唤醒接收者。业务 Err、运行异常、资源不足或任一队列拒绝均丢弃整批。
+  `DomainAccessError.OutboxFull(UInt64)` / `OutboxClosed(UInt64)` 携带失败队列身份。
+  每次操作默认最多 1024 条、1 MiB 消息；宿主通过 `DomainLimits.max_operation_messages` /
+  `max_operation_bytes` 配置，批次自身超限返回 `ResourceLimit`。描述符和字节均计入域预算。
+  普通域读写、构造器和迁移不得调用登记效果；在事务外直接调用 emit 会报告运行错误。
 - 其他外层局部变量按名称排序，按传递值规则封装成独立捕获包，在入队前固定；Copy 值复制，
   String／Array 等拥有值按值移动，调用方不能继续使用被消费的值。可变 Copy 捕获在块内的赋值不修改外层变量。
   捕获包及块末尾结果支持 String、Array 及合格组合，不允许引用、资源或函数值；

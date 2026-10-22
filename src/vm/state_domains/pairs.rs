@@ -336,6 +336,7 @@ pub(super) fn execute(
     } else {
         None
     };
+    let session = transactional.then(|| outbox::Session::enter(domains));
     let mut accepted = true;
     let mut entered = false;
     let result = if let Some(candidates) = &mut candidates {
@@ -391,6 +392,23 @@ pub(super) fn execute(
             .ok_or_else(|| invalid("Invalid domain pair scalar result"))
         }
     });
+    let mut batch = session.and_then(outbox::Session::finish);
+    let result = result.and_then(|value| {
+        if accepted {
+            if let Some(batch) = &mut batch {
+                if let Err(status) = batch.prepare(domains) {
+                    let token = batch.failed_target.unwrap_or(0);
+                    *rejection = Some(match status {
+                        commits::Status::OutboxFull => access::Rejection::OutboxFull(token),
+                        commits::Status::OutboxClosed => access::Rejection::OutboxClosed(token),
+                        _ => access::Rejection::InvalidAccess,
+                    });
+                    return Err(invalid("Operation outbox publication refused"));
+                }
+            }
+        }
+        Ok(value)
+    });
     pair.words[..count].fill(0);
     let mut jobs = Vec::new();
     let mut groups = Vec::new();
@@ -404,6 +422,12 @@ pub(super) fn execute(
             for (index, handle) in pair.handles.iter().enumerate() {
                 if accepted && mutable[index] {
                     domains.entries.get_mut(&handle.sequence).unwrap().revision = revisions[index];
+                }
+            }
+            if accepted {
+                if let Some(batch) = &mut batch {
+                    batch.publish();
+                    batch.wake();
                 }
             }
             DomainOutcome::Value(value)

@@ -11,8 +11,28 @@ pub(super) enum Rejection {
     InvalidAccess = 3,
     Incompatible = 4,
     ResourceLimit = 5,
+    OutboxFull(u64) = 6,
+    OutboxClosed(u64) = 7,
 }
 impl Rejection {
+    pub(super) fn status(self) -> u64 {
+        match self {
+            Self::Closed => 1,
+            Self::DomainFailed => 2,
+            Self::InvalidAccess => 3,
+            Self::Incompatible => 4,
+            Self::ResourceLimit => 5,
+            Self::OutboxFull(_) => 6,
+            Self::OutboxClosed(_) => 7,
+        }
+    }
+    pub(super) fn payload(self) -> u64 {
+        match self {
+            Self::OutboxFull(token) | Self::OutboxClosed(token) => token,
+            _ => 0,
+        }
+    }
+
     pub(super) fn from_error(error: &Error) -> Self {
         match error.code() {
             ErrorCode::ResourceLimit => Self::ResourceLimit,
@@ -91,6 +111,7 @@ pub(super) fn reply(frame: &mut CpsFrame, op: Operation, status: u64, bits: u64)
         Operation::Read => 3,
         Operation::Write | Operation::Query => 4,
         Operation::Pair => 5,
+        Operation::When => 4,
         _ => unreachable!("Only scalar access operations return status and payload slots"),
     };
     frame.slots[offset] = status;

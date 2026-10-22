@@ -44,3 +44,10 @@ pub fn stage(batch:&mut Batch, handle:Handle, bytes:Array<UInt8>) @suspends -> R
     if status==1 { return Err(StageError.Full) }
     Err(StageError.Closed)
 }
+
+// Register bytes in the active when operation; publication is atomic with its state.
+#intrinsic("outbox.emit")
+fn __emit(token:UInt64,bytes:&Array<UInt8>)
+pub fn emit(handle:Handle,bytes:&Array<UInt8>) {
+    __emit(handle.identity,bytes)
+}
