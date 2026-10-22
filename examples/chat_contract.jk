@@ -13,7 +13,8 @@ pub fn defaults() -> Config {
         max_rooms: 4096, max_clients: 512, room_wait_ms: 5000, reclaim_empty: true }
 }
 pub struct Host { pub config: Config, pub directory: domain.DirectoryHandle, pub rooms: domain.DirectoryHandle, pub accounts: domain.DirectoryHandle, pub requests: outbox.Handle }
-pub enum Action { Welcome, Line(String), Disconnect, Notice(String) }
+pub enum Action { Welcome, Line(String), Disconnect }
+pub struct Client { pub host: Host, pub id: UInt64 }
 pub struct Call { pub host: Host, pub id: UInt64, pub action: Action }
 pub struct RoomInit { pub host: Host, pub key: UInt64, pub name: String }
 pub struct RoomKey { pub host: Host, pub key: UInt64 }
@@ -21,11 +22,11 @@ pub struct AccountInit { pub host: Host, pub owners: domain.DirectoryHandle, pub
 
 pub fn require_contract(engine: &vm.Vm) @suspends {
     engine.require::<Host, Unit>("initialize")!
-    engine.require::<Call, UInt64>("dispatch")!
+    engine.require::<Call, Bool>("dispatch")!
     engine.require::<Host, Option<RoomInit>>("next_room")!
     engine.require::<RoomInit, Unit>("init_room")!
     engine.require::<RoomKey, Unit>("open_room")!
     engine.require::<AccountInit, Unit>("init_account")!
     engine.require::<RoomKey, Unit>("fail_room")!
-    engine.require::<Call, Unit>("forget")!
+    engine.require::<Client, Unit>("forget")!
 }

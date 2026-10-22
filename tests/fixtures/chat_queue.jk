@@ -7,7 +7,7 @@ fn room_view(state: &Room) -> RoomView {
 }
 fn apply_account(state: &mut Account, account: Account) { *state = account }
 // Test owners stay local, independently of the production owning directories.
-struct Fixture { directory: domain.Directory, rooms: domain.Directory, accounts: domain.Directory, requests: outbox.Mailbox, catalog: domain.Owner<Catalog>, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Context }
+struct Fixture { directory: domain.Directory, rooms: domain.Directory, accounts: domain.Directory, requests: outbox.Mailbox, catalog: domain.Owner<Catalog>, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Host }
 fn seed_catalog(state: &mut Catalog, _: Unit) {
     state.rooms.push(RoomEntry { name: "r", status: RoomStatus.Ready, waiters: Array.new::<outbox.Handle>() })
     state.rooms.push(RoomEntry { name: "other", status: RoomStatus.Ready, waiters: Array.new::<outbox.Handle>() })
@@ -27,12 +27,12 @@ fn fixture() @suspends -> Fixture {
     host.rooms.insert(1, room.handle())!
     host.rooms.insert(2, other.handle())!
     domain.write_to(catalog.handle(), seed_catalog, {})!
-    Fixture { directory: directory, rooms: rooms, accounts: accounts, requests: requests, catalog: catalog, room: room, other: other, ctx: Context { host: host } }
+    Fixture { directory: directory, rooms: rooms, accounts: accounts, requests: requests, catalog: catalog, room: room, other: other, ctx: host }
 }
-fn test_account(ctx: Context, id: UInt64, key: UInt64, output: outbox.Handle, stop: outbox.Handle) @suspends -> domain.Owner<Account> {
+fn test_account(ctx: Host, id: UInt64, key: UInt64, output: outbox.Handle, stop: outbox.Handle) @suspends -> domain.Owner<Account> {
     let value = Account { route: Route { live: true, id: id, output: output, stop: stop }, room: key, balance_cents: 500 }
     let owner = domain.create(make_account, value)
-    ctx.host.accounts.insert(id, owner.handle())!
+    ctx.accounts.insert(id, owner.handle())!
     if key != 0 { domain.write_to(room_handle(ctx, key)!, add_member, value.route)! }
     owner
 }
@@ -45,7 +45,7 @@ fn balance(owner: &domain.Owner<Account>) @suspends -> UInt64 { domain.read_from
 fn ready(state: &mut Catalog, _: Unit) {}
 fn unchanged(state: &mut Account, _: Unit) { state.balance_cents += 0 }
 fn fund_capacity_test(state: &mut Account, _: Unit) { state.balance_cents = 10000 }
-fn candidate(ctx: Context, account: domain.WriteHandle<Account>, text: String) @suspends -> domain.CandidateSet {
+fn candidate(ctx: Host, account: domain.WriteHandle<Account>, text: String) @suspends -> domain.CandidateSet {
     let room = room_handle(ctx, 1)!
     var access = domain.access_set(); access.include(account.read_only()); access.include(room.read_only())
     let snapshot = domain.snapshot_set(access)
@@ -74,7 +74,7 @@ fn verify_conflicts_and_independence() @suspends {
     check.assert(balance(&alice) == 400, "unrelated state writes do not conflict")
     expect_message(&mut queue, "independent\n")
 }
-fn paid_send(ctx: Context) @suspends { check.assert(process(ctx, 1, "say concurrent"), "concurrent send handled") }
+fn paid_send(ctx: Host) @suspends { check.assert(process(ctx, 1, "say concurrent"), "concurrent send handled") }
 fn verify_balance_race() @suspends {
     let f = fixture()
     var queue = outbox.create(16, 1024)
@@ -214,7 +214,7 @@ fn verify_wide_broadcast() @suspends {
         var queue = queues.pop()!
         expect_message(&mut queue, "message r 1 beyond256\n")
     }
-    let alice = domain.lookup_write::<Account>(f.ctx.host.accounts, 1)!
+    let alice = domain.lookup_write::<Account>(f.ctx.accounts, 1)!
     check.assert(domain.read_from(alice.read_only(), account_view)!.balance_cents == 400, "wide broadcast costs one yuan")
 }
 fn verify_room_resolution_changes_before_operation() @suspends {
@@ -252,10 +252,10 @@ fn verify_chat_queue_domain() @suspends {
 
 fn verify_retired_rooms_and_cleanup_budget() @suspends {
     let f = fixture()
-    var host = f.ctx.host
+    var host = f.ctx
     host.config.reclaim_empty = true
     host.config.max_rooms = 2
-    let ctx = Context { host: host }
+    let ctx = host
     var queue = outbox.create(8, 1024)
     let stop = outbox.create(1, 0)
     let alice = test_account(ctx, 1, 1, queue.handle(), stop.handle())
@@ -279,18 +279,18 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     let bob = test_account(ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
     check.assert(process(ctx, 2, "balance"), "fill another recipient")
     host.config.max_evictions = 0
-    let bounded = Context { host: host }
+    let bounded = host
     let excluded = Array.new::<UInt64>()
     check.assert(!publish(bounded, 1, Command.Disconnect, &excluded), "eviction budget refuses work without recursion")
     check.assert(domain.read_from(alice.read_handle(), account_view)!.route.live, "refused operation did not partially disconnect")
-    forget(Call { host: host, id: 1, action: Action.Disconnect })
+    forget(Client { host: host, id: 1 })
     check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "cleanup does not depend on queue space")
     let room = room_handle(ctx, 1)!
     check.assert(!domain.query_from(room.read_only(), member_value, 1).unwrap_or(true), "failed connection leaves no membership")
     check.assert(domain.read_from(bob.read_handle(), account_view)!.route.live, "unrelated account stays alive")
     host.config.max_rooms = 3
     host.config.room_wait_ms = 1
-    let waiting = Context { host: host }
+    let waiting = host
     let missing = "no-manager"
     check.assert(ensure_room(waiting, &missing) == 0, "room creation has a bounded wait")
     let catalog = f.catalog.handle()

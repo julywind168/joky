@@ -10,7 +10,7 @@ use std::{
     net::{Shutdown, TcpStream},
     process::{Child, Command, Stdio},
     sync::mpsc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 struct Server {
@@ -28,7 +28,7 @@ impl Drop for Server {
     }
 }
 impl Server {
-    fn start(mut command: Command, log: std::path::PathBuf) -> (Self, u16) {
+    fn start(mut command: Command, log: std::path::PathBuf) -> (Self, u16, u16) {
         let mut child = command
             .stdout(Stdio::piped())
             .stderr(std::fs::File::create(&log).unwrap())
@@ -38,26 +38,45 @@ impl Server {
         let server = Self { child, log };
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut port = String::new();
+            let mut chat = String::new();
+            let mut admin = String::new();
             let mut stdout = BufReader::new(stdout);
-            let result = stdout.read_line(&mut port).map(|_| port);
+            let result = stdout
+                .read_line(&mut chat)
+                .and_then(|_| stdout.read_line(&mut admin).map(|_| (chat, admin)));
             let _ = sender.send(result);
             let _ = std::io::copy(&mut stdout, &mut std::io::sink());
         });
-        let line = receiver
+        let (chat, admin) = receiver
             .recv_timeout(Duration::from_secs(60))
             .expect("server must announce its bound port")
             .unwrap();
-        let port = line
-            .trim()
-            .parse()
-            .unwrap_or_else(|_| panic!("server did not announce a port: {line}"));
-        (server, port)
+        let port = |line: &str, label: &str| {
+            line.trim()
+                .strip_prefix(label)
+                .and_then(|text| text.parse().ok())
+                .unwrap_or_else(|| panic!("server did not announce {label}port: {line}"))
+        };
+        (server, port(&chat, "chat "), port(&admin, "admin "))
+    }
+    fn expect_shutdown(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "admin shutdown must exit successfully: {status}"
+                );
+                return;
+            }
+            assert!(Instant::now() < deadline, "admin shutdown did not finish");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 struct Peer(BufReader<TcpStream>);
 impl Peer {
-    fn connect(port: u16, id: u64) -> Self {
+    fn open(port: u16) -> Self {
         let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
@@ -65,7 +84,10 @@ impl Peer {
         stream
             .set_write_timeout(Some(Duration::from_secs(10)))
             .unwrap();
-        let mut peer = Self(BufReader::new(stream));
+        Self(BufReader::new(stream))
+    }
+    fn connect(port: u16, id: u64) -> Self {
+        let mut peer = Self::open(port);
         peer.expect(&format!("welcome {id}\n"));
         peer
     }
@@ -99,8 +121,30 @@ impl Peer {
     }
 }
 
-fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &str) {
+fn conversation(
+    port: u16,
+    admin_port: u16,
+    members: u64,
+    logic_path: &std::path::Path,
+    logic: &str,
+) {
+    let mut admin = Peer::open(admin_port);
+    admin.send("join room\n");
+    admin.expect("error use reload or shutdown\n");
+    drop(admin);
+    let mut truncated = Peer::open(admin_port);
+    truncated.send("shutdown");
+    truncated.0.get_mut().shutdown(Shutdown::Write).unwrap();
+    truncated.closed();
+    let mut invalid = Peer::open(admin_port);
+    invalid.send(b"\xff\n");
+    invalid.closed();
+    let mut admin = Peer::open(admin_port);
     let mut alice = Peer::connect(port, 1);
+    alice.send("reload\nshutdown\n");
+    for _ in 0..2 {
+        alice.expect("error use join <room>, leave, say <message>, or balance\n");
+    }
     let mut bob = Peer::connect(port, 2);
     let mut carol = Peer::connect(port, 3);
     alice.send("balance\nsay before joining\nbalance\n");
@@ -124,8 +168,10 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     );
     assert_ne!(patched, logic);
     std::fs::write(logic_path, &patched).unwrap();
-    alice.send("reload\n");
-    alice.expect("reloaded\n");
+    admin.send("reload");
+    admin.quiet();
+    admin.send("\r\n");
+    admin.expect("reloaded\n");
     bob.send("say updated\n");
     alice.expect("message-v2 123 2 updated\n");
     bob.expect("message-v2 123 2 updated\n");
@@ -133,17 +179,17 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
         format!("{patched}\nfn broken("),
         patched.replace("balance_cents", "credit_cents"),
         patched.replace("fn dispatch(", "fn missing_dispatch("),
-        patched.replace(
-            "fn dispatch(request: Call) @suspends -> UInt64",
-            "fn dispatch(request: Call) @suspends -> Int32",
+        format!(
+            "{}\nfn dispatch(request: Call) @suspends -> Int32 {{ 0 }}",
+            patched.replace("fn dispatch(", "fn previous_dispatch("),
         ),
     ]
     .into_iter()
     .enumerate()
     {
         std::fs::write(logic_path, invalid).unwrap();
-        alice.send("reload\n");
-        alice.expect("reload failed\n");
+        admin.send("reload\n");
+        admin.expect("reload failed\n");
         if index < 2 {
             bob.send("say preserved\n");
             alice.expect("message-v2 123 2 preserved\n");
@@ -154,11 +200,11 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
         }
     }
     std::fs::remove_file(logic_path).unwrap();
-    alice.send("reload\n");
-    alice.expect("reload failed\n");
+    admin.send("reload\n");
+    admin.expect("reload failed\n");
     std::fs::write(logic_path, logic).unwrap();
-    alice.send("reload\n");
-    alice.expect("reloaded\n");
+    admin.send("reload\n");
+    admin.expect("reloaded\n");
     alice.quiet();
     bob.quiet();
 
@@ -321,6 +367,15 @@ fn conversation(port: u16, members: u64, logic_path: &std::path::Path, logic: &s
     for peer in &mut peers {
         peer.expect(&format!("message wide {} wide broadcast\n", 19 + members));
     }
+    // The admin reply never goes through an account or its output queue.
+    admin.send("shutdown\n");
+    admin.expect("shutting down\n");
+    admin.closed();
+    alice.closed();
+    carol.closed();
+    for peer in &mut peers {
+        peer.closed();
+    }
 }
 
 #[test]
@@ -333,7 +388,13 @@ fn chat_real_tcp_on_all_backends() {
         include_str!("../examples/chat_contract.jk"),
     )
     .unwrap();
+    std::fs::write(
+        work.path().join("chat_admin.jk"),
+        include_str!("../examples/chat_admin.jk"),
+    )
+    .unwrap();
     assert_eq!(source.matches("0x7f000001, 7777").count(), 1);
+    assert_eq!(source.matches("0x7f000001, 7778").count(), 1);
     assert_eq!(
         source
             .matches("    let directory = domain.directory(1)")
@@ -343,6 +404,7 @@ fn chat_real_tcp_on_all_backends() {
     let path = work.path().join("chat.jk");
     let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check")
         .replace("0x7f000001, 7777", "0x7f000001, 0")
+        .replace("0x7f000001, 7778", "0x7f000001, 0")
         .replace("examples/chat_logic.jk", "chat_logic.jk")
         .replace("examples/chat_contract.jk", "chat_contract.jk")
         .replace("    let directory = domain.directory(1)", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let directory = domain.directory(1)");
@@ -352,7 +414,7 @@ fn chat_real_tcp_on_all_backends() {
         std::fs::write(&path, &source).unwrap();
         let logic = format!(
         "import joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
-        include_str!("../examples/chat_logic.jk").replace("type AccountInit}", "type AccountInit, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
+        include_str!("../examples/chat_logic.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
         assert_eq!(
             logic
@@ -361,8 +423,8 @@ fn chat_real_tcp_on_all_backends() {
             1
         );
         let logic = logic.replace(
-            "Action.Line(line) => if process(ctx, id, line) { 1 } else { 0 },",
-            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; if process(ctx, id, line) { 1 } else { 0 } },",
+            "Action.Line(line) => process(ctx, id, line),",
+            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; process(ctx, id, line) },",
         );
         let logic = logic.replace(
             "if !value.route.live { return Step.Done(false) }",
@@ -405,15 +467,18 @@ fn chat_real_tcp_on_all_backends() {
                 command
             };
             command.current_dir(work.path());
-            let (mut server, port) =
+            let (mut server, port, admin_port) =
                 Server::start(command, work.path().join(format!("{backend}.log")));
             conversation(
                 port,
+                admin_port,
                 if backend == "interpreter" { 40 } else { 260 },
                 &work.path().join("chat_logic.jk"),
                 &logic,
             );
-            assert!(server.child.try_wait().unwrap().is_none());
+            server.expect_shutdown();
+            assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
+            assert!(TcpStream::connect(("127.0.0.1", admin_port)).is_err());
         }
     }
 }

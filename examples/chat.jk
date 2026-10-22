@@ -1,4 +1,5 @@
-import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, defaults, require_contract}
+import chat_admin
+import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, type Client, defaults, require_contract}
 import joky/vm
 import joky/domain
 import joky/outbox
@@ -8,32 +9,15 @@ import joky/option.{type Option}
 import joky/tcp.{type Address, type TcpListener, type TcpStream}
 
 fn script_path() -> String { "examples/chat_logic.jk" }
-fn report(error: vm.LoadError) {
-    match error.kind {
-        Io(error) => println(error.message), Utf8(_) => println("Script is not UTF-8"),
-        Compile(error) => println(error.message), Incompatible(error) => println(error.message),
-        Conflict(error) => println(error.message), Runtime(error) => println(error.message)
-    }
+fn dispatch(engine: &vm.Vm, client: Client, action: Action) @suspends -> Bool {
+    engine.try_call::<Call, Bool>("dispatch", Call { host: client.host, id: client.id, action: action }).unwrap_or(false)
 }
-fn call(engine: &vm.Vm, host: Host, id: UInt64, action: Action) @suspends -> UInt64 {
-    engine.try_call::<Call, UInt64>("dispatch", Call { host: host, id: id, action: action }).unwrap_or(0)
-}
-fn reload(engine: &vm.Vm, host: Host, id: UInt64) @suspends {
-    // Publication neither acquires a business permit nor drains any output mailbox.
-    let message = match engine.publish_file(script_path()) {
-        Ok(_) => "reloaded\n",
-        Err(error) => { report(error); "reload failed\n" }
-    }
-    call(engine, host, id, Action.Notice(message));
-}
-struct Client { host: Host, id: UInt64 }
 fn line(engine: &vm.Vm, client: &Client, text: String) @suspends @noescape -> Bool {
-    if text.equals("reload") { reload(engine, client.host, client.id); true }
-    else { call(engine, client.host, client.id, Action.Line(text)) != 0 }
+    dispatch(engine, *client, Action.Line(text))
 }
 fn disconnected(engine: &vm.Vm, client: &Client) @suspends @noescape {
-    call(engine, client.host, client.id, Action.Disconnect);
-    engine.try_call::<Call, Unit>("forget", Call { host: client.host, id: client.id, action: Action.Disconnect });
+    dispatch(engine, *client, Action.Disconnect);
+    engine.try_call::<Client, Unit>("forget", *client);
 }
 fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream, permit: admission.Permit) @suspends {
     let owners = domain.directory(1)
@@ -44,7 +28,7 @@ fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream, permit:
         disconnected(engine, &client)
         return
     }
-    if call(engine, host, id, Action.Welcome) == 0 { disconnected(engine, &client); return }
+    if !dispatch(engine, client, Action.Welcome) { disconnected(engine, &client); return }
     session.run(connection, stream, engine, &client, line, disconnected)
     permit.release()
 }
@@ -72,11 +56,8 @@ fn manage(engine: &vm.Vm, host: Host, requests: &mut outbox.Mailbox) @suspends -
     }
     0
 }
-fn serve(engine: &vm.Vm, host: Host) @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
-        Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
-    }
-    println(listener.local_addr()!.port())
+fn serve(engine: &vm.Vm, host: Host, listener: TcpListener) @suspends -> Int32 {
+    var listener = listener
     let admission = admission.create(host.config.max_clients, 0)
     let entrants = admission.handle()
     var next_id: UInt64 = 1
@@ -95,7 +76,7 @@ fn main() @suspends -> Int32 {
     let engine = vm.Vm.new()
     engine.module_file("chat_contract", "examples/chat_contract.jk")!
     require_contract(&engine)
-    match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { report(error); return 1 } }
+    match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { chat_admin.report(error); return 1 } }
     let directory = domain.directory(1)
     let config = defaults()
     let rooms = domain.directory(config.max_rooms)
@@ -103,8 +84,17 @@ fn main() @suspends -> Int32 {
     var requests = outbox.create(config.max_rooms, 0)
     let host = Host { config: config, directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
     engine.call::<Host, Unit>("initialize", host)
+    var chat = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
+        Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
+    }
+    var admin = match TcpListener.bind(Address.ipv4(0x7f000001, 7778)) {
+        Ok(listener) => listener, Err(_) => { println("Could not bind admin listener"); return 1 }
+    }
+    println("chat {chat.local_addr()!.port()}")
+    println("admin {admin.local_addr()!.port()}")
     race {
-        | serve(&engine, host)
+        | serve(&engine, host, chat)
         | manage(&engine, host, &mut requests)
+        | chat_admin.serve(&engine, script_path(), admin)
     }
 }
