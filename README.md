@@ -84,7 +84,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 - [语言与内置模块](docs/language.md)：当前语法、求值顺序、类型准入与 API。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权和宿主 ABI。
 - [解释器设计](docs/interpreter.md)：字节码、预算、调度和运行时诊断。
-- [基础示例](examples/hello.jk)、[泛型](examples/generics.jk)、[模式与枚举](examples/enums.jk)、[文本与格式化](examples/show.jk)、[容器](examples/maps.jk)。
+- [基础示例](examples/hello.jk)、[for 遍历与编号](examples/for.jk)、[泛型](examples/generics.jk)、[模式与枚举](examples/enums.jk)、[文本与格式化](examples/show.jk)、[容器](examples/maps.jk)。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
 - [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。

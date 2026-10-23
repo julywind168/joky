@@ -1,0 +1,74 @@
+import joky/io.{println}
+import joky/iter.{range}
+import joky/map.{type Map}
+
+fn ranges() {
+    var total = 0
+    // range excludes its upper bound; continue and break work as usual.
+    for value in range(0, 10) {
+        if value == 6 { break }
+        if value % 2 != 0 { continue }
+        total += value
+    }
+    println(total) // 6
+}
+
+fn arrays() {
+    var values = [10, 20, 30]
+    var total = 0
+    // Borrow the array without consuming it.
+    for value in &values { total += *value }
+    println(total) // 60
+
+    // index starts at zero; adding to Int32 elements infers Int32.
+    for index, value in &mut values { *value += index }
+
+    total = 0
+    // Iterating by value consumes the array.
+    for value in values { total += value }
+    println(total) // 63
+}
+
+fn index_types() {
+    let values = [10, 20, 30]
+    var total: Int32 = 0
+    // get requires UInt64, so index is UInt64 even though total is Int32.
+    for index, _ in &values { total += values.get(index).unwrap_or(0) }
+    println(total) // 60
+}
+
+fn tuple_items() {
+    var total = 0
+    // The outer comma introduces an index; parentheses destructure each item.
+    for index, (left, right) in [(10, 20), (30, 40)] {
+        total += index + left + right
+    }
+    println(total) // 101
+}
+
+fn maps() {
+    var scores = Map.new::<Int32, Int32>()
+    scores.insert(1, 10)
+    scores.insert(2, 20)
+
+    var total = 0
+    // Without an index: key is &Int32, value is &Int32.
+    for (key, value) in &scores { total += *key + *value }
+    println(total) // 33
+
+    // With an index: key stays shared, value becomes &mut Int32.
+    // Map order is unspecified; index is only this traversal's ordinal.
+    for index, (key, value) in &mut scores { *value += *key + index }
+
+    total = 0
+    for (_, value) in &scores { total += *value }
+    println(total) // 34, independent of Map order
+}
+
+fn main() {
+    ranges()
+    arrays()
+    index_types()
+    tuple_items()
+    maps()
+}
