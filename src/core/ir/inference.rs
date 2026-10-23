@@ -94,6 +94,9 @@ impl FunctionPlan {
                 return Some(ty);
             }
         }
+        if let Some(input) = self.iteration_input(expr, vars, functions, types) {
+            return self.hint(&input, vars, functions, types, default);
+        }
         if let Some(constant) = self.associated_constant(expr, vars, types).ok().flatten() {
             return Some(constant.declaration.ty.clone());
         }

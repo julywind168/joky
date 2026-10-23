@@ -3,6 +3,38 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn for_into_iter_executes_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/for_into_iter.jk").replace(
+        "extern fn record(x: Int32) -> Int32",
+        "import joky/io.{println}\nfn record(x: Int32) -> Int32 { println(x); x }",
+    );
+    work.write(
+        "conversion_lib.jk",
+        &source.replace("fn compute()", "pub fn compute()"),
+    );
+    work.write("conversion.jk", "import conversion_lib\nimport joky/io.{println}\nfn main() { println(conversion_lib.compute()) }");
+    success(&work.cli(&["build", "--no-prelude", "conversion.jk"]));
+    let output = Command::new(work.path().join("conversion"))
+        .output()
+        .unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"100\n101\n101\n42\n");
+    work.write(
+        "conversion_failure.jk",
+        &format!("{source}\nfn main() {{ conversion_failure() }}"),
+    );
+    success(&work.cli(&["build", "--no-prelude", "conversion_failure.jk"]));
+    let output = Command::new(work.path().join("conversion_failure"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
+    assert_eq!(output.stdout, b"0\n");
+}
+
+#[test]
+#[cfg(unix)]
 fn for_iterators_execute_in_standalone_aot() {
     let work = Workspace::new();
     let source = include_str!("../fixtures/for_iterators.jk").replace(

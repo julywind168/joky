@@ -1920,6 +1920,9 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        if let Some(input) = self.iteration_input(expr, vars, functions, types) {
+            return self.expr_expected(&input, vars, functions, suspends, types, expected);
+        }
         if let Expr::Call {
             callee, args, span, ..
         } = expr

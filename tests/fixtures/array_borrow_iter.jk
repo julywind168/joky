@@ -10,12 +10,12 @@ extern fn delayed_value(x: Int32) @suspends -> Int32
 fn expect(ok: Bool) { assert(ok, "Borrowed iterator mismatch") }
 fn sum(values: &Array<Int32>) -> Int32 {
     var result = 0
-    for value in values.iter() { result += *value }
+    for value in values { result += *value }
     result
 }
 fn item_count<T>(values: &Array<T>) -> Int32 {
     var result = 0
-    for _ in values.iter() { result += 1 }
+    for _ in values { result += 1 }
     result
 }
 fn forward<T>(values: &Array<T>) -> &Iter<T> { values.iter() }
@@ -23,7 +23,7 @@ fn forward_mut<T>(values: &mut Array<T>) -> &mut Iter<T> { values.iter_mut() }
 fn compute() -> Int32 {
     var values = [1, 2, 3]
     expect(sum(&values) == 6)
-    for value in forward_mut(&mut values) { *value += 10 }
+    for value in &mut values { *value += 10 }
     expect(sum(&values) == 36)
     let cursor = forward(&values)
     expect(iter.advance(cursor))
@@ -45,7 +45,7 @@ fn compute() -> Int32 {
 fn source_once() {
     var values = [11]
     var sources = 0
-    for _ in { sources += 1; values.iter() } {}
+    for _ in { sources += 1; &values } {}
     expect(sources == 1)
     let saved = {
         let i = values.iter()
@@ -105,7 +105,7 @@ fn values() -> Array<Owned> { [owned(1), owned(2), owned(3), owned(4)] }
 fn consume(action: Int32) -> Int32 {
     let input = values()
     var result = 0
-    for value in input.iter() {
+    for value in &input {
         record(10 + value.id)
         if action == 1 && value.id == 1 { continue }
         result += value.id
@@ -120,7 +120,7 @@ fn consume(action: Int32) -> Int32 {
 }
 fn pending() @suspends -> Int32 {
     var input = values()
-    for value in input.iter_mut() {
+    for value in &mut input {
         value.data.push(99)
         delayed_value(record(10 + value.id))
         expect(value.data.len() == 2)
@@ -132,7 +132,7 @@ fn pending() @suspends -> Int32 {
 }
 fn pending_shared() @suspends -> Int32 {
     let input = values()
-    for value in input.iter() {
+    for value in &input {
         delayed_value(record(10 + value.id))
         expect(value.data.get(0).unwrap_or(0) == value.id)
         if value.id == 1 { continue }

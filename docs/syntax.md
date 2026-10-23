@@ -65,7 +65,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 导入位置 | 已实现，必须在所有类型及函数声明前 | 保留；注释、空白和空分号不影响位置 |
 | `if` / `else` / `else if` | 已实现 | 分支同型；无 else 时为 Unit |
 | `return`、`break` / `continue` | 已实现 | 共享 IR 检查类型、跳转范围和不可达路径 |
-| `for pattern in iterator` | 已实现标准 Iterator、Int32 半开 range、Array.into_iter/iter/iter_mut、Slice 借用与 Map 单列/成对遍历、不可失败绑定及共享循环清理 | IntoIterator、范围运算符与组合器见 [分阶段计划](for-iterators.md) |
+| `for pattern in input` | 已实现 Iterator/IntoIterator、Int32 半开 range、Array 消费与借用、Slice/Map 借用自动转换、不可失败绑定及共享循环清理 | 范围运算符与组合器见 [分阶段计划](for-iterators.md) |
 | 一元 `-` / `!` / `~`、Bool 相等比较 | 已实现 | 保留；比较不可连续书写 |
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串字面量 | 已实现转义与默认插值、`r` 原始字符串、三引号多行去缩进及组合 | 保留，见第 3 节 |
@@ -309,7 +309,9 @@ Array.into_iter 按原顺序消费元素，Array 与 Slice 的 iter/iter_mut 通
 Map 的 keys/values/values_mut 切片可通过相同接口进行单列遍历；
 Map.iter/iter_mut 每轮提供 Entry 借用视图，键只读、值按游标权限访问。
 借用游标使用 advance/current 两步接口，不改变普通 Iterator 的 @noescape 契约。
-当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器)，IntoIterator 及 `..` / `..=`
+普通输入经 IntoIterator 转换一次；Array 支持按值消费以及 &values / &mut values 借用入口。
+Slice 与 Map 引用也自动生成借用游标，自定义普通容器可实现 IntoIterator。
+当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器)，组合器及 `..` / `..=`
 表达式与范围模式的后续目标见 [专项计划](for-iterators.md)。
 以下示例当前可运行：
 

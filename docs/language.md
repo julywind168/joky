@@ -2965,8 +2965,9 @@ fn drain(values: &mut Array<Int32>) {
 
 ## for 循环与迭代器
 
-`for pattern in iterator { body }` 支持标准库 `joky/iter.Iterator` 和下述 Array/Slice/Map 借用游标。
-右侧只求值一次：拥有值移动到循环的隐藏可变绑定，Copy 值按普通规则复制。
+`for pattern in input { body }` 支持标准库 `joky/iter.IntoIterator`、普通 Iterator
+和下述 Array/Slice/Map 借用入口及游标。
+右侧只求值一次，然后转换一次：拥有值移动，Copy 值按普通规则复制，迭代器保存在隐藏可变绑定中。
 普通 Iterator 每轮同步调用 next，Some 的载荷绑定到 pattern，第一次 None 结束循环。
 
 ```joky
@@ -2985,6 +2986,8 @@ fn sum() -> Int32 {
 | --- | --- |
 | `Iterator` | 关联类型 Item；`fn next(&mut self) @noescape -> Option<Self.Item>` |
 | `next<I: Iterator>(&mut I) @noescape -> Option<I.Item>` | 显式选择 Iterator.next，忽略同名固有方法 |
+| `IntoIterator` | 关联类型 IntoIter: Iterator；`fn into_iter(self) -> Self.IntoIter` |
+| `into_iter<I: IntoIterator>(I) -> I.IntoIter` | 显式选择 IntoIterator.into_iter，忽略同名固有方法 |
 | `Range` | Copy 的 Int32 递增迭代器，字段私有 |
 | `range(start: Int32, end: Int32) -> Range` | 半开区间，包含 start、不包含 end；start >= end 时为空 |
 
@@ -2994,7 +2997,7 @@ range 不在 prelude 中，需要显式导入。next 在耗尽的 Range 上始�
 
 自定义迭代器显式导入 `type Iterator` 并实现关联 Item 和 next。泛型函数必须声明
 `I: Iterator`，可用 `I: Iterator<Item = Int32>` 限定元素类型；仅有同名 next 方法不足以参与 for。
-生成调用固定标准协议身份，用户同名 Iterator、next、Option 或 Some 不改变循环语义。
+生成调用固定标准协议身份，用户同名 Iterator、IntoIterator、next、into_iter、Option 或 Some 不改变循环语义。
 语法所需标准库依赖自动装载，`--no-prelude` 下仍有效。
 
 pattern 沿用 let 的不可失败模式，支持名字、`_`、元组、记录及已有的 FixedArray 解构，
@@ -3006,9 +3009,43 @@ break 退出最近的 while/for，return 退出函数，均遵守原有自动清
 Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失败清理沿用 Option/match。
 迭代器在结束或提前退出时清理；循环体可在挂起函数中挂起，恢复不会重新求值输入或重放 next。
 迭代器、元素及引用仍须满足现有跨挂起存储资格，取消先清理子调用再清理本轮元素和迭代器。
-当前不自动将 Array/Map 转成迭代器。Array 显式选择 into_iter、iter 或 iter_mut；
-Map 可选择 iter/iter_mut 成对遍历，也可通过 Slice 接口遍历 keys/values/values_mut；
-IntoIterator 与 map/filter 等组合器仍属于[后续工作](for-iterators.md)。
+map/filter 等惰性组合器仍属于[后续工作](for-iterators.md)。
+
+### IntoIterator 与自动转换
+
+普通 Iterator 自动实现 IntoIterator，转换返回自身；已有 `I: Iterator` 泛型循环继续有效。
+Array 实现 IntoIterator，转换复用 Array.into_iter。用户容器可实现 IntoIterator，
+也可用 `I: IntoIterator` 编写只要求可遍历输入的泛型函数。
+元素类型由 IntoIter 的 Iterator.Item 决定；IntoIterator 没有重复的 Item 关联类型。
+转换与 next 都不能挂起，同名固有 into_iter 方法不能替代标准协议实现。
+
+| for 的输入 | 转换与元素 |
+| --- | --- |
+| `values: Array<T>` | 消费数组，逐项移交 T |
+| `&values: &Array<T>` | 共享借用，元素为 &T |
+| `&mut values: &mut Array<T>` | 独占借用，元素为 &mut T |
+| `&Slice<T>` / `&mut Slice<T>` | 借用切片，元素为 &T / &mut T |
+| `&Map<K, V>` / `&mut Map<K, V>` | 成对遍历，元素为 &Entry / &mut Entry，key 始终只读 |
+| 现有普通 Iterator / 借用游标 | 保留原有遍历行为 |
+
+```joky
+fn three_forms() -> Int32 {
+    var values = [1, 2, 3]
+    var total = 0
+    for value in &values { total += *value }
+    for value in &mut values { *value += 1 }
+    for value in values { total += value }
+    total
+}
+```
+
+显式 into_iter、iter、iter_mut 接口继续可用。借用转换按标准容器身份处理，复用既有
+借用检查；它们不属于普通 IntoIterator trait，不可传给 `I: IntoIterator` 泛型入口。
+本版不开放任意引用类型的 trait 实现、引用聚合存储或 GAT。借用游标仍采用下述
+advance/current 协议；`joky/iter.slice_iter` / slice_iter_mut 与 joky/slice 的同名
+iter / iter_mut 行为相同，供自动转换调用。
+直接传入独占引用绑定会移动该绑定；需复用时写 `&mut *binding` 进行重借用。
+Map 的按值循环仍需显式 `table.into_entries()`，得到拥有的 `(K, V)` 元组；固定数组不自动转换。
 
 ### Array 消费式迭代
 
@@ -3021,7 +3058,7 @@ IntoIterator 与 map/filter 等组合器仍属于[后续工作](for-iterators.md
 fn sum_values() -> Int32 {
     let values = [10, 20, 30]
     var total = 0
-    for value in values.into_iter() { total += value }
+    for value in values { total += value }
     total
 }
 ```

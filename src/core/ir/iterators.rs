@@ -1,8 +1,76 @@
-//! Typed for-step expansion for compiler-owned borrowed cursors.
+//! Typed for-input conversion and compiler-owned borrowed cursor steps.
 use super::*;
-use crate::parser::ast::{MatchArm, Pattern, PayloadPattern};
+use crate::parser::ast::{MatchArm, MethodCall, Pattern, PayloadPattern};
 
 impl FunctionPlan {
+    pub(super) fn iteration_input(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Option<Expr> {
+        let Expr::Call {
+            callee, args, span, ..
+        } = expr
+        else {
+            return None;
+        };
+        if callee != "$for_into_iter" {
+            return None;
+        }
+        let [value] = args.as_slice() else {
+            unreachable!("compiler-authored for input")
+        };
+        if let Some(Type::Reference(reference)) = self.type_hint(value, vars, functions, types) {
+            match &reference.target {
+                Type::BufferIterator(_) | Type::BufferPairIterator(_) => {
+                    return Some(value.clone())
+                }
+                Type::BufferSlice(_) => {
+                    return Some(Expr::Call {
+                        callee: format!(
+                            "$joky_iter.slice_iter{}",
+                            if reference.mutable { "_mut" } else { "" }
+                        ),
+                        type_args: vec![],
+                        args: vec![value.clone()],
+                        span: *span,
+                    })
+                }
+                target => {
+                    // Match the embedded container declaration, not a user's
+                    // spelling or an arbitrary method named iter.
+                    let standard = matches!(target, Type::Record(record) if record.array)
+                        || self.generics.borrow().members.methods.iter().any(|method| {
+                            method.function == "joky/map.Map.iter"
+                                && members::same_owner(target, &method.target)
+                        });
+                    if standard {
+                        return Some(Expr::MethodCall(Box::new(MethodCall {
+                            receiver: value.clone(),
+                            name: if reference.mutable {
+                                "iter_mut"
+                            } else {
+                                "iter"
+                            }
+                            .into(),
+                            type_args: vec![],
+                            args: vec![],
+                            span: *span,
+                        })));
+                    }
+                }
+            }
+        }
+        Some(Expr::Call {
+            callee: "$joky_iter.into_iter".into(),
+            type_args: vec![],
+            args: vec![value.clone()],
+            span: *span,
+        })
+    }
+
     pub(super) fn borrowed_iteration(
         &self,
         value: &Expr,

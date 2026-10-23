@@ -12,7 +12,7 @@ fn forward_mut<K, V>(table: &mut Map<K, V>) -> &mut Iter<K, V> { table.iter_mut(
 fn compute() -> Int32 {
     var table = Map.new::<Int32, Int32>()
     var count = 0
-    for _ in table.iter() { count += 1 }
+    for _ in &table { count += 1 }
     expect(count == 0)
     table.insert(1, 10)
     table.insert(2, 20)
@@ -20,14 +20,14 @@ fn compute() -> Int32 {
     table.remove(2)
     table.insert(4, 40)
     var total = 0
-    for entry in forward(&table) {
+    for entry in &table {
         let key = map.entry_key(entry)
         let value = map.entry_value(entry)
         expect(*value == *key * 10)
         total += *key + *value
     }
     expect(total == 88)
-    for entry in forward_mut(&mut table) {
+    for entry in &mut table {
         let key = *map.entry_key(entry)
         *map.entry_value_mut(entry) += key
     }
@@ -86,7 +86,7 @@ fn owned_table() -> Map<String, Owned> {
 fn consume(action: Int32) -> Int32 {
     var table = owned_table()
     var bytes: UInt64 = 0
-    for entry in table.iter_mut() {
+    for entry in &mut table {
         bytes += string.byte_length(map.entry_key(entry))
         let value = map.entry_value_mut(entry)
         value.data.push(99)
@@ -103,7 +103,7 @@ fn consume(action: Int32) -> Int32 {
 }
 fn pending() @suspends -> Int32 {
     var table = owned_table()
-    for entry in table.iter_mut() {
+    for entry in &mut table {
         let size = string.byte_length(map.entry_key(entry))
         let value = map.entry_value_mut(entry)
         value.data.push(99)
@@ -117,7 +117,7 @@ fn pending() @suspends -> Int32 {
 fn nested_values() {
     var table = Map.new::<Int32, Array<Int32>>()
     table.insert(1, [1, 2])
-    for entry in table.iter_mut() { map.entry_value_mut(entry).push(3) }
+    for entry in &mut table { map.entry_value_mut(entry).push(3) }
     for entry in table.iter() {
         let values = map.entry_value(entry)
         expect(values.len() == 3 && values.get(2).unwrap_or(0) == 3)

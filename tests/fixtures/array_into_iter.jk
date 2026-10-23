@@ -19,7 +19,7 @@ fn values() -> Array<Owned> { [owned(1), owned(2), owned(3), owned(4)] }
 
 fn consume(action: Int32) -> Int32 {
     var sum = 0
-    for value in values().into_iter() {
+    for value in values() {
         record(10 + value.id)
         if action == 1 && value.id == 1 { continue }
         sum += value.id
@@ -56,8 +56,8 @@ fn compute() -> Int32 {
     expect(count(["a", "b"].into_iter()) == 2)
     expect(count(Array.new::<String>().into_iter()) == 0)
     var total = 0
-    for inner in [[1, 2], [3, 4]].into_iter() {
-        for n in inner.into_iter() { total = total * 10 + n }
+    for inner in [[1, 2], [3, 4]] {
+        for n in inner { total = total * 10 + n }
     }
     expect(total == 1234)
     let point = alloc(Point { value: 42 })

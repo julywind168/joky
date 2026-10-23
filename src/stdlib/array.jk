@@ -4,10 +4,15 @@ import joky/internal/buffer.{type Buffer}
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
-import joky/iter as iteration.{type Iterator, type Iter}
+import joky/iter as iteration.{type Iterator, type IntoIterator, type Iter}
 
 pub struct Array<T> { storage: Buffer<T> }
 pub struct IntoIter<T> { values: Array<T> }
+
+impl<T> IntoIterator for Array<T> {
+    type IntoIter = IntoIter<T>
+    fn into_iter(self) -> IntoIter<T> { into_iter(self) }
+}
 
 impl<T> Iterator for IntoIter<T> {
     type Item = T

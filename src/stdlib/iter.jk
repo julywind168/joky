@@ -6,6 +6,20 @@ pub trait Iterator {
     fn next(&mut self) @noescape -> Option<Self.Item>
 }
 
+pub trait IntoIterator {
+    type IntoIter: Iterator
+    fn into_iter(self) -> Self.IntoIter
+}
+
+impl<I: Iterator> IntoIterator for I {
+    type IntoIter = I
+    fn into_iter(self) -> I { self }
+}
+
+pub fn into_iter<I: IntoIterator>(value: I) -> I.IntoIter {
+    IntoIterator.into_iter(value)
+}
+
 // This entry fixes protocol selection even in the presence of inherent next methods.
 pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
     Iterator.next(iterator)
@@ -31,6 +45,8 @@ impl Iterator for Range {
 // Borrowed cursors use separate advance/current operations, so exclusive
 // references never enter Option or another aggregate.
 pub type Iter<T> = buffer.Iter<T>
+pub fn slice_iter<T>(values: &buffer.Slice<T>) -> &Iter<T> { buffer.slice_iter(values) }
+pub fn slice_iter_mut<T>(values: &mut buffer.Slice<T>) -> &mut Iter<T> { buffer.slice_iter_mut(values) }
 pub fn advance<T>(iterator: &Iter<T>) -> Bool { buffer.iter_advance(iterator) }
 pub fn current<T>(iterator: &Iter<T>) -> &T { buffer.iter_current(iterator) }
 pub fn current_mut<T>(iterator: &mut Iter<T>) -> &mut T { buffer.iter_current_mut(iterator) }

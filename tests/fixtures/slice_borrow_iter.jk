@@ -14,17 +14,17 @@ fn forward<T>(values: &Slice<T>) -> &Iter<T> { slice.iter(values) }
 fn forward_mut<T>(values: &mut Slice<T>) -> &mut Iter<T> { slice.iter_mut(values) }
 fn sum(values: &Slice<Int32>) -> Int32 {
     var result = 0
-    for value in forward(values) { result += *value }
+    for value in values { result += *value }
     result
 }
 fn compute() -> Int32 {
     var input = [90, 1, 2, 3, 80]
     let middle = input.slice_mut(1, 4)
-    for value in forward_mut(slice.slice_mut(middle, 1, 3)) { *value += 10 }
+    for value in slice.slice_mut(middle, 1, 3) { *value += 10 }
     expect(sum(input.slice(0, 5)) == 196)
     expect(sum(slice.slice(input.slice(1, 5), 1, 3)) == 25)
     var count = 0
-    for _ in slice.iter(input.slice(5, 5)) { count += 1 }
+    for _ in input.slice(5, 5) { count += 1 }
     let units = [{}, {}, {}]
     for _ in slice.iter(units.slice(1, 3)) { count += 1 }
     expect(count == 2)
@@ -91,7 +91,7 @@ fn owned(id: Int32) -> Owned {
 fn pending() @suspends -> Int32 {
     var input = [owned(1), owned(2), owned(3), owned(4)]
     let view = input.slice_mut(1, 4)
-    for value in forward_mut(slice.slice_mut(view, 0, 2)) {
+    for value in slice.slice_mut(view, 0, 2) {
         value.data.push(99)
         delayed_value(record(10 + value.id))
         expect(value.data.len() == 2)

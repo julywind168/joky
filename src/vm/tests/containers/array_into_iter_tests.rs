@@ -75,7 +75,7 @@ fn pending_source() -> String {
         r#"{SOURCE}
         extern fn delayed_value(x: Int32) @suspends -> Int32
         fn pending() @suspends -> Int32 {{
-            for value in values().into_iter() {{
+            for value in values() {{
                 delayed_value(record(10 + value.id))
                 if value.id == 1 {{ continue }}
                 break
@@ -187,7 +187,7 @@ fn array_into_iter_rejects_reuse_live_borrows_and_private_storage() {
         "let a = [1, 2]; let i = a.into_iter(); let j = i; for _ in i {}",
         "let a = [1, 2]; let r = a.borrow_ref(0); let i = a.into_iter(); let n = *r;",
         "let i = [1, 2].into_iter(); i.values;",
-        "for _ in [1, 2] {}",
+        "let a = [1, 2]; for _ in a {}; a.len();",
     ] {
         let error = frontend_error(
             &format!("fn bad() {{ {body} }}"),

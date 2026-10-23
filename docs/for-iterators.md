@@ -1,7 +1,7 @@
 # for 与迭代器分阶段开发计划
 
 状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
-记录见第 6–10 节；第四阶段仍待实施。
+记录见第 6–11 节；第四阶段 A 的 IntoIterator 与借用自动转换已完成，组合器待后续实施。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -58,7 +58,7 @@ Map 迭代沿用未指定顺序与禁止可变 key 的规则。
 第四阶段再评估 IntoIterator 自动转换、enumerate、map/filter 和其他惰性组合器，
 包括 callable 能力、效果及清理契约。
 
-### 第四阶段 A：自动转换（待实施）
+### 第四阶段 A：自动转换设计
 
 本轮先完成循环入口转换，组合器单独推进。普通值通过标准库 IntoIterator 协议
 转换一次；协议提供关联类型 `IntoIter: Iterator` 和消费 self 的 into_iter 方法。
@@ -326,3 +326,51 @@ for 每轮给出 Entry 视图，具体规则见 [语言参考](language.md#map-�
 
 默认库测试忽略 121 项、CLI 忽略 8 项；本轮额外运行上述相关的逐指令取消穷举。
 未运行 Release、无关压力、Godot、性能测量或其他平台验证。默认检查后仅补充文档记录，未再改代码。
+
+## 11. 第四阶段 A：IntoIterator 与借用自动转换（2026-10-23）
+
+设计提交 `3feebd1`。本次交付公开 IntoIterator 协议、普通 Iterator 的恒等转换、
+Array 消费转换，以及 Array/Slice/Map 引用的自动借用转换。
+接口与示例见 [语言参考](language.md#intoiterator-与自动转换)。组合器留待下一阶段。
+
+解析器先用隐藏绑定保存输入，再生成编译器专用的转换标记。这样输入只求值一次，
+其中的提前结束仍属于外层控制流，独占引用按普通绑定规则移动。
+类型规划将普通值转成固定标准库 into_iter 调用；容器引用按声明身份接入既有借用接口，
+已存在的借用游标保持原样。类型推断与实际生成代码共用同一转换选择，随后复用第三阶段的
+借用循环步骤和第一阶段的 next/match 循环。不新增后端指令、ABI、存储类型或引用豁免。
+
+IntoIterator 只声明 IntoIter: Iterator，Item 由返回迭代器决定，未增加嵌套关联类型等式。
+借用入口是编译器支持的标准容器转换，不能用作 I: IntoIterator 的实参；
+自定义普通容器可实现公开协议，用户同名 trait 或固有 into_iter/iter 方法不能替代标准身份。
+Map 按值循环仍显式使用 into_entries，固定数组与通用引用 trait 实现不在本轮范围。
+
+主要证据：
+
+- [协议 fixture](../tests/fixtures/for_into_iter.jk)：输入与转换各执行一次、标准 trait
+  优先于同名固有方法、用户容器、泛型 IntoIterator/Iterator、空数组、显式转换与转换失败。
+- [VM 测试](../src/vm/tests/language/for_iterator_tests.rs)：JIT/解释器、关闭 prelude、
+  跨模块泛型调用、假协议、非法关联类型/效果、借用冲突、独占引用移动及 Map key 只读。
+- 复用 Array 消费与 Array/Slice/Map 借用 fixture，将部分循环改为自动转换，保留显式 API
+  与重借用覆盖。既有资源边界、分配失败、Pending/恢复/取消、析构唯一性和 arena 归零断言
+  同时验证新入口，避免再复制一套生命周期矩阵。
+- [独立 AOT 测试](../tests/cli/language.rs) 验证导入模块中的自定义转换及转换失败；
+  [容器 AOT 测试](../tests/cli/containers.rs) 验证上述共享 fixture 的同步/CPS 行为与清理。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test --lib iter -- --nocapture` | 63 项通过；7 项压力测试默认忽略 |
+| `cargo test for_into_iter` | 最终 3 项 VM 测试与 1 项独立 AOT 测试通过 |
+| `cargo test --test cli iter_` | 7 项通过；1 项网络压力测试默认忽略 |
+| 相关逐指令取消穷举 | for_iterators、array_into_iter、array_borrow_iter、slice_borrow_iter、map_borrow_iter 共 5 项通过 |
+| 语言参考新增/调整示例 | 关闭 prelude，在 JIT、解释器与独立 AOT 分别输出 15、60 |
+| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1559 项库测试、300 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+逐指令取消使用 `cargo test --lib -- --ignored` 并逐一传入上述五组的完整
+`exhaustive_*_instruction_cancellation` 测试名。未运行 Release、无关压力、Godot、
+性能测量或其他平台验证。
+
+默认库测试忽略 121 项、CLI 忽略 8 项；本轮额外运行上述相关取消穷举。
+默认检查后仅补充文档验收记录，未再改代码。

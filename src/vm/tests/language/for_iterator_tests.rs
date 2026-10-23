@@ -6,6 +6,89 @@ use crate::runtime::arena::LIVE;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/for_iterators.jk");
 const EXPECTED: &[i32] = &[3, -1, 1, -2, 2, 99, -1, 1, -2, 2, -3, 3, 99, -1, 1, 99];
 
+#[test]
+fn for_into_iter_converts_once_and_preserves_generic_protocol_selection() {
+    let source = include_str!("../../../../tests/fixtures/for_into_iter.jk");
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm_with_prelude(source, mode, false);
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [100, 101, 101]));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+        assert!(vm.call_unit_0("conversion_failure").is_err());
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [100, 101, 101, 0]));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn for_into_iter_keeps_container_identity_in_imported_generic_functions() {
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "app/loops",
+            r#"
+        import joky/array.{type Array}
+        import joky/map.{type Map}
+        import joky/iter.{type IntoIterator}
+        pub fn count<I: IntoIterator>(input: I) -> Int32 {
+            var n = 0
+            for _ in input { n += 1 }
+            n
+        }
+        pub fn mutate(input: &mut Array<Int32>) {
+            for value in input { *value += 10 }
+        }
+        pub fn sum<K, V: Copy>(input: &Map<K, V>) -> Int32 {
+            var n = 0
+            for _ in input { n += 1 }
+            n
+        }
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import app/loops
+        import joky/map.{type Map}
+        fn compute() -> Int32 {
+            var a = [10, 10]
+            loops.mutate(&mut a)
+            var m = Map.new::<Int32, Int32>()
+            m.insert(1, 1)
+            var n = 0
+            for v in &a { n += *v }
+            n + loops.count(a) * loops.sum(&m)
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source_with_modules(source, &modules).unwrap();
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn for_into_iter_rejects_fake_protocols_and_conflicting_borrows() {
+    for source in [
+        "import joky/iter.{range, type Range} struct Fake {} impl Fake { fn into_iter(self) -> Range { range(0, 1) } } fn bad() { for _ in (Fake {}) {} }",
+        "import joky/iter.{range, type Range} trait IntoIterator { type IntoIter; fn into_iter(self) -> Self.IntoIter } struct Fake {} impl IntoIterator for Fake { type IntoIter = Range; fn into_iter(self) -> Range { range(0, 1) } } fn bad() { for _ in (Fake {}) {} }",
+        "import joky/iter.{range, type Range} struct Map {} impl Map { fn iter(&self) -> Range { range(0, 1) } } fn bad() { let m = Map {}; for _ in &m {} }",
+        "import joky/iter.{type IntoIterator} struct Fake {} impl IntoIterator for Fake { type IntoIter = Int32; fn into_iter(self) -> Int32 { 1 } }",
+        "import joky/iter.{type IntoIterator, type Range, range} struct Fake {} impl IntoIterator for Fake { type IntoIter = Range; fn into_iter(self) @suspends -> Range { range(0, 1) } }",
+        "fn bad<I>(input: I) { for _ in input {} }",
+        "fn bad() { var a = [1, 2]; for v in &a { a.push(3); let n = *v; } }",
+        "fn bad() { var a = [1, 2]; for v in &mut a { a.push(3); *v = 3; } }",
+        "fn bad() { let a = [1, 2]; for v in &a { *v = 3; } }",
+        "fn bad() { let a = [1, 2]; for _ in &mut a {} }",
+        "fn bad() { var a = [1, 2]; let r = &mut a; for _ in r {}; r.len(); }",
+        "import joky/map.{type Map} fn bad() { var m = Map.new::<Int32, Int32>(); m.insert(1, 2); for e in &mut m { *map.entry_key(e) = 3; } }",
+    ] {
+        let error = frontend_error(source, &crate::ModuleSources::new());
+        assert!(error.span().is_some(), "{source}: {error}");
+    }
+}
+
 fn pending_source() -> String {
     format!(
         r#"{SOURCE}

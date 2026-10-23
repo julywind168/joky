@@ -138,6 +138,7 @@ impl Parser {
         let body = self.parse_block()?;
         let span = self.span(start, self.last_span.end());
         self.iterators = true;
+        let input = format!("$for_input_{start}");
         let iterator = format!("$for_iterator_{start}");
         let item = format!("$for_item_{start}");
         let binding_span = pattern.span();
@@ -195,12 +196,28 @@ impl Parser {
         if let Expr::Match { iteration, .. } = &mut body {
             *iteration = true;
         }
+        // Capture before conversion so input control flow and exclusive-reference
+        // moves obey ordinary binding rules. Conversion sees one typed local.
         Ok(Expr::Block {
             exprs: vec![
+                Expr::Let {
+                    name: input.clone(),
+                    annotation: None,
+                    value: Box::new(value),
+                    span: value_span,
+                },
                 Expr::Var {
                     name: iterator,
                     annotation: None,
-                    value: Box::new(value),
+                    value: Box::new(Expr::Call {
+                        callee: "$for_into_iter".into(),
+                        type_args: vec![],
+                        args: vec![Expr::Ident {
+                            name: input,
+                            span: value_span,
+                        }],
+                        span: value_span,
+                    }),
                     span: value_span,
                 },
                 Expr::While {
