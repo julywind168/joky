@@ -685,7 +685,7 @@ impl TypeRegistry {
                 ));
             }
             let message = match ty {
-                Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) | Type::BufferIterator(element) | Type::BufferPairIterator(element) | Type::BufferEntry(element) | Type::BufferEnumerate(element) | Type::BufferEnumerateEntries(element) | Type::BufferIndexed(element) | Type::BufferIndexedEntry(element) => {
+                Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) | Type::BufferIterator(element) | Type::BufferPairIterator(element) | Type::BufferEntry(element) => {
                     if !element.is_buffer_element() || (matches!(ty, Type::BufferElement(_)) && element.is_owner() && !matches!(element.as_ref(), Type::Parameter(_) | Type::Projection(_)))
                     {
                         return Err(Error::new_with_code(
@@ -903,11 +903,7 @@ fn resolve_type_at_depth(
         | Type::BufferSlice(element)
         | Type::BufferIterator(element)
         | Type::BufferPairIterator(element)
-        | Type::BufferEntry(element)
-        | Type::BufferEnumerate(element)
-        | Type::BufferEnumerateEntries(element)
-        | Type::BufferIndexed(element)
-        | Type::BufferIndexedEntry(element) = ty
+        | Type::BufferEntry(element) = ty
         {
             let element = indirect::resolve_element(element, aliases, registry, depth + 1)?;
             *ty = ty.with_buffer_element(element);
@@ -1233,6 +1229,7 @@ pub(crate) fn resolve_pattern_heads(
         let mut pending = vec![expr];
         while let Some(expr) = pending.pop() {
             match expr {
+                Expr::IndexedLoop(loop_) => pending.push(&mut loop_.body),
                 Expr::When(w) => pending.push(&mut w.body),
                 Expr::AnonymousFunction(f) => pending.push(&mut f.body),
                 Expr::Destructure { pattern, value, .. } => {
@@ -1460,6 +1457,7 @@ pub(crate) fn map_syntax(
         | Expr::Return {
             value: Some(value), ..
         } => map_syntax(value, map, substitutions)?,
+        Expr::IndexedLoop(loop_) => map_syntax(&mut loop_.body, map, substitutions)?,
         Expr::While {
             condition, body, ..
         } => {

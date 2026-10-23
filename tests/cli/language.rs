@@ -3,52 +3,6 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
-fn iterator_enumerate_runs_and_cleans_owners_in_standalone_aot() {
-    let work = Workspace::new();
-    let source = include_str!("../fixtures/iterator_enumerate.jk")
-        .replace("extern fn record(x: Int32) -> Int32", "import joky/io.{println}\nimport joky/task\nfn record(x: Int32) -> Int32 { println(x); x }")
-        .replace("extern fn delayed_value(x: Int32) @suspends -> Int32", "fn delayed_value(x: Int32) @suspends -> Int32 { task.yield_now(); x }");
-    work.write("enumerate.jk", &format!("{source}\nfn main() @suspends {{ expect(compute() == 42); println(200); expect(consume(2) == 1); println(201); expect(pending() == 42); println(202) }}"));
-    success(&work.cli(&["build", "--no-prelude", "enumerate.jk"]));
-    let output = Command::new(work.path().join("enumerate"))
-        .output()
-        .unwrap();
-    success(&output);
-    let events: Vec<i32> = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| line.parse().unwrap())
-        .collect();
-    assert_eq!(&events[..5], &[100, 101, 102, 103, 200]);
-    let middle = events.iter().position(|&event| event == 201).unwrap();
-    assert_eq!(events.last(), Some(&202));
-    let mut exited = events[5..middle].to_vec();
-    exited.sort();
-    assert_eq!(exited, [-3, -2, -1, 1, 2, 3, 11]);
-    let mut pending = events[middle + 1..events.len() - 1].to_vec();
-    pending.sort();
-    assert_eq!(pending, [-3, -2, -1, 1, 2, 3, 11, 12]);
-    work.write(
-        "enumerate_failure.jk",
-        &format!("{source}\nfn main() {{ consume(4); }}"),
-    );
-    success(&work.cli(&["build", "--no-prelude", "enumerate_failure.jk"]));
-    let output = Command::new(work.path().join("enumerate_failure"))
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
-    let mut events: Vec<i32> = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| line.parse().unwrap())
-        .collect();
-    events.sort();
-    assert_eq!(events, [-3, -2, -1, 1, 2, 3, 11]);
-}
-
-#[test]
-#[cfg(unix)]
 fn for_into_iter_executes_in_standalone_aot() {
     let work = Workspace::new();
     let source = include_str!("../fixtures/for_into_iter.jk").replace(
@@ -2761,4 +2715,42 @@ fn suspending_borrows_cleanup_in_standalone_aot() {
         b"2\n42\n1\n2\n42\n2\n42\n2\n42\n2\n42\n",
         0,
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn for_indexed_executes_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/for_indexed.jk");
+    for suspends in [false, true] {
+        let source = if suspends {
+            source
+                .replace("fn compute() ->", "fn compute() @suspends ->")
+                .replace(
+                    "if i == 1 { continue }",
+                    "task.yield_now(); if i == 1 { continue }",
+                )
+        } else {
+            source.to_owned()
+        };
+        let effect = if suspends { "@suspends" } else { "" };
+        work.write("indexed.jk", &format!(
+            "import joky/io.{{println}}\nimport joky/task\n{source}\nfn main() {effect} {{ println(compute()); println(boundary(128)); println(unsigned_boundary(256)); }}"
+        ));
+        success(&work.cli(&["build", "--no-prelude", "indexed.jk"]));
+        let output = Command::new(work.path().join("indexed")).output().unwrap();
+        success(&output);
+        assert_eq!(output.stdout, b"42\n127\n255\n");
+    }
+    for body in [
+        "boundary(129)",
+        "unsigned_boundary(257)",
+        "overflow_owned()",
+    ] {
+        work.write("overflow.jk", &format!("{source}\nfn main() {{ {body}; }}"));
+        success(&work.cli(&["build", "--no-prelude", "overflow.jk"]));
+        let output = Command::new(work.path().join("overflow")).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("For index overflow"));
+    }
 }

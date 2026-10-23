@@ -1,0 +1,171 @@
+import joky/iter.{range}
+import joky/map.{type Map}
+import joky/array.{type Array}
+import joky/check.{assert}
+import joky/string
+import joky/option.{Some}
+fn expect(ok: Bool) { assert(ok, "Indexed for mismatch") }
+fn signed8(n: Int8) -> Int32 { int32(n) }
+fn signed16(n: Int16) -> Int32 { int32(n) }
+fn signed64(n: Int64) -> Int32 { int32(n) }
+fn unsigned8(n: UInt8) -> Int32 { int32(n) }
+fn unsigned16(n: UInt16) -> Int32 { int32(n) }
+fn unsigned32(n: UInt32) -> Int32 { int32(n) }
+fn unsigned64(n: UInt64) -> Int32 { int32(n) }
+fn compute() -> Int32 {
+    var sum = 0
+    var calls = 0
+    for i, v in { calls += 1; [10, 20, 30] } {
+        if i == 1 { continue }
+        sum += i + v
+    }
+    expect(calls == 1 && sum == 42)
+    var xs = [1, 2, 3]
+    for i, v in &xs { expect(*xs.borrow_ref(i) == *v) }
+    for i, v in &mut xs { *v += i }
+    expect(*xs.borrow_ref(2) == 5)
+    for i, _ in range(0, 2) { expect(signed8(i) >= 0) }
+    for i, _ in range(0, 2) { expect(signed16(i) >= 0) }
+    for i, _ in range(0, 2) { expect(signed64(i) >= 0) }
+    for i, _ in range(0, 2) { expect(unsigned8(i) >= 0) }
+    for i, _ in range(0, 2) { expect(unsigned16(i) >= 0) }
+    for i, _ in range(0, 2) { expect(unsigned32(i) >= 0) }
+    for i, _ in range(0, 2) { expect(unsigned64(i) >= 0) }
+    for i, _ in range(0, 2) { expect(i < uint64(2)) }
+    var pairs = 0
+    for i, (a, b) in [(1, 2), (3, 4)] { pairs += i + a + b }
+    expect(pairs == 11)
+    for _, _ in range(0, 1) {}
+    var nested = 0
+    for i, _ in range(0, 2) {
+        for j, _ in range(0, 3) { nested += i * 10 + j }
+    }
+    expect(nested == 36)
+    context_calls()
+    contexts()
+    map_patterns()
+    42
+}
+fn map_patterns() {
+    var scores = Map.new::<Int32, Int32>()
+    scores.insert(1, 10)
+    scores.insert(2, 20)
+    var count = 0
+    for i, (key, value) in &mut scores {
+        *value += *key + 10
+        count += i
+        expect(*value == *key * 11 + 10)
+    }
+    expect(count == 1)
+    var total = 0
+    for (key, value) in &scores { total += *key + *value }
+    expect(total == 56)
+    for entry in &mut scores { let (key, value) = entry; *value += *key }
+    var owned = Map.new::<String, Array<Int32>>()
+    owned.insert("abc", [1])
+    for i, (key, value) in &mut owned {
+        value.push(i)
+        expect(string.byte_length(key) == 3 && value.len() == 2)
+    }
+    var units = Map.new::<Unit, Unit>()
+    units.insert({}, {})
+    for i, (_, _) in &mut units { expect(i == 0) }
+}
+fn boundary(count: Int32) -> Int32 {
+    var last = 0
+    for i, _ in range(0, count) { last = signed8(i) }
+    last
+}
+
+struct Holder { number: UInt16 }
+fn same<T: Copy>(a: T, b: T) -> T { a }
+fn pair(value: (UInt16, Int32)) -> UInt16 { value.0 }
+fn returned() -> UInt16 {
+    for i, _ in range(0, 2) { return i }
+    0
+}
+fn contexts() {
+    context_records()
+    context_nested()
+    var total: UInt64 = 0
+    for i, _ in range(0, 3) { let alias = i; total += alias }
+    expect(total == 3)
+    for i, _ in range(0, 2) {
+        let n = if true { i } else { uint16(9) }
+        expect(unsigned16(n) < 2)
+    }
+    for i, _ in range(0, 2) {
+        let n = if false { uint16(9) } else { i }
+        expect(unsigned16(n) < 2)
+    }
+    for i, _ in range(0, 2) {
+        let n = match Some(1) { Some(value) => i, _ => uint64(9) }
+        expect(unsigned64(n) < 2)
+    }
+}
+fn context_records() {
+    for i, _ in range(0, 2) {
+        let box = Holder { number: i }
+        expect(unsigned16(box.number) < 2)
+    }
+    for i, _ in range(0, 2) { expect(pair((i, 0)) < 2) }
+    for i, _ in range(0, 2) { expect(same(i, uint32(1)) < 2) }
+    for i, _ in range(0, 2) {
+        let numbers = [i, uint16(9)]
+        expect(numbers.len() == 2)
+    }
+    for i, _ in range(0, 2) {
+        let f = || -> UInt16 { i }
+        expect(unsigned16(f()) < 2)
+    }
+    for i, _ in range(0, 2) {
+        var box = Holder { number: 9 }
+        box.number = i
+        expect(box.number < 2)
+    }
+}
+fn context_nested() {
+    for i, _ in range(0, 2) {
+        for j, value in range(0, 2) { expect(unsigned64(i + j) < 3 && value < 2) }
+    }
+    for i, _ in range(0, 1) {
+        expect(signed8(i) == 0)
+        let i: UInt64 = 7
+        for i, _ in range(0, 1) { expect(signed16(i) == 0) }
+        expect(i == 7)
+    }
+    for i, _ in range(0, 2) {
+        expect(signed8(i) < 2)
+        match Some(uint64(0)) { Some(i) => { unsigned64(i); }, _ => {} }
+    }
+    expect(returned() == 0)
+    let xs = [10, 20]
+    for i, v in &xs { expect(xs.get(i).unwrap_or(0) == *v) }
+    for i, v in xs.slice(0, 2) { expect(*v == (i + 1) * 10) }
+    var values = [10, 20]
+    for i, v in values.slice_mut(0, 2) { *v += i }
+    let cursor = values.iter_mut()
+    for i, v in &mut *cursor { expect(i == 0); *v += 1; break }
+    for i, v in &mut *cursor { expect(i == 0 && *v == 21) }
+}
+fn unsigned_boundary(count: Int32) -> Int32 {
+    var last = 0
+    for i, _ in range(0, count) { last = unsigned8(i) }
+    last
+}
+
+fn overflow_owned() {
+    var values = Array.new::<String>()
+    for _ in range(0, 129) { values.push("owned") }
+    for i, value in values { signed8(i); }
+}
+
+enum Count { Value(UInt16) }
+fn invoke<F: Fn(UInt16) -> Int32>(callback: F, n: UInt16) -> Int32 { callback(n) }
+fn context_calls() {
+    let callback: fn(UInt16) -> Int32 = unsigned16
+    for i, _ in range(0, 2) { expect(callback(i) < 2) }
+    for i, _ in range(0, 2) { let count = Count.Value(i); match count { Count.Value(n) => { expect(n < 2); } } }
+    for i, _ in range(0, 2) { let count: UInt16 = Some(i)!; expect(count < 2) }
+    for i, _ in range(0, 2) { expect(invoke(|n| { unsigned16(i + n) }, 0) < 2) }
+}

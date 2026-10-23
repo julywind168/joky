@@ -70,7 +70,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 61] = [
+    pub(crate) const ALL: [Self; 45] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
@@ -116,42 +116,9 @@ impl BufferIntrinsic {
         Self::EntryKey,
         Self::EntryValue,
         Self::EntryValueMut,
-        Self::Enumerate,
-        Self::EnumerateMut,
-        Self::EnumerateAdvance,
-        Self::EnumerateCurrent,
-        Self::EnumerateCurrentMut,
-        Self::EnumerateEntries,
-        Self::EnumerateEntriesMut,
-        Self::EnumerateEntriesAdvance,
-        Self::EnumerateEntriesCurrent,
-        Self::EnumerateEntriesCurrentMut,
-        Self::IndexedIndex,
-        Self::IndexedValue,
-        Self::IndexedValueMut,
-        Self::IndexedEntryIndex,
-        Self::IndexedEntryValue,
-        Self::IndexedEntryValueMut,
     ];
 
     pub(crate) fn borrows_storage(self) -> bool {
-        if matches!(
-            self,
-            Self::Enumerate
-                | Self::EnumerateMut
-                | Self::EnumerateCurrent
-                | Self::EnumerateCurrentMut
-                | Self::EnumerateEntries
-                | Self::EnumerateEntriesMut
-                | Self::EnumerateEntriesCurrent
-                | Self::EnumerateEntriesCurrentMut
-                | Self::IndexedValue
-                | Self::IndexedValueMut
-                | Self::IndexedEntryValue
-                | Self::IndexedEntryValueMut
-        ) {
-            return true;
-        }
         matches!(
             self,
             Self::Borrow
@@ -182,19 +149,6 @@ impl BufferIntrinsic {
         )
     }
     pub(crate) fn allocates(self) -> bool {
-        if matches!(
-            self,
-            Self::Enumerate
-                | Self::EnumerateMut
-                | Self::EnumerateCurrent
-                | Self::EnumerateCurrentMut
-                | Self::EnumerateEntries
-                | Self::EnumerateEntriesMut
-                | Self::EnumerateEntriesCurrent
-                | Self::EnumerateEntriesCurrentMut
-        ) {
-            return true;
-        }
         matches!(
             self,
             Self::Allocate
@@ -222,19 +176,6 @@ impl BufferIntrinsic {
     }
 
     pub(crate) fn is_pair(self) -> bool {
-        if matches!(
-            self,
-            Self::EnumerateEntries
-                | Self::EnumerateEntriesMut
-                | Self::EnumerateEntriesAdvance
-                | Self::EnumerateEntriesCurrent
-                | Self::EnumerateEntriesCurrentMut
-                | Self::IndexedEntryIndex
-                | Self::IndexedEntryValue
-                | Self::IndexedEntryValueMut
-        ) {
-            return true;
-        }
         matches!(
             self,
             Self::PairIter
@@ -291,69 +232,6 @@ impl BufferIntrinsic {
         Some(offsets)
     }
     pub(crate) fn signature(self, element: &Type) -> crate::FunctionSignature {
-        let (indexed_cursor, indexed_item, source) = if self.is_pair() {
-            (
-                Type::BufferEnumerateEntries(Arc::new(element.clone())),
-                Type::BufferIndexedEntry(Arc::new(element.clone())),
-                Type::BufferPairIterator(Arc::new(element.clone())),
-            )
-        } else {
-            (
-                Type::BufferEnumerate(Arc::new(element.clone())),
-                Type::BufferIndexed(Arc::new(element.clone())),
-                Type::BufferIterator(Arc::new(element.clone())),
-            )
-        };
-        let indexed_signature = match self {
-            Self::Enumerate
-            | Self::EnumerateMut
-            | Self::EnumerateEntries
-            | Self::EnumerateEntriesMut => {
-                let mutable = matches!(self, Self::EnumerateMut | Self::EnumerateEntriesMut);
-                Some((
-                    vec![Type::reference(source, mutable)],
-                    Type::reference(indexed_cursor, mutable),
-                ))
-            }
-            Self::EnumerateAdvance | Self::EnumerateEntriesAdvance => {
-                Some((vec![Type::reference(indexed_cursor, false)], Type::Bool))
-            }
-            Self::EnumerateCurrent
-            | Self::EnumerateCurrentMut
-            | Self::EnumerateEntriesCurrent
-            | Self::EnumerateEntriesCurrentMut => {
-                let mutable = matches!(
-                    self,
-                    Self::EnumerateCurrentMut | Self::EnumerateEntriesCurrentMut
-                );
-                Some((
-                    vec![Type::reference(indexed_cursor, mutable)],
-                    Type::reference(indexed_item, mutable),
-                ))
-            }
-            Self::IndexedIndex | Self::IndexedEntryIndex => {
-                Some((vec![Type::reference(indexed_item, false)], Type::UInt64))
-            }
-            Self::IndexedValue
-            | Self::IndexedValueMut
-            | Self::IndexedEntryValue
-            | Self::IndexedEntryValueMut => {
-                let mutable = matches!(self, Self::IndexedValueMut | Self::IndexedEntryValueMut);
-                let target = if self.is_pair() {
-                    Type::BufferEntry(Arc::new(element.clone()))
-                } else {
-                    element.clone()
-                };
-                Some((
-                    vec![Type::reference(indexed_item, mutable)],
-                    Type::reference(target, mutable),
-                ))
-            }
-            _ => None,
-        };
-        if let Some((params, result)) = indexed_signature {
-            return crate::FunctionSignature::new(params, result);
-        }
         if self.is_pair() {
             let Type::Tuple(parts) = element else {
                 unreachable!("paired primitive parameters")
@@ -399,23 +277,7 @@ impl BufferIntrinsic {
         let slice = Type::BufferSlice(Arc::new(element.clone()));
         let iterator = Type::BufferIterator(Arc::new(element.clone()));
         let (params, result) = match self {
-            Self::Enumerate
-            | Self::EnumerateMut
-            | Self::EnumerateAdvance
-            | Self::EnumerateCurrent
-            | Self::EnumerateCurrentMut
-            | Self::EnumerateEntries
-            | Self::EnumerateEntriesMut
-            | Self::EnumerateEntriesAdvance
-            | Self::EnumerateEntriesCurrent
-            | Self::EnumerateEntriesCurrentMut
-            | Self::IndexedIndex
-            | Self::IndexedValue
-            | Self::IndexedValueMut
-            | Self::IndexedEntryIndex
-            | Self::IndexedEntryValue
-            | Self::IndexedEntryValueMut
-            | Self::PairIter
+            Self::PairIter
             | Self::PairIterMut
             | Self::PairAdvance
             | Self::PairCurrent
@@ -532,17 +394,6 @@ impl BufferIntrinsic {
     }
 
     pub(crate) fn may_fail(self) -> bool {
-        if matches!(
-            self,
-            Self::IndexedIndex
-                | Self::IndexedEntryIndex
-                | Self::IndexedValue
-                | Self::IndexedValueMut
-                | Self::IndexedEntryValue
-                | Self::IndexedEntryValueMut
-        ) {
-            return false;
-        }
         !matches!(
             self,
             Self::Len
@@ -560,20 +411,6 @@ impl BufferIntrinsic {
     // Distinct checked source signatures may share the same raw runtime ABI.
     pub(crate) fn runtime_symbol(self) -> &'static str {
         match self {
-            Self::Enumerate | Self::EnumerateMut => "__joky_buffer_enumerate",
-            Self::EnumerateEntries | Self::EnumerateEntriesMut => "__joky_buffer_enumerate_entries",
-            Self::EnumerateAdvance | Self::EnumerateEntriesAdvance => {
-                "__joky_buffer_enumerate_advance"
-            }
-            Self::EnumerateCurrent
-            | Self::EnumerateCurrentMut
-            | Self::EnumerateEntriesCurrent
-            | Self::EnumerateEntriesCurrentMut => "__joky_buffer_enumerate_current",
-            Self::IndexedIndex | Self::IndexedEntryIndex => "__joky_buffer_indexed_index",
-            Self::IndexedValue
-            | Self::IndexedValueMut
-            | Self::IndexedEntryValue
-            | Self::IndexedEntryValueMut => "__joky_buffer_indexed_value",
             Self::IterMut | Self::SliceIter | Self::SliceIterMut => "__joky_buffer_iter",
             Self::IterCurrentMut => "__joky_buffer_iter_current",
             Self::PairIterMut => "__joky_buffer_pair_iter",
@@ -599,23 +436,6 @@ impl BufferIntrinsic {
 
     pub(crate) fn symbol(self) -> &'static str {
         match self {
-            Self::Enumerate => "__joky_buffer_enumerate",
-            Self::EnumerateMut => "__joky_buffer_enumerate_mut",
-            Self::EnumerateAdvance => "__joky_buffer_enumerate_advance",
-            Self::EnumerateCurrent => "__joky_buffer_enumerate_current",
-            Self::EnumerateCurrentMut => "__joky_buffer_enumerate_current_mut",
-            Self::EnumerateEntries => "__joky_buffer_enumerate_entries",
-            Self::EnumerateEntriesMut => "__joky_buffer_enumerate_entries_mut",
-            Self::EnumerateEntriesAdvance => "__joky_buffer_enumerate_entries_advance",
-            Self::EnumerateEntriesCurrent => "__joky_buffer_enumerate_entries_current",
-            Self::EnumerateEntriesCurrentMut => "__joky_buffer_enumerate_entries_current_mut",
-            Self::IndexedIndex => "__joky_buffer_indexed_index",
-            Self::IndexedValue => "__joky_buffer_indexed_value",
-            Self::IndexedValueMut => "__joky_buffer_indexed_value_mut",
-            Self::IndexedEntryIndex => "__joky_buffer_indexed_entry_index",
-            Self::IndexedEntryValue => "__joky_buffer_indexed_entry_value",
-            Self::IndexedEntryValueMut => "__joky_buffer_indexed_entry_value_mut",
-
             Self::PairIter => "__joky_buffer_pair_iter",
             Self::PairIterMut => "__joky_buffer_pair_iter_mut",
             Self::PairAdvance => "__joky_buffer_pair_advance",
@@ -728,22 +548,6 @@ impl FunctionPlan {
                     | BufferIntrinsic::EntryKey
                     | BufferIntrinsic::EntryValue
                     | BufferIntrinsic::EntryValueMut
-                    | BufferIntrinsic::Enumerate
-                    | BufferIntrinsic::EnumerateMut
-                    | BufferIntrinsic::EnumerateAdvance
-                    | BufferIntrinsic::EnumerateCurrent
-                    | BufferIntrinsic::EnumerateCurrentMut
-                    | BufferIntrinsic::EnumerateEntries
-                    | BufferIntrinsic::EnumerateEntriesMut
-                    | BufferIntrinsic::EnumerateEntriesAdvance
-                    | BufferIntrinsic::EnumerateEntriesCurrent
-                    | BufferIntrinsic::EnumerateEntriesCurrentMut
-                    | BufferIntrinsic::IndexedIndex
-                    | BufferIntrinsic::IndexedValue
-                    | BufferIntrinsic::IndexedValueMut
-                    | BufferIntrinsic::IndexedEntryIndex
-                    | BufferIntrinsic::IndexedEntryValue
-                    | BufferIntrinsic::IndexedEntryValueMut
             )
         {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
@@ -771,22 +575,6 @@ impl FunctionPlan {
                 | BufferIntrinsic::EntryKey
                 | BufferIntrinsic::EntryValue
                 | BufferIntrinsic::EntryValueMut
-                | BufferIntrinsic::Enumerate
-                | BufferIntrinsic::EnumerateMut
-                | BufferIntrinsic::EnumerateAdvance
-                | BufferIntrinsic::EnumerateCurrent
-                | BufferIntrinsic::EnumerateCurrentMut
-                | BufferIntrinsic::EnumerateEntries
-                | BufferIntrinsic::EnumerateEntriesMut
-                | BufferIntrinsic::EnumerateEntriesAdvance
-                | BufferIntrinsic::EnumerateEntriesCurrent
-                | BufferIntrinsic::EnumerateEntriesCurrentMut
-                | BufferIntrinsic::IndexedIndex
-                | BufferIntrinsic::IndexedValue
-                | BufferIntrinsic::IndexedValueMut
-                | BufferIntrinsic::IndexedEntryIndex
-                | BufferIntrinsic::IndexedEntryValue
-                | BufferIntrinsic::IndexedEntryValueMut
         ) && !element.is_owner()
             && (!element.is_copy_storage_value() || element.contains_references())
             && !matches!(element, Type::Parameter(_) | Type::Projection(_))
@@ -889,15 +677,11 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 | Type::BufferIterator(_)
                 | Type::BufferPairIterator(_)
                 | Type::BufferEntry(_)
-                | Type::BufferEnumerate(_)
-                | Type::BufferEnumerateEntries(_)
-                | Type::BufferIndexed(_)
-                | Type::BufferIndexedEntry(_)
         ) {
             return Err(type_error(
                 &info.span,
                 ErrorCode::TypeMismatch,
-                "Buffer cursor and item views are borrow-only targets; use & or &mut",
+                "Element, Slice, Iter, Entries and Entry are borrow-only targets; use & or &mut",
             ));
         }
         // Owner reference targets retain nominal identity rather than inline

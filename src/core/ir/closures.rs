@@ -24,6 +24,7 @@ pub(super) struct ClosureDefinition {
 /// Visit expression children in source order. Declaration scopes are handled by callers.
 pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
     match expr {
+        Expr::IndexedLoop(loop_) => vec![&loop_.body],
         Expr::When(w) => vec![&w.body],
         Expr::AnonymousFunction(f) => vec![&f.body],
         Expr::Invoke { callee, args, .. } => std::iter::once(callee.as_ref()).chain(args).collect(),
@@ -168,6 +169,11 @@ fn walk_free(
                 if let Some(other) = else_branch {
                     descend(other, &mut bound.clone())?;
                 }
+            }
+            Expr::IndexedLoop(loop_) => {
+                let mut inner = bound.clone();
+                inner.insert(loop_.name.clone());
+                descend(&loop_.body, &mut inner)?;
             }
             Expr::While {
                 condition, body, ..

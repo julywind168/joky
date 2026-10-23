@@ -361,6 +361,11 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                 binding_names(pattern, &mut names);
                 scopes.last_mut().expect("outermost layer").extend(names);
             }
+            Expr::IndexedLoop(loop_) => {
+                scopes.push(std::collections::HashSet::from([loop_.name.clone()]));
+                visit(&loop_.body, scopes, walk);
+                scopes.pop();
+            }
             Expr::While {
                 condition, body, ..
             } => {

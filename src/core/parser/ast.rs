@@ -57,6 +57,8 @@ pub enum Literal {
 /// Expression
 #[derive(Debug, Clone)]
 pub enum Expr {
+    /// Compiler-authored indexed loop body; integer type is inferred before lowering.
+    IndexedLoop(Box<IndexedLoop>),
     /// An independently queued, compiler-checked state operation.
     When(Box<When>),
     /// A synchronous anonymous function with declaration-local capture identity.
@@ -292,9 +294,19 @@ pub struct ClosureParameter {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
+pub struct IndexedLoop {
+    pub name: String,
+    pub counter: String,
+    pub overflow: String,
+    pub body: Expr,
+    pub span: Span,
+}
+
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
+            Self::IndexedLoop(loop_) => loop_.span,
             Self::When(block) => block.span,
             Self::AnonymousFunction(function) => function.span,
             Self::GenericName(name) => name.span,
@@ -336,6 +348,10 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::IndexedLoop(mut loop_) => {
+                loop_.span = span;
+                Self::IndexedLoop(loop_)
+            }
             Self::When(mut block) => {
                 block.span = span;
                 Self::When(block)
@@ -885,22 +901,6 @@ pub(crate) enum BufferIntrinsic {
     EntryKey,
     EntryValue,
     EntryValueMut,
-    Enumerate,
-    EnumerateMut,
-    EnumerateAdvance,
-    EnumerateCurrent,
-    EnumerateCurrentMut,
-    EnumerateEntries,
-    EnumerateEntriesMut,
-    EnumerateEntriesAdvance,
-    EnumerateEntriesCurrent,
-    EnumerateEntriesCurrentMut,
-    IndexedIndex,
-    IndexedValue,
-    IndexedValueMut,
-    IndexedEntryIndex,
-    IndexedEntryValue,
-    IndexedEntryValueMut,
 }
 
 #[derive(Debug, Clone)]

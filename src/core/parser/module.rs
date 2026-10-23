@@ -109,7 +109,11 @@ impl Parser {
             });
         }
         if self.iterators {
-            for (path, alias) in [("joky/iter", "$joky_iter"), ("joky/option", "$joky_option")] {
+            for (path, alias) in [
+                ("joky/iter", "$joky_iter"),
+                ("joky/option", "$joky_option"),
+                ("joky/check", "$joky_check"),
+            ] {
                 if !module.imports.iter().any(|import| import.path == path) {
                     module.imports.push(Import {
                         path: path.into(),

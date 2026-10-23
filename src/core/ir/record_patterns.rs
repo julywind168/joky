@@ -582,6 +582,15 @@ impl FunctionPlan {
         types: &TypeRegistry,
         vars: &mut HashMap<String, Binding>,
     ) -> Result<(), Error> {
+        if let Some(entry) = value.as_ref().filter(|slot| {
+            matches!(pattern, BindingPattern::Tuple { .. })
+                && slot
+                    .ty
+                    .reference_type()
+                    .is_some_and(|r| matches!(r.target, Type::BufferEntry(_)))
+        }) {
+            return self.bind_entry_pattern(pattern, entry, mutable, vars);
+        }
         // Shared-borrow destructuring covers record patterns; a tuple pattern
         // on a reference keeps its existing rejection.
         if let Some(reference) = value

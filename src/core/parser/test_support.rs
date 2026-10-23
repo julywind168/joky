@@ -134,3 +134,49 @@ impl Point {
 fn fixture_conversion_rejects_missing_named_targets() {
     with_suspends("fn present() {}", true, Suspends::Named("missing"));
 }
+
+/// Seed only the compiler-owned counter so UInt64's final two iterations can
+/// execute in finite tests. No source-level constructor or runtime probe exists.
+pub(crate) fn indexed_for_u64_boundary() -> Module {
+    let mut ast = parse(
+        r#"
+        import joky/iter.{range}
+        import joky/check.{assert}
+        fn boundary(count: Int32) -> Int32 {
+            var total = 0
+            for index, _ in range(0, count) {
+                let actual: UInt64 = index
+                assert(actual >= 18446744073709551614, "Invalid boundary index")
+                total += 1
+            }
+            total
+        }
+    "#,
+    )
+    .unwrap();
+    let mut changed = 0;
+    for item in &mut ast.items {
+        let Item::FnDef(f) = item else { continue };
+        let Expr::Block { exprs, .. } = &mut f.body else {
+            panic!("function block")
+        };
+        for expr in exprs {
+            let Expr::Block { exprs, .. } = expr else {
+                continue;
+            };
+            for expr in exprs {
+                if let Expr::Var { name, value, .. } = expr {
+                    if name.starts_with("$for_index_") {
+                        **value = Expr::Literal {
+                            literal: Literal::UInt64(u64::MAX - 1),
+                            span: value.span(),
+                        };
+                        changed += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(changed, 1);
+    ast
+}

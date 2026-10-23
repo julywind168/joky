@@ -33,7 +33,7 @@ impl IntoIterator for Broken {
 fn conversion_failure() { for _ in (Broken { values: ["owned"] }) {} }
 fn compute() -> Int32 {
     var sum = 0
-    for value in batch() { sum += value }
+    for index, value in batch() { sum += value + index - index }
     assert(sum == 6, "Protocol dispatch mismatch")
     assert(count(Batch { values: [4, 5] }) == 2, "Generic conversion mismatch")
     assert(count(Array.new::<Int32>()) == 0, "Empty conversion mismatch")

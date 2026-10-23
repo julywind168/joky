@@ -121,7 +121,7 @@ Rust/Cranelift 标量运算使用的 MXCSR；标准环境采用最近偶数舍�
 for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条件 Match，保留输入及模式 span。
 不可失败绑定通过普通 Let/Destructure 检查；生成调用使用不可由源码拼写的标准库别名，
 经 `joky/iter.next<I: Iterator>` 固定协议身份与泛型约束，同名固有方法不能劫持选择。
-隐式装载 iter/option 依赖不依赖 prelude，也不向用户值命名空间添加短名。
+隐式装载 iter/option/check 依赖不依赖 prelude，也不向用户值命名空间添加短名。
 条件 Match 保留 parser-authored iteration 标记；共享 IR 确认输入是 `&Iter<T>` / `&mut Iter<T>` 时，
 将该步改写为 advance 条件及直接 current/current_mut 绑定，普通 Iterator 仍走 Option。
 借用游标的 Type::BufferIterator 沿用 Buffer 视图的类型、来源及跨挂起检查，不能成为聚合字段
@@ -136,18 +136,17 @@ Slice 的两个游标构造原语使用独立受检签名，并与 Array 构造�
 后端按已检查字段偏移提取列控制块；不公开偏移或改变 Map 布局。运行时验证两列长度一致，
 两个游标位置同步推进。每次 current 在任务 arena 分配含两个元素地址的 Entry 快照，
 避免后续共享推进改变旧 Entry 身份；该实现逐项累计描述符预算，不拥有元素或放宽引用聚合规则。
-EntryKey 仅返回共享引用，EntryValueMut 需要独占 Entry；不增加 key/value 分离借用豁免。
-
-借用编号游标使用 BufferEnumerate / BufferEnumerateEntries，项使用 BufferIndexed /
-BufferIndexedEntry；元素类型仍按原有 Buffer 规则验证，四者均仅作引用目标。共享运行时
-BufferEnumeration 保存原游标地址及最近一次成功推进的编号、元素地址快照，advance
-固定这些信息，current 将其复制到任务 arena 的稳定 BufferIndexed 描述符。Map 的
-Entry 内嵌于该描述符，其借用地址不会因后续推进变化；不产生独占引用聚合。编号与元素
-访问分别返回 UInt64 和继承原来源的引用。描述符按需计费，元素的拥有者及清理责任不变，
-分配失败沿用任务终止清理。解释器与原生 JIT/AOT 共用这些运行时操作；仅增加私有
-buffer helper，不改变公共 CPS 帧布局或 C 嵌入接口。
+EntryKey 仅返回共享引用，EntryValueMut 需要独占 Entry；显式接口保留整 Entry 借用。
+Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来源路径证明两列互不重叠；
+键始终共享，值权限继承 Entry。后端只提取既有描述符的列指针，不创建引用元组或新快照。
 新增五个私有 runtime helper 由 JIT/AOT 共用，解释器调用相同的描述符操作。
 元素借用沿游标、切片回溯至原容器，取消时只有容器持有元素清理责任；描述符由任务 arena 统一释放。
+
+可选 for 编号由解析器保留 IndexedLoop 体节点，外层仍是原有 for 控制流。
+元素绑定进入局部类型环境后，共享 IR 用循环体的类型约束筛选八种整数类型，无约束默认 Int32；
+随后生成普通局部绑定、溢出检查与递增。隐藏 UInt64 计数及耗尽标记允许每种类型的最大编号
+被使用，只有下一次成功取项才报溢出；用户编号绑定具有推导类型，不能重新赋值。
+递增发生在用户循环体前，continue、挂起恢复与嵌套循环沿用普通控制流，无编号运行时类型或 ABI。
 
 必须保留的语义约束：
 

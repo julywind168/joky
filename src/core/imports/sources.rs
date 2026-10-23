@@ -791,18 +791,7 @@ pub(super) fn record_imported_functions(module: &mut Module) {
 
 /// Install internal buffer type identities only on the trusted storage AST.
 fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
-    for name in [
-        "Buffer",
-        "Element",
-        "Slice",
-        "Iter",
-        "PairIter",
-        "Entry",
-        "EnumerateIter",
-        "EnumerateEntries",
-        "Indexed",
-        "IndexedEntry",
-    ] {
+    for name in ["Buffer", "Element", "Slice", "Iter", "PairIter", "Entry"] {
         let alias = module
             .type_aliases
             .iter_mut()
@@ -821,35 +810,13 @@ fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
             "Slice" => Type::BufferSlice(element),
             "Iter" => Type::BufferIterator(element),
             "PairIter" => Type::BufferPairIterator(element),
-            "Entry" => Type::BufferEntry(element),
-            "EnumerateIter" => Type::BufferEnumerate(element),
-            "EnumerateEntries" => Type::BufferEnumerateEntries(element),
-            "Indexed" => Type::BufferIndexed(element),
-            "IndexedEntry" => Type::BufferIndexedEntry(element),
-            _ => unreachable!(),
+            _ => Type::BufferEntry(element),
         };
     }
     Ok(())
 }
 
 // Test-only wrappers run against the one production algorithm and its fields.
-#[cfg(test)]
-pub(crate) fn iter_test_library() -> StandardLibrary {
-    use std::sync::OnceLock;
-    static SOURCE: OnceLock<String> = OnceLock::new();
-    thread_local! {
-        static LIBRARY: StandardLibrary = {
-            let source = SOURCE.get_or_init(|| format!("{}\n{}", include_str!("../../stdlib/iter.jk"), include_str!("../../../tests/fixtures/iterator_enumerate_invariants.jk")));
-            let definitions: Vec<_> = SOURCES.iter().map(|s| SourceDefinition {
-                kind: s.kind, path: s.path, source: if s.path == "joky/iter" { source } else { s.source },
-                reexport_imports: s.reexport_imports, implicit: s.implicit,
-            }).collect();
-            StandardLibrary::from_sources(&definitions).unwrap()
-        };
-    }
-    LIBRARY.with(Clone::clone)
-}
-
 #[cfg(test)]
 pub(crate) fn map_test_library() -> StandardLibrary {
     use std::sync::OnceLock;

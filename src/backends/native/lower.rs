@@ -36,11 +36,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         | Type::BufferSlice(_)
         | Type::BufferIterator(_)
         | Type::BufferPairIterator(_)
-        | Type::BufferEntry(_)
-        | Type::BufferEnumerate(_)
-        | Type::BufferEnumerateEntries(_)
-        | Type::BufferIndexed(_)
-        | Type::BufferIndexedEntry(_) => None,
+        | Type::BufferEntry(_) => None,
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 | Type::Rune => Some(
             if matches!(ty, Type::Rune) || ty.integer().unwrap().bits() == 32 {
                 types::I32
@@ -654,24 +650,6 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         // Runtime helpers validate layouts/indices and return internal addresses.
         // Element values use typed inline loads/stores, never a polymorphic C ABI.
         let (params, returns) = match intrinsic {
-            BufferIntrinsic::Enumerate
-            | BufferIntrinsic::EnumerateMut
-            | BufferIntrinsic::EnumerateEntries
-            | BufferIntrinsic::EnumerateEntriesMut
-            | BufferIntrinsic::EnumerateCurrent
-            | BufferIntrinsic::EnumerateCurrentMut
-            | BufferIntrinsic::EnumerateEntriesCurrent
-            | BufferIntrinsic::EnumerateEntriesCurrentMut => (vec![ptr, ptr], vec![ptr]),
-            BufferIntrinsic::EnumerateAdvance | BufferIntrinsic::EnumerateEntriesAdvance => {
-                (vec![ptr], vec![types::I8])
-            }
-            BufferIntrinsic::IndexedIndex | BufferIntrinsic::IndexedEntryIndex => {
-                (vec![ptr], vec![types::I64])
-            }
-            BufferIntrinsic::IndexedValue
-            | BufferIntrinsic::IndexedValueMut
-            | BufferIntrinsic::IndexedEntryValue
-            | BufferIntrinsic::IndexedEntryValueMut => (vec![ptr], vec![ptr]),
             BufferIntrinsic::Iter
             | BufferIntrinsic::IterMut
             | BufferIntrinsic::SliceIter
@@ -1902,9 +1880,7 @@ fn lower_ops(
                         | BufferIntrinsic::IterCurrentMut
                         | BufferIntrinsic::EntryKey
                         | BufferIntrinsic::EntryValue
-                        | BufferIntrinsic::EntryValueMut
-                        | BufferIntrinsic::IndexedValue
-                        | BufferIntrinsic::IndexedValueMut => {
+                        | BufferIntrinsic::EntryValueMut => {
                             let element = intrinsic.borrowed_element(element);
                             let pointer = builder.inst_results(call)[0];
                             // One-field owner wrappers borrow the underlying handle;
@@ -2017,6 +1993,22 @@ fn lower_ops(
                     (*method * ptr_ty.bytes() as usize) as i32,
                 );
                 slots.write(builder, dst, entry);
+            }
+            Op::EntryProject { dst, src, column } => {
+                let entry = slots.read(builder, src);
+                let symbol = if *column == 0 {
+                    "__joky_buffer_entry_key"
+                } else {
+                    "__joky_buffer_entry_value"
+                };
+                let pointer = helper(builder, refs, symbol, &[entry]);
+                let target = &dst.ty.reference_type().unwrap().target;
+                let pointer = if target.is_owner() && !target.is_inline_owner() {
+                    builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
+                } else {
+                    pointer
+                };
+                slots.write(builder, dst, pointer);
             }
             Op::Project { dst, src, .. } | Op::PatternProject { dst, src, .. } => {
                 let pointer = slots.read(builder, src);

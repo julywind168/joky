@@ -119,10 +119,6 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
                 | Type::BufferIterator(_)
                 | Type::BufferPairIterator(_)
                 | Type::BufferEntry(_)
-                | Type::BufferEnumerate(_)
-                | Type::BufferEnumerateEntries(_)
-                | Type::BufferIndexed(_)
-                | Type::BufferIndexedEntry(_)
         ) || matches!(target, Type::Record(r) if r.indirect)
             || matches!(target, Type::Enum(e) if e.indirect);
         // Nominal references and borrow-only views have no inline root layout.

@@ -86,9 +86,9 @@ fn owned_table() -> Map<String, Owned> {
 fn consume(action: Int32) -> Int32 {
     var table = owned_table()
     var bytes: UInt64 = 0
-    for entry in &mut table {
-        bytes += string.byte_length(map.entry_key(entry))
-        let value = map.entry_value_mut(entry)
+    for index, (key, value) in &mut table {
+        expect(index < 2)
+        bytes += string.byte_length(key)
         value.data.push(99)
         expect(value.data.len() == 2)
         if action == 1 { return 42 }
@@ -103,13 +103,16 @@ fn consume(action: Int32) -> Int32 {
 }
 fn pending() @suspends -> Int32 {
     var table = owned_table()
-    for entry in &mut table {
-        let size = string.byte_length(map.entry_key(entry))
-        let value = map.entry_value_mut(entry)
+    var ordinal = 0
+    for index, (key, value) in &mut table {
+        expect(index == ordinal)
+        ordinal += 1
+        let size = string.byte_length(key)
         value.data.push(99)
         delayed_value(record(10 + value.id))
         expect(value.data.len() == 2)
         expect(size == 1 || size == 3)
+        expect(index == ordinal - 1 && string.byte_length(key) == size)
     }
     42
 }
@@ -117,7 +120,7 @@ fn pending() @suspends -> Int32 {
 fn nested_values() {
     var table = Map.new::<Int32, Array<Int32>>()
     table.insert(1, [1, 2])
-    for entry in &mut table { map.entry_value_mut(entry).push(3) }
+    for (_, value) in &mut table { value.push(3) }
     for entry in table.iter() {
         let values = map.entry_value(entry)
         expect(values.len() == 3 && values.get(2).unwrap_or(0) == 3)

@@ -18,6 +18,7 @@ struct Escapes {
 enum Projection {
     Field(String),
     Pattern(usize),
+    Entry(usize),
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -236,6 +237,7 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         | Op::Reserve { dst, src }
         | Op::Project { dst, src, .. }
         | Op::PatternProject { dst, src, .. }
+        | Op::EntryProject { dst, src, .. }
         | Op::Copy(dst, src) => (refs(src), refs(dst)),
         Op::Alloc { dst, value, .. } | Op::Local { dst, value, .. } => {
             (value.iter().flat_map(refs).collect(), refs(dst))
@@ -1699,7 +1701,14 @@ fn analyze(
                 value.loans = Set::from([loan]);
                 state.insert(dst.index, value);
             }
-            Op::PatternProject { dst, src, path, .. } => {
+            Op::PatternProject { dst, src, .. } | Op::EntryProject { dst, src, .. } => {
+                let path: Vec<_> = match &plan.ops[pc] {
+                    Op::PatternProject { path, .. } => {
+                        path.iter().copied().map(Projection::Pattern).collect()
+                    }
+                    Op::EntryProject { column, .. } => vec![Projection::Entry(*column)],
+                    _ => unreachable!(),
+                };
                 // Validate availability separately from access: sibling pattern
                 // bindings are disjoint even when their parent is an array loan.
                 if state.get(&src.index).is_none_or(|v| v.invalid) {
@@ -1711,9 +1720,7 @@ fn analyze(
                     .origins
                     .into_iter()
                     .map(|mut origin| {
-                        origin
-                            .path
-                            .extend(path.iter().copied().map(Projection::Pattern));
+                        origin.path.extend(path.iter().cloned());
                         origin
                     })
                     .collect();

@@ -15,7 +15,7 @@ mod sources;
 pub(crate) use files::{expand_with, resolve_file};
 #[cfg(test)]
 pub(crate) use sources::{
-    iter_test_library, list_test_library, map_test_library, string_test_library, tcp_test_library,
+    list_test_library, map_test_library, string_test_library, tcp_test_library,
 };
 pub(crate) use sources::{DefinitionScope, StandardLibrary};
 
@@ -319,6 +319,7 @@ fn bind(
         let compiler_alias = match import.path.as_str() {
             "joky/array" => Some("$joky_array"),
             "joky/iter" => Some("$joky_iter"),
+            "joky/check" => Some("$joky_check"),
             "joky/option" => Some("$joky_option"),
             "joky/show" => Some("$joky_show"),
             "joky/string" => Some("$joky_string"),

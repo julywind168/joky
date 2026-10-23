@@ -382,11 +382,7 @@ pub(crate) fn substitute(
             | Type::BufferSlice(element)
             | Type::BufferIterator(element)
             | Type::BufferPairIterator(element)
-            | Type::BufferEntry(element)
-            | Type::BufferEnumerate(element)
-            | Type::BufferEnumerateEntries(element)
-            | Type::BufferIndexed(element)
-            | Type::BufferIndexedEntry(element) => {
+            | Type::BufferEntry(element) => {
                 let result = ty.with_buffer_element(visit(element, substitutions, types, cache)?);
                 types.validate(&result)?;
                 result
@@ -598,11 +594,7 @@ pub(crate) fn unify(
             | (Type::BufferSlice(a), Type::BufferSlice(b))
             | (Type::BufferIterator(a), Type::BufferIterator(b))
             | (Type::BufferPairIterator(a), Type::BufferPairIterator(b))
-            | (Type::BufferEntry(a), Type::BufferEntry(b))
-            | (Type::BufferEnumerate(a), Type::BufferEnumerate(b))
-            | (Type::BufferEnumerateEntries(a), Type::BufferEnumerateEntries(b))
-            | (Type::BufferIndexed(a), Type::BufferIndexed(b))
-            | (Type::BufferIndexedEntry(a), Type::BufferIndexedEntry(b)) => pending.push((a, b)),
+            | (Type::BufferEntry(a), Type::BufferEntry(b)) => pending.push((a, b)),
             (Type::Reference(a), Type::Reference(b)) if a.mutable == b.mutable || !a.mutable => {
                 pending.push((&a.target, &b.target))
             }

@@ -132,6 +132,7 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             Expr::FieldAssign { target, value, .. } => {
                 pending.extend([target.as_ref(), value.as_ref()])
             }
+            Expr::IndexedLoop(loop_) => pending.push(&loop_.body),
             Expr::While {
                 condition, body, ..
             } => pending.extend([condition.as_ref(), body.as_ref()]),

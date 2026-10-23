@@ -198,6 +198,7 @@ fn safe_bodies(
                                 | Op::Reserve { .. }
                                 | Op::Project { .. }
                                 | Op::PatternProject { .. }
+                                | Op::EntryProject { .. }
                                 | Op::Local { .. }
                                 | Op::EndLocal(_)
                                 | Op::ReadMemory { .. }

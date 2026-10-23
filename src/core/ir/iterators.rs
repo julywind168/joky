@@ -24,10 +24,9 @@ impl FunctionPlan {
         };
         if let Some(Type::Reference(reference)) = self.type_hint(value, vars, functions, types) {
             match &reference.target {
-                Type::BufferIterator(_)
-                | Type::BufferPairIterator(_)
-                | Type::BufferEnumerate(_)
-                | Type::BufferEnumerateEntries(_) => return Some(value.clone()),
+                Type::BufferIterator(_) | Type::BufferPairIterator(_) => {
+                    return Some(value.clone())
+                }
                 Type::BufferSlice(_) => {
                     return Some(Expr::Call {
                         callee: format!(
@@ -94,10 +93,7 @@ impl FunctionPlan {
         };
         if !matches!(
             reference.target,
-            Type::BufferIterator(_)
-                | Type::BufferPairIterator(_)
-                | Type::BufferEnumerate(_)
-                | Type::BufferEnumerateEntries(_)
+            Type::BufferIterator(_) | Type::BufferPairIterator(_)
         ) {
             return None;
         }
@@ -118,14 +114,12 @@ impl FunctionPlan {
         else {
             return None;
         };
-        let prefix = match reference.target {
-            Type::BufferPairIterator(_) => "entries_",
-            Type::BufferEnumerate(_) => "enumerate_",
-            Type::BufferEnumerateEntries(_) => "enumerate_entries_",
-            _ => "",
-        };
+        let paired = matches!(reference.target, Type::BufferPairIterator(_));
         let call = |method: &str| Expr::Call {
-            callee: format!("$joky_iter.{}{method}", prefix),
+            callee: format!(
+                "$joky_iter.{}{method}",
+                if paired { "entries_" } else { "" }
+            ),
             type_args: vec![],
             args: vec![*operand.clone()],
             span: value.span(),
@@ -155,5 +149,69 @@ impl FunctionPlan {
             else_branch: Some(Box::new(fallback.body.clone())),
             span,
         })
+    }
+}
+
+impl FunctionPlan {
+    pub(super) fn bind_entry_pattern(
+        &mut self,
+        pattern: &crate::parser::ast::BindingPattern,
+        entry: &Slot,
+        binding_mutable: bool,
+        vars: &mut HashMap<String, Binding>,
+    ) -> Result<(), Error> {
+        use crate::parser::ast::BindingPattern;
+        let BindingPattern::Tuple { elements, span } = pattern else {
+            return Err(type_error(
+                &pattern.span(),
+                ErrorCode::InvalidPattern,
+                "Entry destructuring requires a (key, value) pattern",
+            ));
+        };
+        if elements.len() != 2
+            || elements.iter().any(|p| {
+                !matches!(
+                    p,
+                    BindingPattern::Name { .. } | BindingPattern::Discard { .. }
+                )
+            })
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidPattern,
+                "Entry patterns require exactly two names or discards",
+            ));
+        }
+        let borrowed = entry.ty.reference_type().unwrap();
+        let Type::BufferEntry(pair) = &borrowed.target else {
+            unreachable!()
+        };
+        let Type::Tuple(pair) = pair.as_ref() else {
+            unreachable!()
+        };
+        for (column, pattern) in elements.iter().enumerate() {
+            if let BindingPattern::Name { name, span } = pattern {
+                self.current_span = *span;
+                let dst = self.slot(Type::reference(
+                    pair.elements[column].clone(),
+                    column == 1 && borrowed.mutable,
+                ))?;
+                self.emit(Op::EntryProject {
+                    dst: dst.clone(),
+                    src: entry.clone(),
+                    column,
+                });
+                let binding = self.local_binding(
+                    name,
+                    Binding {
+                        slot: Some(dst),
+                        mutable: binding_mutable,
+                        place: None,
+                    },
+                )?;
+                vars.insert(name.clone(), binding);
+            }
+        }
+        Ok(())
     }
 }

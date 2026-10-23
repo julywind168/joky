@@ -28,6 +28,8 @@ mod fixed_array_ffi;
 #[cfg(unix)]
 mod fixed_array_model;
 mod floats;
+#[cfg(unix)]
+mod for_indexed;
 mod function_values;
 mod generics;
 mod instances;
@@ -53,7 +55,5 @@ mod lists;
 mod collections;
 
 mod explicit_arena;
-#[cfg(unix)]
-mod iterator_enumerate;
 #[cfg(unix)]
 mod sets;

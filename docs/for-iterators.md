@@ -1,7 +1,8 @@
 # for 与迭代器分阶段开发计划
 
-状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
-记录见第 6–11 节；第四阶段 A 的 IntoIterator 与借用自动转换已完成，组合器待后续实施。
+状态：2026-10-24，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
+记录见第 6–11 节；第四阶段 A 的 IntoIterator 与借用自动转换已完成。
+第 12–13 节的 for 可选编号与 Map 键值解构已完成，取代 enumerate；其余组合器待后续实施。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -409,3 +410,46 @@ Iterator、IntoIterator、Array/Slice/Map 基础游标保持。旧功能的独�
 验证覆盖编号顺序、输入单次求值、模式歧义、重复绑定、嵌套、continue/break/return、
 整数类型推导、约束冲突与溢出边界、Map 共享/可变解构、String 键与拥有值、借用拒绝、挂起恢复、失败与取消。
 执行三后端针对性测试，再执行默认 Debug 检查及受影响的逐指令取消穷举；不运行 Release。
+
+## 13. 循环编号与 Map 解构实现记录（2026-10-24）
+
+已实现第 12 节方案。循环体保留一个编译器内部节点，待元素绑定类型确定后，
+结合参数、赋值、运算、别名、分支、记录/枚举构造及闭包上下文筛选整数类型。
+推导有编译预算限制，默认 Int32，不产生逐处隐式转换。编号随后降低为普通局部变量、
+溢出检查及递增；不增加编号运行时描述符，也不改变 CPS ABI。
+
+Map Entry 二元绑定生成受检的键/值投影，键与值具有不同的来源路径。
+同一组引用可以同时用于读键、修改值；整 Entry 显式访问和容器借用限制继续保留。
+非二元模式不获得新的投影规则，普通下划线仍可丢弃整个 Entry。
+
+普通和借用 enumerate 的 API、专用类型、运行时 helper 与测试探针已撤回。
+保留独立的 trait 默认方法跨模块类型修复；其回归测试也重新通过。
+
+主要证据：
+
+- [编号 fixture](../tests/fixtures/for_indexed.jk) 与 [VM 测试](../src/vm/tests/language/for_indexed_tests.rs)：
+  八种整数类型、默认类型、约束冲突、别名/分支/构造/闭包、嵌套、编号与元素解构区分、
+  continue、重新遍历游标、Map 共享/可变键值绑定、拥有元素溢出清理与旧 API 拒绝。
+- Int8/UInt8 边界直接执行；UInt64 边界仅在测试 AST 中设置隐藏计数器初值，
+  JIT、解释器与[独立 AOT](../src/backends/aot/tests/for_indexed.rs) 执行最终两项及溢出，
+  不为此提供源码入口或运行时测试接口。
+- [普通 for fixture](../tests/fixtures/for_iterators.jk) 与 [Map fixture](../tests/fixtures/map_borrow_iter.jk)
+  的既有生命周期测试迁移部分循环到编号/解构语法，继续验证输入转换单次执行、
+  break/return、析构唯一性、挂起/恢复、失败、分配预算与取消清理。
+- [CLI 独立 AOT](../tests/cli/language.rs) 执行相同编号 fixture，覆盖同步、挂起与溢出失败；
+  Map 的独立 AOT 继续复用已有共享 fixture。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test for_indexed -- --nocapture` | 4 项库测试与 1 项 CLI 独立 AOT 测试通过 |
+| `cargo test --lib -- for_indexed for_into_iter for_iterators map_borrow_iter trait_defaults_pass_substituted_self` | 19 项通过；2 项穷举默认忽略 |
+| 当前 Debug 测试二进制的 `--ignored exhaustive_for_iterators_instruction_cancellation exhaustive_map_borrow_iter_instruction_cancellation` | 2 项逐指令取消穷举通过 |
+| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1564 项库测试、301 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
+| 语言参考新增示例 | 关闭 prelude，在 JIT、解释器与独立 AOT 均输出 63、34 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+默认库测试忽略 121 项，CLI 忽略 8 项；本轮额外执行上述两项相关穷举。
+未运行 Release、无关压力、Godot、性能测量或其他平台验证。
+默认检查后仅补充验收文档，未再修改代码。

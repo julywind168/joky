@@ -121,109 +121,6 @@ impl BufferPairIterator {
     }
 }
 
-/// A borrowed enumeration retains its source cursor, never its elements.
-#[derive(Clone, Copy)]
-pub(crate) enum EnumerationSource {
-    Elements(*const BufferIterator),
-    Entries(*const BufferPairIterator),
-}
-#[derive(Clone, Copy)]
-struct EnumerationPosition {
-    index: u64,
-    value: *mut u8,
-    key: Option<*mut u8>,
-}
-pub(crate) struct BufferEnumeration {
-    source: EnumerationSource,
-    next: Cell<Option<u64>>,
-    current: Cell<Option<EnumerationPosition>>,
-}
-/// Both the index and element identity remain stable across shared advances.
-pub(crate) struct BufferIndexed {
-    pub(crate) index: u64,
-    pub(crate) value: *mut u8,
-    entry: BufferEntry,
-}
-impl BufferEnumeration {
-    /// # Safety
-    /// The source cursor and its initialized payload must remain live on this
-    /// arena's task thread. Checked loans exclude conflicting mutable accesses.
-    pub(crate) unsafe fn new(
-        arena: &mut Arena,
-        source: EnumerationSource,
-    ) -> Result<NonNull<Self>, Error> {
-        let layout = Layout::new::<Self>();
-        let result = arena
-            .allocate(layout.size(), layout.align())?
-            .cast::<Self>();
-        result.as_ptr().write(Self {
-            source,
-            next: Cell::new(Some(0)),
-            current: Cell::new(None),
-        });
-        Ok(result)
-    }
-    /// # Safety
-    /// The source and payload satisfy the lifetime and loan contract of new.
-    pub(crate) unsafe fn advance(&self) -> Result<bool, Error> {
-        self.current.set(None);
-        let position = match self.source {
-            EnumerationSource::Elements(cursor) => {
-                if !(*cursor).advance() {
-                    return Ok(false);
-                }
-                ((*cursor).current()?, None)
-            }
-            EnumerationSource::Entries(cursor) => {
-                if !(*cursor).advance() {
-                    return Ok(false);
-                }
-                ((*cursor).values.current()?, Some((*cursor).keys.current()?))
-            }
-        };
-        let index = self.next.get().ok_or_else(|| {
-            Error::new_with_code(
-                ErrorPhase::Runtime,
-                ErrorCode::Panic,
-                "Enumeration index overflow",
-            )
-        })?;
-        self.next.set(index.checked_add(1));
-        self.current.set(Some(EnumerationPosition {
-            index,
-            value: position.0,
-            key: position.1,
-        }));
-        Ok(true)
-    }
-    pub(crate) fn current(&self, arena: &mut Arena) -> Result<NonNull<BufferIndexed>, Error> {
-        let position = self
-            .current
-            .get()
-            .ok_or_else(|| bounds_error("Iterator current requires a successful advance"))?;
-        let layout = Layout::new::<BufferIndexed>();
-        let result = arena
-            .allocate(layout.size(), layout.align())?
-            .cast::<BufferIndexed>();
-        // The arena never relocates this snapshot. Its entry pointer is internal
-        // metadata; source loans keep only the referenced columns alive.
-        unsafe {
-            result.as_ptr().write(BufferIndexed {
-                index: position.index,
-                value: position.value,
-                entry: BufferEntry {
-                    key: position.key.unwrap_or(std::ptr::null_mut()),
-                    value: position.value,
-                },
-            });
-            if position.key.is_some() {
-                (*result.as_ptr()).value = std::ptr::addr_of_mut!((*result.as_ptr()).entry).cast();
-            }
-        }
-        Ok(result)
-    }
-}
-
 pub(crate) struct OwningGraph {
     pub allocations: Vec<NonNull<u8>>,
     pub buffers: Vec<NonNull<Buffer>>,
@@ -1401,86 +1298,6 @@ unsafe extern "C" fn entry_value(entry: *const BufferEntry) -> *mut u8 {
     (*entry).value
 }
 
-/// # Safety
-/// Arena, cursor and payload are live on one task thread; compiler loans
-/// retain the source and exclude conflicting accesses for the returned view.
-#[export_name = "__joky_buffer_enumerate"]
-unsafe extern "C" fn enumerate(
-    arena: *mut Arena,
-    cursor: *const BufferIterator,
-    source: u64,
-    start: usize,
-    end: usize,
-) -> *mut BufferEnumeration {
-    located(
-        BufferEnumeration::new(&mut *arena, EnumerationSource::Elements(cursor))
-            .map(NonNull::as_ptr),
-        source,
-        start,
-        end,
-    )
-}
-/// # Safety
-/// Arena, cursor and payload are live on one task thread; compiler loans
-/// retain the source and exclude conflicting accesses for the returned view.
-#[export_name = "__joky_buffer_enumerate_entries"]
-unsafe extern "C" fn enumerate_entries(
-    arena: *mut Arena,
-    cursor: *const BufferPairIterator,
-    source: u64,
-    start: usize,
-    end: usize,
-) -> *mut BufferEnumeration {
-    located(
-        BufferEnumeration::new(&mut *arena, EnumerationSource::Entries(cursor))
-            .map(NonNull::as_ptr),
-        source,
-        start,
-        end,
-    )
-}
-/// # Safety
-/// Cursor and payload satisfy the lifetime and loan contract of enumerate.
-#[export_name = "__joky_buffer_enumerate_advance"]
-unsafe extern "C" fn enumerate_advance(
-    cursor: *const BufferEnumeration,
-    source: u64,
-    start: usize,
-    end: usize,
-) -> u8 {
-    located((*cursor).advance().map(u8::from), source, start, end)
-}
-/// # Safety
-/// Cursor, borrowed payload and exclusive arena remain live on one task thread.
-#[export_name = "__joky_buffer_enumerate_current"]
-unsafe extern "C" fn enumerate_current(
-    arena: *mut Arena,
-    cursor: *const BufferEnumeration,
-    source: u64,
-    start: usize,
-    end: usize,
-) -> *mut BufferIndexed {
-    located(
-        (*cursor).current(&mut *arena).map(NonNull::as_ptr),
-        source,
-        start,
-        end,
-    )
-}
-/// # Safety
-/// Item points to a live task-local snapshot initialized by enumerate_current.
-#[export_name = "__joky_buffer_indexed_index"]
-unsafe extern "C" fn indexed_index(item: *const BufferIndexed) -> u64 {
-    (*item).index
-}
-/// # Safety
-/// Item and its payload are live; the caller uses the checked element layout
-/// and enforces the source loan's shared or exclusive access permissions.
-#[export_name = "__joky_buffer_indexed_value"]
-unsafe extern "C" fn indexed_value(item: *const BufferIndexed) -> *mut u8 {
-    (*item).value
-}
-
 #[export_name = "__joky_buffer_slice"]
 unsafe extern "C" fn slice(
     arena: *mut Arena,
@@ -1626,25 +1443,10 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 35] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 29] {
     [
         ("__joky_buffer_pair_iter", pair_iter as *const u8),
         ("__joky_buffer_pair_advance", pair_advance as *const u8),
-        ("__joky_buffer_enumerate", enumerate as *const u8),
-        (
-            "__joky_buffer_enumerate_entries",
-            enumerate_entries as *const u8,
-        ),
-        (
-            "__joky_buffer_enumerate_advance",
-            enumerate_advance as *const u8,
-        ),
-        (
-            "__joky_buffer_enumerate_current",
-            enumerate_current as *const u8,
-        ),
-        ("__joky_buffer_indexed_index", indexed_index as *const u8),
-        ("__joky_buffer_indexed_value", indexed_value as *const u8),
         ("__joky_buffer_pair_current", pair_current as *const u8),
         ("__joky_buffer_entry_key", entry_key as *const u8),
         ("__joky_buffer_entry_value", entry_value as *const u8),

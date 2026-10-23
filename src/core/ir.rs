@@ -33,6 +33,7 @@ mod float;
 mod function_values;
 mod generics;
 mod graph;
+mod indexed_loops;
 mod inference;
 mod interpolation;
 mod iterators;
@@ -325,6 +326,12 @@ pub(crate) enum Op {
         src: Slot,
         offset: usize,
         path: Vec<usize>,
+    },
+    /// Checked disjoint key/value projection from a borrowed Map entry.
+    EntryProject {
+        dst: Slot,
+        src: Slot,
+        column: usize,
     },
     /// Function-owned storage, distinct from the task arena.
     Local {
@@ -2366,6 +2373,7 @@ impl FunctionPlan {
                 }
                 Ok(Flow::Value(None))
             }
+            Expr::IndexedLoop(loop_) => self.indexed_loop(loop_, vars, functions, suspends, types),
             Expr::While { .. }
             | Expr::If { .. }
             | Expr::Logical { .. }

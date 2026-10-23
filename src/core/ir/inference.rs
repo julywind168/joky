@@ -364,6 +364,7 @@ impl FunctionPlan {
             | Expr::If {
                 else_branch: None, ..
             } => Some(Type::Unit),
+            Expr::IndexedLoop(_) => Some(Type::Unit),
             Expr::While {
                 condition, body, ..
             } => {
@@ -578,6 +579,19 @@ fn bind_pattern(
             }
         }
         BindingPattern::Tuple { elements, .. } => {
+            if let Some(Type::Reference(reference)) = ty {
+                if let Type::BufferEntry(pair) = &reference.target {
+                    if let Type::Tuple(pair) = pair.as_ref() {
+                        for (column, element) in elements.iter().enumerate() {
+                            let ty = pair.elements.get(column).map(|t| {
+                                Type::reference(t.clone(), column == 1 && reference.mutable)
+                            });
+                            bind_pattern(element, ty.as_ref(), vars);
+                        }
+                        return;
+                    }
+                }
+            }
             for (index, element) in elements.iter().enumerate() {
                 bind_pattern(
                     element,

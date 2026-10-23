@@ -101,11 +101,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 | Type::BufferSlice(element)
                 | Type::BufferIterator(element)
                 | Type::BufferPairIterator(element)
-                | Type::BufferEntry(element)
-                | Type::BufferEnumerate(element)
-                | Type::BufferEnumerateEntries(element)
-                | Type::BufferIndexed(element)
-                | Type::BufferIndexedEntry(element) => {
+                | Type::BufferEntry(element) => {
                     if !matches!(self.edges, TypeEdges::Arguments | TypeEdges::Inline) {
                         self.pending.push(element);
                     }

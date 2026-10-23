@@ -131,7 +131,22 @@ impl Parser {
     pub(super) fn parse_for(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::For)?;
-        let pattern = self.parse_binding_pattern()?;
+        let mut pattern = self.parse_binding_pattern()?;
+        let index = if self.peek() == &TokenKind::Comma {
+            let name = match &pattern {
+                BindingPattern::Name { name, .. } => name.clone(),
+                BindingPattern::Discard { .. } => "_".to_owned(),
+                _ => return Err(self.error("A for index must be a name or '_'".into())),
+            };
+            self.advance();
+            pattern = self.parse_binding_pattern()?;
+            if name != "_" && binds_name(&pattern, &name) {
+                return Err(self.error(format!("Duplicate binding `{name}` in for pattern")));
+            }
+            Some(name)
+        } else {
+            None
+        };
         self.expect(&TokenKind::In)?;
         let value = self.parse_condition()?;
         let value_span = value.span();
@@ -141,6 +156,19 @@ impl Parser {
         let input = format!("$for_input_{start}");
         let iterator = format!("$for_iterator_{start}");
         let item = format!("$for_item_{start}");
+        let counter = format!("$for_index_{start}");
+        let overflow = format!("$for_overflow_{start}");
+        let body = if let Some(name) = &index {
+            Expr::IndexedLoop(Box::new(crate::parser::ast::IndexedLoop {
+                name: name.clone(),
+                counter: counter.clone(),
+                overflow: overflow.clone(),
+                body,
+                span,
+            }))
+        } else {
+            body
+        };
         let binding_span = pattern.span();
         let item_value = Box::new(Expr::Ident {
             name: item.clone(),
@@ -198,39 +226,62 @@ impl Parser {
         }
         // Capture before conversion so input control flow and exclusive-reference
         // moves obey ordinary binding rules. Conversion sees one typed local.
-        Ok(Expr::Block {
-            exprs: vec![
-                Expr::Let {
-                    name: input.clone(),
-                    annotation: None,
-                    value: Box::new(value),
-                    span: value_span,
-                },
-                Expr::Var {
-                    name: iterator,
-                    annotation: None,
-                    value: Box::new(Expr::Call {
-                        callee: "$for_into_iter".into(),
-                        type_args: vec![],
-                        args: vec![Expr::Ident {
-                            name: input,
-                            span: value_span,
-                        }],
+        let mut exprs = vec![
+            Expr::Let {
+                name: input.clone(),
+                annotation: None,
+                value: Box::new(value),
+                span: value_span,
+            },
+            Expr::Var {
+                name: iterator,
+                annotation: None,
+                value: Box::new(Expr::Call {
+                    callee: "$for_into_iter".into(),
+                    type_args: vec![],
+                    args: vec![Expr::Ident {
+                        name: input,
                         span: value_span,
-                    }),
+                    }],
                     span: value_span,
-                },
-                Expr::While {
-                    condition: Box::new(Expr::Literal {
-                        literal: Literal::Bool(true),
-                        span,
-                    }),
-                    body: Box::new(body),
+                }),
+                span: value_span,
+            },
+            Expr::While {
+                condition: Box::new(Expr::Literal {
+                    literal: Literal::Bool(true),
                     span,
-                },
-            ],
-            span,
-        })
+                }),
+                body: Box::new(body),
+                span,
+            },
+        ];
+        if index.is_some() {
+            exprs.splice(
+                2..2,
+                [
+                    Expr::Var {
+                        name: counter,
+                        annotation: Some(Type::UInt64),
+                        value: Box::new(Expr::Literal {
+                            literal: Literal::UInt64(0),
+                            span,
+                        }),
+                        span,
+                    },
+                    Expr::Var {
+                        name: overflow,
+                        annotation: Some(Type::Bool),
+                        value: Box::new(Expr::Literal {
+                            literal: Literal::Bool(false),
+                            span,
+                        }),
+                        span,
+                    },
+                ],
+            );
+        }
+        Ok(Expr::Block { exprs, span })
     }
 
     pub(super) fn parse_while(&mut self) -> Result<Expr, Diagnostic> {
@@ -350,4 +401,25 @@ impl Parser {
     }
 
     // ── Top-level parsing ──────────────────────────────────────────────────────────
+}
+
+fn binds_name(pattern: &BindingPattern, expected: &str) -> bool {
+    match pattern {
+        BindingPattern::Name { name, .. } => name == expected,
+        BindingPattern::Tuple { elements, .. } => elements.iter().any(|p| binds_name(p, expected)),
+        BindingPattern::Record { inner, .. } => inner
+            .fields
+            .iter()
+            .any(|f| binds_name(&f.pattern, expected)),
+        BindingPattern::Sequence(p) => {
+            p.prefix
+                .iter()
+                .chain(&p.suffix)
+                .any(|p| binds_name(p, expected))
+                || p.rest
+                    .as_ref()
+                    .is_some_and(|r| r.as_deref() == Some(expected))
+        }
+        BindingPattern::Discard { .. } => false,
+    }
 }

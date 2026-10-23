@@ -89,11 +89,7 @@ pub(super) fn eligible(ty: &Type) -> bool {
         | Type::BufferElement(t)
         | Type::BufferIterator(t)
         | Type::BufferPairIterator(t)
-        | Type::BufferEntry(t)
-        | Type::BufferEnumerate(t)
-        | Type::BufferEnumerateEntries(t)
-        | Type::BufferIndexed(t)
-        | Type::BufferIndexedEntry(t) => t.is_place() && eligible(t),
+        | Type::BufferEntry(t) => t.is_place() && eligible(t),
         Type::Record(r) if r.array => r
             .arguments
             .iter()

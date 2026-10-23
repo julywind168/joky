@@ -393,6 +393,7 @@ fn lower_unoptimized(
             | Op::Local { .. }
             | Op::Project { .. }
             | Op::PatternProject { .. }
+            | Op::EntryProject { .. }
             | Op::ReadMemory { .. }
             | Op::ReadOwner { .. }
             | Op::StoreOwner { .. }

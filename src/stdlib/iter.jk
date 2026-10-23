@@ -1,6 +1,5 @@
 import joky/internal/buffer
 import joky/option.{type Option, Some, None}
-import joky/check
 
 pub trait Iterator {
     type Item
@@ -10,7 +9,6 @@ pub trait Iterator {
 pub trait IntoIterator {
     type IntoIter: Iterator
     fn into_iter(self) -> Self.IntoIter
-    fn enumerate(self) -> Enumerate<Self.IntoIter> { enumerate(IntoIterator.into_iter(self)) }
 }
 
 impl<I: Iterator> IntoIterator for I {
@@ -25,29 +23,6 @@ pub fn into_iter<I: IntoIterator>(value: I) -> I.IntoIter {
 // This entry fixes protocol selection even in the presence of inherent next methods.
 pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
     Iterator.next(iterator)
-}
-
-pub struct Enumerate<I> { iterator: I, index: UInt64, overflowed: Bool }
-
-// Construction is lazy; only next advances the input or the index.
-pub fn enumerate<I: Iterator>(iterator: I) -> Enumerate<I> {
-    Enumerate { iterator: iterator, index: 0, overflowed: false }
-}
-
-impl<I: Iterator> Iterator for Enumerate<I> {
-    type Item = (UInt64, I.Item)
-    fn next(&mut self) -> Option<(UInt64, I.Item)> {
-        match Iterator.next(&mut (*self).iterator) {
-            Some(value) => {
-                if self.overflowed { check.panic("Enumeration index overflow") }
-                let index = self.index
-                if index == 18446744073709551615 { self.overflowed = true }
-                else { self.index += 1 }
-                Some((index, value))
-            },
-            None => None,
-        }
-    }
 }
 
 pub struct Range { current: Int32, end: Int32 }
@@ -81,25 +56,3 @@ pub type Entry<K, V> = buffer.Entry<(K, V)>
 pub fn entries_advance<K, V>(cursor: &Entries<K, V>) -> Bool { buffer.pair_advance(cursor) }
 pub fn entries_current<K, V>(cursor: &Entries<K, V>) -> &Entry<K, V> { buffer.pair_current(cursor) }
 pub fn entries_current_mut<K, V>(cursor: &mut Entries<K, V>) -> &mut Entry<K, V> { buffer.pair_current_mut(cursor) }
-
-// Borrowed enumeration keeps indices in snapshots, alongside borrowed items.
-pub type EnumerateIter<T> = buffer.EnumerateIter<T>
-pub type EnumerateEntries<K, V> = buffer.EnumerateEntries<(K, V)>
-pub type Indexed<T> = buffer.Indexed<T>
-pub type IndexedEntry<K, V> = buffer.IndexedEntry<(K, V)>
-pub fn enumerate_ref<T>(cursor: &Iter<T>) -> &EnumerateIter<T> { buffer.enumerate(cursor) }
-pub fn enumerate_mut<T>(cursor: &mut Iter<T>) -> &mut EnumerateIter<T> { buffer.enumerate_mut(cursor) }
-pub fn enumerate_entries<K, V>(cursor: &Entries<K, V>) -> &EnumerateEntries<K, V> { buffer.enumerate_entries(cursor) }
-pub fn enumerate_entries_mut<K, V>(cursor: &mut Entries<K, V>) -> &mut EnumerateEntries<K, V> { buffer.enumerate_entries_mut(cursor) }
-pub fn enumerate_advance<T>(cursor: &EnumerateIter<T>) -> Bool { buffer.enumerate_advance(cursor) }
-pub fn enumerate_current<T>(cursor: &EnumerateIter<T>) -> &Indexed<T> { buffer.enumerate_current(cursor) }
-pub fn enumerate_current_mut<T>(cursor: &mut EnumerateIter<T>) -> &mut Indexed<T> { buffer.enumerate_current_mut(cursor) }
-pub fn enumerate_entries_advance<K, V>(cursor: &EnumerateEntries<K, V>) -> Bool { buffer.enumerate_entries_advance(cursor) }
-pub fn enumerate_entries_current<K, V>(cursor: &EnumerateEntries<K, V>) -> &IndexedEntry<K, V> { buffer.enumerate_entries_current(cursor) }
-pub fn enumerate_entries_current_mut<K, V>(cursor: &mut EnumerateEntries<K, V>) -> &mut IndexedEntry<K, V> { buffer.enumerate_entries_current_mut(cursor) }
-pub fn index<T>(item: &Indexed<T>) -> UInt64 { buffer.indexed_index(item) }
-pub fn value<T>(item: &Indexed<T>) -> &T { buffer.indexed_value(item) }
-pub fn value_mut<T>(item: &mut Indexed<T>) -> &mut T { buffer.indexed_value_mut(item) }
-pub fn entry_index<K, V>(item: &IndexedEntry<K, V>) -> UInt64 { buffer.indexed_entry_index(item) }
-pub fn entry<K, V>(item: &IndexedEntry<K, V>) -> &Entry<K, V> { buffer.indexed_entry_value(item) }
-pub fn entry_mut<K, V>(item: &mut IndexedEntry<K, V>) -> &mut Entry<K, V> { buffer.indexed_entry_value_mut(item) }

@@ -32,7 +32,7 @@ fn for_into_iter_keeps_container_identity_in_imported_generic_functions() {
         import joky/iter.{type IntoIterator}
         pub fn count<I: IntoIterator>(input: I) -> Int32 {
             var n = 0
-            for _ in input { n += 1 }
+            for index, _ in input { n += 1 + index - index }
             n
         }
         pub fn mutate(input: &mut Array<Int32>) {
@@ -40,7 +40,7 @@ fn for_into_iter_keeps_container_identity_in_imported_generic_functions() {
         }
         pub fn sum<K, V: Copy>(input: &Map<K, V>) -> Int32 {
             var n = 0
-            for _ in input { n += 1 }
+            for index, _ in input { n += 1 + index - index }
             n
         }
     "#,
@@ -94,7 +94,8 @@ fn pending_source() -> String {
         r#"{SOURCE}
         extern fn delayed_value(x: Int32) @suspends -> Int32
         fn pending() @suspends -> Int32 {{
-            for value in owners() {{
+            for index, value in owners() {{
+                expect(index == value.id - 1);
                 delayed_value(record(value.id + 10))
                 if value.id == 1 {{ continue }}
                 break

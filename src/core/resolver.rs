@@ -590,6 +590,17 @@ fn resolve_calls(
         | Expr::Unary { operand: value, .. } => {
             resolve_calls(value, functions, member_roots, call_forms, locals)?;
         }
+        Expr::IndexedLoop(loop_) => {
+            let mut inner = locals.clone();
+            inner.insert(loop_.name.clone());
+            resolve_calls(
+                &mut loop_.body,
+                functions,
+                member_roots,
+                call_forms,
+                &mut inner,
+            )?;
+        }
         Expr::While {
             condition, body, ..
         } => {

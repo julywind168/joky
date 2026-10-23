@@ -52,11 +52,12 @@ fn generic_sum<I: Iterator<Item = Int32>>(source: I) -> Int32 {
     sum
 }
 fn early() -> Int32 {
-    for value in owners() { return value.id }
+    for index, value in owners() { expect(index == 0); return value.id }
     0
 }
 fn ownership() {
-    for value in owners() {
+    for index, value in owners() {
+        expect(index == value.id - 1)
         if value.id == 1 { continue }
         break
     }
@@ -64,7 +65,7 @@ fn ownership() {
     expect(early() == 1)
 }
 fn force_failure() {
-    for value in owners() { let invalid = value.id % 0 }
+    for index, value in owners() { expect(index == 0); let invalid = value.id % 0 }
 }
 fn compute() -> Int32 {
     expect(generic_sum(range(0, 10)) == 45)

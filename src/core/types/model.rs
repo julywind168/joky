@@ -70,14 +70,6 @@ pub enum Type {
     BufferPairIterator(Arc<Type>),
     #[doc(hidden)]
     BufferEntry(Arc<Type>),
-    #[doc(hidden)]
-    BufferEnumerate(Arc<Type>),
-    #[doc(hidden)]
-    BufferEnumerateEntries(Arc<Type>),
-    #[doc(hidden)]
-    BufferIndexed(Arc<Type>),
-    #[doc(hidden)]
-    BufferIndexedEntry(Arc<Type>),
 }
 
 /// Source projections become declaration identities before rigid type checking.
@@ -209,11 +201,7 @@ impl Type {
             | Self::BufferSlice(_)
             | Self::BufferIterator(_)
             | Self::BufferPairIterator(_)
-            | Self::BufferEntry(_)
-            | Self::BufferEnumerate(_)
-            | Self::BufferEnumerateEntries(_)
-            | Self::BufferIndexed(_)
-            | Self::BufferIndexedEntry(_) => {
+            | Self::BufferEntry(_) => {
                 TypeWalk::new(self, TypeEdges::Fields).any(|ty| matches!(ty, Self::DynTrait(_)))
             }
             _ => false,
@@ -307,10 +295,6 @@ impl Type {
                     | Self::BufferIterator(_)
                     | Self::BufferPairIterator(_)
                     | Self::BufferEntry(_)
-                    | Self::BufferEnumerate(_)
-                    | Self::BufferEnumerateEntries(_)
-                    | Self::BufferIndexed(_)
-                    | Self::BufferIndexedEntry(_)
             )
     }
     pub(crate) fn is_resource_owner(&self) -> bool {
@@ -336,11 +320,7 @@ impl Type {
                 | Self::BufferSlice(element)
                 | Self::BufferIterator(element)
                 | Self::BufferPairIterator(element)
-                | Self::BufferEntry(element)
-                | Self::BufferEnumerate(element)
-                | Self::BufferEnumerateEntries(element)
-                | Self::BufferIndexed(element)
-                | Self::BufferIndexedEntry(element) => element,
+                | Self::BufferEntry(element) => element,
                 target => target,
             };
             target.is_suspend_safe_owner()
@@ -390,10 +370,6 @@ impl Type {
             Self::BufferIterator(_) => Self::BufferIterator(Arc::new(element)),
             Self::BufferPairIterator(_) => Self::BufferPairIterator(Arc::new(element)),
             Self::BufferEntry(_) => Self::BufferEntry(Arc::new(element)),
-            Self::BufferEnumerate(_) => Self::BufferEnumerate(Arc::new(element)),
-            Self::BufferEnumerateEntries(_) => Self::BufferEnumerateEntries(Arc::new(element)),
-            Self::BufferIndexed(_) => Self::BufferIndexed(Arc::new(element)),
-            Self::BufferIndexedEntry(_) => Self::BufferIndexedEntry(Arc::new(element)),
             _ => unreachable!("internal buffer target"),
         }
     }
@@ -416,11 +392,7 @@ impl Type {
             | Self::BufferSlice(element)
             | Self::BufferIterator(element)
             | Self::BufferPairIterator(element)
-            | Self::BufferEntry(element)
-            | Self::BufferEnumerate(element)
-            | Self::BufferEnumerateEntries(element)
-            | Self::BufferIndexed(element)
-            | Self::BufferIndexedEntry(element) => std::slice::from_ref(element),
+            | Self::BufferEntry(element) => std::slice::from_ref(element),
             Self::String => {
                 static BYTE: std::sync::OnceLock<Arc<Type>> = std::sync::OnceLock::new();
                 std::slice::from_ref(BYTE.get_or_init(|| Arc::new(Type::UInt8)))
@@ -595,21 +567,13 @@ impl std::fmt::Display for Type {
                 | Type::BufferSlice(element)
                 | Type::BufferIterator(element)
                 | Type::BufferPairIterator(element)
-                | Type::BufferEntry(element)
-                | Type::BufferEnumerate(element)
-                | Type::BufferEnumerateEntries(element)
-                | Type::BufferIndexed(element)
-                | Type::BufferIndexedEntry(element) => {
+                | Type::BufferEntry(element) => {
                     f.write_str(match ty {
                         Type::Buffer(_) => "Buffer<",
                         Type::BufferElement(_) => "Element<",
                         Type::BufferSlice(_) => "Slice<",
                         Type::BufferPairIterator(_) => "Entries<",
                         Type::BufferEntry(_) => "Entry<",
-                        Type::BufferEnumerate(_) => "EnumerateIter<",
-                        Type::BufferEnumerateEntries(_) => "EnumerateEntries<",
-                        Type::BufferIndexed(_) => "Indexed<",
-                        Type::BufferIndexedEntry(_) => "IndexedEntry<",
                         _ => "Iter<",
                     })?;
                     display(element, f, remaining)?;

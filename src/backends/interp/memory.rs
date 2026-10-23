@@ -34,6 +34,12 @@ pub(super) enum Instruction {
     ArenaNew {
         dst: usize,
     },
+    EntryProject {
+        dst: usize,
+        reference: usize,
+        column: usize,
+        load_owner: bool,
+    },
     Project {
         dst: usize,
         reference: usize,
@@ -84,6 +90,13 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
         })
     };
     Ok(match op {
+        Op::EntryProject { dst, src, column } => Instruction::EntryProject {
+            dst: dst.index,
+            reference: src.index,
+            column: *column,
+            load_owner: dst.ty.reference_type().unwrap().target.is_owner()
+                && !dst.ty.reference_type().unwrap().target.is_inline_owner(),
+        },
         Op::Project { dst, src, .. } | Op::PatternProject { dst, src, .. } => {
             let offset = match op {
                 Op::PatternProject { offset, .. } => *offset,
@@ -204,6 +217,28 @@ pub(super) fn execute(
         Instruction::ArenaNew { dst } => {
             slots[*dst] =
                 Value::Reference(crate::runtime::explicit_arena::new(arena)?.as_ptr().cast());
+        }
+        Instruction::EntryProject {
+            dst,
+            reference,
+            column,
+            load_owner,
+        } => {
+            let Value::Reference(pointer) = slots[*reference] else {
+                return Err(abi_error("Invalid entry reference"));
+            };
+            if pointer.is_null() {
+                return Err(abi_error("Inactive entry reference"));
+            }
+            // The checked entry projection selects one initialized column. Its
+            // source loan retains the descriptor and the column's element storage.
+            let entry = unsafe { &*pointer.cast::<crate::runtime::buffer::BufferEntry>() };
+            let field = if *column == 0 { entry.key } else { entry.value };
+            slots[*dst] = Value::Reference(if *load_owner {
+                unsafe { field.cast::<*mut u8>().read() }
+            } else {
+                field
+            });
         }
         Instruction::Project {
             dst,

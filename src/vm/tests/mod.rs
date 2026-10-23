@@ -1,9 +1,5 @@
 //! Execution regressions grouped by behavior; shared helpers stay in this test target.
-#[path = "language/borrowed_enumerate_tests.rs"]
-mod borrowed_enumerate_tests;
 use super::*;
-#[path = "language/iterator_enumerate_tests.rs"]
-mod iterator_enumerate_tests;
 #[path = "containers/map_borrow_iter_tests.rs"]
 mod map_borrow_iter_tests;
 #[path = "containers/slice_borrow_iter_tests.rs"]
@@ -195,6 +191,8 @@ mod closure_tests;
 
 #[path = "language/conditional_patterns_tests.rs"]
 mod conditional_patterns_tests;
+#[path = "language/for_indexed_tests.rs"]
+mod for_indexed_tests;
 #[path = "language/for_iterator_tests.rs"]
 mod for_iterator_tests;
 

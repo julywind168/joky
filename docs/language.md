@@ -2986,8 +2986,6 @@ fn sum() -> Int32 {
 | --- | --- |
 | `Iterator` | 关联类型 Item；`fn next(&mut self) @noescape -> Option<Self.Item>` |
 | `next<I: Iterator>(&mut I) @noescape -> Option<I.Item>` | 显式选择 Iterator.next，忽略同名固有方法 |
-| `Enumerate<I>` | 保存原迭代器和编号状态，字段私有；实现 Iterator<Item = (UInt64, I.Item)> |
-| `enumerate<I: Iterator>(I) -> Enumerate<I>` | 惰性包装普通迭代器，从 0 编号 |
 | `IntoIterator` | 关联类型 IntoIter: Iterator；`fn into_iter(self) -> Self.IntoIter` |
 | `into_iter<I: IntoIterator>(I) -> I.IntoIter` | 显式选择 IntoIterator.into_iter，忽略同名固有方法 |
 | `Range` | Copy 的 Int32 递增迭代器，字段私有 |
@@ -3012,6 +3010,55 @@ Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失
 迭代器在结束或提前退出时清理；循环体可在挂起函数中挂起，恢复不会重新求值输入或重放 next。
 迭代器、元素及引用仍须满足现有跨挂起存储资格，取消先清理子调用再清理本轮元素和迭代器。
 map/filter 等惰性组合器仍属于[后续工作](for-iterators.md)。
+
+### 可选循环编号
+
+`for index, pattern in input` 在元素绑定前增加从零开始的编号，不需要 enumerate。
+顶层逗号分隔编号与元素模式，括号内的逗号仍表示元素解构：
+
+```joky
+fn numbered_sum() -> Int32 {
+    var total = 0
+    for index, value in [10, 20, 30] { total += index + value }
+    total
+}
+```
+
+编号只能是一个名称或 `_`，是本轮内不可变的局部绑定。根据循环体的整数运算、赋值与
+函数参数等用法推导统一的 Int8/16/32/64 或 UInt8/16/32/64 类型；无约束时默认
+Int32。同一编号不能在不同位置隐式变成不同类型，约束冲突时报错，需要混用时显式转换。
+例如 `total: Int32` 的 `total += index` 推导 Int32，数组的 `get(index)` 推导 UInt64。
+编号类型与元素类型独立。
+
+每个循环各自计数；continue 仍计入已取出的元素，break/return 提前结束，挂起恢复不重计。
+推导类型的最大编号可以使用；若此后再成功取出一项，报 `For index overflow`，
+正常耗尽则不报错。普通 `for pattern in input` 不增加计数器。
+
+### Map 键值解构
+
+借用 Map 可直接用二元模式获得键和值；增加编号只需在模式前加 `index,`：
+
+```joky
+import joky/map.{type Map}
+
+fn numbered_scores() -> Int32 {
+    var scores = Map.new::<Int32, Int32>()
+    scores.insert(1, 10)
+    scores.insert(2, 20)
+    for index, (key, value) in &mut scores {
+        *value += *key + index
+    }
+    var total = 0
+    for (_, value) in &scores { total += *value }
+    total
+}
+```
+
+共享遍历绑定 `&K` 和 `&V`；可变遍历绑定 `&K` 和 `&mut V`，key 始终只读。
+这两个引用可以同时使用，仍不能在引用存活时推进独占游标、修改容器结构或重复可变借用 value。
+编号是本次遍历次序，不能用它推断 Map 的排序或作为稳定键。
+`let (key, value) = entry` 使用同样规则；Entry 解构目前只接受两个名称或 `_`，
+不创建可存储的引用元组。显式 `entry_key` / `entry_value_mut` 保留原有的保守借用规则。
 
 ### IntoIterator 与自动转换
 
@@ -3048,92 +3095,6 @@ advance/current 协议；`joky/iter.slice_iter` / slice_iter_mut 与 joky/slice 
 iter / iter_mut 行为相同，供自动转换调用。
 直接传入独占引用绑定会移动该绑定；需复用时写 `&mut *binding` 进行重借用。
 Map 的按值循环仍需显式 `table.into_entries()`，得到拥有的 `(K, V)` 元组；固定数组不自动转换。
-
-### enumerate 带编号遍历
-
-`IntoIterator` 提供默认方法 `enumerate(self) -> Enumerate<Self.IntoIter>`，先转换输入，
-再构造适配器；也可调用只接受普通 Iterator 的模块函数 `iter.enumerate(iterator)`。
-需导入 joky/iter，使用 trait 方法时将 IntoIterator 放入作用域。
-构造适配器不取项，也不创建结果数组；每次 next 调用一次底层的标准 Iterator.next，
-成功时产生 `(UInt64, Item)`，不会被底层同名固有 next 方法影响。
-
-```joky
-import joky/iter.{type IntoIterator}
-
-fn indexed_sum() -> Int32 {
-    let values = [10, 20, 30]
-    var total = 0
-    for (index, value) in values.enumerate() {
-        total += int32(index) + value
-    }
-    total
-}
-```
-
-编号从 0 开始，与包装后产生的元素顺序对应；包装已前进的迭代器仍从 0 编号。
-Some 才推进编号，None 不推进；适配器不记忆“永久耗尽”，若底层在 None 后继续产出，
-显式调用 next 会继续编号。for 本身仍在第一次 None 时退出。
-UInt64 最大值是有效编号；之后再取到 Some 会报告 `Enumeration index overflow`，
-不会回绕。该次已取出的元素及剩余迭代器按正常失败路径清理，None 本身不会触发溢出。
-
-支持泛型与嵌套 enumerate，保留普通 Iterator 的同步和 @noescape 契约。
-拥有型迭代器被移动，元素逐项移交、不 clone；Copy 迭代器遵循普通复制规则。
-提前退出、未开始遍历就丢弃、失败与取消都会清理尚未移交的元素；已移交元素可以独立存活。
-无引用拥有元素可按原规则跨挂起；Unit 和受支持的共享引用 Item 也可编号。
-
-链式方法支持普通 Iterator、Array 和其他 IntoIterator 输入；模块函数需要先将
-容器转换为普通 Iterator。构造适配器本身是惰性的，但容器的 IntoIterator 转换立即执行
-（例如 Array 原地反转）；不推迟该转换的副作用。此方法放在 IntoIterator，保持 Iterator
-原有的 dyn 接口资格。Array/Slice/Map 的借用游标使用下一节的独立编号视图 API，
-不通过 `(UInt64, &mut T)` 放宽独占引用的存储限制。
-map/filter 等回调组合器尚未提供。
-
-### 借用 enumerate：编号视图
-
-Array、Slice 与 Map 的借用游标使用独立的编号接口。每轮产生借用视图，编号以
-`UInt64` 从零开始，元素仍归原容器所有：
-
-```joky
-import joky/iter
-
-fn numbered_update() -> Int32 {
-    var values = [10, 20, 30]
-    for item in iter.enumerate_mut(values.iter_mut()) {
-        let index = iter.index(item)
-        *iter.value_mut(item) += int32(index)
-    }
-    var total = 0
-    for item in iter.enumerate_ref(values.iter()) {
-        total += *iter.value(item)
-    }
-    total
-}
-```
-
-| 输入 | 编号入口 | 每轮项 | 读取编号 / 借出元素 |
-| --- | --- | --- | --- |
-| `&Iter<T>` | `iter.enumerate_ref` | `&Indexed<T>` | `iter.index` / `iter.value` |
-| `&mut Iter<T>` | `iter.enumerate_mut` | `&mut Indexed<T>` | `iter.index` / `iter.value_mut` |
-| `&Entries<K,V>` | `iter.enumerate_entries` | `&IndexedEntry<K,V>` | `iter.entry_index` / `iter.entry` |
-| `&mut Entries<K,V>` | `iter.enumerate_entries_mut` | `&mut IndexedEntry<K,V>` | `iter.entry_index` / `iter.entry_mut` |
-
-编号游标分别为 `&EnumerateIter<T>`、`&EnumerateEntries<K,V>`，独占入口返回对应
-`&mut`。Array 使用 `values.iter()` / `values.iter_mut()`；Slice 使用
-`slice.iter(view)` / `slice.iter_mut(view)`。Map 借出的项仍是 Entry，用
-`map.entry_key`、`map.entry_value`、`map.entry_value_mut` 访问，键始终只读。
-先复制编号或键，再借出可变元素，以便结束先前的共享借用。
-
-显式步进 API 为 `enumerate_advance`、`enumerate_current`、`enumerate_current_mut`；
-Map 对应 `enumerate_entries_advance`、`enumerate_entries_current`、
-`enumerate_entries_current_mut`，均在 `joky/iter`。`for` 使用相同的两步协议。
-构造不预读；包装部分消费的游标时，从其下一项重新编号为零。共享别名推进原游标时，
-包装器只统计自身成功推进的次数，current 保留包装器最近一次成功推进的元素。
-
-编号项保存编号和元素地址的快照；共享游标后续推进不会改变已返回项。可变项继续遵守
-整容器借用规则，活跃项与游标推进或另一项可变借用冲突。耗尽前未成功推进，或耗尽后
-调用 current 都会报错。视图元数据按需分配到任务 arena，任务结束时释放；不复制元素，
-不预分配编号数组。编号游标和编号项都是 borrow-only 类型，不能按值或放入普通聚合。
-它们不实现普通 Iterator / IntoIterator，不能传给普通 `iter.enumerate`。
 
 ### Array 消费式迭代
 
