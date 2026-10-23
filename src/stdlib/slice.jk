@@ -1,5 +1,6 @@
 // Half-open borrowed ranges. Views cannot resize or own their storage.
 import joky/internal/buffer as storage
+import joky/iter as iteration.{type Iter}
 import joky/element.{type Element}
 import joky/option.{type Option, Some, None}
 
@@ -19,3 +20,6 @@ pub fn slice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut S
 
 pub fn borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T { storage.slice_borrow_ref(values, index) }
 pub fn borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T { storage.slice_borrow_mut_ref(values, index) }
+
+pub fn iter<T>(values: &Slice<T>) -> &Iter<T> { storage.slice_iter(values) }
+pub fn iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T> { storage.slice_iter_mut(values) }

@@ -646,7 +646,10 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         // Runtime helpers validate layouts/indices and return internal addresses.
         // Element values use typed inline loads/stores, never a polymorphic C ABI.
         let (params, returns) = match intrinsic {
-            BufferIntrinsic::Iter | BufferIntrinsic::IterMut => (vec![ptr, ptr], vec![ptr]),
+            BufferIntrinsic::Iter
+            | BufferIntrinsic::IterMut
+            | BufferIntrinsic::SliceIter
+            | BufferIntrinsic::SliceIterMut => (vec![ptr, ptr], vec![ptr]),
             BufferIntrinsic::IterAdvance => (vec![ptr], vec![types::I8]),
             BufferIntrinsic::IterCurrent | BufferIntrinsic::IterCurrentMut => {
                 (vec![ptr], vec![ptr])

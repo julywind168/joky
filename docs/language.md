@@ -664,10 +664,12 @@ Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 不依赖 Map 的存储；Map 移动/释放后仍可读取，原来源的冲突修改直到任务结束仍被拒绝。
 
 keys/values 的相同下标在借用期间对应同一项；顺序未指定，不承诺插入顺序或稳定遍历顺序。
-使用 `joky/slice` 的 len/get/borrow 等函数配合 while 遍历。Copy value 可用 get/set 或 Element；
+无引用元素可使用 `slices.iter(table.keys())`、`slices.iter(table.values())` 或
+`slices.iter_mut(table.values_mut())` 配合 for 遍历，见下文 [Slice 与 Map 单列遍历](#slice-与-map-单列遍历)。
+Copy value 也可用 get/set 或 Element；含引用的 Copy value 仍使用这些接口配合 while。
 拥有型 value 用 borrow_ref/borrow_mut_ref，可原地修改或 mem.replace，不能用 get/set 复制读取或替换。
 切片使用既有视图头分配及预算规则，不复制载荷。没有公开桶下标或可变 key 切片；
-Map 尚未接入 Iterator 协议。
+Map 本身尚未接入 Iterator 协议，也未提供直接返回 key/value 借用对的游标。
 
 from_entries/extend 按原输入顺序处理；每次替换的旧 value 在处理下一项之前清理。
 它们以输入长度为 reserve 上界，即使大量 key 重复也不承诺只按最终大小分配；
@@ -2960,7 +2962,7 @@ fn drain(values: &mut Array<Int32>) {
 
 ## for 循环与迭代器
 
-`for pattern in iterator { body }` 支持标准库 `joky/iter.Iterator` 和下述 Array 借用游标。
+`for pattern in iterator { body }` 支持标准库 `joky/iter.Iterator` 和下述 Array/Slice 借用游标。
 右侧只求值一次：拥有值移动到循环的隐藏可变绑定，Copy 值按普通规则复制。
 普通 Iterator 每轮同步调用 next，Some 的载荷绑定到 pattern，第一次 None 结束循环。
 
@@ -3002,7 +3004,8 @@ Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失
 迭代器在结束或提前退出时清理；循环体可在挂起函数中挂起，恢复不会重新求值输入或重放 next。
 迭代器、元素及引用仍须满足现有跨挂起存储资格，取消先清理子调用再清理本轮元素和迭代器。
 当前不自动将 Array/Map 转成迭代器。Array 显式选择 into_iter、iter 或 iter_mut；
-Map 迭代、IntoIterator 与 map/filter 等组合器仍属于[后续工作](for-iterators.md)。
+Map 通过 Slice 接口遍历 keys/values/values_mut；key/value 成对借用游标、IntoIterator
+与 map/filter 等组合器仍属于[后续工作](for-iterators.md)。
 
 ### Array 消费式迭代
 
@@ -3077,6 +3080,41 @@ advance 只修改游标位置，因此先前的共享元素引用可跨越后续
 正常结束、提前退出、失败和取消都不由游标析构元素，元素始终归原数组清理。
 构造游标 O(1)，分配一个任务 arena 内的小型描述符；每次 advance/current 为 O(1)、不分配。
 描述符随任务 arena 释放，不承诺在游标最后一次使用时立即回收；未进行性能测量。
+
+### Slice 与 Map 单列遍历
+
+`joky/slice` 提供两个模块函数，沿用上述 Iter 的推进、重借用、耗尽和元素资格规则：
+
+| 接口 | 行为 |
+| --- | --- |
+| `iter<T>(&Slice<T>) -> &Iter<T>` | 按切片下标正序借用，每项为 &T |
+| `iter_mut<T>(&mut Slice<T>) -> &mut Iter<T>` | 按切片下标正序独占借用，每项为 &mut T |
+
+子切片的游标只访问该子区间，空切片不产生元素。创建游标不复制载荷、不消费 Slice 或源容器，
+每次创建分配一个 O(1) 的任务 arena 描述符；每次取项 O(1)，不分配。
+引用来源经 Slice/子切片继续追溯到原 Array 或 Map，元素引用可以超过局部视图绑定的作用域，
+但不能超过来源的有效期。最后一次借用使用后才恢复源容器的冲突操作权限。
+
+```joky
+import joky/map.{type Map}
+import joky/slice as slices
+
+fn update_values() -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 10)
+    table.insert(2, 20)
+    for value in slices.iter_mut(table.values_mut()) { *value += 1 }
+    var total = 0
+    for key in slices.iter(table.keys()) { total += *key }
+    for value in slices.iter(table.values()) { total += *value }
+    total
+}
+```
+
+Map 的键始终只读，values_mut 只允许修改值；活动游标/元素借用仍依赖整个 Map，
+不能同时插入、删除、移动、释放，或通过独占视图的其他来源冲突访问。
+遍历顺序未指定；共享 keys/values 的相同下标在借用期间对应同一项，删除重插后不承诺保持旧顺序。
+这三个入口提供单列借用遍历，未提供 `(key, value)` 借用元组或自动容器转换。
 
 ## 分号与表达式序列
 

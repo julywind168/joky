@@ -70,7 +70,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 35] = [
+    pub(crate) const ALL: [Self; 37] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
@@ -103,6 +103,8 @@ impl BufferIntrinsic {
         Self::SubsliceMut,
         Self::Iter,
         Self::IterMut,
+        Self::SliceIter,
+        Self::SliceIterMut,
         Self::IterAdvance,
         Self::IterCurrent,
         Self::IterCurrentMut,
@@ -125,6 +127,8 @@ impl BufferIntrinsic {
                 | Self::SubsliceMut
                 | Self::Iter
                 | Self::IterMut
+                | Self::SliceIter
+                | Self::SliceIterMut
                 | Self::IterCurrent
                 | Self::IterCurrentMut
         )
@@ -139,6 +143,8 @@ impl BufferIntrinsic {
                 | Self::SubsliceMut
                 | Self::Iter
                 | Self::IterMut
+                | Self::SliceIter
+                | Self::SliceIterMut
         )
     }
 
@@ -160,6 +166,14 @@ impl BufferIntrinsic {
         let (params, result) = match self {
             Self::Iter => (vec![shared], Type::reference(iterator, false)),
             Self::IterMut => (vec![exclusive], Type::reference(iterator, true)),
+            Self::SliceIter => (
+                vec![Type::reference(slice, false)],
+                Type::reference(iterator, false),
+            ),
+            Self::SliceIterMut => (
+                vec![Type::reference(slice, true)],
+                Type::reference(iterator, true),
+            ),
             Self::IterAdvance => (vec![Type::reference(iterator, false)], Type::Bool),
             Self::IterCurrent => (
                 vec![Type::reference(iterator, false)],
@@ -268,7 +282,7 @@ impl BufferIntrinsic {
     // Distinct checked source signatures may share the same raw runtime ABI.
     pub(crate) fn runtime_symbol(self) -> &'static str {
         match self {
-            Self::IterMut => "__joky_buffer_iter",
+            Self::IterMut | Self::SliceIter | Self::SliceIterMut => "__joky_buffer_iter",
             Self::IterCurrentMut => "__joky_buffer_iter_current",
             Self::Borrow
             | Self::BorrowRef
@@ -292,6 +306,8 @@ impl BufferIntrinsic {
         match self {
             Self::Iter => "__joky_buffer_iter",
             Self::IterMut => "__joky_buffer_iter_mut",
+            Self::SliceIter => "__joky_buffer_slice_iter",
+            Self::SliceIterMut => "__joky_buffer_slice_iter_mut",
             Self::IterAdvance => "__joky_buffer_iter_advance",
             Self::IterCurrent => "__joky_buffer_iter_current",
             Self::IterCurrentMut => "__joky_buffer_iter_current_mut",
@@ -379,6 +395,8 @@ impl FunctionPlan {
                     | BufferIntrinsic::SliceBorrowMutRef
                     | BufferIntrinsic::Iter
                     | BufferIntrinsic::IterMut
+                    | BufferIntrinsic::SliceIter
+                    | BufferIntrinsic::SliceIterMut
                     | BufferIntrinsic::IterAdvance
                     | BufferIntrinsic::IterCurrent
                     | BufferIntrinsic::IterCurrentMut
@@ -397,6 +415,8 @@ impl FunctionPlan {
                 | BufferIntrinsic::SliceBorrowMutRef
                 | BufferIntrinsic::Iter
                 | BufferIntrinsic::IterMut
+                | BufferIntrinsic::SliceIter
+                | BufferIntrinsic::SliceIterMut
                 | BufferIntrinsic::IterCurrent
                 | BufferIntrinsic::IterCurrentMut
         ) && !element.is_owner()

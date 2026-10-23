@@ -872,6 +872,8 @@ pub(crate) enum BufferIntrinsic {
     SubsliceMut,
     Iter,
     IterMut,
+    SliceIter,
+    SliceIterMut,
     IterAdvance,
     IterCurrent,
     IterCurrentMut,

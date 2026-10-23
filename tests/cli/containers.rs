@@ -3,6 +3,78 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn slice_borrow_iter_runs_subranges_and_map_columns_in_standalone_aot() {
+    let work = Workspace::new();
+    let fixture = format!("import joky/io.{{println}}\nimport joky/task as task\n{}",
+        include_str!("../fixtures/slice_borrow_iter.jk")
+            .replace("extern fn record(x: Int32) -> Int32", "fn record(x: Int32) -> Int32 { println(x); x }")
+            .replace("extern fn delayed_value(x: Int32) @suspends -> Int32", "fn delayed_value(x: Int32) @suspends -> Int32 { record(x); task.yield_now(); x + 1 }"));
+    work.write(
+        "slice_iter.jk",
+        &format!(
+            r#"{fixture}
+        fn main() @suspends {{
+            println(compute())
+            println(10000 + map_owners(0))
+            println(20000 + map_owners(1))
+            println(30000 + pending())
+        }}
+    "#
+        ),
+    );
+    success(&work.cli(&["build", "--no-prelude", "slice_iter.jk"]));
+    let output = Command::new(work.path().join("slice_iter"))
+        .output()
+        .unwrap();
+    success(&output);
+    let events: Vec<i32> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|n| n.parse().unwrap())
+        .collect();
+    assert_eq!(events[0], 42);
+    for id in 1..=4 {
+        let count = if id <= 2 { 3 } else { 1 };
+        assert_eq!(events.iter().filter(|&&n| n == id).count(), count);
+        assert_eq!(events.iter().filter(|&&n| n == -id).count(), count);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .copied()
+            .filter(|n| *n >= 10000)
+            .collect::<Vec<_>>(),
+        [10042, 20042, 30042]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .copied()
+            .filter(|n| (11..=14).contains(n))
+            .collect::<Vec<_>>(),
+        [12, 12, 13, 13]
+    );
+    work.write(
+        "slice_failed.jk",
+        &format!("{fixture}\nfn main() {{ map_owners(2); }}"),
+    );
+    success(&work.cli(&["build", "--no-prelude", "slice_failed.jk"]));
+    let output = Command::new(work.path().join("slice_failed"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
+    let mut events: Vec<i32> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|n| n.parse().unwrap())
+        .collect();
+    events.sort();
+    assert_eq!(events, [-2, -1, 1, 2]);
+}
+
+#[test]
+#[cfg(unix)]
 fn array_borrow_iter_runs_with_live_element_views_in_standalone_aot() {
     let work = Workspace::new();
     let fixture = format!("import joky/io.{{println}}\nimport joky/task as task\n{}",

@@ -128,7 +128,10 @@ for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条�
 或一般泛型实参；不放宽 `Option<&mut T>` 或 @noescape。每个游标在任务 arena 中分配独立描述符，
 保存非拥有元素地址、长度、步幅和 Cell 位置；共享副本共享位置。生成的原语复用 BufferOp::Storage，
 JIT/AOT 共用三个私有 runtime helper，解释器调用相同的描述符实现，不改变 CPS 帧 ABI。
-元素借用沿游标回溯至原数组，取消时只有数组持有元素清理责任；描述符由任务 arena 统一释放。
+Slice 的两个游标构造原语使用独立受检签名，并与 Array 构造复用同一 runtime helper；
+已有切片头保存子区间地址、长度和元素布局，游标直接读取这些元数据。Map 的 keys/values/values_mut
+通过 Slice 接入，未新增 Map 布局、桶遍历或 key/value 借用聚合。
+元素借用沿游标、切片回溯至原容器，取消时只有容器持有元素清理责任；描述符由任务 arena 统一释放。
 
 必须保留的语义约束：
 

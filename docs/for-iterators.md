@@ -1,7 +1,7 @@
 # for 与迭代器分阶段开发计划
 
-状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array 借用迭代已完成验收，
-记录见第 6–8 节。Map 迭代游标与第四阶段仍待实施。
+状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列遍历已完成，
+记录见第 6–9 节。Map key/value 成对借用游标与第四阶段仍待实施。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -213,4 +213,43 @@ runtime helper，JIT/AOT 共用原生降低，解释器使用同一描述符实�
 | 文档本地链接与 `git diff --check` | 通过 |
 
 默认库测试忽略 119 项、CLI 忽略 8 项；本轮额外运行相关的借用迭代器取消穷举。
+未运行 Release、无关压力、Godot、性能测量或其他平台验证。默认检查后仅补充文档记录，未再改代码。
+
+## 9. 第三阶段续：Slice 与 Map 单列遍历（2026-10-23）
+
+实现基线 `b87a51b`。本次交付 `joky/slice.iter(&Slice<T>) -> &Iter<T>` 和
+`iter_mut(&mut Slice<T>) -> &mut Iter<T>`，使 Map 现有 keys/values/values_mut 切片
+可以直接参与 for 单列遍历。公开语法及示例见 [语言参考](language.md#slice-与-map-单列遍历)。
+
+两个 Slice 构造原语使用独立受检签名，共用原 Array 游标 runtime helper。
+切片头已有子区间地址、长度及元素布局，因此不新增运行时描述符或改变 Buffer/CPS ABI。
+子切片只遍历自身区间，仍通过既有来源分析保留原容器借用；共享/独占元素资格、
+游标位置、耗尽、重借用、挂起和清理均沿用第 8 节契约。
+
+Map 只开放现有列视图：keys 始终只读，values_mut 可修改值，不允许通过活动借用结构性修改
+Map。keys/values 相同下标在共享借用期间对应同一项，遍历顺序仍未指定；删除重插不保序。
+本次没有提供 key/value 借用元组、Map 专用成对游标、IntoIterator 或组合器。
+
+验收覆盖：
+
+- [共享 fixture](../tests/fixtures/slice_borrow_iter.jk)：泛型转发、非零起点和嵌套子切片、
+  空切片、Unit/String 元素、只修改指定区间、游标重借用及耗尽、元素超过局部视图绑定存活；
+  Map 空表、删除重插、列间对应、共享/可变值遍历与拥有记录的提前返回和失败清理。
+- [VM 测试](../src/vm/tests/containers/slice_borrow_iter_tests.rs)：两种 VM 执行，
+  子切片拥有元素跨多次 Pending/恢复/取消、分配失败预算扫描与析构唯一性、arena 归零；
+  共享前端拒绝原容器/父视图冲突、可变键借用、含引用元素及局部来源逃逸。
+- [独立 AOT 测试](../tests/cli/containers.rs)：相同 fixture 的同步行为、真实 yield、
+  提前返回及失败清理。相关取消穷举覆盖 Slice → 子切片 → Iter → 元素的来源链。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test slice_borrow_iter` | 5 项 VM 测试及 1 项独立 AOT 测试通过；逐指令取消默认忽略 |
+| `cargo test exhaustive_slice_borrow_iter_instruction_cancellation --lib -- --ignored` | 1 项通过；取消后无重复析构，arena 归零 |
+| 语言参考新增示例 | `cargo build --lib` 后关闭 prelude，在 JIT、解释器、独立 AOT 均输出 35 |
+| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1550 项库测试、298 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+默认库测试忽略 120 项、CLI 忽略 8 项；本轮额外运行上述相关的逐指令取消穷举。
 未运行 Release、无关压力、Godot、性能测量或其他平台验证。默认检查后仅补充文档记录，未再改代码。

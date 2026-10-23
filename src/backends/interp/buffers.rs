@@ -182,7 +182,10 @@ pub(super) fn execute(
             // completes its checked read/write/commit before advancing the PC.
             let value = unsafe {
                 match intrinsic {
-                    BufferIntrinsic::Iter | BufferIntrinsic::IterMut => {
+                    BufferIntrinsic::Iter
+                    | BufferIntrinsic::IterMut
+                    | BufferIntrinsic::SliceIter
+                    | BufferIntrinsic::SliceIterMut => {
                         Value::Reference((*pointer(arg(0))?).iterator(arena)?.as_ptr().cast())
                     }
                     BufferIntrinsic::IterAdvance => {

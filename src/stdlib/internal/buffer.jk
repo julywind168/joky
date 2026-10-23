@@ -80,3 +80,8 @@ fn iter_advance<T>(iterator: &Iter<T>) -> Bool
 fn iter_current<T>(iterator: &Iter<T>) -> &T
 #intrinsic("buffer.iter_current_mut")
 fn iter_current_mut<T>(iterator: &mut Iter<T>) -> &mut T
+
+#intrinsic("buffer.slice_iter")
+fn slice_iter<T>(values: &Slice<T>) -> &Iter<T>
+#intrinsic("buffer.slice_iter_mut")
+fn slice_iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T>
