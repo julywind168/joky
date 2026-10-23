@@ -32,7 +32,11 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         return native_type(&Type::Ptr);
     }
     match ty {
-        Type::BufferElement(_) | Type::BufferSlice(_) | Type::BufferIterator(_) => None,
+        Type::BufferElement(_)
+        | Type::BufferSlice(_)
+        | Type::BufferIterator(_)
+        | Type::BufferPairIterator(_)
+        | Type::BufferEntry(_) => None,
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 | Type::Rune => Some(
             if matches!(ty, Type::Rune) || ty.integer().unwrap().bits() == 32 {
                 types::I32
@@ -650,7 +654,18 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             | BufferIntrinsic::IterMut
             | BufferIntrinsic::SliceIter
             | BufferIntrinsic::SliceIterMut => (vec![ptr, ptr], vec![ptr]),
-            BufferIntrinsic::IterAdvance => (vec![ptr], vec![types::I8]),
+            BufferIntrinsic::IterAdvance | BufferIntrinsic::PairAdvance => {
+                (vec![ptr], vec![types::I8])
+            }
+            BufferIntrinsic::PairIter | BufferIntrinsic::PairIterMut => {
+                (vec![ptr, ptr, ptr], vec![ptr])
+            }
+            BufferIntrinsic::PairCurrent | BufferIntrinsic::PairCurrentMut => {
+                (vec![ptr, ptr], vec![ptr])
+            }
+            BufferIntrinsic::EntryKey
+            | BufferIntrinsic::EntryValue
+            | BufferIntrinsic::EntryValueMut => (vec![ptr], vec![ptr]),
             BufferIntrinsic::IterCurrent | BufferIntrinsic::IterCurrentMut => {
                 (vec![ptr], vec![ptr])
             }
@@ -1797,6 +1812,20 @@ fn lower_ops(
                         .expect("validated buffer element layout");
                     let mut values = Vec::new();
                     match intrinsic {
+                        BufferIntrinsic::PairIter | BufferIntrinsic::PairIterMut => {
+                            values.push(mode.arena());
+                            let owner = slots.read(builder, &args[0]);
+                            for offset in BufferIntrinsic::pair_offsets(element)
+                                .expect("checked paired columns")
+                            {
+                                values.push(builder.ins().load(
+                                    ptr_ty,
+                                    MemFlagsData::new(),
+                                    owner,
+                                    offset as i32,
+                                ));
+                            }
+                        }
                         BufferIntrinsic::Allocate => {
                             values.push(mode.arena());
                             values.push(slots.read(builder, &args[0]));
@@ -1848,7 +1877,11 @@ fn lower_ops(
                         | BufferIntrinsic::SliceBorrowRef
                         | BufferIntrinsic::SliceBorrowMutRef
                         | BufferIntrinsic::IterCurrent
-                        | BufferIntrinsic::IterCurrentMut => {
+                        | BufferIntrinsic::IterCurrentMut
+                        | BufferIntrinsic::EntryKey
+                        | BufferIntrinsic::EntryValue
+                        | BufferIntrinsic::EntryValueMut => {
+                            let element = intrinsic.borrowed_element(element);
                             let pointer = builder.inst_results(call)[0];
                             // One-field owner wrappers borrow the underlying handle;
                             // mixed aggregates borrow their inline element storage.

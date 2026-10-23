@@ -616,6 +616,7 @@ fn example() -> Int32 {
 | `borrow_mut(&mut Map, key: K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
 | `borrow_ref(&Map, key: K) -> &V` | 无引用 Copy 或拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
 | `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `*p = next`，拥有者可用 `mem.replace` 返回旧值 |
+| `iter(&Map) -> &Iter<K, V>` / `iter_mut(&mut Map) -> &mut Iter<K, V>` | 成对借用游标；for 每轮绑定 Entry 视图，键始终只读 |
 | `keys(&Map) -> &Slice<K>` | 全部 key 的只读切片，不提供 keys_mut |
 | `values(&Map) -> &Slice<V>` / `values_mut(&mut Map) -> &mut Slice<V>` | 全部 value 的只读/独占切片 |
 | `pop(&mut Map) -> Option<(K, V)>` | 移出任意一项；空表 None，不调用 Hash/Eq |
@@ -669,14 +670,16 @@ keys/values 的相同下标在借用期间对应同一项；顺序未指定，�
 Copy value 也可用 get/set 或 Element；含引用的 Copy value 仍使用这些接口配合 while。
 拥有型 value 用 borrow_ref/borrow_mut_ref，可原地修改或 mem.replace，不能用 get/set 复制读取或替换。
 切片使用既有视图头分配及预算规则，不复制载荷。没有公开桶下标或可变 key 切片；
-Map 本身尚未接入 Iterator 协议，也未提供直接返回 key/value 借用对的游标。
+Map.iter/iter_mut 提供独立的成对借用游标，见 [Map 成对借用遍历](#map-成对借用遍历)；
+Map 本身不实现普通 Iterator 协议。
 
 from_entries/extend 按原输入顺序处理；每次替换的旧 value 在处理下一项之前清理。
 它们以输入长度为 reserve 上界，即使大量 key 重复也不承诺只按最终大小分配；
 容量运算受检，分配、协议或析构失败按终止性错误清理 Map、当前项及剩余输入。
 into_entries 消费 Map 并移动各项到新数组；pop/导出得到的拥有值和普通共享引用可继续使用。
 输入数组、已导出的 Map 均不可复用；普通共享引用的实际来源保留沿用 Array 规则。
-容器不能跨语言挂起，也不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk) 与 [map_batches.jk](../examples/map_batches.jk)
+无引用存储树的 Map 拥有者与借用视图可跨语言挂起；含引用元素仍受既有挂起资格限制。
+Map 不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk) 与 [map_batches.jk](../examples/map_batches.jk)
 覆盖频次统计、自定义 key、嵌套拥有值、借用修改、共享引用及批量导入/遍历/导出；
 两个示例在三个后端合计输出六行 42。
 
@@ -2962,7 +2965,7 @@ fn drain(values: &mut Array<Int32>) {
 
 ## for 循环与迭代器
 
-`for pattern in iterator { body }` 支持标准库 `joky/iter.Iterator` 和下述 Array/Slice 借用游标。
+`for pattern in iterator { body }` 支持标准库 `joky/iter.Iterator` 和下述 Array/Slice/Map 借用游标。
 右侧只求值一次：拥有值移动到循环的隐藏可变绑定，Copy 值按普通规则复制。
 普通 Iterator 每轮同步调用 next，Some 的载荷绑定到 pattern，第一次 None 结束循环。
 
@@ -3004,8 +3007,8 @@ Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失
 迭代器在结束或提前退出时清理；循环体可在挂起函数中挂起，恢复不会重新求值输入或重放 next。
 迭代器、元素及引用仍须满足现有跨挂起存储资格，取消先清理子调用再清理本轮元素和迭代器。
 当前不自动将 Array/Map 转成迭代器。Array 显式选择 into_iter、iter 或 iter_mut；
-Map 通过 Slice 接口遍历 keys/values/values_mut；key/value 成对借用游标、IntoIterator
-与 map/filter 等组合器仍属于[后续工作](for-iterators.md)。
+Map 可选择 iter/iter_mut 成对遍历，也可通过 Slice 接口遍历 keys/values/values_mut；
+IntoIterator 与 map/filter 等组合器仍属于[后续工作](for-iterators.md)。
 
 ### Array 消费式迭代
 
@@ -3114,7 +3117,63 @@ fn update_values() -> Int32 {
 Map 的键始终只读，values_mut 只允许修改值；活动游标/元素借用仍依赖整个 Map，
 不能同时插入、删除、移动、释放，或通过独占视图的其他来源冲突访问。
 遍历顺序未指定；共享 keys/values 的相同下标在借用期间对应同一项，删除重插后不承诺保持旧顺序。
-这三个入口提供单列借用遍历，未提供 `(key, value)` 借用元组或自动容器转换。
+这三个入口提供单列借用遍历；成对遍历使用下面的 Entry 视图，不构造 `(key, value)` 借用元组。
+
+
+### Map 成对借用遍历
+
+`table.iter()` 返回 `&map.Iter<K, V>`，`table.iter_mut()` 返回 `&mut map.Iter<K, V>`；
+同名模块函数接收 `&Map` / `&mut Map`。for 每轮分别绑定 `&map.Entry<K, V>` / `&mut map.Entry<K, V>`，
+顺序未指定，元素不复制、不移出 Map。K/V 均须满足直接元素引用的无引用存储资格。
+
+```joky
+import joky/map as maps.{type Map}
+
+fn update_entries() -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 10)
+    table.insert(2, 20)
+    for entry in table.iter_mut() {
+        let delta = *maps.entry_key(entry)
+        *maps.entry_value_mut(entry) += delta
+    }
+    var total = 0
+    for entry in table.iter() {
+        total += *maps.entry_key(entry) + *maps.entry_value(entry)
+    }
+    total
+}
+```
+
+| joky/map 接口 | 行为 |
+| --- | --- |
+| `advance<K, V>(&Iter<K, V>) -> Bool` | 同步推进两列，耗尽后始终 false |
+| `current<K, V>(&Iter<K, V>) -> &Entry<K, V>` | 取得当前项的稳定共享视图 |
+| `current_mut<K, V>(&mut Iter<K, V>) -> &mut Entry<K, V>` | 取得当前项的稳定独占视图 |
+| `entry_key<K, V>(&Entry<K, V>) -> &K` | 只读 key，包含可变遍历场景 |
+| `entry_value<K, V>(&Entry<K, V>) -> &V` | 只读 value |
+| `entry_value_mut<K, V>(&mut Entry<K, V>) -> &mut V` | 独占 value，可原地修改或 mem.replace |
+
+首次推进前、耗尽后的 current/current_mut 受检失败。共享游标别名共享位置；每次 current
+保存同一项的 key/value 地址，之后推进不改变旧 Entry 的身份。共享 Entry 及其元素引用
+可以跨推进或局部游标绑定作用域存活，但始终依赖原 Map。独占游标用 `&mut *cursor` 重借用后
+可在 for 提前退出后继续使用；活跃的独占 Entry/元素借用阻止推进及冲突访问。
+
+Entry 是编译器识别的借用目标，不是拥有记录或普通元组；不能按值使用、解构成引用元组、
+存入 Option/记录/数组或传给宿主。借用仍保守地覆盖整个 Map，不证明 key/value 字段不重叠：
+不能在 key 引用仍活跃时取得可变 value。先读取或计算 key，再调用 entry_value_mut，如上例。
+共享读取 key 和 value 可同时进行；没有可变 key 接口。借用最后一次使用后恢复原 Map 的权限。
+
+Iter/Entry 的实际类型别名分别是 `joky/iter.Entries<K, V>` / `Entry<K, V>`。
+for 使用该模块的 entries_advance、entries_current、entries_current_mut 固定入口；
+它们与 map 的手动接口语义相同，不实现普通 Iterator，也不改变其 @noescape 或 Item 契约。
+符合现有存储资格时，Entry 与其元素可跨语言挂起，恢复不重放取项，取消只由 Map 清理拥有元素。
+
+当前创建游标 O(1)，分配一个任务 arena 描述符；advance O(1)、不分配。
+每次 current/current_mut 为稳定 Entry 分配一个只保存两项地址的小型描述符，耗时 O(1)，
+不复制 key/value；for 每轮一次。因此遍历 n 项额外使用 O(n) 描述符空间，重复手动 current 也累计计费。
+这些描述符随根任务 arena 统一释放，预算不足时终止任务并正常清理 Map；不承诺提前回收。
+这是当前实现成本，尚未进行性能测量。
 
 ## 分号与表达式序列
 

@@ -1,7 +1,7 @@
 # for 与迭代器分阶段开发计划
 
-状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列遍历已完成，
-记录见第 6–9 节。Map key/value 成对借用游标与第四阶段仍待实施。
+状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
+记录见第 6–10 节；第四阶段仍待实施。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -252,4 +252,48 @@ Map。keys/values 相同下标在共享借用期间对应同一项，遍历顺�
 | 文档本地链接与 `git diff --check` | 通过 |
 
 默认库测试忽略 120 项、CLI 忽略 8 项；本轮额外运行上述相关的逐指令取消穷举。
+未运行 Release、无关压力、Godot、性能测量或其他平台验证。默认检查后仅补充文档记录，未再改代码。
+
+## 10. 第三阶段续：Map 成对借用游标（2026-10-23）
+
+实现基线 `cb720be`。本次交付 Map.iter/iter_mut、Iter/Entry 借用目标，以及
+advance/current/current_mut、entry_key/entry_value/entry_value_mut 模块接口。
+for 每轮给出 Entry 视图，具体规则见 [语言参考](language.md#map-成对借用遍历)。
+
+实现继续保留普通 Iterator.next 的 @noescape 契约和引用聚合限制。Entry 保存对应项的两个地址，
+键始终只读，独占视图允许修改值；不构造 `(&K, &mut V)` 元组，也不放宽原 Map 的整体借用规则。
+因此修改值前需结束 key 的借用，或先计算所需 key 信息。共享 Entry 可跨推进保留原项身份。
+
+构造原语从具体拥有记录的受检 Array 字段布局取得两列，模板阶段允许尚未具体化的类型参数，
+实际生成代码前检查两列类型与偏移；运行时检查长度一致。前端及所有后端使用同一类型和布局契约。
+现有 Int32 存储原语测试夹具排除新的多类型参数原语；它们由专门的 Map 行为 fixture 覆盖。
+
+创建游标和每次取项均 O(1)。为了保证共享 Entry 的稳定身份，当前每次取项分配一个任务 arena
+快照，逐项累计 O(n) 描述符空间；仅保存地址，不复制或消费 key/value，描述符不承担析构责任。
+分配计入原任务预算，失败/取消沿用 Map 的唯一清理责任。没有改变 Map、Buffer 或 CPS 帧布局，
+没有优化或测量遍历性能。IntoIterator、组合器与范围运算符仍属后续工作。
+
+验收覆盖：
+
+- [共享 fixture](../tests/fixtures/map_borrow_iter.jk)：空表、删除重插后的配对、共享游标别名、
+  Entry 跨推进稳定、泛型转发、独占重借用、耗尽、String key、拥有记录和嵌套 Array value，
+  提前返回、运行时失败和真实挂起；断言不依赖 Map 的遍历顺序。
+- [VM 测试](../src/vm/tests/containers/map_borrow_iter_tests.rs)：JIT/解释器执行、分配预算扫描、
+  多次 Pending 后恢复或取消、析构唯一性与 arena 归零；共享前端拒绝结构修改、键修改、
+  冲突借用、Entry/Iter 裸值与非法存储、局部来源逃逸和引用元素。
+- [独立 AOT 测试](../tests/cli/containers.rs)：同一 fixture 的同步/CPS 行为、真实 yield、
+  Entry 及元素读写、提前返回、无有效当前项和失败清理。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test map_borrow_iter` | 6 项 VM 测试与 1 项独立 AOT 测试通过；逐指令取消默认忽略 |
+| `cargo test exhaustive_map_borrow_iter_instruction_cancellation --lib -- --ignored` | 1 项通过；取消后无重复析构，arena 归零 |
+| `cargo test buffer_storage` | 4 项相关存储测试通过；新的多类型参数原语由上述 Map fixture 覆盖 |
+| 语言参考新增示例 | `cargo build --lib` 后关闭 prelude，在 JIT、解释器、独立 AOT 均输出 36 |
+| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1556 项库测试、299 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+默认库测试忽略 121 项、CLI 忽略 8 项；本轮额外运行上述相关的逐指令取消穷举。
 未运行 Release、无关压力、Godot、性能测量或其他平台验证。默认检查后仅补充文档记录，未再改代码。

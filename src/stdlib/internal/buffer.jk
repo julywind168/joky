@@ -85,3 +85,22 @@ fn iter_current_mut<T>(iterator: &mut Iter<T>) -> &mut T
 fn slice_iter<T>(values: &Slice<T>) -> &Iter<T>
 #intrinsic("buffer.slice_iter_mut")
 fn slice_iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T>
+
+type PairIter<T> = T
+type Entry<T> = T
+#intrinsic("buffer.pair_iter")
+fn pair_iter<K, V, T>(owner: &T) -> &PairIter<(K, V)>
+#intrinsic("buffer.pair_iter_mut")
+fn pair_iter_mut<K, V, T>(owner: &mut T) -> &mut PairIter<(K, V)>
+#intrinsic("buffer.pair_advance")
+fn pair_advance<K, V>(cursor: &PairIter<(K, V)>) -> Bool
+#intrinsic("buffer.pair_current")
+fn pair_current<K, V>(cursor: &PairIter<(K, V)>) -> &Entry<(K, V)>
+#intrinsic("buffer.pair_current_mut")
+fn pair_current_mut<K, V>(cursor: &mut PairIter<(K, V)>) -> &mut Entry<(K, V)>
+#intrinsic("buffer.entry_key")
+fn entry_key<K, V>(entry: &Entry<(K, V)>) -> &K
+#intrinsic("buffer.entry_value")
+fn entry_value<K, V>(entry: &Entry<(K, V)>) -> &V
+#intrinsic("buffer.entry_value_mut")
+fn entry_value_mut<K, V>(entry: &mut Entry<(K, V)>) -> &mut V

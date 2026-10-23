@@ -3,6 +3,86 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn map_borrow_iter_runs_stable_entries_and_cleans_owners_in_standalone_aot() {
+    let work = Workspace::new();
+    let fixture = format!("import joky/io.{{println}}\nimport joky/task as task\n{}",
+        include_str!("../fixtures/map_borrow_iter.jk")
+            .replace("extern fn record(x: Int32) -> Int32", "fn record(x: Int32) -> Int32 { println(x); x }")
+            .replace("extern fn delayed_value(x: Int32) @suspends -> Int32", "fn delayed_value(x: Int32) @suspends -> Int32 { record(x); task.yield_now(); x + 1 }"));
+    work.write(
+        "map_iter.jk",
+        &format!(
+            r#"{fixture}
+        fn main() @suspends {{
+            println(compute())
+            println(10000 + consume(0))
+            println(20000 + consume(1))
+            println(30000 + pending())
+        }}
+    "#
+        ),
+    );
+    success(&work.cli(&["build", "--no-prelude", "map_iter.jk"]));
+    let output = Command::new(work.path().join("map_iter")).output().unwrap();
+    success(&output);
+    let events: Vec<i32> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|n| n.parse().unwrap())
+        .collect();
+    assert_eq!(events[0], 42);
+    for id in [1, 2] {
+        assert_eq!(events.iter().filter(|&&n| n == id).count(), 3);
+        assert_eq!(events.iter().filter(|&&n| n == -id).count(), 3);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .copied()
+            .filter(|n| *n >= 10000)
+            .collect::<Vec<_>>(),
+        [10042, 20042, 30042]
+    );
+    let mut bodies: Vec<_> = events
+        .iter()
+        .copied()
+        .filter(|n| (11..=14).contains(n))
+        .collect();
+    bodies.sort();
+    assert_eq!(bodies, [11, 11, 12, 12]);
+    for (body, message) in [
+        ("consume(2)", "Division by zero"),
+        ("invalid_current(1)", "successful advance"),
+    ] {
+        work.write(
+            "map_failed.jk",
+            &format!("{fixture}\nfn main() {{ {body}; }}"),
+        );
+        success(&work.cli(&["build", "--no-prelude", "map_failed.jk"]));
+        let output = Command::new(work.path().join("map_failed"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+        let mut events: Vec<i32> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|n| n.parse().unwrap())
+            .collect();
+        events.sort();
+        assert_eq!(
+            events,
+            if body.starts_with("consume") {
+                vec![-2, -1, 1, 2]
+            } else {
+                vec![]
+            }
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn slice_borrow_iter_runs_subranges_and_map_columns_in_standalone_aot() {
     let work = Workspace::new();
     let fixture = format!("import joky/io.{{println}}\nimport joky/task as task\n{}",

@@ -11,15 +11,16 @@ pub(crate) fn module(source: &str) -> AstModule {
     let alias = &mut ast.type_aliases[0];
     alias.target = Type::Buffer(Arc::new(Type::Parameter(alias.type_params[0].clone())));
     // This fixture specializes Copy primitives to Int32. Owner-only views
-    // execute through the owning_elements and owning_slices fixtures in all three backends.
+    // execute through owning_elements/owning_slices; paired primitives use map_borrow_iter.
     for intrinsic in BufferIntrinsic::ALL.into_iter().filter(|i| {
-        !matches!(
-            i,
-            BufferIntrinsic::BorrowRef
-                | BufferIntrinsic::BorrowMutRef
-                | BufferIntrinsic::SliceBorrowRef
-                | BufferIntrinsic::SliceBorrowMutRef
-        )
+        !i.is_pair()
+            && !matches!(
+                i,
+                BufferIntrinsic::BorrowRef
+                    | BufferIntrinsic::BorrowMutRef
+                    | BufferIntrinsic::SliceBorrowRef
+                    | BufferIntrinsic::SliceBorrowMutRef
+            )
     }) {
         let name = intrinsic.symbol().strip_prefix("__joky_buffer_").unwrap();
         let mut item = crate::parser::parse(&format!("fn {name}() {{}}"))

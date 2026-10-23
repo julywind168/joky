@@ -23,7 +23,10 @@ impl FunctionPlan {
         let Type::Reference(reference) = self.type_hint(operand, vars, functions, types)? else {
             return None;
         };
-        if !matches!(reference.target, Type::BufferIterator(_)) {
+        if !matches!(
+            reference.target,
+            Type::BufferIterator(_) | Type::BufferPairIterator(_)
+        ) {
             return None;
         }
         let [success, fallback] = arms else {
@@ -43,8 +46,12 @@ impl FunctionPlan {
         else {
             return None;
         };
+        let paired = matches!(reference.target, Type::BufferPairIterator(_));
         let call = |method: &str| Expr::Call {
-            callee: format!("$joky_iter.{method}"),
+            callee: format!(
+                "$joky_iter.{}{method}",
+                if paired { "entries_" } else { "" }
+            ),
             type_args: vec![],
             args: vec![*operand.clone()],
             span: value.span(),

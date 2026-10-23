@@ -34,3 +34,9 @@ pub type Iter<T> = storage.Iter<T>
 pub fn advance<T>(iterator: &Iter<T>) -> Bool { storage.iter_advance(iterator) }
 pub fn current<T>(iterator: &Iter<T>) -> &T { storage.iter_current(iterator) }
 pub fn current_mut<T>(iterator: &mut Iter<T>) -> &mut T { storage.iter_current_mut(iterator) }
+
+pub type Entries<K, V> = storage.PairIter<(K, V)>
+pub type Entry<K, V> = storage.Entry<(K, V)>
+pub fn entries_advance<K, V>(cursor: &Entries<K, V>) -> Bool { storage.pair_advance(cursor) }
+pub fn entries_current<K, V>(cursor: &Entries<K, V>) -> &Entry<K, V> { storage.pair_current(cursor) }
+pub fn entries_current_mut<K, V>(cursor: &mut Entries<K, V>) -> &mut Entry<K, V> { storage.pair_current_mut(cursor) }

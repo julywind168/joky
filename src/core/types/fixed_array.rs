@@ -114,7 +114,11 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
         let target = ty.reference_type().map_or(ty, |r| &r.target);
         let shallow = matches!(
             target,
-            Type::BufferElement(_) | Type::BufferSlice(_) | Type::BufferIterator(_)
+            Type::BufferElement(_)
+                | Type::BufferSlice(_)
+                | Type::BufferIterator(_)
+                | Type::BufferPairIterator(_)
+                | Type::BufferEntry(_)
         ) || matches!(target, Type::Record(r) if r.indirect)
             || matches!(target, Type::Enum(e) if e.indirect);
         // Nominal references and borrow-only views have no inline root layout.

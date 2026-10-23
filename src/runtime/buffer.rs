@@ -60,6 +60,67 @@ impl BufferIterator {
     }
 }
 
+/// Two columns advance together; neither cursor nor entry owns either payload.
+pub(crate) struct BufferPairIterator {
+    keys: BufferIterator,
+    values: BufferIterator,
+}
+pub(crate) struct BufferEntry {
+    pub(crate) key: *mut u8,
+    pub(crate) value: *mut u8,
+}
+impl BufferPairIterator {
+    pub(crate) fn new(
+        arena: &mut Arena,
+        keys: &Buffer,
+        values: &Buffer,
+    ) -> Result<NonNull<Self>, Error> {
+        if keys.len != values.len {
+            return Err(bounds_error(
+                "Paired iterator columns have different lengths",
+            ));
+        }
+        let layout = Layout::new::<Self>();
+        let result = arena
+            .allocate(layout.size(), layout.align())?
+            .cast::<Self>();
+        let cursor = |buffer: &Buffer| BufferIterator {
+            data: buffer.data,
+            len: buffer.len,
+            stride: buffer.element.size(),
+            position: Cell::new(0),
+        };
+        // All metadata is initialized before publishing this task-local descriptor.
+        unsafe {
+            result.as_ptr().write(Self {
+                keys: cursor(keys),
+                values: cursor(values),
+            });
+        }
+        Ok(result)
+    }
+    pub(crate) fn advance(&self) -> bool {
+        let next = self.keys.advance();
+        self.values.advance();
+        next
+    }
+    pub(crate) fn current(&self, arena: &mut Arena) -> Result<NonNull<BufferEntry>, Error> {
+        let entry = BufferEntry {
+            key: self.keys.current()?,
+            value: self.values.current()?,
+        };
+        let layout = Layout::new::<BufferEntry>();
+        let result = arena
+            .allocate(layout.size(), layout.align())?
+            .cast::<BufferEntry>();
+        // Snapshots preserve entry identity across subsequent shared advances.
+        unsafe {
+            result.as_ptr().write(entry);
+        }
+        Ok(result)
+    }
+}
+
 pub(crate) struct OwningGraph {
     pub allocations: Vec<NonNull<u8>>,
     pub buffers: Vec<NonNull<Buffer>>,
@@ -1178,6 +1239,65 @@ unsafe extern "C" fn iter_current(
     located((*iterator).current(), source, start, end)
 }
 
+/// # Safety
+/// Both initialized columns have compiler-checked element layouts and live on
+/// the exclusive arena's task thread. Source loans keep their payloads stable.
+#[export_name = "__joky_buffer_pair_iter"]
+unsafe extern "C" fn pair_iter(
+    arena: *mut Arena,
+    keys: *const Buffer,
+    values: *const Buffer,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut BufferPairIterator {
+    located(
+        BufferPairIterator::new(&mut *arena, &*keys, &*values).map(NonNull::as_ptr),
+        source,
+        start,
+        end,
+    )
+}
+/// # Safety
+/// The cursor and columns are live on the owning task thread; checked loans
+/// exclude conflicting exclusive entries and serialize cursor access.
+#[export_name = "__joky_buffer_pair_advance"]
+unsafe extern "C" fn pair_advance(cursor: *const BufferPairIterator) -> u8 {
+    (*cursor).advance() as u8
+}
+/// # Safety
+/// Cursor, columns and exclusive arena are live on one task thread. Returned
+/// metadata is arena-owned; source loans retain the referenced initialized items.
+#[export_name = "__joky_buffer_pair_current"]
+unsafe extern "C" fn pair_current(
+    arena: *mut Arena,
+    cursor: *const BufferPairIterator,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut BufferEntry {
+    located(
+        (*cursor).current(&mut *arena).map(NonNull::as_ptr),
+        source,
+        start,
+        end,
+    )
+}
+/// # Safety
+/// Entry and its key remain live on the owning task thread. The caller uses
+/// the checked key layout and grants only shared access to the returned storage.
+#[export_name = "__joky_buffer_entry_key"]
+unsafe extern "C" fn entry_key(entry: *const BufferEntry) -> *mut u8 {
+    (*entry).key
+}
+/// # Safety
+/// Entry and its value remain live on the owning task thread. The caller uses
+/// the checked value layout and enforces the source loan's access permissions.
+#[export_name = "__joky_buffer_entry_value"]
+unsafe extern "C" fn entry_value(entry: *const BufferEntry) -> *mut u8 {
+    (*entry).value
+}
+
 #[export_name = "__joky_buffer_slice"]
 unsafe extern "C" fn slice(
     arena: *mut Arena,
@@ -1323,8 +1443,13 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 24] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 29] {
     [
+        ("__joky_buffer_pair_iter", pair_iter as *const u8),
+        ("__joky_buffer_pair_advance", pair_advance as *const u8),
+        ("__joky_buffer_pair_current", pair_current as *const u8),
+        ("__joky_buffer_entry_key", entry_key as *const u8),
+        ("__joky_buffer_entry_value", entry_value as *const u8),
         ("__joky_buffer_iter", iter as *const u8),
         ("__joky_buffer_iter_advance", iter_advance as *const u8),
         ("__joky_buffer_iter_current", iter_current as *const u8),

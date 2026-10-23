@@ -99,7 +99,9 @@ impl<'a> Iterator for TypeWalk<'a> {
                 Type::Buffer(element)
                 | Type::BufferElement(element)
                 | Type::BufferSlice(element)
-                | Type::BufferIterator(element) => {
+                | Type::BufferIterator(element)
+                | Type::BufferPairIterator(element)
+                | Type::BufferEntry(element) => {
                     if !matches!(self.edges, TypeEdges::Arguments | TypeEdges::Inline) {
                         self.pending.push(element);
                     }

@@ -130,7 +130,14 @@ for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条�
 JIT/AOT 共用三个私有 runtime helper，解释器调用相同的描述符实现，不改变 CPS 帧 ABI。
 Slice 的两个游标构造原语使用独立受检签名，并与 Array 构造复用同一 runtime helper；
 已有切片头保存子区间地址、长度和元素布局，游标直接读取这些元数据。Map 的 keys/values/values_mut
-通过 Slice 接入，未新增 Map 布局、桶遍历或 key/value 借用聚合。
+通过 Slice 接入。Map.iter/iter_mut 使用独立的 BufferPairIterator 与 BufferEntry 借用目标，
+类型参数保留完整 K/V 身份，并参与相同的替换、布局资格、宿主拒绝及来源检查。
+受信任构造原语在具体实例化时验证拥有记录的 keys/values Array 字段及元素类型，
+后端按已检查字段偏移提取列控制块；不公开偏移或改变 Map 布局。运行时验证两列长度一致，
+两个游标位置同步推进。每次 current 在任务 arena 分配含两个元素地址的 Entry 快照，
+避免后续共享推进改变旧 Entry 身份；该实现逐项累计描述符预算，不拥有元素或放宽引用聚合规则。
+EntryKey 仅返回共享引用，EntryValueMut 需要独占 Entry；不增加 key/value 分离借用豁免。
+新增五个私有 runtime helper 由 JIT/AOT 共用，解释器调用相同的描述符操作。
 元素借用沿游标、切片回溯至原容器，取消时只有容器持有元素清理责任；描述符由任务 arena 统一释放。
 
 必须保留的语义约束：

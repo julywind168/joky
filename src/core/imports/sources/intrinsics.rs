@@ -12,6 +12,26 @@ fn parameter(f: &FnDef) -> Result<Type, Error> {
     Ok(Type::Parameter(parameter.clone()))
 }
 
+fn buffer_parameters(
+    f: &FnDef,
+    intrinsic: crate::parser::ast::BufferIntrinsic,
+) -> Result<Type, Error> {
+    if f.type_params.len() != intrinsic.type_parameter_count() {
+        return Err(error(
+            f.span,
+            ErrorCode::InvalidCall,
+            "Invalid compiler buffer type parameter count",
+        ));
+    }
+    if intrinsic.is_pair() {
+        Ok(Type::tuple(
+            f.type_params.iter().cloned().map(Type::Parameter).collect(),
+        ))
+    } else {
+        parameter(f)
+    }
+}
+
 pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<(), Error> {
     use crate::parser::ast::{BufferIntrinsic, CompilerIntrinsic::*, DomainAccessKind, FloatKind};
     for (index, attribute) in std::mem::take(&mut module.intrinsic_attributes) {
@@ -135,7 +155,7 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
                     .ok_or_else(|| unknown(&attribute))?;
                 declaration(&attribute, false)?;
                 f.buffer_intrinsic = Some(intrinsic);
-                f.buffer_element = Some(Box::new(parameter(f)?));
+                f.buffer_element = Some(Box::new(buffer_parameters(f, intrinsic)?));
                 continue;
             }
             _ => return Err(unknown(&attribute)),
@@ -217,7 +237,7 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
             |ty: &Type| matches!(ty.scalar_types(), [Type::Buffer(t)] if **t == Type::UInt8);
         let shared_text = Type::reference(Type::String, false);
         let expected = if let Some(intrinsic) = f.buffer_intrinsic {
-            Some(intrinsic.signature(&parameter(f)?))
+            Some(intrinsic.signature(&buffer_parameters(f, intrinsic)?))
         } else {
             match &f.compiler_intrinsic {
                 Some(ArenaNew) => Some(crate::FunctionSignature::new(

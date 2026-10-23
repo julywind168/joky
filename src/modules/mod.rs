@@ -232,6 +232,8 @@ pub(crate) fn validate_host_types(
                     | Type::BufferElement(_)
                     | Type::BufferSlice(_)
                     | Type::BufferIterator(_)
+                    | Type::BufferPairIterator(_)
+                    | Type::BufferEntry(_)
                     | Type::Parameter(_)
                     | Type::Applied(_)
             )

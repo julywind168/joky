@@ -1,3 +1,4 @@
+import joky/iter as iteration
 import joky/mem
 import joky/array as arrays.{type Array}
 import joky/element.{type Element}
@@ -28,6 +29,8 @@ impl<K, V> Map<K, V> {
     pub fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
     pub fn clear(&mut self) { clear(self) }
     pub fn release(self) { release(self) }
+    pub fn iter(&self) -> &Iter<K, V> { iter(self) }
+    pub fn iter_mut(&mut self) -> &mut Iter<K, V> { iter_mut(self) }
     pub fn keys(&self) -> &Slice<K> { keys(self) }
     pub fn values(&self) -> &Slice<V> { values(self) }
     pub fn values_mut(&mut self) -> &mut Slice<V> { values_mut(self) }
@@ -301,3 +304,15 @@ impl<K: Copy + Eq + Hash, V: Copy> Map<K, V> {
 impl<K: BorrowEq + BorrowHash, V: Copy> Map<K, V> {
     pub fn get_by_ref(&self, key: &K) @noescape(key) -> Option<V> { get_by_ref(self, key) }
 }
+
+
+pub type Iter<K, V> = iteration.Entries<K, V>
+pub type Entry<K, V> = iteration.Entry<K, V>
+pub fn iter<K, V>(table: &Map<K, V>) -> &Iter<K, V> { storage.pair_iter::<K, V, Map<K, V>>(table) }
+pub fn iter_mut<K, V>(table: &mut Map<K, V>) -> &mut Iter<K, V> { storage.pair_iter_mut::<K, V, Map<K, V>>(table) }
+pub fn advance<K, V>(cursor: &Iter<K, V>) -> Bool { iteration.entries_advance(cursor) }
+pub fn current<K, V>(cursor: &Iter<K, V>) -> &Entry<K, V> { iteration.entries_current(cursor) }
+pub fn current_mut<K, V>(cursor: &mut Iter<K, V>) -> &mut Entry<K, V> { iteration.entries_current_mut(cursor) }
+pub fn entry_key<K, V>(entry: &Entry<K, V>) -> &K { storage.entry_key(entry) }
+pub fn entry_value<K, V>(entry: &Entry<K, V>) -> &V { storage.entry_value(entry) }
+pub fn entry_value_mut<K, V>(entry: &mut Entry<K, V>) -> &mut V { storage.entry_value_mut(entry) }

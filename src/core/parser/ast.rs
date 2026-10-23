@@ -877,6 +877,14 @@ pub(crate) enum BufferIntrinsic {
     IterAdvance,
     IterCurrent,
     IterCurrentMut,
+    PairIter,
+    PairIterMut,
+    PairAdvance,
+    PairCurrent,
+    PairCurrentMut,
+    EntryKey,
+    EntryValue,
+    EntryValueMut,
 }
 
 #[derive(Debug, Clone)]

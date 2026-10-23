@@ -70,7 +70,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 37] = [
+    pub(crate) const ALL: [Self; 45] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
@@ -108,6 +108,14 @@ impl BufferIntrinsic {
         Self::IterAdvance,
         Self::IterCurrent,
         Self::IterCurrentMut,
+        Self::PairIter,
+        Self::PairIterMut,
+        Self::PairAdvance,
+        Self::PairCurrent,
+        Self::PairCurrentMut,
+        Self::EntryKey,
+        Self::EntryValue,
+        Self::EntryValueMut,
     ];
 
     pub(crate) fn borrows_storage(self) -> bool {
@@ -131,6 +139,13 @@ impl BufferIntrinsic {
                 | Self::SliceIterMut
                 | Self::IterCurrent
                 | Self::IterCurrentMut
+                | Self::PairIter
+                | Self::PairIterMut
+                | Self::PairCurrent
+                | Self::PairCurrentMut
+                | Self::EntryKey
+                | Self::EntryValue
+                | Self::EntryValueMut
         )
     }
     pub(crate) fn allocates(self) -> bool {
@@ -145,6 +160,10 @@ impl BufferIntrinsic {
                 | Self::IterMut
                 | Self::SliceIter
                 | Self::SliceIterMut
+                | Self::PairIter
+                | Self::PairIterMut
+                | Self::PairCurrent
+                | Self::PairCurrentMut
         )
     }
 
@@ -156,7 +175,101 @@ impl BufferIntrinsic {
             )
     }
 
+    pub(crate) fn is_pair(self) -> bool {
+        matches!(
+            self,
+            Self::PairIter
+                | Self::PairIterMut
+                | Self::PairAdvance
+                | Self::PairCurrent
+                | Self::PairCurrentMut
+                | Self::EntryKey
+                | Self::EntryValue
+                | Self::EntryValueMut
+        )
+    }
+    pub(crate) fn borrowed_element(self, element: &Type) -> &Type {
+        if matches!(
+            self,
+            Self::EntryKey | Self::EntryValue | Self::EntryValueMut
+        ) {
+            let Type::Tuple(parts) = element else {
+                unreachable!("checked entry types")
+            };
+            &parts.elements[usize::from(self != Self::EntryKey)]
+        } else {
+            element
+        }
+    }
+    pub(crate) fn type_parameter_count(self) -> usize {
+        if matches!(self, Self::PairIter | Self::PairIterMut) {
+            3
+        } else if self.is_pair() {
+            2
+        } else {
+            1
+        }
+    }
+    /// Validate the two initialized Array columns before reading their handles.
+    pub(crate) fn pair_offsets(element: &Type) -> Option<[usize; 2]> {
+        let Type::Tuple(parts) = element else {
+            return None;
+        };
+        let [key, value, owner] = parts.elements.as_slice() else {
+            return None;
+        };
+        if !owner.is_inline_owner() {
+            return None;
+        }
+        let mut offsets = [0; 2];
+        for (index, (name, ty)) in [("keys", key), ("values", value)].into_iter().enumerate() {
+            let (offset, field) = owner.storage_field_path(&[name.to_owned()]).ok()?;
+            if field.scalar_types() != [Type::Buffer(Arc::new(ty.clone()))] {
+                return None;
+            }
+            offsets[index] = offset;
+        }
+        Some(offsets)
+    }
     pub(crate) fn signature(self, element: &Type) -> crate::FunctionSignature {
+        if self.is_pair() {
+            let Type::Tuple(parts) = element else {
+                unreachable!("paired primitive parameters")
+            };
+            let pair = Arc::new(Type::tuple(parts.elements[..2].to_vec()));
+            let cursor = Type::BufferPairIterator(pair.clone());
+            let entry = Type::BufferEntry(pair);
+            let (params, result) = match self {
+                Self::PairIter | Self::PairIterMut => {
+                    let mutable = self == Self::PairIterMut;
+                    (
+                        vec![Type::reference(parts.elements[2].clone(), mutable)],
+                        Type::reference(cursor, mutable),
+                    )
+                }
+                Self::PairAdvance => (vec![Type::reference(cursor, false)], Type::Bool),
+                Self::PairCurrent | Self::PairCurrentMut => {
+                    let mutable = self == Self::PairCurrentMut;
+                    (
+                        vec![Type::reference(cursor, mutable)],
+                        Type::reference(entry, mutable),
+                    )
+                }
+                Self::EntryKey => (
+                    vec![Type::reference(entry, false)],
+                    Type::reference(parts.elements[0].clone(), false),
+                ),
+                Self::EntryValue | Self::EntryValueMut => {
+                    let mutable = self == Self::EntryValueMut;
+                    (
+                        vec![Type::reference(entry, mutable)],
+                        Type::reference(parts.elements[1].clone(), mutable),
+                    )
+                }
+                _ => unreachable!(),
+            };
+            return crate::FunctionSignature::new(params, result);
+        }
         let owner = Type::Buffer(Arc::new(element.clone()));
         let shared = Type::reference(owner.clone(), false);
         let exclusive = Type::reference(owner.clone(), true);
@@ -164,6 +277,14 @@ impl BufferIntrinsic {
         let slice = Type::BufferSlice(Arc::new(element.clone()));
         let iterator = Type::BufferIterator(Arc::new(element.clone()));
         let (params, result) = match self {
+            Self::PairIter
+            | Self::PairIterMut
+            | Self::PairAdvance
+            | Self::PairCurrent
+            | Self::PairCurrentMut
+            | Self::EntryKey
+            | Self::EntryValue
+            | Self::EntryValueMut => unreachable!(),
             Self::Iter => (vec![shared], Type::reference(iterator, false)),
             Self::IterMut => (vec![exclusive], Type::reference(iterator, true)),
             Self::SliceIter => (
@@ -275,7 +396,15 @@ impl BufferIntrinsic {
     pub(crate) fn may_fail(self) -> bool {
         !matches!(
             self,
-            Self::Len | Self::Capacity | Self::CapacityLimit | Self::SliceLen | Self::IterAdvance
+            Self::Len
+                | Self::Capacity
+                | Self::CapacityLimit
+                | Self::SliceLen
+                | Self::IterAdvance
+                | Self::PairAdvance
+                | Self::EntryKey
+                | Self::EntryValue
+                | Self::EntryValueMut
         )
     }
 
@@ -284,6 +413,9 @@ impl BufferIntrinsic {
         match self {
             Self::IterMut | Self::SliceIter | Self::SliceIterMut => "__joky_buffer_iter",
             Self::IterCurrentMut => "__joky_buffer_iter_current",
+            Self::PairIterMut => "__joky_buffer_pair_iter",
+            Self::PairCurrentMut => "__joky_buffer_pair_current",
+            Self::EntryValueMut => "__joky_buffer_entry_value",
             Self::Borrow
             | Self::BorrowRef
             | Self::BorrowMutRef
@@ -304,6 +436,14 @@ impl BufferIntrinsic {
 
     pub(crate) fn symbol(self) -> &'static str {
         match self {
+            Self::PairIter => "__joky_buffer_pair_iter",
+            Self::PairIterMut => "__joky_buffer_pair_iter_mut",
+            Self::PairAdvance => "__joky_buffer_pair_advance",
+            Self::PairCurrent => "__joky_buffer_pair_current",
+            Self::PairCurrentMut => "__joky_buffer_pair_current_mut",
+            Self::EntryKey => "__joky_buffer_entry_key",
+            Self::EntryValue => "__joky_buffer_entry_value",
+            Self::EntryValueMut => "__joky_buffer_entry_value_mut",
             Self::Iter => "__joky_buffer_iter",
             Self::IterMut => "__joky_buffer_iter_mut",
             Self::SliceIter => "__joky_buffer_slice_iter",
@@ -400,6 +540,14 @@ impl FunctionPlan {
                     | BufferIntrinsic::IterAdvance
                     | BufferIntrinsic::IterCurrent
                     | BufferIntrinsic::IterCurrentMut
+                    | BufferIntrinsic::PairIter
+                    | BufferIntrinsic::PairIterMut
+                    | BufferIntrinsic::PairAdvance
+                    | BufferIntrinsic::PairCurrent
+                    | BufferIntrinsic::PairCurrentMut
+                    | BufferIntrinsic::EntryKey
+                    | BufferIntrinsic::EntryValue
+                    | BufferIntrinsic::EntryValueMut
             )
         {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
@@ -419,6 +567,14 @@ impl FunctionPlan {
                 | BufferIntrinsic::SliceIterMut
                 | BufferIntrinsic::IterCurrent
                 | BufferIntrinsic::IterCurrentMut
+                | BufferIntrinsic::PairIter
+                | BufferIntrinsic::PairIterMut
+                | BufferIntrinsic::PairAdvance
+                | BufferIntrinsic::PairCurrent
+                | BufferIntrinsic::PairCurrentMut
+                | BufferIntrinsic::EntryKey
+                | BufferIntrinsic::EntryValue
+                | BufferIntrinsic::EntryValueMut
         ) && !element.is_owner()
             && (!element.is_copy_storage_value() || element.contains_references())
             && !matches!(element, Type::Parameter(_) | Type::Projection(_))
@@ -428,6 +584,17 @@ impl FunctionPlan {
                 ErrorCode::TypeMismatch,
                 "borrow_ref and borrow_mut_ref require reference-free elements",
             ));
+        }
+        // Rigid template parameters have no physical fields yet; each concrete
+        // instantiation must prove its two column layouts before backend lowering.
+        if matches!(
+            intrinsic,
+            BufferIntrinsic::PairIter | BufferIntrinsic::PairIterMut
+        ) && !matches!(element, Type::Tuple(parts) if matches!(parts.elements.get(2), Some(Type::Parameter(_) | Type::Projection(_))))
+            && BufferIntrinsic::pair_offsets(element).is_none()
+        {
+            return Err(type_error(&f.span, ErrorCode::TypeMismatch,
+                "Paired iteration requires an owning record with matching keys and values Array fields"));
         }
         let signature = intrinsic.signature(element);
         if f.suspends
@@ -505,12 +672,16 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         }
         if matches!(
             ty,
-            Type::BufferElement(_) | Type::BufferSlice(_) | Type::BufferIterator(_)
+            Type::BufferElement(_)
+                | Type::BufferSlice(_)
+                | Type::BufferIterator(_)
+                | Type::BufferPairIterator(_)
+                | Type::BufferEntry(_)
         ) {
             return Err(type_error(
                 &info.span,
                 ErrorCode::TypeMismatch,
-                "Element, Slice and Iter are borrow-only targets; use & or &mut",
+                "Element, Slice, Iter, Entries and Entry are borrow-only targets; use & or &mut",
             ));
         }
         // Owner reference targets retain nominal identity rather than inline

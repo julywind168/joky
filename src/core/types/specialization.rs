@@ -380,7 +380,9 @@ pub(crate) fn substitute(
             Type::Buffer(element)
             | Type::BufferElement(element)
             | Type::BufferSlice(element)
-            | Type::BufferIterator(element) => {
+            | Type::BufferIterator(element)
+            | Type::BufferPairIterator(element)
+            | Type::BufferEntry(element) => {
                 let result = ty.with_buffer_element(visit(element, substitutions, types, cache)?);
                 types.validate(&result)?;
                 result
@@ -590,7 +592,9 @@ pub(crate) fn unify(
             (Type::Buffer(a), Type::Buffer(b))
             | (Type::BufferElement(a), Type::BufferElement(b))
             | (Type::BufferSlice(a), Type::BufferSlice(b))
-            | (Type::BufferIterator(a), Type::BufferIterator(b)) => pending.push((a, b)),
+            | (Type::BufferIterator(a), Type::BufferIterator(b))
+            | (Type::BufferPairIterator(a), Type::BufferPairIterator(b))
+            | (Type::BufferEntry(a), Type::BufferEntry(b)) => pending.push((a, b)),
             (Type::Reference(a), Type::Reference(b)) if a.mutable == b.mutable || !a.mutable => {
                 pending.push((&a.target, &b.target))
             }
