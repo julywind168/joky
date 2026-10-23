@@ -865,11 +865,14 @@ pub(super) fn check_module(
     }
     for (name, body) in bodies {
         let info = &functions[name];
-        if info.signature.ret.contains_closures() {
+        if info.signature.ret.contains_closures()
+            && (info.signature.ret.contains_unstorable_closures()
+                || info.signature.ret.reference_type().is_some())
+        {
             return Err(type_error(
                 &info.span,
                 ErrorCode::TypeMismatch,
-                "Closure values and references cannot be returned",
+                "Only reference-free move closure values can be returned",
             ));
         }
         if info.suspends && info.signature.params.iter().any(Type::contains_closures) {

@@ -222,6 +222,12 @@ impl Type {
     pub(crate) fn contains_closures(&self) -> bool {
         TypeWalk::new(self, TypeEdges::Storage).any(Type::is_closure_value)
     }
+    /// Only reference-free move environments may leave their creating scope.
+    /// Abstract callable parameters are checked again at concrete specialization.
+    pub(crate) fn contains_unstorable_closures(&self) -> bool {
+        TypeWalk::new(self, TypeEdges::Fields)
+            .any(|ty| ty.closure_info().is_some_and(|c| !c.storable))
+    }
     pub(crate) fn closure_info(&self) -> Option<&ClosureInfo> {
         match self {
             Self::Record(record) => record.closure.as_deref(),
@@ -265,7 +271,11 @@ impl Type {
     /// A movable owning value, including aggregates with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
         match self {
-            Self::Record(r) => !r.owners.is_empty() || r.scalars.iter().any(Type::is_owner_lane),
+            Self::Record(r) => {
+                !r.owners.is_empty()
+                    || r.scalars.iter().any(Type::is_owner_lane)
+                    || r.closure.is_none() && r.scalars.iter().any(Type::is_callable_parameter)
+            }
             Self::Enum(e) => !e.owners.is_empty() || e.scalars.iter().any(Type::is_owner_lane),
             Self::Tuple(t) => !t.owners.is_empty() || t.scalars.iter().any(Type::is_owner_lane),
             _ => self.is_owner_lane(),
@@ -339,6 +349,9 @@ impl Type {
     /// moved between ordinary CPS activations. Borrowed views and aggregates
     /// containing references still require synchronous use.
     pub(crate) fn is_suspend_safe_owner(&self) -> bool {
+        if self.contains_closures() {
+            return false;
+        }
         fn safe_storage(ty: &Type) -> bool {
             if ty.contains_references() {
                 return false;
@@ -411,6 +424,9 @@ impl Type {
     /// elements move as a whole and recursively require reference-free contents.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
+        if self.contains_closures() {
+            return false;
+        }
         if self.contains_fixed_array() {
             return self.is_place() && self.is_fixed_array_data();
         }
@@ -519,10 +535,13 @@ impl Type {
     }
     pub(crate) fn contains_references(&self) -> bool {
         self.is_callable_parameter()
-            || self
-                .scalar_types()
-                .iter()
-                .any(|ty| ty.reference_type().is_some() || ty.is_callable_parameter())
+            || self.scalar_types().iter().any(|ty| {
+                ty.reference_type().is_some()
+                    || ty.is_callable_parameter()
+                    // Callable fields are admitted only through a record
+                    // specialization that rejects borrowing environments.
+                    && !matches!(self, Self::Record(r) if r.closure.is_none())
+            })
     }
     pub(crate) fn reference_type(&self) -> Option<&ReferenceType> {
         match self {
@@ -717,6 +736,7 @@ pub(crate) enum CallableKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClosureInfo {
+    pub storable: bool,
     pub mode: CallableKind,
     pub signature: crate::FunctionSignature,
     pub entry: String,
@@ -852,6 +872,7 @@ impl PartialEq for TypeParameter {
 impl Eq for TypeParameter {}
 
 /// A resolved nominal type. Only repr_c records promise a C memory layout.
+#[derive(Clone)]
 pub struct RecordType {
     /// Identity installed only on the embedded Array declaration.
     pub(crate) array: bool,
@@ -889,7 +910,7 @@ impl PartialEq for RecordType {
 }
 impl Eq for RecordType {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct RecordField {
     pub private: bool,
     pub name: String,

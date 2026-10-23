@@ -28,8 +28,14 @@ fn closure_owning_cleanup_executes_in_standalone_native_code() {
         extern int32_t argument_order(void), consuming_argument_failure(void);
         extern int32_t lazy_skipped(void), lazy_consumed(void), lazy_error_consumed(void);
         extern int32_t query_owned(void), query_temporary(void), lazy_failure(void), lazy_cancellation_work(void);
+        extern int32_t stored_work(void), stored_unused(void), stored_replace(void), stored_failure(void), stored_drop_failure(void), stored_return_drop_failure(void), stored_empty_drop(void);
         int main(void) {
             struct Case { int32_t (*call)(void); int fails, count; int32_t events[6]; } cases[] = {
+                {stored_empty_drop, 0, 1, {7}},
+                {stored_work, 0, 4, {-1,-2,2,1}}, {stored_unused, 0, 2, {-1,1}},
+                {stored_replace, 0, 4, {-1,-2,1,2}}, {stored_failure, 1, 4, {-1,-2,1,2}},
+                {stored_return_drop_failure, 1, 4, {-1,-4,4,1}},
+                {stored_drop_failure, 1, 4, {-4,-5,4,5}},
                 {lazy_skipped, 0, 4, {-1,1,-2,2}}, {lazy_consumed, 0, 2, {-1,1}},
                 {lazy_cancellation_work, 0, 4, {-1,-2,2,1}}, {lazy_error_consumed, 0, 2, {-1,1}}, {query_owned, 0, 4, {-1,-2,2,1}},
                 {query_temporary, 0, 3, {-1,1,100}}, {lazy_failure, 1, 4, {-1,-2,1,2}},

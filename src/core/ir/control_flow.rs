@@ -94,8 +94,12 @@ impl FunctionPlan {
         }
     }
 
-    fn check_return(&self, value: &Option<Slot>, span: &Span) -> Result<(), Error> {
+    pub(super) fn check_return(&mut self, value: &Option<Slot>, span: &Span) -> Result<(), Error> {
         let actual = slot_type(value);
+        if self.infer_return {
+            self.return_type = actual.clone();
+            self.infer_return = false;
+        }
         if actual != self.return_type {
             return Err(type_error(
                 span,
@@ -183,13 +187,14 @@ impl FunctionPlan {
         match expr {
             Expr::Return { value, span } => {
                 let value = if let Some(value) = value {
+                    let expected = (!self.infer_return).then(|| self.return_type.clone());
                     let Flow::Value(value) = self.expr_expected(
                         value,
                         vars,
                         functions,
                         suspends,
                         types,
-                        Some(&self.return_type.clone()),
+                        expected.as_ref(),
                     )?
                     else {
                         return Ok(Flow::Diverged);

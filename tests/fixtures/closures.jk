@@ -169,3 +169,65 @@ fn lazy_cancellation_work() -> Int32 {
     result.id + 41
 }
 fn lazy_closure_task() @suspends -> Int32 { lazy_cancellation_work() }
+
+// Stored environments keep ordinary record ownership and synchronous calls.
+struct Stored<T> { callback: T }
+fn stored_box<T>(callback: T) -> Stored<T> { Stored { callback } }
+fn stored_take<T>(value: Stored<T>) -> T { return value.callback }
+fn stored_read<F: Fn() -> Int32>(value: &Stored<F>) -> Int32 { (&value.callback)() }
+fn stored_work() -> Int32 {
+    let first = resource(1)
+    let reader = stored_box(move || { first.id })
+    let second = resource(2)
+    let consumer = stored_box(stored_box(move || { second }))
+    let f = stored_take(stored_take(consumer))
+    let result = f()
+    stored_read(&reader) + result.id + 39
+}
+fn stored_task() @suspends -> Int32 { stored_work() }
+fn stored_unused() -> Int32 {
+    let value = resource(1)
+    let boxed = stored_box(move || { value })
+    let nested = stored_box(boxed)
+    42
+}
+fn stored_failure() -> Int32 {
+    let a = resource(1)
+    let b = resource(2)
+    let saved = stored_box(move || { a.id + b.id })
+    assert(false, "Stored closure failure")
+    stored_read(&saved)
+}
+fn stored_replace() -> Int32 {
+    let make = |id: Int32| {
+        let value = resource(id)
+        move || { value.id }
+    }
+    var saved = stored_box(make(1))
+    saved = stored_box(make(2))
+    stored_read(&saved) + 40
+}
+fn stored_drop_failure() -> Int32 {
+    let a = resource(4)
+    let b = resource(5)
+    let saved = stored_box(move || { a.id + b.id })
+    42
+}
+fn stored_return_drop_failure() -> Int32 {
+    let make = || {
+        let value = resource(1)
+        let guard = resource(4)
+        move || { value.id }
+    }
+    let result = make()
+    result()
+}
+struct GuardedCallback<T> { callback: T }
+impl<T> Drop for GuardedCallback<T> {
+    fn drop(&mut self) { closure_event(7) }
+}
+fn stored_empty_drop() -> Int32 {
+    let callback = move || { 42 }
+    let guard = GuardedCallback { callback }
+    42
+}

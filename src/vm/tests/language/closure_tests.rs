@@ -42,6 +42,101 @@ fn rejects(source: &str) {
 }
 
 #[test]
+fn closure_storage_move_values_return_and_record_fields() {
+    executes(
+        r#"
+        struct Holder<T> { value: T }
+        fn keep<T>(value: T) -> T { value }
+        type Saved<T> = Holder<T>
+        fn wrap<T>(value: T) -> Saved<T> { Holder { value } }
+        fn unwrap<T>(holder: Holder<T>) -> T { let Holder { value } = holder; value }
+        fn probe() -> Int32 {
+            let offset = 40
+            let f = keep(move |x: Int32| { offset + x })
+            let holder = wrap(f)
+            let g = unwrap(holder)
+            g(2)
+        }
+    "#,
+        42,
+    );
+}
+
+#[test]
+fn closure_storage_callable_fields_and_returned_environments() {
+    executes(
+        r#"
+        struct Holder<T> { value: T }
+        fn wrap<T>(value: T) -> Holder<T> { Holder { value } }
+        fn read<F: Fn() -> Int32>(holder: &Holder<F>) -> Int32 { (&holder.value)() }
+        fn update<F: FnMut() -> Int32>(holder: &mut Holder<F>) -> Int32 { (&mut holder.value)() }
+        fn consume<F: FnOnce() -> Int32>(holder: Holder<F>) -> Int32 { let f = holder.value; f() }
+        fn forward<F: Fn() -> Int32>(f: F) -> F { f }
+        fn probe() -> Int32 {
+            let offset = 20
+            let f = move || { offset }
+            let factory = move || { f }
+            let g = forward(factory())
+            let holder = wrap(g)
+            var count = 0
+            var counter = wrap(move || { count += 1; count })
+            let one = update(&mut counter)
+            let two = update(&mut counter)
+            let first = read(&holder)
+            let last = consume(holder)
+            first + last + two - one + 1
+        }
+    "#,
+        42,
+    );
+}
+
+#[test]
+fn closure_storage_factory_infers_nested_move_environment() {
+    executes(
+        r#"
+        fn probe() -> Int32 {
+            let make = |offset: Int32| { move |x: Int32| { x + offset } }
+            let add = make(20)
+            let other = make(30)
+            add(1) + other(-9)
+        }
+    "#,
+        42,
+    );
+    executes(
+        r#"
+        fn apply<T, F: FnOnce(Int32) -> T>(f: F) -> T { f(40) }
+        fn probe() -> Int32 {
+            let add = apply(|offset| { move |x: Int32| { offset + x } })
+            add(2)
+        }
+    "#,
+        42,
+    );
+}
+
+#[test]
+fn closure_storage_rejects_borrow_escape_copy_and_unsupported_storage() {
+    for body in [
+        "let n = 1; let f = || { n }; wrap(f)",
+        "let n = 1; let r = &n; let f = move || { *r }; wrap(f)",
+        "let p = alloc(1); let refs = [&*p]; let f = move || { refs.len() }; wrap(f)",
+        "let n = 1; let f = || { n }; let g = move || { f() }; wrap(g)",
+        "let f = move || { 1 }; let h = wrap(f); let other = h; let again = h",
+        "let f = move || { 1 }; let h = wrap(f); let other = h.value; let again = h.value",
+        "let f = move || { 1 }; let h = wrap(f); let r = &h; let other = h; consume_ref(r)",
+        "let f = move || { 1 }; let t = (f, 1)",
+        "let f = move || { 1 }; let a = [f]",
+        "let f = move || { 1 }; let h = wrap(f); let a = [h]",
+        "let f = move || { 1 }; let e = Some(f)",
+    ] {
+        let source = format!("struct Holder<T> {{ value: T }} fn wrap<T>(value: T) -> Holder<T> {{ Holder {{ value }} }} fn consume_ref<T>(value: &Holder<T>) {{}} fn probe() {{ {body}; {{}} }}");
+        super::support::frontend_error(&source, &crate::ModuleSources::new());
+    }
+}
+
+#[test]
 fn closure_noncapturing_direct_indirect_and_contextual_calls() {
     executes(
         r#"
@@ -200,7 +295,9 @@ fn closure_nested_captures_helpers_and_hidden_lifetimes() {
     executes("fn apply<F: FnMut() -> Int32>(f: &mut F) -> Int32 { f() } fn probe() -> Int32 { var n = 41; var f = || { n = n + 1; n }; apply(&mut f) }", 42);
     executes("fn forward<F: FnOnce(Int32) -> Int32>(f: F) -> Int32 { apply(f) } fn apply<F: FnOnce(Int32) -> Int32>(f: F) -> Int32 { f(40) } fn probe() -> Int32 { let n = 2; forward(|x| { x + n }) }", 42);
     executes("fn probe() -> Int32 { let n = 42; let f = || { let saved = n; { var n = 0; n = 1 }; saved }; f() }", 42);
-    rejects("fn bad<F: FnOnce() -> Int32>(f: F) -> F { f } fn probe() {}");
+    rejects(
+        "fn bad<F: FnOnce() -> Int32>(f: F) -> F { f } fn probe() { let n = 1; bad(|| { n }) }",
+    );
     rejects("fn bad<F: FnOnce() -> Int32>(f: &F) -> Int32 { f() } fn probe() {}");
     rejects("fn identity<T>(x: T) -> T { x } fn probe() { let f = || { 1 }; identity(f) }");
     rejects("fn probe() { let f = || { 1 }; let g = || { let moved = f; moved() } }");
@@ -240,6 +337,25 @@ fn closure_owning_cleanup_success_skip_consume_and_failure() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = owner_vm(mode);
         for (name, expected, error) in [
+            ("stored_empty_drop", vec![7], None),
+            ("stored_work", vec![-1, -2, 2, 1], None),
+            ("stored_unused", vec![-1, 1], None),
+            ("stored_replace", vec![-1, -2, 1, 2], None),
+            (
+                "stored_failure",
+                vec![-1, -2, 1, 2],
+                Some("Stored closure failure"),
+            ),
+            (
+                "stored_return_drop_failure",
+                vec![-1, -4, 4, 1],
+                Some("First closure drop failure"),
+            ),
+            (
+                "stored_drop_failure",
+                vec![-4, -5, 4, 5],
+                Some("First closure drop failure"),
+            ),
             ("unused", vec![-1, -2, 1, 2], None),
             ("lazy_skipped", vec![-1, 1, -2, 2], None),
             ("lazy_consumed", vec![-1, 1], None),
@@ -291,7 +407,7 @@ fn closure_owning_cleanup_success_skip_consume_and_failure() {
 }
 fn cancellation(sweep: super::support::CancellationSweep) {
     let mut vm = owner_vm(VmMode::Interpreter);
-    for entry in ["closure_task", "lazy_closure_task"] {
+    for entry in ["closure_task", "lazy_closure_task", "stored_task"] {
         super::support::assert_cancellation(
             &mut vm,
             entry,

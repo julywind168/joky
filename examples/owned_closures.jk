@@ -1,0 +1,33 @@
+import joky/io.{println}
+
+// Store reference-free move closures without naming their environment types.
+struct Callback<F> { callback: F }
+fn save<F>(callback: F) -> Callback<F> { Callback { callback } }
+fn evaluate<F: Fn(Int32) -> Int32>(operation: &Callback<F>, value: Int32) -> Int32 {
+    (&operation.callback)(value)
+}
+fn step<F: FnMut() -> Int32>(operation: &mut Callback<F>) -> Int32 {
+    (&mut operation.callback)()
+}
+fn take<F: FnOnce() -> String>(operation: Callback<F>) -> String {
+    let callback = operation.callback
+    callback()
+}
+
+fn main() {
+    let make_adder = |offset: Int32| { move |value: Int32| { value + offset } }
+    let adder = save(make_adder(40))
+    println(evaluate(&adder, 2))
+
+    let make_counter = |initial: Int32| {
+        var count = initial
+        move || { count += 1; count }
+    }
+    var counter = save(make_counter(0))
+    println(step(&mut counter))
+    println(step(&mut counter))
+
+    let message = "stored"
+    let once = save(move || { message })
+    println(take(once))
+}

@@ -349,10 +349,18 @@ impl FunctionPlan {
             });
         }
         if target.is_closure_value() {
-            self.emit(Op::Closure(Box::new(closures::ClosureOp::Move {
-                dst: dst.clone().unwrap(),
-                src: owner.field_path(&path),
-            })));
+            let dst = dst.clone().unwrap();
+            // Owning extraction is checked through its containing owner. Local
+            // borrowing environments still need their separate affine move.
+            let op = if target.is_owner() {
+                closures::ClosureOp::Init(dst)
+            } else {
+                closures::ClosureOp::Move {
+                    dst,
+                    src: owner.field_path(&path),
+                }
+            };
+            self.emit(Op::Closure(Box::new(op)));
         }
         Ok(dst)
     }
@@ -368,7 +376,7 @@ impl FunctionPlan {
     }
 
     fn owner_borrow_target(&self, target: &Type, span: Span) -> Result<(), Error> {
-        if !target.is_owner() {
+        if !target.is_owner() && !target.is_callable_parameter() {
             return Err(type_error(&span, ErrorCode::InvalidAssignment,
                 "Only owning fields can be borrowed from owning records; read or write Copy fields directly"));
         }
@@ -415,9 +423,14 @@ impl FunctionPlan {
                 format!("Undefined local binding '{name}'"),
             )
         })?;
-        if let Some(src) = binding.slot.as_ref().filter(|s| s.ty.is_buffer_view()) {
-            if !path.is_empty() && src.ty.reference_type().unwrap().target.is_owner() {
-                let r = src.ty.reference_type().unwrap();
+        if let Some(src) = binding
+            .slot
+            .as_ref()
+            .filter(|s| s.ty.reference_type().is_some())
+        {
+            let r = src.ty.reference_type().unwrap();
+            let root = self.pointee(&r.target, &self.type_registry)?;
+            if !path.is_empty() && root.is_owner() {
                 if mutable && !r.mutable {
                     return Err(type_error(
                         &span,
@@ -425,7 +438,6 @@ impl FunctionPlan {
                         "Cannot borrow an owning field through a shared reference as mutable",
                     ));
                 }
-                let root = self.pointee(&r.target, &self.type_registry)?;
                 let target = self.field_target(root.clone(), &path, span)?;
                 self.owner_borrow_target(&target, span)?;
                 let dst = self.slot(Type::reference(target, mutable))?;

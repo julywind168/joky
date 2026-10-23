@@ -318,7 +318,11 @@ impl FunctionPlan {
         self.closure_places.insert(dst.index, place.clone());
         self.emit(Op::Literal(
             dst.scalars().next().unwrap(),
-            Constant::UInt8(0),
+            if environment.closure.as_ref().unwrap().storable {
+                Constant::NullPtr
+            } else {
+                Constant::UInt8(0)
+            },
         ));
         for (index, (name, _, _)) in captures.iter().enumerate() {
             let expression = Expr::Ident {
@@ -449,6 +453,10 @@ impl FunctionPlan {
                 "Anonymous function return type mismatch",
             ));
         }
+        // Signature-only hints cannot name an environment returned by a nested
+        // literal. Let its checked body supply the concrete return identity.
+        let infer_return =
+            function.ret.is_none() && expected_signature.is_none() && ret.contains_functions();
         let signature = crate::FunctionSignature::new(
             params.iter().map(|p| p.ty.clone()).collect(),
             ret.clone(),
@@ -461,7 +469,9 @@ impl FunctionPlan {
             .find(|c| c.parent == self.source_function && c.site == function.span)
             .cloned();
         let environment = if let Some(cached) = cached {
-            if cached.environment.closure.as_ref().unwrap().signature != signature {
+            let previous = &cached.environment.closure.as_ref().unwrap().signature;
+            if previous.params != signature.params || !infer_return && previous.ret != signature.ret
+            {
                 return Err(type_error(
                     &function.span,
                     ErrorCode::TypeMismatch,
@@ -477,7 +487,7 @@ impl FunctionPlan {
                 function.span,
             )?;
             let entry = format!("__joky_closure_{count}_{}", self.source_function);
-            let pointer_entry = captures.is_empty().then(|| format!("{entry}_pointer"));
+            let mut pointer_entry = captures.is_empty().then(|| format!("{entry}_pointer"));
             let mut mutations = HashSet::new();
             walk_free(function, |expr, bound| {
                 let local = vars
@@ -562,14 +572,44 @@ impl FunctionPlan {
             } else {
                 CallableKind::Fn
             };
+            let mut storable = function.moving;
+            let mut pending: Vec<_> = captures.iter().map(|(_, ty, _)| ty.clone()).collect();
+            let mut checked = Vec::new();
+            let mut budget = 65_536usize;
+            while storable {
+                let Some(ty) = pending.pop() else {
+                    break;
+                };
+                budget = budget.checked_sub(checked.len().max(1)).ok_or_else(|| {
+                    type_error(
+                        &function.span,
+                        ErrorCode::ResourceLimit,
+                        "Closure storage analysis exceeds its compilation budget",
+                    )
+                })?;
+                if checked.contains(&ty) {
+                    continue;
+                }
+                checked.push(ty.clone());
+                let ty = self.pointee(&ty, types)?;
+                storable = !ty.contains_references() && !ty.contains_unstorable_closures();
+                pending.extend(ty.buffer_elements().iter().map(|ty| (**ty).clone()));
+            }
+            // A null owner lane gives even an empty movable environment a stable
+            // cleanup/move identity. It never allocates or owns a buffer payload.
+            let identity = if storable {
+                Type::Buffer(Arc::new(Type::Unit))
+            } else {
+                Type::UInt8
+            };
             let mut fields = vec![RecordField {
                 private: true,
                 name: "$identity".into(),
-                ty: Type::UInt8,
+                ty: identity.clone(),
                 offset: 0,
             }];
-            let mut scalars = vec![Type::UInt8];
-            let mut owners = Vec::new();
+            let mut scalars = vec![identity.clone()];
+            let mut owners = identity.buffer_elements().to_vec();
             let mut depth = 1;
             for (index, (name, ty, _)) in captures.iter().enumerate() {
                 if ty.contains_fixed_array() {
@@ -607,6 +647,7 @@ impl FunctionPlan {
                 Arc::new(RecordType {
                     array: false,
                     closure: Some(Arc::new(ClosureInfo {
+                        storable,
                         mode,
                         signature: signature.clone(),
                         entry: entry.clone(),
@@ -728,13 +769,14 @@ impl FunctionPlan {
                         capabilities: capabilities.clone(),
                     },
                 );
-                match FunctionPlan::new(
+                match FunctionPlan::new_with_return_inference(
                     &definition,
                     functions,
                     types,
                     &self.nominals,
                     self.generics.clone(),
                     self.instantiation_depth + 1,
+                    infer_return,
                 ) {
                     Ok(plan) => {
                         planned = Some(plan);
@@ -761,6 +803,25 @@ impl FunctionPlan {
                     Err(error) => return Err(error),
                 }
             }
+            let return_type = planned.as_ref().unwrap().return_type.clone();
+            // An inferred environment has no source-spellable function-pointer
+            // signature. Do not re-plan a second copy with a different identity.
+            if return_type.contains_closures() {
+                if let Some(name) = pointer_entry.take() {
+                    self.generics.borrow_mut().generated_functions.remove(&name);
+                }
+                Arc::make_mut(Arc::make_mut(&mut environment).closure.as_mut().unwrap())
+                    .pointer_entry = None;
+            }
+            info.signature.ret = return_type.clone();
+            definition.ret_ty = return_type.clone();
+            Arc::make_mut(Arc::make_mut(&mut environment).closure.as_mut().unwrap())
+                .signature
+                .ret = return_type;
+            self.generics
+                .borrow_mut()
+                .generated_functions
+                .insert(entry.clone(), info.clone());
             self.generics
                 .borrow_mut()
                 .generated_bodies
@@ -774,7 +835,7 @@ impl FunctionPlan {
                 definition.params.remove(0);
                 info.closure_entry = false;
                 info.noescape_params.clear();
-                info.signature = signature.clone();
+                info.signature = environment.closure.as_ref().unwrap().signature.clone();
                 self.generics
                     .borrow_mut()
                     .generated_functions
@@ -1114,12 +1175,47 @@ impl FunctionPlan {
 
 /// Definite move validity follows the IR CFG, including loops and abrupt exits.
 pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Error> {
+    fn environments(slot: &Slot, budget: &mut usize, span: Span) -> Result<Vec<usize>, Error> {
+        let mut slots = vec![slot.clone()];
+        let mut result = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(slot) = slots.pop() {
+            *budget = budget.checked_sub(1).ok_or_else(|| {
+                type_error(
+                    &span,
+                    ErrorCode::ResourceLimit,
+                    "Closure move analysis exceeds its compilation budget",
+                )
+            })?;
+            if slot.ty.is_closure_value() {
+                result.push(slot.index);
+            }
+            if let Type::Record(record) = &slot.ty {
+                if !seen.insert((slot.index, record.id)) {
+                    continue;
+                }
+                slots.extend(
+                    record
+                        .fields
+                        .iter()
+                        .map(|field| slot.field_path(std::slice::from_ref(&field.name))),
+                );
+            }
+        }
+        Ok(result)
+    }
+    let mut budget = 2_000_000usize;
     let mut initial = BTreeSet::new();
     let mut index = 0;
     for ty in &info.signature.params {
-        if ty.is_closure_value() {
-            initial.insert(index);
-        }
+        initial.extend(environments(
+            &Slot {
+                index,
+                ty: ty.clone(),
+            },
+            &mut budget,
+            plan.span,
+        )?);
         index += ty.parameter_slots();
     }
     let mut labels = vec![plan.ops.len(); plan.label_count];
@@ -1131,7 +1227,6 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
     let mut states = vec![None; plan.ops.len() + 1];
     states[0] = Some(initial);
     let mut pending = VecDeque::from([0]);
-    let mut budget = 2_000_000usize;
     while let Some(pc) = pending.pop_front() {
         if pc == plan.ops.len() {
             continue;
@@ -1171,6 +1266,34 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                 }
                 ClosureOp::Access(_) | ClosureOp::BorrowCapture { .. } => {}
             }
+        }
+        match &plan.ops[pc] {
+            Op::Call {
+                result: Some(dst), ..
+            }
+            | Op::ReadOwner { dst: Some(dst), .. } => {
+                live.extend(environments(dst, &mut budget, plan.span)?);
+            }
+            Op::Buffer(BufferOp::Move { dst, src }) => {
+                for index in environments(src, &mut budget, plan.span)? {
+                    live.remove(&index);
+                }
+                live.extend(environments(dst, &mut budget, plan.span)?);
+            }
+            Op::Buffer(
+                BufferOp::Extract { dst, owner, .. } | BufferOp::Detach { dst, owner, .. },
+            ) => {
+                for index in environments(owner, &mut budget, plan.span)? {
+                    live.remove(&index);
+                }
+                live.extend(environments(dst, &mut budget, plan.span)?);
+            }
+            Op::Buffer(BufferOp::End(src)) => {
+                for index in environments(src, &mut budget, plan.span)? {
+                    live.remove(&index);
+                }
+            }
+            _ => {}
         }
         let successors = match &plan.ops[pc] {
             Op::Panic { .. } => vec![],

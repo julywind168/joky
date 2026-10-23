@@ -746,6 +746,10 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         // An empty owning enum initializes its inactive owner lanes to null.
         && !plan.ops.iter().any(|op| {
             matches!(op, Op::Literal(dst, Constant::NullPtr) if dst.ty.is_owner_lane())
+                // A synchronous factory can return an environment whose only
+                // owner lane is its null move identity, without allocating data.
+                || matches!(op, Op::Call { result: Some(dst), .. }
+                    if dst.ty.contains_closures() && !dst.ty.contains_unstorable_closures())
         })
         && !signature.params.iter().any(|ty| {
             ty.is_owner()

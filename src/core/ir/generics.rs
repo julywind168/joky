@@ -405,7 +405,7 @@ impl FunctionPlan {
             if ty.contains_explicit_arena() && !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) {
                 return Err(type_error(span, ErrorCode::TypeMismatch, "Arena capabilities cannot be generic type arguments"));
             }
-            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_closures() || !ty.is_copy_storage_value() && !ty.is_owner()) {
+            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_unstorable_closures() || !ty.is_copy_storage_value() && !ty.is_owner()) {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
             }
@@ -465,6 +465,7 @@ impl FunctionPlan {
                         return Ok(());
                     }
                     let mut signature = signature;
+                    let mut infer_environment_result = false;
                     if unresolved(&signature.ret, inference.params, &inference.substitutions) {
                         let mut hints = vars.clone();
                         for (p, ty) in function.params.iter().zip(&signature.params) {
@@ -475,15 +476,35 @@ impl FunctionPlan {
                         }) else {
                             return Ok(());
                         };
+                        infer_environment_result =
+                            function.ret.is_none() && ret.contains_functions();
                         signature.ret = ret;
                     }
-                    Some(Type::Record(self.prepare_closure(
-                        function,
-                        vars,
-                        functions,
-                        types,
-                        Some(&signature),
-                    )?))
+                    if infer_environment_result {
+                        // Keep contextual inputs, but let the checked body name
+                        // the environment hidden behind a signature-only hint.
+                        let mut contextual = function.clone();
+                        for (parameter, ty) in contextual.params.iter_mut().zip(&signature.params) {
+                            if parameter.ty.is_none() {
+                                parameter.ty = Some(ty.clone());
+                            }
+                        }
+                        Some(Type::Record(self.prepare_closure(
+                            &contextual,
+                            vars,
+                            functions,
+                            types,
+                            None,
+                        )?))
+                    } else {
+                        Some(Type::Record(self.prepare_closure(
+                            function,
+                            vars,
+                            functions,
+                            types,
+                            Some(&signature),
+                        )?))
+                    }
                 } else {
                     self.hint(arg, vars, functions, types, inference.default)
                 };
@@ -513,6 +534,20 @@ impl FunctionPlan {
                         arg.span(),
                     )?;
                 }
+                return Ok(());
+            }
+        }
+        if matches!(formal, Type::Parameter(_)) {
+            if let Expr::AnonymousFunction(function) = arg {
+                let actual =
+                    Type::Record(self.prepare_closure(function, vars, functions, types, None)?);
+                unify(
+                    formal,
+                    &actual,
+                    inference.params,
+                    &mut inference.substitutions,
+                    arg.span(),
+                )?;
                 return Ok(());
             }
         }

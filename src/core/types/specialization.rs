@@ -46,7 +46,9 @@ impl TypeRegistry {
         // Validate even unused parameters before erasing the transparent alias.
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
+            if arg.contains_unstorable_closures()
+                || !arg.is_copy_storage_value() && !arg.is_owner() && !arg.is_callable_parameter()
+            {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!(
@@ -125,7 +127,9 @@ impl TypeRegistry {
         }
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
+            if arg.contains_unstorable_closures()
+                || !arg.is_copy_storage_value() && !arg.is_owner() && !arg.is_callable_parameter()
+            {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!(

@@ -546,6 +546,7 @@ pub(crate) struct FunctionPlan {
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
     return_type: Type,
+    infer_return: bool,
     scope: Arc<super::imports::ImportScope>,
     definition_scope: Option<Arc<super::imports::DefinitionScope>>,
     generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
@@ -1232,6 +1233,26 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
+        Self::new_with_return_inference(
+            f,
+            functions,
+            types,
+            nominals,
+            generics,
+            instantiation_depth,
+            false,
+        )
+    }
+
+    fn new_with_return_inference(
+        f: &FnDef,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        nominals: &Arc<HashMap<String, Type>>,
+        generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
+        instantiation_depth: usize,
+        infer_return: bool,
+    ) -> Result<Self, Error> {
         for ty in f
             .params
             .iter()
@@ -1294,6 +1315,7 @@ impl FunctionPlan {
             op_spans: Vec::new(),
             current_span: f.span,
             return_type: f.ret_ty.clone(),
+            infer_return,
             scope: f.scope.as_ref().map_or_else(
                 || generics.borrow().scope.clone(),
                 |scope| scope.imports.clone(),
@@ -1589,7 +1611,7 @@ impl FunctionPlan {
         }
         // Aggregate results have a fixed region immediately after parameters in CPS.
         // Direct lowering uses the same slots with an internal result pointer.
-        if f.ret_ty.is_aggregate() {
+        if f.ret_ty.is_aggregate() && !infer_return {
             plan.result = Some(plan.slot(f.ret_ty.clone())?);
         }
         let mut vars = HashMap::new();
@@ -1655,22 +1677,25 @@ impl FunctionPlan {
             functions,
             f.suspends,
             types,
-            Some(&f.ret_ty),
+            if infer_return { None } else { Some(&f.ret_ty) },
         )?;
         if let Flow::Value(value) = flow {
-            if slot_type(&value) != f.ret_ty {
+            if plan.infer_return {
+                plan.check_return(&value, &f.span)?;
+            }
+            if slot_type(&value) != plan.return_type {
                 return Err(type_error(
                     &f.span,
                     ErrorCode::TypeMismatch,
                     format!(
                         "Return type mismatch for `{}`: expected {}, got {}",
                         f.name,
-                        f.ret_ty,
+                        plan.return_type,
                         slot_type(&value),
                     ),
                 ));
             }
-            if plan.return_label.is_some() || f.ret_ty.is_aggregate() {
+            if plan.return_label.is_some() || f.ret_ty.is_aggregate() && !infer_return {
                 if let (Some(dst), Some(src)) = (&plan.result, value) {
                     plan.emit(Op::Copy(dst.clone(), src));
                 }
