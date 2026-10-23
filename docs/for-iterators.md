@@ -446,3 +446,40 @@ UInt64 最大编号可以成功返回，后续再出现 Some 才报溢出并清�
 
 默认库测试忽略 122 项、CLI 忽略 8 项；本轮额外运行上述两组相关取消穷举。
 默认检查后仅补充文档验收记录，未再改代码。
+
+## 13. 第四阶段 C 设计：借用 enumerate（2026-10-23）
+
+本轮给 Array/Slice 的 Iter 和 Map 的 Entries 增加惰性编号适配器。沿用
+advance/current 协议，每轮直接返回借用编号视图，不将独占引用放入元组或 Option。
+普通 IntoIterator.enumerate 与其 dyn Iterator 兼容性保持不变。
+
+公开接口计划放在 joky/iter：
+
+- enumerate_ref / enumerate_mut 接收共享 / 独占 Iter，返回对应的 EnumerateIter 借用。
+- enumerate_entries / enumerate_entries_mut 接收 Entries，返回 EnumerateEntries 借用。
+- EnumerateIter 每轮产生 Indexed<T> 视图，index 返回 UInt64 快照，value / value_mut
+  借出元素。EnumerateEntries 每轮产生 IndexedEntry<K,V>，entry_index 返回编号，
+  entry / entry_mut 借出原有 Entry；键仍通过只读 entry_key 访问。
+- 两种适配器都提供显式 advance/current/current_mut 操作，并接入 for 的借用步骤展开。
+  容器先调用已有 iter / iter_mut，Slice 使用 slice_iter / slice_iter_mut。
+  本轮不增加借用类型上的 trait 实现或重载普通 enumerate。
+
+构造只分配任务内描述符，不推进原游标，也不预生成编号数组。适配器借用原游标并共享
+其推进状态；在部分消费后包装，从接下来成功取出的元素重新编号为零。不同共享别名
+推进原游标时，适配器只计算自己的成功 advance 次数。共享编号视图保存编号与元素地址
+快照，后续 advance 不改变已返回的视图；独占视图继续阻止重叠可变访问。
+
+编号游标与编号项均为编译器拥有的 borrow-only 类型，分别保留单列元素与 Map 键值的
+类型身份，不能按值构造、存储进容器或返回悬空借用。返回引用继承原容器的 provenance，
+保守的整容器借用、重借用、挂起和取消检查继续生效。元数据由任务 arena 管理，描述符
+分配失败与运行失败遵循既有终止清理；元素所有权始终属于原容器。
+
+UInt64 编号从零开始，只有成功推进才增加；底层借用游标长度有 isize::MAX 上限，
+正常使用不会达到 UInt64 溢出。运行时仍检查溢出，防止内部不变量被破坏后回绕。
+耗尽后 current 报错，空输入与重复耗尽不产生编号视图。Map Entry 与编号视图的快照
+都由任务 arena 计费，本轮不改变已有逐项视图的 arena 生命周期。
+
+实现按共享前端、公共运行时、解释器及 JIT/AOT 两路 lowering 同步接入。验证覆盖
+Array/Slice/Map 的共享和可变行为、空输入、部分消费、快照、提前退出与拒绝矩阵；
+拥有元素的挂起恢复、失败、分配失败和逐指令取消使用共享 fixture。先运行针对性测试，
+再运行默认 Debug 检查及相关取消穷举。不涉及 map/filter、闭包存储或一般引用聚合。
