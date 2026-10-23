@@ -25,6 +25,76 @@ pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
     Iterator.next(iterator)
 }
 
+// Adapters own their inputs and stop permanently after the first None.
+pub struct Take<I> { source: I, remaining: UInt64 }
+pub fn take<I: IntoIterator>(input: I, count: UInt64) -> Take<I.IntoIter> {
+    Take { source: IntoIterator.into_iter(input), remaining: count }
+}
+impl<I: Iterator> Iterator for Take<I> {
+    type Item = I.Item
+    fn next(&mut self) -> Option<I.Item> {
+        if self.remaining == 0 { return None }
+        self.remaining -= 1
+        match Iterator.next(&mut self.source) {
+            Some(value) => Some(value),
+            None => { self.remaining = 0; None }
+        }
+    }
+}
+
+pub struct Zip<I, J> { left: I, right: J, done: Bool }
+pub fn zip<I: IntoIterator, J: IntoIterator>(left: I, right: J) -> Zip<I.IntoIter, J.IntoIter> {
+    Zip { left: IntoIterator.into_iter(left), right: IntoIterator.into_iter(right), done: false }
+}
+impl<I: Iterator, J: Iterator> Iterator for Zip<I, J> {
+    type Item = (I.Item, J.Item)
+    fn next(&mut self) -> Option<Self.Item> {
+        if self.done { return None }
+        let left = match Iterator.next(&mut self.left) {
+            Some(value) => value,
+            None => { self.done = true; return None }
+        }
+        let right = match Iterator.next(&mut self.right) {
+            Some(value) => value,
+            None => { self.done = true; return None }
+        }
+        Some((left, right))
+    }
+}
+
+pub struct Map<I, T, F> { source: I, transform: F, done: Bool }
+pub fn map<I: IntoIterator, T, F: FnMut(I.IntoIter.Item) -> T>(input: I, transform: F) -> Map<I.IntoIter, T, F> {
+    Map { source: IntoIterator.into_iter(input), transform, done: false }
+}
+impl<I: Iterator, T, F: FnMut(I.Item) -> T> Iterator for Map<I, T, F> {
+    type Item = T
+    fn next(&mut self) -> Option<T> {
+        if self.done { return None }
+        match Iterator.next(&mut self.source) {
+            Some(value) => Some((&mut self.transform)(value)),
+            None => { self.done = true; None }
+        }
+    }
+}
+
+pub struct Filter<I, F> { source: I, predicate: F, done: Bool }
+pub fn filter<I: IntoIterator, F: FnMut(&I.IntoIter.Item) -> Bool>(input: I, predicate: F) -> Filter<I.IntoIter, F> {
+    Filter { source: IntoIterator.into_iter(input), predicate, done: false }
+}
+impl<I: Iterator, F: FnMut(&I.Item) -> Bool> Iterator for Filter<I, F> {
+    type Item = I.Item
+    fn next(&mut self) -> Option<I.Item> {
+        if self.done { return None }
+        while true {
+            let value = match Iterator.next(&mut self.source) {
+                Some(value) => value,
+                None => { self.done = true; return None }
+            }
+            if (&mut self.predicate)(&value) { return Some(value) }
+        }
+    }
+}
+
 // A strict order and its immediate successor; None marks the greatest value.
 // Implementations must advance monotonically without wrapping.
 pub trait Step {

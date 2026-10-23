@@ -2301,6 +2301,29 @@ mod generic_record_tests {
     }
 
     #[test]
+    fn generic_record_instance_budget_allows_cache_hits_at_capacity() {
+        let registry = TypeRegistry::new().with_prelude(false);
+        let parsed =
+            crate::parser::parse("struct Marker<const N: UInt64> {} fn f(value: Marker<0>) {}")
+                .unwrap();
+        let resolved = registry.resolve_aliases(&parsed).unwrap();
+        let Type::Record(record) = parameter(&resolved, 0) else {
+            panic!()
+        };
+        let instantiate = |n| {
+            registry.instantiate_record(
+                &record,
+                vec![GenericArgument::Const(ConstArgument::Value(n))],
+            )
+        };
+        let first = instantiate(0).unwrap();
+        for n in 1..specialization::MAX_RECORD_INSTANCES {
+            instantiate(n as u64).unwrap();
+        }
+        assert_eq!(instantiate(0).unwrap(), first);
+    }
+
+    #[test]
     fn generic_record_shared_phantom_graphs_bound_comparison_and_substitution() {
         let registry = TypeRegistry::new().with_prelude(false);
         let mut source = "struct Marker<T> {} enum Phantom<T> { Value } type T0 = Unit".to_owned();

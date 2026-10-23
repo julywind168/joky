@@ -260,3 +260,107 @@ fn for_iterators_bind_standard_names_and_interpolation_dependencies() {
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }
+
+const ADAPTERS: &str = include_str!("../../../../tests/fixtures/iterator_adapters.jk");
+
+#[test]
+fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm_with_prelude(ADAPTERS, mode, false);
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        assert_eq!(vm.call_int32_0("fields").unwrap(), 42);
+        for (name, expected) in [
+            (
+                "lazy",
+                vec![1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32],
+            ),
+            ("cleanup", vec![1, 2, 3, 9]),
+            ("zip_cleanup", vec![1, 3, 2]),
+        ] {
+            EVENTS.with(|events| events.borrow_mut().clear());
+            vm.call_unit_0(name).unwrap();
+            EVENTS.with(|events| assert_eq!(*events.borrow(), expected, "{mode:?} {name}"));
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+        EVENTS.with(|events| events.borrow_mut().clear());
+        assert_eq!(vm.call_int32_0("early").unwrap(), 1);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 9]));
+        for name in ["fail_map", "fail_filter"] {
+            EVENTS.with(|events| events.borrow_mut().clear());
+            let error = vm.call_unit_0(name).unwrap_err();
+            assert!(error.to_string().contains("callback failure"), "{error}");
+            EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 9], "{mode:?} {name}"));
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+        EVENTS.with(|events| events.borrow_mut().clear());
+        let mut task = vm.call_async("pending", &[]).unwrap();
+        while !task.is_finished() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [14, 3, 1, 16, 4, 2]));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn iterator_adapters_reject_borrow_escape_consuming_callbacks_and_suspension() {
+    for source in [
+        "struct Mixed { n: Int32, items: String } fn bad() -> &Int32 { let m = Mixed { n: 1, items: \"a\" }; &m.n }",
+        "struct Mixed { n: Int32, items: String } fn bad() { var m = Mixed { n: 1, items: \"a\" }; let r = &mut m.n; let x = m.items; *r += 1 }",
+        "struct Mixed { n: Int32, items: String } fn bad(m: &Mixed) { let r = &mut m.n; }",
+
+        "fn bad() { let n = 1; let values = iter.map(0..2, |x| { x + n }); }",
+        "fn bad() { let text = \"owned\"; let values = iter.map(0..2, move |x| { text }); }",
+        "fn bad() { let values = iter.map([\"owned\"], move |x| { x }); for _ in values {} for _ in values {} }",
+        "fn bad() { let a = [1, 2]; let values = iter.take(&a, 1); }",
+        "fn bad() { for _ in iter.filter(0..3, move |x| { alloc(x); true }) {} }",
+        "fn escape(x: &Int32) -> Bool { alloc(x); true } fn bad() { for _ in iter.filter(0..3, escape) {} }",
+        "fn bad() { let a = [1]; let r = &a; let values = iter.map(0..2, move |x| { r.len(); x }); }",
+        "fn bad() @suspends { for _ in iter.map(0..2, move |x| { x }) { task.yield_now() } }",
+        "fn fail() @suspends -> Int32 { 1 } fn bad() { let values = iter.map(0..2, fail); }",
+    ] {
+        let source = format!("import joky/iter\nimport joky/task\n{source}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.span().is_some(), "{source}: {error}");
+    }
+}
+
+fn adapter_cancellation(sweep: CancellationSweep) {
+    let mut vm = parity_vm_with_prelude(ADAPTERS, VmMode::Interpreter, false);
+    // Include synchronous closure frames reached from a suspending entry.
+    for entry in ["pending", "sync_pending"] {
+        assert_cancellation(
+            &mut vm,
+            entry,
+            20_000,
+            sweep,
+            || EVENTS.with(|events| events.borrow_mut().clear()),
+            || EVENTS.with(|events| events.borrow().clone()),
+            || {
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+                EVENTS.with(|events| {
+                    let events = events.borrow();
+                    for id in [1, 2, 3, 4, 9] {
+                        assert!(
+                            events.iter().filter(|&&event| event == id).count() <= 1,
+                            "{events:?}"
+                        );
+                    }
+                });
+            },
+        );
+    }
+}
+
+#[test]
+fn iterator_adapters_cancel_at_resource_boundaries() {
+    adapter_cancellation(CancellationSweep::ResourceBoundaries);
+}
+
+#[test]
+#[ignore = "exhaustive: cancel at every adapter and callback instruction boundary"]
+fn exhaustive_iterator_adapters_instruction_cancellation() {
+    adapter_cancellation(CancellationSweep::EveryInstruction);
+}

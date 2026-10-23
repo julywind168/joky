@@ -1,0 +1,15 @@
+import joky/iter
+import joky/io.{println}
+
+fn main() {
+    let offset = 10
+    let mapped = iter.map(0..10, move |value| { value + offset })
+    let even = iter.filter(mapped, move |value| { *value % 2 == 0 })
+    for index, value in iter.take(even, 3) {
+        println("{index}: {value}")
+    }
+
+    for (name, score) in iter.zip(["Alice", "Bob"], [80, 90]) {
+        println("{name}: {score}")
+    }
+}

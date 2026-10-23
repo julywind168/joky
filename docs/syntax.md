@@ -316,7 +316,8 @@ for (key, value) in &table 支持键值解构；for index, (key, value) in &mut 
 普通输入经 IntoIterator 转换一次；Array 支持按值消费以及 &values / &mut values 借用入口。
 Slice 与 Map 引用也自动生成借用游标，自定义普通容器可实现 IntoIterator。
 当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器) 和 [范围表达式](language.md#范围表达式)，
-整数范围模式见 [当前参考](language.md#整数范围模式)，组合器等后续目标见 [专项计划](for-iterators.md)。
+整数范围模式见 [当前参考](language.md#整数范围模式)。普通迭代器已支持 take/zip/map/filter
+[惰性组合器](language.md#惰性组合器)，借用游标组合等后续目标见 [专项计划](for-iterators.md)。
 以下示例当前可运行：
 
 ```joky

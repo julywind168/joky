@@ -2,10 +2,11 @@
 
 状态：2026-10-24，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
 记录见第 6–11 节；第四阶段 A 的 IntoIterator 与借用自动转换已完成。
-第 12–13 节的 for 可选编号与 Map 键值解构已完成，取代 enumerate；其余组合器待后续实施。
+第 12–13 节的 for 可选编号与 Map 键值解构已完成，取代 enumerate。
 第 14 节记录 Map 直接二元解构的逐项描述符分配消除。
 第 15–16 节记录泛型 Range、闭区间及 `..` / `..=` 表达式的设计与实现。
 第 17–19 节记录已完成的有界范围切片与整数范围模式。
+第 20–21 节记录普通迭代器 take/zip/map/filter 组合器的设计与实现。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -654,3 +655,50 @@ filter 不能绕过借用逃逸检查；先确认 callable 参数的借用契约
 验证覆盖按需推进、FnMut 状态、空输入和不等长 zip、重复耗尽、提前退出、拥有元素及回调环境
 的正常/失败清理；JIT、解释器与独立 AOT 执行共享 fixture。实现后运行默认 Debug 检查，
 涉及所有权路径补跑相关取消穷举。当前节为设计，完成状态另行记录。
+
+
+## 21. 普通迭代器惰性组合器实现（2026-10-24）
+
+第 20 节的四个组合器已实现，当前 API 见[惰性组合器](language.md#惰性组合器)。
+Take、Zip、Map、Filter 使用普通私有字段记录及 Iterator 实现，构造只转换输入，
+next 才推进和调用回调；四者首次 None 后保持耗尽。zip 按左后右顺序取项，
+右源结束时清理本轮已取出的左项；没有中间数组或专用运行时指令。
+首版使用模块函数组合，未增加 blanket 方法语法或借用游标协议。
+
+编译器补齐三个已有路径：拥有记录及引用绑定内的无引用 Copy 字段可通过 Project 重借用；
+刚性 callable 移动后结束旧抽象位置，同时保留捕获来源；借用函数指针调用先读取指针，
+再沿用普通间接调用的 noescape 契约。拥有记录仍保守地按整个根检查冲突，未开放字段分离。
+filter 的闭包逃逸检查在具体实例沿用现有来源分析，普通函数指针谓词须声明 @noescape；
+没有把所有 FnMut 参数一概视为不逃逸。共享引用元素的二次借用仍不支持。
+
+共享 fixture 验证范围与 Array、协议转换一次、构造惰性、FnMut 状态、编号与元组解构、
+空输入、UInt64 最大 take 数量、不等长 zip、重复耗尽、拥有项及回调环境的清理、提前 return、
+回调失败和 take/zip 挂起。静态矩阵覆盖借用捕获、参数逃逸、FnOnce、重复移动、
+共享转可变、局部字段引用逃逸以及闭包跨挂起拒绝。
+取消用例覆盖挂起的 take/zip 与从挂起入口调用同步 map/filter，逐指令检查重复清理和 arena 回收。
+新示例为 [iterator_adapters.jk](../examples/iterator_adapters.jk)。
+
+标准库新增模板使已有多容器模块导入用例超过旧记录缓存总量；记录实例每阶段上限改为 512，
+仍将导入的刚性模板实例计入预算。枚举/别名预算、256 层深度与布局槽预算保持不变，
+增加满容量重复实例命中以及下一实例拒绝的边界测试。
+
+实际验证使用 Debug：
+
+- 首轮组合器、闭包及混合拥有记录专项 30 项通过，2 项穷举默认忽略。
+- `./scripts/check.sh` 的 fmt、Clippy 通过；库测试 1581 项通过、4 项失败、125 项默认忽略。
+  三项失败来自旧记录实例预算，另一项来自仍把引用字段投影视为非法的旧断言。
+  调整预算、更新拒绝矩阵，并补上字段投影执行验证及预算边界验证。
+- 最终 `cargo test --lib -- generic_record local_field_borrows suspending_borrows fixed_array_f5_rejects iterator_adapters`：
+  24 项通过，2 项穷举默认忽略，覆盖上述失败及最终字段投影路径。
+- 最终 Debug 库测试二进制的 `--ignored exhaustive_iterator_adapters_instruction_cancellation exhaustive_closure_interpreter_cancellation_every_instruction`：
+  2 项逐指令取消穷举通过。
+- `cargo build --bin joky --lib` 已刷新本地 Debug 编译器与静态库；新增示例及语言参考片段
+  均关闭 prelude，在 JIT、解释器及独立 AOT 输出符合预期。
+- 默认脚本在库测试失败处停止后，补完剩余检查：最终 fmt 与 Clippy 通过；
+  `cargo test --bins --test '*'` 的 305 项 CLI 测试及其他默认集成测试通过，
+  `cargo test --doc` 通过；while（0、1000）与 Map（0、32）短输入正确性均覆盖三个后端并通过。
+  CLI 包含最终共享 fixture 的独立 AOT 正常执行、map/filter 失败清理和挂起执行。
+- 本地文档链接与 `git diff --check` 通过。
+
+上述运行合计覆盖默认 Debug 检查项；修正预算与旧断言后，重跑受影响的专项及剩余默认检查，
+未重复整套库测试。未运行 Release、无关压力、其他平台或性能测量。

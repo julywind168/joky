@@ -376,9 +376,15 @@ impl FunctionPlan {
     }
 
     fn owner_borrow_target(&self, target: &Type, span: Span) -> Result<(), Error> {
-        if !target.is_owner() && !target.is_callable_parameter() {
-            return Err(type_error(&span, ErrorCode::InvalidAssignment,
-                "Only owning fields can be borrowed from owning records; read or write Copy fields directly"));
+        if !target.is_owner()
+            && !target.is_callable_parameter()
+            && !(target.is_copy_storage_value() && !target.contains_references())
+        {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidAssignment,
+                "Only owning or reference-free Copy fields can be borrowed from owning records",
+            ));
         }
         Ok(())
     }
@@ -430,12 +436,14 @@ impl FunctionPlan {
         {
             let r = src.ty.reference_type().unwrap();
             let root = self.pointee(&r.target, &self.type_registry)?;
-            if !path.is_empty() && root.is_owner() {
+            if !path.is_empty()
+                && (root.is_owner() || root.is_copy_storage_value() && !root.contains_references())
+            {
                 if mutable && !r.mutable {
                     return Err(type_error(
                         &span,
                         ErrorCode::InvalidAssignment,
-                        "Cannot borrow an owning field through a shared reference as mutable",
+                        "Cannot borrow a field through a shared reference as mutable",
                     ));
                 }
                 let target = self.field_target(root.clone(), &path, span)?;
@@ -443,7 +451,7 @@ impl FunctionPlan {
                 let dst = self.slot(Type::reference(target, mutable))?;
                 let mut src = src.clone();
                 src.ty = Type::reference(root.clone(), r.mutable);
-                if root.is_inline_owner() {
+                if root.is_inline_owner() || root.is_copy_value() {
                     self.emit(Op::Project {
                         dst: dst.clone(),
                         src,

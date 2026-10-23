@@ -942,7 +942,7 @@ fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
         ("fn bad(b: &Batch<Int32>) -> Array<Int32> { b.values }", "borrowed wrapper"),
         ("fn bad(b: &mut Batch<Int32>) { b.values = Array.new::<Int32>() }", "borrowed wrapper"),
         ("fn bad() -> &Array<Int32> { let b = Batch.new::<Int32>(); &b.values }", "borrowed input"),
-        ("fn bad() { let b = Batch.new::<Int32>(); let r = &b.version }", "Only owning fields"),
+        ("fn bad() { var b = Batch.new::<Int32>(); let r = &b.version; b.version = 1; let n = *r }", "borrow"),
         ("fn bad() { let b = Batch.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Batch.new::<Int32>() ; (*(&b)); }", "non-Copy"),
         ("fn bad() { var b = Batch.new::<Int32>(); let r = &b; (*(&mut b) = Batch.new::<Int32>()); r.values.len(); }", "borrow"),

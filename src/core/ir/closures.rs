@@ -983,6 +983,17 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
+        // A borrowed function pointer is still an indirect call, not a closure
+        // environment. Preserve its noescape contract when loading the pointer.
+        if value
+            .ty
+            .reference_type()
+            .is_some_and(|r| matches!(r.target, Type::Function(_)))
+        {
+            let pointer = self.read_local(value)?.unwrap();
+            return self
+                .invoke_function_value(pointer, args, span, vars, functions, suspends, types);
+        }
         if suspends {
             return Err(type_error(
                 &span,

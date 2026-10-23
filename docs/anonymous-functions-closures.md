@@ -581,4 +581,5 @@ CLI 304 项通过 / 8 项忽略，其他默认集成测试及三后端 while/Map
 [owned_closures.jk](../examples/owned_closures.jk) 在禁用 prelude 的三后端输出
 `42 / 1 / 2 / stored`；相关文档链接与 diff 检查通过。未执行 Release、无关压力检查或性能测量。
 
-后续：借用捕获逃逸、闭包跨挂起、动态 callable、其他聚合/容器存储和惰性迭代组合器。
+后续：借用捕获逃逸、闭包跨挂起、动态 callable 和其他聚合/容器存储。
+普通迭代器的 take/zip/map/filter 已在后续阶段接入，见[惰性组合器](language.md#惰性组合器)。

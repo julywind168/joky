@@ -1795,6 +1795,11 @@ fn analyze(
                     if src.ty.is_callable_parameter() {
                         let value = state[&src.index].clone();
                         state.insert(dst.index, value);
+                        // Callable moves preserve capture origins, but end the old
+                        // abstract value just like concrete environment moves.
+                        if src.index != dst.index {
+                            state.get_mut(&src.index).unwrap().invalid = true;
+                        }
                     }
                 }
                 if let closures::ClosureOp::BorrowCapture { dst, reference } = op.as_ref() {

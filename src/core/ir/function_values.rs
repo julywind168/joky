@@ -217,6 +217,20 @@ impl FunctionPlan {
         {
             return self.invoke_callable(value, args, span, vars, functions, suspends, types);
         }
+        self.invoke_function_value(value, args, span, vars, functions, suspends, types)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn invoke_function_value(
+        &mut self,
+        value: Slot,
+        args: &[Expr],
+        span: Span,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
         let Type::Function(signature) = &value.ty else {
             return Err(type_error(
                 &span,

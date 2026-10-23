@@ -2860,3 +2860,35 @@ fn range_patterns_execute_integer_domains_owned_matches_and_suspension_in_aot() 
     assert_eq!(output.stdout, b"3\n99\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("range failure"));
 }
+
+#[test]
+#[cfg(unix)]
+fn iterator_adapters_execute_and_clean_up_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/iterator_adapters.jk").replace(
+        "extern fn record(x: Int32) -> Int32",
+        "import joky/io.{println}\nfn record(x: Int32) -> Int32 { println(x); x }",
+    );
+    for (name, entry, expected, failure) in [
+        (
+            "adapters",
+            "fn main() @suspends { println(compute()); println(fields()); lazy(); cleanup(); zip_cleanup(); println(early()); println(pending()) }",
+            "42\n42\n1\n2\n3\n4\n13\n14\n13\n14\n13\n20\n21\n30\n31\n32\n1\n2\n3\n9\n1\n3\n2\n1\n2\n9\n1\n14\n3\n1\n16\n4\n2\n42\n",
+            None,
+        ),
+        ("map_failure", "fn main() { fail_map() }", "1\n2\n9\n", Some("Map callback failure")),
+        ("filter_failure", "fn main() { fail_filter() }", "1\n2\n9\n", Some("Filter callback failure")),
+    ] {
+        let file = format!("{name}.jk");
+        work.write(&file, &format!("{source}\n{entry}"));
+        success(&work.cli(&["build", "--no-prelude", &file]));
+        let output = Command::new(work.path().join(name)).output().unwrap();
+        if let Some(message) = failure {
+            assert_eq!(output.status.code(), Some(1));
+            assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+        } else {
+            success(&output);
+        }
+        assert_eq!(output.stdout, expected.as_bytes(), "{name}");
+    }
+}

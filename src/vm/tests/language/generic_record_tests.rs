@@ -165,7 +165,7 @@ fn generic_record_rejects_invalid_types_and_layouts() {
 #[test]
 fn generic_record_limits_bound_instances_width_and_phantom_depth() {
     let mut instances = "struct Marker<T> {}".to_owned();
-    for n in 0..257 {
+    for n in 0..513 {
         instances.push_str(&format!(" struct R{n} {{}} fn f{n}(x: Marker<R{n}>) {{}}"));
     }
     let mut wide = "struct Double<T> { a: T, b: T } type T0 = Int32".to_owned();
@@ -176,7 +176,7 @@ fn generic_record_limits_bound_instances_width_and_phantom_depth() {
     for n in 1..=257 {
         deep.push_str(&format!(" type T{n} = Marker<T{}>", n - 1));
     }
-    for (source, message) in [(instances, "256 instances"), (wide, "65536"), (deep, "256")] {
+    for (source, message) in [(instances, "512 instances"), (wide, "65536"), (deep, "256")] {
         let error = VmEngine::new_interpreter()
             .load_source(&source)
             .unwrap_err();

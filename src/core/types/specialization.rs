@@ -2,6 +2,9 @@
 use super::*;
 use std::sync::Arc;
 
+// Includes rigid instances from imported standard-library templates.
+pub(super) const MAX_RECORD_INSTANCES: usize = 512;
+
 // Nominal equality intentionally ignores layout metadata. A forward reference
 // may gain ownership after its declaration is resolved; do not reuse an alias
 // expansion checked against the earlier Copy classification.
@@ -149,10 +152,10 @@ impl TypeRegistry {
         {
             return Ok(Type::Record(instance.clone()));
         }
-        if self.record_instances.borrow().len() >= 256 {
+        if self.record_instances.borrow().len() >= MAX_RECORD_INSTANCES {
             return Err(error(
                 ErrorCode::ResourceLimit,
-                "Generic record instantiation exceeds 256 instances",
+                format!("Generic record instantiation exceeds {MAX_RECORD_INSTANCES} instances"),
             ));
         }
         let substitutions = template
@@ -208,10 +211,10 @@ impl TypeRegistry {
             depth,
         });
         // Substituting nested fields can populate this shared cache too.
-        if self.record_instances.borrow().len() >= 256 {
+        if self.record_instances.borrow().len() >= MAX_RECORD_INSTANCES {
             return Err(error(
                 ErrorCode::ResourceLimit,
-                "Generic record instantiation exceeds 256 instances",
+                format!("Generic record instantiation exceeds {MAX_RECORD_INSTANCES} instances"),
             ));
         }
         super::fixed_array::validate(&Type::Record(instance.clone()), self)?;
