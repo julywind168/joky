@@ -57,7 +57,7 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
-        kind: SourceKind::Embedded,
+        kind: SourceKind::BufferLibrary,
         path: "joky/iter",
         source: include_str!("../../stdlib/iter.jk"),
         reexport_imports: false,
@@ -791,7 +791,7 @@ pub(super) fn record_imported_functions(module: &mut Module) {
 
 /// Install internal buffer type identities only on the trusted storage AST.
 fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
-    for name in ["Buffer", "Element", "Slice"] {
+    for name in ["Buffer", "Element", "Slice", "Iter"] {
         let alias = module
             .type_aliases
             .iter_mut()
@@ -807,7 +807,8 @@ fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
         alias.target = match name {
             "Buffer" => Type::Buffer(element),
             "Element" => Type::BufferElement(element),
-            _ => Type::BufferSlice(element),
+            "Slice" => Type::BufferSlice(element),
+            _ => Type::BufferIterator(element),
         };
     }
     Ok(())

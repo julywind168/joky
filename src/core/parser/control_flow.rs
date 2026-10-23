@@ -36,6 +36,7 @@ impl Parser {
         self.newline_sensitive = previous_newlines;
         Ok(Expr::Match {
             conditional: false,
+            iteration: false,
             value,
             arms,
             span: self.span(start, self.last_span.end()),
@@ -107,6 +108,7 @@ impl Parser {
     ) -> Expr {
         Expr::Match {
             conditional: true,
+            iteration: false,
             value: Box::new(value),
             arms: vec![
                 MatchArm {
@@ -172,7 +174,7 @@ impl Parser {
             }],
             span: value_span,
         };
-        let body = Self::conditional_match(
+        let mut body = Self::conditional_match(
             Pattern::Variant {
                 name: "$joky_option.Option.Some".into(),
                 binding: Some(Box::new(PayloadPattern::Name {
@@ -190,6 +192,9 @@ impl Parser {
             Expr::Break { span },
             span,
         );
+        if let Expr::Match { iteration, .. } = &mut body {
+            *iteration = true;
+        }
         Ok(Expr::Block {
             exprs: vec![
                 Expr::Var {

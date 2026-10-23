@@ -1,3 +1,4 @@
+import joky/internal/buffer as storage
 import joky/option.{type Option, Some, None}
 
 pub trait Iterator {
@@ -26,3 +27,10 @@ impl Iterator for Range {
         Some(value)
     }
 }
+
+// Borrowed cursors use separate advance/current operations, so exclusive
+// references never enter Option or another aggregate.
+pub type Iter<T> = storage.Iter<T>
+pub fn advance<T>(iterator: &Iter<T>) -> Bool { storage.iter_advance(iterator) }
+pub fn current<T>(iterator: &Iter<T>) -> &T { storage.iter_current(iterator) }
+pub fn current_mut<T>(iterator: &mut Iter<T>) -> &mut T { storage.iter_current_mut(iterator) }

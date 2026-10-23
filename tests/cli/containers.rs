@@ -3,6 +3,79 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn array_borrow_iter_runs_with_live_element_views_in_standalone_aot() {
+    let work = Workspace::new();
+    let fixture = format!("import joky/io.{{println}}\nimport joky/task as task\n{}",
+        include_str!("../fixtures/array_borrow_iter.jk")
+            .replace("extern fn record(x: Int32) -> Int32", "fn record(x: Int32) -> Int32 { println(x); x }")
+            .replace("extern fn delayed_value(x: Int32) @suspends -> Int32", "fn delayed_value(x: Int32) @suspends -> Int32 { record(x); task.yield_now(); x + 1 }"));
+    work.write(
+        "borrow_iter.jk",
+        &format!(
+            r#"{fixture}
+        fn main() @suspends {{
+            println(compute())
+            for action in iter.range(0, 4) {{ println(10000 + consume(action)) }}
+            println(20000 + pending())
+            println(30000 + pending_shared())
+        }}
+    "#
+        ),
+    );
+    success(&work.cli(&["build", "--no-prelude", "borrow_iter.jk"]));
+    let output = Command::new(work.path().join("borrow_iter"))
+        .output()
+        .unwrap();
+    success(&output);
+    let events: Vec<i32> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|n| n.parse().unwrap())
+        .collect();
+    assert_eq!(events[0], 42);
+    for id in 1..=4 {
+        assert_eq!(events.iter().filter(|&&n| n == id).count(), 6);
+        assert_eq!(events.iter().filter(|&&n| n == -id).count(), 6);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .copied()
+            .filter(|n| *n >= 10000)
+            .collect::<Vec<_>>(),
+        [10010, 10009, 10001, 10001, 20042, 30042]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .copied()
+            .filter(|n| (11..=14).contains(n))
+            .collect::<Vec<_>>(),
+        [11, 12, 13, 14, 11, 12, 13, 14, 11, 11, 11, 11, 12, 12, 11, 11, 12, 12]
+    );
+    for (body, message) in [
+        ("consume(4);", "Division by zero"),
+        ("invalid_current(1);", "successful advance"),
+    ] {
+        work.write("failed.jk", &format!("{fixture}\nfn main() {{ {body} }}"));
+        success(&work.cli(&["build", "--no-prelude", "failed.jk"]));
+        let output = Command::new(work.path().join("failed")).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+        if body.starts_with("consume") {
+            let mut events: Vec<i32> = String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .map(|n| n.parse().unwrap())
+                .collect();
+            events.sort();
+            assert_eq!(events, [-4, -3, -2, -1, 1, 2, 3, 4, 11]);
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn array_into_iter_runs_and_cleans_remaining_items_in_standalone_aot() {
     let work = Workspace::new();
     let fixture = include_str!("../fixtures/array_into_iter.jk").replace(

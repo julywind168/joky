@@ -35,6 +35,7 @@ mod generics;
 mod graph;
 mod inference;
 mod interpolation;
+mod iterators;
 mod locals;
 mod members;
 mod memory;

@@ -841,6 +841,8 @@ fn answer() -> Int32 {
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
 | `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
 | `into_iter(Array<T>) -> IntoIter<T>` / `values.into_iter()` | 消费数组，按原下标正序逐项移出 T；无需 Copy |
+| `iter(&Array<T>) -> &Iter<T>` / `values.iter()` | 按正序借用为 &T，数组保留所有权 |
+| `iter_mut(&mut Array<T>) -> &mut Iter<T>` / `values.iter_mut()` | 按正序独占借用为 &mut T，数组保留所有权 |
 | `replace(&mut Array<T>, UInt64, T) -> Option<T>` | 替换有效下标并返回 Some(old)，长度、容量及其他元素不变；越界返回 None 并消费/清理 next |
 | `swap_remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素，以末元素补位；成功时长度减少、容量不变且不保序；越界返回 None，不修改数组 |
 | `remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素并保留其他元素顺序；越界返回 None，不修改数组；容量不变 |
@@ -2958,9 +2960,9 @@ fn drain(values: &mut Array<Int32>) {
 
 ## for 循环与迭代器
 
-`for pattern in iterator { body }` 按标准库 `joky/iter.Iterator` 协议逐项遍历。
+`for pattern in iterator { body }` 支持标准库 `joky/iter.Iterator` 和下述 Array 借用游标。
 右侧只求值一次：拥有值移动到循环的隐藏可变绑定，Copy 值按普通规则复制。
-每轮同步调用 next，Some 的载荷绑定到 pattern，第一次 None 结束循环。
+普通 Iterator 每轮同步调用 next，Some 的载荷绑定到 pattern，第一次 None 结束循环。
 
 ```joky
 import joky/iter.{range}
@@ -2972,7 +2974,7 @@ fn sum() -> Int32 {
 }
 ```
 
-`joky/iter` 导出以下接口，均为普通 Joky 源码和静态分派：
+`joky/iter` 的普通 Iterator 接口使用 Joky 源码和静态分派：
 
 | 接口 | 行为 |
 | --- | --- |
@@ -2999,8 +3001,8 @@ break 退出最近的 while/for，return 退出函数，均遵守原有自动清
 Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失败清理沿用 Option/match。
 迭代器在结束或提前退出时清理；循环体可在挂起函数中挂起，恢复不会重新求值输入或重放 next。
 迭代器、元素及引用仍须满足现有跨挂起存储资格，取消先清理子调用再清理本轮元素和迭代器。
-当前不自动借用已有迭代器，也不自动将 Array/Map 转成迭代器。Array 使用显式 into_iter；
-借用式 iter/iter_mut、Map 迭代和 map/filter 等组合器属于[后续阶段](for-iterators.md)。
+当前不自动将 Array/Map 转成迭代器。Array 显式选择 into_iter、iter 或 iter_mut；
+Map 迭代、IntoIterator 与 map/filter 等组合器仍属于[后续工作](for-iterators.md)。
 
 ### Array 消费式迭代
 
@@ -3028,6 +3030,53 @@ fn sum_values() -> Int32 {
 不另建元素缓冲区，也不逐项从头部删除搬移后缀。转换和取项过程中均保持完整的已初始化前缀，
 复用 Array 的失败与取消清理。耗尽后容量仍归迭代器所有，迭代器清理时才释放缓冲区；
 这些复杂度描述不代表进行过性能测量。
+
+### Array 借用式迭代
+
+`values.iter()` 返回 `&joky/iter.Iter<T>`，`values.iter_mut()` 返回 `&mut Iter<T>`；
+模块函数 `array.iter(&values)` / `array.iter_mut(&mut values)` 等价。
+它们按下标正序借用原数组，分别给出 `&T` / `&mut T`，不消费数组或移出元素。
+支持与 borrow_ref 相同的无引用元素，包括普通 Copy 数据、String、拥有记录和嵌套数组；
+含引用的元素仍不支持直接引用遍历。
+
+```joky
+fn increment() -> Int32 {
+    var values = [1, 2, 3]
+    for value in values.iter_mut() { *value += 10 }
+    var total = 0
+    for value in values.iter() { total += *value }
+    total
+}
+```
+
+Iter 是编译器识别的借用目标，只能通过 `&Iter<T>` / `&mut Iter<T>` 使用。
+它不实现普通 Iterator，不能作为 `I: Iterator` 的参数；独占引用不进入 Option，
+现有视图聚合、泛型实参与引用存储限制保持不变。显式类型为 Iter 的借用参数可用于泛型转发。
+`for` 通过游标类型选择下面的两步操作，同名用户函数不能改变生成调用：
+
+| joky/iter 接口 | 行为 |
+| --- | --- |
+| `advance<T>(&Iter<T>) -> Bool` | 同步前进一步；成功后存在当前项，空游标及耗尽后始终 false |
+| `current<T>(&Iter<T>) -> &T` | 借用当前元素，不改变位置 |
+| `current_mut<T>(&mut Iter<T>) -> &mut T` | 独占借用当前元素，不改变位置 |
+
+首次 advance 前或 advance 返回 false 后调用 current/current_mut 会产生受检运行时错误。
+手动推进后再进入 for，会从下一项继续；break/continue/return 沿用普通循环语义。
+共享游标可在本地复制，但副本共享位置；重新调用数组的 iter 才会创建独立游标。
+独占游标按现有引用规则移动进循环；若循环后还要使用同一游标，写 `for value in &mut *cursor` 显式重借用。
+advance 只修改游标位置，因此先前的共享元素引用可跨越后续 advance，仍指向原来的元素。
+独占元素引用仍活跃时不能再 advance 或取得冲突借用；检查保守地借用整个数组，
+不根据索引证明不同元素互不重叠。引用最后一次使用后可继续推进或再次借用。
+
+游标和元素引用的来源始终追溯到原数组；借用存活期间不能移动、释放、扩容或结构性修改数组。
+共享遍历允许其他共享读取，可变遍历期间禁止通过原数组进行冲突访问。
+元素引用可比游标的局部绑定活得更久，但不能逃出其数组来源的有效期。
+循环绑定本身不可重新赋值；`&mut T` 仍允许通过 `*value` 或字段修改元素。
+
+循环体可挂起，游标和元素按现有无引用存储树规则保活；恢复不重放 advance。
+正常结束、提前退出、失败和取消都不由游标析构元素，元素始终归原数组清理。
+构造游标 O(1)，分配一个任务 arena 内的小型描述符；每次 advance/current 为 O(1)、不分配。
+描述符随任务 arena 释放，不承诺在游标最后一次使用时立即回收；未进行性能测量。
 
 ## 分号与表达式序列
 

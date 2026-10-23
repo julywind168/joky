@@ -389,11 +389,11 @@ impl FunctionPlan {
                     ty.is_copy_value()
                         || path.is_empty() && ty == Type::String
                         || self
-                            .field_target(
-                                ty.reference_type().map(|r| r.target.clone()).unwrap_or(ty),
-                                &path,
-                                span,
+                            .pointee(
+                                ty.reference_type().map(|r| &r.target).unwrap_or(&ty),
+                                &self.type_registry,
                             )
+                            .and_then(|target| self.field_target(target, &path, span))
                             .is_ok_and(|t| t.is_suspend_safe_owner())
                 })
             })

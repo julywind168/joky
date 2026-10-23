@@ -1,0 +1,151 @@
+import joky/array as array.{type Array}
+import joky/iter as iter.{type Iter}
+import joky/option.{Some, None}
+import joky/check.{assert}
+import joky/drop.{type Drop}
+import joky/string as text
+extern fn record(x: Int32) -> Int32
+extern fn delayed_value(x: Int32) @suspends -> Int32
+
+fn expect(ok: Bool) { assert(ok, "Borrowed iterator mismatch") }
+fn sum(values: &Array<Int32>) -> Int32 {
+    var result = 0
+    for value in values.iter() { result += *value }
+    result
+}
+fn item_count<T>(values: &Array<T>) -> Int32 {
+    var result = 0
+    for _ in values.iter() { result += 1 }
+    result
+}
+fn forward<T>(values: &Array<T>) -> &Iter<T> { values.iter() }
+fn forward_mut<T>(values: &mut Array<T>) -> &mut Iter<T> { values.iter_mut() }
+fn compute() -> Int32 {
+    var values = [1, 2, 3]
+    expect(sum(&values) == 6)
+    for value in forward_mut(&mut values) { *value += 10 }
+    expect(sum(&values) == 36)
+    let cursor = forward(&values)
+    expect(iter.advance(cursor))
+    let first = iter.current(cursor)
+    expect(iter.advance(cursor))
+    let second = iter.current(cursor)
+    expect(*first == 11 && *second == 12)
+    var rest = 0
+    for value in cursor { rest += *value }
+    expect(rest == 13)
+    expect(!iter.advance(cursor))
+    expect(!iter.advance(cursor))
+    source_once()
+    empty_and_nested()
+    mutable_resume()
+    shared_aliases()
+    42
+}
+fn source_once() {
+    var values = [11]
+    var sources = 0
+    for _ in { sources += 1; values.iter() } {}
+    expect(sources == 1)
+    let saved = {
+        let i = values.iter()
+        expect(iter.advance(i))
+        iter.current(i)
+    }
+    expect(*saved == 11)
+    values.push(4)
+    expect(values.len() == 2)
+}
+fn empty_and_nested() {
+    var count = 0
+    let empty = Array.new::<Int32>()
+    for _ in empty.iter() { count += 100 }
+    let units = [{}, {}, {}]
+    for _ in units.iter() { count += 1 }
+    expect(count == 3)
+    expect(item_count::<Unit>(&units) == 3)
+    let texts = ["a", "bc"]
+    var bytes: UInt64 = 0
+    for value in texts.iter() { bytes += text.byte_length(value) }
+    expect(bytes == 3)
+    let nested = [[1, 2], [3, 4]]
+    var digits = 0
+    for inner in nested.iter() {
+        for value in inner.iter() { digits = digits * 10 + *value }
+    }
+    expect(digits == 1234)
+}
+fn mutable_resume() {
+    var values = [11, 12, 13, 4]
+    let mutable = values.iter_mut()
+    for value in &mut *mutable { *value += 1; break }
+    expect(iter.advance(mutable))
+    *iter.current_mut(mutable) += 1
+    expect(sum(&values) == 42)
+}
+fn shared_aliases() {
+    let copy = [2, 3]
+    let left = copy.iter()
+    let right = copy.iter()
+    expect(iter.advance(left) && iter.advance(right))
+    expect(*iter.current(left) == 2 && *iter.current(right) == 2)
+    let alias = left
+    expect(iter.advance(alias))
+    expect(*iter.current(left) == 3)
+}
+
+struct Owned { id: Int32, data: Array<Int32> }
+impl Drop for Owned { fn drop(&mut self) { record(self.id); } }
+fn owned(id: Int32) -> Owned {
+    let value = Owned { id: id, data: [id] }
+    record(-id)
+    value
+}
+fn values() -> Array<Owned> { [owned(1), owned(2), owned(3), owned(4)] }
+fn consume(action: Int32) -> Int32 {
+    let input = values()
+    var result = 0
+    for value in input.iter() {
+        record(10 + value.id)
+        if action == 1 && value.id == 1 { continue }
+        result += value.id
+        if action == 2 { break }
+        if action == 3 { return value.id }
+        if action == 4 { let invalid = value.id % 0 }
+    }
+    // Iteration never moved or dropped any element.
+    expect(input.len() == 4)
+    record(20)
+    result
+}
+fn pending() @suspends -> Int32 {
+    var input = values()
+    for value in input.iter_mut() {
+        value.data.push(99)
+        delayed_value(record(10 + value.id))
+        expect(value.data.len() == 2)
+        if value.id == 1 { continue }
+        break
+    }
+    expect(input.len() == 4)
+    42
+}
+fn pending_shared() @suspends -> Int32 {
+    let input = values()
+    for value in input.iter() {
+        delayed_value(record(10 + value.id))
+        expect(value.data.get(0).unwrap_or(0) == value.id)
+        if value.id == 1 { continue }
+        break
+    }
+    42
+}
+fn invalid_current(after_end: Int32) -> Int32 {
+    let input = [42]
+    let cursor = input.iter()
+    if after_end != 0 {
+        expect(iter.advance(cursor))
+        expect(!iter.advance(cursor))
+    }
+    *iter.current(cursor)
+}

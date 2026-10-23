@@ -67,3 +67,16 @@ fn slice_borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T
 
 #intrinsic("buffer.swap_elements")
 fn swap_elements<T>(buffer: &mut Buffer<T>, first: UInt64, second: UInt64)
+
+// A task-local borrowed cursor, never an owning or aggregate value.
+type Iter<T> = T
+#intrinsic("buffer.iter")
+fn iter<T>(values: &Buffer<T>) -> &Iter<T>
+#intrinsic("buffer.iter_mut")
+fn iter_mut<T>(values: &mut Buffer<T>) -> &mut Iter<T>
+#intrinsic("buffer.iter_advance")
+fn iter_advance<T>(iterator: &Iter<T>) -> Bool
+#intrinsic("buffer.iter_current")
+fn iter_current<T>(iterator: &Iter<T>) -> &T
+#intrinsic("buffer.iter_current_mut")
+fn iter_current_mut<T>(iterator: &mut Iter<T>) -> &mut T

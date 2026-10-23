@@ -32,7 +32,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         return native_type(&Type::Ptr);
     }
     match ty {
-        Type::BufferElement(_) | Type::BufferSlice(_) => None,
+        Type::BufferElement(_) | Type::BufferSlice(_) | Type::BufferIterator(_) => None,
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 | Type::Rune => Some(
             if matches!(ty, Type::Rune) || ty.integer().unwrap().bits() == 32 {
                 types::I32
@@ -646,6 +646,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         // Runtime helpers validate layouts/indices and return internal addresses.
         // Element values use typed inline loads/stores, never a polymorphic C ABI.
         let (params, returns) = match intrinsic {
+            BufferIntrinsic::Iter | BufferIntrinsic::IterMut => (vec![ptr, ptr], vec![ptr]),
+            BufferIntrinsic::IterAdvance => (vec![ptr], vec![types::I8]),
+            BufferIntrinsic::IterCurrent | BufferIntrinsic::IterCurrentMut => {
+                (vec![ptr], vec![ptr])
+            }
             BufferIntrinsic::Allocate => (vec![ptr, types::I64, ptr, ptr], vec![ptr]),
             BufferIntrinsic::Len | BufferIntrinsic::Capacity | BufferIntrinsic::SliceLen => {
                 (vec![ptr], vec![types::I64])
@@ -1838,7 +1843,9 @@ fn lower_ops(
                         BufferIntrinsic::BorrowRef
                         | BufferIntrinsic::BorrowMutRef
                         | BufferIntrinsic::SliceBorrowRef
-                        | BufferIntrinsic::SliceBorrowMutRef => {
+                        | BufferIntrinsic::SliceBorrowMutRef
+                        | BufferIntrinsic::IterCurrent
+                        | BufferIntrinsic::IterCurrentMut => {
                             let pointer = builder.inst_results(call)[0];
                             // One-field owner wrappers borrow the underlying handle;
                             // mixed aggregates borrow their inline element storage.

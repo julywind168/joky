@@ -1,5 +1,7 @@
 //! Execution regressions grouped by behavior; shared helpers stay in this test target.
 use super::*;
+#[path = "containers/array_borrow_iter_tests.rs"]
+mod array_borrow_iter_tests;
 
 #[path = "containers/array_borrow_tests.rs"]
 mod array_borrow_tests;

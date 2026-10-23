@@ -70,7 +70,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 30] = [
+    pub(crate) const ALL: [Self; 35] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
@@ -101,6 +101,11 @@ impl BufferIntrinsic {
         Self::SliceBorrowMutRef,
         Self::Subslice,
         Self::SubsliceMut,
+        Self::Iter,
+        Self::IterMut,
+        Self::IterAdvance,
+        Self::IterCurrent,
+        Self::IterCurrentMut,
     ];
 
     pub(crate) fn borrows_storage(self) -> bool {
@@ -118,12 +123,22 @@ impl BufferIntrinsic {
                 | Self::SliceBorrowMutRef
                 | Self::Subslice
                 | Self::SubsliceMut
+                | Self::Iter
+                | Self::IterMut
+                | Self::IterCurrent
+                | Self::IterCurrentMut
         )
     }
     pub(crate) fn allocates(self) -> bool {
         matches!(
             self,
-            Self::Allocate | Self::Slice | Self::SliceMut | Self::Subslice | Self::SubsliceMut
+            Self::Allocate
+                | Self::Slice
+                | Self::SliceMut
+                | Self::Subslice
+                | Self::SubsliceMut
+                | Self::Iter
+                | Self::IterMut
         )
     }
 
@@ -141,7 +156,19 @@ impl BufferIntrinsic {
         let exclusive = Type::reference(owner.clone(), true);
         let borrowed_element = Type::BufferElement(Arc::new(element.clone()));
         let slice = Type::BufferSlice(Arc::new(element.clone()));
+        let iterator = Type::BufferIterator(Arc::new(element.clone()));
         let (params, result) = match self {
+            Self::Iter => (vec![shared], Type::reference(iterator, false)),
+            Self::IterMut => (vec![exclusive], Type::reference(iterator, true)),
+            Self::IterAdvance => (vec![Type::reference(iterator, false)], Type::Bool),
+            Self::IterCurrent => (
+                vec![Type::reference(iterator, false)],
+                Type::reference(element.clone(), false),
+            ),
+            Self::IterCurrentMut => (
+                vec![Type::reference(iterator, true)],
+                Type::reference(element.clone(), true),
+            ),
             Self::Allocate => (vec![Type::UInt64], owner),
             Self::Transfer => (vec![exclusive.clone(), exclusive], Type::Unit),
             Self::TakeLast => (vec![exclusive], element.clone()),
@@ -234,13 +261,15 @@ impl BufferIntrinsic {
     pub(crate) fn may_fail(self) -> bool {
         !matches!(
             self,
-            Self::Len | Self::Capacity | Self::CapacityLimit | Self::SliceLen
+            Self::Len | Self::Capacity | Self::CapacityLimit | Self::SliceLen | Self::IterAdvance
         )
     }
 
     // Distinct checked source signatures may share the same raw runtime ABI.
     pub(crate) fn runtime_symbol(self) -> &'static str {
         match self {
+            Self::IterMut => "__joky_buffer_iter",
+            Self::IterCurrentMut => "__joky_buffer_iter_current",
             Self::Borrow
             | Self::BorrowRef
             | Self::BorrowMutRef
@@ -261,6 +290,11 @@ impl BufferIntrinsic {
 
     pub(crate) fn symbol(self) -> &'static str {
         match self {
+            Self::Iter => "__joky_buffer_iter",
+            Self::IterMut => "__joky_buffer_iter_mut",
+            Self::IterAdvance => "__joky_buffer_iter_advance",
+            Self::IterCurrent => "__joky_buffer_iter_current",
+            Self::IterCurrentMut => "__joky_buffer_iter_current_mut",
             Self::Allocate => "__joky_buffer_allocate",
             Self::Transfer => "__joky_buffer_transfer",
             Self::TakeLast => "__joky_buffer_take_last",
@@ -343,6 +377,11 @@ impl FunctionPlan {
                     | BufferIntrinsic::SubsliceMut
                     | BufferIntrinsic::SliceBorrowRef
                     | BufferIntrinsic::SliceBorrowMutRef
+                    | BufferIntrinsic::Iter
+                    | BufferIntrinsic::IterMut
+                    | BufferIntrinsic::IterAdvance
+                    | BufferIntrinsic::IterCurrent
+                    | BufferIntrinsic::IterCurrentMut
             )
         {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
@@ -356,6 +395,10 @@ impl FunctionPlan {
                 | BufferIntrinsic::BorrowMutRef
                 | BufferIntrinsic::SliceBorrowRef
                 | BufferIntrinsic::SliceBorrowMutRef
+                | BufferIntrinsic::Iter
+                | BufferIntrinsic::IterMut
+                | BufferIntrinsic::IterCurrent
+                | BufferIntrinsic::IterCurrentMut
         ) && !element.is_owner()
             && (!element.is_copy_storage_value() || element.contains_references())
             && !matches!(element, Type::Parameter(_) | Type::Projection(_))
@@ -440,11 +483,14 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 format!("FixedArray is not supported in this context: {ty}"),
             ));
         }
-        if matches!(ty, Type::BufferElement(_) | Type::BufferSlice(_)) {
+        if matches!(
+            ty,
+            Type::BufferElement(_) | Type::BufferSlice(_) | Type::BufferIterator(_)
+        ) {
             return Err(type_error(
                 &info.span,
                 ErrorCode::TypeMismatch,
-                "Element and Slice are borrow-only targets; use & or &mut",
+                "Element, Slice and Iter are borrow-only targets; use & or &mut",
             ));
         }
         // Owner reference targets retain nominal identity rather than inline

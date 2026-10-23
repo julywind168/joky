@@ -209,7 +209,10 @@ fn resolve(
             registry.validate(&result)?;
             return Ok(result);
         }
-        Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
+        Type::Buffer(element)
+        | Type::BufferElement(element)
+        | Type::BufferSlice(element)
+        | Type::BufferIterator(element) => {
             let element = resolve(element, canonical, registry, depth + 1, budget)?;
             // The view itself is indirect, but its elements are stored inline.
             // Recover nominal layouts by declaration identity after resolving
@@ -447,7 +450,10 @@ pub(crate) fn validate_elements(
         }
         seen.push((ty.clone(), reference_free));
         match &ty {
-            Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
+            Type::Buffer(element)
+            | Type::BufferElement(element)
+            | Type::BufferSlice(element)
+            | Type::BufferIterator(element) => {
                 let element = materialize(element, nominals, registry)?;
                 if !element.is_buffer_element() || reference_free && element.contains_references() {
                     return Err(Error::new_with_code(
@@ -520,7 +526,10 @@ pub(crate) fn substitute_syntax(ty: &Type, arguments: &Substitutions) -> Type {
             Type::DynTrait(Arc::new(d))
         }
         Type::Parameter(p) => arguments.get(&p.id).cloned().unwrap_or_else(|| ty.clone()),
-        Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
+        Type::Buffer(element)
+        | Type::BufferElement(element)
+        | Type::BufferSlice(element)
+        | Type::BufferIterator(element) => {
             ty.with_buffer_element(substitute_syntax(element, arguments))
         }
         Type::Reference(r) => Type::reference(substitute_syntax(&r.target, arguments), r.mutable),

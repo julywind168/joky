@@ -36,6 +36,8 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "insert",
             "into_iter",
             "is_empty",
+            "iter",
+            "iter_mut",
             "len",
             "new",
             "pop",

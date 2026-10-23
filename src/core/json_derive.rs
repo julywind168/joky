@@ -143,6 +143,7 @@ fn context_call(name: &str, type_args: Vec<Type>, args: Vec<Expr>, span: Span) -
 fn propagate(value: Expr, result: &str, span: Span) -> Expr {
     Expr::Match {
         conditional: false,
+        iteration: false,
         value: Box::new(value),
         arms: vec![
             MatchArm {

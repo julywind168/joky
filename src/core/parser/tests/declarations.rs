@@ -566,6 +566,7 @@ fn conditional_patterns_preserve_spans_and_match_payload_syntax() {
         value,
         arms,
         span,
+        ..
     } = &exprs[0]
     else {
         panic!()

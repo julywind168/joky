@@ -112,8 +112,10 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
     });
     if !rigid {
         let target = ty.reference_type().map_or(ty, |r| &r.target);
-        let shallow = matches!(target, Type::BufferElement(_) | Type::BufferSlice(_))
-            || matches!(target, Type::Record(r) if r.indirect)
+        let shallow = matches!(
+            target,
+            Type::BufferElement(_) | Type::BufferSlice(_) | Type::BufferIterator(_)
+        ) || matches!(target, Type::Record(r) if r.indirect)
             || matches!(target, Type::Enum(e) if e.indirect);
         // Nominal references and borrow-only views have no inline root layout.
         // Validate all contained arrays; materialization checks concrete objects.

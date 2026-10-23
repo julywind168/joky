@@ -2,7 +2,10 @@
 use super::*;
 use crate::{
     parser::ast::BufferIntrinsic,
-    runtime::{arena::Arena, buffer::Buffer},
+    runtime::{
+        arena::Arena,
+        buffer::{Buffer, BufferIterator},
+    },
 };
 
 fn pointer(value: &Value) -> Result<*mut Buffer, Error> {
@@ -179,6 +182,12 @@ pub(super) fn execute(
             // completes its checked read/write/commit before advancing the PC.
             let value = unsafe {
                 match intrinsic {
+                    BufferIntrinsic::Iter | BufferIntrinsic::IterMut => {
+                        Value::Reference((*pointer(arg(0))?).iterator(arena)?.as_ptr().cast())
+                    }
+                    BufferIntrinsic::IterAdvance => {
+                        Value::Bool((*pointer(arg(0))?.cast::<BufferIterator>()).advance())
+                    }
                     BufferIntrinsic::Allocate => Value::Reference(
                         Buffer::allocate(arena, count(arg(0))?, layout.size, layout.align)?
                             .as_ptr()
@@ -197,8 +206,17 @@ pub(super) fn execute(
                     BufferIntrinsic::BorrowRef
                     | BufferIntrinsic::BorrowMutRef
                     | BufferIntrinsic::SliceBorrowRef
-                    | BufferIntrinsic::SliceBorrowMutRef => {
-                        let data = (*pointer(arg(0))?).load(count(arg(1))?)?;
+                    | BufferIntrinsic::SliceBorrowMutRef
+                    | BufferIntrinsic::IterCurrent
+                    | BufferIntrinsic::IterCurrentMut => {
+                        let data = if matches!(
+                            intrinsic,
+                            BufferIntrinsic::IterCurrent | BufferIntrinsic::IterCurrentMut
+                        ) {
+                            (*pointer(arg(0))?.cast::<BufferIterator>()).current()?
+                        } else {
+                            (*pointer(arg(0))?).load(count(arg(1))?)?
+                        };
                         Value::Reference(if !element.is_owner() || element.is_inline_owner() {
                             data
                         } else {

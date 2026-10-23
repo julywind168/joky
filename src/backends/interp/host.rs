@@ -962,6 +962,7 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
         | Type::Buffer(_)
         | Type::BufferElement(_)
         | Type::BufferSlice(_)
+        | Type::BufferIterator(_)
         | Type::FixedArray(_)
         | Type::FixedArrayInit(_)
         | Type::Applied(_)

@@ -84,9 +84,10 @@ pub(super) fn eligible(ty: &Type) -> bool {
                     .all(|t| !t.contains_fixed_array() || eligible(t))
         }
         Type::FixedArrayInit(_) => true,
-        Type::Buffer(t) | Type::BufferSlice(t) | Type::BufferElement(t) => {
-            t.is_place() && eligible(t)
-        }
+        Type::Buffer(t)
+        | Type::BufferSlice(t)
+        | Type::BufferElement(t)
+        | Type::BufferIterator(t) => t.is_place() && eligible(t),
         Type::Record(r) if r.array => r
             .arguments
             .iter()

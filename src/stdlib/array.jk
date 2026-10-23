@@ -4,7 +4,7 @@ import joky/internal/buffer as storage.{type Buffer}
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
-import joky/iter.{type Iterator}
+import joky/iter as iteration.{type Iterator, type Iter}
 
 pub struct Array<T> { storage: Buffer<T> }
 pub struct IntoIter<T> { values: Array<T> }
@@ -29,7 +29,13 @@ pub fn into_iter<T>(values: Array<T>) -> IntoIter<T> {
 }
 
 // Both APIs share the module algorithms without duplicating their specializations.
+pub fn iter<T>(values: &Array<T>) -> &Iter<T> { storage.iter(&values.storage) }
+pub fn iter_mut<T>(values: &mut Array<T>) -> &mut Iter<T> { storage.iter_mut(&mut values.storage) }
+
 impl<T> Array<T> {
+    pub fn iter(&self) -> &Iter<T> { iter(self) }
+    pub fn iter_mut(&mut self) -> &mut Iter<T> { iter_mut(self) }
+
     pub fn new() -> Self { new::<T>() }
     pub fn with_capacity(capacity: UInt64) -> Self { with_capacity::<T>(capacity) }
     pub fn release(self) { release(self) }

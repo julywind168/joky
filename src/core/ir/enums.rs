@@ -410,10 +410,18 @@ impl FunctionPlan {
             arms,
             span,
             conditional,
+            iteration,
         } = expr
         else {
             unreachable!()
         };
+        if *iteration {
+            if let Some(lowered) =
+                self.borrowed_iteration(value, arms, vars, functions, types, *span)
+            {
+                return self.expr(&lowered, vars, functions, suspends, types);
+            }
+        }
         self.local_scopes.push(Vec::new());
         let mut value = self.expr(value, &mut vars.clone(), functions, suspends, types)?;
         if let Flow::Value(Some(slot)) = &value {

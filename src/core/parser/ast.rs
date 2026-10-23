@@ -110,9 +110,11 @@ pub enum Expr {
     },
     /// Evaluate once and select an exhaustive variant arm.
     Match {
-        /// Two compiler-authored arms for if let / while let; an irrefutable
+        /// Two compiler-authored arms for if let / while let / for; an irrefutable
         /// success pattern may make the implicit wildcard fallback unreachable.
         conditional: bool,
+        /// Parser-authored for step, resolved after the cursor type is known.
+        iteration: bool,
         value: Box<Expr>,
         arms: Vec<MatchArm>,
         span: Span,
@@ -372,11 +374,13 @@ impl Expr {
                 value,
                 arms,
                 conditional,
+                iteration,
                 ..
             } => Self::Match {
                 value,
                 arms,
                 conditional,
+                iteration,
                 span,
             },
             Self::Record {
@@ -866,6 +870,11 @@ pub(crate) enum BufferIntrinsic {
     SliceBorrowMutRef,
     Subslice,
     SubsliceMut,
+    Iter,
+    IterMut,
+    IterAdvance,
+    IterCurrent,
+    IterCurrentMut,
 }
 
 #[derive(Debug, Clone)]

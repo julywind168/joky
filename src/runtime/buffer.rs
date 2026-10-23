@@ -1,7 +1,7 @@
 //! Private typed storage with task-registered, independently reclaimable owners.
 use super::arena::Arena;
 use crate::{Error, ErrorCode, ErrorPhase, SourceId, Span};
-use std::{alloc::Layout, ptr::NonNull};
+use std::{alloc::Layout, cell::Cell, ptr::NonNull};
 
 /// Stable control block; no element pointers or layout inputs are source-visible.
 /// Replaced payloads and explicitly released owners refund their arena charge.
@@ -25,6 +25,39 @@ pub(crate) struct Buffer {
     release_owner: usize,
     release_hook: usize,
     release_active: bool,
+}
+
+/// Nonowning cursor, retained by the task arena. Checked source loans keep the
+/// payload stable. Shared copies refer to the same position; advancing changes
+/// only this header, never the elements or previously returned addresses.
+pub(crate) struct BufferIterator {
+    data: NonNull<u8>,
+    len: usize,
+    stride: usize,
+    position: Cell<usize>,
+}
+impl BufferIterator {
+    pub(crate) fn advance(&self) -> bool {
+        let position = self.position.get();
+        if position < self.len {
+            self.position.set(position + 1);
+            true
+        } else {
+            // Buffer lengths are bounded by isize::MAX, including ZSTs.
+            self.position.set(self.len + 1);
+            false
+        }
+    }
+    pub(crate) fn current(&self) -> Result<*mut u8, Error> {
+        let position = self.position.get();
+        if position == 0 || position > self.len {
+            return Err(bounds_error(
+                "Iterator current requires a successful advance",
+            ));
+        }
+        // Construction inherits the buffer's checked initialized layout.
+        Ok(unsafe { self.data.as_ptr().add((position - 1) * self.stride) })
+    }
 }
 
 pub(crate) struct OwningGraph {
@@ -317,6 +350,24 @@ impl Buffer {
             .filter(|&i| i < self.len)
             .ok_or_else(|| bounds_error("Buffer index is outside the initialized prefix"))?;
         Ok(self.address(index))
+    }
+
+    pub(crate) fn iterator(&self, arena: &mut Arena) -> Result<NonNull<BufferIterator>, Error> {
+        let layout = Layout::new::<BufferIterator>();
+        let iterator = arena
+            .allocate(layout.size(), layout.align())?
+            .cast::<BufferIterator>();
+        // Arena allocations are stable and retained until task cleanup. This
+        // descriptor has no destructor and never takes payload ownership.
+        unsafe {
+            iterator.as_ptr().write(BufferIterator {
+                data: self.data,
+                len: self.len,
+                stride: self.element.size(),
+                position: Cell::new(0),
+            });
+        }
+        Ok(iterator)
     }
 
     /// A borrowed header snapshots an initialized range, never owns its payload.
@@ -1086,6 +1137,47 @@ unsafe extern "C" fn replace(
     );
 }
 
+/// Create a cursor over initialized buffer storage.
+/// # Safety
+/// arena and buffer are live on the owning task thread; arena is exclusive.
+/// Checked source loans must keep the payload stable for all uses of the result.
+/// The returned descriptor belongs to arena and must never be released as an owner.
+#[export_name = "__joky_buffer_iter"]
+unsafe extern "C" fn iter(
+    arena: *mut Arena,
+    buffer: *const Buffer,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut BufferIterator {
+    located(
+        (*buffer).iterator(&mut *arena).map(NonNull::as_ptr),
+        source,
+        start,
+        end,
+    )
+}
+/// # Safety
+/// iterator points to a live BufferIterator on its owning task thread. Its
+/// descriptor and borrowed payload remain live; concurrent access is forbidden.
+#[export_name = "__joky_buffer_iter_advance"]
+unsafe extern "C" fn iter_advance(iterator: *const BufferIterator) -> u8 {
+    (*iterator).advance() as u8
+}
+/// # Safety
+/// iterator and its initialized payload remain live on their owning task thread.
+/// The caller uses the element's checked layout and enforces shared/exclusive
+/// source loans for all accesses through the returned address.
+#[export_name = "__joky_buffer_iter_current"]
+unsafe extern "C" fn iter_current(
+    iterator: *const BufferIterator,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut u8 {
+    located((*iterator).current(), source, start, end)
+}
+
 #[export_name = "__joky_buffer_slice"]
 unsafe extern "C" fn slice(
     arena: *mut Arena,
@@ -1231,8 +1323,11 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 21] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 24] {
     [
+        ("__joky_buffer_iter", iter as *const u8),
+        ("__joky_buffer_iter_advance", iter_advance as *const u8),
+        ("__joky_buffer_iter_current", iter_current as *const u8),
         ("__joky_place_view", place_view as *const u8),
         ("__joky_buffer_transfer", transfer as *const u8),
         ("__joky_buffer_take_last", take_last as *const u8),
