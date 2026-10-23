@@ -307,7 +307,7 @@ impl FunctionPlan {
                 .unwrap())
         }
     }
-    fn sequence_slice(
+    pub(super) fn sequence_slice(
         &mut self,
         root: &Slot,
         element: &Type,

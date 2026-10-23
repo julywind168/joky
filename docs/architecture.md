@@ -124,6 +124,11 @@ Rust/Cranelift 标量运算使用的 MXCSR；标准环境采用最近偶数舍�
 结果上下文不额外反推泛型实参。标准库 Range<T> 保存当前位置、终点、闭区间标志与耗尽标志，
 通过 Step 的严格比较和受检后继静态分派；产出闭区间终点时直接标记耗尽，避免最大值加一。
 
+索引规划识别解析器生成的有界范围调用，将两个端点直接按 UInt64 定型并依次快照，
+返回普通 Slice 借用。闭区间先检查逆序与终点加一溢出，再通过既有 sequence_slice
+生成 Buffer Slice/Subslice 或 FixedArray Place View；来源借用、清理与跨挂起规则共用原路径，
+不新增运行时 ABI，也不将迭代器状态当成索引边界。
+
 for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条件 Match，保留输入及模式 span。
 不可失败绑定通过普通 Let/Destructure 检查；生成调用使用不可由源码拼写的标准库别名，
 经 `joky/iter.next<I: Iterator>` 固定协议身份与泛型约束，同名固有方法不能劫持选择。

@@ -454,7 +454,9 @@ impl FunctionPlan {
             }
             if borrow {
                 if target.reference_type().is_some()
-                    || super::indexing::is_index_place(place) && target.contains_references()
+                    || super::indexing::is_index_place(place)
+                        && !matches!(target, Type::BufferSlice(_))
+                        && target.contains_references()
                 {
                     return Err(type_error(
                         &expr.span(),

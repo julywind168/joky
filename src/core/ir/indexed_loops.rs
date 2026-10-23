@@ -611,7 +611,12 @@ impl Inference<'_> {
             }
             Expr::Index { base, index, .. } => {
                 depends = descend(base, vars, tracked, None)?;
-                descend(index, vars, tracked, Some(&Type::UInt64))?;
+                if let Some((start, end, _)) = super::indexing::slice_bounds(index) {
+                    descend(start, vars, tracked, Some(&Type::UInt64))?;
+                    descend(end, vars, tracked, Some(&Type::UInt64))?;
+                } else {
+                    descend(index, vars, tracked, Some(&Type::UInt64))?;
+                }
             }
             _ => {
                 for child in super::closures::children(expr) {

@@ -1,0 +1,99 @@
+import joky/array.{type Array}
+import joky/fixed_array.{type FixedArray}
+import joky/slice.{type Slice}
+import joky/check.{assert}
+import joky/drop.{type Drop}
+import joky/integer
+extern fn record(x: Int32) -> Int32
+extern fn delayed_value(x: Int32) @suspends -> Int32
+fn expect(ok: Bool) { assert(ok, "Slice mismatch") }
+fn sum(values: &Slice<Int32>) -> Int32 {
+    var total = 0
+    for value in values { total += *value }
+    total
+}
+fn first<T>(values: &Array<T>) -> &Slice<T> { &values[0..1] }
+fn selected(values: &Array<Int32>) -> &Slice<Int32> { &values[1..=2] }
+fn base(values: &Array<Int32>) -> &Array<Int32> { record(0); values }
+struct Item { id: Int32, text: String }
+fn arrays() {
+    var values = [10, 20, 30, 40]
+    expect(sum(&values[1..3]) == 50)
+    expect(sum(selected(&values)) == 50)
+    expect(sum(&values[0..0]) == 0 && sum(&values[4..4]) == 0)
+    expect(sum(&values[0..=0]) == 10)
+    expect(sum(&base(&values)[uint64(record(1))..=uint64(record(2))]) == 50)
+    let other = [100, 200]
+    var source = &values
+    let captured = &source[0..{ source = &other; 1 }]
+    expect(captured[0] == 10)
+    var start: UInt64 = 1
+    let frozen = &values[start..{ start = 3; start }]
+    expect(sum(frozen) == 50)
+    let region = &mut values[1..=2]
+    let inner = &mut region[0..1]
+    inner[0] += 2
+    for value in &mut *region { *value += 1 }
+    expect(sum(&region[2..2]) == 0)
+    expect(values[1] == 23 && values[2] == 31)
+}
+fn fixed_and_owned() {
+    var fixed: FixedArray<Int32, 4> = [1, 2, 3, 4]
+    let part = &mut fixed[1..=2]
+    part[0] += 10
+    expect(sum(&part[0..2]) == 15)
+    expect(fixed[1] == 12 && sum(&fixed[4..4]) == 0)
+    var items = [Item { id: 20, text: "a" }, Item { id: 22, text: "b" }]
+    expect(first(&items)[0].id == 20)
+    let owned = &mut items[0..2]
+    owned[1].id += 1
+    expect(items[1].id == 23)
+}
+fn reference_elements() {
+    let a = alloc(20)
+    let b = alloc(22)
+    let refs = [&*a, &*b]
+    let borrowed = &refs[0..=1]
+    expect(*borrowed[0] + *borrowed[1] == 42)
+    expect(sum(&[20, 22][0..2]) == 42)
+}
+fn indexed() {
+    let values = [10, 20]
+    var counted = 0
+    for index, _ in [0, 0] {
+        let prefix = &values[0..=index]
+        counted += int32(slice.len(prefix))
+    }
+    expect(counted == 3)
+}
+fn compute() -> Int32 {
+    arrays()
+    fixed_and_owned()
+    reference_elements()
+    indexed()
+    42
+}
+struct Guard { id: Int32, text: String }
+impl Drop for Guard { fn drop(&mut self) { record(self.id); } }
+fn pending() @suspends -> Int32 {
+    let guard = Guard { id: 99, text: "guard" }
+    record(-99)
+    var values = [20, 21, 2]
+    let region = &mut values[uint64(delayed_value(record(-1)))..=uint64(delayed_value(record(0)))]
+    for value in &mut *region { *value += 1 }
+    let n = delayed_value(record(4))
+    expect(sum(region) == 43 && n == 5 && guard.id == 99)
+    values[2] += 1
+    42
+}
+fn bad_half() { let a = [1, 2]; let s = &a[0..3]; sum(s); }
+fn bad_reverse() { let a = [1, 2]; let s = &a[1..=0]; sum(s); }
+fn bad_closed() { let a = [1, 2]; let s = &a[0..=2]; sum(s); }
+fn bad_fixed() { let a: FixedArray<Int32, 2> = [1, 2]; let s = &a[0..=2]; sum(s); }
+fn bad_subslice() { let a = [1, 2]; let s = &a[0..1]; let t = &s[0..=1]; sum(t); }
+fn bad_max() {
+    let guard = Guard { id: 99, text: "guard" }
+    let a = [1, 2]
+    let s = &a[0..=UInt64.MAX]
+    sum(s);
+}

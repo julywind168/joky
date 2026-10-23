@@ -8,6 +8,28 @@ pub(super) fn is_index_place(mut expr: &Expr) -> bool {
     matches!(expr, Expr::Index { .. })
 }
 
+/// Only parser-authored bounded range expressions select slicing. Iterator
+/// values and ordinary function calls remain ordinary index operands.
+pub(super) fn slice_bounds(expr: &Expr) -> Option<(&Expr, &Expr, bool)> {
+    let Expr::Call {
+        callee,
+        args,
+        type_args,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    if !type_args.is_empty() || args.len() != 2 {
+        return None;
+    }
+    match callee.as_str() {
+        "$joky_iter.range" => Some((&args[0], &args[1], false)),
+        "$joky_iter.range_inclusive" => Some((&args[0], &args[1], true)),
+        _ => None,
+    }
+}
+
 impl FunctionPlan {
     pub(super) fn index_reference(
         &mut self,
@@ -110,6 +132,94 @@ impl FunctionPlan {
                 )
             })?;
         root.ty = Type::reference(target, mutable);
+        if let Some((start, end, inclusive)) = slice_bounds(index) {
+            // A later bound may rebind the source reference variable.
+            root = self.reference_value(Some(root), false)?.unwrap();
+            let mut bounds = Vec::with_capacity(2);
+            for bound in [start, end] {
+                let Flow::Value(value) = self.expr_expected(
+                    bound,
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                    Some(&Type::UInt64),
+                )?
+                else {
+                    return Ok(Flow::Diverged);
+                };
+                if slot_type(&value) != Type::UInt64 {
+                    return Err(type_error(
+                        &bound.span(),
+                        ErrorCode::TypeMismatch,
+                        "Slice bounds must have type UInt64",
+                    ));
+                }
+                // Freeze the start before effects in the end expression.
+                bounds.push(self.snapshot(&value)?.unwrap());
+            }
+            let mut end = bounds.pop().unwrap();
+            let start = bounds.pop().unwrap();
+            if inclusive {
+                let mut locals = HashMap::new();
+                for (name, slot) in [("$slice_start", &start), ("$slice_end", &end)] {
+                    locals.insert(
+                        name.into(),
+                        Binding {
+                            slot: Some(slot.clone()),
+                            mutable: false,
+                            place: None,
+                        },
+                    );
+                }
+                let ident = |name: &str| Expr::Ident {
+                    name: name.into(),
+                    span: *span,
+                };
+                let guard = Expr::If {
+                    condition: Box::new(Expr::Logical {
+                        op: crate::parser::ast::LogicalOp::Or,
+                        lhs: Box::new(Expr::BinOp {
+                            op: BinOp::Gt,
+                            lhs: Box::new(ident("$slice_start")),
+                            rhs: Box::new(ident("$slice_end")),
+                            span: *span,
+                        }),
+                        rhs: Box::new(Expr::BinOp {
+                            op: BinOp::Eq,
+                            lhs: Box::new(ident("$slice_end")),
+                            rhs: Box::new(Expr::Literal {
+                                literal: Literal::UInt64(u64::MAX),
+                                span: *span,
+                            }),
+                            span: *span,
+                        }),
+                        span: *span,
+                    }),
+                    then_branch: Box::new(Expr::Call {
+                        callee: "$joky_check.panic".into(),
+                        type_args: vec![],
+                        args: vec![Expr::Literal {
+                            literal: Literal::String("Invalid inclusive slice bounds".into()),
+                            span: *span,
+                        }],
+                        span: *span,
+                    }),
+                    else_branch: None,
+                    span: *span,
+                };
+                self.expr(&guard, &mut locals, functions, suspends, types)?;
+                self.current_span = *span;
+                let one = self.pattern_u64(1)?;
+                let exclusive = self.slot(Type::UInt64)?;
+                self.emit(Op::Binary(exclusive.clone(), BinOp::Add, end, one));
+                end = exclusive;
+            }
+            self.current_span = *span;
+            return Ok(Flow::Value(Some(
+                self.sequence_slice(&root, &element, start, end, mutable)?,
+            )));
+        }
         let Flow::Value(index_value) =
             self.expr_expected(index, vars, functions, suspends, types, Some(&Type::UInt64))?
         else {

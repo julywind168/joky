@@ -254,10 +254,15 @@ impl FunctionPlan {
                     },
                 )
                 .ok(),
-            Expr::Index { base, .. } => {
+            Expr::Index { base, index, .. } => {
                 let ty = self.hint(base, vars, functions, types, default)?;
                 let target = ty.reference_type().map_or(&ty, |r| &r.target);
-                super::arrays::element_type(target).cloned()
+                let element = super::arrays::element_type(target)?.clone();
+                Some(if super::indexing::slice_bounds(index).is_some() {
+                    Type::BufferSlice(Arc::new(element))
+                } else {
+                    element
+                })
             }
             Expr::Field { base, name, .. } => {
                 match self

@@ -306,6 +306,7 @@ parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | 
 `if` / `else`、`else if`、`while`、`for`、`return`、`break` 和 `continue` 均已实现。
 for 使用同步 Iterator.next 与关联 Item；`Range<T>` 支持八种整数及实现 Step 的 Copy 类型。
 `a..b` 为半开区间，`a..=b` 为闭区间；也可显式导入 range/range_inclusive 调用。
+Array、FixedArray、Slice 支持 `&xs[a..b]` / `&mut xs[a..=b]` 的有界范围切片，沿用现有借用检查。
 Array.into_iter 按原顺序消费元素，Array 与 Slice 的 iter/iter_mut 通过借用游标给出 &T / &mut T。
 Map 的 keys/values/values_mut 切片可通过相同接口进行单列遍历；
 Map.iter/iter_mut 每轮提供 Entry 借用视图，键只读、值按游标权限访问。
