@@ -840,6 +840,7 @@ fn answer() -> Int32 {
 | `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
 | `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
+| `into_iter(Array<T>) -> IntoIter<T>` / `values.into_iter()` | 消费数组，按原下标正序逐项移出 T；无需 Copy |
 | `replace(&mut Array<T>, UInt64, T) -> Option<T>` | 替换有效下标并返回 Some(old)，长度、容量及其他元素不变；越界返回 None 并消费/清理 next |
 | `swap_remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素，以末元素补位；成功时长度减少、容量不变且不保序；越界返回 None，不修改数组 |
 | `remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素并保留其他元素顺序；越界返回 None，不修改数组；容量不变 |
@@ -2998,8 +2999,35 @@ break 退出最近的 while/for，return 退出函数，均遵守原有自动清
 Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失败清理沿用 Option/match。
 迭代器在结束或提前退出时清理；循环体可在挂起函数中挂起，恢复不会重新求值输入或重放 next。
 迭代器、元素及引用仍须满足现有跨挂起存储资格，取消先清理子调用再清理本轮元素和迭代器。
-当前不自动借用已有迭代器，也不自动将 Array/Map 转成迭代器；into_iter、iter/iter_mut
-及 map/filter 等组合器属于[后续阶段](for-iterators.md)。
+当前不自动借用已有迭代器，也不自动将 Array/Map 转成迭代器。Array 使用显式 into_iter；
+借用式 iter/iter_mut、Map 迭代和 map/filter 等组合器属于[后续阶段](for-iterators.md)。
+
+### Array 消费式迭代
+
+`joky/array.IntoIter<T>` 是不可复制的拥有型迭代器，字段私有，实现
+`Iterator<Item = T>`。`array.into_iter(values)` 与 `values.into_iter()` 使用同一实现。
+即使元素是 Copy 或数组为空，转换也消费原数组；转换后不能再次使用原绑定。
+存在活动元素/切片借用时不能转换，迭代器本身也不能重复移动。
+
+```joky
+fn sum_values() -> Int32 {
+    let values = [10, 20, 30]
+    var total = 0
+    for value in values.into_iter() { total += value }
+    total
+}
+```
+
+元素按转换前的下标顺序交付，支持 Array 原有的 Copy、String、拥有记录和嵌套数组等元素。
+每次 next 移交一个值的所有权，不 clone 元素；耗尽后继续 next 返回 None。
+已交付的拥有值独立于迭代器存活；共享引用元素仍依赖其原始内容来源。
+未消费的元素在迭代器退出作用域、被丢弃、发生失败或任务取消时恰好清理一次，
+不承诺剩余元素的析构次序。循环体可挂起，存储树仍须满足原有跨挂起资格。
+
+当前实现转换时原地反转一次，随后从末端移出，因此初始化 O(n)、每次 next O(1)，
+不另建元素缓冲区，也不逐项从头部删除搬移后缀。转换和取项过程中均保持完整的已初始化前缀，
+复用 Array 的失败与取消清理。耗尽后容量仍归迭代器所有，迭代器清理时才释放缓冲区；
+这些复杂度描述不代表进行过性能测量。
 
 ## 分号与表达式序列
 

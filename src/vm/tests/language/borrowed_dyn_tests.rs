@@ -1034,11 +1034,24 @@ fn borrowed_dyn_qualification_shares_exact_obligation_boundary() {
             level[0].clone()
         };
         let program = format!("{source} impl Read for Empty {{ type Item = {root} }} fn answer() -> Int32 {{ let e = Empty {{}}; let v: &dyn Read<Item = {root}> = &e; v.read() }}");
+        // Keep this solver boundary independent of the prelude's generic record
+        // instances: the fixture must reach the obligation limit first.
+        let registry = crate::modules::ModuleRegistry::default();
+        let types = registry.types().clone().with_prelude(false);
+        let checked = (|| {
+            let ast = crate::parser::parse(&program)?;
+            let ast = types.resolve_with_modules(&ast, &crate::ModuleSources::new())?;
+            crate::core::prepared::PreparedModule::new(&ast, &types, registry.metadata())?
+                .plan(&std::collections::HashMap::new())
+                .map(|_| ())
+        })();
         if overflow {
-            rejected(&program, "256 obligations");
+            let error: crate::Error = checked.unwrap_err();
+            assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+            assert!(error.message().contains("256 obligations"), "{error}");
+            assert!(error.span().is_some(), "{error}");
         } else {
-            crate::core::prepared::check_source(&program, &crate::ModuleSources::new())
-                .unwrap_or_else(|e| panic!("{e}"));
+            checked.unwrap_or_else(|e| panic!("{e}"));
         }
     }
 }

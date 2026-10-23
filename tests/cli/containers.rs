@@ -3,6 +3,91 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn array_into_iter_runs_and_cleans_remaining_items_in_standalone_aot() {
+    let work = Workspace::new();
+    let fixture = include_str!("../fixtures/array_into_iter.jk").replace(
+        "extern fn record(x: Int32) -> Int32",
+        "import joky/io.{println}\nfn record(x: Int32) -> Int32 { println(x); x }",
+    );
+    for suspends in [false, true] {
+        let source = if suspends {
+            fixture
+                .replace(
+                    "fn consume(action: Int32) -> Int32",
+                    "fn consume(action: Int32) @suspends -> Int32",
+                )
+                .replace(
+                    "record(10 + value.id)",
+                    "task.yield_now(); record(10 + value.id)",
+                )
+        } else {
+            fixture.clone()
+        };
+        let effect = if suspends { "@suspends" } else { "" };
+        work.write(
+            "iter.jk",
+            &format!(
+                r#"
+            import joky/task as task
+            {source}
+            fn main() {effect} {{
+                println(compute())
+                for action in range(0, 4) {{ println(10000 + consume(action)) }}
+                println(20000 + retained())
+                unstarted()
+            }}
+        "#
+            ),
+        );
+        success(&work.cli(&["build", "--no-prelude", "iter.jk"]));
+        let output = Command::new(work.path().join("iter")).output().unwrap();
+        success(&output);
+        let events: Vec<i32> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| line.parse().unwrap())
+            .collect();
+        assert_eq!(events[0], 42);
+        for id in 1..=4 {
+            assert_eq!(events.iter().filter(|&&event| event == id).count(), 6);
+            assert_eq!(events.iter().filter(|&&event| event == -id).count(), 6);
+        }
+        assert_eq!(
+            events
+                .iter()
+                .copied()
+                .filter(|event| *event >= 10000)
+                .collect::<Vec<_>>(),
+            [10010, 10009, 10001, 10001, 20002]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .copied()
+                .filter(|event| (11..=14).contains(event))
+                .collect::<Vec<_>>(),
+            [11, 12, 13, 14, 11, 12, 13, 14, 11, 11, 11]
+        );
+    }
+    work.write(
+        "failed.jk",
+        &format!("{fixture}\nfn main() {{ consume(4); }}"),
+    );
+    success(&work.cli(&["build", "--no-prelude", "failed.jk"]));
+    let output = Command::new(work.path().join("failed")).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
+    let mut events: Vec<i32> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| line.parse().unwrap())
+        .collect();
+    events.sort();
+    assert_eq!(events, [-4, -3, -2, -1, 1, 2, 3, 4, 11]);
+}
+
+#[test]
+#[cfg(unix)]
 fn string_collections_example_and_module_aliases_run_in_all_backends() {
     let work = Workspace::new();
     work.write(

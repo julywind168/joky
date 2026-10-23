@@ -65,7 +65,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 导入位置 | 已实现，必须在所有类型及函数声明前 | 保留；注释、空白和空分号不影响位置 |
 | `if` / `else` / `else if` | 已实现 | 分支同型；无 else 时为 Unit |
 | `return`、`break` / `continue` | 已实现 | 共享 IR 检查类型、跳转范围和不可达路径 |
-| `for pattern in iterator` | 已实现标准 Iterator、Int32 半开 range、不可失败绑定及共享循环清理 | 容器迭代、范围运算符与组合器见 [分阶段计划](for-iterators.md) |
+| `for pattern in iterator` | 已实现标准 Iterator、Int32 半开 range、Array.into_iter、不可失败绑定及共享循环清理 | 借用迭代、范围运算符与组合器见 [分阶段计划](for-iterators.md) |
 | 一元 `-` / `!` / `~`、Bool 相等比较 | 已实现 | 保留；比较不可连续书写 |
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串字面量 | 已实现转义与默认插值、`r` 原始字符串、三引号多行去缩进及组合 | 保留，见第 3 节 |
@@ -305,7 +305,7 @@ parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | 
 
 `if` / `else`、`else if`、`while`、`for`、`return`、`break` 和 `continue` 均已实现。
 for 使用同步 Iterator.next 与关联 Item；范围首版使用显式导入的 Int32 `range(start, end)`。
-当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器)，容器迭代及 `..` / `..=`
+Array.into_iter 已支持按原顺序消费元素。当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器)，借用迭代及 `..` / `..=`
 表达式与范围模式的后续目标见 [专项计划](for-iterators.md)。
 以下示例当前可运行：
 

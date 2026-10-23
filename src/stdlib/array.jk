@@ -4,14 +4,36 @@ import joky/internal/buffer as storage.{type Buffer}
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
+import joky/iter.{type Iterator}
 
 pub struct Array<T> { storage: Buffer<T> }
+pub struct IntoIter<T> { values: Array<T> }
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T
+    fn next(&mut self) -> Option<T> { pop(&mut self.values) }
+}
+
+// Reverse once so tail removal yields the original forward order. The buffer
+// retains a fully initialized prefix throughout conversion and iteration;
+// ordinary owner cleanup handles every early exit, including cancellation.
+pub fn into_iter<T>(values: Array<T>) -> IntoIter<T> {
+    var values = values
+    let length = len(&values)
+    var index: UInt64 = 0
+    while index < length / 2 {
+        storage.swap_elements(&mut values.storage, index, length - 1 - index)
+        index += 1
+    }
+    IntoIter { values: values }
+}
 
 // Both APIs share the module algorithms without duplicating their specializations.
 impl<T> Array<T> {
     pub fn new() -> Self { new::<T>() }
     pub fn with_capacity(capacity: UInt64) -> Self { with_capacity::<T>(capacity) }
     pub fn release(self) { release(self) }
+    pub fn into_iter(self) -> IntoIter<T> { into_iter(self) }
     pub fn len(&self) -> UInt64 { len(self) }
     pub fn capacity(&self) -> UInt64 { capacity(self) }
     pub fn is_empty(&self) -> Bool { is_empty(self) }

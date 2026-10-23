@@ -16,7 +16,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["Array"]
+        ["Array", "IntoIter"]
     );
     assert_eq!(
         array
@@ -34,6 +34,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "clear",
             "get",
             "insert",
+            "into_iter",
             "is_empty",
             "len",
             "new",

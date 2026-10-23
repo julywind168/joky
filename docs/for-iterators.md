@@ -1,6 +1,6 @@
 # for 与迭代器分阶段开发计划
 
-状态：2026-10-23，设计基线 `8b30deb`；第一阶段已完成并验收，记录见第 6 节。
+状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段已完成并验收，记录分别见第 6、7 节。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -107,3 +107,50 @@ Map 迭代沿用未指定顺序与禁止可变 key 的规则。
 默认库测试忽略 117 项，CLI 忽略 8 项；本轮只额外运行相关的迭代器取消穷举。
 非法迭代对象的 CLI 人工探针指向 in 右侧原始表达式；外层循环中的输入提前跳转探针通过。
 未做 Release、无关压力、性能测量、Godot 或其他平台验证。检查通过后仅补充本文记录，未再改代码。
+
+## 7. 第二阶段：Array 消费式迭代（2026-10-23）
+
+实现基线 `6504148`。新增 `joky/array.IntoIter<T>`，包含私有 Array<T> 字段，
+实现标准 Iterator<Item = T>；模块函数 into_iter 与 Array.into_iter 方法共用算法。
+无需 T: Copy，按原数组下标正序逐项移交元素，空数组及耗尽后返回 None。
+未开始、部分消费、提前 return/break、失败及取消均沿普通字段清理释放剩余元素。
+已取出的元素可比迭代器活得更久；不承诺未消费元素的析构顺序。
+
+现有存储只允许完整的已初始化前缀；本阶段采用转换时原地反转一次，再逐次 take_last。
+交付顺序仍是原数组正序，初始化 O(n)、取项 O(1)，不另建元素缓冲区。
+每次 swap 保持全部元素初始化，take_last 同步缩短前缀并移交清理责任，因此复用
+三后端既有交换、移出与清理原语；没有新增存储布局、ABI、后端指令或借用准入。
+若将来需要 O(1) 构造，再单独设计支持已消费前缀的游标存储，不把当前实现称为零成本构造。
+
+验收证据：
+
+- [共享 fixture](../tests/fixtures/array_into_iter.jk)：0–6 项奇偶长度正序与耗尽，Unit、String、
+  共享引用、嵌套数组、带 Drop 的拥有记录，完整遍历、continue/break/return、失败、
+  未开始即丢弃，以及已交付元素在迭代器释放后继续使用。
+- [VM 测试](../src/vm/tests/containers/array_into_iter_tests.rs)：JIT/解释器一致性，
+  分配预算失败扫描至首次完整成功，多次 Pending 不重放、取消时当前与剩余元素清理，
+  资源边界与逐指令取消覆盖构造、反转及移交；所有可观察创建均析构且无重复，arena 归零。
+  拒绝原数组/迭代器重复使用、活动借用下移动、私有存储访问及直接 for Array。
+- [AOT 测试](../tests/cli/containers.rs)：独立构建运行同一 fixture 的同步和真实 yield 路径，
+  核对交付顺序、移动后读取和析构次数；失败时保留原错误并清理所有元素。
+- 标准库导出身份测试同步登记 IntoIter 与 into_iter，保留 Array 私有存储限制。
+
+默认检查暴露一项既有 dyn 约束边界测试依赖 prelude 的泛型记录实例数量：新增 IntoIter
+使该用例先触及记录实例上限，未进入它应验证的 256 个约束边界。将该独立用例改为
+不加载 prelude 的共享前端检查，保留 256 成功、257 拒绝及错误位置断言；未修改编译器限额。
+
+当前仍未实现 Array.iter/iter_mut、Map 迭代、IntoIterator 自动转换与组合器。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test array_into_iter` | 5 项 VM 测试、1 项独立 AOT 测试通过；取消穷举默认忽略 |
+| `cargo test exhaustive_array_into_iter_instruction_cancellation --lib -- --ignored` | 1 项通过，涵盖构造、反转、取项和剩余元素清理 |
+| `cargo test borrowed_dyn_qualification_shares_exact_obligation_boundary --lib` | 隔离 prelude 后 1 项通过，原约束边界保持不变 |
+| `./scripts/check.sh` | 修正上述旧测试后重跑通过：fmt、Clippy、1539 项库测试、296 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
+| `cargo test array_into_iter_rejects --lib`，`cargo fmt -- --check`，`cargo clippy --all-targets -- -D warnings` | 最后将静态拒绝矩阵改为共享前端后，补跑受影响测试及 Rust 检查，均通过；未再改实现 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+默认库测试忽略 118 项、CLI 忽略 8 项；本轮仅额外运行相关的数组迭代器取消穷举。
+未运行 Release、无关压力、Godot、性能测量或其他平台验证。检查结束后仅补记本文验收结果。

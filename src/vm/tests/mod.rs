@@ -4,6 +4,9 @@ use super::*;
 #[path = "containers/array_borrow_tests.rs"]
 mod array_borrow_tests;
 
+#[path = "containers/array_into_iter_tests.rs"]
+mod array_into_iter_tests;
+
 #[path = "containers/array_management_tests.rs"]
 mod array_management_tests;
 
