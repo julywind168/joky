@@ -1,8 +1,7 @@
 # for 与迭代器分阶段开发计划
 
 状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
-记录见第 6–14 节；第四阶段 A 的 IntoIterator 与借用自动转换、第四阶段 B/C 的普通与借用 enumerate 已完成，
-map/filter 待后续实施。
+记录见第 6–11 节；第四阶段 A 的 IntoIterator 与借用自动转换已完成，组合器待后续实施。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -87,29 +86,6 @@ into_entries；固定数组不在本轮范围。显式 iter、iter_mut、into_it
 验收覆盖 Array 三种入口、Slice/Map 借用、自定义与泛型 IntoIterator、标准协议
 身份、一次求值/转换、空输入、提前退出、错误诊断，以及转换和循环期间的资源清理。
 三后端按行为共同覆盖；先执行针对性测试，再执行默认 Debug 检查和相关取消穷举。
-
-### 第四阶段 B：普通 Iterator 的 enumerate 设计
-
-本轮增加 joky/iter.Enumerate<I>、enumerate<I: Iterator>(I)，以及 IntoIterator 的
-默认 enumerate(self) 方法。适配器按值保存原迭代器，Item 为 (UInt64, I.Item)，
-编号从 0 开始；泛型函数与嵌套 enumerate 沿用普通 Iterator / IntoIterator。
-链式入口先执行 IntoIterator 转换，因此也支持 Array；模块函数只包装 Iterator。
-借用游标的 Indexed 视图与 map/filter 留待后续设计。方法放在 IntoIterator 而非
-Iterator，避免新增按值接收者破坏既有 dyn Iterator 的接口资格。
-
-构造只保存迭代器，不调用 next 或建立结果数组。每次 next 恰好调用一次标准
-Iterator.next，得到 Some 时附加编号并推进计数，None 不推进编号；不额外保证融合
-（底层在 None 后还能返回 Some 时，显式继续调用可获得下一个编号）。
-UInt64 最大值仍是有效编号；之后若再得到 Some，报告 Enumeration index overflow，
-不回绕为 0。该次已取出的元素和剩余迭代器按正常失败路径清理。
-
-保持 next 的同步与 @noescape 契约，Item 沿用普通值、拥有值和受支持共享引用的
-存储规则；不允许借此把 &mut T 放入元组。拥有迭代器与元素不复制，Copy 迭代器
-按语言已有 Copy 规则工作；暂停、提前退出、失败及取消沿用所有权清理。
-
-验收包括惰性、顺序、空输入、泛型与嵌套、默认方法及标准 next 选择、非融合输入、
-上限边界、拥有元素移交/清理，以及借用游标拒绝。覆盖 JIT、解释器、独立 AOT，
-先做针对性验证，再运行默认 Debug 检查和本适配器的相关取消穷举。
 
 ## 5. 第一阶段实施与验收
 
@@ -399,134 +375,33 @@ Map 按值循环仍显式使用 into_entries，固定数组与通用引用 trait
 默认库测试忽略 121 项、CLI 忽略 8 项；本轮额外运行上述相关取消穷举。
 默认检查后仅补充文档验收记录，未再改代码。
 
-## 12. 第四阶段 B：惰性 enumerate（2026-10-23）
+## 12. 循环编号与 Map 解构设计（2026-10-24）
 
-设计提交 `25b2966`。本次增加 Enumerate<I>、模块函数 enumerate，以及 IntoIterator 的
-默认 enumerate 方法；普通 Iterator 通过已有 blanket impl 获得链式入口，Array 和自定义
-IntoIterator 输入也可直接使用。具体接口见 [语言参考](language.md#enumerate-带编号遍历)。
+用 for 自身的可选编号取代库级 enumerate：for value in input 保持不变，
+for index, pattern in input 增加 UInt64 编号。顶层逗号区分编号和元素绑定，
+括号内的逗号仍是元素解构；Map 可写 for (key, value) in &table，或
+for index, (key, value) in &mut table。编号只能是单个名称或下划线；重复绑定报错。
 
-按值消费的链式方法放在 IntoIterator，保留 Iterator 原有的 dyn 接口资格；
-普通适配器仍只包装 Iterator。IntoIterator 转换立即执行，之后的适配器构造不预读元素。
-每步固定调用标准 Iterator.next，Some 增加编号，None 不改变编号且不额外融合底层。
-UInt64 最大编号可以成功返回，后续再出现 Some 才报溢出并清理已取出的元素。
-无新后端指令、ABI、运行时类型或借用豁免；借用编号视图和 map/filter 不在本轮范围。
+编号由当前循环的隐藏局部计数器维护，每次执行该 for 从零开始，输入与 IntoIterator
+转换仍只执行一次。成功取项后、执行用户循环体前绑定编号，continue 不漏计，嵌套循环
+计数独立；挂起与恢复不重放编号。UInt64 最大值可用，后续若再成功取项则报编号溢出，
+正常耗尽不报溢出。只生成普通局部变量与控制流，不创建编号适配器或逐项编号快照。
 
-实现同时修复默认方法已替换 Self 后的跨模块名义类型校验：生成的 trait 实现使用
-当前编译模块验证类型身份，包括仍带刚性 impl 参数的默认方法；源码名称、私有函数和
-成员查找继续使用 trait 定义作用域。回归覆盖泛型/具体外部 Self 调用私有泛型 helper，
-以及调用方同名 helper 不得劫持解析。
+Map 的两个绑定是 &K 和 &V / &mut V。对 Entry 的二元解构直接生成编译器检查的
+两列投影，不构造引用元组；名称与下划线绑定均支持。两个投影沿用原容器来源，使用不同
+的结构路径证明键列与值列不重叠，因此循环体可以读取 key 同时修改 value。
+键不获得可变权限，不区分不同迭代步的值地址；重复可变 value、推进游标、容器变更和
+悬空引用继续被拒绝。既有 entry_key/entry_value 接口保持其保守的整 Entry 借用行为。
+同一二元 Entry 解构也可用于 let，保证绑定语义一致；本轮不新增一般引用聚合存储。
 
-主要证据：
+删除普通与借用 enumerate 的公开 API、专用类型、编号运行时 helper 和测试探针；
+Iterator、IntoIterator、Array/Slice/Map 基础游标保持。旧功能的独有生命周期测试迁移到
+新语法；与基础游标重复的快照/手动推进责任继续由已有测试负责。
 
-- [普通 fixture](../tests/fixtures/iterator_enumerate.jk)：惰性、零基顺序、部分消费后包装、
-  空输入、None 后继续取项、泛型/嵌套、Array 直接转换、dyn Iterator 兼容、Unit/共享引用、
-  同名固有 next、拥有元素移交、continue/break/return/失败和挂起。
-- [VM 测试](../src/vm/tests/language/iterator_enumerate_tests.rs)：JIT/解释器、关闭 prelude、
-  未启动即丢弃、已取出项独立存活、分配失败、Pending/恢复/取消、编号不重放、
-  析构唯一性与 arena 归零；共享前端拒绝借用游标、重复移动和私有状态访问。
-- [边界 fixture](../tests/fixtures/iterator_enumerate_boundaries.jk) 与
-  [仅测试探针](../tests/fixtures/iterator_enumerate_invariants.jk)：在隔离标准库副本中设置起始编号，
-  用生产 next 验证最大编号、None 后恢复及溢出清理；正式标准库不导出此探针。
-- [独立 AOT](../tests/cli/language.rs) 验证同步/CPS、真实 yield、提前退出和失败清理；
-  [AOT 边界测试](../src/backends/aot/tests/iterator_enumerate.rs) 验证相同上限与拥有元素清理契约。
+使用 git revert --no-commit 撤销 8af0a0f、9dec37a、3993a7d、25b2966，并保留
+3993a7d 中独立的 trait 默认方法跨模块名义类型修复及回归测试。撤销与新实现一起验证，
+最终作为一个实现提交，保留历史。当前文档单独先提交。
 
-实际验证均使用 Debug：
-
-| 检查 | 结果 |
-| --- | --- |
-| `cargo test iterator_enumerate` | 8 项库测试（包含 AOT 边界）及 1 项独立 AOT CLI 测试通过；逐指令穷举默认忽略 |
-| `cargo test --lib trait_defaults` | 7 项通过；逐指令穷举默认忽略 |
-| 相关逐指令取消穷举 | enumerate 与 trait 默认方法关联拥有值两组通过 |
-| 语言参考新增示例 | 关闭 prelude，在 JIT、解释器和独立 AOT 均输出 63 |
-| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1568 项库测试、301 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
-| 文档本地链接与 `git diff --check` | 通过 |
-
-取消穷举使用 `cargo test --lib -- --ignored exhaustive_iterator_enumerate_instruction_cancellation exhaustive_trait_defaults_associated_owners_instruction_cancellation`。
-未运行 Release、无关压力、Godot、性能测量或其他平台验证。
-
-默认库测试忽略 122 项、CLI 忽略 8 项；本轮额外运行上述两组相关取消穷举。
-默认检查后仅补充文档验收记录，未再改代码。
-
-## 13. 第四阶段 C 设计：借用 enumerate（2026-10-23）
-
-本轮给 Array/Slice 的 Iter 和 Map 的 Entries 增加惰性编号适配器。沿用
-advance/current 协议，每轮直接返回借用编号视图，不将独占引用放入元组或 Option。
-普通 IntoIterator.enumerate 与其 dyn Iterator 兼容性保持不变。
-
-公开接口计划放在 joky/iter：
-
-- enumerate_ref / enumerate_mut 接收共享 / 独占 Iter，返回对应的 EnumerateIter 借用。
-- enumerate_entries / enumerate_entries_mut 接收 Entries，返回 EnumerateEntries 借用。
-- EnumerateIter 每轮产生 Indexed<T> 视图，index 返回 UInt64 快照，value / value_mut
-  借出元素。EnumerateEntries 每轮产生 IndexedEntry<K,V>，entry_index 返回编号，
-  entry / entry_mut 借出原有 Entry；键仍通过只读 entry_key 访问。
-- 两种适配器都提供显式 advance/current/current_mut 操作，并接入 for 的借用步骤展开。
-  容器先调用已有 iter / iter_mut，Slice 使用 slice_iter / slice_iter_mut。
-  本轮不增加借用类型上的 trait 实现或重载普通 enumerate。
-
-构造只分配任务内描述符，不推进原游标，也不预生成编号数组。适配器借用原游标并共享
-其推进状态；在部分消费后包装，从接下来成功取出的元素重新编号为零。不同共享别名
-推进原游标时，适配器只计算自己的成功 advance 次数。共享编号视图保存编号与元素地址
-快照，后续 advance 不改变已返回的视图；独占视图继续阻止重叠可变访问。
-
-编号游标与编号项均为编译器拥有的 borrow-only 类型，分别保留单列元素与 Map 键值的
-类型身份，不能按值构造、存储进容器或返回悬空借用。返回引用继承原容器的 provenance，
-保守的整容器借用、重借用、挂起和取消检查继续生效。元数据由任务 arena 管理，描述符
-分配失败与运行失败遵循既有终止清理；元素所有权始终属于原容器。
-
-UInt64 编号从零开始，只有成功推进才增加；底层借用游标长度有 isize::MAX 上限，
-正常使用不会达到 UInt64 溢出。运行时仍检查溢出，防止内部不变量被破坏后回绕。
-耗尽后 current 报错，空输入与重复耗尽不产生编号视图。Map Entry 与编号视图的快照
-都由任务 arena 计费，本轮不改变已有逐项视图的 arena 生命周期。
-
-实现按共享前端、公共运行时、解释器及 JIT/AOT 两路 lowering 同步接入。验证覆盖
-Array/Slice/Map 的共享和可变行为、空输入、部分消费、快照、提前退出与拒绝矩阵；
-拥有元素的挂起恢复、失败、分配失败和逐指令取消使用共享 fixture。先运行针对性测试，
-再运行默认 Debug 检查及相关取消穷举。不涉及 map/filter、闭包存储或一般引用聚合。
-
-
-## 14. 第四阶段 C：借用编号视图实现（2026-10-23）
-
-设计提交 `9dec37a`。本次交付 Array/Slice 借用游标的 enumerate_ref/enumerate_mut、
-Map 的 enumerate_entries/enumerate_entries_mut，以及编号读取、项借用与显式步进 API。
-完整接口见 [语言参考](language.md#借用-enumerate编号视图)，类型与运行时边界见
-[架构说明](architecture.md)。
-
-四种新类型仅作借用目标，沿用既有元素存储资格、来源分析和跨挂起规则。运行时的
-advance 保存最近成功推进的编号与元素地址，current 生成稳定的编号项快照；Map Entry
-内嵌于编号项同一次 arena 分配中。共享别名推进原游标不会改变包装器 current 或旧项。
-独占项仍禁止冲突访问；没有新增引用聚合、key/value 分离借用或一般引用 trait 实现。
-
-共享运行时新增六个私有 helper，源语言共享/独占签名映射到同一实现；解释器直接调用
-相同操作，JIT/AOT 共用原生 lowering。容器继续持有全部元素，所有权清理不转移到
-编号适配器；描述符分配计入任务预算，任务结束一并释放。普通 enumerate 无行为变更。
-
-主要证据：
-
-- [共享 fixture](../tests/fixtures/borrowed_enumerate.jk)：Array/Slice/Map 共享与可变遍历、
-  空输入、Unit、String、嵌套 Array、泛型包装、惰性构造、部分消费与重新编号、别名推进、
-  稳定快照、显式步进、独占重借用、continue/break/return、失败与挂起。
-- [VM 测试](../src/vm/tests/language/borrowed_enumerate_tests.rs)：关闭 prelude 的 JIT/解释器、
-  current 前置条件、拥有元素析构唯一性、arena 归零、分配预算失败扫描、Pending/恢复/取消，
-  以及借用冲突、逃逸、聚合存储、按值视图和 Map 键修改的共享前端拒绝矩阵。
-- [独立 AOT](../tests/cli/containers.rs)：同一 fixture 的同步与 CPS、真实 yield、提前返回、
-  运行失败清理和非法 current。文档示例在三个后端均输出 63。
-- 单个函数叠加多个复杂借用循环仍受现有引用流分析预算限制；本轮按独立行为拆分测试
-  函数，没有提高编译预算或绕过借用分析。
-
-实际验证均使用 Debug：
-
-| 检查 | 结果 |
-| --- | --- |
-| `cargo test borrowed_enumerate` | 6 项 VM/前端测试与 1 项独立 AOT CLI 测试通过；逐指令穷举默认忽略 |
-| 相关逐指令取消穷举 | borrowed_enumerate、array_borrow_iter、slice_borrow_iter、map_borrow_iter 共 4 项通过 |
-| 语言参考新增示例 | 关闭 prelude，在 JIT、解释器和使用当前运行库的独立 AOT 均输出 63 |
-| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1574 项库测试、302 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
-| 文档本地链接与 `git diff --check` | 通过 |
-
-取消穷举使用 `cargo test --lib -- --ignored`，传入上述四组完整的
-`exhaustive_*_instruction_cancellation` 测试名。默认库测试忽略 123 项、CLI 忽略 8 项；
-本轮额外执行上述四组。未运行 Release、无关压力、Godot、性能测量或其他平台验证。
-
-默认检查后仅补充文档记录，未再改代码。手动 AOT 首次使用了旧的本地运行库；
-改用当前 Cargo 产物后示例通过，并更新本地 Debug 运行库以保持日常命令可用。
+验证覆盖编号顺序、输入单次求值、模式歧义、重复绑定、嵌套、continue/break/return、
+UInt64 边界、Map 共享/可变解构、String 键与拥有值、借用拒绝、挂起恢复、失败与取消。
+执行三后端针对性测试，再执行默认 Debug 检查及受影响的逐指令取消穷举；不运行 Release。
