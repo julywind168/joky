@@ -54,4 +54,6 @@ mod collections;
 
 mod explicit_arena;
 #[cfg(unix)]
+mod iterator_enumerate;
+#[cfg(unix)]
 mod sets;

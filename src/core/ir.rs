@@ -1294,10 +1294,12 @@ impl FunctionPlan {
             generics,
             instantiation_depth,
             // Substituted arguments may come from the consumer's other modules.
+            // Generated trait implementations already substitute Self, including
+            // inherited defaults checked with remaining rigid impl parameters.
             // Validate their identities there; source lookup stays in the
             // definition scope, which was checked with rigid parameters first.
             type_registry: types.clone(),
-            nominals: if instantiation_depth > 0 {
+            nominals: if instantiation_depth > 0 || f.name.starts_with("joky/impl/") {
                 nominals.clone()
             } else {
                 f.scope

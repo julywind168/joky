@@ -70,7 +70,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 类型系统 | 泛型与常量参数、透明别名、固有方法、静态 trait、默认方法、关联类型与常量、同步借用型 dyn、同步函数值与闭包、挂起函数值 |
 | 所有权与存储 | String、Array、List、Set、Map、FixedArray、拥有型聚合与 Drop、受检共享／独占借用、任务 arena 与同步显式 Arena |
 | 执行与任务 | 共享语义分析、Cranelift JIT / AOT、字节码解释器；`@suspends`、`parallel` / `race`、`scope` / `branch`、取消与资源清理、局部值和容器视图跨挂起借用 |
-| 内置模块 | Option / Result、Iterator / IntoIterator、Array 消费迭代、Array/Slice/Map 借用遍历与 for 自动转换、Int32 range、数值、文本与格式化、容器、JSON、任务定时器、文件、TCP、DNS、状态域与有界准入 |
+| 内置模块 | Option / Result、Iterator / IntoIterator 与 enumerate、Array 消费迭代、Array/Slice/Map 借用遍历与 for 自动转换、Int32 range、数值、文本与格式化、容器、JSON、任务定时器、文件、TCP、DNS、状态域与有界准入 |
 | 嵌入与热更新 | Rust `VmEngine`、C VM / CPS API、宿主注册与 FFI、持久实例、状态域、Script 调用与兼容发布、分步迁移 |
 | Godot 原型 | Node 挂载 `.jk`、解释器状态与属性、受检 Node API、帧回调、所属任务和引擎等待；[构建和示例](integrations/godot/README.md) |
 

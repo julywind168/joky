@@ -1,7 +1,8 @@
 # for 与迭代器分阶段开发计划
 
 状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
-记录见第 6–11 节；第四阶段 A 的 IntoIterator 与借用自动转换已完成，组合器待后续实施。
+记录见第 6–12 节；第四阶段 A 的 IntoIterator 与借用自动转换、第四阶段 B 的普通 enumerate 已完成，
+借用编号视图与 map/filter 待后续实施。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -87,12 +88,14 @@ into_entries；固定数组不在本轮范围。显式 iter、iter_mut、into_it
 身份、一次求值/转换、空输入、提前退出、错误诊断，以及转换和循环期间的资源清理。
 三后端按行为共同覆盖；先执行针对性测试，再执行默认 Debug 检查和相关取消穷举。
 
-### 第四阶段 B：普通 Iterator 的 enumerate（待实施）
+### 第四阶段 B：普通 Iterator 的 enumerate 设计
 
-本轮增加 joky/iter.Enumerate<I>、enumerate<I: Iterator>(I)，以及 Iterator 的
+本轮增加 joky/iter.Enumerate<I>、enumerate<I: Iterator>(I)，以及 IntoIterator 的
 默认 enumerate(self) 方法。适配器按值保存原迭代器，Item 为 (UInt64, I.Item)，
 编号从 0 开始；泛型函数与嵌套 enumerate 沿用普通 Iterator / IntoIterator。
-Array 先显式 into_iter，借用游标的 Indexed 视图与 map/filter 留待后续设计。
+链式入口先执行 IntoIterator 转换，因此也支持 Array；模块函数只包装 Iterator。
+借用游标的 Indexed 视图与 map/filter 留待后续设计。方法放在 IntoIterator 而非
+Iterator，避免新增按值接收者破坏既有 dyn Iterator 的接口资格。
 
 构造只保存迭代器，不调用 next 或建立结果数组。每次 next 恰好调用一次标准
 Iterator.next，得到 Some 时附加编号并推进计数，None 不推进编号；不额外保证融合
@@ -394,4 +397,52 @@ Map 按值循环仍显式使用 into_entries，固定数组与通用引用 trait
 性能测量或其他平台验证。
 
 默认库测试忽略 121 项、CLI 忽略 8 项；本轮额外运行上述相关取消穷举。
+默认检查后仅补充文档验收记录，未再改代码。
+
+## 12. 第四阶段 B：惰性 enumerate（2026-10-23）
+
+设计提交 `25b2966`。本次增加 Enumerate<I>、模块函数 enumerate，以及 IntoIterator 的
+默认 enumerate 方法；普通 Iterator 通过已有 blanket impl 获得链式入口，Array 和自定义
+IntoIterator 输入也可直接使用。具体接口见 [语言参考](language.md#enumerate-带编号遍历)。
+
+按值消费的链式方法放在 IntoIterator，保留 Iterator 原有的 dyn 接口资格；
+普通适配器仍只包装 Iterator。IntoIterator 转换立即执行，之后的适配器构造不预读元素。
+每步固定调用标准 Iterator.next，Some 增加编号，None 不改变编号且不额外融合底层。
+UInt64 最大编号可以成功返回，后续再出现 Some 才报溢出并清理已取出的元素。
+无新后端指令、ABI、运行时类型或借用豁免；借用编号视图和 map/filter 不在本轮范围。
+
+实现同时修复默认方法已替换 Self 后的跨模块名义类型校验：生成的 trait 实现使用
+当前编译模块验证类型身份，包括仍带刚性 impl 参数的默认方法；源码名称、私有函数和
+成员查找继续使用 trait 定义作用域。回归覆盖泛型/具体外部 Self 调用私有泛型 helper，
+以及调用方同名 helper 不得劫持解析。
+
+主要证据：
+
+- [普通 fixture](../tests/fixtures/iterator_enumerate.jk)：惰性、零基顺序、部分消费后包装、
+  空输入、None 后继续取项、泛型/嵌套、Array 直接转换、dyn Iterator 兼容、Unit/共享引用、
+  同名固有 next、拥有元素移交、continue/break/return/失败和挂起。
+- [VM 测试](../src/vm/tests/language/iterator_enumerate_tests.rs)：JIT/解释器、关闭 prelude、
+  未启动即丢弃、已取出项独立存活、分配失败、Pending/恢复/取消、编号不重放、
+  析构唯一性与 arena 归零；共享前端拒绝借用游标、重复移动和私有状态访问。
+- [边界 fixture](../tests/fixtures/iterator_enumerate_boundaries.jk) 与
+  [仅测试探针](../tests/fixtures/iterator_enumerate_invariants.jk)：在隔离标准库副本中设置起始编号，
+  用生产 next 验证最大编号、None 后恢复及溢出清理；正式标准库不导出此探针。
+- [独立 AOT](../tests/cli/language.rs) 验证同步/CPS、真实 yield、提前退出和失败清理；
+  [AOT 边界测试](../src/backends/aot/tests/iterator_enumerate.rs) 验证相同上限与拥有元素清理契约。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test iterator_enumerate` | 8 项库测试（包含 AOT 边界）及 1 项独立 AOT CLI 测试通过；逐指令穷举默认忽略 |
+| `cargo test --lib trait_defaults` | 7 项通过；逐指令穷举默认忽略 |
+| 相关逐指令取消穷举 | enumerate 与 trait 默认方法关联拥有值两组通过 |
+| 语言参考新增示例 | 关闭 prelude，在 JIT、解释器和独立 AOT 均输出 63 |
+| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1568 项库测试、301 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+取消穷举使用 `cargo test --lib -- --ignored exhaustive_iterator_enumerate_instruction_cancellation exhaustive_trait_defaults_associated_owners_instruction_cancellation`。
+未运行 Release、无关压力、Godot、性能测量或其他平台验证。
+
+默认库测试忽略 122 项、CLI 忽略 8 项；本轮额外运行上述两组相关取消穷举。
 默认检查后仅补充文档验收记录，未再改代码。

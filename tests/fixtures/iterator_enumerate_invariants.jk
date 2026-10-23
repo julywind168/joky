@@ -1,0 +1,4 @@
+// Appended only to the private test library; next uses the production algorithm.
+pub fn test_enumerate_from<I: Iterator>(iterator: I, index: UInt64) -> Enumerate<I> {
+    Enumerate { iterator: iterator, index: index, overflowed: false }
+}

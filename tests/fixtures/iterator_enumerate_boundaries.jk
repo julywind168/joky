@@ -1,0 +1,47 @@
+import joky/iter.{type Iterator, next, range}
+import joky/array.{type Array}
+import joky/option.{type Option, Some, None}
+import joky/check.{assert}
+import joky/drop.{type Drop}
+extern fn record_int(value: Int32)
+struct Owned { id: Int32, data: Array<String> }
+impl Drop for Owned { fn drop(&mut self) { record_int(self.id) } }
+fn owned(id: Int32) -> Owned { Owned { id: id, data: ["owned"] } }
+fn maximum() -> Int32 {
+    var cursor = iter.test_enumerate_from([owned(1), owned(2)].into_iter(), 18446744073709551614)
+    let (i, first) = next(&mut cursor)!
+    let (j, last) = next(&mut cursor)!
+    assert(i == 18446744073709551614 && j == 18446744073709551615, "Index boundary mismatch")
+    assert(first.id == 1 && last.id == 2, "Value boundary mismatch")
+    assert(next(&mut cursor).is_none() && next(&mut cursor).is_none(), "End boundary mismatch")
+    var empty = iter.test_enumerate_from(range(0, 0), 18446744073709551615)
+    assert(next(&mut empty).is_none(), "Empty boundary mismatch")
+    42
+}
+fn overflow() -> Int32 {
+    var cursor = iter.test_enumerate_from([owned(1), owned(2), owned(3)].into_iter(), 18446744073709551615)
+    let (index, first) = next(&mut cursor)!
+    assert(index == 18446744073709551615 && first.id == 1, "Last valid index mismatch")
+    record_int(10)
+    let invalid = next(&mut cursor)
+    record_int(99)
+    42
+}
+struct Gapped { step: Int32 }
+impl Iterator for Gapped {
+    type Item = Int32
+    fn next(&mut self) -> Option<Int32> {
+        self.step += 1
+        record_int(100 + self.step)
+        if self.step == 2 { None } else { Some(self.step) }
+    }
+}
+fn after_none() -> Int32 {
+    var cursor = iter.test_enumerate_from(Gapped { step: 0 }, 18446744073709551615)
+    let (index, value) = next(&mut cursor)!
+    assert(index == 18446744073709551615 && value == 1, "Gapped boundary mismatch")
+    assert(next(&mut cursor).is_none(), "None must not overflow")
+    let invalid = next(&mut cursor)
+    record_int(99)
+    42
+}

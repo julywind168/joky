@@ -1,5 +1,6 @@
 import joky/internal/buffer
 import joky/option.{type Option, Some, None}
+import joky/check
 
 pub trait Iterator {
     type Item
@@ -9,6 +10,7 @@ pub trait Iterator {
 pub trait IntoIterator {
     type IntoIter: Iterator
     fn into_iter(self) -> Self.IntoIter
+    fn enumerate(self) -> Enumerate<Self.IntoIter> { enumerate(IntoIterator.into_iter(self)) }
 }
 
 impl<I: Iterator> IntoIterator for I {
@@ -23,6 +25,29 @@ pub fn into_iter<I: IntoIterator>(value: I) -> I.IntoIter {
 // This entry fixes protocol selection even in the presence of inherent next methods.
 pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
     Iterator.next(iterator)
+}
+
+pub struct Enumerate<I> { iterator: I, index: UInt64, overflowed: Bool }
+
+// Construction is lazy; only next advances the input or the index.
+pub fn enumerate<I: Iterator>(iterator: I) -> Enumerate<I> {
+    Enumerate { iterator: iterator, index: 0, overflowed: false }
+}
+
+impl<I: Iterator> Iterator for Enumerate<I> {
+    type Item = (UInt64, I.Item)
+    fn next(&mut self) -> Option<(UInt64, I.Item)> {
+        match Iterator.next(&mut (*self).iterator) {
+            Some(value) => {
+                if self.overflowed { check.panic("Enumeration index overflow") }
+                let index = self.index
+                if index == 18446744073709551615 { self.overflowed = true }
+                else { self.index += 1 }
+                Some((index, value))
+            },
+            None => None,
+        }
+    }
 }
 
 pub struct Range { current: Int32, end: Int32 }

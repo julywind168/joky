@@ -2986,6 +2986,8 @@ fn sum() -> Int32 {
 | --- | --- |
 | `Iterator` | 关联类型 Item；`fn next(&mut self) @noescape -> Option<Self.Item>` |
 | `next<I: Iterator>(&mut I) @noescape -> Option<I.Item>` | 显式选择 Iterator.next，忽略同名固有方法 |
+| `Enumerate<I>` | 保存原迭代器和编号状态，字段私有；实现 Iterator<Item = (UInt64, I.Item)> |
+| `enumerate<I: Iterator>(I) -> Enumerate<I>` | 惰性包装普通迭代器，从 0 编号 |
 | `IntoIterator` | 关联类型 IntoIter: Iterator；`fn into_iter(self) -> Self.IntoIter` |
 | `into_iter<I: IntoIterator>(I) -> I.IntoIter` | 显式选择 IntoIterator.into_iter，忽略同名固有方法 |
 | `Range` | Copy 的 Int32 递增迭代器，字段私有 |
@@ -3046,6 +3048,45 @@ advance/current 协议；`joky/iter.slice_iter` / slice_iter_mut 与 joky/slice 
 iter / iter_mut 行为相同，供自动转换调用。
 直接传入独占引用绑定会移动该绑定；需复用时写 `&mut *binding` 进行重借用。
 Map 的按值循环仍需显式 `table.into_entries()`，得到拥有的 `(K, V)` 元组；固定数组不自动转换。
+
+### enumerate 带编号遍历
+
+`IntoIterator` 提供默认方法 `enumerate(self) -> Enumerate<Self.IntoIter>`，先转换输入，
+再构造适配器；也可调用只接受普通 Iterator 的模块函数 `iter.enumerate(iterator)`。
+需导入 joky/iter，使用 trait 方法时将 IntoIterator 放入作用域。
+构造适配器不取项，也不创建结果数组；每次 next 调用一次底层的标准 Iterator.next，
+成功时产生 `(UInt64, Item)`，不会被底层同名固有 next 方法影响。
+
+```joky
+import joky/iter.{type IntoIterator}
+
+fn indexed_sum() -> Int32 {
+    let values = [10, 20, 30]
+    var total = 0
+    for (index, value) in values.enumerate() {
+        total += int32(index) + value
+    }
+    total
+}
+```
+
+编号从 0 开始，与包装后产生的元素顺序对应；包装已前进的迭代器仍从 0 编号。
+Some 才推进编号，None 不推进；适配器不记忆“永久耗尽”，若底层在 None 后继续产出，
+显式调用 next 会继续编号。for 本身仍在第一次 None 时退出。
+UInt64 最大值是有效编号；之后再取到 Some 会报告 `Enumeration index overflow`，
+不会回绕。该次已取出的元素及剩余迭代器按正常失败路径清理，None 本身不会触发溢出。
+
+支持泛型与嵌套 enumerate，保留普通 Iterator 的同步和 @noescape 契约。
+拥有型迭代器被移动，元素逐项移交、不 clone；Copy 迭代器遵循普通复制规则。
+提前退出、未开始遍历就丢弃、失败与取消都会清理尚未移交的元素；已移交元素可以独立存活。
+无引用拥有元素可按原规则跨挂起；Unit 和受支持的共享引用 Item 也可编号。
+
+链式方法支持普通 Iterator、Array 和其他 IntoIterator 输入；模块函数需要先将
+容器转换为普通 Iterator。构造适配器本身是惰性的，但容器的 IntoIterator 转换立即执行
+（例如 Array 原地反转）；不推迟该转换的副作用。此方法放在 IntoIterator，保持 Iterator
+原有的 dyn 接口资格。Array/Slice/Map 的借用游标尚不支持 enumerate。
+借用版需要独立的编号视图设计，不通过 `(UInt64, &mut T)` 放宽独占引用的存储限制。
+map/filter 等回调组合器尚未提供。
 
 ### Array 消费式迭代
 

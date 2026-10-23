@@ -1156,3 +1156,45 @@ fn trait_defaults_keep_effect_contracts_and_implementation_privacy() {
         .compile_module(&ast)
         .is_err());
 }
+
+#[test]
+fn trait_defaults_pass_substituted_self_to_definition_scoped_generic_helpers() {
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "protocol",
+            r#"
+        pub struct Wrapped<T> { pub value: T }
+        fn wrap<T>(value: T) -> Wrapped<T> { Wrapped { value: value } }
+        pub trait Wrap { fn wrapped(self) -> Wrapped<Self> { wrap(self) } }
+    "#,
+        )
+        .unwrap();
+    modules
+        .insert(
+            "values",
+            r#"
+        import protocol.{type Wrap}
+        pub struct Generic<T> { pub value: T }
+        pub struct Concrete { pub value: Int32 }
+        impl<T> Wrap for Generic<T> {}
+        impl Wrap for Concrete {}
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import protocol.{type Wrap}
+        import values.{type Generic, type Concrete}
+        fn wrap<T>(value: T) -> Int32 { 0 }
+        fn wrap_generic<T: Wrap>(value: T) -> protocol.Wrapped<T> { value.wrapped() }
+        fn compute() -> Int32 {
+            wrap_generic(Generic { value: 21 }).value.value + Concrete { value: 21 }.wrapped().value.value
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source_with_modules(source, &modules).unwrap();
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+    }
+}
