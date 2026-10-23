@@ -5,16 +5,15 @@ import joky/element
 import joky/slice
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
+import joky/iter.{range}
 
 // Core synchronous Map operations; keys are reference-free Copy values.
 fn frequencies() -> Int32 {
     var counts = Map.new::<Int32, Int32>()
-    var i = 0
-    while i < 42 {
+    for i in range(0, 42) {
         let key = i & 3
         let count = counts.get(key).unwrap_or(0)
         counts.insert(key, count + 1)
-        i = i + 1
     }
     counts.get(0).unwrap_or(0) + counts.get(1).unwrap_or(0) +
         counts.get(2).unwrap_or(0) + counts.get(3).unwrap_or(0)

@@ -197,13 +197,8 @@ pub fn clear<T>(list: &mut List<T>) {
 pub fn release<T>(list: List<T>) {}
 pub fn from_array<T>(values: Array<T>) -> List<T> { var list = new::<T>(); extend(&mut list, values); list }
 pub fn extend<T>(list: &mut List<T>, values: Array<T>) {
-    var values = values
-    let count = values.len()
-    reserve(list, count)
-    // Reverse the input so taking its tail preserves its original order.
-    var i: UInt64 = 0
-    while i < count / 2 { values.swap(i, count - 1 - i); i = i + 1 }
-    while !values.is_empty() { let value = values.take_last(); push_back(list, value) }
+    reserve(list, values.len())
+    for value in values { push_back(list, value) }
 }
 pub fn into_array<T>(list: List<T>) -> Array<T> {
     var list = list

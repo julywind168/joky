@@ -329,19 +329,13 @@ impl<T: ToJson> ToJson for Array<T> {
 impl<T: FromJson> FromJson for Array<T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
         context.container()?
-        var input = match value { Array(values) => values, _ => { return Err(context.error(MappingErrorKind.ExpectedArray)) } }
-        // Reverse once, then move from the tail in source order without shifting.
-        var index: UInt64 = 0
-        let length = array.len(&input)
-        while index < length / 2 { array.swap(&mut input, index, length - index - 1); index = index + 1 }
+        let input = match value { Array(values) => values, _ => { return Err(context.error(MappingErrorKind.ExpectedArray)) } }
         var output = array.new::<T>()
-        index = 0
-        while !array.is_empty(&input) {
+        for index, value in input {
             array.push(&mut context.path, PathSegment.Index(index))
-            let result = context.read::<T>(array.take_last(&mut input))
+            let result = context.read::<T>(value)
             array.take_last(&mut context.path);
             match result { Ok(value) => { array.push(&mut output, value) }, Err(error) => { return Err(error) } }
-            index = index + 1
         }
         Ok(output)
     }

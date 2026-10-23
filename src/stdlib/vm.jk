@@ -3,6 +3,7 @@ import joky/internal/buffer.{type Buffer}
 import joky/fs
 import joky/result.{type Result, Ok, Err}
 import joky/string.{type Utf8Error}
+import joky/iter.{range}
 
 extern fn __vm_create(mode: UInt64) -> vm.Owner
 extern fn __vm_close(owner: &vm.Owner) -> Int32
@@ -100,8 +101,7 @@ extern fn __vm_source(owner: &vm.Owner, name: String, source: String, mode: UInt
 
 fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspends -> Result<UInt64, LoadError> {
     var packet = buffer.allocate::<UInt64>(5)
-    var index: UInt64 = 0
-    while index < 5 { buffer.initialize_next(&mut packet, 0); index += 1 }
+    for _ in range(0, 5) { buffer.initialize_next(&mut packet, 0) }
     let message = __vm_source(&value.owner, path.clone(), source, mode, &mut packet)
     let code = buffer.load(&packet, 0)
     if code == 0 { return Ok(buffer.load(&packet, 4)) }

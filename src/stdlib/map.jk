@@ -96,14 +96,8 @@ pub fn from_entries<K: BorrowEq + BorrowHash, V>(entries: Array<(K, V)>) -> Map<
     table
 }
 pub fn extend<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, entries: Array<(K, V)>) {
-    var entries = entries
-    let count = entries.len()
-    reserve(table, count)
-    // Reverse in place so tail consumption visits the original input order.
-    var i: UInt64 = 0
-    while i < count / 2 { entries.swap(i, count - 1 - i); i = i + 1 }
-    while !entries.is_empty() {
-        let (key, value) = entries.take_last()
+    reserve(table, entries.len())
+    for (key, value) in entries {
         // Drop an overwritten value before processing the next input entry.
         let old = insert(table, key, value)
     }
