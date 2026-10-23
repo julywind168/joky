@@ -87,6 +87,27 @@ into_entries；固定数组不在本轮范围。显式 iter、iter_mut、into_it
 身份、一次求值/转换、空输入、提前退出、错误诊断，以及转换和循环期间的资源清理。
 三后端按行为共同覆盖；先执行针对性测试，再执行默认 Debug 检查和相关取消穷举。
 
+### 第四阶段 B：普通 Iterator 的 enumerate（待实施）
+
+本轮增加 joky/iter.Enumerate<I>、enumerate<I: Iterator>(I)，以及 Iterator 的
+默认 enumerate(self) 方法。适配器按值保存原迭代器，Item 为 (UInt64, I.Item)，
+编号从 0 开始；泛型函数与嵌套 enumerate 沿用普通 Iterator / IntoIterator。
+Array 先显式 into_iter，借用游标的 Indexed 视图与 map/filter 留待后续设计。
+
+构造只保存迭代器，不调用 next 或建立结果数组。每次 next 恰好调用一次标准
+Iterator.next，得到 Some 时附加编号并推进计数，None 不推进编号；不额外保证融合
+（底层在 None 后还能返回 Some 时，显式继续调用可获得下一个编号）。
+UInt64 最大值仍是有效编号；之后若再得到 Some，报告 Enumeration index overflow，
+不回绕为 0。该次已取出的元素和剩余迭代器按正常失败路径清理。
+
+保持 next 的同步与 @noescape 契约，Item 沿用普通值、拥有值和受支持共享引用的
+存储规则；不允许借此把 &mut T 放入元组。拥有迭代器与元素不复制，Copy 迭代器
+按语言已有 Copy 规则工作；暂停、提前退出、失败及取消沿用所有权清理。
+
+验收包括惰性、顺序、空输入、泛型与嵌套、默认方法及标准 next 选择、非融合输入、
+上限边界、拥有元素移交/清理，以及借用游标拒绝。覆盖 JIT、解释器、独立 AOT，
+先做针对性验证，再运行默认 Debug 检查和本适配器的相关取消穷举。
+
 ## 5. 第一阶段实施与验收
 
 1. 核对 AST、模块依赖注入、trait 身份绑定和泛型模板检查入口。
