@@ -53,7 +53,7 @@ fn json_derive_rejections_point_to_attributes_and_fields_in_all_backends() {
             "Cannot derive JSON",
             Some("value: Unknown"),
         ),
-        ("import joky/json/typed as typed impl<T, U> typed.ToJson for T {} #derive(ToJson) struct Bad { value: Int32 }", "impl requires", None),
+        ("import joky/json/typed impl<T, U> typed.ToJson for T {} #derive(ToJson) struct Bad { value: Int32 }", "impl requires", None),
     ] {
         let source = format!("// 🙂\n{source}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -98,7 +98,7 @@ fn json_derive_normalization_is_idempotent_and_manual_impls_conflict() {
     }
     crate::backends::aot::tests::assert_sync_int32(&second, "probe", 42);
     let source = r#"
-        import joky/json/typed as typed
+        import joky/json/typed
         import joky/json
         import joky/result
         #derive(ToJson)

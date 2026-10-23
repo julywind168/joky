@@ -283,10 +283,10 @@ fn borrowed_matches_suspend_without_replaying_branch_effects() {
 #[test]
 fn borrowed_matches_preserve_module_privacy_and_returned_dependencies() {
     for (body, message) in [
-        ("fn bad() -> Int32 { var value = p.make(); let r = p.select(&value); value = p.Parcel.Empty; r.inspect() }", "borrow"),
-        ("fn bad() { let value = p.make(); match &value { Item(r) => { let hidden = &r.values }, Empty => {} } }", "private"),
+        ("fn bad() -> Int32 { var value = match_library.make(); let r = match_library.select(&value); value = match_library.Parcel.Empty; r.inspect() }", "borrow"),
+        ("fn bad() { let value = match_library.make(); match &value { Item(r) => { let hidden = &r.values }, Empty => {} } }", "private"),
     ] {
-        let source = format!("import match_library as p\n{body}");
+        let source = format!("import match_library\n{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let error = VmEngine::with_mode(mode).load_source_with_modules(&source, &modules()).expect_err(body);
             assert!(error.message().contains(message), "{body}: {error}");

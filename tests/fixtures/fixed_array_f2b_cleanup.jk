@@ -1,5 +1,5 @@
 import joky/drop.{type Drop}
-import joky/fixed_array as fixed.{type FixedArray}
+import joky/fixed_array.{type FixedArray}
 import joky/array.{type Array}
 extern fn note(value: Int32)
 type Row = FixedArray<Int32,3>
@@ -9,9 +9,9 @@ fn identity(a:Row)->Row {a}
 fn exercise()->Int32 {
     var values=Array.new::<Option<Row>>()
     let guard=Guard{id:-1,text:"callback"}
-    let nested=fixed.from_fn::<Row,4>(move |index:UInt64| {
+    let nested=fixed_array.from_fn::<Row,4>(move |index:UInt64| {
         note(int32(index)+1)
-        fixed.repeat::<Int32,3>(43+guard.id)
+        fixed_array.repeat::<Int32,3>(43+guard.id)
     })
     let f=identity
     var i:UInt64=0
@@ -25,9 +25,9 @@ fn exercise()->Int32 {
 }
 fn fail_init()->Int32 {
     let guard=Guard{id:-1,text:"failed"}
-    let nested=fixed.from_fn::<Row,4>(move |index:UInt64| {
+    let nested=fixed_array.from_fn::<Row,4>(move |index:UInt64| {
         note(int32(index)+1)
-        fixed.repeat::<Int32,3>(guard.id/(int32(index)-2))
+        fixed_array.repeat::<Int32,3>(guard.id/(int32(index)-2))
     })
     note(99)
     0

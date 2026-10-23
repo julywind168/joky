@@ -1,6 +1,6 @@
-import joky/array as array.{type Array}
-import joky/element as element.{type Element}
-import joky/slice as slices.{type Slice}
+import joky/array.{type Array}
+import joky/element.{type Element}
+import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 
 struct BorrowPair<T> { tag: Bool, left: T, right: T }
@@ -11,7 +11,7 @@ fn borrowed_at<T: Copy>(values: &Array<T>, index: UInt64) -> &Element<T> { array
 fn borrowed_at_mut<T: Copy>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { array.borrow_mut(values, index) }
 fn borrowed_range<T>(values: &Array<T>, start: UInt64, end: UInt64) -> &Slice<T> { array.slice(values, start, end) }
 fn borrowed_range_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { array.slice_mut(values, start, end) }
-fn borrowed_first<T: Copy>(values: &mut Slice<T>) -> &mut Element<T> { slices.borrow_mut(values, 0) }
+fn borrowed_first<T: Copy>(values: &mut Slice<T>) -> &mut Element<T> { slice.borrow_mut(values, 0) }
 fn borrowed_pair_range(values: &Array<BorrowPair<&Int32>>) -> &Slice<BorrowPair<&Int32>> { array.slice(values, 0, 1) }
 fn borrowed_event(values: &mut Array<BorrowEvent>) -> &mut Element<BorrowEvent> { array.borrow_mut(values, 0) }
 
@@ -40,15 +40,15 @@ fn borrowed_array_ranges() -> Int32 {
     array.push(&mut values, 22)
     array.push(&mut values, 30)
     let shared = borrowed_range(&values, 1, 3)
-    if slices.len(shared) != 2 || array.len(&values) != 4 { return 0 }
-    if slices.get(shared, 0).unwrap_or(0) + slices.get(shared, 1).unwrap_or(0) != 42 { return 0 }
-    if !slices.get(shared, 2).is_none() || !slices.get(shared, 18446744073709551615).is_none() { return 0 }
+    if slice.len(shared) != 2 || array.len(&values) != 4 { return 0 }
+    if slice.get(shared, 0).unwrap_or(0) + slice.get(shared, 1).unwrap_or(0) != 42 { return 0 }
+    if !slice.get(shared, 2).is_none() || !slice.get(shared, 18446744073709551615).is_none() { return 0 }
     let region = borrowed_range_mut(&mut values, 1, 3)
-    let child = slices.slice_mut(region, 0, 1)
+    let child = slice.slice_mut(region, 0, 1)
     let item = borrowed_first(child)
     element.write(item, 21)
-    if !slices.set(region, 1, 21) || slices.set(region, 2, 0) { return 0 }
-    let result = slices.get(region, 0).unwrap_or(0) + element.read(slices.borrow(region, 1))
+    if !slice.set(region, 1, 21) || slice.set(region, 2, 0) { return 0 }
+    let result = slice.get(region, 0).unwrap_or(0) + element.read(slice.borrow(region, 1))
     array.push(&mut values, 99)
     result
 }
@@ -56,13 +56,13 @@ fn borrowed_array_ranges() -> Int32 {
 fn borrowed_array_empty() -> Int32 {
     var values = array.new::<Int32>()
     let empty = array.slice(&values, 0, 0)
-    let nested = slices.slice(empty, 0, 0)
-    if !slices.is_empty(nested) || !slices.get(empty, 0).is_none() { return 0 }
+    let nested = slice.slice(empty, 0, 0)
+    if !slice.is_empty(nested) || !slice.get(empty, 0).is_none() { return 0 }
     let writable = array.slice_mut(&mut values, 0, 0)
-    if slices.set(writable, 0, 42) { return 0 }
+    if slice.set(writable, 0, 42) { return 0 }
     array.push(&mut values, 42)
     let end = array.slice(&values, 1, 1)
-    if !slices.is_empty(end) { return 0 }
+    if !slice.is_empty(end) { return 0 }
     array.pop(&mut values).unwrap_or(0)
 }
 
@@ -77,8 +77,8 @@ fn borrowed_array_references() -> Int32 {
     array.reserve(&mut values, 40)
     let result = {
         let region = array.slice_mut(&mut values, 0, 1)
-        slices.set(region, 0, p);
-        slices.get(region, 0)
+        slice.set(region, 0, p);
+        slice.get(region, 0)
     }
     array.pop(&mut values);
     let ended = values
@@ -91,7 +91,7 @@ fn borrowed_array_aggregates() -> Int32 {
     var values = array.new::<BorrowPair<&Int32>>()
     array.push(&mut values, BorrowPair { tag: false, left: q, right: p })
     let concrete: &Slice<BorrowPair<&Int32>> = borrowed_pair_range(&values)
-    let before = element.read(slices.borrow(concrete, 0))
+    let before = element.read(slice.borrow(concrete, 0))
     if (*before.left) != 22 { return 0 }
     let region = array.slice_mut(&mut values, 0, 1)
     let item = borrowed_first(region)
@@ -123,12 +123,12 @@ fn borrowed_array_zero_size() -> Int32 {
     element.write(item, {})
     element.read(item);
     let region = array.slice_mut(&mut units, 0, 1)
-    if !slices.set(region, 0, {}) || slices.get(region, 0).is_none() { return 0 }
+    if !slice.set(region, 0, {}) || slice.get(region, 0).is_none() { return 0 }
     array.pop(&mut units);
     var empty = array.new::<BorrowEmpty>()
     array.push(&mut empty, BorrowEmpty {})
     element.write(array.borrow_mut(&mut empty, 0), BorrowEmpty {})
-    if slices.get(array.slice(&empty, 0, 1), 0).is_none() { return 0 }
+    if slice.get(array.slice(&empty, 0, 1), 0).is_none() { return 0 }
     42
 }
 
@@ -171,11 +171,11 @@ fn borrowed_array_bad_subslice() -> Int32 {
     var values = array.new::<Int32>()
     array.push(&mut values, 42)
     let region = array.slice(&values, 0, 1)
-    let bad = slices.slice(region, 0, 18446744073709551615)
+    let bad = slice.slice(region, 0, 18446744073709551615)
     0
 }
 fn borrowed_array_bad_slice_element() -> Int32 {
     let values = array.new::<Int32>()
     let region = array.slice(&values, 0, 0)
-    element.read(slices.borrow(region, 0))
+    element.read(slice.borrow(region, 0))
 }

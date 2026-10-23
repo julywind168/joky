@@ -1,4 +1,4 @@
-import joky/array as array.{type Array}
+import joky/array.{type Array}
 import ordered_library.{remove_at, insert_at}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)

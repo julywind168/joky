@@ -1,5 +1,5 @@
 import joky/array.{type Array}
-import joky/result as results.{type Result, Ok, Err}
+import joky/result.{type Result, Ok, Err}
 import joky/task
 extern fn byte_make(input: UInt64) -> Socket
 extern fn read(socket: &mut Socket, limit: UInt64) @suspends -> Array<UInt8>

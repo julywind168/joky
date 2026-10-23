@@ -120,7 +120,7 @@ fn borrowed_receivers_preserve_definition_scope_visibility_and_consumer_types() 
         )
         .unwrap();
     let source = r#"
-        import cells as cells.{type Cell as Saved}
+        import cells.{type Cell as Saved}
         import left
         import right
         struct Cell<T> { wrong: T }

@@ -1,8 +1,8 @@
 import joky/mem
-import joky/string as text.{type StringBuilder}
+import joky/string.{type StringBuilder}
 import joky/array.{type Array}
 import joky/map.{type Map}
-import joky/slice as slices
+import joky/slice
 import joky/drop.{type Drop}
 
 extern fn record_drop(value: Int32)
@@ -78,9 +78,9 @@ fn arrays<T>() -> String {
     let old = mem.replace(parts.borrow_mut_ref(0), "A")
     if old.byte_length() != 1 { return "bad reference" }
     let view = parts.slice(0, parts.len())
-    if slices.borrow_ref(view, 1).byte_length() != 4 { return "bad slice" }
+    if slice.borrow_ref(view, 1).byte_length() != 4 { return "bad slice" }
     let separator = "|"
-    let result = text.join(&parts, &separator)
+    let result = string.join(&parts, &separator)
     parts.clear()
     parts.release()
     result
@@ -113,7 +113,7 @@ fn nested<T>() -> Int32 {
     var entries = entries
     let (_, mut_parts) = entries.take_last()
     let separator = "\0"
-    let joined = text.join(&mut_parts, &separator)
+    let joined = string.join(&mut_parts, &separator)
     if joined.byte_length() != 8 { return 2 }
     42
 }
@@ -170,7 +170,7 @@ fn bulk_work<T>() -> Int32 {
     let separator = "|"
     let parts = value.split(&separator).unwrap_or(Array.new::<String>())
     value.release()
-    let joined = text.join(&parts, &separator)
+    let joined = string.join(&parts, &separator)
     if joined.byte_length() != 11 || parts.len() != 5 { return 1 }
     parts.release()
     joined.release()

@@ -253,7 +253,7 @@ fn array_into_iter_runs_and_cleans_remaining_items_in_standalone_aot() {
             "iter.jk",
             &format!(
                 r#"
-            import joky/task as task
+            import joky/task
             {source}
             fn main() {effect} {{
                 println(compute())
@@ -427,7 +427,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     work.write(
         "collections.jk",
         r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         import joky/option.{type Option}
         pub struct Batch<T> { pub version: UInt64, values: Array<T>, pub sorted: Bool }
         pub struct Secret { value: Int32 }
@@ -461,7 +461,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     );
     work.write("main.jk", r#"
         import collections.{type Batch, type Secret}
-        import bridge as bridge
+        import bridge
         import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         struct Point { value: Int32 }
         fn main() {
@@ -493,7 +493,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     ] {
         work.write(
             "invalid.jk",
-            &format!("import collections.{{type Batch, type Secret}} import joky/array as array {body}"),
+            &format!("import collections.{{type Batch, type Secret}} import joky/array {body}"),
         );
         for command in ["run", "build"] {
             failure(&work.cli(&[command, "invalid.jk"]), "private");
@@ -621,11 +621,11 @@ fn int_map_public_operations_match_all_backends() {
     // CLI validates the same production algorithm through public exports.
     let source: String = recording_cli_source(include_str!("../fixtures/int_map.jk"))
         .lines()
-        .filter(|line| !line.contains("maps.test_bucket_count"))
+        .filter(|line| !line.contains("map.test_bucket_count"))
         .collect::<Vec<_>>()
         .join("\n")
-        .replace("maps.test_invariant(&m)", "true")
-        .replace("maps.test_deleted_count(&m)", "0");
+        .replace("map.test_invariant(&m)", "true")
+        .replace("map.test_deleted_count(&m)", "0");
     work.write("int_map.jk", &source);
     work.assert_all_backends("int_map.jk", &[], b"42\n42\n42\n", 0);
     {
@@ -780,7 +780,7 @@ fn list_example_and_cross_module_aliases_run_in_all_backends() {
         r#"
         import views as chains
         import joky/array.{type Array}
-        import joky/element as element
+        import joky/element
         import joky/io.{println}
         fn main() {
             var input=Array.new::<Int32>(); input.push(20); input.push(22)
@@ -915,7 +915,7 @@ fn number_invariants_and_unique_value_ownership_are_enforced() {
     let work = Workspace::new();
     for (source, diagnostic) in [
         ("import joky/json.{type Number} fn main() { let number = Number { text: \"NaN\" } }", "private"),
-        ("import joky/json as json fn main() { let text = \"1\"; json.parse_float64(&text) }", "unknown_name"),
+        ("import joky/json fn main() { let text = \"1\"; json.parse_float64(&text) }", "unknown_name"),
         ("import joky/json.{type Number} fn main() { let number = Number.from_i64(1); number.text }", "private"),
         ("import joky/json.{type Value} import joky/array.{type Array} fn main() { let values = Array.new::<Value>(); values.get(0) }", "type_mismatch"),
     ] {
@@ -1246,7 +1246,7 @@ fn check_owned_map_cli_cases(additional_cases: bool) {
         .split("fn main()")
         .next()
         .unwrap()
-        .replace("maps.test_invariant(&m)", "true");
+        .replace("map.test_invariant(&m)", "true");
     // Share specializations within the same groups as the VM tests.
     let groups: &[(&[&str], &str)] = if additional_cases {
         &[

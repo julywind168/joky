@@ -478,7 +478,7 @@ fn run() -> Int32 {
 
 ## 可变 List
 
-显式导入 `joky/list as lists.{type List}` 使用 `List<T>`；未加入默认 prelude。
+显式导入 `joky/list.{type List}` 使用 `List<T>`；未加入默认 prelude。
 容器是非 Copy 拥有者，作用域退出自动清理，也可消费式 release。方法和模块函数共用
 [list.jk](../src/stdlib/list.jk) 的算法；构造方法写 `List.new::<T>()`、`List.with_capacity::<T>(n)`。
 
@@ -531,7 +531,7 @@ append 的节点转移次数对源元素数量线性；扩容还可能搬迁目�
 
 ## 无序 Set
 
-显式导入 `joky/set as sets.{type Set}`；未加入默认 prelude。Set 是非 Copy 拥有者，
+显式导入 `joky/set.{type Set}`；未加入默认 prelude。Set 是非 Copy 拥有者，
 由私有 `Map<T, Unit>` 保存元素；模块函数和方法共用 [set.jk](../src/stdlib/set.jk) 的算法。
 T 沿用 Map key 的存储准入：递归无引用的 Copy 值、String、拥有型记录或枚举；
 构造不要求相等/哈希协议，插入、查询、批量导入、关系及集合运算要求 `BorrowEq + BorrowHash`。
@@ -561,7 +561,7 @@ contains/remove 的 `@noescape(value)` 契约经过方法、模块函数和用�
 pop 与导出转移元素所有权；移出的拥有值在容器释放后仍可用。
 
 元素视图约束整个 Set；最后使用前阻止冲突修改、移动和释放，不能逃逸局部容器；无引用元素视图可跨语言挂起。
-拥有元素用 slices.borrow_ref 读取，Copy 元素也可用 slices.get；驻留元素不可变借用。
+拥有元素用 slice.borrow_ref 读取，Copy 元素也可用 slice.get；驻留元素不可变借用。
 消费式运算不能同时消费或借用同一个拥有者；交集/差集结果不依赖右侧借用。
 
 Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、节点句柄或查询式移出 take。
@@ -575,7 +575,7 @@ Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、�
 
 ## 无序 Map
 
-显式导入 `joky/map as maps.{type Map}` 使用 `Map<K, V>`；容器是非 Copy 拥有者，
+显式导入 `joky/map.{type Map}` 使用 `Map<K, V>`；容器是非 Copy 拥有者，
 作用域退出自动清理，也可消费式 `release`。实现全部在 [map.jk](../src/stdlib/map.jk)，
 复用 Array 的受检存储和所有权规则；字段、桶类型和算法 helper 均私有。
 
@@ -665,8 +665,8 @@ Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 不依赖 Map 的存储；Map 移动/释放后仍可读取，原来源的冲突修改直到任务结束仍被拒绝。
 
 keys/values 的相同下标在借用期间对应同一项；顺序未指定，不承诺插入顺序或稳定遍历顺序。
-无引用元素可使用 `slices.iter(table.keys())`、`slices.iter(table.values())` 或
-`slices.iter_mut(table.values_mut())` 配合 for 遍历，见下文 [Slice 与 Map 单列遍历](#slice-与-map-单列遍历)。
+无引用元素可使用 `slice.iter(table.keys())`、`slice.iter(table.values())` 或
+`slice.iter_mut(table.values_mut())` 配合 for 遍历，见下文 [Slice 与 Map 单列遍历](#slice-与-map-单列遍历)。
 Copy value 也可用 get/set 或 Element；含引用的 Copy value 仍使用这些接口配合 while。
 拥有型 value 用 borrow_ref/borrow_mut_ref，可原地修改或 mem.replace，不能用 get/set 复制读取或替换。
 切片使用既有视图头分配及预算规则，不复制载荷。没有公开桶下标或可变 key 切片；
@@ -815,7 +815,7 @@ let item = &mut values[0]
 零大小元素仍受逻辑长度/容量检查，但不分配元素载荷；数组自身始终不是 Copy。
 
 ```joky
-import joky/array as array.{type Array}
+import joky/array.{type Array}
 
 fn answer() -> Int32 {
     var values: Array<Int32> = Array.new::<Int32>()
@@ -931,7 +931,7 @@ Copy 元素没有析构逻辑，截断只更新长度；拥有型元素的清理
 共享引用元素示例：
 
 ```joky
-import joky/array as array
+import joky/array
 
 fn answer() -> Int32 {
     var values = array.new::<&Int32>()
@@ -988,20 +988,20 @@ fn inspect(values: &Array<Resource>) -> Int32 {
 元素与切片借用使用独立的只可借用目标 `Element<T>`、`Slice<T>`，分别从 joky/element 和 joky/slice 导入：
 
 ```joky
-import joky/array as array
-import joky/element as element
-import joky/slice as slices
+import joky/array
+import joky/element
+import joky/slice
 
 fn borrowed_answer() -> Int32 {
     var values = array.new::<Int32>()
     array.push(&mut values, 20)
     array.push(&mut values, 21)
     let region = array.slice_mut(&mut values, 0, 2)
-    let item = slices.borrow_mut(region, 1)
+    let item = slice.borrow_mut(region, 1)
     let old = element.read(item)
     element.write(item, old + 1)
     // item 最后使用后恢复 region，region 最后使用后恢复 values。
-    let answer = slices.get(region, 0).unwrap_or(0) + slices.get(region, 1).unwrap_or(0)
+    let answer = slice.get(region, 0).unwrap_or(0) + slice.get(region, 1).unwrap_or(0)
     array.push(&mut values, 99)
     answer
 }
@@ -1009,25 +1009,25 @@ fn borrowed_answer() -> Int32 {
 
 - array.borrow / borrow_mut 返回 `&Element<T>` / `&mut Element<T>`；element.read 复制 T，element.write 替换 T。
 - array.slice / slice_mut 返回 `&Slice<T>` / `&mut Slice<T>`。区间是半开 [start, end)，必须满足 start <= end <= len，允许空切片。
-  借用构造越界会报告带位置的运行时错误；slices.get / set 的越界仍返回 None / false。
-- slices 提供 len、is_empty、get、set、borrow、borrow_mut、slice、slice_mut；子切片索引相对当前切片。
+  借用构造越界会报告带位置的运行时错误；slice.get / set 的越界仍返回 None / false。
+- slice 提供 len、is_empty、get、set、borrow、borrow_mut、slice、slice_mut；子切片索引相对当前切片。
   元素借用不分配；每次创建切片/子切片均分配一个计入任务预算的头部，不复制元素，并在根任务结束时回收。
 - 普通 API 派生的视图借用整个原始缓冲区，不证明不同索引或区间互不重叠；
   序列模式在成功长度检查后可证明同一模式中的元素和余段不重叠。共享视图允许共享读；
   独占视图阻止其他冲突读写，子视图最后使用后恢复父权限。视图存活时不能冲突修改、扩容、pop、移动或覆盖拥有者。
-- element.read / slices.get 的复制值不延长存储借用；复制出的普通共享引用仍保留元素内容来源。
+- element.read / slice.get 的复制值不延长存储借用；复制出的普通共享引用仍保留元素内容来源。
   Element/Slice 不能按值使用，其视图继承数组视图的不可存储和宿主限制；无引用元素视图可跨挂起。
   可通过明确声明形状的泛型 helper 或跨模块别名传递，不能返回局部拥有者的视图。
-- 取独占借用后求值的后续实参不能冲突读取原数组；先计算复制值，再调用 element.write / slices.set。
+- 取独占借用后求值的后续实参不能冲突读取原数组；先计算复制值，再调用 element.write / slice.set。
   含共享引用元素的写入沿用任务期存储契约，不能写入局部栈借用。
 
 ### 拥有型元素的切片借用
 
-拥有型元素也支持 `Array.slice` / `slice_mut` 及 `slices.slice` / `slice_mut` 子切片，
+拥有型元素也支持 `Array.slice` / `slice_mut` 及 `slice.slice` / `slice_mut` 子切片，
 沿用半开区间检查；索引相对当前切片，空切片可以继续创建空子切片。
 
-- `slices.borrow_ref(&Slice<T>, UInt64) -> &T` /
-  `slices.borrow_mut_ref(&mut Slice<T>, UInt64) -> &mut T` 接受拥有型及无引用 Copy 元素，
+- `slice.borrow_ref(&Slice<T>, UInt64) -> &T` /
+  `slice.borrow_mut_ref(&mut Slice<T>, UInt64) -> &mut T` 接受拥有型及无引用 Copy 元素，
   越界产生带位置的运行时错误。可调用方法、借用字段、共享/独占匹配枚举，
   并通过 `mem.replace` 替换整个元素或其拥有字段，旧值交给调用者清理。
 - `len` / `is_empty` 可用于拥有型切片；`get` / `set` 及 Element 接口
@@ -2147,7 +2147,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
 }
 ```
 
-- 默认模块名为路径末段，例如 `option`；`as opt` 替换该模块名。
+- 默认模块名为路径末段，例如 `option`；通常直接写 `import joky/option`，仅在需要规避重名时使用 `as opt` 替换该模块名。
   `import joky/option.{type Option as Maybe} as opt` 也合法。
   模块别名与成员选择可同时使用，`opt.Option`、`opt.Some`、`opt.Option.Some` 指向同一枚举声明。
 - `import joky/option.{type Option}` 引入类型名及其构造器命名空间，因而允许 `Option.Some(42)`。
@@ -2262,9 +2262,9 @@ pub fn reveal() -> Int32 { LIMIT + SECRET }
 `main.jk`：
 
 ```joky
-import app/config as cfg.{LIMIT}
+import app/config.{LIMIT}
 const SCALED: Int32 = LIMIT * 2
-fn main() -> Int32 { SCALED + cfg.LIMIT + cfg.reveal() }
+fn main() -> Int32 { SCALED + config.LIMIT + config.reveal() }
 ```
 
 - 类型限八种整数、`Float32` / `Float64`、Rune 和 Bool，以及解析到这些类型的透明别名；
@@ -2897,14 +2897,14 @@ else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配�
 
 ```joky
 import joky/array.{type Array}
-import joky/slice as slices
+import joky/slice
 
 fn inspect(values: &Array<Int32>) -> Int32 {
     match values {
         [] => 0
         [0, ..] => 100
         [only] => only
-        [first, ..middle, last] => first + last + int32(slices.len(middle))
+        [first, ..middle, last] => first + last + int32(slice.len(middle))
     }
 }
 ```
@@ -3100,16 +3100,16 @@ advance 只修改游标位置，因此先前的共享元素引用可跨越后续
 
 ```joky
 import joky/map.{type Map}
-import joky/slice as slices
+import joky/slice
 
 fn update_values() -> Int32 {
     var table = Map.new::<Int32, Int32>()
     table.insert(1, 10)
     table.insert(2, 20)
-    for value in slices.iter_mut(table.values_mut()) { *value += 1 }
+    for value in slice.iter_mut(table.values_mut()) { *value += 1 }
     var total = 0
-    for key in slices.iter(table.keys()) { total += *key }
-    for value in slices.iter(table.values()) { total += *value }
+    for key in slice.iter(table.keys()) { total += *key }
+    for value in slice.iter(table.values()) { total += *value }
     total
 }
 ```
@@ -3127,19 +3127,19 @@ Map 的键始终只读，values_mut 只允许修改值；活动游标/元素借�
 顺序未指定，元素不复制、不移出 Map。K/V 均须满足直接元素引用的无引用存储资格。
 
 ```joky
-import joky/map as maps.{type Map}
+import joky/map.{type Map}
 
 fn update_entries() -> Int32 {
     var table = Map.new::<Int32, Int32>()
     table.insert(1, 10)
     table.insert(2, 20)
     for entry in table.iter_mut() {
-        let delta = *maps.entry_key(entry)
-        *maps.entry_value_mut(entry) += delta
+        let delta = *map.entry_key(entry)
+        *map.entry_value_mut(entry) += delta
     }
     var total = 0
     for entry in table.iter() {
-        total += *maps.entry_key(entry) + *maps.entry_value(entry)
+        total += *map.entry_key(entry) + *map.entry_value(entry)
     }
     total
 }
@@ -4704,7 +4704,7 @@ C 嵌入接口见 [include/joky_vm.h](../include/joky_vm.h)，可运行示例为
 
 ```joky
 import joky/io.{println}
-import joky/task as task
+import joky/task
 
 fn report_int32(value: Int32) { println(value) }
 fn main() @suspends {
@@ -5382,7 +5382,7 @@ OutOfRange（首个使整数超范围的数字，UInt64 负号或浮点溢出为
 
 ### JSON 解码
 
-显式导入 `joky/json as json.{type Value, type Limits, type DecodeError, type DecodeErrorKind}`。
+显式导入 `joky/json.{type Value, type Limits, type DecodeError, type DecodeErrorKind}`。
 接口同步返回 `Result<Value, DecodeError>`：
 
 | 接口 | 输入与拥有权 |
@@ -5426,7 +5426,7 @@ StringLimit 指向使解码后长度超限的标量或转义起始处，数字/�
 
 ### JSON 编码
 
-显式导入 `joky/json as json.{type Value, type Limits, type EncodeError}`。
+显式导入 `joky/json.{type Value, type Limits, type EncodeError}`。
 `json.encode(value: &Value) -> Result<String, EncodeError>` 使用默认 Limits；
 `json.encode_with_limits(value: &Value, limits: Limits)` 使用指定限额。
 两者均同步借用输入，输出独立拥有，成功或可恢复错误后输入树保持不变。
@@ -5455,7 +5455,7 @@ struct 可以自动派生或手写字段映射，再调用 `typed.encode(&value)
 [自动派生示例](../examples/json_derive.jk)与[手写示例](../examples/json_struct.jk)均输出 `Ada`、`37`、`/age`。
 
 ```joky
-import joky/json/typed as typed
+import joky/json/typed
 import joky/option.{type Option}
 
 #derive(ToJson, FromJson)

@@ -1,8 +1,8 @@
-import joky/map as maps.{type Map, type Iter, type Entry}
+import joky/map.{type Map, type Iter, type Entry}
 import joky/array.{type Array}
 import joky/option.{Some, None}
 import joky/check.{assert}
-import joky/string as text
+import joky/string
 import joky/drop.{type Drop}
 extern fn record(x: Int32) -> Int32
 extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -21,15 +21,15 @@ fn compute() -> Int32 {
     table.insert(4, 40)
     var total = 0
     for entry in forward(&table) {
-        let key = maps.entry_key(entry)
-        let value = maps.entry_value(entry)
+        let key = map.entry_key(entry)
+        let value = map.entry_value(entry)
         expect(*value == *key * 10)
         total += *key + *value
     }
     expect(total == 88)
     for entry in forward_mut(&mut table) {
-        let key = *maps.entry_key(entry)
-        *maps.entry_value_mut(entry) += key
+        let key = *map.entry_key(entry)
+        *map.entry_value_mut(entry) += key
     }
     expect(*table.borrow_ref(1) == 11 && *table.borrow_ref(3) == 33 && *table.borrow_ref(4) == 44)
     snapshots(&table)
@@ -39,36 +39,36 @@ fn compute() -> Int32 {
 }
 fn snapshots(table: &Map<Int32, Int32>) {
     let cursor = table.iter()
-    expect(maps.advance(cursor))
-    let first = maps.current(cursor)
-    let key = *maps.entry_key(first)
+    expect(map.advance(cursor))
+    let first = map.current(cursor)
+    let key = *map.entry_key(first)
     let other = cursor
-    expect(maps.advance(other))
-    expect(*maps.entry_key(first) == key)
-    expect(*maps.entry_value(first) == key * 11)
-    let second = maps.current(cursor)
-    expect(*maps.entry_key(second) != key)
+    expect(map.advance(other))
+    expect(*map.entry_key(first) == key)
+    expect(*map.entry_value(first) == key * 11)
+    let second = map.current(cursor)
+    expect(*map.entry_key(second) != key)
     var count = 0
     for _ in cursor { count += 1 }
-    expect(count == 1 && !maps.advance(cursor) && !maps.advance(cursor))
-    expect(*maps.entry_key(first) == key)
+    expect(count == 1 && !map.advance(cursor) && !map.advance(cursor))
+    expect(*map.entry_key(first) == key)
 }
 fn resumed(table: &mut Map<Int32, Int32>) {
     let cursor = table.iter_mut()
-    for entry in &mut *cursor { *maps.entry_value_mut(entry) += 1; break }
-    expect(maps.advance(cursor))
-    let entry = maps.current_mut(cursor)
-    *maps.entry_value_mut(entry) += 1
+    for entry in &mut *cursor { *map.entry_value_mut(entry) += 1; break }
+    expect(map.advance(cursor))
+    let entry = map.current_mut(cursor)
+    *map.entry_value_mut(entry) += 1
     var total = 0
-    for entry in table.iter() { total += *maps.entry_value(entry) }
+    for entry in table.iter() { total += *map.entry_value(entry) }
     expect(total == 90)
 }
 fn invalid_current(after_end: Int32) -> Int32 {
     var table = Map.new::<Int32, Int32>()
     table.insert(1, 42)
     let cursor = table.iter()
-    if after_end != 0 { expect(maps.advance(cursor)); expect(!maps.advance(cursor)) }
-    *maps.entry_value(maps.current(cursor))
+    if after_end != 0 { expect(map.advance(cursor)); expect(!map.advance(cursor)) }
+    *map.entry_value(map.current(cursor))
 }
 struct Owned { id: Int32, data: Array<Int32> }
 impl Drop for Owned { fn drop(&mut self) { record(self.id); } }
@@ -87,8 +87,8 @@ fn consume(action: Int32) -> Int32 {
     var table = owned_table()
     var bytes: UInt64 = 0
     for entry in table.iter_mut() {
-        bytes += text.byte_length(maps.entry_key(entry))
-        let value = maps.entry_value_mut(entry)
+        bytes += string.byte_length(map.entry_key(entry))
+        let value = map.entry_value_mut(entry)
         value.data.push(99)
         expect(value.data.len() == 2)
         if action == 1 { return 42 }
@@ -96,7 +96,7 @@ fn consume(action: Int32) -> Int32 {
     }
     expect(bytes == 4)
     var total = 0
-    for entry in table.iter() { total += maps.entry_value(entry).id }
+    for entry in table.iter() { total += map.entry_value(entry).id }
     expect(total == 3)
     record(20)
     42
@@ -104,8 +104,8 @@ fn consume(action: Int32) -> Int32 {
 fn pending() @suspends -> Int32 {
     var table = owned_table()
     for entry in table.iter_mut() {
-        let size = text.byte_length(maps.entry_key(entry))
-        let value = maps.entry_value_mut(entry)
+        let size = string.byte_length(map.entry_key(entry))
+        let value = map.entry_value_mut(entry)
         value.data.push(99)
         delayed_value(record(10 + value.id))
         expect(value.data.len() == 2)
@@ -117,9 +117,9 @@ fn pending() @suspends -> Int32 {
 fn nested_values() {
     var table = Map.new::<Int32, Array<Int32>>()
     table.insert(1, [1, 2])
-    for entry in table.iter_mut() { maps.entry_value_mut(entry).push(3) }
+    for entry in table.iter_mut() { map.entry_value_mut(entry).push(3) }
     for entry in table.iter() {
-        let values = maps.entry_value(entry)
+        let values = map.entry_value(entry)
         expect(values.len() == 3 && values.get(2).unwrap_or(0) == 3)
     }
 }

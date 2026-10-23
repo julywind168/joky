@@ -1,7 +1,7 @@
 // Immutable UTF-8 owners. Only these trusted bridges can transfer validated bytes.
 import joky/array.{type Array}
-import joky/slice as slices.{type Slice}
-import joky/internal/buffer as storage
+import joky/slice.{type Slice}
+import joky/internal/buffer
 import joky/option.{type Option, Some, None}
 import joky/integer
 import joky/result.{type Result, Ok, Err}
@@ -22,8 +22,8 @@ pub struct Utf8Error { pub code: Utf8ErrorCode, pub offset: UInt64 }
 // Reject noncanonical encodings before constructing a Rune. The offset always
 // identifies the start of the first invalid sequence, including truncated input.
 fn decode(source: &Slice<UInt8>, offset: UInt64) -> Result<(Rune, UInt64), Utf8Error> {
-    let length = slices.len(source)
-    let first = uint32(storage.slice_load(source, offset))
+    let length = slice.len(source)
+    let first = uint32(buffer.slice_load(source, offset))
     if first < 0x80 { return Ok((Rune.from_u32(first).unwrap_or('\0'), offset + 1)) }
     let width: UInt64 = if first >= 0xc2 && first <= 0xdf { 2 } else {
         if first >= 0xe0 && first <= 0xef { 3 } else {
@@ -37,7 +37,7 @@ fn decode(source: &Slice<UInt8>, offset: UInt64) -> Result<(Rune, UInt64), Utf8E
         if index >= length - offset {
             return Err(Utf8Error { code: Utf8ErrorCode.UnexpectedEnd, offset: offset })
         }
-        let byte = uint32(storage.slice_load(source, offset + index))
+        let byte = uint32(buffer.slice_load(source, offset + index))
         if byte < 0x80 || byte > 0xbf || (index == 1 && (
             (first == 0xe0 && byte < 0xa0) || (first == 0xed && byte > 0x9f) ||
             (first == 0xf0 && byte < 0x90) || (first == 0xf4 && byte > 0x8f))) {
@@ -63,17 +63,17 @@ pub fn from_utf8(input: Array<UInt8>) -> Result<String, Utf8Error> {
 }
 
 fn boundary(source: &Slice<UInt8>, offset: UInt64) -> Bool {
-    offset == slices.len(source) || (storage.slice_load(source, offset) & 0xc0) != 0x80
+    offset == slice.len(source) || (buffer.slice_load(source, offset) & 0xc0) != 0x80
 }
 
 pub fn substring(text: &String, start: UInt64, end: UInt64) -> Option<String> {
     let source = bytes(text)
-    if start > end || end > slices.len(source) { return None }
+    if start > end || end > slice.len(source) { return None }
     if !boundary(source, start) || !boundary(source, end) { return None }
     var output = Array.with_capacity::<UInt8>(end - start)
     var index = start
     while index < end {
-        output.push(storage.slice_load(source, index))
+        output.push(buffer.slice_load(source, index))
         index = index + 1
     }
     Some(freeze_utf8(output))
@@ -81,7 +81,7 @@ pub fn substring(text: &String, start: UInt64, end: UInt64) -> Option<String> {
 
 pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
     let source = bytes(text)
-    let length = slices.len(source)
+    let length = slice.len(source)
     if offset > length {
         check.panic("String.next_rune offset is out of bounds")
     }
@@ -114,14 +114,14 @@ pub fn concat(left: &String, right: &String) -> String {
 pub enum SplitError { EmptySeparator }
 
 fn add_join_length(current: UInt64, additional: UInt64) -> UInt64 {
-    let limit = storage.capacity_limit::<UInt8>()
+    let limit = buffer.capacity_limit::<UInt8>()
     if current > limit || additional > limit - current { limit + 1 } else { current + additional }
 }
 
 pub fn join(parts: &Array<String>, separator: &String) -> String {
     let length = parts.len()
     let separator_length = byte_length(separator)
-    let limit = storage.capacity_limit::<UInt8>()
+    let limit = buffer.capacity_limit::<UInt8>()
     var total: UInt64 = 0
     var index: UInt64 = 0
     // Saturate at the first impossible layout size, then let checked allocation
@@ -148,8 +148,8 @@ pub fn join(parts: &Array<String>, separator: &String) -> String {
 pub fn split(text: &String, separator: &String) -> Result<Array<String>, SplitError> {
     let source = bytes(text)
     let pattern = bytes(separator)
-    let length = slices.len(source)
-    let width = slices.len(pattern)
+    let length = slice.len(source)
+    let width = slice.len(pattern)
     if width == 0 { return Err(SplitError.EmptySeparator) }
     var output = Array.new::<String>()
     var start: UInt64 = 0
@@ -242,11 +242,11 @@ impl StringBuilder {
     }
     pub fn push_str(&mut self, text: &String) {
         let source = bytes(text)
-        let length = slices.len(source)
+        let length = slice.len(source)
         self.data.reserve(length)
         var index: UInt64 = 0
         while index < length {
-            self.data.push(storage.slice_load(source, index))
+            self.data.push(buffer.slice_load(source, index))
             index = index + 1
         }
     }
@@ -275,13 +275,13 @@ impl String {
 pub fn new() -> String { "" }
 pub fn clone(text: &String) -> String { copy_text(text) }
 pub fn release(text: String) { into_bytes(text).release() }
-pub fn byte_length(text: &String) -> UInt64 { slices.len(bytes(text)) }
+pub fn byte_length(text: &String) -> UInt64 { slice.len(bytes(text)) }
 pub fn is_empty(text: &String) -> Bool { byte_length(text) == 0 }
 
 fn matches_at(text: &Slice<UInt8>, other: &Slice<UInt8>, offset: UInt64) -> Bool {
     var index: UInt64 = 0
-    while index < slices.len(other) {
-        if storage.slice_load(text, offset + index) != storage.slice_load(other, index) { return false }
+    while index < slice.len(other) {
+        if buffer.slice_load(text, offset + index) != buffer.slice_load(other, index) { return false }
         index = index + 1
     }
     true
@@ -289,25 +289,25 @@ fn matches_at(text: &Slice<UInt8>, other: &Slice<UInt8>, offset: UInt64) -> Bool
 pub fn equals(text: &String, other: &String) -> Bool {
     let text = bytes(text)
     let other = bytes(other)
-    slices.len(text) == slices.len(other) && matches_at(text, other, 0)
+    slice.len(text) == slice.len(other) && matches_at(text, other, 0)
 }
 pub fn starts_with(text: &String, prefix: &String) -> Bool {
     let text = bytes(text)
     let prefix = bytes(prefix)
-    slices.len(prefix) <= slices.len(text) && matches_at(text, prefix, 0)
+    slice.len(prefix) <= slice.len(text) && matches_at(text, prefix, 0)
 }
 pub fn ends_with(text: &String, suffix: &String) -> Bool {
     let text = bytes(text)
     let suffix = bytes(suffix)
-    let length = slices.len(text)
-    let count = slices.len(suffix)
+    let length = slice.len(text)
+    let count = slice.len(suffix)
     count <= length && matches_at(text, suffix, length - count)
 }
 pub fn find(text: &String, needle: &String) -> Option<UInt64> {
     let text = bytes(text)
     let needle = bytes(needle)
-    let length = slices.len(text)
-    let count = slices.len(needle)
+    let length = slice.len(text)
+    let count = slice.len(needle)
     if count > length { return None }
     var offset: UInt64 = 0
     while offset <= length - count {

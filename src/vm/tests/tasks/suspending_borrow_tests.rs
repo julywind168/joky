@@ -106,7 +106,7 @@ fn suspending_borrows_reject_conflicts_retention_and_short_lifetimes() {
     let prefix = r#"
         import joky/task
         import joky/array.{type Array}
-        import joky/slice as slices.{type Slice}
+        import joky/slice.{type Slice}
         import joky/mem
         struct Holder { value: &Int32 }
         fn read(value: &Int32) @suspends -> Int32 { task.yield_now(); *value }
@@ -115,7 +115,7 @@ fn suspending_borrows_reject_conflicts_retention_and_short_lifetimes() {
         fn mixed(prefix: (Int32, Int32), local: &Int32, stored: &Int32) @suspends -> Int32 {
             alloc(Holder { value: stored }); task.yield_now(); *local + prefix.0 + prefix.1
         }
-        fn slice_read(values: &Slice<Int32>) @suspends { task.yield_now(); slices.get(values, 0); }
+        fn slice_read(values: &Slice<Int32>) @suspends { task.yield_now(); slice.get(values, 0); }
         fn view(values: &Array<Int32>) -> &Int32 { values.borrow_ref(0) }
     "#;
     for body in [
@@ -142,7 +142,7 @@ fn suspending_borrows_reject_conflicts_retention_and_short_lifetimes() {
         "let values = [1]; retain(values.borrow_ref(0))",
         "let values = [1]; parallel { | retain(values.borrow_ref(0)) }",
         "let values = [1]; let r = values.borrow_ref(0); scope { branch { retain(r) } }",
-        "var values = [1]; let r = values.slice_mut(0, 1); let item = slices.borrow_mut_ref(r, 0); write(item); values.clear(); slices.get(r, 0);",
+        "var values = [1]; let r = values.slice_mut(0, 1); let item = slice.borrow_mut_ref(r, 0); write(item); values.clear(); slice.get(r, 0);",
     ] {
         let source = format!("{prefix} fn bad() @suspends {{ {body} }}");
         let ast = crate::parser::parse(&source).unwrap();

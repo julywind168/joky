@@ -167,18 +167,18 @@ fn map_borrow_iter_allocation_failures_keep_map_owners_live() {
 
 #[test]
 fn map_borrow_iter_rejects_conflicts_and_escaping_entries() {
-    let prefix = "import joky/map as maps.{type Map, type Iter, type Entry}\n";
+    let prefix = "import joky/map.{type Map, type Iter, type Entry}\n";
     for (function, message) in [
         ("fn bad(m: &mut Map<Int32, Int32>) { let i=m.iter(); m.insert(2,3); for _ in i {} }", "conflicts with a live borrow"),
         ("fn bad(m: Map<Int32, Int32>) { let i=m.iter(); m.release(); for _ in i {} }", "conflicts with a live borrow"),
         ("fn bad(m: &mut Map<Int32, Int32>) { let i=m.iter_mut(); m.get(1); for _ in i {} }", "conflicts with a live borrow"),
-        ("fn bad(m: &mut Map<Int32, Int32>) { let i=m.iter_mut(); maps.advance(i); let e=maps.current_mut(i); maps.advance(i); maps.entry_value(e); }", "conflicts with a live borrow"),
-        ("fn bad(m: &mut Map<Int32, Int32>) { for e in m.iter_mut() { let k=maps.entry_key(e); let v=maps.entry_value_mut(e); *v = *k } }", "conflicts with a live borrow"),
-        ("fn bad(m: &mut Map<Int32, Int32>) { for e in m.iter_mut() { *maps.entry_key(e) = 2 } }", "shared reference"),
-        ("fn bad(m: &Map<Int32, Int32>) { for e in m.iter() { maps.entry_value_mut(e); } }", "expected &mut Entry"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { let i=m.iter_mut(); map.advance(i); let e=map.current_mut(i); map.advance(i); map.entry_value(e); }", "conflicts with a live borrow"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { for e in m.iter_mut() { let k=map.entry_key(e); let v=map.entry_value_mut(e); *v = *k } }", "conflicts with a live borrow"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { for e in m.iter_mut() { *map.entry_key(e) = 2 } }", "shared reference"),
+        ("fn bad(m: &Map<Int32, Int32>) { for e in m.iter() { map.entry_value_mut(e); } }", "expected &mut Entry"),
         ("fn bad(m: &Map<Int32, Int32>) { for e in m.iter() { let saved = (e, 1); } }", "Tuple element must be"),
         ("fn bad() -> &Iter<Int32, Int32> { let m=Map.new::<Int32,Int32>(); m.iter() }", "compatible borrowed input"),
-        ("fn bad() -> &Entry<Int32, Int32> { var m=Map.new::<Int32,Int32>(); m.insert(1,2); let i=m.iter(); maps.advance(i); maps.current(i) }", "compatible borrowed input"),
+        ("fn bad() -> &Entry<Int32, Int32> { var m=Map.new::<Int32,Int32>(); m.insert(1,2); let i=m.iter(); map.advance(i); map.current(i) }", "compatible borrowed input"),
         ("fn bad(e: Entry<Int32, Int32>) {}", "borrow-only targets"),
         ("fn bad(i: Iter<Int32, Int32>) {}", "borrow-only targets"),
         ("fn bad(m: &Map<Int32, Int32>) { for e in m.iter() { let saved = [e]; } }", "Generic type argument must be"),

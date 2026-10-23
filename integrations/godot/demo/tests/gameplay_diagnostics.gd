@@ -20,7 +20,7 @@ func make_node(script: Script, spatial: bool = true) -> Node:
 func run() -> void:
     var source = load("res://mover.jk").source_code
     var invalid = ClassDB.instantiate("JokyScript")
-    invalid.source_code = source.replace("state.target = node.get_node(node.self(), &path)", "state.target = node.get_node(node.self(), &path) invalid_position(state)")
+    invalid.source_code = source.replace("state.target = node.get_node(node.self(), &path)", "state.target = node.get_node(node.self(), &path); invalid_position(state)")
     check(invalid.reload() == OK, "invalid vector fixture compiles")
     var a = make_node(invalid)
     var before = a.position

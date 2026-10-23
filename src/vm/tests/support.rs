@@ -209,7 +209,7 @@ fn shared_frontend_rejections_reach_all_backend_entry_points() {
         "fn broken() { let n = 1; n = 2; }",
         "struct Loop { next: Loop } fn broken() {}",
         "trait Read { fn value(self) @noescape -> Int32; } fn unused(value: &dyn Read) {}",
-        "import joky/list.{type List} import joky/element as element fn broken(xs: &mut List<Int32>) { let view = xs.borrow(0); xs.clear(); element.read(view); }",
+        "import joky/list.{type List} import joky/element fn broken(xs: &mut List<Int32>) { let view = xs.borrow(0); xs.clear(); element.read(view); }",
         "import joky/set.{type Set} fn broken(xs: Set<Int32>) { xs.union(xs); }",
     ] {
         let expected = frontend_error(source, &crate::ModuleSources::new());

@@ -1,7 +1,7 @@
 import joky/mem
-import joky/map as maps.{type Map}
+import joky/map.{type Map}
 import joky/array.{type Array}
-import joky/slice as slices.{type Slice}
+import joky/slice.{type Slice}
 import joky/check.{assert}
 import joky/drop.{type Drop}
 import joky/eq.{type Eq}
@@ -10,21 +10,21 @@ extern fn record_int(value: Int32)
 
 fn copy_views<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>()
-    { let assertion_condition = slices.is_empty(m.keys()) && slices.is_empty(m.values()) && slices.is_empty(m.values_mut()); let assertion_message = "Empty views"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = slice.is_empty(m.keys()) && slice.is_empty(m.values()) && slice.is_empty(m.values_mut()); let assertion_message = "Empty views"; assert(assertion_condition, &assertion_message) }
     m.insert(1, 10); m.insert(2, 20); m.insert(3, 30); m.remove(2)
-    let keys = maps.keys(&m)
-    let values = maps.values(&m)
+    let keys = map.keys(&m)
+    let values = map.values(&m)
     var i: UInt64 = 0
-    while i < slices.len(keys) {
-        let key = slices.get(keys, i).unwrap_or(0)
-        { let assertion_condition = slices.get(values, i).unwrap_or(0) == key * 10; let assertion_message = "Paired views"; assert(assertion_condition, &assertion_message) }
+    while i < slice.len(keys) {
+        let key = slice.get(keys, i).unwrap_or(0)
+        { let assertion_condition = slice.get(values, i).unwrap_or(0) == key * 10; let assertion_message = "Paired views"; assert(assertion_condition, &assertion_message) }
         i = i + 1
     }
-    let edit = maps.values_mut(&mut m)
+    let edit = map.values_mut(&mut m)
     i = 0
-    while i < slices.len(edit) {
-        let previous = slices.get(edit, i).unwrap_or(0)
-        slices.set(edit, i, previous + 1); i = i + 1
+    while i < slice.len(edit) {
+        let previous = slice.get(edit, i).unwrap_or(0)
+        slice.set(edit, i, previous + 1); i = i + 1
     }
     { let assertion_condition = m.get(1).unwrap_or(0) == 11 && m.get(3).unwrap_or(0) == 31; let assertion_message = "Value edits preserve keys"; assert(assertion_condition, &assertion_message) }
     m.get(1).unwrap_or(0) + m.get(3).unwrap_or(0)
@@ -35,14 +35,14 @@ fn consuming<Tag>() -> Int32 {
     m.insert(1, 10); m.insert(2, 20); m.insert(3, 30); m.remove(2)
     var sum = 0
     while !m.is_empty() {
-        match maps.pop(&mut m) {
+        match map.pop(&mut m) {
             Some((key, value)) => { { let assertion_condition = value == key * 10 && !m.contains_key(key); let assertion_message = "Popped entry"; assert(assertion_condition, &assertion_message) }; sum = sum + value }
             None => { { let assertion_condition = false; let assertion_message = "Missing entry"; assert(assertion_condition, &assertion_message) } }
         }
     }
     { let assertion_condition = m.pop().is_none(); let assertion_message = "Drained pop"; assert(assertion_condition, &assertion_message) }
     m.insert(4, 2)
-    var entries = maps.into_entries(m)
+    var entries = map.into_entries(m)
     { let assertion_condition = entries.len() == 1; let assertion_message = "Singleton export"; assert(assertion_condition, &assertion_message) }
     let (key, value) = entries.take_last()
     { let assertion_condition = key == 4; let assertion_message = "Exported key"; assert(assertion_condition, &assertion_message) }
@@ -60,19 +60,19 @@ fn batches<Tag>() -> Int32 {
     var m = Map.from_entries(input)
     var more = Array.new::<(Key, Int32)>()
     more.push((Key { id: 2, tag: 40 }, 21)); more.push((Key { id: 2, tag: 50 }, 22))
-    maps.extend(&mut m, more)
+    map.extend(&mut m, more)
     m.extend(Array.new::<(Key, Int32)>())
     { let assertion_condition = m.len() == 2; let assertion_message = "Duplicate input"; assert(assertion_condition, &assertion_message) }
     let keys = m.keys()
     var i: UInt64 = 0
-    while i < slices.len(keys) {
-        match slices.get(keys, i) { Some(k) => { { let assertion_condition = k.tag == k.id * 10; let assertion_message = "Original key retained"; assert(assertion_condition, &assertion_message) } }, None => {} }
+    while i < slice.len(keys) {
+        match slice.get(keys, i) { Some(k) => { { let assertion_condition = k.tag == k.id * 10; let assertion_message = "Original key retained"; assert(assertion_condition, &assertion_message) } }, None => {} }
         i = i + 1
     }
     var exported = m.into_entries()
     var result = 0
     while !exported.is_empty() { let (key, value) = exported.take_last(); result = result + value }
-    let empty = maps.from_entries(Array.new::<(Key, Int32)>())
+    let empty = map.from_entries(Array.new::<(Key, Int32)>())
     { let assertion_condition = empty.is_empty(); let assertion_message = "Empty import"; assert(assertion_condition, &assertion_message) }
     result
 }
@@ -89,12 +89,12 @@ fn resource(id: Int32, fail: Bool) -> Resource {
 fn owned_pipeline<Tag>() -> Int32 {
     var input = Array.new::<(Int32, Resource)>()
     input.push((1, resource(1, false))); input.push((1, resource(2, false))); input.push((2, resource(3, false)))
-    var m = maps.from_entries(input)
-    let read = slices.borrow_ref(m.values(), 0)
+    var m = map.from_entries(input)
+    let read = slice.borrow_ref(m.values(), 0)
     { let assertion_condition = read.data.get(0).unwrap_or(0) == read.id; let assertion_message = "Owned slice"; assert(assertion_condition, &assertion_message) }
     let edit = m.values_mut()
     {
-        let value = slices.borrow_mut_ref(edit, 0)
+        let value = slice.borrow_mut_ref(edit, 0)
         value.data.push(42)
         let old = mem.replace(value, resource(4, false))
     }
@@ -118,8 +118,8 @@ fn references<Tag>() -> Int32 {
     var input = Array.new::<(Int32, &Int32)>()
     input.push((1, (&*(alloc(1))))); input.push((1, (&*(alloc(20)))))
     var m = Map.from_entries(input)
-    slices.set(m.values_mut(), 0, (&*(alloc(42))))
-    let copied = slices.get(m.values(), 0)
+    slice.set(m.values_mut(), 0, (&*(alloc(42))))
+    let copied = slice.get(m.values(), 0)
     var exported = m.into_entries()
     let (key, value) = exported.take_last()
     exported.release()
@@ -130,7 +130,7 @@ fn references<Tag>() -> Int32 {
 struct Plain { id: Int32 }
 fn no_protocols<K, V>(m: Map<K, V>) -> Array<(K, V)> {
     var m = m
-    slices.len(m.keys()); slices.len(m.values()); slices.len(m.values_mut()); m.pop()
+    slice.len(m.keys()); slice.len(m.values()); slice.len(m.values_mut()); m.pop()
     m.into_entries()
 }
 fn unbounded<Tag>() -> Int32 {

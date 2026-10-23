@@ -192,7 +192,7 @@ fn function_values_keep_private_definition_scopes_and_imported_identities() {
 fn language_function_values_keep_legacy_native_registration_abi() {
     let mut vm = VmEngine::with_mode(VmMode::Jit);
     vm.load_source(r#"
-        import joky/vm as vm
+        import joky/vm
         fn increment(x: Int32) -> Int32 { x + 1 }
         fn main() -> Int32 {
             let f = increment

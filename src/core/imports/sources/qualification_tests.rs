@@ -1,7 +1,7 @@
 use super::*;
 use crate::vm::{VmEngine, VmMode};
 const GUARD: &str =
-    "import joky/internal/types as types pub fn guard<T>() { types.require_plain_copy::<T>() }";
+    "import joky/internal/types pub fn guard<T>() { types.require_plain_copy::<T>() }";
 fn qualified_registry() -> TypeRegistry {
     qualified_registry_with(GUARD)
 }
@@ -33,14 +33,14 @@ fn qualified_registry_with(guard: &'static str) -> TypeRegistry {
 #[test]
 fn plain_copy_qualification_executes_legal_layouts_on_both_vms() {
     let source = r#"
-        import joky/test/qualification as q
+        import joky/test/qualification
         struct Key { number: Int64, flag: Bool }
         enum Choice { Empty, Full(UInt64) }
         type Alias = Key
         fn test() -> Int32 {
-            q.guard::<Int32>(); q.guard::<Int64>(); q.guard::<UInt32>(); q.guard::<UInt64>()
-            q.guard::<Bool>(); q.guard::<Unit>(); q.guard::<Key>(); q.guard::<Alias>()
-            q.guard::<Choice>(); q.guard::<(Int32, Bool)>()
+            qualification.guard::<Int32>(); qualification.guard::<Int64>(); qualification.guard::<UInt32>(); qualification.guard::<UInt64>()
+            qualification.guard::<Bool>(); qualification.guard::<Unit>(); qualification.guard::<Key>(); qualification.guard::<Alias>()
+            qualification.guard::<Choice>(); qualification.guard::<(Int32, Bool)>()
             42
         }
     "#;
@@ -63,7 +63,7 @@ fn plain_copy_qualification_executes_legal_layouts_on_both_vms() {
 }
 #[test]
 fn plain_copy_qualification_rejects_actual_owners_references_strings_and_aliases() {
-    let prefix = "import joky/test/qualification as q import joky/array.{type Array}";
+    let prefix = "import joky/test/qualification import joky/array.{type Array}";
     for (declaration, ty) in [
         ("", "&Int32"),
         ("struct Key { value: &Int32 }", "Key"),
@@ -79,7 +79,7 @@ fn plain_copy_qualification_rejects_actual_owners_references_strings_and_aliases
         ("type Key = &Int32", "Key"),
         ("struct Inner { value: &Int32 } type Key = Inner", "Key"),
     ] {
-        let source = format!("{prefix} {declaration} fn bad() {{ q.guard::<{ty}>() }}");
+        let source = format!("{prefix} {declaration} fn bad() {{ qualification.guard::<{ty}>() }}");
         let registry = qualified_registry();
         let ast = registry
             .resolve_with_modules(
@@ -104,7 +104,7 @@ fn plain_copy_qualification_rejects_actual_owners_references_strings_and_aliases
 #[test]
 fn plain_copy_qualification_follows_cross_module_concrete_arguments() {
     let mut modules = crate::ModuleSources::new();
-    modules.insert("keys", "import joky/test/qualification as q pub struct Key { value: &Int32 } pub fn check<T>() { q.guard::<T>() }").unwrap();
+    modules.insert("keys", "import joky/test/qualification pub struct Key { value: &Int32 } pub fn check<T>() { qualification.guard::<T>() }").unwrap();
     let registry = qualified_registry();
     let source = "import keys fn bad() { keys.check::<keys.Key>() }";
     let ast = registry
@@ -130,7 +130,7 @@ fn plain_copy_qualification_follows_cross_module_concrete_arguments() {
 
 #[test]
 fn plain_copy_qualification_checks_fixed_types_in_unused_generic_bodies() {
-    let registry = qualified_registry_with("import joky/internal/types as types pub fn bad<T>() { types.require_plain_copy::<&Int32>() } pub fn good() -> Int32 { 42 }");
+    let registry = qualified_registry_with("import joky/internal/types pub fn bad<T>() { types.require_plain_copy::<&Int32>() } pub fn good() -> Int32 { 42 }");
     let source = "import joky/test/qualification fn test() -> Int32 { qualification.good() }";
     let ast = registry
         .resolve_with_modules(
@@ -162,7 +162,7 @@ fn trusted_source_libraries_honor_explicit_exports() {
     let ast = registry
         .resolve_with_modules(
             &crate::parser::parse(
-                "import joky/test/qualification as q fn test() -> Int32 { q.visible() }",
+                "import joky/test/qualification fn test() -> Int32 { qualification.visible() }",
             )
             .unwrap(),
             &crate::ModuleSources::new(),
@@ -173,7 +173,7 @@ fn trusted_source_libraries_honor_explicit_exports() {
     let ast = registry
         .resolve_with_modules(
             &crate::parser::parse(
-                "import joky/test/qualification as q fn test() -> Int32 { q.hidden() }",
+                "import joky/test/qualification fn test() -> Int32 { qualification.hidden() }",
             )
             .unwrap(),
             &crate::ModuleSources::new(),

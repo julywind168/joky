@@ -1,5 +1,5 @@
-import godot/node as node.{type Vector2}
-import godot/task as task
+import godot/node.{type Vector2}
+import godot/task
 
 struct State { stride: Float64, direction: Float64 }
 fn create() -> State { State { stride: 2.0, direction: 1.0 } }

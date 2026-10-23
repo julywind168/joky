@@ -1,4 +1,4 @@
-import joky/dns as dns
+import joky/dns
 import joky/check.{assert}
 import godot/task
 

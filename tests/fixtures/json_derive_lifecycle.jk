@@ -1,5 +1,5 @@
-import joky/json/typed as typed.{type ToJson, type FromJson, type Context, type MappingError, type MappingErrorKind, type Options, type CodecError}
-import joky/json as json.{type Value, type Number}
+import joky/json/typed.{type ToJson, type FromJson, type Context, type MappingError, type MappingErrorKind, type Options, type CodecError}
+import joky/json.{type Value, type Number}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option}
 import joky/check.{assert}

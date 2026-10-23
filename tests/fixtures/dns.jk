@@ -1,4 +1,4 @@
-import joky/dns as dns.{type ResolveError, type ErrorKind}
+import joky/dns.{type ResolveError, type ErrorKind}
 import joky/tcp.{type Address, type TcpStream, type TcpListener}
 import joky/check.{assert}
 import joky/task

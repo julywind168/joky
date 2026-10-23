@@ -293,10 +293,10 @@ fn mutable_borrows_keep_owner_and_reference_boundaries() {
 #[test]
 fn mutable_borrows_preserve_module_privacy_and_dependencies() {
     for (body, message) in [
-        ("fn bad() -> Int32 { var values = p.make(); let r = p.payload(p.element(&mut values)); values.pop(); r.inspect() }", "borrow"),
-        ("fn bad() { var values = p.make(); match p.element(&mut values) { Item(r) => r.values.push(1), Empty => {} } }", "private"),
+        ("fn bad() -> Int32 { var values = mutable_library.make(); let r = mutable_library.payload(mutable_library.element(&mut values)); values.pop(); r.inspect() }", "borrow"),
+        ("fn bad() { var values = mutable_library.make(); match mutable_library.element(&mut values) { Item(r) => r.values.push(1), Empty => {} } }", "private"),
     ] {
-        let source = format!("import mutable_library as p\n{body}");
+        let source = format!("import mutable_library\n{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let error = VmEngine::with_mode(mode).load_source_with_modules(&source, &modules()).expect_err(body);
             assert!(error.message().contains(message), "{body}: {error}");

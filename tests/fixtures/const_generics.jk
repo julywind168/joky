@@ -1,4 +1,4 @@
-import const_model as model
+import const_model
 import joky/fixed_array.{type FixedArray}
 
 type Phantom<T, const N: UInt64> = T
@@ -18,8 +18,8 @@ const SHADOW: UInt64 = 1
 fn shadow<const SHADOW: UInt64>() -> UInt64 { SHADOW }
 fn check() -> Int32 {
     if apply::<40>(|| { constant::<2>() }) != 42 || shadow::<42>() != 42 { return 7 }
-    let imported = model.Marker::<26>.make()
-    if imported.size() + model.forward::<16>() != 42 { return 6 }
+    let imported = const_model.Marker::<26>.make()
+    if imported.size() + const_model.forward::<16>() != 42 { return 6 }
     let tag = Tag::<Int32, 0x10> { value: 7 }
     let value: Phantom<Int32, 100> = 42
     let function = constant::<26>

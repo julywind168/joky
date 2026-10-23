@@ -402,7 +402,7 @@ store/initialize_next 保留元素借用，replace 合并源内容，get/pop 继
 含引用元素不会将数组独占视图归入普通对象的构造期封存规则；数组仍可在临时视图最后使用后继续修改。
 7b.3 通过 BufferElement / BufferSlice 表示借用专用目标，`Element<T>`/`Slice<T>` 没有按值语义。
 borrow/slice 复制原始缓冲区身份并延长父借用链，所有冲突仍按整个缓冲区判断；不采用独立版本号或区间拆分。
-element.read / slices.get 复制元素内容来源，element.write / slices.set 保留任务期存储借用。
+element.read / slice.get 复制元素内容来源，element.write / slice.set 保留任务期存储借用。
 类型解析恢复视图中内联元素的名义布局，跨模块按声明身份解析，普通引用目标仍保持间接身份。
 这些能力拒绝进入聚合、普通 Copy 泛型、alloc/graph、memory 原语和宿主边界；无引用元素视图可跨语言挂起。
 

@@ -1,4 +1,4 @@
-import joky/json/typed as typed.{type ToJson, type FromJson}
+import joky/json/typed.{type ToJson, type FromJson}
 import joky/result.{Ok, Err}
 import joky/option.{type Option}
 import joky/check.{assert}

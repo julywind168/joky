@@ -1,7 +1,7 @@
 import joky/mem
 // S0 storage model only: Int32 cells are not UTF-8 bytes or the built-in String.
 import joky/array.{type Array}
-import joky/slice as slices.{type Slice}
+import joky/slice.{type Slice}
 import joky/drop.{type Drop}
 import joky/check.{assert}
 extern fn record_int(value: Int32)
@@ -23,7 +23,7 @@ pub fn forward(value: TextProbe) -> TextProbe { value }
 pub fn view(value: &TextProbe) -> &Slice<Int32> { value.data.slice(0, value.data.len()) }
 pub fn sum(value: &TextProbe) -> Int32 {
     let cells = view(value)
-    slices.get(cells, 0).unwrap_or(0) + slices.get(cells, 1).unwrap_or(0)
+    slice.get(cells, 0).unwrap_or(0) + slice.get(cells, 1).unwrap_or(0)
 }
 pub fn release(value: TextProbe) { value.data.release() }
 pub fn take(value: &mut TextProbe, next: TextProbe) -> TextProbe { mem.replace(value, next) }
@@ -35,7 +35,7 @@ fn tracked(id: Int32) -> Tracked {
 pub fn success() -> Int32 {
     var text = forward(finish(builder()))
     let borrowed = view(&text)
-    { let assertion_condition = slices.get(borrowed, 0).unwrap_or(0) == 20; let assertion_message = "Probe borrowed content"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = slice.get(borrowed, 0).unwrap_or(0) == 20; let assertion_message = "Probe borrowed content"; assert(assertion_condition, &assertion_message) }
     let old = take(&mut text, finish(builder()))
     { let assertion_condition = sum(&old) == 42 && sum(&text) == 42; let assertion_message = "Probe replacement"; assert(assertion_condition, &assertion_message) }
     release(old)

@@ -2,7 +2,7 @@ import joky/check.{assert}
 import joky/io.{println}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
-import joky/mem as mem
+import joky/mem
 
 fn expect(ok: Bool) { let message = "Tuple member mismatch"; assert(ok, &message) }
 

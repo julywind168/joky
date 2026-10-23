@@ -1,13 +1,13 @@
 import joky/slice.{type Slice}
 import joky/array.{type Array}
-import joky/map as maps.{type Map as Table}
+import joky/map.{type Map as Table}
 import joky/element.{type Element as Cell}
 import joky/eq.{type Eq as Equality}
 import joky/hash.{type Hash as Hashing}
 
 pub type Dictionary<K, V> = Table<K, V>
-pub fn view<K: Copy + Equality + Hashing, V: Copy>(table: &Dictionary<K, V>, key: K) -> &Cell<V> { maps.borrow(table, key) }
-pub fn edit<K: Copy + Equality + Hashing, V: Copy>(table: &mut Dictionary<K, V>, key: K) -> &mut Cell<V> { maps.borrow_mut(table, key) }
+pub fn view<K: Copy + Equality + Hashing, V: Copy>(table: &Dictionary<K, V>, key: K) -> &Cell<V> { map.borrow(table, key) }
+pub fn edit<K: Copy + Equality + Hashing, V: Copy>(table: &mut Dictionary<K, V>, key: K) -> &mut Cell<V> { map.borrow_mut(table, key) }
 pub fn owned<K: Copy + Equality + Hashing, V>(table: &Dictionary<K, V>, key: K) -> &V { table.borrow_ref(key) }
 pub fn owned_mut<K: Copy + Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K) -> &mut V { table.borrow_mut_ref(key) }
 pub fn copied<K: Copy + Equality + Hashing, V: Copy>(table: &Dictionary<K, V>, key: K) -> Option<V> { table.get(key) }
@@ -17,7 +17,7 @@ pub fn put<K: Copy + Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K
 pub fn keys<K, V>(table: &Dictionary<K, V>) -> &Slice<K> { table.keys() }
 pub fn values<K, V>(table: &Dictionary<K, V>) -> &Slice<V> { table.values() }
 pub fn values_mut<K, V>(table: &mut Dictionary<K, V>) -> &mut Slice<V> { table.values_mut() }
-pub fn pop<K, V>(table: &mut Dictionary<K, V>) -> Option<(K, V)> { maps.pop(table) }
-pub fn export<K, V>(table: Dictionary<K, V>) -> Array<(K, V)> { maps.into_entries(table) }
-pub fn from_entries<K: Copy + Equality + Hashing, V>(entries: Array<(K, V)>) -> Dictionary<K, V> { maps.from_entries(entries) }
-pub fn extend<K: Copy + Equality + Hashing, V>(table: &mut Dictionary<K, V>, entries: Array<(K, V)>) { maps.extend(table, entries) }
+pub fn pop<K, V>(table: &mut Dictionary<K, V>) -> Option<(K, V)> { map.pop(table) }
+pub fn export<K, V>(table: Dictionary<K, V>) -> Array<(K, V)> { map.into_entries(table) }
+pub fn from_entries<K: Copy + Equality + Hashing, V>(entries: Array<(K, V)>) -> Dictionary<K, V> { map.from_entries(entries) }
+pub fn extend<K: Copy + Equality + Hashing, V>(table: &mut Dictionary<K, V>, entries: Array<(K, V)>) { map.extend(table, entries) }

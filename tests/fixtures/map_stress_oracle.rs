@@ -8,9 +8,9 @@ pub fn source(seed: u32, distribution: i32, steps: i32, invariants: bool) -> Str
         SOURCE.to_owned()
     } else {
         SOURCE
-            .replace("maps.test_invariant(m)", "true")
-            .replace("maps.test_deleted_count(&m) == 56", "true")
-            .replace("maps.test_deleted_count(&m) == 0", "true")
+            .replace("map.test_invariant(m)", "true")
+            .replace("map.test_deleted_count(&m) == 56", "true")
+            .replace("map.test_deleted_count(&m) == 0", "true")
     };
     format!("{prefix}\nfn probe() -> Int32 {{ stress({seed}, {distribution}, {steps}) }}\nfn task() @suspends -> Int32 {{ probe() }}")
 }

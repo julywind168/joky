@@ -112,13 +112,13 @@ fn string_queries_byte_borrow_and_consuming_conversion_need_no_allocation() {
     }
     let _restore = RestoreLimit(arena::LIMIT.with(|limit| limit.get()));
     let source = r#"
-        import joky/slice as slices
+        import joky/slice
         extern fn exhaust_budget()
         fn transfer() -> Int32 {
             let text = "é中🙂"
             exhaust_budget()
             let view = text.bytes()
-            if slices.len(view) != 9 { return 1 }
+            if slice.len(view) != 9 { return 1 }
             let data = text.into_bytes()
             if data.len() != 9 || data.get(0).unwrap_or(0) != 0xc3 { return 2 }
             data.release()

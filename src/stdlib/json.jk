@@ -1,11 +1,11 @@
 // Owned JSON values and strict bounded codecs.
-import joky/array as arrays
-import joky/map as maps
+import joky/array
+import joky/map
 import joky/result.{type Result, Ok, Err}
-import joky/string as strings
+import joky/string
 import joky/option.{type Option, Some, None}
 import joky/mem
-import joky/slice as slices
+import joky/slice
 import joky/integer
 import joky/float
 
@@ -14,8 +14,8 @@ pub enum Value {
     Boolean(Bool),
     Number(Number),
     Text(String),
-    Array(arrays.Array<Value>),
-    Object(maps.Map<String, Value>),
+    Array(array.Array<Value>),
+    Object(map.Map<String, Value>),
 }
 
 pub enum NumberErrorKind { InvalidSyntax, NotInteger, OutOfRange, NonFinite, NumberLimit }
@@ -39,8 +39,8 @@ fn error(kind: NumberErrorKind, offset: UInt64) -> NumberError {
     NumberError { kind: kind, offset: offset }
 }
 fn digit(byte: UInt8) -> Bool { byte >= 48 && byte <= 57 }
-fn byte_at(bytes: &slices.Slice<UInt8>, index: UInt64) -> UInt8 {
-    *slices.borrow_ref(bytes, index)
+fn byte_at(bytes: &slice.Slice<UInt8>, index: UInt64) -> UInt8 {
+    *slice.borrow_ref(bytes, index)
 }
 
 // The first unexpected byte (or EOF) identifies a syntax error. Length is
@@ -52,7 +52,7 @@ fn validate(text: &String) -> Result<Unit, NumberError> {
 }
 
 // Shared range validator: offsets are absolute bytes in the supplied input.
-fn validate_number(bytes: &slices.Slice<UInt8>, start: UInt64, length: UInt64) -> Result<Unit, NumberError> {
+fn validate_number(bytes: &slice.Slice<UInt8>, start: UInt64, length: UInt64) -> Result<Unit, NumberError> {
     var index = start
     if index < length && byte_at(bytes, index) == 45 { index = index + 1 }
     if index == length { return Err(error(NumberErrorKind.InvalidSyntax, index)) }
@@ -248,7 +248,7 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> Result<(String, 
     let bytes = input.bytes()
     let length = input.byte_length()
     var offset = start + 1
-    var builder = strings.StringBuilder.new()
+    var builder = string.StringBuilder.new()
     while offset < length {
         let byte = byte_at(bytes, offset)
         let source_offset = offset
@@ -305,11 +305,11 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> Result<(String, 
 
 // Parents own completed siblings while the next child is being scanned. A
 // completed container is popped and moved into its parent, without recursion.
-enum DecodeFrame { Items(arrays.Array<Value>), Fields((maps.Map<String, Value>, Option<String>)) }
+enum DecodeFrame { Items(array.Array<Value>), Fields((map.Map<String, Value>, Option<String>)) }
 
 // Mutable parsing state stays private; step helpers keep control-flow and
 // reference analysis bounded without relaxing compiler budgets.
-struct Decoder { stack: arrays.Array<DecodeFrame>, result: Value, offset: UInt64,
+struct Decoder { stack: array.Array<DecodeFrame>, result: Value, offset: UInt64,
     nodes: UInt64, mode: UInt32, allow_end: Bool, limits: Limits }
 fn close_frame(decoder: &mut Decoder) {
     let value = finish_container(decoder.stack.take_last())
@@ -365,8 +365,8 @@ fn value_start(byte: UInt8) -> Bool {
     byte == 110 || byte == 116 || byte == 102 || byte == 34 || byte == 45 || digit(byte) || byte == 91 || byte == 123
 }
 fn new_frame(byte: UInt8) -> DecodeFrame {
-    if byte == 91 { DecodeFrame.Items(arrays.Array.new::<Value>()) } else {
-        DecodeFrame.Fields((maps.Map.new::<String, Value>(), None))
+    if byte == 91 { DecodeFrame.Items(array.Array.new::<Value>()) } else {
+        DecodeFrame.Fields((map.Map.new::<String, Value>(), None))
     }
 }
 
@@ -456,7 +456,7 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> Result<Value, Decod
     if input.byte_length() > limits.max_input_bytes {
         return Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
     }
-    var decoder = Decoder { stack: arrays.Array.new::<DecodeFrame>(), result: Value.Null,
+    var decoder = Decoder { stack: array.Array.new::<DecodeFrame>(), result: Value.Null,
         offset: 0, nodes: 0, mode: 0, allow_end: false, limits: limits }
     while true {
         let done = decode_step(input, &mut decoder)?
@@ -464,10 +464,10 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> Result<Value, Decod
     }
 }
 
-pub fn decode_bytes(input: arrays.Array<UInt8>) -> Result<Value, DecodeError> {
+pub fn decode_bytes(input: array.Array<UInt8>) -> Result<Value, DecodeError> {
     decode_bytes_with_limits(input, Limits.defaults())
 }
-pub fn decode_bytes_with_limits(input: arrays.Array<UInt8>, limits: Limits) -> Result<Value, DecodeError> {
+pub fn decode_bytes_with_limits(input: array.Array<UInt8>, limits: Limits) -> Result<Value, DecodeError> {
     if !valid_limits(limits) { return Err(decode_error(DecodeErrorKind.InvalidLimits, 0)) }
     if input.len() > limits.max_input_bytes {
         return Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
@@ -480,16 +480,16 @@ pub fn decode_bytes_with_limits(input: arrays.Array<UInt8>, limits: Limits) -> R
 
 // Only indices are stored in the work stack. Each step borrows its node from
 // the immutable root again, without storing references in owning containers.
-struct Encoder { output: strings.StringBuilder, path: arrays.Array<UInt64>,
+struct Encoder { output: string.StringBuilder, path: array.Array<UInt64>,
     nodes: UInt64, visiting: Bool, limits: Limits }
 fn child_ref(value: &Value, index: UInt64) -> &Value {
     match value {
         Array(items) => items.borrow_ref(index)
-        Object(fields) => slices.borrow_ref(fields.values(), index)
+        Object(fields) => slice.borrow_ref(fields.values(), index)
         _ => value
     }
 }
-fn path_value(root: &Value, path: &arrays.Array<UInt64>) @noescape(path) -> &Value {
+fn path_value(root: &Value, path: &array.Array<UInt64>) @noescape(path) -> &Value {
     var value = root
     var level: UInt64 = 0
     while level < path.len() {
@@ -557,7 +557,7 @@ fn write_string(encoder: &mut Encoder, text: &String) -> Result<Unit, EncodeErro
 fn write_key(encoder: &mut Encoder, parent: &Value, index: UInt64) -> Result<Unit, EncodeError> {
     match parent {
         Object(fields) => {
-            write_string(encoder, slices.borrow_ref(fields.keys(), index))?
+            write_string(encoder, slice.borrow_ref(fields.keys(), index))?
             write_mark(encoder, ':')
         }
         _ => Ok({})
@@ -621,7 +621,7 @@ fn encode_step(root: &Value, encoder: &mut Encoder) -> Result<Bool, EncodeError>
 pub fn encode(value: &Value) -> Result<String, EncodeError> { encode_with_limits(value, Limits.defaults()) }
 pub fn encode_with_limits(value: &Value, limits: Limits) -> Result<String, EncodeError> {
     if !valid_limits(limits) { return Err(EncodeError.InvalidLimits) }
-    var encoder = Encoder { output: strings.StringBuilder.new(), path: arrays.Array.new::<UInt64>(),
+    var encoder = Encoder { output: string.StringBuilder.new(), path: array.Array.new::<UInt64>(),
         nodes: 0, visiting: true, limits: limits }
     while true {
         let done = encode_step(value, &mut encoder)?

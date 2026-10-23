@@ -484,13 +484,13 @@ fn diamond_dependencies_resolve_through_shared_declarations() {
         ),
         (
             "app/right",
-            "import app/base as base\npub const R: Int32 = base.B + 2",
+            "import app/base\npub const R: Int32 = base.B + 2",
         ),
         (
             "app/top",
             concat!(
                 "import app/left.{L}\n",
-                "import app/right as right\n",
+                "import app/right\n",
                 "pub const T: Int32 = L * right.R\n",
             ),
         ),

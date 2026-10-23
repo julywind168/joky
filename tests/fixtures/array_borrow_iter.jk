@@ -1,9 +1,9 @@
-import joky/array as array.{type Array}
-import joky/iter as iter.{type Iter}
+import joky/array.{type Array}
+import joky/iter.{type Iter}
 import joky/option.{Some, None}
 import joky/check.{assert}
 import joky/drop.{type Drop}
-import joky/string as text
+import joky/string
 extern fn record(x: Int32) -> Int32
 extern fn delayed_value(x: Int32) @suspends -> Int32
 
@@ -66,7 +66,7 @@ fn empty_and_nested() {
     expect(item_count::<Unit>(&units) == 3)
     let texts = ["a", "bc"]
     var bytes: UInt64 = 0
-    for value in texts.iter() { bytes += text.byte_length(value) }
+    for value in texts.iter() { bytes += string.byte_length(value) }
     expect(bytes == 3)
     let nested = [[1, 2], [3, 4]]
     var digits = 0

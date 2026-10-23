@@ -1,38 +1,38 @@
-import joky/internal/fixed_array as storage
+import joky/internal/fixed_array
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 
-pub type FixedArray<T: Copy, const N: UInt64> = storage.FixedArray<T, N>
+pub type FixedArray<T: Copy, const N: UInt64> = fixed_array.FixedArray<T, N>
 
 pub fn repeat<T: Copy, const N: UInt64>(value: T) -> FixedArray<T, N> {
-    var token = storage.begin::<T, N>()
+    var token = fixed_array.begin::<T, N>()
     var index: UInt64 = 0
     while index < N {
-        storage.write_next(&mut token, value)
+        fixed_array.write_next(&mut token, value)
         index = index + 1
     }
-    storage.finish(token)
+    fixed_array.finish(token)
 }
 
 pub fn from_fn<T: Copy, const N: UInt64, F: FnMut(UInt64) -> T>(init: F) -> FixedArray<T, N> {
     var callback = init
-    var token = storage.begin::<T, N>()
+    var token = fixed_array.begin::<T, N>()
     var index: UInt64 = 0
     while index < N {
-        storage.write_next(&mut token, callback(index))
+        fixed_array.write_next(&mut token, callback(index))
         index = index + 1
     }
-    storage.finish(token)
+    fixed_array.finish(token)
 }
 
 pub fn len<T: Copy, const N: UInt64>(values: &FixedArray<T, N>) -> UInt64 { N }
 pub fn is_empty<T: Copy, const N: UInt64>(values: &FixedArray<T, N>) -> Bool { N == 0 }
 pub fn get<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<T> {
-    if index < N { Some(storage.load(values, index)) } else { None }
+    if index < N { Some(fixed_array.load(values, index)) } else { None }
 }
 pub fn set<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T) -> Bool {
     if index < N {
-        storage.store(values, index, value)
+        fixed_array.store(values, index, value)
         true
     } else { false }
 }
@@ -49,10 +49,10 @@ impl<T: Copy, const N: UInt64> FixedArray<T, N> {
     pub fn set(&mut self, index: UInt64, value: T) -> Bool { set(self, index, value) }
 }
 
-pub fn borrow_ref<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T { storage.borrow_ref(values, index) }
+pub fn borrow_ref<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T { fixed_array.borrow_ref(values, index) }
 
-pub fn borrow_mut_ref<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T { storage.borrow_mut_ref(values, index) }
+pub fn borrow_mut_ref<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T { fixed_array.borrow_mut_ref(values, index) }
 
-pub fn slice<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T> { storage.slice(values, start, end) }
+pub fn slice<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T> { fixed_array.slice(values, start, end) }
 
-pub fn slice_mut<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.slice_mut(values, start, end) }
+pub fn slice_mut<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T> { fixed_array.slice_mut(values, start, end) }

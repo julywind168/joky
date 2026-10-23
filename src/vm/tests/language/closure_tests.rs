@@ -77,7 +77,7 @@ fn closure_noncapturing_identity_and_move_rejections() {
         "fn probe() -> Int32 { let n = 42; var f = || { n }; let g = f; f = g; f() }",
         42,
     );
-    executes("import joky/string as text fn probe() -> Int32 { let n = \"owner\"; var f = move || { text.byte_length(&n) }; let g = f; f = g; if f() == 5 { 42 } else { 0 } }", 42);
+    executes("import joky/string fn probe() -> Int32 { let n = \"owner\"; var f = move || { string.byte_length(&n) }; let g = f; f = g; if f() == 5 { 42 } else { 0 } }", 42);
     rejects("fn probe() { var f = || { 42 }; let g = f; f = g; g() }");
     rejects("fn probe() { let f = || { 42 }; let p = &f; let g = f; p() }");
     executes(
@@ -122,8 +122,8 @@ fn closure_move_snapshots_and_consumes_owning_captures() {
         "fn probe() -> Int32 { var n = 40; let f = move || { n + 2 }; n = 0; f() }",
         42,
     );
-    executes("import joky/string as text fn probe() -> Int32 { let value = \"hello\"; let take = move || -> String { value }; let result = take(); if text.byte_length(&result) == 5 { 42 } else { 0 } }", 42);
-    executes("import joky/string as text fn probe() -> Int32 { let value = \"hello\"; let f = move || { text.byte_length(&value) }; if f() + f() == 10 { 42 } else { 0 } }", 42);
+    executes("import joky/string fn probe() -> Int32 { let value = \"hello\"; let take = move || -> String { value }; let result = take(); if string.byte_length(&result) == 5 { 42 } else { 0 } }", 42);
+    executes("import joky/string fn probe() -> Int32 { let value = \"hello\"; let f = move || { string.byte_length(&value) }; if f() + f() == 10 { 42 } else { 0 } }", 42);
     rejects(
         "fn probe() { let value = \"owned\"; let take = move || -> String { value }; take(); take() }",
     );
@@ -210,8 +210,8 @@ fn closure_nested_captures_helpers_and_hidden_lifetimes() {
 
 #[test]
 fn closure_replaces_owners_without_consuming_the_environment() {
-    executes("import joky/string as text fn probe() -> Int32 { var value = \"a\"; var update = move || { value = \"hello\"; text.byte_length(&value) }; if update() + update() == 10 { 42 } else { 0 } }", 42);
-    executes("import joky/string as text fn probe() -> Int32 { var value = \"a\"; { var update = || { value = \"hello\" }; update(); update() }; if text.byte_length(&value) == 5 { 42 } else { 0 } }", 42);
+    executes("import joky/string fn probe() -> Int32 { var value = \"a\"; var update = move || { value = \"hello\"; string.byte_length(&value) }; if update() + update() == 10 { 42 } else { 0 } }", 42);
+    executes("import joky/string fn probe() -> Int32 { var value = \"a\"; { var update = || { value = \"hello\" }; update(); update() }; if string.byte_length(&value) == 5 { 42 } else { 0 } }", 42);
 }
 
 thread_local! {
@@ -358,8 +358,8 @@ fn closure_reference_captures_and_owning_field_updates() {
         42,
     );
     executes("fn probe() -> Int32 { var n = 41; { let p = &mut n; var f = || { (*(p) = (*p) + 1) }; f() }; n }", 42);
-    executes("import joky/string as text struct Pair { value: String, n: Int32 } fn probe() -> Int32 { var p = Pair { value: \"a\", n: 40 }; { var f = || { p.value = \"hello\"; p.n = p.n + 1 }; f(); f() }; if text.byte_length(&p.value) == 5 { p.n } else { 0 } }", 42);
-    executes("import joky/string as text fn probe() -> Int32 { let value = \"hello\"; let f = move || -> String { value }; let g = move || -> String { f() }; let result = g(); if text.byte_length(&result) == 5 { 42 } else { 0 } }", 42);
+    executes("import joky/string struct Pair { value: String, n: Int32 } fn probe() -> Int32 { var p = Pair { value: \"a\", n: 40 }; { var f = || { p.value = \"hello\"; p.n = p.n + 1 }; f(); f() }; if string.byte_length(&p.value) == 5 { p.n } else { 0 } }", 42);
+    executes("import joky/string fn probe() -> Int32 { let value = \"hello\"; let f = move || -> String { value }; let g = move || -> String { f() }; let result = g(); if string.byte_length(&result) == 5 { 42 } else { 0 } }", 42);
 }
 
 #[test]

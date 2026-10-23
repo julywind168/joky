@@ -1,7 +1,7 @@
 import joky/string
 import joky/option.{type Option}
 import joky/result.{type Result}
-import joky/array as array.{type Array}
+import joky/array.{type Array}
 
 type Transform<T, U> = fn(T) -> U
 struct Holder<T> { run: fn(T) -> T }

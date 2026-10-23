@@ -1,9 +1,9 @@
 import joky/element
-import joky/fixed_array as fixed.{type FixedArray}
-import joky/slice as slices.{type Slice}
+import joky/fixed_array.{type FixedArray}
+import joky/slice.{type Slice}
 import joky/array.{type Array}
 type Row = FixedArray<Int32, 3>
-fn row(n:Int32)->Row { fixed.repeat::<Int32,3>(n) }
+fn row(n:Int32)->Row { fixed_array.repeat::<Int32,3>(n) }
 fn elements()->Int32 {
     var a=row(1)
     *a.borrow_mut_ref(1)=42
@@ -14,10 +14,10 @@ fn elements()->Int32 {
 fn slice_values()->Int32 {
     var a=row(1)
     let s=a.slice_mut(1,3)
-    slices.set(s,0,40)
-    *slices.borrow_mut_ref(s,1)=2
-    let sub=slices.slice(s,0,2)
-    let n=*slices.borrow_ref(sub,0)+*slices.borrow_ref(sub,1)
+    slice.set(s,0,40)
+    *slice.borrow_mut_ref(s,1)=2
+    let sub=slice.slice(s,0,2)
+    let n=*slice.borrow_ref(sub,0)+*slice.borrow_ref(sub,1)
     a=row(9)
     n
 }
@@ -26,12 +26,12 @@ fn nested()->Int32 {
     var p=Packet{lead:1,data:row(0)}
     let r=p.data.borrow_mut_ref(2)
     *r=42
-    var a=fixed.repeat::<Row,2>(p.data)
+    var a=fixed_array.repeat::<Row,2>(p.data)
     let inner=a.borrow_mut_ref(1)
     *inner.borrow_mut_ref(0)=40
     let s=inner.slice_mut(0,3)
-    slices.set(s,1,2)
-    *slices.borrow_ref(s,0)+*slices.borrow_ref(s,1)
+    slice.set(s,1,2)
+    *slice.borrow_ref(s,0)+*slice.borrow_ref(s,1)
 }
 fn dynamic()->Int32 {
     var a=Array.new::<Row>()
@@ -39,56 +39,56 @@ fn dynamic()->Int32 {
     let r=a.borrow_mut_ref(0)
     *r.borrow_mut_ref(1)=42
     let s=a.slice_mut(0,1)
-    let inner=slices.borrow_mut_ref(s,0)
+    let inner=slice.borrow_mut_ref(s,0)
     let v=inner.slice(1,2)
-    let n=*slices.borrow_ref(v,0)
+    let n=*slice.borrow_ref(v,0)
     a.reserve(20)
     n
 }
 fn empty()->Int32 {
-    let a=fixed.repeat::<Int32,0>(1)
-    let b=fixed.repeat::<Unit,3>({})
+    let a=fixed_array.repeat::<Int32,0>(1)
+    let b=fixed_array.repeat::<Unit,3>({})
     b.borrow_ref(2)
-    if slices.len(a.slice(0,0))==0 && slices.len(b.slice(3,3))==0 && slices.len(b.slice(0,3))==3 {42}else{0}
+    if slice.len(a.slice(0,0))==0 && slice.len(b.slice(3,3))==0 && slice.len(b.slice(0,3))==3 {42}else{0}
 }
 fn tail(a:&Row)->&Slice<Int32> { a.slice(1,3) }
 fn first(a:&Row)->&Int32 { a.borrow_ref(0) }
-fn returned()->Int32 { let a=row(21); *first(&a)+*slices.borrow_ref(tail(&a),1) }
+fn returned()->Int32 { let a=row(21); *first(&a)+*slice.borrow_ref(tail(&a),1) }
 fn indirect()->Int32 {
     let a=row(21)
     let f=tail
-    let g=fixed.borrow_ref::<Int32,3>
-    *slices.borrow_ref(f(&a),1)+*g(&a,1)
+    let g=fixed_array.borrow_ref::<Int32,3>
+    *slice.borrow_ref(f(&a),1)+*g(&a,1)
 }
-fn view<T: Copy,const N:UInt64>(a:&FixedArray<T,N>)->&Slice<T> { fixed.slice(a,0,N) }
+fn view<T: Copy,const N:UInt64>(a:&FixedArray<T,N>)->&Slice<T> { fixed_array.slice(a,0,N) }
 fn read<T: Copy>(r:&T)->T { *r }
-fn generic()->Int32 { let a=row(42); read(slices.borrow_ref(view(&a),2)) }
+fn generic()->Int32 { let a=row(42); read(slice.borrow_ref(view(&a),2)) }
 fn bad_index()->Int32 { let a=row(1); *a.borrow_ref(3) }
 fn bad_mut_index()->Int32 { var a=row(1); *a.borrow_mut_ref(18446744073709551615)=42; 0 }
-fn bad_range()->Int32 { let a=row(1); slices.len(a.slice(2,1)); 0 }
-fn bad_end()->Int32 { var a=row(1); slices.len(a.slice_mut(0,4)); 0 }
-fn bad_empty()->Int32 { let a=fixed.repeat::<Int32,0>(1); *a.borrow_ref(0) }
-fn bad_zero_size()->Int32 { let a=fixed.repeat::<Unit,3>({}); a.borrow_ref(3); 0 }
+fn bad_range()->Int32 { let a=row(1); slice.len(a.slice(2,1)); 0 }
+fn bad_end()->Int32 { var a=row(1); slice.len(a.slice_mut(0,4)); 0 }
+fn bad_empty()->Int32 { let a=fixed_array.repeat::<Int32,0>(1); *a.borrow_ref(0) }
+fn bad_zero_size()->Int32 { let a=fixed_array.repeat::<Unit,3>({}); a.borrow_ref(3); 0 }
 fn shared_views()->Int32 {
     var a=Array.new::<Int32>()
     a.push(21)
     let text="*a"
-    let s=slices.slice(text.bytes(),0,1)
-    *slices.borrow_ref(a.slice(0,1),0)+int32(*slices.borrow_ref(s,0))/2
+    let s=slice.slice(text.bytes(),0,1)
+    *slice.borrow_ref(a.slice(0,1),0)+int32(*slice.borrow_ref(s,0))/2
 }
 fn element_views()->Int32 {
     var a=Array.new::<Row>()
     a.push(row(40))
     let s=a.slice_mut(0,1)
-    slices.set(s,0,row(42))
-    let e=slices.borrow_mut(s,0)
+    slice.set(s,0,row(42))
+    let e=slice.borrow_mut(s,0)
     element.write(e,row(42))
     let r=element.read(e)
     *r.borrow_ref(0)
 }
 struct Cell { tag:UInt8, value:Float64 }
 fn aligned()->Int32 {
-    var a=fixed.repeat::<Cell,3>(Cell{tag:1,value:2.5})
+    var a=fixed_array.repeat::<Cell,3>(Cell{tag:1,value:2.5})
     let cell=a.borrow_mut_ref(2)
     cell.value=42.0
     let copy=a
@@ -112,10 +112,10 @@ fn fields()->Int32 {
 }
 fn alias_methods()->Int32 {
     var a=row(21)
-    let f=fixed.slice_mut::<Int32,3>
+    let f=fixed_array.slice_mut::<Int32,3>
     let s=f(&mut a,0,2)
-    *slices.borrow_mut_ref(s,1)=42
-    *slices.borrow_ref(s,1)
+    *slice.borrow_mut_ref(s,1)=42
+    *slice.borrow_ref(s,1)
 }
 impl Packet {
     fn tail(&self)->&Slice<Int32> { self.data.slice(1,3) }
@@ -124,7 +124,7 @@ impl Packet {
 fn record_method()->Int32 {
     var p=Packet{lead:0,data:row(1)}
     *p.middle_mut()=42
-    *slices.borrow_ref(p.tail(),0)
+    *slice.borrow_ref(p.tail(),0)
 }
 fn enum_view()->Int32 {
     var a=Some(row(1))
@@ -132,21 +132,21 @@ fn enum_view()->Int32 {
         Some(r)=>{ *r.borrow_mut_ref(1)=42 },
         None=>{}
     }
-    let n=match &a { Some(r)=>*slices.borrow_ref(r.slice(0,3),1),None=>0 }
+    let n=match &a { Some(r)=>*slice.borrow_ref(r.slice(0,3),1),None=>0 }
     a=None
     n
 }
 fn slice_operations()->Int32 {
-    var a=fixed.repeat::<Row,3>(row(0))
+    var a=fixed_array.repeat::<Row,3>(row(0))
     let s=a.slice_mut(0,3)
-    let sub=slices.slice_mut(s,1,3)
-    slices.set(sub,0,row(40))
-    element.write(slices.borrow_mut(sub,1),row(2))
-    if slices.set(sub,2,row(9)) {return 0}
-    if slices.is_empty(sub) {return 0}
-    let first=match slices.get(sub,0) {Some(r)=>r,None=>row(0)}
-    let second=element.read(slices.borrow(sub,1))
-    let missing=match slices.get(sub,2) {None=>true,Some(_)=>false}
-    a=fixed.repeat::<Row,3>(row(9))
+    let sub=slice.slice_mut(s,1,3)
+    slice.set(sub,0,row(40))
+    element.write(slice.borrow_mut(sub,1),row(2))
+    if slice.set(sub,2,row(9)) {return 0}
+    if slice.is_empty(sub) {return 0}
+    let first=match slice.get(sub,0) {Some(r)=>r,None=>row(0)}
+    let second=element.read(slice.borrow(sub,1))
+    let missing=match slice.get(sub,2) {None=>true,Some(_)=>false}
+    a=fixed_array.repeat::<Row,3>(row(9))
     if missing {*first.borrow_ref(0)+*second.borrow_ref(0)}else{0}
 }

@@ -224,7 +224,7 @@ fn net6_dns_fake_errors_results_and_repeated_pending_execute_generated_code() {
     );
     let _injected = Injected::new(service.clone());
     let source = r#"
-        import joky/dns as dns
+        import joky/dns
         import joky/tcp.{type Address}
         fn main() @suspends -> Int32 {
             if !match dns.lookup("empty.test", 80) { Err(e) => match e.kind { NoAddresses => true, _ => false }, Ok(_) => false } { return 1 }
@@ -255,7 +255,7 @@ fn net6_dns_busy_is_a_business_result_in_both_vm_modes() {
     let service = Arc::new(Service::new(1, 0, 1, Arc::new(|_, _| unreachable!())).unwrap());
     let _injected = Injected::new(service.clone());
     let source = r#"
-        import joky/dns as dns
+        import joky/dns
         fn main() @suspends -> Int32 {
             match dns.lookup("busy.test", 80) {
                 Err(error) => match error.kind { Busy => 42, _ => 1 }

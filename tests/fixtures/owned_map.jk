@@ -1,4 +1,4 @@
-import joky/map as maps.{type Map}
+import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 import joky/check.{assert}
@@ -17,14 +17,14 @@ fn transitions<Tag>() -> Int32 {
     record_int(101)
     m.reserve(5)
     record_int(102)
-    { let assertion_condition = maps.test_invariant(&m); let assertion_message = "Owned rehash"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = map.test_invariant(&m); let assertion_message = "Owned rehash"; assert(assertion_condition, &assertion_message) }
     m.insert(3, resource(3))
     let old = m.insert(1, resource(4))
     let removed = m.remove(2)
-    { let assertion_condition = m.len() == 2 && maps.test_invariant(&m); let assertion_message = "Owned removal"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.len() == 2 && map.test_invariant(&m); let assertion_message = "Owned removal"; assert(assertion_condition, &assertion_message) }
     let cap = m.capacity()
     m.clear()
-    { let assertion_condition = m.is_empty() && m.capacity() == cap && maps.test_invariant(&m); let assertion_message = "Owned clear"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.is_empty() && m.capacity() == cap && map.test_invariant(&m); let assertion_message = "Owned clear"; assert(assertion_condition, &assertion_message) }
     m.insert(5, resource(5))
     record_int(-90)
     m.release()

@@ -1,17 +1,17 @@
 import joky/mem
-import joky/map as maps.{type Map}
+import joky/map.{type Map}
 import joky/array.{type Array}
-import joky/element as element.{type Element}
+import joky/element.{type Element}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 import joky/check.{assert}
 import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
 
-fn view<K: Copy + Eq + Hash, V: Copy>(m: &Map<K, V>, key: K) -> &Element<V> { maps.borrow(m, key) }
-fn view_mut<K: Copy + Eq + Hash, V: Copy>(m: &mut Map<K, V>, key: K) -> &mut Element<V> { maps.borrow_mut(m, key) }
-fn owner_view<K: Copy + Eq + Hash, V>(m: &Map<K, V>, key: K) -> &V { maps.borrow_ref(m, key) }
-fn owner_view_mut<K: Copy + Eq + Hash, V>(m: &mut Map<K, V>, key: K) -> &mut V { maps.borrow_mut_ref(m, key) }
+fn view<K: Copy + Eq + Hash, V: Copy>(m: &Map<K, V>, key: K) -> &Element<V> { map.borrow(m, key) }
+fn view_mut<K: Copy + Eq + Hash, V: Copy>(m: &mut Map<K, V>, key: K) -> &mut Element<V> { map.borrow_mut(m, key) }
+fn owner_view<K: Copy + Eq + Hash, V>(m: &Map<K, V>, key: K) -> &V { map.borrow_ref(m, key) }
+fn owner_view_mut<K: Copy + Eq + Hash, V>(m: &mut Map<K, V>, key: K) -> &mut V { map.borrow_mut_ref(m, key) }
 
 fn copy_views<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>()

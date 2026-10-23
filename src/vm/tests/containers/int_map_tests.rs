@@ -87,7 +87,7 @@ fn int_map_empty_queries_replacement_and_reserved_inserts_reuse_buffers() {
             deny_allocations()
             var i = 0
             while i < 20 {{ m.insert(i, i); i = i + 1 }}
-            if m.capacity() == cap && maps.test_invariant(&m) {{ 42 }} else {{ 0 }}
+            if m.capacity() == cap && map.test_invariant(&m) {{ 42 }} else {{ 0 }}
         }}
     "#
     );

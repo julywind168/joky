@@ -183,7 +183,7 @@ def input_source(data):
 
 
 def fixture(cases):
-    parts = ['''import joky/json as json
+    parts = ['''import joky/json
 import joky/array.{type Array}
 fn check(input: Array<UInt8>) {
     match json.decode_bytes(input) {

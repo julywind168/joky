@@ -1,5 +1,5 @@
 import joky/array.{type Array}
-import joky/slice as slices
+import joky/slice
 import joky/integer
 import joky/check.{assert}
 
@@ -43,8 +43,8 @@ fn check_storage() {
     { let assertion_condition = bytes.get(0).unwrap_or(1) == 0 && bytes.get(1).unwrap_or(0) == 128 && bytes.get(2).unwrap_or(0) == 255; let assertion_message = "Byte array roundtrip"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = bytes.set(1, 42); let assertion_message = "Byte store"; assert(assertion_condition, &assertion_message) }
     let view = bytes.slice(0, 3)
-    { let assertion_condition = slices.get(view, 1).unwrap_or(0) == 42 && slices.get(view, 2).unwrap_or(0) == 255; let assertion_message = "Byte slice roundtrip"; assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = slices.set(bytes.slice_mut(0, 3), 0, 17); let assertion_message = "Byte slice store"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = slice.get(view, 1).unwrap_or(0) == 42 && slice.get(view, 2).unwrap_or(0) == 255; let assertion_message = "Byte slice roundtrip"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = slice.set(bytes.slice_mut(0, 3), 0, 17); let assertion_message = "Byte slice store"; assert(assertion_condition, &assertion_message) }
     bytes.push(64)
     { let assertion_condition = bytes.get(0).unwrap_or(0) == 17 && bytes.get(3).unwrap_or(0) == 64; let assertion_message = "Byte array growth"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = bytes.remove(1).unwrap_or(0) == 42 && bytes.pop().unwrap_or(0) == 64; let assertion_message = "Byte array transfer"; assert(assertion_condition, &assertion_message) }

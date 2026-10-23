@@ -2,7 +2,7 @@ import joky/io.{println}
 import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/element
-import joky/slice as slices
+import joky/slice
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 

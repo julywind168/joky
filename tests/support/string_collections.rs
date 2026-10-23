@@ -105,7 +105,7 @@ pub fn bulk_group() -> Group {
             group.source.push_str(&format!("{{ let expected = {}; if !parts.borrow_ref({index}).equals(&expected) {{ return 2 }} }}; ", literal(part)));
         }
         let joined = parts.join(separator);
-        group.source.push_str(&format!("let joined = text.join(&parts, &separator); parts.release(); separator.release(); let expected = {}; if !joined.equals(&expected) {{ return 3 }}; 42 }}", literal(&joined)));
+        group.source.push_str(&format!("let joined = string.join(&parts, &separator); parts.release(); separator.release(); let expected = {}; if !joined.equals(&expected) {{ return 3 }}; 42 }}", literal(&joined)));
         group.entries.push(Entry {
             name,
             text: None,
@@ -127,7 +127,7 @@ pub fn bulk_group() -> Group {
                 .source
                 .push_str(&format!("parts.push({}); ", literal(value)));
         }
-        group.source.push_str(&format!("let separator = {}; let result = text.join(&parts, &separator); parts.release(); separator.release(); result }}", literal(separator)));
+        group.source.push_str(&format!("let separator = {}; let result = string.join(&parts, &separator); parts.release(); separator.release(); result }}", literal(separator)));
         group.entries.push(Entry {
             name: name.into(),
             text: Some(values.join(separator)),
@@ -135,7 +135,7 @@ pub fn bulk_group() -> Group {
             failure: false,
         });
     }
-    group.source.push_str("\nfn empty_separator() -> Int32 { let input = \"中🙂\"; let separator = \"\"; let result = input.split(&separator); if input.byte_length() != 7 { return 1 }; match result { Err(text.SplitError.EmptySeparator) => 42, Ok(_) => 2 } }");
+    group.source.push_str("\nfn empty_separator() -> Int32 { let input = \"中🙂\"; let separator = \"\"; let result = input.split(&separator); if input.byte_length() != 7 { return 1 }; match result { Err(string.SplitError.EmptySeparator) => 42, Ok(_) => 2 } }");
     group.entries.push(Entry {
         name: "empty_separator".into(),
         text: None,

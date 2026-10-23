@@ -1,9 +1,9 @@
-import joky/slice as slices.{type Slice}
+import joky/slice.{type Slice}
 pub type Region<T> = Slice<T>
-pub fn tail<T>(values: &Region<T>) -> &Slice<T> { slices.slice(values, 1, slices.len(values)) }
+pub fn tail<T>(values: &Region<T>) -> &Slice<T> { slice.slice(values, 1, slice.len(values)) }
 pub fn tail_mut<T>(values: &mut Region<T>) -> &mut Slice<T> {
-    let end = slices.len(values)
-    slices.slice_mut(values, 1, end)
+    let end = slice.len(values)
+    slice.slice_mut(values, 1, end)
 }
-pub fn first<T>(values: &Region<T>) -> &T { slices.borrow_ref(values, 0) }
-pub fn first_mut<T>(values: &mut Region<T>) -> &mut T { slices.borrow_mut_ref(values, 0) }
+pub fn first<T>(values: &Region<T>) -> &T { slice.borrow_ref(values, 0) }
+pub fn first_mut<T>(values: &mut Region<T>) -> &mut T { slice.borrow_mut_ref(values, 0) }

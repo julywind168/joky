@@ -24,9 +24,7 @@ fn for_iterators_execute_in_standalone_aot() {
         let effect = if suspends { "@suspends" } else { "" };
         work.write(
             "iterators.jk",
-            &format!(
-                "import joky/task as task\n{source}\nfn main() {effect} {{ println(compute()) }}"
-            ),
+            &format!("import joky/task\n{source}\nfn main() {effect} {{ println(compute()) }}"),
         );
         success(&work.cli(&["build", "--no-prelude", "iterators.jk"]));
         let output = Command::new(work.path().join("iterators"))
@@ -2186,7 +2184,7 @@ fn conditional_patterns_run_on_all_backends() {
     for suspends in [false, true] {
         let mut source = fixture.clone();
         if suspends {
-            source.insert_str(0, "import joky/task as task\n");
+            source.insert_str(0, "import joky/task\n");
             source = source
                 .replace("fn compute() -> Int32", "fn compute() @suspends -> Int32")
                 .replace(
@@ -2214,7 +2212,7 @@ fn conditional_patterns_run_on_all_backends() {
             0,
         );
     }
-    let source = format!("import joky/task as task\n{fixture}\nfn main() @suspends {{ if let Some(value) = Some(owned(9)) {{ task.yield_now(); let invalid = 1 % 0 }}; record(999); }}");
+    let source = format!("import joky/task\n{fixture}\nfn main() @suspends {{ if let Some(value) = Some(owned(9)) {{ task.yield_now(); let invalid = 1 % 0 }}; record(999); }}");
     work.write("pattern_failure.jk", &source);
     for args in [
         ["run", "pattern_failure.jk"].as_slice(),
@@ -2248,7 +2246,7 @@ fn tuple_members_run_on_all_backends() {
     for suspends in [false, true] {
         let mut source = fixture.to_string();
         if suspends {
-            source.insert_str(0, "import joky/task as task\n");
+            source.insert_str(0, "import joky/task\n");
             source = source
                 .replace("fn compute() -> Int32", "fn compute() @suspends -> Int32")
                 .replace(

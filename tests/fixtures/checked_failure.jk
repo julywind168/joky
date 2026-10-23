@@ -1,4 +1,4 @@
-import joky/check as check.{assert}
+import joky/check.{assert}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_int(value: Int32)

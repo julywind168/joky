@@ -1,6 +1,6 @@
 // A borrow-only view of one initialized element, never an owning value.
-import joky/internal/buffer as storage
+import joky/internal/buffer
 
-pub type Element<T> = storage.Element<T>
-pub fn read<T: Copy>(value: &Element<T>) -> T { storage.element_load(value) }
-pub fn write<T: Copy>(value: &mut Element<T>, next: T) { storage.element_store(value, next) }
+pub type Element<T> = buffer.Element<T>
+pub fn read<T: Copy>(value: &Element<T>) -> T { buffer.element_load(value) }
+pub fn write<T: Copy>(value: &mut Element<T>, next: T) { buffer.element_store(value, next) }

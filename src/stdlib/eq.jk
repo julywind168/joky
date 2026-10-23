@@ -1,4 +1,4 @@
-import joky/string as text
+import joky/string
 
 // By-value equality for reference-free Copy keys. Equality must be stable.
 pub trait Eq { fn eq(self, other: Self) -> Bool }
@@ -15,5 +15,5 @@ impl<T: Copy + Eq> BorrowEq for T {
     fn eq_ref(&self, other: &Self) -> Bool { Eq.eq((*self), (*other)) }
 }
 impl BorrowEq for String {
-    fn eq_ref(&self, other: &String) -> Bool { text.equals(self, other) }
+    fn eq_ref(&self, other: &String) -> Bool { string.equals(self, other) }
 }

@@ -268,7 +268,7 @@ fn view_modules() -> crate::ModuleSources {
     modules
 }
 fn rejected(body: &str, message: &str) {
-    let source=format!("import joky/set.{{type Set}} import joky/array.{{type Array}} import joky/slice as slices import joky/option.{{Some,None}} import joky/string import views {body}");
+    let source=format!("import joky/set.{{type Set}} import joky/array.{{type Array}} import joky/slice import joky/option.{{Some,None}} import joky/string import views {body}");
     let error = super::support::frontend_error(&source, &view_modules());
     assert!(error.message().contains(message), "{body}: {error}");
 }
@@ -281,28 +281,28 @@ fn set_rejects_invalid_keys_mutable_elements_escapes_and_consuming_aliases() {
         ("fn bad() { Set.new::<&mut Int32>(); }","Copy"),
         ("struct Owned { data: String, value: &Int32 } fn bad() { Set.new::<Owned>(); }","reference"),
         ("struct Key { id: Int32 } fn bad(s: &Set<Key>) { s.contains(Key { id: 1 }); }","Borrow"),
-        ("fn bad(s: &Set<String>) { slices.get(s.elements(),0); }","Copy"),
-        ("fn bad(s: &Set<String>) { slices.borrow_mut_ref(s.elements(),0); }","type mismatch"),
-        ("fn bad(s: &Set<Int32>) { slices.set(s.elements(),0,42); }","type mismatch"),
+        ("fn bad(s: &Set<String>) { slice.get(s.elements(),0); }","Copy"),
+        ("fn bad(s: &Set<String>) { slice.borrow_mut_ref(s.elements(),0); }","type mismatch"),
+        ("fn bad(s: &Set<Int32>) { slice.set(s.elements(),0,42); }","type mismatch"),
         ("fn bad(s: &Set<Int32>) { s.items.len(); }","private"),
-        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.insert(2); slices.len(v); }","borrow"),
-        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.remove(2); slices.len(v); }","borrow"),
-        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.pop(); slices.len(v); }","borrow"),
-        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.reserve(0); slices.len(v); }","borrow"),
-        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.clear(); slices.len(v); }","borrow"),
-        ("fn bad(s: Set<Int32>) { let v=s.elements(); s.release(); slices.len(v); }","borrow"),
-        ("fn bad(s: Set<Int32>) { let v=s.elements(); let moved=s; slices.len(v); }","borrow"),
-        ("fn bad(s: Set<Int32>) { let v=s.elements(); s.into_array(); slices.len(v); }","borrow"),
-        ("fn bad() -> &slices.Slice<Int32> { var s=Set.new::<Int32>(); s.insert(1); s.elements() }","borrow"),
-        ("fn bad() -> &String { var s=Set.new::<String>(); s.insert(\"x\"); slices.borrow_ref(s.elements(),0) }","borrow"),
+        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.insert(2); slice.len(v); }","borrow"),
+        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.remove(2); slice.len(v); }","borrow"),
+        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.pop(); slice.len(v); }","borrow"),
+        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.reserve(0); slice.len(v); }","borrow"),
+        ("fn bad(s: &mut Set<Int32>) { let v=s.elements(); s.clear(); slice.len(v); }","borrow"),
+        ("fn bad(s: Set<Int32>) { let v=s.elements(); s.release(); slice.len(v); }","borrow"),
+        ("fn bad(s: Set<Int32>) { let v=s.elements(); let moved=s; slice.len(v); }","borrow"),
+        ("fn bad(s: Set<Int32>) { let v=s.elements(); s.into_array(); slice.len(v); }","borrow"),
+        ("fn bad() -> &slice.Slice<Int32> { var s=Set.new::<Int32>(); s.insert(1); s.elements() }","borrow"),
+        ("fn bad() -> &String { var s=Set.new::<String>(); s.insert(\"x\"); slice.borrow_ref(s.elements(),0) }","borrow"),
         ("fn bad(s: Set<Int32>) { s.union(s); }","moved"),
         ("fn bad(s: Set<Int32>) { s.symmetric_difference(s); }","moved"),
         ("fn bad(s: Set<Int32>) { s.intersection(&s); }","moved"),
         ("fn bad(s: Set<Int32>) { s.difference(&s); }","moved"),
         ("fn bad(s: Set<String>) { s.release(); s.len(); }","moved"),
         ("fn bad(s: &mut Set<String>) { let q=\"x\"; s.insert(q); q.byte_length(); }","moved"),
-        ("fn bad(s: &mut views.Collection<Int32>) { let v=views.elements(s); views.remove(s,1); slices.len(v); }","borrow"),
-        ("fn bad(s: &mut views.Collection<String>) { slices.borrow_mut_ref(views.elements(s),0); }","type mismatch"),
+        ("fn bad(s: &mut views.Collection<Int32>) { let v=views.elements(s); views.remove(s,1); slice.len(v); }","borrow"),
+        ("fn bad(s: &mut views.Collection<String>) { slice.borrow_mut_ref(views.elements(s),0); }","type mismatch"),
         ("fn bad(s: views.Collection<Int32>) { views.intersection(s,&s); }","moved"),
         ("fn bad() { views.new::<&Int32>(); }","reference"),
     ] { rejected(body,message); }
@@ -310,11 +310,11 @@ fn set_rejects_invalid_keys_mutable_elements_escapes_and_consuming_aliases() {
 #[test]
 fn set_cross_module_noescape_queries_views_and_algebra_preserve_ownership() {
     for body in [
-        "var s=views.new::<String>(); views.insert(&mut s,\"alpha\"); var query=\"alpha\"; let view=views.elements(&s); let n=int32(slices.borrow_ref(view,0).byte_length()); if !views.contains(&s,query) { return 0 }; views.remove(&mut s,query); query=\"replacement\"; n+int32(query.byte_length())+26",
+        "var s=views.new::<String>(); views.insert(&mut s,\"alpha\"); var query=\"alpha\"; let view=views.elements(&s); let n=int32(slice.borrow_ref(view,0).byte_length()); if !views.contains(&s,query) { return 0 }; views.remove(&mut s,query); query=\"replacement\"; n+int32(query.byte_length())+26",
         "var input=Array.new::<Int32>(); input.push(20); input.push(22); let s=views.import_array(input); let out=views.export(s); out.get(0).unwrap_or(0)+out.get(1).unwrap_or(0)",
-        "var left=views.new::<String>(); views.insert(&mut left,\"alpha\"); let output={ var right=views.new::<String>(); views.insert(&mut right,\"alpha\"); views.intersection(left,&right) }; int32(slices.borrow_ref(views.elements(&output),0).byte_length())+37",
+        "var left=views.new::<String>(); views.insert(&mut left,\"alpha\"); let output={ var right=views.new::<String>(); views.insert(&mut right,\"alpha\"); views.intersection(left,&right) }; int32(slice.borrow_ref(views.elements(&output),0).byte_length())+37",
     ] {
-        let source=format!("import views import joky/array.{{type Array}} import joky/slice as slices import joky/string fn probe() -> Int32 {{ {body} }}");
+        let source=format!("import views import joky/array.{{type Array}} import joky/slice import joky/string fn probe() -> Int32 {{ {body} }}");
         let mut types=crate::TypeRegistry::default();types.prelude=false;
         let ast=types.resolve_with_modules(&crate::parser::parse(&source).unwrap(),&view_modules()).unwrap();
         for mode in [VmMode::Jit,VmMode::Interpreter] {

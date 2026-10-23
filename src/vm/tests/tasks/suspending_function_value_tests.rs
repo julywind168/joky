@@ -168,7 +168,7 @@ fn suspending_function_values_reject_effect_erasure_and_invalid_boundaries() {
 fn suspending_function_values_preserve_alias_effects_and_private_import_scopes() {
     let mut modules = crate::ModuleSources::new();
     modules.insert("helpers", "pub type Async<T> = fn(T) @suspends -> T fn hidden(x: Int32) @suspends -> Int32 { x + 1 } pub fn get() -> Async<Int32> { hidden } pub fn identity<T>(x: T) @suspends -> T { x }").unwrap();
-    let source = "import helpers as h fn main() @suspends -> Int32 { let get = h.get; let f = get(); let same = h.identity::<h.Async<Int32>>; let value = same(f); value(41) }";
+    let source = "import helpers fn main() @suspends -> Int32 { let get = helpers.get; let f = get(); let same = helpers.identity::<helpers.Async<Int32>>; let value = same(f); value(41) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         vm.load_source_with_modules(source, &modules).unwrap();

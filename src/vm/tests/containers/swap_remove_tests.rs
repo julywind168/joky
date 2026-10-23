@@ -167,15 +167,15 @@ fn swap_remove_preserves_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn swap_remove_rejects_conflicting_views_and_invalid_capabilities() {
-    let prefix = "import joky/array as array.{type Array}\n        import joky/element as element\n        import joky/slice as slices\n        struct Resource { id: Int32, values: Array<Int32> }";
+    let prefix = "import joky/array.{type Array}\n        import joky/element\n        import joky/slice\n        struct Resource { id: Int32, values: Array<Int32> }";
     for body in [
         "fn bad(values: &Array<Int32>) { values.swap_remove(0); }",
         "fn bad(values: &mut Array<Int32>) { values.swap_remove(-1); }",
         "fn bad(values: &mut Array<Int32>) { let item = values.borrow(0); values.swap_remove(0); element.read(item); }",
         "fn bad(values: &mut Array<Resource>) { let item = values.borrow_ref(0); values.swap_remove(0); item.id; }",
         "fn bad(values: &mut Array<Resource>) { let item = values.borrow_mut_ref(0); values.swap_remove(0); item.id = 1; }",
-        "fn bad(values: &mut Array<Resource>) { let region = values.slice(0, 1); values.swap_remove(0); slices.borrow_ref(region, 0).id; }",
-        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); let child = slices.slice_mut(region, 0, 1); values.swap_remove(0); slices.len(child); }",
+        "fn bad(values: &mut Array<Resource>) { let region = values.slice(0, 1); values.swap_remove(0); slice.borrow_ref(region, 0).id; }",
+        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); let child = slice.slice_mut(region, 0, 1); values.swap_remove(0); slice.len(child); }",
         "fn bad(values: Array<Resource>) { values.release(); values.swap_remove(0); }",
         "fn bad(values: &mut Array<&Int32>) @suspends { values.swap_remove(0); }",
         "fn bad(values: &mut Array<Resource>) { let old = values.swap_remove(0); let moved = old; match old { _ => {} } }",

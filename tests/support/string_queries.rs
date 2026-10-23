@@ -90,7 +90,7 @@ pub fn cases() -> Cases {
         for byte in bytes {
             cases.source.push_str(&format!("data.push({byte}); "));
         }
-        cases.source.push_str("match text.from_utf8(data) { ");
+        cases.source.push_str("match string.from_utf8(data) { ");
         match std::str::from_utf8(bytes) {
             Ok(value) => {
                 cases.source.push_str(&format!("Err(_) => 1, Ok(value) => {{ let expected = {}; if !value.equals(&expected) {{ return 2 }}; if value.rune_count() != {} {{ return 3 }}; ", literal(value), value.chars().count()));
@@ -108,7 +108,7 @@ pub fn cases() -> Cases {
                 } else {
                     "UnexpectedEnd"
                 };
-                cases.source.push_str(&format!("Ok(_) => 7, Err(error) => {{ if error.offset != {} {{ return 8 }}; match error.code {{ text.Utf8ErrorCode.{code} => 42, _ => 9 }} }}", error.valid_up_to()));
+                cases.source.push_str(&format!("Ok(_) => 7, Err(error) => {{ if error.offset != {} {{ return 8 }}; match error.code {{ string.Utf8ErrorCode.{code} => 42, _ => 9 }} }}", error.valid_up_to()));
             }
         }
         cases.source.push_str("} }\n");

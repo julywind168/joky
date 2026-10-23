@@ -1,4 +1,4 @@
-import joky/map as maps.{type Map}
+import joky/map.{type Map}
 import joky/check.{assert}
 extern fn record_int(value: Int32)
 fn basic() -> Int32 {
@@ -11,10 +11,10 @@ fn basic() -> Int32 {
     let cap = m.capacity()
     var i = 0
     while i < 16 { { let assertion_condition = m.insert(-1, i).unwrap_or(-1) == if i == 0 { 20 } else { i - 1 }; let assertion_message = "Replacement"; assert(assertion_condition, &assertion_message) }; i = i + 1 }
-    { let assertion_condition = m.len() == 4 && m.capacity() == cap && maps.test_invariant(&m); let assertion_message = "Replacement metadata"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.len() == 4 && m.capacity() == cap && map.test_invariant(&m); let assertion_message = "Replacement metadata"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = m.get(Int32.MIN).unwrap_or(0) == 30 && m.get(Int32.MAX).unwrap_or(0) == 40; let assertion_message = "Boundary read"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = m.remove(0).unwrap_or(0) == 10 && m.remove(Int32.MIN).unwrap_or(0) == 30; let assertion_message = "Boundary removal"; assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = m.get(-1).unwrap_or(0) == 15 && m.get(Int32.MAX).unwrap_or(0) == 40 && maps.test_invariant(&m); let assertion_message = "Moved entry"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.get(-1).unwrap_or(0) == 15 && m.get(Int32.MAX).unwrap_or(0) == 40 && map.test_invariant(&m); let assertion_message = "Moved entry"; assert(assertion_condition, &assertion_message) }
     m.reserve(0)
     m.release()
     42
@@ -22,41 +22,41 @@ fn basic() -> Int32 {
 fn collisions() -> Int32 {
     var m = Map.with_capacity::<Int32, Int32>(6)
     m.insert(9, 1); m.insert(19, 2); m.insert(33, 3); m.insert(44, 4)
-    { let assertion_condition = m.remove(19).unwrap_or(0) == 2 && maps.test_invariant(&m); let assertion_message = "Cluster middle"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.remove(19).unwrap_or(0) == 2 && map.test_invariant(&m); let assertion_message = "Cluster middle"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = m.get(44).unwrap_or(0) == 4 && m.get(33).unwrap_or(0) == 3; let assertion_message = "Deleted probe"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = m.insert(33, 30).unwrap_or(0) == 3 && m.len() == 3; let assertion_message = "Deleted before existing"; assert(assertion_condition, &assertion_message) }
     m.insert(49, 5)
-    { let assertion_condition = maps.test_deleted_count(&m) == 0 && maps.test_invariant(&m); let assertion_message = "Reuse deleted"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = map.test_deleted_count(&m) == 0 && map.test_invariant(&m); let assertion_message = "Reuse deleted"; assert(assertion_condition, &assertion_message) }
     m.remove(9); m.remove(44)
     { let assertion_condition = m.get(33).unwrap_or(0) == 30 && m.get(49).unwrap_or(0) == 5; let assertion_message = "Cluster ends"; assert(assertion_condition, &assertion_message) }
     m.remove(33); m.remove(49)
-    { let assertion_condition = m.is_empty() && maps.test_invariant(&m); let assertion_message = "All deleted"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.is_empty() && map.test_invariant(&m); let assertion_message = "All deleted"; assert(assertion_condition, &assertion_message) }
     m.insert(52, 6); m.insert(61, 7)
-    { let assertion_condition = m.get(52).unwrap_or(0) == 6 && maps.test_invariant(&m); let assertion_message = "Reinsert"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.get(52).unwrap_or(0) == 6 && map.test_invariant(&m); let assertion_message = "Reinsert"; assert(assertion_condition, &assertion_message) }
     let cap = m.capacity()
     m.clear()
-    { let assertion_condition = m.capacity() == cap && maps.test_deleted_count(&m) == 0 && maps.test_invariant(&m); let assertion_message = "Clear capacity"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.capacity() == cap && map.test_deleted_count(&m) == 0 && map.test_invariant(&m); let assertion_message = "Clear capacity"; assert(assertion_condition, &assertion_message) }
     42
 }
 fn capacities() -> Int32 {
-    { let assertion_condition = maps.test_bucket_count(0, 0) == 0 && maps.test_bucket_count(6, 8) == 8; let assertion_message = "Small bucket count"; assert(assertion_condition, &assertion_message) }
-    { let assertion_condition = maps.test_bucket_count(7, 25) == 16 && maps.test_bucket_count(12, 25) == 16 && maps.test_bucket_count(13, 32) == 32; let assertion_message = "Bucket boundaries"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = map.test_bucket_count(0, 0) == 0 && map.test_bucket_count(6, 8) == 8; let assertion_message = "Small bucket count"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = map.test_bucket_count(7, 25) == 16 && map.test_bucket_count(12, 25) == 16 && map.test_bucket_count(13, 32) == 32; let assertion_message = "Bucket boundaries"; assert(assertion_condition, &assertion_message) }
     var m = Map.with_capacity::<Int32, Int32>(6)
     var key = 0
     while key < 6 { m.insert(key, key); key = key + 1 }
     m.remove(0); m.remove(1); m.remove(2)
     let cap = m.capacity()
     m.reserve(3)
-    { let assertion_condition = m.capacity() == cap && maps.test_deleted_count(&m) == 0 && maps.test_invariant(&m); let assertion_message = "Same capacity rehash"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.capacity() == cap && map.test_deleted_count(&m) == 0 && map.test_invariant(&m); let assertion_message = "Same capacity rehash"; assert(assertion_condition, &assertion_message) }
     m.insert(10, 10); m.insert(11, 11); m.insert(12, 12)
     m.insert(13, 13)
-    { let assertion_condition = m.capacity() > cap && maps.test_invariant(&m); let assertion_message = "Growth threshold"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.capacity() > cap && map.test_invariant(&m); let assertion_message = "Growth threshold"; assert(assertion_condition, &assertion_message) }
     var i = 14
-    while i < 80 { m.insert(i, i); { let assertion_condition = maps.test_invariant(&m); let assertion_message = "Growth invariant"; assert(assertion_condition, &assertion_message) }; i = i + 1 }
+    while i < 80 { m.insert(i, i); { let assertion_condition = map.test_invariant(&m); let assertion_message = "Growth invariant"; assert(assertion_condition, &assertion_message) }; i = i + 1 }
     m.reserve(17)
     let reserved = m.capacity()
     i = 80
-    while i < 97 { m.insert(i, i); { let assertion_condition = m.capacity() == reserved && maps.test_invariant(&m); let assertion_message = "Reserve promise"; assert(assertion_condition, &assertion_message) }; i = i + 1 }
+    while i < 97 { m.insert(i, i); { let assertion_condition = m.capacity() == reserved && map.test_invariant(&m); let assertion_message = "Reserve promise"; assert(assertion_condition, &assertion_message) }; i = i + 1 }
     42
 }
 fn capacity_failure() -> Int32 {
@@ -64,5 +64,5 @@ fn capacity_failure() -> Int32 {
     m.reserve(UInt64.MAX)
     0
 }
-fn bucket_limit_failure() -> Int32 { int32(maps.test_bucket_count(13, 25)) }
+fn bucket_limit_failure() -> Int32 { int32(map.test_bucket_count(13, 25)) }
 fn main() { record_int(basic()); record_int(collisions()); record_int(capacities()) }

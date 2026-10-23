@@ -1,4 +1,4 @@
-import mutable_library as p.{type Parcel, Item as Present}
+import mutable_library.{type Parcel, Item as Present}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
@@ -174,14 +174,14 @@ fn mutable_match_empty() -> Int32 {
 }
 
 fn mutable_borrow_modules() -> Int32 {
-    var values = p.make()
-    let value = p.element(&mut values)
-    let item = p.payload(value)
+    var values = mutable_library.make()
+    let value = mutable_library.element(&mut values)
+    let item = mutable_library.payload(value)
     item.update(42)
     let first = item.inspect()
-    let second = match p.element(&mut values) { Present(item) => item.inspect(), Parcel.Empty => 0 }
+    let second = match mutable_library.element(&mut values) { Present(item) => item.inspect(), Parcel.Empty => 0 }
     var copy = Parcel.Item(uint64(0));
-    (*(p.payload(&mut copy)) = 42)
+    (*(mutable_library.payload(&mut copy)) = 42)
     let third = match &copy { Present(n) => int32(n), Parcel.Empty => 0 }
     values.pop();
     if first == second && first == third { first } else { 0 }

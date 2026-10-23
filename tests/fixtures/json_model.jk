@@ -1,15 +1,15 @@
 // 40 fixed-seed semantic goldens and five edge models from Python's JSON codec.
 // Codec roundtrips preserve kinds, array order and number spelling; object
 // order is ignored by the independent semantic fingerprints.
-import joky/json as json.{type Value}
-import joky/slice as slices
+import joky/json.{type Value}
+import joky/slice
 import joky/check.{assert}
 fn text_hash(text: &String) -> UInt64 {
     var hash: UInt64 = 14695981039346656037
     var index: UInt64 = 0
     let bytes = text.bytes()
     while index < text.byte_length() {
-        hash = (hash ^ uint64(*slices.borrow_ref(bytes, index))) * 1099511628211
+        hash = (hash ^ uint64(*slice.borrow_ref(bytes, index))) * 1099511628211
         index = index + 1
     }
     hash
@@ -36,7 +36,7 @@ fn fingerprint(value: &Value) -> UInt64 {
             var index: UInt64 = 0
             let keys = fields.keys()
             while index < fields.len() {
-                let key = slices.borrow_ref(keys, index)
+                let key = slice.borrow_ref(keys, index)
                 hash = hash + text_hash(key) * fingerprint(fields.value_ref(key))
                 index = index + 1
             }

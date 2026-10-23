@@ -1,4 +1,4 @@
-import godot/task as task
+import godot/task
 import joky/check.{assert}
 // Handles belong to the issuing program and never contain engine addresses.
 pub struct Node { token: Int32 }

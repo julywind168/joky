@@ -1,6 +1,6 @@
-import joky/fixed_array as fixed.{type FixedArray}
+import joky/fixed_array.{type FixedArray}
 import joky/array.{type Array}
-import joky/slice as slices
+import joky/slice
 import joky/mem
 import joky/drop.{type Drop}
 type Row=FixedArray<Int32,8>
@@ -17,7 +17,7 @@ fn iteration(input:Row, snapshot:Row, scratch:FixedArray<Row,32>, step:Int32)->(
     let guard=Guard{text:"model"}
     // Reclaimed every iteration; retaining these payloads would exceed the test budget.
     if *scratch.borrow_ref(31).borrow_ref(7)!=42 {1/0;}
-    var command=fixed.repeat::<Int32,4>(0)
+    var command=fixed_array.repeat::<Int32,4>(0)
     unsafe {model_command(&mut command,&step)}
     let op=*command.borrow_ref(0)
     let first=uint64(*command.borrow_ref(1))
@@ -25,20 +25,20 @@ fn iteration(input:Row, snapshot:Row, scratch:FixedArray<Row,32>, step:Int32)->(
     let value=*command.borrow_ref(3)
     var current=input
     var saved=snapshot
-    if op==0 {current=fixed.repeat::<Int32,8>(value)}
-    else if op==1 {current=fixed.from_fn::<Int32,8>(|i:UInt64| {value+int32(i)})}
+    if op==0 {current=fixed_array.repeat::<Int32,8>(value)}
+    else if op==1 {current=fixed_array.from_fn::<Int32,8>(|i:UInt64| {value+int32(i)})}
     else if op==2 {saved=current}
     else if op==3 {current=saved}
     else if op==4 {if current.set(first,value)!=(first<8) {1/0;}}
     else if op==5 {
         let view=current.slice_mut(first,last)
         var i:UInt64=0
-        while i<slices.len(view) {*slices.borrow_mut_ref(view,i)=value+int32(i); i=i+1}
+        while i<slice.len(view) {*slice.borrow_mut_ref(view,i)=value+int32(i); i=i+1}
     }
     else if op==6 {mem.swap(&mut current,&mut saved)}
-    else if op==7 {saved=mem.replace(&mut current,fixed.repeat::<Int32,8>(value))}
+    else if op==7 {saved=mem.replace(&mut current,fixed_array.repeat::<Int32,8>(value))}
     else if op==8 {
-        var pair=Pair{rows:fixed.repeat::<Row,2>(current)}
+        var pair=Pair{rows:fixed_array.repeat::<Row,2>(current)}
         pair.rows.set(1,saved)
         let row=pair.rows.borrow_mut_ref(0)
         *row.borrow_mut_ref(first%8)=value
@@ -64,9 +64,9 @@ fn iteration(input:Row, snapshot:Row, scratch:FixedArray<Row,32>, step:Int32)->(
     (current,saved)
 }
 fn model_run(rounds:Int32)->Int32 {
-    var current=fixed.repeat::<Int32,8>(0)
+    var current=fixed_array.repeat::<Int32,8>(0)
     var saved=current
-    let scratch=fixed.repeat::<Row,32>(fixed.repeat::<Int32,8>(42))
+    let scratch=fixed_array.repeat::<Row,32>(fixed_array.repeat::<Int32,8>(42))
     var step=0
     while step<rounds {
         let (next,copy)=iteration(current,saved,scratch,step)

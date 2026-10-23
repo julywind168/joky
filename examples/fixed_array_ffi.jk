@@ -1,10 +1,10 @@
-import joky/fixed_array as fixed.{type FixedArray}
+import joky/fixed_array.{type FixedArray}
 
 unsafe extern "C" fn joky_example_read(values: &FixedArray<Int32, 4>, length: &UInt64) -> Int32
 unsafe extern "C" fn joky_example_write(values: &mut FixedArray<Int32, 4>) -> Int32
 
 fn run() -> Int32 {
-    var values = fixed.from_fn::<Int32, 4>(|i: UInt64| { 9 + int32(i) })
+    var values = fixed_array.from_fn::<Int32, 4>(|i: UInt64| { 9 + int32(i) })
     let length: UInt64 = 4
     if unsafe { joky_example_read(&values, &length) } != 42 { return 0 }
     // An error status preserves legal writes, and the exclusive borrow ends here.

@@ -315,7 +315,7 @@ mod tests {
             assert!(ty.scalar_types().is_empty());
             assert!(ty.storage_scalars().is_err());
             assert_eq!(ty.place_copy_program().len(), 2);
-            let source = format!("import joky/fixed_array as fixed fn check() -> UInt64 {{ let a = fixed.repeat::<UInt8,{n}>(7); a.len() }}");
+            let source = format!("import joky/fixed_array fn check() -> UInt64 {{ let a = fixed_array.repeat::<UInt8,{n}>(7); a.len() }}");
             let module = crate::parser::parse(&source).unwrap();
             let prepared =
                 PreparedModule::new(&module, &registry, &BindingRegistry::default()).unwrap();
@@ -335,7 +335,7 @@ mod tests {
         let registry = TypeRegistry::default();
         let mut sizes = Vec::new();
         for n in [1, 8192] {
-            let source = format!("import joky/fixed_array as fixed.{{type FixedArray}} struct Packet {{ tag:UInt8, data:FixedArray<FixedArray<UInt8,{n}>,2> }} fn pack()->Packet {{Packet{{tag:1,data:fixed.repeat::<FixedArray<UInt8,{n}>,2>(fixed.repeat::<UInt8,{n}>(7))}}}} fn check()->UInt64 {{match Some(pack()){{Some(Packet{{tag:_,data:a}})=>a.len(),None=>0}}}}");
+            let source = format!("import joky/fixed_array.{{type FixedArray}} struct Packet {{ tag:UInt8, data:FixedArray<FixedArray<UInt8,{n}>,2> }} fn pack()->Packet {{Packet{{tag:1,data:fixed_array.repeat::<FixedArray<UInt8,{n}>,2>(fixed_array.repeat::<UInt8,{n}>(7))}}}} fn check()->UInt64 {{match Some(pack()){{Some(Packet{{tag:_,data:a}})=>a.len(),None=>0}}}}");
             let module = crate::parser::parse(&source).unwrap();
             let prepared =
                 PreparedModule::new(&module, &registry, &BindingRegistry::default()).unwrap();

@@ -12,6 +12,11 @@ Native error helpers use `__joky_runtime_`; their public C queries use `joky_run
 Use Rust naming conventions: `snake_case` for functions and tests, `PascalCase`
 for types, and `SCREAMING_SNAKE_CASE` for constants.
 
+In Joky source and examples, use the default module name from the final import
+path segment: `import joky/task`, then `task.yield_now()`. Add `as` only to avoid
+name collisions or when explicitly requested; retain intentional aliases in
+tests and examples that specifically exercise alias syntax or resolution.
+
 Format Rust with `cargo fmt`. Keep module documentation in `//!` comments and
 public API documentation in `///` comments. Document every unsafe API's pointer,
 layout, lifetime, and threading requirements. Do not suppress warnings to hide

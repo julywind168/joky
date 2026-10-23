@@ -129,7 +129,7 @@ fn send_pressure(writer: &mut TcpWriter) @suspends {
     var total: Int32 = 0
     let record = "record_bytes"
     while index < 512 {
-        let count = match writer.write(text.clone().into_bytes()) { Ok(count) => count, _ => { ensure(false) return } }
+        let count = match writer.write(text.clone().into_bytes()) { Ok(count) => count, _ => { ensure(false); return } }
         ensure(count > 0)
         total = total + count.to_i32().unwrap_or(0)
         task.write_int32(&record, total)
@@ -139,7 +139,7 @@ fn send_pressure(writer: &mut TcpWriter) @suspends {
     ensure(writer.shutdown().is_ok())
 }
 fn task_pressure(port: Int32) @suspends {
-    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false) return } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     parallel { | receive(&mut reader) | send_pressure(&mut writer) }
     reader.close();

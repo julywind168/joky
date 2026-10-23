@@ -1,9 +1,9 @@
-import joky/string as text.{type StringBuilder}
+import joky/string.{type StringBuilder}
 import joky/integer
 import joky/float
 import joky/array.{type Array}
 import joky/map.{type Map}
-import joky/slice as slices
+import joky/slice
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
@@ -68,9 +68,9 @@ impl<K: Show, V: Show> Show for Map<K, V> {
         var index: UInt64 = 0
         while index < self.len() {
             if index != 0 { output.push_str(", ") }
-            Show.show(slices.borrow_ref(keys, index), output)
+            Show.show(slice.borrow_ref(keys, index), output)
             output.push_str(": ")
-            Show.show(slices.borrow_ref(values, index), output)
+            Show.show(slice.borrow_ref(values, index), output)
             index = index + 1
         }
         output.push('}')

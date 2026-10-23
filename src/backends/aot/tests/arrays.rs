@@ -111,7 +111,7 @@ fn arrays_source_library_executes_in_standalone_native_code() {
 #[cfg(unix)]
 fn owning_arrays_cross_suspending_calls_in_standalone_native_code() {
     let source = r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         import joky/task
         extern fn pause() @suspends
 

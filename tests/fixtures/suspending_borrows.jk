@@ -4,7 +4,7 @@ import joky/map.{type Map}
 import joky/list.{type List}
 import joky/set.{type Set}
 import joky/slice as slices.{type Slice}
-import joky/element as elements.{type Element}
+import joky/element.{type Element}
 
 struct Pair { left: Int32, right: Int32 }
 struct Holder { value: &Int32 }
@@ -62,11 +62,11 @@ fn packet_slice(values: &Slice<Packet>) @suspends -> Int32 {
 }
 fn element_read(value: &Element<Int32>) @suspends -> Int32 {
     task.yield_now()
-    elements.read(value)
+    element.read(value)
 }
 fn element_write(value: &mut Element<Int32>) @suspends {
     task.yield_now()
-    elements.write(value, 42)
+    element.write(value, 42)
 }
 fn hold(value: &mut Int32) @suspends {
     *value = 42

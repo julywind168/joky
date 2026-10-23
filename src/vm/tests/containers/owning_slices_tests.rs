@@ -169,25 +169,25 @@ fn owning_slices_preserve_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn owning_slices_reject_conflicting_loans_and_escapes() {
-    let prefix = "import joky/mem\nimport joky/array.{type Array}\n        import joky/slice as slices.{type Slice}\n        struct Resource { id: Int32, values: Array<Int32> }";
+    let prefix = "import joky/mem\nimport joky/array.{type Array}\n        import joky/slice.{type Slice}\n        struct Resource { id: Int32, values: Array<Int32> }";
     for body in [
-        "fn bad(values: &mut Array<Resource>) { let region = values.slice(0, 1); values.pop(); slices.borrow_ref(region, 0).id; }",
-        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); values.push(Resource { id: 0, values: Array.new::<Int32>() }); slices.len(region); }",
-        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); let a = slices.borrow_mut_ref(region, 0); let b = slices.borrow_mut_ref(region, 0); a.id = b.id; }",
-        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); let child = slices.slice_mut(region, 0, 1); slices.borrow_ref(region, 0).id; slices.len(child); }",
-        "fn bad(values: &Slice<Resource>) { slices.borrow_mut_ref(values, 0); }",
-        "fn bad(values: &Slice<Resource>) -> Resource { slices.get(values, 0).unwrap_or(Resource { id: 0, values: Array.new::<Int32>() }) }",
-        "fn bad(values: &mut Slice<Resource>, next: Resource) { slices.set(values, 0, next); }",
-        "fn bad(values: &Slice<Resource>) { slices.borrow(values, 0); }",
-        "fn bad(values: &mut Slice<Resource>) { slices.borrow_mut(values, 0); }",
-        "fn bad(values: &Slice<(Int32, &Int32)>) { slices.borrow_ref(values, 0); }",
-        "fn bad(values: &mut Slice<(Int32, &Int32)>) { slices.borrow_mut_ref(values, 0); }",
+        "fn bad(values: &mut Array<Resource>) { let region = values.slice(0, 1); values.pop(); slice.borrow_ref(region, 0).id; }",
+        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); values.push(Resource { id: 0, values: Array.new::<Int32>() }); slice.len(region); }",
+        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); let a = slice.borrow_mut_ref(region, 0); let b = slice.borrow_mut_ref(region, 0); a.id = b.id; }",
+        "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1); let child = slice.slice_mut(region, 0, 1); slice.borrow_ref(region, 0).id; slice.len(child); }",
+        "fn bad(values: &Slice<Resource>) { slice.borrow_mut_ref(values, 0); }",
+        "fn bad(values: &Slice<Resource>) -> Resource { slice.get(values, 0).unwrap_or(Resource { id: 0, values: Array.new::<Int32>() }) }",
+        "fn bad(values: &mut Slice<Resource>, next: Resource) { slice.set(values, 0, next); }",
+        "fn bad(values: &Slice<Resource>) { slice.borrow(values, 0); }",
+        "fn bad(values: &mut Slice<Resource>) { slice.borrow_mut(values, 0); }",
+        "fn bad(values: &Slice<(Int32, &Int32)>) { slice.borrow_ref(values, 0); }",
+        "fn bad(values: &mut Slice<(Int32, &Int32)>) { slice.borrow_mut_ref(values, 0); }",
         "fn bad() -> &Slice<Resource> { let values = Array.new::<Resource>(); values.slice(0, 0) }",
-        "fn bad() -> &Resource { let values = Array.new::<Resource>(); slices.borrow_ref(values.slice(0, 0), 0) }",
+        "fn bad() -> &Resource { let values = Array.new::<Resource>(); slice.borrow_ref(values.slice(0, 0), 0) }",
         "fn bad(values: Array<Resource>) -> &Slice<Resource> { values.slice(0, 0) }",
         "struct Stored { view: &Slice<Resource> } fn bad() {}",
-        "fn bad(values: &mut Slice<Resource>, next: Resource) { let item = slices.borrow_ref(values, 0); mem.replace(slices.borrow_mut_ref(values, 0), next); item.id; }",
-        "fn bad(values: &Slice<Resource>) { alloc(slices.borrow_ref(values, 0)); }",
+        "fn bad(values: &mut Slice<Resource>, next: Resource) { let item = slice.borrow_ref(values, 0); mem.replace(slice.borrow_mut_ref(values, 0), next); item.id; }",
+        "fn bad(values: &Slice<Resource>) { alloc(slice.borrow_ref(values, 0)); }",
     ] {
         let source = format!("{prefix} {body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

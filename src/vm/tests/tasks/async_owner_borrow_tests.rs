@@ -41,7 +41,7 @@ fn exhaustive_async_owner_borrows_cancel_every_instruction() {
 #[test]
 fn async_owner_borrows_reject_conflicts() {
     for body in ["let item = values.borrow_ref(0); values.push(9); let n = *item"] {
-        let source = format!("import joky/array.{{type Array}} import joky/task import joky/slice as slices fn bad() @suspends {{ var values = Array.new::<Int32>(); values.push(42); {body} }}");
+        let source = format!("import joky/array.{{type Array}} import joky/task import joky/slice fn bad() @suspends {{ var values = Array.new::<Int32>(); values.push(42); {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             assert!(
                 VmEngine::with_mode(mode).load_source(&source).is_err(),
@@ -236,7 +236,7 @@ fn async_owner_views_reject_aliases_and_escapes() {
     let prefix = r#"
         import joky/array.{type Array}
         import joky/task
-        import joky/slice as slices
+        import joky/slice
         struct Packet { bytes: Array<Int32>, tag: Int32 }
         type Packets = Array<Packet>
         fn make() -> Packet { Packet { bytes: Array.new::<Int32>(), tag: 1 } }

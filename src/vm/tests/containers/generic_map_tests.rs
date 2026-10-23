@@ -143,13 +143,13 @@ fn generic_map_rejects_missing_bounds_private_storage_and_conflicting_loans() {
         ("struct Key { n: Int32 } impl Hash for Key { fn hash(self) -> UInt64 { 0 } } fn bad() { var m = Map.new::<Key,Int32>(); m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
         ("fn bad<K: Copy,V>(m: &Map<K,V>,k: K) -> Bool { m.contains_key(k) }","does not satisfy trait bound"),
         ("fn bad(m: &Map<Int32,Int32>) { m.keys; }","private"),
-        ("fn bad(m: &Map<Int32,Int32>) { maps.invariant(m); }","invariant"),
-        ("fn bad(m: &maps.Bucket) {}","Bucket"),
+        ("fn bad(m: &Map<Int32,Int32>) { map.invariant(m); }","invariant"),
+        ("fn bad(m: &map.Bucket) {}","Bucket"),
         ("fn bad() { var m = Map.new::<Int32,Int32>(); let loan = &m; m.insert(1,2); loan.len(); }","borrow"),
         ("fn bad() { let m = Map.new::<Int32,Int32>(); m.release(); m.len(); }","moved"),
         ("fn bad(m: &Map<Int32,Array<Int32>>) { m.get(1); }","Copy"),
     ] {
-        rejected(&format!("import joky/map as maps.{{type Map}} import joky/array.{{type Array}} import joky/eq.{{type Eq}} import joky/hash.{{type Hash}} {body}"),&ModuleSources::new(),expected);
+        rejected(&format!("import joky/map.{{type Map}} import joky/array.{{type Array}} import joky/eq.{{type Eq}} import joky/hash.{{type Hash}} {body}"),&ModuleSources::new(),expected);
     }
 }
 #[test]

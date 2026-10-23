@@ -1,5 +1,5 @@
 import joky/option.{type Option}
-import joky/array as array
+import joky/array
 extern fn delayed_value(x: Int32) @suspends -> Int32
 extern fn record(x: Int32) -> Int32
 extern fn fail_now() @suspends

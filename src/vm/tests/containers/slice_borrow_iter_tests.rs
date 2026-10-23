@@ -119,18 +119,18 @@ fn exhaustive_slice_borrow_iter_instruction_cancellation() {
 
 #[test]
 fn slice_borrow_iter_rejects_conflicts_through_parent_views() {
-    let prefix = "import joky/array.{type Array}\nimport joky/slice as slices.{type Slice}\nimport joky/map.{type Map}\nimport joky/iter as cursors.{type Iter}\n";
+    let prefix = "import joky/array.{type Array}\nimport joky/slice as slice.{type Slice}\nimport joky/map.{type Map}\nimport joky/iter as iter.{type Iter}\n";
     for (function, message) in [
-        ("fn bad(a: &mut Array<Int32>) { let i = slices.iter(a.slice(0, 1)); a.push(2); for _ in i {} }", "conflicts with a live borrow"),
-        ("fn bad(a: &mut Slice<Int32>) { let i = slices.iter_mut(slices.slice_mut(a, 0, 1)); slices.set(a, 0, 2); for _ in i {} }", "conflicts with a live borrow"),
-        ("fn bad(m: &mut Map<Int32, Int32>) { let i = slices.iter(m.keys()); m.insert(2, 3); for _ in i {} }", "conflicts with a live borrow"),
-        ("fn bad(m: &mut Map<Int32, Int32>) { let i = slices.iter_mut(m.values_mut()); m.get(1); for _ in i {} }", "conflicts with a live borrow"),
-        ("fn bad(m: &mut Map<Int32, Int32>) { slices.iter_mut(m.keys()); }", "expected &mut Slice"),
-        ("fn bad(m: Map<Int32, Int32>) { let i = slices.iter(m.values()); m.release(); for _ in i {} }", "conflicts with a live borrow"),
-        ("fn bad(m: &Map<Int32, Int32>) { for key in slices.iter(m.keys()) { *key = 2 } }", "shared reference"),
-        ("fn bad(s: &Slice<&Int32>) { slices.iter(s); }", "reference-free elements"),
-        ("fn bad() -> &Iter<Int32> { let a = [1]; slices.iter(a.slice(0, 1)) }", "compatible borrowed input"),
-        ("fn bad() -> &Int32 { let a = [1]; let i = slices.iter(a.slice(0, 1)); cursors.advance(i); cursors.current(i) }", "conflicts with a live borrow"),
+        ("fn bad(a: &mut Array<Int32>) { let i = slice.iter(a.slice(0, 1)); a.push(2); for _ in i {} }", "conflicts with a live borrow"),
+        ("fn bad(a: &mut Slice<Int32>) { let i = slice.iter_mut(slice.slice_mut(a, 0, 1)); slice.set(a, 0, 2); for _ in i {} }", "conflicts with a live borrow"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { let i = slice.iter(m.keys()); m.insert(2, 3); for _ in i {} }", "conflicts with a live borrow"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { let i = slice.iter_mut(m.values_mut()); m.get(1); for _ in i {} }", "conflicts with a live borrow"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { slice.iter_mut(m.keys()); }", "expected &mut Slice"),
+        ("fn bad(m: Map<Int32, Int32>) { let i = slice.iter(m.values()); m.release(); for _ in i {} }", "conflicts with a live borrow"),
+        ("fn bad(m: &Map<Int32, Int32>) { for key in slice.iter(m.keys()) { *key = 2 } }", "shared reference"),
+        ("fn bad(s: &Slice<&Int32>) { slice.iter(s); }", "reference-free elements"),
+        ("fn bad() -> &Iter<Int32> { let a = [1]; slice.iter(a.slice(0, 1)) }", "compatible borrowed input"),
+        ("fn bad() -> &Int32 { let a = [1]; let i = slice.iter(a.slice(0, 1)); iter.advance(i); iter.current(i) }", "conflicts with a live borrow"),
     ] {
         let error = frontend_error(&format!("{prefix}{function}"), &crate::ModuleSources::new());
         assert!(error.message().contains(message), "{function}: {error}");

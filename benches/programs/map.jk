@@ -1,5 +1,5 @@
 import joky/map.{type Map}
-import joky/slice as slices
+import joky/slice
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 struct Key { id: Int32, distribution: Int32 }
@@ -56,7 +56,7 @@ fn iterate(n: Int32, distribution: Int32) -> Int32 {
     var sum = 0
     while round < 8 {
         var i: UInt64 = 0
-        while i < slices.len(values) { sum = sum + slices.get(values, i).unwrap_or(-1); i = i + 1 }
+        while i < slice.len(values) { sum = sum + slice.get(values, i).unwrap_or(-1); i = i + 1 }
         round = round + 1
     }
     sum

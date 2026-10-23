@@ -1,4 +1,4 @@
-import joky/map as maps.{type Map}
+import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
@@ -7,11 +7,11 @@ import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
 
 fn integer32<Tag>() -> Int32 {
-    var m = maps.new::<Int32, Int32>()
-    maps.insert(&mut m, Int32.MIN, 20); m.insert(Int32.MAX, 22)
-    { let assertion_condition = maps.len(&m) == 2 && maps.contains_key(&m, Int32.MIN); let assertion_message = "Module functions"; assert(assertion_condition, &assertion_message) }
-    let result = maps.get(&m, Int32.MIN).unwrap_or(0) + m.remove(Int32.MAX).unwrap_or(0)
-    maps.clear(&mut m); { let assertion_condition = maps.is_empty(&m); let assertion_message = "Module clear"; assert(assertion_condition, &assertion_message) }; maps.release(m)
+    var m = map.new::<Int32, Int32>()
+    map.insert(&mut m, Int32.MIN, 20); m.insert(Int32.MAX, 22)
+    { let assertion_condition = map.len(&m) == 2 && map.contains_key(&m, Int32.MIN); let assertion_message = "Module functions"; assert(assertion_condition, &assertion_message) }
+    let result = map.get(&m, Int32.MIN).unwrap_or(0) + m.remove(Int32.MAX).unwrap_or(0)
+    map.clear(&mut m); { let assertion_condition = map.is_empty(&m); let assertion_message = "Module clear"; assert(assertion_condition, &assertion_message) }; map.release(m)
     result
 }
 fn integer64<Tag>() -> Int32 {

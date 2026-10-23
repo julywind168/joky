@@ -1,5 +1,5 @@
 // A VM owns its registry entry; shared borrows allow calls during hot reload.
-import joky/internal/buffer as storage.{type Buffer}
+import joky/internal/buffer.{type Buffer}
 import joky/fs
 import joky/result.{type Result, Ok, Err}
 import joky/string.{type Utf8Error}
@@ -99,14 +99,14 @@ pub struct LoadError { pub path: String, pub kind: LoadErrorKind }
 extern fn __vm_source(owner: &vm.Owner, name: String, source: String, mode: UInt64, packet: &mut Buffer<UInt64>) @suspends -> String
 
 fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspends -> Result<UInt64, LoadError> {
-    var packet = storage.allocate::<UInt64>(5)
+    var packet = buffer.allocate::<UInt64>(5)
     var index: UInt64 = 0
-    while index < 5 { storage.initialize_next(&mut packet, 0); index += 1 }
+    while index < 5 { buffer.initialize_next(&mut packet, 0); index += 1 }
     let message = __vm_source(&value.owner, path.clone(), source, mode, &mut packet)
-    let code = storage.load(&packet, 0)
-    if code == 0 { return Ok(storage.load(&packet, 4)) }
-    let diagnostic = Diagnostic { message: message, has_span: storage.load(&packet, 3) != 0,
-        start: storage.load(&packet, 1), end: storage.load(&packet, 2) }
+    let code = buffer.load(&packet, 0)
+    if code == 0 { return Ok(buffer.load(&packet, 4)) }
+    let diagnostic = Diagnostic { message: message, has_span: buffer.load(&packet, 3) != 0,
+        start: buffer.load(&packet, 1), end: buffer.load(&packet, 2) }
     let kind = match code {
         1 => LoadErrorKind.Compile(diagnostic)
         2 => LoadErrorKind.Incompatible(diagnostic)

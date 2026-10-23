@@ -252,8 +252,8 @@ fn buffer_registration_and_identity_cannot_be_forged_by_spelling() {
     for source in [
         "fn f(a: Buffer<Int32>) {}",
         "fn f(a: Array<Int32>) {}",
-        "import joky/array as array fn f() { array.allocate(1); }",
-        "import joky/internal/buffer as b fn f() { b.allocate(1); }",
+        "import joky/array fn f() { array.allocate(1); }",
+        "import joky/internal/buffer fn f() { buffer.allocate(1); }",
     ] {
         let ast = crate::parser::parse(source).unwrap();
         let result = types.resolve_aliases(&ast).and_then(|ast| {

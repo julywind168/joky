@@ -1,4 +1,4 @@
-import godot/node as node.{type Node}
+import godot/node.{type Node}
 import joky/drop.{type Drop}
 struct State { owner: Node, text: String }
 fn create() -> State { State { owner: node.self(), text: "State" } }

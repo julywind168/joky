@@ -1,9 +1,9 @@
-import joky/array as array.{type Array, type IntoIter}
+import joky/array.{type Array, type IntoIter}
 import joky/iter.{type Iterator, next, range}
 import joky/option.{type Option, Some, None}
 import joky/check.{assert}
 import joky/drop.{type Drop}
-import joky/mem as mem
+import joky/mem
 extern fn record(x: Int32) -> Int32
 
 fn expect(ok: Bool) { assert(ok, "Array iterator mismatch") }

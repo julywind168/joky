@@ -1,5 +1,5 @@
 import joky/set.{type Set}
-import joky/slice as slices
+import joky/slice
 import joky/check.{assert}
 extern fn record_int(value: Int32)
 fn ensure(condition: Bool, message: String) { assert(condition, &message) }
@@ -13,8 +13,8 @@ fn membership(set: &Set<Int32>) -> UInt32 {
     var mask: UInt32 = 0
     let values = set.elements()
     var i: UInt64 = 0
-    while i < slices.len(values) {
-        let value = slices.get(values,i).unwrap_or(-1)
+    while i < slice.len(values) {
+        let value = slice.get(values,i).unwrap_or(-1)
         ensure(value >= 0 && value < 8, "Set model domain")
         let bit: UInt32 = 1 << uint32(value)
         ensure((mask & bit) == 0, "Set model duplicate member")

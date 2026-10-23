@@ -1,6 +1,6 @@
 import joky/set as sets.{type Set}
 import joky/array.{type Array}
-import joky/slice as slices
+import joky/slice
 import joky/drop.{type Drop}
 import joky/option.{type Option, Some, None}
 import joky/eq.{type BorrowEq}
@@ -22,8 +22,8 @@ fn key(id: Int32, group: Int32) -> Key {
 fn representative(set: &Set<Key>, group: Int32) -> Int32 {
     let values = set.elements()
     var i: UInt64 = 0
-    while i < slices.len(values) {
-        let value = slices.borrow_ref(values, i)
+    while i < slice.len(values) {
+        let value = slice.borrow_ref(values, i)
         if value.group == group { return value.id }
         i = i + 1
     }
@@ -37,7 +37,7 @@ fn boundaries<Tag>() -> Int32 {
     ensure(sets.insert(&mut set, 42) && !set.insert(42) && set.len() == 1, "Set duplicate")
     ensure(set.is_subset(&set) && !set.is_disjoint(&set), "Set self relations")
     let view = sets.elements(&set)
-    ensure(slices.get(view, 0).unwrap_or(0) == 42, "Set Copy view")
+    ensure(slice.get(view, 0).unwrap_or(0) == 42, "Set Copy view")
     ensure(sets.contains(&set, 42) && set.pop().unwrap_or(0) == 42, "Set module query and transfer")
     42
 }
@@ -64,7 +64,7 @@ fn strings<Tag>() -> Int32 {
     var set = Set.new::<String>()
     ensure(set.insert("alpha") && !set.insert("alpha"), "Set String duplicate")
     let view = set.elements()
-    ensure(slices.borrow_ref(view, 0).byte_length() == 5, "Set String view")
+    ensure(slice.borrow_ref(view, 0).byte_length() == 5, "Set String view")
     var query = "alpha"
     ensure(set.contains(query) && sets.contains(&set, &query), "Set borrowed String query")
     ensure(set.remove(query) && query.byte_length() == 5 && !set.contains(query), "Set query not consumed")

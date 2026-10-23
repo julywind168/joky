@@ -23,7 +23,7 @@ fn generic_arrays_preserve_consumer_nominal_types_through_imported_aliases() {
         .insert(
             "collections",
             r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         pub type Batch<T> = Array<T>
         pub fn make<T>(value: T) -> Batch<T> {
             var values = array.new::<T>()
@@ -60,7 +60,7 @@ fn generic_arrays_preserve_consumer_nominal_types_through_imported_aliases() {
 #[test]
 fn owning_arrays_cross_ordinary_suspending_calls_in_all_vm_modes() {
     let source = r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         import joky/task
 
         fn make_values() -> Array<Int32> {
@@ -99,7 +99,7 @@ fn owning_arrays_cross_ordinary_suspending_calls_in_all_vm_modes() {
 #[test]
 fn owning_arrays_cross_scope_and_race_in_all_vm_modes() {
     let source = r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         import joky/task
 
         fn hold(values: Array<Int32>) @suspends {
@@ -145,8 +145,7 @@ fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
             LIMIT.with(|n| n.set(MAX_BYTES));
         }
     }
-    let prefix =
-        "import joky/array as array struct Mixed { small: Bool, wide: Int64, tail: Bool } ";
+    let prefix = "import joky/array struct Mixed { small: Bool, wide: Int64, tail: Bool } ";
     let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
     let control = std::mem::size_of::<crate::runtime::buffer::Buffer>() + record;
     let mixed = std::alloc::Layout::new::<bool>()
@@ -205,7 +204,7 @@ fn generic_arrays_preserve_scalar_aggregate_and_zero_sized_elements() {
 
 #[test]
 fn generic_arrays_reject_noncopy_elements_and_preserve_template_ownership() {
-    let prefix = "import joky/array as array.{type Array}\n";
+    let prefix = "import joky/array.{type Array}\n";
     for (body, message) in [
         ("fn bad(a: Array<&mut Int32>) {}", "Copy"),
         ("fn bad(a: Array<&Array<Int32>>) {}", "Copy"),
@@ -339,7 +338,7 @@ fn arrays_preserve_ownership_through_source_module_aliases() {
         .insert(
             "numbers",
             r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         pub type Numbers = Array<Int32>
         pub fn make() -> Numbers { var a = array.new::<Int32>(); array.push(&mut a, 42); a }
         pub fn forward(a: Numbers) -> Numbers { a }
@@ -384,7 +383,7 @@ fn arrays_preserve_ownership_through_source_module_aliases() {
 #[test]
 fn arrays_reject_capability_escapes_and_invalid_storage() {
     let prefix = r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         fn consume(a: Array<Int32>) {}
         fn view(a: &Array<Int32>) -> &Array<Int32> { a }
     "#;
@@ -419,7 +418,7 @@ fn arrays_reject_capability_escapes_and_invalid_storage() {
         "extern fn host(a: Array<Int32>) fn bad() {}",
         "unsafe extern \"C\" fn host(a: &Array<Int32>) fn bad() {}",
         "fn bad() { array.allocate(1); }",
-        "fn bad() { array.storage.allocate(1); }",
+        "fn bad() { array.buffer.allocate(1); }",
         "import joky/internal/buffer as b fn bad() { b.allocate(1); }",
         "import joky/internal/buffer.{capacity_limit} fn bad() { capacity_limit(); }",
         "fn __joky_buffer_allocate() {}",
@@ -608,7 +607,7 @@ fn reference_arrays_copy_referents_independently_of_control_blocks() {
 #[test]
 fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
     let prefix = r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         struct Item { value: &Int32 }
         enum Choice { Empty, Item(&Int32) }
         fn replace<T>(a: &mut Array<T>, p: T) { array.set(a, 0, p); }
@@ -651,7 +650,7 @@ fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
         .insert(
             "collections",
             r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         pub type Batch<T> = Array<T>
         pub fn make<T>(p: T) -> Batch<T> { var a = array.new::<T>(); array.push(&mut a, p); a }
         pub fn forward<T>(a: Batch<T>) -> Batch<T> { a }

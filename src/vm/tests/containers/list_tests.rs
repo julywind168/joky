@@ -473,7 +473,7 @@ fn view_modules() -> crate::ModuleSources {
     modules
 }
 fn rejected(body: &str, modules: &crate::ModuleSources) {
-    let source = format!("import joky/list.{{type List}} import joky/array.{{type Array}} import joky/option.{{type Option, Some, None}} import joky/element as element import joky/string {body}");
+    let source = format!("import joky/list.{{type List}} import joky/array.{{type Array}} import joky/option.{{type Option, Some, None}} import joky/element import joky/string {body}");
     let error = super::support::frontend_error(&source, modules);
     assert!(error.span().is_some(), "{body}: {error}");
 }
@@ -530,7 +530,7 @@ fn list_cross_module_aliases_retain_element_and_content_origins() {
         "var input=Array.new::<String>(); input.push(\"twenty\"); var m=views.import_array(input); views.put(&mut m,\"two\"); let edit=views.owned_mut(&mut m,0); mem.drop(mem.replace(edit,\"a\")); let n=int32(views.owned(&m,0).byte_length()); let out=views.export(m); n+int32(out.borrow_ref(1).byte_length())+38",
         "let p=(&*(alloc(42))); var m=views.new::<&Int32>(); views.put(&mut m,p); let old=views.removed(&mut m,0); m.release(); match old { Some(value) => (*value), None => 0 }",
     ] {
-        let source = format!("import views import joky/array.{{type Array}} import joky/element as element import joky/option.{{Some, None}} import joky/string import joky/mem fn probe() -> Int32 {{ {body} }}");
+        let source = format!("import views import joky/array.{{type Array}} import joky/element import joky/option.{{Some, None}} import joky/string import joky/mem fn probe() -> Int32 {{ {body} }}");
         let mut types = crate::TypeRegistry::default(); types.prelude = false;
         let ast = types.resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules).unwrap();
         for mode in [VmMode::Jit, VmMode::Interpreter] {

@@ -1,6 +1,6 @@
 import joky/integer
-import joky/string as text
-import joky/internal/buffer as storage
+import joky/string
+import joky/internal/buffer
 
 // Equal keys must have equal, stable hashes. Outputs are not a persistent format.
 pub trait Hash { fn hash(self) -> UInt64 }
@@ -22,11 +22,11 @@ impl<T: Copy + Hash> BorrowHash for T {
 }
 impl BorrowHash for String {
     fn hash_ref(&self) -> UInt64 {
-        let bytes = text.bytes(self)
+        let bytes = string.bytes(self)
         var hash: UInt64 = 14695981039346656037
         var i: UInt64 = 0
-        while i < storage.slice_len(bytes) {
-            hash = (hash ^ uint64(storage.slice_load(bytes, i))) * 1099511628211
+        while i < buffer.slice_len(bytes) {
+            hash = (hash ^ uint64(buffer.slice_load(bytes, i))) * 1099511628211
             i = i + 1
         }
         hash

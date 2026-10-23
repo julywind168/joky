@@ -1,7 +1,7 @@
 // Single-owner unordered set. Map owns both the index and resident elements.
 import joky/map.{type Map}
 import joky/array.{type Array}
-import joky/slice as slices.{type Slice}
+import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/eq.{type BorrowEq}
 import joky/hash.{type BorrowHash}
@@ -68,8 +68,8 @@ pub fn is_subset<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bool
     if len(set) > len(other) { return false }
     let values = elements(set)
     var i: UInt64 = 0
-    while i < slices.len(values) {
-        if !contains(other, slices.borrow_ref(values, i)) { return false }
+    while i < slice.len(values) {
+        if !contains(other, slice.borrow_ref(values, i)) { return false }
         i = i + 1
     }
     true
@@ -79,8 +79,8 @@ pub fn is_disjoint<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bo
     if len(set) > len(other) { return is_disjoint(other, set) }
     let values = elements(set)
     var i: UInt64 = 0
-    while i < slices.len(values) {
-        if contains(other, slices.borrow_ref(values, i)) { return false }
+    while i < slice.len(values) {
+        if contains(other, slice.borrow_ref(values, i)) { return false }
         i = i + 1
     }
     true

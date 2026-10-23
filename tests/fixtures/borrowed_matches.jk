@@ -1,4 +1,4 @@
-import match_library as packets.{type Parcel, Item as Present}
+import match_library.{type Parcel, Item as Present}
 import joky/option.{type Option}
 import joky/result.{type Result}
 import joky/array.{type Array}
@@ -193,11 +193,11 @@ fn shared_match_reborrow() -> Int32 {
 }
 
 fn shared_match_modules() -> Int32 {
-    let value = packets.make()
-    if !packets.present(&value) { return 0 }
-    let selected = packets.select(&value)
+    let value = match_library.make()
+    if !match_library.present(&value) { return 0 }
+    let selected = match_library.select(&value)
     let first = selected.inspect()
-    let copied = packets.wrap(uint64(42))
+    let copied = match_library.wrap(uint64(42))
     let second = match &copied { Present(number) => int32(number), Parcel.Empty => 0 }
     let third = match &value { Present(resource) => resource.inspect(), Parcel.Empty => 0 }
     let moved = value

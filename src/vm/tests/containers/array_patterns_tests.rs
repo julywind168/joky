@@ -111,7 +111,7 @@ fn exhaustive_array_patterns_cancellation() {
 fn array_patterns_reject_invalid_types_coverage_and_borrows() {
     use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
     let types = crate::TypeRegistry::default();
-    let prefix = "import joky/array.{type Array} import joky/fixed_array.{type FixedArray} import joky/slice as slices.{type Slice}\n";
+    let prefix = "import joky/array.{type Array} import joky/fixed_array.{type FixedArray} import joky/slice.{type Slice}\n";
     for (source, code) in [
         ("fn bad() { let a = [] }", ErrorCode::TypeMismatch),
         ("fn bad() { let a: FixedArray<Int32, 2> = [1] }", ErrorCode::TypeMismatch),
@@ -129,7 +129,7 @@ fn array_patterns_reject_invalid_types_coverage_and_borrows() {
         ("fn bad(a: Array<Int32>) -> Int32 { match a { [x, x] => x, _ => 0 } }", ErrorCode::DuplicateDefinition),
         ("fn bad(a: Array<Int32>) -> Int32 { match a { [x, ..x] => x, _ => 0 } }", ErrorCode::DuplicateDefinition),
         ("fn bad() -> Int32 { let a = [1]; match a { [x] => x, _ => 0 }; int32(a.len()) }", ErrorCode::InvalidAssignment),
-        ("fn bad() -> Int32 { var a = [1,2]; match &a { [x, ..tail] => { a.push(3); int32(slices.len(tail)) }, _ => 0 } }", ErrorCode::InvalidAssignment),
+        ("fn bad() -> Int32 { var a = [1,2]; match &a { [x, ..tail] => { a.push(3); int32(slice.len(tail)) }, _ => 0 } }", ErrorCode::InvalidAssignment),
         ("fn bad() -> &Slice<Int32> { let a = [1,2]; match &a { [..tail] => tail } }", ErrorCode::InvalidAssignment),
         ("fn bad() -> Int32 { var a = [1,2]; match &mut a { [x, y] => { a.push(3); *x + *y }, _ => 0 } }", ErrorCode::InvalidAssignment),
         ("fn bad() -> Int32 { var a = [1,2]; match &mut a { [x, y] => { let z = a.borrow_mut_ref(0); *x + *y + *z }, _ => 0 } }", ErrorCode::InvalidAssignment),

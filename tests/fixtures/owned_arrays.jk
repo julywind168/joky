@@ -1,6 +1,6 @@
-import joky/array as array.{type Array}
-import joky/element as element.{type Element}
-import joky/slice as slices
+import joky/array.{type Array}
+import joky/element.{type Element}
+import joky/slice
 import joky/option.{Some, None, type Option}
 
 struct Batch<T> { values: Array<T> }
@@ -31,9 +31,9 @@ fn methods_all() -> Int32 {
     element.write(item, old + 3)
     if element.read(a.borrow(0)) != 19 { return 0 }
     let r = a.slice(0, 2)
-    if slices.len(r) != 2 { return 0 }
+    if slice.len(r) != 2 { return 0 }
     let m = a.slice_mut(0, 2)
-    slices.set(m, 0, 19);
+    slice.set(m, 0, 19);
     a.reserve(100)
     let answer = a.pop().unwrap_or(0) + a.get(0).unwrap_or(0)
     a.release()

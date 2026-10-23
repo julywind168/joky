@@ -55,7 +55,7 @@ Copy 数组的 get/pop 返回 T 的复制值；borrow/slice 则返回受拥有�
 | `array.pop(values: &mut Array<T>) -> Option<T>` | 空数组返回 None，否则复制末元素并缩短已初始化前缀 |
 | `array.reserve(values: &mut Array<T>, additional: UInt64)` | 保证 capacity 至少为 len + additional；不改变 len |
 
-7b.3 另提供以下借用接口；Element 和 Slice 分别从 joky/element、joky/slice 显式导入，后者建议命名为 slices：
+7b.3 另提供以下借用接口；Element 和 Slice 分别从 joky/element、joky/slice 显式导入，默认模块名分别为 element 和 slice：
 
 | 接口 | 结果与规则 |
 | --- | --- |
@@ -65,13 +65,13 @@ Copy 数组的 get/pop 返回 T 的复制值；borrow/slice 则返回受拥有�
 | `array.slice_mut(&mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T>` | 独占借用半开区间 |
 | `element.read(&Element<T>) -> T` | 复制所借元素 |
 | `element.write(&mut Element<T>, T)` | 替换所借元素，保留既有共享引用存储规则 |
-| `slices.len(&Slice<T>) -> UInt64 / slices.is_empty(&Slice<T>) -> Bool` | 读取切片长度/是否为空 |
-| `slices.get(&Slice<T>, UInt64) -> Option<T>` | 复制元素，越界返回 None |
-| `slices.set(&mut Slice<T>, UInt64, T) -> Bool` | 替换元素，越界返回 false |
-| `slices.borrow(&Slice<T>, UInt64) -> &Element<T>` | 借用切片中的元素 |
-| `slices.borrow_mut(&mut Slice<T>, UInt64) -> &mut Element<T>` | 从独占切片重借用元素 |
-| `slices.slice(&Slice<T>, start: UInt64, end: UInt64) -> &Slice<T>` | 借用子区间，索引相对当前切片 |
-| `slices.slice_mut(&mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T>` | 独占重借用子区间 |
+| `slice.len(&Slice<T>) -> UInt64 / slice.is_empty(&Slice<T>) -> Bool` | 读取切片长度/是否为空 |
+| `slice.get(&Slice<T>, UInt64) -> Option<T>` | 复制元素，越界返回 None |
+| `slice.set(&mut Slice<T>, UInt64, T) -> Bool` | 替换元素，越界返回 false |
+| `slice.borrow(&Slice<T>, UInt64) -> &Element<T>` | 借用切片中的元素 |
+| `slice.borrow_mut(&mut Slice<T>, UInt64) -> &mut Element<T>` | 从独占切片重借用元素 |
+| `slice.slice(&Slice<T>, start: UInt64, end: UInt64) -> &Slice<T>` | 借用子区间，索引相对当前切片 |
+| `slice.slice_mut(&mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T>` | 独占重借用子区间 |
 
 borrow/borrow_mut 必须满足 index < len；slice/slice_mut 必须满足 start <= end <= len。
 空切片合法，非法借用构造通过带位置的运行时错误终止任务；与 get/set 的 None/false 不同。
@@ -86,7 +86,7 @@ get/set 的越界是正常业务结果，不终止任务；内部存储原语仍
 可运行示例：
 
 ```joky
-import joky/array as array.{type Array}
+import joky/array.{type Array}
 
 fn answer() -> Int32 {
     var values: Array<Int32> = array.new::<Int32>()
@@ -256,7 +256,7 @@ array.release 消费拥有者并释放其当前载荷和控制块。pop 不缩�
 若同一 helper 既接受数组视图又接受普通引用，只有数组视图按新类别处理；分配能力仍可能
 让普通引用保留到任务结束。不把 `uses_arena` 全局改成“不会保留参数”。
 
-get/pop、element.read 和 slices.get 不延长数组存储借用；含引用的复制结果保留所存引用的来源。
+get/pop、element.read 和 slice.get 不延长数组存储借用；含引用的复制结果保留所存引用的来源。
 元素/切片视图结果则延长相应输入借用并回溯到原始拥有者，不能套用复制值的规则。
 通过普通 memory 原语读写这些内部目标、请求原始元素地址或将视图藏入聚合均被拒绝。
 
@@ -607,7 +607,7 @@ Slice 可借用无引用内容的拥有型元素，沿用受检半开区间和�
 切片头部不登记元素清理，不转移拥有权；mem.replace 复用既有原子交换协议。
 复制读写和 Element 视图仍限定 Copy 元素，详细源码接口见 [language.md](language.md#拥有型元素的切片借用)。
 
-tests/fixtures/owning_slices.jk 覆盖多层子切片、空区间、相对索引、泛型跨模块返回、
+tests/fixtures/owning_slice.jk 覆盖多层子切片、空区间、相对索引、泛型跨模块返回、
 两种拥有布局、枚举匹配、元组替换、权限恢复、越界与 Drop 失败继续清理。
 JIT、解释器和独立 AOT 程序验证结果及析构顺序；共享语义检查拒绝冲突访问、视图逃逸、
 Copy 式读写和直接挂起。解释器逐指令取消、执行预算、分配失败及重载后旧任务保活

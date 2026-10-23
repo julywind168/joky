@@ -1,4 +1,4 @@
-import joky/json as json.{type Value, type Number, type Limits, type EncodeError}
+import joky/json.{type Value, type Number, type Limits, type EncodeError}
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/string.{type StringBuilder}

@@ -1,4 +1,4 @@
-import joky/array as array.{type Array}
+import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
 struct Resource { id: Int32, values: Array<Int32> }

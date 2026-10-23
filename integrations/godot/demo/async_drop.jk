@@ -1,6 +1,6 @@
 import joky/drop.{type Drop}
-import godot/node as node.{type Node}
-import godot/task as task
+import godot/node.{type Node}
+import godot/task
 struct State { owner: Node, text: String }
 fn create() -> State { State { owner: node.self(), text: "owned" } }
 impl Drop for State {

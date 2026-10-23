@@ -3,7 +3,7 @@
 import joky/io.{println}
 import joky/map.{type Map}
 import joky/array.{type Array}
-import joky/slice as slices
+import joky/slice
 
 fn batches_and_iteration() -> Int32 {
     var input = Array.new::<(Int32, Int32)>()
@@ -14,7 +14,7 @@ fn batches_and_iteration() -> Int32 {
     let view = values.values()
     var i: UInt64 = 0
     var sum = 0
-    while i < slices.len(view) { sum = sum + slices.get(view, i).unwrap_or(0); i = i + 1 }
+    while i < slice.len(view) { sum = sum + slice.get(view, i).unwrap_or(0); i = i + 1 }
     var exported = values.into_entries()
     var exported_sum = 0
     while !exported.is_empty() {

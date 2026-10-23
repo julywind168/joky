@@ -1,5 +1,5 @@
 import joky/domain
-import joky/slice as slices
+import joky/slice
 import joky/array.{type Array}
 import joky/map.{type Map}
 struct Player { name:String, score:Int64, tags:Array<String>, rank:Int32 }
@@ -18,7 +18,7 @@ fn upgrade(old:&PreviousState)->Room {
     var roster=Map.new::<Int32,Player>()
     i=0
     while i<old.roster.len() {
-        let key=*slices.borrow_ref(old.roster.keys(),i)
+        let key=*slice.borrow_ref(old.roster.keys(),i)
         roster.insert(key,upgrade_player(old.roster.borrow_ref(key)));
         i=i+1
     }

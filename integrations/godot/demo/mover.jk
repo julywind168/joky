@@ -1,5 +1,5 @@
 import joky/mem
-import godot/node as node.{type Node, type Vector2}
+import godot/node.{type Node, type Vector2}
 
 struct State {
 	speed: Float64

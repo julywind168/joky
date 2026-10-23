@@ -1,4 +1,4 @@
-import joky/json as json.{type Value, type Limits, type DecodeError, type DecodeErrorKind}
+import joky/json.{type Value, type Limits, type DecodeError, type DecodeErrorKind}
 import joky/array.{type Array}
 import joky/string.{type StringBuilder}
 import joky/check.{assert}

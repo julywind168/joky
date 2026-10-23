@@ -1,5 +1,5 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
-import joky/json as json.{type Value, type Number, type Limits}
+import joky/json.{type Value, type Number, type Limits}
 import joky/array.{type Array}
 import joky/option.{type Option}
 import joky/mem

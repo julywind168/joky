@@ -1,6 +1,6 @@
 import joky/mem
 import joky/array.{type Array}
-import joky/slice as slices.{type Slice}
+import joky/slice.{type Slice}
 import slice_library.{tail, tail_mut, first, first_mut}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
@@ -19,7 +19,7 @@ fn slice_shared() -> Int32 {
     let nested = tail(region)
     let a = first(region)
     let b = first(nested)
-    let result = a.id + b.id + int32(slices.len(region)) + 35
+    let result = a.id + b.id + int32(slice.len(region)) + 35
     values.push(resource(14))
     result
 }
@@ -29,7 +29,7 @@ fn slice_mutable() -> Int32 {
     let region = values.slice_mut(0, 3)
     let child = tail_mut(region)
     let old = mem.replace(first_mut(child), resource(14))
-    let item = slices.borrow_mut_ref(child, 1)
+    let item = slice.borrow_mut_ref(child, 1)
     item.values.push(42)
     item.id = item.id + 10
     let result = first(child).id + old.id + 36
@@ -44,25 +44,25 @@ fn slice_wrapper() -> Int32 {
     let region = values.slice_mut(0, 1)
     var next = Array.new::<Int32>()
     next.push(22)
-    let previous = mem.replace(slices.borrow_mut_ref(region, 0), next)
-    previous.get(0).unwrap_or(0) + slices.borrow_ref(region, 0).get(0).unwrap_or(0)
+    let previous = mem.replace(slice.borrow_mut_ref(region, 0), next)
+    previous.get(0).unwrap_or(0) + slice.borrow_ref(region, 0).get(0).unwrap_or(0)
 }
 fn slice_enum() -> Int32 {
     var values = Array.new::<Option<Resource>>()
     values.push(Some(resource(11)))
     let region = values.slice_mut(0, 1)
-    match slices.borrow_mut_ref(region, 0) {
+    match slice.borrow_mut_ref(region, 0) {
         Some(item) => item.id = 42
         None => {}
     }
-    let old = slices.borrow_mut_ref(region, 0).take()
+    let old = slice.borrow_mut_ref(region, 0).take()
     match old { Some(item) => item.id, None => 0 }
 }
 fn slice_tuple() -> Int32 {
     var values = Array.new::<(Resource, Resource)>()
     values.push((resource(11), resource(12)))
     let region = values.slice_mut(0, 1)
-    let old = mem.replace(slices.borrow_mut_ref(region, 0), (resource(13), resource(14)))
+    let old = mem.replace(slice.borrow_mut_ref(region, 0), (resource(13), resource(14)))
     let (a, b) = old
     a.id + b.id + 39
 }
@@ -70,8 +70,8 @@ fn slice_empty() -> Int32 {
     var values = Array.new::<Resource>()
     values.push(resource(11))
     let empty = values.slice_mut(1, 1)
-    let child = slices.slice_mut(empty, 0, 0)
-    if !slices.is_empty(child) { return 0 }
+    let child = slice.slice_mut(empty, 0, 0)
+    if !slice.is_empty(child) { return 0 }
     values.pop();
     42
 }
@@ -79,13 +79,13 @@ fn slice_bounds() -> Int32 {
     var values = Array.new::<Resource>()
     values.push(resource(11))
     let empty = values.slice(1, 1)
-    slices.borrow_ref(empty, 0).id
+    slice.borrow_ref(empty, 0).id
 }
 fn slice_sub_bounds() -> Int32 {
     var values = Array.new::<Resource>()
     values.push(resource(11))
     let region = values.slice_mut(0, 1)
-    slices.slice_mut(region, 0, 2);
+    slice.slice_mut(region, 0, 2);
     0
 }
 fn slice_drop_failure() -> Int32 {
@@ -93,7 +93,7 @@ fn slice_drop_failure() -> Int32 {
     values.push(Failing { id: 1, values: Array.new::<Int32>() })
     values.push(Failing { id: 2, values: Array.new::<Int32>() })
     let region = values.slice_mut(0, 2)
-    let old = mem.replace(slices.borrow_mut_ref(region, 0),
+    let old = mem.replace(slice.borrow_mut_ref(region, 0),
         Failing { id: 3, values: Array.new::<Int32>() })
     42
 }

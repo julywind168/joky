@@ -54,9 +54,9 @@ fn rejects(source: &str, message: &str) {
 }
 
 const PREFIX: &str = r#"
-    import joky/array as array.{type Array}
-    import joky/element as element.{type Element}
-    import joky/slice as slices.{type Slice}
+    import joky/array.{type Array}
+    import joky/element.{type Element}
+    import joky/slice.{type Slice}
     fn consume(a: Array<Int32>) {}
     fn at<T: Copy>(a: &Array<T>) -> &Element<T> { array.borrow(a, 0) }
     fn part<T>(a: &mut Array<T>) -> &mut Slice<T> { array.slice_mut(a, 0, 1) }
@@ -76,18 +76,18 @@ fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
         "let r = at(&a); a = array.new::<Int32>(); element.read(r);",
         "let r = array.borrow_mut(&mut a, 0); array.get(&a, 0); element.write(r, 7)",
         "element.write(array.borrow_mut(&mut a, 0), array.get(&a, 0).unwrap_or(0))",
-        "slices.set(array.slice_mut(&mut a, 0, 1), 0, array.get(&a, 0).unwrap_or(0));",
-        "let r = array.slice_mut(&mut a, 0, 1); element.write(slices.borrow_mut(r, 0), slices.get(r, 0).unwrap_or(0))",
+        "slice.set(array.slice_mut(&mut a, 0, 1), 0, array.get(&a, 0).unwrap_or(0));",
+        "let r = array.slice_mut(&mut a, 0, 1); element.write(slice.borrow_mut(r, 0), slice.get(r, 0).unwrap_or(0))",
         "let r = array.borrow_mut(&mut a, 0); let s = array.borrow_mut(&mut a, 1); element.write(r, 7); element.write(s, 9)",
-        "let r = array.slice(&a, 0, 1); array.push(&mut a, 7); slices.len(r);",
-        "let r = array.slice(&a, 0, 0); consume(a); slices.len(r);",
-        "let r = part(&mut a); array.get(&a, 0); slices.set(r, 0, 7);",
-        "let r = part(&mut a); let child = slices.borrow_mut(r, 0); slices.get(r, 0); element.write(child, 7)",
-        "let r = part(&mut a); let child = slices.slice(r, 0, 1); slices.set(r, 0, 7); slices.len(child);",
+        "let r = array.slice(&a, 0, 1); array.push(&mut a, 7); slice.len(r);",
+        "let r = array.slice(&a, 0, 0); consume(a); slice.len(r);",
+        "let r = part(&mut a); array.get(&a, 0); slice.set(r, 0, 7);",
+        "let r = part(&mut a); let child = slice.borrow_mut(r, 0); slice.get(r, 0); element.write(child, 7)",
+        "let r = part(&mut a); let child = slice.slice(r, 0, 1); slice.set(r, 0, 7); slice.len(child);",
         "let r = array.borrow_mut(&mut a, 0); let shared = (&*r); element.write(r, 7); element.read(shared);",
         "var b = array.new::<Int32>(); array.push(&mut b, 9); let r = choose(&a, &b, true); array.push(&mut b, 7); element.read(r);",
         "let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); at(&b) }; element.read(r);",
-        "let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); array.slice(&b, 0, 1) }; slices.len(r);",
+        "let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); array.slice(&b, 0, 1) }; slice.len(r);",
     ] {
         let source = format!("{PREFIX} fn bad() {{ var a = array.new::<Int32>(); array.push(&mut a, 42); {body} }}");
         rejects(&source, "live borrow");
@@ -108,9 +108,9 @@ fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
 fn borrowed_arrays_preserve_storage_restrictions_through_element_and_slice_writes() {
     for (body, message) in [
         ("let x = 42; let item = array.borrow_mut(&mut a, 0); element.write(item, &x)", "local borrow"),
-        ("let x = 42; let region = array.slice_mut(&mut a, 0, 1); slices.set(region, 0, &x);", "local borrow"),
+        ("let x = 42; let region = array.slice_mut(&mut a, 0, 1); slice.set(region, 0, &x);", "local borrow"),
         ("let p = alloc(42); let item = array.borrow_mut(&mut a, 0); element.write(item, (&*p)) ; (*(p) = 0)", "retained"),
-        ("let p = alloc(42); let region = array.slice_mut(&mut a, 0, 1); slices.set(region, 0, (&*p)); array.pop(&mut a); (*(p) = 0)", "retained"),
+        ("let p = alloc(42); let region = array.slice_mut(&mut a, 0, 1); slice.set(region, 0, (&*p)); array.pop(&mut a); (*(p) = 0)", "retained"),
     ] {
         rejects(&format!("{PREFIX} fn bad() {{ var a = array.new::<&Int32>(); array.push(&mut a, (&*(alloc(0)))); {body} }}"), message);
     }
@@ -156,7 +156,7 @@ fn borrowed_arrays_do_not_expose_owning_values_storage_or_host_capabilities() {
             "host ABI",
         ),
         (
-            "fn bad(a: &Array<Int32>) { array.storage.borrow(a, 0); }",
+            "fn bad(a: &Array<Int32>) { array.buffer.borrow(a, 0); }",
             "Undeclared function",
         ),
     ] {
@@ -174,9 +174,9 @@ fn borrowed_arrays_element_borrows_do_not_allocate_and_slice_headers_are_charged
         }
     }
     let source = r#"
-        import joky/array as array
-        import joky/element as element
-        import joky/slice as slices
+        import joky/array
+        import joky/element
+        import joky/slice
         fn direct() -> Int32 {
             var a = array.with_capacity::<Int32>(1)
             array.push(&mut a, 0)
@@ -192,7 +192,7 @@ fn borrowed_arrays_element_borrows_do_not_allocate_and_slice_headers_are_charged
         fn ranged() -> Int32 {
             var a = array.with_capacity::<Int32>(1)
             array.push(&mut a, 42)
-            slices.get(array.slice(&a, 0, 1), 0).unwrap_or(0)
+            slice.get(array.slice(&a, 0, 1), 0).unwrap_or(0)
         }
     "#;
     let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
@@ -223,20 +223,20 @@ fn borrowed_arrays_cross_module_aliases_preserve_views_and_consumer_types() {
         .insert(
             "views",
             r#"
-        import joky/array as array.{type Array}
-        import joky/element as element.{type Element}
-        import joky/slice as slices.{type Slice}
+        import joky/array.{type Array}
+        import joky/element.{type Element}
+        import joky/slice.{type Slice}
         pub type Span<T> = &Slice<T>
         pub type Item<T> = &Element<T>
         pub fn range<T>(a: &Array<T>) -> Span<T> { array.slice(a, 0, 1) }
-        pub fn first<T: Copy>(s: Span<T>) -> Item<T> { slices.borrow(s, 0) }
+        pub fn first<T: Copy>(s: Span<T>) -> Item<T> { slice.borrow(s, 0) }
         pub fn copy<T: Copy>(e: Item<T>) -> T { element.read(e) }
         pub fn update<T: Copy>(e: &mut Element<T>, value: T) { element.write(e, value) }
     "#,
         )
         .unwrap();
     let source = r#"
-        import joky/array as array
+        import joky/array
         import views as v
         struct Point { flag: Bool, value: Int64 }
         fn concrete(a: &array.Array<Point>) -> v.Span<Point> { v.range(a) }
@@ -262,7 +262,7 @@ fn borrowed_arrays_cross_module_aliases_preserve_views_and_consumer_types() {
             ("var a = array.new::<Int32>(); array.push(&mut a, 42); let item = v.first(v.range(&a)); array.push(&mut a, 7); v.copy(item);", "live borrow"),
             ("var a = array.new::<&Int32>(); array.push(&mut a, (&*(alloc(0)))); let local = 42; v.update(array.borrow_mut(&mut a, 0), &local)", "local borrow"),
         ] {
-            let bad = format!("import joky/array as array import views as v fn bad() {{ {body} }}");
+            let bad = format!("import joky/array import views as v fn bad() {{ {body} }}");
             let error = vm.load_source_with_modules(&bad, &modules).unwrap_err();
             assert!(error.message().contains(message), "{error}");
             assert_eq!(vm.call_int32_0("check").unwrap(), 42);

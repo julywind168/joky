@@ -187,7 +187,7 @@ fn ordered_arrays_preserves_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn ordered_arrays_reject_conflicting_views_and_invalid_capabilities() {
-    let prefix = "import joky/array.{type Array}\n        import joky/element as element import joky/slice as slices\n        struct Resource { id: Int32, values: Array<Int32> }";
+    let prefix = "import joky/array.{type Array}\n        import joky/element import joky/slice\n        struct Resource { id: Int32, values: Array<Int32> }";
     for operation in [
         "values.remove(0)",
         "values.insert(0, Resource { id: 0, values: Array.new::<Int32>() })",
@@ -196,8 +196,8 @@ fn ordered_arrays_reject_conflicting_views_and_invalid_capabilities() {
             format!("fn bad(values: &Array<Resource>) {{ {operation}; }}"),
             format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_ref(0); {operation}; item.id; }}"),
             format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_mut_ref(0); {operation}; item.id = 1; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1); {operation}; slices.borrow_ref(region, 0).id; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1); let child = slices.slice_mut(region, 0, 1); {operation}; slices.len(child); }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1); {operation}; slice.borrow_ref(region, 0).id; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1); let child = slice.slice_mut(region, 0, 1); {operation}; slice.len(child); }}"),
             format!("fn bad(values: Array<Resource>) {{ values.release(); {operation}; }}"),
             format!("fn pause() @suspends {{}} fn bad(values: &mut Array<Resource>) @suspends {{ let item = values.borrow_ref(0); pause(); {operation}; let id = item.id; }}"),
         ] {

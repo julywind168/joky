@@ -1,4 +1,4 @@
-import joky/array as array.{type Array}
+import joky/array.{type Array}
 
 fn array_empty() -> Int32 {
     var a = array.new::<Int32>()

@@ -1,7 +1,7 @@
 import joky/string
 import joky/array.{type Array}
-import joky/fixed_array as fixed.{type FixedArray}
-import joky/slice as slices.{type Slice}
+import joky/fixed_array.{type FixedArray}
+import joky/slice.{type Slice}
 import joky/task
 
 fn check(ok: Bool) { assert(ok, "array literal/pattern regression") }
@@ -53,7 +53,7 @@ fn shared(values: &Array<Int32>) -> Int32 {
         [] => 0
         [0, ..] => 100
         [only] => only
-        [first, ..middle, last] => first + last + slices.len(middle).to_i32().unwrap_or_else(|| { panic("missing") })
+        [first, ..middle, last] => first + last + slice.len(middle).to_i32().unwrap_or_else(|| { panic("missing") })
     }
 }
 fn slice_value(values: &Slice<Int32>) -> Int32 {
@@ -68,12 +68,12 @@ fn patterns() {
     check(x + z + middle.get(0).unwrap_or_else(|| { panic("missing") }) == 6)
     let [p, q, r] = &b
     check(p + q + r == 6)
-    match &b { [head, ..tail] => check(head + slices.get(tail, 0).unwrap_or_else(|| { panic("missing") }) == 3) }
+    match &b { [head, ..tail] => check(head + slice.get(tail, 0).unwrap_or_else(|| { panic("missing") }) == 3) }
 }
 fn mutable_patterns() {
     var c = [1, 2, 3]
     match &mut c {
-        [first, ..rest, last] => { *first = 10; *last = 20; slices.set(rest, 0, 12); }
+        [first, ..rest, last] => { *first = 10; *last = 20; slice.set(rest, 0, 12); }
         _ => {}
     }
     check(c.get(0).unwrap_or_else(|| { panic("missing") }) + c.get(1).unwrap_or_else(|| { panic("missing") }) + c.get(2).unwrap_or_else(|| { panic("missing") }) == 42)
@@ -86,7 +86,7 @@ fn mutable_patterns() {
 }
 fn owned_patterns() {
     let names = ["a", "b", "c", "d"]
-    match &names { [head, ..rest, last] => { check(head.equals("a")); check(slices.len(rest) == 2); check(last.equals("d")); }, _ => {} }
+    match &names { [head, ..rest, last] => { check(head.equals("a")); check(slice.len(rest) == 2); check(last.equals("d")); }, _ => {} }
     match names {
         [head, ..rest, last] => {
             check(head.equals("a"))

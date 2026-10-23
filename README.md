@@ -37,7 +37,7 @@ fn main() {
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
   可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。
   关闭 prelude 时显式导入 `joky/io.{print, println}`；CLI 不再预注册类型专用打印宿主。
-- `import joky/task as task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
+- `import joky/task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
 

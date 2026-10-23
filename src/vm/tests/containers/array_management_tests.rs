@@ -170,14 +170,14 @@ fn array_management_preserves_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
-    let prefix = "import joky/array.{type Array}\n        import joky/element as element import joky/slice as slices\n        struct Resource { id: Int32, values: Array<Int32> }";
+    let prefix = "import joky/array.{type Array}\n        import joky/element import joky/slice\n        struct Resource { id: Int32, values: Array<Int32> }";
     for operation in ["values.swap(0, 1)", "values.truncate(1)", "values.clear()"] {
         for body in [
             format!("fn bad(values: &Array<Resource>) {{ {operation}; }}"),
             format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_ref(0); {operation}; item.id; }}"),
             format!("fn bad(values: &mut Array<Resource>) {{ let item = values.borrow_mut_ref(0); {operation}; item.id = 1; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1); {operation}; slices.borrow_ref(region, 0).id; }}"),
-            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1); let child = slices.slice_mut(region, 0, 1); {operation}; slices.len(child); }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1); {operation}; slice.borrow_ref(region, 0).id; }}"),
+            format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1); let child = slice.slice_mut(region, 0, 1); {operation}; slice.len(child); }}"),
             format!("fn bad(values: Array<Resource>) {{ values.release(); {operation}; }}"),
             format!("fn bad(values: &mut Array<&Int32>) @suspends {{ {operation}; }}"),
             format!("fn bad(values: &mut Array<Int32>) {{ let item = values.borrow(0); {operation}; element.read(item); }}"),

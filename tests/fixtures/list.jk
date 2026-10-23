@@ -1,6 +1,6 @@
 import joky/list as lists.{type List}
 import joky/array.{type Array}
-import joky/element as element
+import joky/element
 import joky/option.{type Option, Some, None}
 import joky/drop.{type Drop}
 import joky/check.{assert}

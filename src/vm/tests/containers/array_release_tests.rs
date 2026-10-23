@@ -48,7 +48,7 @@ fn released_arrays_refund_exact_header_payload_and_bookkeeping_charges() {
         }
     }
     let source = r#"
-        import joky/array as array
+        import joky/array
         fn check() -> Int32 {
             var i = 0
             while i < 100 {
@@ -107,9 +107,9 @@ fn rejects(source: &str, message: &str) {
 #[test]
 fn released_arrays_reject_double_release_views_and_live_borrows() {
     let prefix = r#"
-        import joky/array as array
-        import joky/element as element
-        import joky/slice as slices
+        import joky/array
+        import joky/element
+        import joky/slice
     "#;
     for (body, message) in [
         ("array.release(a); array.release(a)", "moved"),
@@ -121,7 +121,7 @@ fn released_arrays_reject_double_release_views_and_live_borrows() {
             "live borrow",
         ),
         (
-            "let r = array.slice_mut(&mut a, 0, 1); array.release(a); slices.set(r, 0, 1);",
+            "let r = array.slice_mut(&mut a, 0, 1); array.release(a); slice.set(r, 0, 1);",
             "live borrow",
         ),
         ("array.release(&a)", ""),
@@ -141,7 +141,7 @@ fn released_arrays_cross_module_aliases_preserve_consumption_without_allocation_
         .insert(
             "dispose",
             r#"
-        import joky/array as array.{type Array}
+        import joky/array.{type Array}
         pub type Batch<T> = Array<T>
         pub fn discard<T>(a: Batch<T>) { array.release(a) }
         pub fn update(a: Batch<Int32>, p: &mut Int32) { discard(a) ; (*(p) = 42) }
@@ -149,16 +149,16 @@ fn released_arrays_cross_module_aliases_preserve_consumption_without_allocation_
         )
         .unwrap();
     let source = r#"
-        import joky/array as array
-        import dispose as d
+        import joky/array
+        import dispose
         struct Point { flag: Bool, wide: Int64 }
         fn check() -> Int32 {
-            var a: d.Batch<Point> = array.new::<Point>()
+            var a: dispose.Batch<Point> = array.new::<Point>()
             array.push(&mut a, Point { flag: true, wide: 4294967297 })
-            d.discard(a)
+            dispose.discard(a)
             var n = 0
             let b = array.new::<Int32>()
-            d.update(b, &mut n)
+            dispose.update(b, &mut n)
             n
         }
     "#;
@@ -168,7 +168,7 @@ fn released_arrays_cross_module_aliases_preserve_consumption_without_allocation_
         vm.load_source_with_modules(source, &modules).unwrap();
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
         LIVE.with(|n| assert_eq!(n.get(), 0));
-        let bad = "import joky/array as array import dispose as d fn bad() { let a = array.new::<Int32>(); d.discard(a); d.discard(a) }";
+        let bad = "import joky/array import dispose fn bad() { let a = array.new::<Int32>(); dispose.discard(a); dispose.discard(a) }";
         assert!(vm
             .load_source_with_modules(bad, &modules)
             .unwrap_err()
@@ -189,7 +189,7 @@ fn released_arrays_cross_module_aliases_preserve_consumption_without_allocation_
 fn released_arrays_pause_before_and_after_release_and_survive_cancellation() {
     use crate::runtime::scheduler::Scheduler;
     let source = r#"
-        import joky/array as array
+        import joky/array
         fn helper() -> Int32 {
             var a = array.with_capacity::<Int32>(1)
             array.push(&mut a, 42)

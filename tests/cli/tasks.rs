@@ -133,7 +133,7 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
             }
         "#, 43, ""),
         (r#"
-            import joky/task as task
+            import joky/task
             import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
             impl Int32 {
                 fn worker(self) @suspends {

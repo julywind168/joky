@@ -1,4 +1,4 @@
-import joky/array as array.{type Array}
+import joky/array.{type Array}
 import joky/option.{type Option}
 
 struct Batch<T> { version: UInt64, values: Array<T>, sorted: Bool }

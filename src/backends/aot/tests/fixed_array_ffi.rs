@@ -202,7 +202,7 @@ fn fixed_array_f4_c_layout_and_references_execute_in_all_backends() {
 #[test]
 fn fixed_array_f4_rejects_incompatible_c_boundaries() {
     use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
-    let prefix = "import joky/fixed_array as fixed.{type FixedArray} type Row=FixedArray<Int32,4> #repr(C) struct Packet{data:Row} ";
+    let prefix = "import joky/fixed_array.{type FixedArray} type Row=FixedArray<Int32,4> #repr(C) struct Packet{data:Row} ";
     assert!(crate::parser::parse(&format!(
         "{prefix} unsafe extern \"C\" fn bad(x:&Row) @suspends"
     ))
@@ -215,11 +215,11 @@ fn fixed_array_f4_rejects_incompatible_c_boundaries() {
         "extern fn bad(x:&Row) @suspends",
         "extern fn bad(x:&Packet) @suspends",
         "extern fn bad(x:Row)",
-        "unsafe extern \"C\" fn bad(x:&FixedArray<Int32,3>) fn f(){let a=fixed.repeat::<Int32,4>(1); unsafe{bad(&a)}}",
-        "unsafe extern \"C\" fn bad(x:&FixedArray<FixedArray<Int32,2>,3>) fn f(){let a=fixed.repeat::<FixedArray<Int32,3>,2>(fixed.repeat::<Int32,3>(1)); unsafe{bad(&a)}}",
-        "unsafe extern \"C\" fn bad(x:&mut Row) fn f(){let a=fixed.repeat::<Int32,4>(1); unsafe{bad(&a)}}",
-        "unsafe extern \"C\" fn bad(x:&mut Row) fn f(){var a=fixed.repeat::<Int32,4>(1); let r=&a; unsafe{bad(&mut a)}; r.len();}",
-        "unsafe extern \"C\" fn bad(x:&mut Row,y:&Int32) fn f(){var a=fixed.repeat::<Int32,4>(1); unsafe{bad(&mut a,a.borrow_ref(0))}}",
+        "unsafe extern \"C\" fn bad(x:&FixedArray<Int32,3>) fn f(){let a=fixed_array.repeat::<Int32,4>(1); unsafe{bad(&a)}}",
+        "unsafe extern \"C\" fn bad(x:&FixedArray<FixedArray<Int32,2>,3>) fn f(){let a=fixed_array.repeat::<FixedArray<Int32,3>,2>(fixed_array.repeat::<Int32,3>(1)); unsafe{bad(&a)}}",
+        "unsafe extern \"C\" fn bad(x:&mut Row) fn f(){let a=fixed_array.repeat::<Int32,4>(1); unsafe{bad(&a)}}",
+        "unsafe extern \"C\" fn bad(x:&mut Row) fn f(){var a=fixed_array.repeat::<Int32,4>(1); let r=&a; unsafe{bad(&mut a)}; r.len();}",
+        "unsafe extern \"C\" fn bad(x:&mut Row,y:&Int32) fn f(){var a=fixed_array.repeat::<Int32,4>(1); unsafe{bad(&mut a,a.borrow_ref(0))}}",
     ].into_iter().map(str::to_owned).collect();
     for element in [
         "Bool",

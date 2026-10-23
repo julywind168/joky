@@ -132,15 +132,15 @@ fn exhaustive_array_borrow_iter_instruction_cancellation() {
 
 #[test]
 fn array_borrow_iter_rejects_conflicting_loans_and_escaping_views() {
-    let prefix = "import joky/array.{type Array}\nimport joky/iter as cursors.{type Iter}\n";
+    let prefix = "import joky/array.{type Array}\nimport joky/iter as iter.{type Iter}\n";
     for (body, message) in [
         ("let p = alloc(1); let a = [&*p]; for _ in a.iter() {}", "nested references"),
-        ("var a = [1, 2]; let i = a.iter_mut(); for _ in i { break }; cursors.advance(i);", "exclusive reference"),
+        ("var a = [1, 2]; let i = a.iter_mut(); for _ in i { break }; iter.advance(i);", "exclusive reference"),
         ("var a = [1, 2]; let i = a.iter(); a.push(3); for _ in i {}", "conflicts with a live borrow"),
         ("var a = [1, 2]; let i = a.iter_mut(); a.get(0); for _ in i {}", "conflicts with a live borrow"),
-        ("var a = [1, 2]; let i = a.iter_mut(); cursors.advance(i); let r = cursors.current_mut(i); cursors.advance(i); *r = 3;", "conflicts with a live borrow"),
-        ("var a = [1, 2]; let i = a.iter_mut(); cursors.advance(i); let r = cursors.current_mut(i); let s = cursors.current_mut(i); *r = *s;", "conflicts with a live borrow"),
-        ("var a = [1, 2]; let i = a.iter(); cursors.current_mut(i);", "expected &mut Iter"),
+        ("var a = [1, 2]; let i = a.iter_mut(); iter.advance(i); let r = iter.current_mut(i); iter.advance(i); *r = 3;", "conflicts with a live borrow"),
+        ("var a = [1, 2]; let i = a.iter_mut(); iter.advance(i); let r = iter.current_mut(i); let s = iter.current_mut(i); *r = *s;", "conflicts with a live borrow"),
+        ("var a = [1, 2]; let i = a.iter(); iter.current_mut(i);", "expected &mut Iter"),
         ("let a = [1, 2]; let i = a.iter(); let moved = a; for _ in i {}", "conflicts with a live borrow"),
         ("let a = [1, 2]; let i = a.iter(); let stored = (i, 1);", "Tuple element must be"),
         ("let a = [1, 2]; let i = a.iter(); let stored = [i];", "Generic type argument must be"),
@@ -153,7 +153,7 @@ fn array_borrow_iter_rejects_conflicting_loans_and_escaping_views() {
     }
     for (function, message) in [
         ("fn bad() -> &Iter<Int32> { let a = [1, 2]; a.iter() }", "compatible borrowed input"),
-        ("fn bad() -> &Int32 { let a = [1, 2]; let i = a.iter(); cursors.advance(i); cursors.current(i) }", "conflicts with a live borrow"),
+        ("fn bad() -> &Int32 { let a = [1, 2]; let i = a.iter(); iter.advance(i); iter.current(i) }", "conflicts with a live borrow"),
         ("fn bad(i: Iter<Int32>) {}", "borrow-only targets"),
     ] {
         let error = frontend_error(&format!("{prefix}{function}"), &crate::ModuleSources::new());
