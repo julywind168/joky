@@ -1,0 +1,28 @@
+import joky/option.{type Option, Some, None}
+
+pub trait Iterator {
+    type Item
+    fn next(&mut self) @noescape -> Option<Self.Item>
+}
+
+// This entry fixes protocol selection even in the presence of inherent next methods.
+pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
+    Iterator.next(iterator)
+}
+
+pub struct Range { current: Int32, end: Int32 }
+
+// Ascending, half-open range. Reversed bounds produce an empty iterator.
+pub fn range(start: Int32, end: Int32) -> Range {
+    Range { current: start, end: end }
+}
+
+impl Iterator for Range {
+    type Item = Int32
+    fn next(&mut self) -> Option<Int32> {
+        if self.current >= self.end { return None }
+        let value = self.current
+        self.current += 1
+        Some(value)
+    }
+}

@@ -1,6 +1,7 @@
 # for 与迭代器分阶段开发计划
 
-状态：2026-10-23，设计待实施。当前能力以 [语言参考](language.md) 为准。
+状态：2026-10-23，设计基线 `8b30deb`；第一阶段已完成并验收，记录见第 6 节。
+当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
 
@@ -69,3 +70,40 @@ Map 迭代沿用未指定顺序与禁止可变 key 的规则。
    Debug 穷举，不运行无关压力或 Release。更新 language、syntax 和本文验收记录后提交。
 
 设计提交仅检查内容、本地链接与 `git diff --check`；以上均为待实施契约，非现有可执行示例。
+
+## 6. 第一阶段实施与验收（2026-10-23）
+
+首版交付 `joky/iter.Iterator`、协议入口 next、Copy Range 与 Int32 半开区间 range，
+以及 `for pattern in iterator`。Int32 之外的整数范围留待后续明确接口后扩展。
+范围表达式与 match 范围模式、容器 into_iter/iter/iter_mut、IntoIterator 和组合器未实施。
+
+实施核对后选择与 while let 一致的解析期展开，而非增加独立 For AST：
+普通 Let/Destructure 已能检查不可失败绑定，标准库泛型 helper 能强制 Iterator 约束，
+不可拼写别名能固定协议和 Option 身份；原始 span 保留在输入、模式和循环节点。
+这使现有泛型、闭包、模块限定、借用和所有权遍历自动覆盖 for，无需增加第二套节点遍历。
+未修改后端、运行时 ABI、引用存储准入或任务生命周期机制。
+
+主要证据：
+
+- [行为 fixture](../tests/fixtures/for_iterators.jk)：Int32 空/反向/负数/极值区间、耗尽、
+  只求值一次、泛型协议、同名固有 next、元组/记录解构、嵌套与遮蔽、Unit、闭包、
+  String 与用户拥有记录、完成/continue/break/return/失败清理。
+- [VM 测试](../src/vm/tests/language/for_iterator_tests.rs)：JIT/解释器执行；关闭 prelude、
+  标准名称遮蔽、插值内部隐式依赖、非法协议/模式/作用域/移动；两种 VM 的多次 Pending、
+  恢复不重放 next、取消清理与 arena 归零；解释器资源边界和逐指令取消。
+- [独立 AOT 测试](../tests/cli/language.rs)：同一 fixture 的同步/CPS 入口、真实 yield、
+  输出/析构事件与失败清理，构建时关闭 prelude。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| for_iterators VM 针对性测试，最终版本由默认检查再次执行 | 5 项通过，逐指令取消默认忽略；覆盖 JIT 与解释器 |
+| `cargo test --test cli for_iterators` | 1 项通过，实际构建并执行同步/CPS 与失败路径的独立原生程序 |
+| `cargo test exhaustive_for_iterators_instruction_cancellation --lib -- --ignored` | 1 项通过，逐指令取消后无重复析构，arena 归零 |
+| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1534 项库测试、295 项 CLI 测试及其他默认集成测试通过；while/Map 三后端短输入正确性通过 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+默认库测试忽略 117 项，CLI 忽略 8 项；本轮只额外运行相关的迭代器取消穷举。
+非法迭代对象的 CLI 人工探针指向 in 右侧原始表达式；外层循环中的输入提前跳转探针通过。
+未做 Release、无关压力、性能测量、Godot 或其他平台验证。检查通过后仅补充本文记录，未再改代码。

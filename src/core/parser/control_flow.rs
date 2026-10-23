@@ -124,6 +124,93 @@ impl Parser {
         }
     }
 
+    /// Lower to ordinary scoped bindings, match and while. Unspellable aliases
+    /// select the standard protocol, and destructuring retains irrefutability.
+    pub(super) fn parse_for(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start();
+        self.expect(&TokenKind::For)?;
+        let pattern = self.parse_binding_pattern()?;
+        self.expect(&TokenKind::In)?;
+        let value = self.parse_condition()?;
+        let value_span = value.span();
+        let body = self.parse_block()?;
+        let span = self.span(start, self.last_span.end());
+        self.iterators = true;
+        let iterator = format!("$for_iterator_{start}");
+        let item = format!("$for_item_{start}");
+        let binding_span = pattern.span();
+        let item_value = Box::new(Expr::Ident {
+            name: item.clone(),
+            span: binding_span,
+        });
+        let binding = if let BindingPattern::Name { name, .. } = pattern {
+            Expr::Let {
+                name,
+                annotation: None,
+                value: item_value,
+                span: binding_span,
+            }
+        } else {
+            Expr::Destructure {
+                pattern,
+                mutable: false,
+                annotation: None,
+                value: item_value,
+                span: binding_span,
+            }
+        };
+        let next = Expr::Call {
+            callee: "$joky_iter.next".into(),
+            type_args: vec![],
+            args: vec![Expr::Unary {
+                op: UnaryOp::BorrowMut,
+                operand: Box::new(Expr::Ident {
+                    name: iterator.clone(),
+                    span: value_span,
+                }),
+                span: value_span,
+            }],
+            span: value_span,
+        };
+        let body = Self::conditional_match(
+            Pattern::Variant {
+                name: "$joky_option.Option.Some".into(),
+                binding: Some(Box::new(PayloadPattern::Name {
+                    name: item,
+                    span: binding_span,
+                })),
+                span: binding_span,
+            },
+            next,
+            Expr::Sequence {
+                exprs: vec![binding, body],
+                trailing: true,
+                span,
+            },
+            Expr::Break { span },
+            span,
+        );
+        Ok(Expr::Block {
+            exprs: vec![
+                Expr::Var {
+                    name: iterator,
+                    annotation: None,
+                    value: Box::new(value),
+                    span: value_span,
+                },
+                Expr::While {
+                    condition: Box::new(Expr::Literal {
+                        literal: Literal::Bool(true),
+                        span,
+                    }),
+                    body: Box::new(body),
+                    span,
+                },
+            ],
+            span,
+        })
+    }
+
     pub(super) fn parse_while(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::While)?;

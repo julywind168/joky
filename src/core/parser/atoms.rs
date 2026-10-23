@@ -109,6 +109,7 @@ impl Parser {
             TokenKind::If => self.parse_if(),
             TokenKind::Match => self.parse_match(),
             TokenKind::While => self.parse_while(),
+            TokenKind::For => self.parse_for(),
             // parallel/race { | branch ... }
             TokenKind::Parallel | TokenKind::Race => {
                 let kind = if self.peek() == &TokenKind::Race {

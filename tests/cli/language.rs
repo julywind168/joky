@@ -3,6 +3,54 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn for_iterators_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/for_iterators.jk").replace(
+        "extern fn record(x: Int32) -> Int32",
+        "import joky/io.{println}\nfn record(x: Int32) -> Int32 { println(x); x }",
+    );
+    for suspends in [false, true] {
+        let source = if suspends {
+            source
+                .replace("fn compute() -> Int32", "fn compute() @suspends -> Int32")
+                .replace("fn ownership()", "fn ownership() @suspends")
+                .replace(
+                    "if value.id == 1 { continue }",
+                    "task.yield_now(); if value.id == 1 { continue }",
+                )
+        } else {
+            source.clone()
+        };
+        let effect = if suspends { "@suspends" } else { "" };
+        work.write(
+            "iterators.jk",
+            &format!(
+                "import joky/task as task\n{source}\nfn main() {effect} {{ println(compute()) }}"
+            ),
+        );
+        success(&work.cli(&["build", "--no-prelude", "iterators.jk"]));
+        let output = Command::new(work.path().join("iterators"))
+            .output()
+            .unwrap();
+        success(&output);
+        assert_eq!(
+            output.stdout,
+            b"3\n-1\n1\n-2\n2\n99\n-1\n1\n-2\n2\n-3\n3\n99\n-1\n1\n99\n42\n"
+        );
+    }
+    work.write(
+        "failure.jk",
+        &format!("{source}\nfn main() {{ force_failure() }}"),
+    );
+    success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
+    let output = Command::new(work.path().join("failure")).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
+    assert_eq!(output.stdout, b"-1\n1\n99\n");
+}
+
+#[test]
+#[cfg(unix)]
 fn string_example_runs_in_all_backends() {
     let work = Workspace::new();
     work.write(

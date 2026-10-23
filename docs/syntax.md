@@ -65,6 +65,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 导入位置 | 已实现，必须在所有类型及函数声明前 | 保留；注释、空白和空分号不影响位置 |
 | `if` / `else` / `else if` | 已实现 | 分支同型；无 else 时为 Unit |
 | `return`、`break` / `continue` | 已实现 | 共享 IR 检查类型、跳转范围和不可达路径 |
+| `for pattern in iterator` | 已实现标准 Iterator、Int32 半开 range、不可失败绑定及共享循环清理 | 容器迭代、范围运算符与组合器见 [分阶段计划](for-iterators.md) |
 | 一元 `-` / `!` / `~`、Bool 相等比较 | 已实现 | 保留；比较不可连续书写 |
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串字面量 | 已实现转义与默认插值、`r` 原始字符串、三引号多行去缩进及组合 | 保留，见第 3 节 |
@@ -302,7 +303,10 @@ parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | 
 
 ## 7. 条件、循环与提前结束
 
-`if` / `else`、`else if`、`while`、`return`、`break` 和 `continue` 均已实现。
+`if` / `else`、`else if`、`while`、`for`、`return`、`break` 和 `continue` 均已实现。
+for 使用同步 Iterator.next 与关联 Item；范围首版使用显式导入的 Int32 `range(start, end)`。
+当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器)，容器迭代及 `..` / `..=`
+表达式与范围模式的后续目标见 [专项计划](for-iterators.md)。
 以下示例当前可运行：
 
 ```joky
@@ -335,7 +339,7 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
   不泄漏到循环体或循环外，循环体每轮有独立的局部绑定。
   条件求值也处于该循环的跳转范围内；所有条件路径都提前跳转时，循环体必须为空。
   例如 `while (break) {}` 正常结束，`while (return 42) {}` 返回函数，`while (continue) {}` 持续循环。
-- `break` 退出当前函数中最近一层 `while`；`continue` 回到该循环的条件检查，均不要求分号。
+- `break` 退出当前函数中最近一层 `while`/`for`；`continue` 回到该循环的条件检查或取下一项，均不要求分号。
   循环外使用报错，不支持标签或 `break value`。
 - `return value` 结束当前函数；没有值的 `return` 返回 Unit，必须匹配函数返回类型。
   返回值按非序列表达式解析，返回整个序列的值需写 `return (a; b)`。

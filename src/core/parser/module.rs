@@ -108,6 +108,18 @@ impl Parser {
                 span: self.last_span,
             });
         }
+        if self.iterators {
+            for (path, alias) in [("joky/iter", "$joky_iter"), ("joky/option", "$joky_option")] {
+                if !module.imports.iter().any(|import| import.path == path) {
+                    module.imports.push(Import {
+                        path: path.into(),
+                        alias: Some(alias.into()),
+                        members: vec![],
+                        span: self.last_span,
+                    });
+                }
+            }
+        }
         if self.interpolation {
             for (path, alias) in [("joky/show", "$joky_show"), ("joky/string", "$joky_string")] {
                 if module.imports.iter().any(|import| import.path == path) {

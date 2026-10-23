@@ -57,6 +57,13 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
+        kind: SourceKind::Embedded,
+        path: "joky/iter",
+        source: include_str!("../../stdlib/iter.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::FixedArrayStorage,
         path: "joky/internal/fixed_array",
         source: include_str!("../../stdlib/internal/fixed_array.jk"),

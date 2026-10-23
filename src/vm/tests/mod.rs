@@ -181,6 +181,8 @@ mod closure_tests;
 
 #[path = "language/conditional_patterns_tests.rs"]
 mod conditional_patterns_tests;
+#[path = "language/for_iterator_tests.rs"]
+mod for_iterator_tests;
 
 #[path = "language/conditionals_tests.rs"]
 mod conditionals_tests;

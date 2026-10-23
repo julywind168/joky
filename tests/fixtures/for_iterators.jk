@@ -1,0 +1,112 @@
+import joky/iter.{type Iterator, range, next}
+import joky/option.{type Option, Some, None}
+import joky/check.{assert}
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn record(x: Int32) -> Int32
+
+fn expect(ok: Bool) { assert(ok, "Iterator mismatch") }
+struct Pair { left: Int32, right: Int32 }
+struct Pairs { remaining: Int32 }
+impl Iterator for Pairs {
+    type Item = (Int32, Int32)
+    fn next(&mut self) -> Option<Self.Item> {
+        if self.remaining == 0 { return None }
+        self.remaining -= 1
+        Some((self.remaining, 2))
+    }
+}
+// Protocol selection must ignore this inherent method.
+impl Pairs { fn next(&mut self) -> Bool { false } }
+struct Points { remaining: Int32 }
+impl Iterator for Points {
+    type Item = Pair
+    fn next(&mut self) -> Option<Pair> {
+        if self.remaining == 0 { return None }
+        self.remaining -= 1
+        Some(Pair { left: 20, right: 22 })
+    }
+}
+struct Texts { value: Option<String> }
+impl Iterator for Texts {
+    type Item = String
+    fn next(&mut self) -> Option<String> { self.value.take() }
+}
+struct Owned { id: Int32, items: Array<Int32> }
+impl Drop for Owned { fn drop(&mut self) { record(self.id); } }
+struct Owners { position: Int32, items: Array<Int32> }
+impl Drop for Owners { fn drop(&mut self) { record(99); } }
+impl Iterator for Owners {
+    type Item = Owned
+    fn next(&mut self) -> Option<Owned> {
+        if self.position >= 3 { return None }
+        self.position += 1
+        record(-self.position)
+        Some(Owned { id: self.position, items: Array.new::<Int32>() })
+    }
+}
+fn owners() -> Owners { Owners { position: 0, items: Array.new::<Int32>() } }
+fn generic_sum<I: Iterator<Item = Int32>>(source: I) -> Int32 {
+    var sum = 0
+    for value in source { sum += value }
+    sum
+}
+fn early() -> Int32 {
+    for value in owners() { return value.id }
+    0
+}
+fn ownership() {
+    for value in owners() {
+        if value.id == 1 { continue }
+        break
+    }
+    for _ in owners() {}
+    expect(early() == 1)
+}
+fn force_failure() {
+    for value in owners() { let invalid = value.id % 0 }
+}
+fn compute() -> Int32 {
+    expect(generic_sum(range(0, 10)) == 45)
+    expect(generic_sum(range(3, 3)) == 0)
+    expect(generic_sum(range(4, 3)) == 0)
+    expect(generic_sum(range(-3, 2)) == -5)
+    expect(generic_sum(range(2147483646, 2147483647)) == 2147483646)
+    expect(generic_sum(range(-2147483648, -2147483647)) == -2147483648)
+    var exhausted = range(2147483647, 2147483647)
+    expect(next(&mut exhausted).is_none() && next(&mut exhausted).is_none())
+    var count = 0
+    let n = 40
+    for n in range(0, record(3)) {
+        for _ in range(0, 2) { count += 1; break }
+        if n == 1 { continue }
+        count += n
+        123
+    }
+    expect(count == 5 && n == 40)
+    var sum = 0
+    for (x, y) in (Pairs { remaining: 3 }) { sum += x + y }
+    expect(sum == 9)
+    for Pair { left, right } in (Points { remaining: 1 }) {
+        expect(left + right == 42)
+    }
+    var texts = 0
+    for text in (Texts { value: Some("owned item") }) {
+        let moved = text
+        texts += 1
+    }
+    expect(texts == 1)
+    closure_case()
+    let unit: Unit = for _ in range(0, 0) { 100 }
+    ownership()
+    42
+}
+
+fn closure_case() {
+    let closure = |end: Int32| {
+        var total = 0
+        for value in range(0, end) { total += value }
+        total
+    }
+    expect(closure(4) == 6)
+}

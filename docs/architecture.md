@@ -118,6 +118,12 @@ Rust/Cranelift 标量运算使用的 MXCSR；标准环境采用最近偶数舍�
 公开 AST 的 `Literal::Int32` / `Literal::Int64` / `Literal::UInt32` / `Literal::UInt64` / `Literal::Float32` / `Literal::Float64` 表示已经定型的值，源码解析产生 `Literal::Integer` / `Literal::Float`。
 这会把 Int32 范围错误从解析阶段移到 TypeCheck；超出 UInt64 最大幅值的文本仍在解析阶段拒绝。
 
+for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条件 Match，保留输入及模式 span。
+不可失败绑定通过普通 Let/Destructure 检查；生成调用使用不可由源码拼写的标准库别名，
+经 `joky/iter.next<I: Iterator>` 固定协议身份与泛型约束，同名固有方法不能劫持选择。
+隐式装载 iter/option 依赖不依赖 prelude，也不向用户值命名空间添加短名。
+后续共享 IR 沿用已有循环、移动、借用、清理和 CPS 规划，不新增迭代指令或 ABI。
+
 必须保留的语义约束：
 
 - 可变绑定读取生成快照，后续赋值不能改变已求值的操作数或实参；求值顺序从左到右。

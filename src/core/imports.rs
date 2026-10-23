@@ -315,9 +315,11 @@ fn bind(
             scope.imported_constants.insert(binding.clone());
         }
         // Compiler-generated calls use unspellable aliases so user names cannot
-        // redirect array construction or interpolation. Existing imports suffice.
+        // redirect compiler-generated library calls. Existing imports suffice.
         let compiler_alias = match import.path.as_str() {
             "joky/array" => Some("$joky_array"),
+            "joky/iter" => Some("$joky_iter"),
+            "joky/option" => Some("$joky_option"),
             "joky/show" => Some("$joky_show"),
             "joky/string" => Some("$joky_string"),
             _ => None,
