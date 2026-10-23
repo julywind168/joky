@@ -97,6 +97,18 @@ impl FunctionPlan {
         if let Some(input) = self.iteration_input(expr, vars, functions, types) {
             return self.hint(&input, vars, functions, types, default);
         }
+        if let Some(cursor) = super::iterators::paired_binding(expr) {
+            let Type::Reference(reference) = self.type_hint(cursor, vars, functions, types)? else {
+                return None;
+            };
+            let Type::BufferPairIterator(pair) = &reference.target else {
+                return None;
+            };
+            return Some(Type::reference(
+                Type::BufferEntry(pair.clone()),
+                reference.mutable,
+            ));
+        }
         if let Some(constant) = self.associated_constant(expr, vars, types).ok().flatten() {
             return Some(constant.declaration.ty.clone());
         }

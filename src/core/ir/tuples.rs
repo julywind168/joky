@@ -77,6 +77,15 @@ impl FunctionPlan {
                 span,
             } => {
                 validate_names(pattern, &mut HashSet::new())?;
+                if let Some(cursor) = super::iterators::paired_binding(value) {
+                    let Flow::Value(Some(cursor)) =
+                        self.expr(cursor, vars, functions, suspends, types)?
+                    else {
+                        unreachable!("compiler-authored paired cursor reborrow")
+                    };
+                    self.bind_entry_pattern(pattern, &cursor, *mutable, vars)?;
+                    return Ok(Flow::Value(None));
+                }
                 if let Some(annotation) = annotation {
                     validate_nominal_type(annotation, &self.nominals, span)?;
                     types

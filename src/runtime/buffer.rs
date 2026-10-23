@@ -104,6 +104,20 @@ impl BufferPairIterator {
         self.values.advance();
         next
     }
+    /// # Safety
+    /// The cursor has just advanced successfully, column is 0 or 1, and the
+    /// source loan keeps both initialized columns stable on the task thread.
+    /// Generated pair bindings capture both addresses before executing user code.
+    pub(crate) unsafe fn project(&self, column: usize) -> *mut u8 {
+        let cursor = if column == 0 {
+            &self.keys
+        } else {
+            &self.values
+        };
+        let position = cursor.position.get();
+        debug_assert!(column < 2 && position > 0 && position <= cursor.len);
+        cursor.data.as_ptr().add((position - 1) * cursor.stride)
+    }
     pub(crate) fn current(&self, arena: &mut Arena) -> Result<NonNull<BufferEntry>, Error> {
         let entry = BufferEntry {
             key: self.keys.current()?,
@@ -1284,6 +1298,12 @@ unsafe extern "C" fn pair_current(
     )
 }
 /// # Safety
+/// The live cursor, selected column and source loans obey BufferPairIterator::project.
+#[export_name = "__joky_buffer_pair_project"]
+unsafe extern "C" fn pair_project(cursor: *const BufferPairIterator, column: usize) -> *mut u8 {
+    (*cursor).project(column)
+}
+/// # Safety
 /// Entry and its key remain live on the owning task thread. The caller uses
 /// the checked key layout and grants only shared access to the returned storage.
 #[export_name = "__joky_buffer_entry_key"]
@@ -1443,11 +1463,12 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 29] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 30] {
     [
         ("__joky_buffer_pair_iter", pair_iter as *const u8),
         ("__joky_buffer_pair_advance", pair_advance as *const u8),
         ("__joky_buffer_pair_current", pair_current as *const u8),
+        ("__joky_buffer_pair_project", pair_project as *const u8),
         ("__joky_buffer_entry_key", entry_key as *const u8),
         ("__joky_buffer_entry_value", entry_value as *const u8),
         ("__joky_buffer_iter", iter as *const u8),

@@ -35,7 +35,42 @@ fn compute() -> Int32 {
     snapshots(&table)
     resumed(&mut table)
     nested_values()
+    projected_pairs()
     42
+}
+fn projected_pairs() {
+    var table = Map.new::<Int32, Int32>()
+    for value in [1, 2, 3] { table.insert(value, value * 10) }
+    let cursor = forward(&table)
+    let alias = cursor
+    for index, (key, value) in cursor {
+        let expected = *key
+        expect(index == 0)
+        expect(map.advance(alias))
+        // Both projected references retain their original item across advance.
+        expect(*key == expected && *value == expected * 10)
+        break
+    }
+    let remaining = cursor
+    for (_, value) in remaining { expect(*value > 0) }
+    var count = 0
+    for (key, value) in &table {
+        for (other, _) in &table { count += 1; expect(*other > 0) }
+        expect(*value == *key * 10)
+    }
+    expect(count == 9)
+    let cursor = forward_mut(&mut table)
+    for (_, value) in &mut *cursor { *value += 1; break }
+    for (key, value) in &mut *cursor { *value += *key; continue }
+    var units = Map.new::<Unit, Unit>()
+    units.insert({}, {})
+    for (key, value) in &mut units { let k = *key; *value = k }
+    let saved = first_value(&table)
+    expect(*saved > 0)
+}
+fn first_value(table: &Map<Int32, Int32>) -> &Int32 {
+    for (_, value) in table { return value }
+    table.borrow_ref(1)
 }
 fn snapshots(table: &Map<Int32, Int32>) {
     let cursor = table.iter()

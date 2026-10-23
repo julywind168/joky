@@ -37,6 +37,7 @@ pub(super) enum Instruction {
     EntryProject {
         dst: usize,
         reference: usize,
+        cursor: bool,
         column: usize,
         load_owner: bool,
     },
@@ -93,6 +94,10 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
         Op::EntryProject { dst, src, column } => Instruction::EntryProject {
             dst: dst.index,
             reference: src.index,
+            cursor: matches!(
+                src.ty.reference_type().unwrap().target,
+                Type::BufferPairIterator(_)
+            ),
             column: *column,
             load_owner: dst.ty.reference_type().unwrap().target.is_owner()
                 && !dst.ty.reference_type().unwrap().target.is_inline_owner(),
@@ -221,6 +226,7 @@ pub(super) fn execute(
         Instruction::EntryProject {
             dst,
             reference,
+            cursor,
             column,
             load_owner,
         } => {
@@ -230,10 +236,21 @@ pub(super) fn execute(
             if pointer.is_null() {
                 return Err(abi_error("Inactive entry reference"));
             }
-            // The checked entry projection selects one initialized column. Its
-            // source loan retains the descriptor and the column's element storage.
-            let entry = unsafe { &*pointer.cast::<crate::runtime::buffer::BufferEntry>() };
-            let field = if *column == 0 { entry.key } else { entry.value };
+            // A compiler-authored cursor projection follows a successful advance;
+            // otherwise the source is a stable Entry snapshot. Both source loans
+            // retain the selected initialized element storage.
+            let field = if *cursor {
+                unsafe {
+                    (*pointer.cast::<crate::runtime::buffer::BufferPairIterator>()).project(*column)
+                }
+            } else {
+                let entry = unsafe { &*pointer.cast::<crate::runtime::buffer::BufferEntry>() };
+                if *column == 0 {
+                    entry.key
+                } else {
+                    entry.value
+                }
+            };
             slots[*dst] = Value::Reference(if *load_owner {
                 unsafe { field.cast::<*mut u8>().read() }
             } else {

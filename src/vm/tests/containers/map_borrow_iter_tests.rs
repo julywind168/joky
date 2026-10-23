@@ -10,6 +10,74 @@ fn map_borrow_iter_pairs_columns_and_preserves_entry_identity() {
     }
 }
 
+#[test]
+fn map_borrow_iter_direct_patterns_do_not_allocate_per_item() {
+    extern "C" fn live_allocations() -> u64 {
+        crate::runtime::arena::LIVE.with(|live| live.get() as u64)
+    }
+    let source = r#"
+        import joky/map.{type Map, type Iter}
+        import joky/iter.{range}
+        extern fn live_allocations() -> UInt64
+        fn shared(cursor: &Iter<Int32, Int32>) -> Int32 {
+            let before = live_allocations()
+            var count = 0
+            for (key, value) in cursor {
+                if live_allocations() != before || *value != *key * 10 { return -1 }
+                count += 1
+            }
+            if live_allocations() != before { return -2 }
+            count
+        }
+        fn mutable(cursor: &mut Iter<Int32, Int32>) -> Int32 {
+            let before = live_allocations()
+            var count = 0
+            for index, (key, value) in &mut *cursor {
+                if live_allocations() != before || index != count { return -3 }
+                *value += *key
+                count += 1
+            }
+            if live_allocations() != before { return -4 }
+            count
+        }
+        fn discarded(cursor: &Iter<Int32, Int32>) -> Int32 {
+            let before = live_allocations()
+            var count = 0
+            for (_, _) in cursor { count += 1 }
+            if live_allocations() != before { return -5 }
+            count
+        }
+        fn check(length: Int32) -> Int32 {
+            var table = Map.new::<Int32, Int32>()
+            for key in range(0, length) { table.insert(key, key * 10) }
+            if shared(table.iter()) != length { return 1 }
+            if mutable(table.iter_mut()) != length { return 2 }
+            if discarded(table.iter()) != length { return 3 }
+            42
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = super::VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_fn(
+                "live_allocations",
+                crate::FunctionSignature::new(vec![], crate::Type::UInt64),
+                live_allocations as *const u8,
+            )
+            .unwrap();
+        }
+        vm.load_source(source).unwrap();
+        for length in [0, 1, 64] {
+            assert_eq!(
+                vm.call_int32_1("check", length).unwrap(),
+                42,
+                "{mode:?}: {length}"
+            );
+            crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+    }
+}
+
 fn events() -> Vec<i32> {
     EVENTS.with(|events| events.borrow().clone())
 }
@@ -173,6 +241,9 @@ fn map_borrow_iter_rejects_conflicts_and_escaping_entries() {
         ("fn bad(m: Map<Int32, Int32>) { let i=m.iter(); m.release(); for _ in i {} }", "conflicts with a live borrow"),
         ("fn bad(m: &mut Map<Int32, Int32>) { let i=m.iter_mut(); m.get(1); for _ in i {} }", "conflicts with a live borrow"),
         ("fn bad(m: &mut Map<Int32, Int32>) { let i=m.iter_mut(); map.advance(i); let e=map.current_mut(i); map.advance(i); map.entry_value(e); }", "conflicts with a live borrow"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { let i=m.iter_mut(); for (k,v) in &mut *i { map.advance(i); *v += *k } }", "conflicts with a live borrow"),
+        ("fn bad(m: &mut Map<Int32, Int32>) { for (k,v) in &mut *m { let a=&mut *v; let b=&mut *v; *a += *b } }", "conflicts with a live borrow"),
+        ("fn bad() -> &Int32 { var m=Map.new::<Int32,Int32>(); m.insert(1,2); for (_,v) in &m { return v }; m.borrow_ref(1) }", "cannot outlive"),
         ("fn bad(m: &mut Map<Int32, Int32>) { for e in m.iter_mut() { let k=map.entry_key(e); let v=map.entry_value_mut(e); *v = *k } }", "conflicts with a live borrow"),
         ("fn bad(m: &mut Map<Int32, Int32>) { for e in m.iter_mut() { *map.entry_key(e) = 2 } }", "shared reference"),
         ("fn bad(m: &Map<Int32, Int32>) { for e in m.iter() { map.entry_value_mut(e); } }", "expected &mut Entry"),

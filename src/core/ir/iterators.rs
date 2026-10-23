@@ -1,6 +1,19 @@
 //! Typed for-input conversion and compiler-owned borrowed cursor steps.
 use super::*;
-use crate::parser::ast::{MatchArm, MethodCall, Pattern, PayloadPattern};
+use crate::parser::ast::{BindingPattern, MatchArm, MethodCall, Pattern, PayloadPattern};
+
+/// Only authored by borrowed_iteration, immediately after a successful advance.
+pub(super) fn paired_binding(value: &Expr) -> Option<&Expr> {
+    let Expr::Call { callee, args, .. } = value else {
+        return None;
+    };
+    (callee == "$for_pair_binding").then(|| {
+        let [cursor] = args.as_slice() else {
+            unreachable!("compiler-authored paired binding")
+        };
+        cursor
+    })
+}
 
 impl FunctionPlan {
     pub(super) fn iteration_input(
@@ -124,6 +137,57 @@ impl FunctionPlan {
             args: vec![*operand.clone()],
             span: value.span(),
         };
+        // A direct pair pattern needs only the element addresses. Keep explicit
+        // Entry bindings on the snapshot path, including let destructuring later.
+        if paired {
+            if let Expr::Sequence { exprs, .. } = &success.body {
+                if let Some(Expr::Destructure {
+                    pattern: pattern @ BindingPattern::Tuple { .. },
+                    value: item,
+                    span: pattern_span,
+                    ..
+                }) = exprs.first()
+                {
+                    if matches!(item.as_ref(), Expr::Ident { name: item, .. } if item == name) {
+                        let mut body = exprs.clone();
+                        body[0] = Expr::Destructure {
+                            pattern: pattern.clone(),
+                            mutable: false,
+                            annotation: None,
+                            value: Box::new(Expr::Call {
+                                callee: "$for_pair_binding".into(),
+                                type_args: vec![],
+                                args: vec![Expr::Unary {
+                                    op: if reference.mutable {
+                                        UnaryOp::BorrowMut
+                                    } else {
+                                        UnaryOp::Borrow
+                                    },
+                                    operand: Box::new(Expr::Unary {
+                                        op: UnaryOp::Deref,
+                                        operand: operand.clone(),
+                                        span: value.span(),
+                                    }),
+                                    span: value.span(),
+                                }],
+                                span: *pattern_span,
+                            }),
+                            span: *pattern_span,
+                        };
+                        return Some(Expr::If {
+                            condition: Box::new(call("advance")),
+                            then_branch: Box::new(Expr::Sequence {
+                                exprs: body,
+                                trailing: true,
+                                span,
+                            }),
+                            else_branch: Some(Box::new(fallback.body.clone())),
+                            span,
+                        });
+                    }
+                }
+            }
+        }
         // References stay in direct local bindings, never in Option payloads.
         // Calls use the same provenance, reborrow and suspension checks as any
         // explicit use of advance/current; the for syntax grants no exemptions.
@@ -160,7 +224,6 @@ impl FunctionPlan {
         binding_mutable: bool,
         vars: &mut HashMap<String, Binding>,
     ) -> Result<(), Error> {
-        use crate::parser::ast::BindingPattern;
         let BindingPattern::Tuple { elements, span } = pattern else {
             return Err(type_error(
                 &pattern.span(),
@@ -183,8 +246,9 @@ impl FunctionPlan {
             ));
         }
         let borrowed = entry.ty.reference_type().unwrap();
-        let Type::BufferEntry(pair) = &borrowed.target else {
-            unreachable!()
+        let pair = match &borrowed.target {
+            Type::BufferEntry(pair) | Type::BufferPairIterator(pair) => pair,
+            _ => unreachable!(),
         };
         let Type::Tuple(pair) = pair.as_ref() else {
             unreachable!()

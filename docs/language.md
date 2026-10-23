@@ -3057,6 +3057,8 @@ fn numbered_scores() -> Int32 {
 共享遍历绑定 `&K` 和 `&V`；可变遍历绑定 `&K` 和 `&mut V`，key 始终只读。
 这两个引用可以同时使用，仍不能在引用存活时推进独占游标、修改容器结构或重复可变借用 value。
 编号是本次遍历次序，不能用它推断 Map 的排序或作为稳定键。
+直接使用上述 for 二元模式时，编译器从游标取得两列地址，不逐项分配 Entry 描述符；
+带编号、共享与可变遍历均如此。循环体自身的分配不受此保证约束。
 `let (key, value) = entry` 使用同样规则；Entry 解构目前只接受两个名称或 `_`，
 不创建可存储的引用元组。显式 `entry_key` / `entry_value_mut` 保留原有的保守借用规则。
 
@@ -3209,7 +3211,7 @@ Map 的键始终只读，values_mut 只允许修改值；活动游标/元素借�
 ### Map 成对借用遍历
 
 `table.iter()` 返回 `&map.Iter<K, V>`，`table.iter_mut()` 返回 `&mut map.Iter<K, V>`；
-同名模块函数接收 `&Map` / `&mut Map`。for 每轮分别绑定 `&map.Entry<K, V>` / `&mut map.Entry<K, V>`，
+同名模块函数接收 `&Map` / `&mut Map`。使用单一名称的 for 每轮分别绑定 `&map.Entry<K, V>` / `&mut map.Entry<K, V>`，
 顺序未指定，元素不复制、不移出 Map。K/V 均须满足直接元素引用的无引用存储资格。
 
 ```joky
@@ -3246,18 +3248,22 @@ fn update_entries() -> Int32 {
 可在 for 提前退出后继续使用；活跃的独占 Entry/元素借用阻止推进及冲突访问。
 
 Entry 是编译器识别的借用目标，不是拥有记录或普通元组；不能按值使用、解构成引用元组、
-存入 Option/记录/数组或传给宿主。借用仍保守地覆盖整个 Map，不证明 key/value 字段不重叠：
-不能在 key 引用仍活跃时取得可变 value。先读取或计算 key，再调用 entry_value_mut，如上例。
+存入 Option/记录/数组或传给宿主。显式 entry_key/entry_value_mut 接口保留整 Entry 借用：
+不能在 key 引用仍活跃时取得可变 value。先读取或计算 key，再调用 entry_value_mut，如上例；
+二元绑定模式可证明两列不重叠，允许同时使用 key 与可变 value，见上文“Map 键值解构”。
 共享读取 key 和 value 可同时进行；没有可变 key 接口。借用最后一次使用后恢复原 Map 的权限。
 
 Iter/Entry 的实际类型别名分别是 `joky/iter.Entries<K, V>` / `Entry<K, V>`。
-for 使用该模块的 entries_advance、entries_current、entries_current_mut 固定入口；
+单一名称的 for 使用该模块的 entries_advance、entries_current、entries_current_mut 固定入口；
 它们与 map 的手动接口语义相同，不实现普通 Iterator，也不改变其 @noescape 或 Item 契约。
 符合现有存储资格时，Entry 与其元素可跨语言挂起，恢复不重放取项，取消只由 Map 清理拥有元素。
 
 当前创建游标 O(1)，分配一个任务 arena 描述符；advance O(1)、不分配。
-每次 current/current_mut 为稳定 Entry 分配一个只保存两项地址的小型描述符，耗时 O(1)，
-不复制 key/value；for 每轮一次。因此遍历 n 项额外使用 O(n) 描述符空间，重复手动 current 也累计计费。
+直接二元解构的 `for (key, value)` 和 `for index, (key, value)` 在成功推进后直接取得两列引用，
+每项 O(1)、不分配描述符，遍历自身仅需 O(1) 描述符空间；两列均为 `_` 时也不构造 Entry。
+显式 current/current_mut 仍为稳定 Entry 分配一个只保存两项地址的小型描述符，耗时 O(1)，
+不复制 key/value；`for entry in ...` 每轮一次，即使循环体随后用 let 解构 entry 也如此。
+此快照路径遍历 n 项额外使用 O(n) 描述符空间，重复手动 current 也累计计费。
 这些描述符随根任务 arena 统一释放，预算不足时终止任务并正常清理 Map；不承诺提前回收。
 这是当前实现成本，尚未进行性能测量。
 

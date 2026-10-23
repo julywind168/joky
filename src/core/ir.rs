@@ -327,7 +327,8 @@ pub(crate) enum Op {
         offset: usize,
         path: Vec<usize>,
     },
-    /// Checked disjoint key/value projection from a borrowed Map entry.
+    /// Checked disjoint key/value projection from a borrowed Map entry, or
+    /// directly from a paired cursor immediately after a successful advance.
     EntryProject {
         dst: Slot,
         src: Slot,

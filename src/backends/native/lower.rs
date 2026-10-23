@@ -635,6 +635,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_outbox_emit_v1", vec![types::I64, ptr], vec![]),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
+        ("__joky_buffer_pair_project", vec![ptr, ptr], vec![ptr]),
     ] {
         let mut sig = module.make_signature();
         sig.params = params.into_iter().map(AbiParam::new).collect();
@@ -1996,12 +1997,25 @@ fn lower_ops(
             }
             Op::EntryProject { dst, src, column } => {
                 let entry = slots.read(builder, src);
-                let symbol = if *column == 0 {
-                    "__joky_buffer_entry_key"
+                let pointer = if matches!(
+                    src.ty.reference_type().unwrap().target,
+                    Type::BufferPairIterator(_)
+                ) {
+                    let column = builder.ins().iconst(ptr_ty, *column as i64);
+                    helper(
+                        builder,
+                        refs,
+                        "__joky_buffer_pair_project",
+                        &[entry, column],
+                    )
                 } else {
-                    "__joky_buffer_entry_value"
+                    let symbol = if *column == 0 {
+                        "__joky_buffer_entry_key"
+                    } else {
+                        "__joky_buffer_entry_value"
+                    };
+                    helper(builder, refs, symbol, &[entry])
                 };
-                let pointer = helper(builder, refs, symbol, &[entry]);
                 let target = &dst.ty.reference_type().unwrap().target;
                 let pointer = if target.is_owner() && !target.is_inline_owner() {
                     builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
