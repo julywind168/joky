@@ -58,6 +58,35 @@ Map 迭代沿用未指定顺序与禁止可变 key 的规则。
 第四阶段再评估 IntoIterator 自动转换、enumerate、map/filter 和其他惰性组合器，
 包括 callable 能力、效果及清理契约。
 
+### 第四阶段 A：自动转换（待实施）
+
+本轮先完成循环入口转换，组合器单独推进。普通值通过标准库 IntoIterator 协议
+转换一次；协议提供关联类型 `IntoIter: Iterator` 和消费 self 的 into_iter 方法。
+Item 由返回迭代器的 Iterator 协议确定，不引入重复的关联类型或嵌套关联类型等式。
+现有 Iterator 通过泛型实现返回自身，Array 的实现复用已有 into_iter。
+用户容器可实现 IntoIterator；仅存在同名固有方法不构成协议实现。
+
+借用入口由编译器按标准容器身份接入第三阶段游标：
+
+| 输入 | 入口 | 循环元素 |
+| --- | --- | --- |
+| Array<T> | into_iter | T，消费数组 |
+| &Array<T> / &Slice<T> | iter | &T |
+| &mut Array<T> / &mut Slice<T> | iter_mut | &mut T |
+| &Map<K, V> | iter | &Entry<K, V> |
+| &mut Map<K, V> | iter_mut | &mut Entry<K, V>，key 仍只读 |
+| 已有普通迭代器或借用游标 | 保留原有入口 | 保留原有元素语义 |
+
+这提供 Rust 风格的 `for value in &values` / `&mut values`，但不开放通用引用
+trait 实现、GAT、引用聚合存储或任意用户借用迭代器。Map 按值消费继续显式使用
+into_entries；固定数组不在本轮范围。显式 iter、iter_mut、into_iter 保留。
+输入只求值一次，转换不允许挂起；提前退出、失败与取消沿用已有所有权清理。
+借用来源、互斥、跨挂起存储资格和可变游标移动规则均不放宽。
+
+验收覆盖 Array 三种入口、Slice/Map 借用、自定义与泛型 IntoIterator、标准协议
+身份、一次求值/转换、空输入、提前退出、错误诊断，以及转换和循环期间的资源清理。
+三后端按行为共同覆盖；先执行针对性测试，再执行默认 Debug 检查和相关取消穷举。
+
 ## 5. 第一阶段实施与验收
 
 1. 核对 AST、模块依赖注入、trait 身份绑定和泛型模板检查入口。
