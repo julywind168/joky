@@ -13,7 +13,7 @@ impl IntoIterator for Batch {
 }
 impl Batch {
     // The loop must select the standard trait, not this inherent method.
-    fn into_iter(self) -> Range { range(0, 0) }
+    fn into_iter(self) -> Range<Int32> { range(0, 0) }
 }
 fn batch() -> Batch { record(100); Batch { values: [1, 2, 3] } }
 fn count<I: IntoIterator>(input: I) -> Int32 {

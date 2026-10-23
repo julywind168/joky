@@ -116,6 +116,7 @@ fn array_spread_rejects_invalid_sources_moves_lengths_and_loans() {
     let prefix = "import joky/array.{type Array} import joky/fixed_array.{type FixedArray}\n";
     for (source, code) in [
         ("fn bad() { let a: Array<Int32> = [..(42)] }", ErrorCode::TypeMismatch),
+        ("fn bad() { let a: Array<Int32> = [..0..3] }", ErrorCode::TypeMismatch),
         ("fn bad() { let a: Array<Int32> = [..[true]] }", ErrorCode::TypeMismatch),
         ("fn bad() { let a = [1]; let b = [..a]; a.len(); }", ErrorCode::InvalidAssignment),
         ("fn bad() { let a: Array<Int32> = []; let b = [..a]; a.len(); }", ErrorCode::InvalidAssignment),
@@ -145,7 +146,7 @@ fn array_spread_syntax_and_hidden_import() {
     for source in [
         "fn bad() { [..] }",
         "fn bad() { [...a] }",
-        "fn bad() { [..a ..b] }",
+        "fn bad() { [..a ..b ..c] }",
         "fn bad() { ..[1] }",
     ] {
         assert!(crate::parser::parse(source).is_err(), "{source}");

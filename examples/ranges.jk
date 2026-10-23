@@ -1,0 +1,27 @@
+import joky/io.{println}
+import joky/iter.{type Range, range}
+import joky/integer
+
+fn small_range() -> Range<UInt64> { 0..=uint64(3) }
+
+fn main() {
+    var total = 0
+    for value in 0..3 { total += value }
+    println(total) // 3: the upper bound is excluded.
+
+    total = 0
+    for value in 0..=3 { total += value }
+    println(total) // 6: both bounds are included.
+
+    // One typed endpoint determines the element type; index is independent.
+    for index, value in small_range() { println("{index}: {value}") }
+
+    // Explicit generic calls are also available.
+    let saved = range::<Int8>(-2, 1)
+    for value in saved { println(value) } // -2, -1, 0
+
+    // Inclusive ranges finish without incrementing past the maximum value.
+    for value in UInt64.MAX..=UInt64.MAX { println(value) }
+
+    for _ in 3..1 { println("unreachable") }
+}

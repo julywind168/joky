@@ -93,7 +93,7 @@ impl Parser {
             }
             _ => {}
         }
-        let lhs = self.parse_logical_or()?;
+        let lhs = self.parse_range()?;
         if self.at_expression_break()
             || !matches!(self.peek(), TokenKind::Eq | TokenKind::CompoundAssign(_))
         {
@@ -138,6 +138,37 @@ impl Parser {
                 value,
                 span,
             },
+        })
+    }
+
+    /// Bounded ranges bind below logical operators and above assignment.
+    fn parse_range(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.parse_logical_or()?;
+        if self.at_expression_break()
+            || !matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq)
+        {
+            return Ok(start);
+        }
+        let inclusive = self.peek() == &TokenKind::DotDotEq;
+        self.advance();
+        let end = self.parse_logical_or()?;
+        if !self.at_expression_break()
+            && matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq)
+        {
+            return Err(self.error("Range chains require parentheses".into()));
+        }
+        self.iterators = true;
+        let span = self.span(start.span().start(), end.span().end());
+        Ok(Expr::Call {
+            callee: if inclusive {
+                "$joky_iter.range_inclusive"
+            } else {
+                "$joky_iter.range"
+            }
+            .into(),
+            type_args: vec![],
+            args: vec![start, end],
+            span,
         })
     }
 

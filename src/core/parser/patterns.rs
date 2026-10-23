@@ -91,9 +91,8 @@ impl Parser {
             if self.peek() == &TokenKind::Comma {
                 return Err(self.error("Record pattern fields cannot be empty".into()));
             }
-            if self.peek() == &TokenKind::Dot {
+            if self.peek() == &TokenKind::DotDot {
                 self.advance();
-                self.expect(&TokenKind::Dot)?;
                 rest = true;
                 if self.peek() == &TokenKind::Comma {
                     self.advance();
@@ -256,12 +255,11 @@ impl Parser {
         let mut suffix = Vec::new();
         let mut rest = None;
         while self.peek() != &TokenKind::RBracket {
-            if self.peek() == &TokenKind::Dot {
+            if self.peek() == &TokenKind::DotDot {
                 if rest.is_some() {
                     return Err(self.error("Sequence patterns allow only one rest".into()));
                 }
                 self.advance();
-                self.expect(&TokenKind::Dot)?;
                 let name = if let TokenKind::Ident(name) = self.peek().clone() {
                     self.advance();
                     self.check_binding_name(&name)?;

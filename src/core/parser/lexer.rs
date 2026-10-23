@@ -77,6 +77,8 @@ pub(crate) enum TokenKind {
     RBrace,     // }
     Comma,      // ,
     Dot,        // .
+    DotDot,     // ..
+    DotDotEq,   // ..=
     Colon,      // :
     ColonColon, // ::
     Semi,       // ;
@@ -519,7 +521,17 @@ impl<'a> Lexer<'a> {
             }
             Some('.') => {
                 self.advance();
-                TokenKind::Dot
+                if self.peek() == Some('.') {
+                    self.advance();
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        TokenKind::DotDotEq
+                    } else {
+                        TokenKind::DotDot
+                    }
+                } else {
+                    TokenKind::Dot
+                }
             }
             Some(',') => {
                 self.advance();
@@ -706,6 +718,40 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_tokens_distinguish_floats_tuple_members_and_integer_bounds() {
+        let tokens = Lexer::tokenize(
+            "1..2 1..=2 1.5..=2.5 x.0..x.1 0xffffffffffffffff..=0xffffffffffffffff",
+        )
+        .unwrap();
+        let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::DotDot,
+                TokenKind::IntLit(2),
+                TokenKind::IntLit(1),
+                TokenKind::DotDotEq,
+                TokenKind::IntLit(2),
+                TokenKind::FloatLit("1.5".into()),
+                TokenKind::DotDotEq,
+                TokenKind::FloatLit("2.5".into()),
+                TokenKind::Ident("x".into()),
+                TokenKind::Dot,
+                TokenKind::TupleIndex(0),
+                TokenKind::DotDot,
+                TokenKind::Ident("x".into()),
+                TokenKind::Dot,
+                TokenKind::TupleIndex(1),
+                TokenKind::IntLit(u64::MAX),
+                TokenKind::DotDotEq,
+                TokenKind::IntLit(u64::MAX),
+                TokenKind::Eof,
+            ]
+        );
+    }
 
     #[test]
     fn block_comments_preserve_token_boundaries_lines_and_utf8_spans() {

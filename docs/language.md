@@ -2810,7 +2810,7 @@ fn sum(n: Int32) -> Int32 {
 可以修改外层 `var`，内部同名声明会遮蔽外层绑定。声明、赋值和 `while` 正常结束时的结果
 都是 `Unit`；循环体正常结束时最后一个表达式的值会被丢弃。
 
-运算符从高到低为一元 `-` / `!` / `~`、乘除与余数、加减、移位、`&`、`^`、`|`、比较、`&&`、`||`、赋值、分号序列。
+运算符从高到低为一元 `-` / `!` / `~`、乘除与余数、加减、移位、`&`、`^`、`|`、比较、`&&`、`||`、`..` / `..=`、赋值、分号序列。
 移位和二元位运算在各自优先级内左结合；位运算优先于比较，`flags & mask == 0` 表示 `(flags & mask) == 0`。
 加减优先于移位，`1 << 2 + 1` 为 8，`1 << 1 << 2` 为 8。
 一元运算右结合，四则运算同级左结合：`1 + 2 * 3` 为 7，`(1 + 2) * 3` 为 9。
@@ -2971,11 +2971,9 @@ fn drain(values: &mut Array<Int32>) {
 普通 Iterator 每轮同步调用 next，Some 的载荷绑定到 pattern，第一次 None 结束循环。
 
 ```joky
-import joky/iter.{range}
-
 fn sum() -> Int32 {
     var total = 0
-    for n in range(0, 10) { total += n }
+    for n in 0..10 { total += n }
     total
 }
 ```
@@ -2988,12 +2986,10 @@ fn sum() -> Int32 {
 | `next<I: Iterator>(&mut I) @noescape -> Option<I.Item>` | 显式选择 Iterator.next，忽略同名固有方法 |
 | `IntoIterator` | 关联类型 IntoIter: Iterator；`fn into_iter(self) -> Self.IntoIter` |
 | `into_iter<I: IntoIterator>(I) -> I.IntoIter` | 显式选择 IntoIterator.into_iter，忽略同名固有方法 |
-| `Range` | Copy 的 Int32 递增迭代器，字段私有 |
-| `range(start: Int32, end: Int32) -> Range` | 半开区间，包含 start、不包含 end；start >= end 时为空 |
-
-range 不在 prelude 中，需要显式导入。next 在耗尽的 Range 上始终返回 None，
-整数最大/最小边界按同样规则处理，不通过 end + 1 构造区间。
-其他整数类型、步长、倒序、闭区间、范围运算符与 match 范围模式尚未提供。
+| `Range<T: Copy>` | Copy 的递增迭代器，字段私有；迭代要求 T 实现 Step |
+| `Step` | `less(self, other: Self) -> Bool` 与 `successor(self) -> Option<Self>` |
+| `range<T: Copy + Step>(start: T, end: T) -> Range<T>` | 半开区间，包含 start、不包含 end；start >= end 时为空 |
+| `range_inclusive<T: Copy + Step>(start: T, end: T) -> Range<T>` | 闭区间，包含两个端点；start > end 时为空 |
 
 自定义迭代器显式导入 `type Iterator` 并实现关联 Item 和 next。泛型函数必须声明
 `I: Iterator`，可用 `I: Iterator<Item = Int32>` 限定元素类型；仅有同名 next 方法不足以参与 for。
@@ -3010,6 +3006,47 @@ Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失
 迭代器在结束或提前退出时清理；循环体可在挂起函数中挂起，恢复不会重新求值输入或重放 next。
 迭代器、元素及引用仍须满足现有跨挂起存储资格，取消先清理子调用再清理本轮元素和迭代器。
 map/filter 等惰性组合器仍属于[后续工作](for-iterators.md)。
+
+### 范围表达式
+
+`a..b` 等价于标准库 `range(a, b)`，`a..=b` 等价于 `range_inclusive(a, b)`。
+表达式不需要导入，关闭 prelude 仍可用；直接调用函数则需要导入 `joky/iter`。
+两个端点从左到右各求值一次，可挂起，也可将范围保存在变量中或作为参数、返回值。
+同名用户函数不会改变范围表达式的含义。
+
+```joky
+import joky/iter.{type Range, range}
+
+fn small_range() -> Range<UInt64> { 0..=uint64(3) }
+
+fn range_sum() -> Int32 {
+    var total = 0
+    for n in 0..3 { total += n }       // 0, 1, 2
+    for n in 0..=3 { total += n }      // 0, 1, 2, 3
+    let saved = range::<Int32>(1, 4)
+    for n in saved { total += n }
+    total                             // 15
+}
+```
+
+内置 Step 实现覆盖 Int8/16/32/64、UInt8/16/32/64。端点按普通泛型调用规则推导为同一类型：
+无约束整数字面量默认 Int32，一个已定型端点能约束另一个字面量，已有不同整数类型不能隐式混用。
+例如 `0..uint64(n)` 得到 `Range<UInt64>`。当前不会从循环体、接收变量或函数返回类型
+反向推导泛型调用的端点；写 `let r: Range<UInt64> = 0..uint64(3)`，或显式调用
+`range::<UInt64>(0, 3)`。旧类型标注 `Range` 应迁移为 `Range<Int32>`。
+
+范围只递增；逆序范围为空，闭区间端点相等时产生一项。耗尽后 next 始终返回 None；
+即使终点为整数最大值，闭区间也不会计算 end + 1 或环绕。
+Range 是 Copy 值，按值传给 for 会复制当前迭代状态，不推进原变量。
+自定义 Copy 类型可实现 Step：less 必须表示严格全序，successor 返回紧邻的后继，
+在最大值返回 None，不得环绕或停留在原值。Bool、浮点、Rune 和 String 没有内置 Step。
+
+范围运算优先级低于逻辑运算、高于赋值；`1 + 2..2 * 3` 表示 `(1 + 2)..(2 * 3)`。
+不允许无括号连写 `a..b..c`。`..` / `..=` 必须连续；在以换行分隔语句的位置，
+运算符前换行结束原表达式，运算符后可换行。数组展开 `[0, ..values]`、序列与记录 rest 模式仍沿用原规则。
+数组展开只接受已有序列类型，`[..0..3]` 不会把范围自动收集成数组。
+暂不支持省略端点、步长、倒序、用范围切片或 match 范围模式。
+可运行示例见 [examples/ranges.jk](../examples/ranges.jk)。
 
 ### 可选循环编号
 

@@ -25,19 +25,73 @@ pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
     Iterator.next(iterator)
 }
 
-pub struct Range { current: Int32, end: Int32 }
-
-// Ascending, half-open range. Reversed bounds produce an empty iterator.
-pub fn range(start: Int32, end: Int32) -> Range {
-    Range { current: start, end: end }
+// A strict order and its immediate successor; None marks the greatest value.
+// Implementations must advance monotonically without wrapping.
+pub trait Step {
+    fn less(self, other: Self) -> Bool
+    fn successor(self) -> Option<Self>
 }
 
-impl Iterator for Range {
-    type Item = Int32
-    fn next(&mut self) -> Option<Int32> {
-        if self.current >= self.end { return None }
+impl Step for Int8 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 127 { None } else { Some(self + 1) } }
+}
+impl Step for Int16 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 32767 { None } else { Some(self + 1) } }
+}
+impl Step for Int32 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 2147483647 { None } else { Some(self + 1) } }
+}
+impl Step for Int64 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 9223372036854775807 { None } else { Some(self + 1) } }
+}
+impl Step for UInt8 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 255 { None } else { Some(self + 1) } }
+}
+impl Step for UInt16 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 65535 { None } else { Some(self + 1) } }
+}
+impl Step for UInt32 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 4294967295 { None } else { Some(self + 1) } }
+}
+impl Step for UInt64 {
+    fn less(self, other: Self) -> Bool { self < other }
+    fn successor(self) -> Option<Self> { if self == 18446744073709551615 { None } else { Some(self + 1) } }
+}
+
+pub struct Range<T: Copy> { current: T, end: T, inclusive: Bool, done: Bool }
+
+// Ascending, bounded ranges. Reversed bounds produce an empty iterator.
+pub fn range<T: Copy + Step>(start: T, end: T) -> Range<T> {
+    Range { current: start, end: end, inclusive: false, done: false }
+}
+pub fn range_inclusive<T: Copy + Step>(start: T, end: T) -> Range<T> {
+    Range { current: start, end: end, inclusive: true, done: false }
+}
+
+impl<T: Copy + Step> Iterator for Range<T> {
+    type Item = T
+    fn next(&mut self) -> Option<T> {
+        if self.done { return None }
+        if Step.less(self.end, self.current) || (!self.inclusive && !Step.less(self.current, self.end)) {
+            self.done = true
+            return None
+        }
         let value = self.current
-        self.current += 1
+        if !Step.less(self.current, self.end) {
+            self.done = true
+        } else {
+            match Step.successor(self.current) {
+                Some(next) => { self.current = next },
+                None => { self.done = true }
+            }
+        }
         Some(value)
     }
 }

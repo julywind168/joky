@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn range_expressions_preserve_precedence_spans_and_newline_boundaries() {
+    let source = "fn f() { let r = 1 + 2..=4 * 5\nlet s = false || true..false && true }";
+    let module = parse(source).unwrap();
+    let Item::FnDef(function) = &module.items[0] else {
+        panic!()
+    };
+    let Expr::Block { exprs, .. } = &function.body else {
+        panic!()
+    };
+    let Expr::Let { value, .. } = &exprs[0] else {
+        panic!()
+    };
+    let Expr::Call {
+        callee, args, span, ..
+    } = value.as_ref()
+    else {
+        panic!()
+    };
+    assert_eq!(callee, "$joky_iter.range_inclusive");
+    assert_eq!(span.slice(source), Some("1 + 2..=4 * 5"));
+    assert!(matches!(args[0], Expr::BinOp { op: BinOp::Add, .. }));
+    assert!(matches!(args[1], Expr::BinOp { op: BinOp::Mul, .. }));
+    let Expr::Let { value, .. } = &exprs[1] else {
+        panic!()
+    };
+    let Expr::Call { args, .. } = value.as_ref() else {
+        panic!()
+    };
+    assert!(matches!(
+        args[0],
+        Expr::Logical {
+            op: LogicalOp::Or,
+            ..
+        }
+    ));
+    assert!(matches!(
+        args[1],
+        Expr::Logical {
+            op: LogicalOp::And,
+            ..
+        }
+    ));
+    parse("fn f() { let r = 1..\n3\nlet s = 4..=5 }").unwrap();
+    assert!(parse("fn f() { let r = 1\n..3 }").is_err());
+    for body in ["0..1..2", "0..=1..2", "0..1..=2"] {
+        assert!(parse(&format!("fn f() {{ {body} }}"))
+            .unwrap_err()
+            .message
+            .contains("Range chains"));
+    }
+}
+
+#[test]
 fn match_arms_allow_bitwise_or_and_scope_branches_require_delimiters() {
     for source in [
             "enum E { A, B } fn f(e: E) -> Int32 { match e { A => 1 | 2, B => { 4 | 8 } } }",

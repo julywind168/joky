@@ -4,6 +4,7 @@
 记录见第 6–11 节；第四阶段 A 的 IntoIterator 与借用自动转换已完成。
 第 12–13 节的 for 可选编号与 Map 键值解构已完成，取代 enumerate；其余组合器待后续实施。
 第 14 节记录 Map 直接二元解构的逐项描述符分配消除。
+第 15–16 节记录泛型 Range、闭区间及 `..` / `..=` 表达式的设计与实现。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -517,3 +518,39 @@ JIT/AOT 共用一个无分配的地址投影 helper，解释器调用相同的�
 前导负号与浮点/元组点号词法、优先级、标准身份、泛型/别名、无 prelude、展开/rest 兼容性，
 以及端点和循环体挂起、失败与取消。执行三后端针对性用例后运行默认 Debug 检查，
 相关取消路径运行 Debug 穷举；不进行性能测量或 Release 验收。
+
+## 16. 整数范围与范围表达式实现（2026-10-24）
+
+第 15 节的范围功能已实现，当前语义与类型推导规则见
+[范围表达式](language.md#范围表达式)。公开类型改为 Range<T>，旧的显式 Range 类型标注
+已迁移为 Range<Int32>；原有 range(0, n) 调用继续可用。
+
+范围表达式直接降低为标准库调用，三后端复用现有泛型、调用、循环及 CPS 路径。
+标准库提供八种整数的 Step 实现，且允许用户为 Copy 类型实现该协议。
+沿用普通泛型调用推导：函数返回类型或接收变量的 Range<UInt64> 标注不会反推端点，
+需给一个端点明确类型，或显式调用 range::<UInt64>；不在本阶段扩展整个语言的结果上下文推导。
+
+新增共享 fixture 覆盖八种整数及最小/最大值、半开与闭区间、逆序/空区间、重复耗尽、
+泛型与自定义 Step、已定型端点、元组点号、编号循环和展开/rest 兼容性。
+两种 VM 与独立 AOT 执行相同 fixture，检查端点顺序、一次求值、挂起恢复及失败清理；
+逐指令取消穷举检查拥有值恰好清理一次、任务 arena 归零。
+新示例为 [examples/ranges.jk](../examples/ranges.jk)，原 for 示例已改用范围表达式。
+
+实际验证使用 Debug：
+
+- `cargo test --lib -- ranges_ range_expressions range_tokens for_iter for_indexed`：19 项通过，2 项穷举默认忽略。
+- `cargo test --test cli -- ranges_execute for_into_iter`：2 项独立 AOT 用例通过。
+- 当前 Debug 库测试二进制的 `--ignored exhaustive_ranges_instruction_cancellation`：逐指令取消穷举通过。
+- `./scripts/check.sh`：格式与 Clippy 通过；库测试 1570 项通过，1 项旧数组展开语法断言失败，122 项默认忽略。
+  该旧断言把 `[..a ..b]` 当作解析错误；范围语法加入后它表示展开范围，改为验证类型错误，并保留连续范围的语法拒绝。
+  修改后 `cargo test --lib array_spread` 的 4 项测试全部通过，1 项穷举默认忽略。
+- 最终 `cargo test --lib ranges_reject_mixed_or_unsupported_endpoints_and_incomplete_syntax`、
+  `cargo fmt -- --check` 与 `cargo clippy --all-targets -- -D warnings` 通过。
+- 两个 examples 与语言参考中的范围示例均关闭 prelude，实际运行 JIT、解释器和独立 AOT，输出符合预期。
+- 默认脚本在旧断言处停止后，单独补跑其余检查：`cargo test --bins --test '*'` 的 302 项 CLI 与其他默认集成测试全部通过，
+  `cargo test --doc` 通过；`cargo test --bench while -- --iterations 0,1000` 与
+  `cargo test --bench map -- --iterations 0,32` 的三后端短输入正确性通过。
+- `cargo build --bin joky --lib` 刷新本地 Debug 可执行文件与静态库；文档本地链接、`git diff --check` 通过。
+
+上述检查合计覆盖默认 Debug 检查项；修正旧断言后只重跑受影响的测试、格式与 Clippy，未重复整个库测试集。
+未运行 Release、无关压力或性能测量。

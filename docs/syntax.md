@@ -304,7 +304,8 @@ parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | 
 ## 7. 条件、循环与提前结束
 
 `if` / `else`、`else if`、`while`、`for`、`return`、`break` 和 `continue` 均已实现。
-for 使用同步 Iterator.next 与关联 Item；范围首版使用显式导入的 Int32 `range(start, end)`。
+for 使用同步 Iterator.next 与关联 Item；`Range<T>` 支持八种整数及实现 Step 的 Copy 类型。
+`a..b` 为半开区间，`a..=b` 为闭区间；也可显式导入 range/range_inclusive 调用。
 Array.into_iter 按原顺序消费元素，Array 与 Slice 的 iter/iter_mut 通过借用游标给出 &T / &mut T。
 Map 的 keys/values/values_mut 切片可通过相同接口进行单列遍历；
 Map.iter/iter_mut 每轮提供 Entry 借用视图，键只读、值按游标权限访问。
@@ -313,8 +314,8 @@ for (key, value) in &table 支持键值解构；for index, (key, value) in &mut 
 借用游标使用 advance/current 两步接口，不改变普通 Iterator 的 @noescape 契约。
 普通输入经 IntoIterator 转换一次；Array 支持按值消费以及 &values / &mut values 借用入口。
 Slice 与 Map 引用也自动生成借用游标，自定义普通容器可实现 IntoIterator。
-当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器)，组合器及 `..` / `..=`
-表达式与范围模式的后续目标见 [专项计划](for-iterators.md)。
+当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器) 和 [范围表达式](language.md#范围表达式)，
+组合器与范围模式的后续目标见 [专项计划](for-iterators.md)。
 以下示例当前可运行：
 
 ```joky

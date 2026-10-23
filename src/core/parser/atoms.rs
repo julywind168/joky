@@ -606,10 +606,9 @@ impl Parser {
         let newlines = std::mem::replace(&mut self.newline_sensitive, false);
         let mut elements = Vec::new();
         while self.peek() != &TokenKind::RBracket {
-            let value = if self.peek() == &TokenKind::Dot {
+            let value = if self.peek() == &TokenKind::DotDot {
                 let start = self.peek_span().start();
                 self.advance();
-                self.expect(&TokenKind::Dot)?;
                 let value = self.parse_assignment()?;
                 Expr::Spread {
                     span: self.span(start, value.span().end()),

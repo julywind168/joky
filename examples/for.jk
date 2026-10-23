@@ -1,11 +1,10 @@
 import joky/io.{println}
-import joky/iter.{range}
 import joky/map.{type Map}
 
 fn ranges() {
     var total = 0
-    // range excludes its upper bound; continue and break work as usual.
-    for value in range(0, 10) {
+    // A half-open range excludes its upper bound; continue and break work as usual.
+    for value in 0..10 {
         if value == 6 { break }
         if value % 2 != 0 { continue }
         total += value
