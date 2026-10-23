@@ -164,9 +164,34 @@ impl Parser {
                 _ => return Err(self.error("Expected an integer after '-' in pattern".into())),
             };
             self.advance();
-            PayloadPattern::Literal {
-                literal,
-                span: self.span(start, self.last_span.end()),
+            if matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq) {
+                if !matches!(literal, Literal::Integer { .. }) {
+                    return Err(self.error("Range patterns require integer literal bounds".into()));
+                }
+                let inclusive = self.peek() == &TokenKind::DotDotEq;
+                self.advance();
+                let negative = self.peek() == &TokenKind::Minus;
+                if negative {
+                    self.advance();
+                }
+                let TokenKind::IntLit(magnitude) = self.peek().clone() else {
+                    return Err(self.error("Range patterns require integer literal bounds".into()));
+                };
+                self.advance();
+                PayloadPattern::Range {
+                    start: literal,
+                    end: Literal::Integer {
+                        magnitude,
+                        negative,
+                    },
+                    inclusive,
+                    span: self.span(start, self.last_span.end()),
+                }
+            } else {
+                PayloadPattern::Literal {
+                    literal,
+                    span: self.span(start, self.last_span.end()),
+                }
             }
         } else if self.peek() == &TokenKind::LParen {
             self.advance();

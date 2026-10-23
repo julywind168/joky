@@ -2825,3 +2825,38 @@ fn range_slices_execute_views_suspension_and_checked_closed_bounds_in_aot() {
     assert_eq!(output.stdout, b"99\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("Invalid inclusive slice bounds"));
 }
+
+#[test]
+fn range_patterns_execute_integer_domains_owned_matches_and_suspension_in_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/range_patterns.jk")
+        .replace(
+            "extern fn record(x: Int32) -> Int32",
+            "fn record(x: Int32) -> Int32 { println(x); x }",
+        )
+        .replace(
+            "extern fn delayed_value(x: Int32) @suspends -> Int32",
+            "fn delayed_value(x: Int32) @suspends -> Int32 { record(x); task.yield_now(); x + 1 }",
+        );
+    let source = format!("import joky/io.{{println}}\nimport joky/task\n{source}");
+    work.write(
+        "patterns.jk",
+        &format!("{source}\nfn main() @suspends {{ println(compute()); println(pending()); }}"),
+    );
+    success(&work.cli(&["build", "--no-prelude", "patterns.jk"]));
+    let output = Command::new(work.path().join("patterns")).output().unwrap();
+    success(&output);
+    assert_eq!(
+        output.stdout,
+        b"21\n31\n22\n23\n2\n42\n-99\n1\n1\n40\n40\n99\n42\n"
+    );
+    work.write(
+        "failure.jk",
+        &format!("{source}\nfn main() {{ failure() }}"),
+    );
+    success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
+    let output = Command::new(work.path().join("failure")).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stdout, b"3\n99\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("range failure"));
+}

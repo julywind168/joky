@@ -370,13 +370,13 @@ impl FunctionPlan {
         span: Span,
     ) -> Result<(Type, Option<bool>), Error> {
         match ty {
-            Type::Enum(_) | Type::FixedArray(_) | Type::Bool | Type::Rune => Ok((ty.clone(), None)),
+            Type::Enum(_) | Type::Tuple(_) | Type::FixedArray(_) | Type::Bool | Type::Rune => Ok((ty.clone(), None)),
             _ if ty.integer().is_some() || matches!(ty, Type::Record(r) if r.array) => {
                 Ok((ty.clone(), None))
             }
             Type::Reference(r) => {
                 let target = self.pointee(&r.target, types)?;
-                if matches!(target, Type::Enum(_) | Type::Bool | Type::Rune)
+                if matches!(target, Type::Enum(_) | Type::Tuple(_) | Type::Bool | Type::Rune)
                     || target.integer().is_some()
                     || super::arrays::element_type(&target).is_some()
                 {
@@ -385,13 +385,13 @@ impl FunctionPlan {
                 Err(type_error(
                     &span,
                     ErrorCode::TypeMismatch,
-                    "match requires an enum, integer, Bool, Rune, or sequence value or reference",
+                    "match requires an enum, tuple, integer, Bool, Rune, or sequence value or reference",
                 ))
             }
             _ => Err(type_error(
                 &span,
                 ErrorCode::TypeMismatch,
-                "match requires an enum, integer, Bool, Rune, or sequence value or reference",
+                "match requires an enum, tuple, integer, Bool, Rune, or sequence value or reference",
             )),
         }
     }

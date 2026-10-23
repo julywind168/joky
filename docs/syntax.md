@@ -316,7 +316,7 @@ for (key, value) in &table 支持键值解构；for index, (key, value) in &mut 
 普通输入经 IntoIterator 转换一次；Array 支持按值消费以及 &values / &mut values 借用入口。
 Slice 与 Map 引用也自动生成借用游标，自定义普通容器可实现 IntoIterator。
 当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器) 和 [范围表达式](language.md#范围表达式)，
-组合器与范围模式的后续目标见 [专项计划](for-iterators.md)。
+整数范围模式见 [当前参考](language.md#整数范围模式)，组合器等后续目标见 [专项计划](for-iterators.md)。
 以下示例当前可运行：
 
 ```joky
@@ -723,7 +723,7 @@ fn present(result: Result<Int32, String>) -> String {
 
 整数 `to_string` 由文本库提供。match 是表达式，要求穷尽所有情况，
 正常完成的分支具有相同结果类型；不提供隐式贯穿。返回、失败等终止分支不参与结果类型合并。
-已实现整数/Bool/Rune 字面量、序列、绑定、`_`、载荷元组和枚举构造模式；`_` 覆盖尚未列举的情况。
+已实现整数/Bool/Rune 字面量、整数范围、序列、绑定、`_`、元组和枚举构造模式；`_` 覆盖尚未列举的情况。
 分支书写为 `pattern => expression`，多步分支可用块或括号序列，不要求尾随分号。相邻分支必须用逗号或真实换行分隔，块分支也遵循同一规则；允许尾逗号。
 目标设计中同名构造项由被匹配类型或期望类型确定，无法唯一确定时需写 `Result.Ok` 等限定名。
 

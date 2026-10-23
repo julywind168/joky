@@ -104,7 +104,6 @@ fn ranges_reject_mixed_or_unsupported_endpoints_and_incomplete_syntax() {
         "let r = 0..1..2",
         "let r = 0..=1..=2",
         "let r = [..=3]",
-        "match 1 { 0..=3 => {}, _ => {} }",
         "let r = [1, 2]; r[0..1];",
     ] {
         let source = format!("import joky/iter.{{range, type Range}} fn bad() {{ {body} }}");

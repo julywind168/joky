@@ -1183,6 +1183,12 @@ pub enum PayloadPattern {
         literal: Literal,
         span: Span,
     },
+    Range {
+        start: Literal,
+        end: Literal,
+        inclusive: bool,
+        span: Span,
+    },
     Name {
         name: String,
         span: Span,
@@ -1211,7 +1217,7 @@ impl PayloadPattern {
     pub fn span(&self) -> Span {
         match self {
             Self::Sequence(p) => p.span,
-            Self::Literal { span, .. } => *span,
+            Self::Literal { span, .. } | Self::Range { span, .. } => *span,
             Self::Name { span, .. }
             | Self::Discard { span }
             | Self::Tuple { span, .. }
@@ -1229,7 +1235,7 @@ impl PayloadPattern {
                     out.push(name.clone());
                 }
             }
-            Self::Literal { .. } => {}
+            Self::Literal { .. } | Self::Range { .. } => {}
             Self::Name { name, .. } => out.push(name.clone()),
             Self::Discard { .. } => {}
             Self::Tuple { elements, .. } => elements.iter().for_each(|element| element.names(out)),

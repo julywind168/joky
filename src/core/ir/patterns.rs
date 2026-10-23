@@ -11,6 +11,7 @@ pub(super) struct CheckedPattern {
 pub(super) enum Kind {
     Sequence(Box<super::sequence_patterns::CheckedSequence>),
     Literal(Constant, u64),
+    Range(Box<IntegerRange>),
     Any(Option<String>),
     Tuple(Vec<CheckedPattern>),
     Variant {
@@ -19,6 +20,31 @@ pub(super) enum Kind {
     },
     /// Declared field indices in pattern order; the type carries the record.
     Record(Vec<(usize, CheckedPattern)>),
+}
+
+pub(super) struct IntegerRange {
+    start: Constant,
+    end: Constant,
+    inclusive: bool,
+    lower: i128,
+    upper: i128,
+}
+
+fn range_endpoint(literal: &Literal, ty: &Type, span: Span) -> Result<(Constant, i128), Error> {
+    let Literal::Integer {
+        magnitude,
+        negative,
+    } = literal
+    else {
+        return Err(type_error(
+            &span,
+            ErrorCode::InvalidPattern,
+            "Range patterns require integer literal bounds",
+        ));
+    };
+    let (_, constant) = integer_literal(*magnitude, *negative, Some(ty), span)?;
+    let value = i128::from(*magnitude);
+    Ok((constant, if *negative { -value } else { value }))
 }
 
 impl CheckedPattern {
@@ -44,7 +70,7 @@ impl CheckedPattern {
                 };
                 vars.insert(name.clone(), payload_binding(&ty, 0));
             }
-            Kind::Literal(..) => {}
+            Kind::Literal(..) | Kind::Range(_) => {}
             Kind::Sequence(p) => {
                 for child in p.prefix.iter().chain(&p.suffix) {
                     child.hints(vars, borrowed);
@@ -69,7 +95,7 @@ impl CheckedPattern {
         use crate::memory_layout::MemoryLayoutShape;
         if matches!(
             self.kind,
-            Kind::Any(_) | Kind::Literal(..) | Kind::Sequence(_)
+            Kind::Any(_) | Kind::Literal(..) | Kind::Range(_) | Kind::Sequence(_)
         ) {
             return Ok(Vec::new());
         }
@@ -85,7 +111,9 @@ impl CheckedPattern {
                 Kind::Tuple(elements) => elements.iter().map(|p| (p, 0)).collect(),
                 Kind::Variant { payload, .. } => payload.iter().map(|p| (p.as_ref(), 0)).collect(),
                 Kind::Record(fields) => fields.iter().map(|(_, p)| (p, 0)).collect(),
-                Kind::Any(_) | Kind::Literal(..) | Kind::Sequence(_) => unreachable!(),
+                Kind::Any(_) | Kind::Literal(..) | Kind::Range(_) | Kind::Sequence(_) => {
+                    unreachable!()
+                }
             });
         }
         let layout = self
@@ -112,7 +140,7 @@ impl CheckedPattern {
 
     pub(super) fn binds(&self) -> bool {
         match &self.kind {
-            Kind::Literal(..) => false,
+            Kind::Literal(..) | Kind::Range(_) => false,
             Kind::Sequence(p) => {
                 p.rest.as_ref().is_some_and(Option::is_some)
                     || p.prefix.iter().chain(&p.suffix).any(Self::binds)
@@ -126,6 +154,7 @@ impl CheckedPattern {
     fn coverage(&self) -> Arc<Coverage> {
         Arc::new(match &self.kind {
             Kind::Literal(_, bits) => Coverage::Literal(*bits),
+            Kind::Range(range) => Coverage::Interval(range.lower, range.upper),
             Kind::Sequence(p) => Coverage::Sequence {
                 prefix: p.prefix.iter().map(Self::coverage).collect(),
                 suffix: p.suffix.iter().map(Self::coverage).collect(),
@@ -244,6 +273,37 @@ impl FunctionPlan {
                     types,
                     Self::check_payload_pattern,
                 )
+            }
+            PayloadPattern::Range {
+                start,
+                end,
+                inclusive,
+                ..
+            } => {
+                if ty.integer().is_none() || *ty == Type::Rune {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidPattern,
+                        "Range patterns require an integer scrutinee",
+                    ));
+                }
+                let (start, lower) = range_endpoint(start, ty, span)?;
+                let (end, last) = range_endpoint(end, ty, span)?;
+                let upper = if *inclusive { last } else { last - 1 };
+                if lower > upper {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidPattern,
+                        "Range pattern is empty or reversed",
+                    ));
+                }
+                Kind::Range(Box::new(IntegerRange {
+                    start,
+                    end,
+                    inclusive: *inclusive,
+                    lower,
+                    upper,
+                }))
             }
             PayloadPattern::Literal { literal, .. } => {
                 let (actual, constant, bits) = match literal {
@@ -411,6 +471,27 @@ impl FunctionPlan {
         }
         match &pattern.kind {
             Kind::Sequence(_) => unreachable!(),
+            Kind::Range(range) => {
+                let actual = Slot {
+                    index,
+                    ty: pattern.ty.clone(),
+                };
+                let start = self.slot(pattern.ty.clone())?;
+                self.emit(Op::Literal(start.clone(), range.start.clone()));
+                self.pattern_compare(actual.clone(), start, BinOp::Ge, failure)?;
+                let end = self.slot(pattern.ty.clone())?;
+                self.emit(Op::Literal(end.clone(), range.end.clone()));
+                self.pattern_compare(
+                    actual,
+                    end,
+                    if range.inclusive {
+                        BinOp::Le
+                    } else {
+                        BinOp::Lt
+                    },
+                    failure,
+                )?;
+            }
             Kind::Literal(constant, _) => {
                 self.literal_pattern_test(
                     Slot {
@@ -497,10 +578,10 @@ impl FunctionPlan {
             let root = self.sequence_root(root, &pattern.ty, offset, false, &[])?;
             return self.sequence_tests(p, &root, failure);
         }
-        if let Kind::Literal(constant, _) = &pattern.kind {
+        if matches!(&pattern.kind, Kind::Literal(..) | Kind::Range(_)) {
             let reference = self.pattern_reference(root, &pattern.ty, offset, false, &[])?;
             let actual = self.read_local(reference)?.unwrap();
-            return self.literal_pattern_test(actual, constant.clone(), failure);
+            return self.match_pattern_tests(pattern, actual.index, failure);
         }
         if let Kind::Variant { tag, .. } = &pattern.kind {
             let reference = self.pattern_reference(root, &Type::Int32, offset, false, &[])?;
@@ -654,7 +735,7 @@ impl FunctionPlan {
             value
         };
         match &pattern.kind {
-            Kind::Literal(..) | Kind::Sequence(_) => {}
+            Kind::Literal(..) | Kind::Range(_) | Kind::Sequence(_) => {}
             Kind::Any(Some(name)) => {
                 let binding = self.local_binding(
                     name,
@@ -722,6 +803,7 @@ enum Coverage {
     Any,
     Ctor(usize, Vec<Arc<Coverage>>),
     Literal(u64),
+    Interval(i128, i128),
     Sequence {
         prefix: Vec<Arc<Coverage>>,
         suffix: Vec<Arc<Coverage>>,
@@ -885,6 +967,69 @@ fn useful(
         }
         return Ok(false);
     }
+    if let Some(integer) = types[0].integer().filter(|_| {
+        types[0] != Type::Rune
+            && (matches!(query[0].as_ref(), Coverage::Interval(..))
+                || matrix
+                    .iter()
+                    .any(|row| matches!(row[0].as_ref(), Coverage::Interval(..))))
+    }) {
+        let (minimum, maximum) = if integer.signed() {
+            let half = 1_i128 << (integer.bits() - 1);
+            (-half, half - 1)
+        } else {
+            (0, (1_i128 << integer.bits()) - 1)
+        };
+        let interval = |pattern: &Coverage| match pattern {
+            Coverage::Any => (minimum, maximum),
+            Coverage::Interval(lower, upper) => (*lower, *upper),
+            Coverage::Literal(bits) => {
+                let value = if integer.signed() {
+                    *bits as i64 as i128
+                } else {
+                    i128::from(*bits)
+                };
+                (value, value)
+            }
+            _ => unreachable!("integer pattern coverage"),
+        };
+        let (lower, upper) = interval(&query[0]);
+        // Every interval is constant on each cell, preserving correlations with
+        // the remaining columns without enumerating any integer values. i128
+        // also represents UInt64::MAX + 1 for the exclusive analysis boundary.
+        let mut cuts = vec![lower, upper + 1];
+        for row in matrix {
+            let (start, end) = interval(&row[0]);
+            if start <= upper && end >= lower {
+                cuts.push(start.max(lower));
+                cuts.push((end + 1).min(upper + 1));
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        for cell in cuts.windows(2) {
+            // Charge the scan even when specialization discards most rows.
+            *budget = budget.checked_sub(matrix.len()).ok_or_else(|| {
+                type_error(
+                    &span,
+                    ErrorCode::ResourceLimit,
+                    "Match coverage analysis exceeds 65536 steps",
+                )
+            })?;
+            let rows: Vec<_> = matrix
+                .iter()
+                .filter(|row| {
+                    let (start, end) = interval(&row[0]);
+                    start <= cell[0] && cell[0] <= end
+                })
+                .map(|row| row[1..].to_vec())
+                .collect();
+            if useful(&rows, &query[1..], &types[1..], budget, span, depth + 1)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
     if types[0].integer().is_some() || types[0] == Type::Bool {
         let specialize = |value: Option<u64>, budget: &mut usize| {
             let rows: Vec<_> = matrix
@@ -953,7 +1098,9 @@ fn useful(
         useful(&rows, &candidate, &new_types, budget, span, depth + 1)
     };
     match head.as_ref() {
-        Coverage::Literal(_) | Coverage::Sequence { .. } => unreachable!("typed pattern coverage"),
+        Coverage::Literal(_) | Coverage::Interval(..) | Coverage::Sequence { .. } => {
+            unreachable!("typed pattern coverage")
+        }
         Coverage::Ctor(tag, args) => specialized(*tag, args.clone(), budget),
         Coverage::Any => {
             let tags: HashSet<_> = matrix

@@ -1,0 +1,32 @@
+import joky/io.{println}
+import joky/option.{type Option, Some, None}
+
+fn grade(score: Int32) -> String {
+    match score {
+        0..60 => "below",
+        60..=100 => "pass",
+        _ => "invalid"
+    }
+}
+
+fn band(value: UInt8) -> Int32 {
+    // These two ranges cover every UInt8 value, so no fallback is needed.
+    match value { 0..128 => 0, 128..=255 => 1 }
+}
+
+fn overlap(value: Int32) -> Int32 {
+    // A partially overlapping arm is useful for the values not matched earlier.
+    match value { 0..=10 => 1, 5..=15 => 2, _ => 0 }
+}
+
+fn accepted(score: Option<Int32>) -> Bool {
+    match score { Some(60..=100) => true, Some(_) => false, None => false }
+}
+
+fn main() {
+    for score in [-1, 59, 60, 100, 101] { println("{score}: {grade(score)}") }
+    println(band(255)) // 1
+    println(overlap(7)) // 1
+    println(overlap(12)) // 2
+    println(accepted(Some(90))) // true
+}

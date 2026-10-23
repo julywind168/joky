@@ -48,6 +48,7 @@ impl Parser {
         if matches!(
             self.peek(),
             TokenKind::LBracket
+                | TokenKind::LParen
                 | TokenKind::IntLit(_)
                 | TokenKind::Minus
                 | TokenKind::True

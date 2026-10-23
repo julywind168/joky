@@ -2,6 +2,8 @@
 use super::*;
 #[path = "containers/map_borrow_iter_tests.rs"]
 mod map_borrow_iter_tests;
+#[path = "language/range_pattern_tests.rs"]
+mod range_pattern_tests;
 #[path = "containers/range_slice_tests.rs"]
 mod range_slice_tests;
 #[path = "language/range_tests.rs"]

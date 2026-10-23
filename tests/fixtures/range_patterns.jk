@@ -1,0 +1,81 @@
+import joky/check.{assert, panic}
+import joky/option.{Some, None}
+import joky/drop.{type Drop}
+fn expect(ok: Bool) { assert(ok, "Range pattern mismatch") }
+extern fn record(x: Int32) -> Int32
+extern fn delayed_value(x: Int32) @suspends -> Int32
+fn signed8(x: Int8) -> Int32 { match x { -128..0 => 0, 0..=127 => 1 } }
+fn signed16(x: Int16) -> Int32 { match x { -32768..0 => 0, 0..=32767 => 1 } }
+fn signed32(x: Int32) -> Int32 { match x { -2147483648..0 => 0, 0..=2147483647 => 1 } }
+fn signed64(x: Int64) -> Int32 { match x { -9223372036854775808..0 => 0, 0..=9223372036854775807 => 1 } }
+type Byte = UInt8
+fn unsigned8(x: Byte) -> Int32 { match x { 0..128 => 0, 128..=255 => 1 } }
+fn unsigned16(x: UInt16) -> Int32 { match x { 0..65535 => 0, 65535..=65535 => 1 } }
+fn unsigned32(x: UInt32) -> Int32 { match x { 0..4294967295 => 0, 4294967295..=4294967295 => 1 } }
+fn unsigned64(x: UInt64) -> Int32 { match x { 0..18446744073709551615 => 0, 18446744073709551615..=18446744073709551615 => 1 } }
+fn literal_edges(x: Int8) -> Int32 {
+    match x { -128 => 0, -127..0 => 1, 0 => 2, 1..=127 => 3 }
+}
+fn overlap(x: Int32) -> Int32 { match x { 0..10 => 1, 5..=15 => 2, _ => 3 } }
+fn correlated(flag: Bool, x: UInt8) -> Int32 {
+    match (flag, x) {
+        (true, 0..128) => 1,
+        (true, 128..=255) => 2,
+        (false, 0..=255) => 3
+    }
+}
+struct Item { id: Int32, text: String }
+impl Drop for Item { fn drop(&mut self) { record(self.id); } }
+enum Packet { Data((Int32, Item)), Empty }
+fn consume(packet: Packet) -> Int32 {
+    match packet { Data((0..10, item)) => item.id, Data((_, item)) => item.id + 1, Empty => 0 }
+}
+fn borrowed() {
+    var packet = Packet.Data((5, Item { id: 20, text: "owned" }))
+    match &packet { Data((0..10, item)) => expect(item.id == 20), _ => expect(false) }
+    match &mut packet { Data((0..=5, item)) => { item.id += 1 }, _ => expect(false) }
+}
+fn tuple_owners() {
+    var pair = (3, Item { id: 30, text: "tuple" })
+    match &pair { (0..=3, item) => expect(item.id == 30), _ => expect(false) }
+    match &mut pair { (0..4, item) => { item.id += 1 }, _ => expect(false) }
+    let id = match pair { (0..4, item) => item.id, _ => 0 }
+    expect(id == 31)
+}
+fn compute() -> Int32 {
+    expect(signed8(-128) == 0 && signed8(127) == 1)
+    expect(signed16(-32768) == 0 && signed16(32767) == 1)
+    expect(signed32(-2147483648) == 0 && signed32(2147483647) == 1)
+    expect(signed64(-9223372036854775808) == 0 && signed64(9223372036854775807) == 1)
+    for n in 0..256 { expect(unsigned8(uint8(n)) == if n < 128 { 0 } else { 1 }) }
+    expect(unsigned16(0) == 0 && unsigned16(65535) == 1)
+    expect(unsigned32(0) == 0 && unsigned32(4294967295) == 1)
+    expect(unsigned64(0) == 0 && unsigned64(18446744073709551615) == 1)
+    expect(literal_edges(-128) == 0 && literal_edges(-1) == 1 && literal_edges(0) == 2 && literal_edges(127) == 3)
+    expect(overlap(-1) == 3 && overlap(0) == 1 && overlap(9) == 1)
+    expect(overlap(10) == 2 && overlap(15) == 2 && overlap(16) == 3)
+    expect(correlated(true, 127) == 1 && correlated(true, 128) == 2 && correlated(false, 255) == 3)
+    match [2, 20] { [0..=3, 10..30] => {}, _ => expect(false) }
+    var n = 0
+    if let Some(0..=3) = Some(3) { n += 1 }
+    while let Some(0..3) = Some(n) { n += 1 }
+    expect(n == 3)
+    borrowed()
+    tuple_owners()
+    expect(consume(Packet.Data((5, Item { id: 22, text: "owned" }))) == 22)
+    expect(consume(Packet.Data((15, Item { id: 23, text: "owned" }))) == 24)
+    expect(match record(2) { 0..=3 => true, _ => false })
+    42
+}
+fn pending() @suspends -> Int32 {
+    let item = Item { id: 99, text: "guard" }
+    record(-99)
+    match (delayed_value(record(1)), item) {
+        (0..=2, item) => { let n = delayed_value(record(40)); expect(item.id == 99); n + 1 },
+        _ => 0
+    }
+}
+fn failure() {
+    let item = Item { id: 99, text: "guard" }
+    match record(3) { 0..=3 => panic("range failure"), _ => {} }
+}
