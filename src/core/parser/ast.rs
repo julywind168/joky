@@ -885,6 +885,22 @@ pub(crate) enum BufferIntrinsic {
     EntryKey,
     EntryValue,
     EntryValueMut,
+    Enumerate,
+    EnumerateMut,
+    EnumerateAdvance,
+    EnumerateCurrent,
+    EnumerateCurrentMut,
+    EnumerateEntries,
+    EnumerateEntriesMut,
+    EnumerateEntriesAdvance,
+    EnumerateEntriesCurrent,
+    EnumerateEntriesCurrentMut,
+    IndexedIndex,
+    IndexedValue,
+    IndexedValueMut,
+    IndexedEntryIndex,
+    IndexedEntryValue,
+    IndexedEntryValueMut,
 }
 
 #[derive(Debug, Clone)]

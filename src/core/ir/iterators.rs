@@ -24,9 +24,10 @@ impl FunctionPlan {
         };
         if let Some(Type::Reference(reference)) = self.type_hint(value, vars, functions, types) {
             match &reference.target {
-                Type::BufferIterator(_) | Type::BufferPairIterator(_) => {
-                    return Some(value.clone())
-                }
+                Type::BufferIterator(_)
+                | Type::BufferPairIterator(_)
+                | Type::BufferEnumerate(_)
+                | Type::BufferEnumerateEntries(_) => return Some(value.clone()),
                 Type::BufferSlice(_) => {
                     return Some(Expr::Call {
                         callee: format!(
@@ -93,7 +94,10 @@ impl FunctionPlan {
         };
         if !matches!(
             reference.target,
-            Type::BufferIterator(_) | Type::BufferPairIterator(_)
+            Type::BufferIterator(_)
+                | Type::BufferPairIterator(_)
+                | Type::BufferEnumerate(_)
+                | Type::BufferEnumerateEntries(_)
         ) {
             return None;
         }
@@ -114,12 +118,14 @@ impl FunctionPlan {
         else {
             return None;
         };
-        let paired = matches!(reference.target, Type::BufferPairIterator(_));
+        let prefix = match reference.target {
+            Type::BufferPairIterator(_) => "entries_",
+            Type::BufferEnumerate(_) => "enumerate_",
+            Type::BufferEnumerateEntries(_) => "enumerate_entries_",
+            _ => "",
+        };
         let call = |method: &str| Expr::Call {
-            callee: format!(
-                "$joky_iter.{}{method}",
-                if paired { "entries_" } else { "" }
-            ),
+            callee: format!("$joky_iter.{}{method}", prefix),
             type_args: vec![],
             args: vec![*operand.clone()],
             span: value.span(),

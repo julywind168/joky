@@ -791,7 +791,18 @@ pub(super) fn record_imported_functions(module: &mut Module) {
 
 /// Install internal buffer type identities only on the trusted storage AST.
 fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
-    for name in ["Buffer", "Element", "Slice", "Iter", "PairIter", "Entry"] {
+    for name in [
+        "Buffer",
+        "Element",
+        "Slice",
+        "Iter",
+        "PairIter",
+        "Entry",
+        "EnumerateIter",
+        "EnumerateEntries",
+        "Indexed",
+        "IndexedEntry",
+    ] {
         let alias = module
             .type_aliases
             .iter_mut()
@@ -810,7 +821,12 @@ fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
             "Slice" => Type::BufferSlice(element),
             "Iter" => Type::BufferIterator(element),
             "PairIter" => Type::BufferPairIterator(element),
-            _ => Type::BufferEntry(element),
+            "Entry" => Type::BufferEntry(element),
+            "EnumerateIter" => Type::BufferEnumerate(element),
+            "EnumerateEntries" => Type::BufferEnumerateEntries(element),
+            "Indexed" => Type::BufferIndexed(element),
+            "IndexedEntry" => Type::BufferIndexedEntry(element),
+            _ => unreachable!(),
         };
     }
     Ok(())

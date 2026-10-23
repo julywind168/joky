@@ -685,7 +685,7 @@ impl TypeRegistry {
                 ));
             }
             let message = match ty {
-                Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) | Type::BufferIterator(element) | Type::BufferPairIterator(element) | Type::BufferEntry(element) => {
+                Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) | Type::BufferIterator(element) | Type::BufferPairIterator(element) | Type::BufferEntry(element) | Type::BufferEnumerate(element) | Type::BufferEnumerateEntries(element) | Type::BufferIndexed(element) | Type::BufferIndexedEntry(element) => {
                     if !element.is_buffer_element() || (matches!(ty, Type::BufferElement(_)) && element.is_owner() && !matches!(element.as_ref(), Type::Parameter(_) | Type::Projection(_)))
                     {
                         return Err(Error::new_with_code(
@@ -903,7 +903,11 @@ fn resolve_type_at_depth(
         | Type::BufferSlice(element)
         | Type::BufferIterator(element)
         | Type::BufferPairIterator(element)
-        | Type::BufferEntry(element) = ty
+        | Type::BufferEntry(element)
+        | Type::BufferEnumerate(element)
+        | Type::BufferEnumerateEntries(element)
+        | Type::BufferIndexed(element)
+        | Type::BufferIndexedEntry(element) = ty
         {
             let element = indirect::resolve_element(element, aliases, registry, depth + 1)?;
             *ty = ty.with_buffer_element(element);

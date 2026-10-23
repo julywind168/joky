@@ -1,8 +1,8 @@
 # for 与迭代器分阶段开发计划
 
 状态：2026-10-23，设计基线 `8b30deb`；第一、二阶段及第三阶段的 Array/Slice 借用迭代、Map 单列及成对遍历已完成，
-记录见第 6–12 节；第四阶段 A 的 IntoIterator 与借用自动转换、第四阶段 B 的普通 enumerate 已完成，
-借用编号视图与 map/filter 待后续实施。
+记录见第 6–14 节；第四阶段 A 的 IntoIterator 与借用自动转换、第四阶段 B/C 的普通与借用 enumerate 已完成，
+map/filter 待后续实施。
 当前能力以 [语言参考](language.md#for-循环与迭代器) 为准；第 1–5 节保留设计与阶段划分。
 
 ## 1. 目标与边界
@@ -483,3 +483,50 @@ UInt64 编号从零开始，只有成功推进才增加；底层借用游标长�
 Array/Slice/Map 的共享和可变行为、空输入、部分消费、快照、提前退出与拒绝矩阵；
 拥有元素的挂起恢复、失败、分配失败和逐指令取消使用共享 fixture。先运行针对性测试，
 再运行默认 Debug 检查及相关取消穷举。不涉及 map/filter、闭包存储或一般引用聚合。
+
+
+## 14. 第四阶段 C：借用编号视图实现（2026-10-23）
+
+设计提交 `9dec37a`。本次交付 Array/Slice 借用游标的 enumerate_ref/enumerate_mut、
+Map 的 enumerate_entries/enumerate_entries_mut，以及编号读取、项借用与显式步进 API。
+完整接口见 [语言参考](language.md#借用-enumerate编号视图)，类型与运行时边界见
+[架构说明](architecture.md)。
+
+四种新类型仅作借用目标，沿用既有元素存储资格、来源分析和跨挂起规则。运行时的
+advance 保存最近成功推进的编号与元素地址，current 生成稳定的编号项快照；Map Entry
+内嵌于编号项同一次 arena 分配中。共享别名推进原游标不会改变包装器 current 或旧项。
+独占项仍禁止冲突访问；没有新增引用聚合、key/value 分离借用或一般引用 trait 实现。
+
+共享运行时新增六个私有 helper，源语言共享/独占签名映射到同一实现；解释器直接调用
+相同操作，JIT/AOT 共用原生 lowering。容器继续持有全部元素，所有权清理不转移到
+编号适配器；描述符分配计入任务预算，任务结束一并释放。普通 enumerate 无行为变更。
+
+主要证据：
+
+- [共享 fixture](../tests/fixtures/borrowed_enumerate.jk)：Array/Slice/Map 共享与可变遍历、
+  空输入、Unit、String、嵌套 Array、泛型包装、惰性构造、部分消费与重新编号、别名推进、
+  稳定快照、显式步进、独占重借用、continue/break/return、失败与挂起。
+- [VM 测试](../src/vm/tests/language/borrowed_enumerate_tests.rs)：关闭 prelude 的 JIT/解释器、
+  current 前置条件、拥有元素析构唯一性、arena 归零、分配预算失败扫描、Pending/恢复/取消，
+  以及借用冲突、逃逸、聚合存储、按值视图和 Map 键修改的共享前端拒绝矩阵。
+- [独立 AOT](../tests/cli/containers.rs)：同一 fixture 的同步与 CPS、真实 yield、提前返回、
+  运行失败清理和非法 current。文档示例在三个后端均输出 63。
+- 单个函数叠加多个复杂借用循环仍受现有引用流分析预算限制；本轮按独立行为拆分测试
+  函数，没有提高编译预算或绕过借用分析。
+
+实际验证均使用 Debug：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test borrowed_enumerate` | 6 项 VM/前端测试与 1 项独立 AOT CLI 测试通过；逐指令穷举默认忽略 |
+| 相关逐指令取消穷举 | borrowed_enumerate、array_borrow_iter、slice_borrow_iter、map_borrow_iter 共 4 项通过 |
+| 语言参考新增示例 | 关闭 prelude，在 JIT、解释器和使用当前运行库的独立 AOT 均输出 63 |
+| `./scripts/check.sh` | `Checks passed (quick, Debug)`；fmt、Clippy、1574 项库测试、302 项 CLI 测试及其他默认集成测试通过，while/Map 三后端短输入正确性通过 |
+| 文档本地链接与 `git diff --check` | 通过 |
+
+取消穷举使用 `cargo test --lib -- --ignored`，传入上述四组完整的
+`exhaustive_*_instruction_cancellation` 测试名。默认库测试忽略 123 项、CLI 忽略 8 项；
+本轮额外执行上述四组。未运行 Release、无关压力、Godot、性能测量或其他平台验证。
+
+默认检查后仅补充文档记录，未再改代码。手动 AOT 首次使用了旧的本地运行库；
+改用当前 Cargo 产物后示例通过，并更新本地 Debug 运行库以保持日常命令可用。

@@ -4,7 +4,10 @@ use crate::{
     parser::ast::BufferIntrinsic,
     runtime::{
         arena::Arena,
-        buffer::{Buffer, BufferEntry, BufferIterator, BufferPairIterator},
+        buffer::{
+            Buffer, BufferEntry, BufferEnumeration, BufferIndexed, BufferIterator,
+            BufferPairIterator, EnumerationSource,
+        },
     },
 };
 
@@ -191,6 +194,40 @@ pub(super) fn execute(
             // completes its checked read/write/commit before advancing the PC.
             let value = unsafe {
                 match intrinsic {
+                    BufferIntrinsic::Enumerate
+                    | BufferIntrinsic::EnumerateMut
+                    | BufferIntrinsic::EnumerateEntries
+                    | BufferIntrinsic::EnumerateEntriesMut => {
+                        let source = if matches!(
+                            intrinsic,
+                            BufferIntrinsic::EnumerateEntries
+                                | BufferIntrinsic::EnumerateEntriesMut
+                        ) {
+                            EnumerationSource::Entries(pointer(arg(0))?.cast())
+                        } else {
+                            EnumerationSource::Elements(pointer(arg(0))?.cast())
+                        };
+                        Value::Reference(BufferEnumeration::new(arena, source)?.as_ptr().cast())
+                    }
+                    BufferIntrinsic::EnumerateAdvance
+                    | BufferIntrinsic::EnumerateEntriesAdvance => {
+                        Value::Bool((*pointer(arg(0))?.cast::<BufferEnumeration>()).advance()?)
+                    }
+                    BufferIntrinsic::EnumerateCurrent
+                    | BufferIntrinsic::EnumerateCurrentMut
+                    | BufferIntrinsic::EnumerateEntriesCurrent
+                    | BufferIntrinsic::EnumerateEntriesCurrentMut => Value::Reference(
+                        (*pointer(arg(0))?.cast::<BufferEnumeration>())
+                            .current(arena)?
+                            .as_ptr()
+                            .cast(),
+                    ),
+                    BufferIntrinsic::IndexedIndex | BufferIntrinsic::IndexedEntryIndex => {
+                        Value::UInt64((*pointer(arg(0))?.cast::<BufferIndexed>()).index)
+                    }
+                    BufferIntrinsic::IndexedEntryValue | BufferIntrinsic::IndexedEntryValueMut => {
+                        Value::Reference((*pointer(arg(0))?.cast::<BufferIndexed>()).value)
+                    }
                     BufferIntrinsic::PairIter | BufferIntrinsic::PairIterMut => {
                         let owner = pointer(arg(0))?.cast::<u8>();
                         let [key, value] = instruction.pair_offsets.unwrap();
@@ -245,9 +282,16 @@ pub(super) fn execute(
                     | BufferIntrinsic::IterCurrentMut
                     | BufferIntrinsic::EntryKey
                     | BufferIntrinsic::EntryValue
-                    | BufferIntrinsic::EntryValueMut => {
+                    | BufferIntrinsic::EntryValueMut
+                    | BufferIntrinsic::IndexedValue
+                    | BufferIntrinsic::IndexedValueMut => {
                         let element = intrinsic.borrowed_element(element);
                         let data = if matches!(
+                            intrinsic,
+                            BufferIntrinsic::IndexedValue | BufferIntrinsic::IndexedValueMut
+                        ) {
+                            (*pointer(arg(0))?.cast::<BufferIndexed>()).value
+                        } else if matches!(
                             intrinsic,
                             BufferIntrinsic::EntryKey
                                 | BufferIntrinsic::EntryValue

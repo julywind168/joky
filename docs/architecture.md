@@ -137,6 +137,15 @@ Slice 的两个游标构造原语使用独立受检签名，并与 Array 构造�
 两个游标位置同步推进。每次 current 在任务 arena 分配含两个元素地址的 Entry 快照，
 避免后续共享推进改变旧 Entry 身份；该实现逐项累计描述符预算，不拥有元素或放宽引用聚合规则。
 EntryKey 仅返回共享引用，EntryValueMut 需要独占 Entry；不增加 key/value 分离借用豁免。
+
+借用编号游标使用 BufferEnumerate / BufferEnumerateEntries，项使用 BufferIndexed /
+BufferIndexedEntry；元素类型仍按原有 Buffer 规则验证，四者均仅作引用目标。共享运行时
+BufferEnumeration 保存原游标地址及最近一次成功推进的编号、元素地址快照，advance
+固定这些信息，current 将其复制到任务 arena 的稳定 BufferIndexed 描述符。Map 的
+Entry 内嵌于该描述符，其借用地址不会因后续推进变化；不产生独占引用聚合。编号与元素
+访问分别返回 UInt64 和继承原来源的引用。描述符按需计费，元素的拥有者及清理责任不变，
+分配失败沿用任务终止清理。解释器与原生 JIT/AOT 共用这些运行时操作；仅增加私有
+buffer helper，不改变公共 CPS 帧布局或 C 嵌入接口。
 新增五个私有 runtime helper 由 JIT/AOT 共用，解释器调用相同的描述符操作。
 元素借用沿游标、切片回溯至原容器，取消时只有容器持有元素清理责任；描述符由任务 arena 统一释放。
 

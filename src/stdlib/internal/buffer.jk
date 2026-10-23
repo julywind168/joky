@@ -104,3 +104,40 @@ fn entry_key<K, V>(entry: &Entry<(K, V)>) -> &K
 fn entry_value<K, V>(entry: &Entry<(K, V)>) -> &V
 #intrinsic("buffer.entry_value_mut")
 fn entry_value_mut<K, V>(entry: &mut Entry<(K, V)>) -> &mut V
+
+type EnumerateIter<T> = T
+type EnumerateEntries<T> = T
+type Indexed<T> = T
+type IndexedEntry<T> = T
+#intrinsic("buffer.enumerate")
+fn enumerate<T>(cursor: &Iter<T>) -> &EnumerateIter<T>
+#intrinsic("buffer.enumerate_mut")
+fn enumerate_mut<T>(cursor: &mut Iter<T>) -> &mut EnumerateIter<T>
+#intrinsic("buffer.enumerate_advance")
+fn enumerate_advance<T>(cursor: &EnumerateIter<T>) -> Bool
+#intrinsic("buffer.enumerate_current")
+fn enumerate_current<T>(cursor: &EnumerateIter<T>) -> &Indexed<T>
+#intrinsic("buffer.enumerate_current_mut")
+fn enumerate_current_mut<T>(cursor: &mut EnumerateIter<T>) -> &mut Indexed<T>
+#intrinsic("buffer.indexed_index")
+fn indexed_index<T>(item: &Indexed<T>) -> UInt64
+#intrinsic("buffer.indexed_value")
+fn indexed_value<T>(item: &Indexed<T>) -> &T
+#intrinsic("buffer.indexed_value_mut")
+fn indexed_value_mut<T>(item: &mut Indexed<T>) -> &mut T
+#intrinsic("buffer.enumerate_entries")
+fn enumerate_entries<K, V>(cursor: &PairIter<(K, V)>) -> &EnumerateEntries<(K, V)>
+#intrinsic("buffer.enumerate_entries_mut")
+fn enumerate_entries_mut<K, V>(cursor: &mut PairIter<(K, V)>) -> &mut EnumerateEntries<(K, V)>
+#intrinsic("buffer.enumerate_entries_advance")
+fn enumerate_entries_advance<K, V>(cursor: &EnumerateEntries<(K, V)>) -> Bool
+#intrinsic("buffer.enumerate_entries_current")
+fn enumerate_entries_current<K, V>(cursor: &EnumerateEntries<(K, V)>) -> &IndexedEntry<(K, V)>
+#intrinsic("buffer.enumerate_entries_current_mut")
+fn enumerate_entries_current_mut<K, V>(cursor: &mut EnumerateEntries<(K, V)>) -> &mut IndexedEntry<(K, V)>
+#intrinsic("buffer.indexed_entry_index")
+fn indexed_entry_index<K, V>(item: &IndexedEntry<(K, V)>) -> UInt64
+#intrinsic("buffer.indexed_entry_value")
+fn indexed_entry_value<K, V>(item: &IndexedEntry<(K, V)>) -> &Entry<(K, V)>
+#intrinsic("buffer.indexed_entry_value_mut")
+fn indexed_entry_value_mut<K, V>(item: &mut IndexedEntry<(K, V)>) -> &mut Entry<(K, V)>

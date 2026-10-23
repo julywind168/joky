@@ -3084,9 +3084,56 @@ UInt64 最大值是有效编号；之后再取到 Some 会报告 `Enumeration in
 链式方法支持普通 Iterator、Array 和其他 IntoIterator 输入；模块函数需要先将
 容器转换为普通 Iterator。构造适配器本身是惰性的，但容器的 IntoIterator 转换立即执行
 （例如 Array 原地反转）；不推迟该转换的副作用。此方法放在 IntoIterator，保持 Iterator
-原有的 dyn 接口资格。Array/Slice/Map 的借用游标尚不支持 enumerate。
-借用版需要独立的编号视图设计，不通过 `(UInt64, &mut T)` 放宽独占引用的存储限制。
+原有的 dyn 接口资格。Array/Slice/Map 的借用游标使用下一节的独立编号视图 API，
+不通过 `(UInt64, &mut T)` 放宽独占引用的存储限制。
 map/filter 等回调组合器尚未提供。
+
+### 借用 enumerate：编号视图
+
+Array、Slice 与 Map 的借用游标使用独立的编号接口。每轮产生借用视图，编号以
+`UInt64` 从零开始，元素仍归原容器所有：
+
+```joky
+import joky/iter
+
+fn numbered_update() -> Int32 {
+    var values = [10, 20, 30]
+    for item in iter.enumerate_mut(values.iter_mut()) {
+        let index = iter.index(item)
+        *iter.value_mut(item) += int32(index)
+    }
+    var total = 0
+    for item in iter.enumerate_ref(values.iter()) {
+        total += *iter.value(item)
+    }
+    total
+}
+```
+
+| 输入 | 编号入口 | 每轮项 | 读取编号 / 借出元素 |
+| --- | --- | --- | --- |
+| `&Iter<T>` | `iter.enumerate_ref` | `&Indexed<T>` | `iter.index` / `iter.value` |
+| `&mut Iter<T>` | `iter.enumerate_mut` | `&mut Indexed<T>` | `iter.index` / `iter.value_mut` |
+| `&Entries<K,V>` | `iter.enumerate_entries` | `&IndexedEntry<K,V>` | `iter.entry_index` / `iter.entry` |
+| `&mut Entries<K,V>` | `iter.enumerate_entries_mut` | `&mut IndexedEntry<K,V>` | `iter.entry_index` / `iter.entry_mut` |
+
+编号游标分别为 `&EnumerateIter<T>`、`&EnumerateEntries<K,V>`，独占入口返回对应
+`&mut`。Array 使用 `values.iter()` / `values.iter_mut()`；Slice 使用
+`slice.iter(view)` / `slice.iter_mut(view)`。Map 借出的项仍是 Entry，用
+`map.entry_key`、`map.entry_value`、`map.entry_value_mut` 访问，键始终只读。
+先复制编号或键，再借出可变元素，以便结束先前的共享借用。
+
+显式步进 API 为 `enumerate_advance`、`enumerate_current`、`enumerate_current_mut`；
+Map 对应 `enumerate_entries_advance`、`enumerate_entries_current`、
+`enumerate_entries_current_mut`，均在 `joky/iter`。`for` 使用相同的两步协议。
+构造不预读；包装部分消费的游标时，从其下一项重新编号为零。共享别名推进原游标时，
+包装器只统计自身成功推进的次数，current 保留包装器最近一次成功推进的元素。
+
+编号项保存编号和元素地址的快照；共享游标后续推进不会改变已返回项。可变项继续遵守
+整容器借用规则，活跃项与游标推进或另一项可变借用冲突。耗尽前未成功推进，或耗尽后
+调用 current 都会报错。视图元数据按需分配到任务 arena，任务结束时释放；不复制元素，
+不预分配编号数组。编号游标和编号项都是 borrow-only 类型，不能按值或放入普通聚合。
+它们不实现普通 Iterator / IntoIterator，不能传给普通 `iter.enumerate`。
 
 ### Array 消费式迭代
 

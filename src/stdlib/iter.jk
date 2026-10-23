@@ -81,3 +81,25 @@ pub type Entry<K, V> = buffer.Entry<(K, V)>
 pub fn entries_advance<K, V>(cursor: &Entries<K, V>) -> Bool { buffer.pair_advance(cursor) }
 pub fn entries_current<K, V>(cursor: &Entries<K, V>) -> &Entry<K, V> { buffer.pair_current(cursor) }
 pub fn entries_current_mut<K, V>(cursor: &mut Entries<K, V>) -> &mut Entry<K, V> { buffer.pair_current_mut(cursor) }
+
+// Borrowed enumeration keeps indices in snapshots, alongside borrowed items.
+pub type EnumerateIter<T> = buffer.EnumerateIter<T>
+pub type EnumerateEntries<K, V> = buffer.EnumerateEntries<(K, V)>
+pub type Indexed<T> = buffer.Indexed<T>
+pub type IndexedEntry<K, V> = buffer.IndexedEntry<(K, V)>
+pub fn enumerate_ref<T>(cursor: &Iter<T>) -> &EnumerateIter<T> { buffer.enumerate(cursor) }
+pub fn enumerate_mut<T>(cursor: &mut Iter<T>) -> &mut EnumerateIter<T> { buffer.enumerate_mut(cursor) }
+pub fn enumerate_entries<K, V>(cursor: &Entries<K, V>) -> &EnumerateEntries<K, V> { buffer.enumerate_entries(cursor) }
+pub fn enumerate_entries_mut<K, V>(cursor: &mut Entries<K, V>) -> &mut EnumerateEntries<K, V> { buffer.enumerate_entries_mut(cursor) }
+pub fn enumerate_advance<T>(cursor: &EnumerateIter<T>) -> Bool { buffer.enumerate_advance(cursor) }
+pub fn enumerate_current<T>(cursor: &EnumerateIter<T>) -> &Indexed<T> { buffer.enumerate_current(cursor) }
+pub fn enumerate_current_mut<T>(cursor: &mut EnumerateIter<T>) -> &mut Indexed<T> { buffer.enumerate_current_mut(cursor) }
+pub fn enumerate_entries_advance<K, V>(cursor: &EnumerateEntries<K, V>) -> Bool { buffer.enumerate_entries_advance(cursor) }
+pub fn enumerate_entries_current<K, V>(cursor: &EnumerateEntries<K, V>) -> &IndexedEntry<K, V> { buffer.enumerate_entries_current(cursor) }
+pub fn enumerate_entries_current_mut<K, V>(cursor: &mut EnumerateEntries<K, V>) -> &mut IndexedEntry<K, V> { buffer.enumerate_entries_current_mut(cursor) }
+pub fn index<T>(item: &Indexed<T>) -> UInt64 { buffer.indexed_index(item) }
+pub fn value<T>(item: &Indexed<T>) -> &T { buffer.indexed_value(item) }
+pub fn value_mut<T>(item: &mut Indexed<T>) -> &mut T { buffer.indexed_value_mut(item) }
+pub fn entry_index<K, V>(item: &IndexedEntry<K, V>) -> UInt64 { buffer.indexed_entry_index(item) }
+pub fn entry<K, V>(item: &IndexedEntry<K, V>) -> &Entry<K, V> { buffer.indexed_entry_value(item) }
+pub fn entry_mut<K, V>(item: &mut IndexedEntry<K, V>) -> &mut Entry<K, V> { buffer.indexed_entry_value_mut(item) }

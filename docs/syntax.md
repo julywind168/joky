@@ -65,7 +65,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 导入位置 | 已实现，必须在所有类型及函数声明前 | 保留；注释、空白和空分号不影响位置 |
 | `if` / `else` / `else if` | 已实现 | 分支同型；无 else 时为 Unit |
 | `return`、`break` / `continue` | 已实现 | 共享 IR 检查类型、跳转范围和不可达路径 |
-| `for pattern in input` | 已实现 Iterator/IntoIterator、普通迭代器 enumerate、Int32 半开 range、Array 消费与借用、Slice/Map 借用自动转换、不可失败绑定及共享循环清理 | 范围运算符、借用编号视图与其他组合器见 [分阶段计划](for-iterators.md) |
+| `for pattern in input` | 已实现 Iterator/IntoIterator、普通及借用 enumerate、Int32 半开 range、Array 消费与借用、Slice/Map 借用自动转换、不可失败绑定及共享循环清理 | 范围运算符与其他组合器见 [分阶段计划](for-iterators.md) |
 | 一元 `-` / `!` / `~`、Bool 相等比较 | 已实现 | 保留；比较不可连续书写 |
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串字面量 | 已实现转义与默认插值、`r` 原始字符串、三引号多行去缩进及组合 | 保留，见第 3 节 |
@@ -311,7 +311,9 @@ Map.iter/iter_mut 每轮提供 Entry 借用视图，键只读、值按游标权�
 借用游标使用 advance/current 两步接口，不改变普通 Iterator 的 @noescape 契约。
 普通输入经 IntoIterator 转换一次；Array 支持按值消费以及 &values / &mut values 借用入口。
 Slice 与 Map 引用也自动生成借用游标，自定义普通容器可实现 IntoIterator。
-普通 Iterator 的 enumerate 惰性生成 (UInt64, Item)，从 0 编号；借用游标的编号视图待后续设计。
+普通 Iterator 的 enumerate 惰性生成 (UInt64, Item)，从 0 编号；借用游标通过
+独立的 enumerate_ref/enumerate_mut 与 enumerate_entries/enumerate_entries_mut 产生编号视图，
+保留共享/独占访问和 Map 键只读规则。具体接口见 [语言参考](language.md#借用-enumerate编号视图)。
 当前规则见 [for 循环与迭代器](language.md#for-循环与迭代器)，组合器及 `..` / `..=`
 表达式与范围模式的后续目标见 [专项计划](for-iterators.md)。
 以下示例当前可运行：

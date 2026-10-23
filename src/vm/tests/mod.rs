@@ -1,4 +1,6 @@
 //! Execution regressions grouped by behavior; shared helpers stay in this test target.
+#[path = "language/borrowed_enumerate_tests.rs"]
+mod borrowed_enumerate_tests;
 use super::*;
 #[path = "language/iterator_enumerate_tests.rs"]
 mod iterator_enumerate_tests;
