@@ -9,6 +9,7 @@ use crate::{
     Error, ErrorCode, FunctionSignature, Type,
 };
 use std::rc::Rc;
+use std::sync::Arc;
 
 type DirectAdapter = fn(*const u8, &[&Value]) -> Result<Value, Error>;
 
@@ -235,7 +236,7 @@ impl HostPending {
             return Err(abi_error("Host frame has too few slots"));
         }
         let input_count = args.len();
-        let mut frame = CpsFrame::new(input_count);
+        let mut frame = CpsFrame::try_new(input_count)?;
         if host.binding.abi == HostAbiKind::TextViewV2 {
             frame.text_views = vec![crate::runtime::string::JokyText::default(); args.len()];
         }
@@ -334,12 +335,17 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        if let Some(inputs) = &self.inputs {
+            self.frame
+                .reserve_slots(inputs.frame_slots + inputs.slots.len())?;
+        }
         if let Some(inputs) = self.inputs.take() {
             let mut slots = vec![0; inputs.frame_slots];
             slots[..inputs.slots.len()].copy_from_slice(&inputs.slots);
             self.frame.slots = slots;
             self.frame.text_views = inputs.text_views;
         }
+        self.frame.reserve_slots(self.frame.slots.len())?;
         self.notification = crate::runtime::executor::current_waker().map(|w| w.observe());
         if matches!(self.host.binding.entry, HostEntry::VmSource) {
             let result = unsafe { crate::stdlib::source_poll(arena, self.frame.as_mut()) }?;
@@ -1064,9 +1070,9 @@ fn as_named(value: &Value) -> Result<u64, Error> {
     }
 }
 
-fn decode_string_ptr(pointer: *const u8) -> Result<Rc<str>, Error> {
+fn decode_string_ptr(pointer: *const u8) -> Result<Arc<str>, Error> {
     let text = unsafe { crate::runtime::string::borrow(pointer) }?;
-    Ok(Rc::from(text))
+    Ok(Arc::from(text))
 }
 
 fn as_i64(value: &Value) -> Result<i64, Error> {

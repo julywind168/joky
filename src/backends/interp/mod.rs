@@ -16,6 +16,7 @@ use crate::{
 use std::{
     collections::{BTreeSet, HashMap},
     rc::Rc,
+    sync::Arc,
 };
 
 #[cfg(test)]
@@ -34,7 +35,7 @@ mod places;
 
 pub(crate) use execute::{
     call_instance, call_sync, cleanup_call, prepare_domain, prepare_scalar, prepare_script, start,
-    start_text,
+    start_owned_text, start_text,
 };
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
@@ -46,7 +47,7 @@ pub(crate) struct DynMethodTable {
 }
 
 enum ConstantValue {
-    DynTable(Rc<DynMethodTable>),
+    DynTable(Arc<DynMethodTable>),
     Function(usize),
     NullPtr,
     EmptyReference,
@@ -62,7 +63,7 @@ enum ConstantValue {
     Rune(u32),
     UInt64(u64),
     Bool(bool),
-    String(Rc<str>),
+    String(Arc<str>),
 }
 
 enum Instruction {
@@ -216,7 +217,7 @@ struct BytecodeBranch {
 }
 
 struct BytecodeFunction {
-    place_result: Rc<[crate::runtime::place::CopyNode]>,
+    place_result: Arc<[crate::runtime::place::CopyNode]>,
     name: String,
     spans: Vec<Span>,
     info: FunctionInfo,
@@ -229,13 +230,16 @@ struct BytecodeFunction {
 
 #[derive(Clone)]
 pub(crate) struct BytecodeModule {
+    _parallel_charge: Option<Arc<crate::runtime::parallel::Lease>>,
+    pub(crate) parallel: crate::core::ir::parallel::Effects,
+    parallel_hosts: HashMap<String, crate::runtime::parallel::Host>,
     pub(crate) version: ModuleId,
     pub(crate) files: Option<crate::runtime::fs::FileService>,
     sources: std::sync::Arc<crate::SourceMap>,
-    functions: HashMap<String, Rc<BytecodeFunction>>,
-    callees: Vec<Callee>,
-    task_targets: Vec<Option<u64>>,
-    task_entries: HashMap<u64, Rc<TaskEntry>>,
+    functions: Arc<HashMap<String, Arc<BytecodeFunction>>>,
+    callees: Rc<[Callee]>,
+    task_targets: Arc<[Option<u64>]>,
+    task_entries: Rc<HashMap<u64, Rc<TaskEntry>>>,
 }
 
 struct TaskEntry {
@@ -245,8 +249,100 @@ struct TaskEntry {
 
 #[derive(Clone)]
 enum Callee {
-    User(Rc<BytecodeFunction>),
+    User(Arc<BytecodeFunction>),
     Host(Rc<BoundHost>),
+    Unavailable(FunctionSignature, bool),
+}
+
+enum FrozenCallee {
+    User(Arc<BytecodeFunction>),
+    Host(crate::runtime::parallel::Host),
+    Unavailable(FunctionSignature, bool),
+}
+pub(crate) struct FrozenEntry {
+    pub(crate) info: FunctionInfo,
+    pub(crate) version: ModuleId,
+    pub(crate) sources: Arc<crate::SourceMap>,
+    functions: Arc<HashMap<String, Arc<BytecodeFunction>>>,
+    callees: Vec<FrozenCallee>,
+}
+impl BytecodeModule {
+    pub(crate) fn freeze(&self, name: &str) -> Result<FrozenEntry, Error> {
+        self.parallel.require(name)?;
+        let function = self
+            .functions
+            .get(name)
+            .filter(|function| !function.info.internal)
+            .ok_or_else(|| abi_error("Unknown parallel export"))?;
+        Ok(FrozenEntry {
+            info: function.info.clone(),
+            version: self.version,
+            sources: self.sources.clone(),
+            functions: self.functions.clone(),
+            callees: self
+                .callees
+                .iter()
+                .map(|callee| match callee {
+                    Callee::User(function) => FrozenCallee::User(function.clone()),
+                    Callee::Host(host) => self.parallel_hosts.get(&host.name).map_or_else(
+                        || FrozenCallee::Unavailable(host.signature().clone(), host.suspends()),
+                        |host| FrozenCallee::Host(host.clone()),
+                    ),
+                    Callee::Unavailable(signature, suspends) => {
+                        FrozenCallee::Unavailable(signature.clone(), *suspends)
+                    }
+                })
+                .collect(),
+        })
+    }
+}
+impl FrozenEntry {
+    /// Construct worker-local dispatch, tokens and callback ownership. Instructions
+    /// and constant/layout tables are shared; no source is compiled on the worker.
+    pub(crate) fn instantiate(&self) -> Result<Rc<BytecodeModule>, Error> {
+        // Local dispatch/token tables share their allocation across cleanup
+        // snapshots. Executable instructions and immutable symbol/type/layout
+        // tables are already shared with the frozen code owner.
+        let names = self.functions.keys().map(String::len).sum::<usize>();
+        let bytes = 2
+            * (std::mem::size_of::<BytecodeModule>()
+                + names
+                + self.functions.len()
+                    * (std::mem::size_of::<String>()
+                        + std::mem::size_of::<Arc<BytecodeFunction>>()
+                        + 32)
+                + self.callees.len()
+                    * (std::mem::size_of::<Callee>() + std::mem::size_of::<TaskEntry>() + 64));
+        let charge = crate::runtime::parallel::reserve_current(bytes)?.map(Arc::new);
+        let callees: Vec<_> = self
+            .callees
+            .iter()
+            .map(|callee| {
+                Ok(match callee {
+                    FrozenCallee::User(function) => Callee::User(function.clone()),
+                    FrozenCallee::Host(host) => {
+                        Callee::Host(Rc::new(BoundHost::new(&host.name, host.binding())?))
+                    }
+                    FrozenCallee::Unavailable(signature, suspends) => {
+                        Callee::Unavailable(signature.clone(), *suspends)
+                    }
+                })
+            })
+            .collect::<Result<_, Error>>()?;
+        let (task_targets, task_entries) = task_entries(&callees)?;
+        Ok(Rc::new(BytecodeModule {
+            _parallel_charge: charge,
+            parallel: Default::default(),
+            parallel_hosts: HashMap::new(),
+            version: self.version,
+            sources: self.sources.clone(),
+            files: None,
+            functions: self.functions.clone(),
+            callees: callees.into(),
+            task_targets,
+            task_entries,
+        }))
+    }
 }
 
 pub(crate) fn compile(
@@ -300,7 +396,7 @@ pub(crate) fn compile(
             let mut function =
                 lower_function(&plan.functions[name], body, &ids, &mut tables, &mut layouts)?;
             function.name.clone_from(name);
-            functions.insert(name.clone(), Rc::new(function));
+            functions.insert(name.clone(), Arc::new(function));
         }
     }
     let callees: Vec<_> = names
@@ -313,12 +409,45 @@ pub(crate) fn compile(
             }
         })
         .collect();
+    let (task_targets, task_entries) = task_entries(&callees)?;
+    Ok(BytecodeModule {
+        _parallel_charge: None,
+        parallel: crate::core::ir::parallel::analyse(
+            &plan,
+            prepared,
+            &hosts
+                .iter()
+                .filter_map(|(name, binding)| {
+                    crate::runtime::parallel::Host::from_binding(binding).map(|_| name.clone())
+                })
+                .collect(),
+        ),
+        parallel_hosts: hosts
+            .iter()
+            .filter_map(|(name, binding)| {
+                crate::runtime::parallel::Host::from_binding(binding)
+                    .map(|host| (name.clone(), host))
+            })
+            .collect(),
+        task_targets,
+        task_entries,
+        files: None,
+        sources: prepared.ast().sources.clone(),
+        version,
+        functions: Arc::new(functions),
+        callees: callees.into(),
+    })
+}
+
+type TaskEntries = (Arc<[Option<u64>]>, Rc<HashMap<u64, Rc<TaskEntry>>>);
+fn task_entries(callees: &[Callee]) -> Result<TaskEntries, Error> {
     let mut task_targets = Vec::with_capacity(callees.len());
     let mut task_entries = HashMap::new();
-    for callee in &callees {
+    for callee in callees {
         let (suspends, signature) = match callee {
             Callee::User(function) => (function.info.suspends, &function.info.signature),
             Callee::Host(host) => (host.suspends(), host.signature()),
+            Callee::Unavailable(signature, suspends) => (*suspends, signature),
         };
         if suspends {
             let words = crate::runtime::task_scope::layout::encode(signature)?;
@@ -336,15 +465,7 @@ pub(crate) fn compile(
             task_targets.push(None);
         }
     }
-    Ok(BytecodeModule {
-        task_targets,
-        task_entries,
-        files: None,
-        sources: prepared.ast().sources.clone(),
-        version,
-        functions,
-        callees,
-    })
+    Ok((task_targets.into(), Rc::new(task_entries)))
 }
 
 /// Test adapter for compiling a source AST with an explicit type environment.
@@ -364,7 +485,7 @@ fn lower_function(
     info: &FunctionInfo,
     plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
-    tables: &mut HashMap<usize, Rc<DynMethodTable>>,
+    tables: &mut HashMap<usize, Arc<DynMethodTable>>,
     layouts: &mut places::Layouts,
 ) -> Result<BytecodeFunction, Error> {
     let mut function = lower_unoptimized(info, plan, ids, tables, layouts)?;
@@ -380,7 +501,7 @@ fn lower_unoptimized(
     info: &FunctionInfo,
     plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
-    tables: &mut HashMap<usize, Rc<DynMethodTable>>,
+    tables: &mut HashMap<usize, Arc<DynMethodTable>>,
     layouts: &mut places::Layouts,
 ) -> Result<BytecodeFunction, Error> {
     // Labels are compile-time markers, not executable instructions. Consecutive
@@ -451,7 +572,7 @@ fn lower_unoptimized(
                     tables
                         .entry(table.id)
                         .or_insert_with(|| {
-                            Rc::new(DynMethodTable {
+                            Arc::new(DynMethodTable {
                                 entries: table
                                     .methods
                                     .iter()
@@ -668,7 +789,7 @@ fn lower_unoptimized(
         place_result: if info.signature.ret.is_place() {
             layouts.get(&info.signature.ret).program.clone()
         } else {
-            Rc::from([])
+            Arc::from([])
         },
         instance_hooks: plan.instance_hooks(&info.signature.ret),
         owner_result: plan
@@ -710,7 +831,7 @@ fn lower_constant(value: &Constant) -> ConstantValue {
         Constant::Rune(value) => ConstantValue::Rune(*value),
         Constant::UInt64(value) => ConstantValue::UInt64(*value),
         Constant::Bool(value) => ConstantValue::Bool(*value),
-        Constant::String(value) => ConstantValue::String(Rc::from(value.as_str())),
+        Constant::String(value) => ConstantValue::String(Arc::from(value.as_str())),
     }
 }
 
@@ -785,7 +906,7 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
 #[derive(Clone)]
 pub(crate) enum Value {
     Place(*mut u8),
-    DynTable(Rc<DynMethodTable>),
+    DynTable(Arc<DynMethodTable>),
     Function(usize),
     Unit,
     Float32(f32),
@@ -800,7 +921,7 @@ pub(crate) enum Value {
     Rune(u32),
     UInt64(u64),
     Bool(bool),
-    String(Rc<str>),
+    String(Arc<str>),
     HostText(*const u8),
     Named(u64),
     Reference(*mut u8),

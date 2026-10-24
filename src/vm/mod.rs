@@ -8,6 +8,7 @@ pub use state_domains::{
     DomainRequest, PeriodicStatus,
 };
 mod limits;
+mod parallel;
 pub use crate::core::instance::InstanceValue;
 pub use engine::{VmEngine, VmMode};
 pub use instances::{
@@ -15,6 +16,7 @@ pub use instances::{
     InstanceStatus,
 };
 pub use limits::InterpreterLimits;
+pub use parallel::{ParallelExecution, ParallelOutput, PreparedParallelTask, TaskValue};
 
 #[cfg(test)]
 pub(crate) mod tests;

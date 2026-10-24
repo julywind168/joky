@@ -172,13 +172,18 @@ pub(crate) unsafe extern "C" fn result(
         record_error(invalid("Task result packet layout changed"));
         return std::ptr::null_mut();
     }
-    packet
-        .get_or_insert_with(|| {
-            let mut packet = CpsFrame::new(slots);
-            packet.arena = frame.arena.clone();
-            Box::new(packet)
-        })
-        .as_mut()
+    if packet.is_none() {
+        let mut value = match CpsFrame::try_new(slots) {
+            Ok(value) => value,
+            Err(error) => {
+                record_error(error);
+                return std::ptr::null_mut();
+            }
+        };
+        value.arena = frame.arena.clone();
+        *packet = Some(Box::new(value));
+    }
+    packet.as_mut().unwrap().as_mut()
 }
 
 /// Claim one packet after successful drain for result copying and owner transfer.

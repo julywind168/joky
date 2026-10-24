@@ -8,7 +8,12 @@ use crate::{
 };
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::default_libcall_names;
-use std::{any::Any, collections::HashMap, rc::Rc};
+use std::{
+    any::Any,
+    collections::HashMap,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Clone)]
 pub(crate) struct CompiledFunction {
@@ -28,7 +33,8 @@ pub(crate) struct CompiledModule {
     pub instance_entries: HashMap<String, CompiledFunction>,
     pub instance_hooks:
         HashMap<String, Vec<(crate::core::ir::DropHook, crate::runtime::cleanup::Callback)>>,
-    _code: OwnedCode,
+    pub(crate) parallel: crate::core::ir::parallel::Effects,
+    _code: Arc<Mutex<OwnedCode>>,
     _dependencies: Vec<Rc<dyn Any>>,
 }
 
@@ -52,7 +58,8 @@ impl CompiledModule {
             request_entries: HashMap::new(),
             instance_entries,
             instance_hooks,
-            _code: OwnedCode(None),
+            parallel: Default::default(),
+            _code: Arc::new(Mutex::new(OwnedCode(None))),
             _dependencies: vec![owner],
         }
     }
@@ -72,8 +79,60 @@ impl CompiledModule {
             exports,
             instance_entries,
             instance_hooks: HashMap::new(),
-            _code: OwnedCode(None),
+            parallel: Default::default(),
+            _code: Arc::new(Mutex::new(OwnedCode(None))),
             _dependencies: vec![owner],
+        }
+    }
+}
+/// Finalized executable pages and checked metadata, independent of the local VM.
+pub(crate) struct FrozenEntry {
+    pub(crate) entry: cps::CpsEntry,
+    pub(crate) info: FunctionInfo,
+    pub(crate) version: ModuleId,
+    pub(crate) sources: Arc<crate::SourceMap>,
+    _code: Arc<dyn Any + Send + Sync>,
+    _hosts: Vec<crate::runtime::parallel::Host>,
+}
+impl CompiledModule {
+    pub(crate) fn freeze(&self, name: &str) -> Result<FrozenEntry, Error> {
+        self.parallel.require(name)?;
+        let function = self
+            .exports
+            .get(name)
+            .ok_or_else(|| compile_error("Unknown parallel export"))?;
+        Ok(FrozenEntry {
+            entry: unsafe { crate::runtime::abi::as_cps_entry(function.entry) },
+            info: function.info.clone(),
+            version: self.version,
+            sources: self.sources.clone(),
+            _code: self._code.clone(),
+            _hosts: self
+                ._dependencies
+                .iter()
+                .filter_map(|owner| {
+                    owner
+                        .downcast_ref::<crate::runtime::parallel::Host>()
+                        .cloned()
+                })
+                .collect(),
+        })
+    }
+}
+impl FrozenEntry {
+    pub(crate) unsafe fn aot(
+        entry: cps::CpsEntry,
+        info: FunctionInfo,
+        sources: Arc<crate::SourceMap>,
+        owner: Arc<dyn Any + Send + Sync>,
+    ) -> Self {
+        Self {
+            entry,
+            info,
+            sources,
+            version: ModuleId(0),
+            _code: owner,
+            _hosts: Vec::new(),
         }
     }
 }
@@ -232,7 +291,19 @@ pub(crate) fn compile(
         sources: prepared.ast().sources.clone(),
         version,
         exports,
-        _code: code,
+        parallel: crate::core::ir::parallel::analyse(
+            &plan,
+            prepared,
+            &dependencies
+                .iter()
+                .filter_map(|owner| {
+                    owner
+                        .downcast_ref::<crate::runtime::parallel::Host>()
+                        .map(|host| host.name.clone())
+                })
+                .collect(),
+        ),
+        _code: Arc::new(Mutex::new(code)),
         _dependencies: dependencies,
     })
 }

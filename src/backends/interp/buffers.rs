@@ -32,7 +32,7 @@ pub(super) struct Instruction {
     layout: Option<crate::memory_layout::MemoryLayout>,
     fields: Vec<(usize, crate::Type)>,
     pair_offsets: Option<[usize; 2]>,
-    program: Rc<[crate::runtime::place::CopyNode]>,
+    program: Arc<[crate::runtime::place::CopyNode]>,
 }
 
 pub(super) fn lower(op: &BufferOp, layouts: &mut places::Layouts) -> Result<Instruction, Error> {
@@ -76,7 +76,7 @@ pub(super) fn lower(op: &BufferOp, layouts: &mut places::Layouts) -> Result<Inst
             BufferOp::Storage { element, .. } if element.is_place() => {
                 layouts.get(element).program.clone()
             }
-            _ => Rc::default(),
+            _ => Arc::default(),
         },
         pair_offsets: match op {
             BufferOp::Storage {

@@ -8,6 +8,7 @@ use std::{cell::Cell, rc::Rc};
 thread_local! { static CONTEXT: Cell<*mut CpsFrame> = const { Cell::new(std::ptr::null_mut()) }; }
 
 pub(super) struct Scope {
+    _charge: Option<crate::runtime::parallel::Lease>,
     id: u64,
     kind: u32,
     capacity: usize,
@@ -86,6 +87,12 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
             return Err(invalid("Invalid task scope admission"));
         }
         let id = crate::runtime::task_scope::fresh_identity()?;
+        let charge = crate::runtime::parallel::reserve_current(
+            std::mem::size_of::<Scope>()
+                + capacity
+                    * (std::mem::size_of::<(u64, Box<CpsFrame>)>()
+                        + std::mem::size_of::<Rc<task::CheckedEntry>>()),
+        )?;
         let mut prepared = Vec::new();
         prepared
             .try_reserve(capacity)
@@ -94,6 +101,7 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
             super::task_scope_enter(frame);
         }
         (*frame).task_protocol.push(Scope {
+            _charge: charge,
             id,
             kind,
             capacity,
@@ -185,7 +193,7 @@ pub(crate) unsafe extern "C" fn prepare(
         for &(from, _) in &code.inputs {
             (*super::cleanup(frame)).entries.snapshot(from)?;
         }
-        let mut child = task::prepared(&*frame, code.clone());
+        let mut child = task::prepared(&*frame, code.clone())?;
         let inputs = task::inputs(&mut *child);
         if count != 0 {
             (*inputs)

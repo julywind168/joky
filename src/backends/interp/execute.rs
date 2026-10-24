@@ -324,7 +324,7 @@ pub(crate) fn start_text(
     }
     let args: Vec<_> = input
         .into_iter()
-        .map(|text| Value::String(Rc::from(text)))
+        .map(|text| Value::String(Arc::from(text)))
         .collect();
     let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
     execution.initialize_text_inputs()?;
@@ -336,7 +336,42 @@ pub(crate) fn start_text(
     }))
 }
 
-fn lookup(module: &BytecodeModule, name: &str) -> Result<Rc<BytecodeFunction>, Error> {
+pub(crate) fn start_owned_text(
+    module: Rc<BytecodeModule>,
+    name: &str,
+    input: Option<&mut crate::runtime::parallel::OwnedBuffer>,
+    limits: InterpreterLimits,
+) -> Result<Box<dyn InterpretedTask>, Error> {
+    let function = lookup(&module, name)?;
+    let args: Vec<_> = input
+        .iter()
+        .map(|_| Value::Reference(std::ptr::null_mut()))
+        .collect();
+    let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
+    if let Some(input) = input {
+        let owner = input.take(&execution.arena)?;
+        let frame = execution.frame_mut(0);
+        frame.slots[0] = Value::Reference(owner.cast());
+        frame.cleanups.insert(
+            0,
+            crate::runtime::cleanup::Entry {
+                keep_alive: None,
+                storage_size: 0,
+                storage: None,
+                owners: vec![Some(owner)],
+                hooks: vec![],
+            },
+        );
+    }
+    Ok(Box::new(Task {
+        module,
+        execution,
+        result: None,
+        text_result: None,
+    }))
+}
+
+fn lookup(module: &BytecodeModule, name: &str) -> Result<Arc<BytecodeFunction>, Error> {
     module
         .functions
         .get(name)
@@ -346,10 +381,11 @@ fn lookup(module: &BytecodeModule, name: &str) -> Result<Rc<BytecodeFunction>, E
 }
 
 pub(super) struct Frame {
+    _parallel_charge: Option<crate::runtime::parallel::Lease>,
     cleanups: crate::runtime::cleanup::Cleanups,
     cleanup_locals: memory::Locals,
     locals: memory::Locals,
-    function: Rc<BytecodeFunction>,
+    function: Arc<BytecodeFunction>,
     slots: Vec<Value>,
     pc: usize,
     pending: Option<Pending>,
@@ -358,7 +394,7 @@ pub(super) struct Frame {
 
 impl Frame {
     pub(super) fn new<'a>(
-        function: Rc<BytecodeFunction>,
+        function: Arc<BytecodeFunction>,
         args: impl ExactSizeIterator<Item = &'a Value>,
     ) -> Result<Self, Error> {
         if args.len() != function.info.parameter_slots() || function.info.frame_slots < args.len() {
@@ -367,11 +403,15 @@ impl Frame {
                 "Interpreter frame argument layout mismatch",
             ));
         }
+        let charge = crate::runtime::parallel::reserve_current(
+            std::mem::size_of::<Self>() + function.info.frame_slots * std::mem::size_of::<Value>(),
+        )?;
         let mut slots = vec![Value::Unit; function.info.frame_slots];
         for (slot, value) in slots.iter_mut().zip(args) {
             *slot = value.clone();
         }
         Ok(Self {
+            _parallel_charge: charge,
             cleanups: Default::default(),
             cleanup_locals: Default::default(),
             locals: Default::default(),
@@ -427,11 +467,12 @@ struct ResultPacket {
     owner: Option<(usize, crate::runtime::cleanup::Entry)>,
     place: Option<(
         crate::runtime::arena::Arena,
-        Rc<[crate::runtime::place::CopyNode]>,
+        Arc<[crate::runtime::place::CopyNode]>,
     )>,
 }
 
 struct PreparedUser {
+    _parallel_charge: Option<crate::runtime::parallel::Lease>,
     entry: Rc<TaskEntry>,
     inputs: Vec<Value>,
     cleanups: crate::runtime::cleanup::Cleanups,
@@ -509,6 +550,7 @@ impl Budget {
 }
 
 pub(super) struct Execution {
+    parallel_result: Option<crate::runtime::parallel::Lease>,
     root_aggregate: Option<Vec<Value>>,
     domain_return: Option<Type>,
     domain_result: Option<Vec<u64>>,
@@ -529,6 +571,7 @@ pub(super) struct Execution {
 impl Execution {
     pub(super) fn new(frame: Frame, limits: InterpreterLimits, asynchronous: bool) -> Self {
         Self {
+            parallel_result: None,
             cleanup_mode: false,
             root_aggregate: None,
             domain_return: None,
@@ -639,6 +682,9 @@ impl Execution {
         args: &[Option<usize>],
     ) -> Result<Activation, Error> {
         match &module.callees[target] {
+            Callee::Unavailable(..) => Err(abi_error(
+                "Local callee is unavailable in a parallel snapshot",
+            )),
             Callee::User(function) => {
                 Frame::new(function.clone(), Self::arguments(frame, args)).map(Activation::User)
             }
@@ -673,6 +719,9 @@ impl Execution {
             ));
         }
         match &entry.callee {
+            Callee::Unavailable(..) => Err(abi_error(
+                "Local task is unavailable in a parallel snapshot",
+            )),
             Callee::User(function) => {
                 if function.info.frame_slots < args.len() {
                     return Err(runtime_error(
@@ -681,6 +730,10 @@ impl Execution {
                     ));
                 }
                 Ok(Activation::Prepared(PreparedUser {
+                    _parallel_charge: crate::runtime::parallel::reserve_current(
+                        std::mem::size_of::<PreparedUser>()
+                            + args.len() * std::mem::size_of::<Value>(),
+                    )?,
                     entry: entry.clone(),
                     inputs: Self::arguments(frame, args).cloned().collect(),
                     cleanups: Default::default(),
@@ -712,6 +765,7 @@ impl Execution {
         let signature = match &module.callees[target] {
             Callee::User(function) => &function.info.signature,
             Callee::Host(host) => host.signature(),
+            Callee::Unavailable(signature, _) => signature,
         };
         let mut index = 0;
         let mut owned = Vec::new();
@@ -1368,11 +1422,21 @@ impl Execution {
                     let Some(Value::Reference(handle)) = value.as_ref() else {
                         return Some(Poll::Failed(abi_error("Invalid owning text result")));
                     };
-                    match unsafe { crate::runtime::owned_text::borrow(handle.cast()) }
-                        .and_then(crate::runtime::owned_text::copy_to_host)
-                    {
-                        Ok(text) => value = Some(Value::String(Rc::from(text))),
+                    match unsafe { crate::runtime::owned_text::borrow(handle.cast()) }.and_then(
+                        |text| {
+                            // Account the temporary host String, Arc constant-like
+                            // value and final String while all can coexist.
+                            self.parallel_result = crate::runtime::parallel::reserve_current(
+                                text.len() * 3 + std::mem::size_of::<crate::vm::TaskValue>(),
+                            )?;
+                            crate::runtime::owned_text::copy_to_host(text)
+                        },
+                    ) {
+                        Ok(text) => value = Some(Value::String(Arc::from(text))),
                         Err(error) => {
+                            if let Some(entry) = owner.take() {
+                                let _ = unsafe { entry.run(&mut self.arena) };
+                            }
                             self.release();
                             return Some(Poll::Failed(error));
                         }
@@ -2526,6 +2590,9 @@ pub(crate) fn cleanup_call(
 }
 
 impl InterpretedTask for Task {
+    fn take_parallel_result_charge(&mut self) -> Option<crate::runtime::parallel::Lease> {
+        self.execution.parallel_result.take()
+    }
     fn limits(&self) -> InterpreterLimits {
         self.execution.limits
     }
@@ -2708,7 +2775,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        let baseline: Vec<_> = constants.iter().map(Rc::strong_count).collect();
+        let baseline: Vec<_> = constants.iter().map(Arc::strong_count).collect();
         let frame = Frame::new(function, [].iter()).unwrap();
         let mut execution = Execution::new(
             frame,
@@ -2723,7 +2790,7 @@ mod tests {
         assert!(constants
             .iter()
             .zip(&baseline)
-            .all(|(text, baseline)| Rc::strong_count(text) > *baseline));
+            .all(|(text, baseline)| Arc::strong_count(text) > *baseline));
         let mut failed = false;
         for _ in 0..5 {
             if let Poll::Failed(error) = execution.poll(&module) {
@@ -2736,7 +2803,7 @@ mod tests {
         assert!(constants
             .iter()
             .zip(&baseline)
-            .all(|(text, baseline)| Rc::strong_count(text) == *baseline));
+            .all(|(text, baseline)| Arc::strong_count(text) == *baseline));
         assert_eq!(execution.nodes.capacity(), 0);
     }
 }

@@ -45,6 +45,7 @@ struct Child<T> {
 }
 
 pub(crate) struct LocalTaskScope<T> {
+    charge: Option<super::parallel::Lease>,
     children: Vec<Child<T>>,
     cursor: usize,
     joining: bool,
@@ -55,6 +56,7 @@ pub(crate) struct LocalTaskScope<T> {
 impl<T> Default for LocalTaskScope<T> {
     fn default() -> Self {
         Self {
+            charge: None,
             children: Vec::new(),
             cursor: 0,
             joining: false,
@@ -73,7 +75,29 @@ impl<T> LocalTaskScope<T> {
                 "Cannot publish a child into a joining task scope",
             ));
         }
-        self.children.try_reserve(count).map_err(|_| {
+        let capacity = self.children.len().checked_add(count).ok_or_else(|| {
+            Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::ResourceLimit,
+                "Task capacity overflow",
+            )
+        })?;
+        let bytes = capacity
+            .checked_mul(std::mem::size_of::<Child<T>>())
+            .and_then(|n| n.checked_add(std::mem::size_of::<Self>()))
+            .ok_or_else(|| {
+                Error::new_with_code(
+                    ErrorPhase::Runtime,
+                    ErrorCode::ResourceLimit,
+                    "Task capacity overflow",
+                )
+            })?;
+        if let Some(charge) = &mut self.charge {
+            charge.resize(bytes)?;
+        } else {
+            self.charge = super::parallel::reserve_current(bytes)?;
+        }
+        self.children.try_reserve_exact(count).map_err(|_| {
             Error::new_with_code(
                 ErrorPhase::Runtime,
                 ErrorCode::ResourceLimit,

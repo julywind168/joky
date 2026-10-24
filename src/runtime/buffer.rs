@@ -18,6 +18,7 @@ pub(crate) struct Buffer {
     metadata_budget: *const super::arena::Budget,
     metadata_account: *const super::arena::Budget,
     metadata_charge: usize,
+    metadata_parallel: Option<super::parallel::Lease>,
     failed_descriptor: bool,
     // Intrusive release continuation. These bytes are charged with the header;
     // terminal traversal needs no allocation, even after budget exhaustion.
@@ -304,6 +305,7 @@ impl Buffer {
             metadata_budget: std::ptr::null(),
             metadata_account: std::ptr::null(),
             metadata_charge: 0,
+            metadata_parallel: None,
             failed_descriptor: false,
             release_parent: std::ptr::null_mut(),
             release_owner: 0,
@@ -368,10 +370,20 @@ impl Buffer {
         value.capacity = capacity;
         value.metadata_budget = arena.budget_pointer();
         value.metadata_account = arena.account_pointer();
+        value.metadata_parallel = arena.metadata_lease();
         unsafe {
             owner.as_ptr().write(value);
         }
+        if let Some(root) = arena.parallel_root() {
+            // A later failure may precede language cleanup registration. The
+            // allocation owns this thread-safe accounting field independently.
+            root.finalize_with(owner.cast(), Self::finalize_parallel_metadata);
+        }
         Ok(owner)
+    }
+
+    unsafe fn finalize_parallel_metadata(pointer: *mut u8) {
+        (*pointer.cast::<Self>()).metadata_parallel.take();
     }
 
     pub(crate) fn len(&self) -> u64 {
@@ -492,6 +504,7 @@ impl Buffer {
             metadata_budget: std::ptr::null(),
             metadata_account: std::ptr::null(),
             metadata_charge: 0,
+            metadata_parallel: None,
             failed_descriptor: false,
             release_parent: std::ptr::null_mut(),
             release_owner: 0,
@@ -544,6 +557,11 @@ impl Buffer {
     }
 
     pub(crate) fn reserve_metadata(&mut self, charge: usize) -> Result<(), Error> {
+        if let Some(lease) = &mut self.metadata_parallel {
+            lease.resize(charge)?;
+            self.metadata_charge = charge;
+            return Ok(());
+        }
         // Compiler-owned buffers remain registered with an arena pinning this
         // budget. Ordinary tasks have no shared instance budget and stay unchanged.
         if let Some(budget) = unsafe { self.metadata_budget.as_ref() } {
@@ -574,6 +592,7 @@ impl Buffer {
     }
     unsafe fn clear_metadata(&mut self) {
         self.cleanup.take();
+        self.metadata_parallel.take();
         if let Some(budget) = self.metadata_budget.as_ref() {
             budget.refund(self.metadata_charge);
             (*self.metadata_account).refund(self.metadata_charge);
@@ -803,6 +822,36 @@ impl Buffer {
             buffers,
             metadata,
         })
+    }
+
+    /// Validate the concrete control blocks as well as the static value type.
+    /// No Rc callback, resource, local budget or in-progress cleanup may cross.
+    pub(crate) unsafe fn validate_parallel_owner(
+        arena: &Arena,
+        owner: *mut Self,
+    ) -> Result<(), Error> {
+        if arena.parallel_root().is_none() {
+            return Err(bounds_error("Owner has no parallel storage root"));
+        }
+        let graph = Self::owning_allocations(arena, [owner])?;
+        for pointer in graph.buffers {
+            let buffer = pointer.as_ref();
+            if buffer.resource.is_some()
+                || !buffer.metadata_budget.is_null()
+                || !buffer.metadata_account.is_null()
+                || buffer.metadata_parallel.is_none()
+                || buffer.release_active
+                || buffer.failed_descriptor
+                || buffer.failed_store.is_some()
+                || buffer
+                    .cleanup
+                    .as_ref()
+                    .is_some_and(|cleanup| !cleanup.hooks.is_empty())
+            {
+                return Err(bounds_error("Buffer has Local cleanup or resource state"));
+            }
+        }
+        Ok(())
     }
 
     /// Deep-copy a validated hook-free graph, preserving capacity and descriptors.

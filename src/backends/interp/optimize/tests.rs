@@ -4,7 +4,7 @@ use crate::backends::interp::{
 };
 use crate::core::ir::ModulePlan;
 use crate::{ErrorCode, TypeRegistry};
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunction {
     let ast = crate::parser::parse(source).unwrap();
@@ -35,15 +35,18 @@ pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunc
     .unwrap()
 }
 
-pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
+pub(super) fn run(function: Arc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
     let module = BytecodeModule {
+        _parallel_charge: None,
+        parallel: Default::default(),
+        parallel_hosts: Default::default(),
         files: None,
         sources: Default::default(),
         version: crate::runtime::suspension::ModuleId(0),
-        task_targets: Vec::new(),
-        task_entries: HashMap::new(),
-        functions: HashMap::new(),
-        callees: Vec::new(),
+        task_targets: Default::default(),
+        task_entries: Default::default(),
+        functions: Default::default(),
+        callees: Default::default(),
     };
     let args: Vec<_> = args.iter().copied().map(Value::Int32).collect();
     let frame = Frame::new(function, args.iter()).unwrap();
@@ -71,8 +74,8 @@ fn jump_merges_and_mutable_snapshots_match_unoptimized_execution() {
             return total + x
         }
     "#;
-    let original = Rc::new(compile(source, "f", false));
-    let optimized = Rc::new(compile(source, "f", true));
+    let original = Arc::new(compile(source, "f", false));
+    let optimized = Arc::new(compile(source, "f", true));
     for seed in [i32::MIN, -9, 0, 1, i32::MAX] {
         for n in [0, 1, 2, 3, 4, 8] {
             let mut x: i32 = seed;
@@ -106,7 +109,7 @@ fn jump_merges_and_mutable_snapshots_match_unoptimized_execution() {
     ] {
         for optimized in [false, true] {
             assert_eq!(
-                run(Rc::new(compile(source, name, optimized)), &[]),
+                run(Arc::new(compile(source, name, optimized)), &[]),
                 Ok(expected)
             );
         }
@@ -128,8 +131,8 @@ fn conditional_joins_and_short_circuit_writes_match_unoptimized_execution() {
             x + y
         }
     "#;
-    let original = Rc::new(compile(source, "f", false));
-    let optimized = Rc::new(compile(source, "f", true));
+    let original = Arc::new(compile(source, "f", false));
+    let optimized = Arc::new(compile(source, "f", true));
     for seed in [i32::MIN, -100, -1, 0, 1, 100, i32::MAX] {
         for n in [0, 1, 3, 5, 8, 10] {
             let mut x: i32 = seed;
@@ -159,7 +162,7 @@ fn conditional_joins_and_short_circuit_writes_match_unoptimized_execution() {
 #[test]
 fn unary_assignments_preserve_in_place_operands_and_wrapping() {
     for optimized in [false, true] {
-        let function = Rc::new(compile(
+        let function = Arc::new(compile(
             "fn f(a: Int32) -> Int32 { var x = a; var i = 0; while i < 1 { x = -x; i = i + 1 }; x }",
             "f",
             optimized,
@@ -173,7 +176,7 @@ fn unary_assignments_preserve_in_place_operands_and_wrapping() {
         for value in [i32::MIN, -1, 0, 1, i32::MAX] {
             assert_eq!(run(function.clone(), &[value]), Ok(value.wrapping_neg()));
         }
-        let function = Rc::new(compile(
+        let function = Arc::new(compile(
             "fn f(a: Bool) -> Bool { var x = a; var i = 0; while i < 1 { x = !x; i = i + 1 }; x }",
             "f",
             optimized,
@@ -187,13 +190,16 @@ fn unary_assignments_preserve_in_place_operands_and_wrapping() {
         for value in [false, true] {
             let frame = Frame::new(function.clone(), [Value::Bool(value)].iter()).unwrap();
             let module = BytecodeModule {
+                _parallel_charge: None,
+                parallel: Default::default(),
+                parallel_hosts: Default::default(),
                 files: None,
                 sources: Default::default(),
                 version: crate::runtime::suspension::ModuleId(0),
-                task_targets: Vec::new(),
-                task_entries: HashMap::new(),
-                functions: HashMap::new(),
-                callees: Vec::new(),
+                task_targets: Default::default(),
+                task_entries: Default::default(),
+                functions: Default::default(),
+                callees: Default::default(),
             };
             assert!(
                 matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&module), Poll::Complete(Value::Bool(actual)) if actual == !value)
@@ -223,7 +229,7 @@ fn scalar_assignments_eliminate_snapshot_and_writeback_copies() {
             .count(),
         2
     );
-    let function = Rc::new(function);
+    let function = Arc::new(function);
     for n in [0, 1, -1, i32::MIN, i32::MAX] {
         assert_eq!(run(function.clone(), &[n]), Ok(n.wrapping_add(n)));
     }
@@ -254,8 +260,8 @@ fn copy_facts_expire_when_sources_change_or_control_flow_merges() {
             before + middle + x + y
         }
     "#;
-    let original = Rc::new(compile(source, "f", false));
-    let optimized = Rc::new(compile(source, "f", true));
+    let original = Arc::new(compile(source, "f", false));
+    let optimized = Arc::new(compile(source, "f", true));
     for seed in [0, 1, -7, i32::MIN, i32::MAX] {
         for n in [-1, 0, 1, 2, 7] {
             assert_eq!(
@@ -277,7 +283,7 @@ fn direct_destinations_keep_other_uses_of_the_temporary() {
             calculated + x
         }
     "#;
-    let function = Rc::new(compile(source, "f", true));
+    let function = Arc::new(compile(source, "f", true));
     for seed in [0, -9, i32::MIN, i32::MAX] {
         assert_eq!(
             run(function.clone(), &[seed]),
@@ -289,12 +295,12 @@ fn direct_destinations_keep_other_uses_of_the_temporary() {
 #[test]
 fn optimized_division_keeps_failures_and_signed_wrapping() {
     let source = "fn f(a: Int32, b: Int32) -> Int32 { var x = a; var i = 0; while i < 1 { x = x / b; i = i + 1 }; x }";
-    let function = Rc::new(compile(source, "f", true));
+    let function = Arc::new(compile(source, "f", true));
     assert_eq!(run(function.clone(), &[i32::MIN, -1]), Ok(i32::MIN));
     assert_eq!(run(function.clone(), &[-7, 2]), Ok(-3));
     assert_eq!(run(function, &[12, 0]), Err(ErrorCode::RuntimeError));
     // A discarded result must still trap; this pass only removes dead copies.
-    let function = Rc::new(compile("fn f() -> Int32 { 1 / 0; 42 }", "f", true));
+    let function = Arc::new(compile("fn f() -> Int32 { 1 / 0; 42 }", "f", true));
     assert_eq!(run(function, &[]), Err(ErrorCode::RuntimeError));
 }
 
@@ -318,7 +324,7 @@ fn copy_removal_remaps_branch_entries_and_terminal_targets() {
     assert_eq!(function.code.len(), 3);
     assert!(matches!(function.code[0], Instruction::Jump(2)));
     assert!(matches!(function.code[2], Instruction::Jump(3)));
-    assert_eq!(run(Rc::new(function), &[42]), Ok(42));
+    assert_eq!(run(Arc::new(function), &[42]), Ok(42));
 }
 
 #[test]
@@ -341,7 +347,7 @@ fn direct_destinations_do_not_cross_jump_targets() {
         function.code[2],
         Instruction::Copy { dst: 1, src: 0 }
     ));
-    assert_eq!(run(Rc::new(function), &[42]), Ok(42));
+    assert_eq!(run(Arc::new(function), &[42]), Ok(42));
 }
 
 #[test]
@@ -352,8 +358,8 @@ fn while_kernels_reduce_dispatches_and_match_unoptimized_execution() {
         ("while_recurrence", 6),
         ("while_sequence", 6),
     ] {
-        let original = Rc::new(compile(source, name, false));
-        let optimized = Rc::new(compile(source, name, true));
+        let original = Arc::new(compile(source, name, false));
+        let optimized = Arc::new(compile(source, name, true));
         let loop_size = optimized
             .code
             .iter()
@@ -400,8 +406,8 @@ fn generated_mutation_sequences_match_unoptimized_execution() {
             });
         }
         source.push_str("a + b + c + saved }");
-        let original = Rc::new(compile(&source, "f", false));
-        let optimized = Rc::new(compile(&source, "f", true));
+        let original = Arc::new(compile(&source, "f", false));
+        let optimized = Arc::new(compile(&source, "f", true));
         for seed in [0, 1, -17, i32::MIN, i32::MAX] {
             assert_eq!(
                 run(original.clone(), &[seed]),
@@ -444,7 +450,7 @@ fn immediate_arithmetic_preserves_order_wrapping_and_division_errors() {
             assert!(
                 matches!(&function.code[..], [Instruction::BinaryImm { op: actual, rhs: value, .. }] if *actual == op && *value == rhs)
             );
-            let function = Rc::new(function);
+            let function = Arc::new(function);
             for lhs in [i32::MIN, -7, -1, 0, 1, 7, i32::MAX] {
                 let expected = match op {
                     BinOp::Add => Ok(lhs.wrapping_add(rhs)),
@@ -471,7 +477,7 @@ fn immediate_arithmetic_preserves_order_wrapping_and_division_errors() {
         }
     }
     for (symbol, divide) in [("-", false), ("/", true)] {
-        let function = Rc::new(compile(
+        let function = Arc::new(compile(
             &format!("fn f(a: Int32) -> Int32 {{ 7 {symbol} a }}"),
             "f",
             true,
@@ -505,13 +511,13 @@ fn immediate_facts_expire_at_writes_and_control_flow_boundaries() {
             x + saved
         }
     "#;
-    let original = Rc::new(compile(source, "f", false));
-    let optimized = Rc::new(compile(source, "f", true));
+    let original = Arc::new(compile(source, "f", false));
+    let optimized = Arc::new(compile(source, "f", true));
     for n in [-1, 0, 1, 7, 100] {
         assert_eq!(run(original.clone(), &[n]), run(optimized.clone(), &[n]));
     }
     // The literal must survive when its only remaining use is the return.
-    let function = Rc::new(compile(
+    let function = Arc::new(compile(
         "fn f(a: Int32) -> Int32 { let k = 7; a + k; k }",
         "f",
         true,
@@ -550,20 +556,23 @@ fn slot_compaction_preserves_parameter_positions_and_string_constants() {
         }
     "#;
     let original = compile(source, "f", false);
-    let function = Rc::new(compile(source, "f", true));
+    let function = Arc::new(compile(source, "f", true));
     // Owning text keeps cleanup keys stable, so slot compaction is deliberately
     // skipped. Parameter placement and returned bytes must remain correct.
     assert_eq!(function.info.frame_slots, original.info.frame_slots);
     assert_eq!(function.code.len(), function.spans.len());
     let frame = Frame::new(function, [Value::Unit, Value::Int32(4)].iter()).unwrap();
     let module = BytecodeModule {
+        _parallel_charge: None,
+        parallel: Default::default(),
+        parallel_hosts: Default::default(),
         files: None,
         sources: Default::default(),
         version: crate::runtime::suspension::ModuleId(0),
-        task_targets: Vec::new(),
-        task_entries: HashMap::new(),
-        functions: HashMap::new(),
-        callees: Vec::new(),
+        task_targets: Default::default(),
+        task_entries: Default::default(),
+        functions: Default::default(),
+        callees: Default::default(),
     };
     assert!(
         matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&module), Poll::Complete(Value::String(text)) if &*text == "héllo")
@@ -597,7 +606,7 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(
+                    Arc::new(
                         lower(
                             &plan.functions[name],
                             &plan.bodies[name],
@@ -611,16 +620,19 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            _parallel_charge: None,
+            parallel: Default::default(),
+            parallel_hosts: Default::default(),
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
-            task_targets: Vec::new(),
-            task_entries: HashMap::new(),
+            task_targets: Default::default(),
+            task_entries: Default::default(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
                 .collect(),
-            functions,
+            functions: functions.into(),
         };
         let actual = crate::backends::interp::call_sync(
             &module,
@@ -663,7 +675,7 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(
+                    Arc::new(
                         lower(
                             &plan.functions[name],
                             &plan.bodies[name],
@@ -677,16 +689,19 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            _parallel_charge: None,
+            parallel: Default::default(),
+            parallel_hosts: Default::default(),
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
-            task_targets: Vec::new(),
-            task_entries: HashMap::new(),
+            task_targets: Default::default(),
+            task_entries: Default::default(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
                 .collect(),
-            functions,
+            functions: functions.into(),
         };
         let actual = crate::backends::interp::call_sync(
             &module,
@@ -729,7 +744,7 @@ fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(
+                    Arc::new(
                         lower(
                             &plan.functions[name],
                             &plan.bodies[name],
@@ -743,16 +758,19 @@ fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            _parallel_charge: None,
+            parallel: Default::default(),
+            parallel_hosts: Default::default(),
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
-            task_targets: Vec::new(),
-            task_entries: HashMap::new(),
+            task_targets: Default::default(),
+            task_entries: Default::default(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
                 .collect(),
-            functions,
+            functions: functions.into(),
         };
         let actual = crate::backends::interp::call_sync(
             &module,
@@ -802,7 +820,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
                 .map(|name| {
                     (
                         name.clone(),
-                        Rc::new(
+                        Arc::new(
                             lower(
                                 &plan.functions[name],
                                 &plan.bodies[name],
@@ -816,16 +834,19 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
                 })
                 .collect();
             let module = BytecodeModule {
+                _parallel_charge: None,
+                parallel: Default::default(),
+                parallel_hosts: Default::default(),
                 files: None,
                 sources: Default::default(),
                 version: crate::runtime::suspension::ModuleId(0),
-                task_targets: Vec::new(),
-                task_entries: HashMap::new(),
+                task_targets: Default::default(),
+                task_entries: Default::default(),
                 callees: names
                     .iter()
                     .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
                     .collect(),
-                functions,
+                functions: functions.into(),
             };
             let actual = crate::backends::interp::call_sync(
                 &module,
@@ -855,7 +876,7 @@ fn integer_conversion_in_place_updates_preserve_source_tags_and_snapshots() {
         }
     "#;
     for optimized in [false, true] {
-        let function = Rc::new(compile(source, "f", optimized));
+        let function = Arc::new(compile(source, "f", optimized));
         for n in [i32::MIN, -1, 0, 1, i32::MAX] {
             assert_eq!(run(function.clone(), &[n]), Ok(n.wrapping_add(3)));
         }
@@ -889,7 +910,7 @@ fn method_receivers_and_constant_values_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(
+                    Arc::new(
                         lower(
                             &plan.functions[name],
                             &plan.bodies[name],
@@ -903,16 +924,19 @@ fn method_receivers_and_constant_values_match_unoptimized_execution() {
             })
             .collect();
         let module = BytecodeModule {
+            _parallel_charge: None,
+            parallel: Default::default(),
+            parallel_hosts: Default::default(),
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
-            task_targets: Vec::new(),
-            task_entries: HashMap::new(),
+            task_targets: Default::default(),
+            task_entries: Default::default(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
                 .collect(),
-            functions,
+            functions: functions.into(),
         };
         let actual = crate::backends::interp::call_sync(
             &module,

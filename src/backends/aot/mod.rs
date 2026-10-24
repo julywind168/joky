@@ -10,6 +10,8 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::{collections::HashMap, path::Path, rc::Rc};
 
 pub struct AotCompiler {
+    parallel: crate::core::ir::parallel::Effects,
+    sources: std::sync::Arc<crate::SourceMap>,
     module: ObjectModule,
     exports: HashMap<String, FunctionInfo>,
     requires_runtime: bool,
@@ -17,6 +19,44 @@ pub struct AotCompiler {
     symbol_prefix: String,
     types: TypeRegistry,
     registry: Rc<ModuleRegistry>,
+}
+
+/// Immutable compiler evidence, separate from the loaded native code owner.
+#[derive(Clone)]
+pub struct ParallelEntry {
+    symbol: String,
+    name: String,
+    info: FunctionInfo,
+    sources: std::sync::Arc<crate::SourceMap>,
+}
+impl ParallelEntry {
+    pub fn symbol(&self) -> &str {
+        &self.symbol
+    }
+    /// Bind the exact emitted CPS symbol and retain its executable code.
+    ///
+    /// # Safety
+    /// `entry` must be this descriptor's exact generated symbol, linked against
+    /// this runtime ABI. `owner` must retain all executable pages and dependencies
+    /// until the last task and cleanup finish, and support destruction on any
+    /// thread. This does not validate an arbitrary native pointer or its library.
+    pub unsafe fn prepare(
+        &self,
+        entry: crate::runtime::cps::CpsEntry,
+        owner: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+        inputs: Vec<crate::vm::TaskValue>,
+        budgets: Vec<crate::runtime::parallel::TaskBudget>,
+    ) -> Result<crate::vm::PreparedParallelTask, Error> {
+        let code =
+            super::jit::FrozenEntry::aot(entry, self.info.clone(), self.sources.clone(), owner);
+        crate::vm::PreparedParallelTask::native(
+            code,
+            &self.name,
+            inputs,
+            budgets,
+            Default::default(),
+        )
+    }
 }
 
 /// Compiler-authored logical name, physical symbol, and complete C prototype.
@@ -65,6 +105,8 @@ impl AotCompiler {
         let builder = ObjectBuilder::new(isa, name, default_libcall_names())
             .map_err(|e| compile_error(e.to_string()))?;
         Ok(Self {
+            parallel: Default::default(),
+            sources: Default::default(),
             module: ObjectModule::new(builder),
             exports: HashMap::new(),
             requires_runtime: false,
@@ -280,6 +322,8 @@ impl AotCompiler {
             prepared.bindings(),
         )
         .map_err(|error| error.with_sources(ast.sources()))?;
+        self.parallel = crate::core::ir::parallel::analyse(&plan, &prepared, &Default::default());
+        self.sources = ast.sources.clone();
         self.requires_runtime = compiled.requires_runtime;
         self.exports = compiled
             .exports
@@ -368,6 +412,29 @@ impl AotCompiler {
         }
         header.push_str("#ifdef __cplusplus\n}\n#endif\n");
         header
+    }
+
+    /// Compiler evidence for a pure generated CPS entry. Externs require an
+    /// explicit runtime binding contract; an import slot count is not evidence.
+    pub fn parallel_entry(&self, name: &str) -> Result<ParallelEntry, Error> {
+        self.parallel.require(name)?;
+        let info = self
+            .exports
+            .get(name)
+            .filter(|info| info.suspends)
+            .ok_or_else(|| {
+                compile_error("Parallel entry must be an exported @suspends function")
+            })?;
+        Ok(ParallelEntry {
+            symbol: if info.signature.has_text() {
+                format!("__joky_user_text_v2_{}{name}", self.symbol_prefix)
+            } else {
+                format!("{}{name}", self.symbol_prefix)
+            },
+            name: name.into(),
+            info: info.clone(),
+            sources: self.sources.clone(),
+        })
     }
 
     pub fn cps_frame_slots(&self, name: &str) -> Option<usize> {

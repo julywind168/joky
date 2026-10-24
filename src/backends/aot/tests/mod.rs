@@ -60,3 +60,6 @@ mod collections;
 mod explicit_arena;
 #[cfg(unix)]
 mod sets;
+
+#[cfg(unix)]
+mod task_parallel_storage;

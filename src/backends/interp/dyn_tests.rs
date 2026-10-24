@@ -36,7 +36,7 @@ fn borrowed_dyn_v4_interpreter_checks_table_slot_signature_and_function_id() {
                     value: ConstantValue::DynTable(table),
                     ..
                 } if corruption == 4 => {
-                    *table = Rc::new(DynMethodTable {
+                    *table = Arc::new(DynMethodTable {
                         entries: table
                             .entries
                             .iter()
@@ -57,7 +57,7 @@ fn borrowed_dyn_v4_interpreter_checks_table_slot_signature_and_function_id() {
             }
         }
         assert_eq!(changed, corruption != 0);
-        module.functions.insert("answer".into(), Rc::new(function));
+        Arc::make_mut(&mut module.functions).insert("answer".into(), Arc::new(function));
         let result = call_sync(&module, "answer", &[], Default::default());
         if corruption == 0 {
             assert!(matches!(result.unwrap(), Value::Int32(42)));

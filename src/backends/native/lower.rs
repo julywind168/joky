@@ -1508,6 +1508,7 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         // parent's indirect target or capture slots again.
         let zero = builder.ins().iconst(ptr_ty, 0);
         let child = child_at(builder, refs, frame, index, zero, ptr_ty);
+        check_call(builder, refs, Some(frame), None);
         let status = helper(builder, refs, "__joky_cps_task_poll_v1", &[child]);
         if functions[&branch.name].may_fail {
             check_call(builder, refs, Some(frame), None);
@@ -1901,6 +1902,7 @@ fn lower_suspending_call(
     let descriptor = indirect.as_ref().map(|target| slots.read(builder, target));
     let count = cps_slot_count(builder, &functions[name], descriptor, ptr_ty);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
+    check_call(builder, refs, Some(frame), None);
     lower_cps_arguments(builder, slots, args, refs, ptr_ty, frame, child);
     let saved = builder.ins().iconst(types::I32, i64::from(state));
     builder
@@ -1913,6 +1915,7 @@ fn lower_suspending_call(
     let descriptor = indirect.as_ref().map(|target| slots.read(builder, target));
     let count = cps_slot_count(builder, &functions[name], descriptor, ptr_ty);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
+    check_call(builder, refs, Some(frame), None);
     let status = poll_cps(builder, refs.get(name).copied(), descriptor, child, ptr_ty);
     if functions[name].may_fail {
         check_call(builder, refs, Some(frame), None);
@@ -3405,6 +3408,7 @@ pub(super) fn host_text_cps_entry(
         "__joky_text_cps_prepare_v2",
         &[frame, count, params],
     );
+    check_call(builder, refs, Some(frame), None);
     for (index, ty) in info.signature.params.iter().enumerate() {
         if *ty == Type::String {
             let index = builder.ins().iconst(ptr, index as i64);
@@ -3418,6 +3422,7 @@ pub(super) fn host_text_cps_entry(
     builder.ins().jump(poll, &[child.into()]);
     builder.switch_to_block(resumed);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
+    check_call(builder, refs, Some(frame), None);
     builder.ins().jump(poll, &[child.into()]);
     builder.switch_to_block(poll);
     let child = builder.block_params(poll)[0];

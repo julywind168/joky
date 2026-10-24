@@ -25,6 +25,7 @@ enum ResultState {
 }
 
 pub(crate) struct LocalTaskGroup {
+    _charge: Option<crate::runtime::parallel::Lease>,
     children: LocalTaskScope<usize>,
     policy: CompletionPolicy,
     active: Option<(ChildId, usize)>,
@@ -43,6 +44,11 @@ impl LocalTaskGroup {
         if count == 0 {
             return Err(invalid("A static task group requires children"));
         }
+        let bytes = count
+            .checked_mul(std::mem::size_of::<ResultState>() + 2 * std::mem::size_of::<usize>())
+            .and_then(|n| n.checked_add(std::mem::size_of::<Self>()))
+            .ok_or_else(|| invalid("Task group size overflow"))?;
+        let charge = crate::runtime::parallel::reserve_current(bytes)?;
         let mut children = LocalTaskScope::default();
         let mut indices = Vec::new();
         indices.try_reserve_exact(count).map_err(|_| {
@@ -75,6 +81,7 @@ impl LocalTaskGroup {
             )
         })?;
         Ok(Self {
+            _charge: charge,
             children,
             policy,
             active: None,

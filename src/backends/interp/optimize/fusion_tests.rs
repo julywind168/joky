@@ -4,7 +4,7 @@ use crate::backends::interp::{BytecodeModule, Comparison, Execution, Frame, Poll
 use crate::parser::ast::BinOp;
 use crate::runtime::suspension::ModuleId;
 use crate::ErrorCode;
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn compare(symbol: &str, a: i32, b: i32) -> bool {
     match symbol {
@@ -37,8 +37,8 @@ fn fused_signed_comparisons_cover_both_paths_and_integer_boundaries() {
             }}
         "#
         );
-        let original = Rc::new(compile(&source, "f", false));
-        let optimized = Rc::new(compile(&source, "f", true));
+        let original = Arc::new(compile(&source, "f", false));
+        let optimized = Arc::new(compile(&source, "f", true));
         assert!(optimized
             .code
             .iter()
@@ -74,7 +74,7 @@ fn fused_immediate_comparisons_and_materialized_bools_agree() {
             }}
         "#
         );
-        let optimized = Rc::new(compile(&source, "f", true));
+        let optimized = Arc::new(compile(&source, "f", true));
         assert!(optimized
             .code
             .iter()
@@ -87,7 +87,7 @@ fn fused_immediate_comparisons_and_materialized_bools_agree() {
         }
         // A comparison returned as Bool still uses BinaryImm; it is not a branch.
         let source = format!("fn f(a: Int32) -> Bool {{ a {symbol} 0 }}");
-        let function = Rc::new(compile(&source, "f", true));
+        let function = Arc::new(compile(&source, "f", true));
         assert!(matches!(
             &function.code[..],
             [Instruction::BinaryImm { .. }]
@@ -104,13 +104,16 @@ fn fused_immediate_comparisons_and_materialized_bools_agree() {
 
 fn empty_module() -> BytecodeModule {
     BytecodeModule {
+        _parallel_charge: None,
+        parallel: Default::default(),
+        parallel_hosts: Default::default(),
         files: None,
         sources: Default::default(),
         version: ModuleId(0),
-        task_targets: Vec::new(),
-        task_entries: HashMap::new(),
-        functions: HashMap::new(),
-        callees: Vec::new(),
+        task_targets: Default::default(),
+        task_entries: Default::default(),
+        functions: Default::default(),
+        callees: Default::default(),
     }
 }
 
@@ -180,7 +183,7 @@ fn comparison_fusion_preserves_branch_entries_and_terminal_targets() {
         .resize(function.code.len(), function.info.span);
     fuse::comparison_branches(&mut function);
     assert!(matches!(function.code[3], Instruction::Branch { .. }));
-    assert_eq!(run(Rc::new(function), &[42, 100]), Ok(42));
+    assert_eq!(run(Arc::new(function), &[42, 100]), Ok(42));
 
     // Entry into the comparison is safe; removal must map the old terminal PC.
     let mut function = compile(
@@ -220,7 +223,7 @@ fn comparison_fusion_preserves_branch_entries_and_terminal_targets() {
             ..
         }
     ));
-    let function = Rc::new(function);
+    let function = Arc::new(function);
     assert_eq!(run(function.clone(), &[42, 100]), Ok(99));
     assert_eq!(run(function, &[42, 0]), Ok(42));
 }
@@ -238,7 +241,7 @@ fn bool_equality_matches_before_and_after_branch_fusion() {
         "#
         );
         for optimized in [false, true] {
-            let function = Rc::new(compile(&source, "f", optimized));
+            let function = Arc::new(compile(&source, "f", optimized));
             assert_eq!(
                 function
                     .code
@@ -263,7 +266,7 @@ fn bool_equality_matches_before_and_after_branch_fusion() {
         }
         let source = format!("fn f(a: Bool, b: Bool) -> Bool {{ a {symbol} b }}");
         for optimized in [false, true] {
-            let function = Rc::new(compile(&source, "f", optimized));
+            let function = Arc::new(compile(&source, "f", optimized));
             assert!(function
                 .code
                 .iter()
@@ -336,7 +339,7 @@ fn bool_equality_does_not_accept_mixed_types_or_bool_arithmetic() {
     ] {
         let mut function = compile("fn f(a: Int32, b: Int32) -> Int32 { a }", "f", false);
         function.code = vec![instruction];
-        let frame = Frame::new(Rc::new(function), args.iter()).unwrap();
+        let frame = Frame::new(Arc::new(function), args.iter()).unwrap();
         assert!(
             matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&empty_module()), Poll::Failed(error) if error.code() == ErrorCode::InvalidState)
         );
@@ -369,7 +372,7 @@ fn specialized_instructions_keep_operand_type_checks() {
     ] {
         let mut function = compile("fn f(a: Int32) -> Int32 { a }", "f", false);
         function.code = vec![instruction];
-        let frame = Frame::new(Rc::new(function), [Value::Bool(true)].iter()).unwrap();
+        let frame = Frame::new(Arc::new(function), [Value::Bool(true)].iter()).unwrap();
         assert!(
             matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&empty_module()), Poll::Failed(error) if error.code() == ErrorCode::InvalidState)
         );

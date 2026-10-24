@@ -4818,6 +4818,11 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 可执行验收见 `migration_script_staging_and_atomic_publication_run_in_all_backends`；
 [新版 fixture](../tests/fixtures/migration_new.jk) 依赖准备时注入的旧类型，不能单独加载。
 
+Rust 嵌入接口已提供受检的跨线程准备包：`prepare_parallel_task` 冻结代码与拥有输入，
+接收线程通过 `start` 创建本地执行状态。它尚未开启自动分支调度；现有 `join`、`race`、`branch`
+仍由 Local 驱动，Godot 继续在主线程执行。当前包类型与宿主限制见
+[TP2 交付记录](task-parallel-executor.md#12-tp2-跨线程内存与资格)。
+
 `parallel` 已改名为 `join`；旧写法会提示 `Use join instead of parallel`，行为不变。
 `join` 仅在表达式位置后接 `{` 时作为并发构造，普通函数声明、调用和 `string.join(...)` 仍有效。
 

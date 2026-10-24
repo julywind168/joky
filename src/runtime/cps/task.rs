@@ -14,6 +14,7 @@ thread_local! {
 }
 
 pub(super) struct CheckedEntry {
+    _charge: Option<crate::runtime::parallel::Lease>,
     id: u64,
     pub(super) entry: CpsEntry,
     frame_slots: usize,
@@ -80,7 +81,13 @@ pub(crate) unsafe extern "C" fn register(
         }
         let result_lanes = layout.result_lanes();
         let id = crate::runtime::task_scope::fresh_identity()?;
+        let charge = crate::runtime::parallel::reserve_current(
+            std::mem::size_of::<CheckedEntry>()
+                + inputs.capacity() * std::mem::size_of::<(usize, usize)>()
+                + 128,
+        )?;
         let code = Rc::new(CheckedEntry {
+            _charge: charge,
             id,
             entry,
             frame_slots,
@@ -177,11 +184,11 @@ fn invalid(message: &str) {
     ));
 }
 
-pub(super) fn prepared(parent: &CpsFrame, code: Rc<CheckedEntry>) -> Box<CpsFrame> {
+pub(super) fn prepared(parent: &CpsFrame, code: Rc<CheckedEntry>) -> Result<Box<CpsFrame>, Error> {
     let input_slots = code.layout.slot_counts().0;
-    let mut inputs = CpsFrame::new(input_slots);
+    let mut inputs = CpsFrame::try_new(input_slots)?;
     inputs.arena = parent.arena.clone();
-    let mut child = CpsFrame::new(0);
+    let mut child = CpsFrame::try_new(0)?;
     child.arena = parent.arena.clone();
     child.task_entry = Some(code.entry);
     child.prepared = Some(Prepared {
@@ -189,7 +196,7 @@ pub(super) fn prepared(parent: &CpsFrame, code: Rc<CheckedEntry>) -> Box<CpsFram
         inputs: Box::new(inputs),
     });
     child.task_code = Some(code);
-    Box::new(child)
+    Ok(Box::new(child))
 }
 
 /// Prepare a dynamic task's capture packet without executing its entry.
@@ -214,7 +221,13 @@ pub(crate) unsafe extern "C" fn prepare(parent: *mut CpsFrame, token: u64) -> *m
         return std::ptr::null_mut();
     }
     match lookup(parent, token) {
-        Some(code) => Box::into_raw(prepared(parent, code)),
+        Some(code) => match prepared(parent, code) {
+            Ok(child) => Box::into_raw(child),
+            Err(error) => {
+                super::super::error::record_error(error);
+                std::ptr::null_mut()
+            }
+        },
         None => {
             invalid("Unknown or foreign task entry token");
             std::ptr::null_mut()
@@ -245,7 +258,13 @@ pub(crate) unsafe extern "C" fn prepare_static(
         invalid("Unknown or foreign task entry token");
         return std::ptr::null_mut();
     };
-    let child = prepared(parent, code);
+    let child = match prepared(parent, code) {
+        Ok(child) => child,
+        Err(error) => {
+            super::super::error::record_error(error);
+            return std::ptr::null_mut();
+        }
+    };
     parent.children.push(Some(child));
     let child = parent.children[index].as_deref_mut().unwrap();
     inputs(child)
@@ -280,6 +299,12 @@ pub(crate) unsafe extern "C" fn poll(child: *mut CpsFrame) -> i32 {
         invalid("Task has no registered entry");
         return INVALID_STATE;
     };
+    if let Some(prepared) = &(*child).prepared {
+        if let Err(error) = (*child).reserve_slots(prepared.frame_slots) {
+            super::super::error::record_error(error);
+            return super::RUNTIME_ERROR;
+        }
+    }
     if let Some(mut prepared) = (*child).prepared.take() {
         let mut slots = vec![0; prepared.frame_slots];
         slots[..prepared.inputs.slots.len()].copy_from_slice(&prepared.inputs.slots);

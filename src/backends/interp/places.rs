@@ -9,7 +9,7 @@ use crate::runtime::{
 
 pub(super) struct Instruction {
     op: PlaceOp,
-    layout: Rc<Layout>,
+    layout: Arc<Layout>,
 }
 
 pub(super) struct Layout {
@@ -17,15 +17,15 @@ pub(super) struct Layout {
     align: usize,
     length: u64,
     stride: usize,
-    pub(super) program: Rc<[CopyNode]>,
+    pub(super) program: Arc<[CopyNode]>,
     fields: Vec<(usize, Type)>,
-    element: Option<Rc<Layout>>,
+    element: Option<Arc<Layout>>,
 }
 
 #[derive(Default)]
-pub(super) struct Layouts(Vec<(Type, Rc<Layout>)>);
+pub(super) struct Layouts(Vec<(Type, Arc<Layout>)>);
 impl Layouts {
-    pub(super) fn get(&mut self, ty: &Type) -> Rc<Layout> {
+    pub(super) fn get(&mut self, ty: &Type) -> Arc<Layout> {
         if let Some((_, layout)) = self.0.iter().find(|(known, _)| known == ty) {
             return layout.clone();
         }
@@ -40,7 +40,7 @@ impl Layouts {
         } else {
             None
         };
-        let layout = Rc::new(Layout {
+        let layout = Arc::new(Layout {
             element: child,
             size: shape.size,
             align: shape.align,

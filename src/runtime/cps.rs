@@ -57,6 +57,8 @@ pub struct CpsFrame {
     task_entries: std::collections::BTreeMap<(usize, usize, usize), Rc<task::CheckedEntry>>,
     task_code: Option<Rc<task::CheckedEntry>>,
     task_protocol: Vec<protocol::Scope>,
+    parallel_charge: Option<super::parallel::Lease>,
+    pub(crate) parallel_result: Option<super::parallel::Lease>,
 }
 
 impl CpsFrame {
@@ -88,7 +90,35 @@ impl CpsFrame {
             task_entries: Default::default(),
             task_code: None,
             task_protocol: Vec::new(),
+            parallel_charge: None,
+            parallel_result: None,
         }
+    }
+
+    pub(crate) fn try_new(slot_count: usize) -> Result<Self, crate::Error> {
+        let bytes = Self::charged_size(slot_count)?;
+        let charge = super::parallel::reserve_current(bytes)?;
+        let mut frame = Self::new(slot_count);
+        frame.parallel_charge = charge;
+        Ok(frame)
+    }
+    fn charged_size(slot_count: usize) -> Result<usize, crate::Error> {
+        slot_count
+            .checked_mul(8)
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<Self>()))
+            .ok_or_else(|| {
+                crate::Error::new_with_code(
+                    crate::ErrorPhase::Runtime,
+                    crate::ErrorCode::ResourceLimit,
+                    "CPS frame size overflow",
+                )
+            })
+    }
+    pub(crate) fn reserve_slots(&mut self, slots: usize) -> Result<(), crate::Error> {
+        if let Some(charge) = &mut self.parallel_charge {
+            charge.resize(Self::charged_size(slots)?)?;
+        }
+        Ok(())
     }
 
     fn release_concurrent_results(&mut self) {
@@ -239,14 +269,18 @@ pub unsafe extern "C" fn child_at(
     if children.len() <= index {
         children.resize_with(index + 1, || None);
     }
-    let child = children[index]
-        .get_or_insert_with(|| {
-            let mut child = CpsFrame::new(slot_count);
-            child.arena = frame.arena.clone();
-            Box::new(child)
-        })
-        .as_mut();
-    child
+    if children[index].is_none() {
+        let mut child = match CpsFrame::try_new(slot_count) {
+            Ok(child) => child,
+            Err(error) => {
+                super::error::record_error(error);
+                return std::ptr::null_mut();
+            }
+        };
+        child.arena = frame.arena.clone();
+        children[index] = Some(Box::new(child));
+    }
+    children[index].as_mut().unwrap().as_mut()
 }
 
 /// # Safety
@@ -310,7 +344,13 @@ pub unsafe extern "C" fn task_child(frame: *mut CpsFrame, slot_count: usize) -> 
         ));
         return std::ptr::null_mut();
     }
-    let mut child = CpsFrame::new(slot_count);
+    let mut child = match CpsFrame::try_new(slot_count) {
+        Ok(child) => child,
+        Err(error) => {
+            super::error::record_error(error);
+            return std::ptr::null_mut();
+        }
+    };
     child.arena = frame.arena.clone();
     Box::into_raw(Box::new(child))
 }
@@ -521,7 +561,15 @@ pub(crate) unsafe extern "C" fn capture_text(
     owner: *const super::buffer::Buffer,
 ) {
     if (*frame).root_text && (*frame).domain_return.is_none() {
-        match super::owned_text::borrow(owner).and_then(super::owned_text::copy_to_host) {
+        let result = super::owned_text::borrow(owner).and_then(|text| {
+            let charge = super::parallel::reserve_current(
+                text.len() + std::mem::size_of::<crate::vm::TaskValue>(),
+            )?;
+            let text = super::owned_text::copy_to_host(text)?;
+            (*frame).parallel_result = charge;
+            Ok(text)
+        });
+        match result {
             Ok(text) => (*frame).text_result = Some(text),
             Err(error) => super::error::record_error(error),
         }
@@ -539,6 +587,9 @@ pub(crate) unsafe extern "C" fn text_prepare(
     // Initialize the shared arena before creating the child.
     arena(frame);
     let child = child(frame, slot_count);
+    if child.is_null() {
+        return child;
+    }
     (&mut (*child).slots)[..param_count].copy_from_slice(&(&(*frame).slots)[..param_count]);
     (*child).text_views = vec![super::string::JokyText::default(); param_count];
     (*frame).state = 1;

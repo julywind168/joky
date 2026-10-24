@@ -14,6 +14,7 @@ mod borrowing;
 mod buffers;
 mod fixed_arrays;
 mod indexing;
+pub(crate) mod parallel;
 mod sequence_patterns;
 mod task_scopes;
 pub(crate) use fixed_arrays::PlaceOp;

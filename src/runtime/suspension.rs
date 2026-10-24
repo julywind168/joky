@@ -64,6 +64,9 @@ struct NativeContinuation {
 }
 
 pub(crate) trait InterpretedTask {
+    fn take_parallel_result_charge(&mut self) -> Option<super::parallel::Lease> {
+        None
+    }
     fn limits(&self) -> crate::vm::InterpreterLimits {
         Default::default()
     }
@@ -291,6 +294,15 @@ pub struct StringContinuation {
     inner: Continuation,
 }
 impl StringContinuation {
+    pub(crate) fn take_parallel_result_charge(&mut self) -> Option<super::parallel::Lease> {
+        if self.inner.status != ContinuationStatus::Completed {
+            return None;
+        }
+        match &mut self.inner.inner {
+            ContinuationInner::Native(task) => task.frame.parallel_result.take(),
+            ContinuationInner::Interpreted(task) => task.take_parallel_result_charge(),
+        }
+    }
     pub(crate) fn new(inner: Continuation) -> Self {
         Self { inner }
     }

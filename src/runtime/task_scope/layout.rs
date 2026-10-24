@@ -74,6 +74,7 @@ pub(crate) fn encode(signature: &FunctionSignature) -> Result<Vec<u64>, Error> {
 }
 
 pub(crate) struct CheckedLayout {
+    _charge: Option<crate::runtime::parallel::Lease>,
     // Retain the exact compiler layout with its packet, independently of module data.
     words: Box<[u64]>,
 }
@@ -123,7 +124,11 @@ impl Reader<'_> {
 impl CheckedLayout {
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
         Self::read_counts(words)?;
+        let charge = crate::runtime::parallel::reserve_current(
+            std::mem::size_of::<Self>() + std::mem::size_of_val(words),
+        )?;
         Ok(Self {
+            _charge: charge,
             words: words.into(),
         })
     }

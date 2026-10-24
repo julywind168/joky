@@ -9,8 +9,11 @@ use std::{
 
 /// Per-task charged budget: padded payloads plus allocation bookkeeping.
 pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
-#[derive(Default)]
 pub(crate) struct Arena {
+    parallel: Option<(
+        super::parallel::Storage,
+        Option<super::parallel::LocalShard>,
+    )>,
     allocations: Vec<(NonNull<u8>, Layout)>,
     bytes: usize,
     external: Rc<Cell<usize>>,
@@ -22,6 +25,22 @@ pub(crate) struct Arena {
     parent_account: Option<Rc<Budget>>,
     imported: usize,
     temporary_limit: Option<usize>,
+}
+impl Default for Arena {
+    fn default() -> Self {
+        Self {
+            parallel: super::parallel::current().map(|root| (root, None)),
+            allocations: Vec::new(),
+            bytes: 0,
+            external: Default::default(),
+            task_bytes: Default::default(),
+            budget: None,
+            account: None,
+            parent_account: None,
+            imported: 0,
+            temporary_limit: None,
+        }
+    }
 }
 /// Shared peak accounting for persistent roots and their active invocations.
 #[derive(Default)]
@@ -52,8 +71,17 @@ impl Budget {
 }
 
 impl Arena {
+    pub(crate) fn with_storage(root: super::parallel::Storage) -> Self {
+        let mut arena = Self::default();
+        arena.parallel = Some((root, None));
+        arena
+    }
+    pub(crate) fn parallel_root(&self) -> Option<&super::parallel::Storage> {
+        self.parallel.as_ref().map(|(root, _)| root)
+    }
     pub(crate) fn with_budget(budget: Rc<Budget>, temporary_limit: Option<usize>) -> Self {
         Self {
+            parallel: None,
             budget: Some(budget),
             account: Some(Rc::new(Budget {
                 limit: Cell::new(usize::MAX),
@@ -71,6 +99,7 @@ impl Arena {
     /// A separately reclaimed region shares its task's live allocation ceiling.
     pub(crate) fn child(&self) -> Self {
         Self {
+            parallel: self.parallel.as_ref().map(|(root, _)| (root.clone(), None)),
             task_bytes: self.task_bytes.clone(),
             budget: self.budget.clone(),
             account: self.budget.as_ref().map(|_| {
@@ -96,7 +125,9 @@ impl Arena {
         self.budget.as_ref().map_or(std::ptr::null(), Rc::as_ptr)
     }
     pub(crate) fn bytes(&self) -> usize {
-        self.bytes + self.external.get()
+        self.parallel.as_ref().map_or(self.bytes, |(_, shard)| {
+            shard.as_ref().map_or(0, super::parallel::LocalShard::bytes)
+        }) + self.external.get()
     }
     pub(crate) fn pointers_except(&self, excluded: NonNull<u8>) -> Result<Vec<NonNull<u8>>, Error> {
         let mut pointers = Vec::new();
@@ -222,7 +253,10 @@ impl Arena {
         }
     }
     pub(crate) fn contains(&self, pointer: NonNull<u8>) -> bool {
-        self.allocations.iter().any(|&(p, _)| p == pointer)
+        self.parallel.as_ref().map_or_else(
+            || self.allocations.iter().any(|&(p, _)| p == pointer),
+            |(root, _)| root.contains(pointer),
+        )
     }
 
     /// Release a compiler-owned allocation and refund its live-storage charge.
@@ -231,6 +265,10 @@ impl Arena {
     /// # Safety
     /// No live capability may access this allocation after this call.
     pub(crate) unsafe fn release(&mut self, pointer: NonNull<u8>) {
+        if let Some((root, _)) = &self.parallel {
+            root.release(pointer);
+            return;
+        }
         let index = self
             .allocations
             .iter()
@@ -273,7 +311,17 @@ impl Arena {
     }
     /// Charge host-owned bytes against the same peak as language allocations.
     /// The refund handle remains valid even if the interpreter moves its arena.
+    pub(crate) fn metadata_lease(&self) -> Option<super::parallel::Lease> {
+        self.parallel
+            .as_ref()
+            .map(|(root, _)| root.accounts().reserve(0).expect("zero reservation"))
+    }
     pub(crate) fn reserve_external(&mut self, charge: usize) -> Result<ExternalCharge, Error> {
+        let shared = self
+            .parallel
+            .as_ref()
+            .map(|(root, _)| root.accounts().reserve(charge))
+            .transpose()?;
         let external = self
             .external
             .get()
@@ -314,6 +362,7 @@ impl Arena {
         self.external.set(external);
         self.task_bytes.set(task_bytes);
         Ok(ExternalCharge {
+            _shared: shared,
             bytes: charge,
             external: self.external.clone(),
             task_bytes: self.task_bytes.clone(),
@@ -344,6 +393,15 @@ impl Arena {
         align: usize,
         limit: usize,
     ) -> Result<NonNull<u8>, Error> {
+        if let Some((root, shard)) = &mut self.parallel {
+            if size > limit {
+                return Err(allocation_error());
+            }
+            if shard.is_none() {
+                *shard = Some(root.shard()?);
+            }
+            return shard.as_mut().unwrap().allocate(size, align);
+        }
         let layout = Layout::from_size_align(size.max(1), align).map_err(|_| allocation_error())?;
         let charge = layout
             .pad_to_align()
@@ -410,6 +468,7 @@ impl Arena {
     }
 }
 pub(crate) struct ExternalCharge {
+    _shared: Option<super::parallel::Lease>,
     bytes: usize,
     external: Rc<Cell<usize>>,
     task_bytes: Rc<Cell<usize>>,

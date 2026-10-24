@@ -92,6 +92,75 @@ impl VmEngine {
         Self::with_mode_and_registry(mode, crate::stdlib::module_registry())
     }
 
+    /// Freeze one entry and owning inputs for transfer to a worker. This does not
+    /// enable a worker pool; join/race/branch still use the local driver in TP2.
+    /// Unsupported storage, calls and legacy host bindings fail before execution.
+    pub fn prepare_parallel_task(
+        &self,
+        name: &str,
+        input: Vec<super::TaskValue>,
+        budgets: Vec<crate::runtime::parallel::TaskBudget>,
+    ) -> Result<super::PreparedParallelTask, Error> {
+        match self
+            .current
+            .as_ref()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?
+        {
+            LoadedModule::Jit(module) => super::PreparedParallelTask::native(
+                module.freeze(name)?,
+                name,
+                input,
+                budgets,
+                self.interpreter_limits,
+            ),
+            LoadedModule::Interpreter(module) => super::PreparedParallelTask::interpreted(
+                module.freeze(name)?,
+                name,
+                input,
+                budgets,
+                self.interpreter_limits,
+            ),
+        }
+    }
+
+    /// Explicitly admit a scalar CPS host on any execution worker.
+    ///
+    /// # Safety
+    /// In addition to the ordinary CPS ABI, entry and all transitive callees,
+    /// stop hooks and destructors must support simultaneous calls on arbitrary
+    /// threads. Every poll must return. V1 retains progress only in the declared
+    /// scalar slots: no host_data allocation, host_context, stop hook or retained
+    /// waker. Such capabilities need a separately audited adapter.
+    /// No VM, thread-bound handle or hidden local capability may escape into the
+    /// frame. `owner` keeps every code/data dependency alive and is safe to drop
+    /// on any thread. Complete, exact slot metadata is mandatory. Old registrations
+    /// stay Local; replacing this binding with one revokes admission for new loads.
+    pub unsafe fn register_parallel_suspending_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        entry: CpsEntry,
+        frame_slots: usize,
+        owner: std::sync::Arc<dyn Any + Send + Sync>,
+    ) -> Result<(), Error> {
+        if !signature
+            .params
+            .iter()
+            .chain(std::iter::once(&signature.ret))
+            .all(crate::core::instance::scalar)
+        {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "Parallel host v1 requires scalar inputs and result",
+            ));
+        }
+        let types = self.validate_registration(name, &signature, false, Some(frame_slots))?;
+        let host = super::parallel::host(name, signature, entry, frame_slots, owner);
+        self.hosts.insert(name.into(), host.binding());
+        self.types = types;
+        Ok(())
+    }
+
     /// Inject one immutable binding snapshot for all loads and both VM backends.
     pub(crate) fn with_mode_and_registry(mode: VmMode, registry: Rc<ModuleRegistry>) -> Self {
         let executor = Rc::new(crate::runtime::executor::HostExecutor::default());
@@ -1219,7 +1288,7 @@ impl VmEngine {
         if let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() {
             let args: Vec<_> = input
                 .into_iter()
-                .map(|text| interp::Value::String(Rc::from(text)))
+                .map(|text| interp::Value::String(std::sync::Arc::from(text)))
                 .collect();
             let interp::Value::String(text) =
                 interp::call_sync(module, name, &args, self.interpreter_limits)?
