@@ -18,6 +18,7 @@
 - [Joky 语法与类型系统设计（第一版草案）](syntax.md)
 - [Arena、隐式生命周期与 FFI 设计](arena-borrowing-ffi.md)
 - [服务端状态域与任务并发设计草案](server-concurrency.md)
+- [可选多线程任务执行器设计与实施计划](task-parallel-executor.md)
 - [状态域语法糖草案](state-domain-syntax.md)
 - [有状态服务的编程模型与实施计划](stateful-service-ergonomics.md)
 - [文件运行时设计与开发计划](file-runtime.md)
