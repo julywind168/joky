@@ -82,7 +82,7 @@ int main(void) {
 /// Build ABI-correct forwarding bodies from the compiler's helper signatures.
 /// The loaded object shares ownership accounting and errors with this process.
 #[cfg(unix)]
-fn shared_runtime_object(
+pub(super) fn shared_runtime_object(
     module: &cranelift_object::ObjectModule,
     symbols: &std::collections::HashMap<String, *const u8>,
 ) -> Vec<u8> {

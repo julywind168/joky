@@ -1,0 +1,44 @@
+// TP0 only: dispatch is a test bridge, not a public parallel execution API.
+extern fn probe_dispatch(id: Int32) @suspends -> Int32
+extern fn probe_enter(id: Int32) -> Int32
+extern fn probe_cancel(id: Int32) -> Int32
+extern fn probe_parent()
+
+struct Cell { value: Int32 }
+
+// Generated CPU work and task-owned allocation run on the worker itself.
+// The explicit checkpoint models the cancellation boundary planned for TP3.
+fn work(id: Int32) -> Int32 {
+    let cell = alloc(Cell { value: id + 1 })
+    if probe_enter(id) == 0 { return -2 }
+    var sum = 0
+    var i = 0
+    while i < 512 {
+        if probe_cancel(id) != 0 { return -1 }
+        sum = sum + cell.value
+        i = i + 1
+    }
+    sum
+}
+
+fn joined() @suspends -> Int32 {
+    let values = parallel { | probe_dispatch(0) | probe_dispatch(1) }
+    probe_parent()
+    values.0 + values.1
+}
+
+fn raced() @suspends -> Int32 {
+    let value = race { | probe_dispatch(0) | probe_dispatch(1) }
+    probe_parent()
+    value
+}
+
+fn branched() @suspends -> Int32 {
+    let value = scope {
+        branch { probe_dispatch(0); }
+        branch { probe_dispatch(1); }
+        77
+    }
+    probe_parent()
+    value
+}

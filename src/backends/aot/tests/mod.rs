@@ -43,6 +43,9 @@ mod strings;
 mod support;
 mod suspension;
 
+#[cfg(unix)]
+mod task_parallel_probe;
+
 use support::check_arena_cps_fixture;
 pub(crate) use support::{assert_sync_int32, assert_sync_results};
 
