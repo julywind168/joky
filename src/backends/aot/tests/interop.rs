@@ -277,6 +277,21 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             return child_at_fn(f, i, n);
         }
         void __joky_cps_release_children(JokyCpsFrame *f) { release_children_fn(f); }
+        static int32_t (*concurrent_open_fn)(JokyCpsFrame *, uint32_t, size_t);
+        static int64_t (*concurrent_next_fn)(JokyCpsFrame *);
+        static int32_t (*concurrent_polled_fn)(JokyCpsFrame *, size_t, int32_t);
+        void bind_concurrent_runtime(int32_t (*o)(JokyCpsFrame *, uint32_t, size_t),
+                                     int64_t (*n)(JokyCpsFrame *),
+                                     int32_t (*p)(JokyCpsFrame *, size_t, int32_t)) {
+            concurrent_open_fn = o; concurrent_next_fn = n; concurrent_polled_fn = p;
+        }
+        int32_t __joky_cps_concurrent_open_v1(JokyCpsFrame *f, uint32_t k, size_t n) {
+            return concurrent_open_fn(f, k, n);
+        }
+        int64_t __joky_cps_concurrent_next_v1(JokyCpsFrame *f) { return concurrent_next_fn(f); }
+        int32_t __joky_cps_concurrent_polled_v1(JokyCpsFrame *f, size_t i, int32_t s) {
+            return concurrent_polled_fn(f, i, s);
+        }
     "#,
     )
     .unwrap();
@@ -343,6 +358,18 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         library.get::<BindScope>(b"bind_scope_runtime").unwrap()(
             cps::child_at,
             cps::release_children,
+        );
+        type BindConcurrent = unsafe extern "C" fn(
+            unsafe extern "C" fn(*mut cps::CpsFrame, u32, usize) -> i32,
+            unsafe extern "C" fn(*mut cps::CpsFrame) -> i64,
+            unsafe extern "C" fn(*mut cps::CpsFrame, usize, i32) -> i32,
+        );
+        library
+            .get::<BindConcurrent>(b"bind_concurrent_runtime")
+            .unwrap()(
+            cps::concurrent::open,
+            cps::concurrent::next,
+            cps::concurrent::polled,
         );
     }
     let entry = unsafe { *library.get::<cps::CpsEntry>(b"aot_work").unwrap() };

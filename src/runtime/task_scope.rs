@@ -5,6 +5,9 @@
 //! hands them back for backend-specific cleanup. Tokens survive compaction and
 //! are never reused; storage positions and frame pointers are not task identities.
 //! This is the local policy, not a cross-thread execution or wake protocol.
+mod concurrent;
+pub(crate) use concurrent::{CompletionPolicy, GroupPoll, LocalTaskGroup};
+
 use crate::{Error, ErrorCode, ErrorPhase};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -12,10 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) struct ChildId(u64);
 
 impl ChildId {
-    fn allocate(counter: &AtomicU64) -> Result<Self, Error> {
+    fn allocate(counter: &AtomicU64, count: u64) -> Result<Self, Error> {
         counter
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                value.checked_add(1)
+                value.checked_add(count)
             })
             .map(Self)
             .map_err(|_| {
@@ -54,18 +57,26 @@ impl<T> Default for LocalTaskScope<T> {
 }
 
 impl<T> LocalTaskScope<T> {
-    pub(crate) fn publish(&mut self, child: T) -> Result<ChildId, (Error, T)> {
+    fn reserve(&mut self, count: usize) -> Result<ChildId, Error> {
         if self.joining {
-            return Err((
-                Error::new_with_code(
-                    ErrorPhase::Runtime,
-                    ErrorCode::InvalidState,
-                    "Cannot publish a child into a joining task scope",
-                ),
-                child,
+            return Err(Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::InvalidState,
+                "Cannot publish a child into a joining task scope",
             ));
         }
-        let id = match ChildId::allocate(&NEXT_CHILD) {
+        self.children.try_reserve(count).map_err(|_| {
+            Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::ResourceLimit,
+                "Task registration capacity exhausted",
+            )
+        })?;
+        ChildId::allocate(&NEXT_CHILD, count as u64)
+    }
+
+    pub(crate) fn publish(&mut self, child: T) -> Result<ChildId, (Error, T)> {
+        let id = match self.reserve(1) {
             Ok(id) => id,
             Err(error) => return Err((error, child)),
         };
@@ -75,6 +86,26 @@ impl<T> LocalTaskScope<T> {
         });
         self.live += 1;
         Ok(id)
+    }
+
+    /// Reserve the complete batch before transferring any capture ownership.
+    /// No callback or fallible operation occurs during the publication itself.
+    pub(crate) fn publish_batch(&mut self, children: Vec<T>) -> Result<(), (Error, Vec<T>)> {
+        let first = match self.reserve(children.len()) {
+            Ok(id) => id,
+            Err(error) => return Err((error, children)),
+        };
+        self.live += children.len();
+        self.children.extend(
+            children
+                .into_iter()
+                .enumerate()
+                .map(|(offset, child)| Child {
+                    id: ChildId(first.0 + offset as u64),
+                    value: Some(child),
+                }),
+        );
+        Ok(())
     }
 
     pub(crate) fn close(&mut self) {
@@ -239,7 +270,10 @@ mod tests {
         scope.finish_round();
         assert_eq!(scope.next(), Some(second));
         assert!(scope.entries().all(|(_, _, ready)| !ready));
-        let (_, rejected) = scope.publish(Owner(&drops)).err().unwrap();
+        let (_, rejected) = scope
+            .publish_batch(vec![Owner(&drops), Owner(&drops)])
+            .err()
+            .unwrap();
         assert_eq!(drops.get(), 1);
         drop(rejected);
         scope.polled(second, false).unwrap();
@@ -248,14 +282,19 @@ mod tests {
         scope.restart_join_round();
         assert_eq!(scope.next(), Some(second));
         drop(scope);
-        assert_eq!(drops.get(), 3);
+        assert_eq!(drops.get(), 4);
     }
 
     #[test]
     fn task_scope_identity_exhaustion_does_not_wrap() {
         let counter = AtomicU64::new(u64::MAX - 1);
-        assert_eq!(ChildId::allocate(&counter).unwrap(), ChildId(u64::MAX - 1));
-        assert!(ChildId::allocate(&counter).is_err());
+        assert!(ChildId::allocate(&counter, 2).is_err());
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX - 1);
+        assert_eq!(
+            ChildId::allocate(&counter, 1).unwrap(),
+            ChildId(u64::MAX - 1)
+        );
+        assert!(ChildId::allocate(&counter, 1).is_err());
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
 }

@@ -176,7 +176,19 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
     success(&output);
     work.write(
         "async_main.jk",
-        include_str!("../../examples/async_main.jk"),
+        r#"import joky/task
+import joky/io.{println}
+fn value(n: Int32, waits: Int32) @suspends -> Int32 {
+    var i = 0
+    while i < waits { task.yield_now(); i = i + 1 }
+    n
+}
+fn main() @suspends {
+    let (a, b) = join { | value(40, 2) | value(2, 0) }
+    let winner = race { | value(a + b, 0) | value(0, 3) }
+    println(&winner)
+}
+"#,
     );
     let output = Command::new(bin.join("joky"))
         .current_dir(work.path())

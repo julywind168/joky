@@ -393,6 +393,10 @@ Concurrent branches use the same activation representation as ordinary calls, so
 both direct native CPS imports and Joky functions are valid branches. Each join
 round polls incomplete branches in source order and skips completed branches.
 Repeated Pending does not rebuild arguments or replay earlier side effects.
+`LocalTaskGroup`, shared with native CPS lowering, owns static registration and
+poll selection. Its active child survives instruction slicing; completed source
+positions remain stable when the registry compacts. A Selected group has chosen
+its result but still retains the backend's losing activations for `ConcurrentFinish`.
 Each branch carries scalar or flattened aggregate result destinations. On completion,
 its owning cleanup entry transfers to the parent immediately, retaining stable snapshot
 storage even after the child activation is removed. Once all branches complete,
@@ -430,8 +434,10 @@ failure and cancellation. Branch entry functions still return Unit.
 
 Dynamic task scopes add one scheduling layer. Each frame keeps a stack of open
 scope records: registered children in creation order (`None` once finished), a
-polling cursor, and the round-pending flag. `TaskBranch` checks the frame
-capacity, snapshots the captures into a child activation, transfers owning
+polling cursor, and whether registration is closed for joining. The shared
+`LocalTaskScope` supplies stable child identities and rejects stale or duplicate
+poll reports. `TaskBranch` checks the frame capacity, snapshots the captures into
+a child activation, transfers owning
 cleanup entries, and appends the child without executing it. When the body
 suspends, the scheduler runs one round: the frame tree is walked in pre-order
 (scopes outermost first, children in registration order), polling each

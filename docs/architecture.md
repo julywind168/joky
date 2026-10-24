@@ -184,6 +184,10 @@ Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来
 
 结构化并发在 AST 和共享 IR 中统一表示为 `Concurrent`，`ConcurrentKind::Join` 对应 `join`，
 `ConcurrentKind::Race` 对应 `race`。两者共用参数求值、挂起分支检查、借用检查和能力传播。
+本地静态分支由原生后端与解释器共用的 `LocalTaskGroup` 选择下一分支及决定汇合/race 选择，
+登记使用与动态 branch 相同的 `LocalTaskScope`。批量登记只在全部输入准备后发布；
+原生 `__joky_cps_concurrent_*_v1` 是本地帧适配桥，生成代码仍负责实际调用和按类型接收结果。
+Selected 仅表示结果已选定，不能跳过后续 `ConcurrentFinish` 清理屏障；这些桥不开放跨线程帧访问。
 Join 在各 `ConcurrentBranch` 的结果槽接收不同类型的无引用结果，全部完成后通过普通元组构造
 按源码顺序组合；全 Unit 分支保持 Unit。拥有分支的内嵌 cleanup 描述在该分支完成时立即登记，
 不能等到整个 Join 完成才接管。描述参与 Drop 专化、依赖与能力传播、CPS 稳定存储预算和布局。

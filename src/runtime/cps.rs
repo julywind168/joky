@@ -4,6 +4,8 @@
 //! another value (failure). A pending callback is polled again with the same
 //! frame after the caller signals readiness; it must preserve its own progress.
 
+pub(crate) mod concurrent;
+
 use super::arena::Arena;
 use super::borrowed_host::{BorrowingHostStop, STOP_CANCELLED};
 use std::{cell::UnsafeCell, rc::Rc};
@@ -13,7 +15,7 @@ pub const INVALID_STATE: i32 = 2;
 pub const RUNTIME_ERROR: i32 = 3;
 pub const FAILED: u32 = u32::MAX - 1;
 
-use super::task_scope::{ChildId, LocalTaskScope};
+use super::task_scope::{ChildId, LocalTaskGroup, LocalTaskScope};
 type DynamicTaskScope = LocalTaskScope<Box<CpsFrame>>;
 
 #[repr(C)]
@@ -46,6 +48,7 @@ pub struct CpsFrame {
     pub(crate) domain_result: Option<Vec<u64>>,
     pub(crate) root_text: bool,
     pub(crate) text_result: Option<String>,
+    concurrent: Option<LocalTaskGroup>,
 }
 
 impl CpsFrame {
@@ -70,6 +73,7 @@ impl CpsFrame {
             domain_result: None,
             root_text: false,
             text_result: None,
+            concurrent: None,
         }
     }
 
@@ -79,6 +83,7 @@ impl CpsFrame {
             self.state = FAILED;
         }
         self.children.clear();
+        self.concurrent = None;
         self.task_scopes.clear();
         self.task_entry = None;
         self.text_views.clear();
@@ -186,6 +191,7 @@ pub unsafe extern "C" fn child_at(
 #[export_name = "__joky_cps_release_children"]
 pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
     (*frame).children.clear();
+    (*frame).concurrent = None;
 }
 
 /// # Safety
@@ -400,7 +406,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 19] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 22] {
     [
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
@@ -419,6 +425,18 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 19] {
         ("__joky_cps_release_child", release_child as *const u8),
         ("__joky_cps_child_at", child_at as *const u8),
         ("__joky_cps_release_children", release_children as *const u8),
+        (
+            "__joky_cps_concurrent_open_v1",
+            concurrent::open as *const u8,
+        ),
+        (
+            "__joky_cps_concurrent_next_v1",
+            concurrent::next as *const u8,
+        ),
+        (
+            "__joky_cps_concurrent_polled_v1",
+            concurrent::polled as *const u8,
+        ),
         ("__joky_cps_task_scope_enter", task_scope_enter as *const u8),
         ("__joky_cps_task_child", task_child as *const u8),
         (

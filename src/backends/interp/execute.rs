@@ -3,7 +3,7 @@ use super::{host::HostPending, *};
 use crate::{
     core::integer::IntegerOutcome,
     runtime::suspension::{InterpretedTask, ResumeError},
-    runtime::task_scope::{ChildId, LocalTaskScope},
+    runtime::task_scope::{ChildId, CompletionPolicy, GroupPoll, LocalTaskGroup, LocalTaskScope},
     vm::InterpreterLimits,
     RuntimeFrame,
 };
@@ -405,11 +405,8 @@ enum Pending {
         result: Option<usize>,
     },
     Concurrent {
-        kind: ConcurrentKind,
+        group: LocalTaskGroup,
         branches: Vec<Branch>,
-        next: usize,
-        pending: bool,
-        complete: bool,
     },
     /// Joining the innermost open dynamic task scope; the record stays on
     /// the frame's scope stack until every registered child has finished.
@@ -766,10 +763,10 @@ impl Execution {
                 Instruction::AggregateCall(call) => &call.results,
                 Instruction::IndirectCall(call) => &call.results,
                 Instruction::Concurrent { branches, .. } => {
-                    let Some(Pending::Concurrent { next, .. }) = &parent.pending else {
+                    let Some(Pending::Concurrent { group, .. }) = &parent.pending else {
                         unreachable!()
                     };
-                    &branches[*next].results
+                    &branches[group.active_index().expect("selected static child")].results
                 }
                 _ => unreachable!("byte request result"),
             };
@@ -796,10 +793,10 @@ impl Execution {
             Instruction::AggregateCall(call) => &call.results,
             Instruction::IndirectCall(call) => &call.results,
             Instruction::Concurrent { branches, .. } => {
-                let Some(Pending::Concurrent { next, .. }) = &parent.pending else {
+                let Some(Pending::Concurrent { group, .. }) = &parent.pending else {
                     unreachable!()
                 };
-                &branches[*next].results
+                &branches[group.active_index().expect("selected static child")].results
             }
             _ => unreachable!(),
         };
@@ -872,6 +869,14 @@ impl Execution {
                 })
             })
             .collect::<Result<_, _>>()?;
+        let group = LocalTaskGroup::new(
+            if kind == ConcurrentKind::Join {
+                CompletionPolicy::All
+            } else {
+                CompletionPolicy::First
+            },
+            children.len(),
+        )?;
         let branches = children
             .into_iter()
             .map(|(mut child, done_slot, result, owned)| {
@@ -890,13 +895,7 @@ impl Execution {
                 }
             })
             .collect();
-        self.frame_mut(id).pending = Some(Pending::Concurrent {
-            kind,
-            branches,
-            next: 0,
-            pending: false,
-            complete: false,
-        });
+        self.frame_mut(id).pending = Some(Pending::Concurrent { group, branches });
         Ok(())
     }
 
@@ -1198,14 +1197,9 @@ impl Execution {
                 Pending::TaskJoin => {
                     unreachable!("task children report to their registering scope")
                 }
-                Pending::Concurrent {
-                    kind,
-                    branches,
-                    next,
-                    pending,
-                    complete: finished,
-                } => {
-                    let branch = &mut branches[*next];
+                Pending::Concurrent { group, branches } => {
+                    let index = group.active_index().expect("selected static child");
+                    let branch = &mut branches[index];
                     debug_assert_eq!(branch.child, Some(id));
                     if complete {
                         if let Some(slot) = branch.result {
@@ -1216,12 +1210,11 @@ impl Execution {
                         }
                         branch.child = None;
                         frame.slots[branch.done_slot] = Value::Bool(true);
-                    } else {
-                        *pending = true;
                     }
-                    *next += 1;
-                    if complete && *kind == ConcurrentKind::Race {
-                        *finished = true;
+                    if let Err(error) = group.polled(index, complete) {
+                        return Some(self.fail(error));
+                    }
+                    if group.is_selected() {
                         frame.pc += 1;
                     }
                     return None;
@@ -1262,30 +1255,19 @@ impl Execution {
                         self.current = *child;
                         continue;
                     }
-                    Some(Pending::Concurrent { complete: true, .. }) => {}
-                    Some(Pending::Concurrent {
-                        branches,
-                        next,
-                        pending,
-                        complete,
-                        ..
-                    }) => {
-                        while *next < branches.len() && branches[*next].child.is_none() {
-                            *next += 1;
-                        }
-                        if *next < branches.len() {
-                            self.current = branches[*next].child.unwrap();
-                            continue;
-                        }
-                        if *pending {
-                            *next = 0;
-                            *pending = false;
-                            if let Some(poll) = self.bubble(None) {
-                                return poll;
+                    Some(Pending::Concurrent { group, .. }) if group.is_selected() => {}
+                    Some(Pending::Concurrent { group, branches }) => {
+                        match group.next() {
+                            Ok(GroupPoll::Child(index)) => {
+                                self.current = branches[index].child.expect("live static child");
                             }
-                        } else {
-                            *complete = true;
-                            frame.pc += 1;
+                            Ok(GroupPoll::Pending) => {
+                                if let Some(poll) = self.bubble(None) {
+                                    return poll;
+                                }
+                            }
+                            Ok(GroupPoll::Selected) => unreachable!("selected group handled above"),
+                            Err(error) => return self.fail(error),
                         }
                         continue;
                     }
@@ -1358,14 +1340,13 @@ impl Execution {
                 }
                 Step::ConcurrentFinish => {
                     let frame = self.frame_mut(self.current);
-                    let Some(Pending::Concurrent {
-                        branches,
-                        complete: true,
-                        ..
-                    }) = frame.pending.take()
-                    else {
+                    let Some(Pending::Concurrent { branches, group }) = frame.pending.take() else {
                         unreachable!("scope result must be delivered before cleanup")
                     };
+                    assert!(
+                        group.is_selected(),
+                        "group result must be selected before cleanup"
+                    );
                     if let Err(error) = self.cancel_branches(branches) {
                         return self.fail(error);
                     }

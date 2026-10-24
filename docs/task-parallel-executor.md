@@ -58,8 +58,10 @@ TP1 的实际进展和未完成项见第 11 节。
 
 ## 3. 从父帧轮询改为任务调度
 
-当前原生 `lower_concurrent` 生成父帧依次调用子帧的代码；动态子任务由 CPS 任务树遍历推进。
-解释器在自身执行状态中管理分支。HostExecutor 管理根任务，线程安全 TaskWaker 只负责通知，
+TP1 已将本地静态分支的登记与轮询选择接入共享 LocalTaskGroup；原生 `lower_concurrent`
+仍生成父帧调用所选子帧并接收结果的代码，解释器仍在自身执行状态中持有各分支激活。
+动态子任务的本地登记共用 LocalTaskScope，推进仍遍历 CPS/解释器任务树。
+HostExecutor 管理根任务，线程安全 TaskWaker 只负责通知，
 不赋予帧跨线程访问能力。相关实现入口：
 
 - [原生 lowering](../src/backends/native/lower.rs)
@@ -397,7 +399,7 @@ scope_release 的成功也只能发生在相关清理无遗漏之后，不能用
 使动态后代同时处于普通调用、join 和 race 下，在 JIT、解释器与独立 AOT 上比较精确副作用顺序。
 新增登记表测试覆盖关闭后责任退回、身份耗尽、压缩后的迟到完成、跨作用域身份隔离与汇合游标。
 
-TP1 后续仍须完成静态 join/race 的统一登记、结果交接和仲裁，以及第 10.4 节冻结的
+本切片交付时，TP1 仍须完成静态 join/race 的统一登记、结果交接和仲裁，以及第 10.4 节冻结的
 版本化入口描述符和原生桥。此切片的 ChildId 尚未作为 C ABI token 暴露；没有提前导出空的
 `__joky_task_*_v1` 实现。跨线程状态、唤醒协议、共享代码、分配资格及 worker 调度仍按 TP2–TP4 推进。
 
@@ -412,3 +414,47 @@ TP1 后续仍须完成静态 join/race 的统一登记、结果交接和仲裁�
 - 文档本地链接与 `git diff --check`：通过。
 
 TP1 全部退出条件满足前，继续保留“进行中”；未运行 Release 或无关全量压力检查，也未做性能测量。
+
+### 11.2 本地静态分支登记与结果选择
+
+join/race 现在使用共享的 LocalTaskGroup，内部复用 11.1 的 LocalTaskScope：
+
+- 全部分支参数和捕获准备后，一次预留并发布整批登记；关闭后的发布、容量失败或身份空间不足
+  不发布部分批次，输入责任仍归准备方。动态分支继续使用单项发布入口。
+- 原生 lowering 不再自行扫描 done 标记决定轮询与汇合；解释器不再单独维护 next/pending/complete
+  策略。共同实现选择源码位置、唯一活动分支、Pending 后续轮次、跳过完成项与 race 首次正常结果选择。
+- 每个分支仍由生成代码或解释器激活执行，普通宿主 CPS 返回 Complete 不必设置生成代码的 DONE 状态。
+  指令切片保留活动分支，不重新取得轮询权；输入求值、结果位置及动态后代轮次保持本地契约。
+- Selected 与清理屏障分开。拥有结果仍按既有后端路径及时接管，ConcurrentFinish 仍负责败方清理，
+  父源码只能在清理成功后继续；运行时失败沿既有失败路径停止后续分支并回收已接收结果。
+
+原生接线使用已实现的私有本地 CPS 适配桥 `__joky_cps_concurrent_open_v1`、
+`__joky_cps_concurrent_next_v1`、`__joky_cps_concurrent_polled_v1`，声明见
+[joky_cps.h](../include/joky_cps.h)。这些入口仅供 checked lowering 调用，不是第 10.4 节
+承诺的 `__joky_task_*_v1` ABI，也不接受跨线程操作；新增桥要求编译器与运行库一起更新。
+安装目录测试现实际执行 join/race，并在移除安装目录和源码后验证独立程序输出。
+
+TP1 仍未完成：独立捕获/结果包、统一失败/取消仲裁、清理完成状态、受检入口描述符及冻结的
+版本化任务桥尚待接入。共享本地策略是现行执行路径的基础，不代替 TP2–TP4 的跨线程所有权、
+共享代码与 worker 调度工作；此切片没有增加多线程模式。
+
+2026-10-24 本切片验证：
+
+- `cargo test task_group`：2 个共享策略测试通过；批量发布责任退回与身份耗尽由登记表测试覆盖。
+- `cargo test structured_values`：7 个通过，1 个穷举默认忽略，覆盖 JIT、解释器与 AOT 的结果交接。
+- `cargo test --lib task_scope`、`cargo test --lib race`：分别 25、26 个通过，各有 1 个穷举默认忽略。
+- `cargo test --test cli task_scope`：4 个通过，覆盖三后端的动态后代轮次。
+- `cargo test --test cli installed_compiler_finds_its_runtime_without_repository_paths`：通过，
+  验证安装布局内的运行库包含新桥及独立程序实际执行 join/race。
+- `cargo test jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive`：通过，
+  手写 C 转发桥已接入三个本地适配入口，AOT 与 JIT 仍共享同一运行库。
+- `exhaustive_task_scope_cancels_at_every_instruction`、
+  `exhaustive_structured_values_cancel_at_each_instruction`、
+  `exhaustive_race_values_cancel_at_each_instruction` 均以
+  `cargo test --lib <名字> -- --ignored` 运行通过（Debug）。
+- `./integrations/godot/check.sh`：通过，包含 10 个 Rust 测试与 Godot 4.7.2 真实引擎验收。
+- `./scripts/check.sh`：通过（quick、Debug），包括格式、Clippy、默认测试与 while/Map
+  短输入三后端正确性；库测试 1594 个通过、125 个忽略，CLI 测试 305 个通过、8 个忽略。
+- 文档本地文件链接与 `git diff --cached --check`：通过。
+
+未运行 Release、无关全量压力或性能测量。TP1 继续保持“进行中”。

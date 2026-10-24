@@ -578,6 +578,17 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cps_release_child", vec![ptr], vec![]),
         ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
         ("__joky_cps_release_children", vec![ptr], vec![]),
+        (
+            "__joky_cps_concurrent_open_v1",
+            vec![ptr, types::I32, ptr],
+            vec![types::I32],
+        ),
+        ("__joky_cps_concurrent_next_v1", vec![ptr], vec![types::I64]),
+        (
+            "__joky_cps_concurrent_polled_v1",
+            vec![ptr, ptr, types::I32],
+            vec![types::I32],
+        ),
         ("__joky_cps_task_scope_enter", vec![ptr], vec![]),
         ("__joky_cps_task_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_task_branch_commit", vec![ptr, ptr, ptr], vec![]),
@@ -1251,27 +1262,56 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         let pending = builder.ins().iconst(types::I8, 0);
         store(builder, slots, &branch.done, pending);
     }
+    let kind_tag = builder
+        .ins()
+        .iconst(types::I32, if kind == ConcurrentKind::Join { 0 } else { 1 });
+    let count = builder.ins().iconst(ptr_ty, branches.len() as i64);
+    builder.ins().call(
+        refs["__joky_cps_concurrent_open_v1"],
+        &[frame, kind_tag, count],
+    );
+    check_call(builder, refs, Some(frame), None);
     let saved = builder.ins().iconst(types::I32, concurrent_state as i64);
     builder
         .ins()
         .store(MemFlagsData::new(), saved, frame, state_offset);
-    builder.ins().jump(states[concurrent_state as usize], &[]);
-    builder.switch_to_block(states[concurrent_state as usize]);
+    let select = states[concurrent_state as usize];
+    builder.ins().jump(select, &[]);
+    builder.switch_to_block(select);
 
+    // The shared local policy selects children and arbitrates join/race. Generated
+    // blocks only execute the selected entry and transfer its typed result.
+    let selected = helper(builder, refs, "__joky_cps_concurrent_next_v1", &[frame]);
+    check_call(builder, refs, Some(frame), None);
     let finished = builder.create_block();
-    // Poll incomplete children in source order. A completed join child is
-    // skipped using the persistent done flag, so native callbacks do not need
-    // to expose the generated DONE state themselves.
-    for (index, branch) in branches.iter().enumerate() {
-        let poll = builder.create_block();
-        let after = builder.create_block();
-        let complete = builder.create_block();
-        let done = load(builder, slots, &branch.done);
-        let one = builder.ins().iconst(types::I8, 1);
-        let is_done = builder.ins().icmp(IntCC::Equal, done, one);
-        builder.ins().brif(is_done, after, &[], poll, &[]);
+    let pending = builder.create_block();
+    let invalid = builder.create_block();
+    let blocks: Vec<_> = branches.iter().map(|_| builder.create_block()).collect();
+    let mut switch = Switch::new();
+    for (index, &block) in blocks.iter().enumerate() {
+        switch.set_entry(index as u128, block);
+    }
+    switch.set_entry(
+        crate::runtime::cps::concurrent::PENDING as u64 as u128,
+        pending,
+    );
+    switch.set_entry(
+        crate::runtime::cps::concurrent::SELECTED as u64 as u128,
+        finished,
+    );
+    switch.emit(builder, selected, invalid);
+    builder.switch_to_block(invalid);
+    builder.ins().call(refs["__joky_cps_finish"], &[frame]);
+    let failure = builder.ins().iconst(types::I32, INVALID_STATE as i64);
+    builder.ins().return_(&[failure]);
+    builder.switch_to_block(pending);
+    let pending_status = builder.ins().iconst(types::I32, 1);
+    builder.ins().return_(&[pending_status]);
 
-        builder.switch_to_block(poll);
+    for (index, branch) in branches.iter().enumerate() {
+        builder.switch_to_block(blocks[index]);
+        let complete = builder.create_block();
+        let waiting = builder.create_block();
         let descriptor = branch
             .indirect
             .as_ref()
@@ -1288,7 +1328,16 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         if functions[&branch.name].may_fail {
             check_call(builder, refs, Some(frame), None);
         }
-        branch_cps_status(builder, refs, frame, status, complete, after);
+        branch_cps_status(builder, refs, frame, status, complete, waiting);
+        builder.switch_to_block(waiting);
+        let child_index = builder.ins().iconst(ptr_ty, index as i64);
+        builder.ins().call(
+            refs["__joky_cps_concurrent_polled_v1"],
+            &[frame, child_index, status],
+        );
+        check_call(builder, refs, Some(frame), None);
+        builder.ins().jump(select, &[]);
+
         builder.switch_to_block(complete);
         lower_cps_result(
             builder,
@@ -1311,37 +1360,15 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         }
         let one = builder.ins().iconst(types::I8, 1);
         store(builder, slots, &branch.done, one);
-        builder.ins().jump(
-            if kind == ConcurrentKind::Race {
-                finished
-            } else {
-                after
-            },
-            &[],
+        let child_index = builder.ins().iconst(ptr_ty, index as i64);
+        builder.ins().call(
+            refs["__joky_cps_concurrent_polled_v1"],
+            &[frame, child_index, status],
         );
-
-        builder.switch_to_block(after);
+        check_call(builder, refs, Some(frame), None);
+        builder.ins().jump(select, &[]);
     }
-
-    let pending = builder.create_block();
-    if kind == ConcurrentKind::Join {
-        for branch in branches {
-            let next = builder.create_block();
-            let done = load(builder, slots, &branch.done);
-            let one = builder.ins().iconst(types::I8, 1);
-            let is_done = builder.ins().icmp(IntCC::Equal, done, one);
-            builder.ins().brif(is_done, next, &[], pending, &[]);
-            builder.switch_to_block(next);
-        }
-        builder.ins().jump(finished, &[]);
-    } else {
-        builder.ins().jump(pending, &[]);
-    }
-    builder.switch_to_block(pending);
-    let pending_status = builder.ins().iconst(types::I32, 1);
-    builder.ins().return_(&[pending_status]);
-    // ConcurrentFinish releases children after the caller registers the result.
-    // No source continuation can run between these two IR operations.
+    // ConcurrentFinish retains the existing result-registration/cleanup barrier.
     builder.switch_to_block(finished);
 }
 

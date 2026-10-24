@@ -107,6 +107,16 @@ JokyCpsFrame *__joky_cps_child(JokyCpsFrame *frame, size_t slot_count);
 void __joky_cps_release_child(JokyCpsFrame *frame);
 JokyCpsFrame *__joky_cps_child_at(JokyCpsFrame *frame, size_t index, size_t slot_count);
 void __joky_cps_release_children(JokyCpsFrame *frame);
+/* Local static-group adapters for checked generated code only. All captures are
+ * prepared before open (kind: Join=0, Race=1). next returns a source index,
+ * -1 for Pending, -2 for a selected result, or -3 with a runtime error.
+ * Selection is not a cleanup barrier: release_children still stops losers
+ * after result ownership has been registered. No cross-thread frame access.
+ * open/polled return 0 on success, 2 with a runtime error on failure.
+ * polled accepts only the active child's Complete=0 or Pending=1 status. */
+int32_t __joky_cps_concurrent_open_v1(JokyCpsFrame *frame, uint32_t kind, size_t count);
+int64_t __joky_cps_concurrent_next_v1(JokyCpsFrame *frame);
+int32_t __joky_cps_concurrent_polled_v1(JokyCpsFrame *frame, size_t index, int32_t status);
 void *__joky_cps_arena(JokyCpsFrame *frame);
 void __joky_cps_finish(JokyCpsFrame *frame);
 
