@@ -585,6 +585,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_cps_concurrent_next_v1", vec![ptr], vec![types::I64]),
         (
+            "__joky_cps_concurrent_drain_v1",
+            vec![ptr],
+            vec![types::I32],
+        ),
+        (
             "__joky_cps_concurrent_next_result_v1",
             vec![ptr],
             vec![types::I64],
@@ -1437,8 +1442,15 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         check_call(builder, refs, Some(frame), None);
         builder.ins().jump(select, &[]);
     }
-    // ConcurrentFinish retains the existing result-registration/cleanup barrier.
+    // No result enters the parent until all child execution and stop hooks end.
     builder.switch_to_block(finished);
+    builder
+        .ins()
+        .call(refs["__joky_cps_concurrent_drain_v1"], &[frame]);
+    check_call(builder, refs, Some(frame), None);
+    let collect_results = builder.create_block();
+    builder.ins().jump(collect_results, &[]);
+    builder.switch_to_block(collect_results);
     let next_result = helper(
         builder,
         refs,
@@ -1484,7 +1496,7 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         }
         let one = builder.ins().iconst(types::I8, 1);
         store(builder, slots, &branch.done, one);
-        builder.ins().jump(finished, &[]);
+        builder.ins().jump(collect_results, &[]);
     }
     builder.switch_to_block(received);
 }

@@ -1011,10 +1011,27 @@ impl Execution {
         Ok(())
     }
 
-    /// Drop just the losing subtrees, preserving ancestors, unrelated siblings,
-    /// and the task arena. Walk indices so cancellation uses no Rust recursion.
-    fn cancel_branches(&mut self, branches: Vec<Branch>) -> Result<(), Error> {
-        self.release_subtrees(branches.into_iter().filter_map(|b| b.child).collect())
+    /// Stop losing subtrees before result handoff, retaining packets in the
+    /// parent until cleanup succeeds. No group borrow spans host stop or Drop.
+    fn drain_concurrent(&mut self, parent: usize) -> Result<(), Error> {
+        let roots = {
+            let Some(Pending::Concurrent { group, branches }) = &mut self.frame_mut(parent).pending
+            else {
+                unreachable!()
+            };
+            if !group.begin_drain()? {
+                return Ok(());
+            }
+            branches
+                .iter_mut()
+                .filter_map(|branch| branch.child.take())
+                .collect()
+        };
+        let outcome = self.release_subtrees(roots);
+        let Some(Pending::Concurrent { group, .. }) = &mut self.frame_mut(parent).pending else {
+            unreachable!()
+        };
+        group.finish_drain(outcome)
     }
 
     fn release_subtrees(&mut self, roots: Vec<usize>) -> Result<(), Error> {
@@ -1347,6 +1364,9 @@ impl Execution {
                         return Some(self.fail(error));
                     }
                     if group.is_selected() {
+                        if let Err(error) = self.drain_concurrent(parent) {
+                            return Some(self.fail(error));
+                        }
                         if let Err(error) = self.accept_concurrent_results(parent) {
                             return Some(self.fail(error));
                         }
@@ -1479,12 +1499,12 @@ impl Execution {
                         unreachable!("scope result must be delivered before cleanup")
                     };
                     assert!(
-                        group.is_selected(),
-                        "group result must be selected before cleanup"
+                        group.drain_finished(),
+                        "group cleanup must complete before release"
                     );
-                    if let Err(error) = self.cancel_branches(branches) {
-                        return self.fail(error);
-                    }
+                    debug_assert!(branches
+                        .iter()
+                        .all(|branch| branch.child.is_none() && branch.packet.is_none()));
                     self.frame_mut(self.current).pc += 1;
                 }
                 Step::TaskBranch => {

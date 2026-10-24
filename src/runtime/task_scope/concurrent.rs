@@ -24,6 +24,13 @@ enum ResultState {
     Taken,
 }
 
+enum DrainState {
+    NotStarted,
+    Running,
+    Complete,
+    Failed(Box<Error>),
+}
+
 pub(crate) struct LocalTaskGroup {
     children: LocalTaskScope<usize>,
     policy: CompletionPolicy,
@@ -32,6 +39,7 @@ pub(crate) struct LocalTaskGroup {
     results: Vec<ResultState>,
     completion_order: Vec<usize>,
     result_cursor: usize,
+    drain: DrainState,
 }
 
 fn invalid(message: &str) -> Error {
@@ -82,6 +90,7 @@ impl LocalTaskGroup {
             results,
             completion_order,
             result_cursor: 0,
+            drain: DrainState::NotStarted,
         })
     }
 
@@ -111,14 +120,54 @@ impl LocalTaskGroup {
         Ok(GroupPoll::Pending)
     }
 
+    /// Enter cleanup with no execution owner active. Callbacks must run after
+    /// this mutable borrow ends; reentry cannot begin a second cleanup pass.
+    pub(crate) fn begin_drain(&mut self) -> Result<bool, Error> {
+        if !self.selected || self.active.is_some() {
+            return Err(invalid("Task group has not selected its result"));
+        }
+        match &self.drain {
+            DrainState::NotStarted => {
+                self.drain = DrainState::Running;
+                Ok(true)
+            }
+            DrainState::Running => Err(invalid("Task group cleanup is already running")),
+            DrainState::Complete => Ok(false),
+            DrainState::Failed(error) => Err((**error).clone()),
+        }
+    }
+
+    /// Record completion only after all child execution and external access end.
+    /// A cleanup error permanently prevents result delivery, including retries.
+    pub(crate) fn finish_drain(&mut self, outcome: Result<(), Error>) -> Result<(), Error> {
+        if !matches!(self.drain, DrainState::Running) {
+            return Err(invalid("Task group cleanup was not started"));
+        }
+        self.drain = match outcome {
+            Ok(()) => DrainState::Complete,
+            Err(error) => DrainState::Failed(Box::new(error)),
+        };
+        self.require_drained()
+    }
+
+    pub(crate) fn drain_finished(&self) -> bool {
+        matches!(self.drain, DrainState::Complete | DrainState::Failed(_))
+    }
+
+    fn require_drained(&self) -> Result<(), Error> {
+        match &self.drain {
+            DrainState::Complete => Ok(()),
+            DrainState::Failed(error) => Err((**error).clone()),
+            _ => Err(invalid("Task group cleanup has not completed")),
+        }
+    }
+
     pub(crate) fn completion_order(&self) -> &[usize] {
         &self.completion_order
     }
 
     pub(crate) fn next_result(&mut self) -> Result<Option<usize>, Error> {
-        if !self.selected {
-            return Err(invalid("Task group has not selected its result"));
-        }
+        self.require_drained()?;
         while let Some(&index) = self.completion_order.get(self.result_cursor) {
             if self.results[index] == ResultState::Ready {
                 return Ok(Some(index));
@@ -128,10 +177,11 @@ impl LocalTaskGroup {
         Ok(None)
     }
 
-    /// Claim a completed result once, after the group has selected its outcome.
+    /// Claim a result once, after selection and successful child cleanup.
     /// Backends retain the packet until ownership has transferred or cleanup runs.
     pub(crate) fn take_result(&mut self, index: usize) -> Result<(), Error> {
-        if !self.selected || self.results.get(index) != Some(&ResultState::Ready) {
+        self.require_drained()?;
+        if self.results.get(index) != Some(&ResultState::Ready) {
             return Err(invalid("Task result is not ready or was already taken"));
         }
         self.results[index] = ResultState::Taken;
@@ -185,6 +235,14 @@ mod tests {
         assert_eq!(group.next().unwrap(), GroupPoll::Selected);
         assert!(group.polled(2, true).is_err());
         assert_eq!(group.completion_order(), [1, 0, 2]);
+        assert!(group.next_result().is_err());
+        assert!(group.take_result(1).is_err());
+        assert!(group.finish_drain(Ok(())).is_err());
+        assert!(group.begin_drain().unwrap());
+        assert!(group.begin_drain().is_err());
+        assert!(group.take_result(1).is_err());
+        group.finish_drain(Ok(())).unwrap();
+        assert!(!group.begin_drain().unwrap());
         for index in [1, 0, 2] {
             assert_eq!(group.next_result().unwrap(), Some(index));
             group.take_result(index).unwrap();
@@ -192,6 +250,30 @@ mod tests {
         }
         assert_eq!(group.next_result().unwrap(), None);
         assert!(group.take_result(3).is_err());
+    }
+
+    #[test]
+    fn task_group_cleanup_failure_prevents_result_delivery_and_retry() {
+        let mut group = LocalTaskGroup::new(CompletionPolicy::First, 2).unwrap();
+        assert!(group.begin_drain().is_err());
+        assert!(!group.drain_finished());
+        assert_eq!(group.next().unwrap(), GroupPoll::Child(0));
+        group.polled(0, true).unwrap();
+        assert!(group.begin_drain().unwrap());
+        let failure =
+            Error::new_with_code(ErrorPhase::Runtime, ErrorCode::ResourceLimit, "Stop failed");
+        assert!(group.finish_drain(Err(failure)).is_err());
+        assert!(group.drain_finished());
+        for error in [
+            group.begin_drain().unwrap_err(),
+            group.next_result().unwrap_err(),
+            group.take_result(0).unwrap_err(),
+        ] {
+            assert_eq!(error.code(), ErrorCode::ResourceLimit);
+            assert_eq!(error.message(), "Stop failed");
+        }
+        assert!(group.finish_drain(Ok(())).is_err());
+        assert_eq!(group.take_result(0).unwrap_err().message(), "Stop failed");
     }
 
     #[test]
@@ -215,6 +297,9 @@ mod tests {
         assert_eq!(rejected.1, [3, 4]);
         assert_eq!(group.children.live_len(), 2);
         assert!(group.take_result(0).is_err());
+        assert!(group.take_result(1).is_err());
+        assert!(group.begin_drain().unwrap());
+        group.finish_drain(Ok(())).unwrap();
         assert_eq!(group.next_result().unwrap(), Some(1));
         group.take_result(1).unwrap();
         assert_eq!(group.next_result().unwrap(), None);

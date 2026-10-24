@@ -207,6 +207,18 @@ pub unsafe extern "C" fn child_at(
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_release_children"]
 pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
+    if (*frame)
+        .concurrent
+        .as_ref()
+        .is_some_and(|group| !group.drain_finished())
+    {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidState,
+            "Cannot release a task group before child cleanup completes",
+        ));
+        return;
+    }
     (*frame).children.clear();
     (*frame).release_concurrent_results();
     (*frame).concurrent = None;
@@ -424,7 +436,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 25] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 26] {
     [
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
@@ -466,6 +478,10 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 25] {
         (
             "__joky_cps_concurrent_next_result_v1",
             concurrent::next_result as *const u8,
+        ),
+        (
+            "__joky_cps_concurrent_drain_v1",
+            concurrent::drain as *const u8,
         ),
         ("__joky_cps_task_scope_enter", task_scope_enter as *const u8),
         ("__joky_cps_task_child", task_child as *const u8),

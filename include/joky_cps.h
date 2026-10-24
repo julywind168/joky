@@ -110,17 +110,21 @@ void __joky_cps_release_children(JokyCpsFrame *frame);
 /* Local static-group adapters for checked generated code only. All captures are
  * prepared before open (kind: Join=0, Race=1). next returns a source index,
  * -1 for Pending, -2 for a selected result, or -3 with a runtime error.
- * Selection is not a cleanup barrier: release_children still stops losers
- * after result ownership has been registered. No cross-thread frame access.
+ * Selection is not a cleanup barrier: drain stops children before results can
+ * be taken; release_children then releases the drained group and any unclaimed
+ * results. No cross-thread frame access.
  * open/polled return 0 on success, 2 with a runtime error on failure.
  * polled accepts only the active child's Complete=0 or Pending=1 status. */
 int32_t __joky_cps_concurrent_open_v1(JokyCpsFrame *frame, uint32_t kind, size_t count);
 int64_t __joky_cps_concurrent_next_v1(JokyCpsFrame *frame);
 int32_t __joky_cps_concurrent_polled_v1(JokyCpsFrame *frame, size_t index, int32_t status);
 /* Independent local result packets. Prepare every packet before polling; take
- * succeeds once after selection. Generated code copies lanes and transfers its
+ * succeeds once after successful drain. Generated code copies lanes and transfers its
  * cleanup registration before release_children destroys packet storage. */
 JokyCpsFrame *__joky_cps_concurrent_result_v1(JokyCpsFrame *frame, size_t index, size_t slots);
+/* drain returns 0 after successful cleanup or 2 with an error. Successful
+ * retries do not repeat stop hooks; reentry during cleanup is rejected. */
+int32_t __joky_cps_concurrent_drain_v1(JokyCpsFrame *frame);
 int64_t __joky_cps_concurrent_next_result_v1(JokyCpsFrame *frame);
 JokyCpsFrame *__joky_cps_concurrent_take_v1(JokyCpsFrame *frame, size_t index);
 void *__joky_cps_arena(JokyCpsFrame *frame);

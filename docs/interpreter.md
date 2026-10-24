@@ -396,12 +396,12 @@ Repeated Pending does not rebuild arguments or replay earlier side effects.
 `LocalTaskGroup`, shared with native CPS lowering, owns static registration and
 poll selection. Its active child survives instruction slicing; completed source
 positions remain stable when the registry compacts. A Selected group has chosen
-its result but still retains the backend's losing activations for `ConcurrentFinish`.
+its result but still retains the backend's losing activations for drain.
 Each branch carries scalar or flattened aggregate result destinations. Completion
 first moves its values and owning cleanup entry into an independent result packet,
 retaining stable snapshot storage after the child activation is removed. A place
-result gets an independent copy before local cleanup. Once the group selects its
-outcome, the parent claims packets once in completion order and writes their values
+result gets an independent copy before local cleanup. After selection and successful
+drain, the parent claims packets once in completion order and writes their values
 to the original source destinations. Ordinary tuple construction then moves these
 values in source order, preserving Unit positions; an all-Unit join remains Unit.
 Failure and cancellation clean unclaimed packets after child subtrees have stopped.
@@ -413,11 +413,13 @@ obey the native ABI and may have their own stack/allocation behavior.
 Race uses the same instruction and pending branch representation with a distinct
 completion policy. All branches return the same reference-free type. Scalar and
 flattened aggregate destinations receive the winner using the ordinary CPS return
-protocol, including transfer of owning cleanup entries. The completed pending
-scope retains its losing children while result cleanup registration runs;
-`ConcurrentFinish` then cancels them before source continuation code resumes. A slice
-or cancellation at this boundary still sees both result and child ownership.
-Cleanup failures propagate and release the received result. The first observed failure fails the
+protocol, including transfer of owning cleanup entries. A selected pending scope
+enters drain, detaches losing child roots, then stops their subtrees without retaining
+a group metadata borrow across callbacks. Only successful drain enables result
+delivery; `ConcurrentFinish` releases the drained group afterward. Reentrant drain,
+early delivery and early release are rejected. Cleanup failure fixes the first error
+and leaves packets unclaimed for teardown; retries cannot repeat cleanup or deliver a
+result. The first observed failure fails the
 whole task. Source-order polling breaks ties and can leave later branches unpolled.
 All arguments are still prepared before any branch starts. Cancellation walks
 only the losing subtrees iteratively and returns their frame capacity immediately,
