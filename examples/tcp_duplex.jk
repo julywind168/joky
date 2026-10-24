@@ -26,7 +26,7 @@ fn pushes(writer: &mut TcpWriter) @suspends {
 fn serve(listener: &mut TcpListener) @suspends {
     let stream = match listener.accept() { Ok(stream) => stream, _ => panic("Duplex message session") }
     var (reader, writer) = BufferedTcp.new(stream).split()
-    parallel { | commands(&mut reader) | pushes(&mut writer) }
+    join { | commands(&mut reader) | pushes(&mut writer) }
     reader.close();
     writer.close();
 }
@@ -57,14 +57,14 @@ fn client(address: Address) @suspends {
     let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => panic("Duplex message session") }
     var (reader, writer) = BufferedTcp.new(stream).split()
     // Both halves stay owned by this task until the entire session ends.
-    parallel { | receive(&mut reader) | send(&mut writer) }
+    join { | receive(&mut reader) | send(&mut writer) }
     reader.close();
     writer.close();
 }
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, _ => { return 1 } }
     let address = match listener.local_addr() { Ok(address) => address, _ => { return 2 } }
-    parallel { | serve(&mut listener) | client(address) }
+    join { | serve(&mut listener) | client(address) }
     ensure(listener.close().is_ok())
     0
 }

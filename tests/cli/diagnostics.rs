@@ -182,14 +182,23 @@ fn parser_diagnostics_at_eof_render_without_panicking() {
 }
 
 #[test]
-fn renamed_scope_constructs_report_parallel_migration() {
+fn renamed_concurrent_constructs_report_join_migration() {
     let work = Workspace::new();
     work.write(
         "old_scope.jk",
         "fn wait() @suspends {}\nfn main() @suspends { scope { | wait() } }\n",
     );
     let output = work.cli(&["run", "old_scope.jk"]);
-    failure(&output, "Use parallel for pipe-separated branches");
+    failure(&output, "Use join for pipe-separated branches");
+
+    work.write(
+        "old_parallel.jk",
+        "fn wait() @suspends {}\nfn main() @suspends { parallel { | wait() } }\n",
+    );
+    let output = work.cli(&["run", "old_parallel.jk"]);
+    failure(&output, "Use join instead of parallel");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("old_parallel.jk:2:23"), "{error}");
 
     work.write(
         "new_scope.jk",
@@ -525,7 +534,10 @@ fn script_multi_domain_late_binding_and_module_diagnostics_run_in_all_backends()
     let new = new.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("late_binding.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+        work.write(
+            "late_binding.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="late binding host"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
@@ -549,12 +561,14 @@ fn main() @suspends {{
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2)
     let directory=owner.handle()
-    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
     assert(vm.error_code()==0)
     println("late binding ok")
-}}"#));
+}}"#
+            ),
+        );
         let mut outputs = vec![
             work.cli(&["run", "late_binding.jk"]),
             work.cli(&["run", "--interpreter", "late_binding.jk"]),

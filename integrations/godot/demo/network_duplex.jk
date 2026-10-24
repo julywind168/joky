@@ -50,7 +50,7 @@ fn send(writer: &mut TcpWriter) @suspends {
     ensure(writer.shutdown().is_ok())
 }
 fn session(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
-    parallel { | receive(reader) | send(writer) }
+    join { | receive(reader) | send(writer) }
     let method = "finish"
     task.call(&method)
 }

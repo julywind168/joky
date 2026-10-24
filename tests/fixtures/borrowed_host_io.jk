@@ -85,7 +85,7 @@ fn fail_now() {
 }
 fn fail_later() @suspends { task.sleep_ms(10); fail_now() }
 fn sibling_failure() @suspends -> Int32 {
-    parallel { | discard_read() | fail_later() }
+    join { | discard_read() | fail_later() }
     borrowed_host_io_event(99); 0
 }
 fn instant() @suspends {}

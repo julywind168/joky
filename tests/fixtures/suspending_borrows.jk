@@ -88,7 +88,7 @@ fn locals() @suspends {
     assert(callback(&value) == 42, "indirect borrowed call")
     assert(read(relay(&value)) == 42, "returned reference keeps the original lifetime")
     var pair = Pair { left: 20, right: 20 }
-    parallel { | add(&mut pair.left, 1) | add(&mut pair.right, 1) }
+    join { | add(&mut pair.left, 1) | add(&mut pair.right, 1) }
     assert(pair.left + pair.right == 42, "independent local fields")
     let borrowed_pair = &pair
     task.yield_now()
@@ -97,16 +97,16 @@ fn locals() @suspends {
     let borrowed_option = &option
     task.yield_now()
     assert(match borrowed_option { Some(n) => n == 42, None => false }, "borrowed match")
-    let results = parallel { | allocated_read(&value) | allocated_read(&value) }
+    let results = join { | allocated_read(&value) | allocated_read(&value) }
     assert(results.0 == 42 && results.1 == 42, "allocation does not retain a short borrow")
     let stored = &*(alloc(0))
-    let results = parallel { | mixed((0, 0), &value, stored) }
+    let results = join { | mixed((0, 0), &value, stored) }
     assert(results.0 == 42, "retention follows source parameters across aggregate slots")
     scope {
         let view = &value
         branch { assert(mixed((0, 0), view, stored) == 42, "dynamic parameter retention") }
     }
-    parallel { | allocated_write(&mut value) }
+    join { | allocated_write(&mut value) }
     assert(value == 43, "allocation does not retain a mutable branch input")
     value = 42
     scope {
@@ -146,7 +146,7 @@ fn containers() @suspends {
     let subslice = slices.slice(slice, 0, 1)
     task.yield_now()
     assert(slice_read(subslice) == 42, "subslice pins original storage")
-    let result = parallel { | read(values.borrow_ref(0)) | slice_read(values.slice(0, 1)) }
+    let result = join { | read(values.borrow_ref(0)) | slice_read(values.slice(0, 1)) }
     assert(result.0 == 42 && result.1 == 42, "shared element and slice branches")
     scope {
         let view = values.slice_mut(0, 1)
@@ -180,14 +180,14 @@ fn containers() @suspends {
     assert(text.byte_length() == 2, "nested owner field")
     let bytes = text.bytes()
     task.yield_now()
-    parallel { | instant() }
+    join { | instant() }
     assert(slices.get(bytes, 0)! == uint8(111), "text bytes remain pinned across suspension")
     assert(packet_slice(packets.slice(0, 1)) == 42, "owning element slice")
     packets.clear()
     let texts = ["hello"]
     match &texts {
         [text] => {
-            parallel { | instant() }
+            join { | instant() }
             race { | instant() }
             assert(text.byte_length() == 5, "matched text survives concurrency boundaries")
         }

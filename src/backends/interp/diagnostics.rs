@@ -105,7 +105,7 @@ fn describe(instruction: &Instruction) -> String {
             let name = if *kind == ConcurrentKind::Race {
                 "Race"
             } else {
-                "Parallel"
+                "Join"
             };
             format!(
                 "{name} {} branches -> {result:?} {results:?}",

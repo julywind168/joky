@@ -481,7 +481,7 @@ unsafe fn round_select(root: *mut CpsFrame) -> Option<(*mut DynamicTaskScope, us
             Visit::Frame(frame) => &mut *frame,
         };
         // Reverse insertion preserves pre-order: dynamic scopes in source
-        // order, then the suspended body's ordinary call/parallel children.
+        // order, then the suspended body's ordinary call/join children.
         pending.extend(
             frame
                 .children

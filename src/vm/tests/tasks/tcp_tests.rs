@@ -107,7 +107,7 @@ fn tcp_rejects_forged_signatures_owners_and_aliases() {
         "extern fn __tcp_read(stream: UInt64) @suspends -> UInt64 fn main() @suspends -> UInt64 { __tcp_read(1) }",
         "fn __tcp_close_stream(input: UInt64) @suspends -> UInt64 {input}",
         "import joky/tcp.{type Address, type TcpListener} fn main() @suspends { let a=Address.ipv4(0x7f000001,0); let listener=TcpListener.bind(a); let copied=listener; let twice=listener }",
-        "import joky/tcp.{type TcpListener} fn wait(listener: &mut TcpListener) @suspends {listener.accept();} fn both(listener: &mut TcpListener) @suspends { parallel { | wait(listener) | wait(listener) } }",
+        "import joky/tcp.{type TcpListener} fn wait(listener: &mut TcpListener) @suspends {listener.accept();} fn both(listener: &mut TcpListener) @suspends { join { | wait(listener) | wait(listener) } }",
         "import joky/tcp.{type TcpStream} fn fabricate() -> TcpStream {TcpStream { owner: 1 }}",
         "import joky/tcp.{status} fn main() {status(0);}",
         "import joky/tcp.{stream_addr} fn main() {}",

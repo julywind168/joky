@@ -907,7 +907,7 @@ fn main() @suspends {{
     let source={source:?}
     let message="timer host"
     check.assert(vm.load_source(h,&source)==0,&message)
-    parallel {{ | h.call::<domain.TimerHandle,Unit>("hold",timer) | control(&h,timer) }};
+    join {{ | h.call::<domain.TimerHandle,Unit>("hold",timer) | control(&h,timer) }};
     check.assert(vm.close(h)==0,&message)
     owner.close()
     check.assert(match timer.status() {{ Closed=>true,_=>false }},&message)
@@ -971,7 +971,10 @@ fn domain_value_packets_keep_old_flows_and_bind_new_script_operations_in_all_bac
     let new = new.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("values_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+        work.write(
+            "values_reload.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="domain values reload"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
@@ -990,10 +993,12 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2); let directory=owner.handle()
-    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
-}}"#));
+}}"#
+            ),
+        );
         work.assert_all_backends("values_reload.jk", &[], b"", 0);
     }
 }
@@ -1407,7 +1412,10 @@ fn domain_candidate_values_pin_modules_and_conflict_after_publication() {
     let new = new.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("candidate_reload.jk", &format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+        work.write(
+            "candidate_reload.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="candidate versions"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
@@ -1424,10 +1432,12 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(1); let directory=owner.handle()
-    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
-}}"#));
+}}"#
+            ),
+        );
         work.assert_all_backends("candidate_reload.jk", &[], b"", 0);
     }
 }
@@ -1517,7 +1527,10 @@ fn domain_snapshot_values_keep_frozen_results_across_publication() {
     let new = new.replace('{', "{{").replace('}', "}}");
     for create in ["new", "interpreter"] {
         let work = Workspace::new();
-        work.write("snapshot_reload.jk",&format!(r#"import joky/domain import joky/vm import joky/task import joky/check
+        work.write(
+            "snapshot_reload.jk",
+            &format!(
+                r#"import joky/domain import joky/vm import joky/task import joky/check
 fn assert(ok:Bool) {{let message="snapshot versions"; check.assert(ok,&message)}}
 fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
     var attempts=0
@@ -1533,10 +1546,12 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(1); let directory=owner.handle()
-    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
-}}"#));
+}}"#
+            ),
+        );
         work.assert_all_backends("snapshot_reload.jk", &[], b"", 0);
     }
 }
@@ -1628,7 +1643,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(1); let directory=owner.handle()
-    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#));
@@ -1758,7 +1773,7 @@ fn main() @suspends {{
     let timer=domain.timer(); let t=timer.handle()
     let h=vm.Vm.{create}(); let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    parallel {{ | h.call::<domain.TimerHandle,Unit>("hold",t) | control(&h,t) }};
+    join {{ | h.call::<domain.TimerHandle,Unit>("hold",t) | control(&h,t) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#));
@@ -2130,7 +2145,7 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
 fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}; assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2); let directory=owner.handle()
-    parallel {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
     assert(vm.module_count(h)==1); assert(vm.close(h)==0)
 }}"#));
         work.assert_all_backends("when_reload.jk", &[], b"", 0);

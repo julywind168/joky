@@ -20,7 +20,7 @@ pub enum ConcurrentKind {
 impl ConcurrentKind {
     pub(crate) const fn keyword(self) -> &'static str {
         match self {
-            Self::Join => "parallel",
+            Self::Join => "join",
             Self::Race => "race",
         }
     }
@@ -248,7 +248,7 @@ pub enum Expr {
         trailing: bool,
         span: Span,
     },
-    /// `parallel { | branch1 | branch2 ... }` or `race { | branch1 | branch2 ... }`.
+    /// `join { | branch1 | branch2 ... }` or `race { | branch1 | branch2 ... }`.
     Concurrent {
         kind: ConcurrentKind,
         branches: Vec<Expr>,

@@ -31,7 +31,7 @@ fn race_skip_failure() @suspends -> Int32 {
     42
 }
 fn nested_scope() @suspends {
-    parallel { | slow(1) | slow(2) }
+    join { | slow(1) | slow(2) }
     record(999);
 }
 fn nested_race() @suspends {
@@ -48,7 +48,7 @@ fn winner() @suspends {
     record(700);
 }
 fn race_inside_scope() @suspends -> Int32 {
-    parallel { | winner() | slow(6) }
+    join { | winner() | slow(6) }
     42
 }
 fn race_loop() @suspends -> Int32 {

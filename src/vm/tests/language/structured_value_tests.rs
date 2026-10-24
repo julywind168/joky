@@ -1,4 +1,4 @@
-//! Structured scope and parallel result ownership across backends.
+//! Structured scope and join result ownership across backends.
 use super::{support::*, VmEngine, VmMode};
 use crate::runtime::{
     arena::LIVE,
@@ -207,8 +207,8 @@ fn structured_values_reject_references_and_callable_results() {
         "struct Ref { value: &Int32 } fn bad() @suspends { let value = scope { Ref { value: alloc(42) } } }",
         "fn f() {} fn bad() @suspends { let value = scope { f } }",
         "struct Holder { f: fn() -> Unit } fn f() {} fn bad() @suspends { let value = scope { Holder { f: f } } }",
-        "fn f() {} fn value() @suspends -> fn() -> Unit { f } fn bad() @suspends { let result = parallel { | value() }; }",
-        "fn value() @suspends -> &Int32 { alloc(42) } fn bad() @suspends { let result = parallel { | value() }; }",
+        "fn f() {} fn value() @suspends -> fn() -> Unit { f } fn bad() @suspends { let result = join { | value() }; }",
+        "fn value() @suspends -> &Int32 { alloc(42) } fn bad() @suspends { let result = join { | value() }; }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);

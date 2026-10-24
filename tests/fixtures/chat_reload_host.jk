@@ -12,7 +12,7 @@ fn verify_publication(engine: &vm.Vm) @suspends {
     let directory = domain.directory(1)
     var ready = outbox.create(1, 0)
     let input = Probe { directory: directory.handle(), ready: ready.handle() }
-    parallel { | run_probe(engine, input) | publish_probe(engine, directory.handle(), &mut ready) }
+    join { | run_probe(engine, input) | publish_probe(engine, directory.handle(), &mut ready) }
     engine.publish_file(script_path())!
     check.assert(vm.module_count(engine) == 1, "completed old tasks and roots release their module")
 }

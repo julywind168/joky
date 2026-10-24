@@ -609,7 +609,7 @@ fn host_executor_preserves_external_wakes_across_sliced_siblings_without_spinnin
             event(value)
             wait()
         }
-        fn run() @suspends -> Int32 { parallel { | wait() | sibling() }; 42 }
+        fn run() @suspends -> Int32 { join { | wait() | sibling() }; 42 }
     "#;
     for (mode, budget) in [
         (VmMode::Jit, None),

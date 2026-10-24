@@ -189,7 +189,7 @@ fn buffered_split_rejects_private_state_moves_and_aliases() {
         "import joky/tcp.{type BufferedTcpReader} fn fake() -> BufferedTcpReader { BufferedTcpReader { stream: 1 } }",
         "import joky/tcp.{type ReceiveBuffer} fn main() {}",
         "import joky/tcp.{type BufferedTcpReader} fn peek(reader: &BufferedTcpReader) { reader.buffer; }",
-        "import joky/tcp.{type BufferedTcpReader} fn read(reader: &mut BufferedTcpReader) @suspends { reader.read_message(1); } fn bad(reader: &mut BufferedTcpReader) @suspends { parallel { | read(reader) | read(reader) } }",
+        "import joky/tcp.{type BufferedTcpReader} fn read(reader: &mut BufferedTcpReader) @suspends { reader.read_message(1); } fn bad(reader: &mut BufferedTcpReader) @suspends { join { | read(reader) | read(reader) } }",
         "import joky/tcp.{type BufferedTcp} fn bad(stream: BufferedTcp) @suspends { stream.split(); stream.read(1); }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] { assert!(VmEngine::with_mode(mode).load_source(source).is_err(), "{source}"); }

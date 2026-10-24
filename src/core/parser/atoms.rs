@@ -2,6 +2,31 @@
 use super::*;
 
 impl Parser {
+    fn parse_concurrent(&mut self, kind: ConcurrentKind) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start();
+        self.advance();
+        self.expect(&TokenKind::LBrace)?;
+        let previous_newlines = std::mem::replace(&mut self.newline_sensitive, true);
+        let mut branches = Vec::new();
+        while self.peek() == &TokenKind::Pipe {
+            self.advance(); // Consume the branch separator.
+            let previous_pipe = std::mem::replace(&mut self.allow_pipe, false);
+            let branch = self.parse_assignment()?;
+            self.allow_pipe = previous_pipe;
+            branches.push(branch);
+            while self.peek() == &TokenKind::Semi {
+                self.advance();
+            }
+        }
+        self.expect(&TokenKind::RBrace)?;
+        self.newline_sensitive = previous_newlines;
+        Ok(Expr::Concurrent {
+            kind,
+            branches,
+            span: self.span(start, self.last_span.end()),
+        })
+    }
+
     /// Parse an atomic expression without binary operators.
     pub(super) fn parse_atom(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
@@ -110,37 +135,25 @@ impl Parser {
             TokenKind::Match => self.parse_match(),
             TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
-            // parallel/race { | branch ... }
-            TokenKind::Parallel | TokenKind::Race => {
-                let kind = if self.peek() == &TokenKind::Race {
-                    ConcurrentKind::Race
-                } else {
-                    ConcurrentKind::Join
-                };
-                self.advance();
-                self.expect(&TokenKind::LBrace)?;
-                let previous_newlines = std::mem::replace(&mut self.newline_sensitive, true);
-                let mut branches = Vec::new();
-                while self.peek() == &TokenKind::Pipe {
-                    self.advance(); // Consume the branch separator.
-                    let previous_pipe = std::mem::replace(&mut self.allow_pipe, false);
-                    let branch = self.parse_assignment()?;
-                    self.allow_pipe = previous_pipe;
-                    branches.push(branch);
-                    while self.peek() == &TokenKind::Semi {
-                        self.advance();
-                    }
-                }
-                self.expect(&TokenKind::RBrace)?;
-                self.newline_sensitive = previous_newlines;
-                Ok(Expr::Concurrent {
-                    kind,
-                    branches,
-                    span: self.span(start, self.last_span.end()),
-                })
+            // `join` is contextual so ordinary functions such as string.join remain valid.
+            TokenKind::Ident(ref name)
+                if name == "join"
+                    && (self.allow_record
+                        || self
+                            .tokens
+                            .get(self.pos + 2)
+                            .is_some_and(|t| t.kind == TokenKind::Pipe))
+                    && self
+                        .tokens
+                        .get(self.pos + 1)
+                        .is_some_and(|t| t.kind == TokenKind::LBrace) =>
+            {
+                self.parse_concurrent(ConcurrentKind::Join)
             }
+            TokenKind::Race => self.parse_concurrent(ConcurrentKind::Race),
+            TokenKind::Parallel => Err(self.error("Use join instead of parallel".into())),
             // scope { body }: a sequential task scope; pipe-separated branches
-            // moved to `parallel`.
+            // moved to `join`.
             TokenKind::Scope => {
                 if self
                     .tokens
@@ -151,7 +164,7 @@ impl Parser {
                         .get(self.pos + 2)
                         .is_some_and(|t| t.kind == TokenKind::Pipe)
                 {
-                    return Err(self.error("Use parallel for pipe-separated branches".into()));
+                    return Err(self.error("Use join for pipe-separated branches".into()));
                 }
                 self.advance();
                 let body = self.parse_block()?;

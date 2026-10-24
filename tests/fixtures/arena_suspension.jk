@@ -77,6 +77,6 @@ fn arena_host_fail_suspend() @suspends {
 fn wait_branch() @suspends { delayed_value(0); }
 fn arena_scope_wait() @suspends -> Int32 {
     let p = make(42)
-    parallel { | wait_branch() | wait_branch() }
+    join { | wait_branch() | wait_branch() }
     p.x
 }

@@ -153,7 +153,7 @@ fn buffered_tcp_rejects_forged_state_and_aliases() {
         "import joky/tcp.{type BufferedTcp, type TcpStream} fn forged(stream: TcpStream) -> BufferedTcp { BufferedTcp { stream: stream } }",
         "import joky/tcp.{buffered_probe} fn main() {}",
         "import joky/tcp.{type ReadState} fn main() {}",
-        "import joky/tcp.{type BufferedTcp} fn read(b: &mut BufferedTcp) @suspends { b.read(1); } fn both(b: &mut BufferedTcp) @suspends { parallel { | read(b) | read(b) } }",
+        "import joky/tcp.{type BufferedTcp} fn read(b: &mut BufferedTcp) @suspends { b.read(1); } fn both(b: &mut BufferedTcp) @suspends { join { | read(b) | read(b) } }",
         "import joky/tcp.{type BufferedTcp} fn peek(b: &BufferedTcp) { b.bytes; }",
         "import joky/tcp.{type BufferedTcp} fn fill(b: &mut BufferedTcp) @suspends { b.fill(); }",
         "import joky/tcp.{type BufferedTcp} import joky/array.{type Array} fn take(b: &mut BufferedTcp, out: &mut Array<UInt8>) { b.take_into(out, 1); }",

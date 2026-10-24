@@ -37,7 +37,7 @@ fn scenario() @suspends -> Int32 {
     let handle = owner.handle()
     let reader = handle.read_only()
     let other = domain.create(make, false)
-    parallel { | success(handle) | failure(handle) | independent(other.read_handle()) }
+    join { | success(handle) | failure(handle) | independent(other.read_handle()) }
     assert(domain.read_from(handle.read_only(), count).unwrap() == 1)
     assert(domain.read_from(other.read_handle(), count).unwrap() == 99)
     assert(domain.write_to(handle, reset, {}).unwrap() == '中')

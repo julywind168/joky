@@ -24,7 +24,7 @@ fn unstarted() @suspends -> Int32 { var socket=byte_make(1); race { | instant() 
 struct Pair { socket:Socket, tag:UInt8 }
 fn field() @suspends -> Int32 { var pair=Pair {socket:byte_make(1),tag:255}; inspect(read(&mut pair.socket,4)) }
 fn indirect() @suspends -> Int32 { var socket=byte_make(1); let reader=read_helper; inspect(reader(&mut socket,4)) }
-fn independent() @suspends -> Int32 { var a=byte_make(1); var b=byte_make(1); parallel { | hold(&mut a) | hold(&mut b) }; 42 }
+fn independent() @suspends -> Int32 { var a=byte_make(1); var b=byte_make(1); join { | hold(&mut a) | hold(&mut b) }; 42 }
 
 fn read_helper(socket:&mut Socket, limit:UInt64) @suspends -> Array<UInt8> { read(socket,limit) }
 

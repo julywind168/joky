@@ -56,7 +56,7 @@ fn run(scenario: UInt64) @suspends {
         var batch = outbox.batch(1, 0)
         check.assert(match outbox.stage(&mut batch, ctx.output, "".into_bytes()) { Err(Closed) => true, _ => false }, "cancellation releases queue ownership")
     } else {
-        parallel { | session.run(connection, stream, &ctx, &local, line, closed) | peer(peer_stream, scenario) }
+        join { | session.run(connection, stream, &ctx, &local, line, closed) | peer(peer_stream, scenario) }
     }
     let counts = owner.handle()
     let (lines, closed_count) = when (counts) { (counts.lines, counts.closed) }!

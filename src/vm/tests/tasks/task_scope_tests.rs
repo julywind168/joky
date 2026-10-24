@@ -39,7 +39,7 @@ fn scheduling_rounds_poll_nested_bodies_and_children_once() {
         1
     }
     for entry in [
-        "parallel { | helper(9, 1) | helper(8, 2) }",
+        "join { | helper(9, 1) | helper(8, 2) }",
         "scope { branch { helper(9, 1) }; branch { helper(8, 2) } }",
         "race { | helper(9, 1) | helper(8, 2) }",
     ] {

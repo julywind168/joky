@@ -70,7 +70,7 @@ fn main() @suspends {
     assert(domain.read_from(r,read).unwrap()==10)
     race {| waiting(h) | ready()};
     assert(domain.read_from(r,read).unwrap()==10)
-    parallel {| closing(h) | close(o)};
+    join {| closing(h) | close(o)};
     match domain.request(h,echo,packet(1)) {Err(domain.RequestError.Closed)=>{},_=>{assert(false)}}
     let failed=domain.create(make,1); let f=failed.handle()
     match domain.request(f,poison,packet(0)) {Err(domain.RequestError.DomainFailed)=>{},_=>{assert(false)}}

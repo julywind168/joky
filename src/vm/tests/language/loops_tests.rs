@@ -405,7 +405,7 @@ fn loop_conditions_can_suspend_and_scope_children_restart_each_iteration() {
         fn compute() @suspends -> Int32 {
             var i = 0
             while delayed_value(record(i)) <= 2 {
-                parallel { | branch_task(i + 10) | branch_task({ i = i + 1; i + 20 }) }
+                join { | branch_task(i + 10) | branch_task({ i = i + 1; i + 20 }) }
                 record(i + 30)
             }
             i
@@ -496,7 +496,7 @@ fn mutable_reads_are_snapshots_across_suspending_operands_and_scope_arguments() 
             var x = 1
             let saved = x + delayed_value({ x = 2; x })
             let args = pair(x, delayed_value({ x = 3; x }))
-            parallel { | branch_task(x) | branch_task({ x = 4; x }) }
+            join { | branch_task(x) | branch_task({ x = 4; x }) }
             (saved * 100) + args
         }
     "#;

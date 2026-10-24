@@ -109,7 +109,7 @@ fn semicolon_sequences_resume_without_replaying_prior_expressions() {
             var checks = 0; var bodies = 0;
             while (checks = checks + 1; delayed_value(record(checks)) < 4) {
                 bodies = bodies + 1;
-                parallel { | branch_task(bodies); | branch_task(bodies + 10); };
+                join { | branch_task(bodies); | branch_task(bodies + 10); };
             };
             (checks * 10) + bodies
         }

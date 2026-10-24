@@ -11,7 +11,7 @@ NET6 已实现有界线程池系统解析与 `joky/dns.lookup`；生命周期、
 
 ## 1. 已有能力与前置缺口
 
-现有 @suspends、parallel/race、单调定时器、HostExecutor、TaskWaker 及
+现有 @suspends、join/race、单调定时器、HostExecutor、TaskWaker 及
 BorrowingHostV1 的同步 stop 协议可以复用。Godot 的 tasks.drive 通过
 VmEngine.poll_tasks 推进同一执行器；NET1b 已将 Mio 就绪与外部唤醒接入阻塞/逐帧驱动。
 参见 [现有调度与驱动](architecture.md#continuation-与调度)、
@@ -692,7 +692,7 @@ Detach 先按原来源拒绝仍活跃/保留的借用，再为已分离的拥有
 含多个字段的单一拥有对象仍按整体冲突规则处理；此步骤不开放记录字段的任意并行借用。
 
 [普通拥有用例](../tests/fixtures/detached_owners.jk) 覆盖转发调用、Result、嵌套 Option/元组、
-同步记录拆构、循环、parallel、动态 scope、race 取消后复用及容器内容引用。
+同步记录拆构、循环、join、动态 scope、race 取消后复用及容器内容引用。
 [真实 TCP 用例](../tests/fixtures/detached_tcp_owners.jk) 经挂起 Result 返回两个独立连接，
 拆构后并行收发任意字节、验证 EOF 并分别关闭。两连接是回环的一对端点，
 这项前置测试不等于 NET5b 在同一 socket 上的双向 I/O 已实现。
@@ -789,13 +789,13 @@ NET5c 开发验证：
 
 [双向会话示例](../examples/tcp_duplex.jk)在一个回环连接上同时接收推送和发送命令。
 服务端接收命令与主动推送分别运行；客户端使用 BufferedTcp.split 得到两个独立拥有者，
-parallel 持续驱动两个方向。发送端分别 shutdown，以 EOF 结束各自有限轮次，
+join 持续驱动两个方向。发送端分别 shutdown，以 EOF 结束各自有限轮次，
 两方向都完成后释放会话；JIT、解释器和独立 AOT 输出均为 1、2、3。
 
 [Godot 会话脚本](../integrations/godot/demo/network_duplex.jk)将两端保留在所属任务局部，
 State 仅保留累计命令、停止标记及收发/完成/超时计数。同步控制调用结束后才继续网络等待，
 不把 State 的借用跨挂起保留，也不改变标量任务输入 ABI。收到协议结束空帧或干净 EOF
-时通知写端停止；外层 race 以真实单调截止时间取消整个 parallel，再释放两端。
+时通知写端停止；外层 race 以真实单调截止时间取消整个 join，再释放两端。
 示例每个实例启动一个会话；截止时间在连接建立和拆分后开始，连接建立超时及重连仍未扩展。
 网络/分帧失败通过所属任务失败清理，不声称恢复消息边界。
 

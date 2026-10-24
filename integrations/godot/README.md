@@ -124,7 +124,7 @@ Drop 不自动删除节点。token 不复用，并仅能在签发它的 Program 
 Joky 中用 `godot/task.start(&name)` 启动无参数入口。同步方法（包括 `_ready`）内启动时先保存
 有界的启动请求，归还 State 借用后再登记；第一段代码在后续执行器推进时执行。
 `_ready` 在同一脚本挂载期间最多执行一次；`request_ready()`、手动重调或移出后再入树不重复启动。
-多个显式 start 会创建多个根；一个根内部使用既有 `parallel`/`race`/`scope`/`branch`。
+多个显式 start 会创建多个根；一个根内部使用既有 `join`/`race`/`scope`/`branch`。
 
 以下为 [async.jk](demo/async.jk) 的任务访问方式：
 

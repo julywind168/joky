@@ -1,4 +1,4 @@
-// TP0 only: dispatch is a test bridge, not a public parallel execution API.
+// TP0 only: dispatch is a test bridge, not a public join execution API.
 extern fn probe_dispatch(id: Int32) @suspends -> Int32
 extern fn probe_enter(id: Int32) -> Int32
 extern fn probe_cancel(id: Int32) -> Int32
@@ -22,7 +22,7 @@ fn work(id: Int32) -> Int32 {
 }
 
 fn joined() @suspends -> Int32 {
-    let values = parallel { | probe_dispatch(0) | probe_dispatch(1) }
+    let values = join { | probe_dispatch(0) | probe_dispatch(1) }
     probe_parent()
     values.0 + values.1
 }

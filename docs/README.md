@@ -41,7 +41,7 @@
 - [持久实例、数值类型与 Godot 脚本接入开发计划](persistent-instances-numerics.md)
 - [记录解构开发计划](record-destructuring.md)
 - [String 设计与分阶段开发计划](string-storage-ownership.md)
-- [parallel、scope 与 branch 开发计划](structured-concurrency-scopes.md)
+- [join、scope 与 branch 开发计划](structured-concurrency-scopes.md)
 - [trait 默认方法与关联类型开发计划](trait-default-methods-associated-types.md)
 
 ## 开发与测量

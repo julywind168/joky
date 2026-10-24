@@ -202,7 +202,7 @@ fn streaming() @suspends -> Int32 {
     let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { return 3 } }
     var peer = match listener.accept() { Ok(stream) => stream, _ => { return 4 } }
     var buffered = match BufferedTcp.with_capacity(stream, 2) { Ok(b) => b, _ => { return 2 } }
-    parallel { | consume(&mut buffered) | produce(&mut peer) }
+    join { | consume(&mut buffered) | produce(&mut peer) }
     ensure(buffered.close().is_ok())
     ensure(peer.close().is_ok())
     42

@@ -29,7 +29,7 @@ fn scope_aot_lowering_emits_all_branch_frames() {
         fn left(x: Int32) @suspends { wait_value(x); {} }
         fn right(x: Int32) @suspends { wait_value(x); {} }
         fn all() @suspends -> Int32 {
-            parallel {
+            join {
                 | left(1)
                 | right(2)
             }

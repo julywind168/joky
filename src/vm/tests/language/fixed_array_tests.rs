@@ -517,7 +517,7 @@ fn fixed_array_f5_rejects_recursive_wrappers_at_closed_boundaries() {
         "fn bad(p:Nested) @suspends {}",
         "fn bad(p:&Nested) @suspends {}",
         "fn bad(p:Array<Row>) @suspends {}",
-        "fn bad() @suspends {parallel{|let p=make()|let p=make()}}",
+        "fn bad() @suspends {join{|let p=make()|let p=make()}}",
         "fn bad() @suspends {race{|let p=make()|let p=make()}}",
         "extern fn foreign(p:Nested)",
         "extern fn foreign(p:&Nested) @suspends",

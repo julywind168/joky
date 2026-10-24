@@ -56,7 +56,7 @@ fn helper(id: Int32) @suspends {
 fn relay(id: Int32) @suspends { helper(id) }
 fn main() @suspends {
     relay(10)
-    parallel { | relay(20) | relay(30) }
+    join { | relay(20) | relay(30) }
 }
 "#,
     );
@@ -148,7 +148,7 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
             fn loser() @suspends { task.sleep_ms(1); report_int32(-1) }
             fn main() @suspends {
                 let f: fn(Int32) @suspends -> Unit = worker
-                parallel { | f(1) | f(2) }
+                join { | f(1) | f(2) }
                 race { | winner() | loser() }
                 task.sleep_ms(1)
                 report_int32(42)

@@ -267,9 +267,9 @@ Copy 局部记录的不同字段可以分别借用后交换；拥有记录字段
   同步 C 引用输入和挂起宿主引用输入分别通过独立 FFI 契约开放。
 - 同步及 `@suspends` 函数都可分配、读写、传递和返回 arena 引用，
   包括带共享引用的 Copy 聚合和已封存图。挂起只保留对象，不解除已有借用限制。
-  `parallel` 分支可以接收受检任务 arena 引用，共享读取同一对象或独占访问不同对象；显式 arena 与局部值借用见下节；同步 C 和异步宿主借用接口见前节。
+  `join` 分支可以接收受检任务 arena 引用，共享读取同一对象或独占访问不同对象；显式 arena 与局部值借用见下节；同步 C 和异步宿主借用接口见前节。
 - 根任务正常结束、提前返回、运行时失败、取消或 continuation 丢弃时释放全部对象；
-  Pending、内部 helper 返回、分支/parallel 完成及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
+  Pending、内部 helper 返回、分支/join 完成及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
   当前每次分配使用独立稳定存储，尚未做分块优化。每根任务固定 64 MiB 计费预算，
   包括对齐后的对象大小、零大小占位和逐项管理成本，不等同于进程实际内存上限。
   预算耗尽、布局溢出或分配失败经运行时错误通道传播，不产生空引用；尚无 free/reset。
@@ -346,7 +346,7 @@ fn run() -> Int32 {
   Copy 根目标必须不含引用；也可通过引用绑定投影字段，如 `&view.x`、`&mut view.position.x`，权限不超过根引用。
   临时值 `&42` 及显式解引用表达式上的字段借用仍不支持。
   借用得到的引用仍可通过字段访问及 *p / *p = next 操作，不增加引用算术。
-- `@suspends` 函数中的 Copy 局部引用可跨挂起调用、parallel/race、branch 注册和 scope join，
+- `@suspends` 函数中的 Copy 局部引用可跨挂起调用、join/race、branch 注册和 scope join，
   也可传给满足不保留借用契约的挂起函数或受检异步 FFI。借用期间原位置保持稳定，
   原绑定必须活到调用完成或取消，冲突访问仍被拒绝。统一规则见下文[跨挂起借用](#跨挂起借用)。
 - 局部存储由函数调用拥有，原生同步函数使用稳定栈位置，挂起函数使用 CPS 帧的固定存储，
@@ -405,7 +405,7 @@ fn execute_skill() @suspends -> Int32 {
 模块重载或 VM 丢弃不影响仍存活的旧 continuation；其代码与 arena 一起保活到任务终止。
 上例没有把 state 传给宿主；宿主保留对象地址须使用独立的异步宿主借用 v1，不能使用旧 CPS 注册。
 
-### parallel 分支借用
+### join 分支借用
 
 `race` 沿用本节的参数和借用冲突规则；它的普通分支借用在获胜分支完成、其余分支取消后结束。
 分支实际保留的任务期存储借用不因取消提前结束。
@@ -420,20 +420,20 @@ fn increase(counter: &mut Counter) @suspends {
 fn update_pair() @suspends -> Int32 {
     let left = alloc(Counter { value: 20 })
     let right = alloc(Counter { value: 20 })
-    parallel { | increase(left) | increase(right) }
+    join { | increase(left) | increase(right) }
     left.value + right.value
 }
 ```
 
 - 分支可以共享读取同一对象，也可以像上例一样独占修改不同对象；同一对象的独占/独占或独占/共享
-  分支会在编译时被拒绝，即使运行时是单线程。`parallel { | increase(left) | increase(left) }` 不合法。
+  分支会在编译时被拒绝，即使运行时是单线程。`join { | increase(left) | increase(left) }` 不合法。
 - 参数按分支顺序从左到右求值，全部准备好后才开始分支。先前参数的借用在后续参数求值和挂起时
   已经生效；不能在后续参数中冲突地读写或移动其对象。
-- 普通分支借用持续到整个 parallel 的所有分支完成，包括多次 Pending；单个分支提前完成不缩短借用。
-  join 后可恢复原引用的权限，如上例读取 left/right；含共享引用的聚合、泛型和嵌套 parallel 使用相同规则。
-- 如果分支具有分配能力（包括间接调用和嵌套 parallel），沿用任务期存储契约：全部引用实参的借用
-  保守保留到根任务结束，包含独占实参及返回 Unit 的分支；不能仅因 parallel 已完成就恢复冲突访问。
-- 所有分支共享根任务的 arena 和 64 MiB 计费预算。分支可自行分配，但分支或 parallel 结束不回收这些对象；
+- 普通分支借用持续到整个 join 的所有分支完成，包括多次 Pending；单个分支提前完成不缩短借用。
+  join 后可恢复原引用的权限，如上例读取 left/right；含共享引用的聚合、泛型和嵌套 join 使用相同规则。
+- 如果分支具有分配能力（包括间接调用和嵌套 join），沿用任务期存储契约：全部引用实参的借用
+  保守保留到根任务结束，包含独占实参及返回 Unit 的分支；不能仅因 join 已完成就恢复冲突访问。
+- 所有分支共享根任务的 arena 和 64 MiB 计费预算。分支可自行分配，但分支或 join 结束不回收这些对象；
   根任务成功、失败或取消时统一释放。外部异步保留地址另受宿主借用 v1 的停止协议约束。
 
 ## 共享引用字段与只读对象图
@@ -970,7 +970,7 @@ fn answer() -> Int32 {
   某个 Drop 失败时继续清理其他元素，保留最早错误；失败替换的旧元素不重复析构，右侧新实参也会清理。
 - 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
   无引用元素的 `Array<T>` 拥有者、数组视图及元素资源引用可以进入普通 `@suspends` 调用链、
-  `parallel`、`race` 和 `scope/branch`；含引用元素数组、显式 Arena 能力和容器宿主 ABI 仍受原有限制。
+  `join`、`race` 和 `scope/branch`；含引用元素数组、显式 Arena 能力和容器宿主 ABI 仍受原有限制。
   元素资源引用不能存入聚合，不能通过 `*p` 移出资源；可通过 `*p = next` 替换整个资源，也不能通过共享引用取得独占访问。
   枚举元素支持 `match values.borrow_ref(index)`，载荷借用仍依赖整个原数组。
 
@@ -1237,7 +1237,7 @@ fn example() -> Int64 {
 - 复制模板应明确写出能力：`fn duplicate<T: Copy>(value: T) -> (T, T) { (value, value) }`。
   分支、循环、别名及聚合中的重复移动也在定义时检查；关联类型未确定时同样不假定 Copy。
 - 同步及 `@suspends` 泛型调用共用现有求值顺序、快照、失败、Pending、取消与代码保活机制。
-  普通函数不能调用挂起函数；`parallel` 分支须调用挂起函数，返回按源码顺序组成的结果元组（全 Unit 时仍为 Unit）。
+  普通函数不能调用挂起函数；`join` 分支须调用挂起函数，返回按源码顺序组成的结果元组（全 Unit 时仍为 Unit）。
 - 编译期按“函数声明 + 具体类型实参”缓存实例。别名复用实例，不同名义类型分别实例化；
   同型递归与互递归可用。每个函数最多 64 个类型与常量参数；每次模块编译的泛型实例与隐藏闭包入口
   合计最多 4096 个，同一次编译中导入的标准库实例也计入。新实例依赖链最多 32 层；缓存命中不增加实例或层数。
@@ -1451,7 +1451,7 @@ fn compute() @suspends -> Int32 {
 
 - 间接挂起调用在首次进入时快照目标及实参，Pending 后只继续同一个子调用，不重新求值。
   标量、Unit、空聚合、多槽聚合和函数值返回均沿用既有 CPS 结果约定。
-- `parallel` / `race` 分支可以调用挂起函数值，包括记录函数字段；parallel 返回按源码顺序组成的结果元组，
+- `join` / `race` 分支可以调用挂起函数值，包括记录函数字段；join 返回按源码顺序组成的结果元组，
   race 要求各分支返回相同的无引用类型，结果为获胜分支的值。
   各分支的目标与实参按源码顺序求值，在开始轮询任何分支前完成快照；失败和取消沿用现有结构化规则。
 - 挂起函数值默认保守地处理引用保留；可写 `fn(&String) @suspends @noescape -> R` 声明不逃逸。
@@ -1533,8 +1533,8 @@ fn example() -> Int64 {
 `&` / `|` 不接受 Bool，也不短路；Bool 逻辑继续使用 `&&` / `||` / `!`。
 
 `match` 分支之间用逗号或真实换行分隔，分支结果可直接写按位或，如 `Empty => a | b`。
-`parallel` / `race` 分支最外层的 `|` 仍是分隔符，按位或须加括号或块。
-调用参数、元组元素、记录字段及块内部可直接使用 `|`，如 `parallel { | worker(a | b) | worker(c) }`。
+`join` / `race` 分支最外层的 `|` 仍是分隔符，按位或须加括号或块。
+调用参数、元组元素、记录字段及块内部可直接使用 `|`，如 `join { | worker(a | b) | worker(c) }`。
 示例见 [bitwise.jk](../examples/bitwise.jk)。
 
 ### 显式整数转换
@@ -1693,7 +1693,7 @@ fn example() -> Int32 {
   接收者先求值一次，再从左到右求值其他实参；可变值按值快照，后续实参中的修改不会改变已传入的接收者。
   接收者的类型独立确定，无约束整数仍默认 Int32，不从方法返回注解反推类型。
 - 全部方法体在定义时检查，包括未调用者；递归和互递归静态解析为普通内部调用。
-  `@suspends`、失败、提前返回与 Pending 遵循普通函数规则，`parallel` 也支持挂起方法调用，结果规则与普通分支相同。
+  `@suspends`、失败、提前返回与 Pending 遵循普通函数规则，`join` 也支持挂起方法调用，结果规则与普通分支相同。
   泛型函数可以对已知具体类型调用方法，不能对无约束 T 猜测方法能力。
 - `const NAME: Type = expression` 必须有注解，目前限八种整数、`Float32` / `Float64` 和 Bool。
   支持标量字面量、模块常量与关联常量引用、整数和浮点内建转换、一元操作和二元算术/位运算/比较；
@@ -1734,7 +1734,7 @@ fn borrowed_example() -> Int32 {
   临时值不支持 `&mut self`，也不能通过借用方法返回或保存其引用；显式 `&临时表达式` 仍被拒绝。
   `alloc(...).method()` 的接收者本身是引用，可以调用对应借用方法。按值方法不隐式读取引用，需要显式 *p。
 - 含共享引用对象先按原规则封存，再通过共享引用调用 &self 方法；自动借用不放宽构造期独占引用或任务期存储契约。
-  局部引用可传入已证明对应参数不保留借用的方法，也可跨语言挂起；局部与 arena 引用的方法调用均遵守 @suspends / parallel 保活和取消规则。
+  局部引用可传入已证明对应参数不保留借用的方法，也可跨语言挂起；局部与 arena 引用的方法调用均遵守 @suspends / join 保活和取消规则。
 - 不支持自定义解引用和接收者重载；trait 支持静态派发，见后文；数组拥有者的公开别名仍使用 array 模块函数。
 
 完整示例见 [borrowed_methods.jk](../examples/borrowed_methods.jk)，三后端均输出 42。
@@ -2413,7 +2413,7 @@ fn example() -> Int32 {
   读取可变值时保留快照，后续初始化项或参数中的修改不影响已经求出的值。
 - 不同声明的记录不能互换，即使名字或布局相同。重新加载源码创建新身份，
   原任务继续持有旧代码和类型。透明别名可用于注解，但构造仍使用原始记录名。
-- 同步和 `@suspends` 函数都可传递和返回 Copy 记录；分支、提前返回及 parallel 参数遵循同样规则。
+- 同步和 `@suspends` 函数都可传递和返回 Copy 记录；分支、提前返回及 join 参数遵循同样规则。
   `extern fn`、宿主注册和公开标量调用入口不接受记录签名，CLI main 仍限 Unit / Int32。
 - 所有声明均检查，包括未使用的声明。直接或经别名形成的纯记录无限内联布局会报
   `recursive_record`；含枚举的环报 `recursive_type`，纯别名环仍报 `cyclic_type_alias`。当前每个记录最多展开为 65,536
@@ -2558,7 +2558,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
   `A => first(); value, B => fallback` 合法，分支末尾的分号将其正常值变为 Unit；分号后的换行结束该分支，
   跨行的多步分支应使用块或括号序列。
 - 构造载荷、被匹配表达式和选中分支均可在 `@suspends` 内挂起；恢复不重放此前副作用。
-  同步/CPS 参数、返回值、递归和 parallel 参数支持枚举；取消、失败及重载继续遵循原任务生命周期。
+  同步/CPS 参数、返回值、递归和 join 参数支持枚举；取消、失败及重载继续遵循原任务生命周期。
   extern、宿主注册及公开标量调用入口不接受枚举签名，CLI main 仍限 Unit / Int32。
 - 第一版布局为一个 Int32 标签，加上**所有变体载荷各自独立的扁平标量区**，
   大小为 `1 + sum(payload slots)`，不是最大载荷大小；构造会初始化全部标量区。
@@ -2749,7 +2749,7 @@ fn answer() -> Int32 {
   不同表达式之间须用分号或换行分隔；圆括号外，被调用表达式与 `(` 必须在同一行，换行后的 `(value)` 是下一表达式。
   若返回元组前一项以名称结束，写 `let (x, flag) = pair; (x + 1, flag)`，
   或用 `return (x + 1, flag)` 明确边界，不把分号规定为通用终止符。
-- Copy 元组支持同步/CPS 参数、返回值、if/match 合并、递归及 parallel 参数，挂起恢复不重放前面的元素。
+- Copy 元组支持同步/CPS 参数、返回值、if/match 合并、递归及 join 参数，挂起恢复不重放前面的元素。
   拥有型元组支持同步调用和分支合并，并在返回、失败或取消时清理剩余成员。
   `(Unit, Empty)` 这类零存储元组仍有结构类型，构造和调用的副作用不会被省略。
   元组沿用聚合值的 65,536 标量槽、256 层布局上限；类型/绑定模式语法嵌套也有限额。
@@ -2867,7 +2867,7 @@ JIT、AOT 和解释器共享类型检查与控制流规划。Int32 / Int64 除�
 CLI 源码运行渲染出错表达式；构建的独立程序向 stderr 报告错误及源码字节范围，以状态 1 退出。
 嵌入原生代码的错误协议见[架构说明](architecture.md#原生错误传播)。
 `@suspends` 函数的循环条件及循环体都可以挂起，
-恢复时继续当前调用，不重复执行此前的赋值或副作用；循环中的 `parallel` 每轮创建新的分支。
+恢复时继续当前调用，不重复执行此前的赋值或副作用；循环中的 `join` 每轮创建新的分支。
 默认情况下循环本身不会自动挂起；Rust 嵌入接口可为解释器设置 `InterpreterLimits`，
 启用指令总预算、异步执行时间片和帧数量限制，详见 [解释器文档](interpreter.md#resource-limits)。
 支持 `+=`、`-=`、`*=`、`/=`、`%=`、`&=`、`|=`、`^=`、`<<=`、`>>=`，
@@ -2912,7 +2912,7 @@ fn safe_divide(value: Int32, divisor: Int32) -> Int32 {
 恢复时继续当前表达式，不重算条件或重放此前的副作用。
 
 if 表达式可直接参与运算：`if true { 1 } else { 9 } + 2` 为 3。
-else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配分词，不是两个 parallel 分支符。
+else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配分词，不是两个 join 分支符。
 完整可运行示例见 [examples/conditionals.jk](../examples/conditionals.jk)。
 
 ## 整数范围模式
@@ -3472,7 +3472,7 @@ let length = text
 返回值按非序列表达式解析：`return (a; b)` 返回整个序列的值；`return a; b` 中的 `b`
 不可达并报错。块内 `return` 后换行解析为裸 return，下一行的值不属于返回值；
 跨行返回值使用 `return (` 后换行写表达式，再关闭 `)`。圆括号内部换行仍为空白。
-在 `;`、`}`、`)`、`,`、parallel/race 分支符 `|` 或输入末尾前也解析为裸 return。
+在 `;`、`}`、`)`、`,`、join/race 分支符 `|` 或输入末尾前也解析为裸 return。
 二元或一元运算中使用跳转需加括号或块。
 
 ```joky
@@ -3497,8 +3497,8 @@ fn positive(value: Int32) -> Int32 {
 `if` 两条分支都提前跳转时，整个 if 也不会正常结束；仍可正常结束的路径必须满足原有类型约束。
 
 `@suspends` 返回值和跳转之前的调用可多次挂起，恢复不重放已完成的求值。
-失败或取消不会转为成功返回。parallel/race 分支中的 return 仅结束该分支；调用者跳转前须等整个操作结束。
-parallel 等全部分支完成，race 在首个分支完成并取消其他分支后结束。
+失败或取消不会转为成功返回。join/race 分支中的 return 仅结束该分支；调用者跳转前须等整个操作结束。
+join 等全部分支完成，race 在首个分支完成并取消其他分支后结束。
 两者的实参都先于所有分支求值，实参中的跳转可以阻止整个并发操作启动。
 完整示例 [examples/jumps.jk](../examples/jumps.jk) 依次输出 `0`、`4`、`13`。
 
@@ -3610,7 +3610,7 @@ fn main() @suspends -> Int32 {
   访问列表最多 64 个绑定位置。不同绑定可以指向同一只读域，任何涉及写入的别名在执行前拒绝。
 - 块体同步执行，复用完整可达调用链的域操作证明。不能挂起、调用宿主或网络效果、嵌套 `when`、
   捕获函数值或让状态引用逃逸。首版不支持块内闭包及 `return`；`break`、`continue` 只能作用于块内循环。
-  `scope { branch { ... } }` 中的块仍归属于外层具名函数。`parallel`／`race` 的分支仍须为函数调用，
+  `scope { branch { ... } }` 中的块仍归属于外层具名函数。`join`／`race` 的分支仍须为函数调用，
   可通过具名辅助函数包含 `when`。
 - `outbox.emit(handle, &bytes)` 在当前操作内登记 `Array<UInt8>` 消息，可通过同步业务辅助函数调用。
   它复制字节到有界暂存批次，不执行 I/O；正常成功时所有目标容量验证、状态替换与消息入队
@@ -3806,7 +3806,7 @@ Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不�
 
 请求具有独立根 arena 和失败组。结果在请求清理完毕后才交给调用者；调用者被取消时
 同步撤销请求，域关闭也会取消请求。API 不提供脱离调用者的启动；并发启动使用既有
-`parallel`、`race` 或 `branch`。普通请求失败不会关闭状态；写短操作运行时失败会隔离该域，
+`join`、`race` 或 `branch`。普通请求失败不会关闭状态；写短操作运行时失败会隔离该域，
 取消关联请求，已发生的写入不回滚。请求回执和短操作共同占用有界请求数量与字节额度。
 
 单域 `read/query/write`、`read_from/query_from/write_to` 与双域
@@ -4458,7 +4458,7 @@ OutboxFull／OutboxClosed 后，Some(identity) 指出本次检查遇到的一个
 
 `runtime::executor::HostExecutor` 提供非阻塞推进；完整实例示例见
 [host_tasks.rs](../examples/host_tasks.rs)，运行 `cargo run --example host_tasks`。
-不增加脚本关键字，任务内部继续使用 `parallel`、`race`、`scope` 和 `branch`。
+不增加脚本关键字，任务内部继续使用 `join`、`race`、`scope` 和 `branch`。
 
 - `VmEngine::prepare_async(name, &[InstanceValue])` 验证精确标量签名并准备根任务，不执行用户代码。
   支持混合数值、Bool、Rune、Unit 参数与标量结果；Unit 参数仍显式传入，并保留既有 CPS 占位槽。
@@ -4818,27 +4818,30 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 可执行验收见 `migration_script_staging_and_atomic_publication_run_in_all_backends`；
 [新版 fixture](../tests/fixtures/migration_new.jk) 依赖准备时注入的旧类型，不能单独加载。
 
-`@suspends` 函数可以用 `parallel` 并发等待多个分支；下面是分支均返回 Unit 的写法：
+`parallel` 已改名为 `join`；旧写法会提示 `Use join instead of parallel`，行为不变。
+`join` 仅在表达式位置后接 `{` 时作为并发构造，普通函数声明、调用和 `string.join(...)` 仍有效。
+
+`@suspends` 函数可以用 `join` 并发等待多个分支；下面是分支均返回 Unit 的写法：
 
 ```joky
 fn main() @suspends {
-    parallel {
+    join {
         | fetch_left()
         | fetch_right()
     }
 }
 ```
 
-每个分支必须是 `@suspends` 的函数调用；parallel 轮询所有未完成分支，全部完成后继续执行。
+每个分支必须是 `@suspends` 的函数调用；join 轮询所有未完成分支，全部完成后继续执行。
 分支可返回不同的无引用类型，结果按源码顺序组成元组，与完成先后无关。
-例如 `let (left, right) = parallel { | read_left() | read_right() }`。
+例如 `let (left, right) = join { | read_left() | read_right() }`。
 单个非 Unit 分支返回 `(T,)`；混合结果保留 Unit 位置，例如 `(Int32, Unit, String)`；
 全部分支均为 Unit 时，整个表达式仍返回 Unit。结果范围与下文 race 相同，沿用分支函数签名。
 每个已完成分支的拥有结果立即由父任务接管；等待其余分支期间发生失败或取消时也会清理。
 尾随分号可以丢弃结果，拥有结果仍按正常作用域规则释放。
-可运行的 scope / parallel 结果与清理用例见 [structured_values.jk](../tests/fixtures/structured_values.jk)。
+可运行的 scope / join 结果与清理用例见 [structured_values.jk](../tests/fixtures/structured_values.jk)。
 分支失败会停止后续轮询并释放其他分支；解释器还立即释放整个执行状态。
-分支可分配对象及接收引用，借用范围与冲突规则见 [parallel 分支借用](#parallel-分支借用)。
+分支可分配对象及接收引用，借用范围与冲突规则见 [join 分支借用](#join-分支借用)。
 
 `race` 使用相同分支形式，等待首个观察到的完成或失败：
 
@@ -4891,7 +4894,7 @@ fn work(a: Int32, b: Int32) @suspends {
 }
 ```
 
-- `scope` 按普通块规则取得主体末值，支持与 parallel / race 相同范围的无引用结果；
+- `scope` 按普通块规则取得主体末值，支持与 join / race 相同范围的无引用结果；
   末值在汇合前保存，全部子任务完成后才交给调用者。空主体或尾随分号返回 Unit，
   外层期望类型可用于主体末值的推导，例如 `let value: Int8 = scope { 42 }`。
   保存的拥有值在汇合失败或任务取消时释放；`return value` 仍表示汇合后返回外层函数，
@@ -4914,7 +4917,7 @@ fn work(a: Int32, b: Int32) @suspends {
 - 嵌套的显式 scope 创建新作用域；branch 主体是独立子任务入口，可以再创建自己的 scope/branch，
   父分支必须等这些后代完成才向外报告成功。动态子任务计入解释器帧限额；
   原生后端对单个帧的活动动态子任务数有明确额度，超限返回受控错误。
-  借用冲突规则见 [parallel 分支借用](#parallel-分支借用)，动态捕获沿用同一冲突检查。
+  借用冲突规则见 [join 分支借用](#join-分支借用)，动态捕获沿用同一冲突检查。
 
 [examples/vm.jk](../examples/vm.jk) 演示加载、调用、重载和关闭，依次输出 `42`、`100`：
 
@@ -4937,7 +4940,7 @@ C 嵌入接口见 [include/joky_vm.h](../include/joky_vm.h)，可运行示例为
 
 | 接口 | 行为 |
 |------|------|
-| `yield_now() @suspends` | 主动返回一次 Pending；恢复后完成，让 parallel/race 继续轮询其他分支 |
+| `yield_now() @suspends` | 主动返回一次 Pending；恢复后完成，让 join/race 继续轮询其他分支 |
 | `sleep_ms(milliseconds: UInt64) @suspends` | 使用单调时钟等待指定毫秒数；零毫秒可以立即完成，无法表示的截止时间报告运行时错误 |
 
 ```joky
@@ -5018,7 +5021,7 @@ fn sample() -> UInt64 {
 
 byte_length、equals、find 等只读查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。
 非法 UTF-8 与空句柄不能成为合法语言 String。命名借用阻止移动、release 与冲突替换；
-单独 String 可跨 Pending 并移动到 parallel/race 分支，`&String` 也可在拥有者存活时跨挂起。
+单独 String 可跨 Pending 并移动到 join/race 分支，`&String` 也可在拥有者存活时跨挂起。
 String 和 StringBuilder 支持同步记录、枚举、Option/Result、元组、泛型、Array 元素及 Map value，
 嵌套拥有者随移动、消费匹配、作用域退出和失败递归清理。它们仍是非 Copy；容器读取使用
 `borrow_ref`，不能通过 Copy `get` 复制文本。完整存储树无引用的 Array、Map、StringBuilder 和其他拥有聚合可跨普通语言挂起；
@@ -5197,7 +5200,7 @@ fn greeting(name: &String) -> String {
 
 跨挂起借用统一按存储、生命周期和访问权限检查。支持无引用 Copy 局部值及其字段、
 完整存储树无引用的拥有值，以及这些容器的元素、Element 和 Slice 视图。
-`&T` / `&mut T` 可跨挂起保存、传入挂起函数，或进入 parallel/race、scope/branch。
+`&T` / `&mut T` 可跨挂起保存、传入挂起函数，或进入 join/race、scope/branch。
 接收者方法沿用自动重借用，普通挂起函数实参使用显式 `&` / `&mut`。
 挂起返回值仍不开放拥有对象、Element 或 Slice 的引用；普通 Copy 引用返回继续跟踪输入来源。
 
@@ -5442,7 +5445,7 @@ write_message 对非法 limit 或大于 limit 的载荷返回 IoError 的 Invali
 `cargo run -- run examples/tcp_messages.jk`，输出 hello、你好和一行空行；也支持解释器与独立 AOT。
 
 [双向会话示例](../examples/tcp_duplex.jk)在同一连接上拆分缓冲接收端与发送端，
-用 parallel 同时等待推送和发送命令。回环服务独立推送三条消息，再由各自发送端 shutdown
+用 join 同时等待推送和发送命令。回环服务独立推送三条消息，再由各自发送端 shutdown
 发出 EOF；两端完成后整个会话释放。`cargo run -- run examples/tcp_duplex.jk` 输出 1、2、3，
 也支持解释器与独立 AOT。示例用有限轮次结束，应用可将收发循环维持到协议结束或截止时间。
 

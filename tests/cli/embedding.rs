@@ -1165,7 +1165,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let old={old}
     assert(vm.load_source(h,&old)==0)
     let directory=domain.directory(1); let d=directory.handle()
-    parallel {{ | call(&h,d) | reload(&h,d) }}
+    join {{ | call(&h,d) | reload(&h,d) }}
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}

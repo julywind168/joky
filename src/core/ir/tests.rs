@@ -76,7 +76,7 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         fn convert_pending(x: UInt32) @suspends -> Int64 { int64(x) }
         fn external() -> Int32 { host() }
         fn branch_task() @suspends { external(); }
-        fn parent() @suspends { parallel { | branch_task() } }
+        fn parent() @suspends { join { | branch_task() } }
     "#,
     )
     .unwrap();
@@ -432,10 +432,10 @@ fn reject_invalid_jumps_and_structurally_unreachable_expressions() {
 #[test]
 fn jumps_cannot_inherit_caller_loops_or_skip_scope_argument_checks() {
     for (source, code) in [
-        ("fn child() @suspends { break } fn f() @suspends { while true { parallel { | child() } } }", ErrorCode::InvalidControlFlow),
+        ("fn child() @suspends { break } fn f() @suspends { while true { join { | child() } } }", ErrorCode::InvalidControlFlow),
         ("fn child() { continue } fn f() { while true { child() } }", ErrorCode::InvalidControlFlow),
-        ("fn child(x: Int32) @suspends {} fn f() @suspends { parallel { | child(return) | child(1) } }", ErrorCode::UnreachableCode),
-        ("fn child(x: Int32, y: Int32) @suspends {} fn f() @suspends { parallel { | child(return, 1) } }", ErrorCode::UnreachableCode),
+        ("fn child(x: Int32) @suspends {} fn f() @suspends { join { | child(return) | child(1) } }", ErrorCode::UnreachableCode),
+        ("fn child(x: Int32, y: Int32) @suspends {} fn f() @suspends { join { | child(return, 1) } }", ErrorCode::UnreachableCode),
         ("fn f() -> Int32 { if true { return 1 } }", ErrorCode::TypeMismatch),
     ] {
         let ast = crate::parser::parse(source).unwrap();

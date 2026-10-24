@@ -141,7 +141,7 @@ fn task_pressure(port: Int32) @suspends {
     ensure(text.byte_length() == 8208)
     let header = "\0\0 \u{10}"
     let wire = header.concat(&text)
-    parallel { | flood(&mut writer, &wire) | pushes(&mut reader) }
+    join { | flood(&mut writer, &wire) | pushes(&mut reader) }
     let after = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { ensure(false); return } }
     ensure(after.equals(&text))
     reader.close(); writer.close(); notify("finish")

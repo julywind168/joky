@@ -259,9 +259,9 @@ fn conditional_failures_and_cancellation_skip_later_effects() {
 fn conditional_scope_branches_start_only_on_selected_paths() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for expression in [
-            "if x != 0 { parallel { | branch_task(1) | branch_task(2) } }",
-            "x != 0 && (parallel { | branch_task(1) | branch_task(2) }; true)",
-            "x == 0 || (parallel { | branch_task(1) | branch_task(2) }; true)",
+            "if x != 0 { join { | branch_task(1) | branch_task(2) } }",
+            "x != 0 && (join { | branch_task(1) | branch_task(2) }; true)",
+            "x == 0 || (join { | branch_task(1) | branch_task(2) }; true)",
         ] {
             let source = format!(
                 r#"

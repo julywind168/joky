@@ -201,7 +201,7 @@ fn borrowed_receivers_preserve_evaluation_order_pending_errors_and_cancellation(
         fn branches() @suspends -> Int32 {{
             let left = alloc(Counter {{ value: 0 }})
             let right = alloc(Counter {{ value: 0 }})
-            parallel {{ | left.wait(20) | right.wait(22) }}
+            join {{ | left.wait(20) | right.wait(22) }}
             left.read() + right.read()
         }}
     "#

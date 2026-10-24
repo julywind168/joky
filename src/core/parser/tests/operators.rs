@@ -62,11 +62,11 @@ fn match_arms_allow_bitwise_or_and_scope_branches_require_delimiters() {
             "enum E { A, B } fn f(e: E) { match e { A => (1 | 2, 3 | 4), B => (5, 6) } }",
             "enum E { A, B } fn f(e: E) { match e { A => let x = 1; (x | 2), B => 3 } }",
             "enum E { A, B } fn f(e: E) { match e { A => if (1 | 2) == 3 { 1 | 2 } else { 0 }, B => 4 } }",
-            "fn f() @suspends { parallel { | g(1 | 2) | g(4 | 8); } }",
+            "fn f() @suspends { join { | g(1 | 2) | g(4 | 8); } }",
             "enum E { A, B } fn f(e: E) { match e { A => match e { A => 1, B => 2 }, B => 3 } }",
         ] { parse(source).unwrap(); }
     for source in [
-        "fn f() @suspends { parallel { | 1 | } }",
+        "fn f() @suspends { join { | 1 | } }",
         "enum E { A, B } fn f(e: E) { match e { A => 1, B } }",
         "fn f() { 1 | }",
         "fn f() { ~ }",
@@ -192,7 +192,7 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
         ("true &&", "Expected an expression"),
         ("|| true", "Expected LBrace"),
         ("true ||| false", "Expected an identifier"),
-        ("parallel { || f() }", "Expected RBrace"),
+        ("join { || f() }", "Expected RBrace"),
         ("true &", "Expected an expression"),
     ] {
         let source = format!("fn f() {{ {body} }}");
@@ -200,7 +200,7 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
         assert!(error.message.contains(message), "{source}: {error}");
         assert!(error.span.slice(&source).is_some());
     }
-    parse("fn f() { if true {}\nelse {}\n parallel { | f() | f() } }").unwrap();
+    parse("fn f() { if true {}\nelse {}\n join { | f() | f() } }").unwrap();
 }
 
 #[test]

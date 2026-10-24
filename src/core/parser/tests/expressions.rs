@@ -199,7 +199,7 @@ fn return_preserves_newlines_grouping_and_sequence_boundaries() {
         "return;",
         "(return)",
         "f(return, 1)",
-        "parallel { | return | f() }",
+        "join { | return | f() }",
     ] {
         let mut parser = Parser::from_source(source).unwrap();
         parser.parse_expr().unwrap();
@@ -426,7 +426,7 @@ fn preserves_nested_expression_spans() {
 }
 
 #[test]
-fn pipe_closures_distinguish_logical_or_and_parallel_branches() {
+fn pipe_closures_distinguish_logical_or_and_join_branches() {
     for body in [
         "let f = || { 42 }",
         "return |x: Int32| { x }",
@@ -437,7 +437,7 @@ fn pipe_closures_distinguish_logical_or_and_parallel_branches() {
         "let f = || { true || false }",
         "let f = || { || { 42 } }",
         "(|| { 42 })()",
-        "parallel { | use_fn(|| { 42 }) | use_fn(|x: Int32| { x }) }",
+        "join { | use_fn(|| { 42 }) | use_fn(|x: Int32| { x }) }",
         "race { | use_fn(move || { 42 }) | other() }",
         "match e { A => || { 42 }, B => move || { 0 } }",
     ] {
@@ -457,4 +457,25 @@ fn pipe_closures_distinguish_logical_or_and_parallel_branches() {
         let source = format!("fn test() {{ {body} }}");
         assert!(parse(&source).is_err(), "{source}");
     }
+}
+
+#[test]
+fn join_is_contextual_and_old_parallel_has_a_migration_span() {
+    for source in [
+        "fn join() {} fn f() { join(); string.join(); let join = true; if join {}; while join {} }",
+        "fn f() { let join = 1; match join { _ => {} } }",
+        "fn f() @suspends { join { | f() } }",
+        "fn f() @suspends { join\n{ | f() } }",
+        "fn f() @suspends { let value = (join { | f() }); }",
+        "fn f() @suspends { join {} }",
+        "fn f() @suspends { match join { | f() } { _ => {} } }",
+        "import joky/string.{join} fn f() { join() }",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+    }
+    let source = "fn f() @suspends {\n    parallel { | f() }\n}";
+    let error = parse(source).unwrap_err();
+    assert_eq!(error.message, "Use join instead of parallel");
+    assert_eq!(error.line, 2);
+    assert_eq!(error.span.slice(source), Some("parallel"));
 }

@@ -192,7 +192,7 @@ S7 的 TextFfiV1 继续遵守自己的文本输入/输出协议，不因新增 F
 | 闭包借用/move 捕获 FixedArray 或含数组聚合 | 首版拒绝；from_fn 捕获其他已支持类型不受此新增限制影响 |
 | 其他拥有聚合、List/Map/Set 中的数组存储 | 首版拒绝；Array 外层同样不得通过这些包装进入未验收位置 |
 | 持久实例、状态域、快照/候选、迁移 | 首版拒绝递归含数组的状态及尚未支持的边界输入/结果；不自动获得序列化或迁移兼容性 |
-| 语言 CPS 帧、parallel/race、宿主跨 Pending 保留 | 首版拒绝数组及其包装值/视图；已支持的同步 helper 可在挂起点之间完成内部数组操作 |
+| 语言 CPS 帧、join/race、宿主跨 Pending 保留 | 首版拒绝数组及其包装值/视图；已支持的同步 helper 可在挂起点之间完成内部数组操作 |
 | 普通宿主 direct/CPS、文本适配、VM 公开值接口 | 不自动开放数组参数/结果，继续使用各自准入规则 |
 
 所有已开放入口的类型等价、泛型实例标识和代码快照匹配均包含规范化长度与元素类型。
@@ -466,7 +466,7 @@ JIT、解释器、独立 AOT 均验证记录内数组、只读引用、独占写
 | C 字段、数组引用、显式首元素指针与字节文本边界 | [F4 Joky](../tests/fixtures/fixed_array_f4.jk) / [C](../tests/fixtures/fixed_array_f4.c)、F5 模型与 Rust/C 示例 |
 | alloc、graph、Arena.alloc；借用/move 捕获 | [F5 递归包装及跨模块负例](../src/vm/tests/language/fixed_array_tests.rs)，graph 三入口诊断回归 |
 | List/Map/Set、其他拥有聚合及 Array 外层包装 | 同文件 F2a/F5 拒绝矩阵；Wrapper、Option、List<Array<Row>> 等组合不能隐藏数组 |
-| 挂起函数、parallel/race、宿主跨 Pending 保留 | F1/F2a/F5 包装负例、[F4 异步 C/宿主声明拒绝](../src/backends/aot/tests/fixed_array_ffi.rs)；普通挂起函数可调用不携带数组跨入口的同步 helper |
+| 挂起函数、join/race、宿主跨 Pending 保留 | F1/F2a/F5 包装负例、[F4 异步 C/宿主声明拒绝](../src/backends/aot/tests/fixed_array_ffi.rs)；普通挂起函数可调用不携带数组跨入口的同步 helper |
 | 持久实例、状态域、快照/候选、迁移 | F5 核对 persistent/schema/入口资格、#state 拒绝、create_instance/create_domain 拒绝、迁移候选失败后旧状态与资源不变 |
 | 普通 direct/CPS、文本适配、VM 公开值接口 | F4 注册拒绝、F5 包装 extern/公开调用拒绝，含数组入口不导出到独立 AOT；既有文本 FFI 回归保持 |
 | 元素、零长度、零大小、限额和借用来源 | [F1 类型矩阵](../src/core/types/fixed_array.rs)、F2a/F3 行为/拒绝矩阵；N=0 不绕过元素或来源检查 |

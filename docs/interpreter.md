@@ -80,7 +80,7 @@ The signature and conservative allocation/retention effects are checked in share
 Function values cannot cross host ABIs. Existing module ownership keeps their target
 table alive across pending calls, reload, cancellation and VM destruction. Suspending
 indirect calls use the same activation tree, poll budgets, aggregate completion and
-cancellation paths as named CPS calls. Parallel/race branches can select a saved callee
+cancellation paths as named CPS calls. Join/race branches can select a saved callee
 slot; register compaction visits that slot as well as all arguments. Callee selection
 and argument side effects are never replayed on resume.
 
@@ -141,7 +141,7 @@ The instruction set mirrors the shared IR:
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | Assert / Panic | `Assert` checks a condition; `Panic` fails unconditionally with no normal successor. Both copy the borrowed message into RuntimeError and use frame cleanup. |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
-| `parallel` / `race` | `Concurrent` with a Join / Race completion policy and optional result destinations; `ConcurrentFinish` cleans children after result registration |
+| `join` / `race` | `Concurrent` with a Join / Race completion policy and optional result destinations; `ConcurrentFinish` cleans children after result registration |
 | sequential `scope` / `branch` | `TaskScopeEnter` opens a dynamic scope record, `TaskBranch` registers a child entry with captured inputs, `TaskJoin` suspends on the scope's join |
 | Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
 | Project | `Memory::Project`, adding a validated inline field byte offset to a local pointer |
@@ -211,7 +211,7 @@ does not remove arithmetic, including divisions and shifts whose discarded resul
 still fail, or change the shared typed plan.
 
 Next, local Int32 constants specialize right operands into `BinaryImm`.
-Writes and block/call/parallel boundaries invalidate constant facts. An integer
+Writes and block/call/join boundaries invalidate constant facts. An integer
 load is removed only if no remaining instruction or return reads its slot.
 The immediate instruction shares arithmetic semantics with `Binary`, including
 signed wrapping, bitwise operations, division and shift errors; operands are never reordered.
@@ -239,7 +239,7 @@ Immediate instructions remain Int32-only. Operand tags
 are still checked at runtime.
 
 A final slot pass removes holes left by eliminated temporaries. Parameters,
-including Unit positions, remain fixed; reads, writes, implicit results and parallel
+including Unit positions, remain fixed; reads, writes, implicit results and join
 completion slots are all remapped. This is not liveness-based register reuse:
 values that are still mentioned by any instruction retain separate storage.
 The current three loop kernels use 5/7/7 slots instead of 14/18/16. On a 64-bit
@@ -322,12 +322,12 @@ returned values move into their parent result slots.
 
 Separately from the activation store, `Execution` owns the implicit task arena
 used by checked Joky allocations. Synchronous helpers, suspending helpers and
-all parallel branches share it and its allocation budget. References, including
+all join branches share it and its allocation budget. References, including
 sealed cyclic graphs, remain valid across polls and after a child returns.
 Completion and failure release activations before the
 object arena, even while the terminal continuation is retained. Dropping a pending
 task also releases both. Instruction-budget yields preserve allocations and PCs.
-Completing a branch or an entire parallel does not reclaim its objects or reset the
+Completing a branch or an entire join does not reclaim its objects or reset the
 budget. Shared IR checking keeps all branch arguments borrowed through the join,
 including evaluation and suspension of later arguments. Shared readers may
 overlap; exclusive branch loans must be disjoint. Allocation-capable branches
@@ -337,7 +337,7 @@ text registrations accept synchronous &String through JokyText descriptors.
 Text descriptors borrow the original payload, live in the synchronous call or
 CPS frame, and are released with that call/frame. String results are validated
 and copied before input cleanup. Ordinary text borrows cannot cross language
-suspension, including parallel/race. Explicit C borrowing is described below.
+suspension, including join/race. Explicit C borrowing is described below.
 
 Synchronous local borrowing uses separate storage owned by each `Frame`. Shared
 IR materializes borrowed Copy bindings with `Local` and checks their lexical
@@ -390,14 +390,14 @@ each concrete function to 64 KiB, including zero-size placeholders and alignment
 slack; this is not a bound on the total activation stack or process memory.
 
 Concurrent branches use the same activation representation as ordinary calls, so
-both direct native CPS imports and Joky functions are valid branches. Each parallel
+both direct native CPS imports and Joky functions are valid branches. Each join
 round polls incomplete branches in source order and skips completed branches.
 Repeated Pending does not rebuild arguments or replay earlier side effects.
 Each branch carries scalar or flattened aggregate result destinations. On completion,
 its owning cleanup entry transfers to the parent immediately, retaining stable snapshot
 storage even after the child activation is removed. Once all branches complete,
 ordinary tuple construction moves these values in source order, preserving Unit
-positions; an all-Unit parallel remains Unit. Pending, failure and cancellation
+positions; an all-Unit join remains Unit. Pending, failure and cancellation
 therefore retain cleanup responsibility for partially collected results.
 Failure immediately releases the entire arena, including siblings and locals,
 even if the failed continuation remains in a scheduler. Cancellation and deep
@@ -420,7 +420,7 @@ its allocation budget remain live until the root finishes; prior effects are not
 rolled back. Existing host frames are dropped, with no new external cancellation
 callback or permission to retain Joky references across Pending.
 
-Loop conditions and bodies can both suspend. Re-entering a call, parallel or race on the
+Loop conditions and bodies can both suspend. Re-entering a call, join or race on the
 next iteration creates fresh children. By default loops do not implicitly yield;
 embedders can enable cooperative instruction slices as described below.
 
@@ -523,12 +523,12 @@ fn main() -> Result<(), joky::Error> {
 ```
 
 - `max_frames` bounds simultaneously live user and native CPS activations,
-  including all parallel branches. Default: 1024. Zero is rejected.
+  including all join branches. Default: 1024. Zero is rejected.
 - `instruction_budget` bounds total bytecode instructions plus native CPS polls
   across the whole call and every resume. Exhaustion returns `ResourceLimit` and
   releases execution state. Default: unlimited. Zero fails before any work.
 - `poll_budget` optionally makes async execution return Pending after a slice,
-  preserving the exact cursor and parallel round. It also works inside synchronous
+  preserving the exact cursor and join round. It also works inside synchronous
   callees of an async entry. Synchronous entry calls ignore this per-poll limit
   and use the total budget. Default: disabled. Zero is rejected.
 
@@ -543,7 +543,7 @@ is polled again, even if an intervening root poll resumed a sibling's saved slic
 Internal slice scheduling does not increment this counter. The observation is weak,
 so it neither keeps the root alive nor makes an unsupported wait appear supported.
 It reports unsupported external waits instead of polling them indefinitely. The CLI
-uses this driver for suspending main, including joky/task imports. Parallel/race order remains
+uses this driver for suspending main, including joky/task imports. Join/race order remains
 deterministic, but slices do not promise fair CPU time among branches. A slice yield
 does not advance to the next branch or count as a winning completion.
 A caller can cancel an infinite interpreted loop between slices. Native callbacks

@@ -31,7 +31,7 @@ fn request_unit() @suspends { request(1000); }
 fn ready_unit() @suspends {}
 fn broken_unit() @suspends { broken(0); }
 fn raced() @suspends -> Int32 { race { | request_unit() | ready_unit() }; 0 }
-fn faulty() @suspends -> Int32 { parallel { | request_unit() | broken_unit() }; 0 }
+fn faulty() @suspends -> Int32 { join { | request_unit() | broken_unit() }; 0 }
 fn doubled(delta: Int32) @suspends -> Int32 {
     let first = domain.write(add, delta).unwrap()
     task.yield_now()

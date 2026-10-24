@@ -48,7 +48,7 @@ fn scope_failure() @suspends -> Int32 {
     42
 }
 fn mixed() @suspends -> Int32 {
-    let (a, b, c, d, e) = parallel {
+    let (a, b, c, d, e) = join {
         | relay::<Int8>(-128, 2)
         | relay::<UInt64>(18446744073709551615, 0)
         | unit()
@@ -57,14 +57,14 @@ fn mixed() @suspends -> Int32 {
     }
     let unit_value: Unit = c
     ensure(a == -128 && b == 18446744073709551615 && d == 1.5 && e)
-    let (single,) = parallel { | relay(42, 1) }
-    let empty: Unit = parallel { | unit() | unit() }
+    let (single,) = join { | relay(42, 1) }
+    let empty: Unit = join { | unit() | unit() }
     single
 }
 struct Empty {}
 struct Pair { small: Int8, wide: UInt64 }
 fn aggregates() @suspends -> Int32 {
-    let (a, b, c) = parallel {
+    let (a, b, c) = join {
         | relay(Pair { small: -128, wide: 18446744073709551615 }, 2)
         | relay((40, 2), 0)
         | relay(Empty {}, 1)
@@ -74,14 +74,14 @@ fn aggregates() @suspends -> Int32 {
     left + right
 }
 fn owned() @suspends -> Int32 {
-    let (a, b) = parallel { | relay(make(1), 0) | relay(make(2), 3) }
+    let (a, b) = join { | relay(make(1), 0) | relay(make(2), 3) }
     record(100);
     task.yield_now()
     ensure(a.id == 1 && b.id == 2 && a.text.byte_length() == 7)
     42
 }
 fn discard() @suspends -> Int32 {
-    parallel { | relay(make(1), 0) | relay(make(2), 2) };
+    join { | relay(make(1), 0) | relay(make(2), 2) };
     record(100);
     42
 }
@@ -91,7 +91,7 @@ fn array_value(id: Int32) -> Array<Tracked> {
     values
 }
 fn arrays() @suspends -> Int32 {
-    let (first, second) = parallel { | relay(array_value(1), 0) | relay(array_value(2), 2) }
+    let (first, second) = join { | relay(array_value(1), 0) | relay(array_value(2), 2) }
     var a = first
     var b = second
     a.push(make(3))
@@ -102,35 +102,35 @@ fn arrays() @suspends -> Int32 {
 fn results() @suspends -> Int32 {
     let a: Result<Tracked, Tracked> = Ok(make(1))
     let b: Result<Tracked, Tracked> = Err(make(2))
-    let (a, b) = parallel { | relay(a, 0) | relay(b, 2) }
+    let (a, b) = join { | relay(a, 0) | relay(b, 2) }
     let left = match a { Ok(v) => v.id, Err(_) => 0 }
     let right = match b { Ok(_) => 0, Err(v) => v.id }
     ensure(left == 1 && right == 2)
     42
 }
 fn nested_value() @suspends -> (Tracked, Tracked) {
-    scope { branch { task.yield_now() }; parallel { | relay(make(1), 0) | relay(make(2), 2) } }
+    scope { branch { task.yield_now() }; join { | relay(make(1), 0) | relay(make(2), 2) } }
 }
 fn nested() @suspends -> Int32 {
-    let ((a, b), c) = parallel { | nested_value() | relay(make(3), 0) }
+    let ((a, b), c) = join { | nested_value() | relay(make(3), 0) }
     ensure(a.id == 1 && b.id == 2 && c.id == 3)
     42
 }
 fn relay_owned(value: Tracked, polls: Int32) @suspends -> Tracked { relay(value, polls) }
 fn indirect() @suspends -> Int32 {
     let f = relay_owned
-    let (a, b) = parallel { | f(make(1), 0) | f(make(2), 2) }
+    let (a, b) = join { | f(make(1), 0) | f(make(2), 2) }
     ensure(a.id == 1 && b.id == 2)
     42
 }
 fn host_scalar() @suspends -> Int32 {
-    let (a, b) = parallel { | delayed_value(19) | delayed_value(21) }
+    let (a, b) = join { | delayed_value(19) | delayed_value(21) }
     a + b
 }
 fn repeat() @suspends -> Int32 {
     var n = 0
     while n < 3 {
-        let (a, b) = parallel { | relay(make(1), 0) | relay(make(2), 2) }
+        let (a, b) = join { | relay(make(1), 0) | relay(make(2), 2) }
         ensure(a.id == 1 && b.id == 2)
         n = n + 1
     }
@@ -138,18 +138,18 @@ fn repeat() @suspends -> Int32 {
 }
 fn fail_branch() @suspends -> Tracked { task.yield_now(); ensure(false); make(2) }
 fn branch_failure() @suspends -> Int32 {
-    let value = parallel { | relay(make(1), 0) | fail_branch() }
+    let value = join { | relay(make(1), 0) | fail_branch() }
     record(100);
     42
 }
 fn fail_return() @suspends -> Tracked { let bad = make(9); task.yield_now(); make(2) }
 fn cleanup_failure() @suspends -> Int32 {
-    let value = parallel { | relay(make(1), 0) | fail_return() }
+    let value = join { | relay(make(1), 0) | fail_return() }
     record(100);
     42
 }
 fn choose<T>(value: T) @suspends -> T { scope { branch { unit() }; value } }
-fn pair<T, U>(a: T, b: U) @suspends -> (T, U) { parallel { | relay(a, 0) | relay(b, 1) } }
+fn pair<T, U>(a: T, b: U) @suspends -> (T, U) { join { | relay(a, 0) | relay(b, 1) } }
 fn generic_context() @suspends -> Int32 {
     let (a, b) = pair(choose(make(1)), 41)
     ensure(a.id == 1)
@@ -176,7 +176,7 @@ impl Worker { fn work(self) @suspends -> Int32 { task.yield_now(); self.id } }
 fn members() @suspends -> Int32 {
     let a = Worker { id: 40 }
     let b = Worker { id: 2 }
-    let (a, b) = parallel { | a.work() | b.work() }
+    let (a, b) = join { | a.work() | b.work() }
     a + b
 }
 
@@ -186,13 +186,18 @@ fn padded<T>(before: Unit, value: T, after: Unit, polls: Int32) @suspends -> T {
 fn padded_pair(before: Unit, value: Pair, after: Unit, polls: Int32) @suspends -> Pair {
     padded(before, value, after, polls)
 }
+fn join(value: Int32) @suspends -> Int32 { task.yield_now(); value }
 fn call_shapes() @suspends -> Int32 {
+    let (value,) = join { | join(42) }
+    ensure(value == 42)
+    let join = true
+    if join { ensure(value == 42) } else { ensure(false) }
     let empty = unit()
     padded(empty, empty, empty, 1)
     let narrow = padded::<Int8>(empty, -128, empty, 2)
     let original = padded(empty, Pair { small: narrow, wide: 18446744073709551615 }, empty, 2)
     let f = padded_pair
-    let (pair, owner) = parallel {
+    let (pair, owner) = join {
         | f(empty, original, empty, 2)
         | padded(empty, make(1), empty, 0)
     }

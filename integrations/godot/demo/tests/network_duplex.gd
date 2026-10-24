@@ -141,7 +141,7 @@ fn send_pressure(writer: &mut TcpWriter) @suspends {
 fn task_pressure(port: Int32) @suspends {
     let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
-    parallel { | receive(&mut reader) | send_pressure(&mut writer) }
+    join { | receive(&mut reader) | send_pressure(&mut writer) }
     reader.close();
     writer.close();
     let method = "finish"

@@ -177,12 +177,12 @@ Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来
 - Unit 不产生机器值；普通 ABI 省略 Unit 参数，CPS 参数槽仍保留原始位置。
 - 普通 lowering 通过 Cranelift Variable 构造 SSA，补齐循环回边后封闭块；
   CPS 使用槽位和独立恢复状态。表达式序列只影响规划顺序，不增加执行指令。
-- 恢复继续当前子调用，不重算参数或重放副作用；每轮循环重新创建其 parallel/race 子帧。
+- 恢复继续当前子调用，不重算参数或重放副作用；每轮循环重新创建其 join/race 子帧。
 - String 字面量通过可重定位数据对象输出，不能把编译进程地址写入 AOT 对象。
 - `joky_cps_`、`__joky_cps_`、`joky_vm_`、`joky_runtime_`、`__joky_runtime_`、
   `__joky_string_`、`joky_string_result_` 与 `__joky_user_text_v2_` 保留给 runtime 或版本化出口。
 
-结构化并发在 AST 和共享 IR 中统一表示为 `Concurrent`，`ConcurrentKind::Join` 对应 `parallel`，
+结构化并发在 AST 和共享 IR 中统一表示为 `Concurrent`，`ConcurrentKind::Join` 对应 `join`，
 `ConcurrentKind::Race` 对应 `race`。两者共用参数求值、挂起分支检查、借用检查和能力传播。
 Join 在各 `ConcurrentBranch` 的结果槽接收不同类型的无引用结果，全部完成后通过普通元组构造
 按源码顺序组合；全 Unit 分支保持 Unit。拥有分支的内嵌 cleanup 描述在该分支完成时立即登记，
@@ -292,7 +292,7 @@ JIT/AOT 的同步函数以显式 Cranelift 栈位置实现 Local，按 storage_l
 循环重入复用该声明的存储，恢复后直接读写原位置，不重放初始化。
 解释器激活帧独立拥有稳定分配，按声明目标槽缓存地址；循环重入只重新初始化，同一函数递归调用
 各自拥有存储。词法借用先结束，底层存储可保留至函数返回；正常完成、失败或取消都随帧释放。
-无引用 Copy 局部引用可跨挂起调用、parallel/race、branch 注册和 scope join，包括作为挂起调用实参
+无引用 Copy 局部引用可跨挂起调用、join/race、branch 注册和 scope join，包括作为挂起调用实参
 和藏在 Copy 聚合中的引用。完整存储树无引用的拥有对象及其容器视图沿用稳定存储，
 CFG 活跃性、来源与借用检查保证原位置存活且不发生冲突访问。
 隐藏 place 和编译器写预留可跨挂起，实际借用仍遵守最后使用规则；因此赋值的右侧可以挂起，
@@ -353,10 +353,10 @@ GraphOp::Link 更新组内内容来源而不提前发布共享借用；GraphOp::
 
 FunctionInfo::uses_arena 从实际分配沿普通调用和 Op::Concurrent 分支边传播，区别于仅有引用值的函数。
 FunctionInfo::needs_arena 另传播隐藏任务上下文需求，涵盖分配与独立回收；仅回收不新增普通引用存储契约。
-引用能力也沿这两类边传播，原生回调检查不能因嵌套 parallel 而丢失能力约束。
+引用能力也沿这两类边传播，原生回调检查不能因嵌套 join 而丢失能力约束。
 分配能力与参数保留效果分别推导：调用方按逐参数借用摘要保留实际保存的引用实参，未知契约保持保守。
 数组拥有者及视图不可存储，不因分配能力而被任务期保留；其返回依赖仍接受签名检查。
-不分配的只读 helper 仍可按结果最后使用结束借用。两种能力均可进入 @suspends 调用链及 parallel 分支；
+不分配的只读 helper 仍可按结果最后使用结束借用。两种能力均可进入 @suspends 调用链及 join 分支；
 宿主引用输入只对独立的同步 C 和异步借用 v1 开放。
 Op::Concurrent 在父函数 CFG 中表示整个 fork/join，所有分支实参中的引用槽同时作为活跃性输入。
 这也使较早的参数快照在后续参数求值/挂起期间保持借用，不能被冲突访问或移动。
@@ -373,7 +373,7 @@ borrowing 在该操作检查全部分支的访问后，再按参数效果保留�
 父帧在创建子帧前已经持有 arena，子帧继承其 Rc<UnsafeCell<Arena>>，只对 arena 控制块计数，不对对象计数。
 单线程顺序 poll 和分配 helper 的短期独占访问构成 UnsafeCell 契约；宿主借用 v1 可以保留受检对象地址，但不能获得 Arena 能力或保留帧/槽地址。
 __joky_cps_finish 在成功或失败退出时同步释放子帧及当前帧的 arena 所有权，保留结果槽供调用方读取。
-子帧完成时父帧仍持有 arena，因此返回引用不会失效；parallel 分支也共享根任务 arena，
+子帧完成时父帧仍持有 arena，因此返回引用不会失效；join 分支也共享根任务 arena，
 分支或整个 join 完成都不回收分配或重置计费预算；根帧终止则立即回收全部对象。
 Continuation 对非法 CPS 状态和错误通道失败同样收尾；丢弃 pending 帧通过所有权自动回收。
 解释器的 Execution 在 Pending 保留 arena，在完成/失败时先释放活动帧再释放 arena；poll 预算让出不重放分配。
@@ -630,7 +630,7 @@ AST 的手工构造者需初始化 implementations、traits 及 type_params，�
 
 `core::ir::members` 将方法登记为 `Type.method` 内部普通函数，所有签名先登记再检查全部函数体。
 类型提示只负责静态查找，实际求值复用普通调用：接收者占首个实参，保持快照及从左到右求值。
-`parallel` 复用相同解析过程。原生方法使用 Local linkage，解释器放入内部 callee 列表，公开入口不包含成员。
+`join` 复用相同解析过程。原生方法使用 Local linkage，解释器放入内部 callee 列表，公开入口不包含成员。
 AST 保留 impl 参数与方法独立参数各自的列表和声明身份；类型规范化按两层作用域检查，禁止遮蔽 impl 参数或目标名称。
 成员收集时按 impl、方法的顺序拼接内部模板参数，复用 `core::ir::generics` 的刚性检查、签名替换、完整实参缓存与队列限额。
 方法查找按名义声明 ID 匹配，成员名称和可见性键使用不含类型实参的规范名称；完整目标约束使该查找不涉及特化选择。
@@ -641,7 +641,7 @@ AST 保留 impl 参数与方法独立参数各自的列表和声明身份；类�
 局部预扫描记录候选接收者根、内联字段路径及方法名，在绑定类型已知时查询实际成员种类，再决定是否建立稳定 Local 存储；
 不能仅凭同名方法存在就给按值接收者分配地址。接收者先于显式实参求值，普通调用的快照、借用冲突及返回来源规则不变。
 显式临时值借用和自定义解引用仍未开放；无引用 Copy 记录可通过引用绑定投影内联字段，
-共享/独占权限与根来源保持不变；引用接收者本身可沿既有 CPS 调用和 parallel 路径使用。
+共享/独占权限与根来源保持不变；引用接收者本身可沿既有 CPS 调用和 join 路径使用。
 链式调用的返回提示使用替换后的签名。模板按定义模块检查，实例中的具体类型身份按当前消费模块校验，
 源码名称和私有成员查找仍固定在定义作用域，避免外部类型实参被误拒或调用者同名类型改变模板含义。
 参数化聚合上的方法可从泛型函数调用，无约束参数本身仍不能获得猜测的方法能力。
@@ -1468,7 +1468,7 @@ join/split 也由 Joky 源码实现：join 先受检累加总字节数再构造�
 单独 String 可跨语言 Pending，参数在首次轮询前移交到子帧清理责任，未轮询的 race 败方也能
 清理拥有实参。恢复不重放构造或描述符初始化；子帧先结束，父清理和 arena 后结束。
 String 与整个无引用拥有对象的引用可跨普通语言挂起；无引用元素的 Array 已接入 CPS
-及 parallel/race 的拥有者转移和清理，无引用拥有记录、枚举、元组和容器也使用该路径。
+及 join/race 的拥有者转移和清理，无引用拥有记录、枚举、元组和容器也使用该路径。
 无引用元素/Slice 视图可跨挂起并通过借用链固定来源容器；含引用元素的 Array 仍限同步。
 拥有型局部与 Drop 临时数据保存在 CPS 帧的固定区域，动态分支在登记前复制其清理数据，
 避免父帧循环复用存储覆盖未轮询捕获。拥有型返回值仅在局部析构全部成功后交出，析构失败则清理返回值。
@@ -1561,7 +1561,7 @@ raw numeric result 不暴露文本句柄。结果初始化为零，失败保持�
 JIT/AOT Joky 函数可注册为 native entry，目标 VM 可以是 JIT 或解释器；解释器函数本身没有原生地址。
 
 异步借用 v1 使用 `FunctionInfo::borrowing_host` 标记受检的引用 extern，不增加 `uses_arena` 分配能力。
-共享 IR 重用 C 所指类型的布局检查，调用及 parallel/race 沿用既有借用来源和冲突检查。
+共享 IR 重用 C 所指类型的布局检查，调用及 join/race 沿用既有借用来源和冲突检查。
 JIT/AOT 导入版本化 `BorrowingHostV1` 数据描述符并生成私有 CPS 包装函数，所有调用形态均进入
 `joky_cps_poll_borrowing_v1`。帧在首次 poll 之前登记 stop，终态用 Completed/Failed 收尾，
 release/Drop 用 Cancelled 收尾；取走清理入口后才调用，保证失败或重复释放不重复 stop。
@@ -1586,7 +1586,7 @@ Mio Reactor 已接入同一就绪队列；阻塞驱动会等待 I/O、最早截�
 原生 CPS 入口为 `unsafe extern "C" fn(*mut CpsFrame) -> i32`：0 完成、1 Pending、其他值失败。
 生成入口完成时还设置 `DONE`；普通 native 子回调按返回状态完成即可。
 Int32 / UInt32 使用槽低 32 位，Int64 / UInt64 使用完整 64 位，Bool 使用低 8 位。
-UInt32 写入 CPS 槽时零扩展；有符号与无符号类型不因 ABI 位宽相同而互换。嵌套调用及 parallel 使用运行时管理的子帧。
+UInt32 写入 CPS 槽时零扩展；有符号与无符号类型不因 ABI 位宽相同而互换。嵌套调用及 join 使用运行时管理的子帧。
 AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译使用 `compile_with_import_layouts`。
 
 `ContinuationStatus` 区分 Pending、Completed、Failed。终态不能再次 resume，
@@ -1810,7 +1810,7 @@ JIT / AOT 共用 narrowing `ireduce`、signed widening `sextend`、unsigned wide
 位运算和移位复用 typed IR 的 Binary / Unary，不增加运行时值类型或 CPS 状态结构。
 移位两侧由共享语义检查保证同型。原生 lowering 使用 `band` / `bor` / `bxor` / `bnot`、
 `ishl`，以及依符号选择的 `sshr` / `ushr`。位运算按源码求值顺序保留快照。
-parser 的分支上下文将最外层 `|` 保留给 match / parallel；进入括号、调用参数、元组、字段或块时
+parser 的分支上下文将最外层 `|` 保留给 match / join；进入括号、调用参数、元组、字段或块时
 允许按位或，退出时恢复外层状态。优先级和用户写法见 [位运算与移位](language.md#位运算与移位)。
 
 ## 原生错误传播
@@ -1833,7 +1833,7 @@ longjmp 或跨生成代码的 Rust unwind。已有标量签名继续使用原有
 `VmEngine`、continuation 及解释器 native 适配器的 Rust 调用边界保存外层错误、隔离嵌套调用，
 退出时恢复外层状态。嵌套 VM 中已由调用者处理的失败不会污染外层执行或下一次调用。
 该通道与 `joky/vm` 的公共错误查询独立。CPS 除零或非法移位返回 `JOKY_CPS_RUNTIME_ERROR`，
-设置 `JOKY_CPS_FAILED` 并释放子帧；parallel 不再轮询后续分支。失败任务没有成功结果，不能重试。
+设置 `JOKY_CPS_FAILED` 并释放子帧；join 不再轮询后续分支。失败任务没有成功结果，不能重试。
 
 AOT 编译后用 `AotCompiler::requires_runtime()` 判断是否需要链接 `libjoky.a`；含除法、移位、
 外部调用或 CPS 的对象需要 runtime。C 调用方按 [joky_runtime.h](../include/joky_runtime.h)

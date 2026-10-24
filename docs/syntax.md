@@ -45,7 +45,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 - `let` 不可重新赋值，`var` 可重新赋值；函数签名显式，局部类型可推导。
 - 用 `{}` 划分作用域、`,` 分隔参数；`;` 是连接表达式的序列运算符，不强制使用。
   块可以顺序容纳多个表达式；完整表达式后的换行分隔下一项，行首 `.` 明确继续字段或方法链。
-- 挂起沿用 `@suspends`，调用形式与普通函数一致；结构化并发使用 `parallel` 和 `race`。
+- 挂起沿用 `@suspends`，调用形式与普通函数一致；结构化并发使用 `join` 和 `race`。
 - v0.1 先完成函数、分支、循环和宿主交互；完整目标还包括名义数据类型、泛型与能力约束、
   函数值以及所有权与借用。资源规则先确定，再开放会捕获或跨挂起保存资源的功能。
 
@@ -56,7 +56,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 函数、`extern fn`、`let` / `var`、块、`while` | 已实现 | 保留，规范语句边界 |
 | `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`String`、宿主 opaque 类型 | 已实现 | 保留，不增加隐式转换 |
 | `type` 透明别名 | 已实现 Copy/拥有型记录实参、模块导入、前向引用、链及环检查 | 保持透明展开，无新名义身份或构造函数 |
-| `@suspends`、`parallel`、`race`、`import joky/vm` | 已实现 | race 等待首个终态并取消其余分支 |
+| `@suspends`、`join`、`race`、`import joky/vm` | 已实现 | race 等待首个终态并取消其余分支 |
 | 显式整数转换 | 已实现 `int32/int64/uint32/uint64` 内建 wrapping 转换 | `joky/integer` 提供返回 Option 的 `to_*()` 方法；Integer 约束留待后续 |
 | 四则、位运算与移位 | 已实现优先级、同型整数运算与移位范围检查 | 保留，见第 6 节 |
 | 分号序列 | 已实现，分号可省略 | 保留表达式连接语义，不要求语句终止符 |
@@ -78,9 +78,9 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
 | 模块常量 | 已实现模块级 `const` / `pub const`、跨模块限定与选择导入、与关联常量共用依赖图和标量求值 | String / 引用 / 聚合常量与 `const fn` 留待后续 |
 | 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派；Drop 按专门规则实现 | 默认方法、关联类型、投影及等式约束已实现；同步借用型 dyn 三后端分派、显式重借用与生命周期已验收，见第 5 项计划 |
-| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
+| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 join/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
-| Arena、引用来源检查 | 已实现隐式 arena、同步显式 Arena.new()/arena.alloc() 与 &Arena helper、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、任务 arena 引用跨挂起及 parallel 分支借用、局部值/字段及容器元素/Slice 跨挂起借用与独立字段访问、异步宿主借用 v1 | 显式 Arena 跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
+| Arena、引用来源检查 | 已实现隐式 arena、同步显式 Arena.new()/arena.alloc() 与 &Arena helper、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、任务 arena 引用跨挂起及 join 分支借用、局部值/字段及容器元素/Slice 跨挂起借用与独立字段访问、异步宿主借用 v1 | 显式 Arena 跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | Struct JSON 派生 | 已实现 `#derive(ToJson, FromJson)`，可单向派生，支持泛型条件约束与跨模块私有字段 | 生成普通 trait 实现；enum、字段改名/跳过/默认值注解留待后续，语义见 language.md |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
 | 挂起闭包、借用闭包逃逸、拥有型/动态挂起 dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
@@ -142,6 +142,9 @@ v0.1 核心目标保留字为：
 fn extern unsafe import pub type struct enum impl trait dyn for const match let var if else while break continue return parallel scope race branch
 true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 ```
+
+`parallel` 仅为旧语法的迁移诊断保留，不再接受并发块。`join` 为上下文词，
+在表达式位置后接 `{` 时解析为并发组合；普通 `join(...)`、`fn join`、`string.join(...)` 不受影响。
 
 `self` / `Self` 在 impl 和 trait 内具有接收者 / 目标类型含义。`trait for` 已实现，`dyn` 已保留，
 同步借用型 dyn 已支持资格检查、关联等式规范化、擦除、显式重借用和三后端动态执行，见[实施记录](borrowed-dyn-trait.md#9-实施记录2026-10-08)。后续扩展还包括
@@ -226,7 +229,7 @@ fn increment(start: Int32) -> Int32 {
    圆括号外，被调用表达式与 `(`、记录构造名称与 `{` 在同一行；参数和字段内容可跨行。
 4. 尾随分号丢弃最后一个正常值，序列正常结果为 Unit；不吸收 return、break 或 continue。
    连续分号允许作为空连接，不产生副作用；单独的分号不产生有用值。
-5. 声明、赋值、while 和 branch 正常结束时返回 Unit；scope 返回主体末值，parallel 返回按源码顺序的结果元组（全 Unit 分支仍返回 Unit），race 返回获胜分支的值。尾随分号丢弃正常结果。
+5. 声明、赋值、while 和 branch 正常结束时返回 Unit；scope 返回主体末值，join 返回按源码顺序的结果元组（全 Unit 分支仍返回 Unit），race 返回获胜分支的值。尾随分号丢弃正常结果。
 
 ```joky
 fn answer() -> Int32 { 42 }
@@ -294,7 +297,7 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 `&` / `|` / `^` 均求值两侧，不能替代 Bool 短路运算。
 
 match 分支以逗号或真实换行分隔，分支结果可直接写按位或 `a | b`。
-parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | b)` 或 `{ a | b }`。
+join/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | b)` 或 `{ a | b }`。
 括号、调用参数、元组、记录字段和块内部允许按位或；闭合定界符后恢复外层分支规则。
 嵌套 match 自己管理逗号与换行分支分隔符，不进行按名称或后续 `=>` 猜测；表达式沿用换行与圆括号的通用规则。
 
@@ -365,11 +368,12 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 
 ## 8. 挂起与结构化并发
 
-管道分支形式已由 `scope` 改名为 `parallel`，行为不变，旧写法给出迁移诊断。
+管道分支形式先由 `scope` 改名为 `parallel`，现已统一为 `join`，行为不变。
+旧 `parallel { ... }` 和管道式 `scope { | ... }` 均给出迁移诊断，不提供别名。
 顺序主体的 `scope` 与动态子任务 `branch` 已实现并通过三后端验收：解析、所属关系、
 捕获移动与借用检查、动态登记、调度轮次、汇合与取消清理均在
 JIT、解释器与独立 AOT 上一致。语义、迁移与验收记录见
-[结构化并发作用域开发计划](structured-concurrency-scopes.md)。以下示例使用 `parallel`
+[结构化并发作用域开发计划](structured-concurrency-scopes.md)。以下示例使用 `join`
 展示既有管道分支形式。
 
 ```joky
@@ -384,7 +388,7 @@ fn worker(count: Int32) @suspends {
 }
 
 fn run_pair() @suspends {
-    parallel {
+    join {
         | worker(2)
         | worker(3)
     }
@@ -398,15 +402,15 @@ fn run_pair() @suspends {
 - 普通函数只能调用同步函数；`@suspends` 函数可调用两者，挂起约束沿调用链传播。
   不另加 `async` / `await`，标注也不保证调用必定挂起。
 - 恢复必须继续挂起位置，不重放已完成的实参求值、赋值或宿主副作用。
-- `parallel` 和 `race` 只能在挂起函数中使用，至少有一个分支；每个分支必须是挂起函数调用。
-  parallel 接受不同的无引用结果类型；race 要求各分支返回相同的无引用类型，整个表达式返回获胜值。
+- `join` 和 `race` 只能在挂起函数中使用，至少有一个分支；每个分支必须是挂起函数调用。
+  join 接受不同的无引用结果类型；race 要求各分支返回相同的无引用类型，整个表达式返回获胜值。
   按分支书写顺序、实参从左到右准备全部参数，之后开始分支轮询。
   引用及含共享引用聚合可传入分支；共享读允许重叠，独占借用不能与其他分支的读写重叠。
   较早参数的借用在后续参数求值期间已生效；普通分支借用直到整个操作完成或取消才结束。
   分支可分配，所有嵌套分支共享根任务 arena 和预算；join 不回收对象。各分支按源参数的保留效果
   检查任务期存储前置条件；仅有分配能力不会保留全部引用输入。
-- 所有分支完成后 `parallel` 才返回按源码顺序的结果元组，混合结果保留 Unit 位置，
-  单个非 Unit 分支返回 `(T,)`，全 Unit 分支仍返回 Unit。分支失败使整个 parallel 失败，
+- 所有分支完成后 `join` 才返回按源码顺序的结果元组，混合结果保留 Unit 位置，
+  单个非 Unit 分支返回 `(T,)`，全 Unit 分支仍返回 Unit。分支失败使整个 join 失败，
   并取消其余分支、清理已接收的拥有结果。
   父任务取消也取消其子任务。核心阶段没有 `defer` 或用户析构语法；所有权扩展后，
   取消必须释放已初始化且仍由任务拥有的值，清理动作同步完成、不可挂起，见第 10 节。
@@ -416,14 +420,14 @@ fn run_pair() @suspends {
   普通分支借用在此边界结束，实际保留的任务期存储借用及 arena 对象仍保持到根任务结束。
   无引用拥有结果的清理责任先交给父任务，败方清理失败则释放结果并传播错误。
   不返回获胜编号，不自动合并异构类型；Result.Err 也属于正常完成，不新增外部异步取消 ABI。
-- `scope` 返回主体末值，汇合前保存、汇合后交付；支持与 parallel / race 相同范围的无引用结果，
+- `scope` 返回主体末值，汇合前保存、汇合后交付；支持与 join / race 相同范围的无引用结果，
   空主体及尾随分号仍返回 Unit。`branch` 仍为 Unit；跨 scope 的 return / break / continue 仍先汇合再跳转。
-- 当前 `parallel` / `race` 表示单线程协作并发，不承诺并行、抢占或 CPU 循环公平性；执行限额由嵌入 API 配置。
-- `return` 只完成当前分支函数；不能逃出父函数或父 parallel。
+- 当前 `join` / `race` 表示单线程协作并发，不承诺并行、抢占或 CPU 循环公平性；执行限额由嵌入 API 配置。
+- `return` 只完成当前分支函数；不能逃出父函数或父 join。
   `break` / `continue` 不得跨函数边界，两者都不接受任意语句块作为分支。
 
 可选多线程模式按[任务执行器专项计划](task-parallel-executor.md)推进：直接覆盖同一任务树的
-parallel / race 分支和 branch，保留宿主可选的单线程执行及 Godot 主线程路径。
+join / race 分支和 branch，保留宿主可选的单线程执行及 Godot 主线程路径。
 线程资格、取消清理屏障和模式间顺序差异属于待实现契约，不改变上述当前行为。
 
 后续服务端并发按[状态域与任务并发设计草案](server-concurrency.md)推进：长期状态与任务生命周期分离，
@@ -445,6 +449,79 @@ SC3 已提供两个记录域的联合短操作：显式读写模式、可写别�
 SC4-A 已提供 `joky/admission`：池拥有者、可复制申请句柄、唯一许可、立即申请及有界 FIFO
 等待。取消归还名额，关闭唤醒等待者；许可可跨挂起保留，但不授予状态访问权限。
 活动名额与候选字节、请求记录配额分别检查；Channel、单次应答与业务有效期联动仍待后续切片。
+
+### 8.1 后续并发构造与组合器（仅设计）
+
+本节记录后续建议，不构成当前实现承诺；此次仅完成 `parallel` → `join` 的名称迁移。
+不修改 `branch` 的正常汇合语义，不实现 `background`、`select` 或以下组合器，也不提前保留新关键词。
+并发构造规定完成、失败与取消的规则；是否使用 worker 线程由宿主执行配置决定，
+单线程模式与 Godot 主线程路径继续保留。名称 `join` 不暗示多核同时执行。
+
+| 名称 | 分工 | 状态 |
+| --- | --- | --- |
+| `scope` | 顺序执行主体，拥有动态子任务，负责汇合与清理 | 已实现 |
+| `branch` | 必须等待的动态子任务；正常退出 scope 前必须完成 | 已实现，保持现有语义 |
+| `join` | 静态分支全部完成，按源码顺序返回结果 | 已实现，本次仅改名 |
+| `race` | 首个观察到的完成或运行时失败决定结果，取消并清理其余分支 | 已实现 |
+| `background` | 作用域内辅助任务，随必要工作结束而取消 | 后续设计 |
+| `select` | 选择一个就绪的通信或事件操作 | 更后期设计 |
+
+不把现有 `branch` 改成 Verse 风格的随上下文结束而取消：已有代码依赖正常退出时等待它。
+使用独立的 `background` 表达辅助工作，可在同一 scope 中同时表达“必须完成”和“陪同运行”：
+
+```text
+// 设计伪代码，background 尚未实现。
+scope {
+    background { report_progress() }
+    branch { load_assets() }
+    prepare_scene()
+}
+// prepare_scene 与 load_assets 均结束后，取消 report_progress，并等待清理完成。
+```
+
+`background` 提前正常完成不结束 scope；它的运行时失败默认仍使所属 scope 失败。
+主体结束但必要 branch 尚未完成时，辅助任务继续存活；主体和全部必要 branch 完成后，
+才取消剩余辅助任务并等待清理屏障，再交付 scope 结果。失败或外部取消停止整个子树并清理。
+它不表示低优先级、独占线程或脱离父任务；依赖其已启动/已就绪时必须显式握手。
+
+`select` 应围绕可选择操作建立独立的登记、选择与提交契约，不能直接作为 `race` 的别名。
+例如 Channel 接收的败方不得消费消息；任意 I/O 或有副作用的函数并不会因放进 select 自动变得取消安全。
+需要先具备相应通信原语与取消安全保证，再确定具体语法。
+
+组合策略优先放在库中，不为每种结果策略增加关键词：
+
+| 建议 API / 模式 | 契约与依赖 |
+| --- | --- |
+| `first_ok` | 并发尝试候选，首个业务 Ok 获胜；候选 Err 不提前结束；全部 Err 时聚合失败 |
+| `first_completed` | 返回首个完成结果，其余任务继续由显式外层 scope 拥有；依赖可管理的任务句柄，不做隐式游离任务 |
+| 收集全部业务结果 | 让 join 的分支返回 Result，全部完成后检查各项；运行时失败仍按现有规则终止 |
+| 超时 | 使用 race 与计时器，或提供库包装；保留取消与清理屏障 |
+| 限流 / 有界并发 | 准入许可、Channel 与库组合，分别控制活动任务数及队列容量 |
+| 监督与故障隔离 | 显式服务/所有者 API 定义重启和错误策略，不静默吞掉任意运行时错误 |
+| Actor、流水线、流 | 围绕有界通信与明确生命周期提供库抽象 |
+| 长期独立任务 | 必须有实例、服务或宿主所有者负责停止和回收，不提供无主 detach |
+
+`first_ok` 接收尚未调用的挂起函数值，让组合器负责启动候选；不能先顺序调用再传入结果。
+以下仅为 API 草图，函数名、错误类型和聚合形式尚未实现或定稿：
+
+```text
+// load_primary / load_backup 均是 @suspends 函数，返回 Result<String, LoadError>。
+fn load_config() @suspends -> Result<String, FirstOkError<LoadError>> {
+    task.first_ok(load_primary, load_backup)
+}
+```
+
+例如主源在第 1 轮返回 Err、备用源在第 3 轮返回 Ok，first_ok 继续等待并选取备用源；
+若使用 race，第 1 轮的 Err 已是正常完成的获胜值。两者都返回 Err 时，建议返回
+`AllFailed`，错误按候选输入顺序收集；它不等于第一个错误，也不自动重试。
+一个 Ok 获胜后须取消其余候选并完成清理再交付结果，已经发生的副作用不会回滚。
+运行时失败仍终止整个组合，不能伪装成业务 Err；清理失败也不能被成功结果掩盖。
+多个候选同时就绪时采用所在执行模式的完成仲裁，不额外承诺多线程中的源码优先级。
+
+实现这些库策略仍需内部受控的任务组合能力；普通源码的 join/race 不足以直接拼出 first_ok。
+结果任务句柄、挂起闭包及统一取消接口需另行设计，当前已有的具名挂起函数值可作为初期输入形式。
+空候选的错误形式、异构错误归一化和可变数量候选留到 API 阶段确定。
+继续沿用 `@suspends`；暂不引入 `spawn`、`fork`、`go`、`rush` 或 `async` / `await`。
 
 ## 9. 模块和宿主边界
 
@@ -592,7 +669,7 @@ impl Int32 {
 
 **已实现的记录子集**：`struct` 名义值类型、Copy 或拥有型类型参数、空记录、嵌套、字段读取/赋值、完整构造；
 Copy 实例支持同步及挂起函数的参数/返回值。Copy 字段支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr、共享引用及这些类型组成的记录、有限枚举和元组；
-含共享引用的值可用于同步/挂起调用链及受检的 parallel 分支；
+含共享引用的值可用于同步/挂起调用链及受检的 join 分支；
 类型注解写 `Pair<Int64>`，构造支持字段 / 上下文推导或 `Pair::<Int64> { ... }`。
 同步拥有字段支持 String、StringBuilder 和容器，按值移动并递归清理；opaque 资源字段、记录解构和整体相等比较尚未开放。具体记录及完整泛型记录的固有方法已实现。
 准确的解析消歧、实现限额及宿主边界见[当前记录语义](language.md#记录)。
@@ -664,7 +741,7 @@ F0 已完成设计冻结，F1–F4 已实现常量参数、类型布局、数组
 | `List<T>` | 拥有元素，以内部索引连接同步可变双向链表；L1–L4 已验收 | 首版元素准入沿用 Array，位置不代表稳定节点身份 |
 | `Set<T>` | 拥有无序去重元素；S1–S3 已验收 | 元素准入沿用 Map key，查询与插入要求 BorrowEq、BorrowHash |
 | `Option<T>` | None 或 Some(T) | 没有跨类型通用 null |
-| `Result<T, E>` | Ok(T) 或 Err(E) | 业务错误是数据，不自动取消 parallel 的其他分支 |
+| `Result<T, E>` | Ok(T) 或 Err(E) | 业务错误是数据，不自动取消 join 的其他分支 |
 
 泛型类型参数默认要求有确定的值大小；dyn 和 Slice 等动态大小类型须放在明确的引用或
 拥有指针后面。JSON1a 已支持经 `Array<T>`、`Map<K, V>` 等拥有容器间接存储的有限递归值树，
@@ -820,7 +897,7 @@ F2 已实现独立数组值、嵌套与无引用 Copy 聚合组合，F3 已实�
 调用后缀适用于任意表达式，支持 `(f)(x)`、`factory()(x)`、下标及解包结果调用；
 同一行独立表达式须用分号分隔，跨行仍遵守既有换行规则。
 间接调用保守检查失败、分配和引用保留效果，函数值不跨宿主 ABI；完整规则见[函数值](language.md#函数值)。
-挂起函数值已接入 Pending / 恢复 / 取消及 parallel/race 分支；同步闭包及 Fn / FnMut / FnOnce 已实现。
+挂起函数值已接入 Pending / 恢复 / 取消及 join/race 分支；同步闭包及 Fn / FnMut / FnOnce 已实现。
 
 函数类型包含参数、返回类型和挂起约定：
 
@@ -1053,7 +1130,7 @@ HexDigit     = Digit | "a" | "b" | "c" | "d" | "e" | "f" | "A" | "B" | "C" | "D"
 BinaryDigit  = "0" | "1" ;
 
 Block        = "{", { ";" | Newline }, [ Expression, { Newline, Expression } ], { ";" | Newline }, "}" ;
-BlockForm    = Block | UnsafeBlock | If | While | Parallel | Match | Graph ;
+BlockForm    = Block | UnsafeBlock | If | While | Concurrent | Match | Graph ;
 UnsafeBlock  = "unsafe", Block ;
 Graph        = "graph", Block ;
 Expression   = NonSequence, { ";", [ NonSequence ] } ;
@@ -1101,7 +1178,7 @@ TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] 
 If           = "if", Condition, Block, [ "else", (If | Block) ] ;
 While        = "while", Condition, Block ;
 Condition    = "let", Pattern, "=", NonSequence | NonSequence ;
-Parallel     = ("parallel" | "race"), "{", Branch, { Branch }, "}" ;
+Concurrent   = ("join" | "race"), "{", Branch, { Branch }, "}" ;
 Branch       = "|", NonSequence, [ ";" ] ;
 TaskScope    = "scope", Block ;
 TaskBranch   = "branch", Block ;
@@ -1121,7 +1198,7 @@ SequenceEntry = PayloadPattern | "..", [ Identifier ] ;
 `private: Int32` 仍是名为 private 的普通字段。
 
 impl 目标必须是支持的具体类型或按顺序应用全部 impl 参数的记录 / 枚举，不能特化或以别名声明。
-const 的表达式子集、方法 self 位置及 parallel/race 分支必须为挂起调用等规则由语义检查收窄。
+const 的表达式子集、方法 self 位置及 join/race 分支必须为挂起调用等规则由语义检查收窄。
 Postfix 上的类型实参用于泛型枚举构造、关联函数或方法自己的类型参数。
 实例接收者或已绑定类型命名空间后的列表只包含方法参数；未绑定命名空间后的列表依次包含 impl 和方法参数。
 显式列表可省略末尾 callable 参数，其余部分必须完整；全部省略时从实参推导；详见[方法类型参数](language.md#方法类型参数)。
@@ -1129,7 +1206,7 @@ TypedName 可作类型命名空间的接收者、空载荷泛型构造或完整�
 
 表达式按优先级尽可能继续解析；遇到不能继续当前表达式、但能开始下一表达式的 token 时，
 块才开始下一项。`;` 优先并入当前 Expression，连接其后可解析的 NonSequence，
-在逗号、右括号、右花括号或 parallel / race / match 分支边界前允许尾随。连续分号优先并入同一序列。
+在逗号、右括号、右花括号或 join / race / match 分支边界前允许尾随。连续分号优先并入同一序列。
 末尾单独的空分号也使块结果为 Unit。完整表达式后的换行开始下一项，行首 `.` 明确续写上一项；
 圆括号和实参列表内忽略换行，嵌套花括号恢复分隔。未完整的表达式继续读取下一行。
 Binding、Assignment、Jump 的内部不直接吞入分号序列；通过 Group 显式将序列作为一个值。
@@ -1145,7 +1222,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 方法参数不能遮蔽 impl 参数、impl 目标名称或 `Self`，两层参数合计最多 64 个。
 连续运算符按最长匹配分词；`||` 不是两个分支符。类型列表解析时按需拆分 `>>` 的闭合符，
 或 `>=` 中的闭合符与赋值符；表达式中的比较和移位保持原规则。
-EBNF 的 BitOr 在 parallel / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
+EBNF 的 BitOr 在 join / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
 数值 token 需要整体满足 Integer，不能把 `0b102` 拆成 `0b10` 和 `2`。
 枚举构造复用限定名 / Call 文法，由类型检查辨认；模式中的 `_` 不能被限定或带载荷。
 模式载荷递归解构元组、记录、枚举和序列；变体载荷有无必须与声明匹配。序列中的 rest 最多一个，let/var 中的序列项仅允许绑定模式。空枚举及不穷尽的空 match 在语义阶段拒绝。
@@ -1176,8 +1253,8 @@ mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；�
 2. **补齐控制流**：if、短路、return、break、continue 已通过共享 IR 实现，
    JIT、AOT 和解释器覆盖一致的求值顺序、类型检查与不可达诊断。
 3. **覆盖挂起路径**：条件、分支、短路右侧、返回值和循环跳转均已覆盖多次 Pending、不重放、
-   失败、取消及重载；parallel 完成与跳转顺序、参数提前返回及解释器时间片也有回归测试。
-4. **完成跨后端一致性**：四种整数除零失败、位宽环绕、无符号比较/除法及有符号 `MIN / -1`、同步/CPS/parallel 失败传播及源码范围
+   失败、取消及重载；join 完成与跳转顺序、参数提前返回及解释器时间片也有回归测试。
+4. **完成跨后端一致性**：四种整数除零失败、位宽环绕、无符号比较/除法及有符号 `MIN / -1`、同步/CPS/join 失败传播及源码范围
    已覆盖三个后端；仍保留[诊断及资源限制差异](architecture.md#已知边界)，不宣称所有运行时能力相同。
 
 关键验收用例：`1 + 2 * 3` 为 7；`false && side_effect()` 不调用右侧；无 else 的 Int32 分支

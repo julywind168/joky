@@ -355,7 +355,7 @@ fn owning_string_cps_capture_after_reload_and_scope_cleanup() {
         fn ready(text: String) @suspends { text.release() }
         fn compete() @suspends -> Int32 {
             race { | forever("中🙂") | ready("done") }
-            parallel { | ready("left") | ready("right") }
+            join { | ready("left") | ready("right") }
             42
         }
         fn unpolled() @suspends -> Int32 {

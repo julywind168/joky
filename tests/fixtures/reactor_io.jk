@@ -11,7 +11,7 @@ fn hold(socket: &mut Socket) @suspends { reactor_io_read(socket,4); }
 fn instant() @suspends {}
 fn timeout() @suspends -> Int32 { var socket=reactor_io_make(1); race { | hold(&mut socket) | task.sleep_ms(10) }; 42 }
 fn fail_later() @suspends { task.sleep_ms(10); let ignored=1/0 }
-fn sibling_failure() @suspends -> Int32 { var socket=reactor_io_make(1); parallel { | hold(&mut socket) | fail_later() }; 42 }
+fn sibling_failure() @suspends -> Int32 { var socket=reactor_io_make(1); join { | hold(&mut socket) | fail_later() }; 42 }
 fn reuse() @suspends -> Int32 { var socket=reactor_io_make(1); race { | hold(&mut socket) | instant() }; inspect(reactor_io_read(&mut socket,4)) }
 fn unstarted() @suspends -> Int32 { var socket=reactor_io_make(1); race { | instant() | hold(&mut socket) }; inspect(reactor_io_read(&mut socket,4)) }
 fn dynamic() @suspends -> Int32 {

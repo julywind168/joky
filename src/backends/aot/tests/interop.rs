@@ -158,7 +158,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         }
         fn aot_failure(x: Int32) @suspends { 7 / wait_value(x); }
         fn aot_division_scope(x: Int32) @suspends -> Int32 {
-            parallel { | aot_failure(x) | loop_branch(99) }
+            join { | aot_failure(x) | loop_branch(99) }
             wait_value(100)
         }
         fn aot_expression(x: Int32) @suspends -> Int32 {
@@ -181,7 +181,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
                 i = i + 1
                 if i == 2 { continue }
                 if i == 4 { break }
-                parallel { | loop_branch(i) | loop_branch(i + 10) }
+                join { | loop_branch(i) | loop_branch(i + 10) }
                 total = total + wait_value(i)
             }
             return total + wait_value(40)
@@ -191,7 +191,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             var total = 0
             var checks = 0;
             while (checks = checks + 1; wait_value(i) <= n) {
-                parallel { | loop_branch(i) | loop_branch(i + 10) }
+                join { | loop_branch(i) | loop_branch(i + 10) }
                 total = total + wait_value({ i = i + 1; i })
             }
             total + (checks - (n + 1))

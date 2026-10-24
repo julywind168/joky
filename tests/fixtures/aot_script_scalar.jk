@@ -27,7 +27,7 @@ fn main() @suspends {
     let h = vm.Vm.interpreter()
     let source = v1()
     assert(vm.load_source(h, &source) == 0)
-    parallel { | run(&h) | upgrade(&h) }
+    join { | run(&h) | upgrade(&h) }
     assert(h.call::<Int32, Int32>("session", 1) == 210)
     race { | waiting(&h) | winner() }
     assert(h.call::<Int32, Int32>("session", 1) == 210)

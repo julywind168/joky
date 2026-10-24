@@ -33,7 +33,7 @@ pub(crate) enum TokenKind {
     Return,
     Break,
     Continue,
-    Parallel,
+    Parallel, // Legacy keyword retained only for migration diagnostics.
     Scope,
     Race,
     Branch,

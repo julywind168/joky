@@ -61,7 +61,7 @@ fn exercise() @suspends -> Int32 {
     let message = "detachment preserves element reference dependencies"
     assert(references() == 42, &message)
     var (left, right) = relay(pair())
-    parallel { | append(&mut left, 1) | append(&mut right, 3) }
+    join { | append(&mut left, 1) | append(&mut right, 3) }
     let message = "detached tuple owners are independent"
     assert(left.get(1).unwrap_or(0) == 2 && right.get(1).unwrap_or(0) == 4, &message)
     var i = 0
@@ -79,14 +79,14 @@ fn exercise() @suspends -> Int32 {
     }
     var (a, b) = unpack(buckets())
     race { | hold(&mut a) | instant() }
-    parallel { | append(&mut a, 5) | append(&mut b, 7) }
+    join { | append(&mut a, 5) | append(&mut b, 7) }
     let message = "record owners remain independent after cancellation"
     assert(a.len() == 3 && b.len() == 2, &message)
     match nested() {
         Some(((a, b), extra)) => {
             var first = a
             var second = b
-            parallel { | update(&mut first) | update(&mut second) }
+            join { | update(&mut first) | update(&mut second) }
             let message = "nested owning records retain independent storage"
             assert(first.tag == 11 && second.tag == 12 && extra.len() == 0, &message)
         }

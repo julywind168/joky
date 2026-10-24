@@ -1604,7 +1604,7 @@ fn cps_local_borrows_allow_live_loans_at_suspension() {
         "assert(read(41, later()) == 42, \"temporary borrow survives argument suspension\")",
         "let x = 42; read(&x, later());",
         "let x = 42; consume(&x)",
-        "let x = 42; parallel { | consume(&x) }",
+        "let x = 42; join { | consume(&x) }",
         "let x = 42; let r = &x; scope { branch { yield_now() } }; println(r)",
         "let x = 42; let r = &x; scope { branch { println(r) } }",
     ];
