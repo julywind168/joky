@@ -2580,6 +2580,7 @@ fn lower_ops(
                     refs["__joky_cps_task_branch_commit"],
                     &[frame, child, entry_addr],
                 );
+                check_call(builder, refs, Some(frame), None);
             }
             Op::TaskJoin { state, .. } => {
                 let ExecMode::Suspends {

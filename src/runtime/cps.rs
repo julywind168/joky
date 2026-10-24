@@ -13,26 +13,8 @@ pub const INVALID_STATE: i32 = 2;
 pub const RUNTIME_ERROR: i32 = 3;
 pub const FAILED: u32 = u32::MAX - 1;
 
-/// One dynamic task scope on a frame: registered child frames in creation
-/// order (`None` once finished) plus the polling cursor, which is preserved
-/// across host returns so instruction slicing cannot reorder polling. A
-/// joining scope is driven by its join site; the scheduler round skips it.
-#[repr(C)]
-pub struct DynamicTaskScope {
-    pub children: Vec<Option<Box<CpsFrame>>>,
-    pub cursor: usize,
-    pub joining: bool,
-}
-
-impl DynamicTaskScope {
-    fn compact(&mut self) {
-        self.cursor = self.children[..self.cursor].iter().flatten().count();
-        self.children.retain(Option::is_some);
-        if self.children.capacity() > self.children.len().saturating_mul(4).max(16) {
-            self.children.shrink_to(self.children.len().max(8));
-        }
-    }
-}
+use super::task_scope::{ChildId, LocalTaskScope};
+type DynamicTaskScope = LocalTaskScope<Box<CpsFrame>>;
 
 #[repr(C)]
 pub struct CpsFrame {
@@ -124,7 +106,7 @@ impl CpsFrame {
             plan.add(frame.wake);
             frames.extend(frame.children.iter().filter_map(Option::as_deref));
             for scope in &frame.task_scopes {
-                frames.extend(scope.children.iter().filter_map(Option::as_deref));
+                frames.extend(scope.entries().map(|(_, child, _)| child.as_ref()));
             }
         }
         plan
@@ -210,11 +192,7 @@ pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_task_scope_enter"]
 pub unsafe extern "C" fn task_scope_enter(frame: *mut CpsFrame) {
-    (*frame).task_scopes.push(DynamicTaskScope {
-        children: Vec::new(),
-        cursor: 0,
-        joining: false,
-    });
+    (*frame).task_scopes.push(DynamicTaskScope::default());
 }
 
 /// Upper bound on dynamically registered children of one frame. Registration
@@ -233,11 +211,7 @@ const MAX_DYNAMIC_TASK_CHILDREN: usize = 65536;
 #[export_name = "__joky_cps_task_child"]
 pub unsafe extern "C" fn task_child(frame: *mut CpsFrame, slot_count: usize) -> *mut CpsFrame {
     let frame = &mut *frame;
-    let live: usize = frame
-        .task_scopes
-        .iter()
-        .map(|scope| scope.children.iter().flatten().count())
-        .sum();
+    let live: usize = frame.task_scopes.iter().map(LocalTaskScope::live_len).sum();
     if live >= MAX_DYNAMIC_TASK_CHILDREN {
         super::error::record_error(crate::Error::new_with_code(
             crate::ErrorPhase::Runtime,
@@ -269,7 +243,10 @@ pub unsafe extern "C" fn task_branch_commit(
         .task_scopes
         .last_mut()
         .expect("branch requires an open task scope");
-    scope.children.push(Some(child));
+    if let Err((error, child)) = scope.publish(child) {
+        super::error::record_error(error);
+        drop(child);
+    }
 }
 
 /// Advance the innermost open scope by one polling round. Returns 0 once the
@@ -283,45 +260,29 @@ pub unsafe extern "C" fn task_join(frame: *mut CpsFrame) -> i32 {
     let Some(scope) = frame.task_scopes.last_mut() else {
         return INVALID_STATE;
     };
-    scope.joining = true;
-    loop {
-        while scope.cursor < scope.children.len() && scope.children[scope.cursor].is_none() {
-            scope.cursor += 1;
-        }
-        if scope.cursor >= scope.children.len() {
-            if scope.children.iter().all(Option::is_none) {
-                frame.task_scopes.pop();
-                return 0;
-            }
-            // Every remaining child was polled this round and reported Pending;
-            // the next round starts over from the registration order.
-            scope.compact();
-            scope.cursor = 0;
-            return 1;
-        }
-        let mut child = scope.children[scope.cursor].take().expect("live child");
+    scope.close();
+    while let Some(id) = scope.next() {
+        let child = scope.get_mut(id).expect("live child");
         let entry = child.task_entry.expect("registered child entry");
-        let status = entry(&mut *child);
+        let status = entry(&mut **child);
         match status {
-            0 => {
-                // Completed children return their frame immediately; keep
-                // polling the rest of the round.
-                drop(child);
-                scope.cursor += 1;
-            }
-            1 => {
-                // Pending children keep their frame and are retried next round.
-                scope.children[scope.cursor] = Some(child);
-                scope.cursor += 1;
+            0 | 1 => {
+                drop(scope.polled(id, status == 0).expect("selected child"));
             }
             failure => {
-                // Cancel the whole scope: pending siblings and the failed
-                // child drop here, running their stop hooks and cleanup.
-                drop(child);
+                // Stop the failed child before siblings, preserving local cleanup order.
+                drop(scope.polled(id, true).expect("selected child"));
                 frame.task_scopes.pop();
                 return failure;
             }
         }
+    }
+    if scope.is_empty() {
+        frame.task_scopes.pop();
+        0
+    } else {
+        scope.restart_join_round();
+        1
     }
 }
 
@@ -469,10 +430,10 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 19] {
     ]
 }
 
-unsafe fn round_select(root: *mut CpsFrame) -> Option<(*mut DynamicTaskScope, usize)> {
+unsafe fn round_select(root: *mut CpsFrame) -> Option<(*mut DynamicTaskScope, ChildId)> {
     enum Visit {
         Frame(*mut CpsFrame),
-        Child(*mut DynamicTaskScope, usize),
+        Child(*mut DynamicTaskScope, ChildId),
     }
     let mut pending = vec![Visit::Frame(root)];
     while let Some(visit) = pending.pop() {
@@ -492,15 +453,11 @@ unsafe fn round_select(root: *mut CpsFrame) -> Option<(*mut DynamicTaskScope, us
         );
         for scope in frame.task_scopes.iter_mut().rev() {
             let scope_ptr = scope as *mut DynamicTaskScope;
-            for (index, child) in scope.children.iter_mut().enumerate().rev() {
-                if let Some(child) = child {
-                    if scope.joining || index < scope.cursor {
-                        // The join site already polled this child, but its
-                        // suspended body may have registered dynamic descendants.
-                        pending.push(Visit::Frame(&mut **child));
-                    } else {
-                        pending.push(Visit::Child(scope_ptr, index));
-                    }
+            for (id, child, ready) in scope.entries_mut().rev() {
+                if ready {
+                    pending.push(Visit::Child(scope_ptr, id));
+                } else {
+                    pending.push(Visit::Frame(&mut **child));
                 }
             }
         }
@@ -522,16 +479,11 @@ unsafe fn round_reset(root: *mut CpsFrame) {
         for scope in &mut frame.task_scopes {
             // There is no selected child across this boundary. Remove finished
             // registrations without reordering live children or losing a join's cursor.
-            scope.compact();
-            if !scope.joining {
-                scope.cursor = 0;
-            }
+            scope.finish_round();
             pending.extend(
                 scope
-                    .children
-                    .iter_mut()
-                    .flatten()
-                    .map(|child| &mut **child as *mut _),
+                    .entries_mut()
+                    .map(|(_, child, _)| &mut **child as *mut _),
             );
         }
     }
@@ -551,19 +503,14 @@ pub unsafe extern "C" fn task_round(root: *mut CpsFrame) -> i32 {
             return 0;
         };
         let scope = &mut *scope_ptr;
-        let Some(child) = scope.children[index].as_deref_mut() else {
+        let Some(child) = scope.get_mut(index) else {
             continue;
         };
         let entry = child.task_entry.expect("registered child entry");
-        let status = entry(child);
+        let status = entry(&mut **child);
         match status {
-            0 => {
-                // Completed children return their frame immediately.
-                scope.children[index] = None;
-                scope.cursor = index + 1;
-            }
-            1 => {
-                scope.cursor = index + 1;
+            0 | 1 => {
+                drop(scope.polled(index, status == 0).expect("selected child"));
             }
             failure => return failure,
         }
@@ -744,8 +691,8 @@ mod tests {
                     polls.borrow_mut().clear();
                 });
                 let scope = &frame.task_scopes[0];
-                assert_eq!(scope.children.len(), 1);
-                assert!(scope.children.capacity() <= 16);
+                assert_eq!(scope.storage().0, 1);
+                assert!(scope.storage().1 <= 16);
             }
             // The oldest child keeps its identity through every compaction.
             (&mut (*pending).slots)[0] = 4001;

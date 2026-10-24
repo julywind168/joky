@@ -11,6 +11,7 @@ pub(crate) mod float_env;
 pub mod reactor;
 pub mod scheduler;
 pub mod suspension;
+pub(crate) mod task_scope;
 
 pub(crate) mod owned_text;
 pub mod string;

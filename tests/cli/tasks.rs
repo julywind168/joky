@@ -57,13 +57,14 @@ fn relay(id: Int32) @suspends { helper(id) }
 fn main() @suspends {
     relay(10)
     join { | relay(20) | relay(30) }
+    race { | relay(40) | relay(50) }
 }
 "#,
     );
     work.assert_all_backends(
         "rounds.jk",
         &[],
-        b"10\n12\n11\n13\n20\n30\n22\n32\n21\n31\n23\n33\n",
+        b"10\n12\n11\n13\n20\n30\n22\n32\n21\n31\n23\n33\n40\n50\n42\n52\n41\n51\n43\n",
         0,
     );
 }

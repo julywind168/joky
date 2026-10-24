@@ -724,7 +724,7 @@ fn main() @suspends {{
 }
 
 #[test]
-#[ignore = "exhaustive: cancel at every instruction; run by the stress check in Release"]
+#[ignore = "exhaustive: cancel at every instruction; run by the Debug stress check"]
 fn exhaustive_task_scope_cancels_at_every_instruction() {
     let source = format!(
         "{HOSTS}
