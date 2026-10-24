@@ -5,6 +5,7 @@
 //! frame after the caller signals readiness; it must preserve its own progress.
 
 pub(crate) mod concurrent;
+mod parallel;
 pub(crate) mod protocol;
 pub(crate) mod task;
 

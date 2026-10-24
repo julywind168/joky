@@ -124,6 +124,14 @@ pub extern "C" fn joky_runtime_error_clear() {
     ERROR.with(|error| *error.borrow_mut() = None);
 }
 
+/// Compiler checkpoints run only where ownership registrations are consistent.
+#[export_name = "__joky_task_checkpoint_v1"]
+pub extern "C" fn checkpoint() {
+    if let Err(error) = super::parallel::pool::check_cancelled() {
+        record_error(error);
+    }
+}
+
 /// Zero means success; nonzero means the native result must not be consumed.
 #[no_mangle]
 pub extern "C" fn joky_runtime_error_code() -> i32 {
@@ -181,7 +189,7 @@ pub extern "C" fn joky_runtime_print_error() {
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
     [
         ("__joky_runtime_call_failed", call_failed as *const u8),
         (
@@ -201,6 +209,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
             "__joky_runtime_division_by_zero",
             division_by_zero as *const u8,
         ),
+        ("__joky_task_checkpoint_v1", checkpoint as *const u8),
         (
             "joky_runtime_error_code",
             joky_runtime_error_code as *const u8,

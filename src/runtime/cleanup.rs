@@ -32,6 +32,7 @@ impl Drop for Depth {
 }
 impl Hook {
     pub(crate) unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
+        let _cleaning = super::parallel::pool::CleanupGuard::enter();
         let entered = DEPTH.with(|depth| {
             if depth.get() >= 32 {
                 false

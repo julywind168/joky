@@ -38,7 +38,7 @@ impl TaskValue {
     }
 }
 #[derive(Clone)]
-enum Code {
+pub(crate) enum Code {
     Native(Arc<jit::FrozenEntry>),
     Interpreted(Arc<interp::FrozenEntry>),
 }
@@ -76,6 +76,21 @@ impl ParallelOutput {
     }
 }
 impl PreparedParallelTask {
+    /// Submit a checked root. Its descendants use the same fixed-worker executor.
+    pub fn submit(
+        self,
+        executor: &crate::runtime::parallel::ParallelExecutor,
+    ) -> Result<ParallelTask, Error> {
+        let root = self.root.clone();
+        let code = Arc::new(self.code.clone());
+        let handle = executor.submit(
+            root,
+            code,
+            Box::new(move || Ok(Box::new(RootJob(self.start()?)))),
+        )?;
+        Ok(ParallelTask { handle })
+    }
+
     pub(crate) fn native(
         entry: jit::FrozenEntry,
         name: &str,
@@ -325,3 +340,44 @@ pub(super) fn host(
 
 #[cfg(test)]
 mod tests;
+
+/// Thread-safe observation and cancellation; dropping the handle requests stop.
+pub struct ParallelTask {
+    handle: crate::runtime::parallel::pool::Handle,
+}
+impl ParallelTask {
+    pub fn request_cancel(&self) {
+        self.handle.cancel();
+    }
+    pub fn is_finished(&self) -> bool {
+        self.handle.cleaned()
+    }
+    pub fn wait(&self) {
+        self.handle.wait();
+    }
+    pub fn take_result(&self) -> Result<ParallelOutput, Error> {
+        let result = self
+            .handle
+            .take()
+            .ok_or_else(|| invalid("Parallel task is pending or already collected"))??;
+        result
+            .downcast::<ParallelOutput>()
+            .map(|value| *value)
+            .map_err(|_| invalid("Invalid parallel root result"))
+    }
+}
+impl Drop for ParallelTask {
+    fn drop(&mut self) {
+        self.handle.cancel();
+    }
+}
+struct RootJob(ParallelExecution);
+impl crate::runtime::parallel::pool::Job for RootJob {
+    fn poll(&mut self) -> std::task::Poll<Result<crate::runtime::parallel::pool::Output, Error>> {
+        match self.0.resume() {
+            Ok(false) => std::task::Poll::Pending,
+            Ok(true) => std::task::Poll::Ready(self.0.take_result().map(|v| Box::new(v) as _)),
+            Err(e) => std::task::Poll::Ready(Err(e)),
+        }
+    }
+}

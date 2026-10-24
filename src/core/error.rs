@@ -44,6 +44,7 @@ pub enum ErrorCode {
     IoError,
     LinkError,
     Panic,
+    Cancelled,
 }
 
 impl ErrorCode {
@@ -79,6 +80,7 @@ impl ErrorCode {
             Self::IoError => "io_error",
             Self::LinkError => "link_error",
             Self::Panic => "panic",
+            Self::Cancelled => "cancelled",
         }
     }
 }

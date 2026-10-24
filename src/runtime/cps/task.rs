@@ -17,7 +17,7 @@ pub(super) struct CheckedEntry {
     _charge: Option<crate::runtime::parallel::Lease>,
     id: u64,
     pub(super) entry: CpsEntry,
-    frame_slots: usize,
+    pub(super) frame_slots: usize,
     pub(super) layout: CheckedLayout,
     pub(super) inputs: Vec<(usize, usize)>,
     pub(super) result_key: Option<usize>,

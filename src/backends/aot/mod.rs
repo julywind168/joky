@@ -11,6 +11,7 @@ use std::{collections::HashMap, path::Path, rc::Rc};
 
 pub struct AotCompiler {
     parallel: crate::core::ir::parallel::Effects,
+    parallel_hosts: HashMap<String, (crate::FunctionSignature, usize)>,
     sources: std::sync::Arc<crate::SourceMap>,
     module: ObjectModule,
     exports: HashMap<String, FunctionInfo>,
@@ -106,6 +107,7 @@ impl AotCompiler {
             .map_err(|e| compile_error(e.to_string()))?;
         Ok(Self {
             parallel: Default::default(),
+            parallel_hosts: Default::default(),
             sources: Default::default(),
             module: ObjectModule::new(builder),
             exports: HashMap::new(),
@@ -287,6 +289,33 @@ impl AotCompiler {
         header
     }
 
+    /// Declare an explicitly audited scalar CPS import before compilation.
+    ///
+    /// # Safety
+    /// The final linker must bind this exact name/signature/slot count to code
+    /// safe for simultaneous calls on arbitrary workers. Progress may use only
+    /// declared scalar slots, with no retained waker, local context or stop hook.
+    /// The owner passed to ParallelEntry::prepare must retain every dependency.
+    pub unsafe fn declare_parallel_host(
+        &mut self,
+        name: &str,
+        signature: crate::FunctionSignature,
+        slots: usize,
+    ) -> Result<(), Error> {
+        if !matches!(self.state, CompilationState::New)
+            || !signature
+                .params
+                .iter()
+                .chain(std::iter::once(&signature.ret))
+                .all(crate::core::instance::scalar)
+            || slots < signature.params.len()
+        {
+            return Err(compile_error("Invalid parallel CPS import declaration"));
+        }
+        self.parallel_hosts.insert(name.into(), (signature, slots));
+        Ok(())
+    }
+
     /// Compile one source module. Built-in imports are resolved here.
     /// Use a fresh compiler for each object.
     pub fn compile_module(&mut self, ast: &Module) -> Result<Vec<String>, Error> {
@@ -310,9 +339,13 @@ impl AotCompiler {
         let prepared =
             crate::core::prepared::PreparedModule::new(ast, &self.types, self.registry.metadata())?;
         let ast = prepared.ast();
+        let mut imports = imports.clone();
+        for (name, (_, slots)) in &self.parallel_hosts {
+            imports.insert(name.clone(), *slots);
+        }
         let imports = self
             .registry
-            .import_layouts(ast, imports)
+            .import_layouts(ast, &imports)
             .map_err(|error| error.with_sources(ast.sources()))?;
         let plan = prepared.plan(&imports)?;
         let compiled = native::compile(
@@ -322,7 +355,26 @@ impl AotCompiler {
             prepared.bindings(),
         )
         .map_err(|error| error.with_sources(ast.sources()))?;
-        self.parallel = crate::core::ir::parallel::analyse(&plan, &prepared, &Default::default());
+        for (name, (signature, slots)) in &self.parallel_hosts {
+            let info = plan
+                .functions
+                .get(name)
+                .ok_or_else(|| compile_error("Unknown parallel host declaration"))?;
+            if plan.bodies.contains_key(name)
+                || !info.suspends
+                || info.signature != *signature
+                || info.frame_slots != *slots
+            {
+                return Err(compile_error(
+                    "Parallel host declaration differs from compiled import",
+                ));
+            }
+        }
+        self.parallel = crate::core::ir::parallel::analyse(
+            &plan,
+            &prepared,
+            &self.parallel_hosts.keys().cloned().collect(),
+        );
         self.sources = ast.sources.clone();
         self.requires_runtime = compiled.requires_runtime;
         self.exports = compiled

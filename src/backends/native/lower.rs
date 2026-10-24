@@ -19,6 +19,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
 pub(super) struct DataRefs {
+    pub checkpoints: bool,
     pub tasks: HashMap<String, GlobalValue>,
     pub places: Vec<(Type, GlobalValue, usize)>,
     pub domain: Option<GlobalValue>,
@@ -718,6 +719,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_outbox_emit_v1", vec![types::I64, ptr], vec![]),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
+        ("__joky_task_checkpoint_v1", vec![], vec![]),
         ("__joky_buffer_pair_project", vec![ptr, ptr], vec![ptr]),
     ] {
         let mut sig = module.make_signature();
@@ -1957,9 +1959,15 @@ fn lower_ops(
         .map(|_| builder.create_block())
         .collect();
     let mut terminated = false;
+    let mut checkpoint = true;
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         if terminated && !matches!(op, Op::Label(_)) {
             continue;
+        }
+        if data.checkpoints && checkpoint && !matches!(op, Op::Cleanup(_) | Op::Label(_)) {
+            builder.ins().call(refs["__joky_task_checkpoint_v1"], &[]);
+            check_call(builder, refs, mode.frame(), mode.cleanup());
+            checkpoint = false;
         }
         match op {
             Op::Place(op) => lower_place(builder, op, slots, mode, refs, ptr_ty, data, span),
@@ -2544,6 +2552,7 @@ fn lower_ops(
                 }
                 builder.switch_to_block(labels[*label]);
                 terminated = false;
+                checkpoint = true;
             }
             Op::Jump(label) => {
                 builder.ins().jump(labels[*label], &[]);
@@ -2950,6 +2959,9 @@ fn lower_ops(
                 );
                 check_call(builder, refs, Some(frame), None);
             }
+        }
+        if matches!(op, Op::Call { .. }) {
+            checkpoint = true;
         }
     }
     terminated

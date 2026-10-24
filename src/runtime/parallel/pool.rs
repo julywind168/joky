@@ -1,0 +1,751 @@
+//! Fixed-worker execution. Only factories and terminal packets cross threads.
+use super::{Guard, Lease, Storage};
+use crate::{Error, ErrorCode, ErrorPhase};
+use std::{
+    any::Any,
+    cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Condvar, Mutex, MutexGuard, Weak,
+    },
+    task::Poll,
+    thread::{self, JoinHandle},
+};
+pub(crate) type Output = Box<dyn Any + Send>;
+pub(crate) type Factory = Box<dyn FnOnce() -> Result<Box<dyn Job>, Error> + Send>;
+pub(crate) trait Job {
+    fn poll(&mut self) -> Poll<Result<Output, Error>>;
+}
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+fn invalid(message: &str) -> Error {
+    Error::new_with_code(ErrorPhase::Runtime, ErrorCode::InvalidState, message)
+}
+pub(crate) fn cancelled_error() -> Error {
+    Error::new_with_code(
+        ErrorPhase::Runtime,
+        ErrorCode::Cancelled,
+        "Parallel task cancelled",
+    )
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    Prepared,
+    Ready,
+    Running,
+    Waiting,
+    Stopping,
+    Cleaned,
+}
+struct State {
+    phase: Phase,
+    generation: u64,
+    children: Vec<Weak<Task>>,
+    children_charge: Lease,
+    result: Option<Result<Output, Error>>,
+    sequence: u64,
+    failure: Option<Error>,
+}
+struct Task {
+    id: u64,
+    worker: usize,
+    shared: Arc<Shared>,
+    root: Storage,
+    code: Arc<dyn Any + Send + Sync>,
+    cancelled: AtomicBool,
+    cleaned: AtomicBool,
+    failed: AtomicBool,
+    parent: Option<Weak<Task>>,
+    group: Option<(Arc<Arbiter>, usize)>,
+    state: Mutex<State>,
+    factory: Mutex<Option<Factory>>,
+    _charge: Lease,
+}
+struct Queue {
+    ready: Vec<VecDeque<Arc<Task>>>,
+    tasks: Vec<Weak<Task>>,
+    closing: bool,
+    next_worker: usize,
+}
+struct Shared {
+    queue: Mutex<Queue>,
+    wake: Condvar,
+    sequence: AtomicU64,
+    max_tasks: usize,
+}
+/// Control remains on its creating thread; Drop waits for cleanup and joins workers.
+pub struct ParallelExecutor {
+    shared: Arc<Shared>,
+    workers: Vec<JoinHandle<()>>,
+    _local: PhantomData<Rc<()>>,
+}
+#[derive(Clone)]
+pub(crate) struct Handle(Arc<Task>);
+thread_local! {
+    static CURRENT: RefCell<Option<Arc<Task>>> = const { RefCell::new(None) };
+    static WAITING: Cell<bool> = const { Cell::new(false) };
+    static CLEANING: Cell<bool> = const { Cell::new(false) };
+}
+pub(crate) fn active() -> bool {
+    CURRENT.with(|c| c.borrow().is_some())
+}
+pub(crate) fn check_cancelled() -> Result<(), Error> {
+    if CLEANING.with(Cell::get) {
+        return Ok(());
+    }
+    CURRENT.with(|c| {
+        let current = c.borrow();
+        let Some(task) = current.as_ref() else {
+            return Ok(());
+        };
+        if task.failed.load(Ordering::Acquire) {
+            return Err(lock(&task.state)
+                .failure
+                .clone()
+                .expect("published task failure"));
+        }
+        if task.cancelled.load(Ordering::Acquire) {
+            return Err(cancelled_error());
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn code<T: Any + Send + Sync>() -> Option<Arc<T>> {
+    CURRENT.with(|c| c.borrow().as_ref()?.code.clone().downcast().ok())
+}
+pub(crate) fn wait_for_children() {
+    WAITING.with(|w| w.set(true));
+}
+pub(crate) struct CleanupGuard(bool);
+impl CleanupGuard {
+    pub(crate) fn enter() -> Self {
+        Self(CLEANING.with(|c| c.replace(true)))
+    }
+}
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        CLEANING.with(|c| c.set(self.0));
+    }
+}
+impl Task {
+    fn fail(self: &Arc<Self>, error: Error) {
+        {
+            let mut state = lock(&self.state);
+            if state.phase == Phase::Cleaned || self.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            state.failure.get_or_insert(error);
+            self.failed.store(true, Ordering::Release);
+        }
+        self.wake();
+    }
+    fn wake(self: &Arc<Self>) {
+        let mut state = lock(&self.state);
+        if state.phase == Phase::Cleaned {
+            return;
+        }
+        state.generation = state.generation.wrapping_add(1);
+        if matches!(
+            state.phase,
+            Phase::Waiting | Phase::Prepared | Phase::Stopping
+        ) {
+            state.phase = Phase::Ready;
+            lock(&self.shared.queue).ready[self.worker].push_back(self.clone());
+            self.shared.wake.notify_all();
+        }
+    }
+    fn cancel(self: &Arc<Self>) {
+        let mut pending = vec![self.clone()];
+        while let Some(task) = pending.pop() {
+            task.cancelled.store(true, Ordering::Release);
+            pending.extend(lock(&task.state).children.iter().filter_map(Weak::upgrade));
+            task.wake();
+        }
+    }
+    fn children_cleaned(&self) -> bool {
+        let children = lock(&self.state).children.clone();
+        children
+            .into_iter()
+            .filter_map(|t| t.upgrade())
+            .all(|t| t.cleaned.load(Ordering::Acquire))
+    }
+}
+impl Handle {
+    pub(crate) fn cancel(&self) {
+        self.0.cancel();
+    }
+    pub(crate) fn cleaned(&self) -> bool {
+        lock(&self.0.state).phase == Phase::Cleaned
+    }
+    pub(crate) fn sequence(&self) -> Option<u64> {
+        let state = lock(&self.0.state);
+        (state.phase == Phase::Cleaned).then_some(state.sequence)
+    }
+    pub(crate) fn failed(&self) -> bool {
+        lock(&self.0.state)
+            .result
+            .as_ref()
+            .is_some_and(Result::is_err)
+    }
+    pub(crate) fn take(&self) -> Option<Result<Output, Error>> {
+        lock(&self.0.state).result.take()
+    }
+    pub(crate) fn wait(&self) {
+        let mut q = lock(&self.0.shared.queue);
+        loop {
+            // Never acquire a task lock while holding the queue lock: wake uses
+            // the opposite order. The timed wait also tolerates a just-missed wake.
+            drop(q);
+            if self.cleaned() {
+                return;
+            }
+            q = lock(&self.0.shared.queue);
+            q = self
+                .0
+                .shared
+                .wake
+                .wait_timeout(q, std::time::Duration::from_millis(10))
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+    }
+}
+impl ParallelExecutor {
+    pub fn new(workers: usize, max_tasks: usize) -> Result<Self, Error> {
+        if workers == 0 || workers > 256 || max_tasks == 0 {
+            return Err(invalid(
+                "Parallel workers must be 1..=256 and task capacity must be positive",
+            ));
+        }
+        let shared = Arc::new(Shared {
+            queue: Mutex::new(Queue {
+                ready: (0..workers).map(|_| VecDeque::new()).collect(),
+                tasks: Vec::new(),
+                closing: false,
+                next_worker: 0,
+            }),
+            wake: Condvar::new(),
+            sequence: AtomicU64::new(1),
+            max_tasks,
+        });
+        let mut pool = Self {
+            shared,
+            workers: Vec::new(),
+            _local: PhantomData,
+        };
+        for index in 0..workers {
+            let shared = pool.shared.clone();
+            let worker = thread::Builder::new()
+                .name(format!("joky-task-{index}"))
+                .spawn(move || run(shared, index))
+                .map_err(|e| invalid(&format!("Cannot create task worker: {e}")))?;
+            pool.workers.push(worker);
+        }
+        Ok(pool)
+    }
+    pub(crate) fn submit(
+        &self,
+        root: Storage,
+        code: Arc<dyn Any + Send + Sync>,
+        factory: Factory,
+    ) -> Result<Handle, Error> {
+        Ok(publish(&self.shared, None, root, code, vec![factory], None)?.remove(0))
+    }
+    pub fn request_close(&self) {
+        let tasks = {
+            let mut q = lock(&self.shared.queue);
+            q.closing = true;
+            q.tasks.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+        };
+        for task in tasks {
+            task.cancel();
+        }
+        self.shared.wake.notify_all();
+    }
+    pub fn is_closed(&self) -> bool {
+        let tasks = {
+            let q = lock(&self.shared.queue);
+            if !q.closing {
+                return false;
+            }
+            q.tasks.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+        };
+        tasks.iter().all(|t| lock(&t.state).phase == Phase::Cleaned)
+    }
+    pub fn wait_closed(&mut self) {
+        self.request_close();
+        for worker in self.workers.drain(..) {
+            worker.join().expect("task worker panicked");
+        }
+    }
+}
+impl Drop for ParallelExecutor {
+    fn drop(&mut self) {
+        self.wait_closed();
+    }
+}
+fn children(factories: Vec<Factory>, group: Arc<Arbiter>) -> Result<Vec<Handle>, Error> {
+    CURRENT.with(|c| {
+        let parent = c
+            .borrow()
+            .clone()
+            .ok_or_else(|| invalid("Missing parallel task context"))?;
+        publish(
+            &parent.shared,
+            Some(&parent),
+            parent.root.clone(),
+            parent.code.clone(),
+            factories,
+            Some(group),
+        )
+    })
+}
+fn publish(
+    shared: &Arc<Shared>,
+    parent: Option<&Arc<Task>>,
+    root: Storage,
+    code: Arc<dyn Any + Send + Sync>,
+    factories: Vec<Factory>,
+    group: Option<Arc<Arbiter>>,
+) -> Result<Vec<Handle>, Error> {
+    // Reserve every record before publication. No child can execute a partial batch.
+    let charges = (0..factories.len())
+        .map(|_| root.accounts().reserve(std::mem::size_of::<Task>() + 128))
+        .collect::<Result<Vec<_>, _>>()?;
+    let identities = (0..factories.len())
+        .map(|_| crate::runtime::task_scope::fresh_identity())
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut retained = Vec::new();
+    let mut parent_state = parent.map(|t| lock(&t.state));
+    if parent.is_some_and(|t| t.cancelled.load(Ordering::Acquire)) {
+        return Err(cancelled_error());
+    }
+    let mut arbitration = group.as_ref().map(|g| lock(&g.state));
+    if arbitration.as_ref().is_some_and(|a| a.selected.is_some()) {
+        return Err(arbitration
+            .as_ref()
+            .and_then(|a| a.failure.clone())
+            .unwrap_or_else(|| invalid("Parallel scope is closed to publication")));
+    }
+    let mut q = lock(&shared.queue);
+    q.tasks.retain(|t| {
+        t.upgrade().is_some_and(|t| {
+            let live = !t.cleaned.load(Ordering::Acquire);
+            retained.push(t);
+            live
+        })
+    });
+    if let Some(state) = &mut parent_state {
+        state.children.retain(|t| {
+            t.upgrade().is_some_and(|t| {
+                let live = !t.cleaned.load(Ordering::Acquire);
+                retained.push(t);
+                live
+            })
+        });
+    }
+    if q.closing
+        || q.tasks
+            .len()
+            .checked_add(factories.len())
+            .is_none_or(|n| n > shared.max_tasks)
+    {
+        return Err(Error::new_with_code(
+            ErrorPhase::Runtime,
+            ErrorCode::ResourceLimit,
+            "Parallel task admission capacity exhausted or executor closing",
+        ));
+    }
+    if let Some(state) = &mut parent_state {
+        let capacity = state
+            .children
+            .capacity()
+            .max(state.children.len() + factories.len());
+        state
+            .children_charge
+            .resize(capacity * std::mem::size_of::<Weak<Task>>())?;
+        state
+            .children
+            .try_reserve_exact(factories.len())
+            .map_err(|_| invalid("Task child metadata capacity exhausted"))?;
+    }
+    let mut handles = Vec::with_capacity(factories.len());
+    for ((factory, charge), id) in factories.into_iter().zip(charges).zip(identities) {
+        let worker = q.next_worker;
+        q.next_worker = (worker + 1) % q.ready.len();
+        let task = Arc::new(Task {
+            id,
+            worker,
+            shared: shared.clone(),
+            root: root.clone(),
+            code: code.clone(),
+            cancelled: AtomicBool::new(false),
+            cleaned: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+            parent: parent.map(Arc::downgrade),
+            group: group
+                .as_ref()
+                .map(|g| (g.clone(), arbitration.as_ref().unwrap().children.len())),
+            state: Mutex::new(State {
+                phase: Phase::Prepared,
+                generation: 0,
+                children: Vec::new(),
+                children_charge: root.accounts().reserve(0).expect("zero reservation"),
+                result: None,
+                sequence: 0,
+                failure: None,
+            }),
+            factory: Mutex::new(Some(factory)),
+            _charge: charge,
+        });
+        if let Some(state) = &mut parent_state {
+            state.children.push(Arc::downgrade(&task));
+        }
+        if let Some(arbitration) = &mut arbitration {
+            arbitration.children.push(Arc::downgrade(&task));
+        }
+        q.tasks.push(Arc::downgrade(&task));
+        handles.push(Handle(task));
+    }
+    for handle in &handles {
+        lock(&handle.0.state).phase = Phase::Ready;
+        q.ready[handle.0.worker].push_back(handle.0.clone());
+    }
+    drop(q);
+    shared.wake.notify_all();
+    Ok(handles)
+}
+struct Local {
+    _task: Arc<Task>,
+    job: Option<Box<dyn Job>>,
+    terminal: Option<Result<Output, Error>>,
+}
+fn run(shared: Arc<Shared>, worker: usize) {
+    let mut local = HashMap::<u64, Local>::new();
+    loop {
+        let task = {
+            let mut q = lock(&shared.queue);
+            loop {
+                if let Some(task) = q.ready[worker].pop_front() {
+                    break task;
+                }
+                if q.closing && local.is_empty() {
+                    return;
+                }
+                q = shared.wake.wait(q).unwrap_or_else(|e| e.into_inner());
+            }
+        };
+        let generation = {
+            let mut state = lock(&task.state);
+            if state.phase != Phase::Ready {
+                continue;
+            }
+            state.phase = Phase::Running;
+            state.generation
+        };
+        CURRENT.with(|c| c.replace(Some(task.clone())));
+        WAITING.with(|w| w.set(false));
+        let _storage = Guard::enter(&task.root);
+        let item = local.entry(task.id).or_insert_with(|| Local {
+            _task: task.clone(),
+            job: None,
+            terminal: None,
+        });
+        if item.job.is_none() && item.terminal.is_none() {
+            if task.cancelled.load(Ordering::Acquire) {
+                lock(&task.factory).take();
+                item.terminal = Some(Err(cancelled_error()));
+            } else {
+                let factory = lock(&task.factory).take().expect("one task constructor");
+                match factory() {
+                    Ok(job) => item.job = Some(job),
+                    Err(e) => item.terminal = Some(Err(e)),
+                }
+            }
+        }
+        if item.terminal.is_none() {
+            if let Err(error) = check_cancelled() {
+                item.terminal = Some(Err(error));
+            } else if let Poll::Ready(result) = item.job.as_mut().unwrap().poll() {
+                item.terminal = Some(result);
+            }
+        }
+        if item.terminal.is_some() {
+            let children: Vec<_> = lock(&task.state)
+                .children
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect();
+            for child in children {
+                if lock(&child.state).phase != Phase::Cleaned {
+                    child.cancel();
+                }
+            }
+            if task.children_cleaned() {
+                let _cleaning = CleanupGuard::enter();
+                let mut item = local.remove(&task.id).unwrap();
+                let cleanup = crate::runtime::error::checked(|| drop(item.job.take()));
+                let mut result = item.terminal.take().unwrap();
+                if result.is_ok()
+                    || result
+                        .as_ref()
+                        .err()
+                        .is_some_and(|e| e.code() == ErrorCode::Cancelled)
+                {
+                    if let Err(e) = cleanup {
+                        result = Err(e);
+                    }
+                }
+                if task.cancelled.load(Ordering::Acquire) && result.is_ok() {
+                    result = Err(cancelled_error());
+                }
+                if let Some((group, index)) = &task.group {
+                    group.complete(*index, result.as_ref().err().cloned());
+                }
+                let mut state = lock(&task.state);
+                state.phase = Phase::Cleaned;
+                state.sequence = shared.sequence.fetch_add(1, Ordering::Relaxed);
+                state.result = Some(result);
+                task.cleaned.store(true, Ordering::Release);
+                drop(state);
+                if let Some(parent) = task.parent.as_ref().and_then(Weak::upgrade) {
+                    parent.wake();
+                }
+                shared.wake.notify_all();
+            } else {
+                let mut state = lock(&task.state);
+                state.phase = Phase::Stopping;
+                // A completion racing the child scan increments generation.
+                if state.generation != generation {
+                    drop(state);
+                    task.wake();
+                }
+            }
+        } else {
+            let mut state = lock(&task.state);
+            state.phase = Phase::Waiting;
+            let ready = !WAITING.with(Cell::get)
+                || state.generation != generation
+                || task.cancelled.load(Ordering::Acquire);
+            drop(state);
+            if ready {
+                task.wake();
+            }
+        }
+        CURRENT.with(|c| c.borrow_mut().take());
+    }
+}
+
+/// Per-scope arbitration. The owner reads only synchronized terminal packets.
+pub(crate) struct Group {
+    arbiter: Arc<Arbiter>,
+    kind: u32,
+    handles: Vec<Handle>,
+    selected: Option<usize>,
+    failure: Option<Error>,
+    taken: Vec<bool>,
+}
+impl Group {
+    pub(crate) fn new(kind: u32) -> Self {
+        Self {
+            arbiter: Arc::new(Arbiter {
+                parent: CURRENT.with(|c| c.borrow().as_ref().map(Arc::downgrade)),
+                kind,
+                state: Mutex::new(Arbitration {
+                    selected: None,
+                    failure: None,
+                    children: Vec::new(),
+                }),
+            }),
+            kind,
+            handles: Vec::new(),
+            selected: None,
+            failure: None,
+            taken: Vec::new(),
+        }
+    }
+    pub(crate) fn publish(&mut self, factories: Vec<Factory>) -> Result<(), Error> {
+        if self.selected.is_some() || self.failure.is_some() {
+            return Err(invalid("Parallel scope is closed"));
+        }
+        let handles = children(factories, self.arbiter.clone())?;
+        self.taken.extend((0..handles.len()).map(|_| false));
+        self.handles.extend(handles);
+        Ok(())
+    }
+    pub(crate) fn poll(&mut self) -> Result<bool, Error> {
+        {
+            let arbitration = lock(&self.arbiter.state);
+            self.selected = arbitration.selected;
+            self.failure = arbitration.failure.clone();
+        }
+        if !self.handles.iter().all(Handle::cleaned) {
+            wait_for_children();
+            return Ok(false);
+        }
+        // Cancellation itself is expected for losers; a real cleanup failure is not.
+        let mut ordered: Vec<_> = self.handles.iter().enumerate().collect();
+        ordered.sort_by_key(|(_, h)| h.sequence());
+        for (i, h) in ordered {
+            if self.selected != Some(i) && h.failed() {
+                if let Some(Err(error)) = h.take() {
+                    if error.code() != ErrorCode::Cancelled {
+                        self.failure.get_or_insert(error);
+                    }
+                }
+            }
+        }
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
+        }
+        Ok(true)
+    }
+    pub(crate) fn next_result(&self) -> Option<usize> {
+        if self.kind == 1 {
+            self.selected.filter(|&i| !self.taken[i])
+        } else {
+            self.taken.iter().position(|taken| !taken)
+        }
+    }
+    pub(crate) fn take(&mut self, index: usize) -> Result<Output, Error> {
+        if !self.poll()? {
+            return Err(invalid("Parallel result is not ready"));
+        }
+        if self.taken.get(index).copied() != Some(false)
+            || (self.kind == 1 && self.selected != Some(index))
+        {
+            return Err(invalid("Parallel result was consumed or is not the winner"));
+        }
+        self.taken[index] = true;
+        self.handles[index]
+            .take()
+            .ok_or_else(|| invalid("Missing parallel result"))?
+    }
+    pub(crate) fn winner(&self) -> Option<usize> {
+        self.selected
+    }
+    pub(crate) fn cancel(&self) {
+        for handle in &self.handles {
+            handle.cancel();
+        }
+    }
+}
+impl Drop for Group {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
+struct Arbitration {
+    selected: Option<usize>,
+    failure: Option<Error>,
+    children: Vec<Weak<Task>>,
+}
+struct Arbiter {
+    parent: Option<Weak<Task>>,
+    kind: u32,
+    state: Mutex<Arbitration>,
+}
+impl Arbiter {
+    fn complete(&self, index: usize, error: Option<Error>) {
+        let mut retained = Vec::new();
+        {
+            let mut state = lock(&self.state);
+            if state.selected.is_some() || (self.kind != 1 && error.is_none()) {
+                return;
+            }
+            if error
+                .as_ref()
+                .is_some_and(|e| e.code() == ErrorCode::Cancelled)
+            {
+                return;
+            }
+            state.selected = Some(index);
+            state.failure = error.clone();
+            retained.extend(
+                state
+                    .children
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != index)
+                    .filter_map(|(_, c)| c.upgrade()),
+            );
+        }
+        for task in retained {
+            task.cancel();
+        }
+        if let Some(error) = error {
+            if let Some(parent) = self.parent.as_ref().and_then(Weak::upgrade) {
+                parent.fail(error);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn task_pool_running_notification_survives_pending_and_late_wake_is_inert() {
+        struct Probe {
+            first: bool,
+            sent: std::sync::mpsc::Sender<Arc<Task>>,
+            barrier: Arc<std::sync::Barrier>,
+        }
+        impl Job for Probe {
+            fn poll(&mut self) -> Poll<Result<Output, Error>> {
+                if self.first {
+                    self.first = false;
+                    wait_for_children();
+                    self.sent
+                        .send(CURRENT.with(|c| c.borrow().as_ref().unwrap().clone()))
+                        .unwrap();
+                    self.barrier.wait();
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Ok(Box::new(42usize)))
+                }
+            }
+        }
+        let pool = ParallelExecutor::new(1, 4).unwrap();
+        let root = Storage::new(vec![super::super::TaskBudget::new(1 << 20)]).unwrap();
+        let (sent, recv) = std::sync::mpsc::channel();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let release = barrier.clone();
+        let task = pool
+            .submit(
+                root,
+                Arc::new(()),
+                Box::new(move || {
+                    Ok(Box::new(Probe {
+                        first: true,
+                        sent,
+                        barrier,
+                    }))
+                }),
+            )
+            .unwrap();
+        let record = recv
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        record.wake();
+        record.wake();
+        release.wait();
+        task.wait();
+        assert_eq!(
+            *task.take().unwrap().unwrap().downcast::<usize>().unwrap(),
+            42
+        );
+        record.wake();
+        assert_eq!(lock(&record.state).phase, Phase::Cleaned);
+        assert!(lock(&pool.shared.queue)
+            .ready
+            .iter()
+            .all(VecDeque::is_empty));
+    }
+}

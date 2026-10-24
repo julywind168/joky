@@ -8,6 +8,7 @@ use std::{cell::Cell, rc::Rc};
 thread_local! { static CONTEXT: Cell<*mut CpsFrame> = const { Cell::new(std::ptr::null_mut()) }; }
 
 pub(super) struct Scope {
+    pub(super) remote: Option<crate::runtime::parallel::pool::Group>,
     _charge: Option<crate::runtime::parallel::Lease>,
     id: u64,
     kind: u32,
@@ -28,6 +29,15 @@ impl Scope {
     }
 }
 
+pub(super) fn remote(frame: &mut CpsFrame) -> Option<&mut crate::runtime::parallel::pool::Group> {
+    frame
+        .task_protocol
+        .iter_mut()
+        .rev()
+        .find(|scope| scope.kind != 2)?
+        .remote
+        .as_mut()
+}
 pub(super) fn cancelled(frame: &CpsFrame) -> bool {
     frame
         .task_protocol
@@ -101,6 +111,8 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
             super::task_scope_enter(frame);
         }
         (*frame).task_protocol.push(Scope {
+            remote: crate::runtime::parallel::pool::active()
+                .then(|| crate::runtime::parallel::pool::Group::new(kind)),
             _charge: charge,
             id,
             kind,
@@ -248,6 +260,24 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
                 "Publication contains foreign, repeated or reordered child tokens",
             ));
         }
+        if record.remote.is_some() {
+            let prepared = std::mem::take(&mut (&mut (*frame).task_protocol)[index].prepared);
+            let mut factories = Vec::new();
+            let mut entries = Vec::new();
+            for (_, child) in prepared {
+                let code = child.task_code.as_ref().unwrap().clone();
+                factories.push(super::parallel::factory(child, &code)?);
+                entries.push(code);
+            }
+            let record = &mut (&mut (*frame).task_protocol)[index];
+            record.remote.as_mut().unwrap().publish(factories)?;
+            record.entries.extend(entries);
+            record.published = true;
+            if record.kind != 2 {
+                (*frame).concurrent_results = (0..count).map(|_| None).collect();
+            }
+            return Ok(());
+        }
         if record.kind == 2 {
             let child = (&mut (*frame).task_protocol)[index]
                 .prepared
@@ -310,6 +340,24 @@ pub(crate) unsafe extern "C" fn join(scope: u64) -> i32 {
     }
     if !record.prepared.is_empty() {
         return report(invalid("Unpublished task captures remain"));
+    }
+    if record.remote.is_some() {
+        let record = &mut (&mut (*frame).task_protocol)[index];
+        record.closed = true;
+        return match record.remote.as_mut().unwrap().poll() {
+            Ok(false) => 1,
+            Ok(true) => {
+                record.terminal = Some(0);
+                record.drained = true;
+                0
+            }
+            Err(error) => {
+                record.terminal = Some(2);
+                record.drained = true;
+                record.failure = Some(error.clone());
+                report(error)
+            }
+        };
     }
     let kind = record.kind;
     if kind != 2 && !record.published {
@@ -381,6 +429,32 @@ pub(crate) unsafe extern "C" fn take(
         {
             return Err(invalid("Task scope is not ready to deliver results"));
         }
+        if let Some(remote) = &record.remote {
+            let source = if record.kind == 1 {
+                remote
+                    .winner()
+                    .ok_or_else(|| invalid("Missing race winner"))?
+            } else {
+                child_index
+            };
+            if record.kind == 1 && child_index != 0 {
+                return Err(invalid("Race exposes only its winning result"));
+            }
+            let entry = record
+                .entries
+                .get(source)
+                .ok_or_else(|| invalid("Unknown parallel result"))?;
+            if entry.result_lanes != count || (count != 0 && lanes.is_null()) {
+                return Err(invalid("Task output packet layout mismatch"));
+            }
+            let key = entry.result_key;
+            let output = (&mut (*frame).task_protocol)[index]
+                .remote
+                .as_mut()
+                .unwrap()
+                .take(source)?;
+            return super::parallel::take(output, frame, key, lanes, count);
+        }
         let group = (*frame)
             .concurrent
             .as_ref()
@@ -446,6 +520,9 @@ pub(crate) unsafe extern "C" fn cancel(scope: u64) -> i32 {
             {
                 return 0;
             }
+            if let Some(remote) = &record.remote {
+                remote.cancel();
+            }
             record.terminal.get_or_insert(3);
             record.closed = true;
             if record.kind == 2 {
@@ -482,6 +559,20 @@ pub(crate) unsafe extern "C" fn drain(scope: u64) -> i32 {
     }
     if record.terminal.is_none() {
         return join(scope);
+    }
+    if record.remote.is_some() {
+        let record = &mut (&mut (*frame).task_protocol)[index];
+        return match record.remote.as_mut().unwrap().poll() {
+            Ok(false) => 1,
+            Ok(true) => {
+                record.drained = true;
+                record.terminal.unwrap_or(0)
+            }
+            Err(error) => {
+                record.drained = true;
+                report(error)
+            }
+        };
     }
     let kind = record.kind;
     if (*frame)
@@ -548,7 +639,11 @@ pub(crate) unsafe extern "C" fn release(scope: u64) -> i32 {
         return report(invalid("Cannot release a live or enclosing task scope"));
     }
     let kind = record.kind;
+    let remote = record.remote.is_some();
     let record = (*frame).task_protocol.pop().unwrap();
+    if remote && kind == 2 {
+        (*frame).task_scopes.pop();
+    }
     let outcome = crate::runtime::error::checked(|| {
         if kind != 2 {
             super::release_children(frame);

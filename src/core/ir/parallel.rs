@@ -165,7 +165,24 @@ pub(crate) fn analyse(
         let dependencies = edges.entry(name.clone()).or_default();
         for op in &body.ops {
             dependencies.extend(op.dependencies().cloned());
+            let packet_supported = |name: &String| {
+                plan.functions.get(name).is_some_and(|f| {
+                    f.signature
+                        .params
+                        .iter()
+                        .chain(std::iter::once(&f.signature.ret))
+                        .all(|ty| crate::core::instance::scalar(ty) || *ty == Type::String)
+                })
+            };
             let local = match op {
+                Op::Concurrent { branches, .. }
+                    if branches.iter().any(|b| !packet_supported(&b.name)) =>
+                {
+                    Some("parallel child packets require scalar or String values")
+                }
+                Op::TaskBranch { entry, .. } if !packet_supported(entry) => {
+                    Some("parallel branch captures require scalar or String values")
+                }
                 Op::Call {
                     indirect: Some(_), ..
                 }

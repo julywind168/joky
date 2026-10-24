@@ -58,6 +58,16 @@ pub(crate) unsafe extern "C" fn open(frame: *mut CpsFrame, kind: u32, count: usi
 /// executing while this helper holds its exclusive borrow.
 #[export_name = "__joky_cps_concurrent_next_v1"]
 pub(crate) unsafe extern "C" fn next(frame: *mut CpsFrame) -> i64 {
+    if let Some(group) = super::protocol::remote(&mut *frame) {
+        return match group.poll() {
+            Ok(true) => SELECTED,
+            Ok(false) => PENDING,
+            Err(error) => {
+                record_error(error);
+                FAILED
+            }
+        };
+    }
     if super::protocol::cancelled(&*frame) {
         if let Some(group) = &mut (*frame).concurrent {
             group.stop(None);
@@ -233,6 +243,9 @@ pub(crate) unsafe extern "C" fn take(frame: *mut CpsFrame, index: usize) -> *mut
 /// `frame` is a live, exclusive local parent whose static group has selected.
 #[export_name = "__joky_cps_concurrent_next_result_v1"]
 pub(crate) unsafe extern "C" fn next_result(frame: *mut CpsFrame) -> i64 {
+    if let Some(group) = super::protocol::remote(&mut *frame) {
+        return group.next_result().map_or(-1, |i| i as i64);
+    }
     match (*frame)
         .concurrent
         .as_mut()

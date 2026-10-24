@@ -227,6 +227,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         r#"
         #include "joky_cps.h"
         #include "joky_runtime.h"
+        static void (*checkpoint_fn)(void);
+        void bind_checkpoint(void (*f)(void)) { checkpoint_fn = f; }
+        void __joky_task_checkpoint_v1(void) { checkpoint_fn(); }
         static int32_t (*error_code_fn)(void);
         static uint64_t (*float_enter_fn)(void);
         static void (*float_reset_fn)(void);
@@ -390,6 +393,10 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         unsafe extern "C" fn(*mut cps::CpsFrame),
     );
     unsafe {
+        type BindCheckpoint = unsafe extern "C" fn(extern "C" fn());
+        library.get::<BindCheckpoint>(b"bind_checkpoint").unwrap()(
+            crate::runtime::error::checkpoint,
+        );
         type BindFloat = unsafe extern "C" fn(
             extern "C" fn() -> u64,
             extern "C" fn(),

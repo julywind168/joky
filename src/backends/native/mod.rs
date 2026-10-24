@@ -67,6 +67,30 @@ pub(crate) fn compile<M: Module>(
             }
         }
     }
+    // Checkpoints are needed on CPS roots and their entire synchronous call
+    // graph. Standalone synchronous scalar objects keep their runtime-free ABI.
+    let mut cancellable: HashSet<String> = plan
+        .functions
+        .iter()
+        .filter(|(_, f)| f.suspends)
+        .map(|(n, _)| n.clone())
+        .collect();
+    let mut pending: Vec<_> = cancellable.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        if let Some(body) = plan.bodies.get(&name) {
+            for dependency in body.ops.iter().flat_map(Op::dependencies) {
+                if cancellable.insert(dependency.clone()) {
+                    pending.push(dependency.clone());
+                }
+            }
+        }
+    }
+    let mut functions = plan.functions.clone();
+    for name in &cancellable {
+        if let Some(info) = functions.get_mut(name) {
+            info.may_fail = true;
+        }
+    }
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
@@ -394,7 +418,7 @@ pub(crate) fn compile<M: Module>(
         let name = *name;
         if let Some(adapter) = adapters.get(name) {
             ctx.clear();
-            let info = &plan.functions[name];
+            let info = &functions[name];
             ctx.func.signature = lower::signature(module, info);
             let target = module.target_config();
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
@@ -467,7 +491,7 @@ pub(crate) fn compile<M: Module>(
             continue;
         }
         ctx.clear();
-        let info = &plan.functions[name];
+        let info = &functions[name];
         ctx.func.signature = lower::signature(module, info);
         let target = module.target_config();
         {
@@ -483,6 +507,7 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
+                checkpoints: cancellable.contains(name),
                 tasks: task_ids
                     .get(name)
                     .into_iter()
@@ -529,7 +554,7 @@ pub(crate) fn compile<M: Module>(
                 &mut builder,
                 info,
                 &plan.bodies[name],
-                &plan.functions,
+                &functions,
                 &refs,
                 target.pointer_type(),
                 &data,
@@ -594,7 +619,7 @@ pub(crate) fn compile<M: Module>(
     let mut instance_hooks = HashMap::new();
     for name in &names {
         let name = *name;
-        let info = &plan.functions[name];
+        let info = &functions[name];
         if !info.instance_entry {
             continue;
         }

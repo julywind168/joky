@@ -1,4 +1,5 @@
 //! Iterative execution: language calls and scopes never recurse on the Rust stack.
+mod parallel;
 use super::{host::HostPending, *};
 use crate::{
     core::integer::IntegerOutcome,
@@ -390,6 +391,7 @@ pub(super) struct Frame {
     pc: usize,
     pending: Option<Pending>,
     task_scopes: Vec<LocalTaskScope<usize>>,
+    remote_scopes: Option<Box<parallel::Scopes>>,
 }
 
 impl Frame {
@@ -420,6 +422,7 @@ impl Frame {
             pc: 0,
             pending: None,
             task_scopes: Vec::new(),
+            remote_scopes: None,
         })
     }
 
@@ -440,6 +443,11 @@ impl Frame {
 // Children are indices into a flat arena, including concurrent branches. Both
 // execution and cancellation/drop remain iterative at arbitrary language depth.
 enum Pending {
+    Parallel {
+        group: Box<crate::runtime::parallel::pool::Group>,
+        branches: Vec<(usize, Option<usize>)>,
+        delivered: bool,
+    },
     Call {
         child: usize,
         result: Option<usize>,
@@ -550,6 +558,8 @@ impl Budget {
 }
 
 pub(super) struct Execution {
+    parallel_child: bool,
+    parallel_output: Option<crate::runtime::parallel::OwnedBuffer>,
     parallel_result: Option<crate::runtime::parallel::Lease>,
     root_aggregate: Option<Vec<Value>>,
     domain_return: Option<Type>,
@@ -571,6 +581,8 @@ pub(super) struct Execution {
 impl Execution {
     pub(super) fn new(frame: Frame, limits: InterpreterLimits, asynchronous: bool) -> Self {
         Self {
+            parallel_child: false,
+            parallel_output: None,
             parallel_result: None,
             cleanup_mode: false,
             root_aggregate: None,
@@ -1072,6 +1084,9 @@ impl Execution {
     }
 
     fn start_concurrent(&mut self, module: &BytecodeModule) -> Result<(), Error> {
+        if crate::runtime::parallel::pool::active() {
+            return self.remote_concurrent(module);
+        }
         let id = self.current;
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
             unreachable!()
@@ -1193,6 +1208,7 @@ impl Execution {
                                     .map(|id| (id, false)),
                             );
                         }
+                        Some(Pending::Parallel { group, .. }) => group.cancel(),
                         Some(Pending::TaskJoin) | None => {}
                     }
                     for scope in &mut frame.task_scopes {
@@ -1277,7 +1293,7 @@ impl Execution {
                         .filter_map(|branch| branch.child)
                         .map(Visit::Frame),
                 ),
-                Some(Pending::TaskJoin) | None => {}
+                Some(Pending::Parallel { .. }) | Some(Pending::TaskJoin) | None => {}
             }
             for (scope_index, scope) in frame.task_scopes.iter().enumerate().rev() {
                 for (token, child, ready) in scope.entries().rev() {
@@ -1337,6 +1353,9 @@ impl Execution {
     }
 
     fn start_task_branch(&mut self, module: &BytecodeModule) -> Result<(), Error> {
+        if crate::runtime::parallel::pool::active() {
+            return self.remote_branch(module);
+        }
         let id = self.current;
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
             unreachable!()
@@ -1414,6 +1433,29 @@ impl Execution {
                             value = Some(Value::Unit);
                         }
                         Err(error) => {
+                            self.release();
+                            return Some(Poll::Failed(error));
+                        }
+                    }
+                } else if text && self.parallel_child {
+                    let Value::Reference(raw) = value.as_ref().unwrap() else {
+                        unreachable!()
+                    };
+                    let moved = unsafe {
+                        crate::runtime::parallel::OwnedBuffer::new(
+                            &self.arena,
+                            std::ptr::NonNull::new((*raw).cast()).unwrap(),
+                        )
+                    };
+                    match moved {
+                        Ok(packet) => {
+                            owner.take();
+                            self.parallel_output = Some(packet);
+                        }
+                        Err(error) => {
+                            if let Some(entry) = owner.take() {
+                                let _ = unsafe { entry.run(&mut self.arena) };
+                            }
                             self.release();
                             return Some(Poll::Failed(error));
                         }
@@ -1506,6 +1548,7 @@ impl Execution {
                     // scheduler round runs once the suspension reaches the
                     // root (see the Pending surfacing in `bubble`).
                 }
+                Pending::Parallel { .. } => unreachable!("remote child has no local activation"),
                 Pending::TaskJoin => {
                     unreachable!("task children report to their registering scope")
                 }
@@ -1572,6 +1615,21 @@ impl Execution {
                 &mut self.nodes[self.current].as_mut().unwrap().activation
             {
                 match frame.pending.as_mut() {
+                    Some(Pending::Parallel {
+                        delivered: true, ..
+                    }) => {}
+                    Some(Pending::Parallel { .. }) => {
+                        match self.poll_remote() {
+                            Ok(true) => continue,
+                            Ok(false) => {
+                                if let Some(poll) = self.bubble(None) {
+                                    return poll;
+                                }
+                            }
+                            Err(error) => return self.fail(error),
+                        }
+                        continue;
+                    }
                     Some(Pending::Call { child, .. }) => {
                         self.current = *child;
                         continue;
@@ -1588,6 +1646,36 @@ impl Execution {
                                 }
                             }
                             Ok(GroupPoll::Selected) => unreachable!("selected group handled above"),
+                            Err(error) => return self.fail(error),
+                        }
+                        continue;
+                    }
+                    Some(Pending::TaskJoin)
+                        if frame
+                            .remote_scopes
+                            .as_ref()
+                            .is_some_and(|scopes| !scopes.groups.is_empty()) =>
+                    {
+                        match frame
+                            .remote_scopes
+                            .as_mut()
+                            .unwrap()
+                            .groups
+                            .last_mut()
+                            .unwrap()
+                            .poll()
+                        {
+                            Ok(true) => {
+                                frame.remote_scopes.as_mut().unwrap().groups.pop();
+                                frame.task_scopes.pop();
+                                frame.pending = None;
+                                frame.pc += 1;
+                            }
+                            Ok(false) => {
+                                if let Some(poll) = self.bubble(None) {
+                                    return poll;
+                                }
+                            }
                             Err(error) => return self.fail(error),
                         }
                         continue;
@@ -1670,6 +1758,11 @@ impl Execution {
                 }
                 Step::ConcurrentFinish => {
                     let frame = self.frame_mut(self.current);
+                    if matches!(frame.pending, Some(Pending::Parallel { .. })) {
+                        frame.pending.take();
+                        frame.pc += 1;
+                        continue;
+                    }
                     let Some(Pending::Concurrent { branches, group }) = frame.pending.take() else {
                         unreachable!("scope result must be delivered before cleanup")
                     };
@@ -1765,6 +1858,9 @@ fn run_frame(
         // Registration completes the preceding ownership transition, including
         // entering a callee and receiving its result. Never pause in between.
         if !matches!(instruction, Instruction::Cleanup { .. }) {
+            if let Err(error) = crate::runtime::parallel::pool::check_cancelled() {
+                return Step::Failed(error);
+            }
             match budget.charge() {
                 Charge::Ready => {}
                 Charge::Yield => return Step::Yield,
@@ -2396,6 +2492,20 @@ fn run_frame(
             Instruction::ConcurrentFinish => return Step::ConcurrentFinish,
             Instruction::TaskScopeEnter => {
                 frame.task_scopes.push(Default::default());
+                if crate::runtime::parallel::pool::active() {
+                    if frame.remote_scopes.is_none() {
+                        match parallel::Scopes::new() {
+                            Ok(scopes) => frame.remote_scopes = Some(scopes),
+                            Err(error) => return Step::Failed(error),
+                        }
+                    }
+                    frame
+                        .remote_scopes
+                        .as_mut()
+                        .unwrap()
+                        .groups
+                        .push(crate::runtime::parallel::pool::Group::new(2));
+                }
                 frame.pc += 1;
             }
             // Registration is synchronous; the child runs when the body

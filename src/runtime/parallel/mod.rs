@@ -1,5 +1,7 @@
 //! Transferable preparation, shared code and storage; execution remains local.
+pub(crate) mod pool;
 mod storage;
+pub use pool::ParallelExecutor;
 use std::cell::RefCell;
 pub use storage::TaskBudget;
 pub(crate) use storage::{Lease, LocalShard, Storage};

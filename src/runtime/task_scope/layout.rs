@@ -122,6 +122,35 @@ impl Reader<'_> {
 }
 
 impl CheckedLayout {
+    pub(crate) fn parallel_shape(&self) -> Result<(Vec<usize>, bool), Error> {
+        fn shape(reader: &mut Reader<'_>) -> Result<(usize, bool), Error> {
+            let words = reader.0;
+            let (inputs, _) = reader.value()?;
+            if words[0] & 6 != 0 || words[2] > 1 || words[5] > 1 {
+                return Err(invalid());
+            }
+            let owner = words[0] == 1;
+            if words[5] == 1 {
+                let tag = words[7];
+                if !(1..=12).contains(&tag) && !(owner && tag == 14) {
+                    return Err(invalid());
+                }
+            }
+            Ok((inputs, owner))
+        }
+        let mut reader = Reader(&self.words[2..]);
+        let mut owners = Vec::new();
+        let mut offset = 0;
+        for _ in 0..self.words[1] {
+            let (slots, owner) = shape(&mut reader)?;
+            if owner {
+                owners.push(offset);
+            }
+            offset += slots;
+        }
+        Ok((owners, shape(&mut reader)?.1))
+    }
+
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
         Self::read_counts(words)?;
         let charge = crate::runtime::parallel::reserve_current(

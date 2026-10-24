@@ -405,3 +405,140 @@ fn parallel_pending_cancellation_cleans_on_the_worker_and_releases_code_last() {
         assert_eq!(budget.used(), 0);
     }
 }
+
+#[test]
+fn task_pool_nested_join_race_branch_and_owned_text() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(r#"
+            fn leaf(n: Int32) @suspends -> Int32 { n + 1 }
+            fn joined(n: Int32) @suspends -> Int32 { let (a, b) = join { | leaf(n) | leaf(n + 1) }; a + b }
+            fn nested(n: Int32) @suspends -> Int32 { let (a, b) = join { | joined(n) | joined(n + 2) }; a + b }
+            fn raced(n: Int32) @suspends -> Int32 { race { | joined(n) | leaf(n) } }
+            fn branched(n: Int32) @suspends -> Int32 { scope { branch { joined(n); }; branch { nested(n); } }; n }
+            fn echo(text: String) @suspends -> String { text }
+            fn text(text: String) @suspends -> String { let (a, b) = join { | echo(text) | echo("temporary") }; a }
+        "#).unwrap();
+        for workers in [1, 2, 4] {
+            let executor = crate::runtime::parallel::ParallelExecutor::new(workers, 128).unwrap();
+            let budget = TaskBudget::new(1 << 20);
+            for (entry, expected) in [
+                ("joined", 83),
+                ("nested", 170),
+                ("branched", 40),
+                ("raced", 0),
+            ] {
+                let task = vm
+                    .prepare_parallel_task(
+                        entry,
+                        vec![TaskValue::Scalar(InstanceValue::Int32(40))],
+                        vec![budget.clone()],
+                    )
+                    .unwrap()
+                    .submit(&executor)
+                    .unwrap();
+                task.wait();
+                let result = task.take_result().unwrap().into_value();
+                if entry == "raced" {
+                    assert!([
+                        TaskValue::Scalar(InstanceValue::Int32(41)),
+                        TaskValue::Scalar(InstanceValue::Int32(83))
+                    ]
+                    .contains(&result));
+                } else {
+                    assert_eq!(
+                        result,
+                        TaskValue::Scalar(InstanceValue::Int32(expected)),
+                        "{mode:?} {workers} {entry}"
+                    );
+                }
+                drop(task);
+            }
+            let task = vm
+                .prepare_parallel_task(
+                    "text",
+                    vec![TaskValue::String("transferred".into())],
+                    vec![budget.clone()],
+                )
+                .unwrap()
+                .submit(&executor)
+                .unwrap();
+            task.wait();
+            assert_eq!(
+                task.take_result().unwrap().into_value(),
+                TaskValue::String("transferred".into())
+            );
+            drop(task);
+            drop(executor);
+            assert_eq!(budget.used(), 0);
+        }
+    }
+}
+
+#[test]
+fn task_pool_admission_failure_cancellation_and_shutdown_refund_storage() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(
+            r#"
+            fn leaf() @suspends -> Int32 { 42 }
+            fn root() @suspends -> Int32 { let (a, b) = join { | leaf() | leaf() }; a + b }
+            fn burn() -> Int32 { var i = 0; while true { i = i + 1 } }
+            fn spin() @suspends -> Int32 { burn() }
+            fn fail() @suspends -> Int32 { 1 / 0 }
+            fn failed() @suspends -> Int32 { let (a, b) = join { | fail() | spin() }; a + b }
+            fn failed_branch() @suspends -> Int32 { scope { branch { fail(); }; burn() } }
+        "#,
+        )
+        .unwrap();
+        for limit in [1, 2, 3] {
+            let executor = crate::runtime::parallel::ParallelExecutor::new(1, limit).unwrap();
+            let budget = TaskBudget::new(1 << 20);
+            let task = vm
+                .prepare_parallel_task("root", vec![], vec![budget.clone()])
+                .unwrap()
+                .submit(&executor)
+                .unwrap();
+            task.wait();
+            let result = task.take_result();
+            assert_eq!(result.is_ok(), limit == 3, "{mode:?} {limit}");
+            drop(result);
+            drop(task);
+            drop(executor);
+            assert_eq!(budget.used(), 0);
+        }
+        let budget = TaskBudget::new(1 << 20);
+        let mut executor = crate::runtime::parallel::ParallelExecutor::new(2, 64).unwrap();
+        for entry in ["failed", "failed_branch"] {
+            let failed = vm
+                .prepare_parallel_task(entry, vec![], vec![budget.clone()])
+                .unwrap()
+                .submit(&executor)
+                .unwrap();
+            failed.wait();
+            let error = failed.take_result().err().unwrap();
+            assert_ne!(error.code(), ErrorCode::Cancelled);
+            drop(failed);
+        }
+        let spinning = vm
+            .prepare_parallel_task("spin", vec![], vec![budget.clone()])
+            .unwrap()
+            .submit(&executor)
+            .unwrap();
+        drop(vm);
+        assert!(!executor.is_closed());
+        executor.request_close();
+        spinning.wait();
+        assert_eq!(
+            spinning.take_result().err().unwrap().code(),
+            ErrorCode::Cancelled
+        );
+        executor.wait_closed();
+        assert!(executor.is_closed());
+        drop(spinning);
+        drop(executor);
+        assert_eq!(budget.used(), 0);
+    }
+}
