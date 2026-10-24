@@ -1,7 +1,10 @@
-//! Transferable preparation, shared code and storage; execution remains local.
+//! Explicit parallel execution with checked code, owning packets and root storage.
+mod config;
+pub mod standalone;
+pub use config::{ExecutionMode, TaskExecutor};
 pub(crate) mod pool;
 mod storage;
-pub use pool::ParallelExecutor;
+pub use pool::{ParallelExecutor, ParallelSubmitter};
 use std::cell::RefCell;
 pub use storage::TaskBudget;
 pub(crate) use storage::{Lease, LocalShard, Storage};

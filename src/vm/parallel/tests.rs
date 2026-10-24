@@ -438,7 +438,7 @@ fn task_pool_nested_join_race_branch_and_owned_text() {
                     .unwrap()
                     .submit(&executor)
                     .unwrap();
-                task.wait();
+                task.wait().unwrap();
                 let result = task.take_result().unwrap().into_value();
                 if entry == "raced" {
                     assert!([
@@ -464,7 +464,7 @@ fn task_pool_nested_join_race_branch_and_owned_text() {
                 .unwrap()
                 .submit(&executor)
                 .unwrap();
-            task.wait();
+            task.wait().unwrap();
             assert_eq!(
                 task.take_result().unwrap().into_value(),
                 TaskValue::String("transferred".into())
@@ -501,7 +501,7 @@ fn task_pool_admission_failure_cancellation_and_shutdown_refund_storage() {
                 .unwrap()
                 .submit(&executor)
                 .unwrap();
-            task.wait();
+            task.wait().unwrap();
             let result = task.take_result();
             assert_eq!(result.is_ok(), limit == 3, "{mode:?} {limit}");
             drop(result);
@@ -517,7 +517,7 @@ fn task_pool_admission_failure_cancellation_and_shutdown_refund_storage() {
                 .unwrap()
                 .submit(&executor)
                 .unwrap();
-            failed.wait();
+            failed.wait().unwrap();
             let error = failed.take_result().err().unwrap();
             assert_ne!(error.code(), ErrorCode::Cancelled);
             drop(failed);
@@ -530,7 +530,7 @@ fn task_pool_admission_failure_cancellation_and_shutdown_refund_storage() {
         drop(vm);
         assert!(!executor.is_closed());
         executor.request_close();
-        spinning.wait();
+        spinning.wait().unwrap();
         assert_eq!(
             spinning.take_result().err().unwrap().code(),
             ErrorCode::Cancelled
@@ -539,6 +539,79 @@ fn task_pool_admission_failure_cancellation_and_shutdown_refund_storage() {
         assert!(executor.is_closed());
         drop(spinning);
         drop(executor);
+        assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
+fn task_pool_timer_submission_reload_and_shutdown() {
+    use crate::runtime::parallel::{
+        ExecutionMode, ParallelExecutor, ParallelSubmitter, TaskExecutor,
+    };
+    send::<ParallelSubmitter>();
+    send::<ParallelTask>();
+    assert!(matches!(
+        ExecutionMode::default().create(4).unwrap(),
+        TaskExecutor::Local(_)
+    ));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(
+            r#"
+            import joky/task
+            fn leaf(n: Int32) @suspends -> Int32 { task.sleep_ms(2); n }
+            fn root() @suspends -> Int32 {
+                scope { branch { task.sleep_ms(2) }; task.yield_now() }
+                let (a, b) = join { | leaf(20) | leaf(22) }
+                a + b
+            }
+            fn parked() @suspends { task.sleep_ms(60000) }
+        "#,
+        )
+        .unwrap();
+        let budget = TaskBudget::new(1 << 20);
+        let prepared = vm
+            .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap();
+        let parked = vm
+            .prepare_parallel_task("parked", vec![], vec![budget.clone()])
+            .unwrap();
+        vm.load_source("fn root() @suspends -> Int32 { 99 }")
+            .unwrap();
+        let replacement = vm
+            .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap();
+        let rejected = vm
+            .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap();
+        drop(vm);
+        let mut pool = ParallelExecutor::new(1, 64).unwrap();
+        let submit = pool.submitter();
+        let old = std::thread::spawn(move || submit.submit(prepared).unwrap())
+            .join()
+            .unwrap();
+        old.wait().unwrap();
+        assert_eq!(
+            old.take_result().unwrap().into_value(),
+            TaskValue::Scalar(InstanceValue::Int32(42))
+        );
+        let new = replacement.submit(&pool).unwrap();
+        new.wait().unwrap();
+        assert_eq!(
+            new.take_result().unwrap().into_value(),
+            TaskValue::Scalar(InstanceValue::Int32(99))
+        );
+        let parked = parked.submit(&pool).unwrap();
+        let submit = pool.submitter();
+        pool.request_close();
+        assert!(submit.submit(rejected).is_err());
+        pool.wait_closed();
+        assert!(pool.is_closed());
+        assert_eq!(
+            parked.take_result().err().unwrap().code(),
+            ErrorCode::Cancelled
+        );
+        drop((old, new, parked, submit, pool));
         assert_eq!(budget.used(), 0);
     }
 }

@@ -4,6 +4,7 @@ mod diagnostic;
 
 use joky::{
     parser::{self, ast::Item},
+    runtime::parallel::ExecutionMode,
     vm::{VmEngine, VmMode},
     Error, ErrorCode, ErrorPhase, Span, Type,
 };
@@ -12,8 +13,8 @@ use std::{ffi::OsString, path::PathBuf};
 const HELP: &str = "Joky — run and build Joky programs
 
 Usage:
-  joky run [--interpreter] [--no-prelude] <file.jk>
-  joky build [--no-prelude] <file.jk> [-o <executable>]
+  joky run [--interpreter] [--no-prelude] [--task-workers N] <file.jk>
+  joky build [--no-prelude] [--task-workers N] <file.jk> [-o <executable>]
   joky --help
   joky --version
 
@@ -24,6 +25,7 @@ Commands:
 Options:
   --interpreter       Execute 'run' with the register bytecode interpreter
   --no-prelude        Disable implicit standard-library imports
+  --task-workers N    Use 1..256 task workers (default: Local; requires @suspends main)
   -o, --output <path>  Output executable (default: source path without .jk)
   -h, --help           Show this help
   -V, --version        Show the version
@@ -42,11 +44,13 @@ enum Command {
         source: PathBuf,
         interpreter: bool,
         prelude: bool,
+        mode: ExecutionMode,
     },
     Build {
         source: PathBuf,
         output: PathBuf,
         prelude: bool,
+        mode: ExecutionMode,
     },
 }
 
@@ -76,6 +80,7 @@ impl Command {
         let mut output = None;
         let mut interpreter = false;
         let mut prelude = true;
+        let mut mode = ExecutionMode::Local;
         let mut positional_only = false;
         while let Some(arg) = args.next() {
             if !positional_only && (arg == "--help" || arg == "-h") {
@@ -112,6 +117,23 @@ impl Command {
                     ));
                 }
                 interpreter = true;
+            } else if !positional_only && arg == "--task-workers" {
+                if mode != ExecutionMode::Local {
+                    return Err(cli_argument_error(
+                        "--task-workers was specified more than once",
+                    ));
+                }
+                let workers = args
+                    .next()
+                    .and_then(|value| value.to_str().and_then(|s| s.parse::<usize>().ok()))
+                    .ok_or_else(|| {
+                        cli_argument_error("--task-workers requires a worker count in 1..=256")
+                    })?;
+                mode = ExecutionMode::Parallel { workers }
+                    .validate()
+                    .map_err(|_| {
+                        cli_argument_error("--task-workers requires a worker count in 1..=256")
+                    })?;
             } else if !positional_only && arg == "--no-prelude" {
                 if !prelude {
                     return Err(cli_argument_error(
@@ -145,12 +167,14 @@ impl Command {
                 source,
                 output,
                 prelude,
+                mode,
             })
         } else {
             Ok(Self::Run {
                 source,
                 interpreter,
                 prelude,
+                mode,
             })
         }
     }
@@ -201,13 +225,14 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         let result = (|| {
             let entry = validate_program(&ast, vm.type_registry())?;
             match command {
-                Command::Run { .. } => run(&ast, entry, &mut vm),
+                Command::Run { mode, .. } => run(&ast, entry, &mut vm, mode),
                 Command::Build {
                     source: ref source_path,
                     ref output,
+                    mode,
                     ..
                 } => {
-                    build::build(&ast, entry, source_path, output)?;
+                    build::build(&ast, entry, source_path, output, mode)?;
                     eprintln!("Built {}", output.display());
                     Ok(0)
                 }
@@ -296,8 +321,24 @@ fn validate_program(
     })
 }
 
-fn run(ast: &parser::ast::Module, entry: EntryPoint, vm: &mut VmEngine) -> Result<u8, Error> {
+fn run(
+    ast: &parser::ast::Module,
+    entry: EntryPoint,
+    vm: &mut VmEngine,
+    mode: ExecutionMode,
+) -> Result<u8, Error> {
     vm.load_module(ast)?;
+    if let ExecutionMode::Parallel { workers } = mode {
+        let prepared = vm.prepare_parallel_task("main", vec![], vec![])?;
+        let executor = joky::runtime::parallel::ParallelExecutor::new(workers, 4096)?;
+        let task = prepared.submit(&executor)?;
+        task.wait()?;
+        return match task.take_result()?.into_value() {
+            joky::vm::TaskValue::Scalar(joky::vm::InstanceValue::Int32(value)) => Ok(value as u8),
+            joky::vm::TaskValue::Scalar(joky::vm::InstanceValue::Unit) => Ok(0),
+            _ => Err(cli_argument_error("Unsupported parallel main result")),
+        };
+    }
     if entry.suspends {
         let result = joky::runtime::driver::block_on(vm.prepare_async("main", &[])?)?;
         Ok(if entry.result_type == Type::Int32 {

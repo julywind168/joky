@@ -314,3 +314,88 @@ fn async_owner_views_drop_in_order_in_standalone_aot() {
     work.write("async_owner_drop.jk", &source);
     work.assert_native("async_owner_drop.jk", &[], b"2\n42\n1\n2\n3\n1\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn task_pool_cli_explicit_mode_and_standalone_driver() {
+    let work = Workspace::new();
+    work.write(
+        "parallel.jk",
+        r#"
+        import joky/task
+        fn leaf(n: Int32) @suspends -> Int32 { task.sleep_ms(2); n }
+        fn main() @suspends -> Int32 {
+            scope { branch { task.yield_now() }; task.sleep_ms(1) }
+            let (a, b) = join { | leaf(20) | leaf(22) }
+            let winner = race { | leaf(0) | leaf(0) }
+            a + b + winner
+        }
+    "#,
+    );
+    for workers in ["1", "2"] {
+        for interpreter in [false, true] {
+            let mut command = work.command();
+            command.args(["run", "--task-workers", workers]);
+            if interpreter {
+                command.arg("--interpreter");
+            }
+            let output = command.arg("parallel.jk").output().unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(42),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    let build = work
+        .command()
+        .args([
+            "build",
+            "--task-workers",
+            "2",
+            "parallel.jk",
+            "-o",
+            "parallel",
+        ])
+        .env("JOKY_RUNTIME", runtime_archive())
+        .output()
+        .unwrap();
+    success(&build);
+    assert_eq!(
+        Command::new(work.path().join("parallel"))
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(42)
+    );
+    work.write("local.jk", "fn main() @suspends { println(42) }");
+    for route in ["run", "build"] {
+        let rejected = work
+            .command()
+            .args([route, "--task-workers", "1", "local.jk"])
+            .output()
+            .unwrap();
+        failure(&rejected, "Parallel");
+        assert!(rejected.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("Parallel"));
+    }
+    for args in [
+        vec!["0"],
+        vec!["257"],
+        vec!["x"],
+        vec!["1", "--task-workers", "2"],
+    ] {
+        let output = work
+            .command()
+            .arg("run")
+            .arg("--task-workers")
+            .args(args)
+            .arg("parallel.jk")
+            .output()
+            .unwrap();
+        failure(&output, "--task-workers");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--task-workers"));
+    }
+}

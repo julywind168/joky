@@ -1,5 +1,5 @@
 //! Freeze an admitted entry before moving work to a worker. This is preparation
-//! infrastructure, not the worker-pool scheduler or a change to Local semantics.
+//! infrastructure used by explicit parallel execution; Local semantics stay unchanged.
 use super::{InstanceValue, InterpreterLimits};
 use crate::{
     backends::{interp, jit},
@@ -81,9 +81,16 @@ impl PreparedParallelTask {
         self,
         executor: &crate::runtime::parallel::ParallelExecutor,
     ) -> Result<ParallelTask, Error> {
+        self.submit_to(&executor.submitter())
+    }
+    /// Submit from any host thread through the thread-safe submission handle.
+    pub fn submit_to(
+        self,
+        submitter: &crate::runtime::parallel::ParallelSubmitter,
+    ) -> Result<ParallelTask, Error> {
         let root = self.root.clone();
         let code = Arc::new(self.code.clone());
-        let handle = executor.submit(
+        let handle = submitter.publish(
             root,
             code,
             Box::new(move || Ok(Box::new(RootJob(self.start()?)))),
@@ -352,8 +359,8 @@ impl ParallelTask {
     pub fn is_finished(&self) -> bool {
         self.handle.cleaned()
     }
-    pub fn wait(&self) {
-        self.handle.wait();
+    pub fn wait(&self) -> Result<(), Error> {
+        self.handle.wait()
     }
     pub fn take_result(&self) -> Result<ParallelOutput, Error> {
         let result = self

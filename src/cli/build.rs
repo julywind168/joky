@@ -13,6 +13,7 @@ pub(super) fn build(
     entry_point: super::EntryPoint,
     source: &Path,
     output: &Path,
+    mode: joky::runtime::parallel::ExecutionMode,
 ) -> Result<(), Error> {
     let source = source
         .canonicalize()
@@ -64,13 +65,21 @@ pub(super) fn build(
     // Keep source symbols separate from the C entry point and library functions.
     let mut compiler = AotCompiler::with_symbol_prefix("joky_program", "__joky_user_")?;
     compiler.compile_module(ast)?;
+    let parallel_main = match mode {
+        joky::runtime::parallel::ExecutionMode::Local => None,
+        joky::runtime::parallel::ExecutionMode::Parallel { workers } => Some(
+            compiler
+                .parallel_entry("main")?
+                .standalone_main_v1(workers, 4096)?,
+        ),
+    };
     let requires_runtime =
         compiler.requires_runtime() || ast.imports.iter().any(|import| import.path == "joky/vm");
     let main_slots = compiler.cps_frame_slots("main");
     compiler.write_object(&object)?;
     std::fs::write(
         &driver,
-        driver::render(&entry_point, main_slots, requires_runtime)?,
+        parallel_main.unwrap_or(driver::render(&entry_point, main_slots, requires_runtime)?),
     )
     .map_err(|error| {
         build_error(

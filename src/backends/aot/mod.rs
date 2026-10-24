@@ -34,6 +34,39 @@ impl ParallelEntry {
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
+    /// Render a standalone main only after compiler qualification of the full
+    /// call graph. The descriptor contains link-time symbols, not host addresses.
+    pub fn standalone_main_v1(&self, workers: usize, max_tasks: usize) -> Result<String, Error> {
+        crate::runtime::parallel::ExecutionMode::Parallel { workers }.validate()?;
+        if max_tasks == 0
+            || !self.info.signature.params.is_empty()
+            || !matches!(
+                self.info.signature.ret,
+                crate::Type::Unit | crate::Type::Int32
+            )
+        {
+            return Err(compile_error(
+                "Standalone parallel main requires () -> Unit or Int32",
+            ));
+        }
+        let header = include_str!("../../../include/joky_executor.h");
+        let symbol = &self.symbol;
+        let slots = self.info.frame_slots;
+        let kind = u32::from(self.info.signature.ret == crate::Type::Int32);
+        Ok(format!("{header}
+extern int32_t {symbol}(JokyCpsFrame *);
+extern void joky_runtime_error_clear(void);
+extern void joky_runtime_print_error(void);
+int main(void) {{
+    const JokyExecutionConfigV1 config = {{1, sizeof(JokyExecutionConfigV1), 1, {workers}, {max_tasks}}};
+    const JokyTaskMainV1 entry = {{1, sizeof(JokyTaskMainV1), {symbol}, {slots}, {kind}, 0}};
+    uint64_t value = 0;
+    joky_runtime_error_clear();
+    if (__joky_task_main_v1(&config, &entry, &value) != 0) {{ joky_runtime_print_error(); return 1; }}
+    return {kind} ? (uint8_t)value : 0;
+}}"))
+    }
+
     /// Bind the exact emitted CPS symbol and retain its executable code.
     ///
     /// # Safety
@@ -370,11 +403,24 @@ impl AotCompiler {
                 ));
             }
         }
-        self.parallel = crate::core::ir::parallel::analyse(
-            &plan,
-            &prepared,
-            &self.parallel_hosts.keys().cloned().collect(),
-        );
+        let mut safe_hosts = self
+            .parallel_hosts
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        for name in plan.functions.keys() {
+            if self
+                .registry
+                .binding(name)
+                .and_then(|b| b.host())
+                .as_ref()
+                .and_then(crate::runtime::parallel::Host::from_binding)
+                .is_some()
+            {
+                safe_hosts.insert(name.clone());
+            }
+        }
+        self.parallel = crate::core::ir::parallel::analyse(&plan, &prepared, &safe_hosts);
         self.sources = ast.sources.clone();
         self.requires_runtime = compiled.requires_runtime;
         self.exports = compiled

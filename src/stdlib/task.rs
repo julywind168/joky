@@ -63,7 +63,10 @@ pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
         (1, Some(Wake::Deadline(deadline))) if crate::runtime::executor::now() >= deadline => {
             complete(frame)
         }
-        (1, Some(Wake::Deadline(_))) => 1,
+        (1, Some(Wake::Deadline(deadline))) => {
+            crate::runtime::parallel::pool::wait_until(deadline);
+            1
+        }
         _ => fail("Invalid sleep_ms frame state"),
     }
 }

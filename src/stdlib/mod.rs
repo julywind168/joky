@@ -122,6 +122,30 @@ fn vm_bindings() -> Vec<NativeBinding> {
         .collect()
 }
 
+// These audited primitives retain only frame-local deadlines/state. Unlike the
+// public scalar host contract, they also use the runtime-owned wake field.
+fn parallel_task_binding(
+    spec: BindingSpec,
+    entry: crate::runtime::cps::CpsEntry,
+    slots: usize,
+) -> NativeBinding {
+    let host = crate::runtime::parallel::Host {
+        name: spec.name.clone(),
+        signature: spec.signature.clone(),
+        entry,
+        slots,
+        _owner: std::sync::Arc::new(()),
+    };
+    NativeBinding {
+        spec,
+        entry: Some(HostEntry::Cps {
+            entry,
+            frame_slots: Some(slots),
+        }),
+        owner: Some(Rc::new(host)),
+    }
+}
+
 fn build_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::default();
     unsafe {
@@ -161,14 +185,7 @@ fn build_registry() -> ModuleRegistry {
             format!("joky_task_{name}"),
         );
         spec.suspends = true;
-        NativeBinding {
-            spec,
-            entry: Some(HostEntry::Cps {
-                entry,
-                frame_slots: Some(frame_slots),
-            }),
-            owner: None,
-        }
+        parallel_task_binding(spec, entry, frame_slots)
     });
     // Static CPS callbacks use the declared frame slots and retain no pointers.
     unsafe { registry.register_module("joky/task", tasks) }.expect("Task bindings must be valid");
@@ -229,14 +246,7 @@ fn build_registry() -> ModuleRegistry {
     unsafe {
         registry.register_module(
             "joky/internal/task",
-            [NativeBinding {
-                spec,
-                entry: Some(HostEntry::Cps {
-                    entry: task::yield_internal,
-                    frame_slots: Some(0),
-                }),
-                owner: None,
-            }],
+            [parallel_task_binding(spec, task::yield_internal, 0)],
         )
     }
     .expect("Private task binding must be valid");
@@ -249,14 +259,7 @@ fn build_registry() -> ModuleRegistry {
     unsafe {
         registry.register_module(
             "joky/internal/session",
-            [NativeBinding {
-                spec,
-                entry: Some(HostEntry::Cps {
-                    entry: task::sleep_internal,
-                    frame_slots: Some(1),
-                }),
-                owner: None,
-            }],
+            [parallel_task_binding(spec, task::sleep_internal, 1)],
         )
     }
     .expect("Private session timer binding must be valid");

@@ -227,7 +227,7 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
                 .unwrap()
             };
             let task = prepared.submit(&executor).unwrap();
-            task.wait();
+            task.wait().unwrap();
             let result = task.take_result().unwrap().into_value();
             let TaskValue::Scalar(InstanceValue::Int32(value)) = result else {
                 panic!("scalar result")

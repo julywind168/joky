@@ -13,6 +13,7 @@ use std::{
     },
     task::Poll,
     thread::{self, JoinHandle},
+    time::Instant,
 };
 pub(crate) type Output = Box<dyn Any + Send>;
 pub(crate) type Factory = Box<dyn FnOnce() -> Result<Box<dyn Job>, Error> + Send>;
@@ -49,6 +50,7 @@ struct State {
     result: Option<Result<Output, Error>>,
     sequence: u64,
     failure: Option<Error>,
+    deadline: Option<Instant>,
 }
 struct Task {
     id: u64,
@@ -83,11 +85,33 @@ pub struct ParallelExecutor {
     workers: Vec<JoinHandle<()>>,
     _local: PhantomData<Rc<()>>,
 }
+/// Clones submit checked packets; dropping a submitter never waits for workers.
+#[derive(Clone)]
+pub struct ParallelSubmitter {
+    shared: Arc<Shared>,
+}
+impl ParallelSubmitter {
+    pub fn submit(
+        &self,
+        task: crate::vm::PreparedParallelTask,
+    ) -> Result<crate::vm::ParallelTask, Error> {
+        task.submit_to(self)
+    }
+    pub(crate) fn publish(
+        &self,
+        root: Storage,
+        code: Arc<dyn Any + Send + Sync>,
+        factory: Factory,
+    ) -> Result<Handle, Error> {
+        Ok(publish(&self.shared, None, root, code, vec![factory], None)?.remove(0))
+    }
+}
 #[derive(Clone)]
 pub(crate) struct Handle(Arc<Task>);
 thread_local! {
     static CURRENT: RefCell<Option<Arc<Task>>> = const { RefCell::new(None) };
     static WAITING: Cell<bool> = const { Cell::new(false) };
+    static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
     static CLEANING: Cell<bool> = const { Cell::new(false) };
 }
 pub(crate) fn active() -> bool {
@@ -120,6 +144,13 @@ pub(crate) fn code<T: Any + Send + Sync>() -> Option<Arc<T>> {
 }
 pub(crate) fn wait_for_children() {
     WAITING.with(|w| w.set(true));
+}
+/// Arm only the actual polling task. Deadlines never retain a frame pointer.
+pub(crate) fn wait_until(deadline: Instant) {
+    if active() {
+        WAITING.with(|w| w.set(true));
+        DEADLINE.with(|d| d.set(Some(d.get().map_or(deadline, |old| old.min(deadline)))));
+    }
 }
 pub(crate) struct CleanupGuard(bool);
 impl CleanupGuard {
@@ -195,14 +226,17 @@ impl Handle {
     pub(crate) fn take(&self) -> Option<Result<Output, Error>> {
         lock(&self.0.state).result.take()
     }
-    pub(crate) fn wait(&self) {
+    pub(crate) fn wait(&self) -> Result<(), Error> {
+        if active() {
+            return Err(invalid("Blocking task waits are forbidden on workers"));
+        }
         let mut q = lock(&self.0.shared.queue);
         loop {
             // Never acquire a task lock while holding the queue lock: wake uses
             // the opposite order. The timed wait also tolerates a just-missed wake.
             drop(q);
             if self.cleaned() {
-                return;
+                return Ok(());
             }
             q = lock(&self.0.shared.queue);
             q = self
@@ -217,6 +251,11 @@ impl Handle {
 }
 impl ParallelExecutor {
     pub fn new(workers: usize, max_tasks: usize) -> Result<Self, Error> {
+        if active() {
+            return Err(invalid(
+                "Parallel control must be created outside task workers",
+            ));
+        }
         if workers == 0 || workers > 256 || max_tasks == 0 {
             return Err(invalid(
                 "Parallel workers must be 1..=256 and task capacity must be positive",
@@ -248,13 +287,18 @@ impl ParallelExecutor {
         }
         Ok(pool)
     }
+    pub fn submitter(&self) -> ParallelSubmitter {
+        ParallelSubmitter {
+            shared: self.shared.clone(),
+        }
+    }
     pub(crate) fn submit(
         &self,
         root: Storage,
         code: Arc<dyn Any + Send + Sync>,
         factory: Factory,
     ) -> Result<Handle, Error> {
-        Ok(publish(&self.shared, None, root, code, vec![factory], None)?.remove(0))
+        self.submitter().publish(root, code, factory)
     }
     pub fn request_close(&self) {
         let tasks = {
@@ -399,6 +443,7 @@ fn publish(
                 result: None,
                 sequence: 0,
                 failure: None,
+                deadline: None,
             }),
             factory: Mutex::new(Some(factory)),
             _charge: charge,
@@ -428,17 +473,45 @@ struct Local {
 fn run(shared: Arc<Shared>, worker: usize) {
     let mut local = HashMap::<u64, Local>::new();
     loop {
+        // Scan only this worker's records outside the queue lock (wake takes
+        // state then queue). Recheck the queue before sleeping to avoid lost wakes.
+        let now = Instant::now();
+        let mut deadline: Option<Instant> = None;
+        for item in local.values() {
+            let due = lock(&item._task.state).deadline;
+            if let Some(due) = due {
+                if due <= now {
+                    item._task.wake();
+                } else {
+                    deadline = Some(deadline.map_or(due, |old| old.min(due)));
+                }
+            }
+        }
         let task = {
             let mut q = lock(&shared.queue);
             loop {
                 if let Some(task) = q.ready[worker].pop_front() {
-                    break task;
+                    break Some(task);
                 }
                 if q.closing && local.is_empty() {
                     return;
                 }
-                q = shared.wake.wait(q).unwrap_or_else(|e| e.into_inner());
+                if let Some(deadline) = deadline {
+                    let (next, timeout) = shared
+                        .wake
+                        .wait_timeout(q, deadline.saturating_duration_since(Instant::now()))
+                        .unwrap_or_else(|e| e.into_inner());
+                    q = next;
+                    if timeout.timed_out() {
+                        break None;
+                    }
+                } else {
+                    q = shared.wake.wait(q).unwrap_or_else(|e| e.into_inner());
+                }
             }
+        };
+        let Some(task) = task else {
+            continue;
         };
         let generation = {
             let mut state = lock(&task.state);
@@ -446,10 +519,12 @@ fn run(shared: Arc<Shared>, worker: usize) {
                 continue;
             }
             state.phase = Phase::Running;
+            state.deadline = None;
             state.generation
         };
         CURRENT.with(|c| c.replace(Some(task.clone())));
         WAITING.with(|w| w.set(false));
+        DEADLINE.with(|d| d.set(None));
         let _storage = Guard::enter(&task.root);
         let item = local.entry(task.id).or_insert_with(|| Local {
             _task: task.clone(),
@@ -529,6 +604,7 @@ fn run(shared: Arc<Shared>, worker: usize) {
         } else {
             let mut state = lock(&task.state);
             state.phase = Phase::Waiting;
+            state.deadline = DEADLINE.with(Cell::get);
             let ready = !WAITING.with(Cell::get)
                 || state.generation != generation
                 || task.cancelled.load(Ordering::Acquire);
@@ -736,7 +812,7 @@ mod tests {
         record.wake();
         record.wake();
         release.wait();
-        task.wait();
+        task.wait().unwrap();
         assert_eq!(
             *task.take().unwrap().unwrap().downcast::<usize>().unwrap(),
             42
@@ -747,5 +823,55 @@ mod tests {
             .ready
             .iter()
             .all(VecDeque::is_empty));
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    #[test]
+    fn task_pool_deadline_wait_is_targeted_and_worker_blocking_is_rejected() {
+        struct Waiting(std::sync::mpsc::Sender<Arc<Task>>);
+        impl Job for Waiting {
+            fn poll(&mut self) -> Poll<Result<Output, Error>> {
+                assert!(ParallelExecutor::new(1, 4).is_err());
+                let task = CURRENT.with(|c| c.borrow().as_ref().unwrap().clone());
+                assert!(Handle(task.clone()).wait().is_err());
+                wait_until(Instant::now() + std::time::Duration::from_secs(3600));
+                self.0.send(task).unwrap();
+                Poll::Pending
+            }
+        }
+        let budget = super::super::TaskBudget::new(1 << 20);
+        let root = Storage::new(vec![budget.clone()]).unwrap();
+        let mut executor = ParallelExecutor::new(1, 8).unwrap();
+        let (sent, receive) = std::sync::mpsc::channel();
+        let task = executor
+            .submit(
+                root,
+                Arc::new(()),
+                Box::new(move || Ok(Box::new(Waiting(sent)))),
+            )
+            .unwrap();
+        let record = receive
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        while lock(&record.state).phase == Phase::Running {
+            std::thread::yield_now();
+        }
+        assert_eq!(lock(&record.state).phase, Phase::Waiting);
+        assert!(
+            receive.try_recv().is_err(),
+            "a parked timer must not busy-poll"
+        );
+        task.cancel();
+        task.wait().unwrap();
+        assert_eq!(
+            task.take().unwrap().err().unwrap().code(),
+            ErrorCode::Cancelled
+        );
+        executor.wait_closed();
+        drop((record, task, executor));
+        assert_eq!(budget.used(), 0);
     }
 }
