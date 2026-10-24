@@ -40,6 +40,8 @@ pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, E
         files: None,
         sources: Default::default(),
         version: crate::runtime::suspension::ModuleId(0),
+        task_targets: Vec::new(),
+        task_entries: HashMap::new(),
         functions: HashMap::new(),
         callees: Vec::new(),
     };
@@ -188,6 +190,8 @@ fn unary_assignments_preserve_in_place_operands_and_wrapping() {
                 files: None,
                 sources: Default::default(),
                 version: crate::runtime::suspension::ModuleId(0),
+                task_targets: Vec::new(),
+                task_entries: HashMap::new(),
                 functions: HashMap::new(),
                 callees: Vec::new(),
             };
@@ -556,6 +560,8 @@ fn slot_compaction_preserves_parameter_positions_and_string_constants() {
         files: None,
         sources: Default::default(),
         version: crate::runtime::suspension::ModuleId(0),
+        task_targets: Vec::new(),
+        task_entries: HashMap::new(),
         functions: HashMap::new(),
         callees: Vec::new(),
     };
@@ -608,6 +614,8 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
+            task_targets: Vec::new(),
+            task_entries: HashMap::new(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
@@ -672,6 +680,8 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
+            task_targets: Vec::new(),
+            task_entries: HashMap::new(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
@@ -736,6 +746,8 @@ fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
+            task_targets: Vec::new(),
+            task_entries: HashMap::new(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
@@ -807,6 +819,8 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
                 files: None,
                 sources: Default::default(),
                 version: crate::runtime::suspension::ModuleId(0),
+                task_targets: Vec::new(),
+                task_entries: HashMap::new(),
                 callees: names
                     .iter()
                     .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
@@ -892,6 +906,8 @@ fn method_receivers_and_constant_values_match_unoptimized_execution() {
             files: None,
             sources: Default::default(),
             version: crate::runtime::suspension::ModuleId(0),
+            task_targets: Vec::new(),
+            task_entries: HashMap::new(),
             callees: names
                 .iter()
                 .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))

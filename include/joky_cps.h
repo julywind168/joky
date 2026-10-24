@@ -107,6 +107,34 @@ JokyCpsFrame *__joky_cps_child(JokyCpsFrame *frame, size_t slot_count);
 void __joky_cps_release_child(JokyCpsFrame *frame);
 JokyCpsFrame *__joky_cps_child_at(JokyCpsFrame *frame, size_t index, size_t slot_count);
 void __joky_cps_release_children(JokyCpsFrame *frame);
+/* Prepared local tasks retain an independent capture packet and a fixed entry.
+ * Fill/transfer ownership into inputs before publishing. Input pointers expire
+ * at first poll or destruction. Execution slots are allocated on first poll.
+ * Entry code must remain alive until cleanup. These are private Local adapters. */
+typedef struct JokyTaskEntryV1 JokyTaskEntryV1;
+uint64_t __joky_task_entry_v1(JokyCpsFrame *parent, const JokyTaskEntryV1 *entry, const size_t *indirect);
+JokyCpsFrame *__joky_cps_task_prepare_v1(JokyCpsFrame *parent, uint64_t entry);
+JokyCpsFrame *__joky_cps_task_inputs_v1(JokyCpsFrame *child);
+JokyCpsFrame *__joky_cps_concurrent_prepare_v1(JokyCpsFrame *parent, size_t index, uint64_t entry);
+int32_t __joky_cps_task_poll_v1(JokyCpsFrame *child);
+
+/* Versioned private task protocol. Bind the current Local frame before calls.
+ * Tokens never encode addresses. prepare consumes inputs only on success;
+ * publish failure leaves prepared children owned by the scope. Result delivery
+ * follows successful join/drain and transfers ownership once, without writing
+ * outputs on failure. Only join/drain can return Pending (1); Complete=0,
+ * Failed=2, Cancelled=3. Local polling adapters below implement the driver. */
+void __joky_task_context_v1(JokyCpsFrame *f);
+uint64_t __joky_task_current_scope_v1(uint32_t k);
+uint64_t __joky_task_scope_open_v1(uint32_t k, size_t n);
+uint64_t __joky_task_child_prepare_v1(uint64_t s, uint64_t e, const uint64_t *p, size_t n);
+int32_t __joky_task_publish_v1(uint64_t s, const uint64_t *p, size_t n);
+int32_t __joky_task_join_v1(uint64_t s);
+int32_t __joky_task_take_result_v1(uint64_t s, size_t i, uint64_t *p, size_t n);
+int32_t __joky_task_request_cancel_v1(uint64_t s);
+int32_t __joky_task_drain_v1(uint64_t s);
+int32_t __joky_task_scope_release_v1(uint64_t s);
+
 /* Local static-group adapters for checked generated code only. All captures are
  * prepared before open (kind: Join=0, Race=1). next returns a source index,
  * -1 for Pending, -2 for a selected result, or -3 with a runtime error.

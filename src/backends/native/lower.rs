@@ -19,6 +19,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
 pub(super) struct DataRefs {
+    pub tasks: HashMap<String, GlobalValue>,
     pub places: Vec<(Type, GlobalValue, usize)>,
     pub domain: Option<GlobalValue>,
     pub dyn_tables: HashMap<usize, GlobalValue>,
@@ -605,8 +606,63 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, types::I32],
             vec![types::I32],
         ),
+        ("__joky_task_context_v1", vec![ptr], vec![]),
+        (
+            "__joky_task_current_scope_v1",
+            vec![types::I32],
+            vec![types::I64],
+        ),
+        (
+            "__joky_task_scope_open_v1",
+            vec![types::I32, ptr],
+            vec![types::I64],
+        ),
+        (
+            "__joky_task_child_prepare_v1",
+            vec![types::I64, types::I64, ptr, ptr],
+            vec![types::I64],
+        ),
+        (
+            "__joky_task_publish_v1",
+            vec![types::I64, ptr, ptr],
+            vec![types::I32],
+        ),
+        ("__joky_task_join_v1", vec![types::I64], vec![types::I32]),
+        (
+            "__joky_task_take_result_v1",
+            vec![types::I64, ptr, ptr, ptr],
+            vec![types::I32],
+        ),
+        (
+            "__joky_task_request_cancel_v1",
+            vec![types::I64],
+            vec![types::I32],
+        ),
+        ("__joky_task_drain_v1", vec![types::I64], vec![types::I32]),
+        (
+            "__joky_task_scope_release_v1",
+            vec![types::I64],
+            vec![types::I32],
+        ),
         ("__joky_cps_task_scope_enter", vec![ptr], vec![]),
         ("__joky_cps_task_child", vec![ptr, ptr], vec![ptr]),
+        (
+            "__joky_task_entry_v1",
+            vec![ptr, ptr, ptr],
+            vec![types::I64],
+        ),
+        (
+            "__joky_cps_task_prepare_v1",
+            vec![ptr, types::I64],
+            vec![ptr],
+        ),
+        ("__joky_cps_task_inputs_v1", vec![ptr], vec![ptr]),
+        ("__joky_cps_task_poll_v1", vec![ptr], vec![types::I32]),
+        (
+            "__joky_cps_concurrent_prepare_v1",
+            vec![ptr, ptr, types::I64],
+            vec![ptr],
+        ),
         ("__joky_cps_task_branch_commit", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cps_task_join", vec![ptr], vec![types::I32]),
         ("__joky_runtime_division_by_zero", vec![ptr, ptr], vec![]),
@@ -1228,6 +1284,7 @@ fn lower_cps_result(
 }
 
 struct ConcurrentContext<'a> {
+    data: &'a DataRefs,
     plan: &'a FunctionPlan,
     mode: ExecMode<'a>,
     result: Option<&'a Slot>,
@@ -1264,8 +1321,65 @@ fn concurrent_result_packet(
     )
 }
 
+fn task_call(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Value,
+    name: &str,
+    args: &[Value],
+) -> Value {
+    builder.ins().call(refs["__joky_task_context_v1"], &[frame]);
+    helper(builder, refs, name, args)
+}
+
+fn task_scope(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Value,
+    kind: i64,
+) -> Value {
+    let kind = builder.ins().iconst(types::I32, kind);
+    task_call(
+        builder,
+        refs,
+        frame,
+        "__joky_task_current_scope_v1",
+        &[kind],
+    )
+}
+
+fn capture_lanes(
+    builder: &mut FunctionBuilder,
+    slots: Value,
+    args: &[Option<Slot>],
+    ptr_ty: types::Type,
+) -> Value {
+    let buffer = builder.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        (args.len().max(1) * 8) as u32,
+        3,
+    ));
+    for (index, arg) in args.iter().enumerate() {
+        let bits = if let Some(arg) = arg {
+            builder.ins().load(
+                types::I64,
+                MemFlagsData::new(),
+                slots,
+                (arg.index * 8) as i32,
+            )
+        } else {
+            builder.ins().iconst(types::I64, 0)
+        };
+        builder
+            .ins()
+            .stack_store(ptr_ty, bits, buffer, (index * 8) as i32);
+    }
+    builder.ins().stack_addr(ptr_ty, buffer, 0)
+}
+
 fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_>) {
     let ConcurrentContext {
+        data,
         plan,
         mode,
         result,
@@ -1280,34 +1394,62 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         state_offset,
         states,
     } = context;
-    // Allocate every child and evaluate all branch arguments once. The child
-    // frames remain in the parent until the structured operation ends.
-    for (index, branch) in branches.iter().enumerate() {
-        let descriptor = branch
-            .indirect
-            .as_ref()
-            .map(|target| load(builder, slots, target));
-        let count = cps_slot_count(builder, &functions[&branch.name], descriptor, ptr_ty);
-        let child = child_at(builder, refs, frame, index, count, ptr_ty);
-        lower_cps_arguments(
-            builder,
-            &mut SlotAccess::Frames { slots },
-            &branch.args,
-            refs,
-            ptr_ty,
-            frame,
-            child,
-        );
-        let pending = builder.ins().iconst(types::I8, 0);
-        store(builder, slots, &branch.done, pending);
-    }
     let kind_tag = builder
         .ins()
         .iconst(types::I32, if kind == ConcurrentKind::Join { 0 } else { 1 });
     let count = builder.ins().iconst(ptr_ty, branches.len() as i64);
-    builder.ins().call(
-        refs["__joky_cps_concurrent_open_v1"],
-        &[frame, kind_tag, count],
+    let scope = task_call(
+        builder,
+        refs,
+        frame,
+        "__joky_task_scope_open_v1",
+        &[kind_tag, count],
+    );
+    check_call(builder, refs, Some(frame), None);
+    let tokens = builder.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        (branches.len() * 8) as u32,
+        3,
+    ));
+    for (index, branch) in branches.iter().enumerate() {
+        let indirect = branch
+            .indirect
+            .as_ref()
+            .map(|target| load(builder, slots, target))
+            .unwrap_or_else(|| builder.ins().iconst(ptr_ty, 0));
+        let metadata = builder
+            .ins()
+            .symbol_value(ptr_ty, data.tasks[&format!("static:{}", branch.done.index)]);
+        let entry = helper(
+            builder,
+            refs,
+            "__joky_task_entry_v1",
+            &[frame, metadata, indirect],
+        );
+        check_call(builder, refs, Some(frame), None);
+        let lanes = capture_lanes(builder, slots, &branch.args, ptr_ty);
+        let lane_count = builder.ins().iconst(ptr_ty, branch.args.len() as i64);
+        let child = task_call(
+            builder,
+            refs,
+            frame,
+            "__joky_task_child_prepare_v1",
+            &[scope, entry, lanes, lane_count],
+        );
+        check_call(builder, refs, Some(frame), None);
+        builder
+            .ins()
+            .stack_store(ptr_ty, child, tokens, (index * 8) as i32);
+        let pending = builder.ins().iconst(types::I8, 0);
+        store(builder, slots, &branch.done, pending);
+    }
+    let tokens = builder.ins().stack_addr(ptr_ty, tokens, 0);
+    task_call(
+        builder,
+        refs,
+        frame,
+        "__joky_task_publish_v1",
+        &[scope, tokens, count],
     );
     check_call(builder, refs, Some(frame), None);
     for (index, branch) in branches.iter().enumerate() {
@@ -1362,19 +1504,11 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         builder.switch_to_block(blocks[index]);
         let complete = builder.create_block();
         let waiting = builder.create_block();
-        let descriptor = branch
-            .indirect
-            .as_ref()
-            .map(|target| load(builder, slots, target));
-        let count = cps_slot_count(builder, &functions[&branch.name], descriptor, ptr_ty);
-        let child = child_at(builder, refs, frame, index, count, ptr_ty);
-        let status = poll_cps(
-            builder,
-            refs.get(&branch.name).copied(),
-            descriptor,
-            child,
-            ptr_ty,
-        );
+        // Preparation froze the entry and layout; polling never reads the
+        // parent's indirect target or capture slots again.
+        let zero = builder.ins().iconst(ptr_ty, 0);
+        let child = child_at(builder, refs, frame, index, zero, ptr_ty);
+        let status = helper(builder, refs, "__joky_cps_task_poll_v1", &[child]);
         if functions[&branch.name].may_fail {
             check_call(builder, refs, Some(frame), None);
         }
@@ -1444,9 +1578,10 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
     }
     // No result enters the parent until all child execution and stop hooks end.
     builder.switch_to_block(finished);
-    builder
-        .ins()
-        .call(refs["__joky_cps_concurrent_drain_v1"], &[frame]);
+    let scope = task_scope(builder, refs, frame, 0);
+    task_call(builder, refs, frame, "__joky_task_join_v1", &[scope]);
+    check_call(builder, refs, Some(frame), None);
+    task_call(builder, refs, frame, "__joky_task_drain_v1", &[scope]);
     check_call(builder, refs, Some(frame), None);
     let collect_results = builder.create_block();
     builder.ins().jump(collect_results, &[]);
@@ -1468,32 +1603,31 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
     results_switch.emit(builder, next_result, invalid);
     for (index, branch) in branches.iter().enumerate() {
         builder.switch_to_block(result_blocks[index]);
-        let index = builder.ins().iconst(ptr_ty, index as i64);
-        let packet = helper(
+        let requested = builder.ins().iconst(
+            ptr_ty,
+            if kind == ConcurrentKind::Race {
+                0
+            } else {
+                index as i64
+            },
+        );
+        let destination = branch.result.as_ref().or(result);
+        let count = builder.ins().iconst(
+            ptr_ty,
+            destination.map_or(0, |slot| slot.ty.scalar_types().len()) as i64,
+        );
+        let output = destination
+            .map(|slot| builder.ins().iadd_imm_u(slots, (slot.index * 8) as i64))
+            .unwrap_or_else(|| builder.ins().iconst(ptr_ty, 0));
+        let scope = task_scope(builder, refs, frame, 0);
+        task_call(
             builder,
             refs,
-            "__joky_cps_concurrent_take_v1",
-            &[frame, index],
+            frame,
+            "__joky_task_take_result_v1",
+            &[scope, requested, output, count],
         );
         check_call(builder, refs, Some(frame), None);
-        if let Some(destination) = branch.result.as_ref().or(result) {
-            let packet_slots = helper(builder, refs, "__joky_cps_slots", &[packet]);
-            for (offset, dst) in destination.scalars().enumerate() {
-                let source = Slot {
-                    index: offset,
-                    ty: dst.ty.clone(),
-                };
-                let value = load(builder, packet_slots, &source);
-                store(builder, slots, &dst, value);
-            }
-            if branch.cleanup.is_some() {
-                let key = builder.ins().iconst(ptr_ty, destination.owner_key() as i64);
-                builder.ins().call(
-                    refs["__joky_cps_transfer_owner_v2"],
-                    &[packet, frame, key, key],
-                );
-            }
-        }
         let one = builder.ins().iconst(types::I8, 1);
         store(builder, slots, &branch.done, one);
         builder.ins().jump(collect_results, &[]);
@@ -2551,6 +2685,7 @@ fn lower_ops(
                 lower_concurrent(
                     builder,
                     ConcurrentContext {
+                        data,
                         plan,
                         mode,
                         result: result.as_ref(),
@@ -2569,9 +2704,14 @@ fn lower_ops(
             }
             Op::ConcurrentFinish => {
                 let frame = mode.frame().expect("concurrent combination requires CPS");
-                builder
-                    .ins()
-                    .call(refs["__joky_cps_release_children"], &[frame]);
+                let scope = task_scope(builder, refs, frame, 0);
+                task_call(
+                    builder,
+                    refs,
+                    frame,
+                    "__joky_task_scope_release_v1",
+                    &[scope],
+                );
                 check_call(builder, refs, Some(frame), None);
             }
             Op::OutboxEmit { token, bytes } => {
@@ -2703,9 +2843,16 @@ fn lower_ops(
                 let ExecMode::Suspends { frame, .. } = mode else {
                     unreachable!("task scopes are only valid in suspending functions")
                 };
-                builder
-                    .ins()
-                    .call(refs["__joky_cps_task_scope_enter"], &[frame]);
+                let kind = builder.ins().iconst(types::I32, 2);
+                let capacity = builder.ins().iconst(ptr_ty, 0);
+                task_call(
+                    builder,
+                    refs,
+                    frame,
+                    "__joky_task_scope_open_v1",
+                    &[kind, capacity],
+                );
+                check_call(builder, refs, Some(frame), None);
             }
             Op::TaskBranch {
                 entry, captures, ..
@@ -2716,53 +2863,40 @@ fn lower_ops(
                 let SlotAccess::Frames { slots } = &*slots else {
                     unreachable!("task branches address frame memory")
                 };
-                // Registration snapshots the captures: values are copied into
-                // the child frame and owning inputs move their cleanup duty.
-                for capture in captures.iter().flatten().filter(|s| s.ty.is_owner()) {
-                    let key = builder.ins().iconst(ptr_ty, capture.owner_key() as i64);
-                    builder.ins().call(
-                        refs["__joky_cleanup_snapshot"],
-                        &[mode.cleanup().unwrap(), key],
-                    );
-                    check_call(builder, refs, Some(frame), None);
-                }
-                let count = cps_slot_count(builder, &functions[entry], None, ptr_ty);
-                let child = helper(builder, refs, "__joky_cps_task_child", &[frame, count]);
-                // A null child means the live-task quota was exhausted and a
-                // controlled runtime error is already recorded.
+                let descriptor = builder.ins().symbol_value(ptr_ty, data.tasks[entry]);
+                let zero = builder.ins().iconst(ptr_ty, 0);
+                let entry = helper(
+                    builder,
+                    refs,
+                    "__joky_task_entry_v1",
+                    &[frame, descriptor, zero],
+                );
                 check_call(builder, refs, Some(frame), None);
-                let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
-                for (slot_index, capture) in captures.iter().enumerate() {
-                    if let Some(capture) = capture {
-                        let value = load(builder, *slots, capture);
-                        store(
-                            builder,
-                            child_slots,
-                            &Slot {
-                                index: slot_index,
-                                ty: capture.ty.clone(),
-                            },
-                            value,
-                        );
-                    }
-                }
-                for (to, capture) in captures.iter().enumerate().filter_map(|(to, capture)| {
-                    capture
-                        .as_ref()
-                        .filter(|s| s.ty.is_suspend_safe_owner())
-                        .map(|s| (to, s))
-                }) {
-                    let from = builder.ins().iconst(ptr_ty, capture.owner_key() as i64);
-                    let to = builder.ins().iconst(ptr_ty, to as i64);
-                    builder.ins().call(
-                        refs["__joky_cps_transfer_owner_v2"],
-                        &[frame, child, from, to],
-                    );
-                }
-                let entry_addr = builder.ins().func_addr(ptr_ty, refs[entry]);
-                builder.ins().call(
-                    refs["__joky_cps_task_branch_commit"],
-                    &[frame, child, entry_addr],
+                let scope = task_scope(builder, refs, frame, 2);
+                let lanes = capture_lanes(builder, *slots, captures, ptr_ty);
+                let count = builder.ins().iconst(ptr_ty, captures.len() as i64);
+                let child = task_call(
+                    builder,
+                    refs,
+                    frame,
+                    "__joky_task_child_prepare_v1",
+                    &[scope, entry, lanes, count],
+                );
+                check_call(builder, refs, Some(frame), None);
+                let token = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    8,
+                    3,
+                ));
+                builder.ins().stack_store(ptr_ty, child, token, 0);
+                let tokens = builder.ins().stack_addr(ptr_ty, token, 0);
+                let count = builder.ins().iconst(ptr_ty, 1);
+                task_call(
+                    builder,
+                    refs,
+                    frame,
+                    "__joky_task_publish_v1",
+                    &[scope, tokens, count],
                 );
                 check_call(builder, refs, Some(frame), None);
             }
@@ -2782,7 +2916,9 @@ fn lower_ops(
                     .store(MemFlagsData::new(), saved, frame, state_offset);
                 builder.ins().jump(states[*state as usize], &[]);
                 builder.switch_to_block(states[*state as usize]);
-                let status = helper(builder, refs, "__joky_cps_task_join", &[frame]);
+                let scope = task_scope(builder, refs, frame, 2);
+                let status = task_call(builder, refs, frame, "__joky_task_join_v1", &[scope]);
+                check_call(builder, refs, Some(frame), None);
                 let zero = builder.ins().iconst(types::I32, 0);
                 let completed = builder.ins().icmp(IntCC::Equal, status, zero);
                 let status_check = builder.create_block();
@@ -2802,6 +2938,14 @@ fn lower_ops(
                 builder.ins().call(refs["__joky_cps_finish"], &[frame]);
                 builder.ins().return_(&[status]);
                 builder.switch_to_block(continuation);
+                task_call(
+                    builder,
+                    refs,
+                    frame,
+                    "__joky_task_scope_release_v1",
+                    &[scope],
+                );
+                check_call(builder, refs, Some(frame), None);
             }
         }
     }

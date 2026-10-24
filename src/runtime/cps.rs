@@ -5,6 +5,8 @@
 //! frame after the caller signals readiness; it must preserve its own progress.
 
 pub(crate) mod concurrent;
+pub(crate) mod protocol;
+pub(crate) mod task;
 
 use super::arena::Arena;
 use super::borrowed_host::{BorrowingHostStop, STOP_CANCELLED};
@@ -50,6 +52,11 @@ pub struct CpsFrame {
     pub(crate) text_result: Option<String>,
     concurrent: Option<LocalTaskGroup>,
     concurrent_results: Vec<Option<Box<CpsFrame>>>,
+    prepared: Option<task::Prepared>,
+    task_polling: bool,
+    task_entries: std::collections::BTreeMap<(usize, usize, usize), Rc<task::CheckedEntry>>,
+    task_code: Option<Rc<task::CheckedEntry>>,
+    task_protocol: Vec<protocol::Scope>,
 }
 
 impl CpsFrame {
@@ -76,6 +83,11 @@ impl CpsFrame {
             text_result: None,
             concurrent: None,
             concurrent_results: Vec::new(),
+            prepared: None,
+            task_polling: false,
+            task_entries: Default::default(),
+            task_code: None,
+            task_protocol: Vec::new(),
         }
     }
 
@@ -98,11 +110,42 @@ impl CpsFrame {
         if self.state != DONE {
             self.state = FAILED;
         }
+        let primary = super::error::current_error();
+        if let Some(group) = &mut self.concurrent {
+            group.stop(primary.clone());
+            let _ = group.begin_drain();
+        }
+        for scope in &mut self.task_scopes {
+            match &primary {
+                Some(error) => scope.fail(error.clone()),
+                None => scope.cancel(),
+            }
+            let _ = scope.begin_drain();
+        }
+        let prepared: Vec<_> = self
+            .task_protocol
+            .iter_mut()
+            .flat_map(|scope| scope.take_prepared())
+            .collect();
+        drop(prepared);
         self.children.clear();
+        if let Some(group) = &mut self.concurrent {
+            if !group.drain_finished() {
+                let cleanup = super::error::current_error().map_or(Ok(()), Err);
+                let _ = group.finish_drain(cleanup);
+            }
+        }
+        for index in 0..self.task_scopes.len() {
+            let children = self.task_scopes[index].take_children();
+            drop(children);
+            let cleanup = super::error::current_error().map_or(Ok(()), Err);
+            let _ = self.task_scopes[index].finish_drain(cleanup);
+        }
         self.task_scopes.clear();
         self.release_concurrent_results();
         self.concurrent = None;
         self.task_entry = None;
+        self.prepared = None;
         self.text_views.clear();
         if !self.cleanup.is_null() {
             let cleanup = std::mem::replace(&mut self.cleanup, std::ptr::null_mut());
@@ -116,6 +159,9 @@ impl CpsFrame {
         }
         self.wake = None;
         self.arena = None;
+        self.task_code = None;
+        self.task_entries.clear();
+        self.task_protocol.clear();
     }
 
     pub(crate) fn wait_plan(&self) -> super::driver::WaitPlan {
@@ -228,6 +274,14 @@ pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_task_scope_enter"]
 pub unsafe extern "C" fn task_scope_enter(frame: *mut CpsFrame) {
+    if (*frame).task_scopes.iter().any(LocalTaskScope::draining) {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidState,
+            "Cannot open a task scope during cleanup",
+        ));
+        return;
+    }
     (*frame).task_scopes.push(DynamicTaskScope::default());
 }
 
@@ -274,6 +328,19 @@ pub unsafe extern "C" fn task_branch_commit(
 ) {
     let frame = &mut *frame;
     let mut child = Box::from_raw(child);
+    if child
+        .task_code
+        .as_ref()
+        .is_some_and(|code| !std::ptr::fn_addr_eq(code.entry, entry))
+    {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Abi,
+            crate::ErrorCode::AbiError,
+            "Published task entry differs from its checked descriptor",
+        ));
+        drop(child);
+        return;
+    }
     child.task_entry = Some(entry);
     let scope = frame
         .task_scopes
@@ -292,34 +359,85 @@ pub unsafe extern "C" fn task_branch_commit(
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_task_join"]
 pub unsafe extern "C" fn task_join(frame: *mut CpsFrame) -> i32 {
-    let frame = &mut *frame;
-    let Some(scope) = frame.task_scopes.last_mut() else {
+    if (*frame).task_scopes.iter().any(LocalTaskScope::draining) {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidState,
+            "Cannot reenter a draining task scope",
+        ));
+        return INVALID_STATE;
+    }
+    let Some(index) = (*frame).task_scopes.len().checked_sub(1) else {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidState,
+            "Missing joining task scope",
+        ));
         return INVALID_STATE;
     };
-    scope.close();
-    while let Some(id) = scope.next() {
-        let child = scope.get_mut(id).expect("live child");
-        let entry = child.task_entry.expect("registered child entry");
-        let status = entry(&mut **child);
-        match status {
-            0 | 1 => {
-                drop(scope.polled(id, status == 0).expect("selected child"));
+    (&mut (*frame).task_scopes)[index].close();
+    loop {
+        let selected = {
+            let scope = &mut (&mut (*frame).task_scopes)[index];
+            scope.next().map(|id| {
+                (
+                    id,
+                    &mut **scope.get_mut(id).expect("live child") as *mut CpsFrame,
+                )
+            })
+        };
+        let Some((id, child)) = selected else { break };
+        let outcome = super::error::checked(|| task::poll(child));
+        let failure = match outcome {
+            Ok(status @ (0 | 1)) => {
+                let completed = (&mut (*frame).task_scopes)[index]
+                    .polled(id, status == 0)
+                    .expect("selected child");
+                super::error::checked(|| drop(completed)).err()
             }
-            failure => {
-                // Stop the failed child before siblings, preserving local cleanup order.
-                drop(scope.polled(id, true).expect("selected child"));
-                frame.task_scopes.pop();
-                return failure;
-            }
+            Ok(status) => Some(crate::Error::new_with_code(
+                crate::ErrorPhase::Runtime,
+                crate::ErrorCode::InvalidState,
+                format!("Task child returned failure status {status}"),
+            )),
+            Err(error) => Some(error),
+        };
+        if let Some(error) = failure {
+            let scope = &mut (&mut (*frame).task_scopes)[index];
+            scope.fail(error.clone());
+            let cleanup = drain_dynamic_scope(frame, index);
+            (*frame).task_scopes.pop();
+            super::error::record_error(cleanup.err().unwrap_or(error));
+            return RUNTIME_ERROR;
         }
     }
-    if scope.is_empty() {
-        frame.task_scopes.pop();
-        0
+    if (&(*frame).task_scopes)[index].is_empty() {
+        (&mut (*frame).task_scopes)[index].close();
+        let outcome = drain_dynamic_scope(frame, index);
+        (*frame).task_scopes.pop();
+        match outcome {
+            Ok(()) => 0,
+            Err(error) => {
+                super::error::record_error(error);
+                RUNTIME_ERROR
+            }
+        }
     } else {
-        scope.restart_join_round();
+        (&mut (*frame).task_scopes)[index].restart_join_round();
         1
     }
+}
+
+unsafe fn drain_dynamic_scope(frame: *mut CpsFrame, index: usize) -> Result<(), crate::Error> {
+    let children = {
+        let scope = &mut (&mut (*frame).task_scopes)[index];
+        if !scope.begin_drain()? {
+            return Ok(());
+        }
+        scope.take_children()
+    };
+    let cleanup = super::error::checked(|| drop(children));
+    (&mut (*frame).task_scopes)[index].finish_drain(cleanup)
 }
 
 /// # Safety
@@ -436,8 +554,38 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 26] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 41] {
     [
+        ("__joky_task_context_v1", protocol::context as *const u8),
+        (
+            "__joky_task_current_scope_v1",
+            protocol::current as *const u8,
+        ),
+        ("__joky_task_scope_open_v1", protocol::open as *const u8),
+        (
+            "__joky_task_child_prepare_v1",
+            protocol::prepare as *const u8,
+        ),
+        ("__joky_task_publish_v1", protocol::publish as *const u8),
+        ("__joky_task_join_v1", protocol::join as *const u8),
+        ("__joky_task_take_result_v1", protocol::take as *const u8),
+        (
+            "__joky_task_request_cancel_v1",
+            protocol::cancel as *const u8,
+        ),
+        ("__joky_task_drain_v1", protocol::drain as *const u8),
+        (
+            "__joky_task_scope_release_v1",
+            protocol::release as *const u8,
+        ),
+        ("__joky_task_entry_v1", task::register as *const u8),
+        ("__joky_cps_task_prepare_v1", task::prepare as *const u8),
+        ("__joky_cps_task_inputs_v1", task::inputs as *const u8),
+        ("__joky_cps_task_poll_v1", task::poll as *const u8),
+        (
+            "__joky_cps_concurrent_prepare_v1",
+            task::prepare_static as *const u8,
+        ),
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
         ("__joky_cps_capture_text_v2", capture_text as *const u8),
@@ -516,6 +664,9 @@ unsafe fn round_select(root: *mut CpsFrame) -> Option<(*mut DynamicTaskScope, Ch
                 .map(|child| Visit::Frame(&mut **child)),
         );
         for scope in frame.task_scopes.iter_mut().rev() {
+            if scope.terminal() {
+                continue;
+            }
             let scope_ptr = scope as *mut DynamicTaskScope;
             for (id, child, ready) in scope.entries_mut().rev() {
                 if ready {
@@ -560,23 +711,42 @@ unsafe fn round_reset(root: *mut CpsFrame) {
 /// `root` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_task_round"]
 pub unsafe extern "C" fn task_round(root: *mut CpsFrame) -> i32 {
+    if (*root).task_scopes.iter().any(LocalTaskScope::draining) {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidState,
+            "Cannot advance task scopes during cleanup",
+        ));
+        return INVALID_STATE;
+    }
     loop {
         let selected = round_select(root);
         let Some((scope_ptr, index)) = selected else {
             round_reset(&mut *root);
             return 0;
         };
-        let scope = &mut *scope_ptr;
-        let Some(child) = scope.get_mut(index) else {
-            continue;
+        let child = match (*scope_ptr).get_mut(index) {
+            Some(child) => &mut **child as *mut CpsFrame,
+            None => continue,
         };
-        let entry = child.task_entry.expect("registered child entry");
-        let status = entry(&mut **child);
-        match status {
-            0 | 1 => {
-                drop(scope.polled(index, status == 0).expect("selected child"));
+        let failure = match super::error::checked(|| task::poll(child)) {
+            Ok(status @ (0 | 1)) => {
+                let completed = (*scope_ptr)
+                    .polled(index, status == 0)
+                    .expect("selected child");
+                super::error::checked(|| drop(completed)).err()
             }
-            failure => return failure,
+            Ok(status) => Some(crate::Error::new_with_code(
+                crate::ErrorPhase::Runtime,
+                crate::ErrorCode::InvalidState,
+                format!("Task child returned failure status {status}"),
+            )),
+            Err(error) => Some(error),
+        };
+        if let Some(error) = failure {
+            (*scope_ptr).fail(error.clone());
+            super::error::record_error(error);
+            return RUNTIME_ERROR;
         }
     }
 }

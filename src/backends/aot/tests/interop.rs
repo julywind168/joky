@@ -277,6 +277,53 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             return child_at_fn(f, i, n);
         }
         void __joky_cps_release_children(JokyCpsFrame *f) { release_children_fn(f); }
+        static uint64_t (*task_entry_fn)(JokyCpsFrame *, const JokyTaskEntryV1 *, const size_t *);
+        static JokyCpsFrame *(*task_prepare_fn)(JokyCpsFrame *, size_t, uint64_t);
+        static int32_t (*task_poll_fn)(JokyCpsFrame *);
+        void bind_task_runtime(uint64_t (*e)(JokyCpsFrame *, const JokyTaskEntryV1 *, const size_t *),
+                               JokyCpsFrame *(*p)(JokyCpsFrame *, size_t, uint64_t),
+                               int32_t (*r)(JokyCpsFrame *)) {
+            task_entry_fn = e; task_prepare_fn = p; task_poll_fn = r;
+        }
+        uint64_t __joky_task_entry_v1(JokyCpsFrame *f, const JokyTaskEntryV1 *e, const size_t *a) {
+            return task_entry_fn(f, e, a);
+        }
+        JokyCpsFrame *__joky_cps_concurrent_prepare_v1(JokyCpsFrame *f, size_t i, uint64_t e) {
+            return task_prepare_fn(f, i, e);
+        }
+        int32_t __joky_cps_task_poll_v1(JokyCpsFrame *f) { return task_poll_fn(f); }
+        static void (*protocol_context)(JokyCpsFrame *f);
+        static uint64_t (*protocol_current)(uint32_t k);
+        static uint64_t (*protocol_open)(uint32_t k, size_t n);
+        static uint64_t (*protocol_prepare)(uint64_t s, uint64_t e, const uint64_t *p, size_t n);
+        static int32_t (*protocol_publish)(uint64_t s, const uint64_t *p, size_t n);
+        static int32_t (*protocol_join)(uint64_t s);
+        static int32_t (*protocol_take)(uint64_t s, size_t i, uint64_t *p, size_t n);
+        static int32_t (*protocol_cancel)(uint64_t s);
+        static int32_t (*protocol_drain)(uint64_t s);
+        static int32_t (*protocol_release)(uint64_t s);
+        void bind_task_protocol(const void *const *functions) {
+            protocol_context = (void (*)(JokyCpsFrame *f))functions[0];
+            protocol_current = (uint64_t (*)(uint32_t k))functions[1];
+            protocol_open = (uint64_t (*)(uint32_t k, size_t n))functions[2];
+            protocol_prepare = (uint64_t (*)(uint64_t s, uint64_t e, const uint64_t *p, size_t n))functions[3];
+            protocol_publish = (int32_t (*)(uint64_t s, const uint64_t *p, size_t n))functions[4];
+            protocol_join = (int32_t (*)(uint64_t s))functions[5];
+            protocol_take = (int32_t (*)(uint64_t s, size_t i, uint64_t *p, size_t n))functions[6];
+            protocol_cancel = (int32_t (*)(uint64_t s))functions[7];
+            protocol_drain = (int32_t (*)(uint64_t s))functions[8];
+            protocol_release = (int32_t (*)(uint64_t s))functions[9];
+        }
+        void __joky_task_context_v1(JokyCpsFrame *f) { protocol_context(f); }
+        uint64_t __joky_task_current_scope_v1(uint32_t k) { return protocol_current(k); }
+        uint64_t __joky_task_scope_open_v1(uint32_t k, size_t n) { return protocol_open(k, n); }
+        uint64_t __joky_task_child_prepare_v1(uint64_t s, uint64_t e, const uint64_t *p, size_t n) { return protocol_prepare(s, e, p, n); }
+        int32_t __joky_task_publish_v1(uint64_t s, const uint64_t *p, size_t n) { return protocol_publish(s, p, n); }
+        int32_t __joky_task_join_v1(uint64_t s) { return protocol_join(s); }
+        int32_t __joky_task_take_result_v1(uint64_t s, size_t i, uint64_t *p, size_t n) { return protocol_take(s, i, p, n); }
+        int32_t __joky_task_request_cancel_v1(uint64_t s) { return protocol_cancel(s); }
+        int32_t __joky_task_drain_v1(uint64_t s) { return protocol_drain(s); }
+        int32_t __joky_task_scope_release_v1(uint64_t s) { return protocol_release(s); }
         static int32_t (*concurrent_open_fn)(JokyCpsFrame *, uint32_t, size_t);
         static int64_t (*concurrent_next_fn)(JokyCpsFrame *);
         static int64_t (*concurrent_next_result_fn)(JokyCpsFrame *);
@@ -376,6 +423,34 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             cps::child_at,
             cps::release_children,
         );
+        type BindTask = unsafe extern "C" fn(
+            unsafe extern "C" fn(
+                *mut cps::CpsFrame,
+                *const cps::task::NativeTaskEntryV1,
+                *const usize,
+            ) -> u64,
+            unsafe extern "C" fn(*mut cps::CpsFrame, usize, u64) -> *mut cps::CpsFrame,
+            unsafe extern "C" fn(*mut cps::CpsFrame) -> i32,
+        );
+        library.get::<BindTask>(b"bind_task_runtime").unwrap()(
+            cps::task::register,
+            cps::task::prepare_static,
+            cps::task::poll,
+        );
+        type BindProtocol = unsafe extern "C" fn(*const *const u8);
+        let protocol = [
+            cps::protocol::context as *const u8,
+            cps::protocol::current as *const u8,
+            cps::protocol::open as *const u8,
+            cps::protocol::prepare as *const u8,
+            cps::protocol::publish as *const u8,
+            cps::protocol::join as *const u8,
+            cps::protocol::take as *const u8,
+            cps::protocol::cancel as *const u8,
+            cps::protocol::drain as *const u8,
+            cps::protocol::release as *const u8,
+        ];
+        library.get::<BindProtocol>(b"bind_task_protocol").unwrap()(protocol.as_ptr());
         type BindConcurrent = unsafe extern "C" fn(
             unsafe extern "C" fn(*mut cps::CpsFrame, u32, usize) -> i32,
             unsafe extern "C" fn(*mut cps::CpsFrame) -> i64,

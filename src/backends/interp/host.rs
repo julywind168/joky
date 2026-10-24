@@ -175,9 +175,16 @@ impl BoundHost {
     }
 }
 
+struct PreparedHostInputs {
+    slots: Vec<u64>,
+    text_views: Vec<crate::runtime::string::JokyText>,
+    frame_slots: usize,
+}
+
 pub(super) struct HostPending {
     pub host: Rc<BoundHost>,
-    frame: CpsFrame,
+    frame: Box<CpsFrame>,
+    inputs: Option<PreparedHostInputs>,
     notification: Option<crate::runtime::executor::WakeObservation>,
     pub(super) cleanups: crate::runtime::cleanup::Cleanups,
 }
@@ -227,7 +234,8 @@ impl HostPending {
         if count < args.len() {
             return Err(abi_error("Host frame has too few slots"));
         }
-        let mut frame = CpsFrame::new(count);
+        let input_count = args.len();
+        let mut frame = CpsFrame::new(input_count);
         if host.binding.abi == HostAbiKind::TextViewV2 {
             frame.text_views = vec![crate::runtime::string::JokyText::default(); args.len()];
         }
@@ -268,9 +276,15 @@ impl HostPending {
                 encode_host_value(value)?
             };
         }
+        let inputs = PreparedHostInputs {
+            slots: std::mem::take(&mut frame.slots),
+            text_views: std::mem::take(&mut frame.text_views),
+            frame_slots: count,
+        };
         Ok(Self {
             host,
-            frame,
+            frame: Box::new(frame),
+            inputs: Some(inputs),
             notification: None,
             cleanups: Default::default(),
         })
@@ -320,19 +334,25 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        if let Some(inputs) = self.inputs.take() {
+            let mut slots = vec![0; inputs.frame_slots];
+            slots[..inputs.slots.len()].copy_from_slice(&inputs.slots);
+            self.frame.slots = slots;
+            self.frame.text_views = inputs.text_views;
+        }
         self.notification = crate::runtime::executor::current_waker().map(|w| w.observe());
         if matches!(self.host.binding.entry, HostEntry::VmSource) {
-            let result = unsafe { crate::stdlib::source_poll(arena, &mut self.frame) }?;
+            let result = unsafe { crate::stdlib::source_poll(arena, self.frame.as_mut()) }?;
             self.frame.result = result;
             return Ok(Some(Value::Reference(result as usize as *mut u8)));
         }
         if matches!(self.host.binding.entry, HostEntry::VmCall) {
-            return unsafe { crate::stdlib::call_poll(&mut self.frame) }
+            return unsafe { crate::stdlib::call_poll(self.frame.as_mut()) }
                 .map(|value| value.map(|status| Value::Int32(status as i32)));
         }
         if let HostEntry::Domain(op) = self.host.binding.entry {
-            return unsafe { crate::runtime::domain::poll(arena, &mut self.frame, op) }.and_then(
-                |value| {
+            return unsafe { crate::runtime::domain::poll(arena, self.frame.as_mut(), op) }
+                .and_then(|value| {
                     value
                         .map(|bits| {
                             self.frame.result = bits;
@@ -385,23 +405,24 @@ impl HostPending {
                             }
                         })
                         .transpose()
+                });
+        }
+        if let HostEntry::Fs(op) = self.host.binding.entry {
+            return unsafe { crate::runtime::fs::poll(arena, self.frame.as_mut(), op) }.map(
+                |value| {
+                    value.map(|bits| {
+                        self.frame.result = bits;
+                        if op.scalar() {
+                            Value::UInt64(bits)
+                        } else {
+                            Value::Reference(bits as usize as *mut u8)
+                        }
+                    })
                 },
             );
         }
-        if let HostEntry::Fs(op) = self.host.binding.entry {
-            return unsafe { crate::runtime::fs::poll(arena, &mut self.frame, op) }.map(|value| {
-                value.map(|bits| {
-                    self.frame.result = bits;
-                    if op.scalar() {
-                        Value::UInt64(bits)
-                    } else {
-                        Value::Reference(bits as usize as *mut u8)
-                    }
-                })
-            });
-        }
         if matches!(self.host.binding.entry, HostEntry::Dns) {
-            return unsafe { crate::runtime::dns::poll(arena, &mut self.frame) }.map(|owner| {
+            return unsafe { crate::runtime::dns::poll(arena, self.frame.as_mut()) }.map(|owner| {
                 owner.map(|owner| {
                     self.frame.result = owner.as_ptr() as usize as u64;
                     Value::Reference(owner.as_ptr().cast())
@@ -409,7 +430,7 @@ impl HostPending {
             });
         }
         if let HostEntry::Tcp(op) = self.host.binding.entry {
-            return unsafe { crate::runtime::tcp::poll(arena, &mut self.frame, op) }.map(
+            return unsafe { crate::runtime::tcp::poll(arena, self.frame.as_mut(), op) }.map(
                 |output| {
                     output.map(|output| match output {
                         crate::runtime::tcp::Output::Owner(owner) => {
@@ -423,7 +444,7 @@ impl HostPending {
         }
         if let HostEntry::ResourceIo { descriptor, kind } = &self.host.binding.entry {
             return unsafe {
-                crate::runtime::byte_request::poll_io(arena, &mut self.frame, descriptor, *kind)
+                crate::runtime::byte_request::poll_io(arena, self.frame.as_mut(), descriptor, *kind)
             }
             .map(|result| {
                 result.map(|result| match result {
@@ -437,17 +458,17 @@ impl HostPending {
         }
         if let HostEntry::ResourceFactoryCps(factory) = &self.host.binding.entry {
             return unsafe {
-                crate::runtime::resource::poll_factory(arena, &mut self.frame, factory)
+                crate::runtime::resource::poll_factory(arena, self.frame.as_mut(), factory)
             }
             .map(|owner| owner.map(|owner| Value::Reference(owner.as_ptr().cast())));
         }
         // Registration establishes the ABI/lifetime contract. `self` owns the
         // frame, argument buffers and binding owner until this call is finished.
         let status = match &self.host.binding.entry {
-            HostEntry::Cps { entry, .. } => unsafe { abi::poll_cps(*entry, &mut self.frame) },
+            HostEntry::Cps { entry, .. } => unsafe { abi::poll_cps(*entry, self.frame.as_mut()) },
             HostEntry::BorrowingCps(host) => crate::runtime::error::checked(|| unsafe {
                 crate::runtime::borrowed_host::joky_cps_poll_borrowing_v1(
-                    &mut self.frame,
+                    self.frame.as_mut(),
                     host.as_ref(),
                 )
             }),

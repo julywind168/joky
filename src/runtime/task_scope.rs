@@ -6,6 +6,8 @@
 //! are never reused; storage positions and frame pointers are not task identities.
 //! This is the local policy, not a cross-thread execution or wake protocol.
 mod concurrent;
+pub(crate) mod layout;
+mod lifecycle;
 pub(crate) use concurrent::{CompletionPolicy, GroupPoll, LocalTaskGroup};
 
 use crate::{Error, ErrorCode, ErrorPhase};
@@ -33,6 +35,10 @@ impl ChildId {
 
 static NEXT_CHILD: AtomicU64 = AtomicU64::new(1);
 
+pub(crate) fn fresh_identity() -> Result<u64, Error> {
+    ChildId::allocate(&NEXT_CHILD, 1).map(|id| id.0)
+}
+
 struct Child<T> {
     id: ChildId,
     value: Option<T>,
@@ -43,6 +49,7 @@ pub(crate) struct LocalTaskScope<T> {
     cursor: usize,
     joining: bool,
     live: usize,
+    lifecycle: lifecycle::Lifecycle,
 }
 
 impl<T> Default for LocalTaskScope<T> {
@@ -52,13 +59,14 @@ impl<T> Default for LocalTaskScope<T> {
             cursor: 0,
             joining: false,
             live: 0,
+            lifecycle: Default::default(),
         }
     }
 }
 
 impl<T> LocalTaskScope<T> {
     fn reserve(&mut self, count: usize) -> Result<ChildId, Error> {
-        if self.joining {
+        if self.joining || self.lifecycle.selected() {
             return Err(Error::new_with_code(
                 ErrorPhase::Runtime,
                 ErrorCode::InvalidState,
@@ -110,6 +118,45 @@ impl<T> LocalTaskScope<T> {
 
     pub(crate) fn close(&mut self) {
         self.joining = true;
+        if self.is_empty() {
+            self.lifecycle.complete();
+        }
+    }
+
+    pub(crate) fn cancel(&mut self) {
+        self.joining = true;
+        self.lifecycle.cancel();
+    }
+
+    pub(crate) fn fail(&mut self, error: Error) {
+        self.joining = true;
+        self.lifecycle.fail(error);
+    }
+
+    pub(crate) fn begin_drain(&mut self) -> Result<bool, Error> {
+        self.lifecycle.begin_drain()
+    }
+
+    pub(crate) fn terminal(&self) -> bool {
+        self.lifecycle.selected()
+    }
+
+    pub(crate) fn draining(&self) -> bool {
+        self.lifecycle.draining()
+    }
+
+    pub(crate) fn finish_drain(&mut self, cleanup: Result<(), Error>) -> Result<(), Error> {
+        self.lifecycle.finish_drain(cleanup)
+    }
+
+    /// Detach cleanup ownership after entering drain. No registry borrow spans callbacks.
+    pub(crate) fn take_children(&mut self) -> Vec<T> {
+        self.live = 0;
+        self.cursor = 0;
+        std::mem::take(&mut self.children)
+            .into_iter()
+            .filter_map(|child| child.value)
+            .collect()
     }
 
     pub(crate) fn live_len(&self) -> usize {
@@ -166,6 +213,9 @@ impl<T> LocalTaskScope<T> {
     }
 
     pub(crate) fn next(&mut self) -> Option<ChildId> {
+        if self.terminal() {
+            return None;
+        }
         while self.cursor < self.children.len() && self.children[self.cursor].value.is_none() {
             self.cursor += 1;
         }

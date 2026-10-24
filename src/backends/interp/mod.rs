@@ -234,6 +234,13 @@ pub(crate) struct BytecodeModule {
     sources: std::sync::Arc<crate::SourceMap>,
     functions: HashMap<String, Rc<BytecodeFunction>>,
     callees: Vec<Callee>,
+    task_targets: Vec<Option<u64>>,
+    task_entries: HashMap<u64, Rc<TaskEntry>>,
+}
+
+struct TaskEntry {
+    callee: Callee,
+    layout: crate::runtime::task_scope::layout::CheckedLayout,
 }
 
 #[derive(Clone)]
@@ -296,7 +303,7 @@ pub(crate) fn compile(
             functions.insert(name.clone(), Rc::new(function));
         }
     }
-    let callees = names
+    let callees: Vec<_> = names
         .iter()
         .map(|name| {
             if let Some(function) = functions.get(name) {
@@ -306,7 +313,32 @@ pub(crate) fn compile(
             }
         })
         .collect();
+    let mut task_targets = Vec::with_capacity(callees.len());
+    let mut task_entries = HashMap::new();
+    for callee in &callees {
+        let (suspends, signature) = match callee {
+            Callee::User(function) => (function.info.suspends, &function.info.signature),
+            Callee::Host(host) => (host.suspends(), host.signature()),
+        };
+        if suspends {
+            let words = crate::runtime::task_scope::layout::encode(signature)?;
+            let layout = crate::runtime::task_scope::layout::CheckedLayout::decode(&words)?;
+            let token = crate::runtime::task_scope::fresh_identity()?;
+            task_entries.insert(
+                token,
+                Rc::new(TaskEntry {
+                    callee: callee.clone(),
+                    layout,
+                }),
+            );
+            task_targets.push(Some(token));
+        } else {
+            task_targets.push(None);
+        }
+    }
     Ok(BytecodeModule {
+        task_targets,
+        task_entries,
         files: None,
         sources: prepared.ast().sources.clone(),
         version,

@@ -180,13 +180,20 @@ Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来
 - 恢复继续当前子调用，不重算参数或重放副作用；每轮循环重新创建其 join/race 子帧。
 - String 字面量通过可重定位数据对象输出，不能把编译进程地址写入 AOT 对象。
 - `joky_cps_`、`__joky_cps_`、`joky_vm_`、`joky_runtime_`、`__joky_runtime_`、
-  `__joky_string_`、`joky_string_result_` 与 `__joky_user_text_v2_` 保留给 runtime 或版本化出口。
+  `__joky_task_`、`__joky_string_`、`joky_string_result_` 与 `__joky_user_text_v2_` 保留给 runtime 或版本化出口。
 
 结构化并发在 AST 和共享 IR 中统一表示为 `Concurrent`，`ConcurrentKind::Join` 对应 `join`，
 `ConcurrentKind::Race` 对应 `race`。两者共用参数求值、挂起分支检查、借用检查和能力传播。
 本地静态分支由原生后端与解释器共用的 `LocalTaskGroup` 选择下一分支及决定汇合/race 选择，
 登记使用与动态 branch 相同的 `LocalTaskScope`。批量登记只在全部输入准备后发布；
-原生 `__joky_cps_concurrent_*_v1` 是本地帧适配桥，生成代码仍负责实际调用和按类型接收结果。
+原生 lowering 使用 `__joky_task_*_v1` 完成作用域创建、捕获准备、批量发布、汇合、结果收取和释放。
+`__joky_cps_concurrent_*_v1` 继续作为 Local 策略的内部驱动适配，生成代码按共享策略选择入口，
+实际调用后按编译器类型描述登记结果包；它们不创建 worker，也不授予跨线程资格。
+捕获包与执行槽分离；参数和间接入口只在发布前读取，执行槽在首次 poll 时取得。
+入口、作用域和准备子任务使用单调不复用的 token；token 不编码地址，外来或失效 token 受控拒绝。
+原生入口描述符包含版本、Local 资格、帧槽数、物理布局与捕获清理键映射，数据通过 AOT relocation
+关联代码。清理回调由已检查的捕获登记及结果收集代码提供；Local 代码保活仍由调用方的模块/
+AOT 所有者契约保证。解释器入口直接持有所属快照的 callee；两者都不能据此跨线程传递 Rc。
 Selected 仅表示结果已选定，结果收取还须经过共享 drain 状态确认子任务清理成功；
 `ConcurrentFinish` 只在 drain 完成后释放组与结果包存储。这些桥不开放跨线程帧访问。
 Join 的各分支先将无引用结果及其清理责任保存在独立结果包中，全部完成后才写入父结果槽，
@@ -202,8 +209,10 @@ Race 分支返回同一无引用类型，在共享 IR 的可选结果槽接收�
 不交付结果，重试不重复执行 stop/Drop。未交付结果仍由组回收。
 解释器结果槽参与写入分析与压缩，时间片取消仍能遍历未停止的子树并回收结果包。
 Join 等全部分支完成，Race 按源码顺序观察首个完成，停止其余分支后才继续父函数；
-首个观察到的失败仍沿既有失败路径传播。原生后端使用 `__joky_cps_concurrent_drain_v1` 停止子帧，
-再通过 `__joky_cps_release_children` 释放已 drain 的组，
+首个观察到的失败仍沿既有失败路径传播。版本化 join/drain 在 Local 驱动完成选择后停止子帧，
+`take_result` 校验精确布局并在同一交接段转移拥有责任，`scope_release` 释放已 drain 的组；
+失败收取不写输出，取消不交付结果。静态组与动态作用域共用终态和 drain 状态，
+执行失败不被后续清理失败覆盖，清理回调期间不能重入推进或打开作用域。
 解释器沿平坦激活表迭代释放未获胜分支的子树并归还帧额度，保留祖先和无关兄弟分支。
 取消清理分支拥有的 String；普通 arena 对象仍到根任务结束才回收，已有副作用不撤销。旧 CPS ABI 保持原契约，
 异步借用 v1 将强制 stop 回调接入同一帧释放路径，在父任务恢复前确认外部访问停止。

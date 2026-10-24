@@ -58,6 +58,11 @@ pub(crate) unsafe extern "C" fn open(frame: *mut CpsFrame, kind: u32, count: usi
 /// executing while this helper holds its exclusive borrow.
 #[export_name = "__joky_cps_concurrent_next_v1"]
 pub(crate) unsafe extern "C" fn next(frame: *mut CpsFrame) -> i64 {
+    if super::protocol::cancelled(&*frame) {
+        if let Some(group) = &mut (*frame).concurrent {
+            group.stop(None);
+        }
+    }
     let result = (*frame)
         .concurrent
         .as_mut()
@@ -144,6 +149,18 @@ pub(crate) unsafe extern "C" fn result(
     slots: usize,
 ) -> *mut CpsFrame {
     let frame = &mut *frame;
+    if frame
+        .children
+        .get(index)
+        .and_then(Option::as_ref)
+        .and_then(|child| child.task_code.as_ref())
+        .is_some_and(|code| code.layout.slot_counts().1 != slots)
+    {
+        record_error(invalid(
+            "Task result packet differs from the checked entry layout",
+        ));
+        return std::ptr::null_mut();
+    }
     let Some(packet) = frame.concurrent_results.get_mut(index) else {
         record_error(invalid("Unknown task result packet"));
         return std::ptr::null_mut();
@@ -171,6 +188,10 @@ pub(crate) unsafe extern "C" fn result(
 #[export_name = "__joky_cps_concurrent_take_v1"]
 pub(crate) unsafe extern "C" fn take(frame: *mut CpsFrame, index: usize) -> *mut CpsFrame {
     let frame = &mut *frame;
+    if frame.state == super::FAILED {
+        record_error(invalid("A stopped parent cannot receive task results"));
+        return std::ptr::null_mut();
+    }
     if frame
         .concurrent_results
         .get(index)

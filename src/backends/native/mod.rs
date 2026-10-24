@@ -2,6 +2,7 @@
 mod domain;
 mod float_env;
 mod lower;
+mod task;
 
 use crate::core::builtins::{Builtin, ExternAbi};
 use crate::{
@@ -284,6 +285,7 @@ pub(crate) fn compile<M: Module>(
             place_ids.push((ty.clone(), id, program.len()));
         }
     }
+    let task_ids = task::descriptors(module, plan, &reachable, &ids)?;
     let mut ctx = Context::new();
     let mut builder_ctx = FunctionBuilderContext::new();
     let mut exports = HashMap::new();
@@ -481,6 +483,14 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
+                tasks: task_ids
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .map(|(name, id)| {
+                        (name.clone(), module.declare_data_in_func(*id, builder.func))
+                    })
+                    .collect(),
                 places: place_ids
                     .iter()
                     .map(|(ty, id, count)| {

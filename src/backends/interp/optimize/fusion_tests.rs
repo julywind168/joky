@@ -107,6 +107,8 @@ fn empty_module() -> BytecodeModule {
         files: None,
         sources: Default::default(),
         version: ModuleId(0),
+        task_targets: Vec::new(),
+        task_entries: HashMap::new(),
         functions: HashMap::new(),
         callees: Vec::new(),
     }

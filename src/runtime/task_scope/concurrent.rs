@@ -24,22 +24,14 @@ enum ResultState {
     Taken,
 }
 
-enum DrainState {
-    NotStarted,
-    Running,
-    Complete,
-    Failed(Box<Error>),
-}
-
 pub(crate) struct LocalTaskGroup {
     children: LocalTaskScope<usize>,
     policy: CompletionPolicy,
     active: Option<(ChildId, usize)>,
-    selected: bool,
+    cleanup_active: usize,
     results: Vec<ResultState>,
     completion_order: Vec<usize>,
     result_cursor: usize,
-    drain: DrainState,
 }
 
 fn invalid(message: &str) -> Error {
@@ -86,20 +78,21 @@ impl LocalTaskGroup {
             children,
             policy,
             active: None,
-            selected: false,
+            cleanup_active: usize::MAX,
             results,
             completion_order,
             result_cursor: 0,
-            drain: DrainState::NotStarted,
         })
     }
 
     pub(crate) fn active_index(&self) -> Option<usize> {
-        self.active.map(|(_, index)| index)
+        self.active
+            .map(|(_, index)| index)
+            .or_else(|| (self.cleanup_active != usize::MAX).then_some(self.cleanup_active))
     }
 
     pub(crate) fn is_selected(&self) -> bool {
-        self.selected
+        self.children.lifecycle.selected()
     }
 
     pub(crate) fn next(&mut self) -> Result<GroupPoll, Error> {
@@ -108,7 +101,7 @@ impl LocalTaskGroup {
                 "A task child already holds the group's polling turn",
             ));
         }
-        if self.selected {
+        if self.is_selected() {
             return Ok(GroupPoll::Selected);
         }
         if let Some(id) = self.children.next() {
@@ -123,42 +116,31 @@ impl LocalTaskGroup {
     /// Enter cleanup with no execution owner active. Callbacks must run after
     /// this mutable borrow ends; reentry cannot begin a second cleanup pass.
     pub(crate) fn begin_drain(&mut self) -> Result<bool, Error> {
-        if !self.selected || self.active.is_some() {
+        if !self.is_selected() || self.active.is_some() {
             return Err(invalid("Task group has not selected its result"));
         }
-        match &self.drain {
-            DrainState::NotStarted => {
-                self.drain = DrainState::Running;
-                Ok(true)
-            }
-            DrainState::Running => Err(invalid("Task group cleanup is already running")),
-            DrainState::Complete => Ok(false),
-            DrainState::Failed(error) => Err((**error).clone()),
-        }
+        self.children.begin_drain()
     }
 
-    /// Record completion only after all child execution and external access end.
-    /// A cleanup error permanently prevents result delivery, including retries.
     pub(crate) fn finish_drain(&mut self, outcome: Result<(), Error>) -> Result<(), Error> {
-        if !matches!(self.drain, DrainState::Running) {
-            return Err(invalid("Task group cleanup was not started"));
-        }
-        self.drain = match outcome {
-            Ok(()) => DrainState::Complete,
-            Err(error) => DrainState::Failed(Box::new(error)),
-        };
-        self.require_drained()
+        self.children.finish_drain(outcome)
     }
 
     pub(crate) fn drain_finished(&self) -> bool {
-        matches!(self.drain, DrainState::Complete | DrainState::Failed(_))
+        self.children.lifecycle.drained()
     }
 
     fn require_drained(&self) -> Result<(), Error> {
-        match &self.drain {
-            DrainState::Complete => Ok(()),
-            DrainState::Failed(error) => Err((**error).clone()),
-            _ => Err(invalid("Task group cleanup has not completed")),
+        self.children.lifecycle.require_result()
+    }
+
+    pub(crate) fn stop(&mut self, failure: Option<Error>) {
+        if let Some((_, index)) = self.active.take() {
+            self.cleanup_active = index;
+        }
+        match failure {
+            Some(error) => self.children.fail(error),
+            None => self.children.cancel(),
         }
     }
 
@@ -202,7 +184,7 @@ impl LocalTaskGroup {
             self.completion_order.push(index);
         }
         if complete && (self.policy == CompletionPolicy::First || self.children.is_empty()) {
-            self.selected = true;
+            self.children.lifecycle.complete();
         }
         Ok(())
     }

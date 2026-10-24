@@ -389,12 +389,17 @@ in the caller. Shared IR limits the conservative total borrowed-local layout of
 each concrete function to 64 KiB, including zero-size placeholders and alignment
 slack; this is not a bound on the total activation stack or process memory.
 
-Concurrent branches use the same activation representation as ordinary calls, so
-both direct native CPS imports and Joky functions are valid branches. Each join
+Concurrent branches prepare independent inputs and cleanup ownership before
+publication. A checked, immutable entry token retains the callee from the module
+snapshot. The first poll turns a prepared Joky activation into executable slots;
+a prepared host activation similarly keeps encoded inputs separate from its frame.
+Both direct native CPS imports and Joky functions are valid branches. Each join
 round polls incomplete branches in source order and skips completed branches.
 Repeated Pending does not rebuild arguments or replay earlier side effects.
 `LocalTaskGroup`, shared with native CPS lowering, owns static registration and
-poll selection. Its active child survives instruction slicing; completed source
+poll selection. Static groups and dynamic scopes also share terminal arbitration
+and drain transitions; failure/cancellation selects an outcome before descendant
+cleanup, and late completion cannot reopen a stopped scope. Its active child survives instruction slicing; completed source
 positions remain stable when the registry compacts. A Selected group has chosen
 its result but still retains the backend's losing activations for drain.
 Each branch carries scalar or flattened aggregate result destinations. Completion

@@ -405,7 +405,7 @@ enum Pending {
         result: Option<usize>,
     },
     Concurrent {
-        group: LocalTaskGroup,
+        group: Box<LocalTaskGroup>,
         branches: Vec<Branch>,
     },
     /// Joining the innermost open dynamic task scope; the record stays on
@@ -431,9 +431,26 @@ struct ResultPacket {
     )>,
 }
 
+struct PreparedUser {
+    entry: Rc<TaskEntry>,
+    inputs: Vec<Value>,
+    cleanups: crate::runtime::cleanup::Cleanups,
+}
+
 enum Activation {
+    Prepared(PreparedUser),
     User(Frame),
     Host(HostPending),
+}
+
+impl Activation {
+    fn cleanups_mut(&mut self) -> &mut crate::runtime::cleanup::Cleanups {
+        match self {
+            Self::Prepared(prepared) => &mut prepared.cleanups,
+            Self::User(frame) => &mut frame.cleanups,
+            Self::Host(host) => &mut host.cleanups,
+        }
+    }
 }
 
 struct Node {
@@ -587,13 +604,17 @@ impl Execution {
         }
         // Drop every sibling and local value immediately, even if a scheduler
         // retains the failed continuation to inspect its structured error.
-        self.release();
+        self.release_for(Some(&error));
         Poll::Failed(error)
     }
 
     fn release(&mut self) {
+        self.release_for(None);
+    }
+
+    fn release_for(&mut self, failure: Option<&Error>) {
         if self.live != 0 {
-            let _ = self.release_subtrees(vec![0]);
+            let _ = self.release_subtrees(vec![0], failure);
         }
         self.nodes = Vec::new();
         self.free = Vec::new();
@@ -625,6 +646,62 @@ impl Execution {
                 HostPending::new(host.clone(), Self::arguments(frame, args)).map(Activation::Host)
             }
         }
+    }
+
+    fn prepare_task(
+        module: &BytecodeModule,
+        target: usize,
+        frame: &Frame,
+        args: &[Option<usize>],
+    ) -> Result<Activation, Error> {
+        let entry = module
+            .task_targets
+            .get(target)
+            .copied()
+            .flatten()
+            .and_then(|token| module.task_entries.get(&token))
+            .ok_or_else(|| {
+                runtime_error(
+                    ErrorCode::InvalidCall,
+                    "Unknown interpreted task entry token",
+                )
+            })?;
+        if args.len() != entry.layout.slot_counts().0 {
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "Interpreter task input layout mismatch",
+            ));
+        }
+        match &entry.callee {
+            Callee::User(function) => {
+                if function.info.frame_slots < args.len() {
+                    return Err(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Interpreter task frame layout mismatch",
+                    ));
+                }
+                Ok(Activation::Prepared(PreparedUser {
+                    entry: entry.clone(),
+                    inputs: Self::arguments(frame, args).cloned().collect(),
+                    cleanups: Default::default(),
+                }))
+            }
+            Callee::Host(host) => {
+                HostPending::new(host.clone(), Self::arguments(frame, args)).map(Activation::Host)
+            }
+        }
+    }
+
+    fn activate_task(&mut self) -> Result<(), Error> {
+        if let Activation::Prepared(prepared) = &mut self.node_mut(self.current).activation {
+            let Callee::User(function) = &prepared.entry.callee else {
+                unreachable!("prepared language task")
+            };
+            let mut frame = Frame::new(function.clone(), prepared.inputs.iter())?;
+            frame.cleanups = std::mem::take(&mut prepared.cleanups);
+            self.node_mut(self.current).activation = Activation::User(frame);
+        }
+        Ok(())
     }
 
     fn owned_arguments(
@@ -733,10 +810,7 @@ impl Execution {
         let parent = self.frame_mut(id);
         for (dst, src) in owned {
             if let Some(entry) = parent.cleanups.take(src) {
-                match &mut child {
-                    Activation::User(child) => child.cleanups.insert(dst, entry),
-                    Activation::Host(child) => child.cleanups.insert(dst, entry),
-                }
+                child.cleanups_mut().insert(dst, entry);
             }
         }
         let child = self.insert(child, id);
@@ -846,6 +920,7 @@ impl Execution {
     fn capture_aggregate_result(&mut self, id: usize) -> Result<ResultPacket, Error> {
         let mut place = None;
         let (values, owner) = match &mut self.nodes[id].as_mut().unwrap().activation {
+            Activation::Prepared(_) => unreachable!("unstarted task cannot return a result"),
             Activation::User(child) => {
                 let values = if child.function.info.signature.ret.is_place() {
                     let layout = child
@@ -968,7 +1043,7 @@ impl Execution {
                     },
                     None => branch.target.expect("direct branch target"),
                 };
-                Self::activation(module, target, frame, &branch.args).map(|child| {
+                Self::prepare_task(module, target, frame, &branch.args).map(|child| {
                     (
                         child,
                         branch.done,
@@ -987,15 +1062,17 @@ impl Execution {
             },
             children.len(),
         )?;
+        for (_, _, _, _, owned) in &children {
+            for (_, src) in owned {
+                self.frame_mut(id).cleanups.snapshot(*src)?;
+            }
+        }
         let branches = children
             .into_iter()
             .map(|(mut child, done_slot, result, results, owned)| {
                 for (dst, src) in owned {
                     if let Some(entry) = self.frame_mut(id).cleanups.take(src) {
-                        match &mut child {
-                            Activation::User(frame) => frame.cleanups.insert(dst, entry),
-                            Activation::Host(host) => host.cleanups.insert(dst, entry),
-                        }
+                        child.cleanups_mut().insert(dst, entry);
                     }
                 }
                 Branch {
@@ -1007,7 +1084,10 @@ impl Execution {
                 }
             })
             .collect();
-        self.frame_mut(id).pending = Some(Pending::Concurrent { group, branches });
+        self.frame_mut(id).pending = Some(Pending::Concurrent {
+            group: Box::new(group),
+            branches,
+        });
         Ok(())
     }
 
@@ -1027,14 +1107,18 @@ impl Execution {
                 .filter_map(|branch| branch.child.take())
                 .collect()
         };
-        let outcome = self.release_subtrees(roots);
+        let outcome = self.release_subtrees(roots, None);
         let Some(Pending::Concurrent { group, .. }) = &mut self.frame_mut(parent).pending else {
             unreachable!()
         };
         group.finish_drain(outcome)
     }
 
-    fn release_subtrees(&mut self, roots: Vec<usize>) -> Result<(), Error> {
+    fn release_subtrees(
+        &mut self,
+        roots: Vec<usize>,
+        failure: Option<&Error>,
+    ) -> Result<(), Error> {
         let mut error = None;
         // Reused node indices do not encode nesting. Keep parents alive until
         // child callbacks have finished using their borrowed local storage.
@@ -1042,27 +1126,45 @@ impl Execution {
         while let Some((id, visited)) = pending.pop() {
             if !visited {
                 pending.push((id, true));
-                if let Activation::User(frame) = &self.node(id).activation {
-                    match &frame.pending {
+                if let Activation::User(frame) = &mut self.node_mut(id).activation {
+                    match &mut frame.pending {
                         Some(Pending::Call { child, .. }) => pending.push((*child, false)),
-                        Some(Pending::Concurrent { branches, .. }) => pending.extend(
-                            branches
-                                .iter()
-                                .filter_map(|b| b.child)
-                                .map(|id| (id, false)),
-                        ),
+                        Some(Pending::Concurrent { group, branches }) => {
+                            group.stop(failure.cloned());
+                            let _ = group.begin_drain();
+                            pending.extend(
+                                branches
+                                    .iter_mut()
+                                    .filter_map(|branch| branch.child.take())
+                                    .map(|id| (id, false)),
+                            );
+                        }
                         Some(Pending::TaskJoin) | None => {}
                     }
-                    for scope in &frame.task_scopes {
-                        pending.extend(scope.entries().map(|(_, id, _)| (*id, false)));
+                    for scope in &mut frame.task_scopes {
+                        match failure {
+                            Some(error) => scope.fail(error.clone()),
+                            None => scope.cancel(),
+                        }
+                        let _ = scope.begin_drain();
+                        pending.extend(scope.take_children().into_iter().map(|id| (id, false)));
                     }
                 }
                 continue;
             }
             let mut node = self.nodes[id].take().expect("live cancelled branch");
             let result = match &mut node.activation {
+                Activation::Prepared(prepared) => unsafe {
+                    prepared.cleanups.finish(&mut self.arena)
+                },
                 Activation::User(frame) => unsafe {
+                    for scope in &mut frame.task_scopes {
+                        let _ = scope.finish_drain(error.clone().map_or(Ok(()), Err));
+                    }
                     if let Some(Pending::Concurrent { group, branches }) = &mut frame.pending {
+                        if !group.drain_finished() {
+                            let _ = group.finish_drain(error.clone().map_or(Ok(()), Err));
+                        }
                         // Also drain any prepared packet whose report failed validation.
                         for index in group
                             .active_index()
@@ -1192,7 +1294,7 @@ impl Execution {
         self.frame_capacity(1)?;
         // The capture snapshot happens here: child activation copies the
         // current slot contents, and owning inputs move out of the parent.
-        let mut child = Self::activation(module, target, frame, &args)?;
+        let mut child = Self::prepare_task(module, target, frame, &args)?;
         let owned = Self::owned_arguments(module, target, &args);
         let parent = self.frame_mut(id);
         for (_, src) in &owned {
@@ -1200,10 +1302,7 @@ impl Execution {
         }
         for (dst, src) in owned {
             if let Some(entry) = parent.cleanups.take(src) {
-                match &mut child {
-                    Activation::User(frame) => frame.cleanups.insert(dst, entry),
-                    Activation::Host(host) => host.cleanups.insert(dst, entry),
-                }
+                child.cleanups_mut().insert(dst, entry);
             }
         }
         let child_id = self.insert(child, id);
@@ -1213,7 +1312,7 @@ impl Execution {
             .last_mut()
             .expect("branch requires an open task scope");
         if let Err((error, child_id)) = scope.publish(child_id) {
-            let _ = self.release_subtrees(vec![child_id]);
+            let _ = self.release_subtrees(vec![child_id], Some(&error));
             return Err(error);
         }
         frame.pc += 1;
@@ -1400,6 +1499,9 @@ impl Execution {
             None
         };
         loop {
+            if let Err(error) = self.activate_task() {
+                return self.fail(error);
+            }
             // Resume the explicit continuation path. Budget yields leave this
             // cursor intact; host Pending unwinds to the root for the next poll.
             if let Activation::User(frame) =
@@ -1445,7 +1547,13 @@ impl Execution {
                             }
                             continue;
                         }
-                        // Every registered child finished: close the scope.
+                        // Every registered child and its cleanup finished.
+                        // Use the same explicit drain state as static groups.
+                        scope.close();
+                        let drain = scope.begin_drain().and_then(|_| scope.finish_drain(Ok(())));
+                        if let Err(error) = drain {
+                            return self.fail(error);
+                        }
                         let frame = self.frame_mut(self.current);
                         frame.task_scopes.pop();
                         frame.pending = None;
@@ -1456,6 +1564,9 @@ impl Execution {
                 }
             }
             let step = match &mut self.nodes[self.current].as_mut().unwrap().activation {
+                Activation::Prepared(_) => {
+                    unreachable!("selected task is activated before execution")
+                }
                 Activation::User(frame) => run_frame(
                     frame,
                     &mut self.budget,

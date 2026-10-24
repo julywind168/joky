@@ -82,6 +82,11 @@ pub(crate) unsafe extern "C" fn assert_failed_v2(
     }
 }
 
+/// Preserve the selected failure while a task drains its descendants.
+pub(crate) fn current_error() -> Option<Error> {
+    ERROR.with(|error| error.borrow().clone())
+}
+
 /// Report a structured failure from a synchronous or suspending Rust host callback.
 /// Preserves the first error in the current thread-local invocation. Return
 /// promptly afterwards; generated callers will discard the ordinary result.
