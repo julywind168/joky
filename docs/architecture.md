@@ -188,7 +188,8 @@ Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来
 登记使用与动态 branch 相同的 `LocalTaskScope`。批量登记只在全部输入准备后发布；
 原生 lowering 使用 `__joky_task_*_v1` 完成作用域创建、捕获准备、批量发布、汇合、结果收取和释放。
 `__joky_cps_concurrent_*_v1` 继续作为 Local 策略的内部驱动适配，生成代码按共享策略选择入口，
-实际调用后按编译器类型描述登记结果包；它们不创建 worker，也不授予跨线程资格。
+Local 实际调用后按编译器类型描述登记结果包；Parallel 分派为 worker 工厂及独立结果包。
+桥本身不授予跨线程资格，根提交前必须冻结完整调用图和实际绑定证据。
 捕获包与执行槽分离；参数和间接入口只在发布前读取，执行槽在首次 poll 时取得。
 入口、作用域和准备子任务使用单调不复用的 token；token 不编码地址，外来或失效 token 受控拒绝。
 原生入口描述符包含版本、Local 资格、帧槽数、物理布局与捕获清理键映射，数据通过 AOT relocation
@@ -418,8 +419,22 @@ JIT 持有 finalize 后的共享代码所有者；解释器共享不可变字节
 
 Rust 的准备包可跨线程，`start` 创建的执行对象不可跨线程；该对象在 resume 与 Drop 期间绑定自己的存储根，
 使分配、结果复制与清理都计入同一预算。String 输入转移真实 Buffer，输出是独立宿主 String。
-当前生产分支仍使用 Local 驱动，自动 worker 调度尚未接入；具体能力、受控拒绝与测试桥边界见
-[TP2 交付记录](task-parallel-executor.md#12-tp2-跨线程内存与资格)。
+`submit` 把受检根及生产 join/race/branch 交给固定 worker 池。工厂和拥有结果可转移，
+CPS 帧、解释器激活、Rc 清理状态在所属 worker 创建/销毁。任务状态与通知世代受短锁保护；
+Running 期间 wake 在 Pending 交接时重检，Cleaned 后通知无效；代码、宿主回调和 Drop 均在锁外。
+父任务等待子树时让出 worker，子任务完成时直接仲裁并请求败方取消，不依赖父 worker 空闲。
+原生 CPS 调用图和解释器非清理指令检查取消；清理阶段屏蔽新的取消，错误和结果只在完整屏障后公开。
+
+定时等待记录只有任务身份和 deadline，无跨线程帧指针；队列空时使用条件变量及最近截止时间。
+根 Storage 保留分片，任务/捕获/结果与作用域登记容量独立计费；live-task 限额不替代内存预算。
+`ParallelExecutor` 为非 Send 控制对象，`ParallelSubmitter` 是 Send + Sync 句柄。关闭请求取消并拒绝提交，
+实际 Closed 等待全部子树清理；控制对象在宿主线程 join，worker 不允许阻塞 wait 或创建控制对象。
+
+`ExecutionMode` 缺省 Local；CLI `--task-workers N` 与 AOT 的 `JokyExecutionConfigV1` 显式选择 Parallel。
+[joky_executor.h](../include/joky_executor.h) 的静态入口描述由编译器受检证据生成，
+不验证任意原生指针的安全性。版本/大小检查不能替代代码保活、精确帧布局和链接 ABI 的不安全契约。
+热更新只影响新准备包，旧任务保留旧代码至清理完成。私有 CPS/存储 ABI 变化需同时重编 AOT 对象与运行库。
+当前能力及资源隔离见[支持表](task-parallel-executor.md#141-当前支持表)。
 
 ### 显式子 arena
 

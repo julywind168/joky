@@ -167,7 +167,7 @@ impl Task {
     fn fail(self: &Arc<Self>, error: Error) {
         {
             let mut state = lock(&self.state);
-            if state.phase == Phase::Cleaned || self.cancelled.load(Ordering::Acquire) {
+            if state.phase == Phase::Cleaned {
                 return;
             }
             state.failure.get_or_insert(error);
@@ -376,6 +376,27 @@ fn publish(
             .and_then(|a| a.failure.clone())
             .unwrap_or_else(|| invalid("Parallel scope is closed to publication")));
     }
+    if let Some(state) = &mut arbitration {
+        // A dynamic scope retains completed result positions until join, even
+        // after live-task admission slots become reusable. Charge that capacity
+        // independently so a long scope cannot bypass its root budget.
+        let count = state
+            .children
+            .len()
+            .checked_add(factories.len())
+            .ok_or_else(|| invalid("Parallel scope metadata overflow"))?;
+        let bytes = count
+            .checked_mul(64)
+            .and_then(|n| {
+                n.checked_add(std::mem::size_of::<Group>() + std::mem::size_of::<Arbiter>())
+            })
+            .ok_or_else(|| invalid("Parallel scope metadata overflow"))?;
+        if let Some(charge) = &mut state.charge {
+            charge.resize(bytes)?;
+        } else {
+            state.charge = Some(root.accounts().reserve(bytes)?);
+        }
+    }
     let mut q = lock(&shared.queue);
     q.tasks.retain(|t| {
         t.upgrade().is_some_and(|t| {
@@ -533,7 +554,8 @@ fn run(shared: Arc<Shared>, worker: usize) {
         });
         if item.job.is_none() && item.terminal.is_none() {
             if task.cancelled.load(Ordering::Acquire) {
-                lock(&task.factory).take();
+                let abandoned = { lock(&task.factory).take() };
+                drop(abandoned);
                 item.terminal = Some(Err(cancelled_error()));
             } else {
                 let factory = lock(&task.factory).take().expect("one task constructor");
@@ -564,8 +586,20 @@ fn run(shared: Arc<Shared>, worker: usize) {
             if task.children_cleaned() {
                 let _cleaning = CleanupGuard::enter();
                 let mut item = local.remove(&task.id).unwrap();
-                let cleanup = crate::runtime::error::checked(|| drop(item.job.take()));
                 let mut result = item.terminal.take().unwrap();
+                if result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.code() == ErrorCode::Cancelled)
+                {
+                    // Scopes can disappear during parent unwinding, before
+                    // descendants finish. Their failures are retained on the
+                    // parent record independently of scope/result handles.
+                    if let Some(error) = lock(&task.state).failure.clone() {
+                        result = Err(error);
+                    }
+                }
+                let cleanup = crate::runtime::error::checked(|| drop(item.job.take()));
                 if result.is_ok()
                     || result
                         .as_ref()
@@ -636,6 +670,7 @@ impl Group {
                     selected: None,
                     failure: None,
                     children: Vec::new(),
+                    charge: None,
                 }),
             }),
             kind,
@@ -721,6 +756,7 @@ struct Arbitration {
     selected: Option<usize>,
     failure: Option<Error>,
     children: Vec<Weak<Task>>,
+    charge: Option<Lease>,
 }
 struct Arbiter {
     parent: Option<Weak<Task>>,
@@ -730,19 +766,29 @@ struct Arbiter {
 impl Arbiter {
     fn complete(&self, index: usize, error: Option<Error>) {
         let mut retained = Vec::new();
+        let failure;
         {
             let mut state = lock(&self.state);
-            if state.selected.is_some() || (self.kind != 1 && error.is_none()) {
-                return;
-            }
             if error
                 .as_ref()
                 .is_some_and(|e| e.code() == ErrorCode::Cancelled)
             {
                 return;
             }
-            state.selected = Some(index);
-            state.failure = error.clone();
+            if state.selected.is_some() {
+                // A chosen successful value still depends on losing cleanup.
+                let Some(error) = error else {
+                    return;
+                };
+                state.failure.get_or_insert(error);
+            } else {
+                if self.kind != 1 && error.is_none() {
+                    return;
+                }
+                state.selected = Some(index);
+                state.failure = error;
+            }
+            failure = state.failure.clone();
             retained.extend(
                 state
                     .children
@@ -755,7 +801,7 @@ impl Arbiter {
         for task in retained {
             task.cancel();
         }
-        if let Some(error) = error {
+        if let Some(error) = failure {
             if let Some(parent) = self.parent.as_ref().and_then(Weak::upgrade) {
                 parent.fail(error);
             }
@@ -873,5 +919,86 @@ mod integration_tests {
         executor.wait_closed();
         drop((record, task, executor));
         assert_eq!(budget.used(), 0);
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    struct Probe {
+        shared: Arc<Shared>,
+        drops: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    fn assert_unlocked<T>(mutex: &Mutex<T>) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while mutex.try_lock().is_err() {
+            assert!(Instant::now() < deadline, "Drop retained a scheduler lock");
+            std::thread::yield_now();
+        }
+    }
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            assert_unlocked(&self.shared.queue);
+            CURRENT.with(|current| {
+                if let Some(task) = current.borrow().as_ref() {
+                    assert_unlocked(&task.factory);
+                    assert_unlocked(&task.state);
+                }
+            });
+            self.drops.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    impl Job for Probe {
+        fn poll(&mut self) -> Poll<Result<Output, Error>> {
+            Poll::Ready(Ok(Box::new(())))
+        }
+    }
+    fn close_publication(rounds: usize) {
+        for _ in 0..rounds {
+            let mut pool = ParallelExecutor::new(1, 4).unwrap();
+            let shared = pool.shared.clone();
+            let budget = super::super::TaskBudget::new(1 << 20);
+            let root = Storage::new(vec![budget.clone()]).unwrap();
+            let drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let probe = Probe {
+                shared: shared.clone(),
+                drops: drops.clone(),
+            };
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let submit_gate = gate.clone();
+            let submit = std::thread::spawn(move || {
+                submit_gate.wait();
+                publish(
+                    &shared,
+                    None,
+                    root,
+                    Arc::new(()),
+                    vec![Box::new(move || Ok(Box::new(probe)))],
+                    None,
+                )
+            });
+            gate.wait();
+            pool.request_close();
+            let result = submit.join().unwrap();
+            pool.wait_closed();
+            if let Ok(handles) = &result {
+                for handle in handles {
+                    assert!(handle.cleaned());
+                }
+            }
+            drop(result);
+            drop(pool);
+            assert_eq!(drops.load(Ordering::SeqCst), 1);
+            assert_eq!(budget.used(), 0);
+        }
+    }
+    #[test]
+    fn task_pool_publication_races_close_without_duplicate_cleanup() {
+        close_publication(16);
+    }
+    #[test]
+    #[ignore = "exhaustive: extended concurrent publication and shutdown schedules"]
+    fn exhaustive_task_pool_publication_races_close() {
+        close_publication(512);
     }
 }

@@ -8,7 +8,9 @@ extern "C" {
 
 typedef struct JokyCpsFrame JokyCpsFrame;
 /* Version 1: mode 0 = Local (workers = 0), mode 1 = Parallel (1..256).
- * Capacity bounds all live root and child tasks. No environment overrides. */
+ * In Parallel, max_tasks bounds all live root and child tasks. Local uses the
+ * existing blocking driver limits (max_tasks is ignored after validation).
+ * No environment overrides. */
 typedef struct JokyExecutionConfigV1 {
     uint32_t version, size, mode, workers;
     size_t max_tasks;

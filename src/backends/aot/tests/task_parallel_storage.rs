@@ -73,6 +73,16 @@ fn parallel_aot_frozen_code_and_owning_capture() {
         )
     }
     .unwrap();
+
+    let pooled = unsafe {
+        checked.prepare(
+            entry,
+            library.clone(),
+            vec![TaskValue::String("AOT pool owns".into())],
+            vec![budget.clone()],
+        )
+    }
+    .unwrap();
     let weak = Arc::downgrade(&library);
     drop(library);
     let output = std::thread::spawn(move || {
@@ -83,11 +93,21 @@ fn parallel_aot_frozen_code_and_owning_capture() {
     .join()
     .unwrap();
     assert_eq!(output.value(), &TaskValue::String("AOT owns 跨线程".into()));
+
+    let executor = crate::runtime::parallel::ParallelExecutor::new(2, 16).unwrap();
+    let pooled = pooled.submit(&executor).unwrap();
+    pooled.wait().unwrap();
+    let pooled_output = pooled.take_result().unwrap();
+    assert_eq!(
+        pooled_output.value(),
+        &TaskValue::String("AOT pool owns".into())
+    );
+    drop((pooled, executor));
     assert!(
         weak.upgrade().is_none(),
         "code can retire after task cleanup"
     );
-    drop(output);
+    drop((output, pooled_output));
     assert_eq!(budget.used(), 0);
 }
 
@@ -118,6 +138,9 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
         0
     }
     const SOURCE: &str = r#"
+        import joky/drop.{type Drop}
+        struct Guard { zero: Int32, text: String }
+        impl Drop for Guard { fn drop(&mut self) { 1 / self.zero; } }
         extern fn overlap() @suspends
         fn consume(text: String) { }
         fn leaf(n: Int32) @suspends -> Int32 {
@@ -136,6 +159,17 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
         fn slow() @suspends -> Int32 { overlap(); burn() }
         fn fast() @suspends -> Int32 { overlap(); 42 }
         fn cancel_loop() @suspends -> Int32 { race { | slow() | fast() } }
+        fn losing_text() @suspends -> String {
+            let guard = Guard { zero: 0, text: "cleanup owner" }
+            overlap()
+            while true { }
+        }
+        fn winning_text() @suspends -> String { overlap(); "winner" }
+        fn cleanup_race() @suspends -> String { race { | losing_text() | winning_text() } }
+        fn cancel_cleanup() @suspends -> String { let (a, b) = join { | losing_text() | losing_text() }; a }
+        fn cancel_body() @suspends -> String {
+            scope { branch { losing_text(); }; branch { losing_text(); }; while true { } }
+        }
     "#;
     let scratch = ScratchDir::new("tp3-workers");
     let mut compiler = AotCompiler::new("tp3").unwrap();
@@ -148,10 +182,18 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
     compiler
         .compile_module(&crate::parser::parse(SOURCE).unwrap())
         .unwrap();
-    let entries: Vec<_> = ["joined", "raced", "branched", "cancel_loop"]
-        .into_iter()
-        .map(|name| compiler.parallel_entry(name).unwrap())
-        .collect();
+    let entries: Vec<_> = [
+        "joined",
+        "raced",
+        "branched",
+        "cancel_loop",
+        "cleanup_race",
+        "cancel_cleanup",
+        "cancel_body",
+    ]
+    .into_iter()
+    .map(|name| compiler.parallel_entry(name).unwrap())
+    .collect();
     let mut symbols: HashMap<_, _> = crate::runtime::cps::symbols()
         .into_iter()
         .chain(crate::runtime::error::symbols())
@@ -199,16 +241,25 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
             }
             vm.load_source(SOURCE).unwrap();
         }
-        for (index, name) in ["joined", "raced", "branched", "cancel_loop"]
-            .into_iter()
-            .enumerate()
+        for (index, name) in [
+            "joined",
+            "raced",
+            "branched",
+            "cancel_loop",
+            "cleanup_race",
+            "cancel_cleanup",
+            "cancel_body",
+        ]
+        .into_iter()
+        .enumerate()
         {
             GATE.get_or_init(|| (Mutex::new(Vec::new()), Condvar::new()))
                 .0
                 .lock()
                 .unwrap()
                 .clear();
-            let executor = ParallelExecutor::new(2, 64).unwrap();
+            let executor =
+                ParallelExecutor::new(if name == "cancel_body" { 3 } else { 2 }, 64).unwrap();
             let budget = TaskBudget::new(1 << 20);
             let prepared = if let Some(vm) = &vm {
                 vm.prepare_parallel_task(name, vec![], vec![budget.clone()])
@@ -227,15 +278,42 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
                 .unwrap()
             };
             let task = prepared.submit(&executor).unwrap();
+            if matches!(name, "cancel_cleanup" | "cancel_body") {
+                let (threads, wake) = GATE.get().unwrap();
+                let (threads, timeout) = wake
+                    .wait_timeout_while(
+                        threads.lock().unwrap(),
+                        std::time::Duration::from_secs(5),
+                        |v| v.len() < 2,
+                    )
+                    .unwrap();
+                assert!(
+                    !timeout.timed_out() || threads.len() == 2,
+                    "children did not start"
+                );
+                drop(threads);
+                task.request_cancel();
+            }
             task.wait().unwrap();
-            let result = task.take_result().unwrap().into_value();
-            let TaskValue::Scalar(InstanceValue::Int32(value)) = result else {
-                panic!("scalar result")
-            };
-            match name {
-                "joined" => assert_eq!(value, 83),
-                "raced" => assert!([41, 42].contains(&value)),
-                _ => assert_eq!(value, 42),
+            let result = task.take_result();
+            if matches!(name, "cleanup_race" | "cancel_cleanup" | "cancel_body") {
+                assert_eq!(
+                    result
+                        .err()
+                        .expect("loser cleanup must fail race")
+                        .message(),
+                    "Division by zero"
+                );
+            } else {
+                let TaskValue::Scalar(InstanceValue::Int32(value)) = result.unwrap().into_value()
+                else {
+                    panic!("scalar result")
+                };
+                match name {
+                    "joined" => assert_eq!(value, 83),
+                    "raced" => assert!([41, 42].contains(&value)),
+                    _ => assert_eq!(value, 42),
+                }
             }
             let threads = GATE.get().unwrap().0.lock().unwrap();
             assert_eq!(threads.len(), 2, "{mode:?} {name}");

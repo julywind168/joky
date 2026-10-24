@@ -389,6 +389,25 @@ in the caller. Shared IR limits the conservative total borrowed-local layout of
 each concrete function to 64 KiB, including zero-size placeholders and alignment
 slack; this is not a bound on the total activation stack or process memory.
 
+Explicit `ExecutionMode::Parallel { workers }` freezes immutable bytecode, callee
+metadata and audited host bindings before submission. Each generated branch gets
+an independent execution on its assigned worker; existing Rc frame trees never
+cross threads. `Pending::Parallel` and remote dynamic scopes hold synchronized
+scope handles, while scalar/String owning packets transfer inputs and results.
+Parents return Pending while waiting, so a single worker can progress nested
+joins. Child completion performs arbitration and cancellation before notifying
+the parent; parents expose results only after all descendants are cleaned.
+
+Non-cleanup instruction boundaries check cancellation and propagated child
+failure, including synchronous helper loops. Cleanup masks new cancellation.
+Timer primitives arm the actual polling task's monotonic deadline; idle workers
+wait on the pool condition variable without polling the parent tree. Existing
+instruction limits remain per execution; the root storage budget and live-task
+limit bound aggregate admission. Local resources, reference/aggregate packets
+and unknown hosts are rejected before execution. Godot stays Local. See the
+[current capability table](task-parallel-executor.md#141-当前支持表).
+
+The following tree-polling rules describe the default Local execution mode.
 Concurrent branches prepare independent inputs and cleanup ownership before
 publication. A checked, immutable entry token retains the callee from the module
 snapshot. The first poll turns a prepared Joky activation into executable slots;

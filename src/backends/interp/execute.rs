@@ -659,24 +659,36 @@ impl Execution {
         }
         // Drop every sibling and local value immediately, even if a scheduler
         // retains the failed continuation to inspect its structured error.
-        self.release_for(Some(&error));
+        let cleanup = self.release_for(Some(&error));
+        if error.code() == ErrorCode::Cancelled {
+            if let Err(cleanup) = cleanup {
+                error = cleanup;
+            }
+        }
         Poll::Failed(error)
     }
 
     fn release(&mut self) {
-        self.release_for(None);
+        if let Err(error) = self.release_for(None) {
+            if crate::runtime::parallel::pool::active() {
+                crate::runtime::error::record_error(error);
+            }
+        }
     }
 
-    fn release_for(&mut self, failure: Option<&Error>) {
-        if self.live != 0 {
-            let _ = self.release_subtrees(vec![0], failure);
-        }
+    fn release_for(&mut self, failure: Option<&Error>) -> Result<(), Error> {
+        let result = if self.live != 0 {
+            self.release_subtrees(vec![0], failure)
+        } else {
+            Ok(())
+        };
         self.nodes = Vec::new();
         self.free = Vec::new();
         self.live = 0;
         if !self.cleanup_mode {
             self.arena = crate::runtime::arena::Arena::default();
         }
+        result
     }
 
     fn arguments<'a>(

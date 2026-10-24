@@ -95,7 +95,15 @@ impl pool::Job for NativeJob {
         let result = crate::runtime::error::checked(|| unsafe { (self.entry)(&mut *self.frame) });
         match result {
             Ok(1) => Poll::Pending,
-            Err(error) => Poll::Ready(Err(error)),
+            Err(error) => {
+                let error = match pool::code::<crate::vm::parallel::Code>().as_deref() {
+                    Some(crate::vm::parallel::Code::Native(code)) => {
+                        error.with_sources(&code.sources)
+                    }
+                    _ => error,
+                };
+                Poll::Ready(Err(error))
+            }
             Ok(0) => Poll::Ready((|| {
                 let words = if self.result_lanes == 0 {
                     vec![]

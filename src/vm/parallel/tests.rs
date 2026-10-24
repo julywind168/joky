@@ -615,3 +615,6 @@ fn task_pool_timer_submission_reload_and_shutdown() {
         assert_eq!(budget.used(), 0);
     }
 }
+
+#[path = "stress.rs"]
+mod stress;

@@ -93,7 +93,18 @@ pub(crate) fn current_error() -> Option<Error> {
 /// Do not clear this channel inside a host callback.
 pub fn record_error(value: Error) {
     ERROR.with(|error| {
-        error.borrow_mut().get_or_insert(value);
+        let mut error = error.borrow_mut();
+        // Cancellation starts unwinding; a real cleanup failure must remain
+        // observable (in particular when draining a successful race's loser).
+        if error
+            .as_ref()
+            .is_some_and(|old| old.code() == ErrorCode::Cancelled)
+            && value.code() != ErrorCode::Cancelled
+        {
+            *error = Some(value);
+        } else {
+            error.get_or_insert(value);
+        }
     });
 }
 
@@ -110,12 +121,9 @@ pub extern "C" fn call_failed(source: u64, start: usize, end: usize) {
 }
 
 fn record_failure(span: Span, message: &str) {
-    ERROR.with(|error| {
-        error.borrow_mut().get_or_insert_with(|| {
-            Error::new_with_code(ErrorPhase::Runtime, ErrorCode::RuntimeError, message)
-                .with_span(span)
-        });
-    });
+    record_error(
+        Error::new_with_code(ErrorPhase::Runtime, ErrorCode::RuntimeError, message).with_span(span),
+    );
 }
 
 /// Clear the native error before a new top-level C invocation.

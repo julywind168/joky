@@ -18,13 +18,14 @@
 - [Joky 语法与类型系统设计（第一版草案）](syntax.md)
 - [Arena、隐式生命周期与 FFI 设计](arena-borrowing-ffi.md)
 - [服务端状态域与任务并发设计草案](server-concurrency.md)
-- [可选多线程任务执行器设计与实施计划](task-parallel-executor.md)
 - [状态域语法糖草案](state-domain-syntax.md)
 - [有状态服务的编程模型与实施计划](stateful-service-ergonomics.md)
 - [文件运行时设计与开发计划](file-runtime.md)
 - [for 与迭代器分阶段开发计划](for-iterators.md)
 
 ## 开发记录与专项验收
+
+- [可选多线程任务执行器：TP0–TP5 交付与验证](task-parallel-executor.md)
 
 以下文档按功能演进保留阶段设计和验收记录；其中历史限制不覆盖语言参考中的当前规则。
 

@@ -4818,10 +4818,36 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 可执行验收见 `migration_script_staging_and_atomic_publication_run_in_all_backends`；
 [新版 fixture](../tests/fixtures/migration_new.jk) 依赖准备时注入的旧类型，不能单独加载。
 
-Rust 嵌入接口已提供受检的跨线程准备包：`prepare_parallel_task` 冻结代码与拥有输入，
-接收线程通过 `start` 创建本地执行状态。它尚未开启自动分支调度；现有 `join`、`race`、`branch`
-仍由 Local 驱动，Godot 继续在主线程执行。当前包类型与宿主限制见
-[TP2 交付记录](task-parallel-executor.md#12-tp2-跨线程内存与资格)。
+## 任务执行模式
+
+默认 `ExecutionMode::Local` 在宿主线程顺序推进任务；Godot 继续主线程驱动。
+显式 `Parallel { workers }` 使用 1–256 个固定 worker，把同一根任务的 join/race/branch
+及后代独立调度。CLI 的 run/build 使用 `--task-workers N`；N=1 仍要求完整并行资格，
+不等同于 Local。入口须为无参数、返回 Unit 或 Int32 的 `@suspends main`。
+
+Rust 在本地 VM 中 `prepare_parallel_task` 冻结代码及拥有输入，通过
+`PreparedParallelTask::submit(&ParallelExecutor)` 或可跨线程的 `ParallelSubmitter::submit`
+提交；直接 `start` 只在线程本地创建执行状态。`ExecutionMode::create(max_tasks)` 返回
+Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel 的任务上限包含所有活跃根和子任务。
+控制对象保持本地；`request_close` 拒绝新提交并请求取消，`is_closed` 观察清理屏障，
+`wait_closed` 与控制对象 Drop 等待线程退出。提交句柄 Drop 不等待；任务句柄 Drop 请求取消。
+`ParallelTask::wait` 仅可在非 worker 的宿主线程调用，`take_result` 一次性收取终态。
+
+当前跨任务包支持标量和 String，String 移动真实拥有 Buffer；根文本入口限零参数或单个
+String 参数返回 String。一般 Transfer/Share 分析通过不等于任意聚合包可提交；引用、其他
+聚合、资源和函数值包仍拒绝。分支内可使用已获资格的临时数据。完整调用图必须证明安全，
+未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄和 Godot 对象均保持 Local。
+显式不安全注册的标量 CPS 宿主及内置 task.yield_now/sleep_ms 可用；旧注册不会自动升级。
+准入失败发生在根执行前，不自动回退 Local。
+
+两种模式都先按源码顺序准备全部静态输入，再发布分支。join 结果位置按源码顺序；
+Parallel race 由作用域接纳的首个终态决定，不保证源码顺序，其他分支可能已经产生副作用。
+branch 在发布后可立即与主体重叠。父流程在子树全部停止且清理完成后才能继续或报告终态，
+拥有结果在此后一次性转移；失败取消不回滚副作用。同步语言循环有取消检查点，任意宿主调用
+仍须自行返回；没有抢占、公平时间片或强制关闭时限。
+
+以下源码规则同时适用；顺序轮询、借用及广泛聚合结果的描述针对 Local，Parallel 另受上述
+准入限制。实现与验证见[任务执行器记录](task-parallel-executor.md#14-tp4-显式模式嵌入与等待能力)。
 
 `parallel` 已改名为 `join`；旧写法会提示 `Use join instead of parallel`，行为不变。
 `join` 仅在表达式位置后接 `{` 时作为并发构造，普通函数声明、调用和 `string.join(...)` 仍有效。
@@ -4837,12 +4863,12 @@ fn main() @suspends {
 }
 ```
 
-每个分支必须是 `@suspends` 的函数调用；join 轮询所有未完成分支，全部完成后继续执行。
+每个分支必须是 `@suspends` 的函数调用；Local 依次轮询，Parallel 独立调度，全部完成并清理后继续执行。
 分支可返回不同的无引用类型，结果按源码顺序组成元组，与完成先后无关。
 例如 `let (left, right) = join { | read_left() | read_right() }`。
 单个非 Unit 分支返回 `(T,)`；混合结果保留 Unit 位置，例如 `(Int32, Unit, String)`；
 全部分支均为 Unit 时，整个表达式仍返回 Unit。结果范围与下文 race 相同，沿用分支函数签名。
-每个已完成分支的拥有结果立即由父任务接管；等待其余分支期间发生失败或取消时也会清理。
+已完成分支的拥有结果先进入独立结果包；汇合清理屏障通过后父任务才收取，失败或取消会回收未领取结果。
 尾随分号可以丢弃结果，拥有结果仍按正常作用域规则释放。
 可运行的 scope / join 结果与清理用例见 [structured_values.jk](../tests/fixtures/structured_values.jk)。
 分支失败会停止后续轮询并释放其他分支；解释器还立即释放整个执行状态。
@@ -4868,17 +4894,17 @@ fn first() @suspends {
   定时器返回 Unit，和返回数据的请求组合时应分别包装成返回同一枚举类型的挂起函数。
   `Result.Err` 是正常返回的数据，同样可以胜出；race 不会自动等待第一个 Ok。
   可运行的结果与清理用例见 [race_values.jk](../tests/fixtures/race_values.jk)。
-- 按源码顺序准备所有分支实参，再按源码顺序轮询。每轮遇到 Pending 才轮询下一个分支；
+- 两种模式都按源码顺序准备所有分支实参；Local 再按源码顺序轮询。每轮遇到 Pending 才轮询下一个分支；
   首个观察到的完成使 race 成功，首个观察到的失败使整个任务失败，不会继续等其他分支成功。
   同轮多个分支就绪时由轮询顺序决定；较早分支立即完成时，后续分支可能一次也未被轮询。
 - 父函数继续前，取消并释放其余分支及所有嵌套子帧；重复 Pending 不重算实参。
-  获胜结果的拥有权先交给父任务，再清理其余分支；清理失败时传播错误并释放已取得的结果，
+  获胜结果先保存于独立结果包，再清理其余分支；清理失败时传播错误并释放保存的结果，
   父流程不会获得成功结果。被丢弃的拥有结果也按正常作用域规则清理。
   取消不撤销已经发生的写入或其他副作用；拥有值沿用同步 Drop，不提供 defer。
 - 借用按所有分支同时运行检查，即使某个分支会立即获胜也不放宽冲突规则。
   未被保留的参数借用在 race 结束后释放；所有分支共享根任务 arena，取消不会回收其中的对象。
   分支按参数级效果保留实际保存的引用，沿用普通调用的任务期存储契约。
-- 这是单线程协作并发，不承诺抢占或 CPU 公平性。旧 CPS 注册不授予宿主跨 Pending 保留 Joky 引用的权限；
+- 默认 Local 是单线程协作并发；Parallel 也不承诺抢占或 CPU 公平性。旧 CPS 注册不授予宿主跨 Pending 保留 Joky 引用的权限；
   使用异步借用 v1 的分支在取消时同步执行 stop，确认外部访问停止后才恢复父任务。
 
 ## 顺序任务作用域 `scope` 与动态子任务 `branch`
@@ -4912,7 +4938,7 @@ fn work(a: Int32, b: Int32) @suspends {
   并在检查中按独占处理——同一绑定被两个分支引用捕获、或分支登记后父流程仍以冲突方式访问，
   都会被编译拒绝。捕获不开放通用闭包，也不按字段隐式拆分。
 - 登记时先取得捕获快照并转移清理责任，子任务才对调度器可见；`branch` 表达式内不内联执行子任务。
-  主体实际挂起或进入 scope 汇合时，子任务按登记顺序获得轮次推进；一轮中已 Pending 的子任务
+  Local 中主体实际挂起或进入 scope 汇合时，子任务按登记顺序获得轮次推进；一轮中已 Pending 的子任务
   不会被反复重试，全部 Pending 时任务把线程交还调用者。
 - 主体正常结束后，scope 汇合：停止接受新的登记，等待全部子任务与后代完成。主体中的
   `return` / `break` / `continue` 越过 scope 时，先保存跳转目标，完成被越过 scope 的汇合
@@ -4966,7 +4992,8 @@ fn main() @suspends {
 完整例子见 [async_main.jk](../examples/async_main.jk)。
 
 CLI 的阻塞驱动器在定时器就绪前休眠，选择所有存活分支的最早截止时间；恢复不会重放已完成的副作用。
-这是单线程协作调度，定时器不承诺精确唤醒时间或 CPU 公平性，也不能抢占不让出的循环。
+Local 使用宿主时钟协作调度；Parallel 使用真实单调时钟唤醒实际等待的任务。
+定时器均不承诺精确唤醒时间或 CPU 公平性，不提供抢占式调度。
 race 取消或任务失败时，唤醒信息随帧清理，不留下定时线程或已取消的定时器注册。
 阻塞驱动器遇到 Pending 且没有支持的唤醒来源时才报错；不会对任意宿主回调无限忙轮询。
 外部事件使用 [HostExecutor](#rust-宿主驱动任务) 的线程安全唤醒令牌，可中断阻塞等待；
