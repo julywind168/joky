@@ -117,6 +117,12 @@ void __joky_cps_release_children(JokyCpsFrame *frame);
 int32_t __joky_cps_concurrent_open_v1(JokyCpsFrame *frame, uint32_t kind, size_t count);
 int64_t __joky_cps_concurrent_next_v1(JokyCpsFrame *frame);
 int32_t __joky_cps_concurrent_polled_v1(JokyCpsFrame *frame, size_t index, int32_t status);
+/* Independent local result packets. Prepare every packet before polling; take
+ * succeeds once after selection. Generated code copies lanes and transfers its
+ * cleanup registration before release_children destroys packet storage. */
+JokyCpsFrame *__joky_cps_concurrent_result_v1(JokyCpsFrame *frame, size_t index, size_t slots);
+int64_t __joky_cps_concurrent_next_result_v1(JokyCpsFrame *frame);
+JokyCpsFrame *__joky_cps_concurrent_take_v1(JokyCpsFrame *frame, size_t index);
 void *__joky_cps_arena(JokyCpsFrame *frame);
 void __joky_cps_finish(JokyCpsFrame *frame);
 

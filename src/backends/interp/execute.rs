@@ -417,6 +417,18 @@ struct Branch {
     result: Option<usize>,
     child: Option<usize>,
     done_slot: usize,
+    results: Vec<usize>,
+    packet: Option<ResultPacket>,
+}
+
+/// Completion storage is owned by the group until the parent accepts it.
+struct ResultPacket {
+    values: Vec<Value>,
+    owner: Option<(usize, crate::runtime::cleanup::Entry)>,
+    place: Option<(
+        crate::runtime::arena::Arena,
+        Rc<[crate::runtime::place::CopyNode]>,
+    )>,
 }
 
 enum Activation {
@@ -754,6 +766,16 @@ impl Execution {
                 "Aggregate results require an internal language caller",
             )
         })?;
+        if let Some(Pending::Concurrent { group, .. }) = &self.frame_mut(parent_id).pending {
+            let index = group.active_index().expect("selected static child");
+            let packet = self.capture_aggregate_result(child_id)?;
+            let Some(Pending::Concurrent { branches, .. }) = &mut self.frame_mut(parent_id).pending
+            else {
+                unreachable!()
+            };
+            branches[index].packet = Some(packet);
+            return Ok(());
+        }
         if let Activation::Host(host) = &self.node(child_id).activation {
             let value = host
                 .aggregate_result()
@@ -762,12 +784,6 @@ impl Execution {
             let results = match &parent.function.code[parent.pc] {
                 Instruction::AggregateCall(call) => &call.results,
                 Instruction::IndirectCall(call) => &call.results,
-                Instruction::Concurrent { branches, .. } => {
-                    let Some(Pending::Concurrent { group, .. }) = &parent.pending else {
-                        unreachable!()
-                    };
-                    &branches[group.active_index().expect("selected static child")].results
-                }
                 _ => unreachable!("byte request result"),
             };
             debug_assert_eq!(results.len(), value.iter().flatten().count());
@@ -792,12 +808,6 @@ impl Execution {
         let results = match &parent.function.code[parent.pc] {
             Instruction::AggregateCall(call) => &call.results,
             Instruction::IndirectCall(call) => &call.results,
-            Instruction::Concurrent { branches, .. } => {
-                let Some(Pending::Concurrent { group, .. }) = &parent.pending else {
-                    unreachable!()
-                };
-                &branches[group.active_index().expect("selected static child")].results
-            }
             _ => unreachable!(),
         };
         debug_assert_eq!(results.len(), child.function.aggregate_result.len());
@@ -833,6 +843,105 @@ impl Execution {
         Ok(())
     }
 
+    fn capture_aggregate_result(&mut self, id: usize) -> Result<ResultPacket, Error> {
+        let mut place = None;
+        let (values, owner) = match &mut self.nodes[id].as_mut().unwrap().activation {
+            Activation::User(child) => {
+                let values = if child.function.info.signature.ret.is_place() {
+                    let layout = child
+                        .function
+                        .info
+                        .signature
+                        .ret
+                        .storage_layout()
+                        .map_err(|error| abi_error(error.to_string()))?;
+                    let mut storage = crate::runtime::arena::Arena::default();
+                    let copy = storage.allocate_local(layout.size, layout.align)?;
+                    let source = child.function.aggregate_result[0];
+                    unsafe {
+                        crate::runtime::place::copy(
+                            copy.as_ptr(),
+                            places::pointer(&child.slots[source]),
+                            &child.function.place_result,
+                        );
+                        child.cleanups.finish(&mut self.arena)?;
+                    }
+                    place = Some((storage, child.function.place_result.clone()));
+                    vec![Value::Reference(copy.as_ptr())]
+                } else {
+                    child
+                        .function
+                        .aggregate_result
+                        .iter()
+                        .map(|&slot| child.slots[slot].clone())
+                        .collect()
+                };
+                let owner = child.function.owner_result.and_then(|key| {
+                    child.cleanups.take(key).map(|entry| {
+                        let lane = child
+                            .function
+                            .aggregate_result
+                            .iter()
+                            .position(|&slot| slot == key)
+                            .unwrap();
+                        (lane, entry)
+                    })
+                });
+                (values, owner)
+            }
+            Activation::Host(host) => (
+                host.aggregate_result()
+                    .expect("aggregate host result")
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                None,
+            ),
+        };
+        Ok(ResultPacket {
+            values,
+            owner,
+            place,
+        })
+    }
+
+    fn accept_concurrent_results(&mut self, parent: usize) -> Result<(), Error> {
+        let frame = self.frame_mut(parent);
+        let Some(Pending::Concurrent { group, branches }) = &mut frame.pending else {
+            unreachable!()
+        };
+        while let Some(index) = group.next_result()? {
+            let branch = &mut branches[index];
+            group.take_result(index)?;
+            let packet = branch.packet.take().unwrap();
+            if let Some(slot) = branch.result {
+                frame.slots[slot] = packet.values.into_iter().next().unwrap();
+                if let Some((_, entry)) = packet.owner {
+                    frame.cleanups.insert(slot, entry);
+                }
+            } else {
+                for (&slot, value) in branch.results.iter().zip(packet.values) {
+                    if let Some((_, descriptor)) = &packet.place {
+                        unsafe {
+                            crate::runtime::place::copy(
+                                places::pointer(&frame.slots[slot]),
+                                places::pointer(&value),
+                                descriptor,
+                            );
+                        }
+                    } else {
+                        frame.slots[slot] = value;
+                    }
+                }
+                if let Some((lane, entry)) = packet.owner {
+                    frame.cleanups.insert(branch.results[lane], entry);
+                }
+            }
+            frame.slots[branch.done_slot] = Value::Bool(true);
+        }
+        Ok(())
+    }
+
     fn start_concurrent(&mut self, module: &BytecodeModule) -> Result<(), Error> {
         let id = self.current;
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
@@ -864,6 +973,7 @@ impl Execution {
                         child,
                         branch.done,
                         branch.result,
+                        branch.results.clone(),
                         Self::owned_arguments(module, target, &branch.args),
                     )
                 })
@@ -879,7 +989,7 @@ impl Execution {
         )?;
         let branches = children
             .into_iter()
-            .map(|(mut child, done_slot, result, owned)| {
+            .map(|(mut child, done_slot, result, results, owned)| {
                 for (dst, src) in owned {
                     if let Some(entry) = self.frame_mut(id).cleanups.take(src) {
                         match &mut child {
@@ -892,6 +1002,8 @@ impl Execution {
                     result,
                     child: Some(self.insert(child, id)),
                     done_slot,
+                    results,
+                    packet: None,
                 }
             })
             .collect();
@@ -932,7 +1044,27 @@ impl Execution {
             }
             let mut node = self.nodes[id].take().expect("live cancelled branch");
             let result = match &mut node.activation {
-                Activation::User(frame) => unsafe { frame.cleanups.finish(&mut self.arena) },
+                Activation::User(frame) => unsafe {
+                    if let Some(Pending::Concurrent { group, branches }) = &mut frame.pending {
+                        // Also drain any prepared packet whose report failed validation.
+                        for index in group
+                            .active_index()
+                            .into_iter()
+                            .chain(group.completion_order().iter().rev().copied())
+                            .chain(0..branches.len())
+                        {
+                            let branch = &mut branches[index];
+                            if let Some(packet) = branch.packet.take() {
+                                if let Some((_, entry)) = packet.owner {
+                                    if let Err(next) = entry.run(&mut self.arena) {
+                                        error.get_or_insert(next);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    frame.cleanups.finish(&mut self.arena)
+                },
                 Activation::Host(host) => host.finish(&mut self.arena),
             };
             if let Err(next) = result {
@@ -1202,20 +1334,23 @@ impl Execution {
                     let branch = &mut branches[index];
                     debug_assert_eq!(branch.child, Some(id));
                     if complete {
-                        if let Some(slot) = branch.result {
-                            frame.slots[slot] = value.take().unwrap();
-                            if let Some(entry) = owner {
-                                frame.cleanups.insert(slot, entry);
-                            }
+                        if branch.packet.is_none() {
+                            branch.packet = Some(ResultPacket {
+                                values: vec![value.take().unwrap()],
+                                owner: owner.map(|entry| (0, entry)),
+                                place: None,
+                            });
                         }
                         branch.child = None;
-                        frame.slots[branch.done_slot] = Value::Bool(true);
                     }
                     if let Err(error) = group.polled(index, complete) {
                         return Some(self.fail(error));
                     }
                     if group.is_selected() {
-                        frame.pc += 1;
+                        if let Err(error) = self.accept_concurrent_results(parent) {
+                            return Some(self.fail(error));
+                        }
+                        self.frame_mut(parent).pc += 1;
                     }
                     return None;
                 }

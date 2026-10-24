@@ -279,15 +279,29 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         void __joky_cps_release_children(JokyCpsFrame *f) { release_children_fn(f); }
         static int32_t (*concurrent_open_fn)(JokyCpsFrame *, uint32_t, size_t);
         static int64_t (*concurrent_next_fn)(JokyCpsFrame *);
+        static int64_t (*concurrent_next_result_fn)(JokyCpsFrame *);
         static int32_t (*concurrent_polled_fn)(JokyCpsFrame *, size_t, int32_t);
+        static JokyCpsFrame *(*concurrent_result_fn)(JokyCpsFrame *, size_t, size_t);
+        static JokyCpsFrame *(*concurrent_take_fn)(JokyCpsFrame *, size_t);
         void bind_concurrent_runtime(int32_t (*o)(JokyCpsFrame *, uint32_t, size_t),
                                      int64_t (*n)(JokyCpsFrame *),
-                                     int32_t (*p)(JokyCpsFrame *, size_t, int32_t)) {
+                                     int32_t (*p)(JokyCpsFrame *, size_t, int32_t),
+                                     JokyCpsFrame *(*r)(JokyCpsFrame *, size_t, size_t),
+                                     JokyCpsFrame *(*t)(JokyCpsFrame *, size_t),
+                                     int64_t (*nr)(JokyCpsFrame *)) {
             concurrent_open_fn = o; concurrent_next_fn = n; concurrent_polled_fn = p;
+            concurrent_result_fn = r; concurrent_take_fn = t; concurrent_next_result_fn = nr;
         }
         int32_t __joky_cps_concurrent_open_v1(JokyCpsFrame *f, uint32_t k, size_t n) {
             return concurrent_open_fn(f, k, n);
         }
+        JokyCpsFrame *__joky_cps_concurrent_result_v1(JokyCpsFrame *f, size_t i, size_t n) {
+            return concurrent_result_fn(f, i, n);
+        }
+        JokyCpsFrame *__joky_cps_concurrent_take_v1(JokyCpsFrame *f, size_t i) {
+            return concurrent_take_fn(f, i);
+        }
+        int64_t __joky_cps_concurrent_next_result_v1(JokyCpsFrame *f) { return concurrent_next_result_fn(f); }
         int64_t __joky_cps_concurrent_next_v1(JokyCpsFrame *f) { return concurrent_next_fn(f); }
         int32_t __joky_cps_concurrent_polled_v1(JokyCpsFrame *f, size_t i, int32_t s) {
             return concurrent_polled_fn(f, i, s);
@@ -363,6 +377,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             unsafe extern "C" fn(*mut cps::CpsFrame, u32, usize) -> i32,
             unsafe extern "C" fn(*mut cps::CpsFrame) -> i64,
             unsafe extern "C" fn(*mut cps::CpsFrame, usize, i32) -> i32,
+            unsafe extern "C" fn(*mut cps::CpsFrame, usize, usize) -> *mut cps::CpsFrame,
+            unsafe extern "C" fn(*mut cps::CpsFrame, usize) -> *mut cps::CpsFrame,
+            unsafe extern "C" fn(*mut cps::CpsFrame) -> i64,
         );
         library
             .get::<BindConcurrent>(b"bind_concurrent_runtime")
@@ -370,6 +387,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             cps::concurrent::open,
             cps::concurrent::next,
             cps::concurrent::polled,
+            cps::concurrent::result,
+            cps::concurrent::take,
+            cps::concurrent::next_result,
         );
     }
     let entry = unsafe { *library.get::<cps::CpsEntry>(b"aot_work").unwrap() };

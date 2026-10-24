@@ -661,6 +661,16 @@ impl FunctionPlan {
             Some(ty) if ty != Type::Unit => Some(self.slot(ty)?),
             _ => None,
         };
+        if let Some(value) = result.as_ref().filter(|slot| slot.ty.is_owner()) {
+            for branch in &mut planned {
+                branch.cleanup = Some(CleanupOp::Register {
+                    value: value.clone(),
+                    place: None,
+                    hooks: vec![],
+                    elements: vec![],
+                });
+            }
+        }
         let values: Vec<_> = planned.iter().map(|b| b.result.clone()).collect();
         self.emit(Op::Concurrent {
             result: result.clone(),

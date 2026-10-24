@@ -397,12 +397,14 @@ Repeated Pending does not rebuild arguments or replay earlier side effects.
 poll selection. Its active child survives instruction slicing; completed source
 positions remain stable when the registry compacts. A Selected group has chosen
 its result but still retains the backend's losing activations for `ConcurrentFinish`.
-Each branch carries scalar or flattened aggregate result destinations. On completion,
-its owning cleanup entry transfers to the parent immediately, retaining stable snapshot
-storage even after the child activation is removed. Once all branches complete,
-ordinary tuple construction moves these values in source order, preserving Unit
-positions; an all-Unit join remains Unit. Pending, failure and cancellation
-therefore retain cleanup responsibility for partially collected results.
+Each branch carries scalar or flattened aggregate result destinations. Completion
+first moves its values and owning cleanup entry into an independent result packet,
+retaining stable snapshot storage after the child activation is removed. A place
+result gets an independent copy before local cleanup. Once the group selects its
+outcome, the parent claims packets once in completion order and writes their values
+to the original source destinations. Ordinary tuple construction then moves these
+values in source order, preserving Unit positions; an all-Unit join remains Unit.
+Failure and cancellation clean unclaimed packets after child subtrees have stopped.
 Failure immediately releases the entire arena, including siblings and locals,
 even if the failed continuation remains in a scheduler. Cancellation and deep
 nested-frame destruction are iterative as well. Native callback internals still

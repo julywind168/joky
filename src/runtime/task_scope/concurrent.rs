@@ -17,11 +17,21 @@ pub(crate) enum GroupPoll {
     Selected,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResultState {
+    Pending,
+    Ready,
+    Taken,
+}
+
 pub(crate) struct LocalTaskGroup {
     children: LocalTaskScope<usize>,
     policy: CompletionPolicy,
     active: Option<(ChildId, usize)>,
     selected: bool,
+    results: Vec<ResultState>,
+    completion_order: Vec<usize>,
+    result_cursor: usize,
 }
 
 fn invalid(message: &str) -> Error {
@@ -47,11 +57,31 @@ impl LocalTaskGroup {
             .publish_batch(indices)
             .map_err(|(error, _)| error)?;
         children.close();
+        let mut results = Vec::new();
+        results.try_reserve_exact(count).map_err(|_| {
+            Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::ResourceLimit,
+                "Task result capacity exhausted",
+            )
+        })?;
+        results.resize(count, ResultState::Pending);
+        let mut completion_order = Vec::new();
+        completion_order.try_reserve_exact(count).map_err(|_| {
+            Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::ResourceLimit,
+                "Task completion capacity exhausted",
+            )
+        })?;
         Ok(Self {
             children,
             policy,
             active: None,
             selected: false,
+            results,
+            completion_order,
+            result_cursor: 0,
         })
     }
 
@@ -81,6 +111,33 @@ impl LocalTaskGroup {
         Ok(GroupPoll::Pending)
     }
 
+    pub(crate) fn completion_order(&self) -> &[usize] {
+        &self.completion_order
+    }
+
+    pub(crate) fn next_result(&mut self) -> Result<Option<usize>, Error> {
+        if !self.selected {
+            return Err(invalid("Task group has not selected its result"));
+        }
+        while let Some(&index) = self.completion_order.get(self.result_cursor) {
+            if self.results[index] == ResultState::Ready {
+                return Ok(Some(index));
+            }
+            self.result_cursor += 1;
+        }
+        Ok(None)
+    }
+
+    /// Claim a completed result once, after the group has selected its outcome.
+    /// Backends retain the packet until ownership has transferred or cleanup runs.
+    pub(crate) fn take_result(&mut self, index: usize) -> Result<(), Error> {
+        if !self.selected || self.results.get(index) != Some(&ResultState::Ready) {
+            return Err(invalid("Task result is not ready or was already taken"));
+        }
+        self.results[index] = ResultState::Taken;
+        Ok(())
+    }
+
     pub(crate) fn polled(&mut self, index: usize, complete: bool) -> Result<(), Error> {
         let (id, active) = self
             .active
@@ -90,6 +147,10 @@ impl LocalTaskGroup {
         }
         self.children.polled(id, complete)?;
         self.active = None;
+        if complete {
+            self.results[index] = ResultState::Ready;
+            self.completion_order.push(index);
+        }
         if complete && (self.policy == CompletionPolicy::First || self.children.is_empty()) {
             self.selected = true;
         }
@@ -112,6 +173,8 @@ mod tests {
         group.polled(0, false).unwrap();
         assert_eq!(group.next().unwrap(), GroupPoll::Child(1));
         group.polled(1, true).unwrap();
+        assert!(group.take_result(1).is_err());
+        assert!(group.next_result().is_err());
         assert_eq!(group.next().unwrap(), GroupPoll::Child(2));
         group.polled(2, false).unwrap();
         assert_eq!(group.next().unwrap(), GroupPoll::Pending);
@@ -121,6 +184,14 @@ mod tests {
         group.polled(2, true).unwrap();
         assert_eq!(group.next().unwrap(), GroupPoll::Selected);
         assert!(group.polled(2, true).is_err());
+        assert_eq!(group.completion_order(), [1, 0, 2]);
+        for index in [1, 0, 2] {
+            assert_eq!(group.next_result().unwrap(), Some(index));
+            group.take_result(index).unwrap();
+            assert!(group.take_result(index).is_err());
+        }
+        assert_eq!(group.next_result().unwrap(), None);
+        assert!(group.take_result(3).is_err());
     }
 
     #[test]
@@ -143,5 +214,10 @@ mod tests {
         let rejected = group.children.publish_batch(vec![3, 4]).unwrap_err();
         assert_eq!(rejected.1, [3, 4]);
         assert_eq!(group.children.live_len(), 2);
+        assert!(group.take_result(0).is_err());
+        assert_eq!(group.next_result().unwrap(), Some(1));
+        group.take_result(1).unwrap();
+        assert_eq!(group.next_result().unwrap(), None);
+        assert!(group.take_result(1).is_err());
     }
 }

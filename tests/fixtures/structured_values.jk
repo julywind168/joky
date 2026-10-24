@@ -78,6 +78,10 @@ fn owned() @suspends -> Int32 {
     record(100);
     task.yield_now()
     ensure(a.id == 1 && b.id == 2 && a.text.byte_length() == 7)
+    var updated = a
+    updated = make(3)
+    task.yield_now()
+    ensure(updated.id == 3 && updated.text.byte_length() == 7)
     42
 }
 fn discard() @suspends -> Int32 {

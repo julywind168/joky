@@ -585,6 +585,17 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_cps_concurrent_next_v1", vec![ptr], vec![types::I64]),
         (
+            "__joky_cps_concurrent_next_result_v1",
+            vec![ptr],
+            vec![types::I64],
+        ),
+        (
+            "__joky_cps_concurrent_result_v1",
+            vec![ptr, ptr, ptr],
+            vec![ptr],
+        ),
+        ("__joky_cps_concurrent_take_v1", vec![ptr, ptr], vec![ptr]),
+        (
             "__joky_cps_concurrent_polled_v1",
             vec![ptr, ptr, types::I32],
             vec![types::I32],
@@ -1048,7 +1059,9 @@ fn lower_cleanup(
             slots.read(builder, place)
         } else {
             let layout = value.ty.storage_layout().unwrap();
-            let pointer = if let SlotAccess::Frames { slots } = &*slots {
+            let pointer = if let SlotAccess::Result { storage, .. } = &*slots {
+                *storage
+            } else if let SlotAccess::Frames { slots } = &*slots {
                 let offset = plan.cps_local_slots[&value.index] * 8;
                 builder.ins().iadd_imm_u(*slots, offset as i64)
             } else {
@@ -1225,6 +1238,27 @@ struct ConcurrentContext<'a> {
     states: &'a [cranelift_codegen::ir::Block],
 }
 
+fn concurrent_result_packet(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Value,
+    index: usize,
+    result: Option<&Slot>,
+    ptr_ty: types::Type,
+) -> Value {
+    let count = result.map_or(0, |result| {
+        result.ty.scalar_types().len() + result.ty.storage_layout().unwrap().size.div_ceil(8)
+    });
+    let count = builder.ins().iconst(ptr_ty, count as i64);
+    let index = builder.ins().iconst(ptr_ty, index as i64);
+    helper(
+        builder,
+        refs,
+        "__joky_cps_concurrent_result_v1",
+        &[frame, index, count],
+    )
+}
+
 fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_>) {
     let ConcurrentContext {
         plan,
@@ -1271,6 +1305,17 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         &[frame, kind_tag, count],
     );
     check_call(builder, refs, Some(frame), None);
+    for (index, branch) in branches.iter().enumerate() {
+        concurrent_result_packet(
+            builder,
+            refs,
+            frame,
+            index,
+            branch.result.as_ref().or(result),
+            ptr_ty,
+        );
+        check_call(builder, refs, Some(frame), None);
+    }
     let saved = builder.ins().iconst(types::I32, concurrent_state as i64);
     builder
         .ins()
@@ -1339,27 +1384,51 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         builder.ins().jump(select, &[]);
 
         builder.switch_to_block(complete);
+        let destination = branch.result.as_ref().or(result);
+        let packet = concurrent_result_packet(builder, refs, frame, index, destination, ptr_ty);
+        check_call(builder, refs, Some(frame), None);
+        let packet_slots = helper(builder, refs, "__joky_cps_slots", &[packet]);
+        let lanes = destination.map_or(0, |slot| slot.ty.scalar_types().len());
+        let storage = builder.ins().iadd_imm_u(packet_slots, (lanes * 8) as i64);
+        let mut packet_access = SlotAccess::Result {
+            slots: packet_slots,
+            base: destination.map_or(0, |slot| slot.index),
+            storage,
+        };
         lower_cps_result(
             builder,
-            &mut SlotAccess::Frames { slots },
-            branch.result.as_ref().or(result),
+            &mut packet_access,
+            destination,
             &functions[&branch.name],
             refs,
             child,
         );
         if let Some(cleanup) = &branch.cleanup {
+            let packet_cleanup = helper(builder, refs, "__joky_cps_cleanup_v2", &[packet]);
+            let packet_mode = ExecMode::Suspends {
+                frame,
+                arena: mode.arena_option(),
+                cleanup: Some(packet_cleanup),
+                states,
+                state_offset,
+            };
             lower_cleanup(
                 builder,
                 cleanup,
                 plan,
                 refs,
                 ptr_ty,
-                &mut SlotAccess::Frames { slots },
-                mode,
+                &mut packet_access,
+                packet_mode,
             );
+            let key = builder
+                .ins()
+                .iconst(ptr_ty, destination.unwrap().owner_key() as i64);
+            builder
+                .ins()
+                .call(refs["__joky_cleanup_snapshot"], &[packet_cleanup, key]);
+            check_call(builder, refs, Some(frame), None);
         }
-        let one = builder.ins().iconst(types::I8, 1);
-        store(builder, slots, &branch.done, one);
         let child_index = builder.ins().iconst(ptr_ty, index as i64);
         builder.ins().call(
             refs["__joky_cps_concurrent_polled_v1"],
@@ -1370,6 +1439,54 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
     }
     // ConcurrentFinish retains the existing result-registration/cleanup barrier.
     builder.switch_to_block(finished);
+    let next_result = helper(
+        builder,
+        refs,
+        "__joky_cps_concurrent_next_result_v1",
+        &[frame],
+    );
+    check_call(builder, refs, Some(frame), None);
+    let received = builder.create_block();
+    let result_blocks: Vec<_> = branches.iter().map(|_| builder.create_block()).collect();
+    let mut results_switch = Switch::new();
+    for (index, &block) in result_blocks.iter().enumerate() {
+        results_switch.set_entry(index as u128, block);
+    }
+    results_switch.set_entry(u64::MAX as u128, received);
+    results_switch.emit(builder, next_result, invalid);
+    for (index, branch) in branches.iter().enumerate() {
+        builder.switch_to_block(result_blocks[index]);
+        let index = builder.ins().iconst(ptr_ty, index as i64);
+        let packet = helper(
+            builder,
+            refs,
+            "__joky_cps_concurrent_take_v1",
+            &[frame, index],
+        );
+        check_call(builder, refs, Some(frame), None);
+        if let Some(destination) = branch.result.as_ref().or(result) {
+            let packet_slots = helper(builder, refs, "__joky_cps_slots", &[packet]);
+            for (offset, dst) in destination.scalars().enumerate() {
+                let source = Slot {
+                    index: offset,
+                    ty: dst.ty.clone(),
+                };
+                let value = load(builder, packet_slots, &source);
+                store(builder, slots, &dst, value);
+            }
+            if branch.cleanup.is_some() {
+                let key = builder.ins().iconst(ptr_ty, destination.owner_key() as i64);
+                builder.ins().call(
+                    refs["__joky_cps_transfer_owner_v2"],
+                    &[packet, frame, key, key],
+                );
+            }
+        }
+        let one = builder.ins().iconst(types::I8, 1);
+        store(builder, slots, &branch.done, one);
+        builder.ins().jump(finished, &[]);
+    }
+    builder.switch_to_block(received);
 }
 
 /// Where a function's IR slots live. Suspending functions address a CPS
@@ -1377,6 +1494,11 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
 /// variables so the register allocator handles loop backedges. Shared op
 /// lowering is written once against this choice.
 enum SlotAccess<'a> {
+    Result {
+        slots: Value,
+        base: usize,
+        storage: Value,
+    },
     Frames {
         slots: Value,
     },
@@ -1389,6 +1511,14 @@ impl SlotAccess<'_> {
     fn read(&mut self, builder: &mut FunctionBuilder, slot: &Slot) -> Value {
         match self {
             Self::Frames { slots } => load(builder, *slots, slot),
+            Self::Result { slots, base, .. } => load(
+                builder,
+                *slots,
+                &Slot {
+                    index: slot.index - *base,
+                    ty: slot.ty.clone(),
+                },
+            ),
             Self::Ssa { variables } => builder.use_var(variables[slot.index].unwrap()),
         }
     }
@@ -1396,6 +1526,15 @@ impl SlotAccess<'_> {
     fn write(&mut self, builder: &mut FunctionBuilder, slot: &Slot, value: Value) {
         match self {
             Self::Frames { slots } => store(builder, *slots, slot, value),
+            Self::Result { slots, base, .. } => store(
+                builder,
+                *slots,
+                &Slot {
+                    index: slot.index - *base,
+                    ty: slot.ty.clone(),
+                },
+                value,
+            ),
             Self::Ssa { variables } => define_slot(builder, variables, slot, value),
         }
     }
@@ -1419,6 +1558,12 @@ enum ExecMode<'a> {
 }
 
 impl ExecMode<'_> {
+    fn arena_option(self) -> Option<Value> {
+        match self {
+            Self::Direct { arena, .. } | Self::Suspends { arena, .. } => arena,
+        }
+    }
+
     fn arena(self) -> Value {
         match self {
             Self::Direct { arena, .. } | Self::Suspends { arena, .. } => {

@@ -403,7 +403,7 @@ fn race_values_transfer_winners_and_clean_losers_in_both_vm_backends() {
             assert_eq!(task.cps_result(), Some(42), "{mode:?} {entry}");
             live(0);
             if entry == "owned" {
-                events(&[-1, -2, 1, 100, 2]);
+                events(&[-1, -2, 1, 100, -3, 2, 3]);
             }
             if entry == "unpolled" {
                 events(&[-1, -2, 2, 1]);

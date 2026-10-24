@@ -49,6 +49,7 @@ pub struct CpsFrame {
     pub(crate) root_text: bool,
     pub(crate) text_result: Option<String>,
     concurrent: Option<LocalTaskGroup>,
+    concurrent_results: Vec<Option<Box<CpsFrame>>>,
 }
 
 impl CpsFrame {
@@ -74,7 +75,22 @@ impl CpsFrame {
             root_text: false,
             text_result: None,
             concurrent: None,
+            concurrent_results: Vec::new(),
         }
+    }
+
+    fn release_concurrent_results(&mut self) {
+        if let Some(group) = &self.concurrent {
+            // A failed packet initialization is newer than every published result.
+            for index in group
+                .active_index()
+                .into_iter()
+                .chain(group.completion_order().iter().rev().copied())
+            {
+                self.concurrent_results[index].take();
+            }
+        }
+        self.concurrent_results.clear();
     }
 
     pub(crate) fn release(&mut self) {
@@ -83,8 +99,9 @@ impl CpsFrame {
             self.state = FAILED;
         }
         self.children.clear();
-        self.concurrent = None;
         self.task_scopes.clear();
+        self.release_concurrent_results();
+        self.concurrent = None;
         self.task_entry = None;
         self.text_views.clear();
         if !self.cleanup.is_null() {
@@ -191,6 +208,7 @@ pub unsafe extern "C" fn child_at(
 #[export_name = "__joky_cps_release_children"]
 pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
     (*frame).children.clear();
+    (*frame).release_concurrent_results();
     (*frame).concurrent = None;
 }
 
@@ -406,7 +424,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 22] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 25] {
     [
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
@@ -436,6 +454,18 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 22] {
         (
             "__joky_cps_concurrent_polled_v1",
             concurrent::polled as *const u8,
+        ),
+        (
+            "__joky_cps_concurrent_result_v1",
+            concurrent::result as *const u8,
+        ),
+        (
+            "__joky_cps_concurrent_take_v1",
+            concurrent::take as *const u8,
+        ),
+        (
+            "__joky_cps_concurrent_next_result_v1",
+            concurrent::next_result as *const u8,
         ),
         ("__joky_cps_task_scope_enter", task_scope_enter as *const u8),
         ("__joky_cps_task_child", task_child as *const u8),
