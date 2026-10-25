@@ -199,7 +199,7 @@ fn failing_rhs_keeps_bindings_out() -> Int32 {
     let Point { x, y } = { record_drop(8); point(1 / 0, 2) }
     x + y
 }
-fn cancellation_inner() -> Int32 {
+fn cancellation_inner() @suspends -> Int32 {
     let User { name, score } = User { name: "Ada", score: 37 }
     let Holder { tag, .. } = Holder {
         left: Resource { id: 1, values: Array.new::<Int32>() }

@@ -164,10 +164,11 @@ impl Vm {
 impl Vm {
     // Register all host contracts before the initial load. Future loads and
     // publications validate the complete set before installing any code.
-    pub fn require<A, R>(&self, name: String) @suspends -> Result<Unit, LoadError> {
+    pub fn require<A, R>(&self, name: String) @suspends -> Result<Entry<A, R>, LoadError> {
         let input = schema::<A>()
         let output = schema::<R>()
-        loaded(source_result(self, name, "{input}\n{output}", 2))
+        source_result(self, name.clone(), "{input}\n{output}", 2)?
+        Ok(Entry { name: name })
     }
     pub fn module_source(&self, name: String, source: String) @suspends -> Result<Unit, LoadError> {
         loaded(source_result(self, name, source, 3))
@@ -175,5 +176,29 @@ impl Vm {
     pub fn module_file(&self, name: String, path: String) @suspends -> Result<Unit, LoadError> {
         let source = match file_text(path) { Ok(source) => source, Err(error) => return Err(error) }
         self.module_source(name, source)
+    }
+}
+
+// A typed entry name. Each invocation validates the selected VM's current code;
+// this descriptor neither owns a VM nor pins a code generation.
+pub struct Entry<A, R> { name: String }
+impl<A, R> Entry<A, R> {
+    pub fn call(&self, engine: &Vm, input: A) @suspends -> R {
+        engine.call::<A, R>(self.name.clone(), input)
+    }
+    pub fn try_call(&self, engine: &Vm, input: A) @suspends -> Result<R, CallError> {
+        engine.try_call::<A, R>(self.name.clone(), input)
+    }
+}
+impl LoadError {
+    pub fn message(&self) -> String {
+        match &self.kind {
+            Io(error) => error.message.clone(),
+            Utf8(_) => "Script is not UTF-8",
+            Compile(error) => error.message.clone(),
+            Incompatible(error) => error.message.clone(),
+            Conflict(error) => error.message.clone(),
+            Runtime(error) => error.message.clone()
+        }
     }
 }

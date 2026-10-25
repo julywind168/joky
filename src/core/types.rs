@@ -320,7 +320,7 @@ impl TypeRegistry {
         let registry = &scoped;
         registry.validate_associated_declarations()?;
         let mut canonical = layout::resolve(registry, module)?;
-        let inferred = registry.infer_json_derives(module)?;
+        let inferred = registry.infer_derives(module)?;
         let module = inferred.as_ref().unwrap_or(module);
         let inferred_registry = inferred
             .as_ref()

@@ -1,0 +1,6 @@
+#derive(Clone)
+pub struct Secret<T> { value: T }
+impl<T> Secret<T> {
+    pub fn make(value: T) -> Self { Self { value: value } }
+    pub fn text(&self) -> &T { &self.value }
+}

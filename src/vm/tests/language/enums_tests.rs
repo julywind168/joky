@@ -232,7 +232,7 @@ fn invalid_enums_and_patterns_are_rejected() {
             "inside",
         ),
         (
-            "enum E { A } fn f(e: E) -> Bool { e == E.A }",
+            "enum E { A, B(Int32) } fn f(e: E) -> Bool { e == E.A }",
             ErrorCode::TypeMismatch,
             "Comparison operands",
         ),

@@ -167,7 +167,7 @@ impl Parser {
         Ok((
             FnDef {
                 every: None,
-                json_encode: false,
+                derived_body: None,
                 noescape: (noescape || !noescape_params.is_empty()).then(|| {
                     Box::new(NoEscape {
                         all: noescape,
@@ -454,7 +454,7 @@ impl Parser {
         self.impl_trait = None;
         self.type_params.clear();
         Ok(ImplDef {
-            json_derive: None,
+            derive_fields: None,
             trait_name,
             origin: None,
             scope: None,

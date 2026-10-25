@@ -19,7 +19,7 @@ fn json_derive_rejections_point_to_attributes_and_fields_in_all_backends() {
     for (source, diagnostic, field) in [
         ("#derive struct Bad {}", "#derive requires", None),
         ("#derive() struct Bad {}", "at least one trait", None),
-        ("#derive(Clone) struct Bad {}", "Only #derive", None),
+        ("#derive(Unknown) struct Bad {}", "Only #derive", None),
         (
             "#derive(ToJson, ToJson) struct Bad {}",
             "Duplicate ToJson",
@@ -35,22 +35,22 @@ fn json_derive_rejections_point_to_attributes_and_fields_in_all_backends() {
         ("#derive(ToJson) fn bad() {}", "require a struct", None),
         (
             "#derive(ToJson) struct Bad { callback: fn() -> Int32 }",
-            "Cannot derive JSON",
+            "Cannot derive",
             Some("callback: fn() -> Int32"),
         ),
         (
             "#derive(FromJson) struct Bad { pair: (Int32, Bool) }",
-            "Cannot derive JSON",
+            "Cannot derive",
             Some("pair: (Int32, Bool)"),
         ),
         (
             "struct Unknown {} #derive(ToJson) struct Bad { value: Unknown }",
-            "Cannot derive JSON",
+            "Cannot derive",
             Some("value: Unknown"),
         ),
         (
             "struct Unknown {} #derive(FromJson) struct Bad { value: Unknown }",
-            "Cannot derive JSON",
+            "Cannot derive",
             Some("value: Unknown"),
         ),
         ("import joky/json/typed impl<T, U> typed.ToJson for T {} #derive(ToJson) struct Bad { value: Int32 }", "impl requires", None),

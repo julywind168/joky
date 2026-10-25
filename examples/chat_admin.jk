@@ -2,11 +2,7 @@ import joky/vm
 import joky/tcp.{type TcpListener, type TcpStream, type BufferedTcp}
 
 pub fn report(error: vm.LoadError) {
-    match error.kind {
-        Io(error) => println(error.message), Utf8(_) => println("Script is not UTF-8"),
-        Compile(error) => println(error.message), Incompatible(error) => println(error.message),
-        Conflict(error) => println(error.message), Runtime(error) => println(error.message)
-    }
+    println(error.message())
 }
 fn reload(engine: &vm.Vm, path: &String) @suspends -> String {
     match engine.publish_file(path.clone()) {

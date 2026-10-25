@@ -133,6 +133,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         if !suspends
             || self.generics.borrow().checking
@@ -197,8 +198,16 @@ impl FunctionPlan {
                 "when captures require a bounded value packet (64 contract members, 64 lanes, 8 aggregate levels)",
             ));
         }
-        let ret = self
-            .bound_hint(&block.body, &local, functions, types)
+        let expected_body = expected
+            .and_then(|ty| match ty {
+                Type::Enum(e) if e.name == "joky/result.Result" => {
+                    e.arguments.first().and_then(|a| a.as_type()).cloned()
+                }
+                _ => None,
+            })
+            .filter(|ty| self.when_result(ty, types).ok().as_ref() == expected);
+        let ret = expected_body
+            .or_else(|| self.bound_hint(&block.body, &local, functions, types))
             .ok_or_else(|| {
                 type_error(
                     &block.span,
@@ -358,7 +367,7 @@ impl FunctionPlan {
             info.returns_interior = false;
             let mut definition = FnDef {
                 every: None,
-                json_encode: false,
+                derived_body: None,
                 noescape: Some(Box::new(crate::parser::ast::NoEscape {
                     all: true,
                     params: vec![],
@@ -540,7 +549,7 @@ pub(super) fn validate_states(
         }
         let f = FnDef {
             every: None,
-            json_encode: false,
+            derived_body: None,
             noescape: None,
             public: false,
             buffer_intrinsic: None,

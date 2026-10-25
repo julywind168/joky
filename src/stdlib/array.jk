@@ -1,6 +1,8 @@
 // Array is a nominal, single-owner wrapper. Its storage field remains private;
 // all container policies live in Joky and use checked storage/move primitives.
 import joky/internal/buffer.{type Buffer}
+import joky/clone as cloning.{type Clone}
+import joky/eq.{type BorrowEq}
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
@@ -187,4 +189,20 @@ impl<T: Copy> Array<T> {
     pub fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
     pub fn borrow(&self, index: UInt64) -> &Element<T> { borrow(self, index) }
     pub fn borrow_mut(&mut self, index: UInt64) -> &mut Element<T> { borrow_mut(self, index) }
+}
+
+impl<T: Clone> Clone for Array<T> {
+    fn clone(&self) -> Self { clone(self) }
+}
+pub fn clone<T: Clone>(values: &Array<T>) -> Array<T> {
+    var copy = with_capacity::<T>(values.len())
+    for value in values { copy.push(Clone.clone(value)) }
+    copy
+}
+impl<T: BorrowEq> Array<T> {
+    pub fn contains(&self, value: &T) -> Bool { contains(self, value) }
+}
+pub fn contains<T: BorrowEq>(values: &Array<T>, value: &T) -> Bool {
+    for item in values { if BorrowEq.eq_ref(item, value) { return true } }
+    false
 }

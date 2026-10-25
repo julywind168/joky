@@ -221,6 +221,7 @@ fn bind(
         required.insert(PRELUDE.into());
         let prelude = &libraries[PRELUDE].exports;
         scope.types.extend(prelude.types.clone());
+        scope.traits.extend(prelude.traits.clone());
         scope.constructors.extend(
             prelude
                 .constructors
@@ -405,7 +406,12 @@ fn bind(
                     ));
                 }
                 if let Some(target) = exports.traits.get(&member.name) {
-                    if scope.types.contains_key(name) || scope.traits.contains_key(name) {
+                    if scope.types.contains_key(name)
+                        || scope
+                            .traits
+                            .get(name)
+                            .is_some_and(|old| old.id != target.id)
+                    {
                         return Err(error(
                             member.span,
                             ErrorCode::DuplicateDefinition,

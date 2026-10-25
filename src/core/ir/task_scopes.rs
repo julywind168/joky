@@ -148,7 +148,7 @@ impl FunctionPlan {
         );
         let task_def = FnDef {
             every: None,
-            json_encode: false,
+            derived_body: None,
             noescape: None,
             public: false,
             buffer_intrinsic: None,

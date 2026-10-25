@@ -1276,7 +1276,8 @@ impl FunctionPlan {
         }
         when::validate_blocks(f)?;
         let prepared = super::json_derive::prepare_encoding(f);
-        let f = prepared.as_ref();
+        let prepared_clone = super::clone_derive::prepare(prepared.as_ref());
+        let f = prepared_clone.as_ref();
         // Specialization and synthesized branch entries can expose dyn types
         // absent from the original generic declaration.
         dyn_traits::check_signature(&f.params, &f.ret_ty, f.suspends, false, f.span)?;
@@ -2070,7 +2071,7 @@ impl FunctionPlan {
             }
         }
         match expr {
-            Expr::When(block) => self.when_expr(block, vars, functions, suspends, types),
+            Expr::When(block) => self.when_expr(block, vars, functions, suspends, types, expected),
             Expr::AnonymousFunction(function) => {
                 self.anonymous_function(function, vars, functions, suspends, types, expected)
             }
@@ -2488,11 +2489,14 @@ impl FunctionPlan {
                     type_error(span, ErrorCode::TypeMismatch, "Binary operand is Unit")
                 })?;
                 let equality = matches!(op, BinOp::Eq | BinOp::Ne);
+                let tag_equality = equality
+                    && matches!(&left.ty, Type::Enum(e) if e.variants.iter().all(|v| v.payload.is_none()));
                 if !(left.ty.integer().is_some()
                     || (left.ty.is_float()
                         && (op.is_comparison()
                             || matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div))))
                     && !(equality && matches!(left.ty, Type::Bool | Type::Rune))
+                    && !tag_equality
                 {
                     return Err(type_error(
                         span,
@@ -2530,6 +2534,20 @@ impl FunctionPlan {
                 } else {
                     left.ty.clone()
                 })?;
+                let (left, right) = if tag_equality {
+                    (
+                        Slot {
+                            index: left.index,
+                            ty: Type::Int32,
+                        },
+                        Slot {
+                            index: right.index,
+                            ty: Type::Int32,
+                        },
+                    )
+                } else {
+                    (left, right)
+                };
                 self.emit(Op::Binary(dst.clone(), op.clone(), left, right));
                 Ok(Flow::Value(Some(dst)))
             }

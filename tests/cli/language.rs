@@ -2892,3 +2892,17 @@ fn iterator_adapters_execute_and_clean_up_in_standalone_aot() {
         assert_eq!(output.stdout, expected.as_bytes(), "{name}");
     }
 }
+
+#[test]
+fn service_ergonomics_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "service_clone_model.jk",
+        include_str!("../fixtures/service_clone_model.jk"),
+    );
+    work.write(
+        "ergonomics.jk",
+        include_str!("../fixtures/service_ergonomics.jk"),
+    );
+    work.assert_all_backends("ergonomics.jk", &[], b"", 0);
+}

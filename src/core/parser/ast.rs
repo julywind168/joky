@@ -531,8 +531,8 @@ pub struct MethodCall {
 /// An inherent or trait implementation for a concrete or full generic nominal type.
 #[derive(Debug, Clone)]
 pub struct ImplDef {
-    /// Original fields for compiler-generated JSON bound inference.
-    pub(crate) json_derive: Option<Vec<Param>>,
+    /// Original fields/payloads for compiler-generated conditional derive bounds.
+    pub(crate) derive_fields: Option<Vec<Param>>,
     pub trait_name: Option<String>,
     pub(crate) origin: Option<String>,
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
@@ -576,7 +576,7 @@ impl TraitMethod {
     pub(crate) fn definition(&self) -> FnDef {
         FnDef {
             every: None,
-            json_encode: false,
+            derived_body: None,
             name: self.name.clone(),
             params: self.params.clone(),
             ret_ty: self.ret_ty.clone(),
@@ -712,12 +712,18 @@ pub enum Item {
     ExternFn(ExternFnDecl),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DerivedBody {
+    JsonEncode,
+    Clone,
+}
+
 #[derive(Debug, Clone)]
 pub struct FnDef {
     /// A positive literal period for an automatically scheduled state method.
     pub every: Option<std::num::NonZeroI32>,
-    /// Rebuild Copy field snapshots after generic substitution for JSON encoding.
-    pub(crate) json_encode: bool,
+    /// Adjust generated field borrows after generic substitution.
+    pub(crate) derived_body: Option<DerivedBody>,
     /// Checked promise that borrowed arguments do not escape this call.
     pub noescape: Option<Box<NoEscape>>,
     pub public: bool,
@@ -1070,6 +1076,7 @@ impl RecordDef {
 /// A module-local nominal enum declaration with optional Copy type parameters.
 #[derive(Debug, Clone)]
 pub struct EnumDef {
+    pub attributes: Vec<Attribute>,
     pub public: bool,
     pub name: String,
     pub type_params: Vec<Arc<TypeParameter>>,
@@ -1083,6 +1090,7 @@ impl EnumDef {
     pub fn new(name: String, variants: Vec<VariantDef>, name_span: Span, span: Span) -> Self {
         Self {
             public: false,
+            attributes: Vec::new(),
             name,
             type_params: Vec::new(),
             variants,

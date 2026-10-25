@@ -14,17 +14,17 @@ struct Inference {
 
 impl TypeRegistry {
     /// Layouts are available, but generated methods have not been checked yet.
-    pub(crate) fn infer_json_derives(&self, module: &Module) -> Result<Option<Module>, Error> {
+    pub(crate) fn infer_derives(&self, module: &Module) -> Result<Option<Module>, Error> {
         if !module
             .implementations
             .iter()
-            .any(|i| i.json_derive.is_some())
+            .any(|i| i.derive_fields.is_some())
         {
             return Ok(None);
         }
         let mut output = module.clone();
         for implementation in &mut output.implementations {
-            let Some(fields) = implementation.json_derive.take() else {
+            let Some(fields) = implementation.derive_fields.take() else {
                 continue;
             };
             let original_scope = implementation
@@ -43,7 +43,7 @@ impl TypeRegistry {
                     .resolve_scoped(&field.ty, original_scope, &implementation.type_params)
                     .map_err(|e| e.with_span(field.span))?;
                 local
-                    .infer_json_obligation(&ty, id, &mut inference, 0, field.span)
+                    .infer_derive_obligation(&ty, id, &mut inference, 0, field.span)
                     .map_err(|e| e.with_span(field.span))?;
             }
             let mut imports = original_scope.clone();
@@ -123,7 +123,7 @@ impl TypeRegistry {
         Ok(Some(output))
     }
 
-    fn infer_json_obligation(
+    fn infer_derive_obligation(
         &self,
         ty: &Type,
         id: u64,
@@ -134,7 +134,7 @@ impl TypeRegistry {
         if depth > 32 {
             return Err(error(
                 ErrorCode::ResourceLimit,
-                "JSON derive inference exceeds 32 dependency levels",
+                "Derive inference exceeds 32 dependency levels",
             )
             .with_span(span));
         }
@@ -146,7 +146,7 @@ impl TypeRegistry {
         if inference.work.get() >= 256 {
             return Err(error(
                 ErrorCode::ResourceLimit,
-                "JSON derive inference exceeds 256 obligation expansions",
+                "Derive inference exceeds 256 obligation expansions",
             )
             .with_span(span));
         }
@@ -206,7 +206,7 @@ impl TypeRegistry {
             let mut inferred = inference.clone();
             let inference = &mut inferred;
             let attempt = (|| -> Result<(), Error> {
-                if let Some(fields) = &implementation.json_derive {
+                if let Some(fields) = &implementation.derive_fields {
                     // Nongeneric derives check their own fields independently.
                     // Only conditional implementations contribute outer bounds.
                     if implementation.type_params.is_empty() {
@@ -216,7 +216,7 @@ impl TypeRegistry {
                         let field_ty =
                             self.resolve_scoped(&field.ty, scope, &implementation.type_params)?;
                         let field_ty = super::super::substitute(&field_ty, &substitutions, self)?;
-                        self.infer_json_obligation(&field_ty, id, inference, depth + 1, span)?;
+                        self.infer_derive_obligation(&field_ty, id, inference, depth + 1, span)?;
                     }
                 } else {
                     for parameter in &implementation.type_params {
@@ -229,7 +229,7 @@ impl TypeRegistry {
                         };
                         for bound in &parameter.bounds {
                             let bound_id = self.trait_id(&bound.name, scope, bound.span)?;
-                            self.infer_json_obligation(
+                            self.infer_derive_obligation(
                                 actual,
                                 bound_id,
                                 inference,
@@ -270,7 +270,7 @@ impl TypeRegistry {
                                             .find(|e| e.name == equality.name)
                                         {
                                             if existing.ty != ty {
-                                                return Err(error(ErrorCode::TypeMismatch, "Conflicting associated-type equalities in JSON derive").with_span(span));
+                                                return Err(error(ErrorCode::TypeMismatch, "Conflicting associated-type equalities in derive").with_span(span));
                                             }
                                         } else {
                                             inferred.1.equalities.push(AssociatedEquality {
@@ -289,7 +289,7 @@ impl TypeRegistry {
                                 actual,
                                 &substitutions,
                             )? {
-                                return Err(error(ErrorCode::TypeMismatch, "JSON derive cannot infer this associated-type equality; write an explicit implementation").with_span(span));
+                                return Err(error(ErrorCode::TypeMismatch, "derive cannot infer this associated-type equality; write an explicit implementation").with_span(span));
                             }
                         }
                     }
@@ -317,7 +317,7 @@ impl TypeRegistry {
                 error(
                     ErrorCode::TypeMismatch,
                     format!(
-                        "Cannot derive JSON: field type '{ty}' does not implement '{}'",
+                        "Cannot derive: field type '{ty}' does not implement '{}'",
                         declaration.name
                     ),
                 )

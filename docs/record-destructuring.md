@@ -1,6 +1,8 @@
 # 记录解构开发计划
 
 状态：2026-10-07，基线 `3ff4563`。D0–D5 已全部完成并通过发布验收（证据见第 8 节）。
+后续更新：2026-10-26 的 [R1c](service-concurrency-refactor.md#7-实施阶段) 已解除消费式拥有记录解构的同步限制，
+共享借用解构仍限同步函数；下文保留首版范围记录。
 这是语言基础补齐的第 2 项；字段语法与可见性先按
 [第 1 项](module-constants-record-syntax.md)的 M1 落地，闭包见
 [第 3 项](anonymous-functions-closures.md)。第 2 节代码均已成为实际语法。

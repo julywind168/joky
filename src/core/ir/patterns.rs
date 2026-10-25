@@ -555,12 +555,28 @@ impl FunctionPlan {
         path: &[usize],
     ) -> Result<Slot, Error> {
         let dst = self.slot(Type::reference(ty.clone(), mutable))?;
-        self.emit(Op::PatternProject {
-            dst: dst.clone(),
-            src: root.clone(),
-            offset,
-            path: path.to_vec(),
-        });
+        let target = self.pointee(
+            &root.ty.reference_type().unwrap().target,
+            &self.type_registry,
+        )?;
+        if target.is_owner() && !target.is_inline_owner() && ty.is_owner() {
+            // A one-field owner wrapper borrows the handle itself, just like
+            // ordinary field access. It is not an address containing a handle.
+            // Slice partitions still need their disjoint PatternProject loans.
+            debug_assert_eq!(offset, 0);
+            self.emit(Op::Reference {
+                dst: dst.clone(),
+                src: root.clone(),
+                moving: false,
+            });
+        } else {
+            self.emit(Op::PatternProject {
+                dst: dst.clone(),
+                src: root.clone(),
+                offset,
+                path: path.to_vec(),
+            });
+        }
         Ok(dst)
     }
 

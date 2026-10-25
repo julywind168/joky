@@ -1,11 +1,11 @@
 # 服务端并发模型重构计划
 
-状态：2026-10-26，设计提案，尚未实施。同日按设计评审修订：D1 明确为契约变更，
+状态：2026-10-26，R0／R1 已实施，R2 及后续阶段仍为设计提案。按设计评审修订：D1 明确为契约变更，
 D3／D4 联合设计，D5 分步，D6 独立定案，D7 区分资源所有权、worker 归属与任务调度，
 多线程阶段前增加运行协议；同日二次修订补齐混合队列提交、目录协调与别名规则。
 修订要点见第 10 节。
 
-本文以 `examples/chat.jk`、`chat_logic.jk` 为验收对象，规划下一轮收敛方向，不改变现行规则。
+本文以 `examples/chat.jk`、`chat_logic.jk` 为验收对象；已交付范围见第 7 节，后续提案不改变现行规则。
 当前接口以 [language.md](language.md) 为准，不变量见 [architecture.md](architecture.md)。
 本文承接[有状态服务的编程模型](stateful-service-ergonomics.md)（S0–S4 已完成）、
 [服务端状态域设计](server-concurrency.md)、[状态域语法](state-domain-syntax.md)、
@@ -27,7 +27,7 @@ D3／D4 联合设计，D5 分步，D6 独立定案，D7 区分资源所有权、
 
 ### 1.2 协议负担
 
-`chat_logic.jk` 约 490 行，真正的业务规则（扣费、加入／离开、消息格式）约 150 行，
+R0／R1 实施前，`chat_logic.jk` 约 490 行，真正的业务规则（扣费、加入／离开、消息格式）约 150 行，
 其余为协议与样板。业务作者实际接触的概念包括 Owner、目录、请求根、就绪邮箱、停止邮箱、
 发布屏障、重试、排除列表、`Attempt` 双层 Result 等十余项。主要来源：
 
@@ -40,7 +40,8 @@ D3／D4 联合设计，D5 分步，D6 独立定案，D7 区分资源所有权、
 
 ### 1.3 已核实的语言与实现限制
 
-以下由 2026-10-26 的 Debug 探针与源码核对确认：
+以下为 R0／R1 实施前由 Debug 探针与源码核对确认的基线；前三项已在 R1 解除，
+循环清理已在 R0 完成。当前能力以语言参考为准，其余并发限制留待后续阶段：
 
 - 挂起函数内不能消费式解构拥有记录（`Owned record destructuring requires a synchronous function`），
   chat 因此需要 `split`、`split_request`、`split_work`、`split_room` 四个辅助函数。
@@ -344,14 +345,14 @@ D7 的 VM 与 Domains 部分实施前，先单独成文冻结以下协议，再�
 
 ## 5. 语言与示例的易用性收敛
 
-| 编号 | 内容 | 效果 | 预估 |
+| 编号 | 内容 | 效果 | 状态 |
 | --- | --- | --- | --- |
-| L1 | 挂起函数内的消费式记录解构 | 删除四个 `split_*` | 需调研，涉及 CPS 帧所有权 |
-| L2 | 派生 Clone；Array clone／contains | 删除 `Command.clone`、`copy_ids`、`contains` | 中 |
-| L3 | 无载荷枚举相等比较或模式测试表达式 | 删除 `match … { X => true, _ => false }` | 小 |
-| L4 | `when` 块向内传递期望结果类型 | 删除 `Result.Ok::<Route, Retry>` 显式类型参数 | 需调研，涉及推断 |
-| L5 | `Vm.require` 返回类型化入口句柄 | 调用处不再重复入口字符串与类型参数 | 小到中 |
-| L6 | `LoadError` 提供统一消息 | `chat_admin.report` 不再逐分支打印 | 小 |
+| L1 | 挂起函数内的消费式记录解构 | 删除四个 `split_*` | R1c 已完成 |
+| L2 | 派生 Clone；Array clone／contains | 删除 `Command.clone`、`copy_ids`、`contains` | R1b 已完成 |
+| L3 | 无载荷枚举 `==`／`!=` | 删除 `match … { X => true, _ => false }` | R1a 已完成 |
+| L4 | `when` 块向内传递期望结果类型 | 删除 `Result.Ok::<Route, Retry>` 显式类型参数 | R1c 已完成 |
+| L5 | `Vm.require` 返回类型化入口描述符 | 调用处不再重复入口字符串与类型参数 | R1a 已完成 |
+| L6 | `LoadError` 提供统一消息 | `chat_admin.report` 不再逐分支打印 | R1a 已完成 |
 
 示例层清理（不依赖新能力）：手写下标循环改为 `for`；`room == 0`、`id == 0`、`skip: 0`、
 目录键 1、`key - 1` 换算改为 `Option` 或具名常量；`retry_command` 内重复的 `match &command`
@@ -379,13 +380,13 @@ fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
 
 | 阶段 | 内容 | 依赖 | 退出条件 |
 | --- | --- | --- | --- |
-| R0 | 示例层清理 | 无 | 语义不变，chat 六组合实网矩阵通过 |
-| R1a | L3、L5、L6 | 无 | 三后端行为测试；chat 删除对应样板 |
-| R1b | L2 | 无 | 同上 |
-| R1c | L1、L4 先调研再实施 | 无 | 调研结论入文档；实施后删除 `split_*` 与显式类型参数 |
+| R0（已完成） | 示例层清理 | 无 | 语义不变，chat 六组合实网矩阵通过 |
+| R1a（已完成） | L3、L5、L6 | 无 | 三后端行为测试；chat 删除对应样板 |
+| R1b（已完成） | L2 | 无 | 同上 |
+| R1c（已完成） | L1、L4 先调研再实施 | 无 | 调研结论入文档；实施后删除 `split_*` 与显式类型参数 |
 | R2 | D1 的 `Reject`／`Disconnect` 策略、混合目标协调、提交点与独立溢出通知；D2 会话输出端 | 无 | `Reject` 保持现行测试；混合目标中 `Reject` 失败时不公开消息也不断开任何目标；`Disconnect` 下慢连接不影响他人提交、写阻塞时仍能断开、成员关系被清理；chat 删除排除列表与淘汰工作表；语言参考记录契约变更 |
 | R3 | D4 访问路径（不含创建） | R2 | 身份校验含删除重建；涉及写的别名进入别名分支；重算上限；可重算形式的捕获打包与静态形式语义不变；chat 删除 `expected`／`Retry` |
-| R4 | D3 创建回退、目录授权与拥有交接 | R3 | 同名并发创建只成功一个；目录满／关闭／占用在提交点前确定；失败／取消不泄漏域与条目；创建与条件删除串行；宿主不含房间流程；房间创建可热更新 |
+| R4 | D3 创建回退、目录授权与拥有交接 | R3 | 同名并发请求只发布一个域，其他请求重算后取得该域，无重复条目或泄漏；目录满／关闭／占用在提交点前确定；失败／取消不泄漏域与条目；创建与条件删除串行；宿主不含房间流程；房间创建可热更新 |
 | R5 | D5 第一步：只复制写域 | 无 | 只读域不进入候选；回滚与预算正确；测量数据另行记录 |
 | R6 | 运行协议成文；D10 可控调度基础 | 无 | 协议评审通过；可控调度可复现给定交错 |
 | R7 | D7 混合模式：输出绑定标注、函数值证据、资源归属与跨 worker 转移、TCP、VM 控制／执行拆分 | R6 | chat 在 `--task-workers N` 下运行，连接分布到多个 worker，业务仍串行；资源规则有拒绝测试 |
@@ -393,9 +394,40 @@ fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
 | R9 | D6 定案与实施 | R4、R6 | 第 3 节 D6 的问题全部有答案并有行为测试 |
 | R10 | D8 预留模式示例、D9 监督策略、D5 第二步（按测量） | R2 | 各自行为测试与文档 |
 
-优先级：R0、R1a 先行；语义层 R2 先冻结，它删除最多业务样板，也是 R8 的前提；
+R0／R1 已完成。后续优先冻结语义层 R2，它删除最多业务样板，也是 R8 的前提；
 R3、R4 按 D3／D4 联合设计分步实现；R5 小而独立，可随时插入；
 R7 中的输出绑定标注可最先独立完成，其余部分以 R6 为前提。
+
+### R0／R1 实施结论
+
+- R0：chat 的容器遍历改用 `for`，目录键、空房间和空客户端使用具名常量；统一 `host`，
+  合并重复命令分支；内部命令失败与房间容量失败携带枚举原因。连接处理边界的 Bool 仍表示是否继续会话。
+- R1a：无载荷枚举支持同名义类型的相等比较；`Vm.require` 返回 `Entry<A,R>`，
+  chat 将八个入口集中到 Contract。Entry 只保存名称，调用时显式传 VM，继续校验签名并选择当前版本；
+  不拥有 VM、不固定代码代际。错误输出改用 `LoadError.message`。
+- R1b：Clone 派生生成普通受检 trait 实现，泛型义务按字段／载荷推导；Array 逐元素调用 Clone，
+  contains 按 BorrowEq 借用比较；补齐 prelude 的 trait 导入和单拥有字段包装的共享解构投影。
+  String／Array 的依赖环通过内部最小文本操作模块解除。
+- R1c／L1 调研：消费式解构已经降低为 Buffer Detach 与独立字段清理项，CPS 保存／恢复及取消
+  复用现有所有权路径，无需新增 ABI 或帧布局；解除同步限制并覆盖逐指令取消。借用记录解构仍限同步函数。
+- R1c／L4 调研：`when` 外层是 `Result<R, DomainAccessError>`，只有该完整类型匹配时才将 R
+  传入块体；没有期望类型时保留原来的独立推断。chat 的 Attempt 别名可提供完整的嵌套 Result 类型，
+  因而删除内部 Ok／Err 的重复参数；事务提交／回滚规则保持原样。
+
+验收记录（2026-10-26，Debug）：
+
+- 默认检查各项分段通过：fmt、Clippy、普通库测试、CLI／其他集成测试、文档测试，以及
+  while（0／1000）和 Map（0／32）的三后端基准正确性检查。
+  `./scripts/check.sh` 的库测试中 1654 项通过；一个既有并行数组测试修正预算检查的同步点后
+  单独复验通过，再执行脚本余下的二进制／集成／文档测试和两个短输入基准。
+  预算检查使用 `wait_closed()` 等待 worker 释放任务元数据，运行时契约未改动。
+- `cargo test --lib service_ergonomics -- --include-ignored`、
+  `cargo test --lib record_patterns -- --include-ignored`、
+  `cargo test --lib suspending_borrow_tests -- --include-ignored` 均通过，含三组逐指令取消穷举。
+- `cargo test --test cli service_ergonomics_run_in_all_backends` 通过，覆盖 JIT、解释器与独立 AOT；
+  包括跨模块泛型 Clone、失败发布保留旧入口及内嵌两种脚本模式。
+- `cargo test --test chat -- --ignored` 六组合实网矩阵通过（JIT／解释器／AOT 宿主 × JIT／解释器脚本）。
+  未运行 Release、性能测量或无关压力组。
 
 ## 8. 验证要求
 
@@ -454,3 +486,8 @@ chat 改动运行 `cargo test --test chat -- --ignored` 六组合实网矩阵。
 - Erlang/OTP 监督树与 `code_change`：D9 与迁移协议。
 - Swift 区域隔离与 `sending`、Pony 引用能力：转移资格推导与未来区域概念。
 - FoundationDB 确定性仿真测试：D10。
+
+2026-10-26 R0／R1 交付：
+
+- 完成 L1–L6、chat 示例清理与对应文档；L1／L4 的调研结论及验证记录见第 7 节。
+- 修正 R4 退出条件：同名并发请求只发布一个域，其余请求重算后取得该域。

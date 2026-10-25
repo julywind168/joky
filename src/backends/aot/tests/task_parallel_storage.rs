@@ -543,7 +543,8 @@ fn task_parallel_array_values_and_roots_on_all_backends() {
             vm.load_source(array_tests::SOURCE).unwrap();
         }
         for workers in [1, 3] {
-            let pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            let mut completed = Vec::new();
             for (index, name) in names[..3].iter().enumerate() {
                 let sig = vm
                     .as_ref()
@@ -587,8 +588,14 @@ fn task_parallel_array_values_and_roots_on_all_backends() {
                     assert_eq!(output.value(), &expected, "{mode:?}, {name}, {variant}");
                     assert!(task.take_result().is_err());
                     drop((output, task));
-                    assert_eq!(budget.used(), 0, "{mode:?}, {name}");
+                    completed.push((budget, *name, variant));
                 }
+            }
+            // A completed task has released its language values, but the worker
+            // may still retain the terminal record and its storage metadata.
+            pool.wait_closed();
+            for (budget, name, variant) in completed {
+                assert_eq!(budget.used(), 0, "{mode:?}, {name}, {variant}");
             }
         }
     }

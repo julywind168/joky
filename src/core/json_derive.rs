@@ -13,6 +13,7 @@ fn error(span: Span, message: impl Into<String>) -> Error {
 
 /// Consume attributes on an unbound module. The resulting module can be normalized again.
 pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
+    super::clone_derive::expand(module)?;
     let mut requests = Vec::new();
     for (index, record) in module.records.iter().enumerate() {
         let mut seen = Vec::new();
@@ -27,7 +28,7 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
             let Some(arguments) = &attribute.arguments else {
                 return Err(error(
                     attribute.span,
-                    "#derive requires ToJson and/or FromJson",
+                    "#derive requires Clone, ToJson and/or FromJson",
                 ));
             };
             if arguments.is_empty() {
@@ -46,7 +47,7 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
                 {
                     return Err(error(
                         argument.span,
-                        "Only #derive(ToJson, FromJson) is supported",
+                        "Only #derive(Clone, ToJson, FromJson) is supported",
                     ));
                 }
                 if seen.contains(&name.path) {
@@ -84,7 +85,7 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
     Ok(())
 }
 
-fn import(module: &mut Module, path: &str, alias: &str, span: Span) -> String {
+pub(super) fn import(module: &mut Module, path: &str, alias: &str, span: Span) -> String {
     if let Some(import) = module.imports.iter().find(|i| i.path == path) {
         return import
             .alias
@@ -308,7 +309,7 @@ fn implementation(
     body.push(call(format!("{result}.Result.Ok"), vec![output], span));
     let method = FnDef {
         every: None,
-        json_encode: encoding,
+        derived_body: encoding.then_some(crate::parser::ast::DerivedBody::JsonEncode),
         noescape: Some(Box::new(NoEscape {
             all: true,
             params: vec![],
@@ -351,7 +352,7 @@ fn implementation(
         trait_name: Some(format!("{typed}.{capability}")),
         origin: None,
         scope: None,
-        json_derive: Some(fields),
+        derive_fields: Some(fields),
         type_params,
         target,
         target_name: record.name.clone(),
@@ -365,7 +366,7 @@ fn implementation(
 /// Copy fields in an owning record need a local snapshot before borrowing.
 /// Select this after substitution: a generic field can become Copy or owning.
 pub(crate) fn prepare_encoding(function: &FnDef) -> std::borrow::Cow<'_, FnDef> {
-    if !function.json_encode {
+    if function.derived_body != Some(crate::parser::ast::DerivedBody::JsonEncode) {
         return std::borrow::Cow::Borrowed(function);
     }
     let mut function = function.clone();

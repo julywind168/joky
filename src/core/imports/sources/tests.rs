@@ -32,6 +32,8 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "borrow_ref",
             "capacity",
             "clear",
+            "clone",
+            "contains",
             "get",
             "insert",
             "into_iter",

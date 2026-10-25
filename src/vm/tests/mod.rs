@@ -373,3 +373,6 @@ mod tcp_split_tests;
 
 #[path = "tasks/tcp_tests.rs"]
 mod tcp_tests;
+
+#[path = "language/service_ergonomics_tests.rs"]
+mod service_ergonomics_tests;

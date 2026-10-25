@@ -42,6 +42,8 @@ impl Parser {
             }
             if !attributes.is_empty()
                 && self.peek() != &TokenKind::Struct
+                && !(self.peek() == &TokenKind::Enum
+                    && attributes.iter().all(|a| a.path == "derive"))
                 && !(self.peek() == &TokenKind::Fn
                     && attributes.iter().all(|a| a.path == "intrinsic"))
             {
@@ -86,7 +88,11 @@ impl Parser {
                     module.items.push(Item::FnDef(function));
                 }
                 TokenKind::Impl => module.implementations.push(self.parse_impl()?),
-                TokenKind::Enum => module.enums.push(self.parse_enum(public)?),
+                TokenKind::Enum => {
+                    let mut enumeration = self.parse_enum(public)?;
+                    enumeration.attributes = attributes;
+                    module.enums.push(enumeration);
+                }
                 TokenKind::Trait => module.traits.push(self.parse_trait(public)?),
                 TokenKind::Struct => module.records.push(self.parse_record(public, attributes)?),
                 TokenKind::Type => module.type_aliases.push(self.parse_type_alias(public)?),

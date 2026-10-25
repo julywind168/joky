@@ -221,7 +221,7 @@ fn record_patterns_enforce_field_visibility_across_modules() {
 }
 
 #[test]
-fn record_patterns_reject_drop_ancestors_mut_and_suspension() {
+fn record_patterns_reject_drop_ancestors_mut_and_borrowed_suspension() {
     let prefix = r#"
         import joky/array.{type Array}
         import joky/drop.{type Drop}
@@ -251,10 +251,6 @@ fn record_patterns_reject_drop_ancestors_mut_and_suspension() {
         (
             "fn good2() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { left, .. } = r; left.id }",
             "unused",
-        ),
-        (
-            "fn bad() @suspends -> Int32 { let h = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { tag, .. } = h; tag }",
-            "synchronous function",
         ),
         (
             "fn bad() @suspends -> Int32 { let p = Point { x: 1, y: 2 }; let Point { x, .. } = &p; x }",
@@ -323,4 +319,28 @@ fn record_patterns_survive_copy_cps_suspension() {
     }
     assert!(task.is_finished(), "suspended destructuring must complete");
     assert_eq!(task.cps_result(), Some(44));
+}
+
+#[test]
+#[ignore = "exhaustive: every owned destructuring instruction and cleanup boundary"]
+fn exhaustive_record_patterns_owned_cps_cancellation() {
+    let mut vm = vm(VmMode::Interpreter);
+    assert_cancellation(
+        &mut vm,
+        "cancellation_flow",
+        20_000,
+        CancellationSweep::EveryInstruction,
+        || EVENTS.with(|events| events.borrow_mut().clear()),
+        || EVENTS.with(|events| events.borrow().clone()),
+        || {
+            let events = EVENTS.with(|events| events.borrow().clone());
+            // Before Holder is assembled, initialized field temporaries unwind
+            // in reverse order. After assembly its ignored fields drop in order.
+            assert!(
+                matches!(events.as_slice(), [] | [1] | [1, 2] | [2, 1]),
+                "{events:?}"
+            );
+            crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+        },
+    );
 }

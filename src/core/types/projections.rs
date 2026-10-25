@@ -4,8 +4,8 @@ use crate::core::imports::ImportScope;
 use crate::parser::ast::{ImplDef, TraitDef};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+mod derives;
 mod dyn_traits;
-mod json_derive;
 
 type ParameterScopes = BTreeMap<u64, (Arc<TypeParameter>, Arc<ImportScope>)>;
 

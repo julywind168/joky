@@ -1,0 +1,123 @@
+import joky/array.{type Array}
+import joky/task
+import joky/vm
+import joky/domain
+import joky/fs
+import joky/string.{type Utf8Error, type Utf8ErrorCode}
+import joky/check
+import joky/eq.{type BorrowEq}
+import service_clone_model as model
+
+#derive(Clone)
+struct Parcel<T> { value: T, number: Int32 }
+#derive(Clone)
+struct Empty<T> {}
+#derive(Clone, ToJson, FromJson)
+struct Item { name: String, count: Int32 }
+#derive(Clone)
+enum Command<T> { Empty, Value(T) }
+enum Status { Pending, Ready }
+#state
+struct Counter { value: Int32 }
+fn make(_: Unit) -> Counter { Counter { value: 1 } }
+fn expect(ok: Bool) { check.assert(ok, "Service ergonomics regression") }
+fn update(c: domain.WriteHandle<Counter>) @suspends -> Result<Result<Int32, String>, domain.DomainAccessError> {
+    when (mut c) { c.value += 1; Ok(c.value) }
+}
+fn rejected(c: domain.WriteHandle<Counter>) @suspends -> Result<Result<Int32, String>, domain.DomainAccessError> {
+    when (mut c) { c.value = 99; Err("rejected") }
+}
+struct Different { value: Int32 }
+impl Different {
+    fn clone(&self) -> Self { Different { value: -1 } }
+    fn eq_ref(&self, other: &Self) -> Bool { false }
+}
+impl BorrowEq for Different {
+    fn eq_ref(&self, other: &Self) -> Bool { self.value == other.value }
+}
+impl Clone for Different { fn clone(&self) -> Self { Different { value: self.value } } }
+fn clone_values() {
+    let imported = model.Secret.make("private")
+    let imported_copy = imported.clone()
+    expect(imported_copy.text().equals("private"))
+    expect(imported.text().equals("private"))
+    let wrapped = model.Secret.make(model.Secret.make("nested"))
+    let wrapped_copy = wrapped.clone()
+    expect(wrapped_copy.text().text().equals("nested"))
+    let source = Parcel { value: Different { value: 42 }, number: 0 }
+    expect(source.clone().value.value == 42)
+    var differing = Array.new::<Different>()
+    differing.push(Different { value: 42 })
+    let differing_copy = differing.clone()
+    expect(differing_copy.borrow_ref(0).value == 42)
+    let present = Different { value: 42 }
+    let absent = Different { value: 0 }
+    expect(differing.contains(&present))
+    expect(!differing.contains(&absent))
+    let original = Item { name: "one", count: 1 }
+    var copy = original.clone()
+    copy.name = "changed"
+    expect(original.name.equals("one"))
+    let empty = Empty::<fn() -> Unit> {}.clone()
+    var values = Array.new::<String>()
+    values.push("first")
+    values.push("second")
+    var copied = values.clone()
+    copied.replace(0, "changed");
+    expect(values.contains("first") && !values.contains("changed"))
+    expect(copied.contains("changed") && copied.len() == 2)
+    expect(!Array.new::<String>().contains("absent"))
+    let nested = Parcel { value: values, number: 7 }
+    let duplicate = nested.clone()
+    expect(duplicate.value.contains("second") && nested.value.len() == 2)
+    let number = Command.Value(42).clone()
+    expect(match number { Value(n) => n == 42, _ => false })
+    let command = Command.Value("payload")
+    let copied = command.clone()
+    expect(match copied { Value(text) => text.equals("payload"), _ => false })
+    expect(match command { Value(text) => text.equals("payload"), _ => false })
+    let empty_command = Command.Empty::<String>
+    expect(match empty_command.clone() { Empty => true, _ => false })
+    expect(Status.Pending == Status.Pending && Status.Pending != Status.Ready)
+    expect(!(Status.Pending == Status.Ready) && !(Status.Ready != Status.Ready))
+}
+fn entries(engine: vm.Vm) @suspends {
+    let entry = engine.require::<String, String>("echo")!
+    expect(entry.try_call(&engine, "before load").is_err())
+    engine.load_source("fn echo(input: String) @suspends -> String {{ input }}")!
+    expect(entry.call(&engine, "old").equals("old"))
+    engine.publish_source("fn echo(input: String) @suspends -> String {{ \"new\" }}")!
+    expect(entry.try_call(&engine, "ignored")!.equals("new"))
+    let error = match engine.publish_source("fn echo(input: Int32) @suspends -> Int32 {{ input }}") { Err(error) => error, Ok(_) => { expect(false); return } }
+    expect(!error.message().is_empty())
+    expect(entry.call(&engine, "still current").equals("new"))
+    let foreign = vm.Vm.interpreter()
+    foreign.load_source("fn echo(input: Int32) @suspends -> Int32 {{ input }}")!
+    expect(entry.try_call(&foreign, "wrong signature").is_err())
+    // A descriptor has no owning VM reference; closing invalidates calls normally.
+    let closed = vm.close(engine)
+    expect(closed == 0)
+}
+fn diagnostics() {
+    let error = vm.LoadError { path: "file", kind: vm.LoadErrorKind.Utf8(Utf8Error { code: Utf8ErrorCode.InvalidSequence, offset: 0 }) }
+    expect(error.message().equals("Script is not UTF-8"))
+    let error = vm.LoadError { path: "file", kind: vm.LoadErrorKind.Io(fs.IoError { kind: fs.ErrorKind.NotFound, message: "missing" }) }
+    expect(error.message().equals("missing"))
+}
+fn main() @suspends {
+    clone_values()
+    let x = Parcel { value: "hello", number: 2 }
+    let y = x.clone()
+    let Parcel { value, number } = y
+    task.yield_now()
+    expect(value.equals("hello") && number == 2 && x.value.equals("hello"))
+    let owner = domain.create(make, {})
+    expect(update(owner.handle())!! == 2)
+    expect(rejected(owner.handle())!.is_err())
+    let counter = owner.handle()
+    let value: Result<Int32, domain.DomainAccessError> = when (counter) { counter.value }
+    expect(value! == 2)
+    entries(vm.Vm.new())
+    entries(vm.Vm.interpreter())
+    diagnostics()
+}

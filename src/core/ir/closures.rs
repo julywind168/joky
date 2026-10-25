@@ -692,7 +692,7 @@ impl FunctionPlan {
             );
             let mut definition = FnDef {
                 every: None,
-                json_encode: false,
+                derived_body: None,
                 noescape: None,
                 public: false,
                 buffer_intrinsic: None,

@@ -1,4 +1,5 @@
 // Immutable UTF-8 owners. Only these trusted bridges can transfer validated bytes.
+import joky/internal/text as text_storage
 import joky/array.{type Array}
 import joky/slice.{type Slice}
 import joky/internal/buffer
@@ -7,8 +8,7 @@ import joky/integer
 import joky/result.{type Result, Ok, Err}
 import joky/check
 
-#intrinsic("text.clone")
-fn copy_text(text: &String) @noescape -> String
+fn copy_text(text: &String) @noescape -> String { text_storage.clone(text) }
 #intrinsic("text.freeze_utf8")
 fn freeze_utf8(bytes: Array<UInt8>) -> String
 #intrinsic("text.into_bytes")
@@ -287,9 +287,7 @@ fn matches_at(text: &Slice<UInt8>, other: &Slice<UInt8>, offset: UInt64) -> Bool
     true
 }
 pub fn equals(text: &String, other: &String) -> Bool {
-    let text = bytes(text)
-    let other = bytes(other)
-    slice.len(text) == slice.len(other) && matches_at(text, other, 0)
+    text_storage.equals(text, other)
 }
 pub fn starts_with(text: &String, prefix: &String) -> Bool {
     let text = bytes(text)

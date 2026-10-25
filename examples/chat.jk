@@ -1,30 +1,44 @@
 import chat_admin
-import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, type Client, defaults, require_contract}
+import chat_contract.{type Contract, type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, type Client, defaults, require_contract}
 import joky/vm
 import joky/domain
 import joky/outbox
 import joky/session
 import joky/admission
-import joky/option.{type Option}
 import joky/tcp.{type Address, type TcpListener, type TcpStream}
 
+struct Script { vm: vm.Vm, entries: Contract }
+
 fn script_path() -> String { "examples/chat_logic.jk" }
-fn dispatch(engine: &vm.Vm, client: Client, action: Action) @suspends -> Bool {
-    engine.try_call::<Call, Bool>("dispatch", Call { host: client.host, id: client.id, action: action }).unwrap_or(false)
+fn dispatch(engine: &Script, client: Client, action: Action) @suspends -> Bool {
+    let request = Call { host: client.host, id: client.id, action: action }
+    engine.entries.dispatch.try_call(&engine.vm, request).unwrap_or(false)
 }
-fn line(engine: &vm.Vm, client: &Client, text: String) @suspends @noescape -> Bool {
+fn line(engine: &Script, client: &Client, text: String) @suspends @noescape -> Bool {
     dispatch(engine, *client, Action.Line(text))
 }
-fn disconnected(engine: &vm.Vm, client: &Client) @suspends @noescape {
+fn disconnected(engine: &Script, client: &Client) @suspends @noescape {
     dispatch(engine, *client, Action.Disconnect);
-    engine.try_call::<Client, Unit>("forget", *client);
+    engine.entries.forget.try_call(&engine.vm, *client);
 }
-fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream, permit: admission.Permit) @suspends {
+fn connection(
+    engine: &Script,
+    host: Host,
+    id: UInt64,
+    stream: TcpStream,
+    permit: admission.Permit,
+) @suspends {
     let owners = domain.directory(1)
     let connection = session.create(host.config.connection)
-    let input = AccountInit { host: host, owners: owners.handle(), id: id, output: connection.output(), stop: connection.stop_handle() }
+    let input = AccountInit {
+        host: host,
+        owners: owners.handle(),
+        id: id,
+        output: connection.output(),
+        stop: connection.stop_handle()
+    }
     let client = Client { host: host, id: id }
-    if engine.try_call::<AccountInit, Unit>("init_account", input).is_err() || !refresh(engine) {
+    if engine.entries.init_account.try_call(&engine.vm, input).is_err() || !refresh(engine) {
         disconnected(engine, &client)
         return
     }
@@ -34,29 +48,32 @@ fn connection(engine: &vm.Vm, host: Host, id: UInt64, stream: TcpStream, permit:
 }
 // Creation may have started in an older module while publication was in flight.
 // Bring newly created roots to the current module before exposing them to clients.
-fn refresh(engine: &vm.Vm) -> Bool { vm.publish_domain_code(engine) >= 0 }
-fn create_room(engine: &vm.Vm, input: RoomInit) @suspends {
+fn refresh(engine: &Script) -> Bool { vm.publish_domain_code(&engine.vm) >= 0 }
+fn create_room(engine: &Script, input: RoomInit) @suspends {
     let key = RoomKey { host: input.host, key: input.key }
-    if engine.try_call::<RoomInit, Unit>("init_room", input).is_err() || !refresh(engine) {
-        engine.try_call::<RoomKey, Unit>("fail_room", key);
+    if engine.entries.init_room.try_call(&engine.vm, input).is_err() || !refresh(engine) {
+        engine.entries.fail_room.try_call(&engine.vm, key);
         return
     }
-    if engine.try_call::<RoomKey, Unit>("open_room", key).is_err() {
-        engine.try_call::<RoomKey, Unit>("fail_room", key);
+    if engine.entries.open_room.try_call(&engine.vm, key).is_err() {
+        engine.entries.fail_room.try_call(&engine.vm, key);
     }
 }
-fn manage_rooms(engine: &vm.Vm, host: Host, requests: &mut outbox.Mailbox) @suspends -> Int32 {
+fn manage_rooms(engine: &Script, host: Host, requests: &mut outbox.Mailbox) @suspends -> Int32 {
     while true {
         let request = requests.receive()
         if request.is_none() { break }
         while true {
-            let pending = match engine.try_call::<Host, Option<RoomInit>>("next_room", host) { Ok(value) => value, Err(_) => break }
+            let pending = match engine.entries.next_room.try_call(&engine.vm, host) {
+                Ok(value) => value,
+                Err(_) => break
+            }
             match pending { Some(input) => create_room(engine, input), None => break }
         }
     }
     0
 }
-fn serve(engine: &vm.Vm, host: Host, listener: TcpListener) @suspends -> Int32 {
+fn serve(engine: &Script, host: Host, listener: TcpListener) @suspends -> Int32 {
     var listener = listener
     let admission = admission.create(host.config.max_clients, 0)
     let entrants = admission.handle()
@@ -75,15 +92,27 @@ fn serve(engine: &vm.Vm, host: Host, listener: TcpListener) @suspends -> Int32 {
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.new()
     engine.module_file("chat_contract", "examples/chat_contract.jk")!
-    require_contract(&engine)
-    match engine.load_file(script_path()) { Ok(_) => {}, Err(error) => { chat_admin.report(error); return 1 } }
+    let entries = require_contract(&engine)
+    match engine.load_file(script_path()) {
+        Ok(_) => {},
+        Err(error) => {
+            chat_admin.report(error)
+            return 1
+        }
+    }
     let directory = domain.directory(1)
     let config = defaults()
     let rooms = domain.directory(config.max_rooms)
     let accounts = domain.directory(config.max_clients)
     var requests = outbox.create(config.max_rooms, 0)
-    let host = Host { config: config, directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
-    engine.call::<Host, Unit>("initialize", host)
+    let host = Host {
+        config: config,
+        directory: directory.handle(),
+        rooms: rooms.handle(),
+        accounts: accounts.handle(),
+        requests: requests.handle()
+    }
+    entries.initialize.call(&engine, host)
     var chat = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
@@ -92,9 +121,10 @@ fn main() @suspends -> Int32 {
     }
     println("chat {chat.local_addr()!.port()}")
     println("admin {admin.local_addr()!.port()}")
+    let script = Script { vm: engine, entries: entries }
     race {
-        | serve(&engine, host, chat)
-        | manage_rooms(&engine, host, &mut requests)
-        | chat_admin.serve(&engine, script_path(), admin)
+        | serve(&script, host, chat)
+        | manage_rooms(&script, host, &mut requests)
+        | chat_admin.serve(&script.vm, script_path(), admin)
     }
 }

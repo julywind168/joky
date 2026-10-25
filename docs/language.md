@@ -76,7 +76,7 @@ fn run() -> Int64 {
   可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言，
   数组额外断言各维长度与元素步长。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
-- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)`、[JSON 派生](#struct-与类型化-json)的 `#derive(...)`、[域根声明](#when-状态域操作)的 `#state` 与[周期声明](#周期声明-every)的 `#every(...)`，
+- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)`、[Clone 派生](#显式复制与-clone-派生)与 [JSON 派生](#struct-与类型化-json)的 `#derive(...)`、[域根声明](#when-状态域操作)的 `#state` 与[周期声明](#周期声明-every)的 `#every(...)`，
   允许尾随逗号；未知属性、重复属性或错误使用位置报错。通用属性及属性宏尚未实现；异步借用见下节。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffic-布局与引用参数)。
@@ -2405,8 +2405,8 @@ fn example() -> Int32 {
 
 - 字段类型支持 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`Ptr`、共享引用、嵌套记录、有限枚举及 Copy 元组，允许空记录 `struct Empty {}`。
   仅含这些 Copy 字段的记录按值复制，空记录仍保留名义类型身份，不等于 Unit。
-  另支持[拥有记录与 Copy 元数据](#拥有记录与-copy-元数据)，此类记录非 Copy，暂限同步使用。
-  String 作为拥有叶参与同步聚合布局和清理；宿主 opaque 字段仍不接受。
+  另支持[拥有记录与 Copy 元数据](#拥有记录与-copy-元数据)，此类记录非 Copy，可跨挂起保留。
+  String 作为拥有叶参与聚合布局和清理；宿主 opaque 字段仍不接受。
 - 圆括号外，记录构造名称与开头的 `{` 须在同一行；字段内容允许跨行。
 - 相邻字段声明及相邻构造项之间必须有 `,`，或源码在两项之间存在真实换行；关闭 `}` 前无需分隔，
   允许尾随逗号。缺失分隔在同一行时报错，`;` 不是字段分隔符。
@@ -2434,6 +2434,22 @@ fn example() -> Int32 {
 使用 `if (Point { x: 1, y: 2 }).x > 0 { ... }` 明确边界。
 `.` 字段访问优先于一元及二元运算；模块限定调用仍有效，局部值遮蔽模块名前缀时按该值的方法解析，
 找不到方法即报错，不回退为模块调用。完整示例见 [records.jk](../examples/records.jk)。
+
+### 显式复制与 Clone 派生
+
+`joky/clone.Clone` 定义 `fn clone(&self) @noescape -> Self`，默认 prelude 导入该 trait；
+关闭 prelude 时显式导入 `joky/clone.{type Clone}`。整数、浮点、Bool、Rune、Unit 和 String 已实现 Clone，
+`Array<T>` 在 T: Clone 时支持 `.clone()`，也可显式调用 `array.clone(&values)`。
+Array 逐元素复制，副本与原值独立，长度相同，不承诺保留原容量；失败时清理已复制元素。
+`Array<T>.contains(&value)`／`array.contains(&values, &value)` 要求 T: BorrowEq，按元素顺序
+借用比较，不消费数组或查询值，空数组返回 false。
+
+`#derive(Clone)` 支持命名字段 struct 和 enum，生成受检 Clone 实现：记录逐字段复制，
+枚举只复制当前变体的载荷，原值保持可用。私有字段在定义模块内处理；同名普通 clone 方法
+不替代字段的 Clone trait 实现。泛型约束按字段／载荷推导，未使用参数不额外要求 Clone。
+可与 struct 的 ToJson／FromJson 派生组合。字段或载荷须满足 Clone；没有实现的资源、
+函数、引用、元组等不会被隐式按位复制。const 泛型派生暂不支持；手写与派生的同一 trait
+实现按重叠规则拒绝。完整行为示例见 [service_ergonomics.jk](../tests/fixtures/service_ergonomics.jk)。
 
 ### 记录解构
 
@@ -2471,8 +2487,8 @@ fn norms(p: Point, s: Segment) -> Int32 {
   拥有字段绑定为 `&Field` 视图，嵌套继续投影；原记录保持完整，不因 `_` / `..` 清理。
   视图存续期间，原记录的替换、移动和字段写入按既有借用冲突规则拒绝。
   `&mut` 解构、独占借用模式和借用元组解构仍拒绝。
-- Copy 记录解构可用于同步与挂起函数（含 CPS 恢复）；拥有记录解构与借用解构限同步函数，
-  在解释器时间片、取消、失败和 VM 销毁时保持恰好一次清理。
+- Copy 与拥有记录的消费式解构均可用于同步与挂起函数（含 CPS 恢复）；借用解构仍限同步函数。
+  拥有字段转移到独立清理项，忽略字段在解构结束时释放；解释器时间片、取消、失败和 VM 销毁均保持恰好一次清理。
 - 显式列出的字段（包括 `field: _`）必须可见；`..` 可省略不可见字段，但不能绑定或借用它们。
   无 `..` 且存在不可见字段时拒绝解构，诊断不泄露私有字段名单。
   模块限定名、透明别名、泛型实例和公开泛型函数的定义作用域遵循同一可见性规则。
@@ -2584,7 +2600,8 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
 公开导出只考虑公开枚举，私有枚举的同名成员不会使外部导出产生歧义。
 `match` 的无限定成员模式仍可根据被匹配枚举确定含义，包括嵌套载荷模式；
 显式限定或导入重命名的模式继续校验枚举身份。同一枚举内部的重复成员仍报错。
-支持嵌套的序列、整数、Bool 和 Rune 字面量模式；不支持 guard、字符串/浮点字面量模式或枚举整体相等比较。模式递归深度与类型布局同样限制为 256 层。
+支持嵌套的序列、整数、Bool 和 Rune 字面量模式；不支持 guard、字符串/浮点字面量模式；同一名义类型且所有变体均无载荷的枚举支持 `==`／`!=`，
+带载荷枚举和枚举排序比较仍拒绝。模式递归深度与类型布局同样限制为 256 层。
 拥有型 enum 的按值 `match` 消费整个值，将当前变体的载荷转交给模式绑定；`Variant(_)` 和 `_` 清理未绑定的拥有载荷。
 分支退出、提前返回和失败均保持恰好一次清理，仅当前标签对应的载荷运行 Drop；未激活的拥有者槽为空。
 这些规则适用于任意用户枚举，与 Option / Result 的名称无关。示例见 [owning_enums.jk](../examples/owning_enums.jk)。
@@ -3935,7 +3952,8 @@ String 和 Array 按值移动；需保留原值时显式构造副本，String �
 其中 `ResourceLimit` 也可能在候选计算后返回。`Ok(Err(e))` 表示业务拒绝，丢弃全部候选；
 `Ok(Ok(value))` 表示业务成功并已发布。显式原地短操作不采用这一回滚规则。
 块返回 `Option<T>` 时同样保留外层访问 Result。只构造 `None` 或 `Err` 等无法推导全部参数的分支时，
-使用显式类型参数、带类型的局部变量或有完整返回类型的辅助函数。
+外层函数返回类型、局部变量注解提供完整 `Result<R, DomainAccessError>` 时，期望的 R 会传入块体，
+因此业务 `Ok`／`Err` 无需重复泛型参数；没有外层期望类型且无法独立推导时仍需显式注解。
 
 Timer 的输入也支持上述传递值契约；重复触发时每次建立独立拥有输入，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
 `when` 使用同一传递值载荷资格；Rust `InstanceValue` 公共入口保持标量。
@@ -4525,11 +4543,17 @@ JIT、解释器和 AOT 共用执行器。Rust AOT 宿主可用 unsafe `Continuat
 
 ## Script 入口预检与共享模块
 
-`Vm.require<A,R>(name: String) @suspends -> Result<Unit, LoadError>` 登记必需的完整入口契约。
+`Vm.require<A,R>(name: String) @suspends -> Result<vm.Entry<A,R>, LoadError>` 登记必需的完整入口契约。
 建议在首次加载前登记所有宿主入口；已加载时还会先检查当前版本，失败不改变已登记契约。
 后续 load／publish 必须同时满足全部登记项：入口存在、一个输入、挂起约定、完整输入和结果 schema。
 不兼容版本返回 `LoadErrorKind.Incompatible`，当前入口和域代码均不改变；重复同一契约允许，
 同名但不同的契约拒绝。普通调用仍检查实际契约，未登记的入口也可以按原有规则调用。
+
+成功返回的 `Entry<A,R>` 保存私有入口名，调用 `entry.call(&engine, input)` 或
+`entry.try_call(&engine, input)` 时无需再次填写名称和类型参数，分别返回 R 与 `Result<R, CallError>`。
+Entry 是可跨挂起保留的拥有值，不持有 VM、不固定代码版本；调用时显式选择 VM，仍校验该 VM
+当前入口的完整签名。它可以用于另一 VM，但不代替对该 VM 的 require 登记；不兼容调用正常拒绝。
+兼容发布后同一 Entry 调用新实现，失败发布保留旧实现。
 
 `Vm.module_source(name: String, source: String)` 和 `Vm.module_file(name: String, path: String)`
 均为挂起方法，返回 `Result<Unit, LoadError>`，为后续编译提供显式依赖快照。
@@ -4538,7 +4562,7 @@ JIT、解释器和 AOT 共用执行器。Rust AOT 宿主可用 unsafe `Continuat
 依赖文件也不会在每次调用或发布时自动重读。源 VM 的 load_source 不搜索磁盘。
 
 宿主与脚本可导入同一个契约文件，见 `examples/chat_contract.jk`：宿主先用 module_file
-登记该源文件，再用 require_contract 登记六个入口。每次操作固定选中的实现；源 Script 的
+登记该源文件，再用 require_contract 登记八个入口并返回类型化入口表。每次操作固定选中的实现；源 Script 的
 publish 还检查上一版具名 when／句柄方法的身份与完整捕获契约，以及全部仍存活的域 schema。
 删掉具名操作、改变其访问／捕获／返回契约或遗漏活域类型都拒绝整个发布。匿名 when 仍只属于
 创建它的版本，不提供跨版本晚绑定。底层 Rust publish_domain_code 仍保留按匹配类型选择的规则。
@@ -4719,6 +4743,9 @@ Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失�
 - `Incompatible(vm.Diagnostic)`：活跃目标域的状态 schema 不兼容。
 - `Conflict(vm.Diagnostic)`：执行器／操作状态不匹配，或发布准备期间域凭据发生变化。
 - `Runtime(vm.Diagnostic)`：其他运行时失败，包括发布的资源不足。
+
+`LoadError.message(&self) -> String` 返回独立消息副本：Io 保留原消息，Utf8 返回
+`Script is not UTF-8`，其他分类返回 Diagnostic.message；不消费错误值，路径和位置仍可单独读取。
 
 `Diagnostic` 含 `message: String`、`has_span: Bool`、`start/end: UInt64`；有位置时为源码
 UTF-8 字节的半开区间，无位置时两端为 0。错误值独立保存，可跨挂起保留，不依赖
@@ -5775,8 +5802,8 @@ struct User { name: String, age: UInt8, nickname: Option<String> }
 struct Envelope<T> { value: T }
 ```
 
-- `#derive` 位于 struct/pub 前，参数为固定的内置派生名 `ToJson`、`FromJson`；可以只选择一个方向，
-  也可分成两个属性。重复、空列表、其他派生名、非 struct 目标均拒绝。
+- JSON `#derive` 位于 struct/pub 前，支持 `ToJson`、`FromJson`；可以只选择一个方向，
+  也可分成多个属性或与 `Clone` 组合。重复、空列表、未知派生名均拒绝；JSON 派生仍只接受 struct。
   用户同名 trait 或导入别名不改变派生协议；生成代码自动取得所需标准库依赖。
 - 支持命名字段 struct，包括空 struct、泛型及经拥有容器间接存储的有限递归树。
   所有字段按声明顺序映射，JSON 键就是原字段名；私有字段在定义模块内处理，可跨模块使用派生实现。

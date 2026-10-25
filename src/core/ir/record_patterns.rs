@@ -508,7 +508,6 @@ impl FunctionPlan {
         checked: &CheckedBinding,
         value: Option<Slot>,
         leaves: &mut Vec<BindingLeaf>,
-        suspends: bool,
     ) -> Result<(), Error> {
         if !checked.binds() {
             return Ok(());
@@ -524,7 +523,7 @@ impl FunctionPlan {
                 let base = value.as_ref().unwrap();
                 for (offset, child) in children {
                     let value = self.place_read(base, *offset, child.ty.clone())?;
-                    self.lower_binding_pattern(child, value, leaves, suspends)?;
+                    self.lower_binding_pattern(child, value, leaves)?;
                 }
             }
             BindingKind::Tuple(children) => {
@@ -532,24 +531,17 @@ impl FunctionPlan {
                 for (index, (offset, child)) in children.iter().enumerate() {
                     if checked.ty.is_place() {
                         let slot = self.place_child(value.as_ref().unwrap(), index)?;
-                        self.lower_binding_pattern(child, slot, leaves, suspends)?;
+                        self.lower_binding_pattern(child, slot, leaves)?;
                         continue;
                     }
                     let slot = (child.ty != Type::Unit).then(|| Slot {
                         index: base + offset,
                         ty: child.ty.clone(),
                     });
-                    self.lower_binding_pattern(child, slot, leaves, suspends)?;
+                    self.lower_binding_pattern(child, slot, leaves)?;
                 }
             }
             BindingKind::Record(children) => {
-                if suspends && checked.ty.is_owner() {
-                    return Err(type_error(
-                        &checked.span,
-                        ErrorCode::InvalidCall,
-                        "Owned record destructuring requires a synchronous function",
-                    ));
-                }
                 let Type::Record(record) = &checked.ty else {
                     unreachable!("checked record pattern")
                 };
@@ -557,7 +549,7 @@ impl FunctionPlan {
                 for (index, child) in children {
                     if checked.ty.is_place() {
                         let slot = self.place_child(value.as_ref().unwrap(), *index)?;
-                        self.lower_binding_pattern(child, slot, leaves, suspends)?;
+                        self.lower_binding_pattern(child, slot, leaves)?;
                         continue;
                     }
                     let field = &record.fields[*index];
@@ -565,7 +557,7 @@ impl FunctionPlan {
                         index: base + field.offset,
                         ty: field.ty.clone(),
                     });
-                    self.lower_binding_pattern(child, slot, leaves, suspends)?;
+                    self.lower_binding_pattern(child, slot, leaves)?;
                 }
             }
         }
@@ -624,7 +616,7 @@ impl FunctionPlan {
         let checked = self.check_binding_pattern(pattern, &slot_type(&value), types, &mut names)?;
         let mut leaves = Vec::new();
         let owner = value.as_ref().filter(|slot| slot.ty.is_owner()).cloned();
-        self.lower_binding_pattern(&checked, value, &mut leaves, suspends)?;
+        self.lower_binding_pattern(&checked, value, &mut leaves)?;
         for leaf in leaves {
             self.current_span = leaf.span;
             let slot = if slot_type(&leaf.slot).reference_type().is_some() {

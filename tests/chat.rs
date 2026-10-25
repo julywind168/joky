@@ -418,17 +418,17 @@ fn chat_real_tcp_on_all_backends() {
     );
         assert_eq!(
             logic
-                .matches("if !value.route.live { return Step.Done(false) }")
+                .matches("if !value.route.live { return Step.Failed(CommandFailure.Stopped) }")
                 .count(),
             1
         );
         let logic = logic.replace(
-            "Action.Line(line) => handle_line(ctx, id, line),",
-            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; handle_line(ctx, id, line) },",
+            "Action.Line(line) => handle_line(host, id, line),",
+            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; handle_line(host, id, line) },",
         );
         let logic = logic.replace(
-            "if !value.route.live { return Step.Done(false) }",
-            "if !value.route.live { return Step.Done(false) }\n        pause_send(ctx, &command)",
+            "if !value.route.live { return Step.Failed(CommandFailure.Stopped) }",
+            "if !value.route.live { return Step.Failed(CommandFailure.Stopped) }\n        pause_send(host, &command)",
         );
         std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
         let next = logic
