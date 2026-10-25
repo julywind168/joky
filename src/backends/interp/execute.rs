@@ -347,6 +347,7 @@ fn lookup(module: &BytecodeModule, name: &str) -> Result<Arc<BytecodeFunction>, 
 }
 
 pub(super) struct Frame {
+    captures: Vec<(Vec<u64>, crate::runtime::arena::ExternalCharge)>,
     _parallel_charge: Option<crate::runtime::parallel::Lease>,
     cleanups: crate::runtime::cleanup::Cleanups,
     cleanup_locals: memory::Locals,
@@ -378,6 +379,7 @@ impl Frame {
             *slot = value.clone();
         }
         Ok(Self {
+            captures: Vec::new(),
             _parallel_charge: charge,
             cleanups: Default::default(),
             cleanup_locals: Default::default(),
@@ -439,12 +441,14 @@ struct ResultPacket {
     values: Vec<Value>,
     owner: Option<(usize, crate::runtime::cleanup::Entry)>,
     place: Option<(
-        crate::runtime::arena::Arena,
+        Vec<u64>,
+        crate::runtime::arena::ExternalCharge,
         Arc<[crate::runtime::place::CopyNode]>,
     )>,
 }
 
 struct PreparedUser {
+    captures: Vec<(Vec<u64>, crate::runtime::arena::ExternalCharge)>,
     _parallel_charge: Option<crate::runtime::parallel::Lease>,
     entry: Rc<TaskEntry>,
     inputs: Vec<Value>,
@@ -688,6 +692,7 @@ impl Execution {
         target: usize,
         frame: &Frame,
         args: &[Option<usize>],
+        arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Activation, Error> {
         let entry = module
             .task_targets
@@ -718,13 +723,39 @@ impl Execution {
                         "Interpreter task frame layout mismatch",
                     ));
                 }
+                let mut inputs: Vec<_> = Self::arguments(frame, args).cloned().collect();
+                let mut captures = Vec::with_capacity(entry.layout.input_places().count());
+                for (base, layout) in entry.layout.input_places() {
+                    if layout.align > std::mem::align_of::<u64>() {
+                        return Err(abi_error("Invalid Copy alignment"));
+                    }
+                    let charge =
+                        arena.reserve_external(
+                            layout.size.max(1).div_ceil(8) * 8
+                                + std::mem::size_of::<(
+                                    Vec<u64>,
+                                    crate::runtime::arena::ExternalCharge,
+                                )>(),
+                        )?;
+                    let mut copy = vec![0u64; layout.size.max(1).div_ceil(8)];
+                    unsafe {
+                        crate::runtime::place::copy(
+                            copy.as_mut_ptr().cast(),
+                            places::pointer(&inputs[base]),
+                            layout.nodes,
+                        );
+                    }
+                    inputs[base] = Value::Place(copy.as_mut_ptr().cast());
+                    captures.push((copy, charge));
+                }
                 Ok(Activation::Prepared(PreparedUser {
+                    captures,
                     _parallel_charge: crate::runtime::parallel::reserve_current(
                         std::mem::size_of::<PreparedUser>()
                             + args.len() * std::mem::size_of::<Value>(),
                     )?,
                     entry: entry.clone(),
-                    inputs: Self::arguments(frame, args).cloned().collect(),
+                    inputs,
                     cleanups: Default::default(),
                 }))
             }
@@ -741,6 +772,7 @@ impl Execution {
             };
             let mut frame = Frame::new(function.clone(), prepared.inputs.iter())?;
             frame.cleanups = std::mem::take(&mut prepared.cleanups);
+            frame.captures = std::mem::take(&mut prepared.captures);
             self.node_mut(self.current).activation = Activation::User(frame);
         }
         Ok(())
@@ -973,19 +1005,22 @@ impl Execution {
                         .ret
                         .storage_layout()
                         .map_err(|error| abi_error(error.to_string()))?;
-                    let mut storage = crate::runtime::arena::Arena::default();
-                    let copy = storage.allocate_local(layout.size, layout.align)?;
+                    let charge = self
+                        .arena
+                        .reserve_external(layout.size.max(1).div_ceil(8) * 8)?;
+                    let mut copy = vec![0u64; layout.size.max(1).div_ceil(8)];
                     let source = child.function.aggregate_result[0];
                     unsafe {
                         crate::runtime::place::copy(
-                            copy.as_ptr(),
+                            copy.as_mut_ptr().cast(),
                             places::pointer(&child.slots[source]),
                             &child.function.place_result,
                         );
                         child.cleanups.finish(&mut self.arena)?;
                     }
-                    place = Some((storage, child.function.place_result.clone()));
-                    vec![Value::Reference(copy.as_ptr())]
+                    let pointer = copy.as_mut_ptr().cast();
+                    place = Some((copy, charge, child.function.place_result.clone()));
+                    vec![Value::Place(pointer)]
                 } else {
                     child
                         .function
@@ -1039,7 +1074,7 @@ impl Execution {
                 }
             } else {
                 for (&slot, value) in branch.results.iter().zip(packet.values) {
-                    if let Some((_, descriptor)) = &packet.place {
+                    if let Some((_, _, descriptor)) = &packet.place {
                         unsafe {
                             crate::runtime::place::copy(
                                 places::pointer(&frame.slots[slot]),
@@ -1089,15 +1124,17 @@ impl Execution {
                     },
                     None => branch.target.expect("direct branch target"),
                 };
-                Self::prepare_task(module, target, frame, &branch.args).map(|child| {
-                    (
-                        child,
-                        branch.done,
-                        branch.result,
-                        branch.results.clone(),
-                        Self::owned_arguments(module, target, &branch.args),
-                    )
-                })
+                Self::prepare_task(module, target, frame, &branch.args, &mut self.arena).map(
+                    |child| {
+                        (
+                            child,
+                            branch.done,
+                            branch.result,
+                            branch.results.clone(),
+                            Self::owned_arguments(module, target, &branch.args),
+                        )
+                    },
+                )
             })
             .collect::<Result<_, _>>()?;
         let group = LocalTaskGroup::new(
@@ -1344,7 +1381,7 @@ impl Execution {
         self.frame_capacity(1)?;
         // The capture snapshot happens here: child activation copies the
         // current slot contents, and owning inputs move out of the parent.
-        let mut child = Self::prepare_task(module, target, frame, &args)?;
+        let mut child = Self::prepare_task(module, target, frame, &args, &mut self.arena)?;
         let owned = Self::owned_arguments(module, target, &args);
         let parent = self.frame_mut(id);
         for (_, src) in &owned {

@@ -3,6 +3,9 @@
 #[cfg(test)]
 pub(crate) mod array_tests;
 mod arrays;
+#[cfg(test)]
+pub(crate) mod fixed_array_tests;
+mod places;
 mod value;
 use super::{InstanceValue, InterpreterLimits};
 use crate::{
@@ -28,6 +31,11 @@ pub enum TaskValue {
     Scalar(InstanceValue),
     String(String),
     Tuple(Vec<TaskValue>),
+    /// FixedArray identity and exactly its declared number of Copy elements.
+    FixedArray {
+        ty: Type,
+        elements: Vec<TaskValue>,
+    },
     /// Standard Array identity and initialized elements in source order.
     Array {
         ty: Type,

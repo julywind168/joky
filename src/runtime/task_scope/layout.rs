@@ -4,13 +4,13 @@ use crate::core::ir::parallel::packet::Kind;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 4;
+pub(crate) const VERSION: usize = 5;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v4",
+        "Invalid task entry layout v5",
     )
 }
 
@@ -47,7 +47,7 @@ fn value(out: &mut Vec<u64>, ty: &Type) -> Result<(), Error> {
     out.extend([
         flags,
         ty.parameter_slots() as u64,
-        ty.scalar_types().len() as u64,
+        ty.value_lanes().len() as u64,
         layout.size as u64,
         layout.align as u64,
         fields.len() as u64,
@@ -86,6 +86,12 @@ pub(crate) struct CheckedLayout {
     _charge: Option<crate::runtime::parallel::Lease>,
     // Retain the exact compiler layout with its packet, independently of module data.
     words: Box<[u64]>,
+}
+
+pub(crate) struct Place<'a> {
+    pub(crate) size: usize,
+    pub(crate) align: usize,
+    pub(crate) nodes: &'a [crate::runtime::place::CopyNode],
 }
 
 struct Reader<'a>(&'a [u64]);
@@ -133,6 +139,41 @@ impl Reader<'_> {
 }
 
 impl CheckedLayout {
+    /// Borrow compiler-managed Copy layouts without allocating capture metadata.
+    pub(crate) fn input_places(&self) -> impl Iterator<Item = (usize, Place<'_>)> {
+        let mut reader = Reader(&self.words[2..]);
+        let mut base = 0;
+        (0..self.words[1]).filter_map(move |_| {
+            let words = reader.0;
+            let (inputs, _) = reader.value().unwrap();
+            let index = base;
+            base += inputs;
+            Self::place(words).map(|place| (index, place))
+        })
+    }
+    pub(crate) fn result_place(&self) -> Option<Place<'_>> {
+        let mut reader = Reader(&self.words[2..]);
+        for _ in 0..self.words[1] {
+            reader.value().unwrap();
+        }
+        Self::place(reader.0)
+    }
+    fn place(words: &[u64]) -> Option<Place<'_>> {
+        if words[0] & 2 == 0 {
+            return None;
+        }
+        let start = 6 + words[5] as usize * 2;
+        let count = words[start] as usize;
+        let raw = &words[start + 1..start + 1 + count * 5];
+        // CopyNode is repr(C), exactly five u64 fields with the same alignment.
+        let nodes = unsafe { std::slice::from_raw_parts(raw.as_ptr().cast(), count) };
+        Some(Place {
+            size: words[3] as usize,
+            align: words[4] as usize,
+            nodes,
+        })
+    }
+
     pub(crate) fn parallel_shapes(
         &self,
     ) -> Result<
@@ -147,17 +188,30 @@ impl CheckedLayout {
             let words = reader.0;
             let (inputs, _) = reader.value()?;
             let kind = Kind::decode((words[0] >> 3) as usize).ok_or_else(invalid)?;
-            if !kind.implemented() || words[0] & 6 != 0 {
+            if !kind.implemented() || words[0] & 4 != 0 {
                 return Err(invalid());
             }
             let nodes = 6 + words[5] as usize * 2;
             let start = nodes + 1 + words[nodes] as usize * 5;
             let shape = Shape::decode(&words[start + 1..start + 1 + words[start] as usize])?;
-            if shape.inputs() != inputs
+            if let Shape::Place(layout) = &shape {
+                let stored = CheckedLayout::place(words).ok_or_else(invalid)?;
+                if layout.size != stored.size
+                    || layout.align != stored.align
+                    || layout.nodes != stored.nodes
+                {
+                    return Err(invalid());
+                }
+            }
+            if matches!(shape, Shape::Place(_)) != (words[0] & 2 != 0)
+                || shape.inputs() != inputs
                 || shape.lanes() != words[2] as usize
                 || (!shape.owners().is_empty()) != (words[0] & 1 != 0)
                 || shape.aggregate()
-                    != matches!(kind, Kind::Tuple | Kind::Record | Kind::Enum | Kind::Array)
+                    != matches!(
+                        kind,
+                        Kind::Tuple | Kind::Record | Kind::Enum | Kind::Array | Kind::FixedArray
+                    )
             {
                 return Err(invalid());
             }
@@ -167,6 +221,10 @@ impl CheckedLayout {
                     | (Kind::String, Shape::String)
                     | (Kind::Tuple | Kind::Record | Kind::Array, Shape::Product(_))
                     | (Kind::Enum, Shape::Sum(_))
+                    | (
+                        Kind::FixedArray | Kind::Tuple | Kind::Record | Kind::Enum,
+                        Shape::Place(_)
+                    )
             ) {
                 return Err(invalid());
             }
@@ -243,7 +301,7 @@ mod tests {
         words[0] = 1;
         assert!(CheckedLayout::decode(&words).is_err());
         words[0] = VERSION as u64;
-        words[2] = 7 << 3;
+        words[2] = 8 << 3;
         assert!(CheckedLayout::decode(&words).is_err());
         // A recognized kind with inconsistent ownership cannot enter a worker.
         for flags in [1, (Kind::String as u64) << 3] {

@@ -75,14 +75,12 @@ pub(super) fn intrinsic(value: &Option<CompilerIntrinsic>) -> bool {
 pub(super) fn eligible(ty: &Type) -> bool {
     let target = ty.reference_type().map_or(ty, |r| &r.target);
     match target {
-        Type::Function(f) => {
-            !f.suspends
-                && f.signature
-                    .params
-                    .iter()
-                    .chain(std::iter::once(&f.signature.ret))
-                    .all(|t| !t.contains_fixed_array() || eligible(t))
-        }
+        Type::Function(f) => f
+            .signature
+            .params
+            .iter()
+            .chain(std::iter::once(&f.signature.ret))
+            .all(|t| !t.contains_fixed_array() || eligible(t)),
         Type::FixedArrayInit(_) => true,
         Type::Buffer(t)
         | Type::BufferSlice(t)
@@ -137,9 +135,9 @@ impl FunctionPlan {
     }
 
     pub(super) fn check_fixed_array(&self, ty: &Type) -> Result<(), Error> {
-        if ty.contains_fixed_array() && (!eligible(ty) || self.suspending) {
+        if ty.contains_fixed_array() && !eligible(ty) {
             return Err(type_error(&self.current_span, ErrorCode::TypeMismatch,
-                format!("FixedArray is not supported in this context: {ty}; requires supported synchronous array values or views")));
+                format!("FixedArray is not supported in this context: {ty}; requires supported array values or views")));
         }
         Ok(())
     }

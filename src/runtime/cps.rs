@@ -21,6 +21,18 @@ pub const FAILED: u32 = u32::MAX - 1;
 use super::task_scope::{ChildId, LocalTaskGroup, LocalTaskScope};
 type DynamicTaskScope = LocalTaskScope<Box<CpsFrame>>;
 
+struct ReturnedPlace {
+    arena: Rc<UnsafeCell<Arena>>,
+    pointer: std::ptr::NonNull<u8>,
+}
+impl Drop for ReturnedPlace {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.arena.get()).release(self.pointer);
+        }
+    }
+}
+
 #[repr(C)]
 pub struct CpsFrame {
     pub state: u32,
@@ -51,6 +63,7 @@ pub struct CpsFrame {
     pub(crate) domain_result: Option<Vec<u64>>,
     pub(crate) root_text: bool,
     pub(crate) text_result: Option<String>,
+    place_result: Option<ReturnedPlace>,
     concurrent: Option<LocalTaskGroup>,
     concurrent_results: Vec<Option<Box<CpsFrame>>>,
     prepared: Option<task::Prepared>,
@@ -84,6 +97,7 @@ impl CpsFrame {
             domain_result: None,
             root_text: false,
             text_result: None,
+            place_result: None,
             concurrent: None,
             concurrent_results: Vec::new(),
             prepared: None,
@@ -186,6 +200,7 @@ impl CpsFrame {
         }
         if self.state != DONE || super::error::joky_runtime_error_code() != 0 {
             self.text_result = None;
+            self.place_result = None;
             self.domain_result = None;
         }
         self.wake = None;
@@ -501,6 +516,22 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
     (*frame).release();
 }
 
+/// Retain a completed Copy result until the caller has copied it.
+/// # Safety
+/// The frame owns a fully initialized place at the compiler-selected result slot.
+#[export_name = "__joky_cps_finish_place_v1"]
+pub(crate) unsafe extern "C" fn finish_place(frame: *mut CpsFrame, slot: usize) {
+    let pointer = (*cleanup(frame))
+        .entries
+        .places
+        .take(slot)
+        .expect("registered Copy result");
+    (*frame).place_result = Some(ReturnedPlace {
+        arena: (*frame).arena.as_ref().unwrap().clone(),
+        pointer,
+    });
+}
+
 /// Publish an owning return only after local destructors succeed.
 /// # Safety
 /// The live frame owns the checked return registration in its cleanup table.
@@ -606,7 +637,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 41] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 42] {
     [
         ("__joky_task_context_v1", protocol::context as *const u8),
         (
@@ -650,6 +681,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 41] {
         ("__joky_cps_arena", arena as *const u8),
         ("__joky_cps_finish", finish as *const u8),
         ("__joky_cps_finish_return_v1", finish_return as *const u8),
+        ("__joky_cps_finish_place_v1", finish_place as *const u8),
         ("__joky_cps_slots", slots as *const u8),
         ("__joky_cps_child", child as *const u8),
         ("__joky_cps_release_child", release_child as *const u8),

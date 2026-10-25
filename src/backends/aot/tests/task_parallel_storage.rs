@@ -618,3 +618,114 @@ fn task_parallel_array_values_and_roots_on_all_backends() {
     drop(output);
     assert_eq!(budget.used(), 0);
 }
+
+#[test]
+fn task_fixed_array_values_on_all_backends() {
+    use crate::vm::{parallel::fixed_array_tests as cases, InstanceValue, VmEngine, VmMode};
+    let names = ["root", "dynamic", "empty", "units", "parallel_local"];
+    let (_scratch, entries, library) =
+        linked_task_entries(cases::SOURCE, &names, "task-fixed-arrays");
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(cases::SOURCE).unwrap();
+        }
+        for workers in [1, 3] {
+            let pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            let mut budgets = Vec::new();
+            for (index, name) in names.iter().enumerate() {
+                let sig = vm
+                    .as_ref()
+                    .map(|vm| vm.parallel_signature(name).unwrap())
+                    .unwrap_or_else(|| entries[index].signature().clone());
+                for variant in 0..if *name == "root" { 2 } else { 1 } {
+                    let (input, expected) = match *name {
+                        "root" => {
+                            let v = cases::input(&sig.params[0], variant);
+                            (vec![v.clone()], v)
+                        }
+                        "dynamic" => {
+                            let ty = &sig.params[0];
+                            let row = ty.array_element_type().unwrap();
+                            let v = TaskValue::Array {
+                                ty: ty.clone(),
+                                elements: vec![TaskValue::FixedArray {
+                                    ty: row.clone(),
+                                    elements: vec![TaskValue::Scalar(InstanceValue::Int32(42)); 3],
+                                }],
+                            };
+                            (vec![v.clone()], v)
+                        }
+                        "empty" | "units" => {
+                            let v = TaskValue::FixedArray {
+                                ty: sig.params[0].clone(),
+                                elements: vec![
+                                    TaskValue::Scalar(InstanceValue::Unit);
+                                    if *name == "units" { 3 } else { 0 }
+                                ],
+                            };
+                            (vec![v.clone()], v)
+                        }
+                        _ => (vec![], TaskValue::Scalar(InstanceValue::Int32(42))),
+                    };
+                    let budget = TaskBudget::new(1 << 20);
+                    let prepared = if let Some(vm) = &vm {
+                        vm.prepare_parallel_task(name, input, vec![budget.clone()])
+                            .unwrap_or_else(|e| panic!("{mode:?} {name}: {e}"))
+                    } else {
+                        unsafe {
+                            entries[index].prepare(
+                                *library
+                                    .get::<CpsEntry>(entries[index].symbol().as_bytes())
+                                    .unwrap(),
+                                library.clone(),
+                                input,
+                                vec![budget.clone()],
+                            )
+                        }
+                        .unwrap()
+                    };
+                    let task = prepared.submit(&pool).unwrap();
+                    task.wait()
+                        .unwrap_or_else(|e| panic!("{mode:?} {name} N={workers}: {e:?}"));
+                    let output = task.take_result().unwrap();
+                    assert_eq!(output.value(), &expected, "{mode:?} {name} N={workers}");
+                    drop((output, task));
+                    budgets.push((name, budget));
+                }
+            }
+            // Completion ends execution; the worker can retain its task record
+            // until the polling turn unwinds. Join workers before checking metadata.
+            drop(pool);
+            for (name, budget) in budgets {
+                assert_eq!(budget.used(), 0, "{mode:?} {name}");
+            }
+        }
+    }
+    let entry = &entries[0];
+    let value = cases::input(&entry.signature().params[0], 1);
+    let budget = TaskBudget::new(1 << 20);
+    let weak = Arc::downgrade(&library);
+    let prepared = unsafe {
+        entry.prepare(
+            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+            library.clone(),
+            vec![value.clone()],
+            vec![budget.clone()],
+        )
+    }
+    .unwrap();
+    drop(library);
+    let output = std::thread::spawn(move || {
+        let mut task = prepared.start().unwrap();
+        while !task.resume().unwrap() {}
+        task.take_result().unwrap()
+    })
+    .join()
+    .unwrap();
+    assert!(weak.upgrade().is_none());
+    assert_eq!(output.value(), &value);
+    drop(output);
+    assert_eq!(budget.used(), 0);
+}

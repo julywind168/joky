@@ -671,6 +671,14 @@ impl FunctionPlan {
                 });
             }
         }
+        for destination in result
+            .iter()
+            .chain(planned.iter().filter_map(|b| b.result.as_ref()))
+        {
+            if destination.ty.is_place() {
+                self.emit(Op::Place(PlaceOp::Allocate(destination.clone())));
+            }
+        }
         let values: Vec<_> = planned.iter().map(|b| b.result.clone()).collect();
         self.emit(Op::Concurrent {
             result: result.clone(),

@@ -7,7 +7,7 @@ use std::ptr::NonNull;
 /// Relocatable copy program. Child programs follow their parent; `end` is the
 /// first node after the entire subtree. All offsets are relative to the parent.
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CopyNode {
     pub offset: u64,
     /// 0: scalar bytes, 1: fields, 2: homogeneous array, 3: tagged enum.
@@ -174,6 +174,11 @@ impl Places {
             return Err(invalid("FixedArray initialization is incomplete"));
         }
         node.payload.ok_or_else(|| invalid("Place slot has ended"))
+    }
+
+    /// Detach a completed Copy result; its receiver now releases the allocation.
+    pub(crate) fn take(&mut self, key: usize) -> Option<NonNull<u8>> {
+        unsafe { self.find(key)?.as_mut().payload.take() }
     }
 
     /// End a scope's payload while retaining its charged registration for reuse.

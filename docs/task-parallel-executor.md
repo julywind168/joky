@@ -1,6 +1,6 @@
 # 可选多线程任务执行器设计与实施计划
 
-状态：2026-10-25，TP0–TP7 已完成，当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节，TP7 数组交付见第 17 节。
+状态：2026-10-25，TP0–TP8 已完成。当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节，TP7 数组交付见第 17 节，TP8 FixedArray 见第 18 节。
 生产执行器默认 Local，可显式选择 Parallel。早期冻结决策与探针边界见第 10 节，
 TP1 的最终交付与验证见第 11.5 节，TP2 交付与限制见第 12 节，TP3 见第 13 节，TP4 模式与支持表见第 14 节，TP5 最终验收见第 15 节；第 11.1–11.4 节保留历史切片记录。
 源码名称已由 `parallel` 迁移为 `join`，不改变本文执行器阶段与行为契约。
@@ -777,7 +777,8 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | --- | --- | --- |
 | join/race/branch 与多层 scope | 原有顺序推进 | 固定 worker 分支调度，单 worker 也可推进 |
 | 标量、String、Array、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
-| List/Map/Set、FixedArray、引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
+| FixedArray、含它的 Copy 聚合、Array<FixedArray> | 参数/返回/捕获跨挂起，安全视图服从借用规则 | 独立 Copy 快照，保持元素与存储组合限制 |
+| List/Map/Set、引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
 | task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
@@ -1041,3 +1042,67 @@ Array/记录/枚举/String、空数组、Unit 元素及真实容量保留；宿�
   真实独立 AOT 均返回 42，确认版本 4 布局配套。
 - 本地文档文件链接与 `git diff --check` 通过。未运行 Release、性能测量、无关全量压力、
   Godot 引擎验收或竞争检测器；未开放 FixedArray 跨挂起、其他容器或跨线程资源桥。
+
+## 18. TP8 FixedArray 跨挂起与跨任务
+
+状态：已完成。Local CPS 与 Parallel 独立快照一起交付，集中验证后统一提交。
+
+### 18.1 范围与契约
+
+- 保持现有 FixedArray 元素限制：仅无引用 Copy 数据及其递归聚合；不开放 String、
+  资源、自定义 Drop、闭包捕获、持久状态或普通宿主 ABI。零长度仍检查完整元素类型。
+- Local 允许固定数组及包含它的 Copy 聚合跨挂起，覆盖按值参数、直接/间接调用返回、
+  join/race 结果、branch 捕获以及已有 Array<FixedArray>。安全借用仍服从来源和 loan 检查。
+- 参数与捕获是独立值；任务发布时完成快照。返回存储先保活再结束子帧，接收方按有效
+  字段复制；不得读取 padding 或未激活枚举载荷。失败、取消和 race 败方唯一回收。
+- Parallel 任务包拥有独立 Copy 存储，不传递工作线程的帧、arena 或借用地址。
+  受检宿主入口提供携带精确类型及元素序列的 FixedArray 值，检查长度与 nominal 身份。
+- 快照、描述符及宿主转换计入根预算，保持现有布局大小与逻辑工作量上限。
+  私有任务布局随表示扩展升级；默认 Local 和 Godot 单线程模式不变。
+
+### 18.2 验收
+
+- 三后端验证真实挂起恢复、独立复制、直接/间接返回、join/race/branch，覆盖零长度、
+  Unit 元素、嵌套记录/元组/枚举与动态数组中的固定数组。
+- Parallel 覆盖 N=1/3、宿主往返、错误类型/长度、准备包跨线程及代码销毁后保活。
+- 验证失败、开始前后取消、未收取结果与预算清理；补跑相关取消/分配失败穷举。
+- 定向行为测试通过后运行默认 Debug 检查；不默认运行 Release 或无关压力测试。
+
+
+### 18.3 交付记录
+
+移除共享前端的挂起禁令，保留元素、普通闭包、持久状态和普通宿主 ABI 的独立边界。
+join/race 在启动前为位置结果分配接收存储；普通直接及函数值调用复用已有接收位置。
+原生 CPS 将成功返回的 Place 分配从清理登记中移交给子帧，保留 arena 至调用方完成复制；
+失败时与帧一起回收。解释器在发布前保存独立捕获，并按任务预算保留返回快照。
+
+私有任务布局升级到版本 5，FixedArray 及含它的 Copy 聚合仍只有一个私有位置槽。
+复制描述独立于数组长度，校验边界、树结构、对齐和逻辑工作量；Parallel 包持有独立
+Copy 字节存储，接收线程安装到自己的 Places。Array 中的固定数组沿用已有内联布局。
+宿主增加 TaskValue::FixedArray 与 Type::fixed_array_element_type，按真实字段布局进行
+输入/输出转换，精确检查类型与长度，并跳过 padding 和未激活枚举载荷。
+
+[task_fixed_arrays.jk](../tests/fixtures/task_fixed_arrays.jk) 覆盖真实挂起、按值独立复制、
+直接/间接调用、join/race/branch、嵌套记录/元组/枚举、Array 元素、零长度及 Unit。
+Local 函数值调用继续有效；Parallel 不额外授予间接目标线程资格。
+
+2026-10-25 验证：
+
+- `cargo test --lib fixed_array`：48 个通过、8 个默认忽略，涵盖三后端 N=1/3、
+  Local 挂起/间接调用、宿主长度与类型拒绝、代码销毁后的保活，以及准备、挂起、完成但未收取时丢弃。
+- 默认 Debug 检查覆盖完成。`./scripts/check.sh` 的格式和 Clippy 通过，首次全量库测试
+  为 1640 通过、132 忽略，唯一失败是 F1 的旧“挂起参数必须拒绝”预期；更新该历史矩阵后，
+  上述 48 项定向测试通过。没有重复运行整套库测试。
+- 最终格式与 `cargo clippy --all-targets -- -D warnings` 复核通过；使用 `cargo test --bins`
+  加全部八个 `--test` 目标补完剩余默认测试：CLI 306 通过、8 忽略，其余默认集成用例通过。
+  `cargo test --doc` 通过；`cargo test --bench while -- --iterations 0,1000` 与
+  `cargo test --bench map -- --iterations 0,32` 的三后端短输入正确性通过。
+- `cargo test --lib exhaustive_task_fixed_array -- --ignored`：3 项通过，覆盖 Local
+  分配失败/逐指令取消及 Parallel 预算失败，扫描在首次完整成功并确认清理后停止。
+- `cargo test --lib exhaustive_fixed_array -- --ignored`：既有 F2/F3/F5 的 5 项穷举通过。
+  `cargo test --lib exhaustive_task_parallel_ -- --ignored`：Array 与聚合任务包的 2 项预算穷举通过。
+
+- `cargo build` 刷新默认 Debug CLI 与运行库；不设置 `JOKY_RUNTIME`，FixedArray 与既有
+  Array smoke 在 Local、Parallel N=1/3 的 JIT、解释器及真实独立 AOT 均返回 42，确认版本 5 配套。
+- 本地文档文件链接与 `git diff --check` 通过。未运行 Release、性能测量、无关全量压力、
+  Godot 引擎验收或竞争检测器。默认 Local 与 Godot 主线程模式保持不变。

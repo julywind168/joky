@@ -51,7 +51,7 @@ pub(crate) fn start(
         let words = unsafe {
             let arena = super::arena(&mut *frame);
             let cleanups = &mut (*super::cleanup(&mut *frame)).entries;
-            packet.install(&*arena, cleanups, offset, None)?
+            packet.install(&mut *arena, cleanups, offset, None)?
         };
         frame.slots[offset..offset + words.len()].copy_from_slice(&words);
         offset += inputs;
@@ -119,8 +119,16 @@ pub(super) unsafe fn take(
     if packet.words.len() != count {
         return Err(invalid());
     }
+    if let Shape::Place(layout) = &packet.shape {
+        crate::runtime::place::copy(
+            *lanes as *mut u8,
+            packet.words[0] as *const u8,
+            &layout.nodes,
+        );
+        return Ok(());
+    }
     let arena = super::arena(frame);
-    let words = packet.install(&*arena, &mut (*super::cleanup(frame)).entries, 0, key)?;
+    let words = packet.install(&mut *arena, &mut (*super::cleanup(frame)).entries, 0, key)?;
     if count != 0 {
         std::ptr::copy_nonoverlapping(words.as_ptr(), lanes, count);
     }

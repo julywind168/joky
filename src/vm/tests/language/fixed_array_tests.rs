@@ -134,11 +134,9 @@ fn fixed_array_f2a_rejects_unopened_contexts() {
     use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
     let types = crate::TypeRegistry::default();
     for body in [
-        "fn bad(x: FixedArray<FixedArray<Int32,2>,2>) @suspends {}",
         "fn bad() { let a = alloc(fixed_array.repeat::<Int32,2>(1)) }",
         "import joky/arena.{type Arena} fn bad() { let arena = Arena.new(); let a = arena.alloc(fixed_array.repeat::<Int32,2>(1)) }",
         "fn bad() { let a = fixed_array.repeat::<Int32,2>(1); let f = || { a.len() }; f(); }",
-        "fn bad() @suspends { let a = fixed_array.repeat::<Int32,2>(1) }",
         "fn bad() -> &FixedArray<Int32,2> { let a = fixed_array.repeat::<Int32,2>(1) &a }",
         "fn bad() { var a = fixed_array.repeat::<Int32,2>(1); let r = &a; a.set(0,2); r.len(); }",
         "fn bad() { let a = fixed_array.repeat::<String,0>(\"no\") }",
@@ -514,11 +512,6 @@ fn fixed_array_f5_rejects_recursive_wrappers_at_closed_boundaries() {
         "fn bad(){let values=List.new::<Array<Row>>()}",
         "fn bad(){let values=Wrapper{value:Array.new::<Row>()}}",
         "fn bad(){let values=Some(Array.new::<Row>())}",
-        "fn bad(p:Nested) @suspends {}",
-        "fn bad(p:&Nested) @suspends {}",
-        "fn bad(p:Array<Row>) @suspends {}",
-        "fn bad() @suspends {join{|let p=make()|let p=make()}}",
-        "fn bad() @suspends {race{|let p=make()|let p=make()}}",
         "extern fn foreign(p:Nested)",
         "extern fn foreign(p:&Nested) @suspends",
         "fn bad()->&Nested{let p=make(); &p}",
@@ -688,5 +681,96 @@ fn fixed_array_f5_migration_cannot_publish_wrapped_array_candidates() {
         domain.close();
         drop(vm);
         arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+#[test]
+fn task_fixed_array_local_suspension_and_copy() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/task_fixed_arrays.jk"
+        ))
+        .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        let mut task = vm.call_async("local", &[]).unwrap();
+        for _ in 0..1000 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap_or_else(|e| panic!("{mode:?}: {e:?}"));
+        }
+        assert_eq!(task.cps_result(), Some(42), "{mode:?}");
+        drop(task);
+        arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+fn task_fixed_array_cancel(sweep: super::support::CancellationSweep) {
+    let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+    vm.set_prelude_enabled(false);
+    vm.load_source(include_str!(
+        "../../../../tests/fixtures/task_fixed_arrays.jk"
+    ))
+    .unwrap();
+    super::support::assert_cancellation(
+        &mut vm,
+        "local",
+        10000,
+        sweep,
+        || {},
+        || arena::LIVE.with(|v| v.get()),
+        || arena::LIVE.with(|v| assert_eq!(v.get(), 0)),
+    );
+}
+#[test]
+fn task_fixed_array_local_cancel_boundaries() {
+    task_fixed_array_cancel(super::support::CancellationSweep::ResourceBoundaries);
+}
+#[test]
+#[ignore = "exhaustive: cancel FixedArray CPS captures and results at every instruction"]
+fn exhaustive_task_fixed_array_local_cancellation() {
+    task_fixed_array_cancel(super::support::CancellationSweep::EveryInstruction);
+}
+
+#[test]
+#[ignore = "exhaustive: Local FixedArray CPS allocation failure and result cleanup"]
+fn exhaustive_task_fixed_array_local_budget_failures() {
+    let _restore = RestoreLimit(arena::LIMIT.with(|limit| limit.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        arena::LIMIT.with(|limit| limit.set(arena::MAX_BYTES));
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/task_fixed_arrays.jk"
+        ))
+        .unwrap();
+        let mut completed = false;
+        for bytes in (0..65536).step_by(64) {
+            arena::LIMIT.with(|limit| limit.set(bytes));
+            let outcome = vm.call_async("local", &[]).and_then(|mut task| {
+                while !task.is_finished() {
+                    task.resume().map_err(|error| match error {
+                        crate::runtime::suspension::ResumeError::Failed(error) => error,
+                        other => panic!("unexpected resume status: {other:?}"),
+                    })?;
+                }
+                assert_eq!(task.cps_result(), Some(42));
+                Ok(())
+            });
+            if let Err(error) = &outcome {
+                assert_eq!(
+                    error.code(),
+                    ErrorCode::ResourceLimit,
+                    "{mode:?} bytes={bytes}: {error}"
+                );
+            }
+            arena::LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?} bytes={bytes}"));
+            if outcome.is_ok() {
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "{mode:?}");
     }
 }

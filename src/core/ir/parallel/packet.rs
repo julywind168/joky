@@ -11,11 +11,13 @@ pub(crate) enum Kind {
     Enum = 4,
     Local = 5,
     Array = 6,
+    FixedArray = 7,
 }
 
 impl Kind {
     pub(crate) fn of(ty: &Type) -> Self {
         match ty {
+            Type::FixedArray(_) => Self::FixedArray,
             Type::String => Self::String,
             Type::Record(r) if r.array => Self::Array,
             Type::Tuple(_) => Self::Tuple,
@@ -35,6 +37,7 @@ impl Kind {
             4 => Self::Enum,
             5 => Self::Local,
             6 => Self::Array,
+            7 => Self::FixedArray,
             _ => return None,
         })
     }
@@ -66,6 +69,7 @@ pub(crate) fn classify(
             return None;
         }
         let children: Vec<Type> = match &ty {
+            Type::FixedArray(a) if ty.is_fixed_array_data() => vec![a.element.clone()],
             Type::Tuple(t) => t.elements.clone(),
             Type::Record(r) if r.array => {
                 let [field] = r.fields.as_slice() else {
@@ -202,7 +206,7 @@ mod tests {
             ("array_map", None),
             ("array_list", None),
             ("array_set", None),
-            ("array_fixed", None),
+            ("array_fixed", Some(Kind::Array)),
             ("callable", None),
         ] {
             let signature = &plan.functions[name].signature;

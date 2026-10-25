@@ -27,9 +27,13 @@ pub(super) fn input(
     let layout = element
         .storage_layout()
         .map_err(|_| invalid("Invalid Array element layout"))?;
-    let locations = element
-        .storage_scalars()
-        .map_err(|_| invalid("Invalid Array element lanes"))?;
+    let locations = if element.is_place() {
+        vec![]
+    } else {
+        element
+            .storage_scalars()
+            .map_err(|_| invalid("Invalid Array element lanes"))?
+    };
     let first_owner = element.scalar_types().iter().position(Type::is_owner_lane);
     let mut owner = Buffer::allocate(arena, elements.len() as u64, layout.size, layout.align)?;
     let built = (|| {
@@ -46,6 +50,11 @@ pub(super) fn input(
             }
             for value in elements {
                 let dst = owner.as_ref().initialize_next()?;
+                if element.is_place() {
+                    super::places::write(value, element, dst)?;
+                    owner.as_mut().commit_next();
+                    continue;
+                }
                 let packet = value.packet(element, arena)?;
                 let mut cleanup = Cleanups::default();
                 let words = match packet.install(arena, &mut cleanup, 0, None) {
@@ -98,7 +107,7 @@ pub(super) unsafe fn visit(
         .array_element_type()
         .ok_or_else(|| invalid("Expected Array type"))?;
     let count = length(word)?;
-    let width = element.scalar_types().len();
+    let width = element.value_lanes().len();
     let bytes = count
         .checked_mul(usize::from(preflight) * std::mem::size_of::<TaskValue>())
         .and_then(|n| n.checked_add(width * 8 + Shape::of(element).ok()?.bytes()))
@@ -108,7 +117,11 @@ pub(super) unsafe fn visit(
     let mut words = vec![0; width];
     for index in 0..count {
         words.fill(0);
-        read_memory(element, owner.load(index as u64)?, &mut words)?;
+        if element.is_place() {
+            words[0] = owner.load(index as u64)? as u64;
+        } else {
+            read_memory(element, owner.load(index as u64)?, &mut words)?;
+        }
         visit(element, &words)?;
     }
     Ok(())

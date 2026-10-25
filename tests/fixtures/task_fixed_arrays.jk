@@ -1,0 +1,49 @@
+import joky/task
+import joky/fixed_array.{type FixedArray}
+import joky/array.{type Array}
+import joky/option.{type Option, Some, None}
+type Row = FixedArray<Int32, 3>
+struct Packet { lead: UInt8, rows: FixedArray<Row, 2>, tail: Int64 }
+enum Choice { Empty, Data((Packet, Bool)), Number(Int8) }
+fn row(n: Int32) -> Row { fixed_array.repeat::<Int32,3>(n) }
+fn first(a: &Row) -> Int32 { match a.get(0) { Some(n) => n, None => -1 } }
+fn echo(value: Row) @suspends -> Row { task.yield_now(); value }
+fn root(value: Choice) @suspends -> Choice {
+    let (a, b) = join { | echo_choice(value) | echo_choice(value) }
+    race { | echo_choice(a) | echo_choice(b) }
+}
+fn echo_choice(value: Choice) @suspends -> Choice { task.yield_now(); value }
+fn rows(value: Array<Row>) @suspends -> Array<Row> { task.yield_now(); value }
+fn slow_rows() @suspends -> Array<Row> { task.sleep_ms(60000); [] }
+fn dynamic(value: Array<Row>) @suspends -> Array<Row> {
+    race { | rows(value) | slow_rows() }
+}
+fn empty(value: FixedArray<Int32,0>) @suspends -> FixedArray<Int32,0> { task.yield_now(); value }
+fn units(value: FixedArray<Unit,3>) @suspends -> FixedArray<Unit,3> { task.yield_now(); value }
+fn consume(value: Row) @suspends {
+    task.yield_now()
+    if first(&value) != 42 { 1 / 0; }
+}
+fn borrowed(value: &Row) @suspends -> Int32 { task.yield_now(); first(value) }
+fn local() @suspends -> Int32 {
+    let callback: fn(Row) @suspends -> Row = echo
+    checked(callback(row(40)))
+}
+fn parallel_local() @suspends -> Int32 { checked(echo(row(40))) }
+fn checked(c: Row) @suspends -> Int32 {
+    var a = c
+    a.set(0, 1)
+    let (d, e) = join { | echo(c) | echo(row(2)) }
+    let f = race { | echo(d) | echo(d) }
+    scope {
+        var captured = row(42)
+        branch { consume(captured) }
+        captured.set(0, 0)
+        task.yield_now()
+    }
+    let sum = borrowed(&f) + first(&e)
+    let values = rows([row(sum)])
+    match values.get(0) { Some(r) => first(&r), None => 0 }
+}
+fn failed(value: Choice) @suspends -> Choice { task.yield_now(); 1 / 0; value }
+fn cancelled(value: Choice) @suspends -> Choice { task.sleep_ms(60000); value }

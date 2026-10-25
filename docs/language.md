@@ -1277,7 +1277,7 @@ Ptr、函数值、opaque、引用、拥有者和闭包不能作为元素，零�
 在泛型声明中使用 `FixedArray<T, N>` 时，T 必须声明 `Copy`；具体元素的无引用布局仍在实例化时检查。
 
 **F2 已支持数组值及聚合组合。** T 可以是上述元素，包含有限的 Copy 记录、元组、枚举和嵌套数组；
-数组及含数组的 Copy 聚合具有值语义，赋值、同步直接/函数值间接参数和返回、整数组解引用读取得到独立副本。
+数组及含数组的 Copy 聚合具有值语义，赋值、直接/函数值间接参数和返回、整数组解引用读取得到独立副本。
 支持整个数组的共享/独占引用、解引用写入，以及 `joky/mem` 的 `replace/swap`。
 
 从 `joky/fixed_array` 导入以下函数；除构造函数外，也可通过数组的固有方法调用：
@@ -1310,10 +1310,14 @@ N=0 和零大小元素合法；空数组的 from_fn 不调用回调，但仍清�
 元素引用不分配视图头部；每次切片/子切片的头部计入任务预算并保留到根任务结束，但不拥有或保活载荷。
 重复创建切片可能耗尽头部预算；载荷仍按作用域及时回收。
 List/Map/Set 和其他拥有聚合尚不接受数组或其 Array 包装。
-尚不支持数组捕获、显式 Arena/alloc 存储、挂起函数中的数组值、持久实例/状态域及普通 direct/CPS 宿主值边界。
-普通挂起函数可以调用内部使用数组、签名不含数组的同步 helper。
+支持 Local 挂起函数中的数组值、参数/返回、join/race 结果及 branch 按值捕获；已有
+Array<FixedArray> 也可跨挂起。安全引用和切片可随来源跨挂起，但不能成为并行任务包。
+branch 在发布前复制捕获，父任务之后修改原数组不影响子任务；返回值在接收方复制完成前保活。
+Parallel 对固定数组及含它的 Copy 聚合使用独立快照，保留同样的元素类型限制。
+普通闭包捕获、显式 Arena/alloc 存储、持久实例/状态域及普通 direct/CPS 宿主值边界仍不支持。
+from_fn 的初始化回调保持同步；它与普通挂起函数的按值传参是不同能力。
 兼容数组字段与同步引用可按[固定数组与 C 指针适配](#固定数组与-c-指针适配)跨 C 边界；数组字面值及下标访问见上文；尚无默认 Eq。
-首版 F0–F5 已验收，覆盖与限制见 [FixedArray 记录](fixed-array-storage-ownership.md#f5集成验收与文档发布)。
+首版 F0–F5 已验收，历史覆盖与限制见 [FixedArray 记录](fixed-array-storage-ownership.md#f5集成验收与文档发布)；跨挂起与跨任务扩展见 [TP8](task-parallel-executor.md#18-tp8-fixedarray-跨挂起与跨任务)。
 
 ## 函数值
 
@@ -4836,17 +4840,20 @@ Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel
 当前跨任务包支持标量、String、Array，以及递归嵌套这些类型的元组、普通 struct 和 enum
 （包括 Option/Result）。join/race 的参数与结果、branch 的移动捕获及宿主根入口采用同一
 类型边界；String/Array 交接移动真实拥有 Buffer 树，数组保留有效元素及容量。完整类型树必须无引用、无资源、无自定义 Drop，
-包括未激活枚举变体及实际泛型参数；List/Map/Set、FixedArray、函数/闭包、dyn 和裸指针仍拒绝。
-Array 元素递归满足同一规则；空数组和 Unit 元素可用。FixedArray 及含它的数组仍受现有挂起限制。
+包括未激活枚举变体及实际泛型参数；List/Map/Set、函数/闭包、dyn 和裸指针仍拒绝。
+FixedArray 及包含它的无引用 Copy 聚合使用独立存储快照；Array 可存储这些 Copy 值。
+含 FixedArray 的混合拥有聚合仍受固定数组存储限制；并行支持不额外放宽其类型组合。
+Array 元素递归满足同一规则；空数组和 Unit 元素可用。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 完整调用图必须证明安全，未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄
 和 Godot 对象均保持 Local。
 
 宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
 构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。
+`TaskValue::FixedArray { ty, elements }` 表示固定数组，元素数量必须精确等于类型中的 N。
 宿主输入以元素数为初始容量；宿主输出只包含有效元素，Vec 容量不代表语言数组容量。
 `VmEngine::parallel_signature` 或 AOT `ParallelEntry::signature` 提供受检
-入口签名；`Type::array_element_type`、`tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
+入口签名；`Type::array_element_type`、`fixed_array_element_type`（元素与长度）、`tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
 及变体。记录字段按声明顺序，枚举使用声明序号，无 payload 的变体传 None。nominal 类型
 必须来自对应冻结签名，字段、标量类型和标签精确匹配；新编译模块的同名类型不能冒充旧类型。
 这些入口独立于普通函数 ABI；CLI main 的 Unit/Int32 限制保持不变。

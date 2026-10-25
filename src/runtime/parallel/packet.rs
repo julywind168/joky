@@ -1,4 +1,4 @@
-//! Backend-independent flat packets. Only active String/Array leaves own storage.
+//! Backend-independent lanes, exclusive String/Array owners and Copy snapshots.
 use super::{Lease, OwnedBuffer};
 use crate::{
     runtime::{
@@ -21,6 +21,7 @@ pub(crate) fn invalid() -> Error {
 #[derive(Clone, Debug)]
 pub(crate) enum Shape {
     Unit,
+    Place(super::place::Layout),
     Scalar(Type),
     String,
     Buffer,
@@ -30,8 +31,11 @@ pub(crate) enum Shape {
 impl Shape {
     pub(crate) fn of(ty: &Type) -> Result<Self, Error> {
         fn build(ty: &Type, depth: usize) -> Result<Shape, Error> {
-            if depth > 32 || ty.is_place() {
+            if depth > 32 {
                 return Err(invalid());
+            }
+            if ty.is_place() {
+                return Ok(Shape::Place(super::place::Layout::of(ty)?));
             }
             Ok(match ty {
                 Type::Unit => Shape::Unit,
@@ -66,12 +70,12 @@ impl Shape {
         build(ty, 0)
     }
     pub(crate) fn aggregate(&self) -> bool {
-        matches!(self, Self::Product(_) | Self::Sum(_))
+        matches!(self, Self::Product(_) | Self::Sum(_) | Self::Place(_))
     }
     pub(crate) fn lanes(&self) -> usize {
         match self {
             Self::Unit => 0,
-            Self::Scalar(_) | Self::String | Self::Buffer => 1,
+            Self::Scalar(_) | Self::String | Self::Buffer | Self::Place(_) => 1,
             Self::Product(v) => v.iter().map(Self::lanes).sum(),
             Self::Sum(v) => 1 + v.iter().map(Self::lanes).sum::<usize>(),
         }
@@ -87,6 +91,7 @@ impl Shape {
         std::mem::size_of::<Self>()
             + match self {
                 Self::Product(v) | Self::Sum(v) => v.iter().map(Self::bytes).sum(),
+                Self::Place(layout) => layout.bytes(),
                 _ => 0,
             }
     }
@@ -115,8 +120,8 @@ impl Shape {
         }
         match self {
             Self::Unit => {}
-            Self::String | Self::Buffer if words[0] != 0 => {}
-            Self::String | Self::Buffer => return Err(invalid()),
+            Self::String | Self::Buffer | Self::Place(_) if words[0] != 0 => {}
+            Self::String | Self::Buffer | Self::Place(_) => return Err(invalid()),
             Self::Scalar(ty) => {
                 words[0] = crate::core::instance::InstanceValue::from_bits(ty, words[0])
                     .ok_or_else(invalid)?
@@ -148,6 +153,17 @@ impl Shape {
     }
     pub(crate) fn encode(&self, out: &mut Vec<u64>) {
         match self {
+            Self::Place(layout) => {
+                out.extend([
+                    19,
+                    layout.size as u64,
+                    layout.align as u64,
+                    layout.nodes.len() as u64,
+                ]);
+                for n in &layout.nodes {
+                    out.extend([n.offset, n.kind, n.count, n.stride, n.end]);
+                }
+            }
             Self::Unit => out.push(0),
             Self::String => out.push(14),
             Self::Buffer => out.push(18),
@@ -188,6 +204,33 @@ impl Shape {
                 0 => return Ok(Shape::Unit),
                 14 => return Ok(Shape::String),
                 18 => return Ok(Shape::Buffer),
+                19 => {
+                    if words.len() < 3 {
+                        return Err(invalid());
+                    }
+                    let (size, align, count) =
+                        (words[0] as usize, words[1] as usize, words[2] as usize);
+                    *words = &words[3..];
+                    if count > words.len() / 5 {
+                        return Err(invalid());
+                    }
+                    let nodes = words[..count * 5]
+                        .as_chunks::<5>()
+                        .0
+                        .iter()
+                        .map(|n| crate::runtime::place::CopyNode {
+                            offset: n[0],
+                            kind: n[1],
+                            count: n[2],
+                            stride: n[3],
+                            end: n[4],
+                        })
+                        .collect();
+                    *words = &words[count * 5..];
+                    let layout = super::place::Layout { size, align, nodes };
+                    layout.validate()?;
+                    return Ok(Shape::Place(layout));
+                }
                 1 => Type::Bool,
                 2 => Type::Int8,
                 3 => Type::UInt8,
@@ -207,9 +250,12 @@ impl Shape {
                     if count > words.len() || (tag == 17 && count == 0) {
                         return Err(invalid());
                     }
-                    let children = (0..count)
+                    let children: Vec<_> = (0..count)
                         .map(|_| read(words, depth + 1))
                         .collect::<Result<_, _>>()?;
+                    if children.iter().any(|s| matches!(s, Shape::Place(_))) {
+                        return Err(invalid());
+                    }
                     return Ok(if tag == 16 {
                         Shape::Product(children)
                     } else {
@@ -233,6 +279,7 @@ pub(crate) struct Packet {
     pub(crate) shape: Shape,
     pub(crate) words: Vec<u64>,
     owners: Vec<(usize, OwnedBuffer)>,
+    place: Option<Vec<u64>>,
     _charge: Option<Lease>,
 }
 impl Packet {
@@ -241,6 +288,7 @@ impl Packet {
         let charge = super::reserve_current(
             std::mem::size_of::<Self>()
                 + shape.bytes()
+                + match &shape { Shape::Place(layout) => layout.size.max(1).div_ceil(8) * 8, _ => 0 }
                 // Cover lanes, capture/install scratch and the owner index list.
                 + lanes * (32 + std::mem::size_of::<(usize, OwnedBuffer)>()),
         )?;
@@ -248,12 +296,15 @@ impl Packet {
             shape,
             words: vec![0; lanes],
             owners: Vec::with_capacity(lanes),
+            place: None,
             _charge: charge,
         })
     }
     /// Consume a complete compiler-owned value, releasing remaining owners on failure.
     /// # Safety
     /// Every active String/Array lane is live and exclusively owned by `entry`.
+    /// A Copy lane points to a fully initialized value of the checked layout and
+    /// remains live through this call. Its original storage stays with the caller.
     pub(crate) unsafe fn capture(
         shape: Shape,
         mut words: Vec<u64>,
@@ -279,6 +330,11 @@ impl Packet {
                 *source = None;
                 packet.owners.push((index, owner));
             }
+            if let Shape::Place(layout) = &packet.shape {
+                let snapshot = layout.snapshot(words[0] as *const u8);
+                words[0] = snapshot.as_ptr() as u64;
+                packet.place = Some(snapshot);
+            }
             packet.words = words;
             Ok(packet)
         })();
@@ -291,6 +347,7 @@ impl Packet {
     /// Native returns have already detached their cleanup registration.
     /// # Safety
     /// `words` is the successful generated return, whose owners are now exclusive.
+    /// A returned Copy place stays live in its completed frame through this call.
     pub(crate) unsafe fn returned(
         shape: Shape,
         mut words: Vec<u64>,
@@ -312,11 +369,25 @@ impl Packet {
     }
     pub(crate) fn install(
         mut self,
-        arena: &Arena,
+        arena: &mut Arena,
         cleanups: &mut Cleanups,
         base: usize,
         key: Option<usize>,
     ) -> Result<Vec<u64>, Error> {
+        if let Shape::Place(layout) = &self.shape {
+            let destination =
+                cleanups
+                    .places
+                    .materialize(arena, base, layout.size, layout.align)?;
+            unsafe {
+                crate::runtime::place::copy(
+                    destination.as_ptr(),
+                    self.words[0] as *const u8,
+                    &layout.nodes,
+                );
+            }
+            self.words[0] = destination.as_ptr() as u64;
+        }
         let indices = self.shape.owners();
         if let Some(&first) = indices.first() {
             // Publish the cleanup group before any fallible owner handoff.
@@ -343,6 +414,17 @@ impl Packet {
             cleanups.insert(key, entry);
         }
         Ok(self.words)
+    }
+    /// Initialize the already charged Copy storage for a checked host value.
+    pub(crate) fn place_storage(&mut self) -> *mut u8 {
+        let Shape::Place(layout) = &self.shape else {
+            unreachable!("Copy packet");
+        };
+        let data = self
+            .place
+            .get_or_insert_with(|| vec![0u64; layout.size.max(1).div_ceil(8)]);
+        self.words[0] = data.as_ptr() as u64;
+        data.as_mut_ptr().cast()
     }
     pub(crate) fn push_text(
         &mut self,

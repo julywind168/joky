@@ -60,8 +60,6 @@ fn fixed_array_f1_invalid_constants_and_value_operations_are_rejected() {
         "fn f<const N: UInt64>() {} fn check() { f::<Int32>(); }",
         "struct Tag<const N: UInt64> {} fn same<const N: UInt64>(a:Tag<N>,b:Tag<N>) {} fn check() { same(Tag::<1>{},Tag::<2>{}); }",
         "struct Tag<const N: UInt64> {} fn f<const N: UInt64,const M: UInt64>(a:Tag<N>) -> Tag<M> { a }",
-        "fn f(x:FixedArray<FixedArray<Int32,2>,2>) @suspends -> FixedArray<FixedArray<Int32,2>,2> { x }",
-        "fn f(x:&FixedArray<FixedArray<Int32,2>,2>) @suspends {}",
         "fn f() { let x = FixedArray::<Int32,4>{} }",
         "fn f() { FixedArray.new::<Int32,4>(); }",
     ] {
@@ -70,7 +68,7 @@ fn fixed_array_f1_invalid_constants_and_value_operations_are_rejected() {
         assert!(result.is_err(),"accepted: {source}");
     }
     // Each public compilation entry rejects the same unsupported value boundary.
-    let source="import joky/fixed_array.{type FixedArray}\nfn f(x:FixedArray<FixedArray<Int32,2>,2>) @suspends -> FixedArray<FixedArray<Int32,2>,2> { x }";
+    let source="import joky/fixed_array.{type FixedArray}\nstruct Mixed { values:FixedArray<Int32,2>, text:String } fn f(x:Mixed) {}";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let error = VmEngine::with_mode(mode).load_source(source).unwrap_err();
         assert!(

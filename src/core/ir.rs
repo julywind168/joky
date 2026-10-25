@@ -537,7 +537,6 @@ pub(crate) struct DynErasure {
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
     source_function: String,
-    suspending: bool,
     when_function: String,
     callable_modes: HashMap<usize, crate::core::types::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
@@ -1264,7 +1263,7 @@ impl FunctionPlan {
             .map(|p| &p.ty)
             .chain(std::iter::once(&f.ret_ty))
         {
-            if ty.contains_fixed_array() && (!fixed_arrays::eligible(ty) || f.suspends) {
+            if ty.contains_fixed_array() && !fixed_arrays::eligible(ty) {
                 return Err(type_error(
                     &f.span,
                     ErrorCode::TypeMismatch,
@@ -1308,7 +1307,6 @@ impl FunctionPlan {
             dyn_erasures: Vec::new(),
             when_function,
             source_function: f.name.clone(),
-            suspending: f.suspends,
             callable_modes: Default::default(),
             captured_owners: Default::default(),
             captured_fields: Default::default(),

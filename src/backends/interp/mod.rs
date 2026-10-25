@@ -932,6 +932,9 @@ pub(crate) enum Value {
 impl Value {
     fn from_instance_bits(ty: &Type, bits: u64) -> Result<Self, Error> {
         use crate::core::instance::InstanceValue as V;
+        if ty.is_place() {
+            return Ok(Self::Place(bits as *mut u8));
+        }
         if matches!(ty, Type::Reference(_) | Type::String | Type::Buffer(_)) {
             return Ok(Self::Reference(bits as usize as *mut u8));
         }
@@ -955,7 +958,7 @@ impl Value {
     }
 
     fn instance_bits(&self) -> Result<u64, Error> {
-        if let Self::Reference(pointer) = self {
+        if let Self::Reference(pointer) | Self::Place(pointer) = self {
             return Ok(*pointer as usize as u64);
         }
         self.pack_scalar()

@@ -19,12 +19,12 @@ impl Scopes {
 fn install(
     packet: Packet,
     ty: &Type,
-    arena: &crate::runtime::arena::Arena,
+    arena: &mut crate::runtime::arena::Arena,
     cleanups: &mut crate::runtime::cleanup::Cleanups,
     base: usize,
 ) -> Result<Vec<Value>, Error> {
     let words = packet.install(arena, cleanups, base, None)?;
-    ty.scalar_types()
+    ty.value_lanes()
         .iter()
         .zip(words)
         .map(|(ty, bits)| Value::from_instance_bits(ty, bits))
@@ -39,10 +39,16 @@ fn start_worker(
     match &module.callees[target] {
         Callee::User(function) => start_function(module.clone(), function.clone(), packets, limits),
         Callee::Host(host) => {
-            let arena = crate::runtime::arena::Arena::default();
+            let mut arena = crate::runtime::arena::Arena::default();
             let mut values = Vec::new();
             for (packet, ty) in packets.into_iter().zip(&host.signature().params) {
-                let mut value = install(packet, ty, &arena, &mut Default::default(), values.len())?;
+                let mut value = install(
+                    packet,
+                    ty,
+                    &mut arena,
+                    &mut Default::default(),
+                    values.len(),
+                )?;
                 if *ty == Type::Unit {
                     value.push(Value::Unit);
                 }
@@ -77,7 +83,7 @@ fn start_function(
         let values = install(
             packet,
             ty,
-            &execution.arena,
+            &mut execution.arena,
             frame.activation.cleanups_mut(),
             base,
         )?;
@@ -246,9 +252,14 @@ impl Execution {
                 .first()
                 .map(|&lane| destinations[lane]);
             let frame = self.nodes[id].as_mut().unwrap();
-            let words = message.install(&self.arena, frame.activation.cleanups_mut(), 0, key)?;
+            let words = message.install(
+                &mut self.arena,
+                frame.activation.cleanups_mut(),
+                destinations.first().copied().unwrap_or(0),
+                key,
+            )?;
             let values = ty
-                .scalar_types()
+                .value_lanes()
                 .iter()
                 .zip(words)
                 .map(|(ty, bits)| Value::from_instance_bits(ty, bits))

@@ -663,7 +663,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         .iter()
         .chain(std::iter::once(&signature.ret))
     {
-        if ty.contains_fixed_array() && (info.suspends || !super::fixed_arrays::eligible(ty)) {
+        if ty.contains_fixed_array() && !super::fixed_arrays::eligible(ty) {
             return Err(type_error(
                 &info.span,
                 ErrorCode::TypeMismatch,

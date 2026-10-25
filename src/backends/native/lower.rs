@@ -576,6 +576,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_text_cps_argument_v2", vec![ptr, ptr], vec![]),
         ("__joky_cps_finish", vec![ptr], vec![]),
         ("__joky_cps_finish_return_v1", vec![ptr, ptr], vec![]),
+        ("__joky_cps_finish_place_v1", vec![ptr, ptr], vec![]),
         ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_release_child", vec![ptr], vec![]),
         ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
@@ -1254,6 +1255,7 @@ fn branch_cps_status(
 }
 
 /// Read completed results before the caller registers ownership and releases children.
+#[allow(clippy::too_many_arguments)]
 fn lower_cps_result(
     builder: &mut FunctionBuilder,
     slots: &mut SlotAccess<'_>,
@@ -1261,6 +1263,8 @@ fn lower_cps_result(
     info: &FunctionInfo,
     refs: &HashMap<String, FuncRef>,
     child: Value,
+    data: &DataRefs,
+    ptr_ty: types::Type,
 ) {
     let Some(dst) = result else { return };
     if dst.ty.is_aggregate() {
@@ -1269,6 +1273,16 @@ fn lower_cps_result(
             index: info.aggregate_result_offset(),
             ty: dst.ty.clone(),
         };
+        if dst.ty.is_place() {
+            let src = load(builder, child_slots, &source);
+            let pointer = match slots {
+                SlotAccess::Result { storage, .. } => *storage,
+                _ => slots.read(builder, dst),
+            };
+            place_copy(builder, refs, data, ptr_ty, &dst.ty, pointer, src);
+            slots.write(builder, dst, pointer);
+            return;
+        }
         for (dst, src) in dst.scalars().zip(source.scalars()) {
             let value = load(builder, child_slots, &src);
             slots.write(builder, &dst, value);
@@ -1311,7 +1325,7 @@ fn concurrent_result_packet(
     ptr_ty: types::Type,
 ) -> Value {
     let count = result.map_or(0, |result| {
-        result.ty.scalar_types().len() + result.ty.storage_layout().unwrap().size.div_ceil(8)
+        result.ty.value_lanes().len() + result.ty.storage_layout().unwrap().size.div_ceil(8)
     });
     let count = builder.ins().iconst(ptr_ty, count as i64);
     let index = builder.ins().iconst(ptr_ty, index as i64);
@@ -1530,7 +1544,7 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         let packet = concurrent_result_packet(builder, refs, frame, index, destination, ptr_ty);
         check_call(builder, refs, Some(frame), None);
         let packet_slots = helper(builder, refs, "__joky_cps_slots", &[packet]);
-        let lanes = destination.map_or(0, |slot| slot.ty.scalar_types().len());
+        let lanes = destination.map_or(0, |slot| slot.ty.value_lanes().len());
         let storage = builder.ins().iadd_imm_u(packet_slots, (lanes * 8) as i64);
         let mut packet_access = SlotAccess::Result {
             slots: packet_slots,
@@ -1544,6 +1558,8 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
             &functions[&branch.name],
             refs,
             child,
+            data,
+            ptr_ty,
         );
         if let Some(cleanup) = &branch.cleanup {
             let packet_cleanup = helper(builder, refs, "__joky_cps_cleanup_v2", &[packet]);
@@ -1617,7 +1633,7 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         let destination = branch.result.as_ref().or(result);
         let count = builder.ins().iconst(
             ptr_ty,
-            destination.map_or(0, |slot| slot.ty.scalar_types().len()) as i64,
+            destination.map_or(0, |slot| slot.ty.value_lanes().len()) as i64,
         );
         let output = destination
             .map(|slot| builder.ins().iadd_imm_u(slots, (slot.index * 8) as i64))
@@ -1896,6 +1912,7 @@ fn lower_suspending_call(
     state: u32,
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
+    data: &DataRefs,
     ptr_ty: types::Type,
     frame: Value,
     states: &[cranelift_codegen::ir::Block],
@@ -1935,6 +1952,8 @@ fn lower_suspending_call(
         &functions[name],
         refs,
         child,
+        data,
+        ptr_ty,
     );
     builder
         .ins()
@@ -2845,6 +2864,7 @@ fn lower_ops(
                     *state,
                     functions,
                     refs,
+                    data,
                     ptr_ty,
                     frame,
                     states,
@@ -3047,6 +3067,12 @@ fn lower_cps(
                     .ins()
                     .call(refs["__joky_cps_finish_return_v1"], &[frame, key]);
             }
+        }
+        if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_place()) {
+            let key = builder.ins().iconst(ptr_ty, result.index as i64);
+            builder
+                .ins()
+                .call(refs["__joky_cps_finish_place_v1"], &[frame, key]);
         }
         let done = builder.ins().iconst(types::I32, DONE as i64);
         builder

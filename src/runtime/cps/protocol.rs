@@ -212,6 +212,18 @@ pub(crate) unsafe extern "C" fn prepare(
                 .slots
                 .copy_from_slice(std::slice::from_raw_parts(lanes, count));
         }
+        for (base, layout) in code.layout.input_places() {
+            let source = (&(*inputs).slots)[base] as *const u8;
+            let target = super::cleanup(inputs);
+            let destination = (*target).entries.places.materialize(
+                &mut *(*target).arena,
+                base,
+                layout.size,
+                layout.align,
+            )?;
+            crate::runtime::place::copy(destination.as_ptr(), source, layout.nodes);
+            (&mut (*inputs).slots)[base] = destination.as_ptr() as u64;
+        }
         for &(from, to) in &code.inputs {
             super::transfer_owner(frame, inputs, from, to);
         }
@@ -485,7 +497,13 @@ pub(crate) unsafe extern "C" fn take(
             .ok_or_else(|| invalid("Missing task result packet"))?
             as *mut CpsFrame;
         (*frame).concurrent.as_mut().unwrap().take_result(source)?;
-        if count != 0 {
+        if let Some(layout) = entry.layout.result_place() {
+            crate::runtime::place::copy(
+                *lanes as *mut u8,
+                (&(*packet).slots)[0] as *const u8,
+                layout.nodes,
+            );
+        } else if count != 0 {
             std::ptr::copy_nonoverlapping((*packet).slots.as_ptr(), lanes, count);
         }
         if let Some(key) = entry.result_key {

@@ -336,7 +336,6 @@ impl Type {
             target.is_suspend_safe_owner()
                 || target.is_copy_storage_value()
                     && !target.contains_references()
-                    && !target.contains_fixed_array()
                     && !target.contains_closures()
                     && !target.contains_dyn()
         })
@@ -1163,6 +1162,17 @@ impl Type {
             scalars: Vec::new(),
             depth: 0,
         }))
+    }
+
+    /// Element type and resolved length of a FixedArray.
+    pub fn fixed_array_element_type(&self) -> Option<(&Type, u64)> {
+        match self {
+            Self::FixedArray(a) => match a.length {
+                ConstArgument::Value(length) => Some((&a.element, length)),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// Element type of the compiler-recognized standard Array declaration.

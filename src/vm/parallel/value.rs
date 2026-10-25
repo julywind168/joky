@@ -9,6 +9,17 @@ impl TaskValue {
         match (self, ty) {
             (Self::Scalar(value), ty) => value.value_type() == *ty,
             (Self::String(_), Type::String) => true,
+            (
+                Self::FixedArray {
+                    ty: actual,
+                    elements,
+                },
+                _,
+            ) if actual == ty => ty
+                .fixed_array_element_type()
+                .is_some_and(|(element, length)| {
+                    elements.len() as u64 == length && elements.iter().all(|v| v.matches(element))
+                }),
             (Self::Tuple(values), Type::Tuple(t)) => {
                 values.len() == t.elements.len()
                     && values.iter().zip(&t.elements).all(|(v, t)| v.matches(t))
@@ -52,7 +63,8 @@ impl TaskValue {
                 Self::String(text) => text.capacity(),
                 Self::Tuple(v)
                 | Self::Record { fields: v, .. }
-                | Self::Array { elements: v, .. } => {
+                | Self::Array { elements: v, .. }
+                | Self::FixedArray { elements: v, .. } => {
                     v.iter().map(Self::bytes).sum::<usize>()
                         + (v.capacity() - v.len()) * std::mem::size_of::<Self>()
                 }
@@ -69,6 +81,9 @@ impl TaskValue {
             arena: &mut Arena,
         ) -> Result<(), Error> {
             match value {
+                TaskValue::FixedArray { .. } => {
+                    unreachable!("inline Copy values use typed storage")
+                }
                 TaskValue::Scalar(value) => {
                     if *ty != Type::Unit {
                         packet.words[base] = value.bits();
@@ -113,13 +128,22 @@ impl TaskValue {
             Ok(())
         }
         let mut packet = Packet::empty(Shape::of(ty)?)?;
-        fill(self, ty, &mut packet, 0, arena)?;
+        if ty.is_place() {
+            unsafe {
+                places::write(self, ty, packet.place_storage())?;
+            }
+        } else {
+            fill(self, ty, &mut packet, 0, arena)?;
+        }
         Ok(packet)
     }
 }
 
 pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<ParallelOutput, Error> {
     fn measure(ty: &Type, words: &[u64]) -> Result<usize, Error> {
+        if ty.is_place() {
+            return unsafe { places::measure(ty, words[0] as *const u8) };
+        }
         let children = match ty {
             Type::Record(r) if r.array => {
                 let mut bytes = 0usize;
@@ -172,6 +196,9 @@ pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<Paral
             .ok_or_else(|| invalid("Parallel result size overflow"))
     }
     fn read(ty: &Type, words: &[u64]) -> Result<TaskValue, Error> {
+        if ty.is_place() {
+            return unsafe { places::read(ty, words[0] as *const u8) };
+        }
         Ok(match ty {
             Type::Record(r) if r.array => {
                 let mut elements = Vec::with_capacity(unsafe { arrays::length(words[0])? });
