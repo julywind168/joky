@@ -106,7 +106,7 @@ pub(super) fn descriptors<M: Module>(
             ),
             (
                 std::mem::offset_of!(NativeTaskEntryV1, version),
-                crate::runtime::task_scope::layout::VERSION,
+                crate::runtime::cps::task::ENTRY_VERSION,
             ),
             (
                 std::mem::offset_of!(NativeTaskEntryV1, frame_slots),

@@ -1,13 +1,15 @@
 //! Independent local task captures. Preparation never creates executable slots;
 //! the selected task acquires its execution storage on its first poll.
 use super::{CpsEntry, CpsFrame, INVALID_STATE};
-use crate::runtime::task_scope::layout::{CheckedLayout, VERSION};
+use crate::runtime::task_scope::layout::CheckedLayout;
 use crate::{Error, ErrorCode, ErrorPhase};
 use std::{
     cell::RefCell,
     collections::BTreeMap,
     rc::{Rc, Weak},
 };
+
+pub(crate) const ENTRY_VERSION: usize = 1;
 
 thread_local! {
     static ENTRIES: RefCell<BTreeMap<u64, Weak<CheckedEntry>>> = const { RefCell::new(BTreeMap::new()) };
@@ -145,7 +147,7 @@ impl NativeTaskEntryV1 {
                 "Invalid local task entry descriptor v1",
             )
         };
-        if self.version != VERSION
+        if self.version != ENTRY_VERSION
             || self.qualification != 0
             || self.layout.is_null()
             || self.layout_words > 1_048_576
@@ -406,7 +408,7 @@ mod tests {
         ))
         .unwrap();
         let descriptor = NativeTaskEntryV1 {
-            version: VERSION,
+            version: ENTRY_VERSION,
             qualification: 0,
             entry: Some(entry),
             frame_slots: 1,
@@ -429,11 +431,11 @@ mod tests {
             let next = register(&mut second, &descriptor, std::ptr::null());
             assert!(next > token);
             for (version, qualification, slots, length) in [
-                (VERSION + 1, 0, 1, words.len()),
-                (VERSION, 1, 1, words.len()),
-                (VERSION, 0, 0, words.len()),
-                (VERSION, 0, usize::MAX, words.len()),
-                (VERSION, 0, 1, words.len() - 1),
+                (ENTRY_VERSION + 1, 0, 1, words.len()),
+                (ENTRY_VERSION, 1, 1, words.len()),
+                (ENTRY_VERSION, 0, 0, words.len()),
+                (ENTRY_VERSION, 0, usize::MAX, words.len()),
+                (ENTRY_VERSION, 0, 1, words.len() - 1),
             ] {
                 let invalid = NativeTaskEntryV1 {
                     version,

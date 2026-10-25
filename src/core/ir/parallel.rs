@@ -4,6 +4,8 @@ use super::{ModulePlan, Op};
 use crate::{Error, ErrorCode, ErrorPhase, Type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub(crate) mod packet;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Qualification {
     pub transfer: bool,
@@ -171,7 +173,10 @@ pub(crate) fn analyse(
                         .params
                         .iter()
                         .chain(std::iter::once(&f.signature.ret))
-                        .all(|ty| crate::core::instance::scalar(ty) || *ty == Type::String)
+                        .all(|ty| {
+                            packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty))
+                                .is_some_and(packet::Kind::implemented)
+                        })
                 })
             };
             let local = match op {

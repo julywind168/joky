@@ -1,14 +1,16 @@
 //! Versioned physical capture/result layouts emitted by the checked compiler.
 //! These describe Local storage, not Transfer/Share or parallel admission.
+use crate::core::ir::parallel::packet::Kind;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
-pub(crate) const VERSION: usize = 1;
+// Private layout words evolve independently of the NativeTaskEntryV1 envelope.
+pub(crate) const VERSION: usize = 2;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v1",
+        "Invalid task entry layout v2",
     )
 }
 
@@ -35,7 +37,8 @@ fn value(out: &mut Vec<u64>, ty: &Type) -> Result<(), Error> {
     let layout = ty.storage_layout().map_err(|_| invalid())?;
     let flags = u64::from(ty.is_owner())
         | (u64::from(ty.is_place()) << 1)
-        | (u64::from(ty.reference_type().is_some()) << 2);
+        | (u64::from(ty.reference_type().is_some()) << 2)
+        | ((Kind::of(ty) as u64) << 3);
     let fields = if ty.is_place() {
         Vec::new()
     } else {
@@ -92,7 +95,7 @@ impl Reader<'_> {
         let scalars = self.word()?;
         let size = self.word()?;
         let align = self.word()?;
-        if flags & !7 != 0 || !align.is_power_of_two() {
+        if Kind::decode(flags >> 3).is_none() || !align.is_power_of_two() {
             return Err(invalid());
         }
         let fields = self.word()?;
@@ -126,10 +129,14 @@ impl CheckedLayout {
         fn shape(reader: &mut Reader<'_>) -> Result<(usize, bool), Error> {
             let words = reader.0;
             let (inputs, _) = reader.value()?;
-            if words[0] & 6 != 0 || words[2] > 1 || words[5] > 1 {
+            let kind = Kind::decode((words[0] >> 3) as usize).ok_or_else(invalid)?;
+            if !kind.implemented() || words[0] & 6 != 0 || words[2] > 1 || words[5] > 1 {
                 return Err(invalid());
             }
-            let owner = words[0] == 1;
+            let owner = words[0] & 1 != 0;
+            if owner != (kind == Kind::String) {
+                return Err(invalid());
+            }
             if words[5] == 1 {
                 let tag = words[7];
                 if !(1..=12).contains(&tag) && !(owner && tag == 14) {
@@ -196,5 +203,35 @@ impl CheckedLayout {
             return Err(invalid());
         }
         Ok((input_slots, result_slots))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_layout_versions_and_kinds_fail_closed() {
+        let mut words = encode(&FunctionSignature::new(vec![Type::String], Type::String)).unwrap();
+        assert_eq!(
+            CheckedLayout::decode(&words)
+                .unwrap()
+                .parallel_shape()
+                .unwrap(),
+            (vec![0], true)
+        );
+        words[0] = 1;
+        assert!(CheckedLayout::decode(&words).is_err());
+        words[0] = VERSION as u64;
+        words[2] = 6 << 3;
+        assert!(CheckedLayout::decode(&words).is_err());
+        // A recognized kind with inconsistent ownership cannot enter a worker.
+        for flags in [1, (Kind::String as u64) << 3] {
+            words[2] = flags;
+            assert!(CheckedLayout::decode(&words)
+                .unwrap()
+                .parallel_shape()
+                .is_err());
+        }
     }
 }
