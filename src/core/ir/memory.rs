@@ -809,6 +809,7 @@ pub(super) fn check_module(
         }
         // Preserve source visibility before filtering the ordinary host ABI.
         info.script_entry = !info.internal;
+        info.parallel_entry = !info.internal && info.suspends;
         let references = info
             .signature
             .params

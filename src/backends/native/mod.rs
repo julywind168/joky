@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Compiled definitions returned to a backend.
 pub(crate) struct CompiledDefinitions {
+    pub parallel_entries: HashMap<String, (FuncId, FunctionInfo)>,
     /// Exported functions in source order of their names.
     pub exports: HashMap<String, (FuncId, FunctionInfo)>,
     /// Raw CPS entries for checked requests, without public host ABI wrappers.
@@ -29,6 +30,10 @@ pub(crate) struct CompiledDefinitions {
     /// runtime. Private module functions can fail or suspend without being
     /// reachable from an export, so this must not be inferred from `exports`.
     pub requires_runtime: bool,
+}
+
+pub(crate) fn task_root_symbol(prefix: &str, name: &str) -> String {
+    format!("__joky_task_root_v1_{prefix}{name}")
 }
 
 /// Each imported function selects exactly one native adapter.
@@ -53,7 +58,9 @@ pub(crate) fn compile<M: Module>(
     let mut reachable: HashSet<String> = plan
         .functions
         .iter()
-        .filter(|(_, info)| !info.internal || info.instance_entry || info.script_entry)
+        .filter(|(_, info)| {
+            !info.internal || info.instance_entry || info.script_entry || info.parallel_entry
+        })
         .map(|(name, _)| name.clone())
         .collect();
     let mut pending: Vec<_> = reachable.iter().cloned().collect();
@@ -234,6 +241,13 @@ pub(crate) fn compile<M: Module>(
             entry_ids.insert(name.clone(), entry);
             symbol = format!("__joky_arena_body_{symbol}");
             linkage = Linkage::Local;
+        }
+        // Source-visible aggregate CPS roots need a private task entry while
+        // remaining unavailable through the ordinary scalar/text host ABI.
+        let info = &plan.functions[name];
+        if info.internal && info.parallel_entry {
+            symbol = task_root_symbol(symbol_prefix, name);
+            linkage = Linkage::Export;
         }
         let id = module
             .declare_function(&symbol, linkage, &signature)
@@ -658,7 +672,23 @@ pub(crate) fn compile<M: Module>(
                 .then(|| ((*name).clone(), (ids[*name], info.clone())))
         })
         .collect();
+    let parallel_entries = names
+        .iter()
+        .filter_map(|name| {
+            let info = &plan.functions[*name];
+            (info.parallel_entry && plan.bodies.contains_key(*name)).then(|| {
+                (
+                    (*name).clone(),
+                    (
+                        exports.get(*name).map_or(ids[*name], |(id, _)| *id),
+                        info.clone(),
+                    ),
+                )
+            })
+        })
+        .collect();
     Ok(CompiledDefinitions {
+        parallel_entries,
         request_entries,
         exports,
         instance_entries,

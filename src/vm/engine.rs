@@ -92,8 +92,8 @@ impl VmEngine {
         Self::with_mode_and_registry(mode, crate::stdlib::module_registry())
     }
 
-    /// Freeze one entry and owning inputs for transfer to a worker. This does not
-    /// enable a worker pool; join/race/branch still use the local driver in TP2.
+    /// Freeze one entry and owning inputs for transfer to a worker. Submission
+    /// runs join/race/branch on the selected parallel executor.
     /// Unsupported storage, calls and legacy host bindings fail before execution.
     pub fn prepare_parallel_task(
         &self,
@@ -120,6 +120,18 @@ impl VmEngine {
                 budgets,
                 self.interpreter_limits,
             ),
+        }
+    }
+
+    /// Exact source-visible task types, including aggregates outside the scalar host ABI.
+    pub fn parallel_signature(&self, name: &str) -> Result<FunctionSignature, Error> {
+        match self
+            .current
+            .as_ref()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?
+        {
+            LoadedModule::Jit(module) => Ok(module.freeze(name)?.info.signature),
+            LoadedModule::Interpreter(module) => Ok(module.freeze(name)?.info.signature),
         }
     }
 

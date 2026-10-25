@@ -69,7 +69,7 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
-    fn materialize(&mut self) {
+    pub(crate) fn materialize(&mut self) {
         if let Some((data, descriptor)) = self.storage.take() {
             // Registration guarantees live storage and matching descriptors.
             let keep_alive = self.keep_alive.take();

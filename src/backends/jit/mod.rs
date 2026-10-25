@@ -34,6 +34,7 @@ pub(crate) struct CompiledModule {
     pub instance_hooks:
         HashMap<String, Vec<(crate::core::ir::DropHook, crate::runtime::cleanup::Callback)>>,
     pub(crate) parallel: crate::core::ir::parallel::Effects,
+    pub(crate) parallel_entries: HashMap<String, CompiledFunction>,
     _code: Arc<Mutex<OwnedCode>>,
     _dependencies: Vec<Rc<dyn Any>>,
 }
@@ -59,6 +60,7 @@ impl CompiledModule {
             instance_entries,
             instance_hooks,
             parallel: Default::default(),
+            parallel_entries: HashMap::new(),
             _code: Arc::new(Mutex::new(OwnedCode(None))),
             _dependencies: vec![owner],
         }
@@ -80,6 +82,7 @@ impl CompiledModule {
             instance_entries,
             instance_hooks: HashMap::new(),
             parallel: Default::default(),
+            parallel_entries: HashMap::new(),
             _code: Arc::new(Mutex::new(OwnedCode(None))),
             _dependencies: vec![owner],
         }
@@ -89,22 +92,20 @@ impl CompiledModule {
 pub(crate) struct FrozenEntry {
     pub(crate) entry: cps::CpsEntry,
     pub(crate) info: FunctionInfo,
-    pub(crate) version: ModuleId,
     pub(crate) sources: Arc<crate::SourceMap>,
     _code: Arc<dyn Any + Send + Sync>,
     _hosts: Vec<crate::runtime::parallel::Host>,
 }
 impl CompiledModule {
     pub(crate) fn freeze(&self, name: &str) -> Result<FrozenEntry, Error> {
-        self.parallel.require(name)?;
+        self.parallel.require_packet(name)?;
         let function = self
-            .exports
+            .parallel_entries
             .get(name)
             .ok_or_else(|| compile_error("Unknown parallel export"))?;
         Ok(FrozenEntry {
             entry: unsafe { crate::runtime::abi::as_cps_entry(function.entry) },
             info: function.info.clone(),
-            version: self.version,
             sources: self.sources.clone(),
             _code: self._code.clone(),
             _hosts: self
@@ -130,7 +131,6 @@ impl FrozenEntry {
             entry,
             info,
             sources,
-            version: ModuleId(0),
             _code: owner,
             _hosts: Vec::new(),
         }
@@ -240,6 +240,20 @@ pub(crate) fn compile(
         })
         .collect();
     Ok(CompiledModule {
+        parallel_entries: compiled
+            .parallel_entries
+            .into_iter()
+            .map(|(name, (id, info))| {
+                (
+                    name,
+                    CompiledFunction {
+                        entry: module.get_finalized_function(id),
+                        info,
+                        abi: crate::EntryAbi::Scalar,
+                    },
+                )
+            })
+            .collect(),
         request_entries: compiled
             .request_entries
             .into_iter()

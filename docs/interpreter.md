@@ -393,7 +393,10 @@ Explicit `ExecutionMode::Parallel { workers }` freezes immutable bytecode, calle
 metadata and audited host bindings before submission. Each generated branch gets
 an independent execution on its assigned worker; existing Rc frame trees never
 cross threads. `Pending::Parallel` and remote dynamic scopes hold synchronized
-scope handles, while scalar/String owning packets transfer inputs and results.
+scope handles, while checked packets transfer scalar/String values and nested tuples, records
+and enums. Only active enum payloads transfer String owners; inactive lanes are
+zeroed. Source cleanup groups are detached before publication and installed on
+the destination execution.
 Parents return Pending while waiting, so a single worker can progress nested
 joins. Child completion performs arbitration and cancellation before notifying
 the parent; parents expose results only after all descendants are cleaned.
@@ -403,8 +406,8 @@ failure, including synchronous helper loops. Cleanup masks new cancellation.
 Timer primitives arm the actual polling task's monotonic deadline; idle workers
 wait on the pool condition variable without polling the parent tree. Existing
 instruction limits remain per execution; the root storage budget and live-task
-limit bound aggregate admission. Local resources, reference/aggregate packets
-and unknown hosts are rejected before execution. Godot stays Local. See the
+limit bound aggregate admission. Local resources, reference packets, containers, custom Drop and unknown hosts
+are rejected before execution. Godot stays Local. See the
 [current capability table](task-parallel-executor.md#141-当前支持表).
 
 The following tree-polling rules describe the default Local execution mode.

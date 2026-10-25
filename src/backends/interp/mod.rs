@@ -28,6 +28,7 @@ mod diagnostics;
 #[cfg(test)]
 mod dyn_tests;
 mod execute;
+pub(crate) use execute::parallel::start_root as start_parallel;
 mod host;
 mod memory;
 mod optimize;
@@ -35,7 +36,7 @@ mod places;
 
 pub(crate) use execute::{
     call_instance, call_sync, cleanup_call, prepare_domain, prepare_scalar, prepare_script, start,
-    start_owned_text, start_text,
+    start_text,
 };
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
@@ -268,11 +269,11 @@ pub(crate) struct FrozenEntry {
 }
 impl BytecodeModule {
     pub(crate) fn freeze(&self, name: &str) -> Result<FrozenEntry, Error> {
-        self.parallel.require(name)?;
+        self.parallel.require_packet(name)?;
         let function = self
             .functions
             .get(name)
-            .filter(|function| !function.info.internal)
+            .filter(|function| function.info.parallel_entry)
             .ok_or_else(|| abi_error("Unknown parallel export"))?;
         Ok(FrozenEntry {
             info: function.info.clone(),

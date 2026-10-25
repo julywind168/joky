@@ -4833,10 +4833,21 @@ Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel
 `wait_closed` 与控制对象 Drop 等待线程退出。提交句柄 Drop 不等待；任务句柄 Drop 请求取消。
 `ParallelTask::wait` 仅可在非 worker 的宿主线程调用，`take_result` 一次性收取终态。
 
-当前跨任务包支持标量和 String，String 移动真实拥有 Buffer；根文本入口限零参数或单个
-String 参数返回 String。一般 Transfer/Share 分析通过不等于任意聚合包可提交；引用、其他
-聚合、资源和函数值包仍拒绝。分支内可使用已获资格的临时数据。完整调用图必须证明安全，
-未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄和 Godot 对象均保持 Local。
+当前跨任务包支持标量、String，以及递归嵌套这些叶子的元组、普通 struct 和 enum
+（包括 Option/Result）。join/race 的参数与结果、branch 的移动捕获及宿主根入口采用同一
+类型边界；String 交接移动真实拥有 Buffer。完整类型树必须无引用、无资源、无自定义 Drop，
+包括未激活枚举变体及实际泛型参数；容器、FixedArray、函数/闭包、dyn 和裸指针仍拒绝。
+一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
+完整调用图必须证明安全，未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄
+和 Godot 对象均保持 Local。
+
+宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
+构造和收取聚合值。`VmEngine::parallel_signature` 或 AOT `ParallelEntry::signature` 提供受检
+入口签名；`Type::tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
+及变体。记录字段按声明顺序，枚举使用声明序号，无 payload 的变体传 None。nominal 类型
+必须来自对应冻结签名，字段、标量类型和标签精确匹配；新编译模块的同名类型不能冒充旧类型。
+这些入口独立于普通函数 ABI；CLI main 的 Unit/Int32 限制保持不变。
+
 显式不安全注册的标量 CPS 宿主及内置 task.yield_now/sleep_ms 可用；旧注册不会自动升级。
 准入失败发生在根执行前，不自动回退 Local。
 
@@ -4846,7 +4857,7 @@ branch 在发布后可立即与主体重叠。父流程在子树全部停止且�
 拥有结果在此后一次性转移；失败取消不回滚副作用。同步语言循环有取消检查点，任意宿主调用
 仍须自行返回；没有抢占、公平时间片或强制关闭时限。
 
-以下源码规则同时适用；顺序轮询、借用及广泛聚合结果的描述针对 Local，Parallel 另受上述
+以下源码规则同时适用；顺序轮询与跨分支借用的描述针对 Local，Parallel 另受上述
 准入限制。实现与验证见[任务执行器记录](task-parallel-executor.md#14-tp4-显式模式嵌入与等待能力)。
 
 `parallel` 已改名为 `join`；旧写法会提示 `Use join instead of parallel`，行为不变。

@@ -202,6 +202,7 @@ impl FunctionPlan {
             domain_entry: false,
             domain_request_entry: false,
             script_entry: false,
+            parallel_entry: false,
             span: *span,
         };
         self.generics

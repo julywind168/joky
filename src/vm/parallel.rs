@@ -1,41 +1,41 @@
 //! Freeze an admitted entry before moving work to a worker. This is preparation
 //! infrastructure used by explicit parallel execution; Local semantics stay unchanged.
+mod value;
 use super::{InstanceValue, InterpreterLimits};
 use crate::{
     backends::{interp, jit},
     runtime::{
-        cps::{CpsEntry, CpsFrame},
-        parallel::{Guard, Host, Lease, OwnedBuffer, Storage, TaskBudget},
-        suspension::{Continuation, StringContinuation},
+        cps::CpsEntry,
+        parallel::{
+            packet::{Packet, Shape},
+            pool, Guard, Host, Lease, Storage, TaskBudget,
+        },
     },
     Error, ErrorCode, ErrorPhase, FunctionSignature, Type,
 };
-use std::{any::Any, rc::Rc, sync::Arc};
+use std::{any::Any, sync::Arc, task::Poll};
 
 fn invalid(message: &str) -> Error {
     Error::new_with_code(ErrorPhase::Abi, ErrorCode::InvalidCall, message)
 }
 
 /// Pointer-free owning inputs and results of a frozen worker entry.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TaskValue {
     Scalar(InstanceValue),
     String(String),
-}
-impl TaskValue {
-    fn ty(&self) -> Type {
-        match self {
-            Self::Scalar(v) => v.value_type(),
-            Self::String(_) => Type::String,
-        }
-    }
-    fn bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + match self {
-                Self::String(s) => s.capacity(),
-                _ => 0,
-            }
-    }
+    Tuple(Vec<TaskValue>),
+    /// Fields are in declaration order; `ty` comes from the frozen signature.
+    Record {
+        ty: Type,
+        fields: Vec<TaskValue>,
+    },
+    /// Variant indices are in declaration order. Nullary variants have no payload.
+    Enum {
+        ty: Type,
+        variant: usize,
+        payload: Option<Box<TaskValue>>,
+    },
 }
 #[derive(Clone)]
 pub(crate) enum Code {
@@ -46,21 +46,20 @@ pub(crate) enum Code {
 pub struct PreparedParallelTask {
     code: Code,
     name: String,
-    input: Vec<TaskValue>,
-    text_input: Option<OwnedBuffer>,
+    input: Vec<Packet>,
     root: Storage,
     limits: InterpreterLimits,
     _packet: Lease,
 }
 /// A started task is confined to its worker, including cancellation and Drop.
 pub struct ParallelExecution {
-    task: Option<Running>,
+    task: Option<Box<dyn pool::Job>>,
     root: Storage,
+    code: Code,
     result_type: Type,
-}
-enum Running {
-    Scalar(Continuation),
-    Text(StringContinuation),
+    packet: Option<Packet>,
+    finished: bool,
+    failure: Option<Error>,
 }
 /// The result retains its budget charge until consumed or dropped.
 pub struct ParallelOutput {
@@ -135,7 +134,7 @@ impl PreparedParallelTask {
     fn in_root(
         code: Code,
         name: &str,
-        mut input: Vec<TaskValue>,
+        input: Vec<TaskValue>,
         root: Storage,
         limits: InterpreterLimits,
     ) -> Result<Self, Error> {
@@ -144,22 +143,19 @@ impl PreparedParallelTask {
             Code::Interpreted(e) => &e.info,
         };
         let sig = &info.signature;
-        if !info.suspends || sig.params != input.iter().map(TaskValue::ty).collect::<Vec<_>>() {
-            return Err(invalid(
-                "Parallel task requires a matching @suspends signature",
-            ));
+        Shape::of(&sig.ret)?;
+        for ty in &sig.params {
+            Shape::of(ty)?;
         }
-        if sig.has_text() {
-            if sig.ret != Type::String || !(sig.params.is_empty() || sig.params == [Type::String]) {
-                return Err(invalid(
-                    "Parallel text root supports () or (String) -> String",
-                ));
-            }
-        } else if !crate::core::instance::scalar(&sig.ret)
-            || !sig.params.iter().all(crate::core::instance::scalar)
+        if !info.suspends
+            || sig.params.len() != input.len()
+            || !input
+                .iter()
+                .zip(&sig.params)
+                .all(|(value, ty)| value.matches(ty))
         {
             return Err(invalid(
-                "Parallel root packet requires scalar or String values",
+                "Parallel task requires a matching @suspends signature and exact value types",
             ));
         }
         let bytes = input
@@ -168,101 +164,54 @@ impl PreparedParallelTask {
                 n.checked_add(value.bytes())
             })
             .ok_or_else(|| invalid("Parallel capture size overflow"))?;
-        let packet = root.accounts().reserve(bytes)?;
-        let mut text_input = None;
-        if let Some(TaskValue::String(text)) = input.first_mut() {
-            let mut arena = crate::runtime::arena::Arena::with_storage(root.clone());
-            let owner = crate::runtime::buffer::Buffer::copy_bytes(&mut arena, text.as_bytes())?;
-            text_input = Some(match unsafe { OwnedBuffer::new(&arena, owner) } {
-                Ok(packet) => packet,
-                Err(error) => {
-                    unsafe { crate::runtime::buffer::Buffer::release(&mut arena, owner.as_ptr()) }?;
-                    return Err(error);
-                }
-            });
-            *text = String::new();
-        }
+        let temporary = root.accounts().reserve(bytes)?;
+        let packet = root.accounts().reserve(
+            std::mem::size_of::<Self>() + name.len() + input.len() * std::mem::size_of::<Packet>(),
+        )?;
+        let _guard = Guard::enter(&root);
+        let mut arena = crate::runtime::arena::Arena::with_storage(root.clone());
+        let input = input
+            .into_iter()
+            .zip(&sig.params)
+            .map(|(value, ty)| value.packet(ty, &mut arena))
+            .collect::<Result<_, _>>()?;
+        drop(temporary);
         Ok(Self {
             code,
             name: name.into(),
             input,
-            text_input,
             root,
             limits,
             _packet: packet,
         })
     }
     /// Build all mutable execution state on the receiving thread, without polling.
-    pub fn start(mut self) -> Result<ParallelExecution, Error> {
+    pub fn start(self) -> Result<ParallelExecution, Error> {
         let _guard = Guard::enter(&self.root);
-        let result_type = match &self.code {
-            Code::Native(e) => e.info.signature.ret.clone(),
-            Code::Interpreted(e) => e.info.signature.ret.clone(),
-        };
-        let task = match &self.code {
-            Code::Native(code) => {
-                let mut frame = CpsFrame::try_new(code.info.frame_slots)?;
-                frame.root_text = result_type == Type::String;
-                for (index, value) in self.input.iter().enumerate() {
-                    match value {
-                        TaskValue::Scalar(v) => frame.slots[index] = v.bits(),
-                        TaskValue::String(_) => unsafe {
-                            let arena = crate::runtime::cps::arena(&mut frame);
-                            let owner = self
-                                .text_input
-                                .as_mut()
-                                .expect("prepared text")
-                                .take(&*arena)?;
-                            frame.slots[index] = owner as usize as u64;
-                            let cleanup = crate::runtime::cps::cleanup(&mut frame);
-                            (*cleanup).entries.insert(
-                                index,
-                                crate::runtime::cleanup::Entry {
-                                    keep_alive: None,
-                                    storage_size: 0,
-                                    storage: None,
-                                    owners: vec![Some(owner)],
-                                    hooks: vec![],
-                                },
-                            );
-                        },
-                    }
-                }
-                unsafe { Continuation::new(code.entry, frame, code.version, Rc::new(code.clone())) }
-                    .with_sources(code.sources.clone())
-            }
-            Code::Interpreted(code) => {
-                let module = code.instantiate()?;
-                let task = if result_type == Type::String {
-                    interp::start_owned_text(
-                        module.clone(),
-                        &self.name,
-                        self.text_input.as_mut(),
-                        self.limits,
-                    )?
-                } else {
-                    let args: Vec<_> = self
-                        .input
-                        .iter()
-                        .map(|value| match value {
-                            TaskValue::Scalar(v) => *v,
-                            _ => unreachable!(),
-                        })
-                        .collect();
-                    interp::prepare_scalar(module.clone(), &self.name, &args, self.limits)?
-                };
-                Continuation::new_interpreted(task, code.version, module)
-                    .with_sources(code.sources.clone())
-            }
+        let (task, result_type) = match &self.code {
+            Code::Native(code) => (
+                crate::runtime::cps::parallel::start(
+                    code.entry,
+                    code.info.frame_slots,
+                    code.info.parameter_slots(),
+                    Shape::of(&code.info.signature.ret)?,
+                    self.input,
+                )?,
+                code.info.signature.ret.clone(),
+            ),
+            Code::Interpreted(code) => (
+                interp::start_parallel(code, &self.name, self.input, self.limits)?,
+                code.info.signature.ret.clone(),
+            ),
         };
         Ok(ParallelExecution {
-            task: Some(if result_type == Type::String {
-                Running::Text(StringContinuation::new(task))
-            } else {
-                Running::Scalar(task)
-            }),
+            task: Some(task),
             root: self.root.clone(),
+            code: self.code,
             result_type,
+            packet: None,
+            finished: false,
+            failure: None,
         })
     }
 }
@@ -270,61 +219,69 @@ impl ParallelExecution {
     /// Return true after completion. Pending work stays on this worker.
     pub fn resume(&mut self) -> Result<bool, Error> {
         let _guard = Guard::enter(&self.root);
-        match self
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
+        }
+        if self.finished {
+            return Ok(true);
+        }
+        let outcome = self
             .task
             .as_mut()
             .ok_or_else(|| invalid("Parallel result was already taken"))?
-        {
-            Running::Scalar(task) => {
-                task.resume()?;
-                Ok(task.is_finished())
-            }
-            Running::Text(task) => {
-                task.resume()?;
-                Ok(task.is_finished())
+            .poll();
+        match outcome {
+            Poll::Pending => Ok(false),
+            Poll::Ready(result) => {
+                self.finished = true;
+                let result = result.and_then(|v| {
+                    v.downcast::<Packet>()
+                        .map(|v| *v)
+                        .map_err(|_| invalid("Invalid parallel root result"))
+                });
+                // Teardown stays in the root storage context, including failures.
+                let cleanup = crate::runtime::error::checked(|| drop(self.task.take()));
+                let result = match (result, cleanup) {
+                    (Ok(packet), Ok(())) => Ok(packet),
+                    (Err(error), Err(cleanup)) if error.code() == ErrorCode::Cancelled => {
+                        Err(cleanup)
+                    }
+                    (Err(error), _) | (_, Err(error)) => Err(error),
+                };
+                match result {
+                    Ok(packet) => {
+                        self.packet = Some(packet);
+                        Ok(true)
+                    }
+                    Err(error) => {
+                        let sources = match &self.code {
+                            Code::Native(c) => &c.sources,
+                            Code::Interpreted(c) => &c.sources,
+                        };
+                        let error = error.with_sources(sources);
+                        self.failure = Some(error.clone());
+                        Err(error)
+                    }
+                }
             }
         }
     }
     pub fn take_result(&mut self) -> Result<ParallelOutput, Error> {
         let _guard = Guard::enter(&self.root);
-        let task = self
-            .task
-            .as_mut()
-            .ok_or_else(|| invalid("Parallel result was already taken"))?;
-        let mut text_charge = None;
-        let value = match task {
-            Running::Scalar(task) => {
-                let bits = task
-                    .cps_result()
-                    .ok_or_else(|| invalid("Parallel task has not completed successfully"))?;
-                TaskValue::Scalar(
-                    InstanceValue::from_bits(&self.result_type, bits)
-                        .ok_or_else(|| invalid("Invalid parallel scalar result"))?,
-                )
-            }
-            Running::Text(task) => {
-                text_charge = task.take_parallel_result_charge();
-                TaskValue::String(
-                    task.take_result()
-                        .ok_or_else(|| invalid("Parallel task has not completed successfully"))?,
-                )
-            }
-        };
-        let charge = match text_charge {
-            Some(charge) => charge,
-            None => self.root.accounts().reserve(value.bytes())?,
-        };
-        self.task.take();
-        Ok(ParallelOutput {
-            value,
-            _charge: charge,
-        })
+        let packet = self
+            .packet
+            .as_ref()
+            .ok_or_else(|| invalid("Parallel task is pending, failed or already collected"))?;
+        let output = value::output(packet, &self.result_type, &self.root)?;
+        self.packet.take();
+        Ok(output)
     }
 }
 impl Drop for ParallelExecution {
     fn drop(&mut self) {
         let _guard = Guard::enter(&self.root);
         self.task.take();
+        self.packet.take();
     }
 }
 
@@ -345,6 +302,8 @@ pub(super) fn host(
     }
 }
 
+#[cfg(test)]
+pub(crate) mod aggregates;
 #[cfg(test)]
 mod tests;
 

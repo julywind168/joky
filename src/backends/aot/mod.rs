@@ -15,6 +15,7 @@ pub struct AotCompiler {
     sources: std::sync::Arc<crate::SourceMap>,
     module: ObjectModule,
     exports: HashMap<String, FunctionInfo>,
+    parallel_entries: HashMap<String, FunctionInfo>,
     requires_runtime: bool,
     state: CompilationState,
     symbol_prefix: String,
@@ -31,6 +32,10 @@ pub struct ParallelEntry {
     sources: std::sync::Arc<crate::SourceMap>,
 }
 impl ParallelEntry {
+    /// Exact nominal types for safe TaskValue aggregate construction.
+    pub fn signature(&self) -> &crate::FunctionSignature {
+        &self.info.signature
+    }
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
@@ -144,6 +149,7 @@ impl AotCompiler {
             sources: Default::default(),
             module: ObjectModule::new(builder),
             exports: HashMap::new(),
+            parallel_entries: HashMap::new(),
             requires_runtime: false,
             state: CompilationState::New,
             symbol_prefix: prefix.into(),
@@ -423,6 +429,11 @@ impl AotCompiler {
         self.parallel = crate::core::ir::parallel::analyse(&plan, &prepared, &safe_hosts);
         self.sources = ast.sources.clone();
         self.requires_runtime = compiled.requires_runtime;
+        self.parallel_entries = compiled
+            .parallel_entries
+            .into_iter()
+            .map(|(name, (_, info))| (name, info))
+            .collect();
         self.exports = compiled
             .exports
             .into_iter()
@@ -515,16 +526,18 @@ impl AotCompiler {
     /// Compiler evidence for a pure generated CPS entry. Externs require an
     /// explicit runtime binding contract; an import slot count is not evidence.
     pub fn parallel_entry(&self, name: &str) -> Result<ParallelEntry, Error> {
-        self.parallel.require(name)?;
+        self.parallel.require_packet(name)?;
         let info = self
-            .exports
+            .parallel_entries
             .get(name)
             .filter(|info| info.suspends)
             .ok_or_else(|| {
                 compile_error("Parallel entry must be an exported @suspends function")
             })?;
         Ok(ParallelEntry {
-            symbol: if info.signature.has_text() {
+            symbol: if info.internal {
+                native::task_root_symbol(&self.symbol_prefix, name)
+            } else if info.signature.has_text() {
                 format!("__joky_user_text_v2_{}{name}", self.symbol_prefix)
             } else {
                 format!("{}{name}", self.symbol_prefix)

@@ -1,6 +1,9 @@
-//! Transfer only checked scalars and exclusive text; construct activations locally.
+//! Transfer checked flat packets and exclusive text; construct activations locally.
 use super::*;
-use crate::runtime::parallel::{pool, Lease, OwnedBuffer};
+use crate::runtime::parallel::{
+    packet::{Packet, Shape},
+    pool, Lease,
+};
 pub(super) struct Scopes {
     pub(super) groups: Vec<pool::Group>,
     _charge: Option<Lease>,
@@ -13,43 +16,97 @@ impl Scopes {
         }))
     }
 }
-struct Message {
-    values: Vec<(Type, u64, Option<OwnedBuffer>)>,
-    _charge: Option<Lease>,
+fn install(
+    packet: Packet,
+    ty: &Type,
+    arena: &crate::runtime::arena::Arena,
+    cleanups: &mut crate::runtime::cleanup::Cleanups,
+    base: usize,
+) -> Result<Vec<Value>, Error> {
+    let words = packet.install(arena, cleanups, base, None)?;
+    ty.scalar_types()
+        .iter()
+        .zip(words)
+        .map(|(ty, bits)| Value::from_instance_bits(ty, bits))
+        .collect()
 }
-impl Message {
-    fn new() -> Result<Self, Error> {
-        Ok(Self {
-            values: Vec::new(),
-            _charge: crate::runtime::parallel::reserve_current(128)?,
-        })
-    }
-    fn install(
-        mut self,
-        arena: &crate::runtime::arena::Arena,
-        cleanups: &mut crate::runtime::cleanup::Cleanups,
-        keys: &[usize],
-    ) -> Result<Vec<Value>, Error> {
-        let mut values = Vec::new();
-        for ((ty, bits, owner), key) in self.values.iter_mut().zip(keys) {
-            if let Some(owner) = owner {
-                let raw = owner.take(arena)?;
-                *bits = raw as u64;
-                cleanups.insert(
-                    *key,
-                    crate::runtime::cleanup::Entry {
-                        keep_alive: None,
-                        storage_size: 0,
-                        storage: None,
-                        owners: vec![Some(raw)],
-                        hooks: vec![],
-                    },
-                );
+fn start_worker(
+    module: Rc<BytecodeModule>,
+    target: usize,
+    packets: Vec<Packet>,
+    limits: InterpreterLimits,
+) -> Result<Box<dyn pool::Job>, Error> {
+    match &module.callees[target] {
+        Callee::User(function) => start_function(module.clone(), function.clone(), packets, limits),
+        Callee::Host(host) => {
+            let arena = crate::runtime::arena::Arena::default();
+            let mut values = Vec::new();
+            for (packet, ty) in packets.into_iter().zip(&host.signature().params) {
+                let mut value = install(packet, ty, &arena, &mut Default::default(), values.len())?;
+                if *ty == Type::Unit {
+                    value.push(Value::Unit);
+                }
+                values.extend(value);
             }
-            values.push(Value::from_instance_bits(ty, *bits)?);
+            let pending = HostPending::new(host.clone(), values.iter())?;
+            Ok(Box::new(HostWorker {
+                pending,
+                arena,
+                ret: host.signature().ret.clone(),
+            }))
         }
-        Ok(values)
+        _ => Err(abi_error("Unavailable parallel callee")),
     }
+}
+fn start_function(
+    module: Rc<BytecodeModule>,
+    function: Arc<BytecodeFunction>,
+    packets: Vec<Packet>,
+    limits: InterpreterLimits,
+) -> Result<Box<dyn pool::Job>, Error> {
+    let shape = Shape::of(&function.info.signature.ret)?;
+    let shape_charge =
+        crate::runtime::parallel::reserve_current(std::mem::size_of::<Worker>() + shape.bytes())?;
+    let args = vec![Value::Unit; function.info.parameter_slots()];
+    let mut execution = Execution::new(Frame::new(function.clone(), args.iter())?, limits, true);
+    let mut base = 0;
+    for (packet, ty) in packets.into_iter().zip(&function.info.signature.params) {
+        // Install directly in the activation so partial installation is cleaned
+        // if a later packet conversion fails.
+        let frame = execution.nodes[0].as_mut().unwrap();
+        let values = install(
+            packet,
+            ty,
+            &execution.arena,
+            frame.activation.cleanups_mut(),
+            base,
+        )?;
+        execution.frame_mut(0).slots[base..base + values.len()].clone_from_slice(&values);
+        base += ty.parameter_slots();
+    }
+    execution.parallel_child = Some(shape);
+    if function.info.signature.ret.is_aggregate() {
+        execution.root_aggregate = Some(Vec::new());
+    }
+    Ok(Box::new(Worker {
+        execution,
+        module,
+        _shape_charge: shape_charge,
+    }))
+}
+pub(crate) fn start_root(
+    code: &FrozenEntry,
+    name: &str,
+    packets: Vec<Packet>,
+    limits: InterpreterLimits,
+) -> Result<Box<dyn pool::Job>, Error> {
+    let module = code.instantiate()?;
+    let function = module
+        .functions
+        .get(name)
+        .cloned()
+        .ok_or_else(|| abi_error("Unknown parallel entry"))?;
+    start_function(module, function, packets, limits)
 }
 impl Execution {
     fn remote_factory(
@@ -69,60 +126,29 @@ impl Execution {
             Callee::Host(h) => h.signature(),
             _ => return Err(abi_error("Unavailable parallel callee")),
         };
-        let mut packet = Message::new()?;
-        let mut index = 0;
+        let mut packets = Vec::new();
+        let mut base = 0;
         for ty in &sig.params {
-            let source = args[index];
-            let bits = source.map_or(Ok(0), |src| {
-                self.frame_mut(self.current).slots[src].instance_bits()
-            })?;
-            let owner = if *ty == Type::String {
-                let owner = std::ptr::NonNull::new(bits as *mut crate::runtime::buffer::Buffer)
-                    .ok_or_else(|| abi_error("Invalid text capture"))?;
-                let owner = unsafe { OwnedBuffer::new(&self.arena, owner) }?;
-                self.frame_mut(self.current).cleanups.take(source.unwrap());
-                Some(owner)
-            } else {
-                None
-            };
-            packet.values.push((ty.clone(), bits, owner));
-            index += ty.parameter_slots();
+            let shape = Shape::of(ty)?;
+            let words = args[base..base + shape.lanes()]
+                .iter()
+                .map(|source| {
+                    source.map_or(Ok(0), |src| {
+                        self.frame_mut(self.current).slots[src].instance_bits()
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let entry = shape
+                .owners()
+                .first()
+                .and_then(|key| args[base + key])
+                .and_then(|key| self.frame_mut(self.current).cleanups.take(key));
+            packets.push(unsafe { Packet::capture(shape, words, entry, &mut self.arena)? });
+            base += ty.parameter_slots();
         }
         let limits = self.limits;
         Ok(Box::new(move || {
-            let module = frozen.instantiate()?;
-            match &module.callees[target] {
-                Callee::User(function) => {
-                    let args = vec![Value::Unit; function.info.parameter_slots()];
-                    let mut execution =
-                        Execution::new(Frame::new(function.clone(), args.iter())?, limits, true);
-                    let keys: Vec<_> = (0..args.len()).collect();
-                    let mut cleanups = Default::default();
-                    let values = packet.install(&execution.arena, &mut cleanups, &keys)?;
-                    let frame = execution.frame_mut(0);
-                    frame.slots[..values.len()].clone_from_slice(&values);
-                    frame.cleanups = cleanups;
-                    execution.parallel_child = true;
-                    let ret = function.info.signature.ret.clone();
-                    Ok(Box::new(Worker {
-                        execution,
-                        module,
-                        ret,
-                    }) as Box<dyn pool::Job>)
-                }
-                Callee::Host(host) => {
-                    let arena = crate::runtime::arena::Arena::default();
-                    let keys: Vec<_> = (0..packet.values.len()).collect();
-                    let values = packet.install(&arena, &mut Default::default(), &keys)?;
-                    let pending = HostPending::new(host.clone(), values.iter())?;
-                    Ok(Box::new(HostWorker {
-                        pending,
-                        arena,
-                        ret: host.signature().ret.clone(),
-                    }) as Box<dyn pool::Job>)
-                }
-                _ => Err(abi_error("Unavailable parallel callee")),
-            }
+            start_worker(frozen.instantiate()?, target, packets, limits)
         }))
     }
     pub(super) fn remote_concurrent(&mut self, module: &BytecodeModule) -> Result<(), Error> {
@@ -170,7 +196,7 @@ impl Execution {
         frame.pc += 1;
         Ok(())
     }
-    pub(super) fn poll_remote(&mut self) -> Result<bool, Error> {
+    pub(super) fn poll_remote(&mut self, module: &BytecodeModule) -> Result<bool, Error> {
         let id = self.current;
         let frame = self.frame_mut(id);
         let Some(Pending::Parallel { group, .. }) = &mut frame.pending else {
@@ -190,17 +216,46 @@ impl Execution {
         while let Some(index) = group.next_result() {
             let message = group
                 .take(index)?
-                .downcast::<Message>()
+                .downcast::<Packet>()
                 .map_err(|_| abi_error("Invalid interpreted packet"))?;
             let (done, result) = branches[index];
-            if let Some(slot) = result {
-                let mut entries = Default::default();
-                let values = message.install(&self.arena, &mut entries, &[slot])?;
+            let (target, destinations) = {
                 let frame = self.frame_mut(id);
-                frame.slots[slot] = values.into_iter().next().unwrap();
-                if let Some(entry) = entries.take(slot) {
-                    frame.cleanups.insert(slot, entry);
-                }
+                let Instruction::Concurrent { branches, .. } = &frame.function.code[frame.pc]
+                else {
+                    unreachable!()
+                };
+                let branch = &branches[index];
+                (
+                    branch.target.unwrap(),
+                    if branch.results.is_empty() {
+                        result.into_iter().collect()
+                    } else {
+                        branch.results.clone()
+                    },
+                )
+            };
+            let ty = match &module.callees[target] {
+                Callee::User(f) => &f.info.signature.ret,
+                Callee::Host(h) => &h.signature().ret,
+                _ => return Err(abi_error("Unavailable parallel result")),
+            };
+            let key = message
+                .shape
+                .owners()
+                .first()
+                .map(|&lane| destinations[lane]);
+            let frame = self.nodes[id].as_mut().unwrap();
+            let words = message.install(&self.arena, frame.activation.cleanups_mut(), 0, key)?;
+            let values = ty
+                .scalar_types()
+                .iter()
+                .zip(words)
+                .map(|(ty, bits)| Value::from_instance_bits(ty, bits))
+                .collect::<Result<Vec<_>, _>>()?;
+            let frame = self.frame_mut(id);
+            for (slot, value) in destinations.into_iter().zip(values) {
+                frame.slots[slot] = value;
             }
             self.frame_mut(id).slots[done] = Value::Bool(true);
         }
@@ -217,22 +272,20 @@ impl Execution {
 struct Worker {
     execution: Execution,
     module: Rc<BytecodeModule>,
-    ret: Type,
+    _shape_charge: Option<Lease>,
 }
 impl pool::Job for Worker {
     fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {
         match self.execution.poll(&self.module) {
             Poll::Pending => std::task::Poll::Pending,
             Poll::Failed(e) => std::task::Poll::Ready(Err(e)),
-            Poll::Complete(value) => std::task::Poll::Ready((|| {
-                let mut result = Message::new()?;
-                result.values.push((
-                    self.ret.clone(),
-                    value.instance_bits()?,
-                    self.execution.parallel_output.take(),
-                ));
-                Ok(Box::new(result) as pool::Output)
-            })()),
+            Poll::Complete(_) => std::task::Poll::Ready(
+                self.execution
+                    .parallel_output
+                    .take()
+                    .map(|packet| Box::new(packet) as pool::Output)
+                    .ok_or_else(|| abi_error("Missing interpreted packet")),
+            ),
         }
     }
 }
@@ -248,10 +301,13 @@ impl pool::Job for HostWorker {
             Err(e) => std::task::Poll::Ready(Err(e)),
             Ok(Some(value)) => std::task::Poll::Ready((|| {
                 self.pending.finish(&mut self.arena)?;
-                let mut result = Message::new()?;
-                result
-                    .values
-                    .push((self.ret.clone(), value.instance_bits()?, None));
+                let shape = Shape::of(&self.ret)?;
+                let words = if shape.lanes() == 0 {
+                    vec![]
+                } else {
+                    vec![value.instance_bits()?]
+                };
+                let result = unsafe { Packet::capture(shape, words, None, &mut self.arena)? };
                 Ok(Box::new(result) as pool::Output)
             })()),
         }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::cps::CpsFrame;
 use crate::vm::{VmEngine, VmMode};
 use std::sync::atomic::{AtomicUsize, Ordering};
 const SOURCE: &str = r#"

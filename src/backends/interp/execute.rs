@@ -1,5 +1,5 @@
 //! Iterative execution: language calls and scopes never recurse on the Rust stack.
-mod parallel;
+pub(crate) mod parallel;
 use super::{host::HostPending, *};
 use crate::{
     core::integer::IntegerOutcome,
@@ -337,41 +337,6 @@ pub(crate) fn start_text(
     }))
 }
 
-pub(crate) fn start_owned_text(
-    module: Rc<BytecodeModule>,
-    name: &str,
-    input: Option<&mut crate::runtime::parallel::OwnedBuffer>,
-    limits: InterpreterLimits,
-) -> Result<Box<dyn InterpretedTask>, Error> {
-    let function = lookup(&module, name)?;
-    let args: Vec<_> = input
-        .iter()
-        .map(|_| Value::Reference(std::ptr::null_mut()))
-        .collect();
-    let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
-    if let Some(input) = input {
-        let owner = input.take(&execution.arena)?;
-        let frame = execution.frame_mut(0);
-        frame.slots[0] = Value::Reference(owner.cast());
-        frame.cleanups.insert(
-            0,
-            crate::runtime::cleanup::Entry {
-                keep_alive: None,
-                storage_size: 0,
-                storage: None,
-                owners: vec![Some(owner)],
-                hooks: vec![],
-            },
-        );
-    }
-    Ok(Box::new(Task {
-        module,
-        execution,
-        result: None,
-        text_result: None,
-    }))
-}
-
 fn lookup(module: &BytecodeModule, name: &str) -> Result<Arc<BytecodeFunction>, Error> {
     module
         .functions
@@ -558,8 +523,8 @@ impl Budget {
 }
 
 pub(super) struct Execution {
-    parallel_child: bool,
-    parallel_output: Option<crate::runtime::parallel::OwnedBuffer>,
+    parallel_child: Option<crate::runtime::parallel::packet::Shape>,
+    parallel_output: Option<crate::runtime::parallel::packet::Packet>,
     parallel_result: Option<crate::runtime::parallel::Lease>,
     root_aggregate: Option<Vec<Value>>,
     domain_return: Option<Type>,
@@ -581,7 +546,7 @@ pub(super) struct Execution {
 impl Execution {
     pub(super) fn new(frame: Frame, limits: InterpreterLimits, asynchronous: bool) -> Self {
         Self {
-            parallel_child: false,
+            parallel_child: None,
             parallel_output: None,
             parallel_result: None,
             cleanup_mode: false,
@@ -1449,20 +1414,30 @@ impl Execution {
                             return Some(Poll::Failed(error));
                         }
                     }
-                } else if text && self.parallel_child {
-                    let Value::Reference(raw) = value.as_ref().unwrap() else {
-                        unreachable!()
-                    };
-                    let moved = unsafe {
-                        crate::runtime::parallel::OwnedBuffer::new(
-                            &self.arena,
-                            std::ptr::NonNull::new((*raw).cast()).unwrap(),
-                        )
-                    };
-                    match moved {
+                } else if let Some(shape) = self.parallel_child.clone() {
+                    let raw = self.root_aggregate.clone().unwrap_or_else(|| {
+                        if shape.lanes() == 0 {
+                            vec![]
+                        } else {
+                            vec![value.clone().unwrap()]
+                        }
+                    });
+                    let captured = raw
+                        .iter()
+                        .map(Value::instance_bits)
+                        .collect::<Result<Vec<_>, _>>()
+                        .and_then(|words| unsafe {
+                            crate::runtime::parallel::packet::Packet::capture(
+                                shape,
+                                words,
+                                owner.take(),
+                                &mut self.arena,
+                            )
+                        });
+                    match captured {
                         Ok(packet) => {
-                            owner.take();
                             self.parallel_output = Some(packet);
+                            value = Some(Value::Unit);
                         }
                         Err(error) => {
                             if let Some(entry) = owner.take() {
@@ -1631,7 +1606,7 @@ impl Execution {
                         delivered: true, ..
                     }) => {}
                     Some(Pending::Parallel { .. }) => {
-                        match self.poll_remote() {
+                        match self.poll_remote(module) {
                             Ok(true) => continue,
                             Ok(false) => {
                                 if let Some(poll) = self.bubble(None) {
@@ -2712,9 +2687,6 @@ pub(crate) fn cleanup_call(
 }
 
 impl InterpretedTask for Task {
-    fn take_parallel_result_charge(&mut self) -> Option<crate::runtime::parallel::Lease> {
-        self.execution.parallel_result.take()
-    }
     fn limits(&self) -> InterpreterLimits {
         self.execution.limits
     }

@@ -1164,6 +1164,35 @@ impl Type {
             depth: 0,
         }))
     }
+
+    /// Resolved tuple members in declaration order, without physical ABI lanes.
+    pub fn tuple_element_types(&self) -> Option<&[Type]> {
+        match self {
+            Self::Tuple(t) => Some(&t.elements),
+            _ => None,
+        }
+    }
+
+    /// Resolve a nominal record field in a compiler-provided type snapshot.
+    pub fn record_field_type(&self, name: &str) -> Option<&Type> {
+        match self {
+            Self::Record(r) => r.fields.iter().find(|f| f.name == name).map(|f| &f.ty),
+            _ => None,
+        }
+    }
+
+    /// Find a variant's declaration index and optional payload type.
+    pub fn enum_variant(&self, name: &str) -> Option<(usize, Option<&Type>)> {
+        match self {
+            Self::Enum(e) => e
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == name)
+                .map(|(i, v)| (i, v.payload.as_ref())),
+            _ => None,
+        }
+    }
 }
 
 fn equal_arguments(a: &[GenericArgument], b: &[GenericArgument]) -> bool {

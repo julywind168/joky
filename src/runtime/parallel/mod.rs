@@ -2,6 +2,7 @@
 mod config;
 pub mod standalone;
 pub use config::{ExecutionMode, TaskExecutor};
+pub(crate) mod packet;
 pub(crate) mod pool;
 mod storage;
 pub use pool::{ParallelExecutor, ParallelSubmitter};

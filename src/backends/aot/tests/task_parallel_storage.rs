@@ -7,6 +7,196 @@ use crate::{
 use std::{collections::HashMap, process::Command, sync::Arc};
 
 #[test]
+fn task_parallel_aggregate_values_and_roots_on_all_backends() {
+    use crate::vm::{parallel::aggregates, InstanceValue, VmEngine, VmMode};
+    let scratch = ScratchDir::new("tp6-aggregates");
+    let mut compiler = AotCompiler::new("tp6").unwrap();
+    compiler.set_prelude_enabled(false).unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(aggregates::SOURCE).unwrap())
+        .unwrap();
+    let names = [
+        "root",
+        "single",
+        "empty",
+        "copied",
+        "nested_empty",
+        "mixed",
+        "identity",
+    ];
+    let entries: Vec<_> = names
+        .iter()
+        .map(|name| compiler.parallel_entry(name).unwrap())
+        .collect();
+    let mut symbols: HashMap<_, _> = crate::runtime::cps::symbols()
+        .into_iter()
+        .chain(crate::runtime::error::symbols())
+        .chain(crate::runtime::arena::symbols())
+        .chain(crate::runtime::buffer::symbols())
+        .chain(crate::runtime::cleanup::symbols())
+        .chain(crate::runtime::owned_text::symbols())
+        .chain(crate::runtime::place::symbols())
+        .chain(crate::runtime::float_env::symbols())
+        .map(|(n, p)| (n.to_owned(), p))
+        .collect();
+    symbols.insert(
+        "joky_task_yield_now".into(),
+        crate::stdlib::task::yield_now as *const u8,
+    );
+    symbols.insert(
+        "joky_task_sleep_ms".into(),
+        crate::stdlib::task::sleep_ms as *const u8,
+    );
+    symbols.insert(
+        "__joky_task_yield_now".into(),
+        crate::stdlib::task::yield_internal as *const u8,
+    );
+    symbols.insert(
+        "__joky_task_sleep_ms".into(),
+        crate::stdlib::task::sleep_internal as *const u8,
+    );
+    let object = scratch.path().join("code.o");
+    let bridge = scratch.path().join("bridge.o");
+    let library = scratch.path().join("code.so");
+    std::fs::write(&bridge, shared_runtime_object(&compiler.module, &symbols)).unwrap();
+    compiler.write_object(&object).unwrap();
+    let linked = Command::new("cc")
+        .arg(if cfg!(target_os = "macos") {
+            "-dynamiclib"
+        } else {
+            "-shared"
+        })
+        .arg(&object)
+        .arg(&bridge)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(linked.status.success(), "{linked:?}");
+    let library = Arc::new(unsafe { libloading::Library::new(&library).unwrap() });
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(aggregates::SOURCE).unwrap();
+        }
+        for workers in [1, 3] {
+            let pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            for (index, name) in names[..names.len() - 1].iter().enumerate() {
+                let sig = vm
+                    .as_ref()
+                    .map(|vm| vm.parallel_signature(name).unwrap())
+                    .unwrap_or_else(|| entries[index].signature().clone());
+                for variant in 0..if *name == "root" { 3 } else { 1 } {
+                    let (inputs, expected) = match *name {
+                        "root" => {
+                            let input = aggregates::input(&sig.params[0], variant);
+                            (vec![input.clone()], aggregates::expected(&sig, input))
+                        }
+                        "single" => {
+                            let v = TaskValue::Record {
+                                ty: sig.params[0].clone(),
+                                fields: vec![TaskValue::Scalar(InstanceValue::Int32(42))],
+                            };
+                            (vec![v.clone()], v)
+                        }
+                        "empty" => {
+                            let v = TaskValue::Record {
+                                ty: sig.params[0].clone(),
+                                fields: vec![],
+                            };
+                            (vec![v.clone()], v)
+                        }
+                        "copied" => {
+                            let v = TaskValue::Tuple(vec![
+                                TaskValue::Scalar(InstanceValue::Int8(-100)),
+                                TaskValue::Scalar(InstanceValue::UInt16(65000)),
+                                TaskValue::Scalar(InstanceValue::Float32(-1.25)),
+                                TaskValue::Scalar(InstanceValue::Unit),
+                            ]);
+                            (vec![v.clone()], v)
+                        }
+                        "mixed" => (
+                            vec![
+                                TaskValue::Scalar(InstanceValue::Unit),
+                                TaskValue::String("mixed arguments".into()),
+                                TaskValue::Scalar(InstanceValue::Int32(42)),
+                            ],
+                            TaskValue::Tuple(vec![
+                                TaskValue::String("mixed arguments".into()),
+                                TaskValue::Scalar(InstanceValue::Int32(42)),
+                            ]),
+                        ),
+                        _ => (
+                            vec![],
+                            TaskValue::Tuple(vec![
+                                TaskValue::Scalar(InstanceValue::Unit),
+                                TaskValue::Record {
+                                    ty: sig.ret.tuple_element_types().unwrap()[1].clone(),
+                                    fields: vec![],
+                                },
+                            ]),
+                        ),
+                    };
+                    let budget = TaskBudget::new(1 << 20);
+                    let prepared = if let Some(vm) = &vm {
+                        vm.prepare_parallel_task(name, inputs, vec![budget.clone()])
+                            .unwrap()
+                    } else {
+                        unsafe {
+                            entries[index].prepare(
+                                *library
+                                    .get::<CpsEntry>(entries[index].symbol().as_bytes())
+                                    .unwrap(),
+                                library.clone(),
+                                inputs,
+                                vec![budget.clone()],
+                            )
+                        }
+                        .unwrap()
+                    };
+                    let task = prepared.submit(&pool).unwrap();
+                    task.wait().unwrap();
+                    let result = task
+                        .take_result()
+                        .unwrap_or_else(|e| panic!("{mode:?}, {name}, variant={variant}: {e:?}"));
+                    assert_eq!(
+                        result.value(),
+                        &expected,
+                        "{mode:?}, {name}, variant={variant}"
+                    );
+                    assert!(task.take_result().is_err());
+                    drop((result, task));
+                    assert_eq!(budget.used(), 0, "{mode:?}, {name}");
+                }
+            }
+        }
+    }
+    let entry = entries.last().unwrap();
+    let expected = aggregates::input(&entry.signature().params[0], 2);
+    let weak = Arc::downgrade(&library);
+    let prepared = unsafe {
+        entry.prepare(
+            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+            library.clone(),
+            vec![expected.clone()],
+            vec![],
+        )
+    }
+    .unwrap();
+    drop(library);
+    let output = std::thread::spawn(move || {
+        let mut task = prepared.start().unwrap();
+        while !task.resume().unwrap() {}
+        task.take_result().unwrap()
+    })
+    .join()
+    .unwrap();
+    assert!(weak.upgrade().is_none());
+    assert_eq!(output.value(), &expected);
+}
+
+#[test]
 fn parallel_aot_frozen_code_and_owning_capture() {
     let scratch = ScratchDir::new("tp2-storage");
     let mut compiler = AotCompiler::new("tp2").unwrap();

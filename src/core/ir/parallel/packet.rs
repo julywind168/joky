@@ -36,15 +36,15 @@ impl Kind {
         })
     }
 
-    /// Aggregate transport remains closed until all backends implement it.
+    /// Physical packet kinds implemented by every backend.
     pub(crate) fn implemented(self) -> bool {
-        matches!(self, Self::Scalar | Self::String)
+        !matches!(self, Self::Local)
     }
 }
 
 /// Classify the whole nominal tree, not just currently active physical lanes.
 /// This describes TP6 eligibility; it is not an executable transport certificate.
-pub(super) fn classify(
+pub(crate) fn classify(
     root: &Type,
     resolve: &impl Fn(&Type) -> Result<Type, Error>,
     has_drop: &impl Fn(&Type) -> bool,
@@ -71,7 +71,7 @@ pub(super) fn classify(
                 .cloned()
                 .chain(r.fields.iter().map(|f| f.ty.clone()))
                 .collect(),
-            Type::Enum(e) if !e.indirect => e
+            Type::Enum(e) if !e.indirect && !e.variants.is_empty() => e
                 .arguments
                 .iter()
                 .filter_map(|a| a.as_type())
@@ -90,6 +90,7 @@ pub(super) fn classify(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::parallel::packet::Shape;
     use crate::runtime::task_scope::layout::{encode, CheckedLayout};
 
     #[test]
@@ -142,7 +143,7 @@ mod tests {
         let plan = prepared.plan(&Default::default()).unwrap();
         let effects = super::super::analyse(&plan, &prepared, &Default::default());
         for name in ["join_value", "race_value", "branch_value"] {
-            assert!(effects.require(name).is_err(), "{name}");
+            effects.require(name).unwrap();
         }
         for (name, expected) in [
             ("scalar", Some(Kind::Scalar)),
@@ -168,12 +169,17 @@ mod tests {
                 plan.bodies[name].has_custom_drop(ty)
             });
             assert_eq!(kind, expected, "{name}");
+            assert_eq!(
+                effects.require_packet(name).is_ok(),
+                expected.is_some(),
+                "{name} root admission"
+            );
             let words = encode(signature).unwrap();
             let layout = CheckedLayout::decode(&words).unwrap();
             assert_eq!(layout.slot_counts().0, ty.parameter_slots(), "{name}");
             assert_eq!(
-                layout.parallel_shape().is_ok(),
-                kind.is_some_and(Kind::implemented),
+                layout.parallel_shapes().is_ok(),
+                Shape::of(ty).is_ok(),
                 "{name} must not acquire transport from its lane shape"
             );
         }
@@ -183,7 +189,7 @@ mod tests {
             let scalar = encode(&plan.functions[scalar].signature).unwrap();
             let aggregate = encode(&plan.functions[aggregate].signature).unwrap();
             assert_eq!((scalar[3], aggregate[3]), slots);
-            assert_eq!(&scalar[4..], &aggregate[4..]);
+            assert_eq!(&scalar[4..8], &aggregate[4..8]);
             assert_ne!(scalar[2], aggregate[2]);
         }
     }

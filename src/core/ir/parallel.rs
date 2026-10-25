@@ -102,8 +102,20 @@ fn qualify(ty: &Type) -> Qualification {
 pub(crate) struct Effects {
     rejected: HashMap<String, Error>,
     known: HashSet<String>,
+    packets: HashSet<String>,
 }
 impl Effects {
+    pub(crate) fn require_packet(&self, entry: &str) -> Result<(), Error> {
+        self.require(entry)?;
+        if !self.packets.contains(entry) {
+            return Err(Error::new_with_code(
+                ErrorPhase::Abi,
+                ErrorCode::InvalidCall,
+                format!("Parallel entry `{entry}` has unsupported packet types"),
+            ));
+        }
+        Ok(())
+    }
     pub(crate) fn require(&self, entry: &str) -> Result<(), Error> {
         if let Some(error) = self.rejected.get(entry) {
             return Err(error.clone());
@@ -139,6 +151,7 @@ pub(crate) fn analyse(
     };
     let mut reasons = BTreeMap::<String, String>::new();
     let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut packets = HashSet::new();
     let mut names: Vec<_> = plan.functions.keys().cloned().collect();
     names.sort();
     for name in &names {
@@ -165,6 +178,14 @@ pub(crate) fn analyse(
             continue;
         };
         let dependencies = edges.entry(name.clone()).or_default();
+        if signature
+            .params
+            .iter()
+            .chain(std::iter::once(&signature.ret))
+            .all(|ty| packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty)).is_some())
+        {
+            packets.insert(name.clone());
+        }
         for op in &body.ops {
             dependencies.extend(op.dependencies().cloned());
             let packet_supported = |name: &String| {
@@ -183,10 +204,10 @@ pub(crate) fn analyse(
                 Op::Concurrent { branches, .. }
                     if branches.iter().any(|b| !packet_supported(&b.name)) =>
                 {
-                    Some("parallel child packets require scalar or String values")
+                    Some("parallel child packets require reference-free scalar/String aggregates without custom Drop")
                 }
                 Op::TaskBranch { entry, .. } if !packet_supported(entry) => {
-                    Some("parallel branch captures require scalar or String values")
+                    Some("parallel branch captures require reference-free scalar/String aggregates without custom Drop")
                 }
                 Op::Call {
                     indirect: Some(_), ..
@@ -236,6 +257,7 @@ pub(crate) fn analyse(
         }
     }
     Effects {
+        packets,
         known: names.into_iter().collect(),
         rejected: reasons
             .into_iter()

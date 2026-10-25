@@ -1,0 +1,202 @@
+use super::*;
+use crate::runtime::{
+    arena::Arena,
+    parallel::packet::{Packet, Shape},
+};
+
+impl TaskValue {
+    pub(super) fn matches(&self, ty: &Type) -> bool {
+        match (self, ty) {
+            (Self::Scalar(value), ty) => value.value_type() == *ty,
+            (Self::String(_), Type::String) => true,
+            (Self::Tuple(values), Type::Tuple(t)) => {
+                values.len() == t.elements.len()
+                    && values.iter().zip(&t.elements).all(|(v, t)| v.matches(t))
+            }
+            (Self::Record { ty: actual, fields }, Type::Record(r)) => {
+                actual == ty
+                    && fields.len() == r.fields.len()
+                    && fields.iter().zip(&r.fields).all(|(v, f)| v.matches(&f.ty))
+            }
+            (
+                Self::Enum {
+                    ty: actual,
+                    variant,
+                    payload,
+                },
+                Type::Enum(e),
+            ) if actual == ty => {
+                e.variants
+                    .get(*variant)
+                    .is_some_and(|v| match (payload, &v.payload) {
+                        (None, None) => true,
+                        (Some(value), Some(ty)) => value.matches(ty),
+                        _ => false,
+                    })
+            }
+            _ => false,
+        }
+    }
+    pub(super) fn bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + match self {
+                Self::String(text) => text.capacity(),
+                Self::Tuple(v) | Self::Record { fields: v, .. } => {
+                    v.iter().map(Self::bytes).sum::<usize>()
+                        + (v.capacity() - v.len()) * std::mem::size_of::<Self>()
+                }
+                Self::Enum { payload, .. } => payload.as_ref().map_or(0, |v| v.bytes()),
+                _ => 0,
+            }
+    }
+    pub(super) fn packet(self, ty: &Type, arena: &mut Arena) -> Result<Packet, Error> {
+        fn fill(
+            value: &TaskValue,
+            ty: &Type,
+            packet: &mut Packet,
+            base: usize,
+            arena: &mut Arena,
+        ) -> Result<(), Error> {
+            match value {
+                TaskValue::Scalar(value) => {
+                    if *ty != Type::Unit {
+                        packet.words[base] = value.bits();
+                    }
+                }
+                TaskValue::String(text) => packet.push_text(base, text, arena)?,
+                TaskValue::Tuple(values) => {
+                    let Type::Tuple(t) = ty else { unreachable!() };
+                    let mut offset = base;
+                    for (value, ty) in values.iter().zip(&t.elements) {
+                        fill(value, ty, packet, offset, arena)?;
+                        offset += ty.scalar_types().len();
+                    }
+                }
+                TaskValue::Record { fields, .. } => {
+                    let Type::Record(r) = ty else { unreachable!() };
+                    for (value, field) in fields.iter().zip(&r.fields) {
+                        fill(value, &field.ty, packet, base + field.offset, arena)?;
+                    }
+                }
+                TaskValue::Enum {
+                    variant, payload, ..
+                } => {
+                    let Type::Enum(e) = ty else { unreachable!() };
+                    packet.words[base] = *variant as u64;
+                    if let Some(value) = payload {
+                        let v = &e.variants[*variant];
+                        fill(
+                            value,
+                            v.payload.as_ref().unwrap(),
+                            packet,
+                            base + v.offset,
+                            arena,
+                        )?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        let mut packet = Packet::empty(Shape::of(ty)?)?;
+        fill(&self, ty, &mut packet, 0, arena)?;
+        Ok(packet)
+    }
+}
+
+pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<ParallelOutput, Error> {
+    fn measure(ty: &Type, words: &[u64]) -> Result<usize, Error> {
+        let children = match ty {
+            Type::String => {
+                unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.len()
+            }
+            Type::Tuple(t) => {
+                let mut base = 0;
+                let mut bytes = 0;
+                for ty in &t.elements {
+                    let end = base + ty.scalar_types().len();
+                    bytes += measure(ty, &words[base..end])?;
+                    base = end;
+                }
+                bytes
+            }
+            Type::Record(r) => {
+                let mut bytes = 0;
+                for f in &r.fields {
+                    bytes += measure(
+                        &f.ty,
+                        &words[f.offset..f.offset + f.ty.scalar_types().len()],
+                    )?;
+                }
+                bytes
+            }
+            Type::Enum(e) => {
+                let v = e
+                    .variants
+                    .get(words[0] as usize)
+                    .ok_or_else(|| invalid("Invalid parallel enum result"))?;
+                v.payload.as_ref().map_or(Ok(0), |ty| {
+                    measure(ty, &words[v.offset..v.offset + ty.scalar_types().len()])
+                })?
+            }
+            _ => 0,
+        };
+        children
+            .checked_add(std::mem::size_of::<TaskValue>())
+            .ok_or_else(|| invalid("Parallel result size overflow"))
+    }
+    fn read(ty: &Type, words: &[u64]) -> Result<TaskValue, Error> {
+        Ok(match ty {
+            Type::String => TaskValue::String(
+                unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.to_owned(),
+            ),
+            Type::Tuple(t) => {
+                let mut base = 0;
+                let mut values = Vec::with_capacity(t.elements.len());
+                for ty in &t.elements {
+                    let end = base + ty.scalar_types().len();
+                    values.push(read(ty, &words[base..end])?);
+                    base = end;
+                }
+                TaskValue::Tuple(values)
+            }
+            Type::Record(r) => TaskValue::Record {
+                ty: ty.clone(),
+                fields: r
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        read(
+                            &f.ty,
+                            &words[f.offset..f.offset + f.ty.scalar_types().len()],
+                        )
+                    })
+                    .collect::<Result<_, _>>()?,
+            },
+            Type::Enum(e) => {
+                let variant = words[0] as usize;
+                let v = &e.variants[variant];
+                TaskValue::Enum {
+                    ty: ty.clone(),
+                    variant,
+                    payload: v
+                        .payload
+                        .as_ref()
+                        .map(|ty| {
+                            read(ty, &words[v.offset..v.offset + ty.scalar_types().len()])
+                                .map(Box::new)
+                        })
+                        .transpose()?,
+                }
+            }
+            _ => TaskValue::Scalar(
+                InstanceValue::from_bits(ty, words.first().copied().unwrap_or(0))
+                    .ok_or_else(|| invalid("Invalid parallel scalar result"))?,
+            ),
+        })
+    }
+    let charge = root.accounts().reserve(measure(ty, &packet.words)?)?;
+    Ok(ParallelOutput {
+        value: read(ty, &packet.words)?,
+        _charge: charge,
+    })
+}

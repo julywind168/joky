@@ -40,7 +40,7 @@ fn main() {
 - `import joky/task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
-  支持标量、String 和任务定时器，stdout、网络、文件、状态域及 Godot 回调仍为 Local；
+  支持标量、String、嵌套元组/struct/enum 跨任务交接和任务定时器，stdout、网络、文件、状态域及 Godot 回调仍为 Local；
   [模式与准入范围](docs/language.md#任务执行模式)。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
 

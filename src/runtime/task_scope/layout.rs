@@ -4,13 +4,13 @@ use crate::core::ir::parallel::packet::Kind;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 2;
+pub(crate) const VERSION: usize = 3;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v2",
+        "Invalid task entry layout v3",
     )
 }
 
@@ -64,6 +64,12 @@ fn value(out: &mut Vec<u64>, ty: &Type) -> Result<(), Error> {
     for node in copy {
         out.extend([node.offset, node.kind, node.count, node.stride, node.end]);
     }
+    let mut shape = Vec::new();
+    if let Ok(value) = crate::runtime::parallel::packet::Shape::of(ty) {
+        value.encode(&mut shape);
+    }
+    out.push(shape.len() as u64);
+    out.extend(shape);
     Ok(())
 }
 
@@ -119,43 +125,57 @@ impl Reader<'_> {
         let nodes = self.word()?;
         let words = nodes.checked_mul(5).ok_or_else(invalid)?;
         self.0 = self.0.get(words..).ok_or_else(invalid)?;
+        let shape_words = self.word()?;
+        self.0 = self.0.get(shape_words..).ok_or_else(invalid)?;
         let result = scalars.checked_add(size.div_ceil(8)).ok_or_else(invalid)?;
         Ok((inputs, result))
     }
 }
 
 impl CheckedLayout {
-    pub(crate) fn parallel_shape(&self) -> Result<(Vec<usize>, bool), Error> {
-        fn shape(reader: &mut Reader<'_>) -> Result<(usize, bool), Error> {
+    pub(crate) fn parallel_shapes(
+        &self,
+    ) -> Result<
+        (
+            Vec<crate::runtime::parallel::packet::Shape>,
+            crate::runtime::parallel::packet::Shape,
+        ),
+        Error,
+    > {
+        use crate::runtime::parallel::packet::Shape;
+        fn shape(reader: &mut Reader<'_>) -> Result<Shape, Error> {
             let words = reader.0;
             let (inputs, _) = reader.value()?;
             let kind = Kind::decode((words[0] >> 3) as usize).ok_or_else(invalid)?;
-            if !kind.implemented() || words[0] & 6 != 0 || words[2] > 1 || words[5] > 1 {
+            if !kind.implemented() || words[0] & 6 != 0 {
                 return Err(invalid());
             }
-            let owner = words[0] & 1 != 0;
-            if owner != (kind == Kind::String) {
+            let nodes = 6 + words[5] as usize * 2;
+            let start = nodes + 1 + words[nodes] as usize * 5;
+            let shape = Shape::decode(&words[start + 1..start + 1 + words[start] as usize])?;
+            if shape.inputs() != inputs
+                || shape.lanes() != words[2] as usize
+                || (!shape.owners().is_empty()) != (words[0] & 1 != 0)
+                || shape.aggregate() != matches!(kind, Kind::Tuple | Kind::Record | Kind::Enum)
+            {
                 return Err(invalid());
             }
-            if words[5] == 1 {
-                let tag = words[7];
-                if !(1..=12).contains(&tag) && !(owner && tag == 14) {
-                    return Err(invalid());
-                }
+            if !matches!(
+                (kind, &shape),
+                (Kind::Scalar, Shape::Unit | Shape::Scalar(_))
+                    | (Kind::String, Shape::String)
+                    | (Kind::Tuple | Kind::Record, Shape::Product(_))
+                    | (Kind::Enum, Shape::Sum(_))
+            ) {
+                return Err(invalid());
             }
-            Ok((inputs, owner))
+            Ok(shape)
         }
         let mut reader = Reader(&self.words[2..]);
-        let mut owners = Vec::new();
-        let mut offset = 0;
-        for _ in 0..self.words[1] {
-            let (slots, owner) = shape(&mut reader)?;
-            if owner {
-                owners.push(offset);
-            }
-            offset += slots;
-        }
-        Ok((owners, shape(&mut reader)?.1))
+        let inputs = (0..self.words[1])
+            .map(|_| shape(&mut reader))
+            .collect::<Result<_, _>>()?;
+        Ok((inputs, shape(&mut reader)?))
     }
 
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
@@ -213,13 +233,12 @@ mod tests {
     #[test]
     fn task_layout_versions_and_kinds_fail_closed() {
         let mut words = encode(&FunctionSignature::new(vec![Type::String], Type::String)).unwrap();
-        assert_eq!(
-            CheckedLayout::decode(&words)
-                .unwrap()
-                .parallel_shape()
-                .unwrap(),
-            (vec![0], true)
-        );
+        let (inputs, output) = CheckedLayout::decode(&words)
+            .unwrap()
+            .parallel_shapes()
+            .unwrap();
+        assert_eq!(inputs[0].owners(), [0]);
+        assert_eq!(output.owners(), [0]);
         words[0] = 1;
         assert!(CheckedLayout::decode(&words).is_err());
         words[0] = VERSION as u64;
@@ -230,7 +249,7 @@ mod tests {
             words[2] = flags;
             assert!(CheckedLayout::decode(&words)
                 .unwrap()
-                .parallel_shape()
+                .parallel_shapes()
                 .is_err());
         }
     }
