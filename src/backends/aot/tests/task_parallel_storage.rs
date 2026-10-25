@@ -6,24 +6,21 @@ use crate::{
 };
 use std::{collections::HashMap, process::Command, sync::Arc};
 
-#[test]
-fn task_parallel_aggregate_values_and_roots_on_all_backends() {
-    use crate::vm::{parallel::aggregates, InstanceValue, VmEngine, VmMode};
-    let scratch = ScratchDir::new("tp6-aggregates");
-    let mut compiler = AotCompiler::new("tp6").unwrap();
+fn linked_task_entries(
+    source: &str,
+    names: &[&str],
+    label: &str,
+) -> (
+    ScratchDir,
+    Vec<crate::backends::aot::ParallelEntry>,
+    Arc<libloading::Library>,
+) {
+    let scratch = ScratchDir::new(label);
+    let mut compiler = AotCompiler::new(label).unwrap();
     compiler.set_prelude_enabled(false).unwrap();
     compiler
-        .compile_module(&crate::parser::parse(aggregates::SOURCE).unwrap())
+        .compile_module(&crate::parser::parse(source).unwrap())
         .unwrap();
-    let names = [
-        "root",
-        "single",
-        "empty",
-        "copied",
-        "nested_empty",
-        "mixed",
-        "identity",
-    ];
     let entries: Vec<_> = names
         .iter()
         .map(|name| compiler.parallel_entry(name).unwrap())
@@ -74,6 +71,23 @@ fn task_parallel_aggregate_values_and_roots_on_all_backends() {
         .unwrap();
     assert!(linked.status.success(), "{linked:?}");
     let library = Arc::new(unsafe { libloading::Library::new(&library).unwrap() });
+    (scratch, entries, library)
+}
+
+#[test]
+fn task_parallel_aggregate_values_and_roots_on_all_backends() {
+    use crate::vm::{parallel::aggregates, InstanceValue, VmEngine, VmMode};
+    let names = [
+        "root",
+        "single",
+        "empty",
+        "copied",
+        "nested_empty",
+        "mixed",
+        "identity",
+    ];
+    let (_scratch, entries, library) =
+        linked_task_entries(aggregates::SOURCE, &names, "task-aggregates");
     for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
         let mut vm = mode.map(VmEngine::with_mode);
         if let Some(vm) = &mut vm {
@@ -514,4 +528,93 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
             assert_eq!(budget.used(), 0, "{mode:?} {name}");
         }
     }
+}
+
+#[test]
+fn task_parallel_array_values_and_roots_on_all_backends() {
+    use crate::vm::{parallel::array_tests, InstanceValue, VmEngine, VmMode};
+    let names = ["root", "units", "capacity", "identity"];
+    let (_scratch, entries, library) =
+        linked_task_entries(array_tests::SOURCE, &names, "task-arrays");
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(array_tests::SOURCE).unwrap();
+        }
+        for workers in [1, 3] {
+            let pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            for (index, name) in names[..3].iter().enumerate() {
+                let sig = vm
+                    .as_ref()
+                    .map(|vm| vm.parallel_signature(name).unwrap())
+                    .unwrap_or_else(|| entries[index].signature().clone());
+                for variant in 0..if *name == "capacity" { 1 } else { 2 } {
+                    let (input, expected) = match *name {
+                        "root" => {
+                            let v = array_tests::input(&sig.params[0], variant);
+                            (vec![v.clone()], array_tests::expected(&sig, v))
+                        }
+                        "units" => {
+                            let v = TaskValue::Array {
+                                ty: sig.params[0].clone(),
+                                elements: vec![TaskValue::Scalar(InstanceValue::Unit); variant * 3],
+                            };
+                            (vec![v.clone()], v)
+                        }
+                        _ => (vec![], TaskValue::Scalar(InstanceValue::UInt64(16))),
+                    };
+                    let budget = TaskBudget::new(1 << 20);
+                    let prepared = if let Some(vm) = &vm {
+                        vm.prepare_parallel_task(name, input, vec![budget.clone()])
+                            .unwrap()
+                    } else {
+                        unsafe {
+                            entries[index].prepare(
+                                *library
+                                    .get::<CpsEntry>(entries[index].symbol().as_bytes())
+                                    .unwrap(),
+                                library.clone(),
+                                input,
+                                vec![budget.clone()],
+                            )
+                        }
+                        .unwrap()
+                    };
+                    let task = prepared.submit(&pool).unwrap();
+                    task.wait().unwrap();
+                    let output = task.take_result().unwrap();
+                    assert_eq!(output.value(), &expected, "{mode:?}, {name}, {variant}");
+                    assert!(task.take_result().is_err());
+                    drop((output, task));
+                    assert_eq!(budget.used(), 0, "{mode:?}, {name}");
+                }
+            }
+        }
+    }
+    let entry = entries.last().unwrap();
+    let expected = array_tests::input(&entry.signature().params[0], 1);
+    let budget = TaskBudget::new(1 << 20);
+    let weak = Arc::downgrade(&library);
+    let prepared = unsafe {
+        entry.prepare(
+            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+            library.clone(),
+            vec![expected.clone()],
+            vec![budget.clone()],
+        )
+    }
+    .unwrap();
+    drop(library);
+    let output = std::thread::spawn(move || {
+        let mut task = prepared.start().unwrap();
+        while !task.resume().unwrap() {}
+        task.take_result().unwrap()
+    })
+    .join()
+    .unwrap();
+    assert!(weak.upgrade().is_none());
+    assert_eq!(output.value(), &expected);
+    drop(output);
+    assert_eq!(budget.used(), 0);
 }

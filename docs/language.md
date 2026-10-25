@@ -4833,17 +4833,20 @@ Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel
 `wait_closed` 与控制对象 Drop 等待线程退出。提交句柄 Drop 不等待；任务句柄 Drop 请求取消。
 `ParallelTask::wait` 仅可在非 worker 的宿主线程调用，`take_result` 一次性收取终态。
 
-当前跨任务包支持标量、String，以及递归嵌套这些叶子的元组、普通 struct 和 enum
+当前跨任务包支持标量、String、Array，以及递归嵌套这些类型的元组、普通 struct 和 enum
 （包括 Option/Result）。join/race 的参数与结果、branch 的移动捕获及宿主根入口采用同一
-类型边界；String 交接移动真实拥有 Buffer。完整类型树必须无引用、无资源、无自定义 Drop，
-包括未激活枚举变体及实际泛型参数；容器、FixedArray、函数/闭包、dyn 和裸指针仍拒绝。
+类型边界；String/Array 交接移动真实拥有 Buffer 树，数组保留有效元素及容量。完整类型树必须无引用、无资源、无自定义 Drop，
+包括未激活枚举变体及实际泛型参数；List/Map/Set、FixedArray、函数/闭包、dyn 和裸指针仍拒绝。
+Array 元素递归满足同一规则；空数组和 Unit 元素可用。FixedArray 及含它的数组仍受现有挂起限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 完整调用图必须证明安全，未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄
 和 Godot 对象均保持 Local。
 
 宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
-构造和收取聚合值。`VmEngine::parallel_signature` 或 AOT `ParallelEntry::signature` 提供受检
-入口签名；`Type::tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
+构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。
+宿主输入以元素数为初始容量；宿主输出只包含有效元素，Vec 容量不代表语言数组容量。
+`VmEngine::parallel_signature` 或 AOT `ParallelEntry::signature` 提供受检
+入口签名；`Type::array_element_type`、`tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
 及变体。记录字段按声明顺序，枚举使用声明序号，无 payload 的变体传 None。nominal 类型
 必须来自对应冻结签名，字段、标量类型和标签精确匹配；新编译模块的同名类型不能冒充旧类型。
 这些入口独立于普通函数 ABI；CLI main 的 Unit/Int32 限制保持不变。

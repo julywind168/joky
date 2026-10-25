@@ -1,0 +1,48 @@
+import joky/task
+import joky/array.{type Array}
+
+struct Item { code: Int8, text: String, flag: Bool }
+enum Payload { Empty, Items(Array<Item>), Text(String) }
+fn echo(value: Array<Payload>) @suspends -> Array<Payload> {
+    task.yield_now()
+    value
+}
+fn consume(value: Array<Payload>) { }
+fn texts() @suspends -> Array<String> {
+    var values: Array<String> = Array.with_capacity::<String>(8)
+    values.push("first")
+    task.yield_now()
+    values.push("second")
+    values
+}
+fn root(value: Array<Payload>) @suspends -> (Array<Payload>, Array<String>) {
+    let (a, b) = join { | echo(value) | texts() }
+    scope {
+        let captured = [Payload.Items([Item { code: int8(-8), text: "branch owner", flag: true }]), Payload.Empty]
+        branch { consume(echo(captured)) }
+        task.yield_now()
+    }
+    let c = race { | texts() | texts() }
+    b.release()
+    (a, c)
+}
+fn identity(value: Array<Payload>) @suspends -> Array<Payload> { echo(value) }
+fn unit_child(value: Array<Unit>) @suspends -> Array<Unit> { task.yield_now(); value }
+fn units(value: Array<Unit>) @suspends -> Array<Unit> {
+    let (a, b) = join { | unit_child(value) | unit_child([]) }
+    a
+}
+fn fail(value: Array<Payload>) @suspends -> Array<Payload> { task.yield_now(); 1 / 0; value }
+fn failed(value: Array<Payload>) @suspends -> Array<Payload> {
+    let (a, b) = join { | fail(value) | texts() }
+    a
+}
+fn parked(value: Array<Payload>) @suspends -> Array<Payload> { task.sleep_ms(60000); value }
+fn cancelled(value: Array<Payload>) @suspends -> Array<Payload> {
+    scope { branch { consume(parked([Payload.Text("waiting capture")])) }; parked(value) }
+}
+
+fn capacity() @suspends -> UInt64 {
+    let (a, b) = join { | texts() | texts() }
+    a.capacity() + b.capacity()
+}

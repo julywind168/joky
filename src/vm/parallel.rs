@@ -1,5 +1,8 @@
 //! Freeze an admitted entry before moving work to a worker. This is preparation
 //! infrastructure used by explicit parallel execution; Local semantics stay unchanged.
+#[cfg(test)]
+pub(crate) mod array_tests;
+mod arrays;
 mod value;
 use super::{InstanceValue, InterpreterLimits};
 use crate::{
@@ -25,6 +28,11 @@ pub enum TaskValue {
     Scalar(InstanceValue),
     String(String),
     Tuple(Vec<TaskValue>),
+    /// Standard Array identity and initialized elements in source order.
+    Array {
+        ty: Type,
+        elements: Vec<TaskValue>,
+    },
     /// Fields are in declaration order; `ty` comes from the frozen signature.
     Record {
         ty: Type,

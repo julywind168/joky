@@ -10,12 +10,14 @@ pub(crate) enum Kind {
     Record = 3,
     Enum = 4,
     Local = 5,
+    Array = 6,
 }
 
 impl Kind {
     pub(crate) fn of(ty: &Type) -> Self {
         match ty {
             Type::String => Self::String,
+            Type::Record(r) if r.array => Self::Array,
             Type::Tuple(_) => Self::Tuple,
             Type::Record(r) if r.closure.is_none() => Self::Record,
             Type::Enum(_) => Self::Enum,
@@ -32,6 +34,7 @@ impl Kind {
             3 => Self::Record,
             4 => Self::Enum,
             5 => Self::Local,
+            6 => Self::Array,
             _ => return None,
         })
     }
@@ -43,7 +46,7 @@ impl Kind {
 }
 
 /// Classify the whole nominal tree, not just currently active physical lanes.
-/// This describes TP6 eligibility; it is not an executable transport certificate.
+/// This describes packet eligibility; it is not an executable transport certificate.
 pub(crate) fn classify(
     root: &Type,
     resolve: &impl Fn(&Type) -> Result<Type, Error>,
@@ -64,6 +67,23 @@ pub(crate) fn classify(
         }
         let children: Vec<Type> = match &ty {
             Type::Tuple(t) => t.elements.clone(),
+            Type::Record(r) if r.array => {
+                let [field] = r.fields.as_slice() else {
+                    return None;
+                };
+                let Type::Buffer(element) = &field.ty else {
+                    return None;
+                };
+                vec![(**element).clone()]
+            }
+            Type::Record(r)
+                if matches!(
+                    r.name.as_str(),
+                    "joky/map.Map" | "joky/list.List" | "joky/set.Set"
+                ) =>
+            {
+                return None
+            }
             Type::Record(r) if r.closure.is_none() && !r.indirect => r
                 .arguments
                 .iter()
@@ -100,6 +120,10 @@ mod tests {
             import joky/option.{type Option}
             import joky/result.{type Result}
             import joky/array.{type Array}
+            import joky/map.{type Map}
+            import joky/list.{type List}
+            import joky/set.{type Set}
+            import joky/fixed_array.{type FixedArray}
             struct One { value: Int32 }
             struct Empty { }
             struct Box<T> { value: T }
@@ -122,6 +146,15 @@ mod tests {
             fn tracked(value: Box<Tracked>) { }
             fn inactive_drop(value: Result<Int32, Tracked>) { }
             fn container(value: Box<Array<Int32>>) { }
+            fn array_value(value: Array<Array<Alias>>) { }
+            fn array_pointer(value: Array<Ptr>) { }
+            fn array_reference(value: Array<&Int32>) { }
+            fn array_phantom(value: Array<Marker<Ptr>>) { }
+            fn array_drop(value: Array<Result<Int32, Tracked>>) { }
+            fn array_map(value: Array<Map<Int32, String>>) { }
+            fn array_list(value: Array<List<String>>) { }
+            fn array_set(value: Array<Set<Int32>>) { }
+            fn array_fixed(value: Array<FixedArray<Int32, 2>>) { }
             fn callable(value: fn(Int32) -> Int32) { }
             fn child() @suspends -> One { One { value: 42 } }
             fn join_value() @suspends -> Int32 {
@@ -160,7 +193,16 @@ mod tests {
             ("phantom", None),
             ("tracked", None),
             ("inactive_drop", None),
-            ("container", None),
+            ("container", Some(Kind::Record)),
+            ("array_value", Some(Kind::Array)),
+            ("array_pointer", None),
+            ("array_reference", None),
+            ("array_phantom", None),
+            ("array_drop", None),
+            ("array_map", None),
+            ("array_list", None),
+            ("array_set", None),
+            ("array_fixed", None),
             ("callable", None),
         ] {
             let signature = &plan.functions[name].signature;

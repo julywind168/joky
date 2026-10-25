@@ -1165,6 +1165,21 @@ impl Type {
         }))
     }
 
+    /// Element type of the compiler-recognized standard Array declaration.
+    pub fn array_element_type(&self) -> Option<&Type> {
+        let Self::Record(r) = self else { return None };
+        if !r.array {
+            return None;
+        }
+        let [field] = r.fields.as_slice() else {
+            return None;
+        };
+        match &field.ty {
+            Self::Buffer(element) => Some(element),
+            _ => None,
+        }
+    }
+
     /// Resolved tuple members in declaration order, without physical ABI lanes.
     pub fn tuple_element_types(&self) -> Option<&[Type]> {
         match self {

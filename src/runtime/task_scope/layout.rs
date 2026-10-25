@@ -4,13 +4,13 @@ use crate::core::ir::parallel::packet::Kind;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 3;
+pub(crate) const VERSION: usize = 4;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v3",
+        "Invalid task entry layout v4",
     )
 }
 
@@ -156,7 +156,8 @@ impl CheckedLayout {
             if shape.inputs() != inputs
                 || shape.lanes() != words[2] as usize
                 || (!shape.owners().is_empty()) != (words[0] & 1 != 0)
-                || shape.aggregate() != matches!(kind, Kind::Tuple | Kind::Record | Kind::Enum)
+                || shape.aggregate()
+                    != matches!(kind, Kind::Tuple | Kind::Record | Kind::Enum | Kind::Array)
             {
                 return Err(invalid());
             }
@@ -164,7 +165,7 @@ impl CheckedLayout {
                 (kind, &shape),
                 (Kind::Scalar, Shape::Unit | Shape::Scalar(_))
                     | (Kind::String, Shape::String)
-                    | (Kind::Tuple | Kind::Record, Shape::Product(_))
+                    | (Kind::Tuple | Kind::Record | Kind::Array, Shape::Product(_))
                     | (Kind::Enum, Shape::Sum(_))
             ) {
                 return Err(invalid());
@@ -242,7 +243,7 @@ mod tests {
         words[0] = 1;
         assert!(CheckedLayout::decode(&words).is_err());
         words[0] = VERSION as u64;
-        words[2] = 6 << 3;
+        words[2] = 7 << 3;
         assert!(CheckedLayout::decode(&words).is_err());
         // A recognized kind with inconsistent ownership cannot enter a worker.
         for flags in [1, (Kind::String as u64) << 3] {

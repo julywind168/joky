@@ -1,4 +1,4 @@
-//! Backend-independent flat packets. Only active String leaves own storage.
+//! Backend-independent flat packets. Only active String/Array leaves own storage.
 use super::{Lease, OwnedBuffer};
 use crate::{
     runtime::{
@@ -23,6 +23,7 @@ pub(crate) enum Shape {
     Unit,
     Scalar(Type),
     String,
+    Buffer,
     Product(Vec<Shape>),
     Sum(Vec<Shape>),
 }
@@ -35,6 +36,7 @@ impl Shape {
             Ok(match ty {
                 Type::Unit => Shape::Unit,
                 Type::String => Shape::String,
+                Type::Buffer(_) => Shape::Buffer,
                 Type::Tuple(t) => Shape::Product(
                     t.elements
                         .iter()
@@ -69,7 +71,7 @@ impl Shape {
     pub(crate) fn lanes(&self) -> usize {
         match self {
             Self::Unit => 0,
-            Self::Scalar(_) | Self::String => 1,
+            Self::Scalar(_) | Self::String | Self::Buffer => 1,
             Self::Product(v) => v.iter().map(Self::lanes).sum(),
             Self::Sum(v) => 1 + v.iter().map(Self::lanes).sum::<usize>(),
         }
@@ -91,7 +93,7 @@ impl Shape {
     pub(crate) fn owners(&self) -> Vec<usize> {
         fn walk(s: &Shape, base: usize, out: &mut Vec<usize>) {
             match s {
-                Shape::String => out.push(base),
+                Shape::String | Shape::Buffer => out.push(base),
                 Shape::Product(v) | Shape::Sum(v) => {
                     let mut offset = base + usize::from(matches!(s, Shape::Sum(_)));
                     for s in v {
@@ -113,8 +115,8 @@ impl Shape {
         }
         match self {
             Self::Unit => {}
-            Self::String if words[0] != 0 => {}
-            Self::String => return Err(invalid()),
+            Self::String | Self::Buffer if words[0] != 0 => {}
+            Self::String | Self::Buffer => return Err(invalid()),
             Self::Scalar(ty) => {
                 words[0] = crate::core::instance::InstanceValue::from_bits(ty, words[0])
                     .ok_or_else(invalid)?
@@ -148,6 +150,7 @@ impl Shape {
         match self {
             Self::Unit => out.push(0),
             Self::String => out.push(14),
+            Self::Buffer => out.push(18),
             Self::Scalar(ty) => out.push(match ty {
                 Type::Bool => 1,
                 Type::Int8 => 2,
@@ -184,6 +187,7 @@ impl Shape {
             let scalar = match tag {
                 0 => return Ok(Shape::Unit),
                 14 => return Ok(Shape::String),
+                18 => return Ok(Shape::Buffer),
                 1 => Type::Bool,
                 2 => Type::Int8,
                 3 => Type::UInt8,
@@ -249,7 +253,7 @@ impl Packet {
     }
     /// Consume a complete compiler-owned value, releasing remaining owners on failure.
     /// # Safety
-    /// Every active String lane is live and exclusively owned by `entry`.
+    /// Every active String/Array lane is live and exclusively owned by `entry`.
     pub(crate) unsafe fn capture(
         shape: Shape,
         mut words: Vec<u64>,
@@ -347,8 +351,20 @@ impl Packet {
         arena: &mut Arena,
     ) -> Result<(), Error> {
         let raw = Buffer::copy_bytes(arena, text.as_bytes())?;
+        unsafe { self.push_buffer(index, raw, arena) }
+    }
+    /// Adopt a freshly initialized exclusive buffer, releasing it on failure.
+    /// # Safety
+    /// `raw` is a live exclusive buffer in `arena`; this call consumes its cleanup
+    /// responsibility on both success and failure. No other owner may release it.
+    pub(crate) unsafe fn push_buffer(
+        &mut self,
+        index: usize,
+        raw: NonNull<Buffer>,
+        arena: &mut Arena,
+    ) -> Result<(), Error> {
         let owner = unsafe { OwnedBuffer::new(arena, raw) }.inspect_err(|_| {
-            unsafe { Buffer::release(arena, raw.as_ptr()) }.expect("new text cleanup");
+            unsafe { Buffer::release(arena, raw.as_ptr()) }.expect("new buffer cleanup");
         })?;
         self.words[index] = raw.as_ptr() as u64;
         self.owners.push((index, owner));

@@ -1,6 +1,6 @@
 # 可选多线程任务执行器设计与实施计划
 
-状态：2026-10-25，TP0–TP6 已完成，当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节。
+状态：2026-10-25，TP0–TP7 已完成，当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节，TP7 数组交付见第 17 节。
 生产执行器默认 Local，可显式选择 Parallel。早期冻结决策与探针边界见第 10 节，
 TP1 的最终交付与验证见第 11.5 节，TP2 交付与限制见第 12 节，TP3 见第 13 节，TP4 模式与支持表见第 14 节，TP5 最终验收见第 15 节；第 11.1–11.4 节保留历史切片记录。
 源码名称已由 `parallel` 迁移为 `join`，不改变本文执行器阶段与行为契约。
@@ -776,8 +776,8 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | 能力 | Local | Parallel |
 | --- | --- | --- |
 | join/race/branch 与多层 scope | 原有顺序推进 | 固定 worker 分支调度，单 worker 也可推进 |
-| 标量、String、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
-| 容器、FixedArray、引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
+| 标量、String、Array、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
+| List/Map/Set、FixedArray、引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
 | task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
@@ -909,7 +909,7 @@ TP6.1 当时只提供资格和布局基础，未提前解除生产组包限制�
 
 ### 16.5 后续扩展
 
-容器拥有树、文件/网络资源及 Godot 主线程消息桥各自另立阶段；它们不是本次聚合包开放的
+TP6 完成时，容器拥有树、文件/网络资源及 Godot 主线程消息桥各自另立阶段（Array 后续在 TP7 交付）；它们不是本次聚合包开放的
 隐含承诺。first_ok 可在 Result 跨任务交接稳定后单独设计和实现，仍与 race 保持不同语义。
 
 ### 16.6 TP6.1 实施记录
@@ -979,3 +979,65 @@ AOT 对象与运行库须一起重编。
   新增聚合 smoke 在 JIT、解释器及真实独立 AOT 的 N=1/3 下均返回 42，确认版本 3 布局配套。
 - 本地文档文件链接与 `git diff --check` 通过。未运行 Release、性能测量、无关全量压力、
   Godot 引擎验收或竞争检测器；Godot 保持 Local，并未新增跨线程对象桥。
+
+## 17. TP7 动态数组跨任务传递
+
+状态：已完成。本轮只交付 Array；FixedArray 尚不支持 Local 挂起，按范围确认留到下一阶段，
+先补齐跨挂起再接跨任务。List/Map/Set、first_ok 和资源桥也另立阶段。
+默认 Local 与 Godot 主线程模式保持不变；完成实现后集中验证、统一提交。
+
+### 17.1 范围与契约
+
+- `Array<T>` 允许 TP6 叶子、聚合及递归 Array，完整类型树仍须无引用、裸指针、资源、
+  函数值或自定义 Drop。类型身份来自受信任标准库声明，不能按字段形状或名称伪装数组。
+  FixedArray（含 Array 的固定数组元素）、List/Map/Set 不随之开放。
+- join/race 的参数和结果、branch 捕获以及受检宿主根入口共同支持上述范围。
+  宿主表示携带精确数组类型和元素序列，校验元素类型及 nominal 身份后才准入。
+- 动态数组移动实际拥有树，保留有效元素、容量、元素清理描述及共享存储根；不传递
+  本地回调或可变借用。padding 与未激活枚举载荷不作为有效值读取。
+- 空数组及 Unit 元素保持逻辑长度检查；准备、递归拥有者、临时元数据与输出转换计入
+  根预算。失败、取消、race 败方及未收取结果均唯一清理。
+- 私有布局扩展后升级版本，AOT 对象与运行库共同重编；普通函数 ABI 不随之放宽。
+
+### 17.2 验收
+
+- 共享前端验证数组深层禁用能力和其余容器仍拒绝；三后端运行真实生产池，覆盖 N=1
+  及多 worker、join/race/branch、嵌套拥有树、空值和宿主往返。
+- 验证错误宿主类型/元素、准备包跨线程、代码销毁后保活、开始执行前后取消和重复收取。
+- 定向行为测试通过后，集中运行默认 Debug 检查及受影响的数组/任务预算与取消穷举。
+  预算扫描在首次完整成功且清理断言通过后停止；不默认运行 Release、性能测量或无关压力。
+
+
+### 17.3 交付记录
+
+共享前端仅为受信任 Array 标记开放 Buffer 元素递归，保留 Map/List/Set 的独立拒绝。
+私有任务布局升级到版本 4，记录 Array 种类与 Buffer 拥有叶子；外层入口保持版本 1。
+原生与解释器的分支路径继续使用同一个 Packet，移动经审计的完整拥有树，无需复制载荷。
+
+宿主新增 TaskValue::Array 与 Type::array_element_type。输入逐元素安装清理责任并提交
+有效前缀；输出按真实元素布局读取，先预留元素元数据再遍历。共享的值存储读写辅助函数
+同时服务既有 domain 包和新的任务数组转换，保持窄标量、padding 与枚举有效载荷规则一致。
+
+[task_arrays.jk](../tests/fixtures/task_arrays.jk) 覆盖单/多 worker、join/race/branch、嵌套
+Array/记录/枚举/String、空数组、Unit 元素及真实容量保留；宿主回归覆盖类型拒绝、旧签名
+身份、代码销毁后保活、准备包跨线程、失败及已启动子任务取消。
+
+
+2026-10-25 验证：
+
+- `cargo test --lib task_`：85 个通过、5 个默认忽略，包含三后端实际任务分支、
+  新的数组宿主往返、容量保留、清理与完整类型树拒绝矩阵。
+- `./scripts/check.sh`：quick、Debug 通过，格式、Clippy、1634 个默认库测试
+  （129 个忽略）、306 个 CLI 测试（8 个忽略）、其他默认集成测试和 while/Map 三后端短输入正确性通过。
+  最后补齐的 unsafe 接管契约与调用标记未改变运行时逻辑，另经最终格式和 Clippy 复核。
+- `cargo test --lib exhaustive_task_parallel_ -- --ignored`：Array 与 TP6 聚合预算扫描通过；
+  `exhaustive_task_pool_owning_publication_budget_failures` 通过，既有 String 路径继续覆盖。
+- `exhaustive_task_scope_cancels_at_every_instruction`、
+  `exhaustive_structured_values_cancel_at_each_instruction`、
+  `exhaustive_race_values_cancel_at_each_instruction` 分别以
+  `cargo test --lib <名字> -- --ignored` 运行通过（Debug）。
+- `cargo build` 刷新默认 Debug CLI 与运行库，不设置 `JOKY_RUNTIME`；数组程序覆盖
+  join/race/branch、嵌套拥有值及容量保留，在 Local、Parallel N=1/3 下的 JIT、解释器及
+  真实独立 AOT 均返回 42，确认版本 4 布局配套。
+- 本地文档文件链接与 `git diff --check` 通过。未运行 Release、性能测量、无关全量压力、
+  Godot 引擎验收或竞争检测器；未开放 FixedArray 跨挂起、其他容器或跨线程资源桥。

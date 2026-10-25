@@ -13,7 +13,16 @@ impl TaskValue {
                 values.len() == t.elements.len()
                     && values.iter().zip(&t.elements).all(|(v, t)| v.matches(t))
             }
-            (Self::Record { ty: actual, fields }, Type::Record(r)) => {
+            (
+                Self::Array {
+                    ty: actual,
+                    elements,
+                },
+                _,
+            ) if actual == ty => ty
+                .array_element_type()
+                .is_some_and(|element| elements.iter().all(|v| v.matches(element))),
+            (Self::Record { ty: actual, fields }, Type::Record(r)) if !r.array => {
                 actual == ty
                     && fields.len() == r.fields.len()
                     && fields.iter().zip(&r.fields).all(|(v, f)| v.matches(&f.ty))
@@ -41,7 +50,9 @@ impl TaskValue {
         std::mem::size_of::<Self>()
             + match self {
                 Self::String(text) => text.capacity(),
-                Self::Tuple(v) | Self::Record { fields: v, .. } => {
+                Self::Tuple(v)
+                | Self::Record { fields: v, .. }
+                | Self::Array { elements: v, .. } => {
                     v.iter().map(Self::bytes).sum::<usize>()
                         + (v.capacity() - v.len()) * std::mem::size_of::<Self>()
                 }
@@ -49,7 +60,7 @@ impl TaskValue {
                 _ => 0,
             }
     }
-    pub(super) fn packet(self, ty: &Type, arena: &mut Arena) -> Result<Packet, Error> {
+    pub(super) fn packet(&self, ty: &Type, arena: &mut Arena) -> Result<Packet, Error> {
         fn fill(
             value: &TaskValue,
             ty: &Type,
@@ -64,6 +75,10 @@ impl TaskValue {
                     }
                 }
                 TaskValue::String(text) => packet.push_text(base, text, arena)?,
+                TaskValue::Array { elements, .. } => {
+                    let raw = arrays::input(ty, elements, arena)?;
+                    unsafe { packet.push_buffer(base, raw, arena)? };
+                }
                 TaskValue::Tuple(values) => {
                     let Type::Tuple(t) = ty else { unreachable!() };
                     let mut offset = base;
@@ -98,7 +113,7 @@ impl TaskValue {
             Ok(())
         }
         let mut packet = Packet::empty(Shape::of(ty)?)?;
-        fill(&self, ty, &mut packet, 0, arena)?;
+        fill(self, ty, &mut packet, 0, arena)?;
         Ok(packet)
     }
 }
@@ -106,6 +121,18 @@ impl TaskValue {
 pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<ParallelOutput, Error> {
     fn measure(ty: &Type, words: &[u64]) -> Result<usize, Error> {
         let children = match ty {
+            Type::Record(r) if r.array => {
+                let mut bytes = 0usize;
+                unsafe {
+                    arrays::visit(ty, words[0], true, |element, words| {
+                        bytes = bytes
+                            .checked_add(measure(element, words)?)
+                            .ok_or_else(|| invalid("Parallel array result size overflow"))?;
+                        Ok(())
+                    })?;
+                }
+                bytes
+            }
             Type::String => {
                 unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.len()
             }
@@ -146,6 +173,19 @@ pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<Paral
     }
     fn read(ty: &Type, words: &[u64]) -> Result<TaskValue, Error> {
         Ok(match ty {
+            Type::Record(r) if r.array => {
+                let mut elements = Vec::with_capacity(unsafe { arrays::length(words[0])? });
+                unsafe {
+                    arrays::visit(ty, words[0], false, |element, words| {
+                        elements.push(read(element, words)?);
+                        Ok(())
+                    })?;
+                }
+                TaskValue::Array {
+                    ty: ty.clone(),
+                    elements,
+                }
+            }
             Type::String => TaskValue::String(
                 unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.to_owned(),
             ),
