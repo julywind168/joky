@@ -5,6 +5,9 @@ pub(crate) mod array_tests;
 mod arrays;
 #[cfg(test)]
 pub(crate) mod fixed_array_tests;
+#[cfg(test)]
+pub(crate) mod list_tests;
+mod lists;
 mod places;
 mod value;
 use super::{InstanceValue, InterpreterLimits};
@@ -38,6 +41,11 @@ pub enum TaskValue {
     },
     /// Standard Array identity and initialized elements in source order.
     Array {
+        ty: Type,
+        elements: Vec<TaskValue>,
+    },
+    /// Standard List identity and elements in logical sequence order.
+    List {
         ty: Type,
         elements: Vec<TaskValue>,
     },

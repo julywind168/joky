@@ -304,6 +304,7 @@ impl Reader<'_> {
             + 1;
         let ty = Type::Record(Arc::new(RecordType {
             array: code == 21,
+            list: false,
             closure: None,
             owners: fields
                 .iter()

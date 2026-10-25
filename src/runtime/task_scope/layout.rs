@@ -4,13 +4,13 @@ use crate::core::ir::parallel::packet::Kind;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 5;
+pub(crate) const VERSION: usize = 6;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v5",
+        "Invalid task entry layout v6",
     )
 }
 
@@ -210,7 +210,12 @@ impl CheckedLayout {
                 || shape.aggregate()
                     != matches!(
                         kind,
-                        Kind::Tuple | Kind::Record | Kind::Enum | Kind::Array | Kind::FixedArray
+                        Kind::Tuple
+                            | Kind::Record
+                            | Kind::Enum
+                            | Kind::Array
+                            | Kind::FixedArray
+                            | Kind::List
                     )
             {
                 return Err(invalid());
@@ -219,7 +224,10 @@ impl CheckedLayout {
                 (kind, &shape),
                 (Kind::Scalar, Shape::Unit | Shape::Scalar(_))
                     | (Kind::String, Shape::String)
-                    | (Kind::Tuple | Kind::Record | Kind::Array, Shape::Product(_))
+                    | (
+                        Kind::Tuple | Kind::Record | Kind::Array | Kind::List,
+                        Shape::Product(_)
+                    )
                     | (Kind::Enum, Shape::Sum(_))
                     | (
                         Kind::FixedArray | Kind::Tuple | Kind::Record | Kind::Enum,
@@ -301,7 +309,7 @@ mod tests {
         words[0] = 1;
         assert!(CheckedLayout::decode(&words).is_err());
         words[0] = VERSION as u64;
-        words[2] = 8 << 3;
+        words[2] = 9 << 3;
         assert!(CheckedLayout::decode(&words).is_err());
         // A recognized kind with inconsistent ownership cannot enter a worker.
         for flags in [1, (Kind::String as u64) << 3] {

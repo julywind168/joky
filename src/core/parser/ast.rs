@@ -1021,6 +1021,7 @@ pub enum AttributeValue {
 #[derive(Debug, Clone)]
 pub struct RecordDef {
     pub(crate) array: bool,
+    pub(crate) list: bool,
     pub attributes: Vec<Attribute>,
     pub public: bool,
     pub name: String,
@@ -1047,6 +1048,7 @@ impl RecordDef {
         let id = fresh_type_id();
         Self {
             array: false,
+            list: false,
             public: false,
             attributes: Vec::new(),
             name,

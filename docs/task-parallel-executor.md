@@ -1,6 +1,6 @@
 # 可选多线程任务执行器设计与实施计划
 
-状态：2026-10-25，TP0–TP8 已完成。当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节，TP7 数组交付见第 17 节，TP8 FixedArray 见第 18 节。
+状态：2026-10-25，TP0–TP9 已完成。当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节，TP7 数组交付见第 17 节，TP8 FixedArray 见第 18 节，TP9 List 见第 19 节。
 生产执行器默认 Local，可显式选择 Parallel。早期冻结决策与探针边界见第 10 节，
 TP1 的最终交付与验证见第 11.5 节，TP2 交付与限制见第 12 节，TP3 见第 13 节，TP4 模式与支持表见第 14 节，TP5 最终验收见第 15 节；第 11.1–11.4 节保留历史切片记录。
 源码名称已由 `parallel` 迁移为 `join`，不改变本文执行器阶段与行为契约。
@@ -776,9 +776,9 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | 能力 | Local | Parallel |
 | --- | --- | --- |
 | join/race/branch 与多层 scope | 原有顺序推进 | 固定 worker 分支调度，单 worker 也可推进 |
-| 标量、String、Array、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
+| 标量、String、Array、List、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
 | FixedArray、含它的 Copy 聚合、Array<FixedArray> | 参数/返回/捕获跨挂起，安全视图服从借用规则 | 独立 Copy 快照，保持元素与存储组合限制 |
-| List/Map/Set、引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
+| Map/Set、引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
 | task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
@@ -1106,3 +1106,69 @@ Local 函数值调用继续有效；Parallel 不额外授予间接目标线程�
   Array smoke 在 Local、Parallel N=1/3 的 JIT、解释器及真实独立 AOT 均返回 42，确认版本 5 配套。
 - 本地文档文件链接与 `git diff --check` 通过。未运行 Release、性能测量、无关全量压力、
   Godot 引擎验收或竞争检测器。默认 Local 与 Godot 主线程模式保持不变。
+
+## 19. TP9 List 跨任务传递
+
+状态：已完成。完整阶段集中验证后单独提交。
+
+### 19.1 范围与契约
+
+- 开放标准 List<T> 的任务参数、结果、join/race/branch 捕获及递归聚合；完整元素
+  类型树必须已有 Parallel 资格。Map、Set、资源、自定义 Drop 和引用仍不开放，
+  List 的既有 FixedArray 元素限制也保持不变。默认 Local 与 Godot 单线程模式不变。
+- List 由 values、owners、slots 三个 Array 与整数链索引构成。复用独占拥有树交接，
+  保留容量、逻辑顺序和空闲槽拓扑；不复制线程私有地址，不引入共享可变节点。
+- 编译器仅标记内置标准 List 声明；宿主使用携带精确 nominal 类型的
+  TaskValue::List 元素序列。输入构造有效链，输出按逻辑顺序遍历并验证链与拥有映射，
+  不把底层稠密 payload 顺序当作 List 顺序，也不允许 Record 伪造其私有字段。
+- 宿主临时元数据、三个 Array 存储及结果计入根预算。失败、取消、race 败方及
+  未收取结果沿用唯一清理；部分构造只回收已初始化拥有前缀，不依赖链遍历。
+- 私有任务布局升级到版本 6，外层 NativeTaskEntryV1 保持版本 1。
+
+### 19.2 验收
+
+- 三后端与 N=1/3 覆盖实际挂起、join/race/branch、嵌套 Array/List/String/枚举，
+  以及删除、空闲槽复用、反转和容量保留；包含空 List 与 Unit 元素。
+- 宿主验证逻辑顺序、精确类型、错误元素/伪造 Record、代码销毁后的保活、准备包跨线程。
+- 验证预算失败、启动前后取消、失败和未收取结果的回收，补跑相关 Debug 穷举。
+- 定向行为测试后运行默认 Debug 检查，刷新默认 CLI/runtime 并验证独立 AOT；
+  不默认运行 Release、性能测量或无关全量压力。
+
+### 19.3 交付记录
+
+内置 List 声明新增可信身份并随实例化/类型投影保留，任务种类增加 List。
+完整类型检查递归检查实际参数、所有变体与私有元数据，Map/Set 仍拒绝。
+物理包继续使用 Product 与 Buffer 叶子，三个底层数组保留独占拥有关系、容量和链索引。
+
+宿主增加 TaskValue::List 与 Type::list_element_type。输入按元素顺序建立规范链，
+索引元数据逐项写入，临时空间与 List 长度无关；输出沿链读取，验证双向连接、
+反向拥有映射及空闲链后产生元素序列。宿主往返不保留未公开的容量或空闲槽历史。
+[task_lists.jk](../tests/fixtures/task_lists.jk) 特意构造逻辑顺序不同于稠密载荷顺序的 List，
+覆盖嵌套拥有值、Unit、空表、保留空闲槽的空表，以及跨任务后修改与容量保留。
+
+验证同时发现并修复既有 Buffer 替换缺陷：并行存储的旧头部在移走预算凭证后仍被
+分配回收器执行 finalizer，导致重复销毁。替换现在留下空头部再释放，凭证仅由新拥有者
+持有；独立回归覆盖多次替换、跨线程释放和预算归零，List 的三后端行为用例覆盖生成代码路径。
+
+2026-10-25 验证：
+
+- `cargo test --lib task_parallel_`：17 项通过、3 项默认忽略，包含三后端 N=1/3
+  的 List/Array/FixedArray/聚合任务行为。List 覆盖正常、失败、取消、容量及链顺序。
+  完整类型树准入矩阵与 Buffer 预算凭证替换回归另经定向验证通过。
+- `./scripts/check.sh`：quick、Debug 全部通过；格式、Clippy、1646 个默认库测试
+  （133 个忽略）、306 个 CLI 测试（8 个忽略）、其余默认集成测试，以及 while/Map
+  三后端短输入正确性检查通过。
+- Array 与聚合任务包的预算穷举通过。List 扫描最初沿用的 256 KiB 上限内未完整成功；
+  延伸至已由常规测试验证的 1 MiB 上限，并要求失败确为 ResourceLimit 后，
+  `cargo test --lib exhaustive_task_parallel_list_budget_failures -- --ignored` 通过：
+  每次失败与首次完整成功均确认预算归零，扫描在首次成功后停止。
+  此后仅修改了测试边界和断言，最终格式、Clippy 及 `cargo test --lib task_parallel_list`
+  的 4 项默认测试通过，未重复运行整套默认检查。
+- `exhaustive_list_cancels_at_each_instruction` 与
+  `exhaustive_task_pool_owning_publication_budget_failures` 分别以
+  `cargo test --lib <名字> -- --ignored` 运行通过（Debug）。
+- `cargo build` 刷新默认 Debug CLI/runtime；不设置 JOKY_RUNTIME，List、Array、FixedArray
+  smoke 分别在 Local、Parallel N=1/3 的 JIT、解释器及真实独立 AOT 下返回 42，
+  确认版本 6 对象和运行库配套。
+- 本地文档链接与 `git diff --check` 通过。未运行 Release、性能测量、无关全量压力、
+  Godot 引擎验收或竞争检测器；Map/Set、first_ok 与跨线程资源桥仍留待独立阶段。

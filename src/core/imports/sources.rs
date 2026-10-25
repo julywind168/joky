@@ -410,9 +410,10 @@ impl StandardLibrary {
         implicit: ImplicitImports,
         kind: SourceKind,
     ) -> Result<(), Error> {
-        if matches!(kind, SourceKind::BufferLibrary) && path == "joky/array" {
+        if matches!(kind, SourceKind::BufferLibrary) {
             for record in &mut module.records {
-                record.array = record.name == "Array";
+                record.array = path == "joky/array" && record.name == "Array";
+                record.list = path == "joky/list" && record.name == "List";
             }
         }
         crate::core::json_derive::expand(&mut module)?;

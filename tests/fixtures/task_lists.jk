@@ -1,0 +1,89 @@
+import joky/task
+import joky/string
+import joky/list.{type List}
+import joky/array.{type Array}
+import joky/option.{Some, None}
+
+struct Item { code: Int8, text: String, flag: Bool }
+enum Payload { Empty, Items(Array<Item>), Lists(List<String>), Text(String) }
+fn echo(value: List<Payload>) @suspends -> List<Payload> {
+    task.yield_now()
+    value
+}
+fn consume(value: List<Payload>) { }
+fn texts() @suspends -> List<String> {
+    var values = List.with_capacity::<String>(8)
+    values.push_back("second")
+    values.push_back("discard")
+    values.push_back("first")
+    values.remove(1)
+    task.yield_now()
+    values.push_front("reused")
+    values.pop_front()
+    values.reverse()
+    values
+}
+fn root(value: List<Payload>) @suspends -> (List<Payload>, List<String>) {
+    let (a, b) = join { | echo(value) | texts() }
+    scope {
+        let captured = List.from_array([Payload.Lists(List.from_array(["branch owner"])), Payload.Empty])
+        branch { consume(echo(captured)) }
+        task.yield_now()
+    }
+    let c = race { | texts() | texts() }
+    b.release()
+    (a, c)
+}
+fn identity(value: List<Payload>) @suspends -> List<Payload> { echo(value) }
+fn unit_child(value: List<Unit>) @suspends -> List<Unit> { task.yield_now(); value }
+fn units(value: List<Unit>) @suspends -> List<Unit> {
+    let (a, b) = join { | unit_child(value) | unit_child(List.new::<Unit>()) }
+    a
+}
+fn fail(value: List<Payload>) @suspends -> List<Payload> { task.yield_now(); 1 / 0; value }
+fn failed(value: List<Payload>) @suspends -> List<Payload> {
+    let (a, b) = join { | fail(value) | texts() }
+    a
+}
+fn parked(value: List<Payload>) @suspends -> List<Payload> { task.sleep_ms(60000); value }
+fn cancelled(value: List<Payload>) @suspends -> List<Payload> {
+    scope { branch { consume(parked(List.from_array([Payload.Text("waiting capture")]))) }; parked(value) }
+}
+fn capacity() @suspends -> UInt64 {
+    let (a, b) = join { | texts() | texts() }
+    a.capacity() + b.capacity()
+}
+fn mutate(value: List<String>) @suspends -> List<String> {
+    var values = value
+    values.push_front("temporary")
+    values.pop_front()
+    values.reverse()
+    task.yield_now()
+    values.reverse()
+    values
+}
+fn topology() @suspends -> Int32 {
+    let (a, b) = join { | texts() | texts() }
+    let before = a.capacity()
+    let (c, d) = join { | mutate(a) | mutate(b) }
+    if before == 8 && c.capacity() == before && d.capacity() == before {
+        var ca = c.into_array()
+        var da = d.into_array()
+        let expected = "second"
+        match (ca.pop(), da.pop()) {
+            (Some(a), Some(b)) => if string.equals(&a, &expected) && string.equals(&b, &expected) { 42 } else { 0 }
+            _ => 0
+        }
+    } else { 0 }
+}
+fn nested(value: Array<List<String>>) @suspends -> Array<List<String>> {
+    task.yield_now()
+    value
+}
+fn emptied() @suspends -> List<String> {
+    var values = texts()
+    values.pop_back()
+    values.pop_front()
+    task.yield_now()
+    values
+}

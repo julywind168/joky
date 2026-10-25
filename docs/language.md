@@ -526,7 +526,8 @@ append 的节点转移次数对源元素数量线性；扩容还可能搬迁目�
 分配、移出后失败和 Drop 失败都按各数组及局部拥有值完成清理，保留首个错误，
 不依赖活动链仍完整；不承诺操作失败后的可继续执行状态或按逻辑次序运行 Drop。
 无引用元素的 List 及其元素视图可跨语言挂起，取消和旧代码重载继续遵循任务清理规则；
-容器宿主 ABI 尚未开放。
+完整元素树无引用、资源或自定义 Drop 的 List 可作为并行任务包，受检宿主入口使用
+`TaskValue::List` 按逻辑顺序转换；普通函数的容器宿主 ABI 尚未开放。
 示例见 [lists.jk](../examples/lists.jk)，三后端输出 last、0、last、before、extra、tail。
 阶段证据见 [L1–L4 验收记录](list-set-storage-ownership.md#52-l1l4-验收记录)。
 
@@ -4837,23 +4838,26 @@ Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel
 `wait_closed` 与控制对象 Drop 等待线程退出。提交句柄 Drop 不等待；任务句柄 Drop 请求取消。
 `ParallelTask::wait` 仅可在非 worker 的宿主线程调用，`take_result` 一次性收取终态。
 
-当前跨任务包支持标量、String、Array，以及递归嵌套这些类型的元组、普通 struct 和 enum
+当前跨任务包支持标量、String、Array、List，以及递归嵌套这些类型的元组、普通 struct 和 enum
 （包括 Option/Result）。join/race 的参数与结果、branch 的移动捕获及宿主根入口采用同一
-类型边界；String/Array 交接移动真实拥有 Buffer 树，数组保留有效元素及容量。完整类型树必须无引用、无资源、无自定义 Drop，
-包括未激活枚举变体及实际泛型参数；List/Map/Set、函数/闭包、dyn 和裸指针仍拒绝。
+类型边界；String/Array/List 交接移动真实拥有 Buffer 树，数组保留有效元素及容量，
+List 还保留整数链与空闲槽。完整类型树必须无引用、无资源、无自定义 Drop，
+包括未激活枚举变体及实际泛型参数；Map/Set、函数/闭包、dyn 和裸指针仍拒绝。
 FixedArray 及包含它的无引用 Copy 聚合使用独立存储快照；Array 可存储这些 Copy 值。
 含 FixedArray 的混合拥有聚合仍受固定数组存储限制；并行支持不额外放宽其类型组合。
-Array 元素递归满足同一规则；空数组和 Unit 元素可用。
+Array/List 元素递归满足同一规则；空容器和 Unit 元素可用。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 完整调用图必须证明安全，未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄
 和 Godot 对象均保持 Local。
 
 宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
 构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。
+`TaskValue::List { ty, elements }` 表示 List 的逻辑元素序列，输入构造有效链，输出不暴露
+底层稠密数组或空闲节点。标准 Array/List 不能用 Record 值伪造私有字段。
 `TaskValue::FixedArray { ty, elements }` 表示固定数组，元素数量必须精确等于类型中的 N。
-宿主输入以元素数为初始容量；宿主输出只包含有效元素，Vec 容量不代表语言数组容量。
+宿主输入以元素数为初始容量；宿主输出只包含有效元素，Vec 容量不代表语言容器容量。
 `VmEngine::parallel_signature` 或 AOT `ParallelEntry::signature` 提供受检
-入口签名；`Type::array_element_type`、`fixed_array_element_type`（元素与长度）、`tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
+入口签名；`Type::array_element_type`、`list_element_type`、`fixed_array_element_type`（元素与长度）、`tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
 及变体。记录字段按声明顺序，枚举使用声明序号，无 payload 的变体传 None。nominal 类型
 必须来自对应冻结签名，字段、标量类型和标签精确匹配；新编译模块的同名类型不能冒充旧类型。
 这些入口独立于普通函数 ABI；CLI main 的 Unit/Int32 限制保持不变。

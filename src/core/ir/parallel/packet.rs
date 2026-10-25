@@ -12,6 +12,7 @@ pub(crate) enum Kind {
     Local = 5,
     Array = 6,
     FixedArray = 7,
+    List = 8,
 }
 
 impl Kind {
@@ -20,6 +21,7 @@ impl Kind {
             Type::FixedArray(_) => Self::FixedArray,
             Type::String => Self::String,
             Type::Record(r) if r.array => Self::Array,
+            Type::Record(r) if r.list => Self::List,
             Type::Tuple(_) => Self::Tuple,
             Type::Record(r) if r.closure.is_none() => Self::Record,
             Type::Enum(_) => Self::Enum,
@@ -38,6 +40,7 @@ impl Kind {
             5 => Self::Local,
             6 => Self::Array,
             7 => Self::FixedArray,
+            8 => Self::List,
             _ => return None,
         })
     }
@@ -80,12 +83,7 @@ pub(crate) fn classify(
                 };
                 vec![(**element).clone()]
             }
-            Type::Record(r)
-                if matches!(
-                    r.name.as_str(),
-                    "joky/map.Map" | "joky/list.List" | "joky/set.Set"
-                ) =>
-            {
+            Type::Record(r) if matches!(r.name.as_str(), "joky/map.Map" | "joky/set.Set") => {
                 return None
             }
             Type::Record(r) if r.closure.is_none() && !r.indirect => r
@@ -157,6 +155,13 @@ mod tests {
             fn array_drop(value: Array<Result<Int32, Tracked>>) { }
             fn array_map(value: Array<Map<Int32, String>>) { }
             fn array_list(value: Array<List<String>>) { }
+            fn list_value(value: List<List<String>>) { }
+            fn list_pointer(value: List<Ptr>) { }
+            fn list_reference(value: List<&Int32>) { }
+            fn list_phantom(value: List<Marker<Ptr>>) { }
+            fn list_drop(value: List<Result<Int32, Tracked>>) { }
+            fn list_map(value: List<Map<Int32, String>>) { }
+            fn list_set(value: List<Set<Int32>>) { }
             fn array_set(value: Array<Set<Int32>>) { }
             fn array_fixed(value: Array<FixedArray<Int32, 2>>) { }
             fn callable(value: fn(Int32) -> Int32) { }
@@ -204,8 +209,15 @@ mod tests {
             ("array_phantom", None),
             ("array_drop", None),
             ("array_map", None),
-            ("array_list", None),
+            ("array_list", Some(Kind::Array)),
             ("array_set", None),
+            ("list_value", Some(Kind::List)),
+            ("list_pointer", None),
+            ("list_reference", None),
+            ("list_phantom", None),
+            ("list_drop", None),
+            ("list_map", None),
+            ("list_set", None),
             ("array_fixed", Some(Kind::Array)),
             ("callable", None),
         ] {

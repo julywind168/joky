@@ -145,6 +145,31 @@ mod tests {
         buffer::{Buffer, ElementCleanup},
     };
     #[test]
+    fn parallel_buffer_replacement_moves_metadata_lease_once() {
+        let budget = TaskBudget::new(1 << 20);
+        let root = Storage::new(vec![budget.clone()]).unwrap();
+        let mut arena = Arena::with_storage(root.clone());
+        let owner = Buffer::copy_bytes(&mut arena, b"old").unwrap();
+        for _ in 0..8 {
+            let mut next = Buffer::copy_bytes(&mut arena, b"replacement").unwrap();
+            unsafe {
+                next.as_mut().reserve_metadata(128).unwrap();
+                Buffer::replace(&mut arena, owner.as_ptr(), next.as_ptr()).unwrap();
+                assert_eq!(
+                    crate::runtime::owned_text::borrow(owner.as_ptr()).unwrap(),
+                    "replacement"
+                );
+            }
+        }
+        // The transferred lease and header remain valid after the source header
+        // is freed, including when the receiver is a different host thread.
+        let packet = unsafe { OwnedBuffer::new(&arena, owner) }.unwrap();
+        drop((arena, root));
+        std::thread::spawn(move || drop(packet)).join().unwrap();
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
     fn parallel_owning_tree_keeps_addresses_and_metadata_until_root_release() {
         let budget = TaskBudget::new(1 << 20);
         let root = Storage::new(vec![budget.clone()]).unwrap();

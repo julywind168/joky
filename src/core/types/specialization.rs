@@ -197,6 +197,7 @@ impl TypeRegistry {
         }
         let instance = Arc::new(RecordType {
             array: template.array,
+            list: template.list,
             closure: None,
             owners: layout::record_owners(&fields, crate::Span::empty(0))?,
             repr_c: template.repr_c,

@@ -729,3 +729,145 @@ fn task_fixed_array_values_on_all_backends() {
     drop(output);
     assert_eq!(budget.used(), 0);
 }
+
+#[test]
+fn task_parallel_list_values_and_roots_on_all_backends() {
+    use crate::vm::{parallel::list_tests, InstanceValue, VmEngine, VmMode};
+    let names = [
+        "root",
+        "units",
+        "capacity",
+        "topology",
+        "emptied",
+        "nested",
+        "failed",
+        "cancelled",
+        "identity",
+    ];
+    let (_scratch, entries, library) =
+        linked_task_entries(list_tests::SOURCE, &names, "task-lists");
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(list_tests::SOURCE).unwrap();
+        }
+        for workers in [1, 3] {
+            let pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            let mut budgets = Vec::new();
+            for (index, name) in names[..8].iter().enumerate() {
+                let sig = vm
+                    .as_ref()
+                    .map(|vm| vm.parallel_signature(name).unwrap())
+                    .unwrap_or_else(|| entries[index].signature().clone());
+                for variant in 0..if matches!(*name, "root" | "units" | "nested") {
+                    2
+                } else {
+                    1
+                } {
+                    let (input, expected) = match *name {
+                        "root" => {
+                            let v = list_tests::input(&sig.params[0], variant);
+                            (vec![v.clone()], list_tests::expected(&sig, v))
+                        }
+                        "units" => {
+                            let v = TaskValue::List {
+                                ty: sig.params[0].clone(),
+                                elements: vec![TaskValue::Scalar(InstanceValue::Unit); variant * 3],
+                            };
+                            (vec![v.clone()], v)
+                        }
+                        "topology" => (vec![], TaskValue::Scalar(InstanceValue::Int32(42))),
+                        "emptied" => (
+                            vec![],
+                            TaskValue::List {
+                                ty: sig.ret.clone(),
+                                elements: vec![],
+                            },
+                        ),
+                        "nested" => {
+                            let v = TaskValue::Array {
+                                ty: sig.params[0].clone(),
+                                elements: vec![TaskValue::List {
+                                    ty: sig.params[0].array_element_type().unwrap().clone(),
+                                    elements: vec![TaskValue::String("nested".into()); variant * 2],
+                                }],
+                            };
+                            (vec![v.clone()], v)
+                        }
+                        "failed" | "cancelled" => (
+                            vec![list_tests::input(&sig.params[0], 1)],
+                            TaskValue::Scalar(InstanceValue::Unit),
+                        ),
+                        _ => (vec![], TaskValue::Scalar(InstanceValue::UInt64(16))),
+                    };
+                    let budget = TaskBudget::new(1 << 20);
+                    let prepared = if let Some(vm) = &vm {
+                        vm.prepare_parallel_task(name, input, vec![budget.clone()])
+                            .unwrap()
+                    } else {
+                        unsafe {
+                            entries[index].prepare(
+                                *library
+                                    .get::<CpsEntry>(entries[index].symbol().as_bytes())
+                                    .unwrap(),
+                                library.clone(),
+                                input,
+                                vec![budget.clone()],
+                            )
+                        }
+                        .unwrap()
+                    };
+                    let task = prepared.submit(&pool).unwrap();
+                    if *name == "cancelled" {
+                        task.request_cancel();
+                    }
+                    task.wait().unwrap();
+                    if matches!(*name, "failed" | "cancelled") {
+                        let error = task.take_result().err().unwrap();
+                        if *name == "cancelled" {
+                            assert_eq!(error.code(), crate::ErrorCode::Cancelled);
+                        } else {
+                            assert!(error.to_string().contains("Division by zero"), "{error}");
+                        }
+                    } else {
+                        let output = task.take_result().unwrap();
+                        assert_eq!(output.value(), &expected, "{mode:?}, {name}, {variant}");
+                    }
+                    assert!(task.take_result().is_err());
+                    drop(task);
+                    budgets.push(budget);
+                }
+            }
+            drop(pool);
+            for budget in budgets {
+                assert_eq!(budget.used(), 0);
+            }
+        }
+    }
+    let entry = entries.last().unwrap();
+    let expected = list_tests::input(&entry.signature().params[0], 1);
+    let budget = TaskBudget::new(1 << 20);
+    let weak = Arc::downgrade(&library);
+    let prepared = unsafe {
+        entry.prepare(
+            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+            library.clone(),
+            vec![expected.clone()],
+            vec![budget.clone()],
+        )
+    }
+    .unwrap();
+    drop(library);
+    let output = std::thread::spawn(move || {
+        let mut task = prepared.start().unwrap();
+        while !task.resume().unwrap() {}
+        task.take_result().unwrap()
+    })
+    .join()
+    .unwrap();
+    assert!(weak.upgrade().is_none());
+    assert_eq!(output.value(), &expected);
+    drop(output);
+    assert_eq!(budget.used(), 0);
+}

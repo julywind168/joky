@@ -646,6 +646,7 @@ impl FunctionPlan {
             let make_environment = |mode| {
                 Arc::new(RecordType {
                     array: false,
+                    list: false,
                     closure: Some(Arc::new(ClosureInfo {
                         storable,
                         mode,

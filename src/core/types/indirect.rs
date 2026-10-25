@@ -7,6 +7,7 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<GenericArgument>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
             array: r.array,
+            list: r.list,
             closure: None,
             owners: if r.arguments == arguments {
                 r.owners.clone()

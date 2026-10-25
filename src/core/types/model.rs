@@ -875,6 +875,8 @@ impl Eq for TypeParameter {}
 pub struct RecordType {
     /// Identity installed only on the embedded Array declaration.
     pub(crate) array: bool,
+    /// Identity installed only on the embedded List declaration.
+    pub(crate) list: bool,
     pub(crate) closure: Option<Arc<ClosureInfo>>,
     /// Underlying buffer elements in declaration order, retained in shallow views.
     pub(crate) owners: Vec<Arc<Type>>,
@@ -1188,6 +1190,15 @@ impl Type {
             Self::Buffer(element) => Some(element),
             _ => None,
         }
+    }
+
+    /// Element type of the compiler-recognized standard List declaration.
+    pub fn list_element_type(&self) -> Option<&Type> {
+        let Self::Record(r) = self else { return None };
+        if !r.list {
+            return None;
+        }
+        r.fields.first()?.ty.array_element_type()
     }
 
     /// Resolved tuple members in declaration order, without physical ABI lanes.

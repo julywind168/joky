@@ -1073,7 +1073,9 @@ impl Buffer {
         }
         (*destination).resource.take();
         (*destination).clear_metadata();
-        let value = source.read();
+        // The parallel allocation finalizer still runs for the retired header.
+        // Leave it inert so it cannot refund/drop the lease moved to destination.
+        let value = source.replace(Self::empty((*source).element));
         if (*destination).capacity != 0 && (*destination).element.size() != 0 {
             arena.release((*destination).data);
         }

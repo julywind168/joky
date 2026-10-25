@@ -33,7 +33,16 @@ impl TaskValue {
             ) if actual == ty => ty
                 .array_element_type()
                 .is_some_and(|element| elements.iter().all(|v| v.matches(element))),
-            (Self::Record { ty: actual, fields }, Type::Record(r)) if !r.array => {
+            (
+                Self::List {
+                    ty: actual,
+                    elements,
+                },
+                _,
+            ) if actual == ty => ty
+                .list_element_type()
+                .is_some_and(|element| elements.iter().all(|v| v.matches(element))),
+            (Self::Record { ty: actual, fields }, Type::Record(r)) if !r.array && !r.list => {
                 actual == ty
                     && fields.len() == r.fields.len()
                     && fields.iter().zip(&r.fields).all(|(v, f)| v.matches(&f.ty))
@@ -64,6 +73,7 @@ impl TaskValue {
                 Self::Tuple(v)
                 | Self::Record { fields: v, .. }
                 | Self::Array { elements: v, .. }
+                | Self::List { elements: v, .. }
                 | Self::FixedArray { elements: v, .. } => {
                     v.iter().map(Self::bytes).sum::<usize>()
                         + (v.capacity() - v.len()) * std::mem::size_of::<Self>()
@@ -93,6 +103,9 @@ impl TaskValue {
                 TaskValue::Array { elements, .. } => {
                     let raw = arrays::input(ty, elements, arena)?;
                     unsafe { packet.push_buffer(base, raw, arena)? };
+                }
+                TaskValue::List { elements, .. } => {
+                    lists::input(ty, elements, packet, base, arena)?;
                 }
                 TaskValue::Tuple(values) => {
                     let Type::Tuple(t) = ty else { unreachable!() };
@@ -157,6 +170,18 @@ pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<Paral
                 }
                 bytes
             }
+            Type::Record(r) if r.list => {
+                let mut bytes = 0usize;
+                unsafe {
+                    lists::visit(ty, words, true, |element, words| {
+                        bytes = bytes
+                            .checked_add(measure(element, words)?)
+                            .ok_or_else(|| invalid("Parallel list result size overflow"))?;
+                        Ok(())
+                    })?;
+                }
+                bytes
+            }
             Type::String => {
                 unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.len()
             }
@@ -209,6 +234,19 @@ pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<Paral
                     })?;
                 }
                 TaskValue::Array {
+                    ty: ty.clone(),
+                    elements,
+                }
+            }
+            Type::Record(r) if r.list => {
+                let mut elements = Vec::with_capacity(unsafe { lists::length(ty, words)? });
+                unsafe {
+                    lists::visit(ty, words, false, |element, words| {
+                        elements.push(read(element, words)?);
+                        Ok(())
+                    })?;
+                }
+                TaskValue::List {
                     ty: ty.clone(),
                     elements,
                 }
