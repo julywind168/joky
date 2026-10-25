@@ -29,8 +29,8 @@ fn fixture() @suspends -> Fixture {
     domain.write_to(catalog.handle(), seed_catalog, {})!
     Fixture { directory: directory, rooms: rooms, accounts: accounts, requests: requests, catalog: catalog, room: room, other: other, ctx: host }
 }
-fn test_account(ctx: Host, id: UInt64, key: UInt64, output: outbox.Handle, stop: outbox.Handle) @suspends -> domain.Owner<Account> {
-    let value = Account { route: Route { live: true, id: id, output: output, stop: stop }, room: key, balance_cents: 500 }
+fn test_account(ctx: Host, id: UInt64, key: UInt64, output: session.Output) @suspends -> domain.Owner<Account> {
+    let value = Account { route: Route { live: true, id: id, output: output }, room: key, balance_cents: 500 }
     let owner = domain.create(make_account, value)
     ctx.accounts.insert(id, owner.handle())!
     if key != 0 { domain.write_to(room_handle(ctx, key)!, add_member, value.route)! }
@@ -57,9 +57,9 @@ fn candidate(ctx: Host, account: domain.WriteHandle<Account>, text: String) @sus
 }
 fn verify_conflicts_and_independence() @suspends {
     let f = fixture()
-    var queue = outbox.create(16, 1024)
     let control = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, queue.handle(), control.handle())
+    var queue = outbox.create_with_policy(16, 1024, outbox.Overflow.Disconnect(control.handle()))
+    let alice = test_account(f.ctx, 1, 1, queue.handle())
     let stale = candidate(f.ctx, alice.handle(), "ghost\n")
     domain.write_to(alice.handle(), unchanged, {})!
     var rejected = domain.commit_set(stale)
@@ -77,9 +77,9 @@ fn verify_conflicts_and_independence() @suspends {
 fn paid_send(ctx: Host) @suspends { check.assert(handle_line(ctx, 1, "say concurrent"), "concurrent send handled") }
 fn verify_balance_race() @suspends {
     let f = fixture()
-    var queue = outbox.create(16, 1024)
     let control = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 0, queue.handle(), control.handle())
+    var queue = outbox.create_with_policy(16, 1024, outbox.Overflow.Disconnect(control.handle()))
+    let alice = test_account(f.ctx, 1, 0, queue.handle())
     check.assert(handle_line(f.ctx, 1, "say outside"), "error is a handled command")
     expect_message(&mut queue, "error join a room first\n")
     check.assert(balance(&alice) == 500, "no-room send is free")
@@ -95,15 +95,15 @@ fn verify_balance_race() @suspends {
 }
 fn verify_message_capacity() @suspends {
     let f = fixture()
-    var alice_queue = outbox.create(64, 65536)
     let alice_stop = outbox.create(1, 0)
-    var bob_queue = outbox.create(64, 65536)
+    var alice_queue = outbox.create_with_policy(64, 65536, outbox.Overflow.Disconnect(alice_stop.handle()))
     var bob_stop = outbox.create(1, 0)
-    var carol_queue = outbox.create(8, 256)
+    var bob_queue = outbox.create_with_policy(64, 65536, outbox.Overflow.Disconnect(bob_stop.handle()))
     let carol_stop = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, alice_queue.handle(), alice_stop.handle())
-    let bob = test_account(f.ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
-    let carol = test_account(f.ctx, 3, 2, carol_queue.handle(), carol_stop.handle())
+    var carol_queue = outbox.create_with_policy(8, 256, outbox.Overflow.Disconnect(carol_stop.handle()))
+    let alice = test_account(f.ctx, 1, 1, alice_queue.handle())
+    let bob = test_account(f.ctx, 2, 1, bob_queue.handle())
+    let carol = test_account(f.ctx, 3, 2, carol_queue.handle())
     domain.write_to(alice.handle(), fund_capacity_test, {})!
     var i: UInt64 = 0
     while i < 64 {
@@ -111,10 +111,12 @@ fn verify_message_capacity() @suspends {
         expect_message(&mut alice_queue, "message r 1 fill\n")
         i += 1
     }
-    check.assert(handle_line(f.ctx, 1, "say retry"), "retry after eviction")
-    expect_message(&mut alice_queue, "left r 2\n")
+    check.assert(handle_line(f.ctx, 1, "say retry"), "overflow does not require replay")
     expect_message(&mut alice_queue, "message r 1 retry\n")
-    check.assert(balance(&alice) == 3500, "failed full batch never double-charges")
+    check.assert(run_command(f.ctx, 2, Command.Disconnect), "session callback removes slow member")
+    forget(Client { host: f.ctx, id: 2 })
+    expect_message(&mut alice_queue, "left r 2\n")
+    check.assert(balance(&alice) == 3500, "overflowing send charges once")
     check.assert(bob_stop.receive().is_none(), "evicted session wakes")
     check.assert(bob_queue.receive().is_none(), "evicted output closes")
     check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "evicted account inactive")
@@ -124,12 +126,12 @@ fn verify_message_capacity() @suspends {
 }
 fn verify_byte_capacity() @suspends {
     let f = fixture()
-    var alice_queue = outbox.create(64, 65536)
     let alice_stop = outbox.create(1, 0)
-    var slow_queue = outbox.create(64, 65536)
+    var alice_queue = outbox.create_with_policy(64, 65536, outbox.Overflow.Disconnect(alice_stop.handle()))
     var slow_stop = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, alice_queue.handle(), alice_stop.handle())
-    let slow = test_account(f.ctx, 2, 1, slow_queue.handle(), slow_stop.handle())
+    var slow_queue = outbox.create_with_policy(64, 65536, outbox.Overflow.Disconnect(slow_stop.handle()))
+    let alice = test_account(f.ctx, 1, 1, alice_queue.handle())
+    let slow = test_account(f.ctx, 2, 1, slow_queue.handle())
     domain.write_to(alice.handle(), fund_capacity_test, {})!
     var builder = StringBuilder.new()
     var i: UInt64 = 0
@@ -143,63 +145,62 @@ fn verify_byte_capacity() @suspends {
         expect_message(&mut alice_queue, expected.clone())
         i += 1
     }
-    check.assert(handle_line(f.ctx, 1, "say {payload}"), "retry byte overflow")
-    expect_message(&mut alice_queue, "left r 2\n")
+    check.assert(handle_line(f.ctx, 1, "say {payload}"), "byte overflow commits")
     expect_message(&mut alice_queue, expected.clone())
-    check.assert(balance(&alice) == 10000 - (count + 1) * 100, "byte retry charges once")
+    check.assert(run_command(f.ctx, 2, Command.Disconnect), "byte overload cleanup")
+    forget(Client { host: f.ctx, id: 2 })
+    expect_message(&mut alice_queue, "left r 2\n")
+    check.assert(balance(&alice) == 10000 - (count + 1) * 100, "byte overflow charges once")
     check.assert(slow_stop.receive().is_none() && slow_queue.receive().is_none(), "byte overload closes session")
     check.assert(balance(&slow) == 500, "recipient never pays")
 }
 fn verify_simultaneous_capacity() @suspends {
     let f = fixture()
-    var alice_queue = outbox.create(2, 128)
     var alice_stop = outbox.create(1, 0)
-    var bob_queue = outbox.create(2, 128)
+    var alice_queue = outbox.create_with_policy(2, 128, outbox.Overflow.Disconnect(alice_stop.handle()))
     var bob_stop = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, alice_queue.handle(), alice_stop.handle())
-    let bob = test_account(f.ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
+    var bob_queue = outbox.create_with_policy(2, 128, outbox.Overflow.Disconnect(bob_stop.handle()))
+    let alice = test_account(f.ctx, 1, 1, alice_queue.handle())
+    let bob = test_account(f.ctx, 2, 1, bob_queue.handle())
     check.assert(handle_line(f.ctx, 1, "say full"), "first queued send")
     check.assert(handle_line(f.ctx, 1, "say full"), "second queued send")
-    check.assert(run_command(f.ctx, 1, Command.Disconnect), "iterative cleanup terminates")
+    check.assert(run_command(f.ctx, 1, Command.Disconnect), "departure commits despite full recipient")
     check.assert(!run_command(f.ctx, 1, Command.Disconnect), "disconnect is idempotent")
     check.assert(alice_stop.receive().is_none() && bob_stop.receive().is_none(), "both sessions wake")
     check.assert(alice_queue.receive().is_none() && bob_queue.receive().is_none(), "both queues close")
     check.assert(balance(&alice) == 300 && balance(&bob) == 500, "disconnect is free")
 }
-fn verify_atomic_disconnect_signal() @suspends {
+fn verify_atomic_overflow_signal() @suspends {
     let f = fixture()
-    let output = outbox.create(4, 256)
     var control = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, output.handle(), control.handle())
-    let excluded = Array.new::<UInt64>()
-    leave(f.ctx, alice.handle(), 1, true, &excluded)!!
-    // No post-commit close ran: the commit itself must wake the connection.
-    let notification = control.receive()!
-    check.assert(notification.is_empty(), "disconnect control signal is part of the commit")
-    check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "signal accompanies account removal")
-    let view = domain.read_from(f.room.read_handle(), room_view)!
-    check.assert(!view.members.get(0)!.live, "signal accompanies room removal")
-    let outside_output = outbox.create(1, 64)
-    var outside_control = outbox.create(1, 0)
-    let outside = test_account(f.ctx, 2, 0, outside_output.handle(), outside_control.handle())
-    leave(f.ctx, outside.handle(), 0, true, &excluded)!!
-    check.assert(outside_control.receive()!.is_empty(), "unjoined disconnect also commits its control signal")
-    check.assert(!domain.read_from(outside.read_handle(), account_view)!.route.live, "unjoined disconnect marks account inactive")
+    var output = outbox.create_with_policy(1, 1, outbox.Overflow.Disconnect(control.handle()))
+    let alice = test_account(f.ctx, 1, 1, output.handle())
+    let text = "overflow"
+    say(f.ctx, alice.handle(), 1, &text)!!
+    // No retry_command or post-commit close ran: publication closes the signal.
+    check.assert(control.receive().is_none(), "overflow closes the independent signal at commit")
+    check.assert(output.receive().is_none(), "oversized target batch is wholly discarded")
+    check.assert(balance(&alice) == 400, "overflow still commits the debit")
+    check.assert(run_command(f.ctx, 1, Command.Disconnect), "normal session cleanup")
+    forget(Client { host: f.ctx, id: 1 })
+    check.assert(!domain.query_from(f.room.read_handle(), member_value, 1)!, "cleanup removes membership")
 }
 fn verify_closed_output() @suspends {
     let f = fixture()
-    var queue = outbox.create(4, 256)
     let stop = outbox.create(1, 0)
-    let closed = outbox.create(4, 256)
+    var queue = outbox.create_with_policy(4, 256, outbox.Overflow.Disconnect(stop.handle()))
     var closed_stop = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, queue.handle(), stop.handle())
-    let bob = test_account(f.ctx, 2, 1, closed.handle(), closed_stop.handle())
+    let closed = outbox.create_with_policy(4, 256, outbox.Overflow.Disconnect(closed_stop.handle()))
+    let alice = test_account(f.ctx, 1, 1, queue.handle())
+    let bob = test_account(f.ctx, 2, 1, closed.handle())
     outbox.close(closed.handle())
-    check.assert(handle_line(f.ctx, 1, "say retry"), "closed target evicted")
-    expect_message(&mut queue, "left r 2\n")
+    check.assert(handle_line(f.ctx, 1, "say retry"), "closed target does not reject commit")
     expect_message(&mut queue, "message r 1 retry\n")
+    check.assert(run_command(f.ctx, 2, Command.Disconnect), "closed session cleanup")
+    forget(Client { host: f.ctx, id: 2 })
+    expect_message(&mut queue, "left r 2\n")
     check.assert(closed_stop.receive().is_none(), "closed output signals session")
-    check.assert(balance(&alice) == 400 && balance(&bob) == 500, "closed batch never double-charges")
+    check.assert(balance(&alice) == 400 && balance(&bob) == 500, "closed target never causes replay")
 }
 fn verify_wide_broadcast() @suspends {
     let f = fixture()
@@ -208,8 +209,8 @@ fn verify_wide_broadcast() @suspends {
     var accounts = Array.new::<domain.Owner<Account>>()
     var i: UInt64 = 0
     while i < 260 {
-        let queue = outbox.create(2, 128)
-        accounts.push(test_account(f.ctx, i + 1, 1, queue.handle(), control.handle()))
+        let queue = outbox.create_with_policy(2, 128, outbox.Overflow.Disconnect(control.handle()))
+        accounts.push(test_account(f.ctx, i + 1, 1, queue.handle()))
         queues.push(queue)
         i += 1
     }
@@ -223,16 +224,15 @@ fn verify_wide_broadcast() @suspends {
 }
 fn verify_room_resolution_changes_before_operation() @suspends {
     let f = fixture()
-    var queue = outbox.create(8, 1024)
     let control = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, queue.handle(), control.handle())
+    var queue = outbox.create_with_policy(8, 1024, outbox.Overflow.Disconnect(control.handle()))
+    let alice = test_account(f.ctx, 1, 1, queue.handle())
     let before = domain.read_from(alice.read_handle(), account_view)!
     check.assert(handle_line(f.ctx, 1, "join other"), "concurrent room change")
     expect_message(&mut queue, "left r 1\n")
     expect_message(&mut queue, "joined other 1\n")
-    let excluded = Array.new::<UInt64>()
     let text = "stale"
-    match say(f.ctx, alice.handle(), before.room, &text, &excluded) {
+    match say(f.ctx, alice.handle(), before.room, &text) {
         Ok(Err(Changed)) => {}, _ => { check.assert(false, "stale resolution rejects before charging") }
     }
     check.assert(balance(&alice) == 500, "rejected resolution never charges")
@@ -251,7 +251,7 @@ fn verify_chat_queue_domain() @suspends {
     verify_byte_capacity()
     verify_simultaneous_capacity()
     verify_closed_output()
-    verify_atomic_disconnect_signal()
+    verify_atomic_overflow_signal()
     verify_wide_broadcast()
 }
 
@@ -261,9 +261,9 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     host.config.reclaim_empty = true
     host.config.max_rooms = 2
     let ctx = host
-    var queue = outbox.create(8, 1024)
     let stop = outbox.create(1, 0)
-    let alice = test_account(ctx, 1, 1, queue.handle(), stop.handle())
+    var queue = outbox.create_with_policy(8, 1024, outbox.Overflow.Disconnect(stop.handle()))
+    let alice = test_account(ctx, 1, 1, queue.handle())
     check.assert(handle_line(ctx, 1, "leave"), "leave before reclaim")
     expect_message(&mut queue, "left r 1\n")
     check.assert(room_handle(ctx, 1).is_none(), "empty root removed from directory")
@@ -284,14 +284,12 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     check.assert(!host.rooms.remove(1, old.read_only()), "old cleanup cannot delete a replacement")
     check.assert(handle_line(ctx, 1, "join r"), "join replacement room")
     expect_message(&mut queue, "joined r 1\n")
-    let bob_queue = outbox.create(1, 64)
     let bob_stop = outbox.create(1, 0)
-    let bob = test_account(ctx, 2, 1, bob_queue.handle(), bob_stop.handle())
+    let bob_queue = outbox.create_with_policy(1, 64, outbox.Overflow.Disconnect(bob_stop.handle()))
+    let bob = test_account(ctx, 2, 1, bob_queue.handle())
     check.assert(handle_line(ctx, 2, "balance"), "fill another recipient")
-    host.config.max_evictions = 0
-    let bounded = host
-    check.assert(!run_command(bounded, 1, Command.Disconnect), "eviction budget refuses work without recursion")
-    check.assert(domain.read_from(alice.read_handle(), account_view)!.route.live, "refused operation did not partially disconnect")
+    check.assert(run_command(host, 1, Command.Disconnect), "full recipient does not block departure")
+    check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "departure commits immediately")
     forget(Client { host: host, id: 1 })
     check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "cleanup does not depend on queue space")
     let room = room_handle(ctx, 1)!
@@ -319,38 +317,35 @@ fn member_value(room: &Room, id: UInt64) -> Bool { member(room, id) }
 
 fn verify_unavailable_control_eviction() @suspends {
     let f = fixture()
-    var output = outbox.create(8, 1024)
     let stop = outbox.create(1, 0)
-    let slow_output = outbox.create(1, 64)
+    var output = outbox.create_with_policy(8, 1024, outbox.Overflow.Disconnect(stop.handle()))
     let slow_stop = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, output.handle(), stop.handle())
-    let bob = test_account(f.ctx, 2, 1, slow_output.handle(), slow_stop.handle())
+    let slow_output = outbox.create_with_policy(1, 64, outbox.Overflow.Disconnect(slow_stop.handle()))
+    let alice = test_account(f.ctx, 1, 1, output.handle())
+    let bob = test_account(f.ctx, 2, 1, slow_output.handle())
     check.assert(handle_line(f.ctx, 2, "balance"), "fill slow queue")
     outbox.close(slow_stop.handle())
-    check.assert(handle_line(f.ctx, 1, "say after-cleanup"), "failed eviction falls back to state-only cleanup")
+    check.assert(handle_line(f.ctx, 1, "say after-cleanup"), "closed control does not reject healthy delivery")
     expect_message(&mut output, "message r 1 after-cleanup\n")
-    check.assert(balance(&alice) == 400, "retry charges only after cleanup")
-    check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "excluded recipient must actually be removed")
+    check.assert(balance(&alice) == 400, "send charges once before cleanup")
+    check.assert(run_command(f.ctx, 2, Command.Disconnect), "closed control does not block cleanup")
+    forget(Client { host: f.ctx, id: 2 })
+    check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "session cleanup removes recipient")
 }
 
 fn retire_test_room(room: &mut Room, _: Unit) { room.retired = true }
 fn verify_move_rollback() @suspends {
     let f = fixture()
-    var output = outbox.create(8, 1024)
     let stop = outbox.create(1, 0)
-    var next_output = outbox.create(1, 128)
+    var output = outbox.create_with_policy(8, 1024, outbox.Overflow.Disconnect(stop.handle()))
     let next_stop = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, output.handle(), stop.handle())
-    let bob = test_account(f.ctx, 2, 2, next_output.handle(), next_stop.handle())
+    var next_output = outbox.create_with_policy(1, 128, outbox.Overflow.Disconnect(next_stop.handle()))
+    let alice = test_account(f.ctx, 1, 1, output.handle())
+    let bob = test_account(f.ctx, 2, 2, next_output.handle())
     check.assert(handle_line(f.ctx, 2, "balance"), "fill destination queue")
     let name = "other"
-    let excluded = Array.new::<UInt64>()
-    match join(f.ctx, alice.handle(), 1, 2, &name, &excluded) {
-        Err(OutboxFull(_)) => {}, _ => { check.assert(false, "move fails atomically on destination backpressure") }
-    }
-    expect_message(&mut next_output, "balance 5\n")
     domain.write_to(f.other.handle(), retire_test_room, {})!
-    match join(f.ctx, alice.handle(), 1, 2, &name, &excluded) {
+    match join(f.ctx, alice.handle(), 1, 2, &name) {
         Ok(Err(Changed)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
     }
     check.assert(domain.read_from(alice.read_handle(), account_view)!.room == 1, "failed moves preserve account room")
@@ -359,6 +354,7 @@ fn verify_move_rollback() @suspends {
     check.assert(balance(&alice) == 500 && balance(&bob) == 500, "failed moves do not charge")
     check.assert(run_command(f.ctx, 1, Command.Welcome), "sentinel after rejected moves")
     expect_message(&mut output, "welcome 1\n")
+    expect_message(&mut next_output, "balance 5\n")
     check.assert(handle_line(f.ctx, 2, "balance"), "sentinel after rejected arrival")
     expect_message(&mut next_output, "balance 5\n")
 }

@@ -7,14 +7,14 @@ import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTc
 #state
 struct Counts { lines: UInt64, closed: UInt64 }
 fn make(_: Unit) -> Counts { Counts { lines: 0, closed: 0 } }
-struct Context { counts: domain.WriteHandle<Counts>, output: outbox.Handle }
+struct Context { counts: domain.WriteHandle<Counts>, output: session.Output }
 fn line(ctx: &Context, _: &Unit, text: String) @suspends @noescape -> Bool {
     let counts = ctx.counts
     let output = ctx.output
     let quit = text.equals("bye")
     when "line" (mut counts) {
         counts.lines += 1
-        if !quit { let bytes = "pong\n".into_bytes(); outbox.emit(output, &bytes) }
+        if !quit { let bytes = "pong\n".into_bytes(); output.send(&bytes) }
     }!
     !quit
 }
@@ -25,7 +25,7 @@ fn closed(ctx: &Context, _: &Unit) @suspends @noescape {
         counts.closed += 1
         // Cleanup runs before the connection releases its queue owner.
         let bytes = "".into_bytes()
-        outbox.emit(output, &bytes)
+        output.send(&bytes)
     }!
 }
 fn peer(stream: TcpStream, scenario: UInt64) @suspends {
@@ -47,6 +47,7 @@ fn run(scenario: UInt64) @suspends {
     options.max_line_bytes = 5
     if scenario == 2 { options.idle_ms = 1 }
     let connection = session.create(options)
+    let control = connection.stop_handle()
     let owner = domain.create(make, {})
     let ctx = Context { counts: owner.handle(), output: connection.output() }
     let local = {}
@@ -54,7 +55,7 @@ fn run(scenario: UInt64) @suspends {
         race { | session.run(connection, stream, &ctx, &local, line, closed) | task.sleep_ms(1) }
         peer(peer_stream, scenario)
         var batch = outbox.batch(1, 0)
-        check.assert(match outbox.stage(&mut batch, ctx.output, "".into_bytes()) { Err(Closed) => true, _ => false }, "cancellation releases queue ownership")
+        check.assert(match outbox.stage(&mut batch, control, "".into_bytes()) { Err(Closed) => true, _ => false }, "cancellation releases queue ownership")
     } else {
         join { | session.run(connection, stream, &ctx, &local, line, closed) | peer(peer_stream, scenario) }
     }

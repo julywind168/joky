@@ -3,6 +3,7 @@ import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
 extern fn __outbox_create(messages:UInt64, bytes:UInt64) @suspends -> outbox.QueueOwner
+extern fn __outbox_create_disconnect(messages:UInt64, bytes:UInt64, control:UInt64) @suspends -> outbox.QueueOwner
 extern fn __outbox_handle(queue:&outbox.QueueOwner) @suspends -> UInt64
 extern fn __outbox_close(handle:UInt64) @suspends
 extern fn __outbox_batch(messages:UInt64, bytes:UInt64) @suspends -> outbox.BatchOwner
@@ -17,12 +18,23 @@ pub struct Handle { identity:UInt64 }
 impl Handle {
     // Stable identity for matching failed commit targets; it does not keep the queue alive.
     pub fn identity(&self) -> UInt64 { self.identity }
+    // Stage a message in the active when operation.
+    pub fn send(&self, bytes:&Array<UInt8>) { __emit(self.identity, bytes) }
+    pub fn close(&self) @suspends { __outbox_close(self.identity) }
 }
 pub type Batch = outbox.BatchOwner
 pub enum StageError { Full, Closed }
+// Disconnect closes the independent Reject control mailbox after commit.
+pub enum Overflow { Reject, Disconnect(Handle) }
 
 pub fn create(messages:UInt64, bytes:UInt64) @suspends -> Mailbox {
     Mailbox{storage:__outbox_create(messages,bytes)}
+}
+pub fn create_with_policy(messages:UInt64, bytes:UInt64, overflow:Overflow) @suspends -> Mailbox {
+    match overflow {
+        Reject => create(messages, bytes),
+        Disconnect(control) => Mailbox{storage:__outbox_create_disconnect(messages, bytes, control.identity)}
+    }
 }
 impl Mailbox {
     pub fn handle(&self) @suspends -> Handle { Handle{identity:__outbox_handle(&self.storage)} }
@@ -45,7 +57,7 @@ pub fn stage(batch:&mut Batch, handle:Handle, bytes:Array<UInt8>) @suspends -> R
     Err(StageError.Closed)
 }
 
-// Register bytes in the active when operation; publication is atomic with its state.
+// Register bytes in the active when operation; target policy is applied at commit.
 #intrinsic("outbox.emit")
 fn __emit(token:UInt64,bytes:&Array<UInt8>)
 pub fn emit(handle:Handle,bytes:&Array<UInt8>) {

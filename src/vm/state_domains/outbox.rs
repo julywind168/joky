@@ -14,15 +14,26 @@ pub(super) struct Mailbox {
     max_bytes: usize,
     bytes: usize,
     closed: bool,
+    overflowed: bool,
+    control: Weak<RefCell<Mailbox>>,
     messages: VecDeque<Message>,
     waiter: Option<TaskWaker>,
     _charge: reads::Charge,
 }
 impl Mailbox {
     fn close(&mut self) {
+        self.mark_closed();
+        self.wake();
+        if let Some(control) = self.control.upgrade() {
+            control.borrow_mut().close();
+        }
+    }
+    fn mark_closed(&mut self) {
         self.closed = true;
         self.messages.clear();
         self.bytes = 0;
+    }
+    fn wake(&self) {
         if let Some(waker) = &self.waiter {
             waker.wake();
         }
@@ -47,7 +58,8 @@ struct Staged {
 }
 struct Target {
     token: u64,
-    queue: Rc<RefCell<Mailbox>>,
+    queue: Option<Rc<RefCell<Mailbox>>>,
+    disconnect: bool,
 }
 pub(super) struct Batch {
     registry: u64,
@@ -73,6 +85,18 @@ fn vector<T>(capacity: usize) -> Result<Vec<T>, Error> {
     Ok(values)
 }
 fn create(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<Owner, Error> {
+    create_with_control(registry, messages, bytes, None)
+}
+// The low token bit retains the overflow policy even after the owner is gone.
+fn disconnect_policy(token: u64) -> bool {
+    token & 1 != 0
+}
+fn create_with_control(
+    registry: &Rc<RefCell<Domains>>,
+    messages: u64,
+    bytes: u64,
+    control: Option<u64>,
+) -> Result<Owner, Error> {
     let max_messages = size(messages)?;
     let max_bytes = size(bytes)?;
     if max_messages == 0 {
@@ -82,6 +106,22 @@ fn create(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<
     if domains.shutting_down {
         return Err(invalid("Outbox executor is closed"));
     }
+    let signal = match control {
+        Some(token) => {
+            let signal = domains
+                .outboxes
+                .get(&token)
+                .and_then(Weak::upgrade)
+                .ok_or_else(|| invalid("Disconnect control mailbox is closed or foreign"))?;
+            if disconnect_policy(token) || signal.borrow().closed {
+                return Err(invalid(
+                    "Disconnect requires an open Reject control mailbox",
+                ));
+            }
+            Rc::downgrade(&signal)
+        }
+        None => Weak::new(),
+    };
     let overhead = max_messages
         .checked_mul(std::mem::size_of::<Message>())
         .and_then(|n| {
@@ -101,13 +141,18 @@ fn create(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<
         .outboxes
         .try_reserve(1)
         .map_err(|_| limited("Outbox registry allocation failed"))?;
-    let token = source::next_token()?;
+    let token = source::next_token()?
+        .checked_mul(2)
+        .and_then(|token| token.checked_add(u64::from(control.is_some())))
+        .ok_or_else(|| limited("Outbox identity exhausted"))?;
     let queue = Rc::new(RefCell::new(Mailbox {
         registry: domains.identity,
         max_messages,
         max_bytes,
         bytes: 0,
         closed: false,
+        overflowed: false,
+        control: signal,
         messages: queue,
         waiter: None,
         _charge: charge,
@@ -166,11 +211,12 @@ impl Batch {
         }
         if self.failure.is_none() {
             if domains.shutting_down
-                || domains
-                    .outboxes
-                    .get(&token)
-                    .and_then(Weak::upgrade)
-                    .is_none_or(|q| q.borrow().closed)
+                || (!disconnect_policy(token)
+                    && domains
+                        .outboxes
+                        .get(&token)
+                        .and_then(Weak::upgrade)
+                        .is_none_or(|q| q.borrow().closed))
             {
                 self.failure = Some(Status::OutboxClosed);
                 self.failed_target = Some(token);
@@ -232,25 +278,31 @@ impl Batch {
                 cursor += 1;
             }
             self.failed_target = Some(token);
-            let target = domains
-                .outboxes
-                .get(&token)
-                .and_then(Weak::upgrade)
-                .ok_or(Status::OutboxClosed)?;
-            {
-                let queue = target.borrow();
-                if queue.closed {
-                    return Err(Status::OutboxClosed);
+            let target = domains.outboxes.get(&token).and_then(Weak::upgrade);
+            let failure = match &target {
+                None => Some(Status::OutboxClosed),
+                Some(target) => {
+                    let queue = target.borrow();
+                    if queue.closed {
+                        Some(Status::OutboxClosed)
+                    } else if count > queue.max_messages - queue.messages.len()
+                        || bytes > queue.max_bytes - queue.bytes
+                    {
+                        Some(Status::OutboxFull)
+                    } else {
+                        None
+                    }
                 }
-                if count > queue.max_messages - queue.messages.len()
-                    || bytes > queue.max_bytes - queue.bytes
-                {
-                    return Err(Status::OutboxFull);
+            };
+            if let Some(status) = failure {
+                if !disconnect_policy(token) {
+                    return Err(status);
                 }
             }
             self.targets.push(Target {
                 token,
                 queue: target,
+                disconnect: failure.is_some(),
             });
         }
         self.failed_target = None;
@@ -263,16 +315,40 @@ impl Batch {
                 .targets
                 .binary_search_by_key(&message.token, |t| t.token)
                 .unwrap();
-            let mut queue = self.targets[index].queue.borrow_mut();
+            let target = &self.targets[index];
+            if target.disconnect {
+                continue;
+            }
+            let mut queue = target.queue.as_ref().unwrap().borrow_mut();
             queue.bytes += message.message.bytes.len();
             queue.messages.push_back(message.message);
+        }
+        // All Reject targets passed preflight before any overflow becomes visible.
+        // Closing is allocation-free; notifications wait until all roots/messages publish.
+        for target in &self.targets {
+            if target.disconnect {
+                if let Some(queue) = &target.queue {
+                    let mut queue = queue.borrow_mut();
+                    queue.overflowed = true;
+                    queue.mark_closed();
+                    if let Some(control) = queue.control.upgrade() {
+                        control.borrow_mut().mark_closed();
+                    }
+                }
+            }
         }
     }
     // Notifications are deliberately outside the root/message publication interval.
     pub(super) fn wake(&self) {
         for target in &self.targets {
-            if let Some(waker) = &target.queue.borrow().waiter {
-                waker.wake();
+            if let Some(queue) = &target.queue {
+                let queue = queue.borrow();
+                queue.wake();
+                if target.disconnect {
+                    if let Some(control) = queue.control.upgrade() {
+                        control.borrow().wake();
+                    }
+                }
             }
         }
     }
@@ -325,6 +401,16 @@ unsafe fn poll_inner(
     op: Operation,
 ) -> Result<Option<u64>, Error> {
     match op {
+        Operation::OutboxCreateDisconnect => adopt(
+            arena,
+            create_with_control(
+                registry,
+                frame.slots[0],
+                frame.slots[1],
+                Some(frame.slots[2]),
+            )?,
+        )
+        .map(Some),
         Operation::OutboxCreate => {
             adopt(arena, create(registry, frame.slots[0], frame.slots[1])?).map(Some)
         }

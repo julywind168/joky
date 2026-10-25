@@ -14,12 +14,16 @@ pub struct Options {
 pub fn defaults() -> Options {
     Options { max_line_bytes: 4096, queue_messages: 64, queue_bytes: 65536, idle_ms: 0 }
 }
+// Copyable output endpoint; send stages bytes in when, close stops the session.
+pub type Output = outbox.Handle
 pub struct Connection { outgoing: outbox.Mailbox, control: outbox.Mailbox, options: Options }
 pub fn create(options: Options) @suspends -> Connection {
-    Connection { outgoing: outbox.create(options.queue_messages, options.queue_bytes), control: outbox.create(1, 0), options: options }
+    let control = outbox.create(1, 0)
+    let outgoing = outbox.create_with_policy(options.queue_messages, options.queue_bytes, outbox.Overflow.Disconnect(control.handle()))
+    Connection { outgoing: outgoing, control: control, options: options }
 }
 impl Connection {
-    pub fn output(&self) @suspends -> outbox.Handle { self.outgoing.handle() }
+    pub fn output(&self) @suspends -> Output { self.outgoing.handle() }
     pub fn stop_handle(&self) @suspends -> outbox.Handle { self.control.handle() }
 }
 fn read(reader: &mut BufferedTcpReader, limit: UInt64) @suspends -> Option<String> {

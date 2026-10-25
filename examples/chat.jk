@@ -34,8 +34,7 @@ fn connection(
         host: host,
         owners: owners.handle(),
         id: id,
-        output: connection.output(),
-        stop: connection.stop_handle()
+        output: connection.output()
     }
     let client = Client { host: host, id: id }
     if engine.entries.init_account.try_call(&engine.vm, input).is_err() || !refresh(engine) {

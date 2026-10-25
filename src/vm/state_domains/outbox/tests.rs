@@ -3,10 +3,14 @@ use crate::runtime::executor::HostExecutor;
 use crate::vm::VmMode;
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/outbox.jk");
-fn cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive: bool) {
+fn cancellation(
+    source: &str,
+    boundaries: impl Clone + IntoIterator<Item = usize>,
+    exhaustive: bool,
+) {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut host = VmEngine::with_mode(mode);
-        host.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+        host.load_source(source).unwrap_or_else(|e| panic!("{e}"));
         if mode == VmMode::Interpreter {
             host.set_interpreter_limits(InterpreterLimits {
                 poll_budget: Some(1),
@@ -68,14 +72,30 @@ fn cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive:
 #[test]
 fn outbox_generated_cancellation_reclaims_batches_messages_and_waiters() {
     cancellation(
+        SOURCE,
         [0, 1, 2, 3, 5, 10, 20, 50, 100, 200, 400, 800, 1600, 3200],
+        false,
+    );
+}
+#[test]
+fn outbox_policy_cancellation_reclaims_outputs_and_control_links() {
+    cancellation(
+        include_str!("../../../../tests/fixtures/outbox_policies.jk"),
+        [
+            0, 1, 2, 3, 5, 10, 20, 50, 100, 200, 400, 800, 1600, 3200, 6400,
+        ],
         false,
     );
 }
 #[test]
 #[ignore = "exhaustive: cancel outbox staging, atomic commits, and receive at every interpreter instruction"]
 fn exhaustive_outbox_cancellation() {
-    cancellation(0..=16384, true);
+    cancellation(SOURCE, 0..=16384, true);
+    cancellation(
+        include_str!("../../../../tests/fixtures/outbox_policies.jk"),
+        0..=32768,
+        true,
+    );
 }
 
 #[test]
@@ -367,7 +387,8 @@ fn operation(h:domain.WriteHandle<S>,target:outbox.Handle,zero:Int32) @suspends 
             let owner = vm
                 .create_domain("make", &[InstanceValue::Int32(7)])
                 .unwrap();
-            let queue = create(&vm.domains, 2, 32).unwrap();
+            let control = create(&vm.domains, 1, 0).unwrap();
+            let queue = create_with_control(&vm.domains, 1, 0, Some(control.token)).unwrap();
             let baseline = vm.domains.borrow().budget.bytes.get();
             let live = crate::runtime::arena::LIVE.with(Cell::get);
             let output = Rc::new(RefCell::new(vec![0; 3]));
@@ -410,6 +431,8 @@ fn operation(h:domain.WriteHandle<S>,target:outbox.Handle,zero:Int32) @suspends 
             }
             drop(request);
             assert!(queue.queue.borrow().messages.is_empty(), "{case}");
+            assert!(!queue.queue.borrow().overflowed, "{case}");
+            assert!(!control.queue.borrow().closed, "{case}");
             assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
             assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline, "{case}");
             assert_eq!(crate::runtime::arena::LIVE.with(Cell::get), live, "{case}");
@@ -422,9 +445,180 @@ fn operation(h:domain.WriteHandle<S>,target:outbox.Handle,zero:Int32) @suspends 
                 read.take_result(),
                 Some(DomainOutcome::Value(InstanceValue::Int32(7)))
             ));
-            drop(queue);
+            drop((queue, control));
             owner.close();
             assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
         }
     }
+}
+
+#[test]
+fn session_overflow_cancels_a_blocked_writer_and_runs_membership_cleanup() {
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+    thread_local! { static OUTPUT: Cell<u64> = const { Cell::new(0) }; }
+    extern "C" fn output(token: u64) {
+        OUTPUT.with(|slot| slot.set(token));
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut vm = VmEngine::with_mode(mode);
+        // SAFETY: The callback has the registered scalar ABI and lives for the test.
+        unsafe {
+            vm.register_fn(
+                "output_ready",
+                crate::FunctionSignature::new(vec![Type::UInt64], Type::Unit),
+                output as *const u8,
+            )
+            .unwrap();
+        }
+        vm.load_source(&format!(r#"
+import joky/session import joky/domain
+import joky/tcp.{{type TcpStream, type Address}}
+extern fn output_ready(token:UInt64)
+#state
+struct Membership {{ live:Bool, closed:Int32 }}
+fn make(_:Unit)->Membership {{ Membership{{live:true,closed:0}} }}
+fn line(_member: &domain.WriteHandle<Membership>, _context: &Unit, _text:String) @suspends @noescape ->Bool {{ true }}
+fn closed(handle: &domain.WriteHandle<Membership>, _: &Unit) @suspends @noescape {{
+    let member=*handle
+    when(mut member) {{ member.live=false; member.closed+=1 }}!
+}}
+fn main() @suspends ->Int32 {{
+    let stream=TcpStream.connect(Address.ipv4(0x7f000001,{port}))!
+    var options=session.defaults()
+    options.queue_messages=1
+    options.queue_bytes=65536
+    let connection=session.create(options)
+    let output=connection.output()
+    output_ready(output.identity())
+    let owner=domain.create(make,{{}})
+    let member=owner.handle()
+    let context={{}}
+    session.run(connection,stream,&member,&context,line,closed)
+    when(member) {{ if !member.live && member.closed==1 {{42}} else {{0}} }}!
+}}
+"#)).unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        OUTPUT.with(|slot| slot.set(0));
+        vm.executor
+            .spawn(&TaskGroup::new(), vm.prepare_async("main", &[]).unwrap())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut peer = None;
+        while OUTPUT.with(Cell::get) == 0 || peer.is_none() {
+            let report = vm.poll_tasks(100).unwrap();
+            assert!(report.completed.is_empty());
+            if peer.is_none() {
+                match listener.accept() {
+                    Ok((stream, _)) => peer = Some(stream),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => panic!("{e}"),
+                }
+            }
+            assert!(Instant::now() < deadline, "connection did not start");
+            if report.polled == 0 {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let token = OUTPUT.with(Cell::get);
+        let queue = vm.domains.borrow().outboxes[&token].upgrade().unwrap();
+        let control = queue.borrow().control.upgrade().unwrap();
+        let payload = vec![42; 65536];
+        let mut blocked = false;
+        for _ in 0..128 {
+            let mut send = batch(&vm.domains, 1, payload.len() as u64).unwrap();
+            send.stage(&vm.domains.borrow(), token, &payload).unwrap();
+            send.prepare(&vm.domains.borrow()).unwrap();
+            send.publish();
+            send.wake();
+            let mut idle = 0;
+            while idle < 3 {
+                let report = vm.poll_tasks(100).unwrap();
+                assert!(report.completed.is_empty(), "session ended before overflow");
+                if report.polled == 0 {
+                    idle += 1;
+                    std::thread::sleep(Duration::from_millis(1));
+                } else {
+                    idle = 0;
+                }
+                assert!(Instant::now() < deadline, "writer did not become idle");
+            }
+            if !queue.borrow().messages.is_empty() {
+                blocked = true;
+                break;
+            }
+        }
+        assert!(blocked, "non-reading peer must cause real TCP backpressure");
+        assert!(
+            queue.borrow().waiter.is_none(),
+            "writer is waiting on TCP, not receive"
+        );
+        assert!(!control.borrow().closed);
+        let mut overflow = batch(&vm.domains, 1, 1).unwrap();
+        overflow.stage(&vm.domains.borrow(), token, &[1]).unwrap();
+        overflow.prepare(&vm.domains.borrow()).unwrap();
+        overflow.publish();
+        overflow.wake();
+        assert!(queue.borrow().overflowed && control.borrow().closed);
+        drop((overflow, queue, control));
+        // Keep the peer open and unread: only the independent control signal can finish.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut results = Vec::new();
+        while vm.executor.task_count() != 0 {
+            let report = vm.poll_tasks(100).unwrap();
+            results.extend(report.completed);
+            assert!(
+                Instant::now() < deadline,
+                "{mode:?}: blocked writer was not cancelled"
+            );
+            if report.polled == 0 {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].result, Ok(42));
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        assert!(vm.domains.borrow().outboxes.is_empty());
+        crate::runtime::tcp::LIVE.with(|live| assert_eq!(live.get(), 0));
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+        drop(peer);
+    }
+}
+
+#[test]
+fn disconnect_control_validation_and_failed_creation_preserve_ownership() {
+    let vm = VmEngine::new();
+    let other = VmEngine::new();
+    let foreign = create(&other.domains, 1, 0).unwrap();
+    assert!(create_with_control(&vm.domains, 1, 1, Some(foreign.token)).is_err());
+    let control = create(&vm.domains, 1, 0).unwrap();
+    let output = create_with_control(&vm.domains, 1, 1, Some(control.token)).unwrap();
+    assert!(create_with_control(&vm.domains, 1, 1, Some(output.token)).is_err());
+    drop(output);
+    assert!(control.queue.borrow().closed);
+    assert!(create_with_control(&vm.domains, 1, 1, Some(control.token)).is_err());
+    drop(control);
+    let control = create(&vm.domains, 1, 0).unwrap();
+    let baseline = vm.domains.borrow().budget.bytes.get();
+    vm.domains.borrow().budget.limit.set(baseline);
+    assert!(create_with_control(&vm.domains, 1, 1, Some(control.token)).is_err());
+    assert!(
+        !control.queue.borrow().closed,
+        "failed creation does not close its signal"
+    );
+    assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+    vm.domains.borrow().budget.limit.set(usize::MAX);
+    let output = create_with_control(&vm.domains, 1, 1, Some(control.token)).unwrap();
+    let weak = Rc::downgrade(&control.queue);
+    drop(control);
+    assert!(
+        weak.upgrade().is_none(),
+        "output must not retain control ownership"
+    );
+    output.queue.borrow_mut().close();
+    drop(output);
+    assert!(vm.domains.borrow().outboxes.is_empty());
+    assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
 }

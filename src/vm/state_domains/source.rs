@@ -783,6 +783,7 @@ pub(crate) unsafe fn poll(
         | Operation::DirectoryLookup
         | Operation::DirectoryFound => super::directory::poll(arena, frame, &registry, op)?,
         Operation::OutboxCreate
+        | Operation::OutboxCreateDisconnect
         | Operation::OutboxHandle
         | Operation::OutboxClose
         | Operation::OutboxBatch

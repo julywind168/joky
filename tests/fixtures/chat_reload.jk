@@ -38,14 +38,14 @@ fn verify_online(input: Probe) @suspends {
     f.ctx.directory.insert(2, sync.handle())!
     var queue = outbox.create(8, 1024)
     let stop = outbox.create(1, 0)
-    let alice = test_account(f.ctx, 1, 1, queue.handle(), stop.handle())
+    let alice = test_account(f.ctx, 1, 1, queue.handle())
     check.assert(handle_line(f.ctx, 1, "say queued"), "queue an old-version message")
     check.assert(handle_line(f.ctx, 1, "say paused"), "old flow enters the published operation")
     check.assert(domain.read_from(sync.read_handle(), probe_view)!.attempts == 1, "operation selects current code after dependency resolution")
     check.assert(balance(&alice) == 200, "old flow uses the published two-yuan fee once")
     // This old continuation creates another root after the publication boundary.
     let late_queue = outbox.create(4, 256)
-    let late = test_account(f.ctx, 2, 0, late_queue.handle(), stop.handle())
+    let late = test_account(f.ctx, 2, 0, late_queue.handle())
     let stale = candidate(f.ctx, late.handle(), "late ghost\n")
     var resume = outbox.create(1, 0)
     domain.write_to(sync.handle(), set_probe_resume, resume.handle())!

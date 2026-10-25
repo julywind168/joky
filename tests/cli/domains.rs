@@ -663,6 +663,17 @@ fn outbox_atomic_publication_runs_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn outbox_overflow_policies_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "policies.jk",
+        include_str!("../fixtures/outbox_policies.jk"),
+    );
+    work.assert_all_backends("policies.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn outbox_tcp_writer_runs_in_all_backends() {
     let work = Workspace::new();
     work.write("outbox.jk", include_str!("../fixtures/outbox_tcp.jk"));

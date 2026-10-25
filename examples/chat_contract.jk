@@ -7,14 +7,13 @@ import joky/option.{type Option}
 pub struct Config {
     pub connection: session.Options,
     pub retries: UInt64,
-    pub max_evictions: UInt64,
     pub max_rooms: UInt64,
     pub max_clients: UInt64,
     pub room_wait_ms: UInt64,
     pub reclaim_empty: Bool
 }
 pub fn defaults() -> Config {
-    Config { connection: session.defaults(), retries: 64, max_evictions: 512,
+    Config { connection: session.defaults(), retries: 64,
         max_rooms: 4096, max_clients: 512, room_wait_ms: 5000, reclaim_empty: true }
 }
 pub struct Host {
@@ -33,8 +32,7 @@ pub struct AccountInit {
     pub host: Host,
     pub owners: domain.DirectoryHandle,
     pub id: UInt64,
-    pub output: outbox.Handle,
-    pub stop: outbox.Handle,
+    pub output: session.Output,
 }
 
 pub struct Contract {

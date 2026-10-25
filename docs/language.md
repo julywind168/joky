@@ -3638,7 +3638,8 @@ fn main() @suspends -> Int32 {
   可通过具名辅助函数包含 `when`。
 - `outbox.emit(handle, &bytes)` 在当前操作内登记 `Array<UInt8>` 消息，可通过同步业务辅助函数调用。
   它复制字节到有界暂存批次，不执行 I/O；正常成功时所有目标容量验证、状态替换与消息入队
-  在同一轮完成，再唤醒接收者。业务 Err、运行异常、资源不足或任一队列拒绝均丢弃整批。
+  在同一轮完成，再唤醒接收者。业务 Err、运行异常、资源不足或任一 Reject 队列拒绝均丢弃整批；
+  Disconnect 目标满或关闭时只丢弃该目标整批消息并停止其会话，规则见出站信箱章节。
   `DomainAccessError.OutboxFull(UInt64)` / `OutboxClosed(UInt64)` 携带失败队列身份。
   每次操作默认最多 1024 条、1 MiB 消息；宿主通过 `DomainLimits.max_operation_messages` /
   `max_operation_bytes` 配置，批次自身超限返回 `ResourceLimit`。描述符和字节均计入域预算。
@@ -4414,18 +4415,22 @@ Rust 宿主使用 `VmEngine::domain_periodic_status(handle, method)` 和 `joky::
 在进程内不复用，操作只查当前执行器的注册表；旧句柄不会指向重建的连接。句柄也具备显式
 关闭能力，不能把它当作跨进程连接 ID。
 
-| API（均为 `@suspends`） | 行为 |
+| API（除 `identity`／`send` 外均为 `@suspends`） | 行为 |
 | --- | --- |
-| `outbox.create(messages: UInt64, bytes: UInt64) -> Mailbox` | 创建数量与有效载荷字节双限额的 FIFO；数量必须大于 0，允许零字节容量 |
+| `outbox.create(messages: UInt64, bytes: UInt64) -> Mailbox` | 创建数量与有效载荷字节双限额的 Reject FIFO；数量必须大于 0，允许零字节容量 |
+| `outbox.create_with_policy(messages, bytes, overflow: Overflow) -> Mailbox` | 显式指定 Reject 或 Disconnect(control) 策略 |
 | `Mailbox.handle(&self) -> Handle` | 返回弱句柄 |
 | `Handle.identity(&self) -> UInt64` | 返回不复用的身份，用于匹配提交失败的目标 |
+| `Handle.send(&self, bytes: &Array<UInt8>)` | 在当前 `when` 内暂存消息，等价于 `outbox.emit`；普通同步写入不允许调用 |
+| `Handle.close(&self)` | 等价于 `outbox.close` |
 | `Mailbox.receive(&mut self) -> Option<Array<UInt8>>` | 取出一条消息并立即归还数量与字节容量；空队列挂起并注册唤醒；关闭返回 None，空消息返回 Some(empty) |
 | `outbox.close(handle: Handle)` | 幂等关闭，丢弃队列中的消息并唤醒接收方；Mailbox 析构也会关闭 |
 | `outbox.batch(messages: UInt64, bytes: UInt64) -> Batch` | 创建暂存批次；按给定消息数预分配，无固定条数上限，允许零条空批次；字节上限独立于信箱上限 |
 | `outbox.stage(batch: &mut Batch, target: Handle, bytes: Array<UInt8>) -> Result<Unit, StageError>` | 消费输入数组，复制到批次独立存储；不发送、不等待队列容量 |
 
 `StageError` 为 Full 或 Closed。一次暂存失败会使整个批次失效，之后不能提交成功；即使忽略
-返回错误，也不会只发布此前暂存的消息。无效或属于另一执行器的目标视为 Closed。批次资源
+返回错误，也不会只发布此前暂存的消息。Reject 的失效或其他执行器目标视为 Closed；
+Disconnect 的不可用目标只丢弃消息，句柄仍不授予其他执行器的访问权。批次资源
 本身跨执行器使用则报运行时错误。分配失败也走运行时错误通道。所有暂存字节、排队消息和
 预分配的队列/批次元数据纳入当前执行器的 `DomainLimits.max_state_bytes`，任务侧资源包装
 另计 arena 配额；不把消息挂在永久任务 arena 上。
@@ -4457,11 +4462,27 @@ fn update(h: domain.WriteHandle<State>, target: outbox.Handle) @suspends -> doma
 每个候选或候选集合只接受一个批次；给单候选附加后再扩展为双候选时，批次随整个提交保留。
 批次可含多个目标，同一目标的消息按暂存顺序发布。
 
-提交先验证完整读取凭据、代码版本、截止时间和状态生命周期，再一次检查所有目标的容量
-（包括重复目标的合计消息与字节数）。任一目标已关闭返回新增的 `OutboxClosed`，容量不足或
-批次曾暂存溢出返回 `OutboxFull`；三种回执共用的 CommitError 提供这两个结果。拒绝时所有根和
-消息均不发布；成功时根、消息和提交回执在同一无挂起区间发布，然后唤醒接收方。普通
-`domain.write_to` 和可失败的原地写入不隐式获得消息回滚能力。
+`Overflow` 提供 `Reject` 与 `Disconnect(control: Handle)`。控制信箱必须是当前执行器中
+仍打开的 Reject 信箱；连接作用域持有其所有者，输出信箱只保存弱关联，不延长它的生命周期。
+显式关闭或销毁 Disconnect 信箱也会关闭其控制信箱。多个输出可关联同一控制信箱，关闭其中
+任意一个即停止共同的接收方。
+
+提交先验证完整读取凭据、代码版本、截止时间和状态生命周期，再汇总同一目标的消息数和字节数：
+
+- `Reject` 保持状态与全部目标消息联合入队的保证：目标关闭返回 `OutboxClosed`，容量不足返回
+  `OutboxFull`；显式 Batch 曾暂存溢出也返回 `OutboxFull`。拒绝时所有根、消息和溢出处理均不发布。
+- `Disconnect` 的目标满、关闭或所有者已销毁，不拒绝提交。本次提交发往该目标的消息全部丢弃，
+  仍存活的目标标记溢出并关闭，丢弃旧排队消息，同时关闭关联的 control 信箱。其他目标照常投递。
+  这明确放宽为“状态已提交，部分收件人未收到本次消息”，不允许同一目标只收到本批的一部分。
+- 混合批次必须先通过全部 Reject 检查，才允许投递或断开任何目标。control 的关闭不发送通知消息，
+  不占容量，也不分配资源；即使 control 已满，关闭也会丢弃其消息并唤醒等待者。
+  同批次若还向 control 发送消息，关闭优先，消息不会留在已关闭的 control 中。
+
+全部验证成功、进入无挂起发布区间即为提交点：之前的业务 Err、异常、资源不足和取消丢弃候选
+及消息，不断开目标；之后发布根、消息、溢出状态与回执，取消不撤销这些效果。Local 执行器
+在同一轮次内完成检查与发布，无其他任务抢占容量。状态域仍不支持多 worker；未来并行实现必须
+提供容量预留或等价协调。`when` 自身的消息数／字节上限仍按 DomainLimits 检查，超限为
+ResourceLimit，不能因目标可丢弃而绕过。普通 `domain.write_to` 不隐式获得消息回滚能力。
 
 三种回执都提供 `failed_outbox(&self) @suspends -> Option<UInt64>`：在 `wait()` 返回
 OutboxFull／OutboxClosed 后，Some(identity) 指出本次检查遇到的一个失败目标，可与
@@ -4475,7 +4496,7 @@ OutboxFull／OutboxClosed 后，Some(identity) 指出本次检查遇到的一个
 
 等待提交前丢弃候选或取消未完成回执，会清理消息批次；取消已经提交的回执不会撤销消息。
 接收只出队一次；取消可能丢弃已经出队、尚未写完的消息。出队后字节所有权归接收任务，
-信箱关闭不会回滚在途网络发送。这里保证内存中的联合发布，不保证网络送达或 exactly-once。
+信箱关闭不会回滚在途网络发送。Reject 保证内存中的联合发布，Disconnect 允许丢弃目标整批消息；两者均不保证网络送达或 exactly-once。
 写出任务可直接把收到的数组交给 `TcpWriter.write_all`，完整示例见
 [出站信箱 TCP 测试](../tests/fixtures/outbox_tcp.jk)。
 
@@ -5333,8 +5354,12 @@ scope 主体直接声明的局部值保留到 join 完成；return、break、con
 行长含结束符，容量沿用 TCP／outbox 的有效范围。`idle_ms = 0` 关闭超时；非零值限制
 等到下一条完整行的时间，零散字节不会重置期限。
 
-`create(options) @suspends -> Connection` 创建出站队列和控制队列；
-`Connection.output()`／`stop_handle()` 为挂起方法，返回可传给业务状态的弱 outbox.Handle。
+`create(options) @suspends -> Connection` 创建 Disconnect 出站队列和独立的 Reject 控制队列。
+`Connection.output() @suspends -> Output` 返回可复制、不保活连接的输出端；`Output` 是
+outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业务在 `when` 内调用
+`output.send(&bytes)`，无需创建批次或比较目标身份；`output.close() @suspends` 关闭输出并停止会话。
+`stop_handle()` 仍提供控制信箱的弱 Handle，兼容显式停止需求。输出溢出在提交区间关闭控制信箱，
+使 `race` 即使在 TCP 写阻塞时也能取消写分支；发送方无需清理慢客户端并重放业务。
 `run<S,T>(connection, stream, shared: &S, ctx: &T, on_line, on_close) @suspends`
 消费 Connection 和 TcpStream，沿用创建时的 Options，借用服务共享上下文与连接上下文。两个回调分别是
 `fn(&S,&T,String) @suspends @noescape -> Bool` 和

@@ -140,15 +140,16 @@ shutdown
 
 - [chat_contract.jk](examples/chat_contract.jk)：共享类型、入口契约和 `defaults()` 配置。
 - [chat_logic.jk](examples/chat_logic.jk)：从 `dispatch`／`handle_line` 进入；收费看 `say`，
-  换房看 `join`，离开与断线看 `leave`。重试／淘汰集中在 `run_command`／`retry_command`，
+  换房看 `join`，离开与断线看 `leave`。重试集中在 `run_command`／`retry_command`，
   房间创建、就绪与回收集中在文件后半部分。
 - [chat.jk](examples/chat.jk)：连接生命周期、房间初始化和服务启动。
 - [chat_admin.jk](examples/chat_admin.jk)：独立的发布与停机协议。
 
 修改连接策略只需调整 `defaults()`：默认每行 4096 字节（含结束符）、队列 64 条／64 KiB，
-最多 512 个连接、4096 个历史房间名，每条指令最多重算 64 次、淘汰 512 个慢客户端，
+最多 512 个连接、4096 个历史房间名，每条指令最多重算 64 次，
 房间创建最多等 5 秒。`connection.idle_ms = 0` 关闭完整行超时，`reclaim_empty = false` 保留空房；
-`max_evictions = 0` 拒绝需要淘汰的指令并结束当前连接。账户由连接作用域拥有，默认回收空房域，
+输出满或关闭时提交照常成功，慢连接通过独立控制信号断开，正常断线回调清理成员；
+健康成员先收到本次业务消息，不会因慢连接而回滚或重放。账户由连接作用域拥有，默认回收空房域，
 保留有界名字条目以供重建。状态、消息及活动帧另受运行时预算约束。
 
 宿主可用 `cargo run -- build examples/chat.jk` 编译为 AOT，业务脚本仍由内嵌 VM 动态编译。

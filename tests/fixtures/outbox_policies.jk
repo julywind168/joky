@@ -1,0 +1,90 @@
+import joky/domain
+import joky/outbox
+import joky/check
+
+#state
+struct State { n: Int32 }
+fn make(n: Int32) -> State { State { n: n } }
+fn value(state: &State) -> Int32 { state.n }
+fn send(target: outbox.Handle, text: String) {
+    let bytes = text.into_bytes()
+    target.send(&bytes)
+}
+fn expect(queue: &mut outbox.Mailbox, expected: String) @suspends {
+    let text = String.from_utf8(queue.receive()!)!
+    check.assert(text.equals(&expected), "target FIFO preserves the complete batch")
+}
+fn mixed(reverse: Bool, closed: Bool) @suspends {
+    let owner = domain.create(make, 0)
+    var signal = outbox.create(1, 0)
+    // Exercise both target ordering directions in the sorted commit preflight.
+    var first = outbox.create_with_policy(1, 2, if reverse { outbox.Overflow.Reject } else { outbox.Overflow.Disconnect(signal.handle()) })
+    var second = outbox.create_with_policy(1, 2, if reverse { outbox.Overflow.Disconnect(signal.handle()) } else { outbox.Overflow.Reject })
+    let reject = if reverse { first.handle() } else { second.handle() }
+    let disconnect = if reverse { second.handle() } else { first.handle() }
+    var healthy = outbox.create(4, 16)
+    let good = healthy.handle()
+    let control = signal.handle()
+    let state = owner.handle()
+    when (mut state) {
+        let bytes = "a".into_bytes()
+        reject.send(&bytes)
+        disconnect.send(&bytes)
+        send(control, "")
+    }!
+    if closed { reject.close() }
+    let result = when (mut state) {
+        state.n = 7
+        let bytes = "b".into_bytes()
+        disconnect.send(&bytes)
+        good.send(&bytes)
+        reject.send(&bytes)
+    }
+    check.assert(match result { Err(OutboxFull(_)) => !closed, Err(OutboxClosed(_)) => closed, _ => false }, "Reject rejects the entire mixed commit")
+    check.assert(domain.read_from(owner.read_handle(), value)! == 0, "mixed rejection preserves roots")
+    // Rejected commits neither discard the old output nor close its signal.
+    if reverse { expect(&mut second, "a") } else { expect(&mut first, "a") }
+    expect(&mut signal, "")
+    when (mut state) {
+        state.n = 9
+        let bytes = "c".into_bytes()
+        disconnect.send(&bytes)
+        disconnect.send(&bytes)
+        good.send(&bytes)
+        send(good, "d")
+        send(control, "")
+    }!
+    check.assert(domain.read_from(owner.read_handle(), value)! == 9, "Disconnect publishes roots")
+    check.assert(signal.receive().is_none(), "overflow closes even a full control mailbox")
+    if reverse { check.assert(second.receive().is_none(), "whole target batch discarded") }
+    else { check.assert(first.receive().is_none(), "whole target batch discarded") }
+    expect(&mut healthy, "c")
+    expect(&mut healthy, "d")
+    // A closed Disconnect target remains discardable; healthy targets still commit.
+    when (mut state) {
+        state.n += 1
+        send(disconnect, "closed")
+        send(good, "e")
+    }!
+    expect(&mut healthy, "e")
+    check.assert(domain.read_from(owner.read_handle(), value)! == 10, "closed output does not reject")
+}
+fn dropped_output() @suspends -> outbox.Handle {
+    let control = outbox.create(1, 0)
+    let output = outbox.create_with_policy(1, 1, outbox.Overflow.Disconnect(control.handle()))
+    output.handle()
+}
+fn dropped() @suspends {
+    let owner = domain.create(make, 0)
+    let target = dropped_output()
+    let state = owner.handle()
+    when (mut state) { state.n = 42; send(target, "gone") }!
+    check.assert(domain.read_from(owner.read_handle(), value)! == 42, "dropped output retains its policy without retaining ownership")
+}
+fn main() @suspends {
+    mixed(false, false)
+    mixed(true, false)
+    mixed(false, true)
+    mixed(true, true)
+    dropped()
+}

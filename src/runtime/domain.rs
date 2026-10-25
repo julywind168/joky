@@ -96,6 +96,7 @@ pub(crate) enum Operation {
     PeriodicStatus,
     CommitFailedOutbox,
     DirectoryInsertOwned,
+    OutboxCreateDisconnect,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +148,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
 
         "__outbox_message_closed" => Operation::OutboxMessageClosed,
         "__outbox_message_bytes" => Operation::OutboxMessageBytes,
+        "__outbox_create_disconnect" => Operation::OutboxCreateDisconnect,
         "__outbox_create" => Operation::OutboxCreate,
         "__outbox_handle" => Operation::OutboxHandle,
         "__outbox_close" => Operation::OutboxClose,
@@ -353,6 +355,7 @@ impl Operation {
             Self::DirectoryRemove => (vec![i.clone(), i, token], Type::Bool),
             Self::DirectoryLookup => (vec![m, i.clone(), i, text, Type::Bool], token),
             Self::DirectoryFound => (vec![token], Type::Bool),
+            Self::OutboxCreateDisconnect => (vec![i.clone(), i.clone(), i.clone()], queue),
             Self::OutboxCreate => (vec![i.clone(), i.clone()], queue),
             Self::OutboxHandle => (vec![Type::reference(queue, false)], i),
             Self::OutboxClose => (vec![i], Type::Unit),
@@ -703,6 +706,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         91 => Operation::PeriodicStatus,
         92 => Operation::CommitFailedOutbox,
         93 => Operation::DirectoryInsertOwned,
+        94 => Operation::OutboxCreateDisconnect,
 
         _ => {
             super::error::record_error(Error::new_with_code(
