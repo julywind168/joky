@@ -39,6 +39,8 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                 Type::Record(Arc::new(RecordType {
                     array: r.array,
                     list: r.list,
+                    map: r.map,
+                    set: r.set,
                     closure: None,
                     owners: fields
                         .iter()

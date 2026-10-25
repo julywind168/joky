@@ -278,6 +278,90 @@ pub(crate) fn analyse(
 mod tests {
     use super::*;
     #[test]
+    fn parallel_map_protocols_follow_concrete_generic_call_edges() {
+        let source = r#"
+            import joky/map.{type Map}
+            import joky/set.{type Set}
+            import joky/eq.{type Eq, type BorrowEq}
+            import joky/hash.{type Hash, type BorrowHash}
+            extern fn local(value: Int32) -> UInt64
+            struct BadHash { id: Int32 }
+            struct BadEq { id: Int32 }
+            impl BorrowEq for BadHash {
+                fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id }
+            }
+            impl BorrowHash for BadHash {
+                fn hash_ref(&self) -> UInt64 { local(self.id) }
+            }
+            impl BorrowEq for BadEq {
+                fn eq_ref(&self, other: &Self) -> Bool { local(self.id) == local(other.id) }
+            }
+            impl BorrowHash for BadEq {
+                fn hash_ref(&self) -> UInt64 { 7 }
+            }
+            struct ValueHash { id: Int32 }
+            struct ValueEq { id: Int32 }
+            impl BorrowEq for ValueHash {
+                fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id }
+            }
+            impl Hash for ValueHash { fn hash(self) -> UInt64 { local(self.id) } }
+            impl Eq for ValueEq { fn eq(self, other: Self) -> Bool { local(self.id) == local(other.id) } }
+            impl BorrowHash for ValueEq { fn hash_ref(&self) -> UInt64 { 7 } }
+            fn hash_value_map(value: Map<ValueHash, Int32>) @suspends -> Bool {
+                let key = ValueHash { id: 1 }
+                value.contains_key_by_ref(&key)
+            }
+            fn eq_value_set(value: Set<ValueEq>) @suspends -> Bool {
+                let key = ValueEq { id: 1 }
+                value.contains(&key)
+            }
+            fn carry(value: Map<BadHash, Int32>) @suspends -> Map<BadHash, Int32> { value }
+            fn hash_map(value: Map<BadHash, Int32>) @suspends -> Bool {
+                let key = BadHash { id: 1 }
+                value.contains_key_by_ref(&key)
+            }
+            fn eq_set(value: Set<BadEq>) @suspends -> Bool {
+                let key = BadEq { id: 1 }
+                value.contains(&key)
+            }
+            fn child(value: Map<BadHash, Int32>) @suspends -> Bool { hash_map(value) }
+            fn branches(value: Map<BadHash, Int32>) @suspends -> Bool {
+                let (a, b) = join { | child(value) | child(Map.new::<BadHash, Int32>()) }
+                a
+            }
+        "#;
+        let types = crate::TypeRegistry::default().with_prelude(false);
+        let ast = types
+            .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())
+            .unwrap();
+        let prepared =
+            crate::core::prepared::PreparedModule::new(&ast, &types, &Default::default()).unwrap();
+        let plan = prepared.plan(&Default::default()).unwrap();
+        let effects = analyse(&plan, &prepared, &HashSet::new());
+        effects.require("carry").unwrap();
+        effects.require_packet("carry").unwrap();
+        for name in [
+            "hash_map",
+            "eq_set",
+            "hash_value_map",
+            "eq_value_set",
+            "branches",
+        ] {
+            assert!(effects.require(name).is_err(), "{name}");
+        }
+        let admitted = analyse(&plan, &prepared, &HashSet::from(["local".into()]));
+        for name in [
+            "hash_map",
+            "eq_set",
+            "hash_value_map",
+            "eq_value_set",
+            "branches",
+        ] {
+            admitted.require(name).unwrap();
+        }
+    }
+
+    #[test]
     fn parallel_qualification_distinguishes_storage_and_call_effects() {
         assert_eq!(
             qualify(&Type::Int32),

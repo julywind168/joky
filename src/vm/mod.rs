@@ -17,7 +17,8 @@ pub use instances::{
 };
 pub use limits::InterpreterLimits;
 pub use parallel::{
-    ParallelExecution, ParallelOutput, ParallelTask, PreparedParallelTask, TaskValue,
+    ParallelExecution, ParallelOutput, ParallelTask, PreparedParallelTask, TaskMap, TaskSet,
+    TaskValue,
 };
 
 #[cfg(test)]

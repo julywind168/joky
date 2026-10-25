@@ -871,3 +871,200 @@ fn task_parallel_list_values_and_roots_on_all_backends() {
     drop(output);
     assert_eq!(budget.used(), 0);
 }
+
+#[test]
+fn task_parallel_map_values_and_roots_on_all_backends() {
+    use crate::vm::{parallel::map_tests as cases, InstanceValue, VmEngine, VmMode};
+    let names = [
+        "root",
+        "roundtrip",
+        "factory",
+        "set_factory",
+        "echo_map",
+        "echo_set",
+        "topology",
+        "verify",
+        "empty",
+        "units",
+        "nested",
+        "failed",
+        "cancelled",
+        "emptied",
+        "indices",
+    ];
+    let (_scratch, entries, library) = linked_task_entries(cases::SOURCE, &names, "task-maps");
+    let mut aot_snapshot = None;
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(cases::SOURCE)
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        let signature = |name| {
+            let index = names.iter().position(|n| *n == name).unwrap();
+            vm.as_ref()
+                .map(|vm| vm.parallel_signature(name).unwrap())
+                .unwrap_or_else(|| entries[index].signature().clone())
+        };
+        for workers in [1, 3] {
+            let pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            let mut budgets = Vec::new();
+            let mut run = |name: &str, input: Vec<TaskValue>| {
+                let budget = TaskBudget::new(cases::BUDGET);
+                let index = names.iter().position(|n| *n == name).unwrap();
+                let prepared = if let Some(vm) = &vm {
+                    vm.prepare_parallel_task(name, input, vec![budget.clone()])
+                        .unwrap_or_else(|e| panic!("{mode:?} {name}: {e}"))
+                } else {
+                    unsafe {
+                        entries[index].prepare(
+                            *library
+                                .get::<CpsEntry>(entries[index].symbol().as_bytes())
+                                .unwrap(),
+                            library.clone(),
+                            input,
+                            vec![budget.clone()],
+                        )
+                    }
+                    .unwrap()
+                };
+                let task = prepared.submit(&pool).unwrap();
+                if name == "cancelled" {
+                    task.request_cancel();
+                }
+                task.wait().unwrap();
+                let result = task.take_result();
+                let value = if name == "failed" || name == "cancelled" {
+                    let error = result.err().unwrap();
+                    if name == "cancelled" {
+                        assert_eq!(error.code(), crate::ErrorCode::Cancelled);
+                    } else {
+                        assert!(error.to_string().contains("Division by zero"), "{error}");
+                    }
+                    None
+                } else {
+                    Some(
+                        result
+                            .unwrap_or_else(|e| panic!("{mode:?} {name} N={workers}: {e}"))
+                            .into_value(),
+                    )
+                };
+                assert!(task.take_result().is_err());
+                drop(task);
+                budgets.push(budget);
+                value
+            };
+            let value = run("root", vec![]).unwrap();
+            cases::check_bundle(&value);
+            assert_eq!(run("roundtrip", vec![value.clone()]).unwrap(), value);
+            for name in ["topology", "verify"] {
+                assert_eq!(
+                    run(
+                        name,
+                        if name == "verify" {
+                            vec![value.clone()]
+                        } else {
+                            vec![]
+                        }
+                    )
+                    .unwrap(),
+                    TaskValue::Scalar(InstanceValue::Int32(42)),
+                    "{mode:?} {name}"
+                );
+            }
+            for (factory, echo, set) in [
+                ("factory", "echo_map", false),
+                ("set_factory", "echo_set", true),
+            ] {
+                let ty = signature(factory).params.remove(0);
+                for populated in [false, true] {
+                    let result = run(factory, vec![cases::input(&ty, populated, set)]).unwrap();
+                    cases::check_factory(&result, populated, set);
+                    assert_eq!(run(echo, vec![result.clone()]).unwrap(), result);
+                }
+            }
+            for (name, length) in [("empty", 0), ("emptied", 0), ("units", 1)] {
+                let result = run(name, vec![]).unwrap();
+                let TaskValue::Tuple(parts) = result else {
+                    panic!("expected tuple")
+                };
+                let TaskValue::Map(map) = &parts[0] else {
+                    panic!("expected Map")
+                };
+                let TaskValue::Set(set) = &parts[1] else {
+                    panic!("expected Set")
+                };
+                assert_eq!(map.len(), length);
+                assert_eq!(set.len(), length);
+            }
+            let mixed = run("indices", vec![]).unwrap();
+            let TaskValue::Tuple(parts) = mixed else {
+                unreachable!()
+            };
+            let TaskValue::Map(map) = &parts[0] else {
+                unreachable!()
+            };
+            let TaskValue::Set(set) = &parts[1] else {
+                unreachable!()
+            };
+            assert_eq!(map.len(), 14);
+            assert_eq!(set.len(), 14);
+            for (key, value) in map.entries() {
+                let TaskValue::Scalar(InstanceValue::Int32(i)) = value else {
+                    unreachable!()
+                };
+                assert!(*i >= 0 && *i < 20 && (*i == 0 || *i % 3 != 0));
+                assert_eq!(key, &TaskValue::Scalar(InstanceValue::Int32(i * 7)));
+                assert!(set.elements().contains(key));
+            }
+            let ty = signature("nested").params.remove(0);
+            let list = ty.array_element_type().unwrap().clone();
+            let TaskValue::Tuple(parts) = &value else {
+                unreachable!()
+            };
+            let nested = TaskValue::Array {
+                ty,
+                elements: vec![TaskValue::List {
+                    ty: list,
+                    elements: vec![parts[0].clone()],
+                }],
+            };
+            assert_eq!(run("nested", vec![nested.clone()]).unwrap(), nested);
+            run("failed", vec![value.clone()]);
+            run("cancelled", vec![value.clone()]);
+            if mode.is_none() {
+                aot_snapshot = Some(value);
+            }
+            drop(pool);
+            for budget in budgets {
+                assert_eq!(budget.used(), 0, "{mode:?} N={workers}");
+            }
+        }
+    }
+    let expected = aot_snapshot.unwrap();
+    let budget = TaskBudget::new(cases::BUDGET);
+    let entry = &entries[1];
+    let weak = Arc::downgrade(&library);
+    let prepared = unsafe {
+        entry.prepare(
+            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+            library.clone(),
+            vec![expected.clone()],
+            vec![budget.clone()],
+        )
+    }
+    .unwrap();
+    drop(library);
+    let output = std::thread::spawn(move || {
+        let mut task = prepared.start().unwrap();
+        while !task.resume().unwrap() {}
+        task.take_result().unwrap()
+    })
+    .join()
+    .unwrap();
+    assert!(weak.upgrade().is_none());
+    assert_eq!(output.value(), &expected);
+    drop(output);
+    assert_eq!(budget.used(), 0);
+}

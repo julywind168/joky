@@ -571,6 +571,7 @@ Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、�
 极端碰撞沿用 Map 的最坏成本。批量与集合运算可能分配、同时持有输入和输出，不承诺原地零分配。
 分配、容量上限或 Hash/Eq/Drop 失败均为终止性错误，保留首错并完成清理，不保证失败后恢复容器。
 实现仅调用公开 Map/Array 接口，没有新增 ABI 或存储原语。
+满足[任务包准入](#任务执行模式)的 Set 可跨并行任务传递，宿主使用只读 TaskSet 快照。
 
 示例见 [sets.jk](../examples/sets.jk)，三后端输出 2、true、3、true、true、3；
 验证范围见 [S1–S3 与联合验收记录](list-set-storage-ownership.md#53-s1s3-与-ls1-验收记录)。
@@ -580,6 +581,7 @@ Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、�
 显式导入 `joky/map.{type Map}` 使用 `Map<K, V>`；容器是非 Copy 拥有者，
 作用域退出自动清理，也可消费式 `release`。实现全部在 [map.jk](../src/stdlib/map.jk)，
 复用 Array 的受检存储和所有权规则；字段、桶类型和算法 helper 均私有。
+满足[任务包准入](#任务执行模式)的 Map 可跨并行任务传递，宿主使用只读 TaskMap 快照。
 
 K 必须可存储且递归无引用，支持 Copy 数据、String 和无引用拥有型记录/枚举。
 构造与 insert 实例化时检查真实存储资格；协议本身不会赋予存储权限。
@@ -4838,14 +4840,16 @@ Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel
 `wait_closed` 与控制对象 Drop 等待线程退出。提交句柄 Drop 不等待；任务句柄 Drop 请求取消。
 `ParallelTask::wait` 仅可在非 worker 的宿主线程调用，`take_result` 一次性收取终态。
 
-当前跨任务包支持标量、String、Array、List，以及递归嵌套这些类型的元组、普通 struct 和 enum
+当前跨任务包支持标量、String、Array、List、Map/Set，以及递归嵌套这些类型的元组、普通 struct 和 enum
 （包括 Option/Result）。join/race 的参数与结果、branch 的移动捕获及宿主根入口采用同一
-类型边界；String/Array/List 交接移动真实拥有 Buffer 树，数组保留有效元素及容量，
-List 还保留整数链与空闲槽。完整类型树必须无引用、无资源、无自定义 Drop，
-包括未激活枚举变体及实际泛型参数；Map/Set、函数/闭包、dyn 和裸指针仍拒绝。
+类型边界；String/Array/List/Map/Set 交接移动真实拥有 Buffer 树，数组保留有效元素及容量，
+List 保留整数链与空闲槽，Map/Set 保留桶、缓存哈希、反向位置及删除标记。完整类型树必须无引用、无资源、无自定义 Drop，
+包括未激活枚举变体及实际泛型参数；函数/闭包、dyn 和裸指针仍拒绝。
 FixedArray 及包含它的无引用 Copy 聚合使用独立存储快照；Array 可存储这些 Copy 值。
 含 FixedArray 的混合拥有聚合仍受固定数组存储限制；并行支持不额外放宽其类型组合。
-Array/List 元素递归满足同一规则；空容器和 Unit 元素可用。
+Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit 元素可用。
+仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含 BorrowHash/BorrowEq
+及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 完整调用图必须证明安全，未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄
 和 Godot 对象均保持 Local。
@@ -4853,11 +4857,19 @@ Array/List 元素递归满足同一规则；空容器和 Unit 元素可用。
 宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
 构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。
 `TaskValue::List { ty, elements }` 表示 List 的逻辑元素序列，输入构造有效链，输出不暴露
-底层稠密数组或空闲节点。标准 Array/List 不能用 Record 值伪造私有字段。
+底层稠密数组或空闲节点。标准 Array/List/Map/Set 不能用 Record 值伪造私有字段。
 `TaskValue::FixedArray { ty, elements }` 表示固定数组，元素数量必须精确等于类型中的 N。
-宿主输入以元素数为初始容量；宿主输出只包含有效元素，Vec 容量不代表语言容器容量。
+Array/List 宿主输入以元素数为初始容量；宿主输出只包含有效元素，Vec 容量不代表语言容器容量。
+Map/Set 使用 `TaskValue::Map(TaskMap)` / `TaskValue::Set(TaskSet)`；快照仅由受检结果创建，
+没有公开构造器或可变键访问。可查询 `value_type`、`len`、`is_empty`，通过 Map 的
+`keys` / `values` / `entries` 或 Set 的 `elements` 查看数据，也可克隆并重新提交。
+转换保留私有索引及映射关系，不调用键协议；宿主往返不承诺预留容量。快照的 Rust 相等比较
+比较其表示，不代表语言键相等或集合数学相等，元素顺序仍不保证。
+新数据通过 Array 传给语言工厂，再由 `Map.from_entries` / `Set.from_array` 构造，重复键、
+去重和失败规则沿用语言实现；Rust 不复制哈希算法或隐式执行用户 Hash/Eq。
+实际工厂与往返用例见 [task_maps.jk](../tests/fixtures/task_maps.jk)。
 `VmEngine::parallel_signature` 或 AOT `ParallelEntry::signature` 提供受检
-入口签名；`Type::array_element_type`、`list_element_type`、`fixed_array_element_type`（元素与长度）、`tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
+入口签名；`Type::array_element_type`、`list_element_type`、`map_entry_types`（键与值）、`set_element_type`、`fixed_array_element_type`（元素与长度）、`tuple_element_types`、`record_field_type` 和 `enum_variant` 可查询子类型
 及变体。记录字段按声明顺序，枚举使用声明序号，无 payload 的变体传 None。nominal 类型
 必须来自对应冻结签名，字段、标量类型和标签精确匹配；新编译模块的同名类型不能冒充旧类型。
 这些入口独立于普通函数 ABI；CLI main 的 Unit/Int32 限制保持不变。

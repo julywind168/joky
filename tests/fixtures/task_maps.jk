@@ -1,0 +1,152 @@
+import joky/task
+import joky/map.{type Map}
+import joky/set.{type Set}
+import joky/list.{type List}
+import joky/array.{type Array}
+import joky/option.{Some, None}
+import joky/eq.{type BorrowEq}
+import joky/hash.{type BorrowHash}
+
+struct Key { id: Int32, label: String }
+impl BorrowEq for Key {
+    fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id }
+}
+impl BorrowHash for Key {
+    fn hash_ref(&self) -> UInt64 { 18446744073709551615 }
+}
+enum Payload { Text(String), Items(List<String>), Nested(Map<Int32, String>) }
+type Bundle = (Map<Key, Payload>, Set<Key>)
+fn key(id: Int32) -> Key { Key { id, label: "resident" } }
+fn make() @suspends -> Map<Key, Payload> {
+    var table = Map.with_capacity::<Key, Payload>(8)
+    table.insert(key(1), Payload.Text("old"))
+    table.insert(key(2), Payload.Text("removed"))
+    table.insert(key(3), Payload.Items(List.from_array(["removed nested"])))
+    table.insert(key(1), Payload.Items(List.from_array(["replacement"])))
+    let second = key(2)
+    table.remove_by_ref(&second)
+    task.yield_now()
+    table.insert(key(4), Payload.Nested(Map.from_entries([(9, "nested")])))
+    let third = key(3)
+    table.remove_by_ref(&third)
+    table
+}
+fn make_set() @suspends -> Set<Key> {
+    var values = Set.with_capacity::<Key>(8)
+    values.insert(key(11)); values.insert(key(12)); values.insert(key(13))
+    let second = key(12)
+    values.remove(&second)
+    task.yield_now()
+    values.insert(key(14)); values.insert(key(11))
+    let third = key(13)
+    values.remove(&third)
+    values
+}
+fn echo_map(value: Map<Key, Payload>) @suspends -> Map<Key, Payload> { task.yield_now(); value }
+fn echo_set(value: Set<Key>) @suspends -> Set<Key> { task.yield_now(); value }
+fn consume(value: Bundle) { }
+fn roundtrip(value: Bundle) @suspends -> Bundle {
+    let (table, values) = value
+    join { | echo_map(table) | echo_set(values) }
+}
+fn root() @suspends -> Bundle {
+    let (a, b) = join { | make() | make_set() }
+    scope { branch { consume(roundtrip((make(), make_set()))) }; task.yield_now() }
+    let winner = race { | echo_map(a) | make() }
+    (winner, b)
+}
+fn factory(entries: Array<(Key, Payload)>) @suspends -> Map<Key, Payload> {
+    task.yield_now()
+    Map.from_entries(entries)
+}
+fn set_factory(values: Array<Key>) @suspends -> Set<Key> {
+    task.yield_now()
+    Set.from_array(values)
+}
+fn empty() @suspends -> (Map<Unit, Unit>, Set<Unit>) {
+    task.yield_now()
+    (Map.new::<Unit, Unit>(), Set.new::<Unit>())
+}
+fn units() @suspends -> (Map<Unit, Unit>, Set<Unit>) {
+    task.yield_now()
+    (Map.from_entries([({}, {}), ({}, {})]), Set.from_array([{}, {}]))
+}
+fn nested(value: Array<List<Map<Key, Payload>>>) @suspends -> Array<List<Map<Key, Payload>>> {
+    task.yield_now()
+    value
+}
+fn parked(value: Bundle) @suspends -> Bundle { task.sleep_ms(60000); value }
+fn cancelled(value: Bundle) @suspends -> Bundle {
+    scope { branch { consume(parked((make(), make_set()))) }; parked(value) }
+}
+fn fail(value: Bundle) @suspends -> Bundle { task.yield_now(); 1 / 0; value }
+fn failed(value: Bundle) @suspends -> Bundle {
+    let (a, b) = join { | fail(value) | make() }
+    a
+}
+fn verify(value: Bundle) @suspends -> Int32 {
+    let (table, values) = roundtrip(value)
+    var table = table
+    var values = values
+    let first = key(1)
+    let fourth = key(4)
+    let removed = key(2)
+    let eleven = key(11)
+    let fourteen = key(14)
+    if !table.contains_key_by_ref(&first) || !table.contains_key_by_ref(&fourth) || table.contains_key_by_ref(&removed) { return 0 }
+    if !values.contains(&eleven) || !values.contains(&fourteen) || values.len() != 2 { return 0 }
+    var i = 0
+    while i < 24 {
+        table.insert(key(i + 100), Payload.Text("growth"))
+        values.insert(key(i + 100))
+        i += 1
+    }
+    task.yield_now()
+    table.remove_by_ref(&first)
+    table.insert(key(1), Payload.Text("reused"))
+    values.remove(&eleven)
+    values.insert(key(11))
+    if table.len() == 26 && values.len() == 26 && table.contains_key_by_ref(&first) && values.contains(&eleven) { 42 } else { 0 }
+}
+fn topology() @suspends -> Int32 {
+    let (a, b) = root()
+    let before_a = a.capacity()
+    let before_b = b.capacity()
+    let (c, d) = roundtrip((a, b))
+    if before_a < 8 || before_b < 8 || c.capacity() != before_a || d.capacity() != before_b { return 0 }
+    verify((c, d))
+}
+
+fn emptied() @suspends -> Bundle {
+    let (a, b) = root()
+    var table = a
+    var values = b
+    while let Some(_) = table.pop() { }
+    while let Some(_) = values.pop() { }
+    task.yield_now()
+    (table, values)
+}
+
+fn indices() @suspends -> (Map<Int32, Int32>, Set<Int32>) {
+    var table = Map.new::<Int32, Int32>()
+    var values = Set.new::<Int32>()
+    var i = 0
+    while i < 20 {
+        table.insert(i * 7, i)
+        values.insert(i * 7)
+        i += 1
+    }
+    i = 0
+    while i < 20 {
+        if i % 3 == 0 {
+            let key = i * 7
+            table.remove(key)
+            values.remove(&key);
+        }
+        i += 1
+    }
+    task.yield_now()
+    table.insert(0, 0)
+    values.insert(0)
+    (table, values)
+}

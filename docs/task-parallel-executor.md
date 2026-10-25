@@ -1,6 +1,6 @@
 # 可选多线程任务执行器设计与实施计划
 
-状态：2026-10-25，TP0–TP9 已完成。当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节，TP7 数组交付见第 17 节，TP8 FixedArray 见第 18 节，TP9 List 见第 19 节。
+状态：2026-10-25，TP0–TP10 已完成。当前支持范围见第 14.1 节；TP6 聚合值交付见第 16 节，TP7 数组交付见第 17 节，TP8 FixedArray 见第 18 节，TP9 List 见第 19 节，TP10 Map/Set 见第 20 节。
 生产执行器默认 Local，可显式选择 Parallel。早期冻结决策与探针边界见第 10 节，
 TP1 的最终交付与验证见第 11.5 节，TP2 交付与限制见第 12 节，TP3 见第 13 节，TP4 模式与支持表见第 14 节，TP5 最终验收见第 15 节；第 11.1–11.4 节保留历史切片记录。
 源码名称已由 `parallel` 迁移为 `join`，不改变本文执行器阶段与行为契约。
@@ -776,9 +776,9 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | 能力 | Local | Parallel |
 | --- | --- | --- |
 | join/race/branch 与多层 scope | 原有顺序推进 | 固定 worker 分支调度，单 worker 也可推进 |
-| 标量、String、Array、List、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
+| 标量、String、Array、List、Map/Set、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
 | FixedArray、含它的 Copy 聚合、Array<FixedArray> | 参数/返回/捕获跨挂起，安全视图服从借用规则 | 独立 Copy 快照，保持元素与存储组合限制 |
-| Map/Set、引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
+| 引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
 | task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
@@ -1172,3 +1172,67 @@ Local 函数值调用继续有效；Parallel 不额外授予间接目标线程�
   确认版本 6 对象和运行库配套。
 - 本地文档链接与 `git diff --check` 通过。未运行 Release、性能测量、无关全量压力、
   Godot 引擎验收或竞争检测器；Map/Set、first_ok 与跨线程资源桥仍留待独立阶段。
+
+## 20. TP10 Map/Set 跨任务传递
+
+状态：已完成。实现完整阶段后集中验证、单独提交。
+
+### 20.1 范围与契约
+
+- 开放标准 Map<K,V>/Set<T> 的任务参数、返回、join/race/branch 捕获和递归聚合；
+  完整实际类型树必须无引用、资源、自定义 Drop，保留既有 FixedArray 存储组合限制。
+  默认 Local/Godot 单线程不变，first_ok 与资源桥继续独立规划。
+- Map 的桶、键、值、缓存哈希与反向位置均由 Array 拥有；Set 是 Map<T,Unit> 包装。
+  任务之间直接交接独占拥有树，保留容量、桶与删除标记，不执行 Hash/Eq，不承诺遍历顺序。
+- 任何实际查询、插入或删除所调用的 Hash/Eq/BorrowHash/BorrowEq 实现均通过完整调用图
+  审查；Local extern、资源、间接目标不能经泛型协议调用进入 worker。仅搬运容器不调用协议。
+- 宿主接收不可伪造的只读 TaskMap/TaskSet 快照，允许查看元素、克隆、送回同一精确类型
+  的受检入口。私有索引与缓存哈希不提供可变访问，也不能用 TaskValue::Record 构造容器。
+  宿主转换保持映射关系，宿主往返不承诺预留容量。
+- 任意新键值对/元素通过 TaskValue::Array 传给语言工厂 Map.from_entries/Set.from_array；
+  去重、Hash/Eq、构造失败均在受检任务中处理。Rust 不复制语言的哈希算法，不隐式调用
+  用户协议，也不接受宿主伪造的哈希值。嵌套快照仍保持其私有索引与类型身份。
+- 输出先验证键值长度、桶/位置双射、删除计数与缓存哈希探测路径，再产生只读快照；
+  元数据与元素转换计入根预算。私有布局升级至版本 7，外层 NativeTaskEntryV1 仍为 1。
+
+### 20.2 验收
+
+- 三后端 N=1/3 与独立 Local/Parallel 程序覆盖嵌套拥有值、真实挂起、join/race/branch、
+  空表、碰撞、重复键、扩容、删除标记复用、移出和容量保留。
+- 宿主验证快照往返、工厂输入、精确 nominal 身份、伪造容器拒绝、代码销毁后保活，
+  并验证自定义 Hash/Eq 的安全实现可用及 Local 实现拒绝。
+- 覆盖失败、取消、未收取结果、预算失败及相关 Debug 穷举。定向验证后运行一次
+  默认 Debug 检查；不默认运行 Release、性能测量或无关全量压力。
+
+### 20.3 交付记录
+
+可信 Map/Set 标记随类型实例化与投影保留，语义种类对应物理 Product 拥有树；
+任务移动复用现有 Buffer 交接和清理，未修改 Map/Set 的语言算法。完整调用图继续
+跟踪协议具体实现，覆盖直接借用协议与 Copy 键的 Hash/Eq blanket 转发；仅搬运容器
+不要求执行这些协议。
+
+宿主增加 TaskMap/TaskSet 只读快照及 Type::map_entry_types / set_element_type 查询，
+支持嵌套快照、克隆、跨宿主线程准备与重新提交。私有索引在输入时按受检字段恢复，
+输出以线性桶扫描验证结构及探测可达性，快照比较仅比较表示。任意新输入使用已支持的
+Array 元素入口调用语言工厂；公开 API 无法修改键后继续使用旧哈希缓存。
+
+[task_maps.jk](../tests/fixtures/task_maps.jk) 覆盖拥有型碰撞键、重复键、嵌套 Map/List/String、
+Set、Array<List<Map>>、混合哈希分布、扩容、删除复用、空表/删除后空表、Unit 和容量保留；
+宿主验证错误索引拒绝、Record 伪造拒绝、nominal 身份、代码销毁后保活、失败和取消。
+
+### 20.4 验证记录
+
+- `cargo test --lib task_parallel_`：22 passed、4 ignored，覆盖已有容器及 Map/Set 的
+  三后端根入口、分支传递、快照、预算和取消；协议调用图、类型矩阵、布局版本各自定向测试通过。
+- Debug 穷举 `exhaustive_task_parallel_map_budget_failures`、
+  `exhaustive_owned_map_cancels_at_each_instruction`、
+  `exhaustive_set_cancels_at_each_instruction` 均通过。
+- 默认检查首次在编译阶段因磁盘不足中断，尚未执行测试；清理生成缓存后，以
+  `CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 ./scripts/check.sh` 完成同一套 Debug 检查：
+  fmt、Clippy、库测试 1652 passed / 134 ignored、CLI 306 passed / 8 ignored、
+  其余集成测试及三后端短输入 while/Map 基准正确性全部通过。
+- 关闭增量缓存并限制单构建任务的 `cargo build` 刷新默认 Debug CLI/runtime；不设置
+  JOKY_RUNTIME，Map/Set、List、Array、FixedArray smoke 分别在 Local、Parallel N=1/3
+  的 JIT、解释器及真实独立 AOT 下返回 42，确认版本 7 对象与运行库配套。
+- 本地文档文件链接 311 项及 `git diff --check` 通过。未运行 Release、性能测量、
+  无关全量压力、Godot 引擎验收或竞争检测器；first_ok 与跨线程资源桥仍留待独立阶段。

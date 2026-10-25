@@ -164,6 +164,8 @@ pub(super) fn resolve<'a>(
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
                 array: d.array,
                 list: d.list,
+                map: d.map,
+                set: d.set,
                 closure: None,
                 owners: Vec::new(),
                 repr_c: d.repr_c(),
@@ -485,6 +487,8 @@ pub(super) fn resolve<'a>(
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
                         array: record.array,
                         list: record.list,
+                        map: record.map,
+                        set: record.set,
                         closure: None,
                         owners,
                         indirect: false,

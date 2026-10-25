@@ -877,6 +877,8 @@ pub struct RecordType {
     pub(crate) array: bool,
     /// Identity installed only on the embedded List declaration.
     pub(crate) list: bool,
+    pub(crate) map: bool,
+    pub(crate) set: bool,
     pub(crate) closure: Option<Arc<ClosureInfo>>,
     /// Underlying buffer elements in declaration order, retained in shallow views.
     pub(crate) owners: Vec<Arc<Type>>,
@@ -1199,6 +1201,27 @@ impl Type {
             return None;
         }
         r.fields.first()?.ty.array_element_type()
+    }
+
+    /// Key and value types of the compiler-recognized standard Map declaration.
+    pub fn map_entry_types(&self) -> Option<(&Type, &Type)> {
+        let Self::Record(r) = self else { return None };
+        if !r.map {
+            return None;
+        }
+        Some((
+            r.fields.get(1)?.ty.array_element_type()?,
+            r.fields.get(2)?.ty.array_element_type()?,
+        ))
+    }
+
+    /// Element type of the compiler-recognized standard Set declaration.
+    pub fn set_element_type(&self) -> Option<&Type> {
+        let Self::Record(r) = self else { return None };
+        if !r.set {
+            return None;
+        }
+        Some(r.fields.first()?.ty.map_entry_types()?.0)
     }
 
     /// Resolved tuple members in declaration order, without physical ABI lanes.

@@ -414,6 +414,8 @@ impl StandardLibrary {
             for record in &mut module.records {
                 record.array = path == "joky/array" && record.name == "Array";
                 record.list = path == "joky/list" && record.name == "List";
+                record.map = path == "joky/map" && record.name == "Map";
+                record.set = path == "joky/set" && record.name == "Set";
             }
         }
         crate::core::json_derive::expand(&mut module)?;

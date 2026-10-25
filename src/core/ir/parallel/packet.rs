@@ -13,6 +13,8 @@ pub(crate) enum Kind {
     Array = 6,
     FixedArray = 7,
     List = 8,
+    Map = 9,
+    Set = 10,
 }
 
 impl Kind {
@@ -22,6 +24,8 @@ impl Kind {
             Type::String => Self::String,
             Type::Record(r) if r.array => Self::Array,
             Type::Record(r) if r.list => Self::List,
+            Type::Record(r) if r.map => Self::Map,
+            Type::Record(r) if r.set => Self::Set,
             Type::Tuple(_) => Self::Tuple,
             Type::Record(r) if r.closure.is_none() => Self::Record,
             Type::Enum(_) => Self::Enum,
@@ -41,6 +45,8 @@ impl Kind {
             6 => Self::Array,
             7 => Self::FixedArray,
             8 => Self::List,
+            9 => Self::Map,
+            10 => Self::Set,
             _ => return None,
         })
     }
@@ -82,9 +88,6 @@ pub(crate) fn classify(
                     return None;
                 };
                 vec![(**element).clone()]
-            }
-            Type::Record(r) if matches!(r.name.as_str(), "joky/map.Map" | "joky/set.Set") => {
-                return None
             }
             Type::Record(r) if r.closure.is_none() && !r.indirect => r
                 .arguments
@@ -164,6 +167,15 @@ mod tests {
             fn list_set(value: List<Set<Int32>>) { }
             fn array_set(value: Array<Set<Int32>>) { }
             fn array_fixed(value: Array<FixedArray<Int32, 2>>) { }
+            fn map_value(value: Map<String, List<Array<String>>>) { }
+            fn set_value(value: Set<String>) { }
+            fn map_key_pointer(value: Map<Ptr, Int32>) { }
+            fn map_value_reference(value: Map<Int32, &Int32>) { }
+            fn map_phantom(value: Map<Marker<Ptr>, Int32>) { }
+            fn map_drop(value: Map<Int32, Result<Int32, Tracked>>) { }
+            fn set_pointer(value: Set<Ptr>) { }
+            fn set_reference(value: Set<&Int32>) { }
+            fn set_drop(value: Set<Tracked>) { }
             fn callable(value: fn(Int32) -> Int32) { }
             fn child() @suspends -> One { One { value: 42 } }
             fn join_value() @suspends -> Int32 {
@@ -208,17 +220,26 @@ mod tests {
             ("array_reference", None),
             ("array_phantom", None),
             ("array_drop", None),
-            ("array_map", None),
+            ("array_map", Some(Kind::Array)),
             ("array_list", Some(Kind::Array)),
-            ("array_set", None),
+            ("array_set", Some(Kind::Array)),
             ("list_value", Some(Kind::List)),
             ("list_pointer", None),
             ("list_reference", None),
             ("list_phantom", None),
             ("list_drop", None),
-            ("list_map", None),
-            ("list_set", None),
+            ("list_map", Some(Kind::List)),
+            ("list_set", Some(Kind::List)),
             ("array_fixed", Some(Kind::Array)),
+            ("map_value", Some(Kind::Map)),
+            ("set_value", Some(Kind::Set)),
+            ("map_key_pointer", None),
+            ("map_value_reference", None),
+            ("map_phantom", None),
+            ("map_drop", None),
+            ("set_pointer", None),
+            ("set_reference", None),
+            ("set_drop", None),
             ("callable", None),
         ] {
             let signature = &plan.functions[name].signature;

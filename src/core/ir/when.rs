@@ -27,6 +27,8 @@ fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
     Type::Record(Arc::new(RecordType {
         array: false,
         list: false,
+        map: false,
+        set: false,
         id: crate::core::types::fresh_type_id(),
         name,
         fields,

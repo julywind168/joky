@@ -42,7 +42,19 @@ impl TaskValue {
             ) if actual == ty => ty
                 .list_element_type()
                 .is_some_and(|element| elements.iter().all(|v| v.matches(element))),
-            (Self::Record { ty: actual, fields }, Type::Record(r)) if !r.array && !r.list => {
+            (Self::Map(TaskMap { ty: actual, fields }), Type::Record(r)) if r.map => {
+                actual == ty
+                    && fields.len() == r.fields.len()
+                    && fields.iter().zip(&r.fields).all(|(v, f)| v.matches(&f.ty))
+            }
+            (Self::Set(TaskSet { ty: actual, fields }), Type::Record(r)) if r.set => {
+                actual == ty
+                    && fields.len() == r.fields.len()
+                    && fields.iter().zip(&r.fields).all(|(v, f)| v.matches(&f.ty))
+            }
+            (Self::Record { ty: actual, fields }, Type::Record(r))
+                if !r.array && !r.list && !r.map && !r.set =>
+            {
                 actual == ty
                     && fields.len() == r.fields.len()
                     && fields.iter().zip(&r.fields).all(|(v, f)| v.matches(&f.ty))
@@ -72,6 +84,8 @@ impl TaskValue {
                 Self::String(text) => text.capacity(),
                 Self::Tuple(v)
                 | Self::Record { fields: v, .. }
+                | Self::Map(TaskMap { fields: v, .. })
+                | Self::Set(TaskSet { fields: v, .. })
                 | Self::Array { elements: v, .. }
                 | Self::List { elements: v, .. }
                 | Self::FixedArray { elements: v, .. } => {
@@ -115,7 +129,9 @@ impl TaskValue {
                         offset += ty.scalar_types().len();
                     }
                 }
-                TaskValue::Record { fields, .. } => {
+                TaskValue::Record { fields, .. }
+                | TaskValue::Map(TaskMap { fields, .. })
+                | TaskValue::Set(TaskSet { fields, .. }) => {
                     let Type::Record(r) = ty else { unreachable!() };
                     for (value, field) in fields.iter().zip(&r.fields) {
                         fill(value, &field.ty, packet, base + field.offset, arena)?;
@@ -196,6 +212,11 @@ pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<Paral
                 bytes
             }
             Type::Record(r) => {
+                if r.map {
+                    unsafe {
+                        maps::validate(ty, words)?;
+                    }
+                }
                 let mut bytes = 0;
                 for f in &r.fields {
                     bytes += measure(
@@ -264,9 +285,8 @@ pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<Paral
                 }
                 TaskValue::Tuple(values)
             }
-            Type::Record(r) => TaskValue::Record {
-                ty: ty.clone(),
-                fields: r
+            Type::Record(r) => {
+                let fields = r
                     .fields
                     .iter()
                     .map(|f| {
@@ -275,8 +295,24 @@ pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<Paral
                             &words[f.offset..f.offset + f.ty.scalar_types().len()],
                         )
                     })
-                    .collect::<Result<_, _>>()?,
-            },
+                    .collect::<Result<_, _>>()?;
+                if r.map {
+                    TaskValue::Map(TaskMap {
+                        ty: ty.clone(),
+                        fields,
+                    })
+                } else if r.set {
+                    TaskValue::Set(TaskSet {
+                        ty: ty.clone(),
+                        fields,
+                    })
+                } else {
+                    TaskValue::Record {
+                        ty: ty.clone(),
+                        fields,
+                    }
+                }
+            }
             Type::Enum(e) => {
                 let variant = words[0] as usize;
                 let v = &e.variants[variant];

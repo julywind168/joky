@@ -647,6 +647,8 @@ impl FunctionPlan {
                 Arc::new(RecordType {
                     array: false,
                     list: false,
+                    map: false,
+                    set: false,
                     closure: Some(Arc::new(ClosureInfo {
                         storable,
                         mode,

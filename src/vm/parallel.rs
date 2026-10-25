@@ -8,6 +8,10 @@ pub(crate) mod fixed_array_tests;
 #[cfg(test)]
 pub(crate) mod list_tests;
 mod lists;
+#[cfg(test)]
+pub(crate) mod map_tests;
+mod maps;
+pub use maps::{TaskMap, TaskSet};
 mod places;
 mod value;
 use super::{InstanceValue, InterpreterLimits};
@@ -49,6 +53,10 @@ pub enum TaskValue {
         ty: Type,
         elements: Vec<TaskValue>,
     },
+    /// A read-only Map snapshot produced by a checked task.
+    Map(TaskMap),
+    /// A read-only Set snapshot produced by a checked task.
+    Set(TaskSet),
     /// Fields are in declaration order; `ty` comes from the frozen signature.
     Record {
         ty: Type,

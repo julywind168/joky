@@ -1022,6 +1022,8 @@ pub enum AttributeValue {
 pub struct RecordDef {
     pub(crate) array: bool,
     pub(crate) list: bool,
+    pub(crate) map: bool,
+    pub(crate) set: bool,
     pub attributes: Vec<Attribute>,
     pub public: bool,
     pub name: String,
@@ -1049,6 +1051,8 @@ impl RecordDef {
         Self {
             array: false,
             list: false,
+            map: false,
+            set: false,
             public: false,
             attributes: Vec::new(),
             name,
