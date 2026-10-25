@@ -96,6 +96,7 @@ fn task_parallel_aggregate_values_and_roots_on_all_backends() {
         }
         for workers in [1, 3] {
             let pool = crate::runtime::parallel::ParallelExecutor::new(workers, 64).unwrap();
+            let mut budgets = Vec::new();
             for (index, name) in names[..names.len() - 1].iter().enumerate() {
                 let sig = vm
                     .as_ref()
@@ -181,8 +182,14 @@ fn task_parallel_aggregate_values_and_roots_on_all_backends() {
                     );
                     assert!(task.take_result().is_err());
                     drop((result, task));
-                    assert_eq!(budget.used(), 0, "{mode:?}, {name}");
+                    budgets.push((name, variant, budget));
                 }
+            }
+            // Completion releases language values, but the worker can retain
+            // task metadata until its polling turn unwinds. Drop joins workers.
+            drop(pool);
+            for (name, variant, budget) in budgets {
+                assert_eq!(budget.used(), 0, "{mode:?}, {name}, variant={variant}");
             }
         }
     }
