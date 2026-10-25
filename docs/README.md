@@ -20,6 +20,7 @@
 - [服务端状态域与任务并发设计草案](server-concurrency.md)
 - [状态域语法糖草案](state-domain-syntax.md)
 - [有状态服务的编程模型与实施计划](stateful-service-ergonomics.md)
+- [服务端并发模型重构计划](service-concurrency-refactor.md)
 - [文件运行时设计与开发计划](file-runtime.md)
 - [for 与迭代器分阶段开发计划](for-iterators.md)
 

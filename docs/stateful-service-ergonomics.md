@@ -5,6 +5,7 @@
 当前接口仍以 [language.md](language.md) 为准，状态与 ABI 不变量见
 [architecture.md](architecture.md)。本文承接[状态域设计](server-concurrency.md)、
 [状态域语法](state-domain-syntax.md)和[热更新计划](aot-script-hot-reload.md)，不复制其现行规范。
+S4 之后的下一轮收敛方向见[服务端并发模型重构计划](service-concurrency-refactor.md)。
 
 ## 1. 问题与目标
 
