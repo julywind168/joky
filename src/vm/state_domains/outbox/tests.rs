@@ -375,20 +375,29 @@ fn operation(h:domain.WriteHandle<S>,target:outbox.Handle,zero:Int32) @suspends 
 }
 "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for case in [
+        for (case, disconnect) in [
             "reject",
             "trap",
             "message_limit",
             "byte_limit",
             "allocation",
-        ] {
+        ]
+        .into_iter()
+        .flat_map(|case| [(case, false), (case, true)])
+        {
             let mut vm = VmEngine::with_mode(mode);
             vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
             let owner = vm
                 .create_domain("make", &[InstanceValue::Int32(7)])
                 .unwrap();
-            let control = create(&vm.domains, 1, 0).unwrap();
-            let queue = create_with_control(&vm.domains, 1, 0, Some(control.token)).unwrap();
+            // Rollback is policy-independent: keep the Reject queue alongside Disconnect.
+            let control = disconnect.then(|| create(&vm.domains, 1, 0).unwrap());
+            let queue = match &control {
+                Some(control) => {
+                    create_with_control(&vm.domains, 1, 0, Some(control.token)).unwrap()
+                }
+                None => create(&vm.domains, 2, 32).unwrap(),
+            };
             let baseline = vm.domains.borrow().budget.bytes.get();
             let live = crate::runtime::arena::LIVE.with(Cell::get);
             let output = Rc::new(RefCell::new(vec![0; 3]));
@@ -432,7 +441,9 @@ fn operation(h:domain.WriteHandle<S>,target:outbox.Handle,zero:Int32) @suspends 
             drop(request);
             assert!(queue.queue.borrow().messages.is_empty(), "{case}");
             assert!(!queue.queue.borrow().overflowed, "{case}");
-            assert!(!control.queue.borrow().closed, "{case}");
+            if let Some(control) = &control {
+                assert!(!control.queue.borrow().closed, "{case}");
+            }
             assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
             assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline, "{case}");
             assert_eq!(crate::runtime::arena::LIVE.with(Cell::get), live, "{case}");

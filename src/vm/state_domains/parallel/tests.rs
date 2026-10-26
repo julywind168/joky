@@ -362,6 +362,76 @@ fn parallel_domains_fifo_cancel_close_and_publication_gate() {
         }
     }
 }
+#[test]
+fn parallel_domains_later_reader_waits_behind_an_earlier_waiting_writer() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let budget = TaskBudget::new(64 << 20);
+        let storage = Storage::new(vec![budget.clone()]).unwrap();
+        let guard = Guard::enter(&storage);
+        let mut pool = ParallelExecutor::new(3, 32).unwrap();
+        let parent = pool
+            .submitter()
+            .publish(
+                storage.clone(),
+                Arc::new(()),
+                Box::new(|| Ok(Box::new(Park))),
+            )
+            .unwrap();
+        let context = BlockingContext::new().unwrap();
+        let scope = Scope::enter(parent.domain_spawner(), context.waker());
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(SOURCE)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let a = vm
+            .create_domain("make", &[InstanceValue::Int32(10)])
+            .unwrap();
+        let b = vm
+            .create_domain("make", &[InstanceValue::Int32(20)])
+            .unwrap();
+        let c = vm
+            .create_domain("make", &[InstanceValue::Int32(30)])
+            .unwrap();
+        let probe = Probe::install();
+        let reset = Reset(probe.clone());
+        // W1 runs; W2 waits on a; R3 only conflicts with the waiting W2 on c.
+        let (mut first, _) = queue(&vm, &[a.write_handle(), b.read_handle()], WRITE);
+        let (mut second, _) = queue(&vm, &[c.write_handle(), a.read_handle()], WRITE);
+        let (mut third, result) = queue(&vm, &[c.read_handle(), c.read_handle()], READ);
+        for _ in 0..3 {
+            vm.poll_tasks(128).unwrap();
+            drive();
+        }
+        probe.wait(1);
+        std::thread::sleep(Duration::from_millis(20));
+        drive();
+        assert_eq!(vm.domains.borrow().parallel.flights.len(), 1, "{mode:?}");
+        assert_eq!(vm.domains.borrow().parallel.pending.len(), 2, "{mode:?}");
+        assert_eq!(probe.state.lock().unwrap().threads.len(), 1, "{mode:?}");
+        drop(reset);
+        drain(&mut vm);
+        for request in [&mut first, &mut second, &mut third] {
+            assert!(matches!(
+                request.take_result(),
+                Some(DomainOutcome::Value(_))
+            ));
+        }
+        // W1: a = 10 + 1 + 20 = 31; W2: c = 30 + 1 + 31 = 62; R3 then reads 62 + 62 + 1.
+        assert_eq!(*result.borrow(), vec![125], "{mode:?}");
+        drop((first, second, third, a, b, c, vm));
+        drive();
+        drop(scope);
+        parent.cancel();
+        parent.wait().unwrap();
+        drop(parent);
+        pool.wait_closed();
+        drop(storage);
+        drop(guard);
+        assert_eq!(budget.used(), 0, "{mode:?}");
+    }
+}
 
 const CREATION: &str = r#"import joky/domain
 #state struct State { n:Int32 }
