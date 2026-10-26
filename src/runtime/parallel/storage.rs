@@ -154,10 +154,21 @@ impl Storage {
         &self.0.accounts
     }
     pub(crate) fn shard(&self) -> Result<LocalShard, Error> {
+        let mut shards = lock(&self.0.shards);
+        // Completed Local commands must not leave one charged shard per call.
+        // A detached packet still has allocations, and a live arena retains an Arc.
+        if let Some(shard) = shards
+            .iter()
+            .find(|s| Arc::strong_count(s) == 1 && lock(s).allocations.is_empty())
+        {
+            return Ok(LocalShard {
+                root: self.clone(),
+                shard: shard.clone(),
+            });
+        }
         let charge = self
             .accounts()
             .reserve(std::mem::size_of::<Shard>() + 2 * std::mem::size_of::<Arc<Mutex<Shard>>>())?;
-        let mut shards = lock(&self.0.shards);
         shards.try_reserve_exact(1).map_err(|_| limited())?;
         let shard = Arc::new(Mutex::new(Shard {
             allocations: Vec::new(),
@@ -243,6 +254,47 @@ impl LocalShard {
 mod tests {
     use super::*;
     use std::sync::Barrier;
+    #[test]
+    fn parallel_storage_reuses_only_empty_unowned_shards() {
+        let budget = TaskBudget::new(1 << 20);
+        let root = Storage::new(vec![budget.clone()]).unwrap();
+        let mut first = root.shard().unwrap();
+        let detached = first.allocate(8, 8).unwrap();
+        drop(first);
+        let second = root.shard().unwrap();
+        assert_eq!(
+            lock(&root.0.shards).len(),
+            2,
+            "detached owners retain their shard"
+        );
+        unsafe {
+            root.release(detached);
+        }
+        let third = root.shard().unwrap();
+        assert!(
+            !Arc::ptr_eq(&second.shard, &third.shard),
+            "live empty arenas remain exclusive"
+        );
+        drop((second, third));
+        let mut shard = root.shard().unwrap();
+        let value = shard.allocate(8, 8).unwrap();
+        unsafe {
+            root.release(value);
+        }
+        drop(shard);
+        let stable = budget.used();
+        for _ in 0..128 {
+            let mut shard = root.shard().unwrap();
+            let value = shard.allocate(8, 8).unwrap();
+            unsafe {
+                root.release(value);
+            }
+            drop(shard);
+            assert_eq!(budget.used(), stable);
+        }
+        drop(root);
+        assert_eq!(budget.used(), 0);
+    }
     #[test]
     fn parallel_shared_budgets_reserve_all_or_nothing() {
         let one = TaskBudget::new(100);

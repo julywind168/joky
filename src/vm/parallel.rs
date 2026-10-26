@@ -13,6 +13,8 @@ pub(crate) mod map_tests;
 mod maps;
 pub use maps::{TaskMap, TaskSet};
 #[cfg(test)]
+mod control_tests;
+#[cfg(test)]
 mod function_tests;
 mod places;
 #[cfg(test)]
@@ -187,12 +189,15 @@ impl PreparedParallelTask {
             .iter()
             .chain(std::iter::once(&sig.ret))
             .any(|ty| {
-                TypeWalk::new(ty, TypeEdges::Fields)
-                    .any(|ty| matches!(ty, Type::Resource(_) | Type::Function(_)))
+                TypeWalk::new(ty, TypeEdges::Fields).any(|ty| {
+                    matches!(ty, Type::Resource(_) | Type::Function(_))
+                        || ty.is_domain_capability()
+                        || matches!(ty, Type::Record(r) if matches!(r.name.as_str(), "joky/domain.DirectoryHandle" | "joky/domain.TimerHandle" | "joky/outbox.Handle"))
+                })
             })
         {
             return Err(invalid(
-                "Host task values cannot contain resources or callables",
+                "Host task values cannot contain resources, control handles or callables",
             ));
         }
         Shape::of(&sig.ret)?;

@@ -44,8 +44,14 @@ impl Shape {
                 Type::Unit => Shape::Unit,
                 Type::String => Shape::String,
                 Type::Function(_) => Shape::Function,
+                Type::Named(n) if matches!(n.as_str(), "domain.Handle" | "admission.Token") => {
+                    Shape::Scalar(Type::UInt64)
+                }
                 Type::Buffer(_) => Shape::Buffer,
-                Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => {
+                Type::Resource(name)
+                    if (crate::runtime::tcp::transferable_type(name)
+                        || crate::runtime::parallel::control::resource_type(name)) =>
+                {
                     Shape::Buffer
                 }
                 Type::Tuple(t) => Shape::Product(

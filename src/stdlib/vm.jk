@@ -6,6 +6,7 @@ import joky/string.{type Utf8Error}
 import joky/iter.{range}
 
 extern fn __vm_create(mode: UInt64) -> vm.Owner
+extern fn __vm_share(owner: &vm.Owner) @suspends -> vm.Owner
 extern fn __vm_close(owner: &vm.Owner) -> Int32
 extern fn __vm_error_code() -> Int32
 extern fn __vm_print_error()
@@ -14,6 +15,8 @@ pub struct Vm { owner: vm.Owner }
 impl Vm {
     pub fn new() -> Self { Vm { owner: __vm_create(0) } }
     pub fn interpreter() -> Self { Vm { owner: __vm_create(1) } }
+    // Share the control identity; closing any owner closes all aliases.
+    pub fn share(&self) @suspends -> Self { Vm { owner: __vm_share(&self.owner) } }
     pub fn close(self) -> Int32 { __vm_close(&self.owner) }
 }
 pub fn close(value: Vm) -> Int32 { value.close() }
@@ -181,6 +184,7 @@ impl Vm {
 
 // A typed entry name. Each invocation validates the selected VM's current code;
 // this descriptor neither owns a VM nor pins a code generation.
+#derive(Clone)
 pub struct Entry<A, R> { name: String }
 impl<A, R> Entry<A, R> {
     pub fn call(&self, engine: &Vm, input: A) @suspends -> R {

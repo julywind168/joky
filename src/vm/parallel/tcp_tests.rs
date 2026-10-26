@@ -299,7 +299,7 @@ fn parallel_tcp_pool_close_interrupts_real_write_backpressure() {
 }
 
 #[test]
-fn parallel_tcp_shared_captures_and_custom_drop_remain_rejected() {
+fn parallel_tcp_borrowed_groups_stay_local_but_reference_packets_are_rejected() {
     let mut vm = VmEngine::with_mode(VmMode::Jit);
     vm.load_source(
         r#"
@@ -309,6 +309,8 @@ fn parallel_tcp_shared_captures_and_custom_drop_remain_rejected() {
         fn shared(listener: TcpListener) @suspends {
             join { | inspect(&listener) | inspect(&listener) }
         }
+        fn capture(listener: &TcpListener) @suspends { scope { branch { inspect(listener) } } }
+        fn captured_owner(listener: TcpListener) @suspends { capture(&listener) }
         struct Tracked { stream: TcpStream }
         impl Drop for Tracked { fn drop(&mut self) {} }
         fn consume(value: Tracked) @suspends {}
@@ -318,7 +320,8 @@ fn parallel_tcp_shared_captures_and_custom_drop_remain_rejected() {
     "#,
     )
     .unwrap();
-    for entry in ["shared", "custom"] {
+    vm.parallel_signature("shared").unwrap();
+    for entry in ["captured_owner", "custom"] {
         assert!(vm.parallel_signature(entry).is_err(), "{entry}");
     }
 }

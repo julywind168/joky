@@ -80,7 +80,11 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                     );
                 }
                 Type::Resource(ref name)
-                    if !share && crate::runtime::tcp::transferable_type(name) => {}
+                    if !share
+                        && (crate::runtime::tcp::transferable_type(name)
+                            || crate::runtime::parallel::control::resource_type(name)) => {}
+                Type::Named(ref name)
+                    if matches!(name.as_str(), "domain.Handle" | "admission.Token") => {}
                 Type::String | Type::Function(_) => {}
                 ref scalar if crate::core::instance::scalar(scalar) => {}
                 // Cursor aliases mutate shared position. Raw, erased, unresolved
@@ -203,7 +207,22 @@ pub(crate) fn analyse(
                 .any(|ty| {
                     TypeWalk::new(ty, TypeEdges::Fields).any(|ty| matches!(ty, Type::Function(_)))
                 });
-            if callable || (!hosts.contains(name) && !tcp) {
+            let control = crate::core::builtins::Builtin::lookup(name).is_some_and(|builtin| {
+                builtin.validate(signature, info.suspends, false).is_ok()
+                    && match builtin {
+                        crate::core::builtins::Builtin::VmCall
+                        | crate::core::builtins::Builtin::VmSource
+                        | crate::core::builtins::Builtin::Fs(_) => true,
+                        crate::core::builtins::Builtin::Domain(op) => {
+                            crate::runtime::parallel::control::Operation::domain(op).is_some()
+                        }
+                        crate::core::builtins::Builtin::Vm(_) => {
+                            matches!(name.as_str(), "__vm_create" | "__vm_share" | "__vm_close")
+                        }
+                        _ => false,
+                    }
+            });
+            if callable || (!hosts.contains(name) && !tcp && !control) {
                 reasons.insert(
                     name.clone(),
                     "host binding has no explicit ParallelSafe contract".into(),
@@ -272,13 +291,21 @@ pub(crate) fn analyse(
             }
             let local = match op {
                 Op::Concurrent { branches, .. }
-                    if branches.iter().any(|b| match b.indirect.as_ref().map(|s| &s.ty) {
-                        Some(Type::Function(f)) => !packet_signature(&f.signature),
-                        Some(_) => true,
-                        None => !packet_supported(&b.name),
+                    if branches.iter().any(|branch| {
+                        let signature = match branch.indirect.as_ref().map(|slot| &slot.ty) {
+                            Some(Type::Function(f)) => &f.signature,
+                            Some(_) => return true,
+                            None => &plan.functions[&branch.name].signature,
+                        };
+                        let owned = |ty| {
+                            packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty))
+                                .is_some_and(packet::Kind::implemented)
+                        };
+                        !signature.params.iter().all(|ty| ty.reference_type().is_some() || owned(ty))
+                            || !owned(&signature.ret)
                     }) =>
                 {
-                    Some("parallel child packets require reference-free scalar/String aggregates without custom Drop")
+                    Some("parallel group requires supported owned packets or worker-local borrows")
                 }
                 Op::TaskBranch { entry, .. } if !packet_supported(entry) => {
                     Some("parallel branch captures require reference-free scalar/String aggregates without custom Drop")
@@ -292,10 +319,7 @@ pub(crate) fn analyse(
                 Op::ArenaNew { .. } | Op::ArenaAlloc { .. } => {
                     Some("explicit arena capability is Local")
                 }
-                Op::DomainModule(_)
-                | Op::DomainOwner { .. }
-                | Op::DomainBits { .. }
-                | Op::OutboxEmit { .. } => Some("state domain operation is Local"),
+                Op::DomainModule(_) | Op::OutboxEmit { .. } => Some("state domain operation is Local"),
                 _ => None,
             };
             if let Some(reason) = local {
@@ -316,7 +340,12 @@ pub(crate) fn analyse(
             }) {
                 reasons.insert(
                     name.clone(),
-                    format!("callee or cleanup `{dependency}` requires Local execution"),
+                    format!(
+                        "callee or cleanup `{dependency}` requires Local execution: {}",
+                        reasons
+                            .get(dependency)
+                            .map_or("unknown target", String::as_str)
+                    ),
                 );
                 changed = true;
             }
@@ -473,13 +502,18 @@ mod tests {
             "tcp.ListenerOwner",
             "tcp.ReaderOwner",
             "tcp.WriterOwner",
+            "vm.Owner",
+            "fs.FileOwner",
+            "domain.DirectoryOwner",
+            "outbox.QueueOwner",
+            "admission.PermitOwner",
         ] {
             let resource = Type::Resource(name.into());
             assert!(qualify(&resource).transfer);
             assert!(!qualify(&resource).share);
             assert!(!qualify(&Type::reference(resource, false)).transfer);
         }
-        for name in ["HostResource", "fs.FileOwner", "domain.StateOwner"] {
+        for name in ["HostResource", "domain.StateOwner"] {
             assert!(!qualify(&Type::Resource(name.into())).transfer);
         }
         assert!(!qualify(&Type::BufferIterator(std::sync::Arc::new(Type::Int32))).share);

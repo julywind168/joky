@@ -347,7 +347,21 @@ impl HostPending {
         }
         self.frame.reserve_slots(self.frame.slots.len())?;
         self.notification = crate::runtime::executor::current_waker().map(|w| w.observe());
+        if self.host.name == "__vm_share" {
+            return unsafe { crate::stdlib::share_vm(arena, self.frame.slots[0]) }
+                .map(|value| Some(Value::Reference(value as *mut u8)));
+        }
         if matches!(self.host.binding.entry, HostEntry::VmSource) {
+            if crate::runtime::parallel::pool::active() {
+                return unsafe {
+                    crate::runtime::parallel::control::poll(
+                        arena,
+                        self.frame.as_mut(),
+                        crate::runtime::parallel::control::Operation::VmSource,
+                    )
+                }
+                .map(|r| r.map(|bits| Value::Reference(bits as *mut u8)));
+            }
             let result = unsafe { crate::stdlib::source_poll(arena, self.frame.as_mut()) }?;
             self.frame.result = result;
             return Ok(Some(Value::Reference(result as usize as *mut u8)));

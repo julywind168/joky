@@ -1,0 +1,29 @@
+import joky/vm
+fn call(engine: vm.Vm, value: Int32) @suspends -> Int32 {
+    engine.call::<Int32, Int32>("answer", value)
+}
+fn main() @suspends -> Int32 {
+    let engine = vm.Vm.new()
+    engine.load_source("extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends\nfn answer(value: Int32) @suspends -> Int32 {{ value + 1 }}\nfn slow(value: Int32) @suspends -> Int32 {{ __joky_task_sleep_ms(60000); value }}")!
+    let first = engine.share()
+    let second = engine.share()
+    let (a, b) = join { | call(first, 20) | call(second, 20) }
+    if a + b != 42 { return 1 }
+    let winner = race { | borrowed(&engine, "slow") | borrowed(&engine, "answer") }
+    if winner != 42 { return 5 }
+    engine.load_source("fn echo(value: String) @suspends -> String {{ value }}")!
+    if !engine.call::<String, String>("echo", "worker → control → worker").equals("worker → control → worker") { return 2 }
+    let alias = engine.share()
+    if alias.close() != 0 { return 3 }
+    if engine.try_call::<String, String>("echo", "closed").is_ok() { return 4 }
+    0
+}
+fn parked() @suspends -> Int32 {
+    let engine = vm.Vm.interpreter()
+    engine.load_source("extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends\nfn pending(_: Int32) @suspends -> Int32 {{ __joky_task_sleep_ms(60000); 0 }}")!
+    engine.call::<Int32, Int32>("pending", 0)
+}
+
+fn borrowed(engine: &vm.Vm, name: String) @suspends -> Int32 {
+    engine.call::<Int32, Int32>(name, 41)
+}

@@ -315,6 +315,12 @@ impl Buffer {
         }
     }
 
+    pub(crate) fn resource_ref(&self) -> Result<&super::resource::OwnedResource, Error> {
+        self.resource
+            .as_ref()
+            .ok_or_else(|| bounds_error("Expected a registered resource owner"))
+    }
+
     pub(crate) fn resource_mut(&mut self) -> Result<&mut super::resource::OwnedResource, Error> {
         self.resource
             .as_mut()

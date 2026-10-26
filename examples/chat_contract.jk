@@ -27,6 +27,7 @@ pub struct AccountInit {
     pub output: session.Output,
 }
 
+#derive(Clone)
 pub struct Contract {
     pub dispatch: vm.Entry<Call, Bool>,
     pub init_account: vm.Entry<AccountInit, Unit>,

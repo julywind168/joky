@@ -677,6 +677,9 @@ pub(crate) struct BlockingContext {
     waker: TaskWaker,
 }
 impl BlockingContext {
+    pub(crate) fn waker(&self) -> TaskWaker {
+        self.waker.clone()
+    }
     pub(crate) fn new() -> Result<Self, Error> {
         super::dns::initialize()?;
         let executor = HostExecutor::default();

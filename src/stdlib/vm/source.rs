@@ -145,6 +145,20 @@ pub(crate) unsafe fn source_poll(arena: &mut Arena, frame: &mut CpsFrame) -> Res
 /// Five frame slots contain checked arguments; the owned String uses frame.result.
 #[export_name = "__joky_vm_source"]
 pub(crate) unsafe extern "C" fn source_poll_native(frame: *mut CpsFrame) -> i32 {
+    if crate::runtime::parallel::pool::active() {
+        return match crate::runtime::parallel::control::poll(
+            &mut *cps::arena(frame),
+            &mut *frame,
+            crate::runtime::parallel::control::Operation::VmSource,
+        ) {
+            Ok(Some(_)) => 0,
+            Ok(None) => 1,
+            Err(error) => {
+                crate::runtime::error::record_error(error);
+                cps::RUNTIME_ERROR
+            }
+        };
+    }
     match source_poll(&mut *cps::arena(frame), &mut *frame) {
         Ok(_) => 0,
         Err(error) => {

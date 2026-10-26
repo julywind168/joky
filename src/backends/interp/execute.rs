@@ -1097,7 +1097,34 @@ impl Execution {
 
     fn start_concurrent(&mut self, module: &BytecodeModule) -> Result<(), Error> {
         if crate::runtime::parallel::pool::active() {
-            return self.remote_concurrent(module);
+            let frame = self.frame_mut(self.current);
+            let Instruction::Concurrent { branches, .. } = &frame.function.code[frame.pc] else {
+                unreachable!()
+            };
+            let transferable = branches.iter().all(|b| {
+                let target = b.target.or_else(|| {
+                    b.indirect.and_then(|slot| match frame.slots[slot] {
+                        Value::Function(id) => Some(id),
+                        _ => None,
+                    })
+                });
+                target
+                    .and_then(|id| module.callees.get(id))
+                    .is_some_and(|callee| {
+                        let sig = match callee {
+                            Callee::User(f) => &f.info.signature,
+                            Callee::Host(h) => h.signature(),
+                            _ => return false,
+                        };
+                        sig.params
+                            .iter()
+                            .chain(std::iter::once(&sig.ret))
+                            .all(|ty| crate::runtime::parallel::packet::Shape::of(ty).is_ok())
+                    })
+            });
+            if transferable {
+                return self.remote_concurrent(module);
+            }
         }
         let id = self.current;
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {

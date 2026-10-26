@@ -4,6 +4,7 @@ use crate::{FunctionSignature, Type};
 
 pub(crate) const NAMES: &[&str] = &[
     "__vm_create",
+    "__vm_share",
     "__vm_close",
     "__vm_error_code",
     "__vm_print_error",
@@ -38,6 +39,10 @@ pub(crate) fn binding(name: &str) -> Option<BindingSpec> {
     let mut params = vec![Type::reference(owner.clone(), false)];
     let mut ret = Type::Int32;
     let suffix = match operation {
+        "share" => {
+            ret = owner;
+            ""
+        }
         "create" => {
             params = vec![Type::UInt64];
             ret = owner;
@@ -105,11 +110,9 @@ pub(crate) fn binding(name: &str) -> Option<BindingSpec> {
         "error_code" | "print_error" => format!("joky_vm_{operation}"),
         _ => format!("__joky_vm_managed_{operation}{suffix}"),
     };
-    Some(BindingSpec::with_symbol(
-        name,
-        FunctionSignature::new(params, ret),
-        symbol,
-    ))
+    let mut binding = BindingSpec::with_symbol(name, FunctionSignature::new(params, ret), symbol);
+    binding.suspends = operation == "share";
+    Some(binding)
 }
 
 /// The typed VM bridge uses owned text and a caller-owned packet, not host text views.

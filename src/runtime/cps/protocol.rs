@@ -272,6 +272,21 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
                 "Publication contains foreign, repeated or reordered child tokens",
             ));
         }
+        if record.kind != 2
+            && record.remote.is_some()
+            && record.prepared.iter().any(|(_, child)| {
+                child
+                    .task_code
+                    .as_ref()
+                    .unwrap()
+                    .layout
+                    .parallel_shapes()
+                    .is_err()
+            })
+        {
+            (&mut (*frame).task_protocol)[index].remote = None;
+        }
+        let record = &(&(*frame).task_protocol)[index];
         if record.remote.is_some() {
             let prepared = std::mem::take(&mut (&mut (*frame).task_protocol)[index].prepared);
             let mut factories = Vec::new();

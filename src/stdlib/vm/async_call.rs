@@ -600,6 +600,13 @@ pub(crate) unsafe extern "C" fn call_poll_native(frame: *mut CpsFrame) -> i32 {
 /// Private compiler adapter: three owning Strings and a borrowed UInt64 packet
 /// remain alive in the caller's frame until this operation completes or stops.
 pub(crate) unsafe fn call_poll(frame: &mut CpsFrame) -> Result<Option<u64>, Error> {
+    if crate::runtime::parallel::pool::active() {
+        return crate::runtime::parallel::control::poll(
+            &mut *cps::arena(frame),
+            frame,
+            crate::runtime::parallel::control::Operation::VmCall,
+        );
+    }
     let result = catch_unwind(AssertUnwindSafe(|| poll(frame, true)))
         .unwrap_or_else(|_| Err(runtime_error(ErrorCode::Panic, "Script call panicked")));
     match result {

@@ -58,7 +58,10 @@ impl pool::Job for MainJob {
     fn poll(&mut self) -> Poll<Result<pool::Output, Error>> {
         match error::checked(|| unsafe { (self.entry)(&mut *self.frame) }) {
             Ok(0) => Poll::Ready(Ok(Box::new(self.frame.result))),
-            Ok(1) => Poll::Pending,
+            Ok(1) => {
+                pool::wait_plan(self.frame.wait_plan());
+                Poll::Pending
+            }
             Ok(_) => Poll::Ready(Err(invalid())),
             Err(error) => Poll::Ready(Err(error)),
         }
@@ -102,7 +105,9 @@ pub unsafe extern "C" fn __joky_task_main_v1(
                 let root = Storage::new(vec![TaskBudget::new(crate::runtime::arena::MAX_BYTES)])?;
                 let task = pool.submit(
                     root,
-                    Arc::new(()),
+                    Arc::new(super::control::Files(Some(
+                        crate::runtime::fs::FileService::native(".", Default::default())?,
+                    ))),
                     Box::new(move || {
                         Ok(Box::new(MainJob {
                             frame: Box::new(CpsFrame::try_new(slots)?),

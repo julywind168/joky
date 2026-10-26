@@ -294,7 +294,19 @@ struct Worker {
 impl pool::Job for Worker {
     fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {
         match self.execution.poll(&self.module) {
-            Poll::Pending => std::task::Poll::Pending,
+            Poll::Pending => {
+                let mut plan = crate::runtime::driver::WaitPlan::default();
+                for node in self.execution.nodes.iter().flatten() {
+                    if let Activation::Host(host) = &node.activation {
+                        plan.merge(host.wait_plan());
+                    }
+                }
+                if self.execution.cooperative_yield {
+                    plan.add(Some(crate::runtime::driver::Wake::Immediate));
+                }
+                pool::wait_plan(plan);
+                std::task::Poll::Pending
+            }
             Poll::Failed(e) => std::task::Poll::Ready(Err(e)),
             Poll::Complete(_) => std::task::Poll::Ready(
                 self.execution

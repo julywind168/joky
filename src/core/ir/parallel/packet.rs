@@ -25,7 +25,15 @@ impl Kind {
             Type::FixedArray(_) => Self::FixedArray,
             Type::String => Self::String,
             Type::Function(_) => Self::Function,
-            Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => Self::Resource,
+            Type::Named(n) if matches!(n.as_str(), "domain.Handle" | "admission.Token") => {
+                Self::Scalar
+            }
+            Type::Resource(name)
+                if (crate::runtime::tcp::transferable_type(name)
+                    || crate::runtime::parallel::control::resource_type(name)) =>
+            {
+                Self::Resource
+            }
             Type::Record(r) if r.array => Self::Array,
             Type::Record(r) if r.list => Self::List,
             Type::Record(r) if r.map => Self::Map,
@@ -110,7 +118,15 @@ pub(crate) fn classify(
                 .chain(e.variants.iter().filter_map(|v| v.payload.clone()))
                 .collect(),
             Type::String | Type::Function(_) => Vec::new(),
-            Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => Vec::new(),
+            Type::Named(n) if matches!(n.as_str(), "domain.Handle" | "admission.Token") => {
+                Vec::new()
+            }
+            Type::Resource(name)
+                if (crate::runtime::tcp::transferable_type(name)
+                    || crate::runtime::parallel::control::resource_type(name)) =>
+            {
+                Vec::new()
+            }
             _ if crate::core::instance::scalar(&ty) => Vec::new(),
             _ => return None,
         };

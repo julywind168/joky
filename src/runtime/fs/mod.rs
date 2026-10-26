@@ -297,6 +297,13 @@ pub(crate) unsafe fn poll(
     frame: &mut CpsFrame,
     op: Operation,
 ) -> Result<Option<u64>, Error> {
+    if super::parallel::pool::active() {
+        return super::parallel::control::poll(
+            arena,
+            frame,
+            super::parallel::control::Operation::Fs(op),
+        );
+    }
     if matches!(frame.state, DONE | FAILED) {
         return Err(failure("File operation has terminated"));
     }

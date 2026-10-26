@@ -8,7 +8,7 @@ use std::{
     marker::PhantomData,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Condvar, Mutex, MutexGuard, Weak,
     },
     task::Poll,
@@ -61,6 +61,7 @@ struct Task {
     cancelled: AtomicBool,
     cleaned: AtomicBool,
     failed: AtomicBool,
+    controls_pending: AtomicUsize,
     parent: Option<Weak<Task>>,
     group: Option<(Arc<Arbiter>, usize)>,
     state: Mutex<State>,
@@ -79,6 +80,7 @@ struct Shared {
     sequence: AtomicU64,
     max_tasks: usize,
     io: Mutex<Option<IoDriver>>,
+    controls: Mutex<Vec<super::control::Driver>>,
 }
 struct IoDriver {
     reactor: crate::runtime::reactor::Reactor,
@@ -211,6 +213,32 @@ pub(crate) fn check_cancelled() -> Result<(), Error> {
 pub(crate) fn code<T: Any + Send + Sync>() -> Option<Arc<T>> {
     CURRENT.with(|c| c.borrow().as_ref()?.code.clone().downcast().ok())
 }
+/// A control request retains cleanup responsibility until its Local frame is gone.
+pub(crate) struct ControlReceipt(Arc<Task>);
+pub(crate) fn control_receipt() -> Option<ControlReceipt> {
+    CURRENT.with(|slot| {
+        slot.borrow().as_ref().map(|task| {
+            task.controls_pending.fetch_add(1, Ordering::Relaxed);
+            ControlReceipt(task.clone())
+        })
+    })
+}
+impl Drop for ControlReceipt {
+    fn drop(&mut self) {
+        self.0.controls_pending.fetch_sub(1, Ordering::Release);
+        self.0.wake();
+    }
+}
+pub(crate) fn ready() {
+    WAITING.with(|w| w.set(false));
+}
+pub(crate) fn wait_plan(plan: crate::runtime::driver::WaitPlan) {
+    match plan.wake() {
+        Some(crate::runtime::driver::Wake::Immediate) => ready(),
+        Some(crate::runtime::driver::Wake::Deadline(deadline)) => wait_until(deadline),
+        None => {}
+    }
+}
 pub(crate) fn wait_for_wake() {
     WAITING.with(|w| w.set(true));
 }
@@ -323,6 +351,14 @@ impl Handle {
     }
 }
 impl ParallelExecutor {
+    #[cfg(test)]
+    pub(crate) fn control_observations(&self) -> Vec<(std::thread::ThreadId, usize)> {
+        lock(&self.shared.controls)
+            .iter()
+            .map(super::control::Driver::observation)
+            .collect()
+    }
+
     pub fn new(workers: usize, max_tasks: usize) -> Result<Self, Error> {
         if active() {
             return Err(invalid(
@@ -345,6 +381,7 @@ impl ParallelExecutor {
             sequence: AtomicU64::new(1),
             max_tasks,
             io: Mutex::new(None),
+            controls: Mutex::new(Vec::new()),
         });
         let mut pool = Self {
             shared,
@@ -402,6 +439,9 @@ impl ParallelExecutor {
             q.tasks.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
         };
         tasks.iter().all(|t| lock(&t.state).phase == Phase::Cleaned)
+            && lock(&self.shared.controls)
+                .iter()
+                .all(super::control::Driver::finished)
             && lock(&self.shared.io)
                 .as_ref()
                 .is_none_or(|io| io.thread.is_finished())
@@ -410,6 +450,10 @@ impl ParallelExecutor {
         self.request_close();
         for worker in self.workers.drain(..) {
             worker.join().expect("task worker panicked");
+        }
+        let controls = std::mem::take(&mut *lock(&self.shared.controls));
+        for control in controls {
+            control.join();
         }
         let io = lock(&self.shared.io).take();
         if let Some(io) = io {
@@ -542,6 +586,7 @@ fn publish(
             cancelled: AtomicBool::new(false),
             cleaned: AtomicBool::new(false),
             failed: AtomicBool::new(false),
+            controls_pending: AtomicUsize::new(0),
             parent: parent.map(Arc::downgrade),
             group: group
                 .as_ref()
@@ -673,7 +718,35 @@ fn run(shared: Arc<Shared>, worker: usize) {
                     child.cancel();
                 }
             }
-            if task.children_cleaned() {
+            let children_cleaned = task.children_cleaned();
+            if children_cleaned {
+                let _cleaning = CleanupGuard::enter();
+                let cleanup = crate::runtime::error::checked(|| drop(item.job.take()));
+                if let Err(error) = cleanup {
+                    if item
+                        .terminal
+                        .as_ref()
+                        .unwrap()
+                        .as_ref()
+                        .err()
+                        .is_none_or(|e| e.code() == ErrorCode::Cancelled)
+                    {
+                        item.terminal = Some(Err(error));
+                    }
+                }
+            }
+            let control_closed = if children_cleaned && task.parent.is_none() {
+                let control = lock(&shared.controls)
+                    .iter()
+                    .find_map(|c| c.matches(&task.root));
+                control.is_none_or(|c| c.finish(IoWaker(Arc::downgrade(&task))))
+            } else {
+                true
+            };
+            if children_cleaned
+                && control_closed
+                && task.controls_pending.load(Ordering::Acquire) == 0
+            {
                 let _cleaning = CleanupGuard::enter();
                 let mut item = local.remove(&task.id).unwrap();
                 let mut result = item.terminal.take().unwrap();
@@ -1091,4 +1164,45 @@ mod publication_tests {
     fn exhaustive_task_pool_publication_races_close() {
         close_publication(512);
     }
+}
+
+pub(crate) fn control() -> Result<Arc<super::control::Core>, Error> {
+    let task = CURRENT
+        .with(|c| c.borrow().clone())
+        .ok_or_else(|| invalid("Control command requires a worker task"))?;
+    let mut controls = lock(&task.shared.controls);
+    let mut index = 0;
+    while index < controls.len() {
+        if controls[index].finished() {
+            controls.swap_remove(index).join();
+        } else {
+            index += 1;
+        }
+    }
+    if let Some(core) = controls.iter().find_map(|c| c.matches(&task.root)) {
+        return Ok(core);
+    }
+    if lock(&task.shared.queue).closing {
+        return Err(cancelled_error());
+    }
+    if controls.len() >= task.shared.max_tasks {
+        return Err(Error::new_with_code(
+            ErrorPhase::Runtime,
+            ErrorCode::ResourceLimit,
+            "Local control driver limit exceeded",
+        ));
+    }
+    let files = if let Some(code) = task.code.downcast_ref::<crate::vm::parallel::Code>() {
+        match code {
+            crate::vm::parallel::Code::Native(e) => e.files.clone(),
+            crate::vm::parallel::Code::Interpreted(e) => e.files.clone(),
+        }
+    } else {
+        task.code
+            .downcast_ref::<super::control::Files>()
+            .and_then(|files| files.0.clone())
+    };
+    let (driver, core) = super::control::Driver::start(task.root.clone(), files)?;
+    controls.push(driver);
+    Ok(core)
 }

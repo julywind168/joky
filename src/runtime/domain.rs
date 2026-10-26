@@ -780,7 +780,23 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         }
     }
 }
-pub(crate) use crate::vm::state_domains::source::poll;
+pub(crate) unsafe fn poll(
+    arena: &mut super::arena::Arena,
+    frame: &mut super::cps::CpsFrame,
+    op: Operation,
+) -> Result<Option<u64>, Error> {
+    if super::parallel::pool::active() {
+        let command = super::parallel::control::Operation::domain(op).ok_or_else(|| {
+            Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::InvalidCall,
+                "Domain operation requires Local execution",
+            )
+        })?;
+        return super::parallel::control::poll(arena, frame, command);
+    }
+    crate::vm::state_domains::source::poll(arena, frame, op)
+}
 
 pub(crate) use crate::vm::state_domains::emit;
 /// # Safety

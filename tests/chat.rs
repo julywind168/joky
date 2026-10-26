@@ -381,6 +381,16 @@ fn conversation(
 #[test]
 #[ignore = "manual: real TCP chat matrix; run with cargo test --test chat -- --ignored"]
 fn chat_real_tcp_on_all_backends() {
+    chat_matrix(false);
+}
+
+#[test]
+#[ignore = "manual: parallel real TCP chat matrix"]
+fn chat_parallel_real_tcp_on_all_backends() {
+    chat_matrix(true);
+}
+
+fn chat_matrix(parallel: bool) {
     let work = scratch::ScratchDir::new("chat");
     let source = include_str!("../examples/chat.jk");
     std::fs::write(
@@ -403,7 +413,11 @@ fn chat_real_tcp_on_all_backends() {
         .replace("examples/chat_logic.jk", "chat_logic.jk")
         .replace("examples/chat_contract.jk", "chat_contract.jk")
         .replace("    let config = defaults()", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let config = defaults()");
-    let source = format!("{source}\n{}", include_str!("fixtures/chat_reload_host.jk"));
+    let source = if parallel {
+        source.replace("    verify_publication(&engine)\n", "")
+    } else {
+        format!("{source}\n{}", include_str!("fixtures/chat_reload_host.jk"))
+    };
     for create in ["new", "interpreter"] {
         let source = source.replace("vm.Vm.new()", &format!("vm.Vm.{create}()"));
         std::fs::write(&path, &source).unwrap();
@@ -434,8 +448,12 @@ fn chat_real_tcp_on_all_backends() {
         assert_ne!(next, logic);
         std::fs::write(work.path().join("chat_logic_next.jk"), next).unwrap();
         let binary = work.path().join("chat");
-        let built = Command::new(env!("CARGO_BIN_EXE_joky"))
-            .arg("build")
+        let mut build = Command::new(env!("CARGO_BIN_EXE_joky"));
+        build.arg("build");
+        if parallel {
+            build.args(["--task-workers", "3"]);
+        }
+        let built = build
             .arg(&path)
             .arg("-o")
             .arg(&binary)
@@ -450,6 +468,9 @@ fn chat_real_tcp_on_all_backends() {
             } else {
                 let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
                 command.arg("run");
+                if parallel {
+                    command.args(["--task-workers", "3"]);
+                }
                 if backend == "interpreter" {
                     command.arg("--interpreter");
                 }

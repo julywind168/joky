@@ -1,5 +1,6 @@
 //! Explicit parallel execution with checked code, owning packets and root storage.
 mod config;
+pub(crate) mod control;
 pub mod standalone;
 pub use config::{ExecutionMode, TaskExecutor};
 pub(crate) mod packet;
@@ -46,11 +47,27 @@ pub(crate) enum HostCode {
     /// Only audited runtime bindings construct this internal variant.
     TextView(unsafe extern "C" fn(*const u8) -> i32),
     Tcp(super::tcp::Operation),
+    Control(control::Operation),
 }
 impl Host {
     pub(crate) fn binding(&self) -> super::bindings::HostBinding {
         use super::bindings::{HostAbiKind, HostEntry};
         let (abi, entry) = match self.code {
+            HostCode::Control(op) => (
+                HostAbiKind::Scalar,
+                match op {
+                    control::Operation::VmCreate => {
+                        HostEntry::ResourceFactory(std::rc::Rc::new(crate::stdlib::VM_FACTORY))
+                    }
+                    control::Operation::VmClose => {
+                        HostEntry::Direct(crate::stdlib::VM_CLOSE as *const u8)
+                    }
+                    control::Operation::VmCall => HostEntry::VmCall,
+                    control::Operation::VmSource => HostEntry::VmSource,
+                    control::Operation::Domain(op) => HostEntry::Domain(op),
+                    control::Operation::Fs(op) => HostEntry::Fs(op),
+                },
+            ),
             HostCode::Tcp(op) => (HostAbiKind::Scalar, HostEntry::Tcp(op)),
             HostCode::Cps { entry, slots } => (
                 HostAbiKind::Scalar,
@@ -82,6 +99,59 @@ impl Host {
                 name: format!("{op:?}"),
                 signature: binding.signature.clone(),
                 code: HostCode::Tcp(op),
+                _owner: std::sync::Arc::new(()),
+            });
+        }
+        if matches!(binding.entry, HostEntry::Cps { entry, frame_slots: Some(1) } if std::ptr::fn_addr_eq(entry,crate::stdlib::VM_SHARE as super::cps::CpsEntry))
+            && binding.signature == crate::core::vm::binding("__vm_share")?.signature
+            && binding.abi == HostAbiKind::Scalar
+        {
+            return Some(Self {
+                name: "__vm_share".into(),
+                signature: binding.signature.clone(),
+                code: HostCode::Cps {
+                    entry: crate::stdlib::VM_SHARE,
+                    slots: 1,
+                },
+                _owner: std::sync::Arc::new(()),
+            });
+        }
+        let control = match &binding.entry {
+            HostEntry::Direct(entry)
+                if *entry == crate::stdlib::VM_CLOSE as *const u8
+                    && binding.signature == crate::core::vm::binding("__vm_close")?.signature =>
+            {
+                Some(control::Operation::VmClose)
+            }
+            HostEntry::VmCall if binding.signature == crate::core::vm::call_signature() => {
+                Some(control::Operation::VmCall)
+            }
+            HostEntry::VmSource if binding.signature == crate::core::vm::source_signature() => {
+                Some(control::Operation::VmSource)
+            }
+            HostEntry::Domain(op) if op.validate(&binding.signature, true).is_ok() => {
+                control::Operation::domain(*op)
+            }
+            HostEntry::Fs(op) if op.validate(&binding.signature, true).is_ok() => {
+                Some(control::Operation::Fs(*op))
+            }
+            HostEntry::ResourceFactory(f)
+                if control::vm_factory(f)
+                    && binding.signature
+                        == crate::FunctionSignature::new(
+                            vec![crate::Type::UInt64],
+                            crate::Type::Resource("vm.Owner".into()),
+                        ) =>
+            {
+                Some(control::Operation::VmCreate)
+            }
+            _ => None,
+        };
+        if let Some(op) = control.filter(|_| binding.abi == HostAbiKind::Scalar) {
+            return Some(Self {
+                name: format!("{op:?}"),
+                signature: binding.signature.clone(),
+                code: HostCode::Control(op),
                 _owner: std::sync::Arc::new(()),
             });
         }

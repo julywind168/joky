@@ -261,6 +261,7 @@ enum FrozenCallee {
     Unavailable(FunctionSignature, bool),
 }
 pub(crate) struct FrozenEntry {
+    pub(crate) files: Option<crate::runtime::fs::FileService>,
     pub(crate) info: FunctionInfo,
     pub(crate) version: ModuleId,
     pub(crate) sources: Arc<crate::SourceMap>,
@@ -276,6 +277,7 @@ impl BytecodeModule {
             .filter(|function| function.info.parallel_entry)
             .ok_or_else(|| abi_error("Unknown parallel export"))?;
         Ok(FrozenEntry {
+            files: self.files.clone(),
             info: function.info.clone(),
             version: self.version,
             sources: self.sources.clone(),
@@ -937,6 +939,10 @@ impl Value {
         if ty.is_place() {
             return Ok(Self::Place(bits as *mut u8));
         }
+        if matches!(ty, Type::Named(n) if matches!(n.as_str(),"domain.Handle" | "admission.Token"))
+        {
+            return Ok(Self::Named(bits));
+        }
         if matches!(ty, Type::Function(_)) {
             return Ok(Self::Function(bits as usize));
         }
@@ -966,6 +972,9 @@ impl Value {
     }
 
     fn instance_bits(&self) -> Result<u64, Error> {
+        if let Self::Named(bits) = self {
+            return Ok(*bits);
+        }
         if let Self::Function(target) = self {
             return Ok(*target as u64);
         }

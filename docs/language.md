@@ -4742,7 +4742,8 @@ let status = vm.register_int32_2(engine, &name, host_add)
 |------|--------------|
 | `vm.Vm.new()` | 创建默认 JIT `vm.Vm` |
 | `vm.Vm.interpreter()` | 创建解释器 `vm.Vm` |
-| `vm.close(value)` / `value.close()` | 消费 `Vm` 并提前关闭，正常返回 0；关闭后使用在编译期拒绝 |
+| `value.share()` | 挂起方法，创建共享同一 VM 控制身份的拥有句柄 |
+| `vm.close(value)` / `value.close()` | 消费当前句柄并关闭同一身份的全部别名，正常返回 0；其他别名后续调用失败 |
 | `vm.load_source(handle, source)` | 加载源码，成功返回 0，失败返回 1 |
 | `vm.reload_source(handle, source)` | 替换模块，失败保留旧代码，状态码同上 |
 | `vm.register_int32_0/1/2(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
@@ -4766,7 +4767,8 @@ let status = vm.register_int32_2(engine, &name, host_add)
 不通过线程级 `vm.error_code()` 交付结果。
 同步调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次同步操作前查询。
 `vm.Vm` 是源码库声明的拥有型记录，内部 `vm.Owner` 与 TCP owner 共用 Resource 存储。
-它不能复制，移动转移所有权；作用域退出、提前返回、运行失败与任务取消都会自动关闭。
+它不能隐式复制，移动转移所有权；`share()` 显式增加拥有句柄。作用域退出、提前返回、
+运行失败与任务取消释放当前句柄，最后一个句柄释放时自动关闭 VM。
 除消费型 close 外，各操作接受 `&vm.Vm`；同步函数允许隐式借用，`Vm.call` 使用共享方法接收者。
 多个共享借用允许挂起调用与加载/重载并行；借用存活期间不能移动或关闭拥有者。
 底层 VM 仍绑定创建线程，Rust/C 的数值句柄接口保持原有显式关闭协议。
@@ -4774,7 +4776,8 @@ let status = vm.register_int32_2(engine, &name, host_add)
 显式依赖快照使用 `Vm.module_source`／`module_file` 或 Rust API；同步 `Int32` 宿主函数可通过 `vm.register_int32_0/1/2` 注册。
 
 `Vm.call` 的名称是拥有型 String，不跨模块保留业务借用。首次异步调用或发布将句柄
-绑定当前执行器，此后从另一执行器或原执行器销毁后调用均拒绝；不创建额外事件循环。
+绑定当前执行器，此后从另一执行器或原执行器销毁后调用均拒绝。Local 不创建额外事件循环；
+Parallel 通过任务树的唯一控制执行器执行这些调用。
 Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失败或取消时清理子 continuation。
 关闭 VM 后挂起调用在下一次推进或取消时清理；取消某次借用调用不会关闭外层 VM 拥有者。
 已有流程保留启动模块，新调用使用最近成功加载的模块。加载和编译仍是同步操作。
@@ -4938,7 +4941,8 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 
 默认 `ExecutionMode::Local` 在宿主线程顺序推进任务；Godot 继续主线程驱动。
 显式 `Parallel { workers }` 使用 1–256 个固定 worker，把同一根任务的 join/race/branch
-及后代独立调度。CLI 的 run/build 使用 `--task-workers N`；N=1 仍要求完整并行资格，
+及后代独立调度。含借用参数的静态 join/race 留在当前 worker 顺序推进，拥有型动态分支
+仍可分配到其他 worker。CLI 的 run/build 使用 `--task-workers N`；N=1 仍要求完整并行资格，
 不等同于 Local。入口须为无参数、返回 Unit 或 Int32 的 `@suspends main`。
 
 Rust 在本地 VM 中 `prepare_parallel_task` 冻结代码及拥有输入，通过
@@ -4965,16 +4969,29 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 完整调用图必须证明安全；内置 stdout 绑定已获并行资格，`print`／`println` 还要求实际使用的
-Show 实现及其调用图通过检查。未知 extern、文件/DNS、Domains、持久实例、VM 句柄
-和 Godot 对象仍保持 Local。
+Show 实现及其调用图通过检查。未知 extern、DNS、直接状态域操作、持久实例和 Godot 对象仍保持 Local。
+内置 VM 类型化调用／源码方法、文件操作、目录拥有者、准入池和邮箱通过下述 Local 控制桥接开放。
 
 R7b 开放同一 Parallel 任务树内的 TcpListener／TcpStream／TcpReader／TcpWriter 拥有转移，
 也可放入满足上述规则的容器或聚合。连接始终绑定同一共享 I/O 驱动；读写端可由不同 worker
 持有，各自仍只允许一个活动操作。交接不包含活动借用或 I/O 请求，也不把共享借用变成可转移包。
 取消只撤销该操作；任务结束时按拥有规则关闭其端，另一方向可继续使用。池关闭等待全部操作
 注销及驱动线程退出。该能力要求通过 ParallelExecutor 提交，直接 start 不创建 I/O 驱动。
-Rust TaskValue 继续只承载数据，准备时拒绝包含资源的宿主输入／输出类型；本次不提供跨树或
+Rust TaskValue 继续只承载数据，准备时拒绝包含资源或控制句柄的宿主输入／输出类型；本次不提供跨树或
 Local ↔ Parallel 的 socket 导入／导出。实网用例见 [parallel_tcp.jk](../tests/fixtures/parallel_tcp.jk)。
+
+R7c 的控制代理绑定同一任务树。`Vm.share()` 返回独立拥有句柄，适合移入连接 `branch`；
+共享的是控制身份，跨线程包不包含 `&Vm`、Rc 或调用帧地址。最后一个句柄释放时关闭 VM，
+显式 `close` 关闭所有别名；给已关闭的身份再创建别名不会重新打开它。
+`Vm.call`／`try_call`、类型化 Entry、源码加载／契约声明／发布在该树唯一控制线程执行，
+业务脚本仍按 Local 调度，R8 才开放并行域计算。旧的同步反射、注册和迁移接口仍保持 Local。
+
+同树 worker 可移动 VM、目录、准入池／permit、邮箱／消息和文件 owner 的代理，
+控制端持有实际 Local 资源；命令复制文本和数据包，返回复制结果或新的代理。静态借用
+join/race 的全部分支留在调用 worker，仍检查每个直接／间接目标的完整效果，不能借此
+调用任意 Local 宿主绑定。文件操作沿用准备时配置的 FileService，不新增文件访问权限。
+请求和资源表各有 4096 项上限，元数据和复制包计入任务预算；迟到结果不会复活已取消请求。
+子任务终态等待其控制请求停止，根任务终态还等待控制端资源清理；池关闭最终汇合控制线程。
 
 宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
 构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。

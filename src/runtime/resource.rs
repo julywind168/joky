@@ -67,6 +67,9 @@ pub(crate) unsafe fn invoke(
     input: u64,
 ) -> Result<NonNull<Buffer>, Error> {
     factory.validate()?;
+    if super::parallel::pool::active() && super::parallel::control::vm_factory(factory) {
+        return super::parallel::control::create_vm(arena, input);
+    }
     let event = ResourceEvent::new()?;
     let mut token = std::ptr::null_mut();
     let result = super::error::checked(|| factory.create.unwrap()(input, &mut token));
@@ -281,12 +284,19 @@ impl OwnedResource {
             event: ResourceEvent::new()?,
         })
     }
+    pub(crate) fn control_token(&self, release: ResourceReleaseV1) -> Result<*mut c_void, Error> {
+        if !self.event.is_active() || !std::ptr::fn_addr_eq(self.release, release) {
+            return Err(error("Resource is not a live control proxy"));
+        }
+        Ok(self.token.as_ptr())
+    }
     pub(crate) fn parallel_safe(&self) -> bool {
         self.event.is_active()
             && !self.event.0.busy.load(std::sync::atomic::Ordering::Acquire)
             // The private built-in callback proves the token layout before it
             // is inspected. Generic user factories never acquire this evidence.
-            && unsafe { super::tcp::transferable(self.token, self.release) }
+            && unsafe { super::tcp::transferable(self.token, self.release)
+                || super::parallel::control::transferable(self.token, self.release) }
     }
     pub(crate) fn lease(&self) -> Result<ResourceLease, Error> {
         use std::sync::atomic::Ordering;

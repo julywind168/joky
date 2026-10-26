@@ -4,12 +4,14 @@ use crate::runtime::{buffer::Buffer, resource::ResourceFactoryV1};
 use std::{cell::Cell, ffi::c_void};
 
 struct Owner {
-    handle: Cell<Option<u64>>,
+    handle: Rc<Cell<Option<u64>>>,
 }
 impl Drop for Owner {
     fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            shutdown(handle);
+        if Rc::strong_count(&self.handle) == 1 {
+            if let Some(handle) = self.handle.take() {
+                shutdown(handle);
+            }
         }
     }
 }
@@ -29,7 +31,7 @@ unsafe extern "C" fn create(mode: u64, output: *mut *mut c_void) -> i32 {
         return 1;
     }
     *output = Box::into_raw(Box::new(Owner {
-        handle: Cell::new(Some(handle)),
+        handle: Rc::new(Cell::new(Some(handle))),
     }))
     .cast();
     0
@@ -57,6 +59,11 @@ pub(super) unsafe fn handle(bits: u64) -> Result<u64, Error> {
 }
 #[export_name = "__joky_vm_managed_close"]
 pub(crate) unsafe extern "C" fn close(bits: u64) -> i32 {
+    if crate::runtime::parallel::pool::active() {
+        return operation(1, || {
+            crate::runtime::parallel::control::close_vm(bits).map(|value| value as i32)
+        });
+    }
     operation(1, || {
         let resource = (bits as *mut Buffer)
             .as_mut()
@@ -108,4 +115,52 @@ adapters! {
     call_float64_0(name: *const u8) -> f64 = 0.0, "__joky_vm_managed_call_float64_0_v2";
     call_float64_1(name: *const u8, arg0: f64) -> f64 = 0.0, "__joky_vm_managed_call_float64_1_v2";
     call_float64_2(name: *const u8, arg0: f64, arg1: f64) -> f64 = 0.0, "__joky_vm_managed_call_float64_2_v2";
+}
+
+/// # Safety
+/// Slot zero borrows a live VM owner; the returned owner shares its close identity.
+#[export_name = "__joky_vm_managed_share"]
+pub(crate) unsafe extern "C" fn share(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
+    let result = share_value(
+        &mut *crate::runtime::cps::arena(frame),
+        (&(*frame).slots)[0],
+    );
+    match result {
+        Ok(value) => {
+            (*frame).result = value;
+            0
+        }
+        Err(error) => {
+            crate::runtime::error::record_error(error);
+            crate::runtime::cps::RUNTIME_ERROR
+        }
+    }
+}
+
+/// Allocate the owning alias in the caller's arena, including interpreted callers.
+/// # Safety
+/// `bits` borrows a live VM resource on this execution thread.
+pub(crate) unsafe fn share_value(
+    arena: &mut crate::runtime::arena::Arena,
+    bits: u64,
+) -> Result<u64, Error> {
+    if crate::runtime::parallel::pool::active() {
+        return crate::runtime::parallel::control::share_vm(arena, bits);
+    }
+    let resource = (bits as *const Buffer)
+        .as_ref()
+        .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "Null VM resource"))?
+        .resource_ref()?;
+    let token = resource.control_token(release)?;
+    let owner = &*token.cast::<Owner>();
+    let token = std::ptr::NonNull::new(
+        Box::into_raw(Box::new(Owner {
+            handle: owner.handle.clone(),
+        }))
+        .cast(),
+    )
+    .unwrap();
+    let resource = crate::runtime::resource::OwnedResource::from_token(token, release)
+        .inspect_err(|_| release(token.as_ptr()))?;
+    Ok(Buffer::external(arena, resource)?.as_ptr() as u64)
 }

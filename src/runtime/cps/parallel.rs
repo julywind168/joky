@@ -75,7 +75,10 @@ impl pool::Job for NativeJob {
     fn poll(&mut self) -> Poll<Result<pool::Output, Error>> {
         let result = crate::runtime::error::checked(|| unsafe { (self.entry)(&mut *self.frame) });
         match result {
-            Ok(1) => Poll::Pending,
+            Ok(1) => {
+                pool::wait_plan(self.frame.wait_plan());
+                Poll::Pending
+            }
             Err(error) => {
                 let error = match pool::code::<crate::vm::parallel::Code>().as_deref() {
                     Some(crate::vm::parallel::Code::Native(code)) => {

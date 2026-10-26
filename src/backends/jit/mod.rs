@@ -90,6 +90,7 @@ impl CompiledModule {
 }
 /// Finalized executable pages and checked metadata, independent of the local VM.
 pub(crate) struct FrozenEntry {
+    pub(crate) files: Option<crate::runtime::fs::FileService>,
     pub(crate) entry: cps::CpsEntry,
     pub(crate) info: FunctionInfo,
     pub(crate) sources: Arc<crate::SourceMap>,
@@ -104,6 +105,7 @@ impl CompiledModule {
             .get(name)
             .ok_or_else(|| compile_error("Unknown parallel export"))?;
         Ok(FrozenEntry {
+            files: self.files.clone(),
             entry: unsafe { crate::runtime::abi::as_cps_entry(function.entry) },
             info: function.info.clone(),
             sources: self.sources.clone(),
@@ -128,6 +130,7 @@ impl FrozenEntry {
         owner: Arc<dyn Any + Send + Sync>,
     ) -> Self {
         Self {
+            files: None,
             entry,
             info,
             sources,

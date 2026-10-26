@@ -21,7 +21,7 @@ fn disconnected(engine: &Script, client: &Client) @suspends @noescape {
     engine.entries.forget.try_call(&engine.vm, *client);
 }
 fn connection(
-    engine: &Script,
+    engine: Script,
     host: Host,
     id: UInt64,
     stream: TcpStream,
@@ -37,11 +37,11 @@ fn connection(
     }
     let client = Client { host: host, id: id }
     if engine.entries.init_account.try_call(&engine.vm, input).is_err() {
-        disconnected(engine, &client)
+        disconnected(&engine, &client)
         return
     }
-    if !dispatch(engine, client, Action.Welcome) { disconnected(engine, &client); return }
-    session.run(connection, stream, engine, &client, line, disconnected)
+    if !dispatch(&engine, client, Action.Welcome) { disconnected(&engine, &client); return }
+    session.run(connection, stream, &engine, &client, line, disconnected)
     permit.release()
 }
 fn serve(engine: &Script, host: Host, listener: TcpListener) @suspends -> Int32 {
@@ -55,7 +55,8 @@ fn serve(engine: &Script, host: Host, listener: TcpListener) @suspends -> Int32 
             let permit = match entrants.try_acquire() { Ok(permit) => permit, Err(_) => continue }
             let id = next_id
             next_id += 1
-            branch { connection(engine, host, id, stream, permit) }
+            let script = Script { vm: engine.vm.share(), entries: engine.entries.clone() }
+            branch { connection(script, host, id, stream, permit) }
         }
     }
     0

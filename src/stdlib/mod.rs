@@ -43,6 +43,10 @@ fn vm_bindings() -> Vec<NativeBinding> {
         .iter()
         .map(|&name| {
             let entry = match name {
+                "__vm_share" => HostEntry::Cps {
+                    entry: vm::managed::share,
+                    frame_slots: Some(1),
+                },
                 "__vm_create" => HostEntry::ResourceFactory(Rc::new(vm::managed::FACTORY)),
                 "__vm_close" => HostEntry::Direct(vm::managed::close as *const u8),
                 "__vm_error_code" => HostEntry::Direct(vm::managed::error_code as *const u8),
@@ -248,3 +252,7 @@ pub(crate) fn module_registry() -> Rc<ModuleRegistry> {
 pub(crate) use vm::{call_poll, call_poll_native};
 
 pub(crate) use vm::{source_poll, source_poll_native};
+
+pub(crate) use vm::managed::FACTORY as VM_FACTORY;
+
+pub(crate) use vm::managed::{close as VM_CLOSE, share as VM_SHARE, share_value as share_vm};

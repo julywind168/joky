@@ -835,6 +835,7 @@ impl ModulePlan {
                 may_fail: matches!(item, Item::ExternFn(_))
                     || members.traits.requirements.contains(name),
                 uses_arena: builtin.as_ref().is_some_and(Builtin::needs_adapter)
+                    || name == "__vm_share"
                     || types.resource_factories.contains_key(name)
                     || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
