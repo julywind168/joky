@@ -457,3 +457,31 @@ fn task_parallel_stdout_preserves_writes_and_reports_errors_on_all_backends() {
         failure(&failed, "Destination address required");
     }
 }
+
+#[test]
+fn task_parallel_tcp_handoff_runs_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "parallel_tcp.jk",
+        include_str!("../fixtures/parallel_tcp.jk"),
+    );
+    let build = work
+        .command()
+        .args([
+            "build",
+            "--task-workers",
+            "3",
+            "parallel_tcp.jk",
+            "-o",
+            "parallel_tcp",
+        ])
+        .env("JOKY_RUNTIME", runtime_archive())
+        .output()
+        .unwrap();
+    success(&build);
+    success(
+        &Command::new(work.path().join("parallel_tcp"))
+            .output()
+            .unwrap(),
+    );
+}

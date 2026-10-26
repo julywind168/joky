@@ -281,6 +281,13 @@ impl OwnedResource {
             event: ResourceEvent::new()?,
         })
     }
+    pub(crate) fn parallel_safe(&self) -> bool {
+        self.event.is_active()
+            && !self.event.0.busy.load(std::sync::atomic::Ordering::Acquire)
+            // The private built-in callback proves the token layout before it
+            // is inspected. Generic user factories never acquire this evidence.
+            && unsafe { super::tcp::transferable(self.token, self.release) }
+    }
     pub(crate) fn lease(&self) -> Result<ResourceLease, Error> {
         use std::sync::atomic::Ordering;
         if !self.event.is_active()

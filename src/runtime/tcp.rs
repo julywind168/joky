@@ -13,12 +13,15 @@ use mio::{
     Interest,
 };
 use std::{
-    cell::Cell,
     ffi::c_void,
     io::{self, Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, SocketAddrV6},
     ptr::NonNull,
     rc::Rc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,50 +269,116 @@ pub(crate) fn encode_address(address: SocketAddr) -> (u64, u64, u64) {
         family | ((address.port() as u64) << 8) | (scope << 32),
     )
 }
+// Only the shared lease follows an owning TCP packet. Local counters stay in
+// the local owner wrapper, never inside the Arc connection core.
+enum OwnerCharge {
+    Local { _charge: ExternalCharge },
+    Shared { _charge: super::parallel::Lease },
+}
+impl OwnerCharge {
+    fn new(arena: &mut Arena, bytes: usize) -> Result<Self, Error> {
+        if let Some(root) = arena.parallel_root() {
+            Ok(Self::Shared {
+                _charge: root.accounts().reserve(bytes)?,
+            })
+        } else {
+            Ok(Self::Local {
+                _charge: arena.reserve_external(bytes)?,
+            })
+        }
+    }
+    fn shared(&self) -> bool {
+        matches!(self, Self::Shared { .. })
+    }
+}
+#[derive(Clone)]
+struct ConnectionOwner {
+    core: Arc<Connection>,
+    local_charge: Option<Rc<ExternalCharge>>,
+}
+impl std::ops::Deref for ConnectionOwner {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.core
+    }
+}
 struct Connection {
     source: IoSource<TcpStream>,
     addresses: [Option<SocketAddr>; 2],
     _permit: Option<SocketPermit>,
-    read_closed: Cell<bool>,
-    write_closed: Cell<bool>,
-    _charge: ExternalCharge,
+    read_closed: AtomicBool,
+    write_closed: AtomicBool,
+    _charge: Option<super::parallel::Lease>,
 }
 impl Connection {
     fn shutdown(&self, how: Shutdown) -> io::Result<()> {
-        let closed = match how {
-            Shutdown::Read => self.read_closed.get(),
-            Shutdown::Write => self.write_closed.get(),
-            Shutdown::Both => self.read_closed.get() && self.write_closed.get(),
-        };
-        if closed {
-            return Ok(());
-        }
-        self.source.with_io(|s| s.shutdown(how))?;
-        if matches!(how, Shutdown::Read | Shutdown::Both) {
-            self.read_closed.set(true);
-        }
-        if matches!(how, Shutdown::Write | Shutdown::Both) {
-            self.write_closed.set(true);
-        }
-        Ok(())
+        self.source.with_io(|source| {
+            let closed = match how {
+                Shutdown::Read => self.read_closed.load(Ordering::Acquire),
+                Shutdown::Write => self.write_closed.load(Ordering::Acquire),
+                Shutdown::Both => {
+                    self.read_closed.load(Ordering::Acquire)
+                        && self.write_closed.load(Ordering::Acquire)
+                }
+            };
+            if closed {
+                return Ok(());
+            }
+            source.shutdown(how)?;
+            if matches!(how, Shutdown::Read | Shutdown::Both) {
+                self.read_closed.store(true, Ordering::Release);
+            }
+            if matches!(how, Shutdown::Write | Shutdown::Both) {
+                self.write_closed.store(true, Ordering::Release);
+            }
+            Ok(())
+        })
     }
 }
 enum Socket {
-    Stream(Rc<Connection>),
-    Reader(Rc<Connection>),
-    Writer(Rc<Connection>),
+    Stream(ConnectionOwner),
+    Reader(ConnectionOwner),
+    Writer(ConnectionOwner),
     // Owns the unissued writer between the two checked split primitives.
-    Splitting(Rc<Connection>),
+    Splitting(ConnectionOwner),
     Listener(IoSource<TcpListener>),
     Closed,
 }
 struct Owner {
     socket: Socket,
     permit: Option<SocketPermit>,
-    _charge: ExternalCharge,
+    charge: OwnerCharge,
+    #[cfg(test)]
+    local: bool,
 }
 unsafe extern "C" fn release(token: *mut c_void) {
     drop(Box::from_raw(token.cast::<Owner>()));
+}
+/// Check the exact built-in release identity before inspecting the token.
+/// An active resource lease is rejected by OwnedResource before this call.
+/// # Safety
+/// The token belongs to a live, exclusively owned OwnedResource and matches its
+/// release callback. No concurrent operation may acquire a lease during admission.
+pub(crate) unsafe fn transferable(
+    token: NonNull<c_void>,
+    callback: super::resource::ResourceReleaseV1,
+) -> bool {
+    if !std::ptr::fn_addr_eq(callback, release as super::resource::ResourceReleaseV1) {
+        return false;
+    }
+    let owner = &*token.cast::<Owner>().as_ptr();
+    owner.charge.shared()
+        && match &owner.socket {
+            Socket::Stream(c) | Socket::Reader(c) | Socket::Writer(c) => c.local_charge.is_none(),
+            Socket::Listener(_) | Socket::Closed => true,
+            Socket::Splitting(_) => false,
+        }
+}
+pub(crate) fn transferable_type(name: &str) -> bool {
+    matches!(
+        name,
+        "tcp.StreamOwner" | "tcp.ListenerOwner" | "tcp.ReaderOwner" | "tcp.WriterOwner"
+    )
 }
 fn adopt(
     arena: &mut Arena,
@@ -320,16 +389,20 @@ fn adopt(
         Socket::Listener(_) => IoSource::<TcpListener>::allocation_size(),
         _ => 0,
     };
-    // Charge the owner and Rc source allocation. Kernel buffers and Mio's platform
+    // Charge the owner and Arc source allocation. Kernel buffers and Mio's platform
     // internals are outside task payload accounting.
-    let charge = arena.reserve_external(std::mem::size_of::<Owner>() + source_size)?;
+    let charge = OwnerCharge::new(arena, std::mem::size_of::<Owner>() + source_size)?;
     #[cfg(test)]
-    LIVE.with(|count| count.set(count.get() + 1));
+    if !charge.shared() {
+        LIVE.with(|count| count.set(count.get() + 1));
+    }
     let token = NonNull::new(
         Box::into_raw(Box::new(Owner {
             socket,
             permit,
-            _charge: charge,
+            #[cfg(test)]
+            local: !charge.shared(),
+            charge,
         }))
         .cast(),
     )
@@ -350,20 +423,31 @@ fn adopt_stream(
     source: IoSource<TcpStream>,
     permit: Option<SocketPermit>,
 ) -> Result<NonNull<Buffer>, Error> {
-    let charge = arena.reserve_external(
-        std::mem::size_of::<Connection>()
-            + 2 * std::mem::size_of::<usize>()
-            + IoSource::<TcpStream>::allocation_size(),
-    )?;
+    let bytes = std::mem::size_of::<Connection>()
+        + 2 * std::mem::size_of::<usize>()
+        + IoSource::<TcpStream>::allocation_size();
+    let (charge, local_charge) = if let Some(root) = arena.parallel_root() {
+        (Some(root.accounts().reserve(bytes)?), None)
+    } else {
+        (
+            None,
+            Some(Rc::new(arena.reserve_external(
+                bytes + std::mem::size_of::<ExternalCharge>() + 2 * std::mem::size_of::<usize>(),
+            )?)),
+        )
+    };
     let addresses = source.with_io(|s| [s.local_addr().ok(), s.peer_addr().ok()]);
-    let connection = Rc::new(Connection {
-        source,
-        addresses,
-        _permit: permit,
-        read_closed: Cell::new(false),
-        write_closed: Cell::new(false),
-        _charge: charge,
-    });
+    let connection = ConnectionOwner {
+        core: Arc::new(Connection {
+            source,
+            addresses,
+            _permit: permit,
+            read_closed: AtomicBool::new(false),
+            write_closed: AtomicBool::new(false),
+            _charge: charge,
+        }),
+        local_charge,
+    };
     adopt(arena, Socket::Stream(connection), None)
 }
 enum Registration {
@@ -433,6 +517,13 @@ unsafe fn set_error(frame: &CpsFrame, op: Operation, code: u64) {
         _ => unreachable!(),
     };
     *(frame.slots[index] as usize as *mut u64) = code;
+}
+fn wake_current() {
+    if let Some(waker) = super::parallel::pool::io_waker() {
+        waker.wake();
+    } else if let Some(waker) = super::executor::current_waker() {
+        waker.wake();
+    }
 }
 fn retry(error: &io::Error) -> bool {
     matches!(
@@ -574,7 +665,7 @@ unsafe fn drive(
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                 // Keep the collected writable hint: no WouldBlock consumed it.
-                super::executor::current_waker().unwrap().wake();
+                wake_current();
                 Ok(None)
             }
             Err(e)
@@ -624,7 +715,7 @@ unsafe fn drive(
                             .unwrap()
                             .rearm(Interest::READABLE)?;
                         if e.kind() == io::ErrorKind::Interrupted {
-                            super::executor::current_waker().unwrap().wake();
+                            wake_current();
                         }
                         Ok(None)
                     }
@@ -642,11 +733,11 @@ unsafe fn drive(
                     | (Socket::Writer(c), Operation::WriteHalf) => c,
                     _ => return Err(failure("Invalid TCP direction owner")),
                 };
-                if op == Operation::ReadHalf && connection.read_closed.get() {
+                if op == Operation::ReadHalf && connection.read_closed.load(Ordering::Acquire) {
                     set_error(frame, op, 0);
                     return Ok(Some(Output::Owner(Buffer::copy_bytes(arena, &[])?)));
                 }
-                if op == Operation::WriteHalf && connection.write_closed.get() {
+                if op == Operation::WriteHalf && connection.write_closed.load(Ordering::Acquire) {
                     set_error(frame, op, 4);
                     return Ok(Some(Output::Scalar(0)));
                 }
@@ -683,7 +774,7 @@ unsafe fn drive(
                     Err(e) if retry(&e) => {
                         request.registration.as_ref().unwrap().rearm(interest)?;
                         if e.kind() == io::ErrorKind::Interrupted {
-                            super::executor::current_waker().unwrap().wake();
+                            wake_current();
                         }
                         return Ok(None);
                     }
@@ -809,7 +900,11 @@ pub(crate) unsafe fn poll(
     }
     let result = drive(arena, frame, op);
     match &result {
-        Ok(None) => {}
+        Ok(None) => {
+            if super::parallel::pool::active() {
+                super::parallel::pool::wait_for_wake();
+            }
+        }
         Ok(Some(_)) => {
             frame.stop_host(STOP_COMPLETED);
             frame.state = DONE;
@@ -886,7 +981,9 @@ impl Drop for Owner {
             _ => {}
         }
         #[cfg(test)]
-        LIVE.with(|count| count.set(count.get() - 1));
+        if self.local {
+            LIVE.with(|count| count.set(count.get() - 1));
+        }
     }
 }
 

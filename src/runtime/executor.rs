@@ -171,9 +171,13 @@ pub(crate) fn current_executor() -> Option<HostExecutor> {
 pub fn current_waker() -> Option<TaskWaker> {
     CURRENT.with(|c| c.borrow().as_ref().map(|c| c.waker.clone()))
 }
-/// Get the current root's owner-thread reactor. Use prepared, unpolled roots so
+/// Get the current Local root's reactor or the Parallel pool's shared reactor.
+/// Use prepared, unpolled roots so
 /// the executor context is available when the first host operation starts.
 pub fn current_reactor() -> Result<super::reactor::Reactor, Error> {
+    if super::parallel::pool::active() {
+        return super::parallel::pool::io_reactor();
+    }
     let (reactor, queue) = CURRENT
         .with(|c| {
             c.borrow()

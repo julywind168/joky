@@ -1,0 +1,97 @@
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type TcpReader, type TcpWriter, type IoError}
+import joky/array.{type Array}
+import joky/result.{type Result}
+import joky/check.{assert}
+import joky/integer
+import joky/task
+
+fn checked(result: Result<Unit, IoError>) { assert(result.is_ok(), "TCP status") }
+fn connect(address: Address) @suspends -> TcpStream {
+    match TcpStream.connect(address) { Ok(stream) => stream, Err(_) => panic("connect") }
+}
+fn accept(listeners: Array<TcpListener>) @suspends -> TcpStream {
+    var listeners = listeners
+    var listener = match listeners.pop() { Some(value) => value, None => panic("listener packet") }
+    let stream = match listener.accept() { Ok(stream) => stream, Err(_) => panic("accept") }
+    checked(listener.close())
+    stream
+}
+fn connected() @suspends -> (TcpStream, TcpStream) {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(value) => value, Err(_) => panic("bind") }
+    let address = match listener.local_addr() { Ok(value) => value, Err(_) => panic("address") }
+    var listeners = Array.new::<TcpListener>()
+    listeners.push(listener)
+    join { | connect(address) | accept(listeners) }
+}
+fn send(writer: TcpWriter, size: UInt64) @suspends {
+    var writer = writer
+    var bytes = Array.with_capacity::<UInt8>(size)
+    var i: UInt64 = 0
+    while i < size { bytes.push((i & 255).to_u8().unwrap_or(0)); i += 1 }
+    checked(writer.write_all(bytes))
+    checked(writer.shutdown())
+    checked(writer.shutdown())
+    assert(writer.peer_addr().is_ok(), "address after shutdown")
+    checked(writer.close())
+}
+fn receive(reader: TcpReader, size: UInt64) @suspends {
+    var reader = reader
+    var offset: UInt64 = 0
+    while true {
+        let bytes = match reader.read(127) { Ok(value) => value, Err(_) => panic("read") }
+        if bytes.len() == 0 { break }
+        var i: UInt64 = 0
+        while i < bytes.len() {
+            assert(bytes.get(i).unwrap_or(0) == ((offset + i) & 255).to_u8().unwrap_or(0), "ordered bytes")
+            i += 1
+        }
+        offset += bytes.len()
+        task.yield_now()
+    }
+    assert(offset == size, "message size")
+    reader.close();
+}
+fn pending(reader: TcpReader) @suspends {
+    var reader = reader
+    reader.read(1);
+}
+fn cancel_read() @suspends {
+    let (client, server) = connected()
+    let (reader, writer) = server.split()
+    race { | pending(reader) | task.sleep_ms(5) }
+    let (client_reader, client_writer) = client.split()
+    client_writer.close();
+    join { | send(writer, 17) | receive(client_reader, 17) }
+}
+fn duplex() @suspends {
+    let (client, server) = connected()
+    let (client_reader, client_writer) = client.split()
+    let (server_reader, server_writer) = server.split()
+    join {
+        | send(client_writer, 32769)
+        | receive(server_reader, 32769)
+        | send(server_writer, 16401)
+        | receive(client_reader, 16401)
+    }
+}
+fn main() @suspends {
+    duplex()
+    cancel_read()
+}
+
+fn parked() @suspends {
+    let (client, server) = connected()
+    let (client_reader, client_writer) = client.split()
+    let (server_reader, server_writer) = server.split()
+    join { | pending(client_reader) | pending(server_reader) }
+    client_writer.close();
+    server_writer.close();
+}
+
+fn allocation_failure() @suspends {
+    var (client, server) = connected()
+    let bytes = Array.with_capacity::<UInt8>(16777216)
+    client.peer_addr();
+    server.peer_addr();
+    bytes.len();
+}

@@ -15,6 +15,7 @@ pub(crate) enum Kind {
     List = 8,
     Map = 9,
     Set = 10,
+    Resource = 11,
 }
 
 impl Kind {
@@ -22,6 +23,7 @@ impl Kind {
         match ty {
             Type::FixedArray(_) => Self::FixedArray,
             Type::String => Self::String,
+            Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => Self::Resource,
             Type::Record(r) if r.array => Self::Array,
             Type::Record(r) if r.list => Self::List,
             Type::Record(r) if r.map => Self::Map,
@@ -47,6 +49,7 @@ impl Kind {
             8 => Self::List,
             9 => Self::Map,
             10 => Self::Set,
+            11 => Self::Resource,
             _ => return None,
         })
     }
@@ -104,6 +107,7 @@ pub(crate) fn classify(
                 .chain(e.variants.iter().filter_map(|v| v.payload.clone()))
                 .collect(),
             Type::String => Vec::new(),
+            Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => Vec::new(),
             _ if crate::core::instance::scalar(&ty) => Vec::new(),
             _ => return None,
         };

@@ -1777,13 +1777,16 @@ TCP 所有者、source 的 Arc／Mutex 存储、请求与字节快照计入任�
 默认每执行器最多 4096 个；bind/connect/accept 在系统调用前预留，Pending 请求持有许可，
 成功发布时随 socket 原子转入连接/监听器拥有存储；失败/取消退还，最后拥有者关闭后退还。
 空闲连接和监听器也计数，不依赖是否存在 I/O 登记。许可保活创建时的 Reactor，
-source 终身绑定原 Poll；当前语言层 TCP 拥有者仍是 Local，尚未开放跨 worker 转移。
+source 终身绑定原 Poll；Parallel 树内可在无活动操作的交接点转移内置 TCP 拥有者。
 write_all 在 Joky 库层保留原数组与发送偏移，按实际写入长度推进最多 16 KiB 的分块，
 块间显式 yield；保持发送输入的拥有转移。同步 helper 接收并归还原数组拥有者，
 原数组、分块、宿主快照及 CPS 临时拥有存储都计入现有峰值预算。
 
 TcpStream.split 消费完整连接，TcpReader/TcpWriter 的控制块分别持有独占 lease，
-共享一个 Rc Connection，其中只有一个 Mio source、socket 许可、地址快照、方向关闭状态与计费守卫。
+共享一个 Arc Connection，其中只有一个 Mio source、socket 许可、地址快照、原子方向关闭状态与共享计费租约。
+shutdown 的检查、系统调用和状态更新在 source 锁内完成；Local 计费另由线程本地包装保活，
+不放入 Arc 核心。Parallel 连接与各端拥有者直接计入 TP 根的共享 Accounts，交接不退还额度；
+请求快照和活动帧留在所属 worker，继续使用 ExternalCharge，不能随着拥有包搬运。
 共享存储只计一次，直到最后一个端释放。成功的方向 shutdown 幂等；关闭方向后保留地址，
 读返回 EOF、写返回 NotConnected。端的 close/Drop 只结束本方向，操作 stop 仅撤销该次等待。
 两个受检私有 split 原语沿用单资源发布 ABI：第一步发布 reader，原 StreamOwner 转为
@@ -1810,7 +1813,7 @@ connect 先观察 writable 提示再检查 SO_ERROR/peer_addr，有界处理不�
 根因解释器指令预算让出、尚未访问对应子任务时，不会提前消耗唯一边沿。
 停止时同时清除提示，失效事件不重放，也不使阻塞驱动伪完成。
 
-R7b 已先实现 reactor 同步基础：Core 使用 Arc，共享的等待表、路由、就绪提示、身份序号和
+R7b 的 reactor 同步基础：Core 使用 Arc，共享的等待表、路由、就绪提示、身份序号和
 socket 准入在同一 Mutex 下更新；IoSource／IoRegistration 使用 Arc／Mutex，只有底层
 source 为 Send 时才自然具备跨线程资格，不添加 unsafe Send。锁序固定为 source → 登记表；
 OS register／reregister 和路由发布在登记锁内完成，避免收取边沿早于等待者发布而丢失通知。
@@ -1821,8 +1824,19 @@ poll 单独持驱动锁且同一时刻只允许一个调用者；阻塞内核等
 中断阻塞 poll；再次调用无副作用。关闭后的 rearm／register／poll 返回错误，is_ready 提示
 尚存操作继续处理关闭。登记数仍包含未 stop 的操作，socket 许可也直到拥有者释放才归还；
 关闭后首个方向 stop 注销内核 source，其他方向仅完成各自清理，调用方仍须汇合驱动与操作。
-此同步基础不改变 HostExecutor 的 Local 所有权，也未将 TCP 的 Rc Connection、计费守卫
-或 Parallel 任务池接入共享 I/O；连接转移与 worker 唤醒路由仍是 R7b 后续工作。
+ParallelExecutor 按需创建一个共享 reactor 与一个专用 I/O 线程；所有 worker 共用 socket／登记
+上限，不按 worker 复制配额。驱动只收取新内核事件，通知通过 Weak<Task> 定位逻辑任务；
+任务世代记录通知与 Running → Waiting 的竞争，预算让出继续排队，不依赖 I/O 线程重放提示。
+Local HostExecutor 仍保留原来的有界提示重放。驱动错误关闭准入并使活动任务失败；
+request_close 请求任务取消并关闭 reactor，wait_closed 汇合 worker 清理及 I/O 线程退出。
+
+内置 TCP 适配器以编译器固定操作和精确签名获得资格，解释器冻结同样的操作证据。
+Transfer 允许四种内置 TCP owner，Share 仍不授予；worker 内部函数可借用其拥有值，跨任务包
+仍拒绝所有引用。Buffer 树的动态准入逐个验证内置释放入口、共享计费及非 busy 的 ResourceEvent，
+拒绝通用宿主资源、Local 计费、拆分中间态和活动租约。没有新增 unsafe Send，沿用 OwnedBuffer
+的唯一拥有转移边界；TCP 核心自身满足 Rust 的 Send + Sync。类型检查同时覆盖容器、未激活
+枚举分支和自定义 Drop。Rust TaskValue 保持不含资源的宿主边界，在准备时拒绝资源输入／输出类型。
+本节不开放 VM、Domains、函数值、文件或 DNS 的跨 worker 能力。
 
 `HostExecutor::wait` / `VmEngine::wait_tasks` 只等待，不执行脚本；之后由 poll 推进。
 保留 TaskWaker 的外部宿主可以中断阻塞等待，未知等待仍报错。Clock 默认不准许阻塞，
@@ -2371,8 +2385,9 @@ I/O 驱动；更换执行 worker 不注销连接、不更换 Poll。Mio 默认�
 依据见 [Mio Registry 注册约束](https://docs.rs/mio/1.2.4/mio/struct.Registry.html#method.register)。
 
 一个驱动者在同一时刻收集该 reactor 的事件；注册表、就绪状态和任务唤醒路由通过同步协议共享。
-收集事件不运行用户代码，也不持登记锁执行任务、stop 或唤醒回调。专用 I/O 线程还是协作驱动、
-将来是否把注册分片到多个 reactor，属于实现选择；不能仅凭共享结构就宣称无争用或无瓶颈。
+收集事件不运行用户代码，也不持登记锁执行任务、stop 或唤醒回调。R7b 使用每个任务池一个
+按需创建的专用 I/O 线程，避免执行 worker 在 poll 中阻塞；协作驱动及多 reactor 分片仍是
+未来实现选择，不能仅凭共享结构就宣称无争用或无瓶颈。
 注册、等待者、命令与 socket 配额须有界，多个 worker 不能分别重置上限而绕过服务总额度。
 
 连接任务与拥有值仍通过 TP 受检包交接。迁移发生在无活动 poll、无未完成借用的静止点；

@@ -776,20 +776,22 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | 能力 | Local | Parallel |
 | --- | --- | --- |
 | join/race/branch 与多层 scope | 原有顺序推进 | 固定 worker 分支调度，单 worker 也可推进 |
-| 标量、String、Array、List、Map/Set、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、资源或自定义 Drop |
+| 标量、String、Array、List、Map/Set、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、未获资格资源或自定义 Drop |
 | FixedArray、含它的 Copy 聚合、Array<FixedArray> | 参数/返回/捕获跨挂起，安全视图服从借用规则 | 独立 Copy 快照，保持元素与存储组合限制 |
 | 引用、函数值跨任务包 | 按原有规则 | 尚未开放 |
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
 | task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
 | 内置 stdout（R7a） | 已审计 TextViewV2 绑定与实际 Show 调用图 | 可在 worker 执行；调用间输出顺序未指定 |
-| 普通 extern、文件/DNS/TCP、Domains、持久实例、VM 句柄 | 原有能力 | 根执行前拒绝 |
+| 内置 TCP（R7b） | 原有宿主驱动 | 同树拥有交接、共享 reactor、不同 worker 的独立读写端；TaskValue 不导入／导出资源 |
+| 普通 extern、文件/DNS、Domains、持久实例、VM 句柄 | 原有能力 | 根执行前拒绝 |
 | Godot 对象与回调 | 主线程驱动、原有预算 | 尚未开放主线程消息桥，保持 Local |
 
 首批外部等待能力选择定时器。deadline 只存在任务记录中，不保留帧地址；worker 在没有
 就绪任务时等待条件变量或最近截止时间，无逐定时器线程和定时空轮询。取消通知可提前唤醒，
 终态移除等待记录。一次 Pending 期间的通知仍按世代检查，不能覆盖或丢失。
-文件、网络及状态资源的跨线程协议没有因此自动完成，继续在准入时拒绝。
+TCP 后由 R7b 单独审计并开放，见[当前语言参考](language.md)及
+[服务并发重构记录](service-concurrency-refactor.md)；文件、DNS 及状态资源继续在准入时拒绝。
 
 ### 14.2 验证记录
 

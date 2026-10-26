@@ -426,8 +426,10 @@ pub(crate) fn compile(
         parallel_hosts: hosts
             .iter()
             .filter_map(|(name, binding)| {
-                crate::runtime::parallel::Host::from_binding(binding)
-                    .map(|host| (name.clone(), host))
+                crate::runtime::parallel::Host::from_binding(binding).map(|mut host| {
+                    host.name = name.clone();
+                    (name.clone(), host)
+                })
             })
             .collect(),
         task_targets,
@@ -935,7 +937,10 @@ impl Value {
         if ty.is_place() {
             return Ok(Self::Place(bits as *mut u8));
         }
-        if matches!(ty, Type::Reference(_) | Type::String | Type::Buffer(_)) {
+        if matches!(
+            ty,
+            Type::Reference(_) | Type::String | Type::Buffer(_) | Type::Resource(_)
+        ) {
             return Ok(Self::Reference(bits as usize as *mut u8));
         }
         Ok(

@@ -78,6 +78,75 @@ struct Shared {
     wake: Condvar,
     sequence: AtomicU64,
     max_tasks: usize,
+    io: Mutex<Option<IoDriver>>,
+}
+struct IoDriver {
+    reactor: crate::runtime::reactor::Reactor,
+    thread: JoinHandle<()>,
+}
+/// A wake never retains the task, its job, or a borrowed frame.
+#[derive(Clone)]
+pub(crate) struct IoWaker(Weak<Task>);
+impl IoWaker {
+    pub(crate) fn wake(&self) {
+        if let Some(task) = self.0.upgrade() {
+            task.wake();
+        }
+    }
+}
+pub(crate) fn io_waker() -> Option<IoWaker> {
+    CURRENT.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .map(|task| IoWaker(Arc::downgrade(task)))
+    })
+}
+pub(crate) fn io_reactor() -> Result<crate::runtime::reactor::Reactor, Error> {
+    let task = CURRENT
+        .with(|current| current.borrow().clone())
+        .ok_or_else(|| invalid("I/O requires a parallel task"))?;
+    let mut io = lock(&task.shared.io);
+    if lock(&task.shared.queue).closing {
+        return Err(cancelled_error());
+    }
+    if io.is_none() {
+        let reactor = crate::runtime::reactor::Reactor::for_executor()?;
+        let driver = reactor.clone();
+        let shared = Arc::downgrade(&task.shared);
+        let thread = thread::Builder::new()
+            .name("joky-io".into())
+            .spawn(move || {
+                loop {
+                    if let Err(error) = driver.poll_events() {
+                        if !driver.is_closed() {
+                            // Publish terminal failures without holding the queue or
+                            // registration lock. No sleeper depends on a dead driver.
+                            if let Some(shared) = shared.upgrade() {
+                                let tasks = {
+                                    let mut queue = lock(&shared.queue);
+                                    queue.closing = true;
+                                    queue
+                                        .tasks
+                                        .iter()
+                                        .filter_map(Weak::upgrade)
+                                        .collect::<Vec<_>>()
+                                };
+                                for task in tasks {
+                                    task.fail(error.clone());
+                                }
+                                shared.wake.notify_all();
+                            }
+                            driver.request_close();
+                        }
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| invalid(&format!("Cannot create I/O driver: {error}")))?;
+        *io = Some(IoDriver { reactor, thread });
+    }
+    Ok(io.as_ref().unwrap().reactor.clone())
 }
 /// Control remains on its creating thread; Drop waits for cleanup and joins workers.
 pub struct ParallelExecutor {
@@ -142,7 +211,7 @@ pub(crate) fn check_cancelled() -> Result<(), Error> {
 pub(crate) fn code<T: Any + Send + Sync>() -> Option<Arc<T>> {
     CURRENT.with(|c| c.borrow().as_ref()?.code.clone().downcast().ok())
 }
-pub(crate) fn wait_for_children() {
+pub(crate) fn wait_for_wake() {
     WAITING.with(|w| w.set(true));
 }
 /// Arm only the actual polling task. Deadlines never retain a frame pointer.
@@ -207,6 +276,10 @@ impl Task {
     }
 }
 impl Handle {
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> bool {
+        lock(&self.0.state).phase == Phase::Waiting
+    }
     pub(crate) fn cancel(&self) {
         self.0.cancel();
     }
@@ -271,6 +344,7 @@ impl ParallelExecutor {
             wake: Condvar::new(),
             sequence: AtomicU64::new(1),
             max_tasks,
+            io: Mutex::new(None),
         });
         let mut pool = Self {
             shared,
@@ -286,6 +360,10 @@ impl ParallelExecutor {
             pool.workers.push(worker);
         }
         Ok(pool)
+    }
+    #[cfg(test)]
+    pub(crate) fn reactor(&self) -> Option<crate::runtime::reactor::Reactor> {
+        lock(&self.shared.io).as_ref().map(|io| io.reactor.clone())
     }
     pub fn submitter(&self) -> ParallelSubmitter {
         ParallelSubmitter {
@@ -310,6 +388,10 @@ impl ParallelExecutor {
             task.cancel();
         }
         self.shared.wake.notify_all();
+        let reactor = lock(&self.shared.io).as_ref().map(|io| io.reactor.clone());
+        if let Some(reactor) = reactor {
+            reactor.request_close();
+        }
     }
     pub fn is_closed(&self) -> bool {
         let tasks = {
@@ -320,11 +402,19 @@ impl ParallelExecutor {
             q.tasks.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
         };
         tasks.iter().all(|t| lock(&t.state).phase == Phase::Cleaned)
+            && lock(&self.shared.io)
+                .as_ref()
+                .is_none_or(|io| io.thread.is_finished())
     }
     pub fn wait_closed(&mut self) {
         self.request_close();
         for worker in self.workers.drain(..) {
             worker.join().expect("task worker panicked");
+        }
+        let io = lock(&self.shared.io).take();
+        if let Some(io) = io {
+            io.thread.join().expect("I/O driver panicked");
+            debug_assert_eq!(io.reactor.registration_count(), 0);
         }
     }
 }
@@ -696,7 +786,7 @@ impl Group {
             self.failure = arbitration.failure.clone();
         }
         if !self.handles.iter().all(Handle::cleaned) {
-            wait_for_children();
+            wait_for_wake();
             return Ok(false);
         }
         // Cancellation itself is expected for losers; a real cleanup failure is not.
@@ -823,7 +913,7 @@ mod tests {
             fn poll(&mut self) -> Poll<Result<Output, Error>> {
                 if self.first {
                     self.first = false;
-                    wait_for_children();
+                    wait_for_wake();
                     self.sent
                         .send(CURRENT.with(|c| c.borrow().as_ref().unwrap().clone()))
                         .unwrap();

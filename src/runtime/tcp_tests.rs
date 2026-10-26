@@ -595,3 +595,59 @@ fn net5b_tcp_split_publication_failures_refund_owners_and_keep_one_socket_permit
         assert!(failures > 0 && successes > 0);
     }
 }
+
+#[test]
+fn parallel_tcp_packets_require_builtin_shared_quiescent_owners() {
+    use crate::runtime::parallel::{OwnedBuffer, Storage, TaskBudget};
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<Connection>();
+    let budget = TaskBudget::new(1 << 20);
+    let root = Storage::new(vec![budget.clone()]).unwrap();
+    let mut arena = Arena::with_storage(root.clone());
+    let owner = adopt(&mut arena, Socket::Closed, None).unwrap();
+    let lease = unsafe { (*owner.as_ptr()).resource_mut().unwrap().lease().unwrap() };
+    assert!(unsafe { OwnedBuffer::new(&arena, owner) }.is_err());
+    drop(lease);
+    let packet = unsafe { OwnedBuffer::new(&arena, owner) }.unwrap();
+    drop(arena);
+    std::thread::spawn(move || drop(packet)).join().unwrap();
+
+    let mut arena = Arena::with_storage(root.clone());
+    let mut local = Arena::default();
+    let charge = OwnerCharge::new(&mut local, std::mem::size_of::<Owner>()).unwrap();
+    LIVE.with(|count| count.set(count.get() + 1));
+    let token = NonNull::new(
+        Box::into_raw(Box::new(Owner {
+            socket: Socket::Closed,
+            permit: None,
+            charge,
+            local: true,
+        }))
+        .cast(),
+    )
+    .unwrap();
+    let local_resource = OwnedResource::from_token(token, release).unwrap();
+    let owner = Buffer::external(&mut arena, local_resource).unwrap();
+    // A shared header must not launder a local refund handle into a packet.
+    assert!(unsafe { OwnedBuffer::new(&arena, owner) }.is_err());
+    unsafe {
+        Buffer::release(&mut arena, owner.as_ptr()).unwrap();
+    }
+    assert_eq!(local.bytes(), 0);
+
+    unsafe extern "C" fn foreign_release(token: *mut c_void) {
+        drop(Box::from_raw(token.cast::<u8>()));
+    }
+    let resource = OwnedResource::from_token(
+        NonNull::new(Box::into_raw(Box::new(7u8)).cast()).unwrap(),
+        foreign_release,
+    )
+    .unwrap();
+    let owner = Buffer::external(&mut arena, resource).unwrap();
+    assert!(unsafe { OwnedBuffer::new(&arena, owner) }.is_err());
+    unsafe {
+        Buffer::release(&mut arena, owner.as_ptr()).unwrap();
+    }
+    drop((arena, root));
+    assert_eq!(budget.used(), 0);
+}

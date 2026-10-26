@@ -79,6 +79,8 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                             .map(|ty| (ty, share)),
                     );
                 }
+                Type::Resource(ref name)
+                    if !share && crate::runtime::tcp::transferable_type(name) => {}
                 Type::String => {}
                 ref scalar if crate::core::instance::scalar(scalar) => {}
                 // Cursor aliases mutate shared position. Raw, erased, unresolved
@@ -161,7 +163,13 @@ pub(crate) fn analyse(
             .params
             .iter()
             .chain(std::iter::once(&signature.ret))
-            .any(|ty| !qualify_with(ty, &resolve).transfer)
+            .any(|ty| {
+                // Calls within a worker may borrow its exclusively owned TCP
+                // values, including Array metadata helpers. This does not grant
+                // Share or permit references in cross-task packets below.
+                let local = ty.reference_type().map_or(ty, |r| &r.target);
+                !qualify_with(local, &resolve).transfer
+            })
         {
             reasons.insert(
                 name.clone(),
@@ -169,7 +177,9 @@ pub(crate) fn analyse(
             );
         }
         let Some(body) = plan.bodies.get(name) else {
-            if !hosts.contains(name) {
+            let tcp = crate::runtime::tcp::operation(name)
+                .is_some_and(|op| op.validate(signature, info.suspends).is_ok());
+            if !hosts.contains(name) && !tcp {
                 reasons.insert(
                     name.clone(),
                     "host binding has no explicit ParallelSafe contract".into(),
@@ -372,6 +382,20 @@ mod tests {
         );
         assert!(!qualify(&Type::Ptr).transfer);
         assert!(!qualify(&Type::Resource("HostResource".into())).share);
+        for name in [
+            "tcp.StreamOwner",
+            "tcp.ListenerOwner",
+            "tcp.ReaderOwner",
+            "tcp.WriterOwner",
+        ] {
+            let resource = Type::Resource(name.into());
+            assert!(qualify(&resource).transfer);
+            assert!(!qualify(&resource).share);
+            assert!(!qualify(&Type::reference(resource, false)).transfer);
+        }
+        for name in ["HostResource", "fs.FileOwner", "domain.StateOwner"] {
+            assert!(!qualify(&Type::Resource(name.into())).transfer);
+        }
         assert!(!qualify(&Type::BufferIterator(std::sync::Arc::new(Type::Int32))).share);
         assert!(qualify(&Type::reference(Type::Int32, false)).share);
         assert!(!qualify(&Type::reference(Type::Int32, true)).share);

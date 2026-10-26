@@ -21,8 +21,26 @@ fn failure(message: impl Into<String>) -> Error {
 fn os_error(error: io::Error) -> Error {
     failure(format!("Readiness driver: {error}"))
 }
+#[derive(Clone)]
+pub(crate) enum Wake {
+    Local(TaskWaker),
+    Parallel(super::parallel::pool::IoWaker),
+}
+impl From<TaskWaker> for Wake {
+    fn from(waker: TaskWaker) -> Self {
+        Self::Local(waker)
+    }
+}
+impl Wake {
+    fn wake(&self) {
+        match self {
+            Self::Local(waker) => waker.wake(),
+            Self::Parallel(waker) => waker.wake(),
+        }
+    }
+}
 struct Waiter {
-    waker: TaskWaker,
+    waker: Wake,
     event: Option<ResourceEvent>,
 }
 #[derive(Default)]
@@ -71,7 +89,7 @@ impl Table {
 // Declare before acquiring source/table guards so every return path delivers
 // notifications only after releasing both locks, including OS error paths.
 #[derive(Default)]
-struct Notifications(Vec<TaskWaker>);
+struct Notifications(Vec<Wake>);
 impl Drop for Notifications {
     fn drop(&mut self) {
         for waker in &self.0 {
@@ -191,6 +209,17 @@ impl Reactor {
     /// that stops before WouldBlock must preserve progress and queue another
     /// wake, or finish and attempt I/O before registering its next operation.
     pub fn poll(&self, timeout: Option<Duration>) -> Result<IoReport, Error> {
+        self.collect(timeout, true)
+    }
+    // Worker generations retain wakes across instruction slices. A dedicated
+    // driver must not spin replaying a ready operation while its worker runs.
+    pub(crate) fn poll_events(&self) -> Result<IoReport, Error> {
+        self.collect(None, false)
+    }
+    pub(crate) fn is_closed(&self) -> bool {
+        lock(&self.0.table).closed
+    }
+    fn collect(&self, timeout: Option<Duration>, replay: bool) -> Result<IoReport, Error> {
         let mut wakes = Notifications::default();
         let mut driver = match self.0.driver.try_lock() {
             Ok(driver) => driver,
@@ -208,7 +237,11 @@ impl Reactor {
                 return Err(failure("Readiness driver is closed"));
             }
             let mut notified = 0;
-            for _ in 0..self.0.batch.min(table.ready.queue.len()) {
+            for _ in 0..if replay {
+                self.0.batch.min(table.ready.queue.len())
+            } else {
+                0
+            } {
                 let token = table.ready.queue.pop_front().unwrap();
                 table.ready.queue.push_back(token);
                 if table.latch(token, &mut wakes) {
@@ -344,8 +377,14 @@ impl<S: Source> IoSource<S> {
         event: Option<ResourceEvent>,
     ) -> Result<IoRegistration<S>, Error> {
         let reactor = super::executor::current_reactor()?;
-        let waker = super::executor::current_waker()
-            .ok_or_else(|| failure("I/O registration requires a task executor"))?;
+        let waker = if let Some(waker) = super::parallel::pool::io_waker() {
+            Wake::Parallel(waker)
+        } else {
+            Wake::Local(
+                super::executor::current_waker()
+                    .ok_or_else(|| failure("I/O registration requires a task executor"))?,
+            )
+        };
         self.register_with(&reactor, interest, event, waker)
     }
     fn register_with(
@@ -353,7 +392,7 @@ impl<S: Source> IoSource<S> {
         reactor: &Reactor,
         interest: Interest,
         event: Option<ResourceEvent>,
-        waker: TaskWaker,
+        waker: impl Into<Wake>,
     ) -> Result<IoRegistration<S>, Error> {
         if event.as_ref().is_some_and(|e| !e.is_active()) {
             return Err(failure("Cannot register an inactive resource event"));
@@ -431,7 +470,13 @@ impl<S: Source> IoSource<S> {
         state.directions[slot] = Some(Direction { token, interest });
         state.reactor = Some(reactor.clone());
         state.publish(&mut table);
-        table.waiters.insert(token, Waiter { waker, event });
+        table.waiters.insert(
+            token,
+            Waiter {
+                waker: waker.into(),
+                event,
+            },
+        );
         Ok(IoRegistration {
             source: self.0.clone(),
             reactor: reactor.clone(),

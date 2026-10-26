@@ -752,7 +752,8 @@ impl Buffer {
 
     /// Discover only allocations reachable through compiler-authored owning
     /// lanes, including every private Map array and StringBuilder byte array.
-    /// Eligibility rejects views and external resources.
+    /// This enumerates storage, not transfer eligibility; callers must separately
+    /// check external resource and callback qualifications.
     /// No callback runs while collecting the graph.
     pub(crate) unsafe fn owning_allocations(
         arena: &Arena,
@@ -825,7 +826,8 @@ impl Buffer {
     }
 
     /// Validate the concrete control blocks as well as the static value type.
-    /// No Rc callback, resource, local budget or in-progress cleanup may cross.
+    /// Only audited TCP resources may cross; reject local callbacks, accounting
+    /// pointers, active resource leases and in-progress cleanup.
     pub(crate) unsafe fn validate_parallel_owner(
         arena: &Arena,
         owner: *mut Self,
@@ -836,7 +838,7 @@ impl Buffer {
         let graph = Self::owning_allocations(arena, [owner])?;
         for pointer in graph.buffers {
             let buffer = pointer.as_ref();
-            if buffer.resource.is_some()
+            if buffer.resource.as_ref().is_some_and(|r| !r.parallel_safe())
                 || !buffer.metadata_budget.is_null()
                 || !buffer.metadata_account.is_null()
                 || buffer.metadata_parallel.is_none()

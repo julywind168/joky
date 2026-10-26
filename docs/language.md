@@ -4950,9 +4950,9 @@ Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel
 `ParallelTask::wait` 仅可在非 worker 的宿主线程调用，`take_result` 一次性收取终态。
 
 当前跨任务包支持标量、String、Array、List、Map/Set，以及递归嵌套这些类型的元组、普通 struct 和 enum
-（包括 Option/Result）。join/race 的参数与结果、branch 的移动捕获及宿主根入口采用同一
-类型边界；String/Array/List/Map/Set 交接移动真实拥有 Buffer 树，数组保留有效元素及容量，
-List 保留整数链与空闲槽，Map/Set 保留桶、缓存哈希、反向位置及删除标记。完整类型树必须无引用、无资源、无自定义 Drop，
+（包括 Option/Result）。一般数据在 join/race 的参数与结果、branch 移动捕获及宿主根入口
+采用相同规则；String/Array/List/Map/Set 交接移动真实拥有 Buffer 树，数组保留有效元素及容量，
+List 保留整数链与空闲槽，Map/Set 保留桶、缓存哈希、反向位置及删除标记。完整类型树必须无引用、无未获资格资源、无自定义 Drop，
 包括未激活枚举变体及实际泛型参数；函数/闭包、dyn 和裸指针仍拒绝。
 FixedArray 及包含它的无引用 Copy 聚合使用独立存储快照；Array 可存储这些 Copy 值。
 含 FixedArray 的混合拥有聚合仍受固定数组存储限制；并行支持不额外放宽其类型组合。
@@ -4961,8 +4961,16 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 完整调用图必须证明安全；内置 stdout 绑定已获并行资格，`print`／`println` 还要求实际使用的
-Show 实现及其调用图通过检查。未知 extern、文件/DNS/TCP、Domains、持久实例、VM 句柄
+Show 实现及其调用图通过检查。未知 extern、文件/DNS、Domains、持久实例、VM 句柄
 和 Godot 对象仍保持 Local。
+
+R7b 开放同一 Parallel 任务树内的 TcpListener／TcpStream／TcpReader／TcpWriter 拥有转移，
+也可放入满足上述规则的容器或聚合。连接始终绑定同一共享 I/O 驱动；读写端可由不同 worker
+持有，各自仍只允许一个活动操作。交接不包含活动借用或 I/O 请求，也不把共享借用变成可转移包。
+取消只撤销该操作；任务结束时按拥有规则关闭其端，另一方向可继续使用。池关闭等待全部操作
+注销及驱动线程退出。该能力要求通过 ParallelExecutor 提交，直接 start 不创建 I/O 驱动。
+Rust TaskValue 继续只承载数据，准备时拒绝包含资源的宿主输入／输出类型；本次不提供跨树或
+Local ↔ Parallel 的 socket 导入／导出。实网用例见 [parallel_tcp.jk](../tests/fixtures/parallel_tcp.jk)。
 
 宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
 构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。
@@ -5496,7 +5504,7 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 可执行回环用例见 [tcp.jk](../tests/fixtures/tcp.jk)，包含 IPv4/IPv6、部分读取、EOF、
 半关闭、端口占用及取消后复用；连接拒绝由独立测试注入保留端口。运行 `cargo run -- run tests/fixtures/tcp.jk`；
 加 `--interpreter` 使用解释器，`joky build tests/fixtures/tcp.jk` 可生成独立原生程序。
-每个执行器最多准入 4096 个 TCP socket，监听器、空闲连接、正在 connect/accept 的预留名额
+每个 Local 执行器或 Parallel 任务池最多准入 4096 个 TCP socket，监听器、空闲连接、正在 connect/accept 的预留名额
 均计数；创建前预留，失败、取消、显式关闭或 Drop 同步归还。额度不足为终止性 ResourceLimit。
 就绪登记另有 4096 上限，字节请求及任务存储预算继续独立生效。
 

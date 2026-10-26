@@ -41,6 +41,9 @@ impl Shape {
                 Type::Unit => Shape::Unit,
                 Type::String => Shape::String,
                 Type::Buffer(_) => Shape::Buffer,
+                Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => {
+                    Shape::Buffer
+                }
                 Type::Tuple(t) => Shape::Product(
                     t.elements
                         .iter()

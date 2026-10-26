@@ -45,11 +45,13 @@ pub(crate) enum HostCode {
     /// Synchronous immutable TextViewV2 input, no retained pointer or callback.
     /// Only audited runtime bindings construct this internal variant.
     TextView(unsafe extern "C" fn(*const u8) -> i32),
+    Tcp(super::tcp::Operation),
 }
 impl Host {
     pub(crate) fn binding(&self) -> super::bindings::HostBinding {
         use super::bindings::{HostAbiKind, HostEntry};
         let (abi, entry) = match self.code {
+            HostCode::Tcp(op) => (HostAbiKind::Scalar, HostEntry::Tcp(op)),
             HostCode::Cps { entry, slots } => (
                 HostAbiKind::Scalar,
                 HostEntry::Cps {
@@ -71,6 +73,18 @@ impl Host {
     }
     pub(crate) fn from_binding(binding: &super::bindings::HostBinding) -> Option<Self> {
         use super::bindings::{HostAbiKind, HostEntry};
+        if let HostEntry::Tcp(op) = binding.entry {
+            if binding.abi != HostAbiKind::Scalar || op.validate(&binding.signature, true).is_err()
+            {
+                return None;
+            }
+            return Some(Self {
+                name: format!("{op:?}"),
+                signature: binding.signature.clone(),
+                code: HostCode::Tcp(op),
+                _owner: std::sync::Arc::new(()),
+            });
+        }
         let host = binding.owner.as_ref()?.downcast_ref::<Self>()?;
         let matches = match (host.code, &binding.entry) {
             (
@@ -115,9 +129,10 @@ pub(crate) struct OwnedBuffer {
     root: Storage,
     _charge: Lease,
 }
-// Constructor validates all control blocks and rejects local callbacks, resources
-// and accounting pointers. The caller transfers exclusive language ownership;
-// the packet retains stable storage and disposes hook-free owners on any thread.
+// Constructor validates all control blocks and rejects local callbacks, unqualified
+// resources and accounting pointers. The caller transfers exclusive language ownership;
+// the packet retains stable storage and disposes owners on any thread. Audited TCP
+// resources carry shared refund leases and have no active operation or local Rc.
 unsafe impl Send for OwnedBuffer {}
 impl OwnedBuffer {
     /// # Safety
