@@ -88,8 +88,7 @@ fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends
         if account.balance_cents < SAY_PRICE_CENTS { send(member, "error insufficient balance\n") }
         else {
             account.balance_cents -= SAY_PRICE_CENTS
-            let message = chat_line(&room.name, member.id, text)
-            broadcast(room, &message)
+            broadcast(room, chat_line(&room.name, member.id, text))
         }
         Ok({})
     } else {
@@ -176,8 +175,7 @@ fn enter(account: &mut Account, room: &mut Room, name: &String) -> Result<Member
     if !room.name.equals(name) { return Err(Rejection.Stale) }
     let member = account.member
     add_member(room, member)
-    let message = notice("joined", &room.name, member.id)
-    broadcast(room, &message)
+    broadcast(room, notice("joined", &room.name, member.id))
     mem.replace(&mut account.room, name.clone());
     Ok(member)
 }
@@ -206,10 +204,7 @@ fn is_member(room: &Room, id: UInt64) -> Bool {
 fn empty(room: &Room) -> Bool { room.members.is_empty() }
 fn notice(kind: &String, room: &String, id: UInt64) -> String { "{kind} {room} {id}\n" }
 fn chat_line(room: &String, id: UInt64, text: &String) -> String { "message {room} {id} {text}\n" }
-fn send(member: Member, message: &String) {
-    let bytes = message.clone().into_bytes()
-    member.output.send(&bytes)
-}
+fn send(member: Member, message: &String) { member.output.send(message.clone().into_bytes()) }
 fn broadcast(room: &Room, message: &String) {
     let bytes = message.clone().into_bytes()
     for member in &room.members { member.output.send(&bytes) }

@@ -406,8 +406,7 @@ fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends
         if account.balance_cents < SAY_PRICE_CENTS { send(member, "error insufficient balance\n") }
         else {
             account.balance_cents -= SAY_PRICE_CENTS
-            let message = chat_line(&room.name, member.id, text)
-            broadcast(room, &message)
+            broadcast(room, chat_line(&room.name, member.id, text))
         }
         Ok({})
     } else {
