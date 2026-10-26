@@ -1,37 +1,25 @@
-import chat_contract.{type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, type Client}
+import chat_contract.{type Host, type Action, type Call, type AccountInit, type Client}
 import joky/domain
 import joky/session
-import joky/outbox
 import joky/mem
-import joky/task
 import joky/iter.{range}
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 
-const NO_ROOM: UInt64 = 0
 const NO_CLIENT: UInt64 = 0
-const CATALOG_KEY: UInt64 = 1
-const FIRST_ROOM_KEY: UInt64 = 1
-
-fn room_index(key: UInt64) -> UInt64 { key - FIRST_ROOM_KEY }
-
 struct Route { live: Bool, id: UInt64, output: session.Output }
+impl Clone for Route { fn clone(&self) -> Self { *self } }
 #state
-struct Account { route: Route, room: UInt64, balance_cents: UInt64 }
+#derive(Clone)
+struct Account { route: Route, room: String, balance_cents: UInt64 }
 #state
-struct Room { name: String, members: Array<Route>, retired: Bool }
-enum RoomError { RoomLimit, WaiterLimit }
-enum RoomStatus { Pending, Starting, Ready, Dormant }
-struct RoomEntry { name: String, status: RoomStatus, waiters: Array<outbox.Handle> }
-#state
-struct Catalog { rooms: Array<RoomEntry> }
+struct Room { name: String, members: Array<Route> }
 #derive(Clone)
 enum Command { Welcome, Balance, Join(String), Leave, Say(String), Invalid, Disconnect }
-fn make_catalog(_: Unit) -> Catalog { Catalog { rooms: Array.new::<RoomEntry>() } }
-fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>(), retired: false } }
+fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>() } }
 fn make_account(account: Account) -> Account { account }
 
-// Protocol: decode once, then run one command through bounded recovery.
+// Protocol: decode once, then queue one atomic command.
 fn parse(line: String) -> Command {
     let separator = line.find(" ").unwrap_or(line.byte_length())
     let verb = line.substring(0, separator)!
@@ -58,7 +46,7 @@ fn dispatch(request: Call) @suspends -> Bool {
 
 // Command operations keep validation, business rules and messages in one version.
 enum CommandError { Stopped }
-type Attempt = Result<Result<(Route, UInt64), CommandError>, domain.DomainAccessError>
+type Attempt = Result<Result<(Route, String), CommandError>, domain.DomainAccessError>
 fn check_account(account: &Account) -> Result<Route, CommandError> {
     if !account.route.live { Err(CommandError.Stopped) } else { Ok(account.route) }
 }
@@ -81,7 +69,7 @@ fn reply(
                 _ => "error use join <room>, leave, say <message>, or balance\n"
             }
             deliver(account.route, &message)
-            Ok((account.route, NO_ROOM))
+            Ok((account.route, ""))
         }
     }
 }
@@ -95,62 +83,61 @@ fn say(host: Host, account: domain.WriteHandle<Account>, text: &String) @suspend
             let message = say_message(&room.name, route.id, text)
             broadcast(room, &message, NO_CLIENT)
         }
-        Ok((route, NO_ROOM))
+        Ok((route, ""))
     } else {
         let route = check_account(account)?
         deliver(route, "error join a room first\n")
-        Ok((route, NO_ROOM))
+        Ok((route, ""))
     }
 }
 fn enter(
     account: &mut Account,
     room: &mut Room,
-    key: UInt64,
     name: &String,
 ) -> Result<Route, CommandError> {
-    if room.retired || !room.name.equals(name) { return Err(CommandError.Stopped) }
+    if !room.name.equals(name) { return Err(CommandError.Stopped) }
     let route = account.route
     let message = event("joined", &room.name, route.id, "")
     broadcast(room, &message, NO_CLIENT)
     deliver(route, &message)
     add_member(room, route)
-    account.room = key
+    mem.replace(&mut account.room, name.clone());
     Ok(route)
 }
-fn depart(account: &mut Account, room: &mut Room, closing: Bool) {
+fn depart(account: &mut Account, room: &mut Room, closing: Bool) -> String {
     let id = account.route.id
     let message = event("left", &room.name, id, "")
     broadcast(room, &message, if closing { id } else { NO_CLIENT })
     remove_member(room, id)
-    account.room = NO_ROOM
+    mem.replace(&mut account.room, "")
 }
-fn join(host: Host, account: domain.WriteHandle<Account>, key: UInt64, name: &String) @suspends -> Attempt {
+fn join(host: Host, account: domain.WriteHandle<Account>, name: &String) @suspends -> Attempt {
     let name = name.clone()
-    when "move" (mut account, mut next: Room = host.rooms[key], mut old?: Room = host.rooms[account.room]) {
+    when "move" (mut account,
+                 mut next: Room = host.rooms.get_or_stage(name, make_room(name.clone())),
+                 mut old?: Room = host.rooms[account.room]) {
         check_member(account, old)?
-        let previous = account.room
-        depart(account, old, false)
-        Ok((enter(account, next, key, name)?, previous))
+        let previous = depart(account, old, false)
+        Ok((enter(account, next, name)?, previous))
     } else {
         check_account(account)?
-        Ok((enter(account, next, key, name)?, NO_ROOM))
+        Ok((enter(account, next, name)?, ""))
     } alias {
         let route = check_member(account, next)?
         deliver(route, "error already joined\n")
-        Ok((route, NO_ROOM))
+        Ok((route, ""))
     }
 }
 fn leave(host: Host, account: domain.WriteHandle<Account>, closing: Bool) @suspends -> Attempt {
     when "leave" (mut account, mut room?: Room = host.rooms[account.room]) {
         let route = check_member(account, room)?
-        let previous = account.room
-        depart(account, room, closing)
+        let previous = depart(account, room, closing)
         if closing { account.route.live = false }
         Ok((route, previous))
     } else {
         let route = check_account(account)?
         if closing { account.route.live = false } else { deliver(route, "error join a room first\n") }
-        Ok((route, NO_ROOM))
+        Ok((route, ""))
     }
 }
 
@@ -168,21 +155,13 @@ fn run_command(host: Host, id: UInt64, command: Command) @suspends -> Bool {
 }
 fn apply_command(input: Request) @suspends -> Step {
     let Request { host, id, command } = input
-    let next_key = match &command {
-        Join(name) => {
-            let key = ensure_room(host, name)
-            if key == NO_ROOM { return Step.Failed(CommandFailure.Unavailable) }
-            key
-        },
-        _ => NO_ROOM
-    }
     let account = match domain.lookup_write::<Account>(host.accounts, id) {
         Some(handle) => handle,
         None => return Step.Failed(CommandFailure.Unavailable)
     }
     let result = match &command {
         Say(text) => say(host, account, text),
-        Join(name) => join(host, account, next_key, name),
+        Join(name) => join(host, account, name),
         Leave => leave(host, account, false),
         Disconnect => leave(host, account, true),
         _ => reply(account, &command)
@@ -190,7 +169,7 @@ fn apply_command(input: Request) @suspends -> Step {
     match result {
         Ok(Ok((route, previous))) => {
             match &command { Disconnect => route.output.close(), _ => {} }
-            reclaim(host, previous)
+            reclaim(host, &previous)
             Step.Done
         },
         _ => Step.Failed(CommandFailure.Rejected)
@@ -203,170 +182,44 @@ fn forget(client: Client) @suspends {
     let id = client.id
     let account = match domain.lookup_write::<Account>(host.accounts, id) { Some(h) => h, None => return }
     let removed = when "forget" (mut account, mut room?: Room = host.rooms[account.room]) {
-        let previous = account.room
         remove_member(room, id)
-        account.room = NO_ROOM
+        let previous = mem.replace(&mut account.room, "")
         account.route.live = false
         (account.route, previous)
     } else {
-        account.room = NO_ROOM
+        mem.replace(&mut account.room, "");
         account.route.live = false
-        (account.route, NO_ROOM)
+        (account.route, "")
     }
     match removed {
         Ok((route, previous)) => {
             route.output.close()
             host.accounts.remove(id, account.read_only());
-            reclaim(host, previous)
+            reclaim(host, &previous)
         },
         _ => {}
     }
 }
 
-// Room lifetime: reserve, create, publish readiness, and retire by identity.
+// The connection directory owns its account; the shared account route stays weak.
 fn init_account(input: AccountInit) @suspends {
-    let initial = Account {
-        route: Route { live: true, id: input.id, output: input.output },
-        room: NO_ROOM,
-        balance_cents: 500
-    }
-    let owner = domain.create(make_account, initial)
-    input.host.accounts.insert(input.id, owner.handle())!
-    input.owners.insert_owned(input.id, owner)!
+    let initial = Account { route: Route { live: true, id: input.id, output: input.output },
+        room: "", balance_cents: 500 }
+    when "create account" (account: Account = input.owners.get_or_stage(input.id, make_account(initial.clone()))) {}!
+    let account = domain.lookup_write::<Account>(input.owners, input.id)!
+    input.host.accounts.insert(input.id, account)!
 }
-fn initialize(host: Host) @suspends {
-    host.directory.insert_owned(CATALOG_KEY, domain.create(make_catalog, {}))!
+fn room_handle(host: Host, name: &String) @suspends -> Option<domain.WriteHandle<Room>> {
+    domain.lookup_named_write::<Room>(host.rooms, name)
 }
-
-fn room_handle(host: Host, key: UInt64) @suspends -> Option<domain.WriteHandle<Room>> {
-    if key == NO_ROOM { None } else { domain.lookup_write::<Room>(host.rooms, key) }
-}
-// Catalog writes only resolve/create rooms. Ordinary sends never read this root.
-fn find_room(state: &Catalog, name: String) -> (UInt64, Bool) {
-    var key = FIRST_ROOM_KEY
-    for entry in &state.rooms {
-        if entry.name.equals(&name) { return (key, entry.status == RoomStatus.Ready) }
-        key += 1
-    }
-    (NO_ROOM, false)
-}
-fn take_room(state: &mut Catalog, host: Host) -> Option<RoomInit> {
-    var key = FIRST_ROOM_KEY
-    for entry in &mut state.rooms {
-        if entry.status == RoomStatus.Pending {
-            entry.status = RoomStatus.Starting
-            return Some(RoomInit { host: host, key: key, name: entry.name.clone() })
-        }
-        key += 1
-    }
-    None
-}
-fn finish_room(state: &mut Catalog, result: (UInt64, Bool)) -> Array<outbox.Handle> {
-    let (key, available) = result
-    let entry = state.rooms.borrow_mut_ref(room_index(key))
-    entry.status = if available { RoomStatus.Ready } else { RoomStatus.Dormant }
-    var waiters = Array.new::<outbox.Handle>()
-    mem.swap(&mut entry.waiters, &mut waiters)
-    waiters
-}
-fn resolve_room(
-    catalog: &mut Catalog,
-    room_name: String,
-    waiter: outbox.Handle,
-    request: outbox.Handle,
-    limit: UInt64,
-    clients: UInt64,
-) -> Result<UInt64, RoomError> {
-    let (key, available) = find_room(catalog, room_name.clone())
-    if available { return Ok(key) }
-    if key == NO_ROOM {
-        if catalog.rooms.len() >= limit { return Err(RoomError.RoomLimit) }
-        var waiters = Array.new::<outbox.Handle>()
-        waiters.push(waiter)
-        catalog.rooms.push(RoomEntry { name: room_name, status: RoomStatus.Pending, waiters: waiters })
-    } else {
-        let entry = catalog.rooms.borrow_mut_ref(room_index(key))
-        if entry.waiters.len() >= clients { return Err(RoomError.WaiterLimit) }
-        if entry.status == RoomStatus.Dormant { entry.status = RoomStatus.Pending }
-        entry.waiters.push(waiter)
-    }
-    let signal = Array.new::<UInt8>()
-    outbox.emit(request, &signal)
-    Ok(NO_ROOM)
-}
-fn room_ready(ready: &mut outbox.Mailbox) @suspends { ready.receive(); }
-fn discard_waiter(catalog: &mut Catalog, input: (String, UInt64)) {
-    let (name, identity) = input
-    let (key, _) = find_room(catalog, name)
-    if key == NO_ROOM { return }
-    let entry = catalog.rooms.borrow_mut_ref(room_index(key))
-    for i in range(0, entry.waiters.len()) {
-        if entry.waiters.get(i)!.identity() == identity {
-            entry.waiters.remove(i)
-            return
-        }
-    }
-}
-fn ensure_room(host: Host, name: &String) @suspends -> UInt64 {
-    let catalog = match domain.lookup_write::<Catalog>(host.directory, CATALOG_KEY) {
-        Some(handle) => handle,
-        None => return NO_ROOM
-    }
-    var ready = outbox.create(1, 0)
-    let waiter = ready.handle()
-    let request = host.requests
-    let room_name = name.clone()
-    let limit = host.config.max_rooms
-    let clients = host.config.max_clients
-    let result = when "resolve room" (mut catalog) {
-        resolve_room(catalog, room_name, waiter, request, limit, clients)
-    }
-    let key = match result { Ok(Ok(key)) => key, _ => return NO_ROOM }
-    if key != NO_ROOM { return key }
-    race { | room_ready(&mut ready) | task.sleep_ms(host.config.room_wait_ms) }
-    domain.write_to(catalog, discard_waiter, (name.clone(), waiter.identity()));
-    match domain.query_from(catalog.read_only(), find_room, name.clone()) { Ok((key, true)) => key, _ => NO_ROOM }
-}
-fn next_room(host: Host) @suspends -> Option<RoomInit> {
-    let catalog = domain.lookup_write::<Catalog>(host.directory, CATALOG_KEY)!
-    domain.write_to(catalog, take_room, host)!
-}
-fn init_room(input: RoomInit) @suspends {
-    let RoomInit { host, key, name } = input
-    host.rooms.insert_owned(key, domain.create(make_room, name))!
-}
-fn complete_room(input: RoomKey, available: Bool) @suspends -> Result<Unit, domain.DomainAccessError> {
-    let catalog = match domain.lookup_write::<Catalog>(input.host.directory, CATALOG_KEY) {
-        Some(handle) => handle,
-        None => return Err(domain.DomainAccessError.Closed)
-    }
-    let key = input.key
-    let waiters = when "complete room" (mut catalog) { finish_room(catalog, (key, available)) }?
-    for waiter in waiters { outbox.close(waiter) }
-    Ok({})
-}
-fn open_room(input: RoomKey) @suspends { complete_room(input, true)!; }
-fn fail_room(input: RoomKey) @suspends { complete_room(input, false); }
 fn empty(room: &Room) -> Bool {
     for route in &room.members { if route.live { return false } }
     true
 }
-fn reclaim(host: Host, key: UInt64) @suspends {
-    if !host.config.reclaim_empty || key == NO_ROOM { return }
-    let room = match room_handle(host, key) { Some(h) => h, None => return }
-    let catalog = match domain.lookup_write::<Catalog>(host.directory, CATALOG_KEY) {
-        Some(handle) => handle,
-        None => return
+fn reclaim(host: Host, name: &String) @suspends {
+    if host.config.reclaim_empty && !name.is_empty() {
+        domain.remove_named_if(host.rooms, name, empty);
     }
-    let retired = when "retire room" (mut room, mut catalog) {
-        if empty(room) && !room.retired {
-            room.retired = true
-            let entry = catalog.rooms.borrow_mut_ref(room_index(key))
-            entry.status = RoomStatus.Dormant
-            true
-        } else { false }
-    }
-    if retired.unwrap_or(false) { host.rooms.remove(key, room.read_only()); }
 }
 
 // State and message helpers used inside atomic operations.

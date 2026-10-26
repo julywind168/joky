@@ -3668,8 +3668,8 @@ fn main() @suspends -> Int32 {
 ### 动态访问路径
 
 访问列表可使用 `binding: State = directory[key]`；`mut` 授予写访问。目录表达式必须是
-外层 `DirectoryHandle` 变量或字段投影，键为外层 UInt64 变量／字段／字面量，或前面状态绑定
-的 UInt64 字段投影。路径不能调用函数或执行用户副作用，状态类型须显式标注。
+外层 `DirectoryHandle` 变量或字段投影，键为外层 UInt64／String 变量、字段或字面量，或前面状态绑定
+的 UInt64／String 字段投影。路径不能调用函数或执行用户副作用，状态类型须显式标注。
 
 ```text
 when "move" (mut account,
@@ -3700,6 +3700,31 @@ when "move" (mut account,
 捕获在块内只提供共享借用，需要拥有值时显式 `.clone()` 或构造副本。调用方的拥有捕获仍被消费，
 队列不借用调用方栈帧。静态形式保持原有按值捕获语义。捕获包、路径描述和结果计入请求预算，
 取消释放全部排队数据。可执行示例见 [state_domain_paths.jk](../tests/fixtures/state_domain_paths.jk)。
+
+### 路径缺失时创建
+
+`room: Room = rooms.get_or_stage(name, make_room(name.clone()))` 仅在键缺失时计算构造表达式。
+这是 `when` 访问列表语法，第二参数为同步表达式，无需闭包；必须满足状态构造器的纯操作证明，
+不能挂起、调用宿主、登记 outbox 消息或访问前面绑定的状态引用。拥有捕获仍需显式复制。
+不能同时标记 `?`，也不能让后续路径的键依赖一个带创建回退的绑定。
+
+运行时在整个目录的同步协调区间内重新解析路径、检查容量、暂存新根并计算候选。
+同名请求后执行者取得已发布的域；不会重复运行构造器。目录满返回 `DirectoryFull(目录身份)`，
+关闭返回 `Closed`。构造错误、业务 Err、消息预检失败及提交前取消均不留下新根或条目。
+新根、目录拥有条目及消息一起发布；新根的 `#every` 任务提前预留，成功发布后才激活。
+目录条目接管唯一 Owner，条件删除或目录关闭会关闭域并取消其任务。
+
+String 键按完整内容比较，与 UInt64 键分属不同键空间；名称存储计入预算。
+`domain.lookup_named::<S>`／`lookup_named_write::<S>` 接受 `&String`；目录方法
+`insert_named`／`insert_owned_named`／`remove_named` 对应数字键版本的权限和拥有规则。
+`domain.remove_named_if(directory, &name, predicate)` 接受受检具名纯函数 `fn(&S) -> Bool`，
+在同一目录协调区间检查当前状态并删除，返回 `Result<Bool, DomainAccessError>`。
+缺失或谓词为 false 返回 `Ok(false)`，适合空房回收，避免检查与删除之间插入新成员。
+
+创建与块体使用同一版本：优先使用第一个已存在参与域的代码；全部为新域时，使用调用模块
+最近成功发布的兼容版本。旧流程保留原捕获值，构造器或操作契约不兼容时拒绝。
+普通 `domain.create` 仍保留原有冻结构造器语义。可执行示例见
+[state_domain_creation.jk](../tests/fixtures/state_domain_creation.jk)。
 
 ### when 身份与热更新
 
@@ -4296,7 +4321,7 @@ AcquireError 包含 Full、Closed、WaitLimit；容量非法、整数溢出或�
 
 ## 域目录 `joky/domain`
 
-域目录按 `UInt64` 业务 ID 查找状态域。`Directory` 唯一拥有目录存储，`DirectoryHandle`
+域目录按 `UInt64` 业务 ID 或完整 `String` 名称查找状态域。`Directory` 唯一拥有目录存储，`DirectoryHandle`
 是可复制、可通过 `Vm.call` 平面记录契约传递的访问能力。模块不因此获得可变全局状态；
 AOT 服务作用域持有 Directory，把句柄传给 Script 或业务上下文即可。
 目录可以包含不同状态类型，查找通过显式状态类型参数检查布局和访问权限。
@@ -4321,7 +4346,7 @@ AOT 服务作用域持有 Directory，把句柄传给 Script 或业务上下文�
 | `domain.lookup_write::<S>(directory, key) -> Option<WriteHandle<S>>` | 同上，且要求注册的目标具有写权限 |
 
 插入和替换返回 `Result<Unit, DirectoryError>`，错误有 `Closed`、`Full`、`Occupied`、
-`InvalidTarget`、`Conflict`。关闭或来自其他执行器的目录视为 Closed；目标必须属于当前执行器且
+`InvalidTarget`、`Conflict`、`ResourceLimit`。关闭或来自其他执行器的目录视为 Closed；目标必须属于当前执行器且
 存活、健康。关闭/失效域的旧条目在查找时移除，插入前也会统一清理，以回收未再查找条目的容量。
 
 `insert_owned` 不返还失败的 Owner；无论结果如何，调用者都不能再次使用已移入的所有者。

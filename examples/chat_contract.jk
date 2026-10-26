@@ -1,32 +1,25 @@
 import joky/domain
-import joky/outbox
 import joky/vm
 import joky/session
-import joky/option.{type Option}
 
 pub struct Config {
     pub connection: session.Options,
     pub max_rooms: UInt64,
     pub max_clients: UInt64,
-    pub room_wait_ms: UInt64,
     pub reclaim_empty: Bool
 }
 pub fn defaults() -> Config {
     Config { connection: session.defaults(),
-        max_rooms: 4096, max_clients: 512, room_wait_ms: 5000, reclaim_empty: true }
+        max_rooms: 4096, max_clients: 512, reclaim_empty: true }
 }
 pub struct Host {
     pub config: Config,
-    pub directory: domain.DirectoryHandle,
     pub rooms: domain.DirectoryHandle,
     pub accounts: domain.DirectoryHandle,
-    pub requests: outbox.Handle,
 }
 pub enum Action { Welcome, Line(String), Disconnect }
 pub struct Client { pub host: Host, pub id: UInt64 }
 pub struct Call { pub host: Host, pub id: UInt64, pub action: Action }
-pub struct RoomInit { pub host: Host, pub key: UInt64, pub name: String }
-pub struct RoomKey { pub host: Host, pub key: UInt64 }
 pub struct AccountInit {
     pub host: Host,
     pub owners: domain.DirectoryHandle,
@@ -35,24 +28,14 @@ pub struct AccountInit {
 }
 
 pub struct Contract {
-    pub initialize: vm.Entry<Host, Unit>,
     pub dispatch: vm.Entry<Call, Bool>,
-    pub next_room: vm.Entry<Host, Option<RoomInit>>,
-    pub init_room: vm.Entry<RoomInit, Unit>,
-    pub open_room: vm.Entry<RoomKey, Unit>,
     pub init_account: vm.Entry<AccountInit, Unit>,
-    pub fail_room: vm.Entry<RoomKey, Unit>,
     pub forget: vm.Entry<Client, Unit>
 }
 pub fn require_contract(engine: &vm.Vm) @suspends -> Contract {
     Contract {
-        initialize: engine.require::<Host, Unit>("initialize")!,
         dispatch: engine.require::<Call, Bool>("dispatch")!,
-        next_room: engine.require::<Host, Option<RoomInit>>("next_room")!,
-        init_room: engine.require::<RoomInit, Unit>("init_room")!,
-        open_room: engine.require::<RoomKey, Unit>("open_room")!,
         init_account: engine.require::<AccountInit, Unit>("init_account")!,
-        fail_room: engine.require::<RoomKey, Unit>("fail_room")!,
         forget: engine.require::<Client, Unit>("forget")!
     }
 }

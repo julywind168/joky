@@ -68,14 +68,30 @@ impl Parser {
                 self.arrays = true;
                 let ty = self.parse_type()?;
                 self.expect(&TokenKind::Eq)?;
-                let Expr::Index { base, index, .. } = self.parse_expr()? else {
-                    return Err(self.error("when path requires directory[key]".into()));
+                let (directory, key, create) = match self.parse_expr()? {
+                    Expr::Index { base, index, .. } => (*base, *index, None),
+                    Expr::Call { callee, type_args, mut args, span } if callee.ends_with(".get_or_stage") && type_args.is_empty() && args.len() == 2 => {
+                        let mut names = callee.strip_suffix(".get_or_stage").unwrap().split('.');
+                        let mut directory = Expr::Ident { name: names.next().unwrap().into(), span };
+                        for name in names { directory = Expr::Field { base: Box::new(directory), name: name.into(), type_args: vec![], span }; }
+                        let create = args.pop().unwrap();
+                        (directory, args.pop().unwrap(), Some(create))
+                    }
+                    Expr::MethodCall(mut call) if call.name == "get_or_stage" && call.type_args.is_empty() && call.args.len() == 2 => {
+                        let create = call.args.pop().unwrap();
+                        (call.receiver, call.args.pop().unwrap(), Some(create))
+                    }
+                    _ => return Err(self.error("when path requires directory[key] or directory.get_or_stage(key, constructor)".into())),
                 };
+                if optional && create.is_some() {
+                    return Err(self.error("A creation fallback cannot also be optional".into()));
+                }
                 Some(WhenPath {
                     ty,
-                    directory: *base,
-                    key: *index,
+                    directory,
+                    key,
                     optional,
+                    create,
                 })
             } else {
                 if optional {

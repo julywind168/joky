@@ -1,5 +1,6 @@
 //! Complete bounded domain access sets on the existing FIFO executor.
 use super::*;
+use std::time::Instant;
 pub(super) mod paths;
 mod transactions;
 
@@ -279,17 +280,47 @@ pub(super) fn execute(
     pair: &mut Pair,
     rejection: &mut Option<access::Rejection>,
     charge: &mut usize,
+    now: Option<Instant>,
 ) -> (DomainOutcome, Vec<TaskId>, Vec<TaskGroup>) {
-    if pair.paths.is_some() {
-        if let Err(reason) = paths::refresh(domains, pair) {
-            *rejection = Some(reason);
-            return (
-                DomainOutcome::Failed(invalid("Dynamic domain path rejected")),
-                vec![],
-                vec![],
-            );
+    let mut staged = if pair.paths.is_some() {
+        match paths::refresh(domains, pair) {
+            Ok(staged) => Some(staged),
+            Err(paths::Failure::Constructor(error)) => {
+                return (DomainOutcome::Failed(error), vec![], vec![]);
+            }
+            Err(paths::Failure::Rejected(reason)) => {
+                *rejection = Some(reason);
+                return (
+                    DomainOutcome::Failed(invalid("Dynamic domain path rejected")),
+                    vec![],
+                    vec![],
+                );
+            }
         }
+    } else {
+        None
+    };
+    if let Err(error) = staged
+        .as_ref()
+        .map_or(Ok(()), |staged| staged.prepare_automatic(domains, now))
+    {
+        *rejection = Some(access::Rejection::from_error(&error));
+        let jobs = staged.take().unwrap().discard(domains);
+        return (DomainOutcome::Failed(error), jobs, vec![]);
     }
+    let mut result = execute_prepared(domains, pair, rejection, charge, &mut staged);
+    if let Some(staged) = staged {
+        result.1.extend(staged.discard(domains));
+    }
+    result
+}
+fn execute_prepared(
+    domains: &mut Domains,
+    pair: &mut Pair,
+    rejection: &mut Option<access::Rejection>,
+    charge: &mut usize,
+    staged: &mut Option<paths::Staged>,
+) -> (DomainOutcome, Vec<TaskId>, Vec<TaskGroup>) {
     let count = pair.handles.len();
     let mut mutable = [false; 64];
     for (i, ty) in pair.info.signature.params[..count].iter().enumerate() {
@@ -438,6 +469,9 @@ pub(super) fn execute(
                 }
             }
             if accepted {
+                if let Some(staged) = staged {
+                    staged.publish(domains);
+                }
                 if let Some(batch) = &mut batch {
                     batch.publish();
                     batch.wake();

@@ -89,6 +89,79 @@ impl FunctionPlan {
         let Some(kind) = &info.compiler_intrinsic else {
             return Ok(None);
         };
+        if matches!(kind, DirectoryRemoveIf) {
+            let (operation, predicate) = self
+                .function_value_info(&args[2], vars, functions, types, true)?
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::InvalidCall,
+                        "Conditional directory removal requires a named predicate",
+                    )
+                })?;
+            if predicate.suspends
+                || predicate.signature.params.len() != 1
+                || predicate.signature.ret != Type::Bool
+                || predicate.signature.params[0]
+                    .reference_type()
+                    .is_none_or(|r| r.mutable)
+            {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidCall,
+                    "Conditional directory removal requires fn(&S) -> Bool",
+                ));
+            }
+            if !checking {
+                self.domain_calls.push((operation.clone(), span));
+            }
+            let module = self.slot(crate::runtime::domain::module_type())?;
+            self.emit(Op::DomainModule(module.clone()));
+            let Flow::Value(text) = self.expr(
+                &Expr::Literal {
+                    literal: Literal::String(operation),
+                    span,
+                },
+                vars,
+                functions,
+                suspends,
+                types,
+            )?
+            else {
+                unreachable!()
+            };
+            let name = functions
+                .iter()
+                .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DirectoryRemoveIfFinish)))
+                .map(|(name, _)| name.clone())
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::InvalidCall,
+                        "Missing conditional removal adapter",
+                    )
+                })?;
+            let directory = values[0].as_ref().unwrap();
+            let result = self.slot(info.signature.ret.clone())?;
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::Call {
+                indirect: None,
+                name,
+                args: vec![
+                    Some(module),
+                    Some(Slot {
+                        index: directory.index,
+                        ty: Type::UInt64,
+                    }),
+                    values[1].clone(),
+                    text,
+                ],
+                result: Some(result.clone()),
+                state: Some(state),
+            });
+            return Ok(Some(Flow::Value(Some(result))));
+        }
         if let TimerStart(periodic) = kind {
             let (operation, target) = self
                 .function_value_info(&args[3], vars, functions, types, true)?

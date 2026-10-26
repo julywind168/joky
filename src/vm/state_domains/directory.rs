@@ -3,8 +3,22 @@ use super::commits::{adopt, lease, Stored};
 use super::*;
 use crate::runtime::{buffer::Buffer, domain::Operation};
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Key {
+    Index(u64),
+    Name(String),
+}
+impl Key {
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Index(_) => 0,
+            Self::Name(name) => name.len(),
+        }
+    }
+}
 struct Entry {
-    key: u64,
+    key: Key,
+    _key_charge: reads::Charge,
     handle: DomainHandle,
     token: u64,
     owner: Option<DomainOwner>,
@@ -29,8 +43,8 @@ impl Drop for Owner {
     }
 }
 impl Table {
-    fn position(&self, key: u64) -> Result<usize, usize> {
-        self.entries.binary_search_by_key(&key, |entry| entry.key)
+    fn position_key(&self, key: &Key) -> Result<usize, usize> {
+        self.entries.binary_search_by(|entry| entry.key.cmp(key))
     }
 }
 fn close_table(table: &RefCell<Table>) {
@@ -99,12 +113,20 @@ fn insert(
     expected: Option<u64>,
     token: u64,
 ) -> u64 {
-    insert_entry(registry, directory, key, expected, token, None)
+    insert_entry(registry, directory, Key::Index(key), expected, token, None)
 }
 fn insert_owned(
     registry: &Rc<RefCell<Domains>>,
     directory: u64,
     key: u64,
+    owner: DomainOwner,
+) -> u64 {
+    insert_owned_key(registry, directory, Key::Index(key), owner)
+}
+fn insert_owned_key(
+    registry: &Rc<RefCell<Domains>>,
+    directory: u64,
+    key: Key,
     owner: DomainOwner,
 ) -> u64 {
     let token = {
@@ -137,7 +159,7 @@ fn prune(registry: &Rc<RefCell<Domains>>, table: &RefCell<Table>) {
 fn insert_entry(
     registry: &Rc<RefCell<Domains>>,
     directory: u64,
-    key: u64,
+    key: Key,
     expected: Option<u64>,
     token: u64,
     owner: Option<DomainOwner>,
@@ -148,9 +170,12 @@ fn insert_entry(
     let Ok(handle) = source::handle(registry, token) else {
         return 4;
     };
+    let Ok(key_charge) = reads::Charge::new(registry.borrow().budget.clone(), key.bytes()) else {
+        return 6;
+    };
     if let Some(expected) = expected {
         let mut table = table.borrow_mut();
-        let Ok(index) = table.position(key) else {
+        let Ok(index) = table.position_key(&key) else {
             return 5;
         };
         if table.entries[index].token / 2 != expected / 2 {
@@ -166,6 +191,7 @@ fn insert_entry(
             &mut table.entries[index],
             Entry {
                 key,
+                _key_charge: key_charge,
                 handle,
                 token,
                 owner,
@@ -186,7 +212,7 @@ fn insert_entry(
         return 4;
     }
     let mut table = table.borrow_mut();
-    let index = match table.position(key) {
+    let index = match table.position_key(&key) {
         Ok(_) => return 3,
         Err(index) => index,
     };
@@ -197,6 +223,7 @@ fn insert_entry(
         index,
         Entry {
             key,
+            _key_charge: key_charge,
             handle,
             token,
             owner,
@@ -205,11 +232,14 @@ fn insert_entry(
     0
 }
 fn remove(registry: &Rc<RefCell<Domains>>, directory: u64, key: u64, expected: u64) -> bool {
+    remove_key(registry, directory, &Key::Index(key), expected)
+}
+fn remove_key(registry: &Rc<RefCell<Domains>>, directory: u64, key: &Key, expected: u64) -> bool {
     let Some(table) = table(registry, directory) else {
         return false;
     };
     let mut table = table.borrow_mut();
-    let Ok(index) = table.position(key) else {
+    let Ok(index) = table.position_key(key) else {
         return false;
     };
     if table.entries[index].token / 2 != expected / 2 {
@@ -228,11 +258,28 @@ fn lookup(
     name: &str,
     writable: bool,
 ) -> Result<u64, Error> {
+    lookup_key(
+        registry,
+        directory,
+        &Key::Index(key),
+        module,
+        name,
+        writable,
+    )
+}
+fn lookup_key(
+    registry: &Rc<RefCell<Domains>>,
+    directory: u64,
+    key: &Key,
+    module: &LoadedModule,
+    name: &str,
+    writable: bool,
+) -> Result<u64, Error> {
     let Some(table) = table(registry, directory) else {
         return Ok(0);
     };
     let mut table = table.borrow_mut();
-    let Ok(index) = table.position(key) else {
+    let Ok(index) = table.position_key(key) else {
         return Ok(0);
     };
     let entry = &table.entries[index];
@@ -323,18 +370,75 @@ pub(super) unsafe fn poll(
             let name = crate::runtime::owned_text::borrow(slots[3] as *const Buffer)?;
             lookup(registry, slots[1], slots[2], &module, name, slots[4] != 0)
         }
+        Operation::DirectoryInsertNamed => {
+            let name = crate::runtime::owned_text::borrow(slots[1] as *const Buffer)?;
+            Ok(insert_entry(
+                registry,
+                slots[0],
+                Key::Name(name.to_owned()),
+                None,
+                slots[2],
+                None,
+            ))
+        }
+        Operation::DirectoryInsertOwnedNamed => {
+            let name = crate::runtime::owned_text::borrow(slots[1] as *const Buffer)?;
+            Ok(insert_owned_key(
+                registry,
+                slots[0],
+                Key::Name(name.to_owned()),
+                source::take_owner(slots[2])?,
+            ))
+        }
+        Operation::DirectoryRemoveNamed => {
+            let name = crate::runtime::owned_text::borrow(slots[1] as *const Buffer)?;
+            Ok(u64::from(remove_key(
+                registry,
+                slots[0],
+                &Key::Name(name.to_owned()),
+                slots[2],
+            )))
+        }
+        Operation::DirectoryRemoveNamedIf => {
+            let (module, _) = source::module(registry, slots[0])?;
+            let key = crate::runtime::owned_text::borrow(slots[2] as *const Buffer)?;
+            let name = crate::runtime::owned_text::borrow(slots[3] as *const Buffer)?;
+            let (status, removed) = remove_if(
+                registry,
+                slots[1],
+                &Key::Name(key.to_owned()),
+                &module,
+                name,
+            )?;
+            Ok(status | (u64::from(removed) << 32))
+        }
+        Operation::DirectoryLookupNamed => {
+            let (module, _) = source::module(registry, slots[0])?;
+            let key = crate::runtime::owned_text::borrow(slots[2] as *const Buffer)?;
+            let name = crate::runtime::owned_text::borrow(slots[3] as *const Buffer)?;
+            lookup_key(
+                registry,
+                slots[1],
+                &Key::Name(key.to_owned()),
+                &module,
+                name,
+                slots[4] != 0,
+            )
+        }
         _ => unreachable!(),
     }
 }
 
 #[cfg(test)]
+mod creation_tests;
+#[cfg(test)]
 mod tests;
 
 /// Read-only path resolution never prunes or drops directory owners.
-pub(super) fn resolve_path(
+pub(super) fn resolve_key(
     domains: &Domains,
     token: u64,
-    key: u64,
+    key: &Key,
 ) -> Result<Option<DomainHandle>, access::Rejection> {
     let table = domains
         .directories
@@ -345,7 +449,11 @@ pub(super) fn resolve_path(
     if table.closed || domains.shutting_down {
         return Err(access::Rejection::Closed);
     }
-    let Some(handle) = table.position(key).ok().map(|i| table.entries[i].handle) else {
+    let Some(handle) = table
+        .position_key(key)
+        .ok()
+        .map(|i| table.entries[i].handle)
+    else {
         return Ok(None);
     };
     match domains.get(handle) {
@@ -355,4 +463,169 @@ pub(super) fn resolve_path(
             rejection => Err(rejection),
         },
     }
+}
+
+pub(super) struct Publication {
+    pub(super) directory: u64,
+    registry: Weak<RefCell<Domains>>,
+    table: Rc<RefCell<Table>>,
+    entry: Entry,
+}
+impl Publication {
+    pub(super) fn target_for(&self, directory: u64, key: &Key) -> Option<DomainHandle> {
+        (self.directory == directory && &self.entry.key == key).then_some(self.entry.handle)
+    }
+
+    pub(super) fn set_target(&mut self, handle: DomainHandle, token: u64) {
+        self.entry.handle = handle;
+        self.entry.token = token;
+    }
+    pub(super) fn publish(mut self, domains: &Domains) {
+        let mut table = self.table.borrow_mut();
+        // Closed entries are already inaccessible. Their close responsibility has
+        // been discharged, so pruning them cannot reenter the registry.
+        table.entries.retain_mut(|entry| {
+            let closed = domains
+                .entries
+                .get(&entry.handle.sequence)
+                .is_none_or(|d| d.closing);
+            if closed {
+                if let Some(owner) = &mut entry.owner {
+                    owner.domains = Weak::new();
+                }
+            }
+            !closed
+        });
+        let index = table.position_key(&self.entry.key).unwrap_err();
+        self.entry.owner = Some(DomainOwner {
+            domains: self.registry,
+            handle: self.entry.handle,
+        });
+        table.entries.insert(index, self.entry);
+    }
+}
+pub(super) fn prepare_creation(
+    domains: &Domains,
+    registry: &Weak<RefCell<Domains>>,
+    directory: u64,
+    key: Key,
+    pending: usize,
+) -> Result<Publication, access::Rejection> {
+    let table = domains
+        .directories
+        .get(&directory)
+        .and_then(Weak::upgrade)
+        .ok_or(access::Rejection::Closed)?;
+    {
+        let table = table.borrow();
+        if table.closed || domains.shutting_down {
+            return Err(access::Rejection::Closed);
+        }
+        if table
+            .position_key(&key)
+            .ok()
+            .is_some_and(|i| domains.get(table.entries[i].handle).is_ok())
+        {
+            return Err(access::Rejection::InvalidAccess);
+        }
+        let live = table
+            .entries
+            .iter()
+            .filter(|entry| {
+                domains
+                    .entries
+                    .get(&entry.handle.sequence)
+                    .is_some_and(|d| !d.closing)
+            })
+            .count();
+        if live + pending >= table.capacity {
+            return Err(access::Rejection::DirectoryFull(directory));
+        }
+    }
+    let charge = reads::Charge::new(domains.budget.clone(), key.bytes())
+        .map_err(|_| access::Rejection::ResourceLimit)?;
+    Ok(Publication {
+        directory,
+        registry: registry.clone(),
+        table,
+        entry: Entry {
+            key,
+            _key_charge: charge,
+            handle: DomainHandle {
+                registry: domains.identity,
+                sequence: 0,
+                writable: true,
+            },
+            token: 0,
+            owner: None,
+        },
+    })
+}
+
+fn remove_if(
+    registry: &Rc<RefCell<Domains>>,
+    directory: u64,
+    key: &Key,
+    caller: &LoadedModule,
+    predicate: &str,
+) -> Result<(u64, bool), Error> {
+    let Some(table) = table(registry, directory) else {
+        return Ok((1, false));
+    };
+    let removed = {
+        let mut domains = registry.borrow_mut();
+        let mut table = table.borrow_mut();
+        if table.closed || domains.shutting_down {
+            return Ok((1, false));
+        }
+        let Ok(index) = table.position_key(key) else {
+            return Ok((0, false));
+        };
+        let handle = table.entries[index].handle;
+        let domain = match domains.get(handle) {
+            Ok(domain) => domain,
+            Err(error) => {
+                return Ok((
+                    access::classify(&domains, &[handle], &error).status(),
+                    false,
+                ))
+            }
+        };
+        let module = domain.module.clone();
+        let (Ok(before), Ok(info)) = (
+            caller.instance_info(predicate),
+            module.instance_info(predicate),
+        ) else {
+            return Ok((4, false));
+        };
+        if !handle.writable
+            || !info.domain_entry
+            || predicate.starts_with("$when/")
+            || !code::compatible_entry(&before, &info)
+            || info.signature.params.len() != 1
+            || info.signature.ret != Type::Bool
+            || info.signature.params[0]
+                .reference_type()
+                .is_none_or(|r| r.mutable || !code::compatible(&r.target, &domain.ty))
+        {
+            return Ok((3, false));
+        }
+        let domain = domains.entries.get_mut(&handle.sequence).unwrap();
+        let result = domain.root.as_mut().unwrap().invoke_values(
+            &module,
+            &domain.ty,
+            predicate,
+            &info,
+            (&mut [0], None),
+            domain.limits,
+        )?;
+        if result[0] == 0 {
+            return Ok((0, false));
+        }
+        table.entries.remove(index)
+    };
+    // Owner cleanup can cancel tasks and close other directories. The structural
+    // publication is complete before those callbacks, with no intervening yield.
+    drop(removed);
+    Ok((0, true))
 }

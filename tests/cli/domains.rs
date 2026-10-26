@@ -2046,6 +2046,10 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s?:S=routes[1]) {s.n} else {s.n};", "Undefined"),
         ("", "let d=domain.directory(2); let routes=d.handle(); let text=\"owned\"; when (h,s:S=routes[1]) {let owned:String=text; owned};", "String"),
 
+        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s?:S=routes.get_or_stage(1,make(1))) {} else {};", "cannot also be optional"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); when (s:S=routes.get_or_stage(1,make(1)), t:S=routes[s.n]) {};", "creation fallback"),
+        ("fn noisy()->S{println(1);make(1)}", "let d=domain.directory(2); let routes=d.handle(); when (s:S=routes.get_or_stage(1,noisy())) {};", "proved synchronous"),
+        ("fn noisy(s:&S)->Bool{println(s.n);true}", "let d=domain.directory(2); let name=\"room\"; domain.remove_named_if(d.handle(),&name,noisy);", "proved synchronous"),
         ("", "when (o.handle()) {};", "Expected"),
         (
             "",
@@ -2501,4 +2505,15 @@ fn state_domains_paths_run_in_standalone_aot() {
         include_str!("../fixtures/state_domain_paths.jk"),
     );
     work.assert_native("paths.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_creation_runs_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "creation.jk",
+        include_str!("../fixtures/state_domain_creation.jk"),
+    );
+    work.assert_native("creation.jk", &[], b"", 0);
 }

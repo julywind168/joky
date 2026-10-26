@@ -301,7 +301,7 @@ fn operation(first:domain.WriteHandle<S>,routes:domain.DirectoryHandle) @suspend
                 &vm.domains,
                 vm.current.as_ref().unwrap().clone(),
                 ENTRY,
-                vec![1, 0, 0, 0, 0, at, 0, 1, 1, 0, table.token, 0, 1],
+                vec![1, 0, 0, 0, 0, at, 0, 1, 1, 0, table.token, 0, 1].into(),
                 vec![],
                 pairs::ValueOutput {
                     words: output.clone(),

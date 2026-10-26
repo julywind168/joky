@@ -310,11 +310,14 @@ impl Drop for Worker {
     fn drop(&mut self) {
         // Dispose the queued turn before allowing this owner to be armed again.
         drop(self.request.take());
-        let status = self
-            .registry
-            .upgrade()
-            .map(|r| target_status(&r.borrow(), self.target))
-            .unwrap_or(Status::Closed);
+        let status = if self.state.borrow().staged {
+            Status::Cancelled
+        } else {
+            self.registry
+                .upgrade()
+                .map(|r| target_status(&r.borrow(), self.target))
+                .unwrap_or(Status::Closed)
+        };
         let mut state = self.state.borrow_mut();
         if state.generation == self.generation {
             state.job = None;

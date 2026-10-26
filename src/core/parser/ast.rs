@@ -283,6 +283,7 @@ pub struct When {
 
 #[derive(Debug, Clone)]
 pub struct WhenPath {
+    pub create: Option<Expr>,
     pub ty: Type,
     pub directory: Expr,
     pub key: Expr,
@@ -825,6 +826,8 @@ pub(crate) enum CompilerIntrinsic {
     TimerValueFinish,
     DirectoryType(Type),
     DirectoryWitness,
+    DirectoryRemoveIf,
+    DirectoryRemoveIfFinish,
     DomainSnapshot,
     DomainSnapshotPair,
     DomainSnapshotValue,

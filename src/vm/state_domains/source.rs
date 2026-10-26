@@ -780,6 +780,11 @@ pub(crate) unsafe fn poll(
         | Operation::DirectoryInsertOwned
         | Operation::DirectoryReplace
         | Operation::DirectoryRemove
+        | Operation::DirectoryLookupNamed
+        | Operation::DirectoryInsertNamed
+        | Operation::DirectoryInsertOwnedNamed
+        | Operation::DirectoryRemoveNamedIf
+        | Operation::DirectoryRemoveNamed
         | Operation::DirectoryLookup
         | Operation::DirectoryFound => super::directory::poll(arena, frame, &registry, op)?,
         Operation::OutboxCreate

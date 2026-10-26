@@ -395,25 +395,20 @@ fn chat_real_tcp_on_all_backends() {
     .unwrap();
     assert_eq!(source.matches("0x7f000001, 7777").count(), 1);
     assert_eq!(source.matches("0x7f000001, 7778").count(), 1);
-    assert_eq!(
-        source
-            .matches("    let directory = domain.directory(1)")
-            .count(),
-        1
-    );
+    assert_eq!(source.matches("    let config = defaults()").count(), 1);
     let path = work.path().join("chat.jk");
-    let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check")
+    let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check\nimport joky/outbox")
         .replace("0x7f000001, 7777", "0x7f000001, 0")
         .replace("0x7f000001, 7778", "0x7f000001, 0")
         .replace("examples/chat_logic.jk", "chat_logic.jk")
         .replace("examples/chat_contract.jk", "chat_contract.jk")
-        .replace("    let directory = domain.directory(1)", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let directory = domain.directory(1)");
+        .replace("    let config = defaults()", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let config = defaults()");
     let source = format!("{source}\n{}", include_str!("fixtures/chat_reload_host.jk"));
     for create in ["new", "interpreter"] {
         let source = source.replace("vm.Vm.new()", &format!("vm.Vm.{create}()"));
         std::fs::write(&path, &source).unwrap();
         let logic = format!(
-        "import joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
+        "import joky/outbox\nimport joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
         include_str!("../examples/chat_logic.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
         assert_eq!(logic.matches("let result = match &command {").count(), 1);

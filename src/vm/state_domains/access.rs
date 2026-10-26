@@ -16,6 +16,7 @@ pub(super) enum Rejection {
     Missing(u64) = 8,
     Aliased(u64) = 9,
     RetryLimit = 10,
+    DirectoryFull(u64) = 11,
 }
 impl Rejection {
     pub(super) fn status(self) -> u64 {
@@ -30,6 +31,7 @@ impl Rejection {
             Self::Missing(_) => 8,
             Self::Aliased(_) => 9,
             Self::RetryLimit => 10,
+            Self::DirectoryFull(_) => 11,
         }
     }
     pub(super) fn payload(self) -> u64 {
@@ -37,7 +39,8 @@ impl Rejection {
             Self::OutboxFull(token)
             | Self::OutboxClosed(token)
             | Self::Missing(token)
-            | Self::Aliased(token) => token,
+            | Self::Aliased(token)
+            | Self::DirectoryFull(token) => token,
             _ => 0,
         }
     }

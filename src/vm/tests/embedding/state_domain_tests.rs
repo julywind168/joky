@@ -1914,3 +1914,23 @@ fn exhaustive_state_domains_paths_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_creation_cancellation_releases_staged_roots_and_directory_owners() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_creation.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000, 32768,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel staged creation, directory publication and conditional removal at every instruction"]
+fn exhaustive_state_domains_creation_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_creation.jk"),
+        0..=65536,
+        true,
+    );
+}

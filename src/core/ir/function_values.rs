@@ -81,6 +81,8 @@ impl FunctionPlan {
                     | CompilerIntrinsic::DomainAt(_)
                     | CompilerIntrinsic::DomainPair(_)
                     | CompilerIntrinsic::DomainRequest
+                    | CompilerIntrinsic::DirectoryRemoveIf
+                    | CompilerIntrinsic::DirectoryRemoveIfFinish
                     | CompilerIntrinsic::DomainPathsFinish
                     | CompilerIntrinsic::DomainWhenFinish
                     | CompilerIntrinsic::DomainValueFinish(_)

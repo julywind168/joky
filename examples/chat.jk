@@ -1,8 +1,7 @@
 import chat_admin
-import chat_contract.{type Contract, type Host, type Action, type Call, type RoomInit, type RoomKey, type AccountInit, type Client, defaults, require_contract}
+import chat_contract.{type Contract, type Host, type Action, type Call, type AccountInit, type Client, defaults, require_contract}
 import joky/vm
 import joky/domain
-import joky/outbox
 import joky/session
 import joky/admission
 import joky/tcp.{type Address, type TcpListener, type TcpStream}
@@ -37,40 +36,13 @@ fn connection(
         output: connection.output()
     }
     let client = Client { host: host, id: id }
-    if engine.entries.init_account.try_call(&engine.vm, input).is_err() || !refresh(engine) {
+    if engine.entries.init_account.try_call(&engine.vm, input).is_err() {
         disconnected(engine, &client)
         return
     }
     if !dispatch(engine, client, Action.Welcome) { disconnected(engine, &client); return }
     session.run(connection, stream, engine, &client, line, disconnected)
     permit.release()
-}
-// Creation may have started in an older module while publication was in flight.
-// Bring newly created roots to the current module before exposing them to clients.
-fn refresh(engine: &Script) -> Bool { vm.publish_domain_code(&engine.vm) >= 0 }
-fn create_room(engine: &Script, input: RoomInit) @suspends {
-    let key = RoomKey { host: input.host, key: input.key }
-    if engine.entries.init_room.try_call(&engine.vm, input).is_err() || !refresh(engine) {
-        engine.entries.fail_room.try_call(&engine.vm, key);
-        return
-    }
-    if engine.entries.open_room.try_call(&engine.vm, key).is_err() {
-        engine.entries.fail_room.try_call(&engine.vm, key);
-    }
-}
-fn manage_rooms(engine: &Script, host: Host, requests: &mut outbox.Mailbox) @suspends -> Int32 {
-    while true {
-        let request = requests.receive()
-        if request.is_none() { break }
-        while true {
-            let pending = match engine.entries.next_room.try_call(&engine.vm, host) {
-                Ok(value) => value,
-                Err(_) => break
-            }
-            match pending { Some(input) => create_room(engine, input), None => break }
-        }
-    }
-    0
 }
 fn serve(engine: &Script, host: Host, listener: TcpListener) @suspends -> Int32 {
     var listener = listener
@@ -99,19 +71,14 @@ fn main() @suspends -> Int32 {
             return 1
         }
     }
-    let directory = domain.directory(1)
     let config = defaults()
     let rooms = domain.directory(config.max_rooms)
     let accounts = domain.directory(config.max_clients)
-    var requests = outbox.create(config.max_rooms, 0)
     let host = Host {
         config: config,
-        directory: directory.handle(),
         rooms: rooms.handle(),
-        accounts: accounts.handle(),
-        requests: requests.handle()
+        accounts: accounts.handle()
     }
-    entries.initialize.call(&engine, host)
     var chat = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
@@ -123,7 +90,6 @@ fn main() @suspends -> Int32 {
     let script = Script { vm: engine, entries: entries }
     race {
         | serve(&script, host, chat)
-        | manage_rooms(&script, host, &mut requests)
         | chat_admin.serve(&script.vm, script_path(), admin)
     }
 }

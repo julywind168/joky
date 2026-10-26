@@ -29,7 +29,7 @@ pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
             .paths
             .iter()
             .flatten()
-            .flat_map(|p| [&p.directory, &p.key])
+            .flat_map(|p| [&p.directory, &p.key].into_iter().chain(p.create.iter()))
             .chain(std::iter::once(&w.body))
             .chain(w.missing.iter())
             .chain(w.alias.iter())

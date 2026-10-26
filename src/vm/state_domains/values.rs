@@ -82,11 +82,13 @@ pub(super) unsafe fn poll(
     let initial = frame.state == 0;
     let result = (|| {
         if frame.state == 0 {
+            let mut source_key = 0;
             let (handles, module, name_slot) = if ambient {
                 let (handle, module) = tasks::value_context(registry)?;
                 (vec![handle], module, 0)
             } else if paths {
-                let (module, _) = source::module(registry, frame.slots[0])?;
+                let (module, key) = source::module(registry, frame.slots[0])?;
+                source_key = key;
                 (vec![], module, 1)
             } else if many {
                 let packet = &*(frame.slots[2] as *const Buffer);
@@ -130,14 +132,17 @@ pub(super) unsafe fn poll(
             ]));
             let request = if paths {
                 let descriptors = input_words(
-                    &[Type::Buffer(std::sync::Arc::new(Type::UInt64))],
+                    &[
+                        Type::Buffer(std::sync::Arc::new(Type::UInt64)),
+                        Type::Buffer(std::sync::Arc::new(Type::String)),
+                    ],
                     &*(frame.slots[2] as *const Buffer),
                 )?;
                 let result = pairs::paths::submit(
                     registry,
                     module.clone(),
                     name,
-                    descriptors[2..].to_vec(),
+                    pairs::paths::decode(&descriptors, source_key)?,
                     input,
                     pairs::ValueOutput {
                         words: output.clone(),

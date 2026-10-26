@@ -335,6 +335,7 @@ pub(crate) struct Domains {
     identity: u64,
     timers: HashMap<u64, Weak<RefCell<timers::State>>>,
     directories: HashMap<u64, Weak<RefCell<directory::Table>>>,
+    published: Vec<code::Published>,
     outboxes: HashMap<u64, Weak<RefCell<outbox::Mailbox>>>,
     admissions: HashMap<u64, Weak<RefCell<admission::Pool>>>,
     next_domain: u64,
@@ -358,6 +359,7 @@ impl Domains {
                 .expect("State domain registry identities exhausted"),
             timers: HashMap::new(),
             directories: HashMap::new(),
+            published: Vec::new(),
             outboxes: HashMap::new(),
             admissions: HashMap::new(),
             next_domain: 1,
@@ -674,6 +676,14 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
                 }
                 Work::CommitPair(Some(bundle)) if bundle.timed() => domains.executor.upgrade(),
                 Work::CommitSet(Some(set)) if set.timed() => domains.executor.upgrade(),
+                Work::Pair(pair)
+                    if pair
+                        .paths
+                        .as_ref()
+                        .is_some_and(|paths| paths.needs_clock(&domains)) =>
+                {
+                    domains.executor.upgrade()
+                }
                 _ => None,
             })
     };
@@ -715,6 +725,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
                     pair,
                     &mut request.access_error,
                     &mut request.charge,
+                    now,
                 );
                 if matches!(result.0, DomainOutcome::Value(_)) {
                     request.observed_reads = reads;

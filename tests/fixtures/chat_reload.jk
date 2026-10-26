@@ -12,7 +12,7 @@ fn arm_probe(state: &mut ProbeState, handle: outbox.Handle) -> Bool {
 fn pause_send(ctx: Host, command: &Command) @suspends {
     let pause = match command { Say(text) => text.equals("paused"), _ => false }
     if !pause { return }
-    let state = domain.lookup_write::<ProbeState>(ctx.directory, 2)!
+    let state = domain.lookup_write::<ProbeState>(ctx.accounts, 0)!
     var resume = outbox.create(1, 0)
     let handle = resume.handle()
     let first = domain.write_to(state, arm_probe, handle)!
@@ -35,7 +35,7 @@ fn verify_online(input: Probe) @suspends {
     let f = fixture()
     let sync = domain.create(make_probe, input.ready)
     input.directory.insert(1, sync.handle())!
-    f.ctx.directory.insert(2, sync.handle())!
+    f.ctx.accounts.insert(0, sync.handle())!
     var queue = outbox.create(8, 1024)
     let stop = outbox.create(1, 0)
     let alice = test_account(f.ctx, 1, 1, queue.handle())

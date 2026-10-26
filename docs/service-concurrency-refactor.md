@@ -209,9 +209,9 @@ Local 在完整注册表访问区间内重算一次即稳定；`max_path_retries
 **方案**：创建作为访问路径的回退分支。
 
 ```text
-when "join" (mut account = accounts[id],
-             mut old = rooms[account.room?],
-             mut next = rooms.get_or_stage(name, || Room.new(name))) { ... }
+when "join" (mut account,
+             mut next: Room = rooms.get_or_stage(name, make_room(name.clone())),
+             mut old?: Room = rooms[account.room]) { ... } else { ... } alias { ... }
 ```
 
 - 解析时键不存在，则计划创建；校验时仍不存在，在本次尝试内暂存新域并独占初始化；
@@ -390,6 +390,29 @@ D7 的 VM 与 Domains 部分实施前，先单独成文冻结以下协议，再�
   非法路径、缺失分支引用和拥有捕获消费的拒绝矩阵通过；既有静态 when 取消回归通过。
 - 动态路径逐指令取消穷举通过，chat 六种真实 TCP 宿主／脚本组合通过。
 - `./scripts/check.sh` 单次完整通过：fmt、Clippy、1660 项普通库测试、309 项 CLI 测试、
+  其余默认集成测试，以及三后端短输入 while／Map 正确性。未运行 Release 或无关压力检查。
+
+### R4 实施记录（2026-10-26）
+
+- 创建回退使用 `get_or_stage(key, constructor_expression)` 路径语法，构造表达式提取为受检纯入口，
+  只在执行时缺失才计算。UInt64 与完整 String 键分属不同键空间；名字存储计入预算。
+- Local 注册表同步区间覆盖目录容量预检、暂存根、候选计算和联合发布。同名排队请求复用
+  前一请求发布的域；目录条目接管 Owner。业务拒绝、构造错误、消息预检失败或取消都回收暂存资源。
+- 新根的 `#every` 任务在发布前预留，成功后激活；部分分配失败撤销根并在注册表借用外取消任务。
+  `remove_named_if` 在同一协调区间运行受检纯谓词和条件删除，空房回收与重建串行。
+- 创建与事务体使用同一兼容代码版本；无已有根时，通过弱发布谱系选择最新实现。
+  普通 `domain.create` 的冻结构造器语义不变；匿名操作仍限定原模块身份。
+- chat 删除 Catalog、房间创建信箱、宿主 `create_room`／`manage_rooms`／`refresh`，
+  以房间名直接定位。连接内目录持有账户，房间目录持有事务内创建的房间；默认回收空房与名称。
+- 当前限制：创建回退不能同时为可选路径；后续键不能依赖带创建回退的绑定。
+  构造表达式不接收其他绑定的状态引用，不允许挂起、宿主调用或 outbox 登记。
+- 验证涵盖两种 VM 的同名排队创建、旧流程热更新、周期任务、预算失败、业务拒绝、
+  构造失败与关闭；生成代码覆盖 JIT、解释器及独立 AOT，包含 UTF-8 名称与消息拒绝回滚。
+- 混合后端 chat 揭示解释器临时拥有记录清理会清空 Copy 字段投影，另以 `fix:` 提交修复，
+  附同步及挂起结果投影的三后端回归测试。
+- 创建路径、原动态路径、目录与自动周期任务的逐指令取消穷举通过；chat 六种真实 TCP
+  宿主／脚本组合通过。
+- `./scripts/check.sh` 单次完整通过：fmt、Clippy、1664 项普通库测试、311 项 CLI 测试、
   其余默认集成测试，以及三后端短输入 while／Map 正确性。未运行 Release 或无关压力检查。
 
 ## 6. 目标写法示意

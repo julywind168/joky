@@ -98,6 +98,11 @@ pub(crate) enum Operation {
     DirectoryInsertOwned,
     OutboxCreateDisconnect,
     WhenPaths,
+    DirectoryLookupNamed,
+    DirectoryInsertNamed,
+    DirectoryInsertOwnedNamed,
+    DirectoryRemoveNamed,
+    DirectoryRemoveNamedIf,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +151,11 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__directory_replace" => Operation::DirectoryReplace,
         "__directory_remove" => Operation::DirectoryRemove,
         "__directory_lookup" => Operation::DirectoryLookup,
+        "__directory_lookup_named" => Operation::DirectoryLookupNamed,
+        "__directory_insert_named" => Operation::DirectoryInsertNamed,
+        "__directory_insert_owned_named" => Operation::DirectoryInsertOwnedNamed,
+        "__directory_remove_named" => Operation::DirectoryRemoveNamed,
+        "__directory_remove_named_if" => Operation::DirectoryRemoveNamedIf,
         "__directory_found" => Operation::DirectoryFound,
 
         "__outbox_message_closed" => Operation::OutboxMessageClosed,
@@ -363,6 +373,28 @@ impl Operation {
             Self::DirectoryReplace => (vec![i.clone(), i, token.clone(), token], Type::Int32),
             Self::DirectoryRemove => (vec![i.clone(), i, token], Type::Bool),
             Self::DirectoryLookup => (vec![m, i.clone(), i, text, Type::Bool], token),
+            Self::DirectoryRemoveNamedIf => (
+                vec![m, i, Type::reference(text.clone(), false), text],
+                Type::UInt64,
+            ),
+            Self::DirectoryLookupNamed => (
+                vec![m, i, Type::reference(Type::String, false), text, Type::Bool],
+                token,
+            ),
+            Self::DirectoryInsertNamed => {
+                (vec![i, Type::reference(text, false), token], Type::Int32)
+            }
+            Self::DirectoryInsertOwnedNamed => (
+                vec![
+                    i,
+                    Type::reference(text, false),
+                    Type::reference(owner, true),
+                ],
+                Type::Int32,
+            ),
+            Self::DirectoryRemoveNamed => {
+                (vec![i, Type::reference(text, false), token], Type::Bool)
+            }
             Self::DirectoryFound => (vec![token], Type::Bool),
             Self::OutboxCreateDisconnect => (vec![i.clone(), i.clone(), i.clone()], queue),
             Self::OutboxCreate => (vec![i.clone(), i.clone()], queue),
@@ -717,6 +749,11 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         93 => Operation::DirectoryInsertOwned,
         94 => Operation::OutboxCreateDisconnect,
         95 => Operation::WhenPaths,
+        96 => Operation::DirectoryLookupNamed,
+        97 => Operation::DirectoryInsertNamed,
+        98 => Operation::DirectoryInsertOwnedNamed,
+        99 => Operation::DirectoryRemoveNamed,
+        100 => Operation::DirectoryRemoveNamedIf,
 
         _ => {
             super::error::record_error(Error::new_with_code(

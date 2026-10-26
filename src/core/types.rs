@@ -1237,6 +1237,7 @@ pub(crate) fn resolve_pattern_heads(
                     for path in w.paths.iter_mut().flatten() {
                         pending.push(&mut path.directory);
                         pending.push(&mut path.key);
+                        pending.extend(path.create.iter_mut());
                     }
                 }
                 Expr::AnonymousFunction(f) => pending.push(&mut f.body),
@@ -1370,6 +1371,9 @@ pub(crate) fn map_syntax(
                 map(&mut path.ty, block.span)?;
                 map_syntax(&mut path.directory, map, substitutions)?;
                 map_syntax(&mut path.key, map, substitutions)?;
+                if let Some(create) = &mut path.create {
+                    map_syntax(create, map, substitutions)?;
+                }
             }
             map_syntax(&mut block.body, map, substitutions)?;
             for body in block.missing.iter_mut().chain(block.alias.iter_mut()) {

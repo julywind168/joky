@@ -317,6 +317,9 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                 for (index, (name, _)) in w.accesses.iter().enumerate() {
                     if let Some(Some(path)) = w.paths.get(index) {
                         visit(&path.directory, scopes, walk);
+                        if let Some(create) = &path.create {
+                            visit(create, scopes, walk);
+                        }
                         visit(&path.key, scopes, walk);
                     } else {
                         walk.capture(name, scopes);

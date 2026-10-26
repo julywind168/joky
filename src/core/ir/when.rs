@@ -78,7 +78,7 @@ impl FunctionPlan {
         }
         let fail = || {
             type_error(&block.span, ErrorCode::InvalidCall,
-            "when paths require DirectoryHandle projections and UInt64 keys; dependent keys must project an earlier state")
+            "when paths require DirectoryHandle projections and UInt64 keys or String keys; dependent keys must project an earlier state")
         };
         let literal = |value| Expr::Literal {
             literal: Literal::UInt64(value),
@@ -87,6 +87,7 @@ impl FunctionPlan {
         let params = self.when_parameters(block, vars)?;
         let mut elements = vec![literal(u64::from(block.alias.is_some()))];
         let mut temporary = Vec::new();
+        let mut keys = Vec::new();
         for (i, (name, _)) in block.accesses.iter().enumerate() {
             let mut descriptor = vec![literal(0); 6];
             if let Some(path) = block.paths.get(i).and_then(Option::as_ref) {
@@ -128,7 +129,21 @@ impl FunctionPlan {
                             target = target.inline_field(field).ok_or_else(fail)?.1.clone();
                         }
                         let (offset, ty) = ty.storage_field_path(&fields).map_err(|_| fail())?;
-                        if ty != Type::UInt64 {
+                        if block
+                            .paths
+                            .get(dependency)
+                            .and_then(Option::as_ref)
+                            .is_some_and(|p| p.create.is_some())
+                        {
+                            return Err(type_error(
+                                &block.span,
+                                ErrorCode::InvalidCall,
+                                "A path cannot depend on a binding with a creation fallback",
+                            ));
+                        }
+                        if ty == Type::String {
+                            descriptor[0] = literal(2);
+                        } else if ty != Type::UInt64 {
                             return Err(fail());
                         }
                         descriptor[1] = literal(dependency as u64 + 1);
@@ -140,6 +155,40 @@ impl FunctionPlan {
                     descriptor[4] = path.key.clone();
                 } else {
                     return Err(fail());
+                }
+                if matches!(
+                    &descriptor[1],
+                    Expr::Literal {
+                        literal: Literal::UInt64(0),
+                        ..
+                    }
+                ) {
+                    let key_ty = self.bound_hint(&path.key, vars, functions, types);
+                    if matches!(key_ty.as_ref(), Some(Type::String))
+                        || key_ty.as_ref().is_some_and(|t| {
+                            t.reference_type().is_some_and(|r| r.target == Type::String)
+                        })
+                    {
+                        descriptor[0] = literal(2);
+                        descriptor[4] = literal(keys.len() as u64);
+                        keys.push(Expr::MethodCall(Box::new(crate::parser::ast::MethodCall {
+                            receiver: path.key.clone(),
+                            name: "clone".into(),
+                            type_args: vec![],
+                            args: vec![],
+                            span: block.span,
+                        })));
+                    }
+                }
+                if path.create.is_some() {
+                    let Expr::Literal {
+                        literal: Literal::UInt64(kind),
+                        ..
+                    } = &mut descriptor[0]
+                    else {
+                        unreachable!()
+                    };
+                    *kind |= 4;
                 }
             } else {
                 let value = vars
@@ -165,24 +214,42 @@ impl FunctionPlan {
             }
             elements.extend(descriptor);
         }
-        let ty = self.dynamic_array_type(Type::UInt64, types, block.span)?;
-        let flow = self.expr_expected(
-            &Expr::Array {
-                elements,
-                span: block.span,
-            },
-            vars,
-            functions,
-            suspends,
-            types,
-            Some(&ty),
+        let arrays = [
+            self.dynamic_array_type(Type::UInt64, types, block.span)?,
+            self.dynamic_array_type(Type::String, types, block.span)?,
+        ];
+        let ty = packet(
+            "$when.paths".into(),
+            vec![
+                ("steps".into(), arrays[0].clone()),
+                ("keys".into(), arrays[1].clone()),
+            ],
         );
+        let slot = self.slot(ty.clone())?;
+        for ((name, elements), array) in [("steps", elements), ("keys", keys)]
+            .into_iter()
+            .zip(arrays)
+        {
+            let Flow::Value(Some(value)) = self.expr_expected(
+                &Expr::Array {
+                    elements,
+                    span: block.span,
+                },
+                vars,
+                functions,
+                suspends,
+                types,
+                Some(&array),
+            )?
+            else {
+                return Err(fail());
+            };
+            self.emit(Op::Copy(slot.field_path(&[name.into()]), value));
+        }
+        self.register_owner(slot.clone(), None);
         for name in temporary {
             vars.remove(&name);
         }
-        let Flow::Value(Some(slot)) = flow? else {
-            return Err(fail());
-        };
         Ok((ty, slot))
     }
 
@@ -333,6 +400,13 @@ impl FunctionPlan {
                 exprs: std::iter::once(block.body.clone())
                     .chain(block.missing.clone())
                     .chain(block.alias.clone())
+                    .chain(
+                        block
+                            .paths
+                            .iter()
+                            .flatten()
+                            .filter_map(|p| p.create.clone()),
+                    )
                     .collect(),
                 span: block.span,
             },
@@ -641,6 +715,30 @@ impl FunctionPlan {
                         (expected, Some((&prepared, suffix))),
                     )?;
                 }
+            }
+        }
+        for (index, path) in block.paths.iter().enumerate() {
+            if let Some(path) = path.as_ref().filter(|p| p.create.is_some()) {
+                let mut constructor = block.clone();
+                constructor.accesses.clear();
+                constructor.paths.clear();
+                constructor.missing = None;
+                constructor.alias = None;
+                constructor.body = path.create.clone().unwrap();
+                let contract = PreparedWhen {
+                    entry: prepared.entry.clone(),
+                    input: prepared.input.clone(),
+                    ret: path.ty.clone(),
+                    names: prepared.names.clone(),
+                };
+                self.prepare_when(
+                    &constructor,
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                    (None, Some((&contract, &format!("create/{index}")))),
+                )?;
             }
         }
         let PreparedWhen {

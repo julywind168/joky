@@ -417,6 +417,9 @@ fn resolve_calls(
                         call_forms,
                         locals,
                     )?;
+                    if let Some(create) = &mut path.create {
+                        resolve_calls(create, functions, member_roots, call_forms, locals)?;
+                    }
                     resolve_calls(
                         &mut path.key,
                         functions,

@@ -3,6 +3,7 @@
 //! turns. Suspended requests keep running the code they started with.
 use super::*;
 use crate::backends::interp;
+use std::any::Any;
 
 /// Same nominal record name and identical field names, privacy, slots and types.
 /// Record ids are fresh per load, so equal ids are sufficient but not required.
@@ -100,6 +101,91 @@ pub(super) fn admits(
     matches!((info(caller), info(current)), (Some(a), Some(b)) if compatible_entry(&a, &b))
 }
 
+pub(super) struct Published {
+    origin: Weak<dyn Any>,
+    current: Weak<dyn Any>,
+}
+fn weak_code(module: &LoadedModule) -> Weak<dyn Any> {
+    let owner: Rc<dyn Any> = match module {
+        LoadedModule::Jit(module) => module.clone(),
+        LoadedModule::Interpreter(module) => module.clone(),
+    };
+    Rc::downgrade(&owner)
+}
+fn from_owner(owner: Rc<dyn Any>) -> Option<LoadedModule> {
+    if let Ok(module) = owner
+        .clone()
+        .downcast::<crate::backends::jit::CompiledModule>()
+    {
+        return Some(LoadedModule::Jit(module));
+    }
+    owner
+        .downcast::<crate::backends::interp::BytecodeModule>()
+        .ok()
+        .map(LoadedModule::Interpreter)
+}
+/// Staged creation follows a compatible published lineage, even when its caller
+/// predates publication and no existing root anchors the operation. Weak edges
+/// never keep old code alive and pointer reuse cannot match an expired origin.
+pub(super) fn creation_module(
+    domains: &Domains,
+    caller: &LoadedModule,
+) -> Result<LoadedModule, Error> {
+    let origin = weak_code(caller);
+    match domains
+        .published
+        .iter()
+        .find(|edge| edge.origin.ptr_eq(&origin))
+    {
+        Some(edge) => edge
+            .current
+            .upgrade()
+            .and_then(from_owner)
+            .ok_or_else(|| invalid("Published creation module is closed")),
+        None => Ok(caller.clone()),
+    }
+}
+fn prepare_lineages(
+    domains: &Domains,
+    module: &LoadedModule,
+    origins: &[LoadedModule],
+    owns: &impl Fn(&LoadedModule) -> bool,
+) -> Result<Vec<Published>, Error> {
+    let mut next = Vec::new();
+    next.try_reserve(domains.published.len() + domains.entries.len() + origins.len())
+        .map_err(|_| limited("Creation lineage allocation failed"))?;
+    let current = weak_code(module);
+    for edge in &domains.published {
+        if let Some(origin) = edge.origin.upgrade().and_then(from_owner) {
+            next.push(Published {
+                origin: edge.origin.clone(),
+                current: if owns(&origin) {
+                    current.clone()
+                } else {
+                    edge.current.clone()
+                },
+            });
+        }
+    }
+    for origin in origins.iter().chain(
+        domains
+            .entries
+            .values()
+            .filter(|d| owns(&d.module))
+            .map(|d| &d.module),
+    ) {
+        let old = weak_code(origin);
+        if !source::same_module(origin, module) && !next.iter().any(|edge| edge.origin.ptr_eq(&old))
+        {
+            next.push(Published {
+                origin: old,
+                current: current.clone(),
+            });
+        }
+    }
+    Ok(next)
+}
+
 pub(super) fn module_key(module: &LoadedModule) -> usize {
     match module {
         LoadedModule::Jit(module) => Rc::as_ptr(module) as usize,
@@ -166,11 +252,18 @@ impl VmEngine {
             .current
             .as_ref()
             .ok_or_else(|| invalid("No module loaded"))?;
-        publish_matching(&executor.domains(), module, |bound| {
-            owners
-                .iter()
-                .any(|owner| Rc::as_ptr(owner) as *const () as usize == module_key(bound))
-        })
+        let origins: Vec<_> = owners.iter().cloned().filter_map(from_owner).collect();
+        publish_matching_with(
+            &executor.domains(),
+            module,
+            |bound| {
+                owners
+                    .iter()
+                    .any(|owner| Rc::as_ptr(owner) as *const () as usize == module_key(bound))
+            },
+            &origins,
+            || {},
+        )
     }
 }
 
@@ -238,10 +331,12 @@ impl VmEngine {
                 }
             }
         }
+        let previous_module = self.current.clone();
         let mut previous = None;
-        let count = publish_matching_with(registry, &module, owns, || {
-            previous = self.install_staged(module.clone(), next_version);
-        })?;
+        let count =
+            publish_matching_with(registry, &module, owns, previous_module.as_slice(), || {
+                previous = self.install_staged(module.clone(), next_version);
+            })?;
         // Release old entry code after domain publication and timer activation.
         drop(previous);
         Ok(count)
@@ -257,13 +352,14 @@ fn publish_matching(
     module: &LoadedModule,
     owns: impl Fn(&LoadedModule) -> bool,
 ) -> Result<usize, Error> {
-    publish_matching_with(registry, module, owns, || {})
+    publish_matching_with(registry, module, owns, &[], || {})
 }
 
 fn publish_matching_with(
     registry: &Rc<RefCell<Domains>>,
     module: &LoadedModule,
     owns: impl Fn(&LoadedModule) -> bool,
+    origins: &[LoadedModule],
     commit: impl FnOnce(),
 ) -> Result<usize, Error> {
     let types = state_types(module);
@@ -271,6 +367,7 @@ fn publish_matching_with(
     if domains.shutting_down {
         return Err(invalid("Domain VM is shutting down"));
     }
+    let published = prepare_lineages(&domains, module, origins, &owns)?;
     let mut moves = Vec::new();
     for (&id, domain) in &domains.entries {
         if !owns(&domain.module)
@@ -364,6 +461,7 @@ fn publish_matching_with(
             domain.source_module = key;
         }
     }
+    domains.published = published;
     commit();
     drop(domains);
     drop(periodic);

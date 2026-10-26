@@ -33,7 +33,7 @@ fn finish_current_value<A,R>(name:String,input:A) @suspends -> Result<R,DomainAc
 
 // In-place access rejects before entry; candidate operations may also reject
 // resource exhaustion after calculation without publishing state.
-pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit, OutboxFull(UInt64), OutboxClosed(UInt64), Missing(UInt64), Aliased(UInt64), RetryLimit }
+pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit, OutboxFull(UInt64), OutboxClosed(UInt64), Missing(UInt64), Aliased(UInt64), RetryLimit, DirectoryFull(UInt64) }
 fn access_error(status:Int32) -> DomainAccessError {
     if status == 1 { return DomainAccessError.Closed }
     if status == 2 { return DomainAccessError.DomainFailed }
@@ -499,7 +499,7 @@ extern fn __directory_found(target:domain.Handle) @suspends -> Bool
 pub struct Directory { storage:domain.DirectoryOwner }
 // A flat, non-owning capability suitable for AOT/Script entry contracts.
 pub struct DirectoryHandle { identity:UInt64 }
-pub enum DirectoryError { Closed, Full, Occupied, InvalidTarget, Conflict }
+pub enum DirectoryError { Closed, Full, Occupied, InvalidTarget, Conflict, ResourceLimit }
 pub fn directory(capacity:UInt64) @suspends -> Directory {
     Directory { storage:__directory_create(capacity) }
 }
@@ -515,6 +515,7 @@ fn directory_status(status:Int32) -> Result<Unit,DirectoryError> {
     if status==2 { return Err(DirectoryError.Full) }
     if status==3 { return Err(DirectoryError.Occupied) }
     if status==4 { return Err(DirectoryError.InvalidTarget) }
+    if status==6 { return Err(DirectoryError.ResourceLimit) }
     Err(DirectoryError.Conflict)
 }
 impl DirectoryHandle {
@@ -653,6 +654,45 @@ fn finish_paths<H,A,R>(module:domain.Module,name:String,handles:H,input:A) @susp
     if status==8 { return Err(DomainAccessError.Missing(target)) }
     if status==9 { return Err(DomainAccessError.Aliased(target)) }
     if status==10 { return Err(DomainAccessError.RetryLimit) }
+    if status==11 { return Err(DomainAccessError.DirectoryFull(target)) }
     if status != 0 { return Err(access_error(status)) }
     Ok(unpack_value::<R>(&packet))
+}
+
+extern fn __directory_lookup_named(module:domain.Module, directory:UInt64, key:&String, operation:String, writable:Bool) @suspends -> domain.Handle
+extern fn __directory_insert_named(directory:UInt64, key:&String, target:domain.Handle) @suspends -> Int32
+extern fn __directory_insert_owned_named(directory:UInt64, key:&String, target:&mut domain.StateOwner) @suspends -> Int32
+extern fn __directory_remove_named(directory:UInt64, key:&String, expected:domain.Handle) @suspends -> Bool
+pub fn lookup_named<S>(directory:DirectoryHandle, key:&String) @suspends -> Option<ReadHandle<S>> {
+    let token=__directory_lookup_named(module(),directory.identity,key,lookup_type::<S>(),false)
+    if __directory_found(token) { Some(ReadHandle::<S>{token:token}) } else { None }
+}
+pub fn lookup_named_write<S>(directory:DirectoryHandle, key:&String) @suspends -> Option<WriteHandle<S>> {
+    let token=__directory_lookup_named(module(),directory.identity,key,lookup_type::<S>(),true)
+    if __directory_found(token) { Some(WriteHandle::<S>{token:token}) } else { None }
+}
+impl DirectoryHandle {
+    pub fn insert_named<S>(self,key:&String,target:WriteHandle<S>) @suspends -> Result<Unit,DirectoryError> {
+        directory_status(__directory_insert_named(self.identity,key,target.token))
+    }
+    pub fn insert_owned_named<S>(self,key:&String,target:Owner<S>) @suspends -> Result<Unit,DirectoryError> {
+        var value=target.value
+        directory_status(__directory_insert_owned_named(self.identity,key,&mut value))
+    }
+    pub fn remove_named<S>(self,key:&String,expected:ReadHandle<S>) @suspends -> Bool {
+        __directory_remove_named(self.identity,key,expected.token)
+    }
+}
+
+extern fn __directory_remove_named_if(module:domain.Module,directory:UInt64,key:&String,predicate:String) @suspends -> UInt64
+#intrinsic("domain.remove_named_if")
+pub fn remove_named_if<S>(directory:DirectoryHandle,key:&String,predicate:fn(&S)->Bool) @suspends -> Result<Bool,DomainAccessError> {
+    Err(DomainAccessError.InvalidAccess)
+}
+#intrinsic("domain.finish_remove_named_if")
+fn finish_remove_named_if(module:domain.Module,directory:UInt64,key:&String,predicate:String) @suspends -> Result<Bool,DomainAccessError> {
+    let result=__directory_remove_named_if(module,directory,key,predicate)
+    let status=unpack::<Int32>(result & 0xffffffff)
+    if status!=0 { return Err(access_error(status)) }
+    Ok(result >> 32 != 0)
 }

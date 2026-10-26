@@ -1,4 +1,4 @@
-fn account_view(state: &Account) -> Account { *state }
+fn account_view(state: &Account) -> Account { state.clone() }
 struct RoomView { name: String, members: Array<Route> }
 fn room_view(state: &Room) -> RoomView {
     var members = Array.new::<Route>()
@@ -6,35 +6,34 @@ fn room_view(state: &Room) -> RoomView {
     while i < state.members.len() { members.push(state.members.get(i)!); i += 1 }
     RoomView { name: state.name.clone(), members: members }
 }
-fn apply_account(state: &mut Account, account: Account) { *state = account }
+fn apply_account(state: &mut Account, account: Account) { var next=account; mem.swap(state,&mut next) }
 // Test owners stay local, independently of the production owning directories.
-struct Fixture { directory: domain.Directory, rooms: domain.Directory, accounts: domain.Directory, requests: outbox.Mailbox, catalog: domain.Owner<Catalog>, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Host }
-fn seed_catalog(state: &mut Catalog, _: Unit) {
-    state.rooms.push(RoomEntry { name: "r", status: RoomStatus.Ready, waiters: Array.new::<outbox.Handle>() })
-    state.rooms.push(RoomEntry { name: "other", status: RoomStatus.Ready, waiters: Array.new::<outbox.Handle>() })
-}
+struct Fixture { rooms: domain.Directory, accounts: domain.Directory, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Host }
 fn fixture() @suspends -> Fixture {
-    let directory = domain.directory(2)
-    let rooms = domain.directory(4096)
+    let rooms = domain.directory(2)
     let accounts = domain.directory(4096)
-    let requests = outbox.create(4096, 0)
-    let catalog = domain.create(make_catalog, {})
     let room = domain.create(make_room, "r")
     let other = domain.create(make_room, "other")
     var config = defaults()
     config.reclaim_empty = false
-    let host = Host { config: config, directory: directory.handle(), rooms: rooms.handle(), accounts: accounts.handle(), requests: requests.handle() }
-    host.directory.insert(1, catalog.handle())!
-    host.rooms.insert(1, room.handle())!
-    host.rooms.insert(2, other.handle())!
-    domain.write_to(catalog.handle(), seed_catalog, {})!
-    Fixture { directory: directory, rooms: rooms, accounts: accounts, requests: requests, catalog: catalog, room: room, other: other, ctx: host }
+    let host = Host { config: config, rooms: rooms.handle(), accounts: accounts.handle() }
+    let first = "r"
+    let second = "other"
+    host.rooms.insert_named(&first, room.handle())!
+    host.rooms.insert_named(&second, other.handle())!
+    Fixture { rooms: rooms, accounts: accounts, room: room, other: other, ctx: host }
+}
+fn fixture_room(host: Host, key: UInt64) @suspends -> Option<domain.WriteHandle<Room>> {
+    if key == 0 { return None }
+    let name = if key == 1 { "r" } else { "other" }
+    room_handle(host, &name)
 }
 fn test_account(ctx: Host, id: UInt64, key: UInt64, output: session.Output) @suspends -> domain.Owner<Account> {
-    let value = Account { route: Route { live: true, id: id, output: output }, room: key, balance_cents: 500 }
+    let value = Account { route: Route { live: true, id: id, output: output }, room: if key==0 {""} else if key==1 {"r"} else {"other"}, balance_cents: 500 }
+    let route = value.route
     let owner = domain.create(make_account, value)
     ctx.accounts.insert(id, owner.handle())!
-    if key != 0 { domain.write_to(room_handle(ctx, key)!, add_member, value.route)! }
+    if key != 0 { domain.write_to(fixture_room(ctx, key)!, add_member, route)! }
     owner
 }
 fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
@@ -43,11 +42,10 @@ fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
     check.assert(text.equals(&expected), "mailbox message and ordering")
 }
 fn balance(owner: &domain.Owner<Account>) @suspends -> UInt64 { domain.read_from(owner.read_handle(), account_view)!.balance_cents }
-fn ready(state: &mut Catalog, _: Unit) {}
 fn unchanged(state: &mut Account, _: Unit) { state.balance_cents += 0 }
 fn fund_capacity_test(state: &mut Account, _: Unit) { state.balance_cents = 10000 }
 fn candidate(ctx: Host, account: domain.WriteHandle<Account>, text: String) @suspends -> domain.CandidateSet {
-    let room = room_handle(ctx, 1)!
+    let room = fixture_room(ctx, 1)!
     var access = domain.access_set(); access.include(account.read_only()); access.include(room.read_only())
     let snapshot = domain.snapshot_set(access)
     var value = domain.read_snapshot(&snapshot, account.read_only(), account_view)
@@ -67,9 +65,12 @@ fn verify_conflicts_and_independence() @suspends {
     check.assert(match rejected.wait() { Err(Conflict) => true, _ => false }, "stale debit and broadcast rejected together")
     check.assert(balance(&alice) == 500, "conflict never charges")
     let independent = candidate(f.ctx, alice.handle(), "independent\n")
-    // Changing another room and the catalog cannot invalidate this send.
+    // Changing another room or directory cannot invalidate this send.
     domain.write_to(f.other.handle(), remove_member, 99)!
-    domain.write_to(f.catalog.handle(), ready, {})!
+    let extra = domain.directory(1)
+    let routes = extra.handle()
+    let name = "independent"
+    when (room: Room = routes.get_or_stage(name, make_room(name.clone()))) {}!
     var accepted = domain.commit_set(independent)
     accepted.wait()!
     check.assert(balance(&alice) == 400, "unrelated state writes do not conflict")
@@ -258,31 +259,18 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     let f = fixture()
     var host = f.ctx
     host.config.reclaim_empty = true
-    host.config.max_rooms = 2
     let ctx = host
     let stop = outbox.create(1, 0)
     var queue = outbox.create_with_policy(8, 1024, outbox.Overflow.Disconnect(stop.handle()))
     let alice = test_account(ctx, 1, 1, queue.handle())
     check.assert(handle_line(ctx, 1, "leave"), "leave before reclaim")
     expect_message(&mut queue, "left r 1\n")
-    check.assert(room_handle(ctx, 1).is_none(), "empty root removed from directory")
+    check.assert(fixture_room(ctx, 1).is_none(), "empty root removed from directory")
     let old = f.room.handle()
-    check.assert(when(old) { old.retired }!, "old root cannot accept a new join")
-    let beyond = "beyond-capacity"
-    check.assert(ensure_room(ctx, &beyond) == 0, "catalog names have an explicit bound")
-    var signal = outbox.create(1, 0)
-    let catalog = f.catalog.handle()
-    let waiter = signal.handle()
-    let request = f.ctx.requests
-    let restarted = when "restart room" (mut catalog) { resolve_room(catalog, "r", waiter, request, 2, 512) }
-    check.assert(restarted!! == 0, "dormant name restarts creation")
-    let input = next_room(host)!
-    init_room(input)
-    open_room(RoomKey { host: host, key: 1 })
-    check.assert(signal.receive().is_none(), "ready room wakes its waiter")
-    check.assert(!host.rooms.remove(1, old.read_only()), "old cleanup cannot delete a replacement")
-    check.assert(handle_line(ctx, 1, "join r"), "join replacement room")
+    check.assert(handle_line(ctx, 1, "join r"), "create replacement in the join transaction")
     expect_message(&mut queue, "joined r 1\n")
+    let name = "r"
+    check.assert(!host.rooms.remove_named(&name, old.read_only()), "old cleanup cannot delete a replacement")
     let bob_stop = outbox.create(1, 0)
     let bob_queue = outbox.create_with_policy(1, 64, outbox.Overflow.Disconnect(bob_stop.handle()))
     let bob = test_account(ctx, 2, 1, bob_queue.handle())
@@ -290,26 +278,22 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     check.assert(run_command(host, 1, Command.Disconnect), "full recipient does not block departure")
     check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "departure commits immediately")
     forget(Client { host: host, id: 1 })
-    check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "cleanup does not depend on queue space")
-    let room = room_handle(ctx, 1)!
+    let room = fixture_room(ctx, 1)!
     check.assert(!domain.query_from(room.read_only(), member_value, 1).unwrap_or(true), "failed connection leaves no membership")
     check.assert(domain.read_from(bob.read_handle(), account_view)!.route.live, "unrelated account stays alive")
-    host.config.max_rooms = 3
-    host.config.room_wait_ms = 1
-    let waiting = host
-    let missing = "no-manager"
-    check.assert(ensure_room(waiting, &missing) == 0, "room creation has a bounded wait")
-    check.assert(when(catalog) { let entry = catalog.rooms.borrow_ref(2); entry.waiters.is_empty() }!, "timed out waiter is removed")
-    let pending = next_room(host)!
-    fail_room(RoomKey { host: host, key: pending.key })
-    check.assert(when(catalog) { let entry = catalog.rooms.borrow_ref(2); match entry.status { Dormant => true, _ => false } }!, "failed room can be retried")
-    var failed_waiter = outbox.create(1, 0)
-    let waiter = failed_waiter.handle()
-    let restarted = when "retry failed room" (mut catalog) { resolve_room(catalog, "no-manager", waiter, request, 3, 512) }
-    check.assert(restarted!! == 0, "failed name can register a new waiter")
-    let pending = next_room(host)!
-    fail_room(RoomKey { host: host, key: pending.key })
-    check.assert(failed_waiter.receive().is_none(), "failed room wakes its waiter")
+    let other_name = "other"
+    check.assert(domain.remove_named_if(host.rooms, &other_name, empty)!, "conditional deletion frees directory capacity")
+    let carol_stop = outbox.create(1, 0)
+    var carol_queue = outbox.create_with_policy(4, 256, outbox.Overflow.Disconnect(carol_stop.handle()))
+    let carol = test_account(ctx, 3, 0, carol_queue.handle())
+    check.assert(handle_line(ctx, 3, "join fresh"), "room creation needs no manager or waiter")
+    expect_message(&mut carol_queue, "joined fresh 3\n")
+    let name = "fresh"
+    let fresh = room_handle(ctx, &name)!
+    check.assert(!domain.remove_named_if(host.rooms, &name, empty)!, "occupied rooms survive conditional deletion")
+    let denied = "third"
+    match join(ctx, carol.handle(), &denied) { Err(DirectoryFull(_)) => {}, _ => check.assert(false, "directory capacity rejects before departure") }
+    check.assert(domain.query_from(fresh.read_only(), member_value, 3)!, "failed creation preserves old membership")
 }
 
 fn member_value(room: &Room, id: UInt64) -> Bool { member(room, id) }
@@ -332,7 +316,7 @@ fn verify_unavailable_control_eviction() @suspends {
     check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "session cleanup removes recipient")
 }
 
-fn retire_test_room(room: &mut Room, _: Unit) { room.retired = true }
+fn retire_test_room(room: &mut Room, _: Unit) { mem.replace(&mut room.name, "retired"); }
 fn verify_move_rollback() @suspends {
     let f = fixture()
     let stop = outbox.create(1, 0)
@@ -344,10 +328,10 @@ fn verify_move_rollback() @suspends {
     check.assert(handle_line(f.ctx, 2, "balance"), "fill destination queue")
     let name = "other"
     domain.write_to(f.other.handle(), retire_test_room, {})!
-    match join(f.ctx, alice.handle(), 2, &name) {
+    match join(f.ctx, alice.handle(), &name) {
         Ok(Err(Stopped)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
     }
-    check.assert(domain.read_from(alice.read_handle(), account_view)!.room == 1, "failed moves preserve account room")
+    check.assert(domain.read_from(alice.read_handle(), account_view)!.room.equals("r"), "failed moves preserve account room")
     check.assert(domain.query_from(f.room.read_handle(), member_value, 1)!, "failed moves preserve old membership")
     check.assert(!domain.query_from(f.other.read_handle(), member_value, 1)!, "failed moves never add destination membership")
     check.assert(balance(&alice) == 500 && balance(&bob) == 500, "failed moves do not charge")

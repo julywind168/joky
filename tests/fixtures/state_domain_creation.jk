@@ -1,0 +1,72 @@
+import joky/domain
+import joky/mem
+import joky/check
+import joky/outbox
+#state
+struct Account { room:String, n:Int32 }
+#state
+struct Room { name:String, n:Int32 }
+fn make_account(_:Unit)->Account {Account{room:"",n:0}}
+fn make_room(name:String)->Room {Room{name:name,n:1}}
+fn assert(ok:Bool) {check.assert(ok,"creation")}
+fn lifecycle() @suspends ->Int32 {
+ let owner=domain.create(make_account,{})
+ let account=owner.handle()
+ let directory=domain.directory(1)
+ let rooms=directory.handle()
+ let name="房间🙂"
+ let result=when "join" (mut account,mut next:Room=rooms.get_or_stage(name,make_room(name.clone())),old?:Room=rooms[account.room]) {
+    account.n+=old.n
+    next.n+=1
+    account.n
+ } else {
+    mem.replace(&mut account.room,name.clone());
+    next.n+=1
+    next.n
+ } alias {next.n}
+ assert(result.unwrap()==2)
+ let name="房间🙂"
+ let result=when(mut next:Room=rooms.get_or_stage(name,make_room(name.clone()))) { next.n+=1; next.n }
+ assert(result.unwrap()==3)
+ let name="another"
+ match when(mut next:Room=rooms.get_or_stage(name,make_room(name.clone()))) {next.n} {
+   Err(DirectoryFull(_))=>{},_=>assert(false)
+ }
+ let room_name="房间🙂"
+ let handle=domain.lookup_named_write::<Room>(rooms,&room_name)!
+ assert(when(handle){handle.n}.unwrap()==3)
+ rooms.remove_named(&room_name,handle.read_only())
+ let name="rollback"
+ let result=when(mut account,mut next:Room=rooms.get_or_stage(name,make_room(name.clone()))) {
+   account.n=99
+   let result:Result<Unit,Int32>=Err(1)
+   result
+ }
+ assert(result.unwrap().is_err())
+ let rollback_name="rollback"
+ assert(domain.lookup_named::<Room>(rooms,&rollback_name).is_none())
+ assert(when(account){account.n}.unwrap()==0)
+    let present="房间🙂"
+    when "publish owned root" (room:Room=rooms.get_or_stage(present,make_room(present.clone()))) {}!
+    assert(!domain.remove_named_if(rooms,&room_name,empty)!)
+    let current=domain.lookup_named_write::<Room>(rooms,&room_name)!
+    when(mut current){current.n=0}!
+    assert(domain.remove_named_if(rooms,&room_name,empty)!)
+    assert(domain.lookup_named::<Room>(rooms,&room_name).is_none())
+    let mailbox=outbox.create(1,1)
+    let target=mailbox.handle()
+    let bytes="too large".into_bytes()
+    let name="message rollback"
+    match when (mut account, room:Room=rooms.get_or_stage(name,make_room(name.clone()))) {
+        account.n=55
+        outbox.emit(target,bytes)
+    } { Err(OutboxFull(_))=>{}, _=>assert(false) }
+    let name="message rollback"
+    assert(domain.lookup_named::<Room>(rooms,&name).is_none())
+    assert(when(account){account.n}.unwrap()==0)
+    directory.close()
+    owner.close()
+    24
+}
+fn empty(room:&Room)->Bool {room.n==0}
+fn main() @suspends {assert(lifecycle()==24)}
