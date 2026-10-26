@@ -348,9 +348,10 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
             branches,
             result,
             results,
+            failure,
             ..
         } => {
-            for &slot in result.iter().chain(results) {
+            for &slot in result.iter().chain(results).chain(failure) {
                 visit(slot);
             }
             for branch in branches {
@@ -419,9 +420,10 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
                 branches,
                 result,
                 results,
+                failure,
                 ..
             } => {
-                for slot in result.iter_mut().chain(results) {
+                for slot in result.iter_mut().chain(results).chain(failure) {
                     *slot = remap[*slot];
                 }
                 for branch in branches {

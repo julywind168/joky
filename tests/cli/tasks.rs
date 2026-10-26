@@ -586,3 +586,43 @@ fn task_parallel_domain_transactions_run_in_standalone_aot() {
             .unwrap(),
     );
 }
+
+#[test]
+fn isolate_and_reservation_run_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write("isolate.jk", include_str!("../fixtures/isolate.jk"));
+    work.write(
+        "reservation.jk",
+        include_str!("../../examples/reservation.jk"),
+    );
+    work.write(
+        "examples/reservation_logic.jk",
+        include_str!("../../examples/reservation_logic.jk"),
+    );
+    for source in ["isolate", "reservation"] {
+        for workers in ["1", "3"] {
+            let output = format!("{source}-{workers}");
+            success(
+                &work
+                    .command()
+                    .args([
+                        "build",
+                        "--task-workers",
+                        workers,
+                        &format!("{source}.jk"),
+                        "-o",
+                        &output,
+                    ])
+                    .env("JOKY_RUNTIME", runtime_archive())
+                    .output()
+                    .unwrap(),
+            );
+            success(
+                &Command::new(work.path().join(output))
+                    .current_dir(work.path())
+                    .output()
+                    .unwrap(),
+            );
+        }
+    }
+}

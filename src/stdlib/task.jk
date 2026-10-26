@@ -1,0 +1,22 @@
+import joky/result.{type Result, Ok, Err}
+
+extern fn __joky_public_task_yield_now() @suspends
+extern fn __joky_public_task_sleep_ms(milliseconds: UInt64) @suspends
+fn yield_now() @suspends { __joky_public_task_yield_now() }
+fn sleep_ms(milliseconds: UInt64) @suspends { __joky_public_task_sleep_ms(milliseconds) }
+
+// Fixed-size failure categories: constructing an isolated failure needs no heap storage.
+enum Failure { Runtime, ResourceLimit, Host, Io, InvalidState, InvalidArgument, Other }
+
+fn __isolate_success<T>(value: T) -> Result<T, Failure> { Ok(value) }
+fn __isolate_failure<T>(code: UInt64) -> Result<T, Failure> {
+    Err(match code {
+        1 => Failure.Runtime
+        2 => Failure.ResourceLimit
+        3 => Failure.Host
+        4 => Failure.Io
+        5 => Failure.InvalidState
+        6 => Failure.InvalidArgument
+        _ => Failure.Other
+    })
+}

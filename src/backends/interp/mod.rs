@@ -180,6 +180,7 @@ enum Instruction {
         result: Option<usize>,
         results: Vec<usize>,
         kind: ConcurrentKind,
+        failure: Option<usize>,
         branches: Vec<BytecodeBranch>,
     },
     ConcurrentFinish,
@@ -735,6 +736,7 @@ fn lower_unoptimized(
                 }
             }
             Op::Concurrent {
+                failure,
                 kind,
                 branches,
                 result,
@@ -749,6 +751,7 @@ fn lower_unoptimized(
                     .filter(|s| s.ty.is_aggregate())
                     .map_or_else(Vec::new, |s| s.scalars().map(|s| s.index).collect()),
                 kind: *kind,
+                failure: failure.as_ref().map(|s| s.index),
                 branches: branches
                     .iter()
                     .map(|branch| BytecodeBranch {

@@ -365,6 +365,8 @@ mod suspending_function_value_tests;
 #[path = "tasks/suspending_owner_tests.rs"]
 mod suspending_owner_tests;
 
+#[path = "tasks/isolate_tests.rs"]
+mod isolate_tests;
 #[path = "tasks/task_scope_tests.rs"]
 mod task_scope_tests;
 

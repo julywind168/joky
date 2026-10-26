@@ -56,3 +56,14 @@ fn parallel_domains_transactions_paths_and_creation() {
         }
     }
 }
+
+#[test]
+fn parallel_reservation_sample() {
+    let source = format!(
+        "{}\nfn main() @suspends {{demo({{}})}}",
+        include_str!("../../../examples/reservation_logic.jk")
+    );
+    for (mode, inner) in [(VmMode::Jit, "new"), (VmMode::Interpreter, "interpreter")] {
+        run(&source, mode, inner);
+    }
+}

@@ -10,17 +10,17 @@ thread_local! { static CONTEXT: Cell<*mut CpsFrame> = const { Cell::new(std::ptr
 pub(super) struct Scope {
     pub(super) remote: Option<crate::runtime::parallel::pool::Group>,
     _charge: Option<crate::runtime::parallel::Lease>,
-    id: u64,
-    kind: u32,
+    pub(super) id: u64,
+    pub(super) kind: u32,
     capacity: usize,
     prepared: Vec<(u64, Box<CpsFrame>)>,
     entries: Vec<Rc<task::CheckedEntry>>,
     published: bool,
-    closed: bool,
-    terminal: Option<i32>,
-    failure: Option<Error>,
+    pub(super) closed: bool,
+    pub(super) terminal: Option<i32>,
+    pub(super) failure: Option<Error>,
     draining: bool,
-    drained: bool,
+    pub(super) drained: bool,
 }
 
 impl Scope {
@@ -88,13 +88,17 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
     let result = (|| {
         let frame = parent()?;
         if (*frame).state == super::FAILED
-            || kind > 2
+            || kind > 3
+            || (kind == 3 && capacity != 1)
             || capacity > super::MAX_DYNAMIC_TASK_CHILDREN
             || (kind != 2 && capacity == 0)
             || (*frame).task_protocol.iter().any(|scope| scope.draining)
             || (kind != 2 && (*frame).task_protocol.iter().any(|scope| scope.kind != 2))
         {
             return Err(invalid("Invalid task scope admission"));
+        }
+        if kind == 3 {
+            (*frame).isolated_failure = 0;
         }
         let id = crate::runtime::task_scope::fresh_identity()?;
         let charge = crate::runtime::parallel::reserve_current(
@@ -111,8 +115,10 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
             super::task_scope_enter(frame);
         }
         (*frame).task_protocol.push(Scope {
-            remote: crate::runtime::parallel::pool::active()
-                .then(|| crate::runtime::parallel::pool::Group::new(kind)),
+            remote: (kind != 3
+                && !crate::runtime::isolate::active()
+                && crate::runtime::parallel::pool::active())
+            .then(|| crate::runtime::parallel::pool::Group::new(kind)),
             _charge: charge,
             id,
             kind,

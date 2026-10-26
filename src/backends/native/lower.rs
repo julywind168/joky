@@ -660,6 +660,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_cps_task_inputs_v1", vec![ptr], vec![ptr]),
         ("__joky_cps_task_poll_v1", vec![ptr], vec![types::I32]),
+        ("__joky_isolate_poll_v1", vec![ptr, ptr], vec![types::I32]),
+        ("__joky_isolate_drain_v1", vec![ptr], vec![types::I64]),
         (
             "__joky_cps_concurrent_prepare_v1",
             vec![ptr, ptr, types::I64],
@@ -1305,6 +1307,7 @@ struct ConcurrentContext<'a> {
     mode: ExecMode<'a>,
     result: Option<&'a Slot>,
     kind: ConcurrentKind,
+    failure: Option<&'a Slot>,
     branches: &'a [ConcurrentBranch],
     concurrent_state: u32,
     functions: &'a HashMap<String, FunctionInfo>,
@@ -1400,6 +1403,7 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         mode,
         result,
         kind,
+        failure,
         branches,
         concurrent_state,
         functions,
@@ -1410,9 +1414,14 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         state_offset,
         states,
     } = context;
-    let kind_tag = builder
-        .ins()
-        .iconst(types::I32, if kind == ConcurrentKind::Join { 0 } else { 1 });
+    let kind_tag = builder.ins().iconst(
+        types::I32,
+        match kind {
+            ConcurrentKind::Join => 0,
+            ConcurrentKind::Race => 1,
+            ConcurrentKind::Isolate => 3,
+        },
+    );
     let count = builder.ins().iconst(ptr_ty, branches.len() as i64);
     let scope = task_call(
         builder,
@@ -1510,8 +1519,8 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
     switch.emit(builder, selected, invalid);
     builder.switch_to_block(invalid);
     builder.ins().call(refs["__joky_cps_finish"], &[frame]);
-    let failure = builder.ins().iconst(types::I32, INVALID_STATE as i64);
-    builder.ins().return_(&[failure]);
+    let invalid_status = builder.ins().iconst(types::I32, INVALID_STATE as i64);
+    builder.ins().return_(&[invalid_status]);
     builder.switch_to_block(pending);
     let pending_status = builder.ins().iconst(types::I32, 1);
     builder.ins().return_(&[pending_status]);
@@ -1525,7 +1534,17 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         let zero = builder.ins().iconst(ptr_ty, 0);
         let child = child_at(builder, refs, frame, index, zero, ptr_ty);
         check_call(builder, refs, Some(frame), None);
-        let status = helper(builder, refs, "__joky_cps_task_poll_v1", &[child]);
+        let status = if kind == ConcurrentKind::Isolate {
+            let status = helper(builder, refs, "__joky_isolate_poll_v1", &[frame, child]);
+            check_call(builder, refs, Some(frame), None);
+            let caught = builder.ins().icmp_imm_u(IntCC::Equal, status, 2);
+            let normal = builder.create_block();
+            builder.ins().brif(caught, finished, &[], normal, &[]);
+            builder.switch_to_block(normal);
+            status
+        } else {
+            helper(builder, refs, "__joky_cps_task_poll_v1", &[child])
+        };
         if functions[&branch.name].may_fail {
             check_call(builder, refs, Some(frame), None);
         }
@@ -1597,13 +1616,23 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
     }
     // No result enters the parent until all child execution and stop hooks end.
     builder.switch_to_block(finished);
-    let scope = task_scope(builder, refs, frame, 0);
-    task_call(builder, refs, frame, "__joky_task_join_v1", &[scope]);
-    check_call(builder, refs, Some(frame), None);
-    task_call(builder, refs, frame, "__joky_task_drain_v1", &[scope]);
-    check_call(builder, refs, Some(frame), None);
+    let received = builder.create_block();
     let collect_results = builder.create_block();
-    builder.ins().jump(collect_results, &[]);
+    if let Some(failure) = failure {
+        let code = helper(builder, refs, "__joky_isolate_drain_v1", &[frame]);
+        check_call(builder, refs, Some(frame), None);
+        store(builder, slots, failure, code);
+        builder
+            .ins()
+            .brif(code, received, &[], collect_results, &[]);
+    } else {
+        let scope = task_scope(builder, refs, frame, 0);
+        task_call(builder, refs, frame, "__joky_task_join_v1", &[scope]);
+        check_call(builder, refs, Some(frame), None);
+        task_call(builder, refs, frame, "__joky_task_drain_v1", &[scope]);
+        check_call(builder, refs, Some(frame), None);
+        builder.ins().jump(collect_results, &[]);
+    }
     builder.switch_to_block(collect_results);
     let next_result = helper(
         builder,
@@ -1612,7 +1641,6 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
         &[frame],
     );
     check_call(builder, refs, Some(frame), None);
-    let received = builder.create_block();
     let result_blocks: Vec<_> = branches.iter().map(|_| builder.create_block()).collect();
     let mut results_switch = Switch::new();
     for (index, &block) in result_blocks.iter().enumerate() {
@@ -2698,6 +2726,7 @@ fn lower_ops(
             Op::Concurrent {
                 result,
                 kind,
+                failure,
                 branches,
                 state,
             } => {
@@ -2721,6 +2750,7 @@ fn lower_ops(
                         mode,
                         result: result.as_ref(),
                         kind: *kind,
+                        failure: failure.as_ref(),
                         branches,
                         concurrent_state: *state,
                         functions,

@@ -340,8 +340,11 @@ TP 已提供共享 worker 池与受检包，改为 Verona 式：`when` 是调度
 
 ### D9 作用域监督策略
 
-`scope` 增加子任务失败策略（隔离并记录、重启、传播），取代 chat 中手写的局部失败隔离；
-默认行为保持现有 fail-fast，不静默改变既有执行器组规则。
+语言增加 `isolate { body }` 失败边界，返回 `Result<T, task.Failure>`；监督、记录和重试在其上组合，
+不再给 `scope` 增加策略参数。`scope` 默认 fail-fast 保持不变。隔离区内部任务先取消／汇合并清理，
+然后交付失败；外部取消和 ABI 违规继续传播，业务 `Result.Err` 保持普通返回值。
+首版仅在挂起函数中使用，禁止控制流跳出隔离区；捕获沿用 branch，结果沿用 scope 的无引用限制。
+重启与退避接口另行设计，不在本轮实施。
 
 ### D10 确定性模式
 
@@ -608,7 +611,8 @@ fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
 | R7（已完成） | D7 混合模式：输出绑定标注、函数值证据、资源归属与跨 worker 转移、TCP、VM 控制／执行拆分 | R6 | chat 在 `--task-workers N` 下运行，连接分布到多个 worker，业务仍串行；资源规则有拒绝测试 |
 | R8（已完成） | D7 Domains 的 BoC 调度 | R2、R6、R7 | 多 worker 下多域原子性、无死锁、取消与关闭清理；房间间实际并行有证据 |
 | R9 | D6 顺序入队定案与实施 | R6 | 先确认是否有依赖顺序的真实需求；若实施，同一 scope 对同一域的提交按源码顺序执行（Local 与 Parallel），取消撤回未执行请求，汇合／失败传播与 `branch` 一致，入队失败在调用点返回 |
-| R10 | D8 预留模式示例、D9 监督策略、D5 第二步（按测量） | R2 | 各自行为测试与文档 |
+| R10a/b（已完成） | D8 预留模式示例；D9 `isolate` 原语及 chat 隔离 | R2、R8 | 正常／拒绝／失败／取消／到期与迟到回复；三后端隔离、清理、嵌套和取消一致 |
+| R10 后续 | D9 重启策略；D5 第二步（按测量） | R10a/b | 有需求时设计重启；有测量证据时评估撤销日志 |
 
 R0–R8 已完成；R8 接入完整访问集授权、worker 计算和控制端提交。R9 单独处理源码顺序入队，
 本阶段只保证同一完整访问集的冲突请求按尝试序号排队。
@@ -774,3 +778,22 @@ chat 改动运行 `cargo test --test chat -- --ignored` 六组合实网矩阵。
 - 选择依据是减少连接与 worker 的绑定，并避免把跨 Poll 重注册当作可移植能力；
   这不是吞吐或延迟测量结论。连接状态、任务转移证据与取消／关闭同步仍须实现和验证。
 - 专用驱动线程、协作驱动及未来分片属于实现选择；先保持连接注册稳定，再评估驱动组织方式。
+
+### R10a/b 实施记录（2026-10-27）
+
+- D8：新增 `examples/reservation.jk` 与 `reservation_logic.jk`，采用预留／外部只读查询／确认或释放。
+  时间显式注入，覆盖重复确认、取消后由服务回收到期预留，以及旧回复不能确认新预留。
+  示例不是自动清理后台服务或支付事务；现有快照／提案 API 不收缩。
+- D9：采纳 `isolate { body }` 原语，替代 scope 级策略参数。结果为 `Result<T, task.Failure>`；
+  先清理子树再恢复，取消和观察到的 ABI 违规不捕获，普通业务 Err 不展开，副作用不回滚。
+  `Failure` 使用无分配分类枚举；首版只支持挂起函数和无引用结果，隔离区内协作执行，
+  外层 Parallel 分支仍跨 worker。重启和 D5 撤销日志留待后续。
+- chat 将连接任务置于显式隔离区，错误报告在区外；其他连接继续运行。
+- 验证：一次完整 `./scripts/check.sh` 通过（Debug，库测试 1709 passed／142 ignored，
+  CLI 317 passed／8 ignored，其余默认集成测试与三后端短输入基准正确性通过）。
+  `cargo test --test chat -- --ignored` 两项通过，覆盖 Local／Parallel 各六组实网组合。
+- 定向验证覆盖 JIT／解释器／独立 AOT，包含嵌套隔离、拥有结果、清理后恢复、宿主原始失败状态码、
+  报告自身失败、资源耗尽、外部取消与 ABI 错误继续传播；Parallel 覆盖 1／3 workers。
+  `cargo test --lib exhaustive_isolate -- --ignored` 两项通过，覆盖逐指令取消和逐字节任务预算；
+  `cargo test --lib exhaustive_task_scope_cancels_at_every_instruction -- --ignored` 通过，
+  回归共享任务入口提取与取消清理。未运行无关穷举、Release 或性能测量。

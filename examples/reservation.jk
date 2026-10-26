@@ -1,0 +1,8 @@
+import joky/vm
+
+fn main() @suspends {
+    let engine = vm.Vm.new()
+    engine.load_file("examples/reservation_logic.jk")!
+    engine.call::<Unit, Unit>("demo", {})
+    println("reservation: success, rejection, failure, cancellation and expiry verified")
+}

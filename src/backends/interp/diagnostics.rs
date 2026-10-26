@@ -101,16 +101,18 @@ fn describe(instruction: &Instruction) -> String {
             branches,
             result,
             results,
+            failure,
         } => {
-            let name = if *kind == ConcurrentKind::Race {
-                "Race"
-            } else {
-                "Join"
+            let name = match kind {
+                ConcurrentKind::Race => "Race",
+                ConcurrentKind::Join => "Join",
+                ConcurrentKind::Isolate => "Isolate",
             };
-            format!(
+            let output = format!(
                 "{name} {} branches -> {result:?} {results:?}",
                 branches.len()
-            )
+            );
+            failure.map_or(output.clone(), |slot| format!("{output} failure={slot}"))
         }
         Instruction::ConcurrentFinish => "ConcurrentFinish".into(),
         Instruction::TaskScopeEnter => "TaskScopeEnter".into(),

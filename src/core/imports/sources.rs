@@ -57,6 +57,13 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
+        kind: SourceKind::Embedded,
+        path: "joky/task",
+        source: include_str!("../../stdlib/task.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Text,
         path: "joky/internal/text",
         source: include_str!("../../stdlib/internal/text.jk"),

@@ -1261,6 +1261,7 @@ pub(crate) fn resolve_pattern_heads(
                 | Expr::Assign { value, .. }
                 | Expr::Spread { value, .. }
                 | Expr::Unary { operand: value, .. }
+                | Expr::Isolate { body: value, .. }
                 | Expr::TaskScope { body: value, .. }
                 | Expr::Branch { body: value, .. } => pending.push(value.as_mut()),
                 Expr::While {
@@ -1538,7 +1539,7 @@ pub(crate) fn map_syntax(
                 map_syntax(expr, map, substitutions)?;
             }
         }
-        Expr::TaskScope { body, .. } | Expr::Branch { body, .. } => {
+        Expr::Isolate { body, .. } | Expr::TaskScope { body, .. } | Expr::Branch { body, .. } => {
             map_syntax(body, map, substitutions)?;
         }
         Expr::Literal {

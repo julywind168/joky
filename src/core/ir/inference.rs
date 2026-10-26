@@ -361,6 +361,9 @@ impl FunctionPlan {
             } => branches
                 .first()
                 .and_then(|branch| self.hint(branch, vars, functions, types, default)),
+            Expr::Isolate { body, .. } => self
+                .hint(body, vars, functions, types, default)
+                .and_then(|ty| self.isolate_result(&ty, types).ok()),
             Expr::TaskScope { body, .. } => self.hint(body, vars, functions, types, default),
             Expr::Concurrent { branches, .. } => {
                 let values = branches
@@ -373,7 +376,8 @@ impl FunctionPlan {
                     crate::core::types::tuple_type(values, types).ok()
                 }
             }
-            Expr::Let { .. }
+            Expr::Branch { .. }
+            | Expr::Let { .. }
             | Expr::Var { .. }
             | Expr::Destructure { .. }
             | Expr::Assign { .. }

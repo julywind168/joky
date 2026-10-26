@@ -1,0 +1,105 @@
+// Reserve locally, perform a read-only remote eligibility check, then settle.
+// Logical time is supplied explicitly to make expiry and cancellation reproducible.
+import joky/domain
+import joky/task
+import joky/check
+
+struct Ticket { id: UInt64, amount: Int32 }
+enum Rejection { Busy, Insufficient, InvalidAmount }
+enum Decision { Accept, Reject, Fail }
+#state
+struct Stock {
+    available: Int32,
+    sold: Int32,
+    reserved: Int32,
+    next_id: UInt64,
+    active_id: UInt64,
+    expires_at: UInt64,
+}
+fn make_stock(_: Unit) -> Stock {
+    Stock { available: 100, sold: 0, reserved: 0, next_id: 1, active_id: 0, expires_at: 0 }
+}
+impl Stock {
+    fn expire(&mut self, now: UInt64) {
+        if self.active_id != 0 && now >= self.expires_at {
+            self.available += self.reserved
+            self.reserved = 0
+            self.active_id = 0
+        }
+    }
+    fn reserve(&mut self, amount: Int32, now: UInt64) -> Result<Ticket, Rejection> {
+        if amount <= 0 { return Err(Rejection.InvalidAmount) }
+        if self.active_id != 0 { return Err(Rejection.Busy) }
+        if amount > self.available { return Err(Rejection.Insufficient) }
+        let id = self.next_id
+        self.next_id += 1
+        self.available -= amount
+        self.reserved = amount
+        self.active_id = id
+        self.expires_at = now + 10
+        Ok(Ticket { id: id, amount: amount })
+    }
+    fn settle(&mut self, ticket: Ticket, accept: Bool, now: UInt64) -> Bool {
+        self.expire(now)
+        if self.active_id != ticket.id || self.reserved != ticket.amount { return false }
+        if accept { self.sold += self.reserved } else { self.available += self.reserved }
+        self.reserved = 0
+        self.active_id = 0
+        true
+    }
+}
+fn eligibility(decision: Decision) @suspends -> Bool {
+    task.yield_now()
+    match decision {
+        Accept => true
+        Reject => false
+        Fail => { check.panic("remote eligibility service failed") }
+    }
+}
+fn purchase(stock: domain.WriteHandle<Stock>, decision: Decision, now: UInt64) @suspends {
+    let ticket = when (mut stock) { stock.reserve(10, now) }.unwrap().unwrap()
+    // External work runs without holding any domain access permission.
+    let accepted = match isolate { eligibility(decision) } {
+        Ok(accepted) => accepted
+        Err(_) => false
+    }
+    check.assert(when (mut stock) { stock.settle(ticket, accepted, now + 1) }.unwrap(), "settled once")
+    check.assert(!when (mut stock) { stock.settle(ticket, accepted, now + 1) }.unwrap(), "duplicate ignored")
+}
+fn abandoned(stock: domain.WriteHandle<Stock>) @suspends {
+    let ticket = when (mut stock) { stock.reserve(20, 100) }.unwrap().unwrap()
+    task.sleep_ms(100000)
+    when (mut stock) { stock.settle(ticket, true, 101) };
+}
+fn stop_after_reservation(stock: domain.ReadHandle<Stock>) @suspends {
+    while when (stock) { stock.active_id == 0 }.unwrap() { task.yield_now() }
+}
+fn assert_stock(stock: domain.ReadHandle<Stock>, available: Int32, sold: Int32, reserved: Int32) @suspends {
+    check.assert(when (stock) {
+        stock.available == available && stock.sold == sold && stock.reserved == reserved &&
+             stock.available + stock.sold + stock.reserved == 100
+    }.unwrap(), "stock conservation")
+}
+fn demo(_: Unit) @suspends {
+    let owner = domain.create(make_stock, {})
+    let stock = owner.handle()
+    let read = owner.read_handle()
+    purchase(stock, Decision.Accept, 0)
+    purchase(stock, Decision.Reject, 10)
+    purchase(stock, Decision.Fail, 20)
+    assert_stock(read, 90, 10, 0)
+
+    // Cancellation cannot run a recovery handler. The service owns expiry,
+    // independently of the cancelled request's task tree.
+    race { | abandoned(stock) | stop_after_reservation(read) }
+    assert_stock(read, 70, 10, 20)
+    let old = when (stock) { Ticket { id: stock.active_id, amount: stock.reserved } }.unwrap()
+    when (mut stock) { stock.expire(110) }.unwrap()
+    assert_stock(read, 90, 10, 0)
+    let fresh = when (mut stock) { stock.reserve(5, 111) }.unwrap().unwrap()
+    check.assert(!when (mut stock) { stock.settle(old, true, 112) }.unwrap(), "late reply cannot settle new reservation")
+    assert_stock(read, 85, 10, 5)
+    check.assert(when (mut stock) { stock.settle(fresh, true, 112) }.unwrap(), "fresh reservation")
+    assert_stock(read, 85, 15, 0)
+    owner.close()
+}

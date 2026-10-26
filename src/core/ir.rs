@@ -14,6 +14,7 @@ mod borrowing;
 mod buffers;
 mod fixed_arrays;
 mod indexing;
+mod isolate;
 pub(crate) mod parallel;
 mod sequence_patterns;
 mod task_scopes;
@@ -418,6 +419,7 @@ pub(crate) enum Op {
     Concurrent {
         result: Option<Slot>,
         kind: ConcurrentKind,
+        failure: Option<Slot>,
         branches: Vec<ConcurrentBranch>,
         state: u32,
     },
@@ -1843,7 +1845,9 @@ impl FunctionPlan {
                 result: Some(dst), ..
             }
             | Op::Concurrent {
-                result: Some(dst), ..
+                result: Some(dst),
+                failure: None,
+                ..
             }
             | Op::ReadOwner { dst: Some(dst), .. }
             | Op::Buffer(BufferOp::Extract { dst, .. } | BufferOp::Detach { dst, .. })
@@ -2557,6 +2561,9 @@ impl FunctionPlan {
                 self.call_expr(expr, vars, functions, suspends, types)
             }
             Expr::Concurrent { .. } => self.concurrent_expr(expr, vars, functions, suspends, types),
+            Expr::Isolate { .. } => {
+                self.isolate_expr(expr, vars, functions, suspends, types, expected)
+            }
             Expr::TaskScope { .. } => {
                 self.task_scope_expr(expr, vars, functions, suspends, types, expected)
             }

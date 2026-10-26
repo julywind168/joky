@@ -683,6 +683,7 @@ impl FunctionPlan {
         self.emit(Op::Concurrent {
             result: result.clone(),
             kind: *kind,
+            failure: None,
             branches: planned,
             state,
         });

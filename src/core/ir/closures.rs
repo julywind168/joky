@@ -45,6 +45,7 @@ pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
         | Expr::Spread { value, .. }
         | Expr::Unary { operand: value, .. }
         | Expr::Field { base: value, .. }
+        | Expr::Isolate { body: value, .. }
         | Expr::TaskScope { body: value, .. }
         | Expr::Branch { body: value, .. } => vec![value],
         Expr::Return { value, .. } => value.iter().map(Box::as_ref).collect(),

@@ -18,6 +18,8 @@ mod control_tests;
 mod domain_tests;
 #[cfg(test)]
 mod function_tests;
+#[cfg(test)]
+mod isolate_tests;
 mod places;
 #[cfg(test)]
 mod tcp_tests;

@@ -173,7 +173,9 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             | Expr::Block { exprs, .. }
             | Expr::Graph { exprs, .. }
             | Expr::Sequence { exprs, .. } => pending.extend(exprs),
-            Expr::TaskScope { body, .. } | Expr::Branch { body, .. } => pending.push(body),
+            Expr::Isolate { body, .. }
+            | Expr::TaskScope { body, .. }
+            | Expr::Branch { body, .. } => pending.push(body),
             Expr::Literal { .. }
             | Expr::Ident { .. }
             | Expr::GenericName(_)

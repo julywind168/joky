@@ -370,6 +370,9 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 
 管道分支形式先由 `scope` 改名为 `parallel`，现已统一为 `join`，行为不变。
 旧 `parallel { ... }` 和管道式 `scope { | ... }` 均给出迁移诊断，不提供别名。
+`isolate { body }` 已实现为显式失败边界，语义与限制见 [语言参考](language.md#失败隔离-isolate)。
+它是后接块时的上下文词，监督策略在其返回的 Result 上组合。
+
 顺序主体的 `scope` 与动态子任务 `branch` 已实现并通过三后端验收：解析、所属关系、
 捕获移动与借用检查、动态登记、调度轮次、汇合与取消清理均在
 JIT、解释器与独立 AOT 上一致。语义、迁移与验收记录见
@@ -460,6 +463,7 @@ SC4-A 已提供 `joky/admission`：池拥有者、可复制申请句柄、唯一
 | 名称 | 分工 | 状态 |
 | --- | --- | --- |
 | `scope` | 顺序执行主体，拥有动态子任务，负责汇合与清理 | 已实现 |
+| `isolate` | 局部失败边界，清理后返回 Result；取消继续传播 | 已实现首版，见语言参考 |
 | `branch` | 必须等待的动态子任务；正常退出 scope 前必须完成 | 已实现，保持现有语义 |
 | `join` | 静态分支全部完成，按源码顺序返回结果 | 已实现，本次仅改名 |
 | `race` | 首个观察到的完成或运行时失败决定结果，取消并清理其余分支 | 已实现 |
@@ -1164,7 +1168,7 @@ Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
 Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ Result ], Block ;
 AnonymousParam = Identifier, [ ":", Type ] ;
-TaskForm     = TaskScope | TaskBranch ;
+TaskForm     = TaskScope | TaskBranch | Isolate ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, [ ":", NonSequence ] ;
@@ -1181,6 +1185,7 @@ Condition    = "let", Pattern, "=", NonSequence | NonSequence ;
 Concurrent   = ("join" | "race"), "{", Branch, { Branch }, "}" ;
 Branch       = "|", NonSequence, [ ";" ] ;
 TaskScope    = "scope", Block ;
+Isolate      = "isolate", Block ;
 TaskBranch   = "branch", Block ;
 Match        = "match", NonSequence, "{", [ MatchArm, { BracedSep, MatchArm }, [ "," ] ], "}" ;
 MatchArm     = Pattern, "=>", Expression ;

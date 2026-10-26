@@ -158,7 +158,7 @@ fn build_registry() -> ModuleRegistry {
     .map(|(name, params, entry)| {
         let frame_slots = params.len();
         let mut spec = BindingSpec::with_symbol(
-            format!("joky/task.{name}"),
+            format!("__joky_public_task_{name}"),
             FunctionSignature::new(params, Type::Unit),
             format!("joky_task_{name}"),
         );
@@ -166,7 +166,8 @@ fn build_registry() -> ModuleRegistry {
         parallel_task_binding(spec, entry, frame_slots)
     });
     // Static CPS callbacks use the declared frame slots and retain no pointers.
-    unsafe { registry.register_module("joky/task", tasks) }.expect("Task bindings must be valid");
+    unsafe { registry.register_module("joky/internal/task_api", tasks) }
+        .expect("Task bindings must be valid");
     let placeholder = NativeBinding {
         spec: BindingSpec::with_symbol(
             "__domain_module",

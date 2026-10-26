@@ -73,7 +73,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 语言基础 | 八种定宽整数、Float32 / Float64、Rune、Bool、Unit、表达式与控制流、名义记录和枚举、元组、模式匹配、用户文件模块 |
 | 类型系统 | 泛型与常量参数、透明别名、固有方法、静态 trait、默认方法、关联类型与常量、同步借用型 dyn、同步函数值与闭包、拥有闭包的记录存储与返回、挂起函数值 |
 | 所有权与存储 | String、Array、List、Set、Map、FixedArray、拥有型聚合与 Drop、受检共享／独占借用、任务 arena 与同步显式 Arena |
-| 执行与任务 | 共享语义分析、Cranelift JIT / AOT、字节码解释器；`@suspends`、`join` / `race`、`scope` / `branch`、取消与资源清理、局部值和容器视图跨挂起借用；可选多线程分支执行 |
+| 执行与任务 | 共享语义分析、Cranelift JIT / AOT、字节码解释器；`@suspends`、`join` / `race`、`scope` / `branch`、`isolate` 失败隔离、取消与资源清理、局部值和容器视图跨挂起借用；可选多线程分支执行 |
 | 内置模块 | Option / Result、Iterator / IntoIterator、Array 消费迭代、Array/Slice/Map 借用遍历、for 自动转换与可选编号、Map 键值解构、泛型 range 与 take/zip/map/filter 惰性组合器、数值、文本与格式化、容器、JSON、任务定时器、文件、TCP、DNS、状态域与有界准入 |
 | 嵌入与热更新 | Rust `VmEngine`、C VM / CPS API、宿主注册与 FFI、持久实例、状态域、Script 调用与兼容发布、分步迁移 |
 | Godot 原型 | Node 挂载 `.jk`、解释器状态与属性、受检 Node API、帧回调、所属任务和引擎等待；[构建和示例](integrations/godot/README.md) |
@@ -142,7 +142,7 @@ shutdown
 - [chat_contract.jk](examples/chat_contract.jk)：共享类型、入口契约和 `defaults()` 配置。
 - [chat_logic.jk](examples/chat_logic.jk)：从 `dispatch`／`handle_line` 进入；收费看 `say`，
   换房和缺失房间的事务内创建看 `join`，离开与断线看 `leave`，条件回收看 `reclaim`。
-- [chat.jk](examples/chat.jk)：连接生命周期和服务启动。
+- [chat.jk](examples/chat.jk)：连接生命周期、失败隔离和服务启动。
 - [chat_admin.jk](examples/chat_admin.jk)：独立的发布与停机协议。
 
 修改连接策略只需调整 `defaults()`：默认每行 4096 字节（含结束符）、队列 64 条／64 KiB，
@@ -158,6 +158,9 @@ shutdown
 `cargo test --test chat -- --ignored` 执行三种宿主 × 两种脚本的实网矩阵，覆盖协议、扣费、
 热更新、满队列、房间回收、管理端隔离和主动停机；JIT／AOT 宿主覆盖 260 人，解释器宿主覆盖 40 人。
 这是功能示例，尚未做吞吐或长期运行验收。
+
+预留模式示例：`cargo run -- run examples/reservation.jk`，演示预留、外部查询、确认／释放、
+取消后到期回收与迟到回复校验，详见[语言参考](docs/language.md#跨挂起业务的预留模式)。
 
 ## 验证
 

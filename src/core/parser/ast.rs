@@ -15,6 +15,8 @@ pub use crate::core::types::{
 pub enum ConcurrentKind {
     Join,
     Race,
+    /// A compiler-generated single-child failure boundary.
+    Isolate,
 }
 
 impl ConcurrentKind {
@@ -22,6 +24,7 @@ impl ConcurrentKind {
         match self {
             Self::Join => "join",
             Self::Race => "race",
+            Self::Isolate => "isolate",
         }
     }
 }
@@ -256,6 +259,10 @@ pub enum Expr {
     },
     /// A sequential task scope: the body runs inline and may register child
     /// tasks with `branch`; the scope completes after the body and all children.
+    Isolate {
+        body: Box<Expr>,
+        span: Span,
+    },
     TaskScope {
         body: Box<Expr>,
         span: Span,
@@ -353,6 +360,7 @@ impl Expr {
             | Self::Graph { span, .. }
             | Self::Sequence { span, .. }
             | Self::Concurrent { span, .. }
+            | Self::Isolate { span, .. }
             | Self::TaskScope { span, .. }
             | Self::Branch { span, .. } => *span,
         }
@@ -524,6 +532,7 @@ impl Expr {
                 branches,
                 span,
             },
+            Self::Isolate { body, .. } => Self::Isolate { body, span },
             Self::TaskScope { body, .. } => Self::TaskScope { body, span },
             Self::Branch { body, .. } => Self::Branch { body, span },
         }

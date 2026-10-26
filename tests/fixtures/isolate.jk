@@ -1,0 +1,48 @@
+import joky/task
+import joky/check
+import joky/array.{type Array}
+
+fn assert(ok: Bool) { check.assert(ok, "isolate") }
+fn fail() @suspends { task.yield_now(); check.panic("isolated failure") }
+fn wait() @suspends { task.sleep_ms(100000) }
+fn answer() @suspends -> Int32 { task.yield_now(); 42 }
+fn caught() @suspends {
+    let result: Result<Unit, task.Failure> = isolate { scope { branch { wait() }; branch { fail() } } }
+    assert(match result { Err(Runtime) => true, _ => false })
+    let suspended: Result<Unit, task.Failure> = isolate { scope { branch { fail() }; wait() } }
+    assert(suspended.is_err())
+}
+fn survivor() @suspends { task.yield_now(); task.yield_now(); assert(true) }
+fn cancelled() @suspends -> Int32 {
+    let result = isolate { wait(); 1 }
+    // A race cancellation must never execute a handler or a normal continuation.
+    check.panic("isolate swallowed cancellation")
+}
+fn main() @suspends {
+    assert(isolate { answer() }.unwrap() == 42)
+    let byte: Result<UInt8, task.Failure> = isolate { 42 }
+    assert(byte.unwrap() == 42)
+    assert(isolate { "owned result" }.unwrap().equals("owned result"))
+    let values = isolate { var a = Array.new::<String>(); a.push("owned element"); task.yield_now(); a }.unwrap()
+    assert(values.len() == 1)
+    let rejected: Result<Result<Int32, Int32>, task.Failure> = isolate { Err(7) }
+    assert(match rejected { Ok(Err(7)) => true, _ => false })
+    let outer: Result<Int32, task.Failure> = isolate {
+        let inner: Result<Unit, task.Failure> = isolate { fail() }
+        assert(inner.is_err())
+        9
+    }
+    assert(outer.unwrap() == 9)
+    let text = "failed capture"
+    let failed: Result<String, task.Failure> = isolate { task.yield_now(); fail(); text }
+    assert(failed.is_err())
+    let pair = isolate { ("tuple owner", 42) }.unwrap()
+    assert(pair.0.equals("tuple owner") && pair.1 == 42)
+    scope { branch { caught() }; branch { survivor() } }
+    let winner = race { | cancelled() | answer() }
+    assert(winner == 42)
+    let value = alloc(1)
+    let loan = &mut *value
+    let changed = isolate { *loan = 2; task.yield_now(); *loan }.unwrap()
+    assert(changed == 2 && *value == 2)
+}

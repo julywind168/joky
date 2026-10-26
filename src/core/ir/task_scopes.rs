@@ -141,6 +141,25 @@ impl FunctionPlan {
             ));
         };
         let scope = frame.scope;
+        let (entry, capture_slots) =
+            self.nested_task(body, *span, Type::Unit, vars, functions, types)?;
+        self.emit(Op::TaskBranch {
+            scope,
+            entry,
+            captures: capture_slots,
+        });
+        Ok(Flow::Value(None))
+    }
+
+    pub(super) fn nested_task(
+        &mut self,
+        body: &Expr,
+        span: Span,
+        ret: Type,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Result<(String, Vec<Option<Slot>>), Error> {
         let captures = free_captures(body, vars);
         let entry = format!(
             "__joky_task_{}",
@@ -162,18 +181,18 @@ impl FunctionPlan {
                 .map(|(name, ty)| Param {
                     name: name.clone(),
                     ty: ty.clone(),
-                    span: *span,
+                    span,
                 })
                 .collect(),
-            ret_ty: Type::Unit,
+            ret_ty: ret.clone(),
             suspends: true,
             // A child owns its descendants even without an explicit scope in
             // its body. Returns leave this scope through the usual join path.
             body: Expr::TaskScope {
-                body: body.clone(),
-                span: *span,
+                body: Box::new(body.clone()),
+                span,
             },
-            span: *span,
+            span,
         };
         let info = FunctionInfo {
             every: None,
@@ -190,7 +209,7 @@ impl FunctionPlan {
             extern_abi: crate::core::builtins::ExternAbi::Scalar,
             signature: crate::FunctionSignature::new(
                 captures.iter().map(|(_, ty)| ty.clone()).collect(),
-                Type::Unit,
+                ret,
             ),
             suspends: true,
             may_fail: false,
@@ -203,7 +222,7 @@ impl FunctionPlan {
             domain_request_entry: false,
             script_entry: false,
             parallel_entry: false,
-            span: *span,
+            span,
         };
         self.generics
             .borrow_mut()
@@ -229,12 +248,7 @@ impl FunctionPlan {
             info,
             plan,
         });
-        self.emit(Op::TaskBranch {
-            scope,
-            entry,
-            captures: capture_slots,
-        });
-        Ok(Flow::Value(None))
+        Ok((entry, capture_slots))
     }
 
     /// Route an abrupt exit through every task scope it crosses: scopes
@@ -348,7 +362,9 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                 walk.capture(name, scopes);
                 visit(value, scopes, walk);
             }
-            Expr::TaskScope { body, .. } | Expr::Branch { body, .. } => {
+            Expr::Isolate { body, .. }
+            | Expr::TaskScope { body, .. }
+            | Expr::Branch { body, .. } => {
                 scopes.push(std::collections::HashSet::new());
                 visit(body, scopes, walk);
                 scopes.pop();

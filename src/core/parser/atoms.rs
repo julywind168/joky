@@ -150,6 +150,20 @@ impl Parser {
             {
                 self.parse_concurrent(ConcurrentKind::Join)
             }
+            TokenKind::Ident(name)
+                if name == "isolate"
+                    && self
+                        .tokens
+                        .get(self.pos + 1)
+                        .is_some_and(|t| t.kind == TokenKind::LBrace) =>
+            {
+                self.advance();
+                let body = self.parse_block()?;
+                Ok(Expr::Isolate {
+                    body: Box::new(body),
+                    span: self.span(start, self.last_span.end()),
+                })
+            }
             TokenKind::Race => self.parse_concurrent(ConcurrentKind::Race),
             TokenKind::Parallel => Err(self.error("Use join instead of parallel".into())),
             // scope { body }: a sequential task scope; pipe-separated branches

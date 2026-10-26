@@ -5,6 +5,7 @@
 //! frame after the caller signals readiness; it must preserve its own progress.
 
 pub(crate) mod concurrent;
+mod isolate;
 pub(crate) mod parallel;
 pub(crate) mod protocol;
 pub(crate) mod task;
@@ -65,6 +66,7 @@ pub struct CpsFrame {
     pub(crate) text_result: Option<String>,
     place_result: Option<ReturnedPlace>,
     concurrent: Option<LocalTaskGroup>,
+    isolated_failure: u64,
     concurrent_results: Vec<Option<Box<CpsFrame>>>,
     prepared: Option<task::Prepared>,
     task_polling: bool,
@@ -99,6 +101,7 @@ impl CpsFrame {
             text_result: None,
             place_result: None,
             concurrent: None,
+            isolated_failure: 0,
             concurrent_results: Vec::new(),
             prepared: None,
             task_polling: false,
@@ -453,7 +456,11 @@ pub unsafe extern "C" fn task_join(frame: *mut CpsFrame) -> i32 {
             }
             Ok(status) => Some(crate::Error::new_with_code(
                 crate::ErrorPhase::Runtime,
-                crate::ErrorCode::InvalidState,
+                if super::isolate::active() {
+                    crate::ErrorCode::HostError
+                } else {
+                    crate::ErrorCode::InvalidState
+                },
                 format!("Task child returned failure status {status}"),
             )),
             Err(error) => Some(error),
@@ -637,7 +644,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 42] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 44] {
     [
         ("__joky_task_context_v1", protocol::context as *const u8),
         (
@@ -665,6 +672,8 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 42] {
         ("__joky_cps_task_prepare_v1", task::prepare as *const u8),
         ("__joky_cps_task_inputs_v1", task::inputs as *const u8),
         ("__joky_cps_task_poll_v1", task::poll as *const u8),
+        ("__joky_isolate_poll_v1", isolate::poll as *const u8),
+        ("__joky_isolate_drain_v1", isolate::drain as *const u8),
         (
             "__joky_cps_concurrent_prepare_v1",
             task::prepare_static as *const u8,
@@ -739,14 +748,20 @@ unsafe fn round_select(root: *mut CpsFrame) -> Option<(*mut DynamicTaskScope, Ch
         };
         // Reverse insertion preserves pre-order: dynamic scopes in source
         // order, then the suspended body's ordinary call/join children.
-        pending.extend(
-            frame
-                .children
-                .iter_mut()
-                .rev()
-                .flatten()
-                .map(|child| Visit::Frame(&mut **child)),
-        );
+        if !frame
+            .task_protocol
+            .last()
+            .is_some_and(|scope| scope.kind == 3)
+        {
+            pending.extend(
+                frame
+                    .children
+                    .iter_mut()
+                    .rev()
+                    .flatten()
+                    .map(|child| Visit::Frame(&mut **child)),
+            );
+        }
         for scope in frame.task_scopes.iter_mut().rev() {
             if scope.terminal() {
                 continue;
@@ -768,13 +783,19 @@ unsafe fn round_reset(root: *mut CpsFrame) {
     let mut pending = vec![root];
     while let Some(frame) = pending.pop() {
         let frame = &mut *frame;
-        pending.extend(
-            frame
-                .children
-                .iter_mut()
-                .flatten()
-                .map(|child| &mut **child as *mut _),
-        );
+        if !frame
+            .task_protocol
+            .last()
+            .is_some_and(|scope| scope.kind == 3)
+        {
+            pending.extend(
+                frame
+                    .children
+                    .iter_mut()
+                    .flatten()
+                    .map(|child| &mut **child as *mut _),
+            );
+        }
         for scope in &mut frame.task_scopes {
             // There is no selected child across this boundary. Remove finished
             // registrations without reordering live children or losing a join's cursor.
@@ -822,7 +843,11 @@ pub unsafe extern "C" fn task_round(root: *mut CpsFrame) -> i32 {
             }
             Ok(status) => Some(crate::Error::new_with_code(
                 crate::ErrorPhase::Runtime,
-                crate::ErrorCode::InvalidState,
+                if super::isolate::active() {
+                    crate::ErrorCode::HostError
+                } else {
+                    crate::ErrorCode::InvalidState
+                },
                 format!("Task child returned failure status {status}"),
             )),
             Err(error) => Some(error),

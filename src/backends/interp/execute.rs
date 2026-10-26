@@ -543,6 +543,7 @@ pub(super) struct Execution {
     budget: Budget,
     asynchronous: bool,
     cooperative_yield: bool,
+    isolated_recovery: bool,
     round_child: Option<usize>,
     arena: crate::runtime::arena::Arena,
 }
@@ -572,6 +573,7 @@ impl Execution {
             },
             asynchronous,
             cooperative_yield: false,
+            isolated_recovery: false,
             round_child: None,
             arena: crate::runtime::arena::Arena::default(),
         }
@@ -617,7 +619,66 @@ impl Execution {
         }
     }
 
+    fn isolate_parent(&self) -> Option<(usize, usize)> {
+        let mut cursor = Some(self.current);
+        while let Some(id) = cursor {
+            let node = self.node(id);
+            if let Activation::User(frame) = &node.activation {
+                if matches!(frame.pending, Some(Pending::Concurrent { .. })) {
+                    if let Instruction::Concurrent {
+                        failure: Some(slot),
+                        ..
+                    } = frame.function.code[frame.pc]
+                    {
+                        return Some((id, slot));
+                    }
+                }
+            }
+            cursor = node.parent;
+        }
+        None
+    }
+
     fn fail(&mut self, mut error: Error) -> Poll {
+        if let Some(code) = crate::runtime::isolate::code(&error) {
+            if let Some((parent, slot)) = self.isolate_parent() {
+                if let Some(Pending::Concurrent { group, .. }) = &mut self.frame_mut(parent).pending
+                {
+                    group.stop(None);
+                }
+                let mut cleanup = self.drain_concurrent(parent);
+                let pending = self.frame_mut(parent).pending.take();
+                if let Some(Pending::Concurrent { branches, .. }) = pending {
+                    for branch in branches {
+                        if let Some(packet) = branch.packet {
+                            if let Some((_, owner)) = packet.owner {
+                                if let Err(next) = unsafe { owner.run(&mut self.arena) } {
+                                    if cleanup.is_ok()
+                                        || crate::runtime::isolate::code(&next).is_none()
+                                    {
+                                        cleanup = Err(next);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if self.round_child.is_some_and(|id| self.nodes[id].is_none()) {
+                    self.round_child = None;
+                }
+                self.current = parent;
+                if let Err(cleanup) = cleanup {
+                    if crate::runtime::isolate::code(&cleanup).is_none() {
+                        return self.fail(cleanup);
+                    }
+                }
+                let frame = self.frame_mut(parent);
+                frame.slots[slot] = Value::UInt64(code);
+                frame.pc += 2; // Concurrent and its already completed cleanup barrier.
+                self.isolated_recovery = true;
+                return Poll::Pending;
+            }
+        }
         let mut cursor = Some(self.current);
         while let Some(id) = cursor {
             let node = self.node(id);
@@ -1060,6 +1121,13 @@ impl Execution {
 
     fn accept_concurrent_results(&mut self, parent: usize) -> Result<(), Error> {
         let frame = self.frame_mut(parent);
+        if let Instruction::Concurrent {
+            failure: Some(slot),
+            ..
+        } = frame.function.code[frame.pc]
+        {
+            frame.slots[slot] = Value::UInt64(0);
+        }
         let Some(Pending::Concurrent { group, branches }) = &mut frame.pending else {
             unreachable!()
         };
@@ -1096,7 +1164,7 @@ impl Execution {
     }
 
     fn start_concurrent(&mut self, module: &BytecodeModule) -> Result<(), Error> {
-        if crate::runtime::parallel::pool::active() {
+        if crate::runtime::parallel::pool::active() && !crate::runtime::isolate::active() {
             let frame = self.frame_mut(self.current);
             let Instruction::Concurrent { branches, .. } = &frame.function.code[frame.pc] else {
                 unreachable!()
@@ -1122,7 +1190,15 @@ impl Execution {
                             .all(|ty| crate::runtime::parallel::packet::Shape::of(ty).is_ok())
                     })
             });
-            if transferable {
+            if transferable
+                && !matches!(
+                    frame.function.code[frame.pc],
+                    Instruction::Concurrent {
+                        kind: ConcurrentKind::Isolate,
+                        ..
+                    }
+                )
+            {
                 return self.remote_concurrent(module);
             }
         }
@@ -1394,7 +1470,7 @@ impl Execution {
     }
 
     fn start_task_branch(&mut self, module: &BytecodeModule) -> Result<(), Error> {
-        if crate::runtime::parallel::pool::active() {
+        if crate::runtime::parallel::pool::active() && !crate::runtime::isolate::active() {
             return self.remote_branch(module);
         }
         let id = self.current;
@@ -1637,9 +1713,16 @@ impl Execution {
 
     pub(super) fn poll(&mut self, module: &BytecodeModule) -> Poll {
         let _float_env = crate::runtime::float_env::Guard::enter();
-        match self.poll_inner(module) {
-            Poll::Failed(error) => Poll::Failed(error.with_sources(&module.sources)),
-            result => result,
+        loop {
+            self.isolated_recovery = false;
+            let result = self.poll_inner(module);
+            if self.isolated_recovery {
+                continue;
+            }
+            return match result {
+                Poll::Failed(error) => Poll::Failed(error.with_sources(&module.sources)),
+                result => result,
+            };
         }
     }
 
@@ -1657,6 +1740,9 @@ impl Execution {
             None
         };
         loop {
+            let _isolation = self
+                .isolate_parent()
+                .map(|_| crate::runtime::isolate::Guard::enter());
             if let Err(error) = self.activate_task() {
                 return self.fail(error);
             }
@@ -2543,7 +2629,7 @@ fn run_frame(
             Instruction::ConcurrentFinish => return Step::ConcurrentFinish,
             Instruction::TaskScopeEnter => {
                 frame.task_scopes.push(Default::default());
-                if crate::runtime::parallel::pool::active() {
+                if crate::runtime::parallel::pool::active() && !crate::runtime::isolate::active() {
                     if frame.remote_scopes.is_none() {
                         match parallel::Scopes::new() {
                             Ok(scopes) => frame.remote_scopes = Some(scopes),
