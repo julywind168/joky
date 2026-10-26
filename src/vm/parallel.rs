@@ -12,6 +12,8 @@ mod lists;
 pub(crate) mod map_tests;
 mod maps;
 pub use maps::{TaskMap, TaskSet};
+#[cfg(test)]
+mod function_tests;
 mod places;
 #[cfg(test)]
 mod tcp_tests;
@@ -177,18 +179,21 @@ impl PreparedParallelTask {
             Code::Interpreted(e) => &e.info,
         };
         let sig = &info.signature;
-        // Internal child packets can own TCP resources. The public TaskValue
-        // boundary stays pointer-free and cannot import/export socket owners.
+        // Internal child packets can carry TCP owners and proved language callables.
+        // The public TaskValue boundary stays pointer-free.
         use crate::core::types::walk::{TypeEdges, TypeWalk};
         if sig
             .params
             .iter()
             .chain(std::iter::once(&sig.ret))
             .any(|ty| {
-                TypeWalk::new(ty, TypeEdges::Fields).any(|ty| matches!(ty, Type::Resource(_)))
+                TypeWalk::new(ty, TypeEdges::Fields)
+                    .any(|ty| matches!(ty, Type::Resource(_) | Type::Function(_)))
             })
         {
-            return Err(invalid("Host task values cannot contain resources"));
+            return Err(invalid(
+                "Host task values cannot contain resources or callables",
+            ));
         }
         Shape::of(&sig.ret)?;
         for ty in &sig.params {

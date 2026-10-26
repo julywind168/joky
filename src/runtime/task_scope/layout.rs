@@ -227,6 +227,7 @@ impl CheckedLayout {
                 (Kind::Scalar, Shape::Unit | Shape::Scalar(_))
                     | (Kind::String, Shape::String)
                     | (Kind::Resource, Shape::Buffer)
+                    | (Kind::Function, Shape::Function)
                     | (
                         Kind::Tuple
                             | Kind::Record
@@ -317,7 +318,7 @@ mod tests {
         words[0] = 1;
         assert!(CheckedLayout::decode(&words).is_err());
         words[0] = VERSION as u64;
-        words[2] = 12 << 3;
+        words[2] = 13 << 3;
         assert!(CheckedLayout::decode(&words).is_err());
         // A recognized kind with inconsistent ownership cannot enter a worker.
         for flags in [

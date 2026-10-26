@@ -16,6 +16,7 @@ pub(crate) enum Kind {
     Map = 9,
     Set = 10,
     Resource = 11,
+    Function = 12,
 }
 
 impl Kind {
@@ -23,6 +24,7 @@ impl Kind {
         match ty {
             Type::FixedArray(_) => Self::FixedArray,
             Type::String => Self::String,
+            Type::Function(_) => Self::Function,
             Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => Self::Resource,
             Type::Record(r) if r.array => Self::Array,
             Type::Record(r) if r.list => Self::List,
@@ -50,6 +52,7 @@ impl Kind {
             9 => Self::Map,
             10 => Self::Set,
             11 => Self::Resource,
+            12 => Self::Function,
             _ => return None,
         })
     }
@@ -106,7 +109,7 @@ pub(crate) fn classify(
                 .cloned()
                 .chain(e.variants.iter().filter_map(|v| v.payload.clone()))
                 .collect(),
-            Type::String => Vec::new(),
+            Type::String | Type::Function(_) => Vec::new(),
             Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => Vec::new(),
             _ if crate::core::instance::scalar(&ty) => Vec::new(),
             _ => return None,
@@ -244,7 +247,7 @@ mod tests {
             ("set_pointer", None),
             ("set_reference", None),
             ("set_drop", None),
-            ("callable", None),
+            ("callable", Some(Kind::Function)),
         ] {
             let signature = &plan.functions[name].signature;
             let ty = &signature.params[0];

@@ -24,6 +24,9 @@ pub(crate) enum Shape {
     Place(super::place::Layout),
     Scalar(Type),
     String,
+    // A compiler-generated value under the frozen module's closed target proof.
+    // This shape is never accepted at the public TaskValue or host ABI boundary.
+    Function,
     Buffer,
     Product(Vec<Shape>),
     Sum(Vec<Shape>),
@@ -40,6 +43,7 @@ impl Shape {
             Ok(match ty {
                 Type::Unit => Shape::Unit,
                 Type::String => Shape::String,
+                Type::Function(_) => Shape::Function,
                 Type::Buffer(_) => Shape::Buffer,
                 Type::Resource(name) if crate::runtime::tcp::transferable_type(name) => {
                     Shape::Buffer
@@ -78,7 +82,7 @@ impl Shape {
     pub(crate) fn lanes(&self) -> usize {
         match self {
             Self::Unit => 0,
-            Self::Scalar(_) | Self::String | Self::Buffer | Self::Place(_) => 1,
+            Self::Scalar(_) | Self::String | Self::Function | Self::Buffer | Self::Place(_) => 1,
             Self::Product(v) => v.iter().map(Self::lanes).sum(),
             Self::Sum(v) => 1 + v.iter().map(Self::lanes).sum::<usize>(),
         }
@@ -122,7 +126,7 @@ impl Shape {
             return Err(invalid());
         }
         match self {
-            Self::Unit => {}
+            Self::Unit | Self::Function => {}
             Self::String | Self::Buffer | Self::Place(_) if words[0] != 0 => {}
             Self::String | Self::Buffer | Self::Place(_) => return Err(invalid()),
             Self::Scalar(ty) => {
@@ -168,6 +172,7 @@ impl Shape {
                 }
             }
             Self::Unit => out.push(0),
+            Self::Function => out.push(20),
             Self::String => out.push(14),
             Self::Buffer => out.push(18),
             Self::Scalar(ty) => out.push(match ty {
@@ -207,6 +212,7 @@ impl Shape {
                 0 => return Ok(Shape::Unit),
                 14 => return Ok(Shape::String),
                 18 => return Ok(Shape::Buffer),
+                20 => return Ok(Shape::Function),
                 19 => {
                     if words.len() < 3 {
                         return Err(invalid());

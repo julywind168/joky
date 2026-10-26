@@ -485,3 +485,31 @@ fn task_parallel_tcp_handoff_runs_in_standalone_aot() {
             .unwrap(),
     );
 }
+
+#[test]
+fn task_parallel_function_values_runs_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "parallel_functions.jk",
+        include_str!("../fixtures/parallel_functions.jk"),
+    );
+    let build = work
+        .command()
+        .args([
+            "build",
+            "--task-workers",
+            "3",
+            "parallel_functions.jk",
+            "-o",
+            "parallel_functions",
+        ])
+        .env("JOKY_RUNTIME", runtime_archive())
+        .output()
+        .unwrap();
+    success(&build);
+    success(
+        &Command::new(work.path().join("parallel_functions"))
+            .output()
+            .unwrap(),
+    );
+}

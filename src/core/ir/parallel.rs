@@ -81,7 +81,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 }
                 Type::Resource(ref name)
                     if !share && crate::runtime::tcp::transferable_type(name) => {}
-                Type::String => {}
+                Type::String | Type::Function(_) => {}
                 ref scalar if crate::core::instance::scalar(scalar) => {}
                 // Cursor aliases mutate shared position. Raw, erased, unresolved
                 // and thread-bound capabilities never acquire implicit evidence.
@@ -151,6 +151,22 @@ pub(crate) fn analyse(
         Ok(_) => Ok(ty.clone()),
         Err(error) => Err(error.clone()),
     };
+    // Function values can only originate at compiler-authored FunctionRef sites.
+    // Keep a closed set of targets per calling signature in this frozen module;
+    // an indirect edge depends on every possible target, including cleanup effects.
+    // Host boundaries below cannot introduce new callable values.
+    let targets: Vec<_> = plan
+        .bodies
+        .values()
+        .flat_map(|body| &body.ops)
+        .filter_map(|op| match op {
+            Op::FunctionRef(slot, name) => match &slot.ty {
+                Type::Function(function) => Some((function, name)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
     let mut reasons = BTreeMap::<String, String>::new();
     let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
     let mut packets = HashSet::new();
@@ -179,7 +195,15 @@ pub(crate) fn analyse(
         let Some(body) = plan.bodies.get(name) else {
             let tcp = crate::runtime::tcp::operation(name)
                 .is_some_and(|op| op.validate(signature, info.suspends).is_ok());
-            if !hosts.contains(name) && !tcp {
+            use crate::core::types::walk::{TypeEdges, TypeWalk};
+            let callable = signature
+                .params
+                .iter()
+                .chain(std::iter::once(&signature.ret))
+                .any(|ty| {
+                    TypeWalk::new(ty, TypeEdges::Fields).any(|ty| matches!(ty, Type::Function(_)))
+                });
+            if callable || (!hosts.contains(name) && !tcp) {
                 reasons.insert(
                     name.clone(),
                     "host binding has no explicit ParallelSafe contract".into(),
@@ -198,37 +222,72 @@ pub(crate) fn analyse(
         }
         for op in &body.ops {
             dependencies.extend(op.dependencies().cloned());
-            let packet_supported = |name: &String| {
-                plan.functions.get(name).is_some_and(|f| {
-                    f.signature
-                        .params
-                        .iter()
-                        .chain(std::iter::once(&f.signature.ret))
-                        .all(|ty| {
-                            packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty))
-                                .is_some_and(packet::Kind::implemented)
-                        })
-                })
+            let packet_signature = |signature: &crate::FunctionSignature| {
+                signature
+                    .params
+                    .iter()
+                    .chain(std::iter::once(&signature.ret))
+                    .all(|ty| {
+                        packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty))
+                            .is_some_and(packet::Kind::implemented)
+                    })
             };
+            let packet_supported = |name: &String| {
+                plan.functions
+                    .get(name)
+                    .is_some_and(|f| packet_signature(&f.signature))
+            };
+            let mut indirects = Vec::new();
+            match op {
+                Op::Call {
+                    indirect: Some(slot),
+                    ..
+                } => indirects.push(slot),
+                Op::Concurrent { branches, .. } => {
+                    indirects.extend(branches.iter().filter_map(|b| b.indirect.as_ref()));
+                }
+                _ => {}
+            }
+            for slot in indirects {
+                let Type::Function(function) = &slot.ty else {
+                    reasons.entry(name.clone()).or_insert_with(|| {
+                        "indirect target lacks immutable thread evidence".into()
+                    });
+                    continue;
+                };
+                let mut found = false;
+                for (candidate, target) in &targets {
+                    if candidate.signature == function.signature
+                        && candidate.suspends == function.suspends
+                    {
+                        found = true;
+                        dependencies.insert((*target).clone());
+                    }
+                }
+                if !found {
+                    reasons.entry(name.clone()).or_insert_with(|| {
+                        "indirect target lacks immutable thread evidence".into()
+                    });
+                }
+            }
             let local = match op {
                 Op::Concurrent { branches, .. }
-                    if branches.iter().any(|b| !packet_supported(&b.name)) =>
+                    if branches.iter().any(|b| match b.indirect.as_ref().map(|s| &s.ty) {
+                        Some(Type::Function(f)) => !packet_signature(&f.signature),
+                        Some(_) => true,
+                        None => !packet_supported(&b.name),
+                    }) =>
                 {
                     Some("parallel child packets require reference-free scalar/String aggregates without custom Drop")
                 }
                 Op::TaskBranch { entry, .. } if !packet_supported(entry) => {
                     Some("parallel branch captures require reference-free scalar/String aggregates without custom Drop")
                 }
-                Op::Call {
-                    indirect: Some(_), ..
+                Op::DynMethod { .. } | Op::DynTable { .. } => {
+                    Some("dynamic target lacks immutable thread evidence")
                 }
-                | Op::DynMethod { .. }
-                | Op::DynTable { .. }
-                | Op::FunctionRef(..) => Some("indirect target lacks immutable thread evidence"),
-                Op::Concurrent { branches, .. }
-                    if branches.iter().any(|b| b.indirect.is_some()) =>
-                {
-                    Some("indirect branch lacks immutable thread evidence")
+                Op::FunctionRef(slot, _) if !matches!(slot.ty, Type::Function(_)) => {
+                    Some("raw function address lacks immutable thread evidence")
                 }
                 Op::ArenaNew { .. } | Op::ArenaAlloc { .. } => {
                     Some("explicit arena capability is Local")
@@ -369,6 +428,33 @@ mod tests {
         ] {
             admitted.require(name).unwrap();
         }
+    }
+
+    #[test]
+    fn parallel_indirect_evidence_includes_every_frozen_target() {
+        let source = r#"
+            extern fn local(value: Int32) -> Int32
+            fn safe(value: Int32) -> Int32 { value + 1 }
+            fn bad(value: Int32) -> Int32 { local(value) }
+            fn choose() -> fn(Int32) -> Int32 { bad }
+            fn apply(f: fn(Int32) -> Int32) -> Int32 { f(41) }
+            fn root() @suspends -> Int32 { apply(safe) }
+        "#;
+        let types = crate::TypeRegistry::default().with_prelude(false);
+        let ast = types
+            .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())
+            .unwrap();
+        let prepared =
+            crate::core::prepared::PreparedModule::new(&ast, &types, &Default::default()).unwrap();
+        let plan = prepared.plan(&Default::default()).unwrap();
+        let local = analyse(&plan, &prepared, &HashSet::new());
+        local.require("safe").unwrap();
+        // There is no direct edge from apply to bad. The immutable target set
+        // must still include bad, even though this particular root passes safe.
+        assert!(local.require("apply").is_err());
+        assert!(local.require("root").is_err());
+        let qualified = analyse(&plan, &prepared, &HashSet::from(["local".into()]));
+        qualified.require_packet("root").unwrap();
     }
 
     #[test]

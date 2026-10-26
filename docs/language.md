@@ -4953,7 +4953,11 @@ Local HostExecutor 或 ParallelExecutor；Local 沿用根任务上限，Parallel
 （包括 Option/Result）。一般数据在 join/race 的参数与结果、branch 移动捕获及宿主根入口
 采用相同规则；String/Array/List/Map/Set 交接移动真实拥有 Buffer 树，数组保留有效元素及容量，
 List 保留整数链与空闲槽，Map/Set 保留桶、缓存哈希、反向位置及删除标记。完整类型树必须无引用、无未获资格资源、无自定义 Drop，
-包括未激活枚举变体及实际泛型参数；函数/闭包、dyn 和裸指针仍拒绝。
+包括未激活枚举变体及实际泛型参数；闭包环境、dyn 和裸指针仍拒绝。
+非捕获语言函数值可作为同树内部输入或聚合字段传入 worker，并用于普通或挂起间接调用。
+资格保守检查冻结模块中所有同签名、同挂起效果的函数值目标，任一目标依赖 Local 代码即拒绝
+该间接调用；没有可验证目标也拒绝。`join`／`race` 的结果仍不能包含函数值或引用。
+Rust TaskValue 和宿主函数 ABI 不接纳函数值，不能用原始地址或仅有签名的描述伪造证据。
 FixedArray 及包含它的无引用 Copy 聚合使用独立存储快照；Array 可存储这些 Copy 值。
 含 FixedArray 的混合拥有聚合仍受固定数组存储限制；并行支持不额外放宽其类型组合。
 Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit 元素可用。

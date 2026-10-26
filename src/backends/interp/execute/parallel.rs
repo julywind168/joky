@@ -165,8 +165,17 @@ impl Execution {
         let kind = if *kind == ConcurrentKind::Join { 0 } else { 1 };
         let branches: Vec<_> = branches
             .iter()
-            .map(|b| (b.target.unwrap(), b.args.clone(), b.done, b.result))
-            .collect();
+            .map(|b| {
+                let target = match b.indirect {
+                    Some(slot) => match frame.slots[slot] {
+                        Value::Function(target) if target < module.callees.len() => target,
+                        _ => return Err(abi_error("Invalid parallel function value")),
+                    },
+                    None => b.target.unwrap(),
+                };
+                Ok((target, b.args.clone(), b.done, b.result))
+            })
+            .collect::<Result<_, Error>>()?;
         let mut factories = Vec::new();
         for (target, args, _, _) in &branches {
             factories.push(self.remote_factory(module, *target, args)?);
@@ -177,7 +186,7 @@ impl Execution {
             group: Box::new(group),
             branches: branches
                 .into_iter()
-                .map(|(_, _, done, result)| (done, result))
+                .map(|(target, _, done, result)| (target, done, result))
                 .collect(),
             delivered: false,
         });
@@ -224,22 +233,19 @@ impl Execution {
                 .take(index)?
                 .downcast::<Packet>()
                 .map_err(|_| abi_error("Invalid interpreted packet"))?;
-            let (done, result) = branches[index];
-            let (target, destinations) = {
+            let (target, done, result) = branches[index];
+            let destinations = {
                 let frame = self.frame_mut(id);
                 let Instruction::Concurrent { branches, .. } = &frame.function.code[frame.pc]
                 else {
                     unreachable!()
                 };
                 let branch = &branches[index];
-                (
-                    branch.target.unwrap(),
-                    if branch.results.is_empty() {
-                        result.into_iter().collect()
-                    } else {
-                        branch.results.clone()
-                    },
-                )
+                if branch.results.is_empty() {
+                    result.into_iter().collect()
+                } else {
+                    branch.results.clone()
+                }
             };
             let ty = match &module.callees[target] {
                 Callee::User(f) => &f.info.signature.ret,

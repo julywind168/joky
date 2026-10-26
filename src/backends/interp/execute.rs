@@ -412,7 +412,7 @@ impl Frame {
 enum Pending {
     Parallel {
         group: Box<crate::runtime::parallel::pool::Group>,
-        branches: Vec<(usize, Option<usize>)>,
+        branches: Vec<(usize, usize, Option<usize>)>,
         delivered: bool,
     },
     Call {

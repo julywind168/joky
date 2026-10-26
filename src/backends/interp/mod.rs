@@ -937,6 +937,9 @@ impl Value {
         if ty.is_place() {
             return Ok(Self::Place(bits as *mut u8));
         }
+        if matches!(ty, Type::Function(_)) {
+            return Ok(Self::Function(bits as usize));
+        }
         if matches!(
             ty,
             Type::Reference(_) | Type::String | Type::Buffer(_) | Type::Resource(_)
@@ -963,6 +966,9 @@ impl Value {
     }
 
     fn instance_bits(&self) -> Result<u64, Error> {
+        if let Self::Function(target) = self {
+            return Ok(*target as u64);
+        }
         if let Self::Reference(pointer) | Self::Place(pointer) = self {
             return Ok(*pointer as usize as u64);
         }
