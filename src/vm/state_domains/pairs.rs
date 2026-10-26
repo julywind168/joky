@@ -370,7 +370,7 @@ fn execute_prepared(
     }
     let transactional = pair.method.starts_with("$when/");
     let mut candidates = if transactional {
-        match transactions::Candidates::capture(domains, &pair.handles) {
+        match transactions::Candidates::capture(domains, &pair.handles, &mutable[..count]) {
             Ok(candidates) => Some(candidates),
             Err(error) => {
                 *rejection = Some(access::classify(domains, &pair.handles, &error));
@@ -460,7 +460,7 @@ fn execute_prepared(
         Ok(value) => {
             if accepted {
                 if let Some(candidates) = candidates.take() {
-                    candidates.publish(domains, &pair.handles, &mutable[..count]);
+                    candidates.publish(domains);
                 }
             }
             for (index, handle) in pair.handles.iter().enumerate() {

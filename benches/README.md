@@ -226,3 +226,8 @@ python3 benches/json-startup.py \
 输出目录必须不存在，保存原始 CSV、中位数/min/max、二进制和示例 SHA-256、平台与调用参数、
 调用方提供的构建版本及运行器源码。独立重跑后再判断趋势，历史结果见
 [性能实验记录](../docs/interpreter-performance.md#2026-10-11json-cli-冷启动编译)。
+
+## 状态域候选存储
+
+[R5 候选存储预算对照](reports/service-concurrency-r5-memory.md)记录全根快照与仅写域快照的
+内存预算差异和复现方法。该对照不计时，不代表吞吐测量。

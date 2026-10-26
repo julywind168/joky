@@ -91,6 +91,7 @@ fn lifecycle() @suspends ->Int32 {
     match when (x) {x.n} {Err(Closed)=>{},_=>{assert(false)}}
     b.close()
     c.close()
+    readonly_views()
     when(24)
 }
 fn notify(state:&mut State, target:outbox.Handle, bytes:&Array<UInt8>) {
@@ -134,5 +135,22 @@ fn messages() @suspends {
     assert(one.len()==2 && two.len()==2)
     assert(one.get(0)! ==111 && two.get(1)! ==107)
     owner.close()
+}
+fn readonly_views() @suspends {
+    let a=domain.create(make,3)
+    let b=domain.create(make,7)
+    let read=a.read_handle()
+    let same=read
+    let write=b.handle()
+    let single=when(read){read.text.clone()}!
+    let (text,n)=when(read,mut write,same) {
+        write.n+=read.n+same.values.get(0)!
+        (read.text.clone(),write.n)
+    }!
+    assert(n==13)
+    assert(when(read,same){read.n+same.n}! ==6)
+    a.close()
+    b.close()
+    assert(single.equals("state") && text.equals("state"))
 }
 fn main() @suspends { assert(lifecycle()==24); messages() }
