@@ -495,7 +495,7 @@ impl Publication {
         if table
             .position_key(&self.entry.key)
             .ok()
-            .is_some_and(|i| domains.get(table.entries[i].handle).is_ok())
+            .is_some_and(|i| occupies(domains, &table.entries[i]))
         {
             return Err(access::Rejection::InvalidAccess);
         }
@@ -506,10 +506,7 @@ impl Publication {
         // Closed entries are already inaccessible. Their close responsibility has
         // been discharged, so pruning them cannot reenter the registry.
         table.entries.retain_mut(|entry| {
-            let closed = domains
-                .entries
-                .get(&entry.handle.sequence)
-                .is_none_or(|d| d.closing);
+            let closed = !occupies(domains, entry);
             if closed {
                 if let Some(owner) = &mut entry.owner {
                     owner.domains = Weak::new();
@@ -524,6 +521,14 @@ impl Publication {
         });
         table.entries.insert(index, self.entry);
     }
+}
+// Validation, capacity and publication share one occupancy rule, so the
+// infallible publish region never finds a key that validation treated as free.
+fn occupies(domains: &Domains, entry: &Entry) -> bool {
+    domains
+        .entries
+        .get(&entry.handle.sequence)
+        .is_some_and(|d| !d.closing)
 }
 pub(super) fn prepare_creation(
     domains: &Domains,
@@ -545,19 +550,14 @@ pub(super) fn prepare_creation(
         if table
             .position_key(&key)
             .ok()
-            .is_some_and(|i| domains.get(table.entries[i].handle).is_ok())
+            .is_some_and(|i| occupies(domains, &table.entries[i]))
         {
             return Err(access::Rejection::InvalidAccess);
         }
         let live = table
             .entries
             .iter()
-            .filter(|entry| {
-                domains
-                    .entries
-                    .get(&entry.handle.sequence)
-                    .is_some_and(|d| !d.closing)
-            })
+            .filter(|entry| occupies(domains, entry))
             .count();
         if live + pending >= table.capacity {
             return Err(access::Rejection::DirectoryFull(directory));
