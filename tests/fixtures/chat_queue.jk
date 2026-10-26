@@ -1,3 +1,4 @@
+fn account_view(state: &Account) -> Account { *state }
 struct RoomView { name: String, members: Array<Route> }
 fn room_view(state: &Room) -> RoomView {
     var members = Array.new::<Route>()
@@ -176,8 +177,8 @@ fn verify_atomic_overflow_signal() @suspends {
     var output = outbox.create_with_policy(1, 1, outbox.Overflow.Disconnect(control.handle()))
     let alice = test_account(f.ctx, 1, 1, output.handle())
     let text = "overflow"
-    say(f.ctx, alice.handle(), 1, &text)!!
-    // No retry_command or post-commit close ran: publication closes the signal.
+    say(f.ctx, alice.handle(), &text)!!
+    // No apply_command or post-commit close ran: publication closes the signal.
     check.assert(control.receive().is_none(), "overflow closes the independent signal at commit")
     check.assert(output.receive().is_none(), "oversized target batch is wholly discarded")
     check.assert(balance(&alice) == 400, "overflow still commits the debit")
@@ -227,18 +228,16 @@ fn verify_room_resolution_changes_before_operation() @suspends {
     let control = outbox.create(1, 0)
     var queue = outbox.create_with_policy(8, 1024, outbox.Overflow.Disconnect(control.handle()))
     let alice = test_account(f.ctx, 1, 1, queue.handle())
-    let before = domain.read_from(alice.read_handle(), account_view)!
     check.assert(handle_line(f.ctx, 1, "join other"), "concurrent room change")
     expect_message(&mut queue, "left r 1\n")
     expect_message(&mut queue, "joined other 1\n")
     let text = "stale"
-    match say(f.ctx, alice.handle(), before.room, &text) {
-        Ok(Err(Changed)) => {}, _ => { check.assert(false, "stale resolution rejects before charging") }
-    }
-    check.assert(balance(&alice) == 500, "rejected resolution never charges")
+    say(f.ctx, alice.handle(), &text)!!
+    expect_message(&mut queue, "message other 1 stale\n")
+    check.assert(balance(&alice) == 400, "dynamic path resolves current room and charges once")
     check.assert(handle_line(f.ctx, 1, "say resolved"), "resolve current membership")
     expect_message(&mut queue, "message other 1 resolved\n")
-    check.assert(balance(&alice) == 400, "recalculation charges exactly once")
+    check.assert(balance(&alice) == 300, "each dynamic operation charges exactly once")
 }
 fn verify_chat_queue_domain() @suspends {
     verify_move_rollback()
@@ -345,8 +344,8 @@ fn verify_move_rollback() @suspends {
     check.assert(handle_line(f.ctx, 2, "balance"), "fill destination queue")
     let name = "other"
     domain.write_to(f.other.handle(), retire_test_room, {})!
-    match join(f.ctx, alice.handle(), 1, 2, &name) {
-        Ok(Err(Changed)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
+    match join(f.ctx, alice.handle(), 2, &name) {
+        Ok(Err(Stopped)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
     }
     check.assert(domain.read_from(alice.read_handle(), account_view)!.room == 1, "failed moves preserve account room")
     check.assert(domain.query_from(f.room.read_handle(), member_value, 1)!, "failed moves preserve old membership")

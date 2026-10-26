@@ -274,8 +274,19 @@ pub struct When {
     pub(crate) method: Option<String>,
     pub label: Option<String>,
     pub accesses: Vec<(String, bool)>,
+    pub paths: Vec<Option<WhenPath>>,
+    pub missing: Option<Expr>,
+    pub alias: Option<Expr>,
     pub body: Expr,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhenPath {
+    pub ty: Type,
+    pub directory: Expr,
+    pub key: Expr,
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -805,6 +816,7 @@ pub(crate) enum CompilerIntrinsic {
     DomainAccess(DomainAccessKind),
     DomainModule,
     DomainWhenFinish,
+    DomainPathsFinish,
     DomainReadOnly,
     DomainCreate,
     DomainCreateFinish,

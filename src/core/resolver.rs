@@ -408,7 +408,30 @@ fn resolve_calls(
     match expr {
         Expr::When(block) => {
             let mut inner = locals.clone();
-            inner.extend(block.accesses.iter().map(|(name, _)| name.clone()));
+            for (index, (name, _)) in block.accesses.iter().enumerate() {
+                if let Some(Some(path)) = block.paths.get_mut(index) {
+                    resolve_calls(
+                        &mut path.directory,
+                        functions,
+                        member_roots,
+                        call_forms,
+                        locals,
+                    )?;
+                    resolve_calls(
+                        &mut path.key,
+                        functions,
+                        member_roots,
+                        call_forms,
+                        &mut inner,
+                    )?;
+                }
+                inner.insert(name.clone());
+            }
+            for body in block.missing.iter_mut().chain(block.alias.iter_mut()) {
+                let mut branch = inner.clone();
+                branch.remove(&block.accesses.last().unwrap().0);
+                resolve_calls(body, functions, member_roots, call_forms, &mut branch)?;
+            }
             resolve_calls(
                 &mut block.body,
                 functions,

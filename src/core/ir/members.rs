@@ -604,6 +604,9 @@ impl FunctionPlan {
                             method: Some(method.function.clone()),
                             label: None,
                             accesses: vec![("$when_receiver".into(), mutable)],
+                            paths: vec![],
+                            missing: None,
+                            alias: None,
                             body: Expr::Call {
                                 callee: format!("joky/member/{}", method.function),
                                 type_args: vec![],

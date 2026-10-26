@@ -44,7 +44,148 @@ fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
     }))
 }
 
+struct PreparedWhen {
+    entry: String,
+    input: Type,
+    ret: Type,
+    names: Vec<String>,
+}
+
 impl FunctionPlan {
+    fn when_path_packet(
+        &mut self,
+        block: &When,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<(Type, Slot), Error> {
+        fn projection(expr: &Expr) -> Option<(String, Vec<String>)> {
+            match expr {
+                Expr::Ident { name, .. } => Some((name.clone(), vec![])),
+                Expr::Field {
+                    base,
+                    name,
+                    type_args,
+                    ..
+                } if type_args.is_empty() => {
+                    let (root, mut fields) = projection(base)?;
+                    fields.push(name.clone());
+                    Some((root, fields))
+                }
+                _ => None,
+            }
+        }
+        let fail = || {
+            type_error(&block.span, ErrorCode::InvalidCall,
+            "when paths require DirectoryHandle projections and UInt64 keys; dependent keys must project an earlier state")
+        };
+        let literal = |value| Expr::Literal {
+            literal: Literal::UInt64(value),
+            span: block.span,
+        };
+        let params = self.when_parameters(block, vars)?;
+        let mut elements = vec![literal(u64::from(block.alias.is_some()))];
+        let mut temporary = Vec::new();
+        for (i, (name, _)) in block.accesses.iter().enumerate() {
+            let mut descriptor = vec![literal(0); 6];
+            if let Some(path) = block.paths.get(i).and_then(Option::as_ref) {
+                let (root, _) = projection(&path.directory).ok_or_else(fail)?;
+                if block.accesses[..i].iter().any(|(n, _)| n == &root) {
+                    return Err(fail());
+                }
+                let Flow::Value(Some(directory)) =
+                    self.expr(&path.directory, vars, functions, suspends, types)?
+                else {
+                    return Err(fail());
+                };
+                if !matches!(&directory.ty, Type::Record(r) if r.name == "joky/domain.DirectoryHandle")
+                {
+                    return Err(fail());
+                }
+                let temp = format!("$when.directory.{i}");
+                vars.insert(
+                    temp.clone(),
+                    payload_binding(&Type::UInt64, directory.index),
+                );
+                temporary.push(temp.clone());
+                descriptor[0] = literal(1);
+                descriptor[3] = Expr::Ident {
+                    name: temp,
+                    span: block.span,
+                };
+                descriptor[5] = literal(u64::from(path.optional));
+                if let Some((root, fields)) = projection(&path.key) {
+                    if let Some(dependency) =
+                        block.accesses[..i].iter().position(|(n, _)| n == &root)
+                    {
+                        let ty = &params[dependency].ty.reference_type().unwrap().target;
+                        let mut target = ty.clone();
+                        for field in &fields {
+                            if let Type::Record(record) = &target {
+                                self.check_field(record, field, &block.span)?;
+                            }
+                            target = target.inline_field(field).ok_or_else(fail)?.1.clone();
+                        }
+                        let (offset, ty) = ty.storage_field_path(&fields).map_err(|_| fail())?;
+                        if ty != Type::UInt64 {
+                            return Err(fail());
+                        }
+                        descriptor[1] = literal(dependency as u64 + 1);
+                        descriptor[2] = literal(offset as u64);
+                    } else {
+                        descriptor[4] = path.key.clone();
+                    }
+                } else if matches!(path.key, Expr::Literal { .. }) {
+                    descriptor[4] = path.key.clone();
+                } else {
+                    return Err(fail());
+                }
+            } else {
+                let value = vars
+                    .get(name)
+                    .and_then(|v| v.slot.as_ref())
+                    .ok_or_else(fail)?;
+                let token = self.slot(Type::UInt64)?;
+                self.emit(Op::DomainBits {
+                    dst: token.clone(),
+                    src: Slot {
+                        index: value.index,
+                        ty: crate::runtime::domain::handle_type(),
+                    },
+                    decode: false,
+                });
+                let temp = format!("$when.handle.{i}");
+                vars.insert(temp.clone(), payload_binding(&Type::UInt64, token.index));
+                temporary.push(temp.clone());
+                descriptor[4] = Expr::Ident {
+                    name: temp,
+                    span: block.span,
+                };
+            }
+            elements.extend(descriptor);
+        }
+        let ty = self.dynamic_array_type(Type::UInt64, types, block.span)?;
+        let flow = self.expr_expected(
+            &Expr::Array {
+                elements,
+                span: block.span,
+            },
+            vars,
+            functions,
+            suspends,
+            types,
+            Some(&ty),
+        );
+        for name in temporary {
+            vars.remove(&name);
+        }
+        let Flow::Value(Some(slot)) = flow? else {
+            return Err(fail());
+        };
+        Ok((ty, slot))
+    }
+
     fn when_parameters(
         &self,
         block: &When,
@@ -53,7 +194,15 @@ impl FunctionPlan {
         block
             .accesses
             .iter()
-            .map(|(name, mutable)| {
+            .enumerate()
+            .map(|(index, (name, mutable))| {
+                if let Some(Some(path)) = block.paths.get(index) {
+                    return Ok(Param {
+                        name: name.clone(),
+                        ty: Type::reference(path.ty.clone(), *mutable),
+                        span: block.span,
+                    });
+                }
                 let ty = vars.get(name).map(|b| slot_type(&b.slot));
                 let target = match ty {
                     Some(Type::Record(r))
@@ -126,15 +275,16 @@ impl FunctionPlan {
         self.when_result(&ret, types).ok()
     }
 
-    pub(super) fn when_expr(
+    fn prepare_when(
         &mut self,
         block: &When,
         vars: &mut HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
-        expected: Option<&Type>,
-    ) -> Result<Flow, Error> {
+        context: (Option<&Type>, Option<(&PreparedWhen, &str)>),
+    ) -> Result<PreparedWhen, Error> {
+        let (expected, shared) = context;
         if !suspends
             || self.generics.borrow().checking
             || !self
@@ -179,18 +329,40 @@ impl FunctionPlan {
                 })
                 .collect(),
             ret: None,
-            body: block.body.clone(),
+            body: Expr::Block {
+                exprs: std::iter::once(block.body.clone())
+                    .chain(block.missing.clone())
+                    .chain(block.alias.clone())
+                    .collect(),
+                span: block.span,
+            },
             span: block.span,
         };
         let mut names = closures::free_names(&anonymous, vars)?;
         names.sort();
-        let input = packet(
+        let mut input = packet(
             "$when.captures".into(),
             names
                 .iter()
                 .map(|n| (n.clone(), slot_type(&vars[n].slot)))
                 .collect(),
         );
+        if let Some((shared, _)) = shared {
+            names = shared.names.clone();
+            input = shared.input.clone();
+        }
+        let dynamic = shared.is_some() || block.paths.iter().any(Option::is_some);
+        if dynamic {
+            for name in &names {
+                let ty = slot_type(&vars[name].slot);
+                if ty.is_owner() {
+                    local.insert(
+                        name.clone(),
+                        payload_binding(&Type::reference(ty, false), 0),
+                    );
+                }
+            }
+        }
         if !self.domain_value(&input) {
             return Err(type_error(
                 &block.span,
@@ -206,7 +378,9 @@ impl FunctionPlan {
                 _ => None,
             })
             .filter(|ty| self.when_result(ty, types).ok().as_ref() == expected);
-        let ret = expected_body
+        let ret = shared
+            .map(|(s, _)| s.ret.clone())
+            .or(expected_body)
             .or_else(|| self.bound_hint(&block.body, &local, functions, types))
             .ok_or_else(|| {
                 type_error(
@@ -222,7 +396,9 @@ impl FunctionPlan {
                 "when result requires a bounded value (64 contract members, 64 lanes, 8 aggregate levels)",
             ));
         }
-        let entry = {
+        let entry = if let Some((shared, suffix)) = shared {
+            format!("{}/{suffix}", shared.entry)
+        } else {
             let mut c = self.generics.borrow_mut();
             if let Some((_, _, entry)) = c
                 .when_sites
@@ -277,7 +453,7 @@ impl FunctionPlan {
             }
         };
         let mut body = Vec::new();
-        let owned_captures = input.is_owner();
+        let owned_captures = input.is_owner() && !dynamic;
         if owned_captures {
             use crate::parser::ast::{BindingPattern, RecordFieldPattern, RecordPattern};
             body.push(Expr::Destructure {
@@ -310,7 +486,7 @@ impl FunctionPlan {
             });
         }
         for name in &names {
-            let value = Box::new(if owned_captures {
+            let value = if owned_captures {
                 Expr::Ident {
                     name: format!("$capture.{name}"),
                     span: block.span,
@@ -325,22 +501,33 @@ impl FunctionPlan {
                     type_args: vec![],
                     span: block.span,
                 }
-            });
-            body.push(if vars[name].mutable {
-                Expr::Var {
-                    name: name.clone(),
-                    annotation: None,
-                    value,
+            };
+            let value = Box::new(if dynamic && slot_type(&vars[name].slot).is_owner() {
+                Expr::Unary {
+                    op: UnaryOp::Borrow,
+                    operand: Box::new(value),
                     span: block.span,
                 }
             } else {
-                Expr::Let {
-                    name: name.clone(),
-                    annotation: None,
-                    value,
-                    span: block.span,
-                }
+                value
             });
+            body.push(
+                if vars[name].mutable && (!dynamic || !slot_type(&vars[name].slot).is_owner()) {
+                    Expr::Var {
+                        name: name.clone(),
+                        annotation: None,
+                        value,
+                        span: block.span,
+                    }
+                } else {
+                    Expr::Let {
+                        name: name.clone(),
+                        annotation: None,
+                        value,
+                        span: block.span,
+                    }
+                },
+            );
         }
         body.push(block.body.clone());
         params.push(Param {
@@ -415,42 +602,94 @@ impl FunctionPlan {
                 });
         }
         self.domain_calls.push((entry.clone(), block.span));
-        let handles = packet(
-            "$when.handles".into(),
-            block
-                .accesses
-                .iter()
-                .map(|(n, _)| (n.clone(), Type::UInt64))
-                .collect(),
-        );
-        let handle_slot = self.slot(handles.clone())?;
-        for (i, (name, _)) in block.accesses.iter().enumerate() {
-            let Flow::Value(Some(value)) = self.expr(
-                &Expr::Ident {
-                    name: name.clone(),
-                    span: block.span,
-                },
-                vars,
-                functions,
-                suspends,
-                types,
-            )?
-            else {
-                unreachable!()
-            };
-            let token = Slot {
-                index: value.index,
-                ty: crate::runtime::domain::handle_type(),
-            };
-            self.emit(Op::DomainBits {
-                dst: Slot {
-                    index: handle_slot.index + i,
-                    ty: Type::UInt64,
-                },
-                src: token,
-                decode: false,
-            });
+        Ok(PreparedWhen {
+            entry,
+            input,
+            ret,
+            names,
+        })
+    }
+
+    pub(super) fn when_expr(
+        &mut self,
+        block: &When,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        let prepared =
+            self.prepare_when(block, vars, functions, suspends, types, (expected, None))?;
+        let dynamic = block.paths.iter().any(Option::is_some);
+        if dynamic {
+            for (suffix, branch) in [("missing", &block.missing), ("alias", &block.alias)] {
+                if let Some(body) = branch {
+                    let mut alternate = block.clone();
+                    alternate.accesses.pop();
+                    alternate.paths.pop();
+                    alternate.body = body.clone();
+                    alternate.missing = None;
+                    alternate.alias = None;
+                    // Preserve borrowed capture rules even when the only path was last.
+                    self.prepare_when(
+                        &alternate,
+                        vars,
+                        functions,
+                        suspends,
+                        types,
+                        (expected, Some((&prepared, suffix))),
+                    )?;
+                }
+            }
         }
+        let PreparedWhen {
+            entry,
+            input,
+            ret,
+            names,
+        } = prepared;
+        let (handles, handle_slot) = if dynamic {
+            self.when_path_packet(block, vars, functions, suspends, types)?
+        } else {
+            let handles = packet(
+                "$when.handles".into(),
+                block
+                    .accesses
+                    .iter()
+                    .map(|(n, _)| (n.clone(), Type::UInt64))
+                    .collect(),
+            );
+            let handle_slot = self.slot(handles.clone())?;
+            for (i, (name, _)) in block.accesses.iter().enumerate() {
+                let Flow::Value(Some(value)) = self.expr(
+                    &Expr::Ident {
+                        name: name.clone(),
+                        span: block.span,
+                    },
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                )?
+                else {
+                    unreachable!()
+                };
+                let token = Slot {
+                    index: value.index,
+                    ty: crate::runtime::domain::handle_type(),
+                };
+                self.emit(Op::DomainBits {
+                    dst: Slot {
+                        index: handle_slot.index + i,
+                        ty: Type::UInt64,
+                    },
+                    src: token,
+                    decode: false,
+                });
+            }
+            (handles, handle_slot)
+        };
         let input_slot = self.slot(input.clone())?;
         for name in &names {
             let Flow::Value(value) = self.expr(
@@ -499,8 +738,9 @@ impl FunctionPlan {
                 .iter()
                 .find(|(_, f)| {
                     matches!(
-                        f.compiler_intrinsic,
-                        Some(CompilerIntrinsic::DomainWhenFinish)
+                        (dynamic, &f.compiler_intrinsic),
+                        (true, Some(CompilerIntrinsic::DomainPathsFinish))
+                            | (false, Some(CompilerIntrinsic::DomainWhenFinish))
                     )
                 })
                 .map(|(n, _)| n.clone())

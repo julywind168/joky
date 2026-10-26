@@ -30,7 +30,6 @@ enum Command { Welcome, Balance, Join(String), Leave, Say(String), Invalid, Disc
 fn make_catalog(_: Unit) -> Catalog { Catalog { rooms: Array.new::<RoomEntry>() } }
 fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>(), retired: false } }
 fn make_account(account: Account) -> Account { account }
-fn account_view(state: &Account) -> Account { *state }
 
 // Protocol: decode once, then run one command through bounded recovery.
 fn parse(line: String) -> Command {
@@ -58,16 +57,14 @@ fn dispatch(request: Call) @suspends -> Bool {
 }
 
 // Command operations keep validation, business rules and messages in one version.
-enum Retry { Changed, Stopped }
-type Attempt = Result<Result<Route, Retry>, domain.DomainAccessError>
-fn check_account(account: &Account, expected: UInt64) -> Result<Route, Retry> {
-    if !account.route.live { Err(Retry.Stopped) }
-    else if account.room != expected { Err(Retry.Changed) }
-    else { Ok(account.route) }
+enum CommandError { Stopped }
+type Attempt = Result<Result<(Route, UInt64), CommandError>, domain.DomainAccessError>
+fn check_account(account: &Account) -> Result<Route, CommandError> {
+    if !account.route.live { Err(CommandError.Stopped) } else { Ok(account.route) }
 }
-fn check_member(account: &Account, room: &Room, expected: UInt64) -> Result<Route, Retry> {
-    let route = check_account(account, expected)?
-    if member(room, route.id) { Ok(route) } else { Err(Retry.Stopped) }
+fn check_member(account: &Account, room: &Room) -> Result<Route, CommandError> {
+    let route = check_account(account)?
+    if member(room, route.id) { Ok(route) } else { Err(CommandError.Stopped) }
 }
 fn reply(
     account: domain.WriteHandle<Account>,
@@ -75,7 +72,7 @@ fn reply(
 ) @suspends -> Attempt {
     let command = command.clone()
     when "reply" (mut account) {
-        if !account.route.live { Err(Retry.Stopped) }
+        if !account.route.live { Err(CommandError.Stopped) }
         else {
             let id = account.route.id
             let message = match command {
@@ -84,37 +81,25 @@ fn reply(
                 _ => "error use join <room>, leave, say <message>, or balance\n"
             }
             deliver(account.route, &message)
-            Ok(account.route)
+            Ok((account.route, NO_ROOM))
         }
     }
 }
-fn say(
-    host: Host,
-    account: domain.WriteHandle<Account>,
-    expected: UInt64,
-    text: &String,
-) @suspends -> Attempt {
+fn say(host: Host, account: domain.WriteHandle<Account>, text: &String) @suspends -> Attempt {
     let text = text.clone()
-    if expected == NO_ROOM {
-        return when "outside" (mut account) {
-            let route = check_account(account, expected)?
-            deliver(route, "error join a room first\n")
-            Ok(route)
-        }
-    }
-    let room = match room_handle(host, expected) {
-        Some(room) => room,
-        None => return Err(domain.DomainAccessError.Closed)
-    }
-    when "say" (mut account, room) {
-        let route = check_member(account, room, expected)?
+    when "say" (mut account, room?: Room = host.rooms[account.room]) {
+        let route = check_member(account, room)?
         if account.balance_cents < 100 { deliver(route, "error insufficient balance\n") }
         else {
             account.balance_cents -= 100
-            let message = say_message(&room.name, route.id, &text)
+            let message = say_message(&room.name, route.id, text)
             broadcast(room, &message, NO_CLIENT)
         }
-        Ok(route)
+        Ok((route, NO_ROOM))
+    } else {
+        let route = check_account(account)?
+        deliver(route, "error join a room first\n")
+        Ok((route, NO_ROOM))
     }
 }
 fn enter(
@@ -122,8 +107,8 @@ fn enter(
     room: &mut Room,
     key: UInt64,
     name: &String,
-) -> Result<Route, Retry> {
-    if room.retired || !room.name.equals(name) { return Err(Retry.Changed) }
+) -> Result<Route, CommandError> {
+    if room.retired || !room.name.equals(name) { return Err(CommandError.Stopped) }
     let route = account.route
     let message = event("joined", &room.name, route.id, "")
     broadcast(room, &message, NO_CLIENT)
@@ -139,69 +124,39 @@ fn depart(account: &mut Account, room: &mut Room, closing: Bool) {
     remove_member(room, id)
     account.room = NO_ROOM
 }
-fn join(
-    host: Host,
-    account: domain.WriteHandle<Account>,
-    expected: UInt64,
-    key: UInt64,
-    name: &String,
-) @suspends -> Attempt {
-    let next = match room_handle(host, key) {
-        Some(room) => room,
-        None => return Err(domain.DomainAccessError.Closed)
-    }
+fn join(host: Host, account: domain.WriteHandle<Account>, key: UInt64, name: &String) @suspends -> Attempt {
     let name = name.clone()
-    if expected == key {
-        return when "already joined" (mut account, next) {
-            let route = check_member(account, next, expected)?
-            deliver(route, "error already joined\n")
-            Ok(route)
-        }
-    }
-    if expected == NO_ROOM {
-        return when "join" (mut account, mut next) {
-            check_account(account, expected)?
-            enter(account, next, key, &name)
-        }
-    }
-    let old = match room_handle(host, expected) {
-        Some(room) => room,
-        None => return Err(domain.DomainAccessError.Closed)
-    }
-    when "move" (mut account, mut old, mut next) {
-        check_member(account, old, expected)?
+    when "move" (mut account, mut next: Room = host.rooms[key], mut old?: Room = host.rooms[account.room]) {
+        check_member(account, old)?
+        let previous = account.room
         depart(account, old, false)
-        enter(account, next, key, &name)
+        Ok((enter(account, next, key, name)?, previous))
+    } else {
+        check_account(account)?
+        Ok((enter(account, next, key, name)?, NO_ROOM))
+    } alias {
+        let route = check_member(account, next)?
+        deliver(route, "error already joined\n")
+        Ok((route, NO_ROOM))
     }
 }
-fn leave(
-    host: Host,
-    account: domain.WriteHandle<Account>,
-    expected: UInt64,
-    closing: Bool,
-) @suspends -> Attempt {
-    if expected == NO_ROOM {
-        return when "outside" (mut account) {
-            let route = check_account(account, expected)?
-            if closing { account.route.live = false } else { deliver(route, "error join a room first\n") }
-            Ok(route)
-        }
-    }
-    let room = match room_handle(host, expected) {
-        Some(room) => room,
-        None => return Err(domain.DomainAccessError.Closed)
-    }
-    when "leave" (mut account, mut room) {
-        let route = check_member(account, room, expected)?
+fn leave(host: Host, account: domain.WriteHandle<Account>, closing: Bool) @suspends -> Attempt {
+    when "leave" (mut account, mut room?: Room = host.rooms[account.room]) {
+        let route = check_member(account, room)?
+        let previous = account.room
         depart(account, room, closing)
         if closing { account.route.live = false }
-        Ok(route)
+        Ok((route, previous))
+    } else {
+        let route = check_account(account)?
+        if closing { account.route.live = false } else { deliver(route, "error join a room first\n") }
+        Ok((route, NO_ROOM))
     }
 }
 
-// Recovery retries complete resolutions when membership or directory identity changes.
+// A command queues one complete access-path operation; the runtime revalidates routes.
 struct Request { host: Host, id: UInt64, command: Command }
-enum CommandFailure { Unavailable, Stopped, Rejected, RetryLimit }
+enum CommandFailure { Unavailable, Rejected }
 enum Step { Done, Failed(CommandFailure) }
 fn run_command(host: Host, id: UInt64, command: Command) @suspends -> Bool {
     let account = match domain.lookup_write::<Account>(host.accounts, id) {
@@ -209,97 +164,62 @@ fn run_command(host: Host, id: UInt64, command: Command) @suspends -> Bool {
         None => return false
     }
     let input = Request { host: host, id: id, command: command }
-    match domain.request(account, retry_command, input) {
-        Ok(Done) => true,
-        _ => false
-    }
+    match domain.request(account, apply_command, input) { Ok(Done) => true, _ => false }
 }
-fn retry_command(input: Request) @suspends -> Step {
+fn apply_command(input: Request) @suspends -> Step {
     let Request { host, id, command } = input
-    var tries: UInt64 = 0
-    while tries < host.config.retries {
-        tries += 1
-        // Directory resolution and room creation belong to the complete retry boundary.
-        let next_key = match &command {
-            Join(name) => {
-                let key = ensure_room(host, name)
-                if key == NO_ROOM { return Step.Failed(CommandFailure.Unavailable) }
-                key
-            },
-            _ => NO_ROOM
-        }
-        let account = match domain.lookup_write::<Account>(host.accounts, id) {
-            Some(handle) => handle,
-            None => return Step.Failed(CommandFailure.Unavailable)
-        }
-        let value = match domain.read_from(account.read_only(), account_view) {
-            Ok(value) => value,
-            Err(_) => return Step.Failed(CommandFailure.Unavailable)
-        }
-        if !value.route.live { return Step.Failed(CommandFailure.Stopped) }
-        let result = match &command {
-            Say(text) => say(host, account, value.room, text),
-            Join(name) => join(host, account, value.room, next_key, name),
-            Leave => leave(host, account, value.room, false),
-            Disconnect => leave(host, account, value.room, true),
-            _ => reply(account, &command)
-        }
-        match result {
-            Ok(Ok(route)) => {
-                match &command {
-                    Disconnect => {
-                        route.output.close()
-                        reclaim(host, value.room)
-                    },
-                    Join(_) => reclaim(host, value.room),
-                    Leave => reclaim(host, value.room),
-                    _ => {}
-                }
-                return Step.Done
-            },
-            Ok(Err(Changed)) => continue,
-            Err(Closed) => continue,
-            _ => return Step.Failed(CommandFailure.Rejected)
-        }
+    let next_key = match &command {
+        Join(name) => {
+            let key = ensure_room(host, name)
+            if key == NO_ROOM { return Step.Failed(CommandFailure.Unavailable) }
+            key
+        },
+        _ => NO_ROOM
     }
-    Step.Failed(CommandFailure.RetryLimit)
+    let account = match domain.lookup_write::<Account>(host.accounts, id) {
+        Some(handle) => handle,
+        None => return Step.Failed(CommandFailure.Unavailable)
+    }
+    let result = match &command {
+        Say(text) => say(host, account, text),
+        Join(name) => join(host, account, next_key, name),
+        Leave => leave(host, account, false),
+        Disconnect => leave(host, account, true),
+        _ => reply(account, &command)
+    }
+    match result {
+        Ok(Ok((route, previous))) => {
+            match &command { Disconnect => route.output.close(), _ => {} }
+            reclaim(host, previous)
+            Step.Done
+        },
+        _ => Step.Failed(CommandFailure.Rejected)
+    }
 }
 
 // Membership cleanup has no queue dependency, including after a failed Script call.
 fn forget(client: Client) @suspends {
     let host = client.host
     let id = client.id
-    var tries: UInt64 = 0
-    while tries < host.config.retries {
-        tries += 1
-        let account = match domain.lookup_write::<Account>(host.accounts, id) { Some(h) => h, None => return }
-        let value = match domain.read_from(account.read_only(), account_view) { Ok(v) => v, Err(_) => return }
-        let key = value.room
-        let removed = match room_handle(host, key) {
-            Some(room) => when "forget member" (mut account, mut room) {
-                if account.room != key { false }
-                else {
-                    remove_member(room, id)
-                    account.room = NO_ROOM
-                    account.route.live = false
-                    true
-                }
-            },
-            None => when "forget account" (mut account) {
-                if account.room != key { false }
-                else {
-                    account.room = NO_ROOM
-                    account.route.live = false
-                    true
-                }
-            }
-        }
-        if removed.unwrap_or(false) {
-            value.route.output.close()
+    let account = match domain.lookup_write::<Account>(host.accounts, id) { Some(h) => h, None => return }
+    let removed = when "forget" (mut account, mut room?: Room = host.rooms[account.room]) {
+        let previous = account.room
+        remove_member(room, id)
+        account.room = NO_ROOM
+        account.route.live = false
+        (account.route, previous)
+    } else {
+        account.room = NO_ROOM
+        account.route.live = false
+        (account.route, NO_ROOM)
+    }
+    match removed {
+        Ok((route, previous)) => {
+            route.output.close()
             host.accounts.remove(id, account.read_only());
-            reclaim(host, key)
-            return
-        }
+            reclaim(host, previous)
+        },
+        _ => {}
     }
 }
 

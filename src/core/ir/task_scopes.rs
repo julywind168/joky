@@ -313,11 +313,24 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
     fn visit(expr: &Expr, scopes: &mut Vec<std::collections::HashSet<String>>, walk: &mut Walk) {
         match expr {
             Expr::When(w) => {
-                for (name, _) in &w.accesses {
-                    walk.capture(name, scopes);
+                scopes.push(std::collections::HashSet::new());
+                for (index, (name, _)) in w.accesses.iter().enumerate() {
+                    if let Some(Some(path)) = w.paths.get(index) {
+                        visit(&path.directory, scopes, walk);
+                        visit(&path.key, scopes, walk);
+                    } else {
+                        walk.capture(name, scopes);
+                    }
+                    scopes.last_mut().unwrap().insert(name.clone());
                 }
-                scopes.push(w.accesses.iter().map(|(name, _)| name.clone()).collect());
                 visit(&w.body, scopes, walk);
+                scopes
+                    .last_mut()
+                    .unwrap()
+                    .remove(&w.accesses.last().unwrap().0);
+                for body in w.missing.iter().chain(w.alias.iter()) {
+                    visit(body, scopes, walk);
+                }
                 scopes.pop();
             }
             Expr::AnonymousFunction(f) => {

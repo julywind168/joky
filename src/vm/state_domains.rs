@@ -55,6 +55,8 @@ pub struct DomainLimits {
     pub max_domains: usize,
     pub max_state_bytes: usize,
     pub max_requests: usize,
+    /// Maximum complete path recomputations after queued identities change.
+    pub max_path_retries: usize,
     pub max_operation_messages: usize,
     pub max_operation_bytes: usize,
     /// Logical request storage: entry, function name and scalar input storage.
@@ -66,6 +68,7 @@ impl Default for DomainLimits {
             max_domains: 4096,
             max_state_bytes: 64 * 1024 * 1024,
             max_requests: 4096,
+            max_path_retries: 64,
             max_operation_messages: 1024,
             max_operation_bytes: 1024 * 1024,
             max_request_bytes: 4 * 1024 * 1024,
@@ -293,7 +296,7 @@ impl Request {
         self.domain == domain
             || matches!(&self.work, Work::SnapshotSet(set) if set.touches(domain))
             || matches!(&self.work, Work::CommitSet(Some(set)) if set.touches(domain))
-            || matches!(&self.work, Work::Pair(pair) if pair.handles.iter().any(|h| h.sequence == domain))
+            || matches!(&self.work, Work::Pair(pair) if pair.paths.is_none() && pair.handles.iter().any(|h| h.sequence == domain))
             || matches!(&self.work, Work::Commit(Some(candidate)) if candidate.reads.touches(domain))
             || matches!(&self.work, Work::CommitPair(Some(bundle)) if bundle.touches(domain))
     }

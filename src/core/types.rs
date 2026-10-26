@@ -1230,7 +1230,15 @@ pub(crate) fn resolve_pattern_heads(
         while let Some(expr) = pending.pop() {
             match expr {
                 Expr::IndexedLoop(loop_) => pending.push(&mut loop_.body),
-                Expr::When(w) => pending.push(&mut w.body),
+                Expr::When(w) => {
+                    pending.push(&mut w.body);
+                    pending.extend(w.missing.iter_mut());
+                    pending.extend(w.alias.iter_mut());
+                    for path in w.paths.iter_mut().flatten() {
+                        pending.push(&mut path.directory);
+                        pending.push(&mut path.key);
+                    }
+                }
                 Expr::AnonymousFunction(f) => pending.push(&mut f.body),
                 Expr::Destructure { pattern, value, .. } => {
                     walk_binding(pattern, aliases, registry)?;
@@ -1357,7 +1365,17 @@ pub(crate) fn map_syntax(
     substitutions: &Substitutions,
 ) -> Result<(), Error> {
     match expr {
-        Expr::When(block) => map_syntax(&mut block.body, map, substitutions)?,
+        Expr::When(block) => {
+            for path in block.paths.iter_mut().flatten() {
+                map(&mut path.ty, block.span)?;
+                map_syntax(&mut path.directory, map, substitutions)?;
+                map_syntax(&mut path.key, map, substitutions)?;
+            }
+            map_syntax(&mut block.body, map, substitutions)?;
+            for body in block.missing.iter_mut().chain(block.alias.iter_mut()) {
+                map_syntax(body, map, substitutions)?;
+            }
+        }
         Expr::AnonymousFunction(function) => {
             for param in &mut function.params {
                 if let Some(ty) = &mut param.ty {

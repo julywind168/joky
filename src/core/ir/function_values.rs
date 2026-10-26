@@ -81,6 +81,7 @@ impl FunctionPlan {
                     | CompilerIntrinsic::DomainAt(_)
                     | CompilerIntrinsic::DomainPair(_)
                     | CompilerIntrinsic::DomainRequest
+                    | CompilerIntrinsic::DomainPathsFinish
                     | CompilerIntrinsic::DomainWhenFinish
                     | CompilerIntrinsic::DomainValueFinish(_)
                     | CompilerIntrinsic::DomainScalarFinish(_)

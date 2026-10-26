@@ -70,7 +70,8 @@ pub(super) unsafe fn poll(
 ) -> Result<Option<u64>, Error> {
     use crate::runtime::domain::Operation;
     let ambient = op == Operation::CurrentValues;
-    let many = op == Operation::When;
+    let paths = op == Operation::WhenPaths;
+    let many = matches!(op, Operation::When | Operation::WhenPaths);
     let packet_slot = if ambient {
         1
     } else if many {
@@ -84,6 +85,9 @@ pub(super) unsafe fn poll(
             let (handles, module, name_slot) = if ambient {
                 let (handle, module) = tasks::value_context(registry)?;
                 (vec![handle], module, 0)
+            } else if paths {
+                let (module, _) = source::module(registry, frame.slots[0])?;
+                (vec![], module, 1)
             } else if many {
                 let packet = &*(frame.slots[2] as *const Buffer);
                 if !(1..=64).contains(&packet.len()) {
@@ -105,9 +109,13 @@ pub(super) unsafe fn poll(
                 let (module, _) = source::module(registry, frame.slots[0])?;
                 (handles, module, 4)
             };
-            let count = handles.len();
             let name = crate::runtime::owned_text::borrow(frame.slots[name_slot] as *const Buffer)?;
             let info = module.instance_info(name)?;
+            let count = if paths {
+                crate::core::state_domain::access_count(&info)
+            } else {
+                handles.len()
+            };
             if !info.domain_entry
                 || !crate::core::state_domain::value_eligible(&info)
                 || crate::core::state_domain::access_count(&info) != count
@@ -120,18 +128,48 @@ pub(super) unsafe fn poll(
                 0;
                 info.signature.ret.scalar_types().len()
             ]));
-            let request = pairs::submit_values(
-                registry,
-                &handles,
-                &module,
-                name,
-                input,
-                pairs::ValueOutput {
-                    words: output.clone(),
-                    snapshot: false,
-                },
-                crate::runtime::suspension::current_limits(),
-            )?;
+            let request = if paths {
+                let descriptors = input_words(
+                    &[Type::Buffer(std::sync::Arc::new(Type::UInt64))],
+                    &*(frame.slots[2] as *const Buffer),
+                )?;
+                let result = pairs::paths::submit(
+                    registry,
+                    module.clone(),
+                    name,
+                    descriptors[2..].to_vec(),
+                    input,
+                    pairs::ValueOutput {
+                        words: output.clone(),
+                        snapshot: false,
+                    },
+                    crate::runtime::suspension::current_limits(),
+                );
+                match result {
+                    Ok(request) => request,
+                    Err(rejection) => {
+                        return Ok(Some(access::reply(
+                            frame,
+                            op,
+                            rejection.status(),
+                            rejection.payload(),
+                        )))
+                    }
+                }
+            } else {
+                pairs::submit_values(
+                    registry,
+                    &handles,
+                    &module,
+                    name,
+                    input,
+                    pairs::ValueOutput {
+                        words: output.clone(),
+                        snapshot: false,
+                    },
+                    crate::runtime::suspension::current_limits(),
+                )?
+            };
             request.register_current_wait()?;
             frame.host_context = Box::into_raw(Box::new(Wait { request, output })).cast();
             frame.host_stop = Some(stop);
@@ -173,6 +211,15 @@ pub(super) unsafe fn poll(
     }
     match result {
         Err(error) if initial => {
+            if paths {
+                let rejection = access::Rejection::from_error(&error);
+                return Ok(Some(access::reply(
+                    frame,
+                    op,
+                    rejection.status(),
+                    rejection.payload(),
+                )));
+            }
             if many {
                 let packet = &*(frame.slots[2] as *const Buffer);
                 let tokens = (0..packet.len().min(64))

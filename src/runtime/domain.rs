@@ -97,6 +97,7 @@ pub(crate) enum Operation {
     CommitFailedOutbox,
     DirectoryInsertOwned,
     OutboxCreateDisconnect,
+    WhenPaths,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +127,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_query_at" => Operation::Query,
         "__domain_query_scalar" => Operation::CurrentQuery,
         "__domain_when" => Operation::When,
+        "__domain_when_paths" => Operation::WhenPaths,
         "__domain_values" => Operation::Values,
         "__domain_current_values" => Operation::CurrentValues,
         "__timer_create" => Operation::TimerCreate,
@@ -264,6 +266,7 @@ impl Operation {
                 | Self::CurrentWrite
                 | Self::Pair
                 | Self::When
+                | Self::WhenPaths
                 | Self::Values
                 | Self::CurrentValues
                 | Self::Query
@@ -271,8 +274,14 @@ impl Operation {
         )
     }
     pub(crate) fn status_payload(self) -> bool {
-        matches!(self, Self::Request | Self::SetRevisionChecked | Self::When)
-            || (self.access() && !matches!(self, Self::Values | Self::CurrentValues | Self::When))
+        matches!(
+            self,
+            Self::Request | Self::SetRevisionChecked | Self::When | Self::WhenPaths
+        ) || (self.access()
+            && !matches!(
+                self,
+                Self::Values | Self::CurrentValues | Self::When | Self::WhenPaths
+            ))
     }
     pub(crate) fn signature(self) -> FunctionSignature {
         let token = handle_type();
@@ -290,7 +299,7 @@ impl Operation {
         let directory = Type::Resource("domain.DirectoryOwner".into());
         let (params, ret) = match self {
             Self::PeriodicStatus => (vec![token, text], Type::Int32),
-            Self::When => (
+            Self::When | Self::WhenPaths => (
                 vec![
                     m,
                     text,
@@ -707,6 +716,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         92 => Operation::CommitFailedOutbox,
         93 => Operation::DirectoryInsertOwned,
         94 => Operation::OutboxCreateDisconnect,
+        95 => Operation::WhenPaths,
 
         _ => {
             super::error::record_error(Error::new_with_code(

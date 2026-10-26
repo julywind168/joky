@@ -25,7 +25,15 @@ pub(super) struct ClosureDefinition {
 pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
     match expr {
         Expr::IndexedLoop(loop_) => vec![&loop_.body],
-        Expr::When(w) => vec![&w.body],
+        Expr::When(w) => w
+            .paths
+            .iter()
+            .flatten()
+            .flat_map(|p| [&p.directory, &p.key])
+            .chain(std::iter::once(&w.body))
+            .chain(w.missing.iter())
+            .chain(w.alias.iter())
+            .collect(),
         Expr::AnonymousFunction(f) => vec![&f.body],
         Expr::Invoke { callee, args, .. } => std::iter::once(callee.as_ref()).chain(args).collect(),
         Expr::MethodCall(c) => std::iter::once(&c.receiver).chain(&c.args).collect(),

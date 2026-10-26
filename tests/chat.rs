@@ -416,19 +416,14 @@ fn chat_real_tcp_on_all_backends() {
         "import joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
         include_str!("../examples/chat_logic.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
-        assert_eq!(
-            logic
-                .matches("if !value.route.live { return Step.Failed(CommandFailure.Stopped) }")
-                .count(),
-            1
-        );
+        assert_eq!(logic.matches("let result = match &command {").count(), 1);
         let logic = logic.replace(
             "Action.Line(line) => handle_line(host, id, line),",
             "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; handle_line(host, id, line) },",
         );
         let logic = logic.replace(
-            "if !value.route.live { return Step.Failed(CommandFailure.Stopped) }",
-            "if !value.route.live { return Step.Failed(CommandFailure.Stopped) }\n        pause_send(host, &command)",
+            "let result = match &command {",
+            "pause_send(host, &command)\n    let result = match &command {",
         );
         std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
         let next = logic

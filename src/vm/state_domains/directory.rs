@@ -329,3 +329,30 @@ pub(super) unsafe fn poll(
 
 #[cfg(test)]
 mod tests;
+
+/// Read-only path resolution never prunes or drops directory owners.
+pub(super) fn resolve_path(
+    domains: &Domains,
+    token: u64,
+    key: u64,
+) -> Result<Option<DomainHandle>, access::Rejection> {
+    let table = domains
+        .directories
+        .get(&token)
+        .and_then(Weak::upgrade)
+        .ok_or(access::Rejection::Closed)?;
+    let table = table.borrow();
+    if table.closed || domains.shutting_down {
+        return Err(access::Rejection::Closed);
+    }
+    let Some(handle) = table.position(key).ok().map(|i| table.entries[i].handle) else {
+        return Ok(None);
+    };
+    match domains.get(handle) {
+        Ok(_) => Ok(Some(handle)),
+        Err(error) => match access::classify(domains, &[handle], &error) {
+            access::Rejection::Closed => Ok(None),
+            rejection => Err(rejection),
+        },
+    }
+}

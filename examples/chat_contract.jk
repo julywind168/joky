@@ -6,14 +6,13 @@ import joky/option.{type Option}
 
 pub struct Config {
     pub connection: session.Options,
-    pub retries: UInt64,
     pub max_rooms: UInt64,
     pub max_clients: UInt64,
     pub room_wait_ms: UInt64,
     pub reclaim_empty: Bool
 }
 pub fn defaults() -> Config {
-    Config { connection: session.defaults(), retries: 64,
+    Config { connection: session.defaults(),
         max_rooms: 4096, max_clients: 512, room_wait_ms: 5000, reclaim_empty: true }
 }
 pub struct Host {

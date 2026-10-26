@@ -1,9 +1,11 @@
 //! Complete bounded domain access sets on the existing FIFO executor.
 use super::*;
+pub(super) mod paths;
 mod transactions;
 
 pub(super) struct Pair {
     pub(super) handles: Vec<DomainHandle>,
+    pub(super) paths: Option<Box<paths::Paths>>,
     anonymous_module: Option<usize>,
     module: LoadedModule,
     method: String,
@@ -223,6 +225,7 @@ fn submit_words(
         registry,
         handles[0].sequence,
         Work::Pair(Pair {
+            paths: None,
             anonymous_module,
             handles: handles.to_vec(),
             module,
@@ -277,6 +280,16 @@ pub(super) fn execute(
     rejection: &mut Option<access::Rejection>,
     charge: &mut usize,
 ) -> (DomainOutcome, Vec<TaskId>, Vec<TaskGroup>) {
+    if pair.paths.is_some() {
+        if let Err(reason) = paths::refresh(domains, pair) {
+            *rejection = Some(reason);
+            return (
+                DomainOutcome::Failed(invalid("Dynamic domain path rejected")),
+                vec![],
+                vec![],
+            );
+        }
+    }
     let count = pair.handles.len();
     let mut mutable = [false; 64];
     for (i, ty) in pair.info.signature.params[..count].iter().enumerate() {

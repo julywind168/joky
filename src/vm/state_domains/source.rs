@@ -747,7 +747,7 @@ pub(crate) unsafe fn poll(
     let executor = crate::runtime::executor::current_executor()
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
-    if op.access() && op.status_payload() && op != Operation::When {
+    if op.access() && op.status_payload() && !matches!(op, Operation::When | Operation::WhenPaths) {
         let initial = frame.state == 0;
         let result = match wait(arena, frame, &registry, op) {
             Err(error) if initial => {
@@ -799,7 +799,7 @@ pub(crate) unsafe fn poll(
                 None => return Ok(None),
             }
         }
-        Operation::Values | Operation::CurrentValues | Operation::When => {
+        Operation::Values | Operation::CurrentValues | Operation::When | Operation::WhenPaths => {
             return super::values::poll(arena, frame, &registry, op)
         }
         Operation::AdmissionCreate

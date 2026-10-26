@@ -1,0 +1,58 @@
+import joky/domain
+import joky/check
+import joky/outbox
+#state
+struct State { key:UInt64, n:Int32 }
+fn make(n:Int32)->State { State { key:2,n:n } }
+fn assert(ok:Bool) { check.assert(ok,"dynamic paths") }
+fn lifecycle() @suspends ->Int32 {
+    let directory=domain.directory(8)
+    let routes=directory.handle()
+    let a=domain.create(make,1)
+    let b=domain.create(make,2)
+    let first=a.handle()
+    routes.insert(1,first).unwrap()
+    routes.insert(2,b.handle()).unwrap()
+    let text="captured"
+    let value=when "dependent" (mut first:State=routes[1],second?:State=routes[first.key]) {
+        assert(text.equals("captured"))
+        first.n+=second.n
+        first.n
+    } else {first.n}
+    assert(value.unwrap()==3)
+    when(mut first) {first.key=1}.unwrap()
+    let aliased=when "alias" (mut first,mut second:State=routes[first.key]) { first.n+=second.n; first.n }
+        alias { first.n+=1; first.n }
+    assert(aliased.unwrap()==4)
+    match when(mut first,second:State=routes[first.key]) { first.n+=second.n } {
+        Err(Aliased(pair))=>assert(pair==1), _=>assert(false)
+    }
+    assert(when(first,second:State=routes[first.key]) {first.n+second.n}.unwrap()==8)
+    when(mut first) {first.key=3}.unwrap()
+    let value=when(mut first,second?:State=routes[first.key]) {first.n=99; second.n}
+        else {first.n+=1; first.n}
+    assert(value.unwrap()==5)
+    match when(mut first,second:State=routes[first.key]) {first.n=99; second.n} {
+        Err(Missing(index))=>assert(index==1), _=>assert(false)
+    }
+    when(mut first) {first.key=2}.unwrap()
+    let text="rollback"
+    let denied=when(mut first,mut second:State=routes[first.key]) {
+        first.n=99; second.n=99
+        let result:Result<String,Int32>=Err(7)
+        assert(text.equals("rollback"))
+        result
+    }
+    assert(denied.unwrap().is_err())
+    assert(when(first,second:State=routes[first.key]) {first.n==5 && second.n==2}.unwrap())
+    var mailbox=outbox.create(1,8)
+    let output=mailbox.handle()
+    let bytes="message".into_bytes()
+    when(mut first,second:State=routes[first.key]) {first.n+=second.n; outbox.emit(output,bytes)}.unwrap()
+    assert(mailbox.receive()!.len()==7)
+    directory.close()
+    match when(first,second:State=routes[first.key]) {second.n} {Err(Closed)=>{},_=>assert(false)}
+    a.close(); b.close()
+    24
+}
+fn main() @suspends {assert(lifecycle()==24)}

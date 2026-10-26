@@ -2039,6 +2039,13 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ("", "when \"\" (h) {h.n};", "must not be empty"),
         ("", "when () {};", "1 to 64"),
         ("", "when (h,h) {};", "Duplicate binding"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); when (h, s?:S=routes[1]) {};", "else branch"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); when (s?:S=routes[1], h) {} else {};", "must be last"),
+        ("fn key()->UInt64{1}", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[key()]) {};", "UInt64 keys"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[h.n]) {};", "UInt64 keys"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s?:S=routes[1]) {s.n} else {s.n};", "Undefined"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let text=\"owned\"; when (h,s:S=routes[1]) {let owned:String=text; owned};", "String"),
+
         ("", "when (o.handle()) {};", "Expected"),
         (
             "",
@@ -2483,4 +2490,15 @@ fn make(n:Int32)->S{S{n:n}}
     }
     work.write("moved.jk", &format!("{prefix} fn echo(s:&S,a:Array<String>)->Array<String>{{a}} fn main() @suspends {{let o=domain.create(make,1); let a=Array.new::<String>(); domain.query_from(o.read_handle(),echo,a); a.len();}}"));
     failure(&work.cli(&["build", "moved.jk"]), "moved");
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_paths_run_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "paths.jk",
+        include_str!("../fixtures/state_domain_paths.jk"),
+    );
+    work.assert_native("paths.jk", &[], b"", 0);
 }

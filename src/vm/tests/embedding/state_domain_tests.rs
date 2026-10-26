@@ -1894,3 +1894,23 @@ fn probe() @suspends ->Int32 {
 "#,
     );
 }
+
+#[test]
+fn state_domains_paths_cancellation_releases_captures_and_roots() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_paths.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel dynamic path resolution, captures and publication at every instruction"]
+fn exhaustive_state_domains_paths_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_paths.jk"),
+        0..=32768,
+        true,
+    );
+}

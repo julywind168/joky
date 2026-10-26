@@ -241,3 +241,115 @@ fn directory_owned_pruning_rechecks_resources_closed_by_task_cleanup() {
         assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
     }
 }
+
+#[test]
+fn state_domains_paths_revalidate_keys_generations_aliases_and_retry_limits() {
+    const SOURCE: &str = r#"import joky/domain
+struct S { key:UInt64,n:Int32 }
+fn make(n:Int32)->S { S{key:2,n:n} }
+fn route(s:&mut S,key:UInt64) {s.key=key}
+fn read(s:&S)->Int32 {s.n}
+fn operation(first:domain.WriteHandle<S>,routes:domain.DirectoryHandle) @suspends ->Int32 {
+    when "update" (mut first,mut second?:S=routes[first.key]) {
+        first.n+=second.n; first.n
+    } else {first.n+=10; first.n} alias {first.n+=100; first.n}.unwrap()
+}"#;
+    const ENTRY: &str = "$when/named/4:main/9:operation/6:757064617465";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(SOURCE).unwrap();
+        for action in [
+            "replace", "key", "missing", "alias", "limit", "closed", "cancel",
+        ] {
+            let a = vm
+                .create_domain("make", &[InstanceValue::Int32(1)])
+                .unwrap();
+            let b = vm
+                .create_domain("make", &[InstanceValue::Int32(2)])
+                .unwrap();
+            let c = vm
+                .create_domain("make", &[InstanceValue::Int32(3)])
+                .unwrap();
+            let table = create(&vm.domains, 4).unwrap();
+            let token = |owner: &DomainOwner| {
+                vm.domains.borrow().get(owner.handle).unwrap().source_token * 2 + 1
+            };
+            let at = token(&a);
+            let bt = token(&b);
+            let ct = token(&c);
+            assert_eq!(insert(&vm.domains, table.token, 1, None, at), 0);
+            assert_eq!(insert(&vm.domains, table.token, 2, None, bt), 0);
+            assert_eq!(insert(&vm.domains, table.token, 3, None, ct), 0);
+            let mut prior = if matches!(action, "key" | "missing" | "alias") {
+                Some(
+                    vm.queue_domain_call(
+                        a.write_handle(),
+                        "route",
+                        &[InstanceValue::UInt64(match action {
+                            "key" => 3,
+                            "missing" => 4,
+                            _ => 1,
+                        })],
+                    )
+                    .unwrap(),
+                )
+            } else {
+                None
+            };
+            let output = Rc::new(RefCell::new(vec![0]));
+            let mut request = pairs::paths::submit(
+                &vm.domains,
+                vm.current.as_ref().unwrap().clone(),
+                ENTRY,
+                vec![1, 0, 0, 0, 0, at, 0, 1, 1, 0, table.token, 0, 1],
+                vec![],
+                pairs::ValueOutput {
+                    words: output.clone(),
+                    snapshot: false,
+                },
+                vm.interpreter_limits(),
+            )
+            .unwrap();
+            if matches!(action, "replace" | "limit") {
+                assert_eq!(insert(&vm.domains, table.token, 2, Some(bt), ct), 0);
+                b.close();
+            }
+            if action == "limit" {
+                vm.domains.borrow_mut().limits.max_path_retries = 0;
+            }
+            if action == "closed" {
+                close_table(&table.table);
+            }
+            if action == "cancel" {
+                request.cancel();
+            }
+            vm.poll_tasks(10000).unwrap();
+            if let Some(prior) = &mut prior {
+                assert!(matches!(prior.take_result(), Some(DomainOutcome::Value(_))));
+            }
+            let (outcome, rejection) = request.take_access_result().unwrap();
+            match action {
+                "limit" => assert_eq!(rejection, Some(access::Rejection::RetryLimit)),
+                "closed" => assert_eq!(rejection, Some(access::Rejection::Closed)),
+                "cancel" => assert!(matches!(outcome, DomainOutcome::Cancelled)),
+                _ => {
+                    assert_eq!(rejection, None, "{action}: {outcome:?}");
+                    assert_eq!(
+                        *output.borrow(),
+                        vec![match action {
+                            "missing" => 11,
+                            "alias" => 101,
+                            _ => 4,
+                        }]
+                    );
+                }
+            }
+            vm.domains.borrow_mut().limits.max_path_retries = 64;
+            a.close();
+            b.close();
+            c.close();
+            drop(table);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}
