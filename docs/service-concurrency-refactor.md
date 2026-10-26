@@ -838,3 +838,22 @@ R2 专项验收（2026-10-26，Debug）：
   `cargo test --lib exhaustive_isolate -- --ignored` 两项通过，覆盖逐指令取消和逐字节任务预算；
   `cargo test --lib exhaustive_task_scope_cancels_at_every_instruction -- --ignored` 通过，
   回归共享任务入口提取与取消清理。未运行无关穷举、Release 或性能测量。
+
+### R2–R10 验收与收尾（2026-10-27）
+
+- 结论：R2–R8 与 R10a/b 通过验收，无阻断问题。逐提交静态审查对照 D1–D10 与第 7 节退出条件；
+  R7 未见 `unsafe impl Send/Sync`，reactor 与 TCP 核心改为 `Arc` + `Mutex`。
+- 收尾修正：
+  - 补充 Parallel 下“后来的读请求不能越过较早的等待写请求”的三请求确定性用例；
+    临时去掉调度器的较早等待项判断时该用例失败，恢复后通过。
+  - 事务消息回滚矩阵恢复 Reject 队列变体，与 Disconnect 变体并存。
+  - 目录的键占用校验、容量统计与发布前清理统一为同一存活判定，消除发布区间内依赖隐式不变量的
+    `unwrap_err`；失败但未关闭的域继续占用其键，在提交点前拒绝。
+  - chat 删除未被读取的 `Step`／`CommandFailure`，拆分超长行，注明空房间名与手写 Clone 的原因。
+- 未修正、已记录：会话取消用例改为检查 control 关闭后，AOT 下不再直接观察 Disconnect 输出的释放；
+  两者由同一 `Connection` 析构释放，两种 VM 的库测试仍检查资源用量。真实 TCP 背压下的溢出断开
+  只在两种 VM 下运行。R8 的并行收益边界、共享只读根的审计前提与 `isolate` 结果丢弃见第 9 节。
+- 验证（Debug）：`./scripts/check.sh` 单次完整通过，含 fmt、Clippy、1710 项库测试、317 项 CLI 测试、
+  其余默认集成／文档测试与三后端短输入 while／Map 正确性；`cargo test --test chat -- --ignored`
+  的 Local／Parallel 两组实网矩阵通过；建域、路径、目录三组逐指令取消穷举通过。
+  未运行 Release、性能测量或无关压力组。
