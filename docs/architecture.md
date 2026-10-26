@@ -1731,6 +1731,25 @@ State 仍须等待取消与 stop 完成后再清理。
 驱动继续使用系统单调时钟。截止时间随等待帧存在，执行器仅缓存各根的最早截止时间。
 根轮询额度不能限制单次 native 执行耗时，也不能限制根内部本轮遍历的子任务数量。
 
+R6 提供可选 Rust 宿主驱动器 `runtime::executor::controlled::ControlledExecutor`，默认执行器仍用
+FIFO。`new(seed, max_tasks, trace_capacity)` 建立虚拟单调时钟与有界记录；宿主通过 `executor()`
+登记 `prepare_async` 或独立 AOT continuation，并调用 `poll(max_polls)`。每批就绪任务按执行器内
+序号排序后用固定 SplitMix64／Fisher–Yates 选择；记录包含完整就绪集合、所选顺序和 poll 额度，
+不使用跨运行变化的进程 TaskId。每根每批仍最多恢复一次；该随机顺序不提供 FIFO 或有限等待保证。
+
+`advance(Duration)` 只推进虚拟时间，下一次 poll 才处理到期任务；不自动跳到下一截止时间。
+`inject(event_id, callback)` 在两次 poll 之间记录事件，再执行宿主回调；回调先公布输入数据再唤醒，
+也可执行取消、关闭或代码发布。注入期间不能嵌套注入、推进时间或 poll，用户回调不在调度器借用内执行。
+事件 payload 和回调由测试 fixture 保存，Trace 不包含它们。直接调用外部唤醒、连接真实 OS I/O 或
+使用远端 worker 会引入未记录输入，不能据此声称可重现。
+
+`trace()` 取得内存中的 `Trace { version, seed, steps }`；`replay(trace, max_tasks)` 严格校验
+事件编号、时间推进、poll 额度、就绪集合及选择合法性，`finish()` 检查重放是否完整消费。
+记录达到容量或重放分歧后停止执行任务，错误包含种子，可结合原始记录定位；仍可 `cancel`／`cancel_group`
+清理活根。原始 Trace 可用 Debug 输出定位问题，当前不提供持久化格式或 CLI 开关。复现须保留同一
+构建、后端、创建任务顺序、输入 fixture 和宿主驱动步骤；不承诺跨后端、跨版本或真实 worker 交错一致。
+控制粒度是根任务恢复边界，不能插入单次 native 调用内部，也不替代 R7／R8 的内存可见性测试。
+
 通用外部资源以 `Type::Resource` 表示，类型由宿主显式登记，非 Copy 且没有源级构造器。
 私有 Buffer 控制块仅承担拥有者登记和 arena/State 迁移，资源本身由唯一 token 与释放回调持有；
 不含伪造的容器字段。控制块释放先调用资源回收函数，再退还自身配额。

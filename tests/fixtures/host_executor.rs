@@ -18,6 +18,12 @@ extern "C" { fn work(frame: *mut CpsFrame) -> i32; fn branches(frame: *mut CpsFr
 struct ClockSource(Cell<Instant>);
 impl Clock for ClockSource { fn now(&self) -> Instant { self.0.get() } }
 fn main() {
+    use joky::runtime::executor::controlled::ControlledExecutor;
+    let control = ControlledExecutor::new(42, 8, 32).unwrap();
+    controlled_work(&control);
+    controlled_work(&ControlledExecutor::replay(control.trace(), 8).unwrap());
+    EVENTS.with(|v| v.borrow_mut().clear()); READY.with(|v| v.set(false));
+    POLLS.with(|v| v.set(0));
     let clock = Rc::new(ClockSource(Cell::new(Instant::now())));
     let executor = HostExecutor::new(clock.clone(), 8);
     let group = TaskGroup::new();
@@ -47,4 +53,26 @@ fn main() {
     executor.cancel_group(&group); stale.wake();
     assert_eq!(executor.poll(10).unwrap().polled, 0);
     assert_eq!(executor.task_count(), 0);
+}
+
+fn controlled_work(control: &joky::runtime::executor::controlled::ControlledExecutor) {
+    EVENTS.with(|v| v.borrow_mut().clear()); READY.with(|v| v.set(false));
+    TOKEN.with(|v| v.borrow_mut().take());
+    let executor = control.executor();
+    let group = TaskGroup::new();
+    let task = unsafe { Continuation::from_native(work, CpsFrame::new(WORK_SLOTS), Rc::new(())) };
+    executor.spawn(&group, task).unwrap();
+    assert_eq!(executor.poll(1).unwrap().polled, 1);
+    let token = TOKEN.with(|v| v.borrow().clone().unwrap());
+    assert_eq!(executor.poll(1).unwrap().polled, 0);
+    control.inject(10, || {READY.with(|v| v.set(true)); token.wake();}).unwrap();
+    assert_eq!(executor.poll(1).unwrap().polled, 1);
+    control.advance(Duration::from_millis(9)).unwrap();
+    assert_eq!(executor.poll(1).unwrap().polled, 0);
+    control.advance(Duration::from_millis(1)).unwrap();
+    assert_eq!(executor.poll(1).unwrap().polled, 1);
+    assert_eq!(executor.poll(1).unwrap().completed[0].result, Ok(42));
+    assert_eq!(EVENTS.with(|v| v.borrow().clone()), [1,2,3]);
+    assert_eq!(executor.task_count(), 0);
+    control.finish().unwrap();
 }

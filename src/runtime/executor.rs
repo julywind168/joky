@@ -12,6 +12,8 @@ use std::{
     time::Instant,
 };
 
+pub mod controlled;
+
 /// Monotonic time supplied by the embedding host. Advance it only forward.
 /// A virtual clock may stop while the application's simulation is paused.
 pub trait Clock {
@@ -228,6 +230,7 @@ impl Drop for Lease {
     }
 }
 struct Record {
+    ordinal: u64,
     entry: Option<Entry>,
     group: TaskGroup,
     waker: TaskWaker,
@@ -266,6 +269,7 @@ struct ExecutorState {
     queue: Arc<Queue>,
     clock: Rc<dyn Clock>,
     polling: Cell<bool>,
+    schedule: Option<Rc<RefCell<controlled::Schedule>>>,
     max_tasks: usize,
     live: Rc<Cell<usize>>,
     reactor: Rc<RefCell<Option<super::reactor::Reactor>>>,
@@ -294,12 +298,20 @@ impl Default for HostExecutor {
 }
 impl HostExecutor {
     pub fn new(clock: Rc<dyn Clock>, max_tasks: usize) -> Self {
+        Self::with_schedule(clock, max_tasks, None)
+    }
+    fn with_schedule(
+        clock: Rc<dyn Clock>,
+        max_tasks: usize,
+        schedule: Option<Rc<RefCell<controlled::Schedule>>>,
+    ) -> Self {
         Self {
             inner: Rc::new_cyclic(|weak| ExecutorState {
                 tasks: RefCell::new(BTreeMap::new()),
                 queue: Arc::default(),
                 clock,
                 polling: Cell::new(false),
+                schedule,
                 max_tasks,
                 live: Rc::new(Cell::new(0)),
                 reactor: Default::default(),
@@ -348,6 +360,11 @@ impl HostExecutor {
         drop(owner);
         let waker = self.new_waker()?;
         let id = waker.0.id;
+        let ordinal = self
+            .inner
+            .schedule
+            .as_ref()
+            .map_or(Ok(0), |s| s.borrow_mut().next_task())?;
         let wake = task.wait_plan().wake();
         let deadline = match wake {
             Some(super::driver::Wake::Deadline(d)) => Some(d),
@@ -363,6 +380,7 @@ impl HostExecutor {
         self.inner.tasks.borrow_mut().insert(
             id,
             Record {
+                ordinal,
                 entry: Some(Entry {
                     task: Some(task),
                     environment,
@@ -435,6 +453,9 @@ impl HostExecutor {
         group.running() == 0
     }
     pub fn poll(&self, max_polls: usize) -> Result<PollReport, Error> {
+        if let Some(schedule) = &self.inner.schedule {
+            schedule.borrow().check_poll()?;
+        }
         if self.inner.polling.replace(true) {
             return Err(invalid("Executor is already polling"));
         }
@@ -456,7 +477,17 @@ impl HostExecutor {
         }
         let batch: Vec<_> = {
             let mut ready = self.inner.queue.0.lock().unwrap_or_else(|e| e.into_inner());
-            let ids: Vec<_> = ready.order.iter().take(max_polls).copied().collect();
+            let ids: Vec<_> = if let Some(schedule) = &self.inner.schedule {
+                let tasks = self.inner.tasks.borrow();
+                let available = ready
+                    .order
+                    .iter()
+                    .map(|id| (*id, tasks[id].ordinal))
+                    .collect();
+                schedule.borrow_mut().select(max_polls, available)?
+            } else {
+                ready.order.iter().take(max_polls).copied().collect()
+            };
             for id in &ids {
                 ready.remove(id);
             }

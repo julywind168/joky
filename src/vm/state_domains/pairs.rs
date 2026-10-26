@@ -797,3 +797,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "pairs/controlled_tests.rs"]
+mod controlled_tests;

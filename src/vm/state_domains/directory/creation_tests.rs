@@ -220,3 +220,82 @@ fn state_domains_creation_budgets_fail_before_any_root_or_route_is_published() {
         assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
     }
 }
+
+#[test]
+fn controlled_creation_publication_replacement_and_close_replay() {
+    use crate::runtime::executor::controlled::ControlledExecutor;
+    fn run(mode: VmMode, control: &ControlledExecutor) -> Vec<Vec<u64>> {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.executor = Rc::new(control.executor().clone());
+        vm.domains = vm.executor.domains();
+        vm.load_source(SOURCE).unwrap();
+        let table = create(&vm.domains, 2).unwrap();
+        let old = vm.current.as_ref().unwrap().clone();
+        let (mut first, a) = submit(&vm, &old, table.token, false);
+        let (mut second, b) = submit(&vm, &old, table.token, false);
+        let (mut cancelled, _) = submit(&vm, &old, table.token, false);
+        control
+            .inject(1, || {
+                cancelled.cancel();
+                vm.publish_source(&SOURCE.replace("value:10", "value:20"))
+                    .unwrap();
+            })
+            .unwrap();
+        assert_eq!(vm.poll_tasks(64).unwrap().polled, 2);
+        assert!(first.take_access_result().unwrap().1.is_none());
+        assert!(second.take_access_result().unwrap().1.is_none());
+        assert!(matches!(
+            cancelled.take_result(),
+            Some(DomainOutcome::Cancelled)
+        ));
+        assert!(cancelled.take_result().is_none());
+        let values = vec![a.borrow().clone(), b.borrow().clone()];
+        let mut sorted = values.clone();
+        sorted.sort();
+        assert_eq!(sorted, [vec![0, 22, 0], vec![0, 24, 0]]);
+        assert_eq!(table.table.borrow().entries.len(), 1);
+        let key = Key::Name("room".into());
+        let before = resolve_key(&vm.domains.borrow(), table.token, &key)
+            .unwrap()
+            .unwrap();
+        let (mut late, output) = submit(&vm, &old, table.token, false);
+        control
+            .inject(2, || {
+                let token = table.table.borrow().entries[0].token;
+                assert!(remove_key(&vm.domains, table.token, &key, token));
+            })
+            .unwrap();
+        vm.poll_tasks(64).unwrap();
+        assert!(late.take_access_result().unwrap().1.is_none());
+        assert_eq!(*output.borrow(), vec![0, 22, 0]);
+        let after = resolve_key(&vm.domains.borrow(), table.token, &key)
+            .unwrap()
+            .unwrap();
+        assert_ne!(before, after);
+        assert!(vm.domain_revision(before).is_err());
+        assert_eq!(vm.domains.borrow().entries.len(), 1);
+        assert_eq!(vm.task_count(), 1); // Only the replacement's timer survives.
+        let (mut closing, _) = submit(&vm, &old, table.token, false);
+        control.inject(3, || close_table(&table.table)).unwrap();
+        vm.poll_tasks(64).unwrap();
+        let (outcome, rejection) = closing.take_access_result().unwrap();
+        assert!(
+            matches!(outcome, DomainOutcome::Closed)
+                || rejection == Some(access::Rejection::Closed)
+        );
+        assert!(closing.take_result().is_none());
+        drop(table);
+        assert_eq!(vm.task_count(), 0);
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        control.finish().unwrap();
+        values
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for seed in [0, 5] {
+            let control = ControlledExecutor::new(seed, 64, 32).unwrap();
+            let result = run(mode, &control);
+            let replay = ControlledExecutor::replay(control.trace(), 64).unwrap();
+            assert_eq!(run(mode, &replay), result);
+        }
+    }
+}

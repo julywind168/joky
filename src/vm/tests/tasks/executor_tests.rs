@@ -915,3 +915,6 @@ fn repeated_scalar_wait_requests_do_not_accumulate_arena_storage() {
         assert_eq!(LIVE.with(Cell::get), 0);
     }
 }
+
+#[path = "controlled_tests.rs"]
+mod controlled_tests;
