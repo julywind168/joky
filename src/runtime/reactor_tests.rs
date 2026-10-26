@@ -4,7 +4,7 @@ use crate::runtime::{
     executor::{current_waker, HostExecutor, TaskGroup},
     suspension::Continuation,
 };
-use std::{cell::RefCell, io::Write, net::TcpListener};
+use std::{cell::RefCell, io::Write, net::TcpListener, rc::Rc};
 
 thread_local! { static CAPTURE: RefCell<Option<TaskWaker>> = const { RefCell::new(None) }; }
 unsafe extern "C" fn capture(_: *mut CpsFrame) -> i32 {
@@ -28,6 +28,7 @@ struct FakeSource {
     fail_stop: bool,
     fail_rearm: bool,
     fail_register: bool,
+    stops: usize,
 }
 impl Source for FakeSource {
     fn register(&mut self, _: &Registry, _: Token, _: Interest) -> io::Result<()> {
@@ -45,6 +46,7 @@ impl Source for FakeSource {
         }
     }
     fn deregister(&mut self, _: &Registry) -> io::Result<()> {
+        self.stops += 1;
         if self.fail_stop {
             Err(io::Error::other("injected deregistration failure"))
         } else {
@@ -100,7 +102,7 @@ fn reactor_identity_limits_cancel_and_failed_deregistration_are_safe() {
     assert!(source
         .register_with(&reactor, Interest::READABLE, None, waker.clone())
         .is_err());
-    reactor.0.next.set(usize::MAX);
+    lock(&reactor.0.table).next = usize::MAX;
     let clean = IoSource::new(FakeSource::default());
     for _ in 0..2 {
         assert!(clean
@@ -184,11 +186,11 @@ fn net5b_reactor_direction_hints_limits_and_stale_tokens_are_independent() {
     let mut read = source
         .register_with(&reactor, Interest::READABLE, None, waker.clone())
         .unwrap();
-    let kernel = source.0.borrow().token.unwrap();
+    let kernel = lock(&source.0).token.unwrap();
     let mut write = source
         .register_with(&reactor, Interest::WRITABLE, None, waker.clone())
         .unwrap();
-    assert_eq!(source.0.borrow().token, Some(kernel));
+    assert_eq!(lock(&source.0).token, Some(kernel));
     assert_eq!(reactor.registration_count(), 2);
     assert!(source
         .register_with(&reactor, Interest::READABLE, None, waker.clone())
@@ -205,7 +207,7 @@ fn net5b_reactor_direction_hints_limits_and_stale_tokens_are_independent() {
     read.stop().unwrap();
     assert!(write.is_ready());
     assert_eq!(reactor.registration_count(), 1);
-    assert!(reactor.0.routes.borrow()[&kernel][0].is_none());
+    assert!(lock(&reactor.0.table).routes[&kernel][0].is_none());
     let next_read = source
         .register_with(&reactor, Interest::READABLE, None, waker.clone())
         .unwrap();
@@ -214,11 +216,11 @@ fn net5b_reactor_direction_hints_limits_and_stale_tokens_are_independent() {
     assert!(write.is_ready());
     drop(next_read);
     write.stop().unwrap();
-    assert!(reactor.0.routes.borrow().is_empty());
+    assert!(lock(&reactor.0.table).routes.is_empty());
     let next = source
         .register_with(&reactor, Interest::READABLE, None, waker)
         .unwrap();
-    assert_ne!(kernel, source.0.borrow().token.unwrap());
+    assert_ne!(kernel, lock(&source.0).token.unwrap());
     drop(next);
     let limited = Reactor::new(1, 1).unwrap();
     let (_, _, waker) = target();
@@ -229,7 +231,7 @@ fn net5b_reactor_direction_hints_limits_and_stale_tokens_are_independent() {
     assert!(source
         .register_with(&limited, Interest::WRITABLE, None, waker)
         .is_err());
-    assert!(!source.0.borrow().poisoned);
+    assert!(!lock(&source.0).poisoned);
     drop(read);
 }
 #[test]
@@ -261,8 +263,8 @@ fn net5b_reactor_failed_interest_changes_revoke_routes_and_wake_the_peer() {
         }
         assert_eq!(executor.poll(1).unwrap().polled, 1);
         assert_eq!(executor.poll(1).unwrap().polled, 0);
-        assert!(source.0.borrow().poisoned);
-        assert!(reactor.0.routes.borrow().is_empty());
+        assert!(lock(&source.0).poisoned);
+        assert!(lock(&reactor.0.table).routes.is_empty());
         assert!(read.is_ready());
         assert!(read.rearm(Interest::READABLE).is_err());
         assert!(read.stop().is_err());
@@ -278,12 +280,12 @@ fn net5b_reactor_failed_registration_never_publishes_or_reuses_a_source() {
         fail_register: true,
         ..Default::default()
     });
-    let stale = reactor.0.next.get();
+    let stale = lock(&reactor.0.table).next;
     assert!(source
         .register_with(&reactor, Interest::READABLE, None, waker.clone())
         .is_err());
-    assert!(source.0.borrow().poisoned);
-    assert!(reactor.0.routes.borrow().is_empty());
+    assert!(lock(&source.0).poisoned);
+    assert!(lock(&reactor.0.table).routes.is_empty());
     assert_eq!(reactor.registration_count(), 0);
     assert!(!reactor.notify(stale));
     source.with_io(|s| s.fail_register = false);
@@ -295,4 +297,278 @@ fn net5b_reactor_failed_registration_never_publishes_or_reuses_a_source() {
         .register_with(&reactor, Interest::READABLE, None, waker)
         .unwrap();
     assert_ne!(stale, registration.token);
+}
+
+#[test]
+fn shared_reactor_admission_is_atomic_across_threads() {
+    use std::{sync::Barrier, thread};
+
+    let reactor = Reactor::new(1, 1).unwrap();
+    let start = Arc::new(Barrier::new(4));
+    let admitted = Arc::new(Barrier::new(4));
+    let threads: Vec<_> = (0..3)
+        .map(|_| {
+            let reactor = reactor.clone();
+            let start = start.clone();
+            let admitted = admitted.clone();
+            thread::spawn(move || {
+                let (_executor, _group, waker) = target();
+                let source = IoSource::new(FakeSource::default());
+                start.wait();
+                let socket = reactor.reserve_socket();
+                let registration = source.register_with(&reactor, Interest::READABLE, None, waker);
+                // Keep both successful reservations alive until all contenders
+                // have attempted admission; neither limit is per-thread.
+                admitted.wait();
+                (socket, registration)
+            })
+        })
+        .collect();
+    start.wait();
+    admitted.wait();
+    let results: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+    assert_eq!(results.iter().filter(|(s, _)| s.is_ok()).count(), 1);
+    assert_eq!(results.iter().filter(|(_, r)| r.is_ok()).count(), 1);
+    for (socket, registration) in &results {
+        if let Err(error) = socket {
+            assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        }
+        if let Err(error) = registration {
+            assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        }
+    }
+    assert_eq!(reactor.socket_count(), 1);
+    assert_eq!(reactor.registration_count(), 1);
+    drop(results);
+    assert_eq!(reactor.socket_count(), 0);
+    assert_eq!(reactor.registration_count(), 0);
+}
+
+#[test]
+fn shared_reactor_transfers_live_tcp_directions_without_changing_poll() {
+    use std::{io::Read, thread};
+
+    let (executor, group, waker) = target();
+    let reactor = Reactor::new(2, 2).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    stream.set_nonblocking(true).unwrap();
+    let (mut peer, _) = listener.accept().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let source = Arc::new(IoSource::new(net::TcpStream::from_std(stream)));
+    let event = ResourceEvent::new().unwrap();
+    let read = source
+        .register_with(
+            &reactor,
+            Interest::READABLE,
+            Some(event.clone()),
+            waker.clone(),
+        )
+        .unwrap();
+    let kernel = lock(&source.0).token.unwrap();
+    let write = {
+        let source = source.clone();
+        let reactor = reactor.clone();
+        let waker = waker.clone();
+        thread::spawn(move || {
+            source
+                .register_with(&reactor, Interest::WRITABLE, None, waker)
+                .unwrap()
+        })
+        .join()
+        .unwrap()
+    };
+    assert_eq!(lock(&source.0).token, Some(kernel));
+    peer.write_all(b"r").unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !(read.is_ready() && write.is_ready()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "TCP readiness timed out"
+        );
+        // The event collector runs on neither I/O owner's thread.
+        let reactor = reactor.clone();
+        thread::spawn(move || reactor.poll(Some(Duration::from_millis(50))).unwrap())
+            .join()
+            .unwrap();
+    }
+    assert_eq!(executor.poll(1).unwrap().polled, 1);
+    let stale_read = read.token;
+    thread::scope(|scope| {
+        let source = &source;
+        scope.spawn(move || {
+            let mut read = read;
+            let mut byte = [0];
+            assert_eq!(source.with_io(|s| s.read(&mut byte)).unwrap(), 1);
+            assert_eq!(&byte, b"r");
+            event.invalidate();
+            read.stop().unwrap();
+        });
+        scope.spawn(move || {
+            let mut write = write;
+            assert_eq!(source.with_io(|s| s.write(b"w")).unwrap(), 1);
+            write.rearm(Interest::WRITABLE).unwrap();
+            write.stop().unwrap();
+        });
+    });
+    let mut byte = [0];
+    peer.read_exact(&mut byte).unwrap();
+    assert_eq!(&byte, b"w");
+    assert_eq!(reactor.registration_count(), 0);
+    assert!(!reactor.notify(stale_read));
+    // Deregistration permits a new operation on this Poll, not a new Poll.
+    let other = Reactor::new(2, 2).unwrap();
+    assert!(source
+        .register_with(&other, Interest::READABLE, None, waker.clone())
+        .is_err());
+    let next = source
+        .register_with(&reactor, Interest::READABLE, None, waker)
+        .unwrap();
+    assert_ne!(next.token, stale_read);
+    assert!(!reactor.notify(stale_read));
+    drop(next);
+    executor.cancel_group(&group);
+}
+
+#[test]
+fn shared_reactor_close_interrupts_driver_and_retires_all_waiters() {
+    use std::{thread, time::Instant};
+
+    let (executor, group, waker) = target();
+    let reactor = Reactor::new(2, 2).unwrap();
+    let source = IoSource::new(FakeSource::default());
+    let read = source
+        .register_with(&reactor, Interest::READABLE, None, waker.clone())
+        .unwrap();
+    let write = source
+        .register_with(&reactor, Interest::WRITABLE, None, waker.clone())
+        .unwrap();
+    let stale = read.token;
+    let permit = reactor.reserve_socket().unwrap();
+    let driver = {
+        let reactor = reactor.clone();
+        thread::spawn(move || reactor.poll(Some(Duration::from_secs(5))))
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if matches!(reactor.0.driver.try_lock(), Err(TryLockError::WouldBlock)) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "driver did not enter poll");
+        thread::yield_now();
+    }
+    assert!(reactor.poll(Some(Duration::ZERO)).is_err());
+    reactor.request_close();
+    reactor.request_close();
+    assert!(driver.join().unwrap().is_err());
+    assert_eq!(executor.poll(1).unwrap().polled, 1);
+    assert_eq!(executor.poll(1).unwrap().polled, 0);
+    assert!(!reactor.notify(stale));
+    assert!(reactor.reserve_socket().is_err());
+    assert!(source
+        .register_with(&reactor, Interest::READABLE, None, waker)
+        .is_err());
+    assert!(read.is_ready() && write.is_ready());
+    assert!(read.rearm(Interest::READABLE).is_err());
+    assert!(write.rearm(Interest::WRITABLE).is_err());
+    // Logical close does not pretend that outstanding operations or socket
+    // owners have already cleaned up. Both directions can stop on other threads.
+    assert_eq!(reactor.registration_count(), 2);
+    assert_eq!(reactor.socket_count(), 1);
+    thread::scope(|scope| {
+        scope.spawn(move || drop(read));
+        scope.spawn(move || drop(write));
+        scope.spawn(move || drop(permit));
+    });
+    assert_eq!(reactor.registration_count(), 0);
+    assert_eq!(reactor.socket_count(), 0);
+    assert!(lock(&source.0).token.is_none());
+    assert_eq!(source.with_io(|s| s.stops), 1);
+    assert!(lock(&reactor.0.table).routes.is_empty());
+    executor.cancel_group(&group);
+}
+
+#[test]
+fn shared_reactor_does_not_lose_an_edge_during_registration_publication() {
+    use std::{sync::mpsc, thread, time::Instant};
+
+    struct PausedSource {
+        stream: net::TcpStream,
+        registered: mpsc::Sender<()>,
+        publish: mpsc::Receiver<()>,
+    }
+    impl Source for PausedSource {
+        fn register(
+            &mut self,
+            registry: &Registry,
+            token: Token,
+            interest: Interest,
+        ) -> io::Result<()> {
+            registry.register(&mut self.stream, token, interest)?;
+            self.registered.send(()).unwrap();
+            self.publish.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(())
+        }
+        fn reregister(
+            &mut self,
+            registry: &Registry,
+            token: Token,
+            interest: Interest,
+        ) -> io::Result<()> {
+            registry.reregister(&mut self.stream, token, interest)
+        }
+        fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
+            registry.deregister(&mut self.stream)
+        }
+    }
+
+    let (executor, group, waker) = target();
+    let reactor = Reactor::new(1, 1).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    stream.set_nonblocking(true).unwrap();
+    let (mut peer, _) = listener.accept().unwrap();
+    peer.write_all(b"ready before register").unwrap();
+    let (registered, pending) = mpsc::channel();
+    let (publish, resume) = mpsc::channel();
+    let source = IoSource::new(PausedSource {
+        stream: net::TcpStream::from_std(stream),
+        registered,
+        publish: resume,
+    });
+    let driver = {
+        let reactor = reactor.clone();
+        thread::spawn(move || reactor.poll(Some(Duration::from_secs(5))).unwrap())
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if matches!(reactor.0.driver.try_lock(), Err(TryLockError::WouldBlock)) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "driver did not enter poll");
+        thread::yield_now();
+    }
+    let registering = {
+        let reactor = reactor.clone();
+        thread::spawn(move || {
+            source
+                .register_with(&reactor, Interest::READABLE, None, waker)
+                .unwrap()
+        })
+    };
+    pending.recv_timeout(Duration::from_secs(5)).unwrap();
+    // The kernel source is live, but its route/waiter is not yet published.
+    // Event dispatch must serialize behind that publication.
+    assert!(matches!(
+        reactor.0.table.try_lock(),
+        Err(TryLockError::WouldBlock)
+    ));
+    publish.send(()).unwrap();
+    let registration = registering.join().unwrap();
+    assert_eq!(driver.join().unwrap().notified, 1);
+    assert!(registration.is_ready());
+    assert_eq!(executor.poll(1).unwrap().polled, 1);
+    drop(registration);
+    assert_eq!(reactor.registration_count(), 0);
+    executor.cancel_group(&group);
 }

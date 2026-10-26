@@ -322,7 +322,7 @@ TP 已提供共享 worker 池与受检包，改为 Verona 式：`when` 是调度
 | --- | --- | --- | --- |
 | `println` 等输出 | 实现使用 `stdout().lock()`，错误记录经 TP 已保存／恢复的线程局部状态；已附带 ParallelSafe 证据 | R7a 审计并标注，Show 调用图仍须检查 | 很小 |
 | 函数值／间接调用 | 间接目标缺少不可变线程证据 | 函数值携带资格证据，调用前验证 | 中 |
-| TCP | `Reactor` 为 `Rc<Core>`，内部 `RefCell` 等待表与就绪队列；`Connection` 为 `Rc` + `Cell` | 共享 reactor、同步等待／唤醒路由、线程安全连接核心与受检拥有转移 | 中到大 |
+| TCP | `Reactor` 已改为 Arc 与同步登记表，source／登记句柄可按底层 Send 资格跨线程；`Connection` 与计费守卫仍含 Rc／Cell | 接入 worker 唤醒路由、线程安全连接核心与受检拥有转移 | 中到大 |
 | VM 句柄 | 引擎与模块保活使用 `Rc`，加载／发布修改状态 | 按第 4 节运行协议拆分控制与执行，不能只靠原子指针换代 | 大 |
 | Domains／`when` | 注册表为 `Weak<RefCell<…>>`；原子性证明依赖单线程同步轮次 | 每域等待队列、按全局序号排队的 BoC 调度；块体编译为 ParallelSafe 入口，发起方 Pending，执行后交回结果包 | 大 |
 
@@ -463,6 +463,23 @@ R6 的规范正文集中于 [架构文档：服务运行协议](architecture.md#
   其余默认集成／文档测试及三后端 while（0／1000）和 Map（0／32）正确性。
   未运行 Release、性能测量或额外压力组；本步骤没有改动任务取消或存储布局。
 
+### R7b 实施进展：共享 reactor 基础（2026-10-26）
+
+- Reactor 与 IoSource／IoRegistration 改为 Arc／Mutex；一个驱动者收取事件，登记、方向更新、
+  注销和全局配额受同步保护。OS 登记与路由发布串行，避免线程间丢边沿；不持登记锁执行唤醒。
+- 增加逻辑关闭：关闭准入、撤销路由、唤醒全部等待者并中断阻塞 poll；操作 stop 与最后 socket
+  拥有者释放后才完成清理和归还额度。关闭本身不伪装成已经清理完成。
+- 真实线程回归覆盖竞争准入、同一 TCP source 的读写方向交接与注销、登记发布窗口、阻塞驱动
+  的关闭和迟到通知。既有 source 仍拒绝换 Poll，未引入 unsafe Send。
+- 定向验证通过：`cargo test --lib reactor`（16 项通过）；reactor、TCP 与拆分发布的
+  3 项逐指令取消穷举通过（`exhaustive_reactor_cancel_every_instruction`、
+  `exhaustive_tcp_cancel_every_instruction`、`exhaustive_split_publication_cancel_every_instruction`）。
+- `./scripts/check.sh` 单次完整通过：fmt、Clippy、1679 项普通库测试、312 项 CLI 测试、
+  其余默认集成／文档测试及三后端 while（0／1000）和 Map（0／32）正确性。
+  未运行 Release、性能测量或无关压力组。
+- R7b 尚未完成：TCP Connection 与 ExternalCharge 中的线程本地预算句柄须先拆分，再接入
+  Parallel worker 的等待／唤醒及受检资源包。当前测试验证底层 source 交接，不宣称语言层 TCP
+  已能在 `--task-workers` 下运行；R7 的 chat 验收条件保持不变。
 
 ## 6. 目标写法示意
 
@@ -508,7 +525,7 @@ R7 分步交付，全部完成后才标记 R7 完成：
 | 步骤 | 实施范围 | 验收边界 |
 | --- | --- | --- |
 | R7a（已完成） | 审计并标注内置输出绑定的 ParallelSafe 资格 | JIT／解释器／独立 AOT 的真实 worker 输出；未获资格的宿主调用仍拒绝 |
-| R7b | 共享 reactor、跨线程等待／唤醒、线程安全 TCP 核心与资源转移 | 同一注册的跨 worker 使用；读写、取消、关闭和迟到通知；全局有界配额 |
+| R7b（进行中） | 共享 reactor、跨线程等待／唤醒、线程安全 TCP 核心与资源转移 | 同一注册的跨 worker 使用；读写、取消、关闭和迟到通知；全局有界配额 |
 | R7c | 函数值／间接入口证据、VM 控制代理与执行拆分、Local 命令桥接 | 同树连接分布到多个 worker，业务暂由控制端串行；chat 完整实网矩阵 |
 
 以上是依赖边界，不降低原 R7 的退出条件。单独完成 R7a 不意味着 TCP、VM 或 chat 已具备并行资格。

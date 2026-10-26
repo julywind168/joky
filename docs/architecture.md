@@ -1772,12 +1772,12 @@ Array，写消费输入数组并复制快照。ExternalCharge 与 arena 分配�
 内部 UInt64 输出存储只能作为精确 TCP 调用实参跨该调用存活，noescape 与同步 stop 保证
 父存储清理之前结束访问。资源的单字段包装链沿用稳定控制块借用，不授予普通容器视图权限。
 连接与接受结果立即进入 RAII 资源守卫，所有失败路径保留唯一释放责任。
-TCP 所有者、source 的 Rc 存储、请求与字节快照计入任务/实例峰值；
+TCP 所有者、source 的 Arc／Mutex 存储、请求与字节快照计入任务/实例峰值；
 内核 socket 缓冲和 Mio 平台内部存储不计入语言载荷。Reactor 另持有 socket 准入计数，
 默认每执行器最多 4096 个；bind/connect/accept 在系统调用前预留，Pending 请求持有许可，
 成功发布时随 socket 原子转入连接/监听器拥有存储；失败/取消退还，最后拥有者关闭后退还。
 空闲连接和监听器也计数，不依赖是否存在 I/O 登记。许可保活创建时的 Reactor，
-已有 I/O 的 source 仍不得迁移执行器。
+source 终身绑定原 Poll；当前语言层 TCP 拥有者仍是 Local，尚未开放跨 worker 转移。
 write_all 在 Joky 库层保留原数组与发送偏移，按实际写入长度推进最多 16 KiB 的分块，
 块间显式 yield；保持发送输入的拥有转移。同步 helper 接收并归还原数组拥有者，
 原数组、分块、宿主快照及 CPS 临时拥有存储都计入现有峰值预算。
@@ -1802,13 +1802,27 @@ source 和 Reactor。一个 source 至多有两个互不重叠的方向等待者
 ResourceEvent、TaskWaker 与就绪提示；一个内核 token 对应当前 interest 的并集，事件按方向路由。
 stop 先移除自身身份与提示，再更新剩余 interest；最后等待者退出才 deregister。
 身份不复用，重新登记使用新内核 token。注册/更新/撤销失败会失效路由并禁止 source 再登记；
-尚存等待者被唤醒以观察运行时失败。source 的 Poll 在两次操作之间仍保活，不能跨执行器迁移。
-每轮 poll 使用零等待收取最多 256 个事件，每个执行器最多 4096 个登记，通知只排队根。
+尚存等待者被唤醒以观察运行时失败。source 的 Poll 在两次操作之间仍保活，不可更换。
+默认每轮非阻塞 poll 收取最多 256 个事件，每个 reactor 最多 4096 个登记，通知只排队根。
 就绪可虚假，读写/accept 登记后先实际尝试 I/O，WouldBlock 后 rearm；
 connect 先观察 writable 提示再检查 SO_ERROR/peer_addr，有界处理不能丢弃未排空的就绪进度。
 登记的就绪提示保留到 rearm/stop，每轮额外重放最多 256 项并旋转队列；
 根因解释器指令预算让出、尚未访问对应子任务时，不会提前消耗唯一边沿。
 停止时同时清除提示，失效事件不重放，也不使阻塞驱动伪完成。
+
+R7b 已先实现 reactor 同步基础：Core 使用 Arc，共享的等待表、路由、就绪提示、身份序号和
+socket 准入在同一 Mutex 下更新；IoSource／IoRegistration 使用 Arc／Mutex，只有底层
+source 为 Send 时才自然具备跨线程资格，不添加 unsafe Send。锁序固定为 source → 登记表；
+OS register／reregister 和路由发布在登记锁内完成，避免收取边沿早于等待者发布而丢失通知。
+poll 单独持驱动锁且同一时刻只允许一个调用者；阻塞内核等待不持登记锁。所有唤醒在 source
+和登记锁释放后发出。已收集通知与 stop 竞争时可以产生无害的根唤醒，旧操作身份不能再次登记。
+
+`Reactor::request_close` 在登记锁内关闭准入并撤销全部路由／就绪提示，随后唤醒所有等待者并
+中断阻塞 poll；再次调用无副作用。关闭后的 rearm／register／poll 返回错误，is_ready 提示
+尚存操作继续处理关闭。登记数仍包含未 stop 的操作，socket 许可也直到拥有者释放才归还；
+关闭后首个方向 stop 注销内核 source，其他方向仅完成各自清理，调用方仍须汇合驱动与操作。
+此同步基础不改变 HostExecutor 的 Local 所有权，也未将 TCP 的 Rc Connection、计费守卫
+或 Parallel 任务池接入共享 I/O；连接转移与 worker 唤醒路由仍是 R7b 后续工作。
 
 `HostExecutor::wait` / `VmEngine::wait_tasks` 只等待，不执行脚本；之后由 poll 推进。
 保留 TaskWaker 的外部宿主可以中断阻塞等待，未知等待仍报错。Clock 默认不准许阻塞，
