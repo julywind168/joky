@@ -163,8 +163,8 @@ fn conversation(
     carol.expect("joined 房间 3\n");
     // Publish a business change without replacing either socket or membership.
     let patched = logic.replace(
-        "event(\"message\", room, id, text)",
-        "event(\"message-v2\", room, id, text)",
+        "\"message {room} {id} {text}\\n\"",
+        "\"message-v2 {room} {id} {text}\\n\"",
     );
     assert_ne!(patched, logic);
     std::fs::write(logic_path, &patched).unwrap();
@@ -425,25 +425,20 @@ fn chat_matrix(parallel: bool) {
         "import joky/outbox\nimport joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
         include_str!("../examples/chat_logic.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
-        assert_eq!(logic.matches("let result = match &command {").count(), 1);
+        assert_eq!(logic.matches("    let command = parse(line)\n").count(), 1);
         let logic = logic.replace(
-            "Action.Line(line) => handle_line(host, id, line),",
-            "Action.Line(line) => { if line.equals(\"crash\") { let bad = 1 / 0; }; handle_line(host, id, line) },",
-        );
-        let logic = logic.replace(
-            "let result = match &command {",
-            "pause_send(host, &command)\n    let result = match &command {",
+            "    let command = parse(line)\n",
+            "    if line.equals(\"crash\") { let bad = 1 / 0; }\n    let command = parse(line)\n    pause_send(host, &command)\n",
         );
         std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
         let next = logic
             .replace(
-                "event(\"message\", room, id, text)",
-                "event(\"probe-v2\", room, id, text)",
+                "\"message {room} {id} {text}\\n\"",
+                "\"probe-v2 {room} {id} {text}\\n\"",
             )
-            .replace("account.balance_cents < 100", "account.balance_cents < 200")
             .replace(
-                "account.balance_cents -= 100",
-                "account.balance_cents -= 200",
+                "const SAY_PRICE_CENTS: UInt64 = 100",
+                "const SAY_PRICE_CENTS: UInt64 = 200",
             );
         assert_ne!(next, logic);
         std::fs::write(work.path().join("chat_logic_next.jk"), next).unwrap();

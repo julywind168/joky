@@ -1,3 +1,4 @@
+// Types shared by the AOT host and the hot-reloaded script, and the entries the host requires.
 import joky/domain
 import joky/vm
 import joky/session
@@ -9,17 +10,15 @@ pub struct Config {
     pub reclaim_empty: Bool
 }
 pub fn defaults() -> Config {
-    Config { connection: session.defaults(),
-        max_rooms: 4096, max_clients: 512, reclaim_empty: true }
+    Config { connection: session.defaults(), max_rooms: 4096, max_clients: 512, reclaim_empty: true }
 }
 pub struct Host {
     pub config: Config,
     pub rooms: domain.DirectoryHandle,
     pub accounts: domain.DirectoryHandle,
 }
-pub enum Action { Welcome, Line(String), Disconnect }
 pub struct Client { pub host: Host, pub id: UInt64 }
-pub struct Call { pub host: Host, pub id: UInt64, pub action: Action }
+pub struct Call { pub host: Host, pub id: UInt64, pub line: String }
 pub struct AccountInit {
     pub host: Host,
     pub owners: domain.DirectoryHandle,
@@ -29,14 +28,14 @@ pub struct AccountInit {
 
 #derive(Clone)
 pub struct Contract {
-    pub dispatch: vm.Entry<Call, Bool>,
     pub init_account: vm.Entry<AccountInit, Unit>,
+    pub dispatch: vm.Entry<Call, Bool>,
     pub forget: vm.Entry<Client, Unit>
 }
 pub fn require_contract(engine: &vm.Vm) @suspends -> Contract {
     Contract {
-        dispatch: engine.require::<Call, Bool>("dispatch")!,
         init_account: engine.require::<AccountInit, Unit>("init_account")!,
+        dispatch: engine.require::<Call, Bool>("dispatch")!,
         forget: engine.require::<Client, Unit>("forget")!
     }
 }

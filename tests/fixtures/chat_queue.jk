@@ -1,19 +1,18 @@
-fn account_view(state: &Account) -> Account { state.clone() }
-struct RoomView { name: String, members: Array<Route> }
-fn room_view(state: &Room) -> RoomView {
-    var members = Array.new::<Route>()
-    var i: UInt64 = 0
-    while i < state.members.len() { members.push(state.members.get(i)!); i += 1 }
-    RoomView { name: state.name.clone(), members: members }
+fn balance_view(state: &Account) -> UInt64 { state.balance_cents }
+fn live_view(state: &Account) -> Bool { state.live }
+fn room_name_view(state: &Account) -> String { state.room.clone() }
+fn account_view(state: &Account) -> Account {
+    Account { member: state.member, live: state.live, room: state.room.clone(), balance_cents: state.balance_cents }
 }
 fn apply_account(state: &mut Account, account: Account) { var next=account; mem.swap(state,&mut next) }
+fn set_room(state: &mut Account, room: String) { mem.replace(&mut state.room, room); }
 // Test owners stay local, independently of the production owning directories.
 struct Fixture { rooms: domain.Directory, accounts: domain.Directory, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Host }
 fn fixture() @suspends -> Fixture {
     let rooms = domain.directory(2)
     let accounts = domain.directory(4096)
-    let room = domain.create(make_room, "r")
-    let other = domain.create(make_room, "other")
+    let room = domain.create(new_room, "r")
+    let other = domain.create(new_room, "other")
     var config = defaults()
     config.reclaim_empty = false
     let host = Host { config: config, rooms: rooms.handle(), accounts: accounts.handle() }
@@ -23,17 +22,23 @@ fn fixture() @suspends -> Fixture {
     host.rooms.insert_named(&second, other.handle())!
     Fixture { rooms: rooms, accounts: accounts, room: room, other: other, ctx: host }
 }
+fn room_handle(host: Host, name: &String) @suspends -> Option<domain.WriteHandle<Room>> {
+    domain.lookup_named_write::<Room>(host.rooms, name)
+}
 fn fixture_room(host: Host, key: UInt64) @suspends -> Option<domain.WriteHandle<Room>> {
     if key == 0 { return None }
     let name = if key == 1 { "r" } else { "other" }
     room_handle(host, &name)
 }
 fn test_account(ctx: Host, id: UInt64, key: UInt64, output: session.Output) @suspends -> domain.Owner<Account> {
-    let value = Account { route: Route { live: true, id: id, output: output }, room: if key==0 {""} else if key==1 {"r"} else {"other"}, balance_cents: 500 }
-    let route = value.route
-    let owner = domain.create(make_account, value)
+    let member = Member { id: id, output: output }
+    let owner = domain.create(new_account, member)
     ctx.accounts.insert(id, owner.handle())!
-    if key != 0 { domain.write_to(fixture_room(ctx, key)!, add_member, route)! }
+    if key != 0 {
+        let name = if key == 1 { "r" } else { "other" }
+        domain.write_to(owner.handle(), set_room, name)!
+        domain.write_to(fixture_room(ctx, key)!, add_member, member)!
+    }
     owner
 }
 fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
@@ -41,7 +46,7 @@ fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
     let text = String.from_utf8(bytes)!
     check.assert(text.equals(&expected), "mailbox message and ordering")
 }
-fn balance(owner: &domain.Owner<Account>) @suspends -> UInt64 { domain.read_from(owner.read_handle(), account_view)!.balance_cents }
+fn balance(owner: &domain.Owner<Account>) @suspends -> UInt64 { domain.read_from(owner.read_handle(), balance_view)! }
 fn unchanged(state: &mut Account, _: Unit) { state.balance_cents += 0 }
 fn fund_capacity_test(state: &mut Account, _: Unit) { state.balance_cents = 10000 }
 fn candidate(ctx: Host, account: domain.WriteHandle<Account>, text: String) @suspends -> domain.CandidateSet {
@@ -51,7 +56,7 @@ fn candidate(ctx: Host, account: domain.WriteHandle<Account>, text: String) @sus
     var value = domain.read_snapshot(&snapshot, account.read_only(), account_view)
     value.balance_cents -= 100
     var batch = outbox.batch(1, text.byte_length())
-    outbox.stage(&mut batch, value.route.output, text.into_bytes())!
+    outbox.stage(&mut batch, value.member.output, text.into_bytes())!
     domain.edit_snapshot(snapshot, account, apply_account, value).with_outbox(batch)
 }
 fn verify_conflicts_and_independence() @suspends {
@@ -70,7 +75,7 @@ fn verify_conflicts_and_independence() @suspends {
     let extra = domain.directory(1)
     let routes = extra.handle()
     let name = "independent"
-    when (room: Room = routes.get_or_stage(name, make_room(name.clone()))) {}!
+    when (room: Room = routes.get_or_stage(name, new_room(name.clone()))) {}!
     var accepted = domain.commit_set(independent)
     accepted.wait()!
     check.assert(balance(&alice) == 400, "unrelated state writes do not conflict")
@@ -115,13 +120,12 @@ fn verify_message_capacity() @suspends {
     }
     check.assert(handle_line(f.ctx, 1, "say retry"), "overflow does not require replay")
     expect_message(&mut alice_queue, "message r 1 retry\n")
-    check.assert(run_command(f.ctx, 2, Command.Disconnect), "session callback removes slow member")
     forget(Client { host: f.ctx, id: 2 })
     expect_message(&mut alice_queue, "left r 2\n")
     check.assert(balance(&alice) == 3500, "overflowing send charges once")
     check.assert(bob_stop.receive().is_none(), "evicted session wakes")
     check.assert(bob_queue.receive().is_none(), "evicted output closes")
-    check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "evicted account inactive")
+    check.assert(!domain.read_from(bob.read_handle(), live_view)!, "evicted account inactive")
     check.assert(handle_line(f.ctx, 3, "say alive"), "unrelated room survives")
     expect_message(&mut carol_queue, "message other 3 alive\n")
     check.assert(balance(&carol) == 400, "other account pays independently")
@@ -149,7 +153,6 @@ fn verify_byte_capacity() @suspends {
     }
     check.assert(handle_line(f.ctx, 1, "say {payload}"), "byte overflow commits")
     expect_message(&mut alice_queue, expected.clone())
-    check.assert(run_command(f.ctx, 2, Command.Disconnect), "byte overload cleanup")
     forget(Client { host: f.ctx, id: 2 })
     expect_message(&mut alice_queue, "left r 2\n")
     check.assert(balance(&alice) == 10000 - (count + 1) * 100, "byte overflow charges once")
@@ -166,8 +169,9 @@ fn verify_simultaneous_capacity() @suspends {
     let bob = test_account(f.ctx, 2, 1, bob_queue.handle())
     check.assert(handle_line(f.ctx, 1, "say full"), "first queued send")
     check.assert(handle_line(f.ctx, 1, "say full"), "second queued send")
-    check.assert(run_command(f.ctx, 1, Command.Disconnect), "departure commits despite full recipient")
-    check.assert(!run_command(f.ctx, 1, Command.Disconnect), "disconnect is idempotent")
+    forget(Client { host: f.ctx, id: 1 })
+    forget(Client { host: f.ctx, id: 1 })
+    check.assert(domain.lookup_write::<Account>(f.ctx.accounts, 1).is_none(), "forgetting is idempotent")
     check.assert(alice_stop.receive().is_none() && bob_stop.receive().is_none(), "both sessions wake")
     check.assert(alice_queue.receive().is_none() && bob_queue.receive().is_none(), "both queues close")
     check.assert(balance(&alice) == 300 && balance(&bob) == 500, "disconnect is free")
@@ -178,12 +182,11 @@ fn verify_atomic_overflow_signal() @suspends {
     var output = outbox.create_with_policy(1, 1, outbox.Overflow.Disconnect(control.handle()))
     let alice = test_account(f.ctx, 1, 1, output.handle())
     let text = "overflow"
-    say(f.ctx, alice.handle(), &text)!!
+    say(f.ctx, alice.handle(), text)!!
     // No apply_command or post-commit close ran: publication closes the signal.
     check.assert(control.receive().is_none(), "overflow closes the independent signal at commit")
     check.assert(output.receive().is_none(), "oversized target batch is wholly discarded")
     check.assert(balance(&alice) == 400, "overflow still commits the debit")
-    check.assert(run_command(f.ctx, 1, Command.Disconnect), "normal session cleanup")
     forget(Client { host: f.ctx, id: 1 })
     check.assert(!domain.query_from(f.room.read_handle(), member_value, 1)!, "cleanup removes membership")
 }
@@ -198,7 +201,6 @@ fn verify_closed_output() @suspends {
     outbox.close(closed.handle())
     check.assert(handle_line(f.ctx, 1, "say retry"), "closed target does not reject commit")
     expect_message(&mut queue, "message r 1 retry\n")
-    check.assert(run_command(f.ctx, 2, Command.Disconnect), "closed session cleanup")
     forget(Client { host: f.ctx, id: 2 })
     expect_message(&mut queue, "left r 2\n")
     check.assert(closed_stop.receive().is_none(), "closed output signals session")
@@ -222,7 +224,7 @@ fn verify_wide_broadcast() @suspends {
         expect_message(&mut queue, "message r 1 beyond256\n")
     }
     let alice = domain.lookup_write::<Account>(f.ctx.accounts, 1)!
-    check.assert(domain.read_from(alice.read_only(), account_view)!.balance_cents == 400, "wide broadcast costs one yuan")
+    check.assert(domain.read_from(alice.read_only(), balance_view)! == 400, "wide broadcast costs one yuan")
 }
 fn verify_room_resolution_changes_before_operation() @suspends {
     let f = fixture()
@@ -233,7 +235,7 @@ fn verify_room_resolution_changes_before_operation() @suspends {
     expect_message(&mut queue, "left r 1\n")
     expect_message(&mut queue, "joined other 1\n")
     let text = "stale"
-    say(f.ctx, alice.handle(), &text)!!
+    say(f.ctx, alice.handle(), text)!!
     expect_message(&mut queue, "message other 1 stale\n")
     check.assert(balance(&alice) == 400, "dynamic path resolves current room and charges once")
     check.assert(handle_line(f.ctx, 1, "say resolved"), "resolve current membership")
@@ -275,12 +277,11 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     let bob_queue = outbox.create_with_policy(1, 64, outbox.Overflow.Disconnect(bob_stop.handle()))
     let bob = test_account(ctx, 2, 1, bob_queue.handle())
     check.assert(handle_line(ctx, 2, "balance"), "fill another recipient")
-    check.assert(run_command(host, 1, Command.Disconnect), "full recipient does not block departure")
-    check.assert(!domain.read_from(alice.read_handle(), account_view)!.route.live, "departure commits immediately")
     forget(Client { host: host, id: 1 })
+    check.assert(!domain.read_from(alice.read_handle(), live_view)!, "full recipient does not block departure")
     let room = fixture_room(ctx, 1)!
     check.assert(!domain.query_from(room.read_only(), member_value, 1).unwrap_or(true), "failed connection leaves no membership")
-    check.assert(domain.read_from(bob.read_handle(), account_view)!.route.live, "unrelated account stays alive")
+    check.assert(domain.read_from(bob.read_handle(), live_view)!, "unrelated account stays alive")
     let other_name = "other"
     check.assert(domain.remove_named_if(host.rooms, &other_name, empty)!, "conditional deletion frees directory capacity")
     let carol_stop = outbox.create(1, 0)
@@ -292,11 +293,11 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     let fresh = room_handle(ctx, &name)!
     check.assert(!domain.remove_named_if(host.rooms, &name, empty)!, "occupied rooms survive conditional deletion")
     let denied = "third"
-    match join(ctx, carol.handle(), &denied) { Err(DirectoryFull(_)) => {}, _ => check.assert(false, "directory capacity rejects before departure") }
+    match join(ctx, carol.handle(), denied) { Err(DirectoryFull(_)) => {}, _ => check.assert(false, "directory capacity rejects before departure") }
     check.assert(domain.query_from(fresh.read_only(), member_value, 3)!, "failed creation preserves old membership")
 }
 
-fn member_value(room: &Room, id: UInt64) -> Bool { member(room, id) }
+fn member_value(room: &Room, id: UInt64) -> Bool { is_member(room, id) }
 
 fn verify_unavailable_control_eviction() @suspends {
     let f = fixture()
@@ -311,9 +312,8 @@ fn verify_unavailable_control_eviction() @suspends {
     check.assert(handle_line(f.ctx, 1, "say after-cleanup"), "closed control does not reject healthy delivery")
     expect_message(&mut output, "message r 1 after-cleanup\n")
     check.assert(balance(&alice) == 400, "send charges once before cleanup")
-    check.assert(run_command(f.ctx, 2, Command.Disconnect), "closed control does not block cleanup")
     forget(Client { host: f.ctx, id: 2 })
-    check.assert(!domain.read_from(bob.read_handle(), account_view)!.route.live, "session cleanup removes recipient")
+    check.assert(!domain.read_from(bob.read_handle(), live_view)!, "session cleanup removes recipient")
 }
 
 fn retire_test_room(room: &mut Room, _: Unit) { mem.replace(&mut room.name, "retired"); }
@@ -328,15 +328,15 @@ fn verify_move_rollback() @suspends {
     check.assert(handle_line(f.ctx, 2, "balance"), "fill destination queue")
     let name = "other"
     domain.write_to(f.other.handle(), retire_test_room, {})!
-    match join(f.ctx, alice.handle(), &name) {
-        Ok(Err(Stopped)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
+    match join(f.ctx, alice.handle(), name) {
+        Ok(Err(Stale)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
     }
-    check.assert(domain.read_from(alice.read_handle(), account_view)!.room.equals("r"), "failed moves preserve account room")
+    check.assert(domain.read_from(alice.read_handle(), room_name_view)!.equals("r"), "failed moves preserve account room")
     check.assert(domain.query_from(f.room.read_handle(), member_value, 1)!, "failed moves preserve old membership")
     check.assert(!domain.query_from(f.other.read_handle(), member_value, 1)!, "failed moves never add destination membership")
     check.assert(balance(&alice) == 500 && balance(&bob) == 500, "failed moves do not charge")
-    check.assert(run_command(f.ctx, 1, Command.Welcome), "sentinel after rejected moves")
-    expect_message(&mut output, "welcome 1\n")
+    check.assert(handle_line(f.ctx, 1, "balance"), "sentinel after rejected moves")
+    expect_message(&mut output, "balance 5\n")
     expect_message(&mut next_output, "balance 5\n")
     check.assert(handle_line(f.ctx, 2, "balance"), "sentinel after rejected arrival")
     expect_message(&mut next_output, "balance 5\n")

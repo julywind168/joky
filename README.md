@@ -143,9 +143,10 @@ shutdown
 按关注点阅读示例：
 
 - [chat_contract.jk](examples/chat_contract.jk)：共享类型、入口契约和 `defaults()` 配置。
-- [chat_logic.jk](examples/chat_logic.jk)：从 `dispatch`／`handle_line` 进入；收费看 `say`，
-  换房和缺失房间的事务内创建看 `join`，离开与断线看 `leave`，条件回收看 `reclaim`。
-- [chat.jk](examples/chat.jk)：连接生命周期、失败隔离和服务启动。
+- [chat_logic.jk](examples/chat_logic.jk)：从 `handle_line` 进入，每条命令是一个具名 `when`；
+  收费看 `say` 与 `SAY_PRICE_CENTS`，换房和缺失房间的事务内创建看 `join`，主动离开看 `leave`；
+  开户与欢迎看 `init_account`，断线清理看 `forget`，空房条件回收看 `reclaim`。
+- [chat.jk](examples/chat.jk)：连接生命周期（开户、会话、清理）、失败隔离和服务启动。
 - [chat_admin.jk](examples/chat_admin.jk)：独立的发布与停机协议。
 
 修改连接策略只需调整 `defaults()`：默认每行 4096 字节（含结束符）、队列 64 条／64 KiB，

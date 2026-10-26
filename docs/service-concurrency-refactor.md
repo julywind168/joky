@@ -396,31 +396,30 @@ fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
 }
 ```
 
-R3／R4 交付后 `examples/chat_logic.jk` 的实际写法：
+2026-10-27 重写后 `examples/chat_logic.jk` 的实际写法：
 
 ```text
-fn say(host: Host, account: domain.WriteHandle<Account>, text: &String) @suspends -> Attempt {
-    let text = text.clone()
+fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends -> Outcome<Unit> {
     when "say" (mut account, room?: Room = host.rooms[account.room]) {
-        let route = check_member(account, room)?
-        if account.balance_cents < 100 { deliver(route, "error insufficient balance\n") }
+        let member = check_member(account, room)?
+        if account.balance_cents < SAY_PRICE_CENTS { send(member, "error insufficient balance\n") }
         else {
-            account.balance_cents -= 100
-            let message = say_message(&room.name, route.id, text)
-            broadcast(room, &message, NO_CLIENT)
+            account.balance_cents -= SAY_PRICE_CENTS
+            let message = chat_line(&room.name, member.id, text)
+            broadcast(room, &message)
         }
-        Ok((route, ""))
+        Ok({})
     } else {
-        let route = check_account(account)?
-        deliver(route, "error join a room first\n")
-        Ok((route, ""))
+        let member = check_live(account)?
+        send(member, "error join a room first\n")
+        Ok({})
     }
 }
 ```
 
-相对重构前移除了 `ctx`、`excluded`、`expected`、`Retry` 与位置重试循环。路径校验保证 `room`
+相对重构前移除了 `ctx`、`excluded`、`expected`、`Retry`、位置重试循环与捕获复制。路径校验保证 `room`
 仍是账户所在的同一个域；live 与成员关系仍由块体检查。可选路径落空时进入 `else` 分支，
-换房时新旧房间相同进入 `alias` 分支。`Attempt` 双层 Result 仍保留：外层为访问错误，内层为业务拒绝。
+换房时新旧房间相同进入 `alias` 分支。`Outcome<T>` 双层 Result 仍保留：外层为访问错误，内层为业务拒绝。
 
 ## 7. 实施阶段
 
@@ -857,3 +856,20 @@ R2 专项验收（2026-10-26，Debug）：
   其余默认集成／文档测试与三后端短输入 while／Map 正确性；`cargo test --test chat -- --ignored`
   的 Local／Parallel 两组实网矩阵通过；建域、路径、目录三组逐指令取消穷举通过。
   未运行 Release、性能测量或无关压力组。
+
+### chat 示例重写（2026-10-27）
+
+- 目标：在不改变网络协议与可观察行为的前提下，让一条命令只对应一条代码路径。
+- 命令分派：`handle_line` 解析后直接调用 `say`／`join`／`leave`／`reply`，提交后的空房回收由
+  `committed`／`vacated` 统一处理；删除 `run_command`、`domain.request` 与 `apply_command` 转发层。
+- 生命周期：欢迎消息并入开户的 `when`；原 `Action.Disconnect` 与 `forget` 合并为一次原子离开
+  （通知其他成员、关闭输出、移除账户），共享契约缩减为 `init_account`、`dispatch`、`forget` 三个入口，
+  `Call` 直接携带一行文本。
+- 数据模型：房间成员离开即移除，不再以 `live` 标记占位；`live` 只属于账户，`broadcast` 不再需要跳过参数。
+  命令参数按值进入操作，不再先复制；`Account` 不再派生 Clone。价格与初始余额改为具名常量。
+- 空字符串表示账户不在房间：访问路径的键只能是 UInt64 或 String，暂不能表达 `Option` 键。
+- 测试：`tests/chat.rs` 的源码补丁改为消息模板与价格常量；fixture 改用视图函数读取账户字段，
+  以 `forget` 替代“断开 + 清理”两步，以余额查询替代欢迎消息作为顺序哨兵。
+- 验证（Debug）：fixture 的 12 组业务断言直接通过；`cargo test --test chat -- --ignored`
+  的 Local／Parallel 两组实网矩阵通过；`./scripts/check.sh` 单次完整通过（1710 项库测试、
+  317 项 CLI 测试及三后端短输入基准正确性）。未运行 Release 或性能测量。

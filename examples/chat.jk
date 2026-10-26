@@ -1,5 +1,7 @@
+// AOT chat host: owns sockets, directories and the script VM; business rules live in
+// chat_logic.jk and are republished through the admin port without dropping connections.
 import chat_admin
-import chat_contract.{type Contract, type Host, type Action, type Call, type AccountInit, type Client, defaults, require_contract}
+import chat_contract.{type Contract, type Host, type Call, type AccountInit, type Client, defaults, require_contract}
 import joky/vm
 import joky/domain
 import joky/session
@@ -10,39 +12,27 @@ import joky/tcp.{type Address, type TcpListener, type TcpStream}
 struct Script { vm: vm.Vm, entries: Contract }
 
 fn script_path() -> String { "examples/chat_logic.jk" }
-fn dispatch(engine: &Script, client: Client, action: Action) @suspends -> Bool {
-    let request = Call { host: client.host, id: client.id, action: action }
-    engine.entries.dispatch.try_call(&engine.vm, request).unwrap_or(false)
+
+// Session callbacks forward to the current script version.
+fn line(script: &Script, client: &Client, text: String) @suspends @noescape -> Bool {
+    let call = Call { host: client.host, id: client.id, line: text }
+    script.entries.dispatch.try_call(&script.vm, call).unwrap_or(false)
 }
-fn line(engine: &Script, client: &Client, text: String) @suspends @noescape -> Bool {
-    dispatch(engine, *client, Action.Line(text))
+fn closed(script: &Script, client: &Client) @suspends @noescape {
+    script.entries.forget.try_call(&script.vm, *client);
 }
-fn disconnected(engine: &Script, client: &Client) @suspends @noescape {
-    dispatch(engine, *client, Action.Disconnect);
-    engine.entries.forget.try_call(&engine.vm, *client);
-}
-fn connection(
-    engine: Script,
-    host: Host,
-    id: UInt64,
-    stream: TcpStream,
-    permit: admission.Permit,
-) @suspends {
+
+// One connection: open its account, run the session, then always forget the account.
+fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit: admission.Permit) @suspends {
     let owners = domain.directory(1)
     let connection = session.create(host.config.connection)
-    let input = AccountInit {
-        host: host,
-        owners: owners.handle(),
-        id: id,
-        output: connection.output()
-    }
     let client = Client { host: host, id: id }
-    if engine.entries.init_account.try_call(&engine.vm, input).is_err() {
-        disconnected(&engine, &client)
-        return
+    let account = AccountInit { host: host, owners: owners.handle(), id: id, output: connection.output() }
+    if script.entries.init_account.try_call(&script.vm, account).is_ok() {
+        session.run(connection, stream, &script, &client, line, closed)
+    } else {
+        closed(&script, &client)
     }
-    if !dispatch(&engine, client, Action.Welcome) { disconnected(&engine, &client); return }
-    session.run(connection, stream, &engine, &client, line, disconnected)
     permit.release()
 }
 fn report_failure(id: UInt64, failure: &task.Failure) {
@@ -57,7 +47,8 @@ fn report_failure(id: UInt64, failure: &task.Failure) {
     }
     println("connection {id}: {reason}")
 }
-fn serve(engine: &Script, host: Host, listener: TcpListener) @suspends -> Int32 {
+// Each connection runs in its own failure boundary; one failing client never stops the rest.
+fn serve(script: &Script, host: Host, listener: TcpListener) @suspends -> Int32 {
     var listener = listener
     let admission = admission.create(host.config.max_clients, 0)
     let entrants = admission.handle()
@@ -68,9 +59,9 @@ fn serve(engine: &Script, host: Host, listener: TcpListener) @suspends -> Int32 
             let permit = match entrants.try_acquire() { Ok(permit) => permit, Err(_) => continue }
             let id = next_id
             next_id += 1
-            let script = Script { vm: engine.vm.share(), entries: engine.entries.clone() }
+            let copy = Script { vm: script.vm.share(), entries: script.entries.clone() }
             branch {
-                if let Err(failure) = isolate { connection(script, host, id, stream, permit) } {
+                if let Err(failure) = isolate { connection(copy, host, id, stream, permit) } {
                     report_failure(id, &failure)
                 }
             }
@@ -92,11 +83,7 @@ fn main() @suspends -> Int32 {
     let config = defaults()
     let rooms = domain.directory(config.max_rooms)
     let accounts = domain.directory(config.max_clients)
-    let host = Host {
-        config: config,
-        rooms: rooms.handle(),
-        accounts: accounts.handle()
-    }
+    let host = Host { config: config, rooms: rooms.handle(), accounts: accounts.handle() }
     var chat = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }

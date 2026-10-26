@@ -1,4 +1,7 @@
-import chat_contract.{type Host, type Action, type Call, type AccountInit, type Client}
+// Chat business rules. examples/chat.jk loads this script and republishes it on `reload`.
+// Every command is one named `when`: checks, balance changes and outgoing messages commit
+// together or not at all. Read top to bottom: state, protocol, commands, lifetime, helpers.
+import chat_contract.{type Host, type Call, type AccountInit, type Client}
 import joky/domain
 import joky/session
 import joky/mem
@@ -6,260 +9,208 @@ import joky/iter.{range}
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 
-const NO_CLIENT: UInt64 = 0
-struct Route { live: Bool, id: UInt64, output: session.Output }
-// Route is Copy, but output handles have no library Clone for the derive to use.
-impl Clone for Route { fn clone(&self) -> Self { *self } }
-// An empty room name means the account is outside every room; the protocol rejects empty names.
-#state
-#derive(Clone)
-struct Account { route: Route, room: String, balance_cents: UInt64 }
-#state
-struct Room { name: String, members: Array<Route> }
-#derive(Clone)
-enum Command { Welcome, Balance, Join(String), Leave, Say(String), Invalid, Disconnect }
-fn make_room(name: String) -> Room { Room { name: name, members: Array.new::<Route>() } }
-fn make_account(account: Account) -> Account { account }
+const START_BALANCE_CENTS: UInt64 = 500
+const SAY_PRICE_CENTS: UInt64 = 100
 
-// Protocol: decode once, then queue one atomic command.
+struct Member { id: UInt64, output: session.Output }
+// `room` is empty while the account is outside every room; the protocol rejects empty names.
+#state
+struct Account { member: Member, live: Bool, room: String, balance_cents: UInt64 }
+#state
+struct Room { name: String, members: Array<Member> }
+fn new_account(member: Member) -> Account {
+    Account { member: member, live: true, room: "", balance_cents: START_BALANCE_CENTS }
+}
+fn new_room(name: String) -> Room { Room { name: name, members: Array.new::<Member>() } }
+
+// A command whose account or membership changed underneath it is refused as a whole.
+enum Rejection { Stale }
+type Outcome<T> = Result<Result<T, Rejection>, domain.DomainAccessError>
+
+// Protocol: one line is one command; any rejection closes the connection.
+enum Command { Balance, Join(String), Leave, Say(String), Invalid }
 fn parse(line: String) -> Command {
     let separator = line.find(" ").unwrap_or(line.byte_length())
     let verb = line.substring(0, separator)!
     let argument = if separator < line.byte_length() {
         line.substring(separator + 1, line.byte_length())!
     } else { "" }
-    let room_name = !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none()
-    if verb.equals("join") && room_name { Command.Join(argument) }
+    let room = !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none()
+    if verb.equals("join") && room { Command.Join(argument) }
     else if line.equals("balance") { Command.Balance }
     else if line.equals("leave") { Command.Leave }
     else if verb.equals("say") && !argument.is_empty() { Command.Say(argument) }
     else { Command.Invalid }
 }
-
+fn dispatch(call: Call) @suspends -> Bool {
+    let Call { host, id, line } = call
+    handle_line(host, id, line)
+}
 fn handle_line(host: Host, id: UInt64, line: String) @suspends -> Bool {
-    run_command(host, id, parse(line))
-}
-fn dispatch(request: Call) @suspends -> Bool {
-    let Call { host, id, action } = request
-    match action {
-        Action.Welcome => run_command(host, id, Command.Welcome),
-        Action.Line(line) => handle_line(host, id, line),
-        Action.Disconnect => run_command(host, id, Command.Disconnect)
-    }
-}
-
-// Command operations keep validation, business rules and messages in one version.
-enum CommandError { Stopped }
-type Attempt = Result<Result<(Route, String), CommandError>, domain.DomainAccessError>
-fn check_account(account: &Account) -> Result<Route, CommandError> {
-    if !account.route.live { Err(CommandError.Stopped) } else { Ok(account.route) }
-}
-fn check_member(account: &Account, room: &Room) -> Result<Route, CommandError> {
-    let route = check_account(account)?
-    if member(room, route.id) { Ok(route) } else { Err(CommandError.Stopped) }
-}
-fn reply(
-    account: domain.WriteHandle<Account>,
-    command: &Command,
-) @suspends -> Attempt {
-    let command = command.clone()
-    when "reply" (mut account) {
-        if !account.route.live { Err(CommandError.Stopped) }
-        else {
-            let id = account.route.id
-            let message = match command {
-                Welcome => "welcome {id}\n",
-                Balance => { let yuan = account.balance_cents / 100; "balance {yuan}\n" },
-                _ => "error use join <room>, leave, say <message>, or balance\n"
-            }
-            deliver(account.route, &message)
-            Ok((account.route, ""))
-        }
-    }
-}
-fn say(host: Host, account: domain.WriteHandle<Account>, text: &String) @suspends -> Attempt {
-    let text = text.clone()
-    when "say" (mut account, room?: Room = host.rooms[account.room]) {
-        let route = check_member(account, room)?
-        if account.balance_cents < 100 { deliver(route, "error insufficient balance\n") }
-        else {
-            account.balance_cents -= 100
-            let message = say_message(&room.name, route.id, text)
-            broadcast(room, &message, NO_CLIENT)
-        }
-        Ok((route, ""))
-    } else {
-        let route = check_account(account)?
-        deliver(route, "error join a room first\n")
-        Ok((route, ""))
-    }
-}
-fn enter(
-    account: &mut Account,
-    room: &mut Room,
-    name: &String,
-) -> Result<Route, CommandError> {
-    if !room.name.equals(name) { return Err(CommandError.Stopped) }
-    let route = account.route
-    let message = event("joined", &room.name, route.id, "")
-    broadcast(room, &message, NO_CLIENT)
-    deliver(route, &message)
-    add_member(room, route)
-    mem.replace(&mut account.room, name.clone());
-    Ok(route)
-}
-fn depart(account: &mut Account, room: &mut Room, closing: Bool) -> String {
-    let id = account.route.id
-    let message = event("left", &room.name, id, "")
-    broadcast(room, &message, if closing { id } else { NO_CLIENT })
-    remove_member(room, id)
-    mem.replace(&mut account.room, "")
-}
-fn join(host: Host, account: domain.WriteHandle<Account>, name: &String) @suspends -> Attempt {
-    let name = name.clone()
-    when "move" (mut account,
-                 mut next: Room = host.rooms.get_or_stage(name, make_room(name.clone())),
-                 mut old?: Room = host.rooms[account.room]) {
-        check_member(account, old)?
-        let previous = depart(account, old, false)
-        Ok((enter(account, next, name)?, previous))
-    } else {
-        check_account(account)?
-        Ok((enter(account, next, name)?, ""))
-    } alias {
-        let route = check_member(account, next)?
-        deliver(route, "error already joined\n")
-        Ok((route, ""))
-    }
-}
-fn leave(host: Host, account: domain.WriteHandle<Account>, closing: Bool) @suspends -> Attempt {
-    when "leave" (mut account, mut room?: Room = host.rooms[account.room]) {
-        let route = check_member(account, room)?
-        let previous = depart(account, room, closing)
-        if closing { account.route.live = false }
-        Ok((route, previous))
-    } else {
-        let route = check_account(account)?
-        if closing { account.route.live = false } else { deliver(route, "error join a room first\n") }
-        Ok((route, ""))
-    }
-}
-
-// A command queues one complete access-path operation; the runtime revalidates routes.
-// The Bool tells the session whether to keep the connection open.
-struct Request { host: Host, id: UInt64, command: Command }
-fn run_command(host: Host, id: UInt64, command: Command) @suspends -> Bool {
     let account = match domain.lookup_write::<Account>(host.accounts, id) {
-        Some(handle) => handle,
+        Some(account) => account,
         None => return false
     }
-    let input = Request { host: host, id: id, command: command }
-    domain.request(account, apply_command, input).unwrap_or(false)
+    let command = parse(line)
+    match command {
+        Say(text) => committed(say(host, account, text)),
+        Join(name) => vacated(host, join(host, account, name)),
+        Leave => vacated(host, leave(host, account)),
+        Balance => committed(reply(account, Reply.Balance)),
+        Invalid => committed(reply(account, Reply.Usage))
+    }
 }
-fn apply_command(input: Request) @suspends -> Bool {
-    let Request { host, id, command } = input
-    let account = match domain.lookup_write::<Account>(host.accounts, id) {
-        Some(handle) => handle,
-        None => return false
-    }
-    let result = match &command {
-        Say(text) => say(host, account, text),
-        Join(name) => join(host, account, name),
-        Leave => leave(host, account, false),
-        Disconnect => leave(host, account, true),
-        _ => reply(account, &command)
-    }
-    match result {
-        Ok(Ok((route, previous))) => {
-            match &command { Disconnect => route.output.close(), _ => {} }
-            reclaim(host, &previous)
-            true
-        },
+fn committed<T>(outcome: Outcome<T>) -> Bool { match outcome { Ok(Ok(_)) => true, _ => false } }
+// Commands that leave a room hand its name back so an empty room can be reclaimed.
+fn vacated(host: Host, outcome: Outcome<String>) @suspends -> Bool {
+    match outcome {
+        Ok(Ok(room)) => { reclaim(host, &room); true },
         _ => false
     }
 }
 
-// Membership cleanup has no queue dependency, including after a failed Script call.
-fn forget(client: Client) @suspends {
-    let host = client.host
-    let id = client.id
-    let account = match domain.lookup_write::<Account>(host.accounts, id) { Some(h) => h, None => return }
-    let removed = when "forget" (mut account, mut room?: Room = host.rooms[account.room]) {
-        remove_member(room, id)
-        let previous = mem.replace(&mut account.room, "")
-        account.route.live = false
-        (account.route, previous)
-    } else {
-        mem.replace(&mut account.room, "");
-        account.route.live = false
-        (account.route, "")
+// Commands.
+enum Reply { Balance, Usage }
+fn reply(account: domain.WriteHandle<Account>, reply: Reply) @suspends -> Outcome<Unit> {
+    when "reply" (account) {
+        let member = check_live(account)?
+        let text = match reply {
+            Balance => { let yuan = account.balance_cents / 100; "balance {yuan}\n" },
+            Usage => "error use join <room>, leave, say <message>, or balance\n"
+        }
+        send(member, &text)
+        Ok({})
     }
-    match removed {
-        Ok((route, previous)) => {
-            route.output.close()
-            host.accounts.remove(id, account.read_only());
-            reclaim(host, &previous)
-        },
-        _ => {}
+}
+fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends -> Outcome<Unit> {
+    when "say" (mut account, room?: Room = host.rooms[account.room]) {
+        let member = check_member(account, room)?
+        if account.balance_cents < SAY_PRICE_CENTS { send(member, "error insufficient balance\n") }
+        else {
+            account.balance_cents -= SAY_PRICE_CENTS
+            let message = chat_line(&room.name, member.id, text)
+            broadcast(room, &message)
+        }
+        Ok({})
+    } else {
+        let member = check_live(account)?
+        send(member, "error join a room first\n")
+        Ok({})
+    }
+}
+// Moving checks and leaves the old room, then enters the new one; a failure undoes both.
+fn join(host: Host, account: domain.WriteHandle<Account>, name: String) @suspends -> Outcome<String> {
+    when "move" (mut account,
+                 mut next: Room = host.rooms.get_or_stage(name, new_room(name.clone())),
+                 mut old?: Room = host.rooms[account.room]) {
+        check_member(account, old)?
+        let previous = depart(account, old, true)
+        enter(account, next, name)?
+        Ok(previous)
+    } else {
+        check_live(account)?
+        enter(account, next, name)?
+        Ok("")
+    } alias {
+        let member = check_member(account, next)?
+        send(member, "error already joined\n")
+        Ok("")
+    }
+}
+fn leave(host: Host, account: domain.WriteHandle<Account>) @suspends -> Outcome<String> {
+    when "leave" (mut account, mut room?: Room = host.rooms[account.room]) {
+        check_member(account, room)?
+        Ok(depart(account, room, true))
+    } else {
+        let member = check_live(account)?
+        send(member, "error join a room first\n")
+        Ok("")
     }
 }
 
-// The connection directory owns its account; the shared account route stays weak.
+// Connection lifetime: the host opens an account before its session and forgets it after.
+// The connection-local directory owns the account; the shared route stays weak.
 fn init_account(input: AccountInit) @suspends {
-    let initial = Account { route: Route { live: true, id: input.id, output: input.output },
-        room: "", balance_cents: 500 }
-    when "create account" (account: Account = input.owners.get_or_stage(input.id, make_account(initial.clone()))) {}!
-    let account = domain.lookup_write::<Account>(input.owners, input.id)!
-    input.host.accounts.insert(input.id, account)!
+    let AccountInit { host, owners, id, output } = input
+    let member = Member { id: id, output: output }
+    when "open account" (account: Account = owners.get_or_stage(id, new_account(member))) {
+        send(member, "welcome {id}\n")
+    }!
+    host.accounts.insert(id, domain.lookup_write::<Account>(owners, id)!)!
 }
-fn room_handle(host: Host, name: &String) @suspends -> Option<domain.WriteHandle<Room>> {
-    domain.lookup_named_write::<Room>(host.rooms, name)
+// Runs once after every session, including after script failures in its commands.
+fn forget(client: Client) @suspends {
+    let Client { host, id } = client
+    let account = match domain.lookup_write::<Account>(host.accounts, id) {
+        Some(account) => account,
+        None => return
+    }
+    let ended = when "forget" (mut account, mut room?: Room = host.rooms[account.room]) {
+        account.live = false
+        (account.member.output, depart(account, room, false))
+    } else {
+        account.live = false
+        (account.member.output, "")
+    }
+    if let Ok((output, room)) = ended {
+        output.close()
+        host.accounts.remove(id, account.read_only());
+        reclaim(host, &room)
+    }
 }
-fn empty(room: &Room) -> Bool {
-    for route in &room.members { if route.live { return false } }
-    true
-}
-fn reclaim(host: Host, name: &String) @suspends {
-    if host.config.reclaim_empty && !name.is_empty() {
-        domain.remove_named_if(host.rooms, name, empty);
+fn reclaim(host: Host, room: &String) @suspends {
+    if host.config.reclaim_empty && !room.is_empty() {
+        domain.remove_named_if(host.rooms, room, empty);
     }
 }
 
 // State and message helpers used inside atomic operations.
-fn event(kind: &String, room: &String, id: UInt64, message: &String) -> String {
-    if message.is_empty() { "{kind} {room} {id}\n" }
-    else { "{kind} {room} {id} {message}\n" }
+fn check_live(account: &Account) -> Result<Member, Rejection> {
+    if account.live { Ok(account.member) } else { Err(Rejection.Stale) }
 }
-fn deliver(route: Route, message: &String) {
-    if route.live {
-        let bytes = message.clone().into_bytes()
-        route.output.send(&bytes)
-    }
+fn check_member(account: &Account, room: &Room) -> Result<Member, Rejection> {
+    let member = check_live(account)?
+    if is_member(room, member.id) { Ok(member) } else { Err(Rejection.Stale) }
 }
-fn broadcast(room: &Room, message: &String, skip: UInt64) {
-    let bytes = message.clone().into_bytes()
-    for route in &room.members {
-        if route.live && route.id != skip { route.output.send(&bytes) }
-    }
+fn enter(account: &mut Account, room: &mut Room, name: &String) -> Result<Member, Rejection> {
+    if !room.name.equals(name) { return Err(Rejection.Stale) }
+    let member = account.member
+    add_member(room, member)
+    let message = notice("joined", &room.name, member.id)
+    broadcast(room, &message)
+    mem.replace(&mut account.room, name.clone());
+    Ok(member)
 }
-fn say_message(room: &String, id: UInt64, text: &String) -> String { event("message", room, id, text) }
-fn remove_member(state: &mut Room, id: UInt64) {
-    for route in &mut state.members {
-        if route.id == id { route.live = false }
-    }
+// Leaves the room and returns its name. A closed connection does not hear its own departure.
+fn depart(account: &mut Account, room: &mut Room, notify_self: Bool) -> String {
+    let member = account.member
+    remove_member(room, member.id)
+    let message = notice("left", &room.name, member.id)
+    broadcast(room, &message)
+    if notify_self { send(member, &message) }
+    mem.replace(&mut account.room, "")
 }
-fn add_member(state: &mut Room, route: Route) {
-    for member in &mut state.members {
-        if !member.live {
-            *member = route
+fn add_member(room: &mut Room, member: Member) { room.members.push(member) }
+fn remove_member(room: &mut Room, id: UInt64) {
+    for index in range(0, room.members.len()) {
+        if room.members.get(index)!.id == id {
+            room.members.swap_remove(index);
             return
         }
     }
-    state.members.push(route)
 }
-fn member(room: &Room, id: UInt64) -> Bool {
-    for route in &room.members {
-        if route.live && route.id == id { return true }
-    }
+fn is_member(room: &Room, id: UInt64) -> Bool {
+    for member in &room.members { if member.id == id { return true } }
     false
+}
+fn empty(room: &Room) -> Bool { room.members.is_empty() }
+fn notice(kind: &String, room: &String, id: UInt64) -> String { "{kind} {room} {id}\n" }
+fn chat_line(room: &String, id: UInt64, text: &String) -> String { "message {room} {id} {text}\n" }
+fn send(member: Member, message: &String) {
+    let bytes = message.clone().into_bytes()
+    member.output.send(&bytes)
+}
+fn broadcast(room: &Room, message: &String) {
+    let bytes = message.clone().into_bytes()
+    for member in &room.members { member.output.send(&bytes) }
 }

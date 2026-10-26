@@ -54,11 +54,11 @@ fn verify_online(input: Probe) @suspends {
     var rejected = domain.commit_set(stale)
     check.assert(match rejected.wait() { Err(Conflict) => true, _ => false }, "refresh catches a root created by an old continuation")
     check.assert(balance(&late) == 500, "late-root conflict never charges")
-    check.assert(run_command(f.ctx, 1, Command.Welcome), "sentinel committed")
+    check.assert(handle_line(f.ctx, 1, "balance"), "sentinel committed")
     // No receive ran before publication: the old queue survived intact and in order.
     expect_message(&mut queue, "message r 1 queued\n")
     expect_message(&mut queue, "probe-v2 r 1 paused\n")
-    expect_message(&mut queue, "welcome 1\n")
+    expect_message(&mut queue, "balance 2\n")
 }
 fn resume_probe(directory: domain.DirectoryHandle) @suspends {
     let state = domain.lookup_write::<ProbeState>(directory, 1)!
