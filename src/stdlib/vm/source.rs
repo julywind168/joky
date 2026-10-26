@@ -159,6 +159,9 @@ pub(crate) unsafe extern "C" fn source_poll_native(frame: *mut CpsFrame) -> i32 
             }
         };
     }
+    if !crate::vm::state_domains::parallel::gate(&mut *frame) {
+        return 1;
+    }
     match source_poll(&mut *cps::arena(frame), &mut *frame) {
         Ok(_) => 0,
         Err(error) => {

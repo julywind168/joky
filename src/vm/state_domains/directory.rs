@@ -480,6 +480,27 @@ impl Publication {
         self.entry.handle = handle;
         self.entry.token = token;
     }
+    pub(super) fn validate(&self, domains: &Domains) -> Result<(), access::Rejection> {
+        let table = self.table.borrow();
+        if table.closed
+            || domains.shutting_down
+            || !domains
+                .directories
+                .get(&self.directory)
+                .and_then(Weak::upgrade)
+                .is_some_and(|current| Rc::ptr_eq(&current, &self.table))
+        {
+            return Err(access::Rejection::Closed);
+        }
+        if table
+            .position_key(&self.entry.key)
+            .ok()
+            .is_some_and(|i| domains.get(table.entries[i].handle).is_ok())
+        {
+            return Err(access::Rejection::InvalidAccess);
+        }
+        Ok(())
+    }
     pub(super) fn publish(mut self, domains: &Domains) {
         let mut table = self.table.borrow_mut();
         // Closed entries are already inaccessible. Their close responsibility has
@@ -611,14 +632,19 @@ fn remove_if(
             return Ok((3, false));
         }
         let domain = domains.entries.get_mut(&handle.sequence).unwrap();
-        let result = domain.root.as_mut().unwrap().invoke_values(
-            &module,
-            &domain.ty,
-            predicate,
-            &info,
-            (&mut [0], None),
-            domain.limits,
-        )?;
+        let result = domain
+            .root
+            .as_mut()
+            .and_then(std::sync::Arc::get_mut)
+            .unwrap()
+            .invoke_values(
+                &module,
+                &domain.ty,
+                predicate,
+                &info,
+                (&mut [0], None),
+                domain.limits,
+            )?;
         if result[0] == 0 {
             return Ok((0, false));
         }

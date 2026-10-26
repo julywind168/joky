@@ -122,6 +122,24 @@ impl CompiledModule {
         })
     }
 }
+impl CompiledModule {
+    /// The caller retains the complete local module until the granted call ends.
+    pub(crate) fn freeze_domain(&self, name: &str) -> Result<FrozenEntry, Error> {
+        let function = self
+            .instance_entries
+            .get(name)
+            .filter(|f| f.info.domain_entry)
+            .ok_or_else(|| compile_error("Unknown checked domain entry"))?;
+        Ok(FrozenEntry {
+            files: None,
+            entry: unsafe { crate::runtime::abi::as_cps_entry(function.entry) },
+            info: function.info.clone(),
+            sources: self.sources.clone(),
+            _code: self._code.clone(),
+            _hosts: Vec::new(),
+        })
+    }
+}
 impl FrozenEntry {
     pub(crate) unsafe fn aot(
         entry: cps::CpsEntry,

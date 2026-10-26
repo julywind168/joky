@@ -216,6 +216,7 @@ impl Driver {
     pub(crate) fn start(
         root: Storage,
         files: Option<crate::runtime::fs::FileService>,
+        spawner: pool::DomainSpawner,
     ) -> Result<(Self, Arc<Core>), Error> {
         // Charge bounded queue/driver/table capacity, including drain scratch and hash slack.
         let charge = root.accounts().reserve(
@@ -253,6 +254,10 @@ impl Driver {
                         Ok(context) => {
                             driver.wake.set(context.waker()).ok();
                             let _ = tx.send(Ok(()));
+                            let _domains = crate::vm::state_domains::parallel::Scope::enter(
+                                spawner,
+                                context.waker(),
+                            );
                             run(&driver, &context);
                         }
                         Err(e) => {
@@ -608,7 +613,13 @@ impl Call {
             }
             Operation::VmClose => Ok(Some(crate::stdlib::VM_CLOSE(frame.slots[0]) as u64)),
             Operation::VmCall => crate::stdlib::call_poll(frame),
-            Operation::VmSource => crate::stdlib::source_poll(arena, frame).map(Some),
+            Operation::VmSource => {
+                if crate::vm::state_domains::parallel::gate(frame) {
+                    crate::stdlib::source_poll(arena, frame).map(Some)
+                } else {
+                    Ok(None)
+                }
+            }
             Operation::Domain(op) => crate::runtime::domain::poll(arena, frame, op),
             Operation::Fs(op) => crate::runtime::fs::poll(arena, frame, op),
         }
@@ -717,9 +728,13 @@ fn run(core: &Arc<Core>, context: &BlockingContext) {
                     q.closing,
                 )
             };
+            // Accept cancellation and owner release before the domain commit pass.
+            // This must remain after context.drive(): poll() consumes its wake token.
+            active.retain(|call| !closing && !lock(&call.request.state).cancelled);
             for id in releases {
                 resources.remove(&id);
             }
+            crate::vm::state_domains::parallel::drive();
             for request in requests {
                 if closing {
                     complete(&request, Err(invalid("Local control driver closed")));
@@ -789,6 +804,12 @@ fn run(core: &Arc<Core>, context: &BlockingContext) {
         drop(active);
         drop(resources);
     });
+    while crate::vm::state_domains::parallel::busy() {
+        context.poll(crate::vm::state_domains::parallel::drive);
+        if crate::vm::state_domains::parallel::busy() {
+            let _ = context.wait(WaitPlan::default());
+        }
+    }
 }
 
 /// The synchronous VM constructor only creates a Local registry entry; it cannot
@@ -854,8 +875,8 @@ mod tests {
         let budget = super::super::TaskBudget::new(32 << 20);
         let first = Storage::new(vec![budget.clone()]).unwrap();
         let second = Storage::new(vec![budget.clone()]).unwrap();
-        let (one, core) = Driver::start(first.clone(), None).unwrap();
-        let (two, other) = Driver::start(second.clone(), None).unwrap();
+        let (one, core) = Driver::start(first.clone(), None, Default::default()).unwrap();
+        let (two, other) = Driver::start(second.clone(), None, Default::default()).unwrap();
         let request = core
             .submit(
                 Operation::VmCreate,

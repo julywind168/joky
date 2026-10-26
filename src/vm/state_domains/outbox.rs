@@ -178,7 +178,7 @@ fn batch(registry: &Rc<RefCell<Domains>>, messages: u64, bytes: u64) -> Result<B
 }
 fn new_batch(
     identity: u64,
-    budget: Rc<Budget>,
+    budget: std::sync::Arc<Budget>,
     max_messages: usize,
     max_bytes: usize,
 ) -> Result<Batch, Error> {
@@ -233,7 +233,12 @@ impl Batch {
         self.record(domains.budget.clone(), token, bytes)?;
         Ok(0)
     }
-    fn record(&mut self, budget: Rc<Budget>, token: u64, bytes: &[u8]) -> Result<(), Error> {
+    fn record(
+        &mut self,
+        budget: std::sync::Arc<Budget>,
+        token: u64,
+        bytes: &[u8],
+    ) -> Result<(), Error> {
         if self.messages.len() == self.max_messages || bytes.len() > self.max_bytes - self.bytes {
             return Err(limited("Operation message budget exceeded"));
         }
@@ -523,7 +528,7 @@ mod tests;
 // registry held by the FIFO executor or observes live mailbox state.
 struct Staging {
     identity: u64,
-    budget: Rc<Budget>,
+    budget: std::sync::Arc<Budget>,
     messages: usize,
     bytes: usize,
     batch: Option<Batch>,
@@ -532,20 +537,42 @@ thread_local! {
     static STAGING: RefCell<Option<Staging>> = const { RefCell::new(None) };
 }
 pub(super) struct Session;
+// Before prepare(), targets is empty and the batch owns only bytes and atomic
+// budget charges. This sealed wrapper never accepts a prepared Local batch.
+pub(super) struct PendingBatch(Batch);
+unsafe impl Send for PendingBatch {}
+impl PendingBatch {
+    pub(super) fn into_local(self) -> Batch {
+        self.0
+    }
+}
 impl Session {
     pub(super) fn enter(domains: &Domains) -> Self {
+        Self::enter_worker(domains.identity, domains.budget.clone(), domains.limits)
+    }
+    pub(super) fn enter_worker(
+        identity: u64,
+        budget: std::sync::Arc<Budget>,
+        limits: DomainLimits,
+    ) -> Self {
         STAGING.with(|slot| {
             let mut slot = slot.borrow_mut();
             assert!(slot.is_none(), "Transaction effects cannot reenter");
             *slot = Some(Staging {
-                identity: domains.identity,
-                budget: domains.budget.clone(),
-                messages: domains.limits.max_operation_messages,
-                bytes: domains.limits.max_operation_bytes,
+                identity,
+                budget,
+                messages: limits.max_operation_messages,
+                bytes: limits.max_operation_bytes,
                 batch: None,
             });
         });
         Self
+    }
+    pub(super) fn finish_worker(self) -> Option<PendingBatch> {
+        self.finish().map(|batch| {
+            assert!(batch.targets.is_empty());
+            PendingBatch(batch)
+        })
     }
     pub(super) fn finish(self) -> Option<Batch> {
         STAGING.with(|slot| slot.borrow_mut().take().and_then(|staging| staging.batch))

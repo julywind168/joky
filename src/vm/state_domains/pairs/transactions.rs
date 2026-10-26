@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) struct Candidates {
-    roots: Vec<(u64, Type, Root)>,
+    roots: Vec<(u64, Type, std::sync::Arc<Root>)>,
     _charge: reads::Charge,
 }
 impl Candidates {
@@ -17,7 +17,7 @@ impl Candidates {
             .map_err(|_| limited("Transaction root allocation failed"))?;
         let charge = reads::Charge::new(
             domains.budget.clone(),
-            roots.capacity() * std::mem::size_of::<(u64, Type, Root)>(),
+            roots.capacity() * std::mem::size_of::<(u64, Type, std::sync::Arc<Root>)>(),
         )?;
         for (handle, write) in handles.iter().zip(mutable) {
             if !write {
@@ -30,11 +30,13 @@ impl Candidates {
             roots.push((
                 handle.sequence,
                 domain.ty.clone(),
-                domain
-                    .root
-                    .as_ref()
-                    .unwrap()
-                    .snapshot(&domain.ty, domains.budget.clone())?,
+                std::sync::Arc::new(
+                    domain
+                        .root
+                        .as_ref()
+                        .unwrap()
+                        .snapshot(&domain.ty, domains.budget.clone())?,
+                ),
             ));
         }
         Ok(Self {
@@ -103,14 +105,14 @@ impl storage::RootAccess for BorrowedRoots<'_> {
             .iter_mut()
             .find(|(id, _, _)| *id == sequence)
         {
-            (ty, root)
+            (ty, std::sync::Arc::get_mut(root).unwrap())
         } else {
             storage::RootAccess::root(self.domains, sequence)
         }
     }
 }
 
-pub(super) fn accepts(ty: &Type, words: &[u64]) -> bool {
+pub(in super::super) fn accepts(ty: &Type, words: &[u64]) -> bool {
     // Only the standard top-level Result controls publication. Bool, Option,
     // nested Result and user enums (even with an Err variant) are ordinary values.
     !matches!(ty, Type::Enum(e) if e.name == "joky/result.Result" && words.first() == Some(&1))

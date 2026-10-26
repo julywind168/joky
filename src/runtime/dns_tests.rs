@@ -426,7 +426,6 @@ unsafe extern "C" fn probe(frame: *mut CpsFrame) -> i32 {
 
 #[test]
 fn net6_dns_copy_peak_failure_stops_and_refunds_request() {
-    use std::cell::Cell;
     let service = Arc::new(
         Service::new(
             1,
@@ -437,9 +436,10 @@ fn net6_dns_copy_peak_failure_stops_and_refunds_request() {
         .unwrap(),
     );
     let _injected = Injected::new(service.clone());
-    let budget = Rc::new(super::super::arena::Budget {
-        bytes: Cell::new(0),
-        limit: Cell::new(8192),
+    let budget = std::sync::Arc::new(super::super::arena::Budget {
+        bytes: (0).into(),
+        limit: (8192).into(),
+        ..Default::default()
     });
     let mut arena = Arena::with_budget(budget.clone(), None);
     let input = Buffer::copy_bytes(&mut arena, b"copy.test").unwrap();

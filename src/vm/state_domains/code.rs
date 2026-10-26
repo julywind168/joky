@@ -364,6 +364,7 @@ fn publish_matching_with(
 ) -> Result<usize, Error> {
     let types = state_types(module);
     let domains = registry.borrow();
+    parallel::ensure_idle(&domains)?;
     if domains.shutting_down {
         return Err(invalid("Domain VM is shutting down"));
     }

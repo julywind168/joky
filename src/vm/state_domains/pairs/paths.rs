@@ -46,6 +46,34 @@ impl Paths {
         })
     }
 
+    pub(in super::super) fn changed(&self, domains: &Domains) -> Result<bool, Rejection> {
+        let selection = self.select(domains)?;
+        Ok(selection.handles != self.initial || selection.branch != self.branch)
+    }
+    pub(in super::super) fn retry(&mut self, domains: &Domains) -> Result<(), Rejection> {
+        let selection = self.select(domains)?;
+        self.initial = selection.handles;
+        self.branch = selection.branch;
+        Ok(())
+    }
+    pub(in super::super) fn accesses(
+        &self,
+        domains: &Domains,
+    ) -> Result<Vec<(u64, bool, bool)>, Rejection> {
+        let selection = self.select(domains)?;
+        let mut accesses = Vec::new();
+        for (handle, ty) in selection.handles.iter().zip(&self.info.signature.params) {
+            if handle.sequence != 0 {
+                accesses.push((handle.sequence, false, ty.reference_type().unwrap().mutable));
+            }
+        }
+        for descriptor in &self.descriptors {
+            if descriptor[0] & 3 != 0 {
+                accesses.push((descriptor[3], true, descriptor[0] & 4 != 0));
+            }
+        }
+        Ok(accesses)
+    }
     fn select(&self, domains: &Domains) -> Result<Selection, Rejection> {
         let mut handles: Vec<DomainHandle> = Vec::with_capacity(self.descriptors.len());
         let mut creations: Vec<(usize, u64, directory::Key)> = Vec::new();
@@ -331,7 +359,7 @@ pub(in super::super) struct Staged {
     _charge: reads::Charge,
 }
 impl Staged {
-    pub(super) fn prepare_automatic(
+    pub(in super::super) fn prepare_automatic(
         &self,
         domains: &mut Domains,
         now: Option<Instant>,
@@ -350,7 +378,13 @@ impl Staged {
         }
         Ok(())
     }
-    pub(super) fn publish(&mut self, domains: &mut Domains) {
+    pub(in super::super) fn validate(&self, domains: &Domains) -> Result<(), Rejection> {
+        for publication in &self.publications {
+            publication.validate(domains)?;
+        }
+        Ok(())
+    }
+    pub(in super::super) fn publish(&mut self, domains: &mut Domains) {
         for publication in self.publications.drain(..) {
             publication.publish(domains);
         }
@@ -359,7 +393,7 @@ impl Staged {
         }
         self.roots.clear();
     }
-    pub(super) fn discard(self, domains: &mut Domains) -> Vec<TaskId> {
+    pub(in super::super) fn discard(self, domains: &mut Domains) -> Vec<TaskId> {
         let mut jobs = Vec::new();
         for id in self.roots {
             if let Some(domain) = domains.entries.remove(&id) {
@@ -379,6 +413,27 @@ impl From<Rejection> for Failure {
     }
 }
 pub(in super::super) fn refresh(domains: &mut Domains, pair: &mut Pair) -> Result<Staged, Failure> {
+    refresh_with(
+        domains,
+        pair,
+        |_, module, info, constructor, input, limits, budget| {
+            Root::construct(module, info, constructor, input, limits, budget).map(Some)
+        },
+    )
+}
+pub(in super::super) fn refresh_with(
+    domains: &mut Domains,
+    pair: &mut Pair,
+    mut construct: impl FnMut(
+        u64,
+        &LoadedModule,
+        &FunctionInfo,
+        &str,
+        &[u64],
+        InterpreterLimits,
+        std::sync::Arc<Budget>,
+    ) -> Result<Option<Root>, Error>,
+) -> Result<Staged, Failure> {
     let paths = pair.paths.as_ref().unwrap();
     let mut selection = paths.select(domains)?;
     if (selection.handles != paths.initial || selection.branch != paths.branch)
@@ -478,7 +533,8 @@ pub(in super::super) fn refresh(domains: &mut Domains, pair: &mut Pair) -> Resul
                 .map_err(|_| Rejection::ResourceLimit)?;
             let token = source::next_token().map_err(|_| Rejection::ResourceLimit)?;
             let schema = source::next_token().map_err(|_| Rejection::ResourceLimit)?;
-            let root = Root::construct(
+            let root = construct(
+                sequence,
                 &module,
                 &info,
                 &constructor,
@@ -501,7 +557,7 @@ pub(in super::super) fn refresh(domains: &mut Domains, pair: &mut Pair) -> Resul
             domains.entries.insert(
                 sequence,
                 Domain {
-                    root: Some(root),
+                    root: root.map(std::sync::Arc::new),
                     module: module.clone(),
                     source_module,
                     source_token: token,

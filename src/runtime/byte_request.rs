@@ -264,7 +264,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 1] {
 mod tests {
     use super::*;
     use crate::runtime::resource::{invoke, ResourceFactoryV1};
-    use std::{cell::Cell, rc::Rc};
+    use std::cell::Cell;
     thread_local! {static STOPS:Cell<u32>=const {Cell::new(0)};}
     unsafe extern "C" fn create(_: u64, output: *mut *mut c_void) -> i32 {
         *output = Box::into_raw(Box::new(42u8)).cast();
@@ -301,8 +301,8 @@ mod tests {
     #[test]
     fn resource_bytes_peak_budget_refunds_and_runtime_lease_rejects_overlap() {
         STOPS.with(|n| n.set(0));
-        let budget = Rc::new(super::super::arena::Budget {
-            limit: Cell::new(4096),
+        let budget = std::sync::Arc::new(super::super::arena::Budget {
+            limit: (4096).into(),
             ..Default::default()
         });
         let mut arena = Arena::with_budget(budget.clone(), None);

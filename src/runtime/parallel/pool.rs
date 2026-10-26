@@ -50,6 +50,7 @@ struct State {
     result: Option<Result<Output, Error>>,
     sequence: u64,
     failure: Option<Error>,
+    observer: Option<crate::runtime::executor::TaskWaker>,
     deadline: Option<Instant>,
 }
 struct Task {
@@ -303,7 +304,52 @@ impl Task {
             .all(|t| t.cleaned.load(Ordering::Acquire))
     }
 }
+/// A control driver submits computation as children of its original root.
+#[derive(Clone, Default)]
+pub(crate) struct DomainSpawner {
+    parent: Weak<Task>,
+}
+impl DomainSpawner {
+    pub(crate) fn cancelled(&self) -> bool {
+        self.parent
+            .upgrade()
+            .is_none_or(|parent| parent.cancelled.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn submit(&self, factory: Factory) -> Result<Handle, Error> {
+        let parent = self.parent.upgrade().ok_or_else(cancelled_error)?;
+        if parent.cancelled.load(Ordering::Acquire) {
+            return Err(cancelled_error());
+        }
+        Ok(publish(
+            &parent.shared,
+            Some(&parent),
+            parent.root.clone(),
+            Arc::new(()),
+            vec![factory],
+            None,
+        )?
+        .remove(0))
+    }
+}
 impl Handle {
+    #[cfg(test)]
+    pub(crate) fn domain_spawner(&self) -> DomainSpawner {
+        DomainSpawner {
+            parent: Arc::downgrade(&self.0),
+        }
+    }
+
+    pub(crate) fn observe(&self, waker: crate::runtime::executor::TaskWaker) {
+        let mut state = lock(&self.0.state);
+        if state.phase == Phase::Cleaned {
+            drop(state);
+            waker.wake();
+        } else {
+            state.observer = Some(waker);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn waiting(&self) -> bool {
         lock(&self.0.state).phase == Phase::Waiting
@@ -599,6 +645,7 @@ fn publish(
                 result: None,
                 sequence: 0,
                 failure: None,
+                observer: None,
                 deadline: None,
             }),
             factory: Mutex::new(Some(factory)),
@@ -784,7 +831,11 @@ fn run(shared: Arc<Shared>, worker: usize) {
                 state.sequence = shared.sequence.fetch_add(1, Ordering::Relaxed);
                 state.result = Some(result);
                 task.cleaned.store(true, Ordering::Release);
+                let observer = state.observer.take();
                 drop(state);
+                if let Some(observer) = observer {
+                    observer.wake();
+                }
                 if let Some(parent) = task.parent.as_ref().and_then(Weak::upgrade) {
                     parent.wake();
                 }
@@ -1202,7 +1253,14 @@ pub(crate) fn control() -> Result<Arc<super::control::Core>, Error> {
             .downcast_ref::<super::control::Files>()
             .and_then(|files| files.0.clone())
     };
-    let (driver, core) = super::control::Driver::start(task.root.clone(), files)?;
+    let mut parent = task.clone();
+    while let Some(next) = parent.parent.as_ref().and_then(Weak::upgrade) {
+        parent = next;
+    }
+    let spawner = DomainSpawner {
+        parent: Arc::downgrade(&parent),
+    };
+    let (driver, core) = super::control::Driver::start(task.root.clone(), files, spawner)?;
     controls.push(driver);
     Ok(core)
 }

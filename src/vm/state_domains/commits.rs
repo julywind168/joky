@@ -28,7 +28,7 @@ pub(super) enum Status {
 }
 pub(super) struct Candidate {
     outbox: Option<Box<outbox::Batch>>,
-    root: Root,
+    root: std::sync::Arc<Root>,
     module: LoadedModule,
     ty: Type,
     base: DomainHandle,
@@ -194,7 +194,7 @@ fn construct(
     let root = Root::construct(&module, &info, name, &words, limits, budget)?;
     Ok(Candidate {
         outbox: None,
-        root,
+        root: std::sync::Arc::new(root),
         module,
         ty: info.signature.ret,
         base,
@@ -769,8 +769,8 @@ mod tests {
             let baseline = vm.domains.borrow().budget.bytes.get();
             for limit in [0, std::mem::size_of::<Stored<Option<Candidate>>>()] {
                 let next = candidate(&vm, &owner, 99);
-                let budget = Rc::new(Budget {
-                    limit: Cell::new(limit),
+                let budget = std::sync::Arc::new(Budget {
+                    limit: (limit).into(),
                     ..Default::default()
                 });
                 let mut arena = Arena::with_budget(budget.clone(), None);
@@ -781,8 +781,8 @@ mod tests {
             for limit in [0, std::mem::size_of::<Stored<Receipt>>()] {
                 let next = candidate(&vm, &owner, 99);
                 let receipt = admit(&vm.domains, token(&vm, &owner), next);
-                let budget = Rc::new(Budget {
-                    limit: Cell::new(limit),
+                let budget = std::sync::Arc::new(Budget {
+                    limit: (limit).into(),
                     ..Default::default()
                 });
                 let mut arena = Arena::with_budget(budget.clone(), None);
@@ -905,8 +905,8 @@ mod tests {
         let deadline = deadline_after(&vm.domains, 10).unwrap();
         let live = crate::runtime::arena::LIVE.with(|n| n.get());
         for limit in [0, std::mem::size_of::<Stored<Deadline>>()] {
-            let budget = Rc::new(Budget {
-                limit: Cell::new(limit),
+            let budget = std::sync::Arc::new(Budget {
+                limit: (limit).into(),
                 ..Default::default()
             });
             let mut arena = Arena::with_budget(budget.clone(), None);

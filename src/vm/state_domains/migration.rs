@@ -9,7 +9,7 @@ pub(crate) struct PreparedMigration {
     target: DomainHandle,
     reads: reads::ReadSet,
     // Candidate storage is destroyed before either pinned code owner.
-    root: Root,
+    root: std::sync::Arc<Root>,
     original: LoadedModule,
     module: LoadedModule,
     next_version: u64,
@@ -50,6 +50,7 @@ impl PreparedMigration {
 }
 
 fn selected(domains: &Domains, owners: &[Rc<dyn Any>]) -> Result<DomainHandle, Error> {
+    parallel::ensure_idle(domains)?;
     if domains.shutting_down {
         return Err(invalid("Migration executor is closed"));
     }
@@ -169,7 +170,7 @@ pub(crate) fn prepare(
         module,
         next_version,
         ty: info.signature.ret,
-        root,
+        root: std::sync::Arc::new(root),
         schema: source::next_token()?,
         step: None,
         _charge: charge,
@@ -239,7 +240,7 @@ pub(crate) fn step(
         domain.root.as_ref().unwrap().borrow_pointer(&domain.ty),
         budget,
     ];
-    let result = plan.root.invoke(
+    let result = std::sync::Arc::get_mut(&mut plan.root).unwrap().invoke(
         &plan.module,
         &plan.ty,
         &step.method,

@@ -41,6 +41,13 @@ impl TaskBudget {
 #[derive(Clone)]
 pub(crate) struct Accounts(Arc<[TaskBudget]>);
 impl Accounts {
+    pub(crate) fn empty_lease(&self) -> Lease {
+        Lease {
+            accounts: self.clone(),
+            bytes: 0,
+        }
+    }
+
     pub(crate) fn new(mut budgets: Vec<TaskBudget>) -> Self {
         budgets.sort_by_key(|budget| Arc::as_ptr(&budget.0));
         budgets.dedup_by(|a, b| Arc::ptr_eq(&a.0, &b.0));
@@ -61,6 +68,17 @@ pub(crate) struct Lease {
     bytes: usize,
 }
 impl Lease {
+    pub(crate) fn add(&mut self, amount: usize) -> Result<(), Error> {
+        self.resize(self.bytes.checked_add(amount).ok_or_else(limited)?)
+    }
+    pub(crate) fn refund(&mut self, amount: usize) {
+        assert!(self.bytes >= amount);
+        for budget in self.accounts.0.iter() {
+            *lock(&budget.0.used) -= amount;
+        }
+        self.bytes -= amount;
+    }
+
     pub(crate) fn resize(&mut self, bytes: usize) -> Result<(), Error> {
         // The sorted identities impose one lock order even for overlapping roots.
         let mut guards: Vec<_> = self.accounts.0.iter().map(|b| lock(&b.0.used)).collect();

@@ -2,17 +2,17 @@
 use super::*;
 use std::time::Instant;
 pub(super) mod paths;
-mod transactions;
+pub(super) mod transactions;
 
 pub(super) struct Pair {
     pub(super) handles: Vec<DomainHandle>,
     pub(super) paths: Option<Box<paths::Paths>>,
-    anonymous_module: Option<usize>,
-    module: LoadedModule,
-    method: String,
-    info: FunctionInfo,
-    words: Vec<u64>,
-    limits: InterpreterLimits,
+    pub(super) anonymous_module: Option<usize>,
+    pub(super) module: LoadedModule,
+    pub(super) method: String,
+    pub(super) info: FunctionInfo,
+    pub(super) words: Vec<u64>,
+    pub(super) limits: InterpreterLimits,
     pub(super) output: Option<ValueOutput>,
 }
 pub(super) struct ValueOutput {
@@ -242,7 +242,7 @@ fn submit_words(
 
 /// The first participant owns the named operation. Other participants supply
 /// checked state, not competing implementations of the same operation name.
-fn resolve(
+pub(super) fn resolve(
     domains: &Domains,
     handles: &[DomainHandle],
     method: &str,
@@ -387,14 +387,19 @@ fn execute_prepared(
         candidates.invoke(domains, pair, &module, &mutable[..count], &mut entered)
     } else if count == 1 {
         let domain = domains.entries.get_mut(&pair.handles[0].sequence).unwrap();
-        domain.root.as_mut().unwrap().invoke_values(
-            &module,
-            &domain.ty,
-            &pair.method,
-            &pair.info,
-            (&mut pair.words, Some(&mut entered)),
-            pair.limits,
-        )
+        domain
+            .root
+            .as_mut()
+            .and_then(std::sync::Arc::get_mut)
+            .unwrap()
+            .invoke_values(
+                &module,
+                &domain.ty,
+                &pair.method,
+                &pair.info,
+                (&mut pair.words, Some(&mut entered)),
+                pair.limits,
+            )
     } else {
         Root::invoke_many(
             domains,

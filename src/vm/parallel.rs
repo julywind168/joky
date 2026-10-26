@@ -15,6 +15,8 @@ pub use maps::{TaskMap, TaskSet};
 #[cfg(test)]
 mod control_tests;
 #[cfg(test)]
+mod domain_tests;
+#[cfg(test)]
 mod function_tests;
 mod places;
 #[cfg(test)]

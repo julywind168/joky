@@ -41,7 +41,7 @@ fn main() {
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
   支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
-  VM、文件、目录、准入与邮箱通过任务树控制代理使用，业务状态域仍在控制线程串行执行，Godot 回调保持 Local；
+  VM、文件、目录、准入与邮箱通过任务树控制代理使用，业务 `when` 按完整域访问集在 worker 并行计算并统一提交，Godot 回调保持 Local；
   [模式与准入范围](docs/language.md#任务执行模式)。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
 

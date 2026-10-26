@@ -240,7 +240,7 @@ unsafe fn edit(
             .ok_or_else(|| invalid("Frozen root was consumed"))?;
         set.candidates.push(Candidate {
             outbox: None,
-            root,
+            root: std::sync::Arc::new(root),
             module: frozen.module.clone(),
             ty: frozen.ty.clone(),
             base: DomainHandle {
@@ -287,14 +287,16 @@ unsafe fn edit(
         .map_err(|_| limited("Candidate input allocation failed"))?;
     words.push(0);
     words.extend(input);
-    candidate.root.invoke_values(
-        &candidate.module,
-        &candidate.ty,
-        name,
-        &info,
-        (&mut words, None),
-        limits,
-    )?;
+    std::sync::Arc::get_mut(&mut candidate.root)
+        .unwrap()
+        .invoke_values(
+            &candidate.module,
+            &candidate.ty,
+            name,
+            &info,
+            (&mut words, None),
+            limits,
+        )?;
     Ok(())
 }
 fn admit(registry: &Rc<RefCell<Domains>>, mut set: Proposal) -> Receipt {
@@ -346,8 +348,8 @@ pub(crate) fn execute_commit(domains: &mut Domains, request: &mut Request, now: 
     let mut set = *set.take().unwrap();
     let prepared = (|| {
         let mut next = vector(set.candidates.len()).map_err(|_| Status::ResourceLimit)?;
-        let retired =
-            vector::<Option<Root>>(set.candidates.len()).map_err(|_| Status::ResourceLimit)?;
+        let retired = vector::<Option<std::sync::Arc<Root>>>(set.candidates.len())
+            .map_err(|_| Status::ResourceLimit)?;
         let revisions =
             vector::<(u64, u64)>(set.candidates.len()).map_err(|_| Status::ResourceLimit)?;
         for candidate in &set.candidates {
@@ -882,8 +884,8 @@ mod tests {
             let candidate = &mut set.candidates[0];
             let info = candidate.module.instance_info("read").unwrap();
             assert!(matches!(
-                candidate
-                    .root
+                std::sync::Arc::get_mut(&mut candidate.root)
+                    .unwrap()
                     .invoke(
                         &candidate.module,
                         &candidate.ty,

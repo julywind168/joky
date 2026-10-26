@@ -356,9 +356,10 @@ fn result_allocation_failure_reclaims_an_unclaimed_open_file() {
     let f = Fixture::new();
     let file = f.open("normal");
     let packet = Packet::ok(Data::File(Arc::new(FileCell::Native(file.clone()))));
-    let budget = Rc::new(crate::runtime::arena::Budget {
+    let budget = std::sync::Arc::new(crate::runtime::arena::Budget {
         bytes: Default::default(),
-        limit: std::cell::Cell::new(1),
+        limit: (1).into(),
+        ..Default::default()
     });
     let mut arena = crate::runtime::arena::Arena::with_budget(budget.clone(), None);
     assert!(super::super::outcome(&mut arena, packet, None).is_err());

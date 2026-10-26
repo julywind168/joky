@@ -106,7 +106,6 @@ pub(crate) unsafe extern "C" fn allocate_native(
 mod tests {
     use super::*;
     use crate::runtime::arena::{Budget, LIMIT, LIVE};
-    use std::{cell::Cell, rc::Rc};
 
     struct Limit(usize);
     impl Limit {
@@ -173,9 +172,10 @@ mod tests {
             let pointer = parent.allocate(1, 1).unwrap();
             unsafe { parent.release(pointer) };
         }
-        let budget = Rc::new(Budget {
-            bytes: Cell::new(0),
-            limit: Cell::new(8192),
+        let budget = std::sync::Arc::new(Budget {
+            bytes: (0).into(),
+            limit: (8192).into(),
+            ..Default::default()
         });
         let mut parent = Arena::with_budget(budget.clone(), None);
         let owner = new(&mut parent).unwrap();
@@ -197,9 +197,10 @@ mod tests {
 
     #[test]
     fn explicit_arena_preserves_invocation_metadata_and_sibling_account_limits() {
-        let budget = Rc::new(Budget {
-            bytes: Cell::new(0),
-            limit: Cell::new(32768),
+        let budget = std::sync::Arc::new(Budget {
+            bytes: (0).into(),
+            limit: (32768).into(),
+            ..Default::default()
         });
         let mut parent = Arena::with_budget(budget.clone(), Some(8192));
         parent.credit_imported();

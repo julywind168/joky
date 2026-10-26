@@ -461,12 +461,13 @@ mod tests {
                         Default::default(),
                     )
                     .unwrap();
-                    let budget = Rc::new(Budget {
-                        limit: Cell::new(if action == 2 {
+                    let budget = std::sync::Arc::new(Budget {
+                        limit: (if action == 2 {
                             0
                         } else {
                             std::mem::size_of::<Stored<Option<Bundle>>>()
-                        }),
+                        })
+                        .into(),
                         ..Default::default()
                     });
                     let mut arena = Arena::with_budget(budget.clone(), None);

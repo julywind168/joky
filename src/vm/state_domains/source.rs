@@ -747,6 +747,31 @@ pub(crate) unsafe fn poll(
     let executor = crate::runtime::executor::current_executor()
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
+    if frame.state == 0
+        && !matches!(
+            op,
+            Operation::Values
+                | Operation::CurrentValues
+                | Operation::When
+                | Operation::WhenPaths
+                | Operation::AdmissionCreate
+                | Operation::AdmissionHandle
+                | Operation::AdmissionClose
+                | Operation::AdmissionTry
+                | Operation::AdmissionAcquire
+                | Operation::AdmissionStatus
+                | Operation::OutboxCreate
+                | Operation::OutboxCreateDisconnect
+                | Operation::OutboxHandle
+                | Operation::OutboxClose
+                | Operation::OutboxReceive
+                | Operation::OutboxMessageClosed
+                | Operation::OutboxMessageBytes
+        )
+        && !parallel::gate(frame)
+    {
+        return Ok(None);
+    }
     if op.access() && op.status_payload() && !matches!(op, Operation::When | Operation::WhenPaths) {
         let initial = frame.state == 0;
         let result = match wait(arena, frame, &registry, op) {
@@ -980,8 +1005,8 @@ mod tests {
                 0
             };
             for limit in [0, std::mem::size_of::<Snapshot>() + extra] {
-                let budget = Rc::new(Budget {
-                    limit: Cell::new(limit),
+                let budget = std::sync::Arc::new(Budget {
+                    limit: (limit).into(),
                     ..Default::default()
                 });
                 let mut arena = Arena::with_budget(budget.clone(), None);

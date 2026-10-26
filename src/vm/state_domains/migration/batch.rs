@@ -7,7 +7,7 @@ struct Entry {
     old: Type,
     ty: Option<Type>,
     // Both candidate and retired roots drop before their code owners.
-    root: Option<Root>,
+    root: Option<std::sync::Arc<Root>>,
     retired_module: Option<LoadedModule>,
     step: Option<Step>,
     schema: u64,
@@ -45,6 +45,7 @@ impl Batch {
         domains: &Domains,
         owners: &[Rc<dyn Any>],
     ) -> Result<(), Error> {
+        parallel::ensure_idle(domains)?;
         if !self.registry.ptr_eq(&Rc::downgrade(registry))
             || engine
                 .current
@@ -87,6 +88,7 @@ pub(crate) fn begin(
         .clone()
         .ok_or_else(|| invalid("No Script module loaded"))?;
     let domains = registry.borrow();
+    parallel::ensure_idle(&domains)?;
     if domains.shutting_down {
         return Err(invalid("Migration executor is closed"));
     }
@@ -229,14 +231,14 @@ pub(crate) fn stage(
     for i in selected {
         let entry = &mut batch.entries[i];
         let domain = domains.get(entry.target)?;
-        entry.root = Some(Root::construct(
+        entry.root = Some(std::sync::Arc::new(Root::construct(
             &batch.module,
             &info,
             start,
             &[domain.root.as_ref().unwrap().borrow_pointer(&domain.ty)],
             engine.interpreter_limits(),
             domains.budget.clone(),
-        )?);
+        )?));
         entry.ty = Some(ty.clone());
         entry.schema = source::next_token()?;
         if step_info.is_some() {
@@ -280,14 +282,19 @@ pub(crate) fn step(
             domain.root.as_ref().unwrap().borrow_pointer(&domain.ty),
             budget,
         ];
-        let result = entry.root.as_mut().unwrap().invoke(
-            &batch.module,
-            entry.ty.as_ref().unwrap(),
-            &step.method,
-            &info,
-            &mut words,
-            engine.interpreter_limits(),
-        )?;
+        let result = entry
+            .root
+            .as_mut()
+            .and_then(std::sync::Arc::get_mut)
+            .unwrap()
+            .invoke(
+                &batch.module,
+                entry.ty.as_ref().unwrap(),
+                &step.method,
+                &info,
+                &mut words,
+                engine.interpreter_limits(),
+            )?;
         let InstanceValue::Bool(done) = result else {
             unreachable!("validated step return")
         };

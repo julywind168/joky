@@ -73,7 +73,7 @@ pub(super) struct Instances {
     limits: Cell<InstanceLimits>,
     closing: RefCell<Vec<Rc<Instance>>>,
     tasks: RefCell<HashMap<crate::runtime::executor::TaskId, InstanceId>>,
-    peak: Rc<Budget>,
+    peak: std::sync::Arc<Budget>,
 }
 #[derive(Default)]
 struct Usage {
@@ -97,8 +97,8 @@ impl Default for Instances {
             limits: Cell::new(InstanceLimits::default()),
             closing: Default::default(),
             tasks: Default::default(),
-            peak: Rc::new(Budget {
-                limit: Cell::new(InstanceLimits::default().max_peak_bytes),
+            peak: std::sync::Arc::new(Budget {
+                limit: (InstanceLimits::default().max_peak_bytes).into(),
                 ..Default::default()
             }),
         }
@@ -127,7 +127,7 @@ struct Storage {
     charge: usize,
     overhead: usize,
     usage: Rc<Usage>,
-    peak: Rc<Budget>,
+    peak: std::sync::Arc<Budget>,
     cleanup: Option<ElementCleanup>,
     // Explicitly pin code until cleanup has completed, including unpublished roots.
     module: LoadedModule,

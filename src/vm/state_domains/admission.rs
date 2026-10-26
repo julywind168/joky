@@ -469,8 +469,8 @@ mod tests {
         assert!(create(&vm.domains, 0, 0).is_err());
         assert!(create(&vm.domains, 1, u64::MAX).is_err());
         for limit in [0, std::mem::size_of::<Stored<Permit>>()] {
-            let budget = Rc::new(Budget {
-                limit: Cell::new(limit),
+            let budget = std::sync::Arc::new(Budget {
+                limit: (limit).into(),
                 ..Default::default()
             });
             let mut arena = Arena::with_budget(budget.clone(), None);
@@ -479,8 +479,8 @@ mod tests {
             assert_eq!(budget.bytes.get(), 0);
         }
         for limit in [0, std::mem::size_of::<Stored<Owner>>()] {
-            let budget = Rc::new(Budget {
-                limit: Cell::new(limit),
+            let budget = std::sync::Arc::new(Budget {
+                limit: (limit).into(),
                 ..Default::default()
             });
             let mut arena = Arena::with_budget(budget.clone(), None);

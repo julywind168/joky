@@ -1,11 +1,21 @@
 //! Opaque, bounded read credentials captured in one synchronous executor turn.
 use super::*;
 pub(super) struct Charge {
-    budget: Rc<Budget>,
+    budget: std::sync::Arc<Budget>,
     bytes: usize,
 }
 impl Charge {
-    pub(super) fn new(budget: Rc<Budget>, bytes: usize) -> Result<Self, Error> {
+    pub(super) fn resize(&mut self, bytes: usize) -> Result<(), Error> {
+        if bytes > self.bytes {
+            self.budget.charge(bytes - self.bytes)?;
+        } else {
+            self.budget.refund(self.bytes - bytes);
+        }
+        self.bytes = bytes;
+        Ok(())
+    }
+
+    pub(super) fn new(budget: std::sync::Arc<Budget>, bytes: usize) -> Result<Self, Error> {
         budget.charge(bytes)?;
         Ok(Self { budget, bytes })
     }

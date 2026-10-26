@@ -407,13 +407,13 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
 mod tests {
     use super::*;
     use crate::runtime::arena::Budget;
-    use std::{cell::Cell, rc::Rc};
 
     #[test]
     fn fixed_array_f2a_places_charge_reuse_and_roll_back_before_publication() {
-        let budget = Rc::new(Budget {
-            bytes: Cell::new(0),
-            limit: Cell::new(usize::MAX),
+        let budget = std::sync::Arc::new(Budget {
+            bytes: (0).into(),
+            limit: (usize::MAX).into(),
+            ..Default::default()
         });
         let mut arena = Arena::with_budget(budget.clone(), None);
         let mut places = Places::default();

@@ -1,0 +1,20 @@
+import joky/fs
+import joky/string
+import joky/vm
+
+fn verify(engine:&vm.Vm,path:String) @suspends {
+    var file=fs.open(path,fs.OpenOptions.new())!
+    let source=file.read_text()!
+    let entry="\nfn entry(_:Unit) @suspends {{ main() }}"
+    engine.load_source(string.concat(&source,&entry))!
+    engine.call::<Unit,Unit>("entry",{})
+}
+fn suite(engine:vm.Vm) @suspends {
+    verify(&engine,"state_domain_when.jk")
+    verify(&engine,"state_domain_paths.jk")
+    verify(&engine,"state_domain_creation.jk")
+}
+fn main() @suspends {
+    suite(vm.Vm.new())
+    suite(vm.Vm.interpreter())
+}

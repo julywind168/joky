@@ -2,6 +2,8 @@
 use super::*;
 use crate::runtime::{arena::ExternalCharge, buffer::Buffer};
 
+pub(super) mod parallel;
+
 pub(super) struct Root {
     _charge: ExternalCharge,
     arena: Arena,
@@ -14,17 +16,39 @@ pub(super) trait RootAccess {
 impl RootAccess for Domains {
     fn root(&mut self, sequence: u64) -> (&Type, &mut Root) {
         let domain = self.entries.get_mut(&sequence).unwrap();
-        (&domain.ty, domain.root.as_mut().unwrap())
+        (
+            &domain.ty,
+            domain
+                .root
+                .as_mut()
+                .and_then(std::sync::Arc::get_mut)
+                .unwrap(),
+        )
     }
 }
 impl Root {
+    #[cfg(test)]
+    pub(super) fn untrack(&mut self) {
+        self.arena.untrack();
+    }
+
     pub(super) fn construct(
         module: &LoadedModule,
         info: &FunctionInfo,
         constructor: &str,
         words: &[u64],
         limits: InterpreterLimits,
-        budget: Rc<Budget>,
+        budget: std::sync::Arc<Budget>,
+    ) -> Result<Self, Error> {
+        Self::construct_with(info, words, budget, |input, arena| {
+            module.invoke_instance(constructor, input, limits, arena)
+        })
+    }
+    fn construct_with(
+        info: &FunctionInfo,
+        words: &[u64],
+        budget: std::sync::Arc<Budget>,
+        invoke: impl FnOnce(&[u64], &mut Arena) -> Result<Vec<u64>, Error>,
     ) -> Result<Self, Error> {
         let ty = &info.signature.ret;
         let mut arena = Arena::with_budget(budget, None);
@@ -36,7 +60,11 @@ impl Root {
             .filter(|(_, ty)| ty.is_owner_lane())
             .map(|(offset, _)| offset)
             .collect();
-        let charge = arena.reserve_external(owners.len() * std::mem::size_of::<usize>())?;
+        let charge = arena.reserve_external(
+            owners.len() * std::mem::size_of::<usize>()
+                + std::mem::size_of::<Root>()
+                + 2 * std::mem::size_of::<usize>(),
+        )?;
         let pointer = arena.allocate(layout.size, layout.align)?;
         unsafe {
             pointer.as_ptr().write_bytes(0, layout.size.max(1));
@@ -48,7 +76,7 @@ impl Root {
             owners,
         };
         let input = decode_input(info, words, &mut root.arena)?;
-        let result = module.invoke_instance(constructor, &input, limits, &mut root.arena)?;
+        let result = invoke(&input, &mut root.arena)?;
         super::super::instances::initialize(root.pointer, ty, &result)?;
         let live = root.allocations()?;
         unsafe {
@@ -56,10 +84,18 @@ impl Root {
         }
         Ok(root)
     }
-    pub(super) fn snapshot(&self, ty: &Type, budget: Rc<Budget>) -> Result<Self, Error> {
+    pub(super) fn snapshot(
+        &self,
+        ty: &Type,
+        budget: std::sync::Arc<Budget>,
+    ) -> Result<Self, Error> {
         let mut arena = Arena::with_budget(budget, None);
         let layout = ty.storage_layout().map_err(|e| invalid(&e.to_string()))?;
-        let charge = arena.reserve_external(self.owners.len() * std::mem::size_of::<usize>())?;
+        let charge = arena.reserve_external(
+            self.owners.len() * std::mem::size_of::<usize>()
+                + std::mem::size_of::<Root>()
+                + 2 * std::mem::size_of::<usize>(),
+        )?;
         let mut owners = Vec::new();
         owners
             .try_reserve_exact(self.owners.len())
@@ -173,7 +209,7 @@ impl Root {
         method: &str,
         words: &mut [u64],
         access: (&[bool], &mut bool),
-        execution: (InterpreterLimits, Rc<Budget>),
+        execution: (InterpreterLimits, std::sync::Arc<Budget>),
     ) -> Result<Vec<u64>, Error> {
         let (limits, budget) = execution;
         let (mutable, entered) = access;

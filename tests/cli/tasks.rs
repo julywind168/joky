@@ -541,3 +541,48 @@ fn task_parallel_control_bridge_runs_in_standalone_aot() {
             .unwrap(),
     );
 }
+
+#[test]
+fn task_parallel_domain_transactions_run_in_standalone_aot() {
+    let work = Workspace::new();
+    for (name, source) in [
+        (
+            "parallel_domains.jk",
+            include_str!("../fixtures/parallel_domains.jk"),
+        ),
+        (
+            "state_domain_when.jk",
+            include_str!("../fixtures/state_domain_when.jk"),
+        ),
+        (
+            "state_domain_paths.jk",
+            include_str!("../fixtures/state_domain_paths.jk"),
+        ),
+        (
+            "state_domain_creation.jk",
+            include_str!("../fixtures/state_domain_creation.jk"),
+        ),
+    ] {
+        work.write(name, source);
+    }
+    let build = work
+        .command()
+        .args([
+            "build",
+            "--task-workers",
+            "3",
+            "parallel_domains.jk",
+            "-o",
+            "parallel_domains",
+        ])
+        .env("JOKY_RUNTIME", runtime_archive())
+        .output()
+        .unwrap();
+    success(&build);
+    success(
+        &Command::new(work.path().join("parallel_domains"))
+            .current_dir(work.path())
+            .output()
+            .unwrap(),
+    );
+}

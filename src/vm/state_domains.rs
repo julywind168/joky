@@ -11,12 +11,15 @@ use crate::{
     Error, ErrorCode, ErrorPhase, Type,
 };
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     collections::HashMap,
     ptr::NonNull,
     rc::{Rc, Weak},
     sync::atomic::{AtomicU64, Ordering},
 };
+
+#[cfg(test)]
+use std::cell::Cell;
 
 mod access;
 mod admission;
@@ -28,6 +31,7 @@ pub(crate) mod migration;
 mod outbox;
 pub(crate) use outbox::emit;
 mod pairs;
+pub(crate) mod parallel;
 mod reads;
 mod storage;
 mod timers;
@@ -242,7 +246,7 @@ impl Drop for DomainRequest {
 }
 
 struct Domain {
-    root: Option<Root>,
+    root: Option<std::sync::Arc<Root>>,
     module: LoadedModule,
     source_module: usize,
     source_token: u64,
@@ -268,6 +272,7 @@ struct Request {
     failed_outbox: Option<u64>,
     access_error: Option<access::Rejection>,
     charge: usize,
+    parallel_output: Option<reads::Charge>,
     outcome: Option<DomainOutcome>,
     observed_revision: u64,
     second_revision: u64,
@@ -346,8 +351,9 @@ pub(crate) struct Domains {
     shutting_down: bool,
     request_bytes: usize,
     source_requests: usize,
-    budget: Rc<Budget>,
+    budget: std::sync::Arc<Budget>,
     limits: DomainLimits,
+    parallel: parallel::Coordinator,
 }
 impl Domains {
     pub(crate) fn new(executor: WeakExecutor) -> Self {
@@ -370,11 +376,14 @@ impl Domains {
             shutting_down: false,
             request_bytes: 0,
             source_requests: 0,
-            budget: Rc::new(Budget {
-                bytes: Cell::new(0),
-                limit: Cell::new(limits.max_state_bytes),
+            budget: std::sync::Arc::new(Budget {
+                bytes: (0).into(),
+                limit: (limits.max_state_bytes).into(),
+                shared: crate::runtime::parallel::current()
+                    .map(|root| std::sync::Mutex::new(root.accounts().empty_lease())),
             }),
             limits,
+            parallel: Default::default(),
         }
     }
 }
@@ -457,6 +466,7 @@ impl VmEngine {
     }
     pub fn set_domain_limits(&mut self, limits: DomainLimits) -> Result<(), Error> {
         let mut domains = self.domains.borrow_mut();
+        parallel::ensure_idle(&domains)?;
         if limits.max_domains == 0
             || limits.max_state_bytes == 0
             || limits.max_requests == 0
@@ -618,6 +628,7 @@ fn enqueue(
             failed_outbox: None,
             access_error: None,
             charge,
+            parallel_output: None,
             outcome: None,
             observed_revision: 0,
             second_revision: 0,
@@ -661,6 +672,12 @@ impl TaskEnvironment for Turn {
     }
 }
 fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
+    if parallel::dispatch(registry, sequence) {
+        return;
+    }
+    execute_local(registry, sequence);
+}
+fn execute_local(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     // Sample the actual clock at the final publication boundary, not the
     // executor's earlier timer scan. A reentrant clock may cancel or close the
     // request; inspect all control state only after the callback returns.
@@ -796,14 +813,12 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         request.access_error = Some(access::Rejection::Incompatible);
         DomainOutcome::Failed(error)
     } else if let Some(next) = next {
-        let result = domain.root.as_mut().unwrap().invoke(
-            &domain.module,
-            &domain.ty,
-            method,
-            info,
-            words,
-            *limits,
-        );
+        let result = domain
+            .root
+            .as_mut()
+            .and_then(std::sync::Arc::get_mut)
+            .unwrap()
+            .invoke(&domain.module, &domain.ty, method, info, words, *limits);
         match result {
             Ok(value) => {
                 domain.revision = next;
@@ -973,7 +988,7 @@ fn create_words(
     domains.entries.insert(
         sequence,
         Domain {
-            root: Some(root),
+            root: Some(std::sync::Arc::new(root)),
             module,
             source_module: 0,
             source_token: source::next_token()?,

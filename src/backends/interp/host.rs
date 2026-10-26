@@ -362,6 +362,9 @@ impl HostPending {
                 }
                 .map(|r| r.map(|bits| Value::Reference(bits as *mut u8)));
             }
+            if !unsafe { crate::vm::state_domains::parallel::gate(self.frame.as_mut()) } {
+                return Ok(None);
+            }
             let result = unsafe { crate::stdlib::source_poll(arena, self.frame.as_mut()) }?;
             self.frame.result = result;
             return Ok(Some(Value::Reference(result as usize as *mut u8)));

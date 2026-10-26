@@ -836,8 +836,8 @@ fn vm_resource_factory_rolls_back_when_owner_allocation_fails() {
         arena::{Arena, Budget},
         resource,
     };
-    let budget = Rc::new(Budget {
-        limit: std::cell::Cell::new(0),
+    let budget = std::sync::Arc::new(Budget {
+        limit: (0).into(),
         ..Default::default()
     });
     let mut arena = Arena::with_budget(budget.clone(), None);

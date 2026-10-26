@@ -78,8 +78,8 @@ fn pair() -> (TcpStream, std::net::TcpStream) {
 }
 #[test]
 fn net2_tcp_read_copy_peak_failure_stops_and_refunds_the_request() {
-    let budget = Rc::new(super::super::arena::Budget {
-        limit: Cell::new(8192),
+    let budget = std::sync::Arc::new(super::super::arena::Budget {
+        limit: (8192).into(),
         ..Default::default()
     });
     let executor = HostExecutor::default();
@@ -252,8 +252,8 @@ fn net3_tcp_socket_admission_counts_idle_owners_and_refunds_failures() {
     CONTEXT.with(|c| c.borrow_mut().take());
     // Failed owner publication must refund admission as well as close the fd.
     let mut empty = Arena::with_budget(
-        Rc::new(super::super::arena::Budget {
-            limit: Cell::new(0),
+        std::sync::Arc::new(super::super::arena::Budget {
+            limit: (0).into(),
             ..Default::default()
         }),
         None,
@@ -544,8 +544,8 @@ fn net5b_tcp_split_publication_failures_refund_owners_and_keep_one_socket_permit
         let mut failures = 0;
         let mut successes = 0;
         for allowance in (0..1024).step_by(8) {
-            let budget = Rc::new(super::super::arena::Budget {
-                limit: Cell::new(8192),
+            let budget = std::sync::Arc::new(super::super::arena::Budget {
+                limit: (8192).into(),
                 ..Default::default()
             });
             let mut arena = Arena::with_budget(budget.clone(), None);

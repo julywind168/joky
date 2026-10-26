@@ -10,6 +10,8 @@ use std::{
 /// Per-task charged budget: padded payloads plus allocation bookkeeping.
 pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) struct Arena {
+    #[cfg(test)]
+    tracked: bool,
     parallel: Option<(
         super::parallel::Storage,
         Option<super::parallel::LocalShard>,
@@ -19,16 +21,18 @@ pub(crate) struct Arena {
     external: Rc<Cell<usize>>,
     // Explicit regions share the task ceiling even without a persistent budget.
     task_bytes: Rc<Cell<usize>>,
-    budget: Option<Rc<Budget>>,
-    account: Option<Rc<Budget>>,
+    budget: Option<std::sync::Arc<Budget>>,
+    account: Option<std::sync::Arc<Budget>>,
     // Region payload also counts against the invocation's metadata-aware limit.
-    parent_account: Option<Rc<Budget>>,
+    parent_account: Option<std::sync::Arc<Budget>>,
     imported: usize,
     temporary_limit: Option<usize>,
 }
 impl Default for Arena {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
+            tracked: true,
             parallel: super::parallel::current().map(|root| (root, None)),
             allocations: Vec::new(),
             bytes: 0,
@@ -45,32 +49,84 @@ impl Default for Arena {
 /// Shared peak accounting for persistent roots and their active invocations.
 #[derive(Default)]
 pub(crate) struct Budget {
-    pub bytes: Cell<usize>,
-    pub limit: Cell<usize>,
+    pub bytes: Counter,
+    pub limit: Counter,
+    pub shared: Option<std::sync::Mutex<super::parallel::Lease>>,
+}
+/// Atomic accounting shared by independently owned domain arenas.
+#[derive(Default)]
+pub(crate) struct Counter(std::sync::atomic::AtomicUsize);
+impl From<usize> for Counter {
+    fn from(value: usize) -> Self {
+        Self(std::sync::atomic::AtomicUsize::new(value))
+    }
+}
+impl Counter {
+    #[cfg(test)]
+    pub(crate) fn replace(&self, value: usize) -> usize {
+        self.0.swap(value, std::sync::atomic::Ordering::AcqRel)
+    }
+    pub(crate) fn get(&self) -> usize {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+    pub(crate) fn set(&self, value: usize) {
+        self.0.store(value, std::sync::atomic::Ordering::Release);
+    }
 }
 impl Budget {
     pub(crate) fn charge(&self, amount: usize) -> Result<(), Error> {
-        let bytes = self
-            .bytes
-            .get()
-            .checked_add(amount)
-            .filter(|&n| n <= self.limit.get())
-            .ok_or_else(|| {
+        self.bytes
+            .0
+            .try_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |bytes| bytes.checked_add(amount).filter(|n| *n <= self.limit.get()),
+            )
+            .map_err(|_| {
                 Error::new_with_code(
                     ErrorPhase::Runtime,
                     ErrorCode::ResourceLimit,
                     "Instance byte budget exceeded",
                 )
             })?;
-        self.bytes.set(bytes);
+        if let Some(shared) = &self.shared {
+            if let Err(error) = shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .add(amount)
+            {
+                self.bytes
+                    .0
+                    .fetch_sub(amount, std::sync::atomic::Ordering::AcqRel);
+                return Err(error);
+            }
+        }
         Ok(())
     }
     pub(crate) fn refund(&self, amount: usize) {
-        self.bytes.set(self.bytes.get() - amount);
+        if let Some(shared) = &self.shared {
+            shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .refund(amount);
+        }
+        let previous = self
+            .bytes
+            .0
+            .fetch_sub(amount, std::sync::atomic::Ordering::AcqRel);
+        debug_assert!(previous >= amount);
     }
 }
 
 impl Arena {
+    #[cfg(test)]
+    pub(crate) fn untrack(&mut self) {
+        if self.tracked {
+            LIVE.with(|live| live.set(live.get() - self.allocations.len()));
+            self.tracked = false;
+        }
+    }
+
     pub(crate) fn with_storage(root: super::parallel::Storage) -> Self {
         let mut arena = Self::default();
         arena.parallel = Some((root, None));
@@ -79,12 +135,17 @@ impl Arena {
     pub(crate) fn parallel_root(&self) -> Option<&super::parallel::Storage> {
         self.parallel.as_ref().map(|(root, _)| root)
     }
-    pub(crate) fn with_budget(budget: Rc<Budget>, temporary_limit: Option<usize>) -> Self {
+    pub(crate) fn with_budget(
+        budget: std::sync::Arc<Budget>,
+        temporary_limit: Option<usize>,
+    ) -> Self {
         Self {
+            #[cfg(test)]
+            tracked: true,
             parallel: None,
             budget: Some(budget),
-            account: Some(Rc::new(Budget {
-                limit: Cell::new(usize::MAX),
+            account: Some(std::sync::Arc::new(Budget {
+                limit: (usize::MAX).into(),
                 ..Default::default()
             })),
             parent_account: None,
@@ -99,12 +160,14 @@ impl Arena {
     /// A separately reclaimed region shares its task's live allocation ceiling.
     pub(crate) fn child(&self) -> Self {
         Self {
+            #[cfg(test)]
+            tracked: true,
             parallel: self.parallel.as_ref().map(|(root, _)| (root.clone(), None)),
             task_bytes: self.task_bytes.clone(),
             budget: self.budget.clone(),
             account: self.budget.as_ref().map(|_| {
-                Rc::new(Budget {
-                    limit: Cell::new(usize::MAX),
+                std::sync::Arc::new(Budget {
+                    limit: (usize::MAX).into(),
                     ..Default::default()
                 })
             }),
@@ -119,10 +182,14 @@ impl Arena {
     // Buffer metadata holds a nonowning pointer; the arena pins this budget,
     // and transfer only accepts another arena with the identical budget owner.
     pub(crate) fn account_pointer(&self) -> *const Budget {
-        self.account.as_ref().map_or(std::ptr::null(), Rc::as_ptr)
+        self.account
+            .as_ref()
+            .map_or(std::ptr::null(), std::sync::Arc::as_ptr)
     }
     pub(crate) fn budget_pointer(&self) -> *const Budget {
-        self.budget.as_ref().map_or(std::ptr::null(), Rc::as_ptr)
+        self.budget
+            .as_ref()
+            .map_or(std::ptr::null(), std::sync::Arc::as_ptr)
     }
     pub(crate) fn bytes(&self) -> usize {
         self.parallel.as_ref().map_or(self.bytes, |(_, shard)| {
@@ -164,7 +231,8 @@ impl Arena {
         limit: usize,
     ) -> Result<(), Error> {
         transfer_checkpoint()?;
-        if !matches!((&self.budget, &to.budget), (Some(a), Some(b)) if Rc::ptr_eq(a, b)) {
+        if !matches!((&self.budget, &to.budget), (Some(a), Some(b)) if std::sync::Arc::ptr_eq(a, b))
+        {
             return Err(allocation_error());
         }
         for (index, p) in pointers.iter().enumerate() {
@@ -199,6 +267,16 @@ impl Arena {
     pub(crate) fn transfer_reserved(&mut self, to: &mut Self, pointers: &[NonNull<u8>]) {
         debug_assert_eq!(self.budget_pointer(), to.budget_pointer());
         debug_assert!(to.allocations.capacity() - to.allocations.len() >= pointers.len());
+        #[cfg(test)]
+        if self.tracked != to.tracked {
+            LIVE.with(|live| {
+                live.set(if to.tracked {
+                    live.get() + pointers.len()
+                } else {
+                    live.get() - pointers.len()
+                })
+            });
+        }
         let mut charge = 0;
         for p in pointers {
             let index = self.allocations.iter().position(|(q, _)| q == p).unwrap();
@@ -293,7 +371,9 @@ impl Arena {
         }
         dealloc(pointer.as_ptr(), layout);
         #[cfg(test)]
-        LIVE.with(|live| live.set(live.get() - 1));
+        if self.tracked {
+            LIVE.with(|live| live.set(live.get() - 1));
+        }
     }
 
     fn allocation_limit(&self) -> Result<usize, Error> {
@@ -463,7 +543,9 @@ impl Arena {
         self.bytes = bytes;
         self.task_bytes.set(task_bytes);
         #[cfg(test)]
-        LIVE.with(|live| live.set(live.get() + 1));
+        if self.tracked {
+            LIVE.with(|live| live.set(live.get() + 1));
+        }
         Ok(pointer)
     }
 }
@@ -472,9 +554,9 @@ pub(crate) struct ExternalCharge {
     bytes: usize,
     external: Rc<Cell<usize>>,
     task_bytes: Rc<Cell<usize>>,
-    budget: Option<Rc<Budget>>,
-    account: Option<Rc<Budget>>,
-    parent_account: Option<Rc<Budget>>,
+    budget: Option<std::sync::Arc<Budget>>,
+    account: Option<std::sync::Arc<Budget>>,
+    parent_account: Option<std::sync::Arc<Budget>>,
 }
 impl Drop for ExternalCharge {
     fn drop(&mut self) {
@@ -513,7 +595,9 @@ impl Drop for Arena {
                 dealloc(pointer.as_ptr(), layout);
             }
             #[cfg(test)]
-            LIVE.with(|live| live.set(live.get() - 1));
+            if self.tracked {
+                LIVE.with(|live| live.set(live.get() - 1));
+            }
         }
     }
 }
@@ -616,9 +700,10 @@ mod tests {
 
     #[test]
     fn arena_transfer_preserves_task_counters_and_imported_credit() {
-        let budget = Rc::new(Budget {
-            bytes: Cell::new(0),
-            limit: Cell::new(16384),
+        let budget = std::sync::Arc::new(Budget {
+            bytes: (0).into(),
+            limit: (16384).into(),
+            ..Default::default()
         });
         let mut storage = Arena::with_budget(budget.clone(), None);
         let mut invocation = Arena::with_budget(budget.clone(), Some(1024));
@@ -664,9 +749,10 @@ mod tests {
 
     #[test]
     fn arena_region_transfers_keep_shared_counters_and_accounts_balanced() {
-        let budget = Rc::new(Budget {
-            bytes: Cell::new(0),
-            limit: Cell::new(16384),
+        let budget = std::sync::Arc::new(Budget {
+            bytes: (0).into(),
+            limit: (16384).into(),
+            ..Default::default()
         });
         let mut parent = Arena::with_budget(budget.clone(), Some(1024));
         parent.credit_imported();

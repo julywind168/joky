@@ -276,6 +276,17 @@ impl BytecodeModule {
             .get(name)
             .filter(|function| function.info.parallel_entry)
             .ok_or_else(|| abi_error("Unknown parallel export"))?;
+        self.freeze_function(function)
+    }
+    pub(crate) fn freeze_domain(&self, name: &str) -> Result<FrozenEntry, Error> {
+        let function = self
+            .functions
+            .get(name)
+            .filter(|f| f.info.domain_entry)
+            .ok_or_else(|| abi_error("Unknown checked domain entry"))?;
+        self.freeze_function(function)
+    }
+    fn freeze_function(&self, function: &BytecodeFunction) -> Result<FrozenEntry, Error> {
         Ok(FrozenEntry {
             files: self.files.clone(),
             info: function.info.clone(),
