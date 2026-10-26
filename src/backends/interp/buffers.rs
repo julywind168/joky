@@ -175,7 +175,9 @@ pub(super) fn execute(
         }
         BufferOp::Access { .. } => unreachable!("owner access markers are erased after checking"),
         BufferOp::End(owner) => {
-            for scalar in owner.scalars() {
+            // Copy fields may be the result of a temporary projection. Ending
+            // the owner releases its resources, not those independent values.
+            for scalar in owner.scalars().filter(|s| s.ty.is_owner_lane()) {
                 slots[scalar.index] = Value::Unit;
             }
         }

@@ -2906,3 +2906,22 @@ fn service_ergonomics_run_in_all_backends() {
     );
     work.assert_all_backends("ergonomics.jk", &[], b"", 0);
 }
+
+#[test]
+fn copy_projections_survive_temporary_owner_cleanup_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "temporary_projection.jk",
+        r#"import joky/check
+struct State { name:String, number:UInt64 }
+fn make() -> State {State{name:"temporary",number:500}}
+fn direct() -> UInt64 {make().number}
+fn wrapped() @suspends -> Result<State,Int32> {Ok(make())}
+fn project() @suspends -> UInt64 {wrapped()!.number}
+fn main() @suspends {
+    check.assert(direct()==500,"synchronous temporary")
+    check.assert(project()==500,"suspended enum payload temporary")
+}"#,
+    );
+    work.assert_all_backends("temporary_projection.jk", &[], b"", 0);
+}
