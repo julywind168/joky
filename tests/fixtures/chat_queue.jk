@@ -1,11 +1,13 @@
 fn balance_view(state: &Account) -> UInt64 { state.balance_cents }
 fn live_view(state: &Account) -> Bool { state.live }
-fn room_name_view(state: &Account) -> String { state.room.clone() }
+fn room_name_view(state: &Account) -> Option<String> {
+    match &state.room { Some(name) => Some(name.clone()), None => None }
+}
 fn account_view(state: &Account) -> Account {
-    Account { member: state.member, live: state.live, room: state.room.clone(), balance_cents: state.balance_cents }
+    Account { member: state.member, live: state.live, room: room_name_view(state), balance_cents: state.balance_cents }
 }
 fn apply_account(state: &mut Account, account: Account) { var next=account; mem.swap(state,&mut next) }
-fn set_room(state: &mut Account, room: String) { mem.replace(&mut state.room, room); }
+fn set_room(state: &mut Account, room: String) { mem.replace(&mut state.room, Some(room)); }
 // Test owners stay local, independently of the production owning directories.
 struct Fixture { rooms: domain.Directory, accounts: domain.Directory, room: domain.Owner<Room>, other: domain.Owner<Room>, ctx: Host }
 fn fixture() @suspends -> Fixture {
@@ -331,7 +333,7 @@ fn verify_move_rollback() @suspends {
     match join(f.ctx, alice.handle(), name) {
         Ok(Err(Stale)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
     }
-    check.assert(domain.read_from(alice.read_handle(), room_name_view)!.equals("r"), "failed moves preserve account room")
+    check.assert(domain.read_from(alice.read_handle(), room_name_view)!!.equals("r"), "failed moves preserve account room")
     check.assert(domain.query_from(f.room.read_handle(), member_value, 1)!, "failed moves preserve old membership")
     check.assert(!domain.query_from(f.other.read_handle(), member_value, 1)!, "failed moves never add destination membership")
     check.assert(balance(&alice) == 500 && balance(&bob) == 500, "failed moves do not charge")

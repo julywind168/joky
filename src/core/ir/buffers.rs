@@ -646,6 +646,25 @@ impl FunctionPlan {
     }
 }
 
+// Inline sums can carry no owner even when other variants own storage.
+// Buffers, strings and resources themselves always require a real owner source.
+fn can_be_owner_empty(ty: &Type) -> bool {
+    if !ty.is_owner() {
+        return true;
+    }
+    match ty {
+        Type::Enum(e) => e
+            .variants
+            .iter()
+            .any(|v| v.payload.as_ref().is_none_or(can_be_owner_empty)),
+        Type::Record(r) if r.closure.is_none() => {
+            r.fields.iter().all(|f| can_be_owner_empty(&f.ty))
+        }
+        Type::Tuple(t) => t.elements.iter().all(can_be_owner_empty),
+        _ => false,
+    }
+}
+
 pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Error> {
     let mut signature = info.signature.clone();
     // Generic reference targets may carry only nominal identity until planning.
@@ -746,10 +765,11 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         // An empty owning enum initializes its inactive owner lanes to null.
         && !plan.ops.iter().any(|op| {
             matches!(op, Op::Literal(dst, Constant::NullPtr) if dst.ty.is_owner_lane())
-                // A synchronous factory can return an environment whose only
-                // owner lane is its null move identity, without allocating data.
+                // A factory can forward an empty inline sum without allocating.
+                // This does not admit recursive buffer factories with no owner source.
                 || matches!(op, Op::Call { result: Some(dst), .. }
-                    if dst.ty.contains_closures() && !dst.ty.contains_unstorable_closures())
+                    if (dst.ty.is_owner() && can_be_owner_empty(&dst.ty))
+                        || (dst.ty.contains_closures() && !dst.ty.contains_unstorable_closures()))
         })
         && !signature.params.iter().any(|ty| {
             ty.is_owner()

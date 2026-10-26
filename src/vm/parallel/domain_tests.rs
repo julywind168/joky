@@ -67,3 +67,14 @@ fn parallel_reservation_sample() {
         run(&source, mode, inner);
     }
 }
+
+#[test]
+fn parallel_domains_optional_paths_and_owning_variants() {
+    for (mode, inner) in [(VmMode::Jit, "new"), (VmMode::Interpreter, "interpreter")] {
+        run(
+            include_str!("../../../tests/fixtures/state_domain_optional.jk"),
+            mode,
+            inner,
+        );
+    }
+}

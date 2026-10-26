@@ -3,6 +3,16 @@ use super::ir::{BufferOp, CleanupOp, FunctionInfo, FunctionPlan, Op};
 use crate::Type;
 use std::collections::{HashMap, HashSet};
 
+/// Only the standard Option of a directory key participates in optional paths.
+pub(crate) fn optional_key(ty: &Type) -> Option<&Type> {
+    let Type::Enum(e) = ty else { return None };
+    if e.name != "joky/option.Option" {
+        return None;
+    }
+    let key = e.arguments.first()?.as_type()?;
+    matches!(key, Type::UInt64 | Type::String).then_some(key)
+}
+
 fn state_root(ty: &Type, body: &FunctionPlan) -> bool {
     matches!(ty, Type::Record(record)
         if record.template.is_none()

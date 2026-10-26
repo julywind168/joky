@@ -2041,8 +2041,8 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ("", "when (h,h) {};", "Duplicate binding"),
         ("", "let d=domain.directory(2); let routes=d.handle(); when (h, s?:S=routes[1]) {};", "else branch"),
         ("", "let d=domain.directory(2); let routes=d.handle(); when (s?:S=routes[1], h) {} else {};", "must be last"),
-        ("fn key()->UInt64{1}", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[key()]) {};", "UInt64 keys"),
-        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[h.n]) {};", "UInt64 keys"),
+        ("fn key()->UInt64{1}", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[key()]) {};", "UInt64/String keys"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[h.n]) {};", "UInt64/String keys"),
         ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s?:S=routes[1]) {s.n} else {s.n};", "Undefined"),
         ("", "let d=domain.directory(2); let routes=d.handle(); let text=\"owned\"; when (h,s:S=routes[1]) {let owned:String=text; owned};", "String"),
 
@@ -2516,4 +2516,15 @@ fn state_domains_creation_runs_in_standalone_aot() {
         include_str!("../fixtures/state_domain_creation.jk"),
     );
     work.assert_native("creation.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_optional_paths_run_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "optional.jk",
+        include_str!("../fixtures/state_domain_optional.jk"),
+    );
+    work.assert_native("optional.jk", &[], b"", 0);
 }

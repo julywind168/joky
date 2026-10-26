@@ -353,3 +353,77 @@ fn operation(first:domain.WriteHandle<S>,routes:domain.DirectoryHandle) @suspend
         }
     }
 }
+
+#[test]
+fn state_domains_optional_paths_revalidate_presence_and_retry_limits() {
+    const SOURCE: &str = r#"import joky/domain
+        struct S { key:Option<UInt64>, n:Int32 }
+        fn make(n:Int32)->S {S{key:None,n:n}}
+        fn route(s:&mut S,key:UInt64) {s.key=if key==0 {None}else{Some(key)}}
+        fn operation(first:domain.WriteHandle<S>,routes:domain.DirectoryHandle) @suspends ->Int32 {
+            when "update" (mut first, second?:S=routes[first.key]) {first.n+=second.n;first.n}
+            else {first.n+=10;first.n}.unwrap()
+        }"#;
+    const ENTRY: &str = "$when/named/4:main/9:operation/6:757064617465";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(SOURCE).unwrap();
+        for (before, after) in [(0, 2), (2, 0)] {
+            for retries in [0, 64] {
+                let a = vm
+                    .create_domain("make", &[InstanceValue::Int32(1)])
+                    .unwrap();
+                let b = vm
+                    .create_domain("make", &[InstanceValue::Int32(2)])
+                    .unwrap();
+                let token = |o: &DomainOwner| {
+                    vm.domains.borrow().get(o.handle).unwrap().source_token * 2 + 1
+                };
+                let at = token(&a);
+                let bt = token(&b);
+                let table = create(&vm.domains, 4).unwrap();
+                assert_eq!(insert(&vm.domains, table.token, 2, None, bt), 0);
+                let mut initial = vm
+                    .queue_domain_call(a.write_handle(), "route", &[InstanceValue::UInt64(before)])
+                    .unwrap();
+                vm.poll_tasks(10).unwrap();
+                initial.take_result().unwrap();
+                let mut change = vm
+                    .queue_domain_call(a.write_handle(), "route", &[InstanceValue::UInt64(after)])
+                    .unwrap();
+                let output = Rc::new(RefCell::new(vec![0]));
+                let mut request = pairs::paths::submit(
+                    &vm.domains,
+                    vm.current.as_ref().unwrap().clone(),
+                    ENTRY,
+                    vec![0, 0, 0, 0, 0, at, 0, 9, 1, 0, table.token, 0, 1].into(),
+                    vec![],
+                    pairs::ValueOutput {
+                        words: output.clone(),
+                        snapshot: false,
+                    },
+                    vm.interpreter_limits(),
+                )
+                .unwrap();
+                vm.domains.borrow_mut().limits.max_path_retries = retries;
+                vm.poll_tasks(100).unwrap();
+                assert!(matches!(
+                    change.take_result(),
+                    Some(DomainOutcome::Value(_))
+                ));
+                let (_, rejection) = request.take_access_result().unwrap();
+                if retries == 0 {
+                    assert_eq!(rejection, Some(access::Rejection::RetryLimit));
+                } else {
+                    assert_eq!(rejection, None);
+                    assert_eq!(*output.borrow(), vec![if after == 0 { 11 } else { 3 }]);
+                }
+                vm.domains.borrow_mut().limits.max_path_retries = 64;
+                a.close();
+                b.close();
+                drop(table);
+                assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            }
+        }
+    }
+}

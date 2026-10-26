@@ -3,6 +3,38 @@
 use super::super::access::Rejection;
 use super::*;
 
+// Resolve an actual field type, never a payload lane hidden behind an unchecked tag.
+fn key_field(ty: &Type, offset: usize, key: &Type, optional: bool) -> Option<usize> {
+    use crate::core::types::memory_layout::MemoryLayoutShape;
+    if offset == 0 && !optional && ty == key {
+        return Some(0);
+    }
+    let layout = ty.storage_layout().ok()?;
+    if offset == 0 && optional && crate::core::state_domain::optional_key(ty) == Some(key) {
+        let MemoryLayoutShape::Enum { variants, .. } = layout.shape else {
+            return None;
+        };
+        return Some(variants.get(1)?.payload?.offset);
+    }
+    match (ty, layout.shape) {
+        (Type::Record(r), MemoryLayoutShape::Record(fields)) => {
+            r.fields.iter().zip(fields).find_map(|(f, l)| {
+                offset
+                    .checked_sub(l.offset)
+                    .and_then(|offset| key_field(&f.ty, offset, key, optional))
+            })
+        }
+        (Type::Tuple(t), MemoryLayoutShape::Tuple(fields)) => {
+            t.elements.iter().zip(fields).find_map(|(t, l)| {
+                offset
+                    .checked_sub(l.offset)
+                    .and_then(|offset| key_field(t, offset, key, optional))
+            })
+        }
+        _ => None,
+    }
+}
+
 pub(in super::super) struct Paths {
     registry: Weak<RefCell<Domains>>,
     source_key: usize,
@@ -80,6 +112,8 @@ impl Paths {
         for (i, descriptor) in self.descriptors.iter().enumerate() {
             let [kind, dependency, offset, directory, input, optional] = *descriptor;
             let create = kind & 4 != 0;
+            let option_key = kind & 8 != 0;
+            let absent = kind & 16 != 0;
             let kind = kind & 3;
             let mut pending = None;
             let reference = self.info.signature.params[i].reference_type().unwrap();
@@ -95,8 +129,10 @@ impl Paths {
                     writable: input & 1 != 0,
                 })
             } else {
-                let key = if dependency == 0 {
-                    if kind == 1 {
+                let key = if absent {
+                    None
+                } else if dependency == 0 {
+                    Some(if kind == 1 {
                         directory::Key::Index(input)
                     } else {
                         directory::Key::Name(
@@ -105,52 +141,62 @@ impl Paths {
                                 .ok_or(Rejection::InvalidAccess)?
                                 .clone(),
                         )
-                    }
+                    })
                 } else {
                     let handle = handles[(dependency - 1) as usize];
                     let domain = domains
                         .get(handle)
                         .map_err(|e| access::classify(domains, &[handle], &e))?;
-                    // The descriptor's offset must identify a real UInt64 lane in
-                    // the checked state schema, never arbitrary root memory.
-                    if !domain
-                        .ty
-                        .storage_scalars()
-                        .map_err(|_| Rejection::Incompatible)?
-                        .contains(&(
-                            offset as usize,
-                            if kind == 1 {
-                                Type::UInt64
-                            } else {
-                                Type::String
-                            },
-                        ))
-                    {
-                        return Err(Rejection::InvalidAccess);
-                    }
+                    let key = if kind == 1 {
+                        Type::UInt64
+                    } else {
+                        Type::String
+                    };
+                    let payload = key_field(&domain.ty, offset as usize, &key, option_key)
+                        .ok_or(Rejection::InvalidAccess)?;
                     // SAFETY: the root is live, the lane was checked above, and
                     // the registry borrow prevents publication during resolution.
                     unsafe {
-                        let pointer = (domain.root.as_ref().unwrap().scalar_pointer() as *const u8)
+                        let mut pointer = (domain.root.as_ref().unwrap().scalar_pointer()
+                            as *const u8)
                             .add(offset as usize);
-                        if kind == 1 {
-                            directory::Key::Index(pointer.cast::<u64>().read_unaligned())
+                        let present = if option_key {
+                            match pointer.cast::<i32>().read_unaligned() {
+                                0 => false,
+                                1 => true,
+                                _ => return Err(Rejection::InvalidAccess),
+                            }
                         } else {
-                            directory::Key::Name(
-                                crate::runtime::owned_text::borrow(
-                                    pointer
-                                        .cast::<*const crate::runtime::buffer::Buffer>()
-                                        .read_unaligned(),
+                            true
+                        };
+                        if !present {
+                            None
+                        } else {
+                            pointer = pointer.add(payload);
+                            Some(if kind == 1 {
+                                directory::Key::Index(pointer.cast::<u64>().read_unaligned())
+                            } else {
+                                directory::Key::Name(
+                                    crate::runtime::owned_text::borrow(
+                                        pointer
+                                            .cast::<*const crate::runtime::buffer::Buffer>()
+                                            .read_unaligned(),
+                                    )
+                                    .map_err(|_| Rejection::InvalidAccess)?
+                                    .to_owned(),
                                 )
-                                .map_err(|_| Rejection::InvalidAccess)?
-                                .to_owned(),
-                            )
+                            })
                         }
                     }
                 };
-                match directory::resolve_key(domains, directory, &key)? {
-                    Some(handle) => Some(handle),
-                    None if create => {
+                match key
+                    .map(|key| {
+                        directory::resolve_key(domains, directory, &key).map(|handle| (key, handle))
+                    })
+                    .transpose()?
+                {
+                    Some((_, Some(handle))) => Some(handle),
+                    Some((key, None)) if create => {
                         pending = Some((i, directory, key));
                         Some(DomainHandle {
                             registry: domains.identity,
@@ -158,7 +204,7 @@ impl Paths {
                             writable: true,
                         })
                     }
-                    None => None,
+                    _ => None,
                 }
             };
             let Some(handle) = handle else {
@@ -273,7 +319,9 @@ pub(in super::super) fn submit(
         branch: "",
     };
     for (i, d) in paths.descriptors.iter().enumerate() {
-        if !matches!(d[0], 0 | 1 | 2 | 5 | 6)
+        if !matches!(d[0], 0 | 1 | 2 | 5 | 6 | 9 | 10 | 25 | 26)
+            || (d[0] & 8 != 0 && d[5] != 1)
+            || (d[0] & 16 != 0 && d[1] != 0)
             || d[1] > i as u64
             || d[5] > 1
             || (d[5] != 0 && (i == 0 || i + 1 != count))

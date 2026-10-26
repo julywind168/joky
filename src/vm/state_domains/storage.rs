@@ -2,13 +2,15 @@
 use super::*;
 use crate::runtime::{arena::ExternalCharge, buffer::Buffer};
 
+mod owners;
 pub(super) mod parallel;
+use owners::Owner;
 
 pub(super) struct Root {
     _charge: ExternalCharge,
     arena: Arena,
     pointer: NonNull<u8>,
-    owners: Vec<usize>,
+    owners: Vec<Owner>,
 }
 pub(super) trait RootAccess {
     fn root(&mut self, sequence: u64) -> (&Type, &mut Root);
@@ -53,15 +55,9 @@ impl Root {
         let ty = &info.signature.ret;
         let mut arena = Arena::with_budget(budget, None);
         let layout = ty.storage_layout().map_err(|e| invalid(&e.to_string()))?;
-        let owners: Vec<_> = ty
-            .storage_scalars()
-            .map_err(|e| invalid(&e.to_string()))?
-            .into_iter()
-            .filter(|(_, ty)| ty.is_owner_lane())
-            .map(|(offset, _)| offset)
-            .collect();
+        let owners = Owner::describe(ty)?;
         let charge = arena.reserve_external(
-            owners.len() * std::mem::size_of::<usize>()
+            owners.iter().map(Owner::bytes).sum::<usize>()
                 + std::mem::size_of::<Root>()
                 + 2 * std::mem::size_of::<usize>(),
         )?;
@@ -92,7 +88,7 @@ impl Root {
         let mut arena = Arena::with_budget(budget, None);
         let layout = ty.storage_layout().map_err(|e| invalid(&e.to_string()))?;
         let charge = arena.reserve_external(
-            self.owners.len() * std::mem::size_of::<usize>()
+            self.owners.iter().map(Owner::bytes).sum::<usize>()
                 + std::mem::size_of::<Root>()
                 + 2 * std::mem::size_of::<usize>(),
         )?;
@@ -104,10 +100,10 @@ impl Root {
         let pointer = arena.allocate(layout.size, layout.align)?;
         unsafe {
             std::ptr::copy_nonoverlapping(self.pointer.as_ptr(), pointer.as_ptr(), layout.size);
-            for &offset in &owners {
+            for owner in &owners {
                 pointer
                     .as_ptr()
-                    .add(offset)
+                    .add(owner.offset)
                     .cast::<*mut Buffer>()
                     .write(std::ptr::null_mut());
             }
@@ -120,11 +116,11 @@ impl Root {
         };
         let originals = self.owner_pointers()?;
         let copies = unsafe { Buffer::copy_owners(&self.arena, &originals, &mut root.arena)? };
-        for (&offset, copy) in root.owners.iter().zip(copies) {
+        for (owner, copy) in root.owners.iter().zip(copies) {
             unsafe {
                 root.pointer
                     .as_ptr()
-                    .add(offset)
+                    .add(owner.offset)
                     .cast::<*mut Buffer>()
                     .write(copy);
             }
@@ -136,12 +132,16 @@ impl Root {
         owners
             .try_reserve_exact(self.owners.len())
             .map_err(|_| limited("Root graph allocation failed"))?;
-        owners.extend(self.owners.iter().map(|&offset| unsafe {
-            self.pointer
-                .as_ptr()
-                .add(offset)
-                .cast::<*mut Buffer>()
-                .read()
+        owners.extend(self.owners.iter().map(|owner| unsafe {
+            if owner.active(self.pointer.as_ptr()) {
+                self.pointer
+                    .as_ptr()
+                    .add(owner.offset)
+                    .cast::<*mut Buffer>()
+                    .read_unaligned()
+            } else {
+                std::ptr::null_mut()
+            }
         }));
         Ok(owners)
     }
@@ -158,18 +158,7 @@ impl Root {
         self.pointer.as_ptr() as u64
     }
     fn allocations(&self) -> Result<Vec<NonNull<u8>>, Error> {
-        let mut graph = unsafe {
-            Buffer::owning_allocations(
-                &self.arena,
-                self.owners.iter().map(|offset| {
-                    self.pointer
-                        .as_ptr()
-                        .add(*offset)
-                        .cast::<*mut Buffer>()
-                        .read()
-                }),
-            )
-        }?;
+        let mut graph = unsafe { Buffer::owning_allocations(&self.arena, self.owner_pointers()?) }?;
         graph
             .allocations
             .try_reserve(1)
@@ -325,11 +314,21 @@ impl Root {
         result
     }
     fn release_owners(&mut self, arena: &mut Arena) {
-        for &offset in &self.owners {
+        Self::release(&self.owners, self.pointer, arena);
+    }
+    fn release(owners: &[Owner], pointer: NonNull<u8>, arena: &mut Arena) {
+        for descriptor in owners {
             unsafe {
-                let lane = self.pointer.as_ptr().add(offset).cast::<*mut Buffer>();
-                let owner = lane.read();
-                lane.write(std::ptr::null_mut());
+                let lane = pointer
+                    .as_ptr()
+                    .add(descriptor.offset)
+                    .cast::<*mut Buffer>();
+                let owner = if descriptor.active(pointer.as_ptr()) {
+                    lane.read_unaligned()
+                } else {
+                    std::ptr::null_mut()
+                };
+                lane.write_unaligned(std::ptr::null_mut());
                 if !owner.is_null() {
                     let _ = Buffer::release(arena, owner);
                 }
@@ -406,21 +405,8 @@ impl Root {
 }
 impl Drop for Root {
     fn drop(&mut self) {
-        // Compiler-authored descriptors recursively release child owners.
-        // Eligibility excludes user callbacks throughout the storage graph.
-        for &offset in &self.owners {
-            unsafe {
-                let owner = self
-                    .pointer
-                    .as_ptr()
-                    .add(offset)
-                    .cast::<*mut Buffer>()
-                    .read();
-                if !owner.is_null() {
-                    let _ = Buffer::release(&mut self.arena, owner);
-                }
-            }
-        }
+        // Active tags are tested before reading any owning payload.
+        Self::release(&self.owners, self.pointer, &mut self.arena);
     }
 }
 

@@ -13,13 +13,13 @@ const START_BALANCE_CENTS: UInt64 = 500
 const SAY_PRICE_CENTS: UInt64 = 100
 
 struct Member { id: UInt64, output: session.Output }
-// `room` is empty while the account is outside every room; the protocol rejects empty names.
+// No room membership is represented explicitly, independently of valid room names.
 #state
-struct Account { member: Member, live: Bool, room: String, balance_cents: UInt64 }
+struct Account { member: Member, live: Bool, room: Option<String>, balance_cents: UInt64 }
 #state
 struct Room { name: String, members: Array<Member> }
 fn new_account(member: Member) -> Account {
-    Account { member: member, live: true, room: "", balance_cents: START_BALANCE_CENTS }
+    Account { member: member, live: true, room: None, balance_cents: START_BALANCE_CENTS }
 }
 fn new_room(name: String) -> Room { Room { name: name, members: Array.new::<Member>() } }
 
@@ -62,7 +62,7 @@ fn handle_line(host: Host, id: UInt64, line: String) @suspends -> Bool {
 }
 fn committed<T>(outcome: Outcome<T>) -> Bool { match outcome { Ok(Ok(_)) => true, _ => false } }
 // Commands that leave a room hand its name back so an empty room can be reclaimed.
-fn vacated(host: Host, outcome: Outcome<String>) @suspends -> Bool {
+fn vacated(host: Host, outcome: Outcome<Option<String>>) @suspends -> Bool {
     match outcome {
         Ok(Ok(room)) => { reclaim(host, &room); true },
         _ => false
@@ -98,7 +98,7 @@ fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends
     }
 }
 // Moving checks and leaves the old room, then enters the new one; a failure undoes both.
-fn join(host: Host, account: domain.WriteHandle<Account>, name: String) @suspends -> Outcome<String> {
+fn join(host: Host, account: domain.WriteHandle<Account>, name: String) @suspends -> Outcome<Option<String>> {
     when "move" (mut account,
                  mut next: Room = host.rooms.get_or_stage(name, new_room(name.clone())),
                  mut old?: Room = host.rooms[account.room]) {
@@ -109,21 +109,21 @@ fn join(host: Host, account: domain.WriteHandle<Account>, name: String) @suspend
     } else {
         check_live(account)?
         enter(account, next, name)?
-        Ok("")
+        Ok(None)
     } alias {
         let member = check_member(account, next)?
         send(member, "error already joined\n")
-        Ok("")
+        Ok(None)
     }
 }
-fn leave(host: Host, account: domain.WriteHandle<Account>) @suspends -> Outcome<String> {
+fn leave(host: Host, account: domain.WriteHandle<Account>) @suspends -> Outcome<Option<String>> {
     when "leave" (mut account, mut room?: Room = host.rooms[account.room]) {
         check_member(account, room)?
         Ok(depart(account, room, true))
     } else {
         let member = check_live(account)?
         send(member, "error join a room first\n")
-        Ok("")
+        Ok(None)
     }
 }
 
@@ -149,7 +149,7 @@ fn forget(client: Client) @suspends {
         (account.member.output, depart(account, room, false))
     } else {
         account.live = false
-        (account.member.output, "")
+        (account.member.output, None)
     }
     if let Ok((output, room)) = ended {
         output.close()
@@ -157,9 +157,9 @@ fn forget(client: Client) @suspends {
         reclaim(host, &room)
     }
 }
-fn reclaim(host: Host, room: &String) @suspends {
-    if host.config.reclaim_empty && !room.is_empty() {
-        domain.remove_named_if(host.rooms, room, empty);
+fn reclaim(host: Host, room: &Option<String>) @suspends {
+    if host.config.reclaim_empty {
+        if let Some(name) = room { domain.remove_named_if(host.rooms, name, empty); }
     }
 }
 
@@ -176,17 +176,17 @@ fn enter(account: &mut Account, room: &mut Room, name: &String) -> Result<Member
     let member = account.member
     add_member(room, member)
     broadcast(room, notice("joined", &room.name, member.id))
-    mem.replace(&mut account.room, name.clone());
+    mem.replace(&mut account.room, Some(name.clone()));
     Ok(member)
 }
 // Leaves the room and returns its name. A closed connection does not hear its own departure.
-fn depart(account: &mut Account, room: &mut Room, notify_self: Bool) -> String {
+fn depart(account: &mut Account, room: &mut Room, notify_self: Bool) -> Option<String> {
     let member = account.member
     remove_member(room, member.id)
     let message = notice("left", &room.name, member.id)
     broadcast(room, &message)
     if notify_self { send(member, &message) }
-    mem.replace(&mut account.room, "")
+    account.room.take()
 }
 fn add_member(room: &mut Room, member: Member) { room.members.push(member) }
 fn remove_member(room: &mut Room, id: UInt64) {

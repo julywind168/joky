@@ -78,12 +78,13 @@ impl FunctionPlan {
         }
         let fail = || {
             type_error(&block.span, ErrorCode::InvalidCall,
-            "when paths require DirectoryHandle projections and UInt64 keys or String keys; dependent keys must project an earlier state")
+            "when paths require DirectoryHandle projections and UInt64/String keys (Option only on optional paths); dependent keys must project an earlier state")
         };
         let literal = |value| Expr::Literal {
             literal: Literal::UInt64(value),
             span: block.span,
         };
+        let saved_scope = self.scope.clone();
         let params = self.when_parameters(block, vars)?;
         let mut elements = vec![literal(u64::from(block.alias.is_some()))];
         let mut temporary = Vec::new();
@@ -141,11 +142,21 @@ impl FunctionPlan {
                                 "A path cannot depend on a binding with a creation fallback",
                             ));
                         }
-                        if ty == Type::String {
-                            descriptor[0] = literal(2);
-                        } else if ty != Type::UInt64 {
-                            return Err(fail());
+                        let optional = crate::core::state_domain::optional_key(&ty);
+                        if optional.is_some() && (!path.optional || path.create.is_some()) {
+                            return Err(type_error(
+                                &block.span,
+                                ErrorCode::InvalidCall,
+                                "Option keys require an optional path without get_or_stage",
+                            ));
                         }
+                        let key = optional.unwrap_or(&ty);
+                        let kind = match key {
+                            Type::String => 2,
+                            Type::UInt64 => 1,
+                            _ => return Err(fail()),
+                        };
+                        descriptor[0] = literal(kind | if optional.is_some() { 8 } else { 0 });
                         descriptor[1] = literal(dependency as u64 + 1);
                         descriptor[2] = literal(offset as u64);
                     } else {
@@ -163,12 +174,103 @@ impl FunctionPlan {
                         ..
                     }
                 ) {
-                    let key_ty = self.bound_hint(&path.key, vars, functions, types);
-                    if matches!(key_ty.as_ref(), Some(Type::String))
-                        || key_ty.as_ref().is_some_and(|t| {
-                            t.reference_type().is_some_and(|r| r.target == Type::String)
-                        })
-                    {
+                    let key_ty = self
+                        .bound_hint(&path.key, vars, functions, types)
+                        .ok_or_else(fail)?;
+                    let borrowed = key_ty.reference_type().is_some();
+                    let key_ty = key_ty.reference_type().map_or(&key_ty, |r| &r.target);
+                    if let Some(key) = crate::core::state_domain::optional_key(key_ty) {
+                        if !path.optional || path.create.is_some() {
+                            return Err(type_error(
+                                &block.span,
+                                ErrorCode::InvalidCall,
+                                "Option keys require an optional path without get_or_stage",
+                            ));
+                        }
+                        let Type::Enum(enumeration) = key_ty else {
+                            unreachable!()
+                        };
+                        // Compiler-authored patterns must not resolve user constructors
+                        // named Some/None, or depend on how Option was imported.
+                        for variant in ["Some", "None"] {
+                            Arc::make_mut(&mut self.scope).constructors.insert(
+                                format!("$when.option.{variant}"),
+                                vec![crate::core::imports::ConstructorBinding {
+                                    enumeration: crate::core::imports::TypeBinding {
+                                        name: enumeration.name.clone(),
+                                        declaration: Some(enumeration.id),
+                                        resolved: None,
+                                    },
+                                    variant: variant.into(),
+                                }],
+                            );
+                        }
+                        let span = block.span;
+                        let binding = format!("$when.key.{i}");
+                        let select = |some: Expr, none: Expr| Expr::Match {
+                            conditional: false,
+                            iteration: false,
+                            value: Box::new(if key_ty.is_owner() && !borrowed {
+                                Expr::Unary {
+                                    op: UnaryOp::Borrow,
+                                    operand: Box::new(path.key.clone()),
+                                    span,
+                                }
+                            } else {
+                                path.key.clone()
+                            }),
+                            arms: vec![
+                                crate::parser::ast::MatchArm {
+                                    pattern: crate::parser::ast::Pattern::Variant {
+                                        name: "$when.option.Some".into(),
+                                        binding: Some(Box::new(
+                                            crate::parser::ast::PayloadPattern::Name {
+                                                name: binding.clone(),
+                                                span,
+                                            },
+                                        )),
+                                        span,
+                                    },
+                                    body: some,
+                                    span,
+                                },
+                                crate::parser::ast::MatchArm {
+                                    pattern: crate::parser::ast::Pattern::Variant {
+                                        name: "$when.option.None".into(),
+                                        binding: None,
+                                        span,
+                                    },
+                                    body: none,
+                                    span,
+                                },
+                            ],
+                            span,
+                        };
+                        let value = Expr::Ident {
+                            name: binding.clone(),
+                            span,
+                        };
+                        let kind = if *key == Type::String { 2 } else { 1 };
+                        descriptor[0] = select(literal(kind | 8), literal(kind | 8 | 16));
+                        if *key == Type::String {
+                            descriptor[4] = literal(keys.len() as u64);
+                            keys.push(select(
+                                Expr::MethodCall(Box::new(crate::parser::ast::MethodCall {
+                                    receiver: value,
+                                    name: "clone".into(),
+                                    type_args: vec![],
+                                    args: vec![],
+                                    span,
+                                })),
+                                Expr::Literal {
+                                    literal: Literal::String(String::new()),
+                                    span,
+                                },
+                            ));
+                        } else {
+                            descriptor[4] = select(value, literal(0));
+                        }
+                    } else if *key_ty == Type::String {
                         descriptor[0] = literal(2);
                         descriptor[4] = literal(keys.len() as u64);
                         keys.push(Expr::MethodCall(Box::new(crate::parser::ast::MethodCall {
@@ -178,6 +280,16 @@ impl FunctionPlan {
                             args: vec![],
                             span: block.span,
                         })));
+                    } else if *key_ty != Type::UInt64
+                        && !matches!(
+                            path.key,
+                            Expr::Literal {
+                                literal: Literal::Integer { .. },
+                                ..
+                            }
+                        )
+                    {
+                        return Err(fail());
                     }
                 }
                 if path.create.is_some() {
@@ -250,6 +362,7 @@ impl FunctionPlan {
         for name in temporary {
             vars.remove(&name);
         }
+        self.scope = saved_scope;
         Ok((ty, slot))
     }
 

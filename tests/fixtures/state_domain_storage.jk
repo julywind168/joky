@@ -6,7 +6,7 @@ import joky/array.{type Array}
 import joky/map.{type Map}
 
 fn assert(condition: Bool) { let message = "HR1 domain"; check.assert(condition, &message) }
-enum Status { Idle, Ready(Int32) }
+enum Status { Idle, Ready((Int32, String)) }
 struct Profile { name: String, score: Int32, details: (String, Int32), status: Status }
 struct Player { profile: Profile, inventory: Array<String> }
 struct State { leader: Player, players: Array<Player>, rooms: Map<Int32, Player>, value: Int32 }
@@ -14,7 +14,7 @@ fn player(value: Int32) -> Player {
     var inventory = Array.new::<String>()
     inventory.push("sword")
     inventory.push("shield")
-    Player { profile: Profile { name: "玩家", score: value, details: ("active", value), status: Status.Ready(value) }, inventory: inventory }
+    Player { profile: Profile { name: "玩家", score: value, details: ("active", value), status: Status.Ready((value, "ready")) }, inventory: inventory }
 }
 fn make(value: Int32) -> State {
     var players = Array.new::<Player>()
@@ -30,7 +30,7 @@ fn valid(player: &Player, value: Int32) -> Bool {
     let name = "玩家"
     let item = "shield"
     let detail = "active"
-    player.profile.details.0.equals(&detail) && player.profile.details.1 == value && (match player.profile.status { Ready(score) => score == value, _ => false }) && player.profile.name.equals(&name) && player.profile.score == value && player.inventory.len() == 2 && player.inventory.borrow_ref(1).equals(&item)
+    player.profile.details.0.equals(&detail) && player.profile.details.1 == value && (match &player.profile.status { Ready(details) => details.0 == value && details.1.equals("ready"), _ => false }) && player.profile.name.equals(&name) && player.profile.score == value && player.inventory.len() == 2 && player.inventory.borrow_ref(1).equals(&item)
 }
 fn inspect(state: &State) -> Bool {
     let temporary = player(0)

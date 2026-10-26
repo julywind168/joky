@@ -1,0 +1,66 @@
+import joky/domain
+import joky/check
+import joky/mem
+import joky/array.{type Array}
+
+// Unrelated constructors must not capture the compiler-generated Option match.
+enum Other { None, Some(UInt64) }
+enum Payload { Empty, Text(String), Nested((String, Option<Array<String>>)) }
+#state
+struct State { name: Option<String>, index: Option<UInt64>, payload: Payload, n: Int32 }
+fn make(n: Int32) -> State { State { name: Option.None, index: Option.None, payload: Payload.Empty, n: n } }
+fn assert(ok: Bool) { check.assert(ok, "optional state paths") }
+fn read(s: &State) -> Int32 { s.n }
+fn external_keys(first: domain.WriteHandle<State>, routes: domain.DirectoryHandle) @suspends {
+    let key: Option<String> = Option.Some("")
+    assert(when(first, second?: State = routes[key]) { second.n } else { 0 }.unwrap() == 2)
+    let key: Option<UInt64> = Option.Some(0)
+    assert(when(first, second?: State = routes[key]) { second.n } else { 0 }.unwrap() == 2)
+    let missing: Option<String> = Option.None
+    assert(when(first, second?: State = routes[missing]) { 0 } else { first.n }.unwrap() == 1)
+    let missing: Option<UInt64> = Option.None
+    assert(when(first, second?: State = routes[missing]) { 0 } else { first.n }.unwrap() == 1)
+}
+fn lifecycle() @suspends -> Int32 {
+    let directory = domain.directory(8)
+    let routes = directory.handle()
+    let a = domain.create(make, 1)
+    let b = domain.create(make, 2)
+    let first = a.handle()
+    assert(when(s: State = routes.get_or_stage("fresh", make(3))) { s.n }.unwrap() == 3)
+    routes.insert(0, b.handle()).unwrap()
+    let empty = ""
+    let self_name = "self"
+    routes.insert_named(&empty, b.handle()).unwrap()
+    routes.insert_named(&self_name, first).unwrap()
+    assert(when(first, second?: State = routes[first.name]) { second.n } else { first.n }.unwrap() == 1)
+    when(mut first) { mem.replace(&mut first.name, Option.Some("")); first.index = Option.Some(0); mem.replace(&mut first.payload, Payload.Text("owned")); }.unwrap()
+    assert(when(first, second?: State = routes[first.name]) { second.n } else { 0 }.unwrap() == 2)
+    assert(when(first, second?: State = routes[first.index]) { second.n } else { 0 }.unwrap() == 2)
+    external_keys(first, routes)
+    let snapshot = domain.snapshot_from(first.read_only(), read)
+    let rejected = when(mut first) {
+        mem.replace(&mut first.name, Option.None)
+        mem.replace(&mut first.payload, Payload.Empty)
+        first.n = 9
+        let result: Result<Unit, Int32> = Err(7)
+        result
+    }
+    assert(rejected.unwrap().is_err())
+    assert(when(first) { first.name.is_some() && match &first.payload { Text(value) => value.equals("owned"), _ => false } }.unwrap())
+    when(mut first) {
+        var values = Array.new::<String>(); values.push("nested")
+        mem.replace(&mut first.payload, Payload.Nested(("header", Option.Some(values))))
+        mem.replace(&mut first.name, Option.Some("self"));
+    }.unwrap()
+    assert(when(mut first, mut second?: State = routes[first.name]) { 0 } else { 0 } alias { first.n += 1; first.n }.unwrap() == 2)
+    assert(when(first) { match &first.payload { Nested(pair) => pair.0.equals("header"), _ => false } }.unwrap())
+    when(mut first) { mem.replace(&mut first.name, Option.None); first.index = Option.None; mem.replace(&mut first.payload, Payload.Empty); }.unwrap()
+    assert(snapshot.value() == 1)
+    directory.close()
+    // Option.None never looks up the closed directory.
+    assert(when(first, second?: State = routes[first.name]) { 0 } else { first.n }.unwrap() == 2)
+    a.close(); b.close()
+    24
+}
+fn main() @suspends { assert(lifecycle() == 24) }

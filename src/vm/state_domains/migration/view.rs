@@ -11,6 +11,7 @@ pub(super) struct View {
     maps: String,
     add_arrays: bool,
     add_maps: bool,
+    enums: [(String, bool); 2],
 }
 impl View {
     pub fn new(ty: &Type, imports: &[crate::parser::ast::Import]) -> Result<Self, Error> {
@@ -56,6 +57,22 @@ impl View {
             types: Vec::new(),
             roots,
             left: 65_536,
+            enums: ["joky/option", "joky/result"].map(|path| {
+                let name = alias(path);
+                (
+                    name.clone().unwrap_or_else(|| {
+                        format!(
+                            "Previous{}",
+                            if path.ends_with("option") {
+                                "Options"
+                            } else {
+                                "Results"
+                            }
+                        )
+                    }),
+                    name.is_none(),
+                )
+            }),
         };
         for (ty, _) in view.roots.clone() {
             if !matches!(ty, Type::Record(_)) {
@@ -160,7 +177,38 @@ impl View {
                 self.declarations.push_str(&declaration);
                 Ok(name)
             }
-            Type::Enum(e) if !e.indirect && !ty.is_owner() => {
+            Type::Enum(e)
+                if matches!(e.name.as_str(), "joky/option.Option" | "joky/result.Result") =>
+            {
+                // Keep standard enum constructors out of the generated view's
+                // local namespace. Payload types still use compiler-derived old views.
+                let index = usize::from(e.name == "joky/result.Result");
+                let (alias, add) = &mut self.enums[index];
+                let (path, name) = if index == 0 {
+                    ("joky/option", "Option")
+                } else {
+                    ("joky/result", "Result")
+                };
+                if *add {
+                    self.imports
+                        .push_str(&format!("import {path} as {alias}\n"));
+                    *add = false;
+                }
+                let alias = alias.clone();
+                let arguments = e
+                    .arguments
+                    .iter()
+                    .map(|arg| {
+                        self.render(
+                            arg.as_type()
+                                .ok_or_else(|| invalid("Invalid standard enum argument"))?,
+                            depth + 1,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("{alias}.{name}<{}>", arguments.join(",")))
+            }
+            Type::Enum(e) if !e.indirect => {
                 let name = self.name(&e.name);
                 self.types.push((ty.clone(), name.clone()));
                 let mut declaration = format!("\nenum {name} {{\n");
@@ -213,8 +261,6 @@ pub(super) fn matches_named(old: &Type, view: &Type, name: &str) -> bool {
             (Type::Enum(a), Type::Enum(b)) => {
                 !a.indirect
                     && !b.indirect
-                    && !Type::Enum(a.clone()).is_owner()
-                    && !Type::Enum(b.clone()).is_owner()
                     && a.variants.len() == b.variants.len()
                     && a.variants.iter().zip(&b.variants).all(|(a, b)| {
                         a.name == b.name

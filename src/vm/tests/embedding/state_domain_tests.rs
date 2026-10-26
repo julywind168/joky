@@ -641,7 +641,8 @@ fn source_cancellation_boundaries(
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
+        vm.load_source(source)
+            .unwrap_or_else(|e| panic!("{e} at {:?}", e.span()));
         if mode == VmMode::Interpreter {
             vm.set_interpreter_limits(InterpreterLimits {
                 poll_budget: Some(1),
@@ -1933,4 +1934,40 @@ fn exhaustive_state_domains_creation_cancellation() {
         0..=65536,
         true,
     );
+}
+
+#[test]
+fn state_domains_optional_paths_and_variants_release_owned_graphs() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_optional.jk"),
+        [0, 1, 10, 100, 500, 1000, 2000, 4000, 8000, 16000],
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel optional paths and owning variant replacement at every instruction"]
+fn exhaustive_state_domains_optional_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_optional.jk"),
+        0..=32768,
+        true,
+    );
+}
+
+#[test]
+fn state_domains_optional_keys_require_optional_noncreating_paths() {
+    let prefix = "import joky/domain #state struct S{n:Int32} fn make()->S{S{n:1}}";
+    for path in [
+        "second:S=routes[key]",
+        "second:S=routes.get_or_stage(key,make())",
+    ] {
+        let source=format!("{prefix} fn test(first:domain.WriteHandle<S>,routes:domain.DirectoryHandle,key:Option<UInt64>) @suspends {{when(first,{path}){{second.n}};}}");
+        let error = support::frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.message().contains("Option keys"), "{error}");
+    }
+    for key in ["Option<Bool>", "Option<Option<UInt64>>"] {
+        let source=format!("{prefix} fn test(first:domain.WriteHandle<S>,routes:domain.DirectoryHandle,key:{key}) @suspends {{when(first,second?:S=routes[key]){{second.n}}else{{0}};}}");
+        let error = support::frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.message().contains("when paths"), "{error}");
+    }
 }

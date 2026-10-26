@@ -176,3 +176,64 @@ fn state_domains_storage_many_owned_roots_preserve_unique_cleanup() {
         }
     }
 }
+
+fn optional_root_budgets(step: usize) {
+    const SOURCE: &str = r#"enum E { Empty, Text(String), Nested((String, Option<String>)) }
+        struct S { value:E }
+        fn make(n:Int32)->S {S{value:if n==0 {E.Empty} else if n==1 {E.Text("text")} else {E.Nested(("outer",Some("inner")))}}}"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(SOURCE).unwrap();
+        for n in 0..3 {
+            let owner = owner(&vm, n);
+            let domains = vm.domains.borrow();
+            let domain = domains.get(owner.read_handle()).unwrap();
+            let root = domain.root.as_ref().unwrap();
+            // Deliberately poison inactive owning lanes: neither snapshot nor Drop may read them.
+            for descriptor in &root.owners {
+                unsafe {
+                    if !descriptor.active(root.pointer.as_ptr()) {
+                        root.pointer
+                            .as_ptr()
+                            .add(descriptor.offset)
+                            .cast::<usize>()
+                            .write_unaligned(1);
+                    }
+                }
+            }
+            let budget = domains.budget.clone();
+            let baseline = budget.bytes.get();
+            let live = LIVE.with(Cell::get);
+            let mut complete = false;
+            for extra in (0..65536).step_by(step) {
+                budget.limit.set(baseline + extra);
+                match root.snapshot(&domain.ty, budget.clone()) {
+                    Ok(copy) => {
+                        drop(copy);
+                        complete = true;
+                    }
+                    Err(e) => assert_eq!(e.code(), ErrorCode::ResourceLimit),
+                }
+                assert_eq!(budget.bytes.get(), baseline, "{mode:?}/{n}/{extra}");
+                assert_eq!(LIVE.with(Cell::get), live);
+                if complete {
+                    break;
+                }
+            }
+            assert!(complete);
+            budget.limit.set(usize::MAX);
+            drop(domains);
+            owner.close();
+            assert_eq!(budget.bytes.get(), 0);
+        }
+    }
+}
+#[test]
+fn state_domains_optional_root_tags_and_copy_budgets() {
+    optional_root_budgets(97);
+}
+#[test]
+#[ignore = "exhaustive: every byte through tag-aware root snapshot construction"]
+fn exhaustive_state_domains_optional_root_budgets() {
+    optional_root_budgets(1);
+}

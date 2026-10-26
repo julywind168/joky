@@ -92,8 +92,7 @@ impl FunctionPlan {
                     .collect(),
                 Type::Buffer(element) => vec![(**element).clone()],
                 Type::Tuple(t) => t.elements.clone(),
-                // Owning variants require tag-aware root graph descriptors.
-                Type::Enum(e) if !ty.is_owner() && !e.indirect => e
+                Type::Enum(e) if !e.indirect => e
                     .arguments
                     .iter()
                     .filter_map(|a| a.as_type())

@@ -4,8 +4,8 @@ import joky/check
 import joky/array.{type Array}
 import joky/map.{type Map}
 struct Player { name:String, score:Int32, tags:Array<String> }
-enum Mode { Idle, Active(Int32) }
-struct Room { host:Player, players:Array<Player>, roster:Map<Int32,Player>, title:String, flags:(Int32,String), mode:Mode }
+enum Mode { Idle, Active((Int32,String)) }
+struct Room { host:Player, players:Array<Player>, roster:Map<Int32,Player>, title:String, flags:(Int32,String), mode:Mode, optional:Option<String>, absent:Option<String>, result:Result<String,UInt64> }
 fn player(score:Int32)->Player {
     var tags=Array.new::<String>()
     tags.push("sword")
@@ -14,7 +14,7 @@ fn player(score:Int32)->Player {
 fn make(score:Int32)->Room {
     var players=Array.new::<Player>(); players.push(player(score))
     var roster=Map.new::<Int32,Player>(); roster.insert(7,player(score));
-    Room{host:player(score),players:players,roster:roster,title:"房间",flags:(3,"live"),mode:Mode.Active(9)}
+    Room{host:player(score),players:players,roster:roster,title:"房间",flags:(3,"live"),mode:Mode.Active((9,"active")),optional:Some("present"),absent:None,result:Ok("result")}
 }
 fn read(room:&Room)->Int32 {room.host.score}
 fn add(room:&mut Room,value:Int32)->Int32 {

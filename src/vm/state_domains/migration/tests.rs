@@ -516,3 +516,29 @@ fn migration_interpreter_budget_reclaims_partial_owned_graphs() {
     owner.close();
     assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
 }
+
+#[test]
+fn migration_string_sentinel_to_optional_state_preserves_both_cases() {
+    const OLD: &str = r#"struct S{room:String}
+        fn make(n:Int32)->S{S{room:if n==0 {""}else{"room"}}}
+        fn read(s:&S)->Bool{s.room.is_empty()}"#;
+    const NEW: &str = r#"struct S{room:Option<String>}
+        fn upgrade(old:&PreviousState)->S{S{room:if old.room.is_empty(){None}else{Some(old.room.clone())}}}
+        fn read(s:&S)->Bool{s.room.is_none()}"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for n in [0, 1] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(OLD).unwrap();
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(n)])
+                .unwrap();
+            let owners = vec![vm.script_code_owner().unwrap()];
+            let registry = vm.domains.clone();
+            let plan = prepare_new(&vm, &owners, NEW).unwrap_or_else(|e| panic!("{e}"));
+            publish(&mut vm, &registry, &owners, plan).unwrap();
+            assert_eq!(read(&vm, &owner, "read"), InstanceValue::Bool(n == 0));
+            owner.close();
+            assert_eq!(registry.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}

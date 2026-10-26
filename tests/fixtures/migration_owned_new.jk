@@ -3,8 +3,8 @@ import joky/slice
 import joky/array.{type Array}
 import joky/map.{type Map}
 struct Player { name:String, score:Int64, tags:Array<String>, rank:Int32 }
-enum Mode { Idle, Active(Int32) }
-struct Room { host:Player, players:Array<Player>, roster:Map<Int32,Player>, title:String, flags:(Int32,String), mode:Mode, level:Int32 }
+enum Mode { Idle, Active((Int32,String)) }
+struct Room { host:Player, players:Array<Player>, roster:Map<Int32,Player>, title:String, flags:(Int32,String), mode:Mode, optional:Option<String>, absent:Option<String>, result:Result<String,UInt64>, level:Int32 }
 fn upgrade_player(old:&PreviousPlayer)->Player {
     var tags=Array.new::<String>()
     var i:UInt64=0
@@ -22,8 +22,8 @@ fn upgrade(old:&PreviousState)->Room {
         roster.insert(key,upgrade_player(old.roster.borrow_ref(key)));
         i=i+1
     }
-    let mode=match old.mode {Idle=>Mode.Idle,Active(n)=>Mode.Active(n)}
-    Room{host:upgrade_player(&old.host),players:players,roster:roster,title:old.title.clone(),flags:(old.flags.0,old.flags.1.clone()),mode:mode,level:1}
+    let mode=match &old.mode {Idle=>Mode.Idle,Active(n)=>Mode.Active((n.0,n.1.clone()))}
+    Room{host:upgrade_player(&old.host),players:players,roster:roster,title:old.title.clone(),flags:(old.flags.0,old.flags.1.clone()),mode:mode,optional:match &old.optional {Option.Some(s)=>Option.Some(s.clone()),Option.None=>Option.None},absent:match &old.absent {Option.Some(s)=>Option.Some(s.clone()),Option.None=>Option.None},result:match &old.result {Result.Ok(s)=>Result.Ok(s.clone()),Result.Err(n)=>Result.Err(n)},level:1}
 }
 fn valid(player:&Player,score:Int64)->Bool {
     let name="玩家"; let tag="sword"
@@ -33,7 +33,9 @@ fn read(room:&Room)->Int32 {
     let title="房间"; let flag="live"
     if (valid(&room.host,room.host.score) && valid(room.players.borrow_ref(0),room.host.score) && valid(room.roster.borrow_ref(7),room.host.score)
         && room.title.equals(&title) && room.flags.0==3 && room.flags.1.equals(&flag)
-        && (match room.mode {Active(n)=>n==9,_=>false})) {int32(room.host.score)+room.level} else {-100}
+        && (match &room.result {Result.Ok(s)=>s.equals("result"),Result.Err(_)=>false})
+        && room.absent.is_none() && (match &room.optional {Option.Some(s)=>s.equals("present"),Option.None=>false})
+        && (match &room.mode {Active(n)=>n.0==9 && n.1.equals("active"),_=>false})) {int32(room.host.score)+room.level} else {-100}
 }
 fn version()->Int32 {2}
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {

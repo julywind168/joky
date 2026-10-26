@@ -3686,6 +3686,12 @@ when "move" (mut account,
 
 可选路径用绑定名后的 `?` 标记，只能位于最后，且必须提供 `else`；前面至少有一个域。
 `alias` 同样仅处理最后一个绑定与前面绑定的写别名，前缀自身的写别名仍拒绝。
+路径键也可为标准库 `Option<UInt64>`／`Option<String>`，包括前面状态字段的投影和外部捕获。
+Option 键只允许用于最后的 `?` 可选路径，不能用于必需路径或 `get_or_stage`。
+`None` 不读取载荷、不查目录，直接进入 `else`（即使该目录已经关闭）；`Some(key)` 与普通键相同，
+因此 `Some(0)`／`Some("")` 不等于缺失。排队期间状态键的 `None`／`Some` 变化仍参与重新解析，
+沿用身份、代际、别名和重算上限规则。可执行用例见 [可选路径](../tests/fixtures/state_domain_optional.jk)。
+
 只读别名可直接执行。缺失必需路径返回 `Missing(index)`；未处理的写别名返回
 `Aliased(first * 64 + second)`，索引从零开始。目录关闭返回 `Closed`，域隔离仍为 `DomainFailed`。
 分支不获得缺失或别名绑定的引用，各分支返回同一类型。
@@ -3777,11 +3783,11 @@ SC1 提供 Rust 状态域所有者、独立请求任务，以及下节的源码 
 JIT 与 Interpreter 可使用 Rust 接口；源码生命周期同时支持独立 AOT，尚未开放 C 状态域 API。
 
 `VmEngine::create_domain(constructor, args)` 返回唯一 Owner；构造函数必须返回普通、非泛型的
-记录；HR1 允许字段递归包含标量、String、嵌套记录、元组、无拥有载荷的枚举与
+记录；允许字段递归包含标量、String、嵌套记录、元组、载荷符合状态资格的枚举与
 受检 Buffer 容器，包括 `Array<Record>`、`Map<K, Record>`，记录内还可拥有其他容器。
 嵌套泛型记录按完整字段和实参检查，不靠容器名字获取资格；泛型最外层根仍未开放。
 参数与操作结果仍使用 `InstanceValue` 的标量类型。整个存储图（含空容器的元素类型）拒绝
-引用、视图、裸指针、闭包、外部资源、用户 Drop、拥有载荷枚举及递归类型。类型展开深度
+引用、视图、裸指针、闭包、外部资源、用户 Drop 及递归类型。类型展开深度
 最多 32、访问节点最多 65,536；超限不能成为域入口。
 `owner.read_handle()` 或 `write_handle()` 产生可复制句柄；`handle.read_only()` 只能降级权限。
 句柄不保活状态，跨 VM 使用、关闭后使用及不匹配的名义类型都会被拒绝。
@@ -4851,14 +4857,15 @@ Rust 嵌入方可使用 `VmEngine::load_named_source(name, source)` 保留诊断
 迁移入口是 `fn upgrade(old: &PreviousState) -> Room`。`PreviousState` 由运行时根据
 实际旧根的类型生成，再与新源码一起编译；业务源码不能重复声明该名字。新根必须与旧根同名，
 且 schema 确实变化；根仍限非泛型记录。HR5-B1 支持无用户 Drop 的有限拥有图：嵌套记录、
-String、Array、Map、元组及无拥有载荷的枚举。只改变容器元素字段也算 schema 变化。
+String、Array、Map、元组及载荷符合状态资格的枚举（包括 `Option<String>`）。只改变容器元素字段也算 schema 变化。
 编译器证明迁移同步、旧引用不逃逸、不修改旧图且不调用宿主；旧容器必须借用读取并逐项
 构造新容器，String 可显式 clone，不能从旧借用中搬走拥有者。借用、外部资源、用户 Drop、
-递归拥有图、拥有载荷枚举仍不支持；多域批次入口见下文。
+递归拥有图仍不支持；多域批次入口见下文。
 
 旧根名固定为 `PreviousState`。嵌套用户类型按声明名生成 `PreviousPlayer` 等旧视图；同名
 冲突时使用按遍历顺序分配的 `PreviousTypeN`。它们只保留旧字段/变体，不继承旧业务方法，
-生成名不能由业务重复声明。Array/Map 视图使用当前标准库的受检借用方法；运行前递归验证
+生成名不能由业务重复声明。Array/Map 和标准 Option/Result 视图复用当前标准类型，
+其元素或载荷递归映射为旧视图；不会生成遮蔽标准 Some/None、Ok/Err 的构造器。运行前递归验证
 实际旧图与生成视图的布局，包括容器元素，不能把新版 Player 当作旧元素读取。
 实际示例见[拥有图迁移 fixture](../tests/fixtures/migration_owned_new.jk)：
 `upgrade_player(old: &PreviousPlayer)` 为旧元素构造新版 Player，然后填入独立的新容器。
