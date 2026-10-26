@@ -1,0 +1,54 @@
+{
+  "name": "joky",
+  "displayName": "Joky",
+  "description": "Syntax highlighting and basic editing support for the Joky language.",
+  "version": "0.1.0",
+  "publisher": "joky-local",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=22"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "joky",
+    "jk"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "package": "npm test && vsce package --no-dependencies --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "4.0.0",
+    "vscode-textmate": "9.3.2",
+    "vscode-oniguruma": "2.0.1"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "joky",
+        "aliases": [
+          "Joky",
+          "joky"
+        ],
+        "extensions": [
+          ".jk"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "joky",
+        "scopeName": "source.joky",
+        "path": "./syntaxes/joky.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.inline.joky": "joky"
+        }
+      }
+    ]
+  }
+}

@@ -47,6 +47,9 @@ fn main() {
 
 ## 安装与产物
 
+VS Code 的 `.jk` 语法高亮与基础编辑支持见 [Joky 扩展](editors/vscode/README.md)，
+可在本地打包并安装 VSIX。
+
 ```sh
 ./scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"

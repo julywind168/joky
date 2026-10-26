@@ -1,0 +1,312 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Joky",
+  "scopeName": "source.joky",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#attributes"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#identifiers"
+    },
+    {
+      "include": "#block"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "begin": "//",
+          "end": "$",
+          "name": "comment.line.double-slash.joky",
+          "patterns": []
+        },
+        {
+          "include": "#block-comment"
+        }
+      ]
+    },
+    "block-comment": {
+      "begin": "/\\*",
+      "end": "\\*/",
+      "name": "comment.block.joky",
+      "patterns": [
+        {
+          "include": "#block-comment"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "include": "#raw-multiline"
+        },
+        {
+          "include": "#raw-string"
+        },
+        {
+          "include": "#multiline-string"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#character"
+        }
+      ]
+    },
+    "raw-multiline": {
+      "begin": "\\br(\\#*)\"\"\"",
+      "end": "\"\"\"\\1",
+      "name": "string.quoted.triple.raw.joky",
+      "patterns": []
+    },
+    "raw-string": {
+      "begin": "\\br(\\#*)\"",
+      "end": "\"\\1|$",
+      "name": "string.quoted.double.raw.joky",
+      "patterns": []
+    },
+    "multiline-string": {
+      "begin": "\"\"\"",
+      "end": "\"\"\"",
+      "name": "string.quoted.triple.joky",
+      "patterns": [
+        {
+          "include": "#string-content"
+        }
+      ]
+    },
+    "string": {
+      "begin": "\"",
+      "end": "\"|$",
+      "name": "string.quoted.double.joky",
+      "patterns": [
+        {
+          "include": "#string-content"
+        }
+      ]
+    },
+    "character": {
+      "begin": "'",
+      "end": "'|$",
+      "name": "string.quoted.single.joky",
+      "patterns": [
+        {
+          "match": "\\\\(?:[nrt0\\'\"\\\\]|u\\{[0-9a-fA-F]{1,6}\\})",
+          "name": "constant.character.escape.joky"
+        },
+        {
+          "match": "\\\\.",
+          "name": "invalid.illegal.escape.joky"
+        }
+      ]
+    },
+    "string-content": {
+      "patterns": [
+        {
+          "match": "\\\\(?:[nrt0\"\\\\]|u\\{[0-9a-fA-F]{1,6}\\})",
+          "name": "constant.character.escape.joky"
+        },
+        {
+          "match": "\\\\.",
+          "name": "invalid.illegal.escape.joky"
+        },
+        {
+          "match": "\\{\\{|\\}\\}",
+          "name": "constant.character.escape.joky"
+        },
+        {
+          "include": "#interpolation"
+        },
+        {
+          "match": "\\}",
+          "name": "invalid.illegal.unmatched-brace.joky"
+        }
+      ]
+    },
+    "interpolation": {
+      "begin": "\\{",
+      "end": "\\}",
+      "name": "meta.embedded.inline.joky",
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ],
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.begin.joky"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.end.joky"
+        }
+      }
+    },
+    "block": {
+      "begin": "\\{",
+      "end": "\\}",
+      "name": "meta.block.joky",
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ],
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.block.begin.joky"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.block.end.joky"
+        }
+      }
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.joky"
+            },
+            "2": {
+              "name": "entity.name.function.joky"
+            }
+          }
+        },
+        {
+          "match": "\\b(struct|enum|trait|type)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.joky"
+            },
+            "2": {
+              "name": "entity.name.type.joky"
+            }
+          }
+        }
+      ]
+    },
+    "attributes": {
+      "match": "[@#][\\p{L}_][\\p{L}\\p{N}_]*",
+      "name": "storage.type.annotation.joky"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "\\b(?:if|else|match|while|for|in|return|break|continue|scope|race|branch)\\b",
+          "name": "keyword.control.joky"
+        },
+        {
+          "match": "(?<![.\\p{L}\\p{N}_])\\b(?:join|isolate|alias)\\b(?=\\s*\\{)",
+          "name": "keyword.control.joky"
+        },
+        {
+          "match": "(?<![.\\p{L}\\p{N}_])\\bwhen\\b(?=\\s*(?:\"|\\([^\\n]*\\)\\s*\\{))",
+          "name": "keyword.control.joky"
+        },
+        {
+          "match": "\\b(?:fn|let|var|const|struct|enum|type|trait|impl|dyn)\\b",
+          "name": "storage.type.joky"
+        },
+        {
+          "match": "\\b(?:pub|extern|unsafe|move|mut)\\b",
+          "name": "storage.modifier.joky"
+        },
+        {
+          "match": "\\b(?:import|as)\\b",
+          "name": "keyword.control.import.joky"
+        },
+        {
+          "match": "\\bparallel\\b",
+          "name": "invalid.deprecated.joky"
+        },
+        {
+          "match": "\\b(?:true|false)\\b",
+          "name": "constant.language.joky"
+        },
+        {
+          "match": "\\bself\\b",
+          "name": "variable.language.joky"
+        },
+        {
+          "match": "\\b(?:Int(?:8|16|32|64)|UInt(?:8|16|32|64)|Float(?:32|64)|Bool|String|Rune|Unit|Ptr|Self)\\b",
+          "name": "support.type.joky"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "(?<!\\.)(\\.)([0-9]+)\\b",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.joky"
+            },
+            "2": {
+              "name": "constant.numeric.integer.joky"
+            }
+          }
+        },
+        {
+          "match": "\\b[0-9](?:_?[0-9])*\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?\\b",
+          "name": "constant.numeric.float.joky"
+        },
+        {
+          "match": "\\b(?:0x[0-9a-fA-F](?:_?[0-9a-fA-F])*|0b[01](?:_?[01])*|[0-9](?:_?[0-9])*)\\b",
+          "name": "constant.numeric.integer.joky"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "match": "\\b[\\p{L}_][\\p{L}\\p{N}_]*(?=\\s*(?:\\(|::<))",
+          "name": "entity.name.function.joky"
+        },
+        {
+          "match": "\\b[A-Z][\\p{L}\\p{N}_]*\\b",
+          "name": "entity.name.type.joky"
+        },
+        {
+          "match": "[\\p{L}_][\\p{L}\\p{N}_]*",
+          "name": "variable.other.joky"
+        }
+      ]
+    },
+    "operators": {
+      "match": "<<=?|>>=?|->|=>|\\.\\.=|\\.\\.|::|[+*/%&|^!=<>-]=?|[~?]",
+      "name": "keyword.operator.joky"
+    },
+    "punctuation": {
+      "match": "[()\\[\\],.;:]",
+      "name": "punctuation.separator.joky"
+    }
+  }
+}
