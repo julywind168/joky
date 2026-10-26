@@ -8,7 +8,9 @@ import joky/option.{type Option, Some, None}
 
 const NO_CLIENT: UInt64 = 0
 struct Route { live: Bool, id: UInt64, output: session.Output }
+// Route is Copy, but output handles have no library Clone for the derive to use.
 impl Clone for Route { fn clone(&self) -> Self { *self } }
+// An empty room name means the account is outside every room; the protocol rejects empty names.
 #state
 #derive(Clone)
 struct Account { route: Route, room: String, balance_cents: UInt64 }
@@ -23,10 +25,12 @@ fn make_account(account: Account) -> Account { account }
 fn parse(line: String) -> Command {
     let separator = line.find(" ").unwrap_or(line.byte_length())
     let verb = line.substring(0, separator)!
-    let argument = if separator < line.byte_length() { line.substring(separator + 1, line.byte_length())! } else { "" }
-    if verb.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() {
-        Command.Join(argument)
-    } else if line.equals("balance") { Command.Balance }
+    let argument = if separator < line.byte_length() {
+        line.substring(separator + 1, line.byte_length())!
+    } else { "" }
+    let room_name = !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none()
+    if verb.equals("join") && room_name { Command.Join(argument) }
+    else if line.equals("balance") { Command.Balance }
     else if line.equals("leave") { Command.Leave }
     else if verb.equals("say") && !argument.is_empty() { Command.Say(argument) }
     else { Command.Invalid }
@@ -142,22 +146,21 @@ fn leave(host: Host, account: domain.WriteHandle<Account>, closing: Bool) @suspe
 }
 
 // A command queues one complete access-path operation; the runtime revalidates routes.
+// The Bool tells the session whether to keep the connection open.
 struct Request { host: Host, id: UInt64, command: Command }
-enum CommandFailure { Unavailable, Rejected }
-enum Step { Done, Failed(CommandFailure) }
 fn run_command(host: Host, id: UInt64, command: Command) @suspends -> Bool {
     let account = match domain.lookup_write::<Account>(host.accounts, id) {
         Some(handle) => handle,
         None => return false
     }
     let input = Request { host: host, id: id, command: command }
-    match domain.request(account, apply_command, input) { Ok(Done) => true, _ => false }
+    domain.request(account, apply_command, input).unwrap_or(false)
 }
-fn apply_command(input: Request) @suspends -> Step {
+fn apply_command(input: Request) @suspends -> Bool {
     let Request { host, id, command } = input
     let account = match domain.lookup_write::<Account>(host.accounts, id) {
         Some(handle) => handle,
-        None => return Step.Failed(CommandFailure.Unavailable)
+        None => return false
     }
     let result = match &command {
         Say(text) => say(host, account, text),
@@ -170,9 +173,9 @@ fn apply_command(input: Request) @suspends -> Step {
         Ok(Ok((route, previous))) => {
             match &command { Disconnect => route.output.close(), _ => {} }
             reclaim(host, &previous)
-            Step.Done
+            true
         },
-        _ => Step.Failed(CommandFailure.Rejected)
+        _ => false
     }
 }
 
