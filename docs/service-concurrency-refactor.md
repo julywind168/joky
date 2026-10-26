@@ -1,9 +1,9 @@
 # 服务端并发模型重构计划
 
-状态：2026-10-26，R0–R8 已交付，R9 及后续阶段仍为设计提案。按设计评审修订：D1 明确为契约变更，
+状态：2026-10-27，R0–R8 与 R10a/b 已交付并验收，R9 与 R10 后续仍为设计提案。按设计评审修订：D1 明确为契约变更，
 D3／D4 联合设计，D5 分步，D6 收窄为顺序入队问题，D7 区分资源所有权、I/O 注册归属与任务调度，
 多线程阶段前增加运行协议；同日二次修订补齐混合队列提交、目录协调与别名规则。
-修订要点见第 10 节。
+修订要点见第 10 节，各阶段实施与验证记录见第 12 节。
 
 本文以 `examples/chat.jk`、`chat_logic.jk` 为验收对象；已交付范围见第 7 节，后续提案不改变现行规则。
 当前接口以 [language.md](language.md) 为准，不变量见 [architecture.md](architecture.md)。
@@ -325,7 +325,7 @@ TP 已提供共享 worker 池与受检包，改为 Verona 式：`when` 是调度
 | 函数值／间接调用 | R7c 已冻结模块内同签名目标集合 | 传播全部目标效果，未知目标和 Local 依赖拒绝 | 已完成 |
 | TCP | R7b 已接入共享驱动、线程安全连接核心和同树拥有转移；Local 计费与共享租约分开 | 已完成；VM／Domains 及跨树资源导入不随之开放 | 中到大 |
 | VM 句柄 | 引擎与模块保活仍在控制线程使用 `Rc` | R7c 用同树拥有代理与复制命令桥接；R8 将受检业务操作交给 worker，控制端协调提交 | R7c／R8 |
-| Domains／`when` | 注册表为 `Weak<RefCell<…>>`；原子性证明依赖单线程同步轮次 | 每域等待队列、按全局序号排队的 BoC 调度；块体编译为 ParallelSafe 入口，发起方 Pending，执行后交回结果包 | 大 |
+| Domains／`when` | 注册表为 `Weak<RefCell<…>>`；原子性证明依赖单线程同步轮次 | 按全局尝试序号排队的 BoC 调度：完整访问集一次授权，共享读、独占写；块体编译为 ParallelSafe 入口，发起方 Pending，执行后交回结果包（R8 实际为控制端每注册表一张有序请求表，边界见第 9 节） | 大 |
 
 **准入粒度**：由“根调用树任一 Local 即拒绝整个入口”改为按能力分级，配合上述资源规则。
 
@@ -377,6 +377,251 @@ R6 的规范正文集中于 [架构文档：服务运行协议](architecture.md#
 示例层清理（不依赖新能力）：手写下标循环改为 `for`；`room == 0`、`id == 0`、`skip: 0`、
 目录键 1、`key - 1` 换算改为 `Option` 或具名常量；`retry_command` 内重复的 `match &command`
 合并；统一 `ctx`／`host` 命名；拆分超长行与单行多语句；失败结果携带原因而非 `Bool`／`Err({})`。
+已在 R0 完成；R2–R4 随后删除了数字房间键、Catalog 与淘汰流程，相关特殊值随之消失。
+房间改为按名字寻址，账户以空名字表示不在房间（协议不接受空房间名）。
+
+## 6. 目标写法与实际写法
+
+设计阶段的示意：
+
+```text
+fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
+    when "say" (mut account = accounts[id], room = rooms[account.room?]) {
+        if !account.route.live || !room.has_member(id) { return Err(ChatError.Stale) }
+        if account.balance_cents < 100 { return Err(ChatError.InsufficientBalance) }
+        account.balance_cents -= 100
+        room.broadcast(event("message", &room.name, id, &text))
+        Ok({})
+    }
+}
+```
+
+R3／R4 交付后 `examples/chat_logic.jk` 的实际写法：
+
+```text
+fn say(host: Host, account: domain.WriteHandle<Account>, text: &String) @suspends -> Attempt {
+    let text = text.clone()
+    when "say" (mut account, room?: Room = host.rooms[account.room]) {
+        let route = check_member(account, room)?
+        if account.balance_cents < 100 { deliver(route, "error insufficient balance\n") }
+        else {
+            account.balance_cents -= 100
+            let message = say_message(&room.name, route.id, text)
+            broadcast(room, &message, NO_CLIENT)
+        }
+        Ok((route, ""))
+    } else {
+        let route = check_account(account)?
+        deliver(route, "error join a room first\n")
+        Ok((route, ""))
+    }
+}
+```
+
+相对重构前移除了 `ctx`、`excluded`、`expected`、`Retry` 与位置重试循环。路径校验保证 `room`
+仍是账户所在的同一个域；live 与成员关系仍由块体检查。可选路径落空时进入 `else` 分支，
+换房时新旧房间相同进入 `alias` 分支。`Attempt` 双层 Result 仍保留：外层为访问错误，内层为业务拒绝。
+
+## 7. 实施阶段
+
+| 阶段 | 内容 | 依赖 | 退出条件 |
+| --- | --- | --- | --- |
+| R0（已完成） | 示例层清理 | 无 | 语义不变，chat 六组合实网矩阵通过 |
+| R1a（已完成） | L3、L5、L6 | 无 | 三后端行为测试；chat 删除对应样板 |
+| R1b（已完成） | L2 | 无 | 同上 |
+| R1c（已完成） | L1、L4 先调研再实施 | 无 | 调研结论入文档；实施后删除 `split_*` 与显式类型参数 |
+| R2（已完成） | D1 的 `Reject`／`Disconnect` 策略、混合目标协调、提交点与独立溢出通知；D2 会话输出端 | 无 | `Reject` 保持现行测试；混合目标中 `Reject` 失败时不公开消息也不断开任何目标；`Disconnect` 下慢连接不影响他人提交、写阻塞时仍能断开、成员关系被清理；chat 删除排除列表与淘汰工作表；语言参考记录契约变更 |
+| R3（已完成） | D4 访问路径（不含创建） | R2 | 身份校验含删除重建；涉及写的别名进入别名分支；重算上限；可重算形式的捕获打包与静态形式语义不变；chat 删除 `expected`／`Retry` |
+| R4（已完成） | D3 创建回退、目录授权与拥有交接 | R3 | 同名并发请求只发布一个域，其他请求重算后取得该域，无重复条目或泄漏；目录满／关闭／占用在提交点前确定；失败／取消不泄漏域与条目；创建与条件删除串行；宿主不含房间流程；房间创建可热更新 |
+| R5（已完成） | D5 第一步：只复制写域 | 无 | 只读域不进入候选；回滚与预算正确；测量数据另行记录 |
+| R6（已完成） | 运行协议成文；D10 可控调度基础 | 无 | 协议评审通过；可控调度可复现给定交错 |
+| R7（已完成） | D7 混合模式：输出绑定标注、函数值证据、资源归属与跨 worker 转移、TCP、VM 控制／执行拆分 | R6 | chat 在 `--task-workers N` 下运行，连接分布到多个 worker，业务仍串行；资源规则有拒绝测试 |
+| R8（已完成） | D7 Domains 的 BoC 调度 | R2、R6、R7 | 多 worker 下多域原子性、无死锁、取消与关闭清理；房间间实际并行有证据 |
+| R9 | D6 顺序入队定案与实施 | R6 | 先确认是否有依赖顺序的真实需求；若实施，同一 scope 对同一域的提交按源码顺序执行（Local 与 Parallel），取消撤回未执行请求，汇合／失败传播与 `branch` 一致，入队失败在调用点返回 |
+| R10a/b（已完成） | D8 预留模式示例；D9 `isolate` 原语及 chat 隔离 | R2、R8 | 正常／拒绝／失败／取消／到期与迟到回复；三后端隔离、清理、嵌套和取消一致 |
+| R10 后续 | D9 重启策略；D5 第二步（按测量） | R10a/b | 有需求时设计重启；有测量证据时评估撤销日志 |
+
+R0–R8 已完成；R8 接入完整访问集授权、worker 计算和控制端提交。R9 单独处理源码顺序入队，
+本阶段只保证同一完整访问集的冲突请求按尝试序号排队。
+
+R7 分步交付，全部完成后才标记 R7 完成：
+
+| 步骤 | 实施范围 | 验收边界 |
+| --- | --- | --- |
+| R7a（已完成） | 审计并标注内置输出绑定的 ParallelSafe 资格 | JIT／解释器／独立 AOT 的真实 worker 输出；未获资格的宿主调用仍拒绝 |
+| R7b（已完成） | 共享 reactor、跨线程等待／唤醒、线程安全 TCP 核心与资源转移 | 同一注册的跨 worker 使用；读写、取消、关闭和迟到通知；全局有界配额 |
+| R7c（已完成） | 函数值／间接入口证据、VM 控制代理与执行拆分、Local 命令桥接 | 同树连接分布到多个 worker，业务暂由控制端串行；chat 完整实网矩阵 |
+
+以上是依赖边界，不降低原 R7 的退出条件。单独完成 R7a 不意味着 TCP、VM 或 chat 已具备并行资格。
+
+## 8. 验证要求
+
+按 [AGENTS.md](../AGENTS.md) 的范围规则执行。编译器与运行时改动附带执行生成代码的行为测试，
+JIT、解释器、独立 AOT 一致；热更新另覆盖内嵌 JIT／解释器脚本。
+R2、R3、R4、R8 涉及所有权、取消或任务生命周期，补跑相关 Debug 穷举；
+chat 改动运行 `cargo test --test chat -- --ignored` 六组合实网矩阵。
+多线程阶段沿用 TP 的受控交错与单 worker 推进验证，并使用 D10 的可控调度复现交错，
+不以多个 VM 根替代同树分支并行。不默认构建 Release；性能结论按基准方法独立测量。
+
+## 9. 待定问题
+
+- D1 `KeepLatest` 的多消息替换、超容量批次与关闭目标语义，合并粒度（按目标还是按消息键），
+  以及溢出事件是否需要可观测计数。
+- D1 的混合目标容量预留与统一提交点由 R8 以控制端独占预检／发布区间实现；未来拆分邮箱协调器时才需要跨协调器容量令牌。
+- D3 目录授权从整个目录细化为按键预约的条件与收益。
+- D4 路径表达式的允许范围、别名分支的语法，以及与目录弱句柄的交互。
+- D6 是否需要程序顺序入队，以及多线程下提交顺序的定义。
+- D7 已选共享 reactor；R7b 采用每池一个专用 I/O 线程，协作驱动及未来分片保留为后续实现选择。
+  R8 已区分请求身份与单调尝试序号，重算保留捕获、重新排队。
+- R8 授权门目前按控制会话保守排空，且在编译前关闭；缩小到目标 VM／移出编译阶段的收益需单独评估。
+- R8 实现边界（不影响正确性，影响并行收益，需测量后再优化）：写根深复制与提交都在控制线程串行完成；
+  worker 每次分配经共享预算锁；协调器每次驱动扫描全部待处理请求并两两比较冲突（O(P²)）；
+  非 `when` 的具名域操作、`#every` 周期 tick 与快照／提案经全局保守屏障，会等待全部并行计算排空，
+  使用周期任务的服务会被周期性串行化。
+- R8 共享只读活根依赖“生成代码与运行时读取辅助函数不改写 Buffer 头部与 arena 计数器”，
+  目前靠编译器的 `&S` 不可写与人工审计保证，尚无 Debug 期校验。
+- `isolate { … };` 用尾随分号丢弃结果时，失败会被静默吞掉，与语法设计“不静默吞掉任意运行时错误”
+  的原则存在张力；是否把丢弃隔离结果设为编译错误待定。
+- D5 第二步对 Map／List 容器内部写入的记录粒度。
+- 效果分类统一（2.2 第 5 项）的内部表示与是否最终开放源级语法。
+
+## 10. 修订记录
+
+2026-10-26 按设计评审修订：
+
+- D1：撤回“不削弱已承诺保证”的表述，改为明确的契约变更；引入按队列的溢出策略并保留
+  `Reject` 现行语义；补充提交点与独立溢出通知路径。
+- D3／D4：联合设计。已有域须经访问路径取得权限；路径校验记录身份与世代，不替代业务校验；
+  补充别名合并与重算时的捕获保留；明确新域 Owner 由目录条目持有。阶段顺序改为 D4 先于 D3。
+- D5：先只复制写域，撤销日志降为另行评估，并列出其必须覆盖的机制。
+- D6：从 D3 阶段拆出，按“向域移交工作所有权”独立定案。
+- D7：区分资源所有权、worker 归属与任务调度；补充跨 worker 转移、拆分资源与跨 worker
+  共享借用（`&Vm`、函数值回调）规则。
+- 新增第 4 节多线程运行协议作为 D7 前置；修正“后续补状态布局迁移”的过时表述。
+- 易用性项按工作量拆分为 R1a／R1b／R1c；实施阶段整体重排。
+
+2026-10-26 二次修订：
+
+- D1：补充混合目标协调。所有拒绝条件确定前不公开消息、不触发断开；只含 `Disconnect` 时可逐目标
+  原子投递；含 `Reject` 时需要容量预留或等价协议，撤回“提交只需非阻塞推送”的笼统表述。
+  `KeepLatest` 移出 R2。
+- D3：含创建回退的路径将目录纳入访问集合并取得写授权，键存在性、容量、关闭、占用在提交点前确定，
+  域与条目联合发布；删除重建走同一授权。
+- D4：别名规则改为与语言参考一致，涉及写的重复绑定进入别名分支；捕获借用限定于可重算形式，
+  运行时保留独立拥有包。
+- D10：明确可控调度不能替代真实 worker 的受控交错测试。
+
+2026-10-26 三次修订：
+
+- D6：不等待结果的需求改用现有 `branch { when }` 表达，生命周期沿用 `scope`／`branch` 规则；
+  D6 收窄为是否提供程序顺序入队的同步提交形式。“移交给域并超出调用方生命周期”暂不设计。
+  R9 不再依赖 R4。
+
+2026-10-26 R0／R1 交付：
+
+- 完成 L1–L6、chat 示例清理与对应文档；L1／L4 的调研结论及验证记录见第 7 节。
+- 修正 R4 退出条件：同名并发请求只发布一个域，其余请求重算后取得该域。
+
+2026-10-26 reactor 选型修订：
+
+- 经方案对比，D7 改为共享 reactor，分离 I/O 注册归属与任务执行位置。
+  R6 提交 `2b85395`／`621e504` 中的每 worker 选型及注销后换 reactor 的迁移描述被本修订取代。
+- 选择依据是减少连接与 worker 的绑定，并避免把跨 Poll 重注册当作可移植能力；
+  这不是吞吐或延迟测量结论。连接状态、任务转移证据与取消／关闭同步仍须实现和验证。
+- 专用驱动线程、协作驱动及未来分片属于实现选择；先保持连接注册稳定，再评估驱动组织方式。
+
+2026-10-27 验收整理：
+
+- 散落在第 5、6、7、11 节的实施记录集中到第 12 节；阶段表补记 R3–R6 完成。
+- 第 6 节补充 chat 的实际写法；D7 表格按 R8 实现修正调度结构描述。
+- 第 9 节补记 R8 的并行收益边界、共享只读根的审计前提，以及丢弃 `isolate` 结果的待定问题。
+
+## 11. 参考
+
+- [When Concurrency Matters: Behaviour-Oriented Concurrency](https://doi.org/10.1145/3622852)：
+  Verona 多资源行为调度，D6、D7 的主要参考。
+- Calvin 确定性数据库的 OLLP（乐观锁位置预测）：D4 的解析—获取—校验模式。
+- Clojure STM 中 agent 发送推迟到事务提交：D2 提交后效果的先例。
+- Erlang/OTP 监督树与 `code_change`：D9 与迁移协议。
+- Swift 区域隔离与 `sending`、Pony 引用能力：转移资格推导与未来区域概念。
+- FoundationDB 确定性仿真测试：D10。
+
+## 12. 实施记录
+
+各阶段按交付顺序记录实际范围与验证；当前接口以语言参考为准。
+
+### R0／R1 实施结论
+
+- R0：chat 的容器遍历改用 `for`，目录键、空房间和空客户端使用具名常量；统一 `host`，
+  合并重复命令分支；内部命令失败与房间容量失败携带枚举原因。连接处理边界的 Bool 仍表示是否继续会话。
+- R1a：无载荷枚举支持同名义类型的相等比较；`Vm.require` 返回 `Entry<A,R>`，
+  chat 将八个入口集中到 Contract。Entry 只保存名称，调用时显式传 VM，继续校验签名并选择当前版本；
+  不拥有 VM、不固定代码代际。错误输出改用 `LoadError.message`。
+- R1b：Clone 派生生成普通受检 trait 实现，泛型义务按字段／载荷推导；Array 逐元素调用 Clone，
+  contains 按 BorrowEq 借用比较；补齐 prelude 的 trait 导入和单拥有字段包装的共享解构投影。
+  String／Array 的依赖环通过内部最小文本操作模块解除。
+- R1c／L1 调研：消费式解构已经降低为 Buffer Detach 与独立字段清理项，CPS 保存／恢复及取消
+  复用现有所有权路径，无需新增 ABI 或帧布局；解除同步限制并覆盖逐指令取消。借用记录解构仍限同步函数。
+- R1c／L4 调研：`when` 外层是 `Result<R, DomainAccessError>`，只有该完整类型匹配时才将 R
+  传入块体；没有期望类型时保留原来的独立推断。chat 的 Attempt 别名可提供完整的嵌套 Result 类型，
+  因而删除内部 Ok／Err 的重复参数；事务提交／回滚规则保持原样。
+
+验收记录（2026-10-26，Debug）：
+
+- 默认检查各项分段通过：fmt、Clippy、普通库测试、CLI／其他集成测试、文档测试，以及
+  while（0／1000）和 Map（0／32）的三后端基准正确性检查。
+  `./scripts/check.sh` 的库测试中 1654 项通过；一个既有并行数组测试修正预算检查的同步点后
+  单独复验通过，再执行脚本余下的二进制／集成／文档测试和两个短输入基准。
+  预算检查使用 `wait_closed()` 等待 worker 释放任务元数据，运行时契约未改动。
+- `cargo test --lib service_ergonomics -- --include-ignored`、
+  `cargo test --lib record_patterns -- --include-ignored`、
+  `cargo test --lib suspending_borrow_tests -- --include-ignored` 均通过，含三组逐指令取消穷举。
+- `cargo test --test cli service_ergonomics_run_in_all_backends` 通过，覆盖 JIT、解释器与独立 AOT；
+  包括跨模块泛型 Clone、失败发布保留旧入口及内嵌两种脚本模式。
+- `cargo test --test chat -- --ignored` 六组合实网矩阵通过（JIT／解释器／AOT 宿主 × JIT／解释器脚本）。
+  未运行 Release、性能测量或无关压力组。
+
+独立测试修正复验（2026-10-26，Debug）：
+
+- 聚合版并行存储测试同样改为在线程池退出、worker 释放任务元数据后逐个断言预算归零；
+  同文件其他并行存储测试已有相应等待点，运行时契约未改动。
+- `cargo test --lib backends::aot::tests::task_parallel_storage` 的 7 项测试通过，
+  聚合版测试连续复跑 20 次全部通过。
+- `./scripts/check.sh` 单次完整运行通过，含 fmt、Clippy、1655 项普通库测试、
+  307 项 CLI 测试、其他默认集成／文档测试，以及 while（0／1000）和 Map（0／32）
+  的三后端基准正确性检查。本次未运行 Release 或额外压力组。
+
+### R2 实施结论
+
+- `outbox.create` 保持 Reject 默认行为；`create_with_policy` 支持
+  `Overflow.Reject`／`Overflow.Disconnect(control)`。后者要求同执行器打开的 Reject 控制信箱，
+  只保存弱关联，输出关闭／销毁也关闭 control；已销毁输出的句柄仍保留策略，不保留墓碑或所有者。
+- 混合批次先完成全部可拒绝检查，再进入无挂起发布区间。Disconnect 目标按整批接收或丢弃，
+  溢出标记、输出与 control 关闭不分配资源，唤醒在发布后发生。control 关闭优先于同批对它的投递。
+  单批条数／字节和共享存储预算维持原检查；Reject 的错误与 failed_outbox 保留。
+- `session.create` 默认连接 Disconnect 输出与独立 control；`Connection.output()` 返回
+  `session.Output`（outbox.Handle 的源库别名），业务调用 `output.send`／`output.close`。
+  不新增传输包装或改变消息格式，仍由 session.run 的 race 取消阻塞写分支，再调用 on_close。
+- chat 删除 `excluded`、淘汰工作表、`slow_client`／`target_member`、停止信箱参数和 max_evictions。
+  慢连接不再引起收费／广播回滚与重放，健康收件人先收到本次消息，离开通知随后由普通断线清理发送。
+  expected／Retry 和房间创建协议保留给 R3／R4。共享契约和 Account／Room 布局有变化，升级示例需重启；
+  新布局内的兼容业务热更新仍按既有契约执行。
+- 语言参考已明确部分收件人可能收不到已提交消息；目前状态域保持 Local 执行，不宣称多 worker
+  的容量协调已经实现。KeepLatest 与其他 D2 暂存效果不在本阶段交付。
+
+R2 专项验收（2026-10-26，Debug）：
+
+- outbox 库测试与控制信箱创建验证通过，覆盖回滚、整批投递／丢弃、共享预算、独立唤醒、
+  非法控制关联与弱引用释放；真实 TCP 背压测试在 JIT／解释器中确认写阻塞后仍能断开并清理一次。
+- `cargo test --test cli outbox_` 与
+  `cargo test --test cli connection_sessions_run_in_all_backends` 通过，覆盖 JIT／解释器／独立 AOT。
+- `cargo test --lib exhaustive_outbox_cancellation -- --ignored` 通过，包含原有 Reject 与新增
+  混合策略的逐指令取消及资源归还。
+- `cargo test --test chat -- --ignored` 六组合实网矩阵通过，包含新溢出契约下的收费、广播顺序、
+  断线成员清理、房间回收、兼容热更新与停机。
+- `./scripts/check.sh` 单次完整通过：fmt、Clippy、1658 项普通库测试、308 项 CLI 测试、
+  其他默认集成／文档测试，以及 while（0／1000）和 Map（0／32）的三后端正确性检查。
+  未运行 Release、性能测量或无关压力组。
 
 ### R3 实施记录（2026-10-26）
 
@@ -554,25 +799,6 @@ R6 的规范正文集中于 [架构文档：服务运行协议](architecture.md#
 - 本步完成 R7c 和 R7。后续 R8 实现完整访问集合授权、并行域计算及协调提交；任意宿主绑定、
   旧同步 VM 反射／注册／迁移接口和 Godot 对象不因控制桥接自动取得 worker 资格。
 
-## 6. 目标写法示意
-
-```text
-fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
-    when "say" (mut account = accounts[id], room = rooms[account.room?]) {
-        if !account.route.live || !room.has_member(id) { return Err(ChatError.Stale) }
-        if account.balance_cents < 100 { return Err(ChatError.InsufficientBalance) }
-        account.balance_cents -= 100
-        room.broadcast(event("message", &room.name, id, &text))
-        Ok({})
-    }
-}
-```
-
-相对现状移除 `ctx`、`excluded`、`expected`、`Retry` 与 `Attempt`。
-路径校验保证 `room` 仍是账户所在的同一个域；live 与成员关系仍由块体检查。
-`text` 以借用交给块体，重算时由运行时保留原值。
-
-
 ### R8 实施记录（2026-10-26）
 
 - 控制端协调器按完整域／目录访问集授权，共享读、独占写，冲突请求不能越过早先写申请；
@@ -593,191 +819,6 @@ fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
   其余默认集成／文档测试，以及三后端短输入 while／Map 正确性。
 - 相关 Debug 穷举共 13 项通过：并行域逐字节分配预算、拥有／嵌套候选预算、when／路径／创建逐指令取消，
   以及 7 项迁移预算与脚本取消。最终仅补记文档，没有重跑代码检查；未运行 Release、性能测量或无关压力组。
-
-
-## 7. 实施阶段
-
-| 阶段 | 内容 | 依赖 | 退出条件 |
-| --- | --- | --- | --- |
-| R0（已完成） | 示例层清理 | 无 | 语义不变，chat 六组合实网矩阵通过 |
-| R1a（已完成） | L3、L5、L6 | 无 | 三后端行为测试；chat 删除对应样板 |
-| R1b（已完成） | L2 | 无 | 同上 |
-| R1c（已完成） | L1、L4 先调研再实施 | 无 | 调研结论入文档；实施后删除 `split_*` 与显式类型参数 |
-| R2（已完成） | D1 的 `Reject`／`Disconnect` 策略、混合目标协调、提交点与独立溢出通知；D2 会话输出端 | 无 | `Reject` 保持现行测试；混合目标中 `Reject` 失败时不公开消息也不断开任何目标；`Disconnect` 下慢连接不影响他人提交、写阻塞时仍能断开、成员关系被清理；chat 删除排除列表与淘汰工作表；语言参考记录契约变更 |
-| R3 | D4 访问路径（不含创建） | R2 | 身份校验含删除重建；涉及写的别名进入别名分支；重算上限；可重算形式的捕获打包与静态形式语义不变；chat 删除 `expected`／`Retry` |
-| R4 | D3 创建回退、目录授权与拥有交接 | R3 | 同名并发请求只发布一个域，其他请求重算后取得该域，无重复条目或泄漏；目录满／关闭／占用在提交点前确定；失败／取消不泄漏域与条目；创建与条件删除串行；宿主不含房间流程；房间创建可热更新 |
-| R5 | D5 第一步：只复制写域 | 无 | 只读域不进入候选；回滚与预算正确；测量数据另行记录 |
-| R6 | 运行协议成文；D10 可控调度基础 | 无 | 协议评审通过；可控调度可复现给定交错 |
-| R7（已完成） | D7 混合模式：输出绑定标注、函数值证据、资源归属与跨 worker 转移、TCP、VM 控制／执行拆分 | R6 | chat 在 `--task-workers N` 下运行，连接分布到多个 worker，业务仍串行；资源规则有拒绝测试 |
-| R8（已完成） | D7 Domains 的 BoC 调度 | R2、R6、R7 | 多 worker 下多域原子性、无死锁、取消与关闭清理；房间间实际并行有证据 |
-| R9 | D6 顺序入队定案与实施 | R6 | 先确认是否有依赖顺序的真实需求；若实施，同一 scope 对同一域的提交按源码顺序执行（Local 与 Parallel），取消撤回未执行请求，汇合／失败传播与 `branch` 一致，入队失败在调用点返回 |
-| R10a/b（已完成） | D8 预留模式示例；D9 `isolate` 原语及 chat 隔离 | R2、R8 | 正常／拒绝／失败／取消／到期与迟到回复；三后端隔离、清理、嵌套和取消一致 |
-| R10 后续 | D9 重启策略；D5 第二步（按测量） | R10a/b | 有需求时设计重启；有测量证据时评估撤销日志 |
-
-R0–R8 已完成；R8 接入完整访问集授权、worker 计算和控制端提交。R9 单独处理源码顺序入队，
-本阶段只保证同一完整访问集的冲突请求按尝试序号排队。
-
-R7 分步交付，全部完成后才标记 R7 完成：
-
-| 步骤 | 实施范围 | 验收边界 |
-| --- | --- | --- |
-| R7a（已完成） | 审计并标注内置输出绑定的 ParallelSafe 资格 | JIT／解释器／独立 AOT 的真实 worker 输出；未获资格的宿主调用仍拒绝 |
-| R7b（已完成） | 共享 reactor、跨线程等待／唤醒、线程安全 TCP 核心与资源转移 | 同一注册的跨 worker 使用；读写、取消、关闭和迟到通知；全局有界配额 |
-| R7c（已完成） | 函数值／间接入口证据、VM 控制代理与执行拆分、Local 命令桥接 | 同树连接分布到多个 worker，业务暂由控制端串行；chat 完整实网矩阵 |
-
-以上是依赖边界，不降低原 R7 的退出条件。单独完成 R7a 不意味着 TCP、VM 或 chat 已具备并行资格。
-
-
-### R0／R1 实施结论
-
-- R0：chat 的容器遍历改用 `for`，目录键、空房间和空客户端使用具名常量；统一 `host`，
-  合并重复命令分支；内部命令失败与房间容量失败携带枚举原因。连接处理边界的 Bool 仍表示是否继续会话。
-- R1a：无载荷枚举支持同名义类型的相等比较；`Vm.require` 返回 `Entry<A,R>`，
-  chat 将八个入口集中到 Contract。Entry 只保存名称，调用时显式传 VM，继续校验签名并选择当前版本；
-  不拥有 VM、不固定代码代际。错误输出改用 `LoadError.message`。
-- R1b：Clone 派生生成普通受检 trait 实现，泛型义务按字段／载荷推导；Array 逐元素调用 Clone，
-  contains 按 BorrowEq 借用比较；补齐 prelude 的 trait 导入和单拥有字段包装的共享解构投影。
-  String／Array 的依赖环通过内部最小文本操作模块解除。
-- R1c／L1 调研：消费式解构已经降低为 Buffer Detach 与独立字段清理项，CPS 保存／恢复及取消
-  复用现有所有权路径，无需新增 ABI 或帧布局；解除同步限制并覆盖逐指令取消。借用记录解构仍限同步函数。
-- R1c／L4 调研：`when` 外层是 `Result<R, DomainAccessError>`，只有该完整类型匹配时才将 R
-  传入块体；没有期望类型时保留原来的独立推断。chat 的 Attempt 别名可提供完整的嵌套 Result 类型，
-  因而删除内部 Ok／Err 的重复参数；事务提交／回滚规则保持原样。
-
-验收记录（2026-10-26，Debug）：
-
-- 默认检查各项分段通过：fmt、Clippy、普通库测试、CLI／其他集成测试、文档测试，以及
-  while（0／1000）和 Map（0／32）的三后端基准正确性检查。
-  `./scripts/check.sh` 的库测试中 1654 项通过；一个既有并行数组测试修正预算检查的同步点后
-  单独复验通过，再执行脚本余下的二进制／集成／文档测试和两个短输入基准。
-  预算检查使用 `wait_closed()` 等待 worker 释放任务元数据，运行时契约未改动。
-- `cargo test --lib service_ergonomics -- --include-ignored`、
-  `cargo test --lib record_patterns -- --include-ignored`、
-  `cargo test --lib suspending_borrow_tests -- --include-ignored` 均通过，含三组逐指令取消穷举。
-- `cargo test --test cli service_ergonomics_run_in_all_backends` 通过，覆盖 JIT、解释器与独立 AOT；
-  包括跨模块泛型 Clone、失败发布保留旧入口及内嵌两种脚本模式。
-- `cargo test --test chat -- --ignored` 六组合实网矩阵通过（JIT／解释器／AOT 宿主 × JIT／解释器脚本）。
-  未运行 Release、性能测量或无关压力组。
-
-独立测试修正复验（2026-10-26，Debug）：
-
-- 聚合版并行存储测试同样改为在线程池退出、worker 释放任务元数据后逐个断言预算归零；
-  同文件其他并行存储测试已有相应等待点，运行时契约未改动。
-- `cargo test --lib backends::aot::tests::task_parallel_storage` 的 7 项测试通过，
-  聚合版测试连续复跑 20 次全部通过。
-- `./scripts/check.sh` 单次完整运行通过，含 fmt、Clippy、1655 项普通库测试、
-  307 项 CLI 测试、其他默认集成／文档测试，以及 while（0／1000）和 Map（0／32）
-  的三后端基准正确性检查。本次未运行 Release 或额外压力组。
-
-### R2 实施结论
-
-- `outbox.create` 保持 Reject 默认行为；`create_with_policy` 支持
-  `Overflow.Reject`／`Overflow.Disconnect(control)`。后者要求同执行器打开的 Reject 控制信箱，
-  只保存弱关联，输出关闭／销毁也关闭 control；已销毁输出的句柄仍保留策略，不保留墓碑或所有者。
-- 混合批次先完成全部可拒绝检查，再进入无挂起发布区间。Disconnect 目标按整批接收或丢弃，
-  溢出标记、输出与 control 关闭不分配资源，唤醒在发布后发生。control 关闭优先于同批对它的投递。
-  单批条数／字节和共享存储预算维持原检查；Reject 的错误与 failed_outbox 保留。
-- `session.create` 默认连接 Disconnect 输出与独立 control；`Connection.output()` 返回
-  `session.Output`（outbox.Handle 的源库别名），业务调用 `output.send`／`output.close`。
-  不新增传输包装或改变消息格式，仍由 session.run 的 race 取消阻塞写分支，再调用 on_close。
-- chat 删除 `excluded`、淘汰工作表、`slow_client`／`target_member`、停止信箱参数和 max_evictions。
-  慢连接不再引起收费／广播回滚与重放，健康收件人先收到本次消息，离开通知随后由普通断线清理发送。
-  expected／Retry 和房间创建协议保留给 R3／R4。共享契约和 Account／Room 布局有变化，升级示例需重启；
-  新布局内的兼容业务热更新仍按既有契约执行。
-- 语言参考已明确部分收件人可能收不到已提交消息；目前状态域保持 Local 执行，不宣称多 worker
-  的容量协调已经实现。KeepLatest 与其他 D2 暂存效果不在本阶段交付。
-
-R2 专项验收（2026-10-26，Debug）：
-
-- outbox 库测试与控制信箱创建验证通过，覆盖回滚、整批投递／丢弃、共享预算、独立唤醒、
-  非法控制关联与弱引用释放；真实 TCP 背压测试在 JIT／解释器中确认写阻塞后仍能断开并清理一次。
-- `cargo test --test cli outbox_` 与
-  `cargo test --test cli connection_sessions_run_in_all_backends` 通过，覆盖 JIT／解释器／独立 AOT。
-- `cargo test --lib exhaustive_outbox_cancellation -- --ignored` 通过，包含原有 Reject 与新增
-  混合策略的逐指令取消及资源归还。
-- `cargo test --test chat -- --ignored` 六组合实网矩阵通过，包含新溢出契约下的收费、广播顺序、
-  断线成员清理、房间回收、兼容热更新与停机。
-- `./scripts/check.sh` 单次完整通过：fmt、Clippy、1658 项普通库测试、308 项 CLI 测试、
-  其他默认集成／文档测试，以及 while（0／1000）和 Map（0／32）的三后端正确性检查。
-  未运行 Release、性能测量或无关压力组。
-
-## 8. 验证要求
-
-按 [AGENTS.md](../AGENTS.md) 的范围规则执行。编译器与运行时改动附带执行生成代码的行为测试，
-JIT、解释器、独立 AOT 一致；热更新另覆盖内嵌 JIT／解释器脚本。
-R2、R3、R4、R8 涉及所有权、取消或任务生命周期，补跑相关 Debug 穷举；
-chat 改动运行 `cargo test --test chat -- --ignored` 六组合实网矩阵。
-多线程阶段沿用 TP 的受控交错与单 worker 推进验证，并使用 D10 的可控调度复现交错，
-不以多个 VM 根替代同树分支并行。不默认构建 Release；性能结论按基准方法独立测量。
-
-## 9. 待定问题
-
-- D1 `KeepLatest` 的多消息替换、超容量批次与关闭目标语义，合并粒度（按目标还是按消息键），
-  以及溢出事件是否需要可观测计数。
-- D1 的混合目标容量预留与统一提交点由 R8 以控制端独占预检／发布区间实现；未来拆分邮箱协调器时才需要跨协调器容量令牌。
-- D3 目录授权从整个目录细化为按键预约的条件与收益。
-- D4 路径表达式的允许范围、别名分支的语法，以及与目录弱句柄的交互。
-- D6 是否需要程序顺序入队，以及多线程下提交顺序的定义。
-- D7 已选共享 reactor；R7b 采用每池一个专用 I/O 线程，协作驱动及未来分片保留为后续实现选择。
-  R8 已区分请求身份与单调尝试序号，重算保留捕获、重新排队。
-- R8 授权门目前按控制会话保守排空，且在编译前关闭；缩小到目标 VM／移出编译阶段的收益需单独评估。
-- D5 第二步对 Map／List 容器内部写入的记录粒度。
-- 效果分类统一（2.2 第 5 项）的内部表示与是否最终开放源级语法。
-
-## 10. 修订记录
-
-2026-10-26 按设计评审修订：
-
-- D1：撤回“不削弱已承诺保证”的表述，改为明确的契约变更；引入按队列的溢出策略并保留
-  `Reject` 现行语义；补充提交点与独立溢出通知路径。
-- D3／D4：联合设计。已有域须经访问路径取得权限；路径校验记录身份与世代，不替代业务校验；
-  补充别名合并与重算时的捕获保留；明确新域 Owner 由目录条目持有。阶段顺序改为 D4 先于 D3。
-- D5：先只复制写域，撤销日志降为另行评估，并列出其必须覆盖的机制。
-- D6：从 D3 阶段拆出，按“向域移交工作所有权”独立定案。
-- D7：区分资源所有权、worker 归属与任务调度；补充跨 worker 转移、拆分资源与跨 worker
-  共享借用（`&Vm`、函数值回调）规则。
-- 新增第 4 节多线程运行协议作为 D7 前置；修正“后续补状态布局迁移”的过时表述。
-- 易用性项按工作量拆分为 R1a／R1b／R1c；实施阶段整体重排。
-
-2026-10-26 二次修订：
-
-- D1：补充混合目标协调。所有拒绝条件确定前不公开消息、不触发断开；只含 `Disconnect` 时可逐目标
-  原子投递；含 `Reject` 时需要容量预留或等价协议，撤回“提交只需非阻塞推送”的笼统表述。
-  `KeepLatest` 移出 R2。
-- D3：含创建回退的路径将目录纳入访问集合并取得写授权，键存在性、容量、关闭、占用在提交点前确定，
-  域与条目联合发布；删除重建走同一授权。
-- D4：别名规则改为与语言参考一致，涉及写的重复绑定进入别名分支；捕获借用限定于可重算形式，
-  运行时保留独立拥有包。
-- D10：明确可控调度不能替代真实 worker 的受控交错测试。
-
-2026-10-26 三次修订：
-
-- D6：不等待结果的需求改用现有 `branch { when }` 表达，生命周期沿用 `scope`／`branch` 规则；
-  D6 收窄为是否提供程序顺序入队的同步提交形式。“移交给域并超出调用方生命周期”暂不设计。
-  R9 不再依赖 R4。
-
-## 11. 参考
-
-- [When Concurrency Matters: Behaviour-Oriented Concurrency](https://doi.org/10.1145/3622852)：
-  Verona 多资源行为调度，D6、D7 的主要参考。
-- Calvin 确定性数据库的 OLLP（乐观锁位置预测）：D4 的解析—获取—校验模式。
-- Clojure STM 中 agent 发送推迟到事务提交：D2 提交后效果的先例。
-- Erlang/OTP 监督树与 `code_change`：D9 与迁移协议。
-- Swift 区域隔离与 `sending`、Pony 引用能力：转移资格推导与未来区域概念。
-- FoundationDB 确定性仿真测试：D10。
-
-2026-10-26 R0／R1 交付：
-
-- 完成 L1–L6、chat 示例清理与对应文档；L1／L4 的调研结论及验证记录见第 7 节。
-- 修正 R4 退出条件：同名并发请求只发布一个域，其余请求重算后取得该域。
-
-2026-10-26 reactor 选型修订：
-
-- 经方案对比，D7 改为共享 reactor，分离 I/O 注册归属与任务执行位置。
-  R6 提交 `2b85395`／`621e504` 中的每 worker 选型及注销后换 reactor 的迁移描述被本修订取代。
-- 选择依据是减少连接与 worker 的绑定，并避免把跨 Poll 重注册当作可移植能力；
-  这不是吞吐或延迟测量结论。连接状态、任务转移证据与取消／关闭同步仍须实现和验证。
-- 专用驱动线程、协作驱动及未来分片属于实现选择；先保持连接注册稳定，再评估驱动组织方式。
 
 ### R10a/b 实施记录（2026-10-27）
 
