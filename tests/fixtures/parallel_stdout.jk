@@ -1,0 +1,20 @@
+import joky/task
+
+fn emit(id: Int32) @suspends {
+    var item = 0
+    while item < 8 {
+        println("worker={id};item={item};__PAYLOAD__\0🙂")
+        task.yield_now()
+        item += 1
+    }
+}
+fn main() @suspends {
+    print(42)
+    print("\n")
+    scope {
+        branch { emit(0) }
+        branch { emit(1) }
+        branch { emit(2) }
+        branch { emit(3) }
+    }
+}

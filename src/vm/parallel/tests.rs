@@ -619,3 +619,76 @@ fn task_pool_timer_submission_reload_and_shutdown() {
 
 #[path = "stress.rs"]
 mod stress;
+
+#[test]
+fn parallel_stdout_frozen_evidence_survives_reload_and_vm_drop() {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    unsafe extern "C" fn replacement(_: *const u8) -> i32 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let source = "fn root() @suspends ->Int32 {print(\"\"); 42}";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let budget = TaskBudget::new(1 << 20);
+        let prepared = vm
+            .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap();
+        let rejected = unsafe {
+            vm.register_text_fn(
+                "__joky_write_stdout",
+                FunctionSignature::new(vec![Type::reference(Type::String, false)], Type::Int32),
+                replacement as *const u8,
+            )
+        }
+        .unwrap_err();
+        assert_eq!(rejected.code(), ErrorCode::DuplicateDefinition);
+        vm.load_source("fn replacement() ->Int32 {99}").unwrap();
+        drop(vm);
+        let mut pool = crate::runtime::parallel::ParallelExecutor::new(2, 8).unwrap();
+        let task = prepared.submit(&pool).unwrap();
+        task.wait().unwrap();
+        assert_eq!(
+            task.take_result().unwrap().into_value(),
+            TaskValue::Scalar(InstanceValue::Int32(42))
+        );
+        pool.wait_closed();
+        drop((task, pool));
+        assert_eq!(budget.used(), 0);
+    }
+    assert_eq!(CALLS.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn parallel_stdout_does_not_qualify_local_show_implementations() {
+    unsafe extern "C" fn local() -> i32 {
+        42
+    }
+    let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+    unsafe {
+        vm.register_fn(
+            "local",
+            FunctionSignature::new(vec![], Type::Int32),
+            local as *const u8,
+        )
+        .unwrap();
+    }
+    vm.load_source(
+        r#"
+        import joky/show.{type Show}
+        import joky/string.{type StringBuilder}
+        extern fn local() ->Int32
+        struct Item {n:Int32}
+        impl Show for Item {
+            fn show(&self, output:&mut StringBuilder) @noescape {
+                let value=local()
+                value.show(output)
+            }
+        }
+        fn root() @suspends {println(Item{n:1})}
+    "#,
+    )
+    .unwrap();
+    assert!(vm.prepare_parallel_task("root", vec![], vec![]).is_err());
+}

@@ -370,7 +370,7 @@ fn task_pool_cli_explicit_mode_and_standalone_driver() {
             .code(),
         Some(42)
     );
-    work.write("local.jk", "fn main() @suspends { println(42) }");
+    work.write("local.jk", "import joky/domain struct State {n:Int32} fn make(n:Int32)->State {State{n:n}} fn main() @suspends {let owner=domain.create(make,1)}");
     for route in ["run", "build"] {
         let rejected = work
             .command()
@@ -397,5 +397,63 @@ fn task_pool_cli_explicit_mode_and_standalone_driver() {
             .unwrap();
         failure(&output, "--task-workers");
         assert!(String::from_utf8_lossy(&output.stderr).contains("--task-workers"));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn task_parallel_stdout_preserves_writes_and_reports_errors_on_all_backends() {
+    use std::{
+        os::{fd::OwnedFd, unix::net::UnixDatagram},
+        process::Stdio,
+    };
+    let work = Workspace::new();
+    // Exceed typical pipe atomic-write sizes: stdout's whole-call lock, not
+    // short OS writes, must prevent fragments of these records interleaving.
+    let payload = "中".repeat(2048);
+    let source = include_str!("../fixtures/parallel_stdout.jk").replace("__PAYLOAD__", &payload);
+    work.write("output.jk", &source);
+    let mut expected: Vec<_> = (0..4)
+        .flat_map(|id| (0..8).map(move |item| (id, item)))
+        .map(|(id, item)| format!("worker={id};item={item};{payload}\0🙂"))
+        .collect();
+    expected.sort();
+    let build = work
+        .command()
+        .args(["build", "--task-workers", "2", "output.jk", "-o", "output"])
+        .env("JOKY_RUNTIME", runtime_archive())
+        .output()
+        .unwrap();
+    success(&build);
+    for backend in ["jit", "interpreter", "aot"] {
+        let command = || {
+            if backend == "aot" {
+                Command::new(work.path().join("output"))
+            } else {
+                let mut cmd = work.command();
+                cmd.args(["run", "--task-workers", "2"]);
+                if backend == "interpreter" {
+                    cmd.arg("--interpreter");
+                }
+                cmd.arg("output.jk");
+                cmd
+            }
+        };
+        let output = command().output().unwrap();
+        success(&output);
+        assert!(output.stderr.is_empty(), "{backend}: {:?}", output.stderr);
+        let text = String::from_utf8(output.stdout).unwrap();
+        let mut lines = text.lines();
+        assert_eq!(lines.next(), Some("42"));
+        let mut records: Vec<_> = lines.map(str::to_owned).collect();
+        records.sort();
+        assert_eq!(records, expected, "{backend}");
+        // An unconnected datagram socket fails writes without SIGPIPE or a
+        // pipe-reader race. Invalid/read-only fds can be ignored by Rust stdout.
+        let failed = command()
+            .stdout(Stdio::from(OwnedFd::from(UnixDatagram::unbound().unwrap())))
+            .output()
+            .unwrap();
+        failure(&failed, "Destination address required");
     }
 }

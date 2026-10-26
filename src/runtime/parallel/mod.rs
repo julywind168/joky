@@ -26,40 +26,79 @@ impl Drop for Guard {
     }
 }
 
-/// Only constructed by the explicit unsafe host registration path.
+/// Constructed by explicit unsafe host registration or audited built-in adapters.
+/// Frozen evidence owns code dependencies without carrying a local registry.
 #[derive(Clone)]
 pub(crate) struct Host {
     pub(crate) name: String,
     pub(crate) signature: crate::FunctionSignature,
-    pub(crate) entry: super::cps::CpsEntry,
-    pub(crate) slots: usize,
+    pub(crate) code: HostCode,
     pub(crate) _owner: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+}
+/// Each variant fixes an ABI, rather than blessing arbitrary direct pointers.
+#[derive(Clone, Copy)]
+pub(crate) enum HostCode {
+    Cps {
+        entry: super::cps::CpsEntry,
+        slots: usize,
+    },
+    /// Synchronous immutable TextViewV2 input, no retained pointer or callback.
+    /// Only audited runtime bindings construct this internal variant.
+    TextView(unsafe extern "C" fn(*const u8) -> i32),
 }
 impl Host {
     pub(crate) fn binding(&self) -> super::bindings::HostBinding {
+        use super::bindings::{HostAbiKind, HostEntry};
+        let (abi, entry) = match self.code {
+            HostCode::Cps { entry, slots } => (
+                HostAbiKind::Scalar,
+                HostEntry::Cps {
+                    entry,
+                    frame_slots: Some(slots),
+                },
+            ),
+            HostCode::TextView(entry) => (
+                HostAbiKind::TextViewV2,
+                HostEntry::Direct(entry as *const u8),
+            ),
+        };
         super::bindings::HostBinding {
-            abi: super::bindings::HostAbiKind::Scalar,
+            abi,
             signature: self.signature.clone(),
-            entry: super::bindings::HostEntry::Cps {
-                entry: self.entry,
-                frame_slots: Some(self.slots),
-            },
+            entry,
             owner: Some(std::rc::Rc::new(self.clone())),
         }
     }
     pub(crate) fn from_binding(binding: &super::bindings::HostBinding) -> Option<Self> {
+        use super::bindings::{HostAbiKind, HostEntry};
         let host = binding.owner.as_ref()?.downcast_ref::<Self>()?;
-        let super::bindings::HostEntry::Cps {
-            entry,
-            frame_slots: Some(slots),
-        } = binding.entry
-        else {
-            return None;
+        let matches = match (host.code, &binding.entry) {
+            (
+                HostCode::Cps {
+                    entry: expected,
+                    slots: expected_slots,
+                },
+                HostEntry::Cps {
+                    entry,
+                    frame_slots: Some(slots),
+                },
+            ) => {
+                binding.abi == HostAbiKind::Scalar
+                    && std::ptr::fn_addr_eq(*entry, expected)
+                    && *slots == expected_slots
+            }
+            (HostCode::TextView(expected), HostEntry::Direct(entry)) => {
+                binding.abi == HostAbiKind::TextViewV2
+                    && *entry == expected as *const u8
+                    && binding.signature
+                        == crate::FunctionSignature::new(
+                            vec![crate::Type::reference(crate::Type::String, false)],
+                            crate::Type::Int32,
+                        )
+            }
+            _ => false,
         };
-        (std::ptr::fn_addr_eq(entry, host.entry)
-            && slots == host.slots
-            && binding.signature == host.signature)
-            .then(|| host.clone())
+        (matches && binding.signature == host.signature).then(|| host.clone())
     }
 }
 

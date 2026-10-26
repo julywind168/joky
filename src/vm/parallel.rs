@@ -328,8 +328,7 @@ pub(super) fn host(
     Host {
         name: name.into(),
         signature,
-        entry,
-        slots,
+        code: crate::runtime::parallel::HostCode::Cps { entry, slots },
         _owner: owner,
     }
 }

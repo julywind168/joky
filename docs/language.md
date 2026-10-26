@@ -4960,8 +4960,9 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含 BorrowHash/BorrowEq
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
-完整调用图必须证明安全，未知 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄
-和 Godot 对象均保持 Local。
+完整调用图必须证明安全；内置 stdout 绑定已获并行资格，`print`／`println` 还要求实际使用的
+Show 实现及其调用图通过检查。未知 extern、文件/DNS/TCP、Domains、持久实例、VM 句柄
+和 Godot 对象仍保持 Local。
 
 宿主使用 `TaskValue::Tuple`、`Record { ty, fields }` 和 `Enum { ty, variant, payload }`
 构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。
@@ -5287,6 +5288,10 @@ Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本
 print 无换行，println 添加一个 LF。先完成整次格式化，再通过共享的 TextViewV2 宿主入口
 写入 stdout，支持 UTF-8 与内嵌 NUL；写入失败记录运行时错误，已输出的前缀不回滚。
 CLI 不再预注册类型专用打印宿主。
+内置输出可在 Parallel worker 中调用；一次调用完成格式化后，持 stdout 锁写入全部字节。
+不同任务的调用顺序未指定，多次 print／println 不构成一个原子批次；其他绕过该 stdout 锁的
+宿主写入不在保证范围内。输出仍是同步操作，可能阻塞当前 worker；取消不撤销已写入字节。
+自定义 Show 若调用 Local 宿主，不能因最后调用了内置输出而获得并行资格。
 
 ```joky
 fn main() {

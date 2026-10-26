@@ -782,7 +782,8 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
 | task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
-| 普通 extern、stdout、文件/DNS/TCP、Domains、持久实例、VM 句柄 | 原有能力 | 根执行前拒绝 |
+| 内置 stdout（R7a） | 已审计 TextViewV2 绑定与实际 Show 调用图 | 可在 worker 执行；调用间输出顺序未指定 |
+| 普通 extern、文件/DNS/TCP、Domains、持久实例、VM 句柄 | 原有能力 | 根执行前拒绝 |
 | Godot 对象与回调 | 主线程驱动、原有预算 | 尚未开放主线程消息桥，保持 Local |
 
 首批外部等待能力选择定时器。deadline 只存在任务记录中，不保留帧地址；worker 在没有

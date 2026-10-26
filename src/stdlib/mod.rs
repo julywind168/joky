@@ -37,20 +37,6 @@ pub(crate) fn module_owner(entry: *const u8) -> Option<Rc<dyn Any>> {
     MODULE_OWNERS.with(|owners| owners.borrow().get(&(entry as usize))?.upgrade())
 }
 
-fn binding(
-    name: &str,
-    symbol: &str,
-    params: Vec<Type>,
-    ret: Type,
-    entry: *const u8,
-) -> NativeBinding {
-    NativeBinding {
-        spec: BindingSpec::with_symbol(name, FunctionSignature::new(params, ret), symbol),
-        entry: Some(HostEntry::Direct(entry)),
-        owner: None,
-    }
-}
-
 /// Implementations of the signatures shared with standalone source validation.
 fn vm_bindings() -> Vec<NativeBinding> {
     crate::core::vm::NAMES
@@ -132,8 +118,7 @@ fn parallel_task_binding(
     let host = crate::runtime::parallel::Host {
         name: spec.name.clone(),
         signature: spec.signature.clone(),
-        entry,
-        slots,
+        code: crate::runtime::parallel::HostCode::Cps { entry, slots },
         _owner: std::sync::Arc::new(()),
     };
     NativeBinding {
@@ -148,19 +133,8 @@ fn parallel_task_binding(
 
 fn build_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::default();
-    unsafe {
-        registry.register_module(
-            "joky/internal/output",
-            [binding(
-                "__joky_write_stdout",
-                "joky_io_write_stdout_v2",
-                vec![Type::reference(Type::String, false)],
-                Type::Int32,
-                output::joky_io_write_stdout_v2 as *const u8,
-            )],
-        )
-    }
-    .expect("Stdout binding must be valid");
+    unsafe { registry.register_module("joky/internal/output", [output::binding()]) }
+        .expect("Stdout binding must be valid");
     // These static C ABI functions implement the exact signatures listed above.
     unsafe { registry.register_module("joky/internal/vm", vm_bindings()) }
         .expect("standard library bindings must be valid");
