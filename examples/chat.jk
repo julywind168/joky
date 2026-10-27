@@ -48,8 +48,7 @@ fn report_failure(id: UInt64, failure: &task.Failure) {
     println("connection {id}: {reason}")
 }
 // Each connection runs in its own failure boundary; one failing client never stops the rest.
-fn serve(script: &Script, host: Host, listener: TcpListener) @suspends -> Int32 {
-    var listener = listener
+fn serve(script: &Script, host: Host, var listener: TcpListener) @suspends -> Int32 {
     let admission = admission.create(host.config.max_clients, 0)
     let entrants = admission.handle()
     var next_id: UInt64 = 1

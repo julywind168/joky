@@ -200,8 +200,7 @@ pub fn extend<T>(list: &mut List<T>, values: Array<T>) {
     reserve(list, values.len())
     for value in values { push_back(list, value) }
 }
-pub fn into_array<T>(list: List<T>) -> Array<T> {
-    var list = list
+pub fn into_array<T>(var list: List<T>) -> Array<T> {
     var values = Array.with_capacity::<T>(len(&list))
     while let Some(value) = pop_front(&mut list) { values.push(value) }
     values

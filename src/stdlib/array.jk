@@ -24,8 +24,7 @@ impl<T> Iterator for IntoIter<T> {
 // Reverse once so tail removal yields the original forward order. The buffer
 // retains a fully initialized prefix throughout conversion and iteration;
 // ordinary owner cleanup handles every early exit, including cancellation.
-pub fn into_iter<T>(values: Array<T>) -> IntoIter<T> {
-    var values = values
+pub fn into_iter<T>(var values: Array<T>) -> IntoIter<T> {
     let length = len(&values)
     var index: UInt64 = 0
     while index < length / 2 {

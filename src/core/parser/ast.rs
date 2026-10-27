@@ -308,6 +308,7 @@ pub struct AnonymousFunction {
 
 #[derive(Debug, Clone)]
 pub struct ClosureParameter {
+    pub mutable: bool,
     pub name: String,
     pub ty: Option<Type>,
     pub span: Span,
@@ -691,6 +692,8 @@ impl BinOp {
 /// Function parameter.
 #[derive(Debug, Clone)]
 pub struct Param {
+    /// Whether the callee may mutate this binding; not part of its type.
+    pub mutable: bool,
     pub name: String,
     pub ty: Type,
     /// UTF-8 byte range covering the parameter declaration.

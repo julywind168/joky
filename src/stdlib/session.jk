@@ -30,8 +30,7 @@ fn read(reader: &mut BufferedTcpReader, limit: UInt64) @suspends -> Option<Strin
     match reader.read_line(limit) { Ok(line) => line, Err(_) => None }
 }
 fn timeout(milliseconds: UInt64) @suspends -> Option<String> { __joky_task_sleep_ms(milliseconds); None }
-fn receive<S, T>(shared: &S, ctx: &T, reader: BufferedTcpReader, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options) @suspends @noescape {
-    var reader = reader
+fn receive<S, T>(shared: &S, ctx: &T, var reader: BufferedTcpReader, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options) @suspends @noescape {
     while true {
         let next = if options.idle_ms == 0 { read(&mut reader, options.max_line_bytes) }
         else { race { | read(&mut reader, options.max_line_bytes) | timeout(options.idle_ms) } }
@@ -39,8 +38,7 @@ fn receive<S, T>(shared: &S, ctx: &T, reader: BufferedTcpReader, on_line: fn(&S,
         if !on_line(shared, ctx, line) { return }
     }
 }
-fn send(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends {
-    var writer = writer
+fn send(queue: &mut outbox.Mailbox, var writer: TcpWriter) @suspends {
     while true {
         let bytes = match queue.receive() { Some(bytes) => bytes, None => return }
         if writer.write_all(bytes).is_err() { return }
@@ -48,9 +46,7 @@ fn send(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends {
 }
 fn stop(queue: &mut outbox.Mailbox) @suspends { queue.receive(); }
 pub fn run<S, T>(connection: Connection, stream: TcpStream, shared: &S, ctx: &T, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, on_close: fn(&S, &T) @suspends @noescape -> Unit) @suspends @noescape {
-    let (outgoing, control, options) = split(connection)
-    var outgoing = outgoing
-    var control = control
+    var (outgoing, control, options) = split(connection)
     let (reader, writer) = BufferedTcp.new(stream).split()
     race {
         | receive(shared, ctx, reader, on_line, options)

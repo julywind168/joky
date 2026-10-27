@@ -2925,3 +2925,13 @@ fn main() @suspends {
     );
     work.assert_all_backends("temporary_projection.jk", &[], b"", 0);
 }
+
+#[test]
+fn mutable_parameters_run_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "mutable.jk",
+        include_str!("../fixtures/mutable_parameters.jk"),
+    );
+    work.assert_native("mutable.jk", &[], b"", 0);
+}

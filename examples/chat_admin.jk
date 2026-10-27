@@ -27,8 +27,7 @@ fn connection(engine: &vm.Vm, path: &String, stream: TcpStream) @suspends -> Boo
     }
 }
 // Serialize administrative commands; disconnecting a session keeps the service running.
-pub fn serve(engine: &vm.Vm, path: String, listener: TcpListener) @suspends -> Int32 {
-    var listener = listener
+pub fn serve(engine: &vm.Vm, path: String, var listener: TcpListener) @suspends -> Int32 {
     while true {
         let stream = match listener.accept() { Ok(stream) => stream, Err(_) => return 1 }
         if connection(engine, &path, stream) { return 0 }

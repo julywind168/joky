@@ -557,6 +557,10 @@ impl Parser {
         let mut params = Vec::new();
         while !empty && self.peek() != &TokenKind::Pipe {
             let span_start = self.peek_span().start();
+            let mutable = self.peek() == &TokenKind::Var;
+            if mutable {
+                self.advance();
+            }
             let name = self.expect_ident()?;
             self.check_binding_name(&name)?;
             if name == "_" || name == "self" {
@@ -571,6 +575,7 @@ impl Parser {
                 None
             };
             params.push(ClosureParameter {
+                mutable,
                 name,
                 ty,
                 span: self.span(span_start, self.last_span.end()),

@@ -81,15 +81,12 @@ pub fn is_disjoint<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bo
     }
     true
 }
-pub fn union<T: BorrowEq + BorrowHash>(set: Set<T>, other: Set<T>) -> Set<T> {
-    var set = set
-    var other = other
+pub fn union<T: BorrowEq + BorrowHash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
     reserve(&mut set, len(&other))
     while !is_empty(&other) { match pop(&mut other) { Some(value) => { insert(&mut set, value); }, None => {} } }
     set
 }
-fn filter<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>, present: Bool) -> Set<T> {
-    var set = set
+fn filter<T: BorrowEq + BorrowHash>(var set: Set<T>, other: &Set<T>, present: Bool) -> Set<T> {
     var output = with_capacity::<T>(len(&set))
     while !is_empty(&set) {
         match pop(&mut set) {
@@ -105,9 +102,7 @@ fn filter<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>, present: Bool) 
 }
 pub fn intersection<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, true) }
 pub fn difference<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, false) }
-pub fn symmetric_difference<T: BorrowEq + BorrowHash>(set: Set<T>, other: Set<T>) -> Set<T> {
-    var set = set
-    var other = other
+pub fn symmetric_difference<T: BorrowEq + BorrowHash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
     reserve(&mut set, len(&other))
     while !is_empty(&other) {
         match pop(&mut other) {

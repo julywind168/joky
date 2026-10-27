@@ -189,8 +189,7 @@ impl Context {
         array.take_last(&mut self.path);
         result
     }
-    pub fn finish_object(&mut self, fields: Map<String, Value>) -> Result<Unit, MappingError> {
-        var fields = fields
+    pub fn finish_object(&mut self, var fields: Map<String, Value>) -> Result<Unit, MappingError> {
         if self.options.reject_unknown_fields {
             if let Some((name, _)) = map.pop(&mut fields) {
                 array.push(&mut self.path, PathSegment.Field(name))

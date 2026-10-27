@@ -381,6 +381,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                     .cloned()
                     .enumerate()
                     .map(|(index, ty)| Param {
+                        mutable: false,
                         name: format!("arg{index}"),
                         ty,
                         span: import_span,

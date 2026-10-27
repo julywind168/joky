@@ -135,8 +135,7 @@ impl ReadProgress {
     }
 }
 // Strip LF or CRLF and validate UTF-8 only after the delimiter is consumed.
-fn decode_line(bytes: Array<UInt8>) -> Result<String, ReadError> {
-    var bytes = bytes
+fn decode_line(var bytes: Array<UInt8>) -> Result<String, ReadError> {
     let length = bytes.len() - 1
     bytes.truncate(length)
     if length > 0 && bytes[length - 1] == 13 { bytes.truncate(length - 1) }
@@ -189,8 +188,7 @@ impl BufferedTcp {
     pub fn buffered_len(&self) -> UInt64 { self.buffer.buffered_len() }
     pub fn is_eof(&self) -> Bool { self.buffer.is_eof() }
     // A received prefix may be lost on cancellation; end the protocol connection.
-    fn read_frame(&mut self, progress: ReadProgress) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        var progress = progress
+    fn read_frame(&mut self, var progress: ReadProgress) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if progress.is_complete() { return Ok(progress.finish(ReadStatus.Done)) }
         while true {
             let needs_fill = self.buffer.needs_fill()?
@@ -263,8 +261,7 @@ impl BufferedTcpReader {
     pub fn buffered_len(&self) -> UInt64 { self.buffer.buffered_len() }
     pub fn is_eof(&self) -> Bool { self.buffer.is_eof() }
     // A received prefix may be lost on cancellation; end the protocol connection.
-    fn read_frame(&mut self, progress: ReadProgress) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        var progress = progress
+    fn read_frame(&mut self, var progress: ReadProgress) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if progress.is_complete() { return Ok(progress.finish(ReadStatus.Done)) }
         while true {
             let needs_fill = self.buffer.needs_fill()?
@@ -389,8 +386,7 @@ impl TcpStream {
     // Cancellation/error may leave a transmitted prefix. Never retry the full
     // input blindly. Keep the original owner and copy only one bounded chunk.
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
-        let (bytes, length) = byte_length(bytes)
-        var remaining = bytes
+        var (remaining, length) = byte_length(bytes)
         if length > 1048576 { return Err(IoError { code: 9 }) }
         var offset: UInt64 = 0
         while offset < length {
@@ -446,8 +442,7 @@ impl TcpWriter {
     // Cancellation/error may leave a transmitted prefix. Never retry the full
     // input blindly. Keep the original owner and copy only one bounded chunk.
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
-        let (bytes, length) = byte_length(bytes)
-        var remaining = bytes
+        var (remaining, length) = byte_length(bytes)
         if length == 0 {
             self.write(remaining)?
             return Ok({})

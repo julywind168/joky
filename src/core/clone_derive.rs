@@ -149,6 +149,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
             };
             for f in &fields {
                 obligations.push(Param {
+                    mutable: false,
                     name: f.name.clone(),
                     ty: crate::core::types::substitute_syntax(&f.ty, &substitutions),
                     span: f.span,
@@ -191,6 +192,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
                     .map(|v| {
                         if let Some(ty) = &v.payload {
                             obligations.push(Param {
+                                mutable: false,
                                 name: v.name.clone(),
                                 ty: crate::core::types::substitute_syntax(ty, &substitutions),
                                 span: v.span,
@@ -245,6 +247,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
             name: "clone".into(),
             type_params: vec![],
             params: vec![Param {
+                mutable: false,
                 name: "self".into(),
                 ty: Type::reference(target.clone(), false),
                 span,

@@ -38,6 +38,7 @@ pub(crate) fn module(source: &str) -> AstModule {
             .into_iter()
             .enumerate()
             .map(|(i, ty)| crate::parser::ast::Param {
+                mutable: false,
                 name: format!("arg{i}"),
                 ty,
                 span: f.span,

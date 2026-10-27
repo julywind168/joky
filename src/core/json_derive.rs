@@ -210,6 +210,7 @@ fn implementation(
         .fields
         .iter()
         .map(|f| Param {
+            mutable: false,
             name: f.name.clone(),
             ty: crate::core::types::substitute_syntax(&f.ty, &substitutions),
             span: f.span,
@@ -323,6 +324,7 @@ fn implementation(
         type_params: vec![],
         params: vec![
             Param {
+                mutable: false,
                 name: if encoding { "self" } else { "$value" }.into(),
                 ty: if encoding {
                     Type::reference(target.clone(), false)
@@ -332,6 +334,7 @@ fn implementation(
                 span,
             },
             Param {
+                mutable: false,
                 name: "$context".into(),
                 ty: Type::reference(Type::Named(format!("{typed}.Context")), true),
                 span,

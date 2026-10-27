@@ -179,6 +179,7 @@ impl FunctionPlan {
             params: captures
                 .iter()
                 .map(|(name, ty)| Param {
+                    mutable: false,
                     name: name.clone(),
                     ty: ty.clone(),
                     span,

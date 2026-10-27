@@ -84,8 +84,7 @@ pub fn pop<K, V>(table: &mut Map<K, V>) -> Option<(K, V)> {
     table.deleted = table.deleted + 1
     Some((key, value))
 }
-pub fn into_entries<K, V>(table: Map<K, V>) -> Array<(K, V)> {
-    var table = table
+pub fn into_entries<K, V>(var table: Map<K, V>) -> Array<(K, V)> {
     var entries = Array.with_capacity::<(K, V)>(len(&table))
     while let Some(entry) = pop(&mut table) { entries.push(entry) }
     entries

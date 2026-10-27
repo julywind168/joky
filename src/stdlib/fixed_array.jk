@@ -14,12 +14,11 @@ pub fn repeat<T: Copy, const N: UInt64>(value: T) -> FixedArray<T, N> {
     fixed_array.finish(token)
 }
 
-pub fn from_fn<T: Copy, const N: UInt64, F: FnMut(UInt64) -> T>(init: F) -> FixedArray<T, N> {
-    var callback = init
+pub fn from_fn<T: Copy, const N: UInt64, F: FnMut(UInt64) -> T>(var init: F) -> FixedArray<T, N> {
     var token = fixed_array.begin::<T, N>()
     var index: UInt64 = 0
     while index < N {
-        fixed_array.write_next(&mut token, callback(index))
+        fixed_array.write_next(&mut token, init(index))
         index = index + 1
     }
     fixed_array.finish(token)

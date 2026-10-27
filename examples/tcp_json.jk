@@ -39,8 +39,7 @@ fn send_value(writer: &mut TcpWriter, value: &Value) @suspends -> Bool {
         Err(_) => false
     }
 }
-fn reply(value: Value) -> Value {
-    var value = value
+fn reply(var value: Value) -> Value {
     match &mut value { Array(items) => { mem.replace(items.borrow_mut_ref(0), Value.Text("reply")); }, _ => panic("JSON message session") }
     value
 }

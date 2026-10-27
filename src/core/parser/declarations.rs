@@ -7,6 +7,10 @@ impl Parser {
         let mut params = Vec::new();
         while self.peek() != &TokenKind::RParen {
             let start = self.peek_span().start();
+            let mutable = self.peek() == &TokenKind::Var;
+            if mutable {
+                self.advance();
+            }
             let borrowed = if self.peek() == &TokenKind::Amp {
                 self.advance();
                 let mutable = self.peek() == &TokenKind::Mut;
@@ -17,6 +21,9 @@ impl Parser {
             } else {
                 None
             };
+            if mutable && borrowed.is_some() {
+                return Err(self.error("var cannot modify a borrowed receiver".into()));
+            }
             let name = self.expect_ident()?;
             self.check_binding_name(&name)?;
             if borrowed.is_some() && (name != "self" || self.impl_target.is_none()) {
@@ -38,6 +45,7 @@ impl Parser {
                 self.parse_type()?
             };
             params.push(Param {
+                mutable,
                 name,
                 ty,
                 span: self.span(start, self.last_span.end()),
@@ -584,6 +592,7 @@ impl Parser {
             self.expect(&TokenKind::Colon)?;
             let ty = self.parse_type()?;
             fields.push(Param {
+                mutable: false,
                 name,
                 ty,
                 span: self.span(start, self.last_span.end()),

@@ -106,3 +106,11 @@ fn format_examples_and_standard_modules_are_idempotent() {
     visit(&root.join("examples"));
     visit(&root.join("src/stdlib"));
 }
+
+#[test]
+fn format_mutable_parameters() {
+    assert_format(
+        "fn f(var  value:Int32)->Int32{value+=1;value}",
+        "fn f(var value: Int32) -> Int32 { value += 1; value }\n",
+    );
+}

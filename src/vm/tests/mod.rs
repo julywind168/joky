@@ -378,3 +378,6 @@ mod tcp_tests;
 
 #[path = "language/service_ergonomics_tests.rs"]
 mod service_ergonomics_tests;
+
+#[path = "language/mutable_parameters_tests.rs"]
+mod mutable_parameters_tests;

@@ -1,0 +1,80 @@
+import joky/array.{type Array}
+import joky/task
+
+fn expect(value: Bool) { assert(value, "mutable parameters") }
+
+struct Counter { value: Int32 }
+trait Adjust {
+    fn adjust(self, amount: Int32) -> Int32
+    fn default_adjust(self, var amount: Int32) -> Int32 {
+        amount += 1
+        self.adjust(amount)
+    }
+}
+impl Adjust for Counter {
+    fn adjust(var self, var amount: Int32) -> Int32 {
+        amount += 1
+        self.value += amount
+        self.value
+    }
+}
+impl Counter {
+    fn replace<T: Copy>(self, var value: T, replacement: T) -> T {
+        value = replacement
+        value
+    }
+}
+fn bump(value: &mut Int32) { *value += 1 }
+fn increment(var value: Int32) -> Int32 { bump(&mut value); value }
+fn replace<T>(var value: T, replacement: T) -> T { value = replacement; value }
+fn twice<F: FnMut() -> Int32>(var operation: F) -> Int32 { operation(); operation() }
+fn apply(operation: fn(Int32) -> Int32) -> Int32 { operation(41) }
+fn owners(var values: Array<String>, early: Bool) -> Int32 {
+    values.push("second")
+    if early { expect(values.len() == 2); return 2 }
+    values = ["replacement"]
+    expect(values.len() == 1)
+    1
+}
+fn failure(var values: Array<String>) -> Int32 {
+    values.push("before failure")
+    values = ["replacement"]
+    42 / (if values.len() == 1 { 0 } else { 1 })
+}
+fn suspended(var values: Array<String>) @suspends -> Int32 {
+    values.push("before yield")
+    task.yield_now()
+    values = ["after yield"]
+    task.yield_now()
+    values.push("last")
+    expect(values.len() == 2)
+    42
+}
+fn compute() -> Int32 {
+    let value = 41
+    expect(increment(value) == 42)
+    expect(value == 41)
+    expect(apply(increment) == 42)
+    let text = replace("old", "new")
+    expect(text.equals("new"))
+    expect(owners(["first"], true) == 2)
+    expect(owners(["first"], false) == 1)
+    let counter = Counter { value: 39 }
+    expect(counter.adjust(2) == 42)
+    expect(counter.default_adjust(1) == 42)
+    expect(counter.value == 39)
+    expect(counter.replace(1, 42) == 42)
+    expect(apply(|var value| { value += 1; value }) == 42)
+    let captured = 1
+    let closure = |var value: Int32| { value += captured; value }
+    expect(closure(41) == 42)
+    expect(closure(1) == 2)
+    var count = 40
+    expect(twice(|| { count += 1; count }) == 42)
+    42
+}
+fn fail() -> Int32 { failure(["start"]) }
+fn main() @suspends {
+    expect(compute() == 42)
+    expect(suspended(["start"]) == 42)
+}

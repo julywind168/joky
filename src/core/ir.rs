@@ -1648,7 +1648,7 @@ impl FunctionPlan {
                 &p.name,
                 Binding {
                     slot,
-                    mutable: false,
+                    mutable: p.mutable,
                     place: None,
                 },
             )?;

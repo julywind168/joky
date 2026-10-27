@@ -497,27 +497,21 @@ extern fn __outbox_attach(candidate:&mut domain.CandidateOwner, batch:&mut outbo
 extern fn __outbox_attach_pair(candidate:&mut domain.CandidatePairOwner, batch:&mut outbox.BatchOwner) @suspends
 extern fn __outbox_attach_set(candidate:&mut domain.CandidateSetOwner, batch:&mut outbox.BatchOwner) @suspends
 impl<S> Candidate<S> {
-    pub fn with_outbox(self, batch:Batch) @suspends -> Candidate<S> {
-        var candidate=self
-        var batch=batch
-        __outbox_attach(&mut candidate.storage,&mut batch)
-        candidate
+    pub fn with_outbox(var self, var batch:Batch) @suspends -> Candidate<S> {
+        __outbox_attach(&mut self.storage,&mut batch)
+        self
     }
 }
 impl<S,T> CandidatePair<S,T> {
-    pub fn with_outbox(self, batch:Batch) @suspends -> CandidatePair<S,T> {
-        var candidate=self
-        var batch=batch
-        __outbox_attach_pair(&mut candidate.storage,&mut batch)
-        candidate
+    pub fn with_outbox(var self, var batch:Batch) @suspends -> CandidatePair<S,T> {
+        __outbox_attach_pair(&mut self.storage,&mut batch)
+        self
     }
 }
 impl CandidateSet {
-    pub fn with_outbox(self, batch:Batch) @suspends -> CandidateSet {
-        var candidate=self
-        var batch=batch
-        __outbox_attach_set(&mut candidate.storage,&mut batch)
-        candidate
+    pub fn with_outbox(var self, var batch:Batch) @suspends -> CandidateSet {
+        __outbox_attach_set(&mut self.storage,&mut batch)
+        self
     }
 }
 

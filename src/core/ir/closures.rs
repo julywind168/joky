@@ -438,6 +438,7 @@ impl FunctionPlan {
                 .map_err(|e| e.with_span(parameter.span))?;
             hints.insert(parameter.name.clone(), payload_binding(&ty, 0));
             params.push(Param {
+                mutable: parameter.mutable,
                 name: parameter.name.clone(),
                 ty,
                 span: parameter.span,
@@ -691,6 +692,7 @@ impl FunctionPlan {
             inputs.insert(
                 0,
                 Param {
+                    mutable: false,
                     name: "$environment".into(),
                     ty: Type::reference(
                         Type::Record(environment.clone()),

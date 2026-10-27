@@ -56,6 +56,7 @@ pub(super) fn expand(module: &mut AstModule) -> Result<(), Error> {
         adapter.name = entry(&function.name);
         adapter.public = false;
         adapter.params.push(Param {
+            mutable: false,
             name: "$every.input".into(),
             ty: Type::Unit,
             span: function.span,

@@ -378,6 +378,7 @@ impl FunctionPlan {
             .map(|(index, (name, mutable))| {
                 if let Some(Some(path)) = block.paths.get(index) {
                     return Ok(Param {
+                        mutable: false,
                         name: name.clone(),
                         ty: Type::reference(path.ty.clone(), *mutable),
                         span: block.span,
@@ -408,6 +409,7 @@ impl FunctionPlan {
                     )
                 })?;
                 Ok(Param {
+                    mutable: false,
                     name: name.clone(),
                     ty: Type::reference(target, *mutable),
                     span: block.span,
@@ -529,6 +531,7 @@ impl FunctionPlan {
             params: params
                 .iter()
                 .map(|p| ClosureParameter {
+                    mutable: false,
                     name: p.name.clone(),
                     ty: Some(p.ty.clone()),
                     span: p.span,
@@ -759,6 +762,7 @@ impl FunctionPlan {
         }
         body.push(block.body.clone());
         params.push(Param {
+            mutable: false,
             name: "$captures".into(),
             ty: input.clone(),
             span: block.span,

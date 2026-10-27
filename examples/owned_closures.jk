@@ -19,8 +19,7 @@ fn main() {
     let adder = save(make_adder(40))
     println(evaluate(&adder, 2))
 
-    let make_counter = |initial: Int32| {
-        var count = initial
+    let make_counter = |var count: Int32| {
         move || { count += 1; count }
     }
     var counter = save(make_counter(0))
