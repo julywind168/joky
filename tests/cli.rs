@@ -46,6 +46,8 @@ mod diagnostics;
 mod domains;
 #[path = "cli/embedding.rs"]
 mod embedding;
+#[path = "cli/format.rs"]
+mod format;
 #[path = "cli/io.rs"]
 mod io;
 #[path = "cli/language.rs"]

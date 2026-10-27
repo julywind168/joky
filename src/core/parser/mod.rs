@@ -7,6 +7,8 @@ mod attributes;
 mod control_flow;
 mod declarations;
 mod expressions;
+mod format;
+pub use format::format;
 mod interpolation;
 mod lexer;
 mod module;

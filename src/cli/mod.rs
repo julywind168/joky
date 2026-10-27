@@ -1,6 +1,7 @@
 //! User-facing commands; compiler and runtime internals stay in the library.
 mod build;
 mod diagnostic;
+mod format;
 
 use joky::{
     parser::{self, ast::Item},
@@ -10,19 +11,24 @@ use joky::{
 };
 use std::{ffi::OsString, path::PathBuf};
 
-const HELP: &str = "Joky — run and build Joky programs
+const HELP: &str = "Joky — run, build and format Joky programs
 
 Usage:
   joky run [--interpreter] [--no-prelude] [--task-workers N] <file.jk>
   joky build [--no-prelude] [--task-workers N] <file.jk> [-o <executable>]
+  joky fmt [--check] <file.jk>
+  joky fmt [--check] --stdin
   joky --help
   joky --version
 
 Commands:
+  fmt      Format a source file without resolving imports or running code
   run      Execute the program with the JIT compiler (or the interpreter)
   build    Compile a native executable using the system C compiler (cc)
 
 Options:
+  --check             Report formatting differences without writing (exit 1)
+  --stdin             Read fmt input from stdin; write formatted source to stdout
   --interpreter       Execute 'run' with the register bytecode interpreter
   --no-prelude        Disable implicit standard-library imports
   --task-workers N    Use 1..256 task workers (default: Local; requires @suspends main)
@@ -40,6 +46,7 @@ Use @suspends on main for cooperative tasks; import joky/task for yield_now and 
 enum Command {
     Help,
     Version,
+    Format(format::Options),
     Run {
         source: PathBuf,
         interpreter: bool,
@@ -68,6 +75,9 @@ impl Command {
                 return Err(cli_argument_error("Unexpected arguments after --version"));
             }
             return Ok(Self::Version);
+        }
+        if command == "fmt" {
+            return format::parse(args);
         }
         let build = command == "build";
         if !build && command != "run" {
@@ -194,6 +204,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
             println!("joky {}", env!("CARGO_PKG_VERSION"));
             return 0;
         }
+        Command::Format(options) => return format::execute(options),
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
     let result = (|| -> Result<u8, Error> {
