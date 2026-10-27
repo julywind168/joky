@@ -4997,6 +4997,11 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含 BorrowHash/BorrowEq
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
+worker 内部使用资格单独检查：Array／Slice 的 Iter、Map 的成对 Iter 与 Entry 支持共享和
+可变借用遍历、泛型辅助函数及循环内挂起。游标与原容器始终留在所属 worker，挂起恢复不迁移。
+含游标借用的 join/race 在同一 worker 顺序推进；共享游标别名仍共享位置。
+这不授予游标 Transfer／Share：宿主根参数和结果、跨 worker 参数和结果、branch 捕获仍拒绝
+游标及其引用。原有来源、独占借用、结构性修改和逃逸限制保持不变；取消由容器拥有者清理元素。
 完整调用图必须证明安全；内置 stdout 绑定已获并行资格，`print`／`println` 还要求实际使用的
 Show 实现及其调用图通过检查。未知 extern、直接状态域操作、持久实例和 Godot 对象仍保持 Local。
 内置 DNS 支持 Parallel：解析线程只持有输入副本和完成通知，任务存储仍由所属 worker 访问。

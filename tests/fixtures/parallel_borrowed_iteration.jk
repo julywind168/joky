@@ -1,0 +1,86 @@
+import joky/array.{type Array}
+import joky/iter
+import joky/slice
+import joky/map.{type Map}
+import joky/task
+import joky/check
+
+fn observe(id: Int32) @suspends {}
+fn count<T>(cursor: &iter.Iter<T>, id: Int32) @suspends -> Int32 {
+    var count = 0
+    for value in cursor {
+        observe(id)
+        task.yield_now()
+        count += 1
+    }
+    count
+}
+fn increment<K>(entry: &mut map.Entry<K, Int32>) @suspends {
+    let value = map.entry_value_mut(entry)
+    task.yield_now()
+    *value += 1
+}
+fn array_values(id: Int32) @suspends {
+    observe(id)
+    var values = [1, 2, 3]
+    for index, value in &mut values {
+        task.yield_now()
+        *value += 1
+    }
+    check.assert(values[0] == 2 && values[2] == 4, "mutable array iteration resumes once")
+    for value in slice.iter_mut(values.slice_mut(1, 3)) { *value += 10 }
+    check.assert(values[1] == 13 && values[2] == 14, "slice iteration stays within its range")
+    check.assert(count(slice.iter(values.slice(1, 3)), id) == 2, "generic slice cursor forwarding")
+}
+fn shared_cursor(id: Int32) @suspends {
+    let values = [2, 13, 14]
+    let cursor = values.iter()
+    let (left, right) = join { | count(cursor, id) | count(cursor, id) }
+    check.assert(left + right == 3, "local aliases share one cursor position")
+    let strings = ["one", "two"]
+    check.assert(count(strings.iter(), id) == 2, "owning elements stay borrowed")
+    var total = 0
+    for value in &values { let saved = *value; task.yield_now(); check.assert(*value == saved, "element remains live across suspension"); total += *value }
+    check.assert(total == 29, "array remains usable after borrowing")
+}
+fn map_values() @suspends {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 10)
+    table.insert(2, 20)
+    for entry in &mut table { increment(entry) }
+    for index, (key, value) in &mut table { task.yield_now(); *value += *key }
+    var sum = 0
+    for (key, value) in &table { task.yield_now(); sum += *key + *value }
+    check.assert(sum == 38, "paired map iteration preserves both columns")
+    let entries = table.iter()
+    check.assert(map.advance(entries), "first map entry")
+    let first = map.current(entries)
+    let saved = *map.entry_value(first)
+    check.assert(map.advance(entries), "second map entry")
+    task.yield_now()
+    check.assert(*map.entry_value(first) == saved, "entry snapshot survives cursor advance")
+    var key_sum = 0
+    for key in slice.iter(table.keys()) { key_sum += *key }
+    check.assert(key_sum == 3, "map single-column cursor")
+}
+fn exercise(id: Int32) @suspends { array_values(id); shared_cursor(id); map_values(); observe(id) }
+fn park_array() @suspends {
+    var values = ["array owner"]
+    for value in &mut values { observe(99); task.sleep_ms(60000); check.assert(value.equals("array owner"), "array borrow") }
+}
+fn park_map() @suspends {
+    var table = Map.new::<Int32, String>()
+    table.insert(1, "map owner")
+    for entry in &table { observe(100); task.sleep_ms(60000); check.assert(map.entry_value(entry).equals("map owner"), "map borrow") }
+}
+fn parked() @suspends { join { | park_array() | park_map() } }
+fn invalid_cursor() @suspends {
+    let values = [1]
+    let cursor = values.iter()
+    iter.current(cursor);
+}
+fn main() @suspends -> Int32 {
+    join { | exercise(1) | exercise(2) }
+    check.assert(isolate { invalid_cursor() }.is_err(), "invalid cursor access remains checked")
+    0
+}

@@ -1841,6 +1841,13 @@ ParallelExecutor 按需创建一个共享 reactor 与一个专用 I/O 线程；�
 Local HostExecutor 仍保留原来的有界提示重放。驱动错误关闭准入并使活动任务失败；
 request_close 请求任务取消并关闭 reactor，wait_closed 汇合 worker 清理及 I/O 线程退出。
 
+函数调用图中的 worker 内部使用资格与 Transfer／Share、跨任务包准入分开检查。
+BufferIterator、BufferPairIterator 和 BufferEntry 只获得 worker 内部使用资格，递归检查其元素类型；
+引用在本 worker 内继续遵守前端借用规则。游标的 Cell 位置和非拥有元素指针不跨线程，
+无需原子化、加锁或修改描述符布局。活跃任务固定在所属 worker，挂起后仍在原 worker 恢复。
+带借用的 join/race 通过现有 native／解释器回退路径在原 worker 顺序执行；拥有参数的并发组
+仍按原规则分派。包分类、物理形状检查和 branch 准入不放宽，不能把内部可用资格当成传递证据。
+
 内置 TCP 适配器以编译器固定操作和精确签名获得资格，解释器冻结同样的操作证据。
 Transfer 允许四种内置 TCP owner，Share 仍不授予；worker 内部函数可借用其拥有值，跨任务包
 仍拒绝所有引用。Buffer 树的动态准入逐个验证内置释放入口、共享计费及非 busy 的 ResourceEvent，

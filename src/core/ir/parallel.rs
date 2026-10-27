@@ -10,13 +10,20 @@ pub(crate) mod packet;
 pub(crate) struct Qualification {
     pub transfer: bool,
     pub share: bool,
+    /// Usable by a checked call on the owning worker, including local borrows.
+    pub worker_local: bool,
 }
 
 /// This is a type/storage property, not a proof that a particular pointer or
 /// callable is transferable. Packet admission must additionally prove lifetime,
 /// code ownership, destructor effects and exclusive/shared access.
 fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Qualification {
-    fn check(root: &Type, shared: bool, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> bool {
+    fn check(
+        root: &Type,
+        shared: bool,
+        worker_local: bool,
+        resolve: &impl Fn(&Type) -> Result<Type, Error>,
+    ) -> bool {
         let mut pending = vec![(root.clone(), shared)];
         let mut seen = HashSet::new();
         let mut retained = Vec::new();
@@ -42,16 +49,25 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
             }
             match ty {
                 Type::Reference(r) => {
-                    if share && r.mutable {
+                    if !worker_local && share && r.mutable {
                         return false;
                     }
-                    // A shared reference requires Share even when the reference
-                    // itself is being moved, including nested reference fields.
-                    pending.push((r.target.clone(), !r.mutable));
+                    // Across threads, moving a shared reference still requires
+                    // Share. Worker-local calls use ordinary checked loans.
+                    pending.push((r.target.clone(), !worker_local && !r.mutable));
                 }
                 Type::Buffer(element)
                 | Type::BufferElement(element)
                 | Type::BufferSlice(element) => pending.push(((*element).clone(), share)),
+                // These descriptors borrow worker-owned storage and mutate local
+                // cursor position. This grants neither Transfer nor Share.
+                Type::BufferIterator(element)
+                | Type::BufferPairIterator(element)
+                | Type::BufferEntry(element)
+                    if worker_local =>
+                {
+                    pending.push(((*element).clone(), false));
+                }
                 Type::FixedArray(a) => pending.push((a.element.clone(), share)),
                 Type::Tuple(t) => pending.extend(t.elements.iter().cloned().map(|ty| (ty, share))),
                 Type::Record(r) if r.closure.is_none() => {
@@ -95,8 +111,9 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
         true
     }
     Qualification {
-        transfer: check(ty, false, resolve),
-        share: check(ty, true, resolve),
+        transfer: check(ty, false, false, resolve),
+        share: check(ty, true, false, resolve),
+        worker_local: check(ty, false, true, resolve),
     }
 }
 #[cfg(test)]
@@ -184,11 +201,9 @@ pub(crate) fn analyse(
             .iter()
             .chain(std::iter::once(&signature.ret))
             .any(|ty| {
-                // Calls within a worker may borrow its exclusively owned TCP
-                // values, including Array metadata helpers. This does not grant
-                // Share or permit references in cross-task packets below.
-                let local = ty.reference_type().map_or(ty, |r| &r.target);
-                !qualify_with(local, &resolve).transfer
+                // Ordinary calls stay on their worker, including borrowed
+                // cursors and views. Packet admission below remains separate.
+                !qualify_with(ty, &resolve).worker_local
             })
         {
             reasons.insert(
@@ -493,7 +508,8 @@ mod tests {
             qualify(&Type::Int32),
             Qualification {
                 transfer: true,
-                share: true
+                share: true,
+                worker_local: true,
             }
         );
         assert!(!qualify(&Type::Ptr).transfer);
@@ -517,7 +533,28 @@ mod tests {
         for name in ["HostResource", "domain.StateOwner"] {
             assert!(!qualify(&Type::Resource(name.into())).transfer);
         }
-        assert!(!qualify(&Type::BufferIterator(std::sync::Arc::new(Type::Int32))).share);
+        for cursor in [
+            Type::BufferIterator(std::sync::Arc::new(Type::Int32)),
+            Type::BufferPairIterator(std::sync::Arc::new(Type::tuple(vec![
+                Type::Int32,
+                Type::Int32,
+            ]))),
+            Type::BufferEntry(std::sync::Arc::new(Type::tuple(vec![
+                Type::Int32,
+                Type::Int32,
+            ]))),
+        ] {
+            let evidence = qualify(&cursor);
+            assert!(evidence.worker_local);
+            assert!(!evidence.transfer && !evidence.share);
+            for mutable in [false, true] {
+                let reference = Type::reference(cursor.clone(), mutable);
+                assert!(qualify(&reference).worker_local);
+                assert!(!qualify(&reference).transfer);
+                assert!(packet::classify(&reference, &|ty| Ok(ty.clone()), &|_| false).is_none());
+            }
+        }
+        assert!(!qualify(&Type::BufferIterator(std::sync::Arc::new(Type::Ptr))).worker_local);
         assert!(qualify(&Type::reference(Type::Int32, false)).share);
         assert!(!qualify(&Type::reference(Type::Int32, true)).share);
         assert!(!qualify(&Type::reference(Type::reference(Type::Int32, true), false)).transfer);

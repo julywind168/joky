@@ -13,6 +13,8 @@ pub(crate) mod map_tests;
 mod maps;
 pub use maps::{TaskMap, TaskSet};
 #[cfg(test)]
+mod borrowed_iteration_tests;
+#[cfg(test)]
 mod control_tests;
 #[cfg(test)]
 mod domain_tests;

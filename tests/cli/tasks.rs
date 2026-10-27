@@ -626,3 +626,13 @@ fn isolate_and_reservation_run_in_standalone_aot() {
         }
     }
 }
+
+#[test]
+fn parallel_borrowed_iteration_runs_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "borrowed.jk",
+        include_str!("../fixtures/parallel_borrowed_iteration.jk"),
+    );
+    work.assert_native("borrowed.jk", &["--task-workers", "3"], b"", 0);
+}

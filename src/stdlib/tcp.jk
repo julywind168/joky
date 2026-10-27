@@ -62,8 +62,8 @@ pub fn listen(host: String, port: UInt16) @suspends -> Result<TcpListener, Endpo
         Err(error) => return Err(EndpointError.Resolve(error))
     }
     var last = IoError { code: 6 }
-    for address in addresses {
-        match TcpListener.bind(address) {
+    for address in &addresses {
+        match TcpListener.bind(*address) {
             Ok(listener) => return Ok(listener),
             Err(error) => last = error
         }
@@ -76,8 +76,8 @@ pub fn connect(host: String, port: UInt16) @suspends -> Result<TcpStream, Endpoi
         Err(error) => return Err(EndpointError.Resolve(error))
     }
     var last = IoError { code: 6 }
-    for address in addresses {
-        match TcpStream.connect(address) {
+    for address in &addresses {
+        match TcpStream.connect(*address) {
             Ok(stream) => return Ok(stream),
             Err(error) => last = error
         }
