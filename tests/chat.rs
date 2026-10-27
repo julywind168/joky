@@ -452,7 +452,7 @@ fn chat_matrix(parallel: bool) {
         let mut build = Command::new(env!("CARGO_BIN_EXE_joky"));
         build.arg("build").arg(&app).arg("-o").arg(&built_dir);
         if parallel {
-            build.args(["--task-workers", "3"]);
+            build.arg("--parallel");
         }
         let built = build
             .current_dir(work.path())
@@ -468,25 +468,40 @@ fn chat_matrix(parallel: bool) {
             std::fs::read(bundle.join("contract.jk")).unwrap(),
             std::fs::read(app.join("contract.jk")).unwrap()
         );
-        for backend in ["jit", "interpreter", "aot"] {
-            eprintln!("chat backend: {backend}, script: {create}");
+        let runs: &[(&str, &str)] = if parallel {
+            &[
+                ("jit", "3"),
+                ("interpreter", "3"),
+                ("aot", "1"),
+                ("aot", "3"),
+            ]
+        } else {
+            &[("jit", "0"), ("interpreter", "0"), ("aot", "0")]
+        };
+        for &(backend, workers) in runs {
+            eprintln!("chat backend: {backend}, script: {create}, workers: {workers}");
             let root = if backend == "aot" { &bundle } else { &app };
             let mut command = if backend == "aot" {
                 let mut command = Command::new(bundle.join("chat"));
                 command.env("PATH", "");
+                if parallel {
+                    command.args(["--task-workers", workers]);
+                }
                 command
             } else {
                 let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
                 command.arg("run").arg(&app);
                 if parallel {
-                    command.args(["--task-workers", "3"]);
+                    command.args(["--task-workers", workers]);
                 }
                 if backend == "interpreter" {
                     command.arg("--interpreter");
                 }
                 command
             };
-            command.current_dir(work.path());
+            command
+                .current_dir(work.path())
+                .env_remove("JOKY_TASK_WORKERS");
             let (mut server, port, admin_port) =
                 Server::start(command, work.path().join(format!("{backend}.log")));
             conversation(

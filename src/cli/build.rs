@@ -68,21 +68,19 @@ pub(super) fn build(
     compiler.compile_module(ast)?;
     let parallel_main = match mode {
         joky::runtime::parallel::ExecutionMode::Local => None,
-        joky::runtime::parallel::ExecutionMode::Parallel { workers } => Some(
+        joky::runtime::parallel::ExecutionMode::Parallel { .. } => Some(
             compiler
                 .parallel_entry("main")?
-                .standalone_main_v1(workers, 4096)?,
+                .standalone_driver_v1(4096)?,
         ),
     };
     let requires_runtime =
         compiler.requires_runtime() || ast.imports.iter().any(|import| import.path == "joky/vm");
     let main_slots = compiler.cps_frame_slots("main");
     compiler.write_object(&object)?;
-    let mut driver_source =
+    let driver_source =
         parallel_main.unwrap_or(driver::render(&entry_point, main_slots, requires_runtime)?);
-    if project {
-        driver_source = driver::project_main(driver_source);
-    }
+    let driver_source = driver::startup(driver_source, mode, project);
     std::fs::write(&driver, driver_source).map_err(|error| {
         build_error(
             ErrorCode::IoError,

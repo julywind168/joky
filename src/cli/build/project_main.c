@@ -1,5 +1,5 @@
 /* The bundle root is the physical executable directory, independent of cwd. */
-int main(void) {
+static int joky_project_enter(void) {
     char *executable = NULL;
 #ifdef __APPLE__
     uint32_t size = 0;
@@ -31,5 +31,5 @@ int main(void) {
         perror("Cannot enter the Joky application directory");
         return 1;
     }
-    return joky_project_main();
+    return 0;
 }

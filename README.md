@@ -126,8 +126,8 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 cargo build --bin joky --lib
 target/debug/joky run examples/chat
 # 原生项目构建，产物可整体搬动后直接运行：
-target/debug/joky build examples/chat -o /tmp/chat-app --task-workers 3
-/tmp/chat-app/chat
+target/debug/joky build examples/chat -o /tmp/chat-app --parallel
+/tmp/chat-app/chat --task-workers 3
 ```
 
 聊天端口为 `127.0.0.1:7777`，管理端口为 `127.0.0.1:7778`。

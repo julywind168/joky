@@ -785,14 +785,19 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
 | 内置 stdout（R7a） | 已审计 TextViewV2 绑定与实际 Show 调用图 | 可在 worker 执行；调用间输出顺序未指定 |
 | 内置 TCP（R7b） | 原有宿主驱动 | 同树拥有交接、共享 reactor、不同 worker 的独立读写端；TaskValue 不导入／导出资源 |
-| 普通 extern、文件/DNS、Domains、持久实例、VM 句柄 | 原有能力 | 根执行前拒绝 |
+| DNS | 原有能力 | 已审计服务，解析线程仅持输入副本与通知 |
+| 文件、VM 类型化调用／源码方法、目录、准入与邮箱 | 原有能力 | 同任务树 Local 控制代理，实际 Local 资源不跨线程 |
+| 脚本 `when` 状态域业务 | 原有能力 | R8 按访问集授权到 worker 池，不相交域和共享读可并行，控制端提交 |
+| 普通 extern、直接 Local 域 owner、旧同步 VM 反射／注册／迁移、持久实例 | 原有能力 | 未获明确资格的入口仍拒绝 |
 | Godot 对象与回调 | 主线程驱动、原有预算 | 尚未开放主线程消息桥，保持 Local |
 
 首批外部等待能力选择定时器。deadline 只存在任务记录中，不保留帧地址；worker 在没有
 就绪任务时等待条件变量或最近截止时间，无逐定时器线程和定时空轮询。取消通知可提前唤醒，
 终态移除等待记录。一次 Pending 期间的通知仍按世代检查，不能覆盖或丢失。
-TCP 后由 R7b 单独审计并开放，见[当前语言参考](language.md)及
-[服务并发重构记录](service-concurrency-refactor.md)；文件、DNS 及状态资源继续在准入时拒绝。
+TCP 后续由 R7b 开放；DNS、文件、VM 控制代理及状态域业务已随服务并发阶段扩展，
+具体入口与限制见[当前语言参考](language.md#任务执行模式)及
+[服务并发重构记录](service-concurrency-refactor.md)。启动时数量配置见
+[专项计划](startup-worker-configuration.md)，不改变未获资格资源的拒绝规则。
 
 ### 14.2 验证记录
 

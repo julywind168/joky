@@ -3,6 +3,7 @@ mod build;
 mod diagnostic;
 mod format;
 mod project;
+mod workers;
 
 use joky::{
     parser::{self, ast::Item},
@@ -15,8 +16,8 @@ use std::{ffi::OsString, path::PathBuf};
 const HELP: &str = "Joky — run, build and format Joky programs
 
 Usage:
-  joky run [--interpreter] [--no-prelude] [--task-workers N] [<file.jk> | <project-dir> | joky.toml]
-  joky build [--no-prelude] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
+  joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml]
+  joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky fmt [--check] <file.jk>
   joky fmt [--check] --stdin
   joky --help
@@ -32,7 +33,8 @@ Options:
   --stdin             Read fmt input from stdin; write formatted source to stdout
   --interpreter       Execute 'run' with the register bytecode interpreter
   --no-prelude        Disable implicit standard-library imports
-  --task-workers N    Use 1..256 task workers (default: Local; requires @suspends main)
+  --parallel          Enable checked Parallel execution (default: 1 worker)
+  --task-workers N    Enable Parallel with 1..256 workers; build sets a startup default
   -o, --output <path>  Output executable for a file, or bundle directory for a project
   -h, --help           Show this help
   -V, --version        Show the version
@@ -41,6 +43,9 @@ Without an input, run/build find the nearest joky.toml in the current directory 
 Projects declare [project] name, entry, source-root (default \".\"), and resources.
 Project builds default to <project>/dist/<name>; run them directly after moving the bundle.
 Single-file builds default to the source path without .jk.
+Parallel executables accept --task-workers N at startup. Precedence:
+startup option > JOKY_TASK_WORKERS > build default. Local rejects worker configuration.
+Run uses the same precedence after explicit --parallel or --task-workers; build ignores the environment.
 Programs start at fn main() or fn main() -> Int32.
 Import joky/io.{print, println}; Show values are borrowed automatically, e.g. println(42).
 String literals interpolate by default, e.g. \"value={value}\"; double braces escape literal braces.
@@ -95,7 +100,8 @@ impl Command {
         let mut output = None;
         let mut interpreter = false;
         let mut prelude = true;
-        let mut mode = ExecutionMode::Local;
+        let mut parallel = false;
+        let mut workers = None;
         let mut positional_only = false;
         while let Some(arg) = args.next() {
             if !positional_only && (arg == "--help" || arg == "-h") {
@@ -132,23 +138,23 @@ impl Command {
                     ));
                 }
                 interpreter = true;
+            } else if !positional_only && arg == "--parallel" {
+                if parallel {
+                    return Err(cli_argument_error(
+                        "--parallel was specified more than once",
+                    ));
+                }
+                parallel = true;
             } else if !positional_only && arg == "--task-workers" {
-                if mode != ExecutionMode::Local {
+                if workers.is_some() {
                     return Err(cli_argument_error(
                         "--task-workers was specified more than once",
                     ));
                 }
-                let workers = args
-                    .next()
-                    .and_then(|value| value.to_str().and_then(|s| s.parse::<usize>().ok()))
-                    .ok_or_else(|| {
-                        cli_argument_error("--task-workers requires a worker count in 1..=256")
-                    })?;
-                mode = ExecutionMode::Parallel { workers }
-                    .validate()
-                    .map_err(|_| {
-                        cli_argument_error("--task-workers requires a worker count in 1..=256")
-                    })?;
+                let value = args.next().ok_or_else(|| {
+                    cli_argument_error("--task-workers requires a worker count in 1..=256")
+                })?;
+                workers = Some(workers::parse(&value, "--task-workers")?);
             } else if !positional_only && arg == "--no-prelude" {
                 if !prelude {
                     return Err(cli_argument_error(
@@ -176,6 +182,16 @@ impl Command {
                 "Source files must have the .jk extension",
             ));
         }
+        let environment = if build {
+            None
+        } else {
+            std::env::var_os("JOKY_TASK_WORKERS")
+        };
+        let mode = workers::resolve(
+            parallel || workers.is_some(),
+            workers,
+            environment.as_deref(),
+        )?;
         if build {
             if output.as_ref().is_some_and(|p| p.as_os_str().is_empty()) {
                 return Err(cli_argument_error("Output path must not be empty"));

@@ -43,6 +43,17 @@ impl ParallelEntry {
     /// call graph. The descriptor contains link-time symbols, not host addresses.
     pub fn standalone_main_v1(&self, workers: usize, max_tasks: usize) -> Result<String, Error> {
         crate::runtime::parallel::ExecutionMode::Parallel { workers }.validate()?;
+        Ok(format!(
+            "{}\nint main(void) {{ return joky_parallel_main({workers}); }}",
+            self.standalone_driver_v1(max_tasks)?
+        ))
+    }
+
+    /// Render `static int joky_parallel_main(uint32_t workers)` for a caller-owned
+    /// startup wrapper. The caller supplies the worker count; the runtime validates
+    /// it before executing the checked entry. No arguments or environment are read.
+    /// The descriptor contains only link-time symbols and retains the v1 ABI.
+    pub fn standalone_driver_v1(&self, max_tasks: usize) -> Result<String, Error> {
         if max_tasks == 0
             || !self.info.signature.params.is_empty()
             || !matches!(
@@ -62,8 +73,8 @@ impl ParallelEntry {
 extern int32_t {symbol}(JokyCpsFrame *);
 extern void joky_runtime_error_clear(void);
 extern void joky_runtime_print_error(void);
-int main(void) {{
-    const JokyExecutionConfigV1 config = {{1, sizeof(JokyExecutionConfigV1), 1, {workers}, {max_tasks}}};
+static int joky_parallel_main(uint32_t workers) {{
+    const JokyExecutionConfigV1 config = {{1, sizeof(JokyExecutionConfigV1), 1, workers, {max_tasks}}};
     const JokyTaskMainV1 entry = {{1, sizeof(JokyTaskMainV1), {symbol}, {slots}, {kind}, 0}};
     uint64_t value = 0;
     joky_runtime_error_clear();

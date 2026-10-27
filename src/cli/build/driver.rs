@@ -75,13 +75,34 @@ fn async_main(entry: &EntryPoint, main_slots: Option<usize>) -> Result<String, E
     ))
 }
 
-/// Resolve the executable rather than argv[0], so PATH and symlink launches
-/// also locate the bundle. This runs before either executor starts any workers.
-pub(super) fn project_main(driver: String) -> String {
-    let driver = driver.replacen("int main(void)", "static int joky_project_main(void)", 1);
-    format!(
-        "{}\n{driver}\n{}",
-        include_str!("project_headers.c"),
-        include_str!("project_main.c")
-    )
+/// Startup policy belongs to CLI-generated executables, not the embedding ABI.
+pub(super) fn startup(
+    driver: String,
+    mode: joky::runtime::parallel::ExecutionMode,
+    project: bool,
+) -> String {
+    let (workers, call, driver) = match mode {
+        joky::runtime::parallel::ExecutionMode::Local => (
+            0,
+            "joky_local_main()",
+            driver.replacen("int main(void)", "static int joky_local_main(void)", 1),
+        ),
+        joky::runtime::parallel::ExecutionMode::Parallel { workers } => {
+            (workers, "joky_parallel_main(workers)", driver)
+        }
+    };
+    let (headers, enter, prepare) = if project {
+        (
+            include_str!("project_headers.c"),
+            include_str!("project_main.c"),
+            "if (joky_project_enter() != 0) return 1;",
+        )
+    } else {
+        ("", "", "")
+    };
+    let parser = include_str!("startup.c");
+    format!("{headers}\n{parser}\n{driver}\n{enter}\nint main(int argc, char **argv) {{\n    uint32_t workers = {workers};\n    if (joky_startup_workers(argc, argv, &workers) != 0) return 1;\n    {prepare}\n    return {call};\n}}\n")
 }
+
+#[cfg(test)]
+mod tests;

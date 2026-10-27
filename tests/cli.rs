@@ -59,3 +59,7 @@ mod tasks;
 
 #[path = "cli/project.rs"]
 mod project;
+
+#[cfg(unix)]
+#[path = "cli/workers.rs"]
+mod workers;

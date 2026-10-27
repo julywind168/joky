@@ -460,7 +460,12 @@ Running 期间 wake 在 Pending 交接时重检，Cleaned 后通知无效；代�
 `ParallelExecutor` 为非 Send 控制对象，`ParallelSubmitter` 是 Send + Sync 句柄。关闭请求取消并拒绝提交，
 实际 Closed 等待全部子树清理；控制对象在宿主线程 join，worker 不允许阻塞 wait 或创建控制对象。
 
-`ExecutionMode` 缺省 Local；CLI `--task-workers N` 与 AOT 的 `JokyExecutionConfigV1` 显式选择 Parallel。
+`ExecutionMode` 缺省 Local；CLI `--parallel`／`--task-workers N` 显式选择 Parallel，
+完整调用图与任务包资格在构建或准备阶段检查，与实际 worker 数量无关。
+CLI 生成的 AOT 启动层解析参数／环境后填写 `JokyExecutionConfigV1`；运行库及嵌入入口不读取环境变量。
+`ParallelEntry::standalone_main_v1` 保留原固定配置行为，`standalone_driver_v1` 提供调用者包装的受检入口。
+数量只在池构造时生效，不改变线程归属、资源生命周期或清理屏障；1 worker 仍遵守 Parallel 准入。
+用户接口与配置优先级见[任务执行模式](language.md#任务执行模式)。
 [joky_executor.h](../include/joky_executor.h) 的静态入口描述由编译器受检证据生成，
 不验证任意原生指针的安全性。版本/大小检查不能替代代码保活、精确帧布局和链接 ABI 的不安全契约。
 热更新只影响新准备包，旧任务保留旧代码至清理完成。私有 CPS/存储 ABI 变化需同时重编 AOT 对象与运行库。

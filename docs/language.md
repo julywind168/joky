@@ -5018,8 +5018,25 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 默认 `ExecutionMode::Local` 在宿主线程顺序推进任务；Godot 继续主线程驱动。
 显式 `Parallel { workers }` 使用 1–256 个固定 worker，把同一根任务的 join/race/branch
 及后代独立调度。含借用参数的静态 join/race 留在当前 worker 顺序推进，拥有型动态分支
-仍可分配到其他 worker。CLI 的 run/build 使用 `--task-workers N`；N=1 仍要求完整并行资格，
-不等同于 Local。入口须为无参数、返回 Unit 或 Int32 的 `@suspends main`。
+仍可分配到其他 worker。CLI 的 run/build 使用 `--parallel` 或 `--task-workers N` 显式启用 Parallel；
+N=1 仍要求完整并行资格，不等同于 Local。入口须为无参数、返回 Unit 或 Int32 的 `@suspends main`。
+
+`build --parallel` 默认数量为 1；`build --task-workers N` 把 N 作为构建默认值。
+同一份生成程序可用 `./program --task-workers N` 或 `JOKY_TASK_WORKERS=N ./program` 在启动时覆盖数量，
+单文件与项目产物规则相同。优先级是启动参数 > 环境变量 > 构建默认值；未生效的低优先级值不解析。
+`run --parallel` 也读取该环境变量，显式 `run --task-workers N` 优先；两个选项可同时出现，
+同一选项重复则报错。不指定模式仍为 Local，环境变量不能单独启用 Parallel。
+`build` 不读取此变量，fmt／帮助／版本查询也不受影响。
+
+数量仅接受十进制数字且值为 1–256；空值、正负号、空白、溢出与越界均拒绝。
+Local 执行收到 worker 环境配置会报错，Local 原生程序也拒绝 worker 启动参数。
+生成程序目前只接受 `--task-workers N`，重复、缺值及其他启动参数均报错；不提供用户程序参数 API。
+这些配置错误在业务入口和线程池创建前报告。线程池创建失败直接退出，不降低数量重试或回退 Local。
+本次启动后数量固定，不支持运行中扩缩容；它只计算 task worker，不包含 reactor、控制线程或 I/O 服务线程。
+
+配置解析属于 CLI 启动层；Rust/C 嵌入调用仍只采用显式配置，不读取环境变量。
+`ParallelEntry::standalone_main_v1` 保留固定数量语义；`standalone_driver_v1` 为自定义启动包装
+提供接收数量的 C 函数，由运行时在执行受检入口前验证数量，生成器本身不读取参数或环境。
 
 Rust 在本地 VM 中 `prepare_parallel_task` 冻结代码及拥有输入，通过
 `PreparedParallelTask::submit(&ParallelExecutor)` 或可跨线程的 `ParallelSubmitter::submit`

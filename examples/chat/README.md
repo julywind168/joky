@@ -37,13 +37,20 @@ target/debug/joky run examples/chat --task-workers 3
 构建并直接运行原生应用（以下构建命令从仓库根目录执行）：
 
 ```sh
-target/debug/joky build examples/chat -o /tmp/chat-app --task-workers 3
-/tmp/chat-app/chat
+target/debug/joky build examples/chat -o /tmp/chat-app --parallel
+/tmp/chat-app/chat --task-workers 3
 ```
 
 默认输出是项目下的 `dist/`。原生程序和清单声明的运行时资源一起组成应用目录，
 可整体搬动到相同目标平台，直接执行其中的 `chat`；它按自身位置定位资源，不需要 shell 启动脚本
 或安装 Joky 编译器。构建时选择 Local／Parallel，默认 Local。
+`--parallel` 构建的程序默认启动 1 个 task worker；同一份产物可在启动时用
+`--task-workers 1` 或 `--task-workers 3` 选择数量，无需重新构建。
+也可使用 `JOKY_TASK_WORKERS=3 /tmp/chat-app/chat`；启动参数优先于环境变量，
+环境变量优先于构建默认值。旧的 `build --task-workers 3` 保留为设置 Parallel 默认数量的入口。
+数量在本次进程生命周期内固定，不影响控制线程和 I/O 服务线程的数量；1 worker 仍是 Parallel。
+Local 产物收到 worker 配置会报错，不能由启动参数变成 Parallel。
+完整规则见[任务执行模式](../../docs/language.md#任务执行模式)。
 
 同名项目生成过的输出目录可重新构建；构建失败保留旧产物，成功后替换整个目录。
 普通目录、符号链接和其他项目的产物不会被覆盖。重新构建会更新打包脚本，因此运行服务前
