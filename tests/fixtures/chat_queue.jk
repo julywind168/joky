@@ -1,3 +1,5 @@
+fn fixture_add_member(room: &mut Room, member: Member) { room.add_member(member) }
+fn fixture_remove_member(room: &mut Room, id: UInt64) { room.remove_member(id) }
 fn balance_view(state: &Account) -> UInt64 { state.balance_cents }
 fn live_view(state: &Account) -> Bool { state.live }
 fn room_name_view(state: &Account) -> Option<String> {
@@ -39,7 +41,7 @@ fn test_account(ctx: Host, id: UInt64, key: UInt64, output: session.Output) @sus
     if key != 0 {
         let name = if key == 1 { "r" } else { "other" }
         domain.write_to(owner.handle(), set_room, name)!
-        domain.write_to(fixture_room(ctx, key)!, add_member, member)!
+        domain.write_to(fixture_room(ctx, key)!, fixture_add_member, member)!
     }
     owner
 }
@@ -73,7 +75,7 @@ fn verify_conflicts_and_independence() @suspends {
     check.assert(balance(&alice) == 500, "conflict never charges")
     let independent = candidate(f.ctx, alice.handle(), "independent\n")
     // Changing another room or directory cannot invalidate this send.
-    domain.write_to(f.other.handle(), remove_member, 99)!
+    domain.write_to(f.other.handle(), fixture_remove_member, 99)!
     let extra = domain.directory(1)
     let routes = extra.handle()
     let name = "independent"
@@ -299,7 +301,7 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     check.assert(domain.query_from(fresh.read_only(), member_value, 3)!, "failed creation preserves old membership")
 }
 
-fn member_value(room: &Room, id: UInt64) -> Bool { is_member(room, id) }
+fn member_value(room: &Room, id: UInt64) -> Bool { room.has_member(id) }
 
 fn verify_unavailable_control_eviction() @suspends {
     let f = fixture()

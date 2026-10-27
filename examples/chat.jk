@@ -26,8 +26,8 @@ fn closed(script: &Script, client: &Client) @suspends @noescape {
 fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit: admission.Permit) @suspends {
     let owners = domain.directory(1)
     let connection = session.create(host.config.connection)
-    let client = Client { host: host, id: id }
-    let account = AccountInit { host: host, owners: owners.handle(), id: id, output: connection.output() }
+    let client = Client { host, id }
+    let account = AccountInit { host, owners: owners.handle(), id, output: connection.output() }
     if script.entries.init_account.try_call(&script.vm, account).is_ok() {
         session.run(connection, stream, &script, &client, line, closed)
     } else {
@@ -83,7 +83,7 @@ fn main() @suspends -> Int32 {
     let config = defaults()
     let rooms = domain.directory(config.max_rooms)
     let accounts = domain.directory(config.max_clients)
-    let host = Host { config: config, rooms: rooms.handle(), accounts: accounts.handle() }
+    let host = Host { config, rooms: rooms.handle(), accounts: accounts.handle() }
     var chat = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
@@ -92,7 +92,7 @@ fn main() @suspends -> Int32 {
     }
     println("chat {chat.local_addr()!.port()}")
     println("admin {admin.local_addr()!.port()}")
-    let script = Script { vm: engine, entries: entries }
+    let script = Script { vm: engine, entries }
     race {
         | serve(&script, host, chat)
         | chat_admin.serve(&script.vm, script_path(), admin)

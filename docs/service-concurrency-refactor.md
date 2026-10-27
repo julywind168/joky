@@ -398,21 +398,21 @@ fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
 }
 ```
 
-2026-10-27 重写后 `examples/chat_logic.jk` 的实际写法：
+2026-10-28 语法整理后 `examples/chat_logic.jk` 的实际写法：
 
 ```text
 fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends -> Outcome<Unit> {
     when "say" (mut account, room?: Room = host.rooms[account.room]) {
         let member = check_member(account, room)?
-        if account.balance_cents < SAY_PRICE_CENTS { send(member, "error insufficient balance\n") }
+        if account.balance_cents < SAY_PRICE_CENTS { member.send("error insufficient balance\n") }
         else {
             account.balance_cents -= SAY_PRICE_CENTS
-            broadcast(room, chat_line(&room.name, member.id, text))
+            room.broadcast(chat_line(&room.name, member.id, text))
         }
         Ok({})
     } else {
-        let member = check_live(account)?
-        send(member, "error join a room first\n")
+        let member = account.check_live()?
+        member.send("error join a room first\n")
         Ok({})
     }
 }
