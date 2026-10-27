@@ -1,6 +1,6 @@
 # 有状态服务的编程模型与实施计划
 
-状态：2026-10-23，S0–S4 已完成实现与 Debug 验收。以 `examples/chat.jk` / `chat_logic.jk` 为验收对象，
+状态：2026-10-23，S0–S4 已完成实现与 Debug 验收。以 `examples/chat/main.jk` / `script/main.jk` 为验收对象，
 目标是降低业务开发者必须理解的概念数量。阶段交付与验证记录见末节。
 当前接口仍以 [language.md](language.md) 为准，状态与 ABI 不变量见
 [architecture.md](architecture.md)。本文承接[状态域设计](server-concurrency.md)、
@@ -214,7 +214,7 @@ S2c 验证已完成：六组合实网矩阵通过，包含满队列／关闭队�
 默认 Debug 检查通过，包含 1528 项库测试、291 项 CLI 测试、默认集成测试和三后端短输入
 while／Map 正确性。此阶段未改运行时或所有权协议，不重复 S2b 已通过的取消穷举；未运行 Release。
 
-S3 使用 chat_contract.jk 作为唯一入口类型定义，并以 Vm.require 登记六个宿主入口。
+S3 使用 contract.jk 作为唯一入口类型定义，并以 Vm.require 登记六个宿主入口。
 Vm.module_source／module_file 提供显式依赖快照，不给 load_source 添加隐式磁盘搜索。
 所有加载检查全部必需契约；源发布还检查现有具名操作身份、访问／捕获／结果契约及活域类型完整性。
 这些检查与已有 schema、读取凭据和周期任务检查都完成后，才切换入口与域代码。
@@ -251,7 +251,7 @@ try_call 六组合、取消穷举及聊天六组合验证，均通过。未执�
 
 ### 后续收敛：分离管理连接
 
-Chat 的 `reload`／`shutdown` 由 `chat_admin.jk` 提供独立的 loopback TCP 端口，默认 7778；
+Chat 的 `reload`／`shutdown` 由 `host/admin.jk` 提供独立的 loopback TCP 端口，默认 7778；
 7777 只处理聊天协议。启动前绑定两个监听端口，成功后分别标明端口。管理连接不建立账户，
 不占聊天准入名额，也不通过业务 outbox 发送管理回复。管理命令串行执行，未知命令回复错误并
 保留连接；EOF、非法 UTF-8 或超长行只关闭管理会话，监听继续。完整的 shutdown 命令写回确认后

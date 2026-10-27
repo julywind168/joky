@@ -1,4 +1,4 @@
-// Admin port: `reload` republishes chat_logic.jk, `shutdown` stops the service.
+// Admin port: `reload` republishes script/main.jk, `shutdown` stops the service.
 // Replies go straight to the admin socket, never through chat accounts or their queues.
 import joky/vm
 import joky/tcp.{type TcpListener, type TcpStream, type BufferedTcp}

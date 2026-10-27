@@ -1,7 +1,7 @@
-// Chat business rules. examples/chat.jk loads this script and republishes it on `reload`.
+// Chat business rules. main.jk loads this script and republishes it on `reload`.
 // Every command is one named `when`: checks, balance changes and outgoing messages commit
 // together or not at all. Read top to bottom: state, protocol, commands, lifetime, helpers.
-import chat_contract.{type Host, type Call, type AccountInit, type Client}
+import contract.{type Host, type Call, type AccountInit, type Client}
 import joky/domain
 import joky/session
 import joky/mem

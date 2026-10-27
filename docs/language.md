@@ -4679,7 +4679,7 @@ Entry 是可跨挂起保留的拥有值，不持有 VM、不固定代码版本�
 不允许覆盖 `joky`。更换依赖快照不改变运行中的代码，只有下次成功 load／publish 才使用它；
 依赖文件也不会在每次调用或发布时自动重读。源 VM 的 load_source 不搜索磁盘。
 
-宿主与脚本可导入同一个契约文件，见 `examples/chat_contract.jk`：宿主先用 module_file
+宿主与脚本可导入同一个契约文件，见 `examples/chat/contract.jk`：宿主先用 module_file
 登记该源文件，再用 require_contract 登记三个入口并返回类型化入口表。每次操作固定选中的实现；源 Script 的
 publish 还检查上一版具名 when／句柄方法的身份与完整捕获契约，以及全部仍存活的域 schema。
 删掉具名操作、改变其访问／捕获／返回契约或遗漏活域类型都拒绝整个发布。匿名 when 仍只属于
@@ -5180,7 +5180,7 @@ fn work(a: Int32, b: Int32) @suspends {
 包装为 `Result<T, task.Failure>`。它建立独立失败边界，内部子任务失败时先取消／清理该子树，
 再返回 `Err`；不会使外层 scope 的兄弟任务失败。正常结束也等待内部全部子任务汇合。
 `scope` 的默认 fail-fast 行为保持不变。可运行用例见 [isolate fixture](../tests/fixtures/isolate.jk)，
-连接级用法见 [chat](../examples/chat.jk)。
+连接级用法见 [chat](../examples/chat/main.jk)。
 
 - `isolate` 是后接块时的上下文词，已有 `fn isolate(...)` 与普通调用不受影响。
 - 捕获与 `branch` 相同：Copy 值快照，拥有值移入，借用不逃逸且必须通过权限检查。

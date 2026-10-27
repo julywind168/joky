@@ -392,26 +392,38 @@ fn chat_parallel_real_tcp_on_all_backends() {
 
 fn chat_matrix(parallel: bool) {
     let work = scratch::ScratchDir::new("chat");
-    let source = include_str!("../examples/chat.jk");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_joky"), work.path().join("joky")).unwrap();
+    std::os::unix::fs::symlink(runtime::runtime_archive(), work.path().join("libjoky.a")).unwrap();
+    let app = work.path().join("source app");
+    std::fs::create_dir_all(app.join("host")).unwrap();
+    std::fs::create_dir_all(app.join("script")).unwrap();
+    for name in ["run.sh", "build.sh"] {
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("examples/chat")
+                .join(name),
+            app.join(name),
+        )
+        .unwrap();
+    }
+    let source = include_str!("../examples/chat/main.jk");
     std::fs::write(
-        work.path().join("chat_contract.jk"),
-        include_str!("../examples/chat_contract.jk"),
+        app.join("contract.jk"),
+        include_str!("../examples/chat/contract.jk"),
     )
     .unwrap();
     std::fs::write(
-        work.path().join("chat_admin.jk"),
-        include_str!("../examples/chat_admin.jk"),
+        app.join("host/admin.jk"),
+        include_str!("../examples/chat/host/admin.jk"),
     )
     .unwrap();
     assert_eq!(source.matches("\"127.0.0.1\", 7777").count(), 1);
     assert_eq!(source.matches("\"127.0.0.1\", 7778").count(), 1);
     assert_eq!(source.matches("    let config = defaults()").count(), 1);
-    let path = work.path().join("chat.jk");
+    let path = app.join("main.jk");
     let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check\nimport joky/outbox")
         .replace("\"127.0.0.1\", 7777", "\"127.0.0.1\", 0")
         .replace("\"127.0.0.1\", 7778", "\"127.0.0.1\", 0")
-        .replace("examples/chat_logic.jk", "chat_logic.jk")
-        .replace("examples/chat_contract.jk", "chat_contract.jk")
         .replace("    let config = defaults()", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let config = defaults()");
     let source = if parallel {
         source.replace("    verify_publication(&engine)\n", "")
@@ -423,14 +435,14 @@ fn chat_matrix(parallel: bool) {
         std::fs::write(&path, &source).unwrap();
         let logic = format!(
         "import joky/outbox\nimport joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
-        include_str!("../examples/chat_logic.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
+        include_str!("../examples/chat/script/main.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
         assert_eq!(logic.matches("    let command = parse(line)\n").count(), 1);
         let logic = logic.replace(
             "    let command = parse(line)\n",
             "    if line.equals(\"crash\") { let bad = 1 / 0; }\n    let command = parse(line)\n    pause_send(host, &command)\n",
         );
-        std::fs::write(work.path().join("chat_logic.jk"), &logic).unwrap();
+        std::fs::write(app.join("script/main.jk"), &logic).unwrap();
         let next = logic
             .replace(
                 "\"message {room} {id} {text}\\n\"",
@@ -441,37 +453,52 @@ fn chat_matrix(parallel: bool) {
                 "const SAY_PRICE_CENTS: UInt64 = 200",
             );
         assert_ne!(next, logic);
-        std::fs::write(work.path().join("chat_logic_next.jk"), next).unwrap();
-        let binary = work.path().join("chat");
-        let mut build = Command::new(env!("CARGO_BIN_EXE_joky"));
-        build.arg("build");
+        std::fs::write(app.join("script/next.jk"), next).unwrap();
+        let built_dir = work.path().join(format!("built-{create}"));
+        let mut build = Command::new(app.join("build.sh"));
+        build.arg(&built_dir);
         if parallel {
             build.args(["--task-workers", "3"]);
         }
         let built = build
-            .arg(&path)
-            .arg("-o")
-            .arg(&binary)
-            .env("JOKY_RUNTIME", runtime::runtime_archive())
+            .current_dir(work.path())
+            .env("JOKY", "./joky")
+            .env("JOKY_RUNTIME", "./libjoky.a")
             .output()
             .unwrap();
         assert!(built.status.success(), "{built:?}");
+        let bundle = work.path().join(format!("relocated app-{create}"));
+        std::fs::rename(&built_dir, &bundle).unwrap();
+        assert!(!bundle.join("main.jk").exists());
+        assert!(!bundle.join("host").exists());
+        assert_eq!(
+            std::fs::read(bundle.join("contract.jk")).unwrap(),
+            std::fs::read(app.join("contract.jk")).unwrap()
+        );
+        // Rebuilding must not overwrite a deployed application's edited files.
+        let refused = Command::new(app.join("build.sh"))
+            .arg(&bundle)
+            .current_dir(work.path())
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("Output already exists"));
         for backend in ["jit", "interpreter", "aot"] {
             eprintln!("chat backend: {backend}, script: {create}");
-            let mut command = if backend == "aot" {
-                Command::new(&binary)
+            let root = if backend == "aot" { &bundle } else { &app };
+            let mut command = Command::new(root.join("run.sh"));
+            if backend == "aot" {
+                // The native launcher must not try to locate a compiler.
+                command.env("JOKY", work.path().join("missing-compiler"));
             } else {
-                let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
-                command.arg("run");
+                command.env("JOKY", "./joky");
                 if parallel {
                     command.args(["--task-workers", "3"]);
                 }
                 if backend == "interpreter" {
                     command.arg("--interpreter");
                 }
-                command.arg(&path);
-                command
-            };
+            }
             command.current_dir(work.path());
             let (mut server, port, admin_port) =
                 Server::start(command, work.path().join(format!("{backend}.log")));
@@ -479,7 +506,7 @@ fn chat_matrix(parallel: bool) {
                 port,
                 admin_port,
                 if backend == "interpreter" { 40 } else { 260 },
-                &work.path().join("chat_logic.jk"),
+                &root.join("script/main.jk"),
                 &logic,
             );
             server.expect_shutdown();

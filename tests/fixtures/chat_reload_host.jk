@@ -2,7 +2,7 @@ struct Probe { directory: domain.DirectoryHandle, ready: outbox.Handle }
 fn run_probe(engine: &vm.Vm, input: Probe) @suspends { engine.call::<Probe, Unit>("verify_online", input) }
 fn publish_probe(engine: &vm.Vm, directory: domain.DirectoryHandle, ready: &mut outbox.Mailbox) @suspends {
     ready.receive()!
-    engine.publish_file("chat_logic_next.jk")!
+    engine.publish_file("script/next.jk")!
     engine.call::<domain.DirectoryHandle, Unit>("resume_probe", directory)
     ready.receive()!
     check.assert(vm.publish_domain_code(engine) == 1, "refresh only the root created after publication")

@@ -5,7 +5,7 @@ D3／D4 联合设计，D5 分步，D6 收窄为顺序入队问题，D7 区分资
 多线程阶段前增加运行协议；同日二次修订补齐混合队列提交、目录协调与别名规则。
 修订要点见第 10 节，各阶段实施与验证记录见第 12 节。
 
-本文以 `examples/chat.jk`、`chat_logic.jk` 为验收对象；已交付范围见第 7 节，后续提案不改变现行规则。
+本文以 `examples/chat/main.jk`、`script/main.jk` 为验收对象；已交付范围见第 7 节，后续提案不改变现行规则。
 当前接口以 [language.md](language.md) 为准，不变量见 [architecture.md](architecture.md)。
 本文承接[有状态服务的编程模型](stateful-service-ergonomics.md)（S0–S4 已完成）、
 [服务端状态域设计](server-concurrency.md)、[状态域语法](state-domain-syntax.md)、
@@ -18,7 +18,7 @@ D3／D4 联合设计，D5 分步，D6 收窄为顺序入队问题，D7 区分资
 
 - **宿主与脚本分工**：宿主只负责 I/O、生命周期与并发骨架；业务全部在 Script。
   `main` 用 `race`／`scope`／`branch` 写出的服务骨架清晰。
-- **契约单源与发布前预检**：`chat_contract.jk` 与 `require_contract` 让热更新边界明确。
+- **契约单源与发布前预检**：`contract.jk` 与 `require_contract` 让热更新边界明确。
 - **多资源 `when`**：`when "say" (mut account, room)` 让收费规则在一次业务操作内可读；
   换房的三方写集合一眼可见。这是本组合最有辨识度的部分，重构保留它作为核心。
 - **所有权归属**：账户归连接，房间归服务；重试、淘汰均有上限。
@@ -27,7 +27,7 @@ D3／D4 联合设计，D5 分步，D6 收窄为顺序入队问题，D7 区分资
 
 ### 1.2 协议负担
 
-R0／R1 实施前，`chat_logic.jk` 约 490 行，真正的业务规则（扣费、加入／离开、消息格式）约 150 行，
+R0／R1 实施前，`script/main.jk` 约 490 行，真正的业务规则（扣费、加入／离开、消息格式）约 150 行，
 其余为协议与样板。业务作者实际接触的概念包括 Owner、目录、请求根、就绪邮箱、停止邮箱、
 发布屏障、重试、排除列表、`Attempt` 双层 Result 等十余项。主要来源：
 
@@ -398,7 +398,7 @@ fn say(id: UInt64, text: String) @suspends -> Result<Unit, ChatError> {
 }
 ```
 
-2026-10-28 语法整理后 `examples/chat_logic.jk` 的实际写法：
+2026-10-28 语法整理后 `examples/chat/script/main.jk` 的实际写法：
 
 ```text
 fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends -> Outcome<Unit> {

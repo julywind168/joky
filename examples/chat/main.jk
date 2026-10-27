@@ -1,7 +1,7 @@
 // AOT chat host: owns sockets, directories and the script VM; business rules live in
-// chat_logic.jk and are republished through the admin port without dropping connections.
-import chat_admin
-import chat_contract.{type Contract, type Host, type Call, type AccountInit, type Client, defaults, require_contract}
+// script/main.jk and are republished through the admin port without dropping connections.
+import host/admin
+import contract.{type Contract, type Host, type Call, type AccountInit, type Client, defaults, require_contract}
 import joky/vm
 import joky/domain
 import joky/session
@@ -11,7 +11,7 @@ import joky/tcp.{type TcpListener, type TcpStream}
 
 struct Script { vm: vm.Vm, entries: Contract }
 
-fn script_path() -> String { "examples/chat_logic.jk" }
+fn script_path() -> String { "script/main.jk" }
 
 // Session callbacks forward to the current script version.
 fn line(script: &Script, client: &Client, text: String) @suspends @noescape -> Bool {
@@ -70,12 +70,12 @@ fn serve(script: &Script, host: Host, var listener: TcpListener) @suspends -> In
 }
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.new()
-    engine.module_file("chat_contract", "examples/chat_contract.jk")!
+    engine.module_file("contract", "contract.jk")!
     let entries = require_contract(&engine)
     match engine.load_file(script_path()) {
         Ok(_) => {},
         Err(error) => {
-            chat_admin.report(error)
+            admin.report(error)
             return 1
         }
     }
@@ -86,14 +86,14 @@ fn main() @suspends -> Int32 {
     var chat = match tcp.listen("127.0.0.1", 7777) {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
-    var admin = match tcp.listen("127.0.0.1", 7778) {
+    var admin_listener = match tcp.listen("127.0.0.1", 7778) {
         Ok(listener) => listener, Err(_) => { println("Could not bind admin listener"); return 1 }
     }
     println("chat {chat.local_addr()!.port()}")
-    println("admin {admin.local_addr()!.port()}")
+    println("admin {admin_listener.local_addr()!.port()}")
     let script = Script { vm: engine, entries }
     race {
         | serve(&script, host, chat)
-        | chat_admin.serve(&script.vm, script_path(), admin)
+        | admin.serve(&script.vm, script_path(), admin_listener)
     }
 }
