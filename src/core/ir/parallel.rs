@@ -70,7 +70,10 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 }
                 Type::FixedArray(a) => pending.push((a.element.clone(), share)),
                 Type::Tuple(t) => pending.extend(t.elements.iter().cloned().map(|ty| (ty, share))),
-                Type::Record(r) if r.closure.is_none() => {
+                Type::Record(r)
+                    if r.closure.as_ref().is_none_or(|c| c.storable)
+                        && (worker_local || !share || r.closure.is_none()) =>
+                {
                     pending.extend(
                         r.arguments
                             .iter()
@@ -220,7 +223,8 @@ pub(crate) fn analyse(
                 .iter()
                 .chain(std::iter::once(&signature.ret))
                 .any(|ty| {
-                    TypeWalk::new(ty, TypeEdges::Fields).any(|ty| matches!(ty, Type::Function(_)))
+                    TypeWalk::new(ty, TypeEdges::Fields)
+                        .any(|ty| matches!(ty, Type::Function(_)) || ty.is_closure_value())
                 });
             let control = crate::core::builtins::Builtin::lookup(name).is_some_and(|builtin| {
                 builtin.validate(signature, info.suspends, false).is_ok()
@@ -247,6 +251,23 @@ pub(crate) fn analyse(
             continue;
         };
         let dependencies = edges.entry(name.clone()).or_default();
+        // A transferable environment keeps its exact compiler-created target,
+        // even when the receiving helper only stores/drops it without calling it.
+        // Fn/FnMut/FnOnce specialization uses direct calls, not forged pointers.
+        for ty in signature
+            .params
+            .iter()
+            .chain(std::iter::once(&signature.ret))
+        {
+            for ty in crate::core::types::walk::TypeWalk::new(
+                ty,
+                crate::core::types::walk::TypeEdges::Fields,
+            ) {
+                if let Some(closure) = ty.closure_info() {
+                    dependencies.insert(closure.entry.clone());
+                }
+            }
+        }
         if signature
             .params
             .iter()
@@ -286,7 +307,10 @@ pub(crate) fn analyse(
             for slot in indirects {
                 let Type::Function(function) = &slot.ty else {
                     reasons.entry(name.clone()).or_insert_with(|| {
-                        "indirect target lacks immutable thread evidence".into()
+                        format!(
+                            "indirect target `{}` lacks immutable thread evidence",
+                            slot.ty
+                        )
                     });
                     continue;
                 };
@@ -301,7 +325,10 @@ pub(crate) fn analyse(
                 }
                 if !found {
                     reasons.entry(name.clone()).or_insert_with(|| {
-                        "indirect target lacks immutable thread evidence".into()
+                        format!(
+                            "indirect target `{}` lacks immutable thread evidence",
+                            slot.ty
+                        )
                     });
                 }
             }

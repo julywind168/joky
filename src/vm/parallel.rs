@@ -15,6 +15,8 @@ pub use maps::{TaskMap, TaskSet};
 #[cfg(test)]
 mod borrowed_iteration_tests;
 #[cfg(test)]
+mod closure_tests;
+#[cfg(test)]
 mod control_tests;
 #[cfg(test)]
 mod domain_tests;
@@ -197,6 +199,7 @@ impl PreparedParallelTask {
             .any(|ty| {
                 TypeWalk::new(ty, TypeEdges::Fields).any(|ty| {
                     matches!(ty, Type::Resource(_) | Type::Function(_))
+                        || ty.is_closure_value()
                         || ty.is_domain_capability()
                         || matches!(ty, Type::Record(r) if matches!(r.name.as_str(), "joky/domain.DirectoryHandle" | "joky/domain.TimerHandle" | "joky/outbox.Handle"))
                 })

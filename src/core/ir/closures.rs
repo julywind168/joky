@@ -284,11 +284,14 @@ impl FunctionPlan {
                 (name, slot_type(&binding.slot), binding.mutable)
             })
             .collect();
-        if suspends && !matches!(expected, Some(Type::Function(_))) {
+        if suspends
+            && !matches!(expected, Some(Type::Function(_)))
+            && !environment.closure.as_ref().unwrap().storable
+        {
             return Err(type_error(
                 &function.span,
                 ErrorCode::InvalidCall,
-                "Closure environments cannot enter suspending functions",
+                "Only reference-free move closure environments can enter suspending functions",
             ));
         }
         if let Some(Type::Function(pointer)) = expected {
@@ -1008,11 +1011,11 @@ impl FunctionPlan {
             return self
                 .invoke_function_value(pointer, args, span, vars, functions, suspends, types);
         }
-        if suspends {
+        if suspends && value.ty.contains_unstorable_closures() {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                "Closure environments cannot enter suspending functions",
+                "Only reference-free move closure environments can enter suspending functions",
             ));
         }
         let value = if self.captured_fields.contains_key(&value.index)
@@ -1128,7 +1131,7 @@ impl FunctionPlan {
             |i| args.get(i + 1),
             vars,
             functions,
-            false,
+            suspends,
             types,
         )?
         else {

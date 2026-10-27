@@ -27,6 +27,8 @@ pub(crate) enum Shape {
     // A compiler-generated value under the frozen module's closed target proof.
     // This shape is never accepted at the public TaskValue or host ABI boundary.
     Function,
+    // Compiler-created move closures retain a null owner identity.
+    EmptyOwner,
     Buffer,
     Product(Vec<Shape>),
     Sum(Vec<Shape>),
@@ -60,6 +62,17 @@ impl Shape {
                         .map(|t| build(t, depth + 1))
                         .collect::<Result<_, _>>()?,
                 ),
+                Type::Record(r) if r.closure.as_ref().is_some_and(|c| c.storable) => {
+                    let mut fields = vec![Shape::EmptyOwner];
+                    fields.extend(
+                        r.fields
+                            .iter()
+                            .skip(1)
+                            .map(|f| build(&f.ty, depth + 1))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    );
+                    Shape::Product(fields)
+                }
                 Type::Record(r) if !r.indirect && r.closure.is_none() => Shape::Product(
                     r.fields
                         .iter()
@@ -88,7 +101,12 @@ impl Shape {
     pub(crate) fn lanes(&self) -> usize {
         match self {
             Self::Unit => 0,
-            Self::Scalar(_) | Self::String | Self::Function | Self::Buffer | Self::Place(_) => 1,
+            Self::Scalar(_)
+            | Self::String
+            | Self::Function
+            | Self::EmptyOwner
+            | Self::Buffer
+            | Self::Place(_) => 1,
             Self::Product(v) => v.iter().map(Self::lanes).sum(),
             Self::Sum(v) => 1 + v.iter().map(Self::lanes).sum::<usize>(),
         }
@@ -111,7 +129,7 @@ impl Shape {
     pub(crate) fn owners(&self) -> Vec<usize> {
         fn walk(s: &Shape, base: usize, out: &mut Vec<usize>) {
             match s {
-                Shape::String | Shape::Buffer => out.push(base),
+                Shape::String | Shape::Buffer | Shape::EmptyOwner => out.push(base),
                 Shape::Product(v) | Shape::Sum(v) => {
                     let mut offset = base + usize::from(matches!(s, Shape::Sum(_)));
                     for s in v {
@@ -133,6 +151,8 @@ impl Shape {
         }
         match self {
             Self::Unit | Self::Function => {}
+            Self::EmptyOwner if words[0] == 0 => {}
+            Self::EmptyOwner => return Err(invalid()),
             Self::String | Self::Buffer | Self::Place(_) if words[0] != 0 => {}
             Self::String | Self::Buffer | Self::Place(_) => return Err(invalid()),
             Self::Scalar(ty) => {
@@ -179,6 +199,7 @@ impl Shape {
             }
             Self::Unit => out.push(0),
             Self::Function => out.push(20),
+            Self::EmptyOwner => out.push(21),
             Self::String => out.push(14),
             Self::Buffer => out.push(18),
             Self::Scalar(ty) => out.push(match ty {
@@ -219,6 +240,7 @@ impl Shape {
                 14 => return Ok(Shape::String),
                 18 => return Ok(Shape::Buffer),
                 20 => return Ok(Shape::Function),
+                21 => return Ok(Shape::EmptyOwner),
                 19 => {
                     if words.len() < 3 {
                         return Err(invalid());

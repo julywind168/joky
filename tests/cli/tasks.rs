@@ -636,3 +636,20 @@ fn parallel_borrowed_iteration_runs_in_standalone_aot() {
     );
     work.assert_native("borrowed.jk", &["--task-workers", "3"], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn parallel_owned_closures_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "closures.jk",
+        include_str!("../fixtures/parallel_owned_closures.jk"),
+    );
+    work.assert_native("closures.jk", &["--parallel"], b"", 0);
+    let output = Command::new(work.path().join("closures"))
+        .args(["--task-workers", "3"])
+        .output()
+        .unwrap();
+    success(&output);
+    assert!(output.stdout.is_empty());
+}

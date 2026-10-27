@@ -318,7 +318,6 @@ fn iterator_adapters_reject_borrow_escape_consuming_callbacks_and_suspension() {
         "fn bad() { for _ in iter.filter(0..3, move |x| { alloc(x); true }) {} }",
         "fn escape(x: &Int32) -> Bool { alloc(x); true } fn bad() { for _ in iter.filter(0..3, escape) {} }",
         "fn bad() { let a = [1]; let r = &a; let values = iter.map(0..2, move |x| { r.len(); x }); }",
-        "fn bad() @suspends { for _ in iter.map(0..2, move |x| { x }) { task.yield_now() } }",
         "fn fail() @suspends -> Int32 { 1 } fn bad() { let values = iter.map(0..2, fail); }",
     ] {
         let source = format!("import joky/iter\nimport joky/task\n{source}");

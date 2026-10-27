@@ -1,0 +1,80 @@
+import joky/task
+import joky/check
+import joky/string
+import joky/iter
+
+struct Callback<F> { operation: F }
+fn store<F>(operation: F) -> Callback<F> { Callback { operation } }
+fn observe(id: Int32) @suspends {}
+fn invoke<F: FnOnce() -> String>(operation: F, id: Int32) @suspends -> String {
+    observe(id)
+    task.yield_now()
+    operation()
+}
+fn repeat<F: FnMut() -> Int32>(var operation: F) @suspends -> Int32 {
+    let first = operation()
+    task.yield_now()
+    first + operation()
+}
+fn saved<F: FnOnce() -> String>(callback: Callback<F>) @suspends -> String {
+    task.yield_now()
+    let operation = callback.operation
+    operation()
+}
+fn discard<F>(value: F) {}
+fn parked_call<F: FnOnce() -> String>(operation: F) @suspends -> String {
+    observe(99)
+    task.sleep_ms(60000)
+    operation()
+}
+fn delayed(value: Int32) @suspends -> Int32 { task.yield_now(); value }
+fn fast(value: String) @suspends -> String { value }
+fn cancelled() @suspends -> String {
+    let text = "losing environment"
+    let operation = move || { text }
+    race { | parked_call(operation) | fast("winner") }
+}
+fn parked() @suspends {
+    let text = "cancelled environment"
+    let operation = move || { text }
+    scope { branch { discard(parked_call(operation)) } }
+}
+fn failed() @suspends {
+    let text = "unconsumed environment"
+    let operation = move || { text }
+    task.yield_now()
+    check.panic("closure failure")
+}
+fn main() @suspends -> Int32 {
+    let offset = 40
+    let add = move |value: Int32| { offset + value }
+    check.assert(add(delayed(2)) == 42, "closure arguments may suspend")
+    let prefix = "text"
+    var mapped = 0
+    for value in iter.map(0..2, move |value| { value + int32(prefix.byte_length()) }) {
+        task.yield_now()
+        mapped += value
+    }
+    check.assert(mapped == 9, "iterator adapter retains its owned callback across suspension")
+    let text = "owned"
+    let operation = move || { text }
+    let (left, right) = join { | invoke(operation, 1) | invoke(move || { "empty" }, 2) }
+    check.assert(left.equals("owned") && right.equals("empty"), "FnOnce and empty environment")
+    var count = 20
+    let counter = move || { count += 1; count }
+    let (total, zero) = join { | repeat(counter) | repeat(move || { 0 }) }
+    check.assert(total == 43 && zero == 0, "FnMut resumes with stable local storage")
+    let values = ["a", "bc"]
+    let callback = store(move || { "length={values.len()}" })
+    let (description, other) = join { | saved(callback) | invoke(move || { "other" }, 3) }
+    check.assert(description.equals("length=2") && other.equals("other"), "wrapper and owned array capture")
+    let nested_text = "nested"
+    let inner = move || { nested_text }
+    let outer = move || { inner() }
+    scope { branch { check.assert(invoke(outer, 4).equals("nested"), "nested environment") } }
+    let never_called = "dropped on receiver"
+    let unused = move || { never_called }
+    scope { branch { discard(unused) } }
+    check.assert(cancelled().equals("winner"), "race releases losing environment")
+    0
+}

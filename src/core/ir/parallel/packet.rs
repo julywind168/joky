@@ -39,7 +39,7 @@ impl Kind {
             Type::Record(r) if r.map => Self::Map,
             Type::Record(r) if r.set => Self::Set,
             Type::Tuple(_) => Self::Tuple,
-            Type::Record(r) if r.closure.is_none() => Self::Record,
+            Type::Record(r) if r.closure.as_ref().is_none_or(|c| c.storable) => Self::Record,
             Type::Enum(_) => Self::Enum,
             _ if crate::core::instance::scalar(ty) => Self::Scalar,
             _ => Self::Local,
@@ -102,6 +102,11 @@ pub(crate) fn classify(
                     return None;
                 };
                 vec![(**element).clone()]
+            }
+            Type::Record(r) if r.closure.as_ref().is_some_and(|c| c.storable) => {
+                // The compiler-owned first field is a null cleanup identity, not
+                // an arbitrary Buffer capability. Captures are checked normally.
+                r.fields.iter().skip(1).map(|f| f.ty.clone()).collect()
             }
             Type::Record(r) if r.closure.is_none() && !r.indirect => r
                 .arguments

@@ -88,7 +88,7 @@ impl FunctionPlan {
             })?;
         if ret.contains_references()
             || ret.contains_functions()
-            || ret.is_closure_value()
+            || ret.contains_closures()
             || (ret.is_owner() && !ret.is_suspend_safe_owner())
         {
             return Err(type_error(

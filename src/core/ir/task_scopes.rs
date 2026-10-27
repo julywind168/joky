@@ -70,7 +70,7 @@ impl FunctionPlan {
             Flow::Value(value) => {
                 let ty = slot_type(&value);
                 if ty.contains_references()
-                    || ty.is_closure_value()
+                    || ty.contains_closures()
                     || ty.contains_functions()
                     || (ty.is_owner() && !ty.is_suspend_safe_owner())
                 {

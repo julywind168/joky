@@ -348,7 +348,7 @@ impl Type {
     /// moved between ordinary CPS activations. Borrowed views and aggregates
     /// containing references still require synchronous use.
     pub(crate) fn is_suspend_safe_owner(&self) -> bool {
-        if self.contains_closures() {
+        if self.contains_unstorable_closures() {
             return false;
         }
         fn safe_storage(ty: &Type) -> bool {

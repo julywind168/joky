@@ -876,11 +876,17 @@ pub(super) fn check_module(
                 "Only reference-free move closure values can be returned",
             ));
         }
-        if info.suspends && info.signature.params.iter().any(Type::contains_closures) {
+        if info.suspends
+            && info
+                .signature
+                .params
+                .iter()
+                .any(Type::contains_unstorable_closures)
+        {
             return Err(type_error(
                 &info.span,
                 ErrorCode::InvalidCall,
-                "Closure values cannot enter suspending frames",
+                "Only reference-free move closure values can enter suspending frames",
             ));
         }
         for (index, ty) in info.signature.params.iter().enumerate() {
@@ -908,7 +914,11 @@ pub(super) fn check_module(
                 .into_iter()
                 .chain(op.cleanup_storage().map(|(_, ty)| ty))
             {
-                if info.suspends && !target.is_copy_value() && !target.is_suspend_safe_owner() {
+                if info.suspends
+                    && !target.is_copy_value()
+                    && !target.is_suspend_safe_owner()
+                    && !target.is_callable_parameter()
+                {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,

@@ -4,6 +4,7 @@
 首版支持同步局部匿名函数、借用/move 捕获、Fn/FnMut/FnOnce 与 Option/Result 回调。
 实现规则见 [language.md](language.md#同步匿名函数与闭包)，阶段证据见第 10 节。
 2026-10-24 的同步拥有闭包存储与返回扩展见第 12 节；下文 C0–C6 是历史首版边界。
+后续无引用拥有环境的挂起存储与同树 worker 输入见 [W3a 记录](startup-worker-configuration.md#9-w3a-实施与验证记录)。
 这是语言基础补齐的第 3 项；前两项见[模块常量与字段语法](module-constants-record-syntax.md)
 与[记录解构](record-destructuring.md)。下文保留设计推导与冻结契约，挂起闭包与借用环境逃逸仍属后续范围。
 
