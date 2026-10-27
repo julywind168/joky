@@ -21,6 +21,7 @@
 - [状态域语法糖草案](state-domain-syntax.md)
 - [有状态服务的编程模型与实施计划](stateful-service-ergonomics.md)
 - [服务端并发模型重构计划](service-concurrency-refactor.md)
+- [启动时 worker 配置与并行能力演进计划](startup-worker-configuration.md)
 - [文件运行时设计与开发计划](file-runtime.md)
 - [for 与迭代器分阶段开发计划](for-iterators.md)
 
