@@ -399,7 +399,8 @@ fn net6_dns_race_cancelled_lookup_does_not_cancel_next_lookup() {
             executor.task_count() == 0
         });
         clean();
-        assert_eq!(service.core.outstanding.load(Ordering::Acquire), 1);
+        // Result delivery can precede the worker dropping its request identity.
+        wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 1);
         release_tx.send(()).unwrap();
         wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 0);
         assert_eq!(executor.poll(1).unwrap().polled, 0);
