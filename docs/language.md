@@ -1828,9 +1828,9 @@ fn example() {
   定义作用域、成员可见性、同步 / CPS、失败、取消和重载后的旧任务保活规则不变。
   固有方法可声明带约束的参数；trait 要求的方法本身不接受独立类型参数。拥有型记录实参可用；闭包实参须具有 callable bound。
 
-### Option 与 Result 后缀解包
+### Option、Result 与 Outcome 后缀解包
 
-标准库 `Option<T>` 和 `Result<T, E>` 支持后缀 `!` 与 `?`，同步与 `@suspends` 函数均可使用：
+标准库 `Option<T>`、`Result<T, E>` 和 `domain.Outcome<T, E>` 支持后缀 `!` 与 `?`，同步与 `@suspends` 函数均可使用：
 
 | 表达式 | 成功分支 | 失败分支 |
 | --- | --- | --- |
@@ -1838,10 +1838,12 @@ fn example() {
 | `result!` | Ok 取出 T | Err 触发当前任务失败并清理错误载荷 |
 | `option?` | Some 取出 T | 从当前函数返回 None |
 | `result?` | Ok 取出 T | 从当前函数返回 Err，转移原错误载荷 |
+| `outcome!` | Committed 取出 T | Rejected／Failed 触发任务失败，消息区分两种变体 |
+| `outcome?` | Committed 取出 T | 从当前函数原样返回 Rejected／Failed，转移载荷 |
 
-`?` 要求当前函数返回同类标准枚举；成功载荷类型可以不同，Result 的错误类型必须一致，
-不做隐式转换，也不在 Option 与 Result 之间转换。闭包内的 `?` 返回该闭包；跨 `scope`
-的提前返回与显式 return 一样，先汇合子任务再退出。Err / None 是普通返回值，不触发任务失败。
+`?` 要求当前函数返回同类标准枚举；成功载荷类型可以不同，Result 和 Outcome 的业务错误类型必须一致，
+不做隐式转换，也不在 Option、Result 和 Outcome 之间转换。闭包内的 `?` 返回该闭包；跨 `scope`
+的提前返回与显式 return 一样，先汇合子任务再退出。Err／None／Rejected／Failed 是普通返回值，不触发任务失败。
 
 ```joky
 fn increment(value: Option<Int32>) -> Option<Int64> {
@@ -1854,7 +1856,7 @@ fn main() {
 
 操作数只求值一次。拥有型实例按值消费，成功时转移载荷，失败或提前返回时沿普通清理路径释放局部资源；
 Copy 实例仍可再次使用。运算符只识别标准库类型的声明身份，支持导入别名和关闭 prelude 后的显式导入，
-不适用于同名自定义枚举或 `&Option` / `&Result`；需要借用时用 match。
+不适用于同名自定义枚举或 `&Option`／`&Result`／`&Outcome`；需要借用时用 match。
 
 后缀与成员、下标访问可连续使用，例如 `nested!!`、`read()?.field`；优先级高于前缀一元运算和二元运算。
 `!flag` 仍是 Bool 逻辑取反，`!=` 仍是不等比较。在换行会结束表达式的位置，后缀不能跨行：
@@ -3650,14 +3652,15 @@ fn main() @suspends -> Int32 {
   队列保存独立数据，不转移活根内部引用。
   多个捕获共同计入下述 64 个结构项、64 槽、8 层聚合限制，编译器生成的外层捕获记录也计入。
   枚举允许 `Option<T>`、`Result<T,E>` 等具体实例，所有分支载荷和类型参数都须符合传递值资格。
-- 表达式结果是 `Result<R, domain.DomainAccessError>`，其中 R 为块末尾表达式类型。
+- 块末尾类型 R 为标准 `Result<T,E>` 时，表达式结果为 `domain.Outcome<T,E>`；
+  其他 R（包括 Option 或自定义枚举）仍返回 `Result<R, domain.DomainAccessError>`。
   关闭、域隔离、非法访问、入口不兼容及资源不足保留现有分类。参数／捕获包准备失败仍可走
   任务失败通道；候选复制、执行或结果预留遇到资源不足时返回 `ResourceLimit`，不发布候选。
   算术异常等块体错误仍终结当前调用，但不会隔离或修改参与域。
 - 每次操作仅深复制声明 `mut` 的域作为独立候选；只读域在同一同步注册表区间内借用活根，
   不创建候选、不推进修订。只读别名共享同一根，返回拥有值时仍需显式复制。标准 `Result<T,E>` 的顶层 `Err`
   丢弃全部候选；顶层 `Ok` 或普通非 Result 返回值成功发布。`false`、`Ok(false)`、`None`
-  以及自定义枚举均不隐式回滚。业务错误作为 `Ok(Err(e))` 返回，与外层运行时拒绝区分。
+  以及自定义枚举均不隐式回滚。业务错误作为 `Outcome.Rejected(e)` 返回，与访问／提交失败 `Outcome.Failed(e)` 区分。
 - 只有成功发布才推进声明可写域的修订。候选准备、同步计算及发布在同一 FIFO 执行轮次内完成，
   不跨挂起点或切换代码版本，因此此路径没有中途并发冲突，也不隐式重试。深复制计入临时峰值预算。
   取消尚未执行的申请不修改状态；发布后的取消只丢弃结果。发布后在调用方复制／解码拥有型结果
@@ -3753,7 +3756,8 @@ AOT 中两种形式均可用；AOT 中的块不会自动成为另一个 Script �
 属性不表示所有方法都合格，作为域操作调用的方法仍须通过效果及不逃逸证明。
 
 `handle.method(arg1, arg2)` 可调用状态类型的非泛型固有方法，接收者必须为 `&self` 或 `&mut self`。
-它在 `@suspends` 流程中等待，与 `when` 共用候选发布和业务 `Err` 回滚规则，返回同样的访问 Result。
+它在 `@suspends` 流程中等待，与 `when` 共用候选发布和业务 `Err` 回滚规则，
+方法返回标准 Result 时交付 Outcome，其他返回值仍包装访问 Result。
 参数在调用方按顺序求值，再合成有界传递值包；
 读句柄不能调用可写方法。方法按模块／类型／方法身份匹配当前实现，旧独立函数 API 保持可用。
 句柄本身已有的固有方法和可见 trait 方法优先，例如 `read_only()`；发生名称遮蔽时用 `when`
@@ -4015,13 +4019,31 @@ String 和 Array 按值移动；需保留原值时显式构造副本，String �
 返回 `RequestError.ResourceLimit`。可执行示例见
 [state_domain_request_values.jk](../tests/fixtures/state_domain_request_values.jk)。
 
-业务枚举不改变访问协议。块返回 `Result<T,E>` 时，`when` 的类型是
-`Result<Result<T,E>, domain.DomainAccessError>`：外层 `Err` 表示本次操作没有发布状态，
-其中 `ResourceLimit` 也可能在候选计算后返回。`Ok(Err(e))` 表示业务拒绝，丢弃全部候选；
-`Ok(Ok(value))` 表示业务成功并已发布。显式原地短操作不采用这一回滚规则。
-块返回 `Option<T>` 时同样保留外层访问 Result。只构造 `None` 或 `Err` 等无法推导全部参数的分支时，
-外层函数返回类型、局部变量注解提供完整 `Result<R, DomainAccessError>` 时，期望的 R 会传入块体，
-因此业务 `Ok`／`Err` 无需重复泛型参数；没有外层期望类型且无法独立推导时仍需显式注解。
+块返回标准 `Result<T,E>` 时，`when` 和状态句柄方法返回
+`domain.Outcome<T,E> { Committed(T), Rejected(E), Failed(DomainAccessError) }`：
+Committed 表示业务成功并已发布；Rejected 表示业务拒绝，丢弃全部候选；Failed 表示访问或提交失败，
+本次操作没有发布状态，其中 ResourceLimit 也可能在候选计算后返回。
+运行时异常、取消和发布后的结果交付失败仍沿任务通道传播，不包装成 Failed。
+块内继续用 Ok／Err 和 `?` 表达业务结果。只展开最外层的标准 Result，T 本身为 Result 时不继续展开。
+显式原地短操作、request、快照和提案回执沿用各自原有结果类型与契约。
+
+块返回普通值或 `Option<T>` 时仍保留外层访问 Result。外层函数返回类型或局部变量注解为
+`domain.Outcome<T,E>` 时，块体及 else／alias 分支获得 `Result<T,E>` 的期望类型；
+其他块仍从完整的 `Result<R, DomainAccessError>` 接收 R。只有 Ok 或只有 Err 的块无需重复泛型参数。
+没有外层期望类型且无法独立推导时仍需显式注解。可执行示例见
+[三态状态域结果](../tests/fixtures/state_domain_outcome.jk)。
+
+Outcome 的方法如下；消费结果时按值转移载荷，无需 Clone／Copy：
+
+| 方法 | 行为 |
+| --- | --- |
+| `is_committed(&self) -> Bool` | 借用查询是否成功，不消费载荷 |
+| `committed(self) -> Option<T>` | Committed 转为 Some；消费并丢弃两类失败，返回 None |
+| `unwrap(self) -> T` | 解出 Committed；Rejected／Failed 触发带分类消息的任务失败 |
+| `into_result<F,R: FnOnce(E)->F,A: FnOnce(DomainAccessError)->F>(self, rejected:R, failed:A) -> Result<T,F>` | Committed 转为 Ok；失败时仅调用对应的同步映射函数 |
+
+Outcome 支持单个 `!`；在返回相同业务错误类型的 Outcome 函数中，可用一次 `?` 传播两类失败。
+转换为普通 Result 时由调用方用 into_result 显式决定两类错误的表示，不做隐式错误转换。
 
 Timer 的输入也支持上述传递值契约；重复触发时每次建立独立拥有输入，具体生命周期见[定时域调用](#定时域调用-jokydomain)。
 `when` 使用同一传递值载荷资格；Rust `InstanceValue` 公共入口保持标量。

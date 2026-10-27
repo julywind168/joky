@@ -67,7 +67,11 @@ impl FunctionPlan {
         if enumeration.parameters.len() == 2 {
             let error = returned
                 .and_then(|r| r.arguments.get(1)?.as_type().cloned())
-                .or_else(|| (!is_success).then_some(payload).flatten());
+                .or_else(|| {
+                    matches!(constructor.name.as_str(), "Err" | "Rejected")
+                        .then_some(payload)
+                        .flatten()
+                });
             let Some(error) = error else { return Ok(None) };
             arguments.push(GenericArgument::Type(error));
         }
@@ -114,7 +118,7 @@ impl FunctionPlan {
             type_error(
                 span,
                 ErrorCode::TypeMismatch,
-                "Postfix `!` and `?` require a standard Option or Result value",
+                "Postfix `!` and `?` require a standard Option, Result or Outcome value",
             )
         };
         let value = value.ok_or_else(invalid)?;
@@ -122,18 +126,23 @@ impl FunctionPlan {
             return Err(invalid());
         };
         let success = success_variant(enumeration, types).ok_or_else(invalid)?;
-        let failure = 1 - success;
         let target = if propagate {
             let valid = match &self.return_type {
                 Type::Enum(target) => {
                     target.id == enumeration.id
-                        && target.variants[failure].payload == enumeration.variants[failure].payload
+                        && enumeration
+                            .variants
+                            .iter()
+                            .enumerate()
+                            .all(|(tag, variant)| {
+                                tag == success || target.variants[tag].payload == variant.payload
+                            })
                 }
                 _ => false,
             };
             if !valid {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
-                    "Postfix `?` requires the enclosing function to return the same Option or Result kind with the same error type"));
+                    "Postfix `?` requires the enclosing function to return the same Option, Result or Outcome kind with the same error type"));
             }
             let Type::Enum(target) = &self.return_type else {
                 unreachable!()
@@ -143,77 +152,80 @@ impl FunctionPlan {
             None
         };
 
-        let success_label = self.label_count;
-        self.label_count += 1;
-        let failed = variant_pattern(enumeration, failure, *span);
-        self.match_pattern_tests(&failed, value.index, success_label)?;
-        self.local_scopes.push(Vec::new());
-        if value.ty.is_owner() || value.ty.is_place() {
-            self.local_scopes.last_mut().unwrap().push(value.clone());
+        for failure in (0..enumeration.variants.len()).filter(|&tag| tag != success) {
+            let next = self.label_count;
+            self.label_count += 1;
+            let failed = variant_pattern(enumeration, failure, *span);
+            self.match_pattern_tests(&failed, value.index, next)?;
+            self.local_scopes.push(Vec::new());
+            if value.ty.is_owner() || value.ty.is_place() {
+                self.local_scopes.last_mut().unwrap().push(value.clone());
+            }
+            let mut local = vars.clone();
+            if let Some(target) = target.clone() {
+                self.bind_match_pattern(&failed, Some(value.clone()), None, &mut local)?;
+                let payload = [Expr::Ident {
+                    name: "$payload".into(),
+                    span: *span,
+                }];
+                let returned = self.construct_enum(
+                    enums::Constructor {
+                        name: target.variants[failure].name.clone(),
+                        args: target.variants[failure]
+                            .payload
+                            .as_ref()
+                            .map(|_| payload.as_slice()),
+                        enumeration: target,
+                        type_args: &[],
+                        span: *span,
+                    },
+                    &mut local,
+                    functions,
+                    suspends,
+                    types,
+                )?;
+                let Flow::Value(returned) = returned else {
+                    unreachable!()
+                };
+                self.return_value(returned, *span)?;
+            } else {
+                let message = format!("Postfix `!` on {}", enumeration.variants[failure].name);
+                let literal = Expr::Literal {
+                    literal: Literal::String(message),
+                    span: *span,
+                };
+                let Flow::Value(message) =
+                    self.expr(&literal, &mut local, functions, suspends, types)?
+                else {
+                    unreachable!()
+                };
+                local.insert(
+                    "$message".into(),
+                    Binding {
+                        slot: message,
+                        mutable: false,
+                        place: None,
+                    },
+                );
+                let Flow::Value(Some(message)) = self.borrow_local(
+                    &Expr::Ident {
+                        name: "$message".into(),
+                        span: *span,
+                    },
+                    false,
+                    &local,
+                    suspends,
+                    *span,
+                )?
+                else {
+                    unreachable!()
+                };
+                self.emit(Op::Panic { message });
+            }
+            self.end_local_scope();
+            self.emit(Op::Label(next));
         }
         let mut local = vars.clone();
-        if let Some(target) = target {
-            self.bind_match_pattern(&failed, Some(value.clone()), None, &mut local)?;
-            let payload = [Expr::Ident {
-                name: "$payload".into(),
-                span: *span,
-            }];
-            let returned = self.construct_enum(
-                enums::Constructor {
-                    name: target.variants[failure].name.clone(),
-                    args: target.variants[failure]
-                        .payload
-                        .as_ref()
-                        .map(|_| payload.as_slice()),
-                    enumeration: target,
-                    type_args: &[],
-                    span: *span,
-                },
-                &mut local,
-                functions,
-                suspends,
-                types,
-            )?;
-            let Flow::Value(returned) = returned else {
-                unreachable!()
-            };
-            self.return_value(returned, *span)?;
-        } else {
-            let message = format!("Postfix `!` on {}", enumeration.variants[failure].name);
-            let literal = Expr::Literal {
-                literal: Literal::String(message),
-                span: *span,
-            };
-            let Flow::Value(message) =
-                self.expr(&literal, &mut local, functions, suspends, types)?
-            else {
-                unreachable!()
-            };
-            local.insert(
-                "$message".into(),
-                Binding {
-                    slot: message,
-                    mutable: false,
-                    place: None,
-                },
-            );
-            let Flow::Value(Some(message)) = self.borrow_local(
-                &Expr::Ident {
-                    name: "$message".into(),
-                    span: *span,
-                },
-                false,
-                &local,
-                suspends,
-                *span,
-            )?
-            else {
-                unreachable!()
-            };
-            self.emit(Op::Panic { message });
-        }
-        self.end_local_scope();
-        self.emit(Op::Label(success_label));
         self.local_scopes.push(Vec::new());
         if value.ty.is_owner() || value.ty.is_place() {
             self.local_scopes.last_mut().unwrap().push(value.clone());

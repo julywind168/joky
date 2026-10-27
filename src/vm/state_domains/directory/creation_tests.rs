@@ -14,7 +14,7 @@ fn operation(routes:domain.DirectoryHandle,delta:Int32,reject:Bool) @suspends ->
         room.value+=delta
         let result:Result<Int32,Int32>=if reject {Err(7)} else {Ok(room.value)}
         result
-    }.unwrap().unwrap()
+    }.unwrap()
 }"#;
 const ENTRY: &str = "$when/named/4:main/9:operation/6:637265617465";
 struct ManualClock(Cell<Instant>);

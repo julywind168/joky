@@ -1944,6 +1944,25 @@ fn state_domains_optional_paths_and_variants_release_owned_graphs() {
         true,
     );
 }
+
+#[test]
+fn state_domains_outcome_preserves_errors_propagation_and_cleanup() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_outcome.jk"),
+        [0, 1, 10, 100, 500, 1000, 2000, 4000, 8000],
+        true,
+    );
+}
+
+#[test]
+#[ignore = "exhaustive: cancel flat domain outcomes and failure propagation at every instruction"]
+fn exhaustive_state_domains_outcome_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../../../tests/fixtures/state_domain_outcome.jk"),
+        0..=32768,
+        true,
+    );
+}
 #[test]
 #[ignore = "exhaustive: cancel optional paths and owning variant replacement at every instruction"]
 fn exhaustive_state_domains_optional_cancellation() {

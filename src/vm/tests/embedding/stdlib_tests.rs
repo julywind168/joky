@@ -282,18 +282,24 @@ fn postfix_unwrap_rejects_wrong_types_and_consumed_owners() {
         "fn bad(x: &Option<Int32>) -> Int32 { x! }",
         "fn bad() -> &Int32 { let n = 42; Some(&n)! }",
         "fn bad() { let f = || -> Int32 { Some(1)? } }",
+        "import joky/domain fn bad(x:domain.Outcome<Int32,String>)->domain.Outcome<Int32,Bool>{domain.Outcome.Committed(x?)}",
+        "import joky/domain fn bad(x:domain.Outcome<Int32,String>)->Result<Int32,String>{Ok(x?)}",
+        "import joky/domain fn bad(x:Result<Int32,String>)->domain.Outcome<Int32,String>{domain.Outcome.Committed(x?)}",
+        "import joky/domain fn bad(x:domain.Outcome<String,String>){let value=x!; x!;}",
     ] {
         let mut vm = VmEngine::new_interpreter();
         assert!(vm.load_source(source).is_err(), "{source}");
     }
-    for name in ["Option", "Result"] {
+    for name in ["Option", "Result", "Outcome"] {
         let source =
             format!("enum {name}<T> {{ None, Some(T) }} fn bad() -> Int32 {{ {name}.Some(42)! }}");
         let mut vm = VmEngine::new_interpreter();
         vm.set_prelude_enabled(false);
         let error = vm.load_source(&source).unwrap_err();
         assert!(
-            error.to_string().contains("standard Option or Result"),
+            error
+                .to_string()
+                .contains("standard Option, Result or Outcome"),
             "{error}"
         );
     }

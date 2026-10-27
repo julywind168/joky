@@ -25,7 +25,7 @@ fn new_room(name: String) -> Room { Room { name: name, members: Array.new::<Memb
 
 // A command whose account or membership changed underneath it is refused as a whole.
 enum Rejection { Stale }
-type Outcome<T> = Result<Result<T, Rejection>, domain.DomainAccessError>
+type Outcome<T> = domain.Outcome<T, Rejection>
 
 // Protocol: one line is one command; any rejection closes the connection.
 enum Command { Balance, Join(String), Leave, Say(String), Invalid }
@@ -60,11 +60,11 @@ fn handle_line(host: Host, id: UInt64, line: String) @suspends -> Bool {
         Invalid => committed(reply(account, Reply.Usage))
     }
 }
-fn committed<T>(outcome: Outcome<T>) -> Bool { match outcome { Ok(Ok(_)) => true, _ => false } }
+fn committed<T>(outcome: Outcome<T>) -> Bool { outcome.is_committed() }
 // Commands that leave a room hand its name back so an empty room can be reclaimed.
 fn vacated(host: Host, outcome: Outcome<Option<String>>) @suspends -> Bool {
     match outcome {
-        Ok(Ok(room)) => { reclaim(host, &room); true },
+        Committed(room) => { reclaim(host, &room); true },
         _ => false
     }
 }

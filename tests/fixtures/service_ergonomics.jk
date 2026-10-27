@@ -21,10 +21,10 @@ enum Status { Pending, Ready }
 struct Counter { value: Int32 }
 fn make(_: Unit) -> Counter { Counter { value: 1 } }
 fn expect(ok: Bool) { check.assert(ok, "Service ergonomics regression") }
-fn update(c: domain.WriteHandle<Counter>) @suspends -> Result<Result<Int32, String>, domain.DomainAccessError> {
+fn update(c: domain.WriteHandle<Counter>) @suspends -> domain.Outcome<Int32, String> {
     when (mut c) { c.value += 1; Ok(c.value) }
 }
-fn rejected(c: domain.WriteHandle<Counter>) @suspends -> Result<Result<Int32, String>, domain.DomainAccessError> {
+fn rejected(c: domain.WriteHandle<Counter>) @suspends -> domain.Outcome<Int32, String> {
     when (mut c) { c.value = 99; Err("rejected") }
 }
 struct Different { value: Int32 }
@@ -112,8 +112,8 @@ fn main() @suspends {
     task.yield_now()
     expect(value.equals("hello") && number == 2 && x.value.equals("hello"))
     let owner = domain.create(make, {})
-    expect(update(owner.handle())!! == 2)
-    expect(rejected(owner.handle())!.is_err())
+    expect(update(owner.handle())! == 2)
+    expect(match rejected(owner.handle()) { Rejected(message) => message.equals("rejected"), _ => false })
     let counter = owner.handle()
     let value: Result<Int32, domain.DomainAccessError> = when (counter) { counter.value }
     expect(value! == 2)

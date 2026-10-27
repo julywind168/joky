@@ -43,13 +43,13 @@ fn lifecycle() @suspends ->Int32 {
     let b=domain.create(make,Option.None::<Int32>)
     let x=a.handle(); let y=b.handle()
     assert(x.value().unwrap().unwrap_or(-1)==10)
-    assert(x.apply(Command.Set(12)).unwrap().unwrap()==12)
+    assert(x.apply(Command.Set(12)).unwrap()==12)
     let command=Command.Reject(Rejection.Limit(4))
     match when "business error" (mut x,y) {
         x.n+=1
         update(x,command)
-    } {Ok(Err(Limit(n)))=>assert(n==4),_=>assert(false)}
-    // A business Err discards candidates while preserving the outer success result.
+    } {Rejected(Limit(n))=>assert(n==4),_=>assert(false)}
+    // A business Err discards candidates and returns a business rejection.
     assert(x.value().unwrap().unwrap_or(-1)==12)
     let absent:Option<Int32>=Option.None
     assert(when (x) {absent}.unwrap().is_none())
@@ -80,7 +80,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(x.value().unwrap().unwrap_or(-1)==30)
     timer.close()
     a.close()
-    match x.apply(Command.Read) {Err(Closed)=>{},_=>assert(false)}
+    match x.apply(Command.Read) {Failed(Closed)=>{},_=>assert(false)}
     b.close()
     24
 }

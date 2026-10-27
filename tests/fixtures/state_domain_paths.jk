@@ -43,7 +43,7 @@ fn lifecycle() @suspends ->Int32 {
         assert(text.equals("rollback"))
         result
     }
-    assert(denied.unwrap().is_err())
+    assert(match denied { Rejected(7) => true, _ => false })
     assert(when(first,second:State=routes[first.key]) {first.n==5 && second.n==2}.unwrap())
     var mailbox=outbox.create(1,8)
     let output=mailbox.handle()

@@ -2528,3 +2528,14 @@ fn state_domains_optional_paths_run_in_standalone_aot() {
     );
     work.assert_native("optional.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_outcome_runs_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "outcome.jk",
+        include_str!("../fixtures/state_domain_outcome.jk"),
+    );
+    work.assert_native("outcome.jk", &[], b"", 0);
+}

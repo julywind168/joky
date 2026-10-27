@@ -40,10 +40,10 @@ fn lifecycle() @suspends ->Int32 {
     let x=a.handle(); let y=b.handle()
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==10)
     assert(x.sum((1,true),Pair{left:2,right:3}).unwrap()==16)
-    assert(x.apply(input(12)).unwrap().unwrap().left==12)
+    assert(x.apply(input(12)).unwrap().left==12)
     var captured=input(13); captured.left.1=false
     let offset=(1,true)
-    match when "business error" (mut x,y) {update(x,captured)} {Ok(Err(Denied))=>{},_=>assert(false)}
+    match when "business error" (mut x,y) {update(x,captured)} {Rejected(Denied)=>{},_=>assert(false)}
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==12)
     let answer=when (x,y) {(Pair{left:x.n+offset.0,right:y.n},Option.Some((true,'中')))}.unwrap()
     assert(answer.0.left==13 && answer.1.unwrap_or((false,'a')).1=='中')
@@ -81,7 +81,7 @@ fn lifecycle() @suspends ->Int32 {
     while match t.status() {Active=>true,_=>false} {task.yield_now()}
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==30)
     timer.close(); a.close()
-    match x.apply(input(0)) {Err(Closed)=>{},_=>assert(false)}
+    match x.apply(input(0)) {Failed(Closed)=>{},_=>assert(false)}
     b.close(); 24
 }
 fn main() @suspends {assert(lifecycle()==24)}

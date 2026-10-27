@@ -14,14 +14,14 @@ fn data(n:Int32)->Data {
 fn counter(n:Int32)->Counter {Counter{n:n}}
 fn read(s:&Counter)->Int32 {s.n}
 fn size(s:&Data)->Int32 {s.values.len().to_i32()!}
-fn operation(a:domain.WriteHandle<Counter>,b:domain.ReadHandle<Data>,c:domain.ReadHandle<Data>,mode:Int32) @suspends ->Result<Int32,Int32> {
+fn operation(a:domain.WriteHandle<Counter>,b:domain.ReadHandle<Data>,c:domain.ReadHandle<Data>,mode:Int32) @suspends ->domain.Outcome<Int32,Int32> {
     when "update" (b,mut a,c) {
         let text=b.text.clone()
         a.n=b.values.get(0)!+c.values.get(c.values.len()-1)!
         if mode==2 {a.n=a.n/(mode-2)}
         let result:Result<Int32,Int32>=if mode==1 {Err(9)} else {Ok(a.n)}
         result
-    }.unwrap()
+    }
 }
 fn single(b:domain.ReadHandle<Data>) @suspends ->Int32 {when "read" (b){size(b)}!}
 fn shared(b:domain.ReadHandle<Data>,c:domain.ReadHandle<Data>) @suspends ->Int32 {when "read" (b,c){size(b)+size(c)}!}

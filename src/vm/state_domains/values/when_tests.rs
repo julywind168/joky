@@ -182,11 +182,11 @@ fn state_domains_when_candidate_budget_failures_and_business_rejection_refund_ev
 struct S{n:Int32,text:String}
 fn make(n:Int32)->S{S{n:n,text:"unchanged"}}
 fn read(s:&S)->Int32{s.n}
-fn operation(a:domain.WriteHandle<S>,b:domain.WriteHandle<S>) @suspends ->Result<String,String> {
+fn operation(a:domain.WriteHandle<S>,b:domain.WriteHandle<S>) @suspends ->domain.Outcome<String,String> {
     when "update" (mut a,mut b) {
         mem.swap(&mut a.text,&mut b.text); a.n=90; b.n=91;
         let rejected:Result<String,String>=Err("business rejection"); rejected
-    }.unwrap()
+    }
 }"#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);

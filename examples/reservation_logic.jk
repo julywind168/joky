@@ -57,7 +57,7 @@ fn eligibility(decision: Decision) @suspends -> Bool {
     }
 }
 fn purchase(stock: domain.WriteHandle<Stock>, decision: Decision, now: UInt64) @suspends {
-    let ticket = when (mut stock) { stock.reserve(10, now) }.unwrap().unwrap()
+    let ticket = when (mut stock) { stock.reserve(10, now) }.unwrap()
     // External work runs without holding any domain access permission.
     let accepted = match isolate { eligibility(decision) } {
         Ok(accepted) => accepted
@@ -67,7 +67,7 @@ fn purchase(stock: domain.WriteHandle<Stock>, decision: Decision, now: UInt64) @
     check.assert(!when (mut stock) { stock.settle(ticket, accepted, now + 1) }.unwrap(), "duplicate ignored")
 }
 fn abandoned(stock: domain.WriteHandle<Stock>) @suspends {
-    let ticket = when (mut stock) { stock.reserve(20, 100) }.unwrap().unwrap()
+    let ticket = when (mut stock) { stock.reserve(20, 100) }.unwrap()
     task.sleep_ms(100000)
     when (mut stock) { stock.settle(ticket, true, 101) };
 }
@@ -96,7 +96,7 @@ fn demo(_: Unit) @suspends {
     let old = when (stock) { Ticket { id: stock.active_id, amount: stock.reserved } }.unwrap()
     when (mut stock) { stock.expire(110) }.unwrap()
     assert_stock(read, 90, 10, 0)
-    let fresh = when (mut stock) { stock.reserve(5, 111) }.unwrap().unwrap()
+    let fresh = when (mut stock) { stock.reserve(5, 111) }.unwrap()
     check.assert(!when (mut stock) { stock.settle(old, true, 112) }.unwrap(), "late reply cannot settle new reservation")
     assert_stock(read, 85, 10, 5)
     check.assert(when (mut stock) { stock.settle(fresh, true, 112) }.unwrap(), "fresh reservation")

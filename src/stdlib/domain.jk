@@ -2,6 +2,7 @@ import joky/internal/buffer.{type Buffer}
 import joky/option.{type Option, Some, None}
 import joky/outbox.{type Batch}
 import joky/result.{type Result, Ok, Err}
+import joky/check
 
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
 extern fn __domain_read_scalar(method: String) @suspends -> (Int32, UInt64)
@@ -34,6 +35,41 @@ fn finish_current_value<A,R>(name:String,input:A) @suspends -> Result<R,DomainAc
 // In-place access rejects before entry; candidate operations may also reject
 // resource exhaustion after calculation without publishing state.
 pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit, OutboxFull(UInt64), OutboxClosed(UInt64), Missing(UInt64), Aliased(UInt64), RetryLimit, DirectoryFull(UInt64) }
+
+// Candidate operations distinguish business rejection from access/commit failure.
+pub enum Outcome<T, E> { Committed(T), Rejected(E), Failed(DomainAccessError) }
+impl<T, E> Outcome<T, E> {
+    pub fn is_committed(&self) -> Bool {
+        match self { Committed(_) => true, _ => false }
+    }
+    // Explicitly discard either failure and consume the successful payload.
+    pub fn committed(self) -> Option<T> {
+        match self { Committed(value) => Some(value), _ => None }
+    }
+    pub fn unwrap(self) -> T {
+        match self {
+            Committed(value) => value,
+            Rejected(_) => check.panic("Called Outcome.unwrap on Rejected"),
+            Failed(_) => check.panic("Called Outcome.unwrap on Failed")
+        }
+    }
+    pub fn into_result<F, R: FnOnce(E) -> F, A: FnOnce(DomainAccessError) -> F>(self, rejected: R, failed: A) -> Result<T, F> {
+        match self {
+            Committed(value) => Ok(value),
+            Rejected(error) => Err(rejected(error)),
+            Failed(error) => Err(failed(error))
+        }
+    }
+}
+// Compiler-authored conversion runs after candidate commit or rollback.
+fn __when_outcome<T, E>(value: Result<Result<T, E>, DomainAccessError>) -> Outcome<T, E> {
+    match value {
+        Ok(Ok(value)) => Outcome.Committed(value),
+        Ok(Err(error)) => Outcome.Rejected(error),
+        Err(error) => Outcome.Failed(error)
+    }
+}
+
 fn access_error(status:Int32) -> DomainAccessError {
     if status == 1 { return DomainAccessError.Closed }
     if status == 2 { return DomainAccessError.DomainFailed }

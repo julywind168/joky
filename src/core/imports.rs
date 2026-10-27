@@ -143,6 +143,7 @@ fn bind(
     for (path, name, success) in [
         ("joky/option", "Option", "Some"),
         ("joky/result", "Result", "Ok"),
+        ("joky/domain", "Outcome", "Committed"),
     ] {
         if let Some(id) = libraries
             .get(path)

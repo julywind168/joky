@@ -1,0 +1,66 @@
+import joky/domain
+import joky/check
+import joky/task
+
+#state
+struct State { n: Int32 }
+fn make(_: Unit) -> State { State { n: 0 } }
+fn assert(ok: Bool) { check.assert(ok, "domain outcome") }
+impl State {
+    fn accept(&mut self) -> Result<String, String> { self.n += 1; Ok("committed") }
+}
+fn accept(state: domain.WriteHandle<State>) @suspends -> domain.Outcome<String, String> {
+    when (mut state) { state.n += 1; Ok("committed") }
+}
+fn reject(state: domain.WriteHandle<State>) @suspends -> domain.Outcome<String, String> {
+    when (mut state) { state.n = 99; Err("rejected") }
+}
+fn forward(value: domain.Outcome<String, String>) -> domain.Outcome<Int32, String> {
+    let text = value?
+    assert(text.equals("committed"))
+    domain.Outcome.Committed(24)
+}
+fn failed() -> domain.Outcome<String, String> { domain.Outcome.Failed(domain.DomainAccessError.Closed)? }
+fn denied() -> domain.Outcome<Int32, String> { domain.Outcome.Rejected("denied")? }
+fn mapped(value: domain.Outcome<String, String>, expected: Int32) -> Result<String, String> {
+    var rejected_calls = 0
+    var failed_calls = 0
+    let result = value.into_result(
+        |error| { rejected_calls += 1; error },
+        |error| { failed_calls += 1; "access" })
+    assert(rejected_calls == if expected == 1 { 1 } else { 0 })
+    assert(failed_calls == if expected == 2 { 1 } else { 0 })
+    result
+}
+fn lifecycle() @suspends -> Int32 {
+    let owner = domain.create(make, {})
+    let state = owner.handle()
+    assert(forward(accept(state))! == 24)
+    assert(state.accept()!.equals("committed"))
+    match forward(reject(state)) { Rejected(error) => assert(error.equals("rejected")), _ => assert(false) }
+    assert(when (state) { state.n }! == 2)
+    match forward(failed()) { Failed(Closed) => {}, _ => assert(false) }
+    let access: domain.Outcome<String, String> = domain.Outcome.Failed(domain.DomainAccessError.OutboxFull(7))
+    match forward(access) { Failed(OutboxFull(id)) => assert(id == 7), _ => assert(false) }
+    match denied() { Rejected(error) => assert(error.equals("denied")), _ => assert(false) }
+    let no_room: Result<Option<String>, domain.DomainAccessError> = when (state) { None }
+    assert(no_room!.is_none())
+    let nested: domain.Outcome<Result<Int32, String>, String> = when (state) { Ok(Err("inner")) }
+    assert(nested!.err()!.equals("inner"))
+    let success = accept(state)
+    assert(success.is_committed())
+    assert(success.committed()!.equals("committed"))
+    assert(reject(state).committed().is_none())
+    assert(accept(state).unwrap().equals("committed"))
+    assert(mapped(reject(state), 1).err()!.equals("rejected"))
+    assert(mapped(accept(state), 0)!.equals("committed"))
+    owner.close()
+    assert(mapped(accept(state), 2).err()!.equals("access"))
+    assert(accept(state).committed().is_none())
+    let broken = isolate { let value: domain.Outcome<String, String> = domain.Outcome.Rejected("owned"); value! }
+    assert(broken.is_err())
+    let broken = isolate { failed().unwrap() }
+    assert(broken.is_err())
+    24
+}
+fn main() @suspends { assert(lifecycle() == 24) }

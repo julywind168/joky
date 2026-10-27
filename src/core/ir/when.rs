@@ -417,6 +417,32 @@ impl FunctionPlan {
     }
 
     fn when_result(&self, result: &Type, types: &TypeRegistry) -> Result<Type, Error> {
+        if let Type::Enum(e) = result {
+            if types.standard_success_variant(e.id) == Some("Ok") {
+                let context = self.generics.borrow();
+                let helper = context
+                    .templates
+                    .get("joky/domain.__when_outcome")
+                    .ok_or_else(|| {
+                        type_error(
+                            &self.current_span,
+                            ErrorCode::InvalidCall,
+                            "when requires joky/domain",
+                        )
+                    })?;
+                let substitutions = helper
+                    .type_params
+                    .iter()
+                    .zip(&e.arguments)
+                    .map(|(p, a)| (p.id, a.as_type().unwrap().clone()))
+                    .collect();
+                return crate::core::types::substitute(&helper.ret_ty, &substitutions, types);
+            }
+        }
+        self.when_access_result(result, types)
+    }
+
+    fn when_access_result(&self, result: &Type, types: &TypeRegistry) -> Result<Type, Error> {
         let context = self.generics.borrow();
         let adapter = context
             .templates
@@ -561,6 +587,21 @@ impl FunctionPlan {
             .and_then(|ty| match ty {
                 Type::Enum(e) if e.name == "joky/result.Result" => {
                     e.arguments.first().and_then(|a| a.as_type()).cloned()
+                }
+                Type::Enum(e) if types.standard_success_variant(e.id) == Some("Committed") => {
+                    let context = self.generics.borrow();
+                    let helper = context.templates.get("joky/domain.__when_outcome")?;
+                    let Type::Enum(access) = &helper.params[0].ty else {
+                        return None;
+                    };
+                    let body = access.arguments.first()?.as_type()?;
+                    let substitutions = helper
+                        .type_params
+                        .iter()
+                        .zip(&e.arguments)
+                        .map(|(p, a)| Some((p.id, a.as_type()?.clone())))
+                        .collect::<Option<_>>()?;
+                    crate::core::types::substitute(body, &substitutions, types).ok()
                 }
                 _ => None,
             })
@@ -941,7 +982,13 @@ impl FunctionPlan {
         else {
             unreachable!()
         };
-        let result_ty = self.when_result(&ret, types)?;
+        let result_ty = self.when_access_result(&ret, types)?;
+        let outcome_args = match &ret {
+            Type::Enum(e) if types.standard_success_variant(e.id) == Some("Ok") => {
+                Some(e.arguments.clone())
+            }
+            _ => None,
+        };
         let name = {
             let mut c = self.generics.borrow_mut();
             let adapter = c
@@ -982,6 +1029,39 @@ impl FunctionPlan {
         });
         if result.ty.is_owner() {
             self.register_owner(result.clone(), None);
+        }
+        if let Some(type_args) = outcome_args {
+            let mut local = vars.clone();
+            local.insert(
+                "$when.result".into(),
+                Binding {
+                    slot: Some(result),
+                    mutable: false,
+                    place: None,
+                },
+            );
+            let helper = "joky/domain.__when_outcome";
+            let scope = self.scope.clone();
+            Arc::make_mut(&mut self.scope)
+                .functions
+                .insert(helper.into(), helper.into());
+            let flow = self.expr(
+                &Expr::Call {
+                    callee: helper.into(),
+                    type_args,
+                    args: vec![Expr::Ident {
+                        name: "$when.result".into(),
+                        span: block.span,
+                    }],
+                    span: block.span,
+                },
+                &mut local,
+                functions,
+                suspends,
+                types,
+            );
+            self.scope = scope;
+            return flow;
         }
         Ok(Flow::Value(Some(result)))
     }

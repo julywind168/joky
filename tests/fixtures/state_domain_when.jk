@@ -66,7 +66,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(!when (mut x) {x.n=11; false}.unwrap())
     assert(same.value().unwrap()==11)
     let rejected=same.value().unwrap()
-    match x.reject().unwrap() {Err(message)=>{assert(message.equals("denied"))},_=>{assert(false)}}
+    match x.reject() {domain.Outcome.Rejected(message)=>{assert(message.equals("denied"))},_=>{assert(false)}}
     assert(same.value().unwrap()==rejected)
     let rollback=when "reject transfer" (mut x,mut y,z) {
         mem.swap(&mut x.values,&mut y.values)
@@ -77,15 +77,15 @@ fn lifecycle() @suspends ->Int32 {
         let result:Result<Bool,Int32>=Err(42)
         result
     }
-    match rollback.unwrap() {Err(n)=>{assert(n==42)},_=>{assert(false)}}
+    match rollback {domain.Outcome.Rejected(n)=>{assert(n==42)},_=>{assert(false)}}
     assert(when(x,y){x.n==11 && y.n==6 && x.values.len()==1 && y.values.len()==1 && x.values.get(0)! ==2 && y.values.get(0)! ==1 && x.text.equals("state")}.unwrap())
     let success=when(mut x) {x.n=12; let result:Result<Bool,Int32>=Ok(false); result}
-    assert(!success.unwrap().unwrap())
+    assert(!success.unwrap())
     assert(same.value().unwrap()==12)
     match when(mut x){x.n=13; Decision.Rejected}.unwrap() {Rejected=>{}}
     assert(same.value().unwrap()==13)
     let nested=when(mut x){x.n=14; let inner:Result<Bool,Int32>=Err(7); let outer:Result<Result<Bool,Int32>,Int32>=Ok(inner); outer}
-    assert(nested.unwrap().unwrap().is_err())
+    assert(nested.unwrap().is_err())
     assert(same.value().unwrap()==14)
     a.close()
     match when (x) {x.n} {Err(Closed)=>{},_=>{assert(false)}}
@@ -111,7 +111,7 @@ fn messages() @suspends {
         let result:Result<Unit,Int32>=Err(7)
         result
     }
-    assert(denied.unwrap().is_err())
+    assert(match denied { domain.Outcome.Rejected(7) => true, _ => false })
     assert(h.value().unwrap()==1)
     let bytes="two".into_bytes()
     when "publish message" (mut h) {notify(h,b,&bytes)}.unwrap()

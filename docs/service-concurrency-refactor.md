@@ -374,7 +374,7 @@ R6 的规范正文集中于 [架构文档：服务运行协议](architecture.md#
 | L5 | `Vm.require` 返回类型化入口描述符 | 调用处不再重复入口字符串与类型参数 | R1a 已完成 |
 | L6 | `LoadError` 提供统一消息 | `chat_admin.report` 不再逐分支打印 | R1a 已完成 |
 | L7 | 状态允许拥有载荷枚举；访问路径接受 `Option` 键 | chat 以 `Option<String>` 表示不在房间，删除空字符串约定 | 已完成，见第 12 节 |
-| L8 | `when` 结果改为三态 `domain.Outcome<T, E>` | 删除 `Ok(Ok(x))`、`!!` 与各项目自写的嵌套结果折叠 | 待定，见第 9 节 |
+| L8 | `when` 结果改为三态 `domain.Outcome<T, E>` | 删除 `Ok(Ok(x))`、`!!` 与各项目自写的嵌套结果折叠 | 已完成，见第 12 节 |
 
 示例层清理（不依赖新能力）：手写下标循环改为 `for`；`room == 0`、`id == 0`、`skip: 0`、
 目录键 1、`key - 1` 换算改为 `Option` 或具名常量；`retry_command` 内重复的 `match &command`
@@ -420,7 +420,8 @@ fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends
 
 相对重构前移除了 `ctx`、`excluded`、`expected`、`Retry`、位置重试循环与捕获复制。路径校验保证 `room`
 仍是账户所在的同一个域；live 与成员关系仍由块体检查。可选路径落空时进入 `else` 分支，
-换房时新旧房间相同进入 `alias` 分支。`Outcome<T>` 双层 Result 仍保留：外层为访问错误，内层为业务拒绝。
+换房时新旧房间相同进入 `alias` 分支。`Outcome<T>` 现为 `domain.Outcome<T, Rejection>` 的别名，
+调用方直接匹配 Committed／Rejected／Failed，不再使用双层 Result。
 
 ## 7. 实施阶段
 
@@ -484,20 +485,6 @@ chat 改动运行 `cargo test --test chat -- --ignored` 六组合实网矩阵。
   的原则存在张力；是否把丢弃隔离结果设为编译错误待定。
 - D5 第二步对 Map／List 容器内部写入的记录粒度。
 - 效果分类统一（2.2 第 5 项）的内部表示与是否最终开放源级语法。
-- L8 `when` 的结果形状：块体返回 `Result<T, E>` 时，表达式类型目前为
-  `Result<Result<T, E>, DomainAccessError>`。分开业务拒绝与访问失败是有意的设计
-  （见[有状态服务计划](stateful-service-ergonomics.md) S2a），但嵌套编码迫使调用方写 `Ok(Ok(x))`、
-  `!!`，chat 也只能自写 `Outcome<T>` 别名和折叠函数。候选方案：
-  - 合并为单一错误类型，由运行时把访问错误转入用户枚举：需要转换机制，且丢失两类失败的区分，不采用。
-  - 仅用库函数折叠：零语言改动，但类型仍嵌套，每个项目重复实现。
-  - 推荐：标准库提供三态 `domain.Outcome<T, E> { Committed(T), Rejected(E), Failed(DomainAccessError) }`，
-    块体返回 `Result<T, E>` 时 `when` 的类型改为它。块体内 `Ok`／`Err`、`?` 与回滚规则不变，
-    只改变对外的结果形状；另提供 `committed() -> Option<T>`、带清晰消息的 `unwrap()`，
-    以及由调用方显式映射的 `into_result`。这延续了[服务端状态域设计](server-concurrency.md)
-    第 6.3 节的结果分类。
-  代价：`when` 结果类型推导须与 L4 的期望类型传递一起调整；现有返回 Result 的 `when` 调用方
-  （chat、预留示例与测试 fixture）一次性迁移，非公开阶段不保留旧形式；句柄方法与快照／提案回执
-  是否统一为同一形状须一并决定，避免两套结果风格。
 
 ## 10. 修订记录
 
@@ -910,3 +897,20 @@ R2 专项验收（2026-10-26，Debug）：
   工厂的兼容性回归，修复后库测试完整通过；后续 CLI 仅因旧诊断字符串断言失败，更新两处
   期望后定向复验通过，再补齐脚本尚未执行的项目。
   未运行 Release 或性能测量。
+
+2026-10-27 L8 实施：
+
+- 标准库新增 `domain.Outcome<T,E>`，区分 Committed、Rejected、Failed。when 和句柄方法仅在
+  块体返回标准 Result 时使用 Outcome；普通值与 Option 保留访问 Result，不递归展开内层 T。
+- 编译器从期望 Outcome 反向推导块体 Result，块内 Ok／Err、`?`、else／alias 及回滚规则不变。
+  转换发生于原访问适配器返回后；快照／提案回执、显式原地操作和 request 不改变结果形状。
+- Outcome 提供 is_committed、committed、unwrap、into_result，以及单个 `!` 和同类结果间的 `?`；
+  Failed 只包装 DomainAccessError，运行时异常、取消与结果交付失败保持任务通道。
+- chat 与预留示例直接使用新结果，删除双层解包；拥有结果与两类失败的生命周期沿用既有清理。
+- 专项验证（Debug）通过：Outcome 的 JIT／解释器／独立 AOT、既有后缀操作与静态拒绝、
+  Parallel 域操作及预留示例。新 Outcome 与既有后缀操作的逐指令取消穷举通过。
+- `cargo test --test chat -- --ignored` 两项通过，覆盖 Local／Parallel 各六组实网组合。
+- 默认检查分段完成：fmt、Clippy、1717 项库测试、319 项 CLI 测试、其余 64 项集成测试、
+  文档测试及三后端短输入 while／Map 正确性均通过。check.sh 在两个 fixture 遗留的
+  Err(Closed) 断言处停止；更新为 Failed(Closed) 后定向复验通过，补跑剩余默认检查，
+  未重复整套测试或已通过的实网矩阵。未运行 Release 或性能测量。

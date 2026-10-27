@@ -1222,9 +1222,14 @@ VM 销毁先禁止新的域工作并执行同一关闭协议。
 CurrentQuery/Query 操作，双读查询复用 Pair，记录查询复用 Values/CurrentValues。
 这些查询只要求读权限，不推进数据修订；输入、结果及取消仍遵循同一请求存储协议。
 
-具名短操作的公开返回值为 `Result<R, DomainAccessError>`。标量私有入口返回独立的
+显式原地短操作的公开返回值为 `Result<R, DomainAccessError>`。标量私有入口返回独立的
 `(Int32 status, UInt64 bits)`，元组槽放在参数槽之后；Values/CurrentValues 返回 Int32 状态，
 仅成功时解包结果。所有后端共享状态协议；标量不使用错误哨兵，公共 CPS 帧布局不变。
+源码 `when`／句柄方法的块体为标准 Result 时，编译器在原适配器返回后调用受信任的库转换，
+交付三态 `domain.Outcome<T,E>`；转换不进入候选计算、不改变回滚判据及私有桥布局。
+期望 Outcome 反向约束块体 Result，普通值和 Option 仍使用外层访问 Result。
+标准 Outcome 的后缀 `!`／`?` 按声明身份识别，分别处理 Rejected 和 Failed，沿用消费式模式清理；
+`?` 只允许向同种枚举且业务错误类型相同的返回值传播。
 私有调度桥升级为 `__joky_domain_poll_v3`，旧对象必须重编译，不能将旧帧交给新结果协议。
 准入和排队后的预检拒绝会记录独立 access_error；
 操作体失败保留 DomainOutcome::Failed 并执行原写域隔离协议，不能按 ErrorCode 将其

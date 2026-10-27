@@ -42,7 +42,7 @@ fn lifecycle() @suspends ->Int32 {
    let result:Result<Unit,Int32>=Err(1)
    result
  }
- assert(result.unwrap().is_err())
+ assert(match result { Rejected(1) => true, _ => false })
  let rollback_name="rollback"
  assert(domain.lookup_named::<Room>(rooms,&rollback_name).is_none())
  assert(when(account){account.n}.unwrap()==0)

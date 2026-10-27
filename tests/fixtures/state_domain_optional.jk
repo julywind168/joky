@@ -46,7 +46,7 @@ fn lifecycle() @suspends -> Int32 {
         let result: Result<Unit, Int32> = Err(7)
         result
     }
-    assert(rejected.unwrap().is_err())
+    assert(match rejected { Rejected(7) => true, _ => false })
     assert(when(first) { first.name.is_some() && match &first.payload { Text(value) => value.equals("owned"), _ => false } }.unwrap())
     when(mut first) {
         var values = Array.new::<String>(); values.push("nested")

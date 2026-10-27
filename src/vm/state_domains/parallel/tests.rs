@@ -442,7 +442,7 @@ fn operation(routes:domain.DirectoryHandle,delta:Int32,reject:Bool) @suspends ->
         room.n+=delta
         let result:Result<Int32,Int32>=if reject {Err(7)} else {Ok(room.n)}
         result
-    }.unwrap().unwrap()
+    }.unwrap()
 }"#;
 #[test]
 fn parallel_domains_staged_creation_is_invisible_until_commit_and_reclaims_cancelled_timers() {

@@ -184,7 +184,7 @@ fn verify_atomic_overflow_signal() @suspends {
     var output = outbox.create_with_policy(1, 1, outbox.Overflow.Disconnect(control.handle()))
     let alice = test_account(f.ctx, 1, 1, output.handle())
     let text = "overflow"
-    say(f.ctx, alice.handle(), text)!!
+    say(f.ctx, alice.handle(), text)!
     // No apply_command or post-commit close ran: publication closes the signal.
     check.assert(control.receive().is_none(), "overflow closes the independent signal at commit")
     check.assert(output.receive().is_none(), "oversized target batch is wholly discarded")
@@ -237,7 +237,7 @@ fn verify_room_resolution_changes_before_operation() @suspends {
     expect_message(&mut queue, "left r 1\n")
     expect_message(&mut queue, "joined other 1\n")
     let text = "stale"
-    say(f.ctx, alice.handle(), text)!!
+    say(f.ctx, alice.handle(), text)!
     expect_message(&mut queue, "message other 1 stale\n")
     check.assert(balance(&alice) == 400, "dynamic path resolves current room and charges once")
     check.assert(handle_line(f.ctx, 1, "say resolved"), "resolve current membership")
@@ -295,7 +295,7 @@ fn verify_retired_rooms_and_cleanup_budget() @suspends {
     let fresh = room_handle(ctx, &name)!
     check.assert(!domain.remove_named_if(host.rooms, &name, empty)!, "occupied rooms survive conditional deletion")
     let denied = "third"
-    match join(ctx, carol.handle(), denied) { Err(DirectoryFull(_)) => {}, _ => check.assert(false, "directory capacity rejects before departure") }
+    match join(ctx, carol.handle(), denied) { Failed(DirectoryFull(_)) => {}, _ => check.assert(false, "directory capacity rejects before departure") }
     check.assert(domain.query_from(fresh.read_only(), member_value, 3)!, "failed creation preserves old membership")
 }
 
@@ -331,7 +331,7 @@ fn verify_move_rollback() @suspends {
     let name = "other"
     domain.write_to(f.other.handle(), retire_test_room, {})!
     match join(f.ctx, alice.handle(), name) {
-        Ok(Err(Stale)) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
+        Rejected(Stale) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
     }
     check.assert(domain.read_from(alice.read_handle(), room_name_view)!!.equals("r"), "failed moves preserve account room")
     check.assert(domain.query_from(f.room.read_handle(), member_value, 1)!, "failed moves preserve old membership")
