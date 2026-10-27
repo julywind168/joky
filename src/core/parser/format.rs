@@ -245,7 +245,9 @@ fn space_between(
     }
     if matches!(b, LParen | LBracket) {
         return matches!(a, If | While | Match | Return | In | Colon | Comma | Semi)
-            || matches!(a, Ident(name) if name == "when");
+            || matches!(a, Ident(name) if name == "when")
+            // A string before parentheses is a when label, not a callee.
+            || matches!((a, b), (StrLit(_), LParen));
     }
     true
 }
