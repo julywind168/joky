@@ -539,3 +539,210 @@ fn net6_dns_slow_lookup_keeps_timer_and_other_root_progressing() {
         wait_until(|| service.quiescent());
     }
 }
+
+#[test]
+fn tcp_host_endpoints_in_local_and_parallel_vm_modes() {
+    use crate::runtime::parallel::{ParallelExecutor, TaskBudget};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../tests/fixtures/tcp_endpoints.jk"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(), 0);
+        clean();
+        let budget = TaskBudget::new(8 << 20);
+        let prepared = vm
+            .prepare_parallel_task("main", vec![], vec![budget.clone()])
+            .unwrap_or_else(|error| panic!("{error}"));
+        drop(vm);
+        let mut pool = ParallelExecutor::new(2, 32).unwrap();
+        let task = prepared.submit(&pool).unwrap();
+        wait_until(|| task.is_finished());
+        task.take_result().unwrap_or_else(|error| panic!("{error}"));
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0, "{mode:?}");
+    }
+}
+
+#[test]
+fn tcp_host_endpoints_try_candidates_and_preserve_last_error() {
+    let service = Arc::new(
+        Service::new(
+            1,
+            8,
+            16,
+            Arc::new(|host, port| {
+                if host == "failed.test" {
+                    return Packet::error(SYSTEM_FAILURE, "controlled resolution failure");
+                }
+                let first = if host == "connect.test" {
+                    "::1"
+                } else {
+                    "2001:db8::1"
+                };
+                Packet::addresses([
+                    SocketAddr::new(first.parse().unwrap(), port),
+                    SocketAddr::from(([127, 0, 0, 1], port)),
+                ])
+            }),
+        )
+        .unwrap(),
+    );
+    let _injected = Injected::new(service.clone());
+    let source = r#"
+        import joky/tcp
+        import joky/check
+        fn receive(listener: &mut tcp.TcpListener) @suspends {
+            var stream = listener.accept()!
+            check.assert(stream.read(1)![0] == 42, "fallback stream is usable")
+        }
+        fn send(port: UInt16) @suspends {
+            var stream = tcp.connect("connect.test", port)!
+            stream.write_all([42])!
+        }
+        fn main() @suspends -> Int32 {
+            var listener = tcp.listen("listen.test", 0)!
+            let address = listener.local_addr()!
+            check.assert(!address.is_ipv6(), "listen falls back to IPv4")
+            check.assert(match tcp.listen("listen.test", address.port()) {
+                Err(Io(error)) => match error.kind() { AddrInUse => true, _ => false },
+                _ => false
+            }, "all failed candidates return the last socket error")
+            check.assert(match tcp.connect("failed.test", 80) {
+                Err(Resolve(error)) => error.message.equals("controlled resolution failure"),
+                _ => false
+            }, "DNS failure preserves its diagnostic")
+            join { | receive(&mut listener) | send(address.port()) }
+            42
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(),
+            42
+        );
+        clean();
+    }
+    service.close();
+    wait_until(|| service.quiescent());
+    assert_eq!(service.core.outstanding.load(Ordering::Acquire), 0);
+}
+
+unsafe extern "C" fn install_parallel_service(frame: *mut CpsFrame) -> i32 {
+    // The test and registered host owner retain this Arc until all workers close.
+    let pointer = (&(*frame).slots)[0] as usize as *const Service;
+    Arc::increment_strong_count(pointer);
+    TEST_SERVICE.with(|slot| slot.replace(Some(Arc::from_raw(pointer))));
+    0
+}
+
+#[test]
+fn net6_dns_parallel_completion_cancellation_and_pool_close() {
+    use crate::runtime::parallel::{ParallelExecutor, TaskBudget};
+    use crate::vm::{InstanceValue, TaskValue};
+    let source = r#"
+        import joky/dns
+        extern fn install(service: UInt64) @suspends
+        fn pending(service: UInt64) @suspends -> Int32 {
+            install(service)
+            let addresses = dns.lookup("controlled.test", 443)!
+            if addresses.len() == 1 { 42 } else { 1 }
+        }
+        fn next(service: UInt64) @suspends -> Int32 {
+            install(service)
+            dns.lookup("next.test", 80)!
+            7
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let service = Arc::new(
+            Service::new(
+                2,
+                8,
+                16,
+                Arc::new(move |host, port| {
+                    if host == "controlled.test" {
+                        started_tx.send(()).unwrap();
+                        lock(&release_rx).recv().unwrap();
+                    }
+                    Packet::addresses([SocketAddr::from(([127, 0, 0, 1], port))])
+                }),
+            )
+            .unwrap(),
+        );
+        let mut vm = VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_parallel_suspending_fn(
+                "install",
+                FunctionSignature::new(vec![Type::UInt64], Type::Unit),
+                install_parallel_service,
+                1,
+                service.clone(),
+            )
+            .unwrap();
+        }
+        vm.load_source(source)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let argument =
+            TaskValue::Scalar(InstanceValue::UInt64(Arc::as_ptr(&service) as usize as u64));
+        for action in ["complete", "cancel", "close"] {
+            let budget = TaskBudget::new(8 << 20);
+            let mut pool = ParallelExecutor::new(1, 16).unwrap();
+            let task = vm
+                .prepare_parallel_task("pending", vec![argument.clone()], vec![budget.clone()])
+                .unwrap_or_else(|error| panic!("{error}"))
+                .submit(&pool)
+                .unwrap();
+            started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert!(!task.is_finished());
+            // One blocked resolver must not pin the only task worker.
+            let next = vm
+                .prepare_parallel_task("next", vec![argument.clone()], vec![budget.clone()])
+                .unwrap()
+                .submit(&pool)
+                .unwrap();
+            wait_until(|| next.is_finished());
+            assert_eq!(
+                next.take_result().unwrap().value(),
+                &TaskValue::Scalar(InstanceValue::Int32(7))
+            );
+            drop(next);
+            if action == "complete" {
+                release_tx.send(()).unwrap();
+                wait_until(|| task.is_finished());
+                assert_eq!(
+                    task.take_result().unwrap().value(),
+                    &TaskValue::Scalar(InstanceValue::Int32(42))
+                );
+            } else {
+                if action == "close" {
+                    pool.request_close();
+                } else {
+                    task.request_cancel();
+                }
+                wait_until(|| task.is_finished());
+                assert_eq!(
+                    task.take_result().err().unwrap().code(),
+                    ErrorCode::Cancelled
+                );
+                // Cancellation refunds task storage, but a running OS request retains its quota.
+                wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 1);
+            }
+            drop(task);
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}: {action}");
+            if action != "complete" {
+                release_tx.send(()).unwrap();
+            }
+            wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 0);
+        }
+        service.close();
+        wait_until(|| service.quiescent());
+    }
+}

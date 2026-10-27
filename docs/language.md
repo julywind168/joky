@@ -4998,7 +4998,8 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 完整调用图必须证明安全；内置 stdout 绑定已获并行资格，`print`／`println` 还要求实际使用的
-Show 实现及其调用图通过检查。未知 extern、DNS、直接状态域操作、持久实例和 Godot 对象仍保持 Local。
+Show 实现及其调用图通过检查。未知 extern、直接状态域操作、持久实例和 Godot 对象仍保持 Local。
+内置 DNS 支持 Parallel：解析线程只持有输入副本和完成通知，任务存储仍由所属 worker 访问。
 内置 VM 类型化调用／源码方法、文件操作、目录拥有者、准入池和邮箱通过下述 Local 控制桥接开放。
 
 R7b 开放同一 Parallel 任务树内的 TcpListener／TcpStream／TcpReader／TcpWriter 拥有转移，
@@ -5547,7 +5548,23 @@ outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业�
 显式导入 `joky/tcp.{type Address, type TcpListener, type TcpStream, type IoError, type ErrorKind, type Shutdown}`。
 CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本注册 socket 宿主。
 所有网络操作标记 `@suspends`；bind、地址查询、shutdown、close 通常在首次 poll 完成。
-`TcpListener.bind` 同时绑定并进入监听状态，首版没有独立 listen 或 backlog 配置。
+`TcpListener.bind` 同时绑定并进入监听状态，没有分离的 bind/listen 阶段或 backlog 配置。
+
+日常使用可只导入 `joky/tcp`，通过主机名或数值 IP 字符串建立端点：
+
+| 操作 | 返回类型 |
+| --- | --- |
+| `tcp.listen(host: String, port: UInt16)` | `Result<TcpListener, EndpointError>` |
+| `tcp.connect(host: String, port: UInt16)` | `Result<TcpStream, EndpointError>` |
+
+两个入口均为 `@suspends`，支持 Local 和 Parallel。host 与 port 分开传入，格式约束与
+`dns.lookup` 相同；例如 `tcp.listen("127.0.0.1", 7777)` 和 `tcp.connect("localhost", 7777)`。
+每次调用解析一次，按系统返回顺序逐个尝试地址，首次成功便返回；listen 只创建一个监听器，
+不同时监听 IPv4 与 IPv6。数值 IP 直接解析，不进入系统解析线程池；端口 0 在 listen 时分配端口。
+`EndpointError.Resolve(dns.ResolveError)` 保留解析错误；全部候选失败则返回
+`EndpointError.Io(IoError)`，携带最后一次 socket 错误。各次失败会释放临时 socket。
+不进行多地址竞速，也没有隐含超时；可使用 `race` 配合定时器取消等待。
+已有 Address 时继续使用下述 `TcpListener.bind` / `TcpStream.connect`，跳过解析。
 
 地址是 Copy 值，内部字段私有，不执行 DNS：
 
@@ -5833,7 +5850,7 @@ CLI 的 JIT/解释器与 `joky build` 生成的程序安装本机服务，相对
 
 ## 内置 DNS 模块 joky/dns
 
-显式导入 `joky/dns as dns.{type ResolveError, type ErrorKind}`；地址类型从
+显式导入 `joky/dns.{type ResolveError, type ErrorKind}`；地址类型从
 `joky/tcp.{type Address}` 导入，数组与 Result 使用既有标准库类型。
 CLI、JIT、解释器、独立 AOT 与 Godot 共用系统解析实现。
 
@@ -5847,7 +5864,8 @@ host 限制为 1–1024 字节 ASCII，拒绝 NUL、控制字符、空白、URL�
 域名查询由系统名称服务处理，包括 hosts、搜索域及系统缓存；不提供 TTL、任意记录查询或
 自定义 DNS 服务器。结果保留系统顺序、IPv6 scope ID，按完整地址去重，所有端口使用传入值
 （包括 0）。最多返回 64 个地址；超过上限返回错误，空结果同样返回错误。
-解析成功不保证连接成功；应用自行选择候选地址。首版不提供 connect_host 或多地址连接竞速。
+解析成功不保证连接成功；应用可自行选择候选地址，或使用 `tcp.listen` / `tcp.connect`
+按系统顺序尝试。当前不提供多地址连接竞速。
 
 `ResolveError` 有公开字段 `kind: ErrorKind` 与 `message: String`。错误消息最多 1024 字节，
 保持有效 UTF-8；系统消息与平台相关，不能根据其文本可靠区分 NXDOMAIN、SERVFAIL 或超时。

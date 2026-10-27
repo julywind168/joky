@@ -7,7 +7,7 @@ import joky/domain
 import joky/session
 import joky/admission
 import joky/task
-import joky/tcp.{type Address, type TcpListener, type TcpStream}
+import joky/tcp.{type TcpListener, type TcpStream}
 
 struct Script { vm: vm.Vm, entries: Contract }
 
@@ -84,10 +84,10 @@ fn main() @suspends -> Int32 {
     let rooms = domain.directory(config.max_rooms)
     let accounts = domain.directory(config.max_clients)
     let host = Host { config, rooms: rooms.handle(), accounts: accounts.handle() }
-    var chat = match TcpListener.bind(Address.ipv4(0x7f000001, 7777)) {
+    var chat = match tcp.listen("127.0.0.1", 7777) {
         Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
     }
-    var admin = match TcpListener.bind(Address.ipv4(0x7f000001, 7778)) {
+    var admin = match tcp.listen("127.0.0.1", 7778) {
         Ok(listener) => listener, Err(_) => { println("Could not bind admin listener"); return 1 }
     }
     println("chat {chat.local_addr()!.port()}")

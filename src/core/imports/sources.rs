@@ -163,9 +163,16 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
+        path: "joky/internal/resolve",
+        source: include_str!("../../stdlib/internal/resolve.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
         path: "joky/dns",
         source: include_str!("../../stdlib/dns.jk"),
-        reexport_imports: false,
+        reexport_imports: true,
         implicit: ImplicitImports::None,
     },
     SourceDefinition {

@@ -174,11 +174,38 @@ impl Drop for Permit {
         self.0.fetch_sub(1, Ordering::AcqRel);
     }
 }
+// Notifications carry no task storage and may outlive cancellation.
+enum Wake {
+    Local(TaskWaker),
+    Parallel(super::parallel::pool::IoWaker),
+}
+impl Wake {
+    fn current() -> Result<Self, Error> {
+        if let Some(waker) = super::parallel::pool::io_waker() {
+            Ok(Self::Parallel(waker))
+        } else {
+            current_waker()
+                .map(Self::Local)
+                .ok_or_else(|| failure("DNS lookup requires a task executor"))
+        }
+    }
+    fn wake(&self) {
+        match self {
+            Self::Local(waker) => waker.wake(),
+            Self::Parallel(waker) => waker.wake(),
+        }
+    }
+}
+impl From<TaskWaker> for Wake {
+    fn from(waker: TaskWaker) -> Self {
+        Self::Local(waker)
+    }
+}
 struct State {
     cancelled: bool,
     running: bool,
     result: Option<Packet>,
-    waker: Option<TaskWaker>,
+    waker: Option<Wake>,
 }
 struct Ticket {
     state: Mutex<State>,
@@ -256,7 +283,7 @@ impl Service {
         &self,
         host: &str,
         port: u16,
-        waker: TaskWaker,
+        waker: impl Into<Wake>,
     ) -> Result<Option<Arc<Ticket>>, Error> {
         let mut queue = lock(&self.core.queue);
         if queue.closed {
@@ -286,7 +313,7 @@ impl Service {
                 cancelled: false,
                 running: false,
                 result: None,
-                waker: Some(waker),
+                waker: Some(waker.into()),
             }),
             _permit: permit,
         });
@@ -473,8 +500,7 @@ pub(crate) unsafe fn poll(
                 return output(arena, frame, &packet).map(Some);
             }
             let service = service()?;
-            let waker =
-                current_waker().ok_or_else(|| failure("DNS lookup requires a task executor"))?;
+            let waker = Wake::current()?;
             let charge = arena.reserve_external(
                 std::mem::size_of::<Request>()
                     + std::mem::size_of::<Ticket>()

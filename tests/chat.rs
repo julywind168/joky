@@ -403,13 +403,13 @@ fn chat_matrix(parallel: bool) {
         include_str!("../examples/chat_admin.jk"),
     )
     .unwrap();
-    assert_eq!(source.matches("0x7f000001, 7777").count(), 1);
-    assert_eq!(source.matches("0x7f000001, 7778").count(), 1);
+    assert_eq!(source.matches("\"127.0.0.1\", 7777").count(), 1);
+    assert_eq!(source.matches("\"127.0.0.1\", 7778").count(), 1);
     assert_eq!(source.matches("    let config = defaults()").count(), 1);
     let path = work.path().join("chat.jk");
     let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check\nimport joky/outbox")
-        .replace("0x7f000001, 7777", "0x7f000001, 0")
-        .replace("0x7f000001, 7778", "0x7f000001, 0")
+        .replace("\"127.0.0.1\", 7777", "\"127.0.0.1\", 0")
+        .replace("\"127.0.0.1\", 7778", "\"127.0.0.1\", 0")
         .replace("examples/chat_logic.jk", "chat_logic.jk")
         .replace("examples/chat_contract.jk", "chat_contract.jk")
         .replace("    let config = defaults()", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let config = defaults()");

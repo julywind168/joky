@@ -100,6 +100,7 @@ pub unsafe extern "C" fn __joky_task_main_v1(
                     .ok_or_else(invalid)
             }
             ExecutionMode::Parallel { workers } => {
+                crate::runtime::dns::initialize()?;
                 let pool = ParallelExecutor::new(workers, config.max_tasks)?;
                 let slots = descriptor.frame_slots;
                 let root = Storage::new(vec![TaskBudget::new(crate::runtime::arena::MAX_BYTES)])?;

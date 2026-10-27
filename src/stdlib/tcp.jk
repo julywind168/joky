@@ -4,6 +4,7 @@ import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
 import joky/string.{type Utf8Error}
 import joky/mem
+import joky/internal/resolve
 
 extern fn __joky_task_yield_now() @suspends
 
@@ -49,6 +50,40 @@ pub struct TcpStream { owner: tcp.StreamOwner }
 pub struct TcpListener { owner: tcp.ListenerOwner }
 pub struct TcpReader { owner: tcp.ReaderOwner }
 pub struct TcpWriter { owner: tcp.WriterOwner }
+
+// Host endpoints resolve once and try candidates in system order.
+pub enum EndpointError { Resolve(resolve.ResolveError), Io(IoError) }
+fn resolved_address(high: UInt64, low: UInt64, endpoint: UInt64) -> Address {
+    Address { high, low, endpoint }
+}
+pub fn listen(host: String, port: UInt16) @suspends -> Result<TcpListener, EndpointError> {
+    let addresses = match resolve.lookup(host, port, resolved_address) {
+        Ok(addresses) => addresses,
+        Err(error) => return Err(EndpointError.Resolve(error))
+    }
+    var last = IoError { code: 6 }
+    for address in addresses {
+        match TcpListener.bind(address) {
+            Ok(listener) => return Ok(listener),
+            Err(error) => last = error
+        }
+    }
+    Err(EndpointError.Io(last))
+}
+pub fn connect(host: String, port: UInt16) @suspends -> Result<TcpStream, EndpointError> {
+    let addresses = match resolve.lookup(host, port, resolved_address) {
+        Ok(addresses) => addresses,
+        Err(error) => return Err(EndpointError.Resolve(error))
+    }
+    var last = IoError { code: 6 }
+    for address in addresses {
+        match TcpStream.connect(address) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last = error
+        }
+    }
+    Err(EndpointError.Io(last))
+}
 
 pub enum ReadError { InvalidLimit, Io(IoError), UnexpectedEof(UInt64), LimitExceeded, InvalidUtf8(Utf8Error) }
 enum ReadState { Open, Eof, Failed(IoError) }

@@ -47,6 +47,7 @@ pub(crate) enum HostCode {
     /// Only audited runtime bindings construct this internal variant.
     TextView(unsafe extern "C" fn(*const u8) -> i32),
     Tcp(super::tcp::Operation),
+    Dns,
     Control(control::Operation),
 }
 impl Host {
@@ -68,6 +69,7 @@ impl Host {
                     control::Operation::Fs(op) => HostEntry::Fs(op),
                 },
             ),
+            HostCode::Dns => (HostAbiKind::Scalar, HostEntry::Dns),
             HostCode::Tcp(op) => (HostAbiKind::Scalar, HostEntry::Tcp(op)),
             HostCode::Cps { entry, slots } => (
                 HostAbiKind::Scalar,
@@ -90,6 +92,19 @@ impl Host {
     }
     pub(crate) fn from_binding(binding: &super::bindings::HostBinding) -> Option<Self> {
         use super::bindings::{HostAbiKind, HostEntry};
+        if matches!(binding.entry, HostEntry::Dns) {
+            if binding.abi != HostAbiKind::Scalar
+                || super::dns::validate(&binding.signature, true).is_err()
+            {
+                return None;
+            }
+            return Some(Self {
+                name: "__dns_lookup".into(),
+                signature: binding.signature.clone(),
+                code: HostCode::Dns,
+                _owner: std::sync::Arc::new(()),
+            });
+        }
         if let HostEntry::Tcp(op) = binding.entry {
             if binding.abi != HostAbiKind::Scalar || op.validate(&binding.signature, true).is_err()
             {

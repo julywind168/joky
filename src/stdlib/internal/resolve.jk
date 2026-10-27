@@ -1,0 +1,46 @@
+// System host lookup. Cancellation ends delivery; running OS lookups may continue.
+import joky/array.{type Array}
+import joky/result.{type Result, Ok, Err}
+import joky/integer
+import joky/string
+
+pub enum ErrorKind { InvalidInput, Busy, NoAddresses, LimitExceeded, SystemFailure }
+pub struct ResolveError { pub kind: ErrorKind, pub message: String }
+
+// Private bounded wire packet: address triples on success, UTF-8 on failure.
+extern fn __dns_lookup(host: String, port: UInt16, error: &mut UInt64) @suspends -> Array<UInt8>
+
+fn word(bytes: &Array<UInt8>, offset: UInt64) -> UInt64 {
+    var value: UInt64 = 0
+    var index: UInt64 = 0
+    while index < 8 {
+        value = (value << 8) | bytes.get(offset + index).unwrap_or(0).to_u64().unwrap_or(0)
+        index = index + 1
+    }
+    value
+}
+pub fn lookup<T>(host: String, port: UInt16, address: fn(UInt64, UInt64, UInt64) -> T) @suspends -> Result<Array<T>, ResolveError> {
+    var error: UInt64 = 0
+    let bytes = __dns_lookup(host, port, &mut error)
+    if error != 0 {
+        let kind = if error == 1 { ErrorKind.InvalidInput } else {
+            if error == 2 { ErrorKind.Busy } else {
+                if error == 3 { ErrorKind.NoAddresses } else {
+                    if error == 4 { ErrorKind.LimitExceeded } else { ErrorKind.SystemFailure }
+                }
+            }
+        }
+        let message = match String.from_utf8(bytes) { Ok(text) => text, Err(_) => "Name resolution failed" }
+        return Err(ResolveError { kind: kind, message: message })
+    }
+    var addresses = Array.with_capacity::<T>(bytes.len() / 24)
+    var offset: UInt64 = 0
+    while offset < bytes.len() {
+        let high = word(&bytes, offset)
+        let low = word(&bytes, offset + 8)
+        let endpoint = word(&bytes, offset + 16)
+        addresses.push(address(high, low, endpoint))
+        offset = offset + 24
+    }
+    Ok(addresses)
+}

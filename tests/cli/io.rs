@@ -573,6 +573,16 @@ fn dns_public_module_runs_in_all_backends() {
 }
 
 #[test]
+#[cfg(unix)]
+fn tcp_host_endpoints_native_local_and_parallel() {
+    let work = Workspace::new();
+    work.write("endpoints.jk", include_str!("../fixtures/tcp_endpoints.jk"));
+    // VM behavior lives in runtime DNS tests; this completes standalone coverage.
+    work.assert_native("endpoints.jk", &[], b"", 0);
+    work.assert_native("endpoints.jk", &["--task-workers", "2"], b"", 0);
+}
+
+#[test]
 #[ignore = "exhaustive: buffered TCP native-peer wire parity through both CLI VM modes"]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn exhaustive_buffered_tcp_native_peer_and_cancelled_prefix_cli_vm_modes() {

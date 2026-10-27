@@ -210,7 +210,8 @@ pub(crate) fn analyse(
             let control = crate::core::builtins::Builtin::lookup(name).is_some_and(|builtin| {
                 builtin.validate(signature, info.suspends, false).is_ok()
                     && match builtin {
-                        crate::core::builtins::Builtin::VmCall
+                        crate::core::builtins::Builtin::Dns
+                        | crate::core::builtins::Builtin::VmCall
                         | crate::core::builtins::Builtin::VmSource
                         | crate::core::builtins::Builtin::Fs(_) => true,
                         crate::core::builtins::Builtin::Domain(op) => {

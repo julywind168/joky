@@ -1847,7 +1847,7 @@ Transfer 允许四种内置 TCP owner，Share 仍不授予；worker 内部函数
 拒绝通用宿主资源、Local 计费、拆分中间态和活动租约。没有新增 unsafe Send，沿用 OwnedBuffer
 的唯一拥有转移边界；TCP 核心自身满足 Rust 的 Send + Sync。类型检查同时覆盖容器、未激活
 枚举分支和自定义 Drop。Rust TaskValue 保持不含资源的宿主边界，在准备时拒绝资源输入／输出类型。
-本节不开放 VM、Domains、函数值、文件或 DNS 的跨 worker 能力。
+此处的 TCP 资格不自动授予其他宿主操作并行能力；DNS 的独立资格见下节。
 
 `HostExecutor::wait` / `VmEngine::wait_tasks` 只等待，不执行脚本；之后由 poll 推进。
 保留 TaskWaker 的外部宿主可以中断阻塞等待，未知等待仍报错。Clock 默认不准许阻塞，
@@ -1867,14 +1867,20 @@ VM 持有实例任务执行器；每个根另持实例访问环境，保活不�
 
 ### DNS 线程边界与关闭
 
-`runtime::dns` 共享固定大小的系统解析线程池，`joky/dns` 负责公开 Result 与地址数组包装。
+`runtime::dns` 共享固定大小的系统解析线程池。`joky/internal/resolve` 负责错误与地址包解码，
+通过库内地址构造回调同时服务 `dns.lookup` 和 `tcp.listen` / `tcp.connect`，避免 TCP 与 DNS
+互相导入。`joky/dns` 重新导出 ResolveError／ErrorKind，地址仍保持 `joky/tcp.Address` 身份。
+TCP 便捷入口逐个尝试候选，复用原 bind/connect 的 socket 拥有与取消规则。
 私有受检原语 `__dns_lookup(String, UInt16, &mut UInt64) @suspends -> Array<UInt8>` 只接受精确签名，
 沿用局部借用的固定位置与同步 stop 规则。String 保持拥有 Buffer ABI，
 不走 TextView。解释器、JIT 与 AOT 都调用同一个 poll/stop 实现；沿用 CpsFrame 的 host_context
 和 host_stop，不增加帧 ABI 字段。内部字节包每个地址占 24 字节，按大端存 high/low/endpoint；
 错误包携带受限 UTF-8，错误种类写入独占 UInt64 槽，库层复用 `joky/tcp.Address` 的类型身份。
 
-工作线程只持有拥有主机名、端口、Arc 请求身份、Mutex 完成状态、服务额度及 TaskWaker。
+DNS 操作经精确签名校验取得 Parallel 资格，解释器冻结相同的内置操作证据。
+工作线程只持有拥有主机名、端口、Arc 请求身份、Mutex 完成状态、服务额度及完成通知。
+Local 通知使用 TaskWaker；Parallel 通知使用 Weak<Task>，沿用 worker 的任务世代与唤醒竞争处理。
+请求的 poll、stop 和 ExternalCharge 释放仍在所属任务线程执行，通知不保活任务树。
 不持有 Buffer、CpsFrame、arena、Rc、VM、实例 State 或 Godot 对象。系统调用期间不持锁；
 结果发布和通知撤销使用同一完成状态锁。每次 lookup 独立分配身份；取消 race 失败分支后，
 旧结果不能命中新请求，已进入根就绪队列的旧通知只产生无害的额外 poll。
@@ -1885,7 +1891,7 @@ VM 持有实例任务执行器；每个根另持实例访问环境，保活不�
 取消立即释放任务计费，后台存储仍受服务额度约束；工作线程从不释放非 Send 的 arena 额度。
 系统解析器内部列表、缓存与线程栈属于宿主开销，不受语言 arena 硬限制。
 
-VM 加载 DNS 模块、Rust block_on 和原生阻塞驱动在进入 poll 前初始化服务。手动原生 poll
+VM 加载解析原语、Rust block_on 和原生 Local／Parallel 阻塞驱动在进入 poll 前初始化服务。手动原生 poll
 须先调用 Rust `runtime::dns::initialize()` 或 C `joky_dns_initialize()`；线程创建失败会关闭
 并回收已经启动的空闲线程，初始化失败保持错误状态。每份链接的运行时只有一个服务；多个
 VM 共用，独立链接的动态库可以各自拥有一份。不为 VM 销毁 join 工作线程，也不自动关闭
