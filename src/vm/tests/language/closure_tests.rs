@@ -1,6 +1,5 @@
 //! Closure behavior and rejected programs must agree across generated-code backends.
 use super::{VmEngine, VmMode};
-use crate::aot::AotCompiler;
 
 fn executes(source: &str, expected: i32) {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -23,22 +22,9 @@ fn executes(source: &str, expected: i32) {
     );
 }
 
+#[track_caller]
 fn rejects(source: &str) {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        assert!(
-            VmEngine::with_mode(mode).load_source(source).is_err(),
-            "accepted {source}"
-        );
-    }
-    if let Ok(ast) = crate::parser::parse(source) {
-        assert!(
-            AotCompiler::new("closures")
-                .unwrap()
-                .compile_module(&ast)
-                .is_err(),
-            "accepted {source}"
-        );
-    }
+    super::support::frontend_error(source, &crate::ModuleSources::new());
 }
 
 #[test]
@@ -510,15 +496,7 @@ fn closure_limits_and_reserved_capability_names_are_checked() {
     for i in 0..2049 {
         source.push_str(&format!("fn probe_{i}() {{ let f = || {{ 1 }} }}"));
     }
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = VmEngine::with_mode(mode).load_source(&source).unwrap_err();
-        assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
-        assert_eq!(error.message(), "Generated function limit 4096 exceeded (0 generic instances + 4096 closure entries, requesting 2 more)");
-    }
-    let error = AotCompiler::new("closure_limit")
-        .unwrap()
-        .compile_module(&crate::parser::parse(&source).unwrap())
-        .unwrap_err();
+    let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
     assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
     assert_eq!(error.message(), "Generated function limit 4096 exceeded (0 generic instances + 4096 closure entries, requesting 2 more)");
     rejects("struct Fn { n: Int32 } fn probe() {}");

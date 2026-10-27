@@ -48,7 +48,7 @@ const PREFIX: &str = r#"
 
 #[test]
 fn local_field_borrows_modify_original_fields_and_allow_disjoint_access() {
-    for body in [
+    let bodies = [
         "var p = Point { x: 20, y: 20 }; both(&mut p.x, &mut p.y); p.x + p.y",
         "var p = Point { x: 20, y: 20 }; let x = &mut p.x; p.y = p.y + 1; bump(x); p.x + p.y",
         "var p = Point { x: 20, y: 20 }; let x = &p.x; p.y = p.y + 2; inspect(x) + p.y",
@@ -64,12 +64,21 @@ fn local_field_borrows_modify_original_fields_and_allow_disjoint_access() {
         "var p = Point { x: 0, y: 0 }; bump(&mut p.x); p = Point { x: 20, y: 22 }; p.x + p.y",
         "var p = Point { x: 41, y: 41 }; let x = if true { &mut p.x } else { &mut p.y }; bump(x); p.x + p.y - 41",
         "var p = Point { x: 20, y: 20 }; let x = &mut p.x; let y = &mut p.y; let n = inspect(x); bump(y); bump(x); n + p.y + p.x - 20",
-    ] {
-        let source = format!("{PREFIX} fn f() -> Int32 {{ {body} }}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(&source).unwrap_or_else(|error| panic!("{mode:?}: {error}\n{source}"));
-            assert_eq!(vm.call_int32_0("f").unwrap(), 42, "{mode:?}: {body}");
+    ];
+    let mut source = PREFIX.to_owned();
+    for (case, body) in bodies.iter().enumerate() {
+        source.push_str(&format!("fn case_{case}() -> Int32 {{ {body} }}\n"));
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&source)
+            .unwrap_or_else(|error| panic!("{mode:?}: {error}\n{source}"));
+        for (case, body) in bodies.iter().enumerate() {
+            assert_eq!(
+                vm.call_int32_0(&format!("case_{case}")).unwrap(),
+                42,
+                "{mode:?}: {body}"
+            );
         }
     }
 }

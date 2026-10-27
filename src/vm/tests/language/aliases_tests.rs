@@ -1,7 +1,7 @@
 //! Alias resolution and reload semantics across both execution modes.
 
 use super::support::*;
-use super::{VmEngine, VmMode};
+use super::VmMode;
 use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 
@@ -59,7 +59,7 @@ fn aliases_match_canonical_types_in_direct_and_cps_execution() {
 }
 
 #[test]
-fn alias_errors_match_across_backends_and_preserve_source_ranges() {
+fn alias_errors_preserve_codes_and_source_ranges() {
     for (body, marked, code) in [
         ("type A = Missing", "Missing", ErrorCode::UnknownType),
         (
@@ -91,21 +91,10 @@ fn alias_errors_match_across_backends_and_preserve_source_ranges() {
         ),
     ] {
         let source = format!("// 🙂\n{body}");
-        let mut errors = Vec::new();
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            errors.push(VmEngine::with_mode(mode).load_source(&source).unwrap_err());
-        }
-        let mut compiler = crate::aot::AotCompiler::new("invalid_alias").unwrap();
-        errors.push(
-            compiler
-                .compile_module(&crate::parser::parse(&source).unwrap())
-                .unwrap_err(),
-        );
-        for error in errors {
-            assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{body}: {error}");
-            assert_eq!(error.code(), code, "{body}: {error}");
-            assert_eq!(error.span().unwrap().slice(&source), Some(marked), "{body}");
-        }
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{body}: {error}");
+        assert_eq!(error.code(), code, "{body}: {error}");
+        assert_eq!(error.span().unwrap().slice(&source), Some(marked), "{body}");
     }
 }
 

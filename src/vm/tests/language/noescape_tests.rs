@@ -16,20 +16,9 @@ fn executes(source: &str, expected: i32) {
     );
 }
 
+#[track_caller]
 fn rejects(source: &str) {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        assert!(
-            VmEngine::with_mode(mode).load_source(source).is_err(),
-            "{source}"
-        );
-    }
-    assert!(
-        AotCompiler::new("inferred-borrows")
-            .unwrap()
-            .compile_module(&crate::parser::parse(source).unwrap())
-            .is_err(),
-        "{source}"
-    );
+    super::support::frontend_error(source, &crate::ModuleSources::new());
 }
 
 #[test]

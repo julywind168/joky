@@ -58,6 +58,13 @@ fn project_run_resolves_nested_entries_and_resources_from_any_directory() {
 fn project_build_relocates_resources_and_preserves_previous_output_on_failure() {
     let work = Workspace::new();
     project(&work);
+    work.write(
+        "app/joky.toml",
+        &CONFIG.replace(
+            "\"assets\"",
+            "\"./assets\", \"assets/message.txt\", \"assets\"",
+        ),
+    );
     std::fs::create_dir(work.path().join("app/assets/empty")).unwrap();
     success(&work.cli(&["build", "app"]));
     let dist = work.path().join("app/dist");
@@ -138,44 +145,37 @@ fn project_manifest_rejects_unknown_invalid_and_escaping_paths() {
     work.write("app/main.jk", "fn main() {}");
     work.write("outside.jk", "fn main() {}");
     work.write("app/src/unused.jk", "fn unused() {}");
-    for (manifest, message) in [
-        ("[project", "Invalid"),
-        (
-            "[project]\nname='demo'\nentry='main.jk'\nsource-root='src'",
-            "outside source-root",
-        ),
-        (
-            "version=2\n[project]\nname='demo'\nentry='main.jk'",
-            "version",
-        ),
-        (
-            "[project]\nname='demo'\nentry='main.jk'\nresoruces=[]",
-            "Unknown",
-        ),
-        ("[project]\nname='../demo'\nentry='main.jk'", "Project name"),
-        ("[project]\nname='demo'\nentry='../outside.jk'", "relative"),
-        (
-            "[project]\nname='demo'\nentry='main.jk'\nsource-root='missing'",
-            "Cannot access",
-        ),
-        (
-            "[project]\nname='demo'\nentry='main.jk'\nresources=[42]",
-            "array of paths",
-        ),
-        (
-            "[project]\nname='demo'\nentry='main.jk'\nresources=['../outside.jk']",
-            "relative",
-        ),
-        (
-            "[project]\nname='demo'\nentry='main.jk'\nresources=['.']",
-            "relative",
-        ),
-        (
-            "[project]\nname='demo'\nentry='main.jk'\nresources=['./demo']",
-            "conflicts",
-        ),
+    for (fields, message) in [
+        ("name='../demo'\nentry='main.jk'", "Project name"),
+        ("name=''\nentry='main.jk'", "nonempty string"),
+        ("name='demo'\nentry='../outside.jk'", "relative"),
+        ("name='demo'\nentry='/outside.jk'", "relative"),
+        ("name='demo'\nentry='.'", "relative"),
+        ("name='demo'\nentry=''", "nonempty string"),
     ] {
-        work.write("app/joky.toml", manifest);
+        work.write("app/joky.toml", &format!("[project]\n{fields}"));
+        failure(&work.cli(&["build", "app"]), message);
+        assert!(!work.path().join("app/dist").exists());
+    }
+    for (prefix, fields, message) in [
+        ("[project", "", "Invalid"),
+        ("version=2", "", "version"),
+        ("unknown=true", "", "Unknown"),
+        ("", "source-root='src'", "outside source-root"),
+        ("", "source-root='missing'", "Cannot access"),
+        ("", "resoruces=[]", "Unknown"),
+        ("", "resources=[42]", "array of paths"),
+        ("", "resources='assets'", "array of paths"),
+        ("", "resources=['../outside.jk']", "relative"),
+        ("", "resources=['/outside.jk']", "relative"),
+        ("", "resources=['']", "relative"),
+        ("", "resources=['.']", "relative"),
+        ("", "resources=['./demo']", "conflicts"),
+    ] {
+        work.write(
+            "app/joky.toml",
+            &format!("{prefix}\n[project]\nname='demo'\nentry='main.jk'\n{fields}"),
+        );
         failure(&work.cli(&["build", "app"]), message);
         assert!(!work.path().join("app/dist").exists());
     }

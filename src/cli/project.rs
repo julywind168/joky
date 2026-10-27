@@ -96,11 +96,7 @@ impl Project {
         }
         let mut paths = BTreeSet::new();
         for resource in resources {
-            relative(&resource, false)?;
-            let path: PathBuf = Path::new(&resource)
-                .components()
-                .filter(|c| *c != Component::CurDir)
-                .collect();
+            let path = relative(&resource, false)?;
             let first = path.components().next().unwrap().as_os_str();
             if first == name.as_str() || first == MARKER || first == MANIFEST {
                 return Err(cli_argument_error(format!(
@@ -281,18 +277,24 @@ fn collect_resources(
     Ok(())
 }
 
-fn relative(path: &str, allow_root: bool) -> Result<(), Error> {
-    if path.is_empty()
-        || Path::new(path)
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
-        || (!allow_root && Path::new(path).components().all(|c| c == Component::CurDir))
-    {
-        return Err(cli_argument_error(format!(
+fn relative(path: &str, allow_root: bool) -> Result<PathBuf, Error> {
+    let invalid = || {
+        cli_argument_error(format!(
             "Project paths must stay relative to the project directory: {path}"
-        )));
+        ))
+    };
+    let mut normalized = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            _ => return Err(invalid()),
+        }
     }
-    Ok(())
+    if path.is_empty() || (!allow_root && normalized.as_os_str().is_empty()) {
+        return Err(invalid());
+    }
+    Ok(normalized)
 }
 fn contained(root: &Path, path: &str, allow_root: bool) -> Result<PathBuf, Error> {
     relative(path, allow_root)?;
