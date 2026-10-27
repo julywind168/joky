@@ -56,3 +56,6 @@ mod language;
 mod modules;
 #[path = "cli/tasks.rs"]
 mod tasks;
+
+#[path = "cli/project.rs"]
+mod project;

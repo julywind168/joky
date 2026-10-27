@@ -392,20 +392,14 @@ fn chat_parallel_real_tcp_on_all_backends() {
 
 fn chat_matrix(parallel: bool) {
     let work = scratch::ScratchDir::new("chat");
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_joky"), work.path().join("joky")).unwrap();
-    std::os::unix::fs::symlink(runtime::runtime_archive(), work.path().join("libjoky.a")).unwrap();
     let app = work.path().join("source app");
     std::fs::create_dir_all(app.join("host")).unwrap();
     std::fs::create_dir_all(app.join("script")).unwrap();
-    for name in ["run.sh", "build.sh"] {
-        std::fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("examples/chat")
-                .join(name),
-            app.join(name),
-        )
-        .unwrap();
-    }
+    std::fs::write(
+        app.join("joky.toml"),
+        include_str!("../examples/chat/joky.toml"),
+    )
+    .unwrap();
     let source = include_str!("../examples/chat/main.jk");
     std::fs::write(
         app.join("contract.jk"),
@@ -455,15 +449,14 @@ fn chat_matrix(parallel: bool) {
         assert_ne!(next, logic);
         std::fs::write(app.join("script/next.jk"), next).unwrap();
         let built_dir = work.path().join(format!("built-{create}"));
-        let mut build = Command::new(app.join("build.sh"));
-        build.arg(&built_dir);
+        let mut build = Command::new(env!("CARGO_BIN_EXE_joky"));
+        build.arg("build").arg(&app).arg("-o").arg(&built_dir);
         if parallel {
             build.args(["--task-workers", "3"]);
         }
         let built = build
             .current_dir(work.path())
-            .env("JOKY", "./joky")
-            .env("JOKY_RUNTIME", "./libjoky.a")
+            .env("JOKY_RUNTIME", runtime::runtime_archive())
             .output()
             .unwrap();
         assert!(built.status.success(), "{built:?}");
@@ -475,30 +468,24 @@ fn chat_matrix(parallel: bool) {
             std::fs::read(bundle.join("contract.jk")).unwrap(),
             std::fs::read(app.join("contract.jk")).unwrap()
         );
-        // Rebuilding must not overwrite a deployed application's edited files.
-        let refused = Command::new(app.join("build.sh"))
-            .arg(&bundle)
-            .current_dir(work.path())
-            .output()
-            .unwrap();
-        assert!(!refused.status.success());
-        assert!(String::from_utf8_lossy(&refused.stderr).contains("Output already exists"));
         for backend in ["jit", "interpreter", "aot"] {
             eprintln!("chat backend: {backend}, script: {create}");
             let root = if backend == "aot" { &bundle } else { &app };
-            let mut command = Command::new(root.join("run.sh"));
-            if backend == "aot" {
-                // The native launcher must not try to locate a compiler.
-                command.env("JOKY", work.path().join("missing-compiler"));
+            let mut command = if backend == "aot" {
+                let mut command = Command::new(bundle.join("chat"));
+                command.env("PATH", "");
+                command
             } else {
-                command.env("JOKY", "./joky");
+                let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
+                command.arg("run").arg(&app);
                 if parallel {
                     command.args(["--task-workers", "3"]);
                 }
                 if backend == "interpreter" {
                     command.arg("--interpreter");
                 }
-            }
+                command
+            };
             command.current_dir(work.path());
             let (mut server, port, admin_port) =
                 Server::start(command, work.path().join(format!("{backend}.log")));

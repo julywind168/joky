@@ -119,14 +119,15 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 ## TCP 状态域聊天室
 
-[chat 应用](examples/chat/README.md) 将 host、热更新脚本和共享契约放在同一个应用目录。
+[chat 项目](examples/chat/README.md) 用 `joky.toml` 声明 host 入口、源码根和运行时资源。
 在仓库根目录执行：
 
 ```sh
 cargo build --bin joky --lib
-examples/chat/run.sh
-# 原生应用目录，可整体搬动后通过其中的 run.sh 启动：
-examples/chat/build.sh /tmp/chat-app --task-workers 3
+target/debug/joky run examples/chat
+# 原生项目构建，产物可整体搬动后直接运行：
+target/debug/joky build examples/chat -o /tmp/chat-app --task-workers 3
+/tmp/chat-app/chat
 ```
 
 聊天端口为 `127.0.0.1:7777`，管理端口为 `127.0.0.1:7778`。

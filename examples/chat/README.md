@@ -1,56 +1,66 @@
 # TCP 状态域聊天室
 
-先在仓库根目录构建 Debug 编译器和运行时，再启动应用：
+chat 是一个 Joky 项目，配置位于根目录的 `joky.toml`：
 
-```sh
-cargo build --bin joky --lib
-examples/chat/run.sh
-# 聊天终端，可打开多个：
-nc 127.0.0.1 7777
-# 单独的管理终端：
-nc 127.0.0.1 7778
+```toml
+[project]
+name = "chat"
+entry = "main.jk"
+source-root = "."
+resources = ["contract.jk", "script"]
 ```
-
-目录职责如下，`contract.jk` 是应用根目录中的唯一共享契约：
 
 ```text
 chat/
+├── joky.toml
 ├── main.jk
 ├── contract.jk
 ├── host/admin.jk
 ├── script/main.jk
-├── run.sh
-├── build.sh
 └── README.md
 ```
 
-`run.sh` 自行定位应用根目录，从其他工作目录调用它也能加载正确的脚本和契约。
-源码启动支持 `./run.sh --interpreter` 和 `./run.sh --task-workers 3`。
-工具选择顺序为显式 `JOKY`、PATH 中的 `joky`、本仓库的 `target/debug/joky`；
-`JOKY` 也接受相对于调用位置的可执行文件路径。脚本不会自动构建编译器。
-直接执行 `joky run main.jk` 时，仍须以应用目录作为工作目录。
-
-构建可搬动的原生应用（以下命令从仓库根目录运行）：
+在仓库根目录构建 Debug 工具后运行：
 
 ```sh
-examples/chat/build.sh /tmp/chat-app --task-workers 3
-cd /tmp
-./chat-app/run.sh
+cargo build --bin joky --lib
+target/debug/joky run examples/chat
+# 使用解释器，或启用并行 host：
+target/debug/joky run examples/chat --interpreter
+target/debug/joky run examples/chat --task-workers 3
 ```
 
-`build.sh [输出目录] [Joky 构建选项]` 默认输出到应用目录下的 `dist/`；
-显式相对输出目录按调用时的工作目录解析。输出目录必须不存在，以免覆盖正在部署的脚本。
-构建选项可用 `--task-workers N`，默认 Local；运行时归档沿用 `JOKY_RUNTIME` 配置或编译器的安装布局。
+安装 `joky` 后，也可进入此目录执行 `joky run`。不提供输入时，CLI 从当前目录向上
+查找最近的 `joky.toml`；从其他目录传入项目路径同样有效。
+源码模块按 `source-root` 解析，文件 API 与内嵌 VM 的文件加载按项目根目录解析。
 
-产物包含 `chat` 原生程序、`run.sh`、`contract.jk`、`script/` 和运行说明。
-构建会先复制应用源码，再用该副本编译，使打包契约与 host 使用同一份源码。
-产物不需要安装 Joky 编译器，可整体复制到相同目标平台的其他位置，并通过其中的 `run.sh` 启动。
-原生启动入口不接受选项；执行模式在构建时确定。运行中的服务使用启动时选定的目录，
-移动部署目录应先停机，移动后再启动。
+构建并直接运行原生应用（以下构建命令从仓库根目录执行）：
 
-修改部署目录中的 `script/main.jk` 可热更新业务。`contract.jk` 必须与原生程序配套，
-修改契约或 host 后应重新构建到新目录并重启；`reload` 不更新契约快照。
-当前脚本依赖由 host 显式登记；新增业务模块时也须登记对应模块，目录本身不启用自动依赖发现。
+```sh
+target/debug/joky build examples/chat -o /tmp/chat-app --task-workers 3
+/tmp/chat-app/chat
+```
+
+默认输出是项目下的 `dist/`。原生程序和清单声明的运行时资源一起组成应用目录，
+可整体搬动到相同目标平台，直接执行其中的 `chat`；它按自身位置定位资源，不需要 shell 启动脚本
+或安装 Joky 编译器。构建时选择 Local／Parallel，默认 Local。
+
+同名项目生成过的输出目录可重新构建；构建失败保留旧产物，成功后替换整个目录。
+普通目录、符号链接和其他项目的产物不会被覆盖。重新构建会更新打包脚本，因此运行服务前
+应完成构建；更新 host 或搬动部署目录时先停机，完成后再启动。
+
+修改源码或部署目录中的 `script/main.jk` 后可发送 `reload` 热更新业务。
+`contract.jk` 的打包内容使用 host 编译时读到的源码快照，必须与原生程序配套；
+修改契约需重新构建并重启，`reload` 不更新契约快照。
+脚本依赖仍由 host 显式登记；项目配置负责源码根、文件根与资源打包，不自动创建内嵌 VM。
+完整规则见[项目模式](../../docs/language.md#joky-项目模式)。
+
+分别连接聊天端口与管理端口：
+
+```sh
+nc 127.0.0.1 7777
+nc 127.0.0.1 7778
+```
 
 两个端口均只监听本机。启动成功输出 `chat <端口>` 和 `admin <端口>`；任一端口绑定失败即退出。
 聊天连接收到 `welcome <id>`，每行一条命令，支持 LF / CRLF：
@@ -98,7 +108,7 @@ shutdown
 输出满或关闭时提交照常成功，慢连接通过独立控制信号断开，正常断线回调清理成员；
 健康成员先收到本次业务消息，不会因慢连接而回滚或重放。账户由连接作用域拥有，默认同时回收空房域和名字条目，下次加入时在事务内重建。状态、消息及活动帧另受运行时预算约束。
 
-宿主可用 `build.sh` 编译为 AOT 应用目录，业务脚本仍由内嵌 VM 动态编译。
+宿主可用 `joky build` 编译为 AOT 应用目录，业务脚本仍由内嵌 VM 动态编译。
 热更新必须保持共享入口契约、具名操作和存活状态 schema 兼容；共享契约文件在启动时登记，
 改变它需同步修改宿主并重启示例，状态布局迁移不由 `reload` 自动处理。
 [有状态服务设计与验收](../../docs/stateful-service-ergonomics.md)记录候选提交、背压、失败隔离与资源生命周期。

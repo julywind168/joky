@@ -12,7 +12,7 @@ use std::{
 
 mod files;
 mod sources;
-pub(crate) use files::{expand_with, resolve_file};
+pub(crate) use files::{expand_with, resolve_file, resolve_file_with_root};
 #[cfg(test)]
 pub(crate) use sources::{
     list_test_library, map_test_library, string_test_library, tcp_test_library,

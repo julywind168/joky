@@ -14,6 +14,7 @@ pub(super) fn build(
     source: &Path,
     output: &Path,
     mode: joky::runtime::parallel::ExecutionMode,
+    project: bool,
 ) -> Result<(), Error> {
     let source = source
         .canonicalize()
@@ -77,11 +78,12 @@ pub(super) fn build(
         compiler.requires_runtime() || ast.imports.iter().any(|import| import.path == "joky/vm");
     let main_slots = compiler.cps_frame_slots("main");
     compiler.write_object(&object)?;
-    std::fs::write(
-        &driver,
-        parallel_main.unwrap_or(driver::render(&entry_point, main_slots, requires_runtime)?),
-    )
-    .map_err(|error| {
+    let mut driver_source =
+        parallel_main.unwrap_or(driver::render(&entry_point, main_slots, requires_runtime)?);
+    if project {
+        driver_source = driver::project_main(driver_source);
+    }
+    std::fs::write(&driver, driver_source).map_err(|error| {
         build_error(
             ErrorCode::IoError,
             format!("Cannot write linker driver: {error}"),
@@ -184,10 +186,10 @@ fn runtime_archive() -> Result<PathBuf, Error> {
     ))
 }
 
-struct WorkDir(PathBuf);
+pub(super) struct WorkDir(pub(super) PathBuf);
 
 impl WorkDir {
-    fn new(parent: &Path) -> Result<Self, Error> {
+    pub(super) fn new(parent: &Path) -> Result<Self, Error> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         for _ in 0..100 {
             let id = NEXT.fetch_add(1, Ordering::Relaxed);

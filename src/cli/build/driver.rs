@@ -74,3 +74,14 @@ fn async_main(entry: &EntryPoint, main_slots: Option<usize>) -> Result<String, E
          }}"
     ))
 }
+
+/// Resolve the executable rather than argv[0], so PATH and symlink launches
+/// also locate the bundle. This runs before either executor starts any workers.
+pub(super) fn project_main(driver: String) -> String {
+    let driver = driver.replacen("int main(void)", "static int joky_project_main(void)", 1);
+    format!(
+        "{}\n{driver}\n{}",
+        include_str!("project_headers.c"),
+        include_str!("project_main.c")
+    )
+}

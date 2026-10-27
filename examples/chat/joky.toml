@@ -1,0 +1,5 @@
+[project]
+name = "chat"
+entry = "main.jk"
+source-root = "."
+resources = ["contract.jk", "script"]

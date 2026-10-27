@@ -84,9 +84,36 @@ fn load(
 }
 
 pub(crate) fn resolve_file(path: &Path, registry: &TypeRegistry) -> Result<Module, Error> {
+    let canonical = path.canonicalize().map_err(|e| io_error(path, e))?;
+    resolve_file_with_root(
+        path,
+        canonical.parent().expect("a source file has a parent"),
+        registry,
+    )
+}
+
+pub(crate) fn resolve_file_with_root(
+    path: &Path,
+    root: &Path,
+    registry: &TypeRegistry,
+) -> Result<Module, Error> {
     let entry = read_file(path)?;
     let path = path.canonicalize().map_err(|e| io_error(path, e))?;
-    let root = path.parent().expect("a source file has a parent");
+    let root = root.canonicalize().map_err(|e| io_error(root, e))?;
+    if !root.is_dir() {
+        return Err(Error::new_with_code(
+            ErrorPhase::Resolve,
+            ErrorCode::InvalidImport,
+            "Source root must be a directory",
+        ));
+    }
+    if !path.starts_with(&root) {
+        return Err(Error::new_with_code(
+            ErrorPhase::Resolve,
+            ErrorCode::InvalidImport,
+            "Entry file is outside the source root",
+        ));
+    }
     let mut sources = SourceMap::default();
     sources.insert(entry.clone());
     let mut module = crate::parser::parse_with_source(entry.text(), entry.id())
@@ -95,7 +122,7 @@ pub(crate) fn resolve_file(path: &Path, registry: &TypeRegistry) -> Result<Modul
     let expanded = expand_with(&module, registry, &|name| {
         let file = root.join(format!("{name}.jk"));
         let file = file.canonicalize().map_err(|e| io_error(&file, e))?;
-        if !file.starts_with(root) {
+        if !file.starts_with(&root) {
             return Err(Error::new_with_code(
                 ErrorPhase::Resolve,
                 ErrorCode::InvalidImport,

@@ -315,6 +315,16 @@ impl TypeRegistry {
         super::imports::resolve_file(path.as_ref(), self)
     }
 
+    /// Read an entry file using an explicit source root for every user import.
+    /// Both the entry and canonical dependency paths must remain inside the root.
+    pub fn resolve_file_with_root(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        root: impl AsRef<std::path::Path>,
+    ) -> Result<Module, Error> {
+        super::imports::resolve_file_with_root(path.as_ref(), root.as_ref(), self)
+    }
+
     fn resolve_bound(&self, module: &Module) -> Result<Module, Error> {
         let scoped = self.compilation_scope().with_trait_environment(module);
         let registry = &scoped;

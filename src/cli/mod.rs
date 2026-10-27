@@ -2,6 +2,7 @@
 mod build;
 mod diagnostic;
 mod format;
+mod project;
 
 use joky::{
     parser::{self, ast::Item},
@@ -14,8 +15,8 @@ use std::{ffi::OsString, path::PathBuf};
 const HELP: &str = "Joky — run, build and format Joky programs
 
 Usage:
-  joky run [--interpreter] [--no-prelude] [--task-workers N] <file.jk>
-  joky build [--no-prelude] [--task-workers N] <file.jk> [-o <executable>]
+  joky run [--interpreter] [--no-prelude] [--task-workers N] [<file.jk> | <project-dir> | joky.toml]
+  joky build [--no-prelude] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky fmt [--check] <file.jk>
   joky fmt [--check] --stdin
   joky --help
@@ -32,10 +33,14 @@ Options:
   --interpreter       Execute 'run' with the register bytecode interpreter
   --no-prelude        Disable implicit standard-library imports
   --task-workers N    Use 1..256 task workers (default: Local; requires @suspends main)
-  -o, --output <path>  Output executable (default: source path without .jk)
+  -o, --output <path>  Output executable for a file, or bundle directory for a project
   -h, --help           Show this help
   -V, --version        Show the version
 
+Without an input, run/build find the nearest joky.toml in the current directory or its parents.
+Projects declare [project] name, entry, source-root (default \".\"), and resources.
+Project builds default to <project>/dist/<name>; run them directly after moving the bundle.
+Single-file builds default to the source path without .jk.
 Programs start at fn main() or fn main() -> Int32.
 Import joky/io.{print, println}; Show values are borrowed automatically, e.g. println(42).
 String literals interpolate by default, e.g. \"value={value}\"; double braces escape literal braces.
@@ -55,7 +60,7 @@ enum Command {
     },
     Build {
         source: PathBuf,
-        output: PathBuf,
+        output: Option<PathBuf>,
         prelude: bool,
         mode: ExecutionMode,
     },
@@ -160,17 +165,19 @@ impl Command {
                 return Err(cli_argument_error("Expected exactly one source file"));
             }
         }
-        let source =
-            source.ok_or_else(|| cli_argument_error("Missing source file. Use 'joky --help'."))?;
-        if source.extension().is_none_or(|ext| ext != "jk") {
+        let source = source.or_else(project::discover).ok_or_else(|| {
+            cli_argument_error("Missing source file or joky.toml project. Use 'joky --help'.")
+        })?;
+        if !source.is_dir()
+            && source.file_name().is_none_or(|name| name != "joky.toml")
+            && source.extension().is_none_or(|ext| ext != "jk")
+        {
             return Err(cli_argument_error(
                 "Source files must have the .jk extension",
             ));
         }
         if build {
-            let output =
-                output.unwrap_or_else(|| source.with_extension(std::env::consts::EXE_EXTENSION));
-            if output.as_os_str().is_empty() {
+            if output.as_ref().is_some_and(|p| p.as_os_str().is_empty()) {
                 return Err(cli_argument_error("Output path must not be empty"));
             }
             Ok(Self::Build {
@@ -208,6 +215,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
     let result = (|| -> Result<u8, Error> {
+        let project = project::Project::load(path)?;
         let prelude = match command {
             Command::Run { prelude, .. } | Command::Build { prelude, .. } => prelude,
             _ => unreachable!(),
@@ -227,12 +235,17 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         );
         if matches!(command, Command::Run { .. }) {
             vm.set_file_service(joky::runtime::fs::FileService::native(
-                ".",
+                project
+                    .as_ref()
+                    .map_or(std::path::Path::new("."), |p| p.root.as_path()),
                 Default::default(),
             )?)?;
         }
         vm.set_prelude_enabled(prelude);
-        let ast = vm.type_registry().resolve_file(path)?;
+        let ast = match &project {
+            Some(project) => project.resolve(vm.type_registry())?,
+            None => vm.type_registry().resolve_file(path)?,
+        };
         let result = (|| {
             let entry = validate_program(&ast, vm.type_registry())?;
             match command {
@@ -243,7 +256,15 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
                     mode,
                     ..
                 } => {
-                    build::build(&ast, entry, source_path, output, mode)?;
+                    let output = if let Some(project) = &project {
+                        project.build(&ast, entry, output.as_deref(), mode)?
+                    } else {
+                        let output = output.clone().unwrap_or_else(|| {
+                            source_path.with_extension(std::env::consts::EXE_EXTENSION)
+                        });
+                        build::build(&ast, entry, source_path, &output, mode, false)?;
+                        output
+                    };
                     eprintln!("Built {}", output.display());
                     Ok(0)
                 }
