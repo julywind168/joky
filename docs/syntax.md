@@ -949,6 +949,11 @@ Fn 同时满足 FnMut 和 FnOnce，FnMut 同时满足 FnOnce。
 Result 表达可处理的错误结果，`@suspends` 表达执行可能暂停，二者相互独立。
 目前只确定这一种效果，不预设通用效果行、I/O 效果推导或效果处理器语法。
 
+拥有型 `dyn Trait` 已纳入 [W3 计划](startup-worker-configuration.md)，
+尚未实现。候选规则采用裸 `dyn Trait` 表示拥有对象，现有 `&dyn Trait`／`&mut dyn Trait`
+表示借用视图；由期望接口类型触发拥有转换，与自定义 Drop 转移共用清理协议。
+首版保持动态方法同步，不因此开放挂起动态方法或跨 worker 借用。
+
 ### 10.7 所有权、借用与释放
 
 第一版优先采用 [Arena 与隐式生命周期方案](arena-borrowing-ffi.md)，以下为目标规则。
