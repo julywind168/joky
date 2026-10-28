@@ -13,6 +13,8 @@ fn describe(instruction: &Instruction) -> String {
         } => format!(
             "DomainOwner owner={owner} packet={packet} index={index} value={value} decode={decode}"
         ),
+        Instruction::DynBorrow { .. } => "DynBorrow".into(),
+        Instruction::DynPack { .. } => "DynPack".into(),
         Instruction::DynCopy { lanes } => format!("DynCopy {lanes:?}"),
         Instruction::DynMethod { method, .. } => format!("DynMethod #{method}"),
         Instruction::Text { .. } => "text".into(),

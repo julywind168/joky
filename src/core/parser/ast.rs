@@ -811,6 +811,8 @@ pub(crate) enum DomainAccessKind {
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
+    /// Compiler-owned container adapters may return a checked fat dyn borrow.
+    DynBorrowAdapter,
     OutboxEmit,
     FixedArrayBegin,
     FixedArrayWriteNext,

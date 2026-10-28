@@ -52,7 +52,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::Int16 | Type::UInt16 => Some(types::I16),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
-        Type::DynTrait(_) | Type::Parameter(_) | Type::Applied(_) | Type::Projection(_) => {
+        Type::Parameter(_) | Type::Applied(_) | Type::Projection(_) => {
             unreachable!("generic parameter reached native lowering")
         }
         Type::FixedArray(_)
@@ -60,6 +60,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         | Type::Function(_)
         | Type::String
         | Type::Resource(_)
+        | Type::DynTrait(_)
         | Type::Ptr
         | Type::Reference(_)
         | Type::Buffer(_) => Some(if cfg!(target_pointer_width = "64") {
@@ -348,7 +349,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
                 }
             }
         }
-        if info.signature.ret.is_aggregate() {
+        if info.signature.ret.is_call_aggregate() {
             sig.params
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
@@ -357,7 +358,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
         if let Some(ty) =
-            native_lane(&info.signature.ret).filter(|_| !info.signature.ret.is_place())
+            native_lane(&info.signature.ret).filter(|_| !info.signature.ret.is_call_aggregate())
         {
             sig.returns.push(AbiParam::new(ty));
         }
@@ -403,7 +404,7 @@ pub(super) fn instance_entry(builder: &mut FunctionBuilder, body: FuncRef, info:
             index += 1;
         }
     }
-    if info.signature.ret.is_aggregate() {
+    if info.signature.ret.is_call_aggregate() {
         args.push(output);
     }
     if info.needs_arena {
@@ -506,6 +507,9 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, ptr, ptr],
             vec![],
         ),
+        ("__joky_dyn_pack", vec![ptr, ptr, ptr], vec![]),
+        ("__joky_dyn_data", vec![ptr], vec![ptr]),
+        ("__joky_dyn_table", vec![ptr], vec![ptr]),
         ("__joky_cleanup_snapshot", vec![ptr, ptr], vec![]),
         (
             "__joky_resource_create_v1",
@@ -1269,7 +1273,7 @@ fn lower_cps_result(
     ptr_ty: types::Type,
 ) {
     let Some(dst) = result else { return };
-    if dst.ty.is_aggregate() {
+    if dst.ty.is_call_aggregate() {
         let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
         let source = Slot {
             index: info.aggregate_result_offset(),
@@ -1700,6 +1704,26 @@ enum SlotAccess<'a> {
     },
 }
 
+fn dyn_borrow(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    slots: &mut SlotAccess<'_>,
+    dst: &Slot,
+    owner: Value,
+) {
+    let data = helper(builder, refs, "__joky_dyn_data", &[owner]);
+    let table = helper(builder, refs, "__joky_dyn_table", &[owner]);
+    slots.write(builder, dst, data);
+    slots.write(
+        builder,
+        &Slot {
+            index: dst.index + 1,
+            ty: Type::Ptr,
+        },
+        table,
+    );
+}
+
 impl SlotAccess<'_> {
     fn read(&mut self, builder: &mut FunctionBuilder, slot: &Slot) -> Value {
         match self {
@@ -1831,7 +1855,7 @@ fn lower_sync_call(
             call_args.splice(..environment.scalar_types().len(), [pointer]);
         }
     }
-    let buffer = match result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
+    let buffer = match result.as_ref().filter(|slot| slot.ty.is_call_aggregate()) {
         Some(dst) if dst.ty.is_place() => {
             call_args.push(slots.read(builder, dst));
             None
@@ -1876,12 +1900,12 @@ fn lower_sync_call(
                 .params
                 .push(AbiParam::new(native_lane(ty).unwrap()));
         }
-        if info.signature.ret.is_aggregate() {
+        if info.signature.ret.is_call_aggregate() {
             signature.params.push(AbiParam::new(ptr_ty));
         }
         signature.params.push(AbiParam::new(ptr_ty));
         if let Some(ty) =
-            native_lane(&info.signature.ret).filter(|_| !info.signature.ret.is_place())
+            native_lane(&info.signature.ret).filter(|_| !info.signature.ret.is_call_aggregate())
         {
             signature.returns.push(AbiParam::new(ty));
         }
@@ -1919,7 +1943,7 @@ fn lower_sync_call(
                 let value = unpack(builder, ty, value);
                 slots.write(builder, &dst, value);
             }
-        } else if !dst.ty.is_aggregate() {
+        } else if !dst.ty.is_call_aggregate() {
             let value = builder.inst_results(call)[0];
             let value = narrow_lane(builder, &dst.ty, value);
             slots.write(builder, dst, value);
@@ -2071,7 +2095,16 @@ fn lower_ops(
                         .clone()
                         .unwrap_or_else(|| src.scalars().find(|s| s.ty.is_owner_lane()).unwrap());
                     let value = slots.read(builder, &source);
-                    slots.write(builder, dst, value);
+                    if dst.ty.dyn_interface().is_some() {
+                        let value = if place.is_some() {
+                            builder.ins().load(ptr_ty, MemFlagsData::new(), value, 0)
+                        } else {
+                            value
+                        };
+                        dyn_borrow(builder, refs, slots, dst, value);
+                    } else {
+                        slots.write(builder, dst, value);
+                    }
                 }
                 BufferOp::Access { .. } => {
                     unreachable!("owner access markers are erased after checking")
@@ -2267,7 +2300,11 @@ fn lower_ops(
                             } else {
                                 builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
                             };
-                            slots.write(builder, dst.as_ref().unwrap(), pointer);
+                            if matches!(element, Type::DynTrait(_)) {
+                                dyn_borrow(builder, refs, slots, dst.as_ref().unwrap(), pointer);
+                            } else {
+                                slots.write(builder, dst.as_ref().unwrap(), pointer);
+                            }
                         }
                         BufferIntrinsic::Load
                         | BufferIntrinsic::TakeLast
@@ -2350,10 +2387,27 @@ fn lower_ops(
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
+                if dst.ty.dyn_interface().is_some() && src.ty.is_dyn_wrapper_view() {
+                    let owner = slots.read(builder, src);
+                    dyn_borrow(builder, refs, slots, dst, owner);
+                    continue;
+                }
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
                     let value = slots.read(builder, &src);
                     slots.write(builder, &dst, value);
                 }
+            }
+            Op::DynPack {
+                owner,
+                table,
+                indirect,
+            } => {
+                let owner = slots.read(builder, owner);
+                let table = slots.read(builder, table);
+                let indirect = builder.ins().iconst(ptr_ty, i64::from(*indirect));
+                builder
+                    .ins()
+                    .call(refs["__joky_dyn_pack"], &[owner, table, indirect]);
             }
             Op::DynTable { dst, table } => {
                 let value = builder
@@ -2398,7 +2452,11 @@ fn lower_ops(
                 } else {
                     pointer
                 };
-                slots.write(builder, dst, pointer);
+                if matches!(target, Type::DynTrait(_)) {
+                    dyn_borrow(builder, refs, slots, dst, pointer);
+                } else {
+                    slots.write(builder, dst, pointer);
+                }
             }
             Op::Project { dst, src, .. } | Op::PatternProject { dst, src, .. } => {
                 let pointer = slots.read(builder, src);
@@ -2422,7 +2480,11 @@ fn lower_ops(
                 } else {
                     pointer
                 };
-                slots.write(builder, dst, pointer);
+                if matches!(target, Type::DynTrait(_)) {
+                    dyn_borrow(builder, refs, slots, dst, pointer);
+                } else {
+                    slots.write(builder, dst, pointer);
+                }
             }
             Op::ArenaNew { dst } => {
                 let source = builder
@@ -3076,7 +3138,7 @@ fn lower_cps(
         mode,
     );
     if !terminated {
-        if let Some(result) = plan.result.as_ref().filter(|s| !s.ty.is_aggregate()) {
+        if let Some(result) = plan.result.as_ref().filter(|s| !s.ty.is_call_aggregate()) {
             let value = load(builder, slots, result);
             let value = wide(builder, value);
             builder
@@ -3177,7 +3239,7 @@ fn lower_direct(
     let result_pointer = info
         .signature
         .ret
-        .is_aggregate()
+        .is_call_aggregate()
         .then(|| parameters.next().unwrap());
 
     let arena = info.needs_arena.then(|| parameters.next().unwrap());

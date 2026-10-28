@@ -184,7 +184,7 @@ fn parallel_owned_closures_freeze_transfer_and_cancel() {
 }
 
 #[test]
-fn parallel_owned_closures_reject_local_targets_and_custom_drop_packets() {
+fn parallel_owned_closures_reject_local_targets() {
     let mut vm = VmEngine::new();
     unsafe extern "C" fn local() -> i32 {
         42
@@ -199,34 +199,21 @@ fn parallel_owned_closures_reject_local_targets_and_custom_drop_packets() {
     }
     vm.load_source(
         r#"
-        import joky/drop.{type Drop}
         extern fn local() -> Int32
-        struct Tracked { text: String }
-        impl Drop for Tracked { fn drop(&mut self) {} }
         fn discard<F>(value: F) @suspends {}
         fn bad_target() @suspends {
             let value = "capture"
             let callback = move || { local(); value }
             scope { branch { discard(callback) } }
         }
-        fn bad_drop() @suspends {
-            let value = Tracked { text: "capture" }
-            let callback = move || { value }
-            scope { branch { discard(callback) } }
-        }
     "#,
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    for (name, reason) in [
-        ("bad_target", "local"),
-        ("bad_drop", "parallel branch captures"),
-    ] {
-        let error = vm
-            .prepare_parallel_task(name, vec![], vec![])
-            .err()
-            .expect("must reject before executing");
-        assert!(error.message().contains(reason), "{name}: {error}");
-    }
+    let error = vm
+        .prepare_parallel_task("bad_target", vec![], vec![])
+        .err()
+        .expect("must reject before executing");
+    assert!(error.message().contains("local"), "{error}");
 }
 
 #[test]

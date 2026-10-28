@@ -200,7 +200,10 @@ impl TypeRegistry {
         interface: &DynInterface,
         span: Span,
     ) -> Result<(), Error> {
-        if actual.contains_dyn() || !self.implements(actual, interface.trait_id)? {
+        if actual.contains_dyn_view()
+            || matches!(actual, Type::DynTrait(_))
+            || !self.implements(actual, interface.trait_id)?
+        {
             return Err(error(
                 ErrorCode::TypeMismatch,
                 format!("Type '{actual}' has no applicable impl for the dyn trait"),

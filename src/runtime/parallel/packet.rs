@@ -49,7 +49,7 @@ impl Shape {
                 Type::Named(n) if matches!(n.as_str(), "domain.Handle" | "admission.Token") => {
                     Shape::Scalar(Type::UInt64)
                 }
-                Type::Buffer(_) => Shape::Buffer,
+                Type::Buffer(_) | Type::DynTrait(_) => Shape::Buffer,
                 Type::Resource(name)
                     if (crate::runtime::tcp::transferable_type(name)
                         || crate::runtime::parallel::control::resource_type(name)) =>
@@ -317,6 +317,7 @@ pub(crate) struct Packet {
     pub(crate) words: Vec<u64>,
     owners: Vec<(usize, OwnedBuffer)>,
     place: Option<Vec<u64>>,
+    cleanup: Option<super::portable::Payload>,
     _charge: Option<Lease>,
 }
 impl Packet {
@@ -334,6 +335,7 @@ impl Packet {
             words: vec![0; lanes],
             owners: Vec::with_capacity(lanes),
             place: None,
+            cleanup: None,
             _charge: charge,
         })
     }
@@ -344,10 +346,45 @@ impl Packet {
     /// remains live through this call. Its original storage stays with the caller.
     pub(crate) unsafe fn capture(
         shape: Shape,
+        words: Vec<u64>,
+        entry: Option<Entry>,
+        arena: &mut Arena,
+    ) -> Result<Self, Error> {
+        Self::capture_value(shape, words, entry, arena, false)
+    }
+    pub(crate) unsafe fn capture_value(
+        shape: Shape,
         mut words: Vec<u64>,
         mut entry: Option<Entry>,
         arena: &mut Arena,
+        returned: bool,
     ) -> Result<Self, Error> {
+        let portable = entry
+            .as_ref()
+            .map_or(Ok(false), |e| super::portable::Payload::needed(e, arena));
+        match portable {
+            Ok(false) => {}
+            result => {
+                let captured = (|| {
+                    result?;
+                    shape.normalize(&mut words)?;
+                    let mut packet = Self::empty(shape)?;
+                    packet.cleanup = Some(super::portable::Payload::capture(
+                        entry.as_ref().unwrap(),
+                        arena,
+                        returned,
+                    )?);
+                    packet.words = words;
+                    Ok(packet)
+                })();
+                if captured.is_err() {
+                    if let Some(entry) = entry {
+                        let _ = entry.run(arena);
+                    }
+                }
+                return captured;
+            }
+        }
         if let Some(entry) = &mut entry {
             entry.materialize();
         }
@@ -411,6 +448,11 @@ impl Packet {
         base: usize,
         key: Option<usize>,
     ) -> Result<Vec<u64>, Error> {
+        if let Some(cleanup) = self.cleanup.take() {
+            let key = key.unwrap_or(base + self.shape.owners()[0]);
+            cleanups.insert(key, cleanup.install(arena)?);
+            return Ok(self.words);
+        }
         if let Shape::Place(layout) = &self.shape {
             let destination =
                 cleanups

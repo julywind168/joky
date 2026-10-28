@@ -17,6 +17,7 @@ pub(crate) enum Kind {
     Set = 10,
     Resource = 11,
     Function = 12,
+    Dynamic = 13,
 }
 
 impl Kind {
@@ -25,6 +26,7 @@ impl Kind {
             Type::FixedArray(_) => Self::FixedArray,
             Type::String => Self::String,
             Type::Function(_) => Self::Function,
+            Type::DynTrait(_) => Self::Dynamic,
             Type::Named(n) if matches!(n.as_str(), "domain.Handle" | "admission.Token") => {
                 Self::Scalar
             }
@@ -61,6 +63,7 @@ impl Kind {
             10 => Self::Set,
             11 => Self::Resource,
             12 => Self::Function,
+            13 => Self::Dynamic,
             _ => return None,
         })
     }
@@ -122,7 +125,7 @@ pub(crate) fn classify(
                 .cloned()
                 .chain(e.variants.iter().filter_map(|v| v.payload.clone()))
                 .collect(),
-            Type::String | Type::Function(_) => Vec::new(),
+            Type::String | Type::Function(_) | Type::DynTrait(_) => Vec::new(),
             Type::Named(n) if matches!(n.as_str(), "domain.Handle" | "admission.Token") => {
                 Vec::new()
             }

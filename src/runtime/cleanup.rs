@@ -8,6 +8,35 @@ pub(crate) type Callback = unsafe extern "C" fn(*mut u8, *mut Arena);
 
 pub(crate) type InterpretedCallback = std::rc::Rc<dyn Fn(*mut u8, &mut Arena) -> Result<(), Error>>;
 
+/// Immutable code evidence, without a worker-local interpreter or activation.
+#[derive(Clone)]
+pub(crate) enum PortableCallback {
+    Native(Callback),
+    Interpreted {
+        code: std::sync::Arc<crate::backends::interp::FrozenEntry>,
+        name: String,
+    },
+}
+impl PortableCallback {
+    unsafe fn run(&self, data: *mut u8, arena: &mut Arena) -> Result<(), Error> {
+        match self {
+            Self::Native(callback) => {
+                super::error::checked(|| callback(data, arena)).map_err(|error| {
+                    match super::parallel::pool::code::<crate::vm::parallel::Code>().as_deref() {
+                        Some(crate::vm::parallel::Code::Native(code)) => {
+                            error.with_sources(&code.sources)
+                        }
+                        _ => error,
+                    }
+                })
+            }
+            Self::Interpreted { code, name } => {
+                crate::backends::interp::cleanup_call(&code.instantiate()?, name, data, arena)
+            }
+        }
+    }
+}
+
 pub(crate) enum Hook {
     Native {
         data: *mut u8,
@@ -16,6 +45,10 @@ pub(crate) enum Hook {
     Interpreted {
         data: *mut u8,
         callback: InterpretedCallback,
+    },
+    Portable {
+        data: *mut u8,
+        callback: PortableCallback,
     },
 }
 
@@ -52,6 +85,7 @@ impl Hook {
         match self {
             Self::Native { data, callback } => super::error::checked(|| callback(data, arena)),
             Self::Interpreted { data, callback } => callback(data, arena),
+            Self::Portable { data, callback } => callback.run(data, arena),
         }
     }
 }
@@ -417,6 +451,12 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut NativeFrame) {
 /// Keep its cleanup responsibility until that point, including native failures.
 #[export_name = "__joky_cleanup_finish_return"]
 pub(crate) unsafe extern "C" fn finish_return(frame: *mut NativeFrame, slot: usize) {
+    take_return(frame, slot);
+}
+
+/// Detach a successful return while retaining its complete cleanup description.
+/// The caller assumes the uniquely owned result and its live storage on success.
+pub(crate) unsafe fn take_return(frame: *mut NativeFrame, slot: usize) -> Option<Entry> {
     let mut frame = Box::from_raw(frame);
     let returned = frame.entries.take(slot);
     if let Err(error) = frame.entries.finish(&mut *frame.arena) {
@@ -424,6 +464,9 @@ pub(crate) unsafe extern "C" fn finish_return(frame: *mut NativeFrame, slot: usi
             let _ = returned.run(&mut *frame.arena);
         }
         super::error::record_error(error);
+        None
+    } else {
+        returned
     }
 }
 

@@ -6,6 +6,7 @@ pub(super) fn check_signature(
     ret: &Type,
     suspends: bool,
     host: bool,
+    allow_view_result: bool,
     span: Span,
 ) -> Result<(), Error> {
     let has_dyn = params.iter().any(|p| p.ty.contains_dyn()) || ret.contains_dyn();
@@ -13,18 +14,18 @@ pub(super) fn check_signature(
         return Err(Error::new_with_code(
             ErrorPhase::Abi,
             ErrorCode::AbiError,
-            "Dyn views cannot cross a host ABI",
+            "Dyn objects and views cannot cross a host ABI",
         )
         .with_span(span));
     }
-    if ret.contains_dyn() {
+    if ret.contains_dyn_view() && !allow_view_result {
         return Err(type_error(
             &span,
             ErrorCode::TypeMismatch,
             "Dyn views cannot be returned",
         ));
     }
-    if suspends && has_dyn {
+    if suspends && params.iter().any(|p| p.ty.contains_dyn_view()) {
         return Err(type_error(
             &span,
             ErrorCode::TypeMismatch,
@@ -68,6 +69,27 @@ impl ModulePlan {
                 }
             }
             for (op, span) in body.ops.iter().zip(&body.op_spans) {
+                if let Op::DynPack {
+                    owner,
+                    table,
+                    indirect,
+                } = op
+                {
+                    let valid = tables.get(&table.index).is_some_and(|table| {
+                        matches!(&owner.ty, Type::Buffer(element) if **element == table.self_type)
+                            && *indirect == (table.self_type.is_owner() && !table.self_type.is_inline_owner())
+                            && body.ops.iter().any(|op| matches!(op,
+                                Op::Buffer(BufferOp::Move { dst, src })
+                                if src.index == owner.index && dst.ty.dyn_interface() == Some(&table.interface)))
+                    });
+                    if !valid {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidState,
+                            "Invalid owning dyn erasure descriptor",
+                        ));
+                    }
+                }
                 if let Op::DynTable { table, .. } = op {
                     let DynTable {
                         self_type,
@@ -383,21 +405,37 @@ impl FunctionPlan {
                 )
             })?;
         let slot = interface.methods[method].clone();
-        if slot.mutable && !ty.reference_type().unwrap().mutable {
+        if slot.mutable && ty.reference_type().is_some_and(|r| !r.mutable) {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
                 "An exclusive dyn method requires an exclusive view",
             ));
         }
+        let receiver = if matches!(ty, Type::DynTrait(_)) {
+            Expr::Unary {
+                op: if slot.mutable {
+                    UnaryOp::BorrowMut
+                } else {
+                    UnaryOp::Borrow
+                },
+                operand: Box::new(receiver),
+                span,
+            }
+        } else {
+            receiver
+        };
         let Flow::Value(Some(view)) = self.expr(&receiver, vars, functions, suspends, types)?
         else {
             return Ok(Some(Flow::Diverged));
         };
         // Borrow with the method's permissions. A shared method called through
         // an exclusive view must allow another shared receiver in its arguments.
-        let receiver_ty =
-            Type::reference(ty.reference_type().unwrap().target.clone(), slot.mutable);
+        let receiver_ty = Type::reference(
+            ty.reference_type()
+                .map_or_else(|| ty.clone(), |r| r.target.clone()),
+            slot.mutable,
+        );
         let borrowed = self.slot(receiver_ty.clone())?;
         self.emit(Op::Reference {
             dst: borrowed.clone(),
@@ -488,6 +526,42 @@ mod tests {
     }
 
     const BASE: &str = "trait Read { type Item; fn value(&self) @noescape -> Self.Item; fn touch(&self) @noescape {} } struct Counter { value: Int32 } impl Read for Counter { type Item = Int32; fn value(&self) -> Int32 { self.value } }";
+
+    #[test]
+    fn owning_dyn_rejects_mismatched_erasure_descriptors() {
+        for invalid in 0..3 {
+            let mut plan = checked(&format!(
+                "{BASE} fn object() -> dyn Read<Item = Int32> {{ Counter {{ value: 42 }} }}"
+            ))
+            .unwrap();
+            let body = plan.bodies.get_mut("object").unwrap();
+            let pack = body
+                .ops
+                .iter_mut()
+                .find(|op| matches!(op, Op::DynPack { .. }))
+                .unwrap();
+            let Op::DynPack {
+                owner,
+                table,
+                indirect,
+            } = pack
+            else {
+                unreachable!()
+            };
+            match invalid {
+                0 => *indirect = !*indirect,
+                1 => owner.ty = Type::Buffer(Arc::new(Type::Bool)),
+                _ => table.index = usize::MAX,
+            }
+            let error = plan.validate_dyn_tables().unwrap_err();
+            assert!(
+                error
+                    .message()
+                    .contains("Invalid owning dyn erasure descriptor"),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn borrowed_dyn_v2_preserves_erasure_and_table_descriptors() {

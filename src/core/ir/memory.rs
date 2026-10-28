@@ -44,6 +44,60 @@ impl FunctionPlan {
         flow: Flow,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        if let (Flow::Value(Some(src)), Some(target @ Type::DynTrait(_))) = (&flow, expected) {
+            if &src.ty != target {
+                let interface = target.dyn_interface().unwrap();
+                if src.ty.contains_references() || !src.ty.is_buffer_element() {
+                    return Err(type_error(
+                        &self.current_span,
+                        ErrorCode::TypeMismatch,
+                        "Owning dyn erasure requires a reference-free storable value",
+                    ));
+                }
+                self.type_registry
+                    .check_dyn_erasure(&src.ty, interface, self.current_span)?;
+                let table = self.dyn_entries(&src.ty, interface, self.current_span)?;
+                use crate::parser::ast::BufferIntrinsic;
+                let buffer = self.slot(Type::Buffer(Arc::new(src.ty.clone())))?;
+                let capacity = self.slot(Type::UInt64)?;
+                self.emit(Op::Literal(capacity.clone(), Constant::UInt64(1)));
+                self.emit(Op::Buffer(BufferOp::Storage {
+                    intrinsic: BufferIntrinsic::Allocate,
+                    element: src.ty.clone(),
+                    args: vec![capacity],
+                    dst: Some(buffer.clone()),
+                }));
+                self.register_owner(buffer.clone(), None);
+                let reference = self.slot(Type::reference(buffer.ty.clone(), true))?;
+                self.emit(Op::Buffer(BufferOp::Borrow {
+                    dst: reference.clone(),
+                    src: buffer.clone(),
+                    place: None,
+                }));
+                self.emit(Op::Buffer(BufferOp::Storage {
+                    intrinsic: BufferIntrinsic::InitializeNext,
+                    element: src.ty.clone(),
+                    args: vec![reference, src.clone()],
+                    dst: None,
+                }));
+                let dispatch = self.slot(Type::Ptr)?;
+                self.emit(Op::DynTable {
+                    dst: dispatch.clone(),
+                    table,
+                });
+                self.emit(Op::DynPack {
+                    owner: buffer.clone(),
+                    table: dispatch,
+                    indirect: src.ty.is_owner() && !src.ty.is_inline_owner(),
+                });
+                let dst = self.slot(target.clone())?;
+                self.emit(Op::Buffer(BufferOp::Move {
+                    dst: dst.clone(),
+                    src: buffer,
+                }));
+                return Ok(Flow::Value(Some(dst)));
+            }
+        }
         if let (Flow::Value(Some(src)), Some(Type::Function(expected))) = (&flow, expected) {
             if let Type::Function(actual) = &src.ty {
                 if actual.signature == expected.signature
@@ -890,7 +944,7 @@ pub(super) fn check_module(
             ));
         }
         for (index, ty) in info.signature.params.iter().enumerate() {
-            if ty.contains_dyn() && !info.parameter_noescape(index) {
+            if ty.contains_dyn_view() && !info.parameter_noescape(index) {
                 return Err(type_error(
                     &info.span,
                     ErrorCode::InvalidCall,

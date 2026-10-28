@@ -399,7 +399,7 @@ impl FunctionPlan {
                 (name, slot_type(&binding.slot), binding.mutable)
             })
             .collect();
-        if captures.iter().any(|(_, ty, _)| ty.contains_dyn()) {
+        if captures.iter().any(|(_, ty, _)| ty.contains_dyn_view()) {
             return Err(type_error(
                 &function.span,
                 ErrorCode::TypeMismatch,

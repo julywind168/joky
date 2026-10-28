@@ -653,3 +653,41 @@ fn parallel_owned_closures_execute_in_standalone_aot() {
     success(&output);
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn parallel_drop_values_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "drops.jk",
+        include_str!("../fixtures/parallel_drop_values.jk"),
+    );
+    let output = work.cli(&["build", "drops.jk", "--task-workers", "3"]);
+    success(&output);
+    let output = Command::new(work.path().join("drops")).output().unwrap();
+    success(&output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut lines: Vec<_> = stdout.lines().collect();
+    lines.sort();
+    assert_eq!(lines, ["a", "array", "b", "closure", "loser", "winner"]);
+}
+
+#[test]
+fn owned_dyn_values_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "objects.jk",
+        include_str!("../fixtures/owned_dyn_values.jk"),
+    );
+    success(&work.cli(&["build", "objects.jk", "--parallel"]));
+    for workers in ["1", "3"] {
+        let output = Command::new(work.path().join("objects"))
+            .args(["--task-workers", workers])
+            .output()
+            .unwrap();
+        success(&output);
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let mut lines: Vec<_> = stdout.lines().collect();
+        lines.sort();
+        assert_eq!(lines, ["loser", "owned"]);
+    }
+}

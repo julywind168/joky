@@ -15,6 +15,8 @@ use std::{
     thread::{self, JoinHandle},
     time::Instant,
 };
+mod disposal;
+pub(crate) use disposal::CleanupReceipt;
 pub(crate) type Output = Box<dyn Any + Send>;
 pub(crate) type Factory = Box<dyn FnOnce() -> Result<Box<dyn Job>, Error> + Send>;
 pub(crate) trait Job {
@@ -63,6 +65,8 @@ struct Task {
     cleaned: AtomicBool,
     failed: AtomicBool,
     controls_pending: AtomicUsize,
+    cleanups_pending: AtomicUsize,
+    cleanups: Mutex<Vec<disposal::Work>>,
     parent: Option<Weak<Task>>,
     group: Option<(Arc<Arbiter>, usize)>,
     state: Mutex<State>,
@@ -633,6 +637,8 @@ fn publish(
             cleaned: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             controls_pending: AtomicUsize::new(0),
+            cleanups_pending: AtomicUsize::new(0),
+            cleanups: Mutex::new(Vec::new()),
             parent: parent.map(Arc::downgrade),
             group: group
                 .as_ref()
@@ -729,11 +735,22 @@ fn run(shared: Arc<Shared>, worker: usize) {
         WAITING.with(|w| w.set(false));
         DEADLINE.with(|d| d.set(None));
         let _storage = Guard::enter(&task.root);
+        let disposal_error = disposal::drain(&task).err();
         let item = local.entry(task.id).or_insert_with(|| Local {
             _task: task.clone(),
             job: None,
             terminal: None,
         });
+        if let Some(error) = disposal_error {
+            task.fail(error.clone());
+            if item.terminal.as_ref().is_some_and(|r| {
+                r.as_ref()
+                    .err()
+                    .is_none_or(|e| e.code() == ErrorCode::Cancelled)
+            }) {
+                item.terminal = Some(Err(error));
+            }
+        }
         if item.job.is_none() && item.terminal.is_none() {
             if task.cancelled.load(Ordering::Acquire) {
                 let abandoned = { lock(&task.factory).take() };
@@ -782,6 +799,17 @@ fn run(shared: Arc<Shared>, worker: usize) {
                     }
                 }
             }
+            if children_cleaned {
+                if let Err(error) = disposal::drain(&task) {
+                    if item.terminal.as_ref().is_some_and(|r| {
+                        r.as_ref()
+                            .err()
+                            .is_none_or(|e| e.code() == ErrorCode::Cancelled)
+                    }) {
+                        item.terminal = Some(Err(error));
+                    }
+                }
+            }
             let control_closed = if children_cleaned && task.parent.is_none() {
                 let control = lock(&shared.controls)
                     .iter()
@@ -793,6 +821,7 @@ fn run(shared: Arc<Shared>, worker: usize) {
             if children_cleaned
                 && control_closed
                 && task.controls_pending.load(Ordering::Acquire) == 0
+                && task.cleanups_pending.load(Ordering::Acquire) == 0
             {
                 let _cleaning = CleanupGuard::enter();
                 let mut item = local.remove(&task.id).unwrap();
@@ -912,6 +941,18 @@ impl Group {
         if !self.handles.iter().all(Handle::cleaned) {
             wait_for_wake();
             return Ok(false);
+        }
+        if self.kind == 1 {
+            for (index, handle) in self.handles.iter().enumerate() {
+                if self.selected != Some(index) && !handle.failed() {
+                    drop(handle.take());
+                }
+            }
+        }
+        if let Some(task) = CURRENT.with(|slot| slot.borrow().clone()) {
+            if let Err(error) = disposal::drain(&task) {
+                self.failure.get_or_insert(error);
+            }
         }
         // Cancellation itself is expected for losers; a real cleanup failure is not.
         let mut ordered: Vec<_> = self.handles.iter().enumerate().collect();

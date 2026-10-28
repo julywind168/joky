@@ -105,6 +105,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 Type::Named(ref name)
                     if matches!(name.as_str(), "domain.Handle" | "admission.Token") => {}
                 Type::String | Type::Function(_) => {}
+                Type::DynTrait(_) if worker_local || !share => {}
                 ref scalar if crate::core::instance::scalar(scalar) => {}
                 // Cursor aliases mutate shared position. Raw, erased, unresolved
                 // and thread-bound capabilities never acquire implicit evidence.
@@ -191,6 +192,18 @@ pub(crate) fn analyse(
             _ => None,
         })
         .collect();
+    let dyn_tables: Vec<_> = plan
+        .bodies
+        .values()
+        .flat_map(|b| &b.ops)
+        .filter_map(|op| {
+            if let Op::DynTable { table, .. } = op {
+                Some(table)
+            } else {
+                None
+            }
+        })
+        .collect();
     let mut reasons = BTreeMap::<String, String>::new();
     let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
     let mut packets = HashSet::new();
@@ -266,13 +279,35 @@ pub(crate) fn analyse(
                 if let Some(closure) = ty.closure_info() {
                     dependencies.insert(closure.entry.clone());
                 }
+                if let Some(interface) = ty.dyn_interface() {
+                    let candidates: Vec<_> = dyn_tables
+                        .iter()
+                        .filter(|t| t.interface == *interface)
+                        .collect();
+                    if candidates.is_empty()
+                        || candidates
+                            .iter()
+                            .any(|t| !qualify_with(&t.self_type, &resolve).worker_local)
+                    {
+                        reasons.insert(
+                            name.clone(),
+                            "dynamic target lacks immutable thread evidence".into(),
+                        );
+                    }
+                    for table in candidates {
+                        dependencies.extend(table.methods.iter().cloned());
+                    }
+                }
             }
         }
         if signature
             .params
             .iter()
             .chain(std::iter::once(&signature.ret))
-            .all(|ty| packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty)).is_some())
+            .all(|ty| {
+                !ty.contains_dyn()
+                    && packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty)).is_some()
+            })
         {
             packets.insert(name.clone());
         }
@@ -284,7 +319,7 @@ pub(crate) fn analyse(
                     .iter()
                     .chain(std::iter::once(&signature.ret))
                     .all(|ty| {
-                        packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty))
+                        packet::classify(ty, &resolve, &|_| false)
                             .is_some_and(packet::Kind::implemented)
                     })
             };
@@ -315,6 +350,14 @@ pub(crate) fn analyse(
                     continue;
                 };
                 let mut found = false;
+                for table in &dyn_tables {
+                    for (method, target) in table.interface.methods.iter().zip(&table.methods) {
+                        if method.signature == function.signature && !function.suspends {
+                            found = true;
+                            dependencies.insert(target.clone());
+                        }
+                    }
+                }
                 for (candidate, target) in &targets {
                     if candidate.signature == function.signature
                         && candidate.suspends == function.suspends
@@ -341,20 +384,25 @@ pub(crate) fn analyse(
                             None => &plan.functions[&branch.name].signature,
                         };
                         let owned = |ty| {
-                            packet::classify(ty, &resolve, &|ty| body.has_custom_drop(ty))
+                            packet::classify(ty, &resolve, &|_| false)
                                 .is_some_and(packet::Kind::implemented)
                         };
-                        !signature.params.iter().all(|ty| ty.reference_type().is_some() || owned(ty))
+                        !signature
+                            .params
+                            .iter()
+                            .all(|ty| ty.reference_type().is_some() || owned(ty))
                             || !owned(&signature.ret)
                     }) =>
                 {
                     Some("parallel group requires supported owned packets or worker-local borrows")
                 }
                 Op::TaskBranch { entry, .. } if !packet_supported(entry) => {
-                    Some("parallel branch captures require reference-free scalar/String aggregates without custom Drop")
+                    Some("parallel branch captures require supported reference-free owning packets")
                 }
-                Op::DynMethod { .. } | Op::DynTable { .. } => {
-                    Some("dynamic target lacks immutable thread evidence")
+                Op::DynTable { table, .. }
+                    if !qualify_with(&table.self_type, &resolve).worker_local =>
+                {
+                    Some("dynamic target has Local concrete storage")
                 }
                 Op::FunctionRef(slot, _) if !matches!(slot.ty, Type::Function(_)) => {
                     Some("raw function address lacks immutable thread evidence")
@@ -362,7 +410,9 @@ pub(crate) fn analyse(
                 Op::ArenaNew { .. } | Op::ArenaAlloc { .. } => {
                     Some("explicit arena capability is Local")
                 }
-                Op::DomainModule(_) | Op::OutboxEmit { .. } => Some("state domain operation is Local"),
+                Op::DomainModule(_) | Op::OutboxEmit { .. } => {
+                    Some("state domain operation is Local")
+                }
                 _ => None,
             };
             if let Some(reason) = local {

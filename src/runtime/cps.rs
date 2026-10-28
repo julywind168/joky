@@ -59,6 +59,8 @@ pub struct CpsFrame {
     // helpers borrow the UnsafeCell only for the duration of one allocation.
     arena: Option<Rc<UnsafeCell<Arena>>>,
     pub(crate) cleanup: *mut super::cleanup::NativeFrame,
+    pub(crate) parallel_return: bool,
+    pub(crate) returned_cleanup: Option<super::cleanup::Entry>,
     pub(crate) text_views: Vec<super::string::JokyText>,
     pub(crate) domain_return: Option<(crate::Type, usize)>,
     pub(crate) domain_result: Option<Vec<u64>>,
@@ -94,6 +96,8 @@ impl CpsFrame {
             task_entry: None,
             arena: None,
             cleanup: std::ptr::null_mut(),
+            parallel_return: false,
+            returned_cleanup: None,
             text_views: Vec::new(),
             domain_return: None,
             domain_result: None,
@@ -205,6 +209,13 @@ impl CpsFrame {
             self.text_result = None;
             self.place_result = None;
             self.domain_result = None;
+        }
+        if let Some(returned) = self.returned_cleanup.take() {
+            if let Some(arena) = &self.arena {
+                if let Err(error) = unsafe { returned.run(&mut *arena.get()) } {
+                    super::error::record_error(error);
+                }
+            }
         }
         self.wake = None;
         self.arena = None;
@@ -520,7 +531,13 @@ pub(crate) unsafe extern "C" fn arena(frame: *mut CpsFrame) -> *mut Arena {
 /// readable, but generated code must not access its arena after this call.
 #[export_name = "__joky_cps_finish"]
 pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
+    let returned = (*frame).returned_cleanup.take();
+    let retained_arena = returned.as_ref().and((*frame).arena.clone());
     (*frame).release();
+    (*frame).returned_cleanup = returned;
+    if retained_arena.is_some() {
+        (*frame).arena = retained_arena;
+    }
 }
 
 /// Retain a completed Copy result until the caller has copied it.
@@ -545,7 +562,11 @@ pub(crate) unsafe extern "C" fn finish_place(frame: *mut CpsFrame, slot: usize) 
 #[export_name = "__joky_cps_finish_return_v1"]
 pub(crate) unsafe extern "C" fn finish_return(frame: *mut CpsFrame, slot: usize) {
     let cleanup = std::mem::replace(&mut (*frame).cleanup, std::ptr::null_mut());
-    super::cleanup::finish_return(cleanup, slot);
+    if (*frame).parallel_return {
+        (*frame).returned_cleanup = super::cleanup::take_return(cleanup, slot);
+    } else {
+        super::cleanup::finish_return(cleanup, slot);
+    }
     if super::error::joky_runtime_error_code() == 0 {
         if let Some((ty, offset)) = (*frame).domain_return.clone() {
             let raw = if ty.is_aggregate() {

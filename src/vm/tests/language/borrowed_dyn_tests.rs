@@ -68,10 +68,7 @@ fn borrowed_dyn_qualified_unused_signatures_compile_without_host_layouts() {
         }
         accepted(&format!("trait Read {{ fn value(&self, other: &Int32) @noescape(self, other) -> Int32 }} fn unused(value: {borrow} Read) {{}}"));
     }
-    rejected(
-        "trait Read { fn value(&self) @noescape -> Int32 } fn unused(value: dyn Read) {}",
-        "Bare dyn trait types",
-    );
+    accepted("trait Read { fn value(&self) @noescape -> Int32 } fn unused(value: dyn Read) {}");
     rejected("fn unused(value: &dyn Missing) {}", "Unknown trait bound");
 }
 
@@ -157,7 +154,7 @@ fn borrowed_dyn_v1_boundaries_are_shared_by_all_backends() {
         ("fn f() { let c = Counter { value: 1 }; use_view(c) }", "explicit borrow"),
         ("fn f() { let c = 1; use_view(&c) }", "no applicable impl"),
         ("fn f(v: &mut dyn Read) { (*(v) = 1); }", "Dyn storage"),
-        ("fn f(v: &mut dyn Read) { mem.replace(v, 1); }", "dyn trait"),
+        ("fn f(v: &mut dyn Read) { mem.replace(v, 1); }", "Dyn storage"),
         ("fn f(v: &dyn Read) { alloc(v); }", "alloc requires Copy data"),
         ("fn needs<T: Read>(v: T) {} fn f(v: &dyn Read) { needs(v) }", "does not satisfy"),
         ("trait Other { fn value(&self) @noescape -> Int32; } fn f(v: &dyn Read) { Other.value(v); }", "different trait"),

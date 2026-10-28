@@ -225,6 +225,7 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             std::iter::once(src).chain(place).flat_map(refs).collect(),
             refs(dst),
         ),
+        Op::DynPack { owner, .. } => (refs(owner), vec![]),
         Op::Buffer(super::BufferOp::Access { src, .. }) => (refs(src), vec![]),
         Op::Buffer(super::BufferOp::End(owner)) => (refs(owner), vec![]),
         Op::Graph(op) => match op.as_ref() {
@@ -1286,7 +1287,7 @@ fn analyze(
         if suspending
             && live[pc]
                 .iter()
-                .any(|index| types.get(index).is_some_and(Type::contains_dyn))
+                .any(|index| types.get(index).is_some_and(Type::contains_dyn_view))
         {
             return Err(type_error(
                 span,

@@ -432,10 +432,9 @@ impl FunctionPlan {
                     Ok(Flow::Diverged)
                 } else {
                     self.emit(Op::Label(exit));
-                    if result
-                        .as_ref()
-                        .is_some_and(|s| s.ty.dyn_interface().is_some())
-                    {
+                    if result.as_ref().is_some_and(|s| {
+                        s.ty.reference_type().is_some() && s.ty.dyn_interface().is_some()
+                    }) {
                         // Give the merged view one loan identity before subsequent
                         // reborrows; keep every incoming object origin intact.
                         result = self.reference_value(result, false)?;

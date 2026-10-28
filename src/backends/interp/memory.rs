@@ -40,12 +40,14 @@ pub(super) enum Instruction {
         cursor: bool,
         column: usize,
         load_owner: bool,
+        dynamic: bool,
     },
     Project {
         dst: usize,
         reference: usize,
         offset: usize,
         load_owner: bool,
+        dynamic: bool,
     },
     Alloc {
         local: bool,
@@ -99,6 +101,7 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                 Type::BufferPairIterator(_)
             ),
             column: *column,
+            dynamic: matches!(dst.ty.reference_type().unwrap().target, Type::DynTrait(_)),
             load_owner: dst.ty.reference_type().unwrap().target.is_owner()
                 && !dst.ty.reference_type().unwrap().target.is_inline_owner(),
         },
@@ -120,6 +123,7 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                 dst: dst.index,
                 reference: src.index,
                 offset,
+                dynamic: matches!(dst.ty.reference_type().unwrap().target, Type::DynTrait(_)),
                 load_owner: dst.ty.reference_type().unwrap().target.is_owner()
                     && !dst.ty.reference_type().unwrap().target.is_inline_owner(),
             }
@@ -229,6 +233,7 @@ pub(super) fn execute(
             cursor,
             column,
             load_owner,
+            dynamic,
         } => {
             let Value::Reference(pointer) = slots[*reference] else {
                 return Err(abi_error("Invalid entry reference"));
@@ -256,12 +261,21 @@ pub(super) fn execute(
             } else {
                 field
             });
+            if *dynamic {
+                let Value::Reference(owner) = slots[*dst] else {
+                    unreachable!()
+                };
+                unsafe {
+                    super::buffers::dyn_borrow(slots, *dst, owner.cast())?;
+                }
+            }
         }
         Instruction::Project {
             dst,
             reference,
             offset,
             load_owner,
+            dynamic,
         } => {
             let Value::Reference(pointer) = slots[*reference] else {
                 return Err(abi_error("Invalid local reference"));
@@ -277,6 +291,14 @@ pub(super) fn execute(
             } else {
                 field
             });
+            if *dynamic {
+                let Value::Reference(owner) = slots[*dst] else {
+                    unreachable!()
+                };
+                unsafe {
+                    super::buffers::dyn_borrow(slots, *dst, owner.cast())?;
+                }
+            }
         }
         Instruction::Alloc {
             local,
@@ -360,9 +382,11 @@ pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
         Type::Bool => Value::Bool(ptr.read() != 0),
         Type::Function(_) => Value::Function(ptr.cast::<usize>().read_unaligned()),
         Type::Ptr => Value::Ptr(ptr.cast::<*mut u8>().read_unaligned()),
-        Type::Reference(_) | Type::Buffer(_) | Type::String | Type::Resource(_) => {
-            Value::Reference(ptr.cast::<*mut u8>().read_unaligned())
-        }
+        Type::Reference(_)
+        | Type::Buffer(_)
+        | Type::String
+        | Type::Resource(_)
+        | Type::DynTrait(_) => Value::Reference(ptr.cast::<*mut u8>().read_unaligned()),
         _ => unreachable!("validated Copy memory"),
     }
 }

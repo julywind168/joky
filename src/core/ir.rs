@@ -409,6 +409,12 @@ pub(crate) enum Op {
         dst: Slot,
         table: Arc<DynTable>,
     },
+    /// Attach immutable dispatch evidence to an exclusively owned concrete box.
+    DynPack {
+        owner: Slot,
+        table: Slot,
+        indirect: bool,
+    },
     /// Load one typed entry; the data borrow remains an explicit call argument.
     DynMethod {
         dst: Slot,
@@ -637,6 +643,7 @@ impl ModulePlan {
                 ret,
                 suspends,
                 matches!(item, Item::ExternFn(_)),
+                false,
                 *item_span(item),
             )?;
             let builtin = Builtin::lookup(name);
@@ -1283,7 +1290,18 @@ impl FunctionPlan {
         let f = prepared_clone.as_ref();
         // Specialization and synthesized branch entries can expose dyn types
         // absent from the original generic declaration.
-        dyn_traits::check_signature(&f.params, &f.ret_ty, f.suspends, false, f.span)?;
+        dyn_traits::check_signature(
+            &f.params,
+            &f.ret_ty,
+            f.suspends,
+            false,
+            f.buffer_intrinsic.is_some()
+                || matches!(
+                    f.compiler_intrinsic,
+                    Some(CompilerIntrinsic::DynBorrowAdapter)
+                ),
+            f.span,
+        )?;
         // Branch entries are planned before their FunctionInfo is registered;
         // parameter storage is derivable from the declaration alone.
         let parameter_slots = functions.get(&f.name).map_or_else(
@@ -1618,7 +1636,7 @@ impl FunctionPlan {
         }
         // Aggregate results have a fixed region immediately after parameters in CPS.
         // Direct lowering uses the same slots with an internal result pointer.
-        if f.ret_ty.is_aggregate() && !infer_return {
+        if f.ret_ty.is_call_aggregate() && !infer_return {
             plan.result = Some(plan.slot(f.ret_ty.clone())?);
         }
         let mut vars = HashMap::new();
@@ -1702,7 +1720,7 @@ impl FunctionPlan {
                     ),
                 ));
             }
-            if plan.return_label.is_some() || f.ret_ty.is_aggregate() && !infer_return {
+            if plan.return_label.is_some() || f.ret_ty.is_call_aggregate() && !infer_return {
                 if let (Some(dst), Some(src)) = (&plan.result, value) {
                     plan.emit(Op::Copy(dst.clone(), src));
                 }

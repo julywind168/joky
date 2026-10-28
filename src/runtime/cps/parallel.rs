@@ -45,6 +45,7 @@ pub(crate) fn start(
         std::mem::size_of::<NativeJob>() + result.bytes(),
     )?;
     let mut frame = Box::new(CpsFrame::try_new(slots)?);
+    frame.parallel_return = true;
     let mut offset = 0;
     for packet in packets {
         let inputs = packet.shape.inputs();
@@ -98,11 +99,21 @@ impl pool::Job for NativeJob {
                     vec![self.frame.result]
                 };
                 let packet = unsafe {
-                    Packet::returned(
-                        self.result.clone(),
-                        words,
-                        &mut *super::arena(&mut *self.frame),
-                    )?
+                    if let Some(cleanup) = self.frame.returned_cleanup.take() {
+                        Packet::capture_value(
+                            self.result.clone(),
+                            words,
+                            Some(cleanup),
+                            &mut *super::arena(&mut *self.frame),
+                            true,
+                        )?
+                    } else {
+                        Packet::returned(
+                            self.result.clone(),
+                            words,
+                            &mut *super::arena(&mut *self.frame),
+                        )?
+                    }
                 };
                 Ok(Box::new(packet) as pool::Output)
             })()),

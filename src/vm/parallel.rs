@@ -21,6 +21,10 @@ mod control_tests;
 #[cfg(test)]
 mod domain_tests;
 #[cfg(test)]
+mod drop_tests;
+#[cfg(test)]
+mod dyn_tests;
+#[cfg(test)]
 mod function_tests;
 #[cfg(test)]
 mod isolate_tests;

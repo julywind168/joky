@@ -85,6 +85,15 @@ enum Instruction {
     DynCopy {
         lanes: Vec<(usize, usize)>,
     },
+    DynBorrow {
+        dst: usize,
+        src: usize,
+    },
+    DynPack {
+        owner: usize,
+        table: usize,
+        indirect: bool,
+    },
     DynMethod {
         dst: usize,
         table: usize,
@@ -568,6 +577,14 @@ fn lower_unoptimized(
             | Op::ReadOwner { .. }
             | Op::StoreOwner { .. }
             | Op::WriteMemory { .. } => Instruction::Memory(Box::new(memory::lower(op)?)),
+            Op::Reference { dst, src, .. }
+                if dst.ty.dyn_interface().is_some() && src.ty.is_dyn_wrapper_view() =>
+            {
+                Instruction::DynBorrow {
+                    dst: dst.index,
+                    src: src.index,
+                }
+            }
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
                 let lanes: Vec<_> = dst
                     .scalars()
@@ -583,6 +600,15 @@ fn lower_unoptimized(
                     }
                 }
             }
+            Op::DynPack {
+                owner,
+                table,
+                indirect,
+            } => Instruction::DynPack {
+                owner: owner.index,
+                table: table.index,
+                indirect: *indirect,
+            },
             Op::DynTable { dst, table } => Instruction::Const {
                 dst: dst.index,
                 value: ConstantValue::DynTable(
@@ -714,14 +740,16 @@ fn lower_unoptimized(
                         args,
                         result: result
                             .as_ref()
-                            .filter(|s| !s.ty.is_aggregate())
+                            .filter(|s| !s.ty.is_call_aggregate())
                             .map(|s| s.index),
                         results: result
                             .as_ref()
-                            .filter(|s| s.ty.is_aggregate())
+                            .filter(|s| s.ty.is_call_aggregate())
                             .map_or_else(Vec::new, |s| s.scalars().map(|s| s.index).collect()),
                     }))
-                } else if let Some(result) = result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
+                } else if let Some(result) =
+                    result.as_ref().filter(|slot| slot.ty.is_call_aggregate())
+                {
                     Instruction::AggregateCall(Box::new(AggregateCall {
                         target: ids[name],
                         args,
@@ -744,11 +772,11 @@ fn lower_unoptimized(
             } => Instruction::Concurrent {
                 result: result
                     .as_ref()
-                    .filter(|s| !s.ty.is_aggregate())
+                    .filter(|s| !s.ty.is_call_aggregate())
                     .map(|s| s.index),
                 results: result
                     .as_ref()
-                    .filter(|s| s.ty.is_aggregate())
+                    .filter(|s| s.ty.is_call_aggregate())
                     .map_or_else(Vec::new, |s| s.scalars().map(|s| s.index).collect()),
                 kind: *kind,
                 failure: failure.as_ref().map(|s| s.index),
@@ -759,13 +787,13 @@ fn lower_unoptimized(
                             .result
                             .as_ref()
                             .or(result.as_ref())
-                            .filter(|s| !s.ty.is_aggregate())
+                            .filter(|s| !s.ty.is_call_aggregate())
                             .map(|s| s.index),
                         results: branch
                             .result
                             .as_ref()
                             .or(result.as_ref())
-                            .filter(|s| s.ty.is_aggregate())
+                            .filter(|s| s.ty.is_call_aggregate())
                             .map_or_else(Vec::new, |s| s.scalars().map(|s| s.index).collect()),
                         indirect: branch.indirect.as_ref().map(|s| s.index),
                         target: branch.indirect.is_none().then(|| ids[&branch.name]),
@@ -824,12 +852,12 @@ fn lower_unoptimized(
         result: plan
             .result
             .as_ref()
-            .filter(|slot| !slot.ty.is_aggregate())
+            .filter(|slot| !slot.ty.is_call_aggregate())
             .map(|slot| slot.index),
         aggregate_result: plan
             .result
             .as_ref()
-            .filter(|slot| slot.ty.is_aggregate())
+            .filter(|slot| slot.ty.is_call_aggregate())
             .map(|slot| slot.scalars().map(|slot| slot.index).collect())
             .unwrap_or_default(),
     })
@@ -962,7 +990,11 @@ impl Value {
         }
         if matches!(
             ty,
-            Type::Reference(_) | Type::String | Type::Buffer(_) | Type::Resource(_)
+            Type::Reference(_)
+                | Type::String
+                | Type::Buffer(_)
+                | Type::Resource(_)
+                | Type::DynTrait(_)
         ) {
             return Ok(Self::Reference(bits as usize as *mut u8));
         }

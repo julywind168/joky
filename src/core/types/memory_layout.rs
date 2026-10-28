@@ -249,7 +249,9 @@ impl LayoutContext {
                     Type::Float64 | Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::Int8 | Type::UInt8 | Type::Bool => (1, 1),
                     Type::Int16 | Type::UInt16 => (2, 2),
-                    Type::Buffer(_) | Type::String | Type::Resource(_) if self.owners => {
+                    Type::Buffer(_) | Type::String | Type::Resource(_) | Type::DynTrait(_)
+                        if self.owners =>
+                    {
                         (self.target.pointer_size, self.target.pointer_align)
                     }
                     Type::Ptr | Type::Function(_) => {
@@ -413,7 +415,7 @@ impl Type {
     /// Compiler-private local and owner-element storage does not establish a public or FFI layout.
     pub(crate) fn storage_layout(&self) -> Result<MemoryLayout, MemoryLayoutError> {
         // Validate the whole reachable type graph once, before recursive layout.
-        if self.contains_dyn() {
+        if self.contains_dyn_view() {
             return Err(MemoryLayoutError::UnsupportedType);
         }
         let mut context = LayoutContext {
@@ -468,7 +470,7 @@ impl Type {
             Ok(())
         }
         // Validate the whole reachable type graph once, before recursive layout.
-        if self.contains_dyn() {
+        if self.contains_dyn_view() || !owners && self.contains_dyn() {
             return Err(MemoryLayoutError::UnsupportedType);
         }
         let mut context = LayoutContext {

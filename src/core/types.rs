@@ -661,15 +661,8 @@ impl TypeRegistry {
             return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                 "Arena capabilities require a direct owner or &Arena; aggregates, type arguments, function values and &mut Arena are not supported"));
         }
-        if matches!(ty, Type::DynTrait(_)) {
-            return Err(Error::new_with_code(
-                ErrorPhase::TypeCheck,
-                ErrorCode::TypeMismatch,
-                "Bare dyn trait types are not values; use &dyn or &mut dyn",
-            ));
-        }
         for ty in TypeWalk::new(ty, TypeEdges::Fields) {
-            if ty.contains_dyn()
+            if ty.contains_dyn_view()
                 && !matches!(ty, Type::DynTrait(_))
                 && !ty
                     .reference_type()
@@ -901,12 +894,8 @@ fn resolve_type_at_depth(
             return Ok(());
         }
         if let Type::DynTrait(d) = ty {
-            return Err(Error::new_with_code(
-                ErrorPhase::TypeCheck,
-                ErrorCode::TypeMismatch,
-                "Bare dyn trait types are not values; use &dyn or &mut dyn",
-            )
-            .with_span(d.span));
+            *ty = Type::DynTrait(std::sync::Arc::new(registry.normalize_dyn_trait(d)?));
+            return Ok(());
         }
         if let Type::Buffer(element)
         | Type::BufferElement(element)
@@ -1032,7 +1021,7 @@ fn resolve_type_at_depth(
 
 /// Construct the shared checked layout for inferred tuple expressions.
 pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result<Type, Error> {
-    if elements.iter().any(Type::contains_dyn) {
+    if elements.iter().any(Type::contains_dyn_view) {
         return Err(Error::new_with_code(
             ErrorPhase::TypeCheck,
             ErrorCode::TypeMismatch,
@@ -2381,7 +2370,7 @@ mod generic_record_tests {
 }
 
 fn reject_dyn_storage(ty: &Type, span: Span) -> Result<(), Error> {
-    if ty.contains_dyn() {
+    if ty.contains_dyn_view() {
         Err(Error::new_with_code(
             ErrorPhase::TypeCheck,
             ErrorCode::TypeMismatch,

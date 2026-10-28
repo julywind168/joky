@@ -207,9 +207,19 @@ impl Type {
             _ => false,
         }
     }
+    pub(crate) fn contains_dyn_view(&self) -> bool {
+        TypeWalk::new(self, TypeEdges::Fields)
+            .any(|ty| matches!(ty, Self::Reference(r) if matches!(r.target, Self::DynTrait(_))))
+    }
+    pub(crate) fn is_dyn_wrapper_view(&self) -> bool {
+        self.reference_type().is_some_and(|r| {
+            matches!(r.target, Self::Record(_))
+                && matches!(r.target.scalar_types(), [Self::DynTrait(_)])
+        })
+    }
     pub(crate) fn dyn_interface(&self) -> Option<&Arc<DynInterface>> {
-        match self.reference_type().map(|r| &r.target) {
-            Some(Self::DynTrait(d)) => d.interface.as_ref(),
+        match self.reference_type().map_or(self, |r| &r.target) {
+            Self::DynTrait(d) => d.interface.as_ref(),
             _ => None,
         }
     }
@@ -265,7 +275,11 @@ impl Type {
     pub(crate) fn is_owner_lane(&self) -> bool {
         matches!(
             self,
-            Self::Buffer(_) | Self::String | Self::Resource(_) | Self::Projection(_)
+            Self::Buffer(_)
+                | Self::String
+                | Self::Resource(_)
+                | Self::DynTrait(_)
+                | Self::Projection(_)
         ) || matches!(self, Self::Parameter(p) if p.callable.is_none() && !p.copy)
     }
     /// A movable owning value, including aggregates with owning contents.
@@ -342,7 +356,7 @@ impl Type {
     }
     pub(crate) fn is_buffer_view(&self) -> bool {
         self.reference_type()
-            .is_some_and(|r| r.target.is_buffer_target())
+            .is_some_and(|r| !matches!(r.target, Self::DynTrait(_)) && r.target.is_buffer_target())
     }
     /// Owning values whose complete storage tree is reference-free can be
     /// moved between ordinary CPS activations. Borrowed views and aggregates
@@ -356,7 +370,11 @@ impl Type {
                 return false;
             }
             match ty {
-                Type::String | Type::Resource(_) | Type::Parameter(_) | Type::Projection(_) => true,
+                Type::String
+                | Type::Resource(_)
+                | Type::DynTrait(_)
+                | Type::Parameter(_)
+                | Type::Projection(_) => true,
                 Type::Buffer(element) => {
                     if element.is_owner() {
                         safe_storage(element)
@@ -398,6 +416,12 @@ impl Type {
     }
     /// All underlying element types, including shallow nominal owner views.
     pub(crate) fn buffer_elements(&self) -> &[Arc<Type>] {
+        if self
+            .reference_type()
+            .is_some_and(|r| matches!(r.target, Self::DynTrait(_)))
+        {
+            return &[];
+        }
         match self.reference_type().map_or(self, |r| &r.target) {
             Self::Buffer(element)
             | Self::BufferElement(element)
@@ -409,7 +433,7 @@ impl Type {
                 static BYTE: std::sync::OnceLock<Arc<Type>> = std::sync::OnceLock::new();
                 std::slice::from_ref(BYTE.get_or_init(|| Arc::new(Type::UInt8)))
             }
-            Self::Resource(_) => {
+            Self::Resource(_) | Self::DynTrait(_) => {
                 static LEAF: std::sync::OnceLock<Arc<Type>> = std::sync::OnceLock::new();
                 std::slice::from_ref(LEAF.get_or_init(|| Arc::new(Type::Unit)))
             }
@@ -455,6 +479,7 @@ impl Type {
                     if !matches!(
                         ty,
                         Self::String
+                            | Self::DynTrait(_)
                             | Self::Resource(_)
                             | Self::Parameter(_)
                             | Self::Projection(_)
@@ -948,6 +973,10 @@ impl Type {
         }
     }
 
+    /// Private calls return aggregate storage and fat borrowed views through an output region.
+    pub(crate) fn is_call_aggregate(&self) -> bool {
+        self.is_aggregate() || self.reference_type().is_some_and(|r| r.lanes.len() > 1)
+    }
     pub(crate) fn is_aggregate(&self) -> bool {
         matches!(
             self,

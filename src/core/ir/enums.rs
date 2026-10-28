@@ -315,6 +315,7 @@ impl FunctionPlan {
                 | Type::Buffer(_)
                 | Type::String
                 | Type::Resource(_)
+                | Type::DynTrait(_)
                 | Type::Parameter(_)
                 | Type::Projection(_) => Constant::NullPtr,
                 Type::Reference(_) => {

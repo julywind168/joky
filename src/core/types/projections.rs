@@ -855,7 +855,7 @@ impl TypeRegistry {
     }
 
     pub(crate) fn implements(&self, ty: &Type, id: u64) -> Result<bool, Error> {
-        if ty.contains_dyn() {
+        if ty.contains_dyn_view() || matches!(ty, Type::DynTrait(_)) {
             return Ok(false);
         }
         let key = Obligation::Implements(ty.clone(), id);

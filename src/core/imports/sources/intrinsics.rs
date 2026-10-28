@@ -166,6 +166,28 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
         declaration(&attribute, adapter)?;
         f.compiler_intrinsic = Some(compiler);
     }
+    if kind == SourceKind::BufferLibrary {
+        // These bodies still undergo normal provenance and escape analysis.
+        // Only compiler-owned adapters receive this private result ABI marker.
+        let functions = module
+            .items
+            .iter_mut()
+            .filter_map(|item| match item {
+                Item::FnDef(f) => Some(f),
+                _ => None,
+            })
+            .chain(
+                module
+                    .implementations
+                    .iter_mut()
+                    .flat_map(|implementation| &mut implementation.methods),
+            );
+        for function in functions {
+            if function.ret_ty.reference_type().is_some() && function.compiler_intrinsic.is_none() {
+                function.compiler_intrinsic = Some(DynBorrowAdapter);
+            }
+        }
+    }
     if kind == SourceKind::Arena {
         // Method identities are granted by the embedded definition, never its path.
         for implementation in &mut module.implementations {

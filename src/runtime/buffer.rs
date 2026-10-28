@@ -5,7 +5,19 @@ use std::{alloc::Layout, cell::Cell, ptr::NonNull};
 
 /// Stable control block; no element pointers or layout inputs are source-visible.
 /// Replaced payloads and explicitly released owners refund their arena charge.
+pub(crate) enum DynDispatch {
+    Native {
+        table: usize,
+        indirect: bool,
+    },
+    Interpreted {
+        table: std::sync::Arc<crate::backends::interp::DynMethodTable>,
+        indirect: bool,
+    },
+}
+
 pub(crate) struct Buffer {
+    pub(crate) dynamic: Option<DynDispatch>,
     resource: Option<super::resource::OwnedResource>,
     data: NonNull<u8>,
     len: usize,
@@ -146,6 +158,16 @@ pub(crate) struct OwningGraph {
 pub(crate) enum ElementCallback {
     Native(super::cleanup::Callback),
     Interpreted(super::cleanup::InterpretedCallback),
+    Portable(super::cleanup::PortableCallback),
+}
+impl ElementCallback {
+    pub(crate) fn portable(&self) -> Option<super::cleanup::PortableCallback> {
+        match self {
+            Self::Native(callback) => Some(super::cleanup::PortableCallback::Native(*callback)),
+            Self::Portable(callback) => Some(callback.clone()),
+            Self::Interpreted(_) => None,
+        }
+    }
 }
 #[derive(Clone)]
 pub(crate) struct ElementHook {
@@ -277,6 +299,10 @@ impl ElementHook {
                 data,
                 callback: callback.clone(),
             },
+            ElementCallback::Portable(callback) => super::cleanup::Hook::Portable {
+                data,
+                callback: callback.clone(),
+            },
         })
     }
 }
@@ -311,6 +337,7 @@ impl Buffer {
             release_owner: 0,
             release_hook: 0,
             release_active: false,
+            dynamic: None,
             resource: None,
         }
     }
@@ -516,6 +543,7 @@ impl Buffer {
             release_owner: 0,
             release_hook: 0,
             release_active: false,
+            dynamic: None,
             resource: None,
         };
         let layout = Layout::new::<Self>();
@@ -838,6 +866,31 @@ impl Buffer {
         arena: &Arena,
         owner: *mut Self,
     ) -> Result<(), Error> {
+        Self::validate_parallel_value(arena, owner, false)
+    }
+
+    pub(crate) unsafe fn has_user_cleanup(
+        arena: &Arena,
+        owners: impl IntoIterator<Item = *mut Self>,
+    ) -> Result<bool, Error> {
+        Ok(Self::owning_allocations(arena, owners)?
+            .buffers
+            .iter()
+            .any(|p| {
+                p.as_ref()
+                    .cleanup
+                    .as_ref()
+                    .is_some_and(|c| !c.hooks.is_empty())
+            }))
+    }
+
+    /// The caller pins qualified code and guarantees worker-side disposal when
+    /// admitting portable callbacks. Ordinary buffer packets remain hook-free.
+    pub(crate) unsafe fn validate_parallel_value(
+        arena: &Arena,
+        owner: *mut Self,
+        callbacks: bool,
+    ) -> Result<(), Error> {
         if arena.parallel_root().is_none() {
             return Err(bounds_error("Owner has no parallel storage root"));
         }
@@ -851,10 +904,12 @@ impl Buffer {
                 || buffer.release_active
                 || buffer.failed_descriptor
                 || buffer.failed_store.is_some()
-                || buffer
-                    .cleanup
-                    .as_ref()
-                    .is_some_and(|cleanup| !cleanup.hooks.is_empty())
+                || buffer.cleanup.as_ref().is_some_and(|cleanup| {
+                    cleanup
+                        .hooks
+                        .iter()
+                        .any(|h| !callbacks || h.callback.portable().is_none())
+                })
             {
                 return Err(bounds_error("Buffer has Local cleanup or resource state"));
             }
@@ -1005,6 +1060,7 @@ impl Buffer {
                     arena.release(buffer.data);
                 }
                 buffer.resource.take();
+                buffer.dynamic.take();
                 buffer.clear_metadata();
                 arena.release(NonNull::new_unchecked(current.cast()));
                 current = parent;
@@ -1225,6 +1281,30 @@ unsafe extern "C" fn store(
         end,
     )
 }
+
+#[export_name = "__joky_dyn_pack"]
+unsafe extern "C" fn dyn_pack(owner: *mut Buffer, table: usize, indirect: usize) {
+    (*owner).dynamic = Some(DynDispatch::Native {
+        table,
+        indirect: indirect != 0,
+    });
+}
+#[export_name = "__joky_dyn_data"]
+unsafe extern "C" fn dyn_data(owner: *mut Buffer) -> *mut u8 {
+    let pointer = (*owner).data.as_ptr();
+    match (*owner).dynamic {
+        Some(DynDispatch::Native { indirect: true, .. }) => pointer.cast::<*mut u8>().read(),
+        _ => pointer,
+    }
+}
+#[export_name = "__joky_dyn_table"]
+unsafe extern "C" fn dyn_table(owner: *mut Buffer) -> usize {
+    match (*owner).dynamic {
+        Some(DynDispatch::Native { table, .. }) => table,
+        _ => unreachable!("native dynamic object"),
+    }
+}
+
 #[export_name = "__joky_buffer_initialize_next"]
 unsafe extern "C" fn initialize_next(
     buffer: *mut Buffer,
@@ -1522,7 +1602,7 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 30] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 33] {
     [
         ("__joky_buffer_pair_iter", pair_iter as *const u8),
         ("__joky_buffer_pair_advance", pair_advance as *const u8),
@@ -1550,6 +1630,9 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 30] {
         ("__joky_buffer_capacity_limit", capacity_limit as *const u8),
         ("__joky_buffer_load", load as *const u8),
         ("__joky_buffer_store", store as *const u8),
+        ("__joky_dyn_pack", dyn_pack as *const u8),
+        ("__joky_dyn_data", dyn_data as *const u8),
+        ("__joky_dyn_table", dyn_table as *const u8),
         (
             "__joky_buffer_initialize_next",
             initialize_next as *const u8,

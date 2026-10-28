@@ -132,7 +132,7 @@ pub(crate) fn call_instance(
         }
     }
     execution.arena = std::mem::take(arena);
-    if ret.is_aggregate() {
+    if ret.is_call_aggregate() {
         execution.root_aggregate = Some(Vec::new());
     }
     let result = match execution.poll(module) {
@@ -238,8 +238,8 @@ pub(crate) fn prepare_script(
             .map(|(ty, &bits)| Value::from_instance_bits(ty, bits))
             .collect::<Result<Vec<_>, _>>()?
     };
-    let aggregate =
-        function.info.signature.ret.is_aggregate() || function.info.signature.ret == Type::Unit;
+    let aggregate = function.info.signature.ret.is_call_aggregate()
+        || function.info.signature.ret == Type::Unit;
     let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
     if aggregate {
         execution.root_aggregate = Some(Vec::new());
@@ -277,8 +277,8 @@ pub(crate) fn prepare_domain(
             .map(|(ty, &bits)| Value::from_instance_bits(ty, bits))
             .collect::<Result<Vec<_>, _>>()?
     };
-    let aggregate =
-        function.info.signature.ret.is_aggregate() || function.info.signature.ret == Type::Unit;
+    let aggregate = function.info.signature.ret.is_call_aggregate()
+        || function.info.signature.ret == Type::Unit;
     let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
     let words = crate::runtime::domain_packet::decode(
         std::slice::from_ref(&input),
@@ -1567,11 +1567,12 @@ impl Execution {
                         .map(Value::instance_bits)
                         .collect::<Result<Vec<_>, _>>()
                         .and_then(|words| unsafe {
-                            crate::runtime::parallel::packet::Packet::capture(
+                            crate::runtime::parallel::packet::Packet::capture_value(
                                 shape,
                                 words,
                                 owner.take(),
                                 &mut self.arena,
+                                true,
                             )
                         });
                     match captured {
@@ -1981,7 +1982,7 @@ fn run_frame(
                     .cleanups
                     .insert(frame.function.owner_result.unwrap(), entry);
             }
-            if frame.function.info.signature.ret.is_aggregate() {
+            if frame.function.info.signature.ret.is_call_aggregate() {
                 return Step::CompleteAggregate;
             }
             return Step::Complete(
@@ -2086,12 +2087,14 @@ fn run_frame(
                             offset: hook.offset,
                             indirect: hook.indirect,
                             guards: hook.guards.clone(),
-                            callback: crate::runtime::buffer::ElementCallback::Interpreted(
-                                Rc::new(move |data, arena| {
-                                    let _keep_alive = &storage;
-                                    cleanup_call(&module, &name, data, arena)
-                                }),
-                            ),
+                            callback: portable_cleanup(&name).unwrap_or_else(|| {
+                                crate::runtime::buffer::ElementCallback::Interpreted(Rc::new(
+                                    move |data, arena| {
+                                        let _keep_alive = &storage;
+                                        cleanup_call(&module, &name, data, arena)
+                                    },
+                                ))
+                            }),
                         });
                     }
                     entry.keep_alive = Some(storage);
@@ -2121,11 +2124,11 @@ fn run_frame(
                             offset: hook.offset,
                             indirect: hook.indirect,
                             guards: hook.guards.clone(),
-                            callback: crate::runtime::buffer::ElementCallback::Interpreted(
-                                Rc::new(move |data, arena| {
-                                    cleanup_call(&module, &name, data, arena)
-                                }),
-                            ),
+                            callback: portable_cleanup(&name).unwrap_or_else(|| {
+                                crate::runtime::buffer::ElementCallback::Interpreted(Rc::new(
+                                    move |data, arena| cleanup_call(&module, &name, data, arena),
+                                ))
+                            }),
                         });
                     }
                     if let Err(error) = unsafe {
@@ -2238,6 +2241,37 @@ fn run_frame(
             Instruction::DynCopy { lanes } => {
                 for &(dst, src) in lanes {
                     frame.slots[dst] = frame.slots[src].clone();
+                }
+                frame.pc += 1;
+            }
+            Instruction::DynBorrow { dst, src } => {
+                let Value::Reference(owner) = frame.slots[*src] else {
+                    unreachable!("dynamic wrapper view")
+                };
+                if let Err(error) =
+                    unsafe { super::buffers::dyn_borrow(&mut frame.slots, *dst, owner.cast()) }
+                {
+                    return Step::Failed(error);
+                }
+                frame.pc += 1;
+            }
+            Instruction::DynPack {
+                owner,
+                table,
+                indirect,
+            } => {
+                let Value::Reference(owner) = frame.slots[*owner] else {
+                    unreachable!("dynamic owner")
+                };
+                let Value::DynTable(table) = &frame.slots[*table] else {
+                    unreachable!("dynamic table")
+                };
+                unsafe {
+                    (*owner.cast::<crate::runtime::buffer::Buffer>()).dynamic =
+                        Some(crate::runtime::buffer::DynDispatch::Interpreted {
+                            table: table.clone(),
+                            indirect: *indirect,
+                        });
                 }
                 frame.pc += 1;
             }
@@ -2804,6 +2838,19 @@ impl Drop for Execution {
     fn drop(&mut self) {
         self.release();
     }
+}
+
+fn portable_cleanup(name: &str) -> Option<crate::runtime::buffer::ElementCallback> {
+    let code = crate::runtime::parallel::pool::code::<crate::vm::parallel::Code>()?;
+    let crate::vm::parallel::Code::Interpreted(code) = code.as_ref() else {
+        return None;
+    };
+    Some(crate::runtime::buffer::ElementCallback::Portable(
+        crate::runtime::cleanup::PortableCallback::Interpreted {
+            code: code.clone(),
+            name: name.into(),
+        },
+    ))
 }
 
 pub(crate) fn cleanup_call(

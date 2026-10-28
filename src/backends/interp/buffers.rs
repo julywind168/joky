@@ -8,6 +8,25 @@ use crate::{
     },
 };
 
+pub(super) unsafe fn dyn_borrow(
+    slots: &mut [Value],
+    dst: usize,
+    owner: *mut Buffer,
+) -> Result<(), Error> {
+    let Some(crate::runtime::buffer::DynDispatch::Interpreted { table, indirect }) =
+        &(*owner).dynamic
+    else {
+        return Err(abi_error("Invalid owning dyn table"));
+    };
+    let data = (*owner).load(0)?;
+    slots[dst] = Value::Reference(if *indirect {
+        data.cast::<*mut u8>().read()
+    } else {
+        data
+    });
+    slots[dst + 1] = Value::DynTable(table.clone());
+    Ok(())
+}
 fn pointer(value: &Value) -> Result<*mut Buffer, Error> {
     match value {
         Value::Reference(p) if !p.is_null() => Ok(p.cast()),
@@ -170,8 +189,18 @@ pub(super) fn execute(
             }
         }
         BufferOp::Borrow { dst, src, place } => {
-            slots[dst.index] =
-                slots[place.as_ref().map_or_else(|| src.owner_key(), |p| p.index)].clone()
+            let value = slots[place.as_ref().map_or_else(|| src.owner_key(), |p| p.index)].clone();
+            if dst.ty.dyn_interface().is_some() {
+                let mut owner = pointer(&value)?;
+                if place.is_some() {
+                    owner = unsafe { owner.cast::<*mut Buffer>().read() };
+                }
+                unsafe {
+                    dyn_borrow(slots, dst.index, owner)?;
+                }
+            } else {
+                slots[dst.index] = value;
+            }
         }
         BufferOp::Access { .. } => unreachable!("owner access markers are erased after checking"),
         BufferOp::End(owner) => {
@@ -269,6 +298,14 @@ pub(super) fn execute(
                         } else {
                             (*pointer(arg(0))?).load(count(arg(1))?)?
                         };
+                        if matches!(element, Type::DynTrait(_)) {
+                            dyn_borrow(
+                                slots,
+                                dst.as_ref().unwrap().index,
+                                data.cast::<*mut Buffer>().read(),
+                            )?;
+                            return Ok(());
+                        }
                         Value::Reference(if !element.is_owner() || element.is_inline_owner() {
                             data
                         } else {

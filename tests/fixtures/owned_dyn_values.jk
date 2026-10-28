@@ -1,0 +1,85 @@
+import joky/drop.{type Drop}
+import joky/task
+import joky/check
+import joky/array.{type Array}
+import joky/option.{type Option}
+import joky/list.{type List}
+import joky/map.{type Map}
+trait Read {
+    type Item
+    fn value(&self) @noescape -> Self.Item
+    fn change(&mut self, n: Int32) @noescape
+}
+struct Owned { n: Int32, text: String }
+impl Read for Owned {
+    type Item = Int32
+    fn value(&self) @noescape -> Int32 { self.n }
+    fn change(&mut self, n: Int32) @noescape { self.n = n }
+}
+impl Drop for Owned { fn drop(&mut self) { println(self.text) } }
+struct CopyValue { n: Int32 }
+impl Read for CopyValue {
+    type Item = Int32
+    fn value(&self) @noescape -> Int32 { self.n }
+    fn change(&mut self, n: Int32) @noescape { self.n = n }
+}
+type Object = dyn Read<Item = Int32>
+struct Holder { item: Object, stamp: Int32 }
+struct Wrapper { item: Object }
+impl Read for Wrapper {
+    type Item = Int32
+    fn value(&self) @noescape -> Int32 { self.item.value() }
+    fn change(&mut self, n: Int32) @noescape { self.item.change(n) }
+}
+fn make(owned: Bool) -> Object {
+    if owned { Owned { n: 21, text: "owned" } } else { CopyValue { n: 7 } }
+}
+fn relay(value: Object) @suspends -> Object { task.yield_now(); value }
+fn slow(value: Object) @suspends -> Object { while true { task.yield_now() } }
+fn wrapped_value(wrapper: &Wrapper) @noescape -> Int32 {
+    let Wrapper { item } = &*wrapper
+    item.value()
+}
+fn inspect(value: &dyn Read<Item = Int32>) @noescape -> Int32 { value.value() }
+fn main() @suspends -> Int32 {
+    var original = CopyValue { n: 8 }
+    var copy: Object = original
+    original.n = 99
+    check.assert(copy.value() == 8, "Copy erasure snapshots")
+    copy.change(10)
+    check.assert(inspect(&copy) == 10, "borrow own dyn")
+    let view: &dyn Read<Item = Int32> = &original
+    check.assert(inspect(view) == 99, "worker local concrete erasure")
+    var holder = Holder { item: make(false), stamp: 1 }
+    holder.item.change(11)
+    check.assert(holder.item.value() == 11, "stored object")
+    let wrapper = Wrapper { item: make(false) }
+    check.assert(wrapper.item.value() == 7, "wrapped object")
+    check.assert(wrapped_value(&wrapper) == 7, "borrowed wrapper pattern")
+    copy = CopyValue { n: 13 }
+    check.assert(copy.value() == 13, "assignment erasure")
+    var nested: Object = Wrapper { item: make(false) }
+    nested.change(17)
+    check.assert(nested.value() == 17, "nested concrete object")
+    let some: Option<Object> = Some(make(false))
+    let extracted = match some { Some(value) => value, None => make(false) }
+    check.assert(extracted.value() == 7, "enum object")
+    var values: Array<Object> = [make(false), CopyValue { n: 7 }]
+    for value in &mut values { value.change(12) }
+    for value in &values { check.assert(value.value() == 12, "array object") }
+    check.assert(values.borrow_ref(0).value() == 12, "array borrowed accessor")
+    var sequence = List.new::<Object>()
+    sequence.push_back(make(false))
+    check.assert(sequence.borrow_ref(0).value() == 7, "list object")
+    var table = Map.new::<Int32, Object>()
+    table.insert(1, make(false))
+    let key = 1
+    check.assert(table.value_ref(&key).value() == 7, "map object")
+    let (a, b) = join { | relay(make(true)) | relay(make(false)) }
+    check.assert(a.value() + b.value() == 28, "parallel returns")
+    let winner = race { | relay(make(false)) | slow(Owned { n: 1, text: "loser" }) }
+    check.assert(winner.value() == 7, "dynamic race")
+    let captured = make(false)
+    scope { branch { check.assert(captured.value() == 7, "branch capture") } }
+    0
+}

@@ -4,13 +4,13 @@ use crate::core::ir::parallel::packet::Kind;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 8;
+pub(crate) const VERSION: usize = 9;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v8",
+        "Invalid task entry layout v9",
     )
 }
 
@@ -226,7 +226,7 @@ impl CheckedLayout {
                 (kind, &shape),
                 (Kind::Scalar, Shape::Unit | Shape::Scalar(_))
                     | (Kind::String, Shape::String)
-                    | (Kind::Resource, Shape::Buffer)
+                    | (Kind::Resource | Kind::Dynamic, Shape::Buffer)
                     | (Kind::Function, Shape::Function)
                     | (
                         Kind::Tuple
@@ -318,7 +318,7 @@ mod tests {
         words[0] = 1;
         assert!(CheckedLayout::decode(&words).is_err());
         words[0] = VERSION as u64;
-        words[2] = 13 << 3;
+        words[2] = u64::from(u8::MAX) << 3;
         assert!(CheckedLayout::decode(&words).is_err());
         // A recognized kind with inconsistent ownership cannot enter a worker.
         for flags in [

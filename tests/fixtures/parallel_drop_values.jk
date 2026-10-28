@@ -1,0 +1,76 @@
+import joky/drop.{type Drop}
+import joky/task
+import joky/check
+import joky/array.{type Array}
+
+fn trace(text: &String) -> Int32 { println(text); 0 }
+struct Item { id: Int32, text: String }
+impl Drop for Item { fn drop(&mut self) { trace(&self.text); self.id += 1 } }
+trait Value { fn value(&self) @noescape -> Int32 }
+impl Value for Item { fn value(&self) -> Int32 { self.id } }
+struct Wrapped { text: String }
+impl Drop for Wrapped { fn drop(&mut self) { trace(&self.text); } }
+fn keep(item: Item) @suspends -> Item { task.yield_now(); item }
+fn slow(item: Item) @suspends -> Item { while true { task.yield_now() } }
+fn keep_array(items: Array<Item>) @suspends -> Array<Item> { task.yield_now(); items }
+fn discard<F>(value: F) @suspends { task.yield_now() }
+fn main() @suspends -> Int32 {
+    {
+        let (a, b) = join {
+            | keep(Item { id: 1, text: "a" })
+            | keep(Item { id: 2, text: "b" })
+        }
+        check.assert(a.id + b.id == 3, "joined")
+    }
+    {
+        let items: Array<Item> = [Item { id: 3, text: "array" }]
+        let (returned, _) = join { | keep_array(items) | task.yield_now() }
+        check.assert(returned.len() == 1, "array")
+    }
+    {
+        let winner = race {
+            | keep(Item { id: 4, text: "winner" })
+            | slow(Item { id: 5, text: "loser" })
+        }
+        check.assert(winner.id == 4, "race")
+    }
+    let value = Wrapped { text: "closure" }
+    let callback = move || { value }
+    scope { branch { discard(callback) } }
+    0
+}
+fn parked() @suspends {
+    let value = Item { id: 6, text: "cancelled" }
+    let marker = "ready"
+    trace(&marker)
+    scope { branch { slow(value); }; while true { task.yield_now() } }
+}
+fn failed() @suspends {
+    let value = Item { id: 7, text: "failed" }
+    scope { branch { slow(value); }; check.panic("expected failure") }
+}
+
+struct Failing { text: String }
+impl Drop for Failing { fn drop(&mut self) { trace(&self.text); check.panic("destructor failure") } }
+fn cleanup_failed() @suspends {
+    let value = Failing { text: "cleanup-failed" }
+    scope { branch { discard(value) } }
+}
+fn produced() @suspends -> dyn Value {
+    let item: dyn Value = Item { id: 8, text: "unclaimed" }
+    let marker = "produced"
+    trace(&marker)
+    item
+}
+fn pending_result() @suspends {
+    let (a, b) = join { | produced() | slow(Item { id: 9, text: "pending-peer" }) }
+}
+fn dynamic_lifecycle() @suspends -> Int32 {
+    var value: dyn Value = Item { id: 10, text: "first" }
+    check.assert(value.value() == 10, "first object")
+    task.yield_now()
+    value = Item { id: 11, text: "second" }
+    let values: Array<dyn Value> = [value]
+    task.yield_now()
+    values.borrow_ref(0).value()
+}
