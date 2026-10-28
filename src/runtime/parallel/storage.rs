@@ -232,6 +232,21 @@ impl Storage {
     }
 }
 impl LocalShard {
+    /// Reclaim a private region before the enclosing task tree closes.
+    ///
+    /// # Safety
+    /// No references or owners into this shard may remain live or be exported.
+    /// The caller exclusively owns the region and runs on its owning worker.
+    pub(crate) unsafe fn release_region(&mut self) {
+        let allocations = {
+            let mut shard = lock(&self.shard);
+            let allocations = std::mem::take(&mut shard.allocations);
+            shard.metadata.resize(0).expect("refund region metadata");
+            allocations
+        };
+        // Keep even runtime finalizers outside the shard lock.
+        drop(allocations);
+    }
     pub(crate) fn bytes(&self) -> usize {
         lock(&self.shard)
             .allocations

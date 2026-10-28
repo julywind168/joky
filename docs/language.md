@@ -315,11 +315,16 @@ fn run() -> Int32 {
   局部创建的 arena 引用不能通过块结果、函数返回值或含引用聚合逃逸，也不能存入任务 arena。
 - 较短寿命 arena 可以保存较长寿命对象的共享引用，保存的借用持续到目标 arena 释放。
   因此内层 arena 释放后，可以恢复对外层对象的独占访问；反向存储被拒绝。
-- 显式 arena 的控制块和对象与隐式 task arena 共用 64 MiB 总额度，释放立即退还额度。
+- Local 下显式 arena 的控制块和对象与隐式 task arena 共用 64 MiB 总额度，释放立即退还额度。
   每次 `Arena.new()` 不会获得新的独立任务额度。
 - 首版只支持同步使用。Arena 能力及其引用不能跨语言挂起点；解释器内部时间片及取消仍按拥有者清理。
   Arena 不能作为聚合字段、普通泛型实参、闭包捕获或持久状态，也不能由用户函数按值返回；创建使用 `Arena.new()`。
-  不提供 `&mut Arena`、reset 或逐对象 free。
+  不提供 `&mut Arena`、reset 或逐对象 free，也不能将 Arena 擦除为拥有型 dyn 对象。
+
+Parallel worker 可以在同步区段创建、使用和释放显式 Arena，并调用同步 `&Arena` helper。
+Arena 及其依赖引用始终留在所属 worker；内部解释器时间片不迁移它们，也不开放跨语言挂起、
+跨 worker 参数／结果或 branch 捕获。各区域共享任务根预算，退出区域立即释放其载荷与分配表；
+空分片头可由任务根复用。三后端并行用例见 [parallel_explicit_arena.jk](../tests/fixtures/parallel_explicit_arena.jk)。
 
 显式分配不改变 `alloc(value)` 的目标，也不会把 helper 内的 String、Array 等分配重定向到该 arena。
 三后端共享用例见 [explicit_arena.jk](../tests/fixtures/explicit_arena.jk)。

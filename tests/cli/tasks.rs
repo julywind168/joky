@@ -691,3 +691,21 @@ fn owned_dyn_values_execute_in_standalone_aot() {
         assert_eq!(lines, ["loser", "owned"]);
     }
 }
+
+#[test]
+fn parallel_explicit_arena_executes_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "regions.jk",
+        include_str!("../fixtures/parallel_explicit_arena.jk"),
+    );
+    success(&work.cli(&["build", "regions.jk", "--parallel"]));
+    for workers in ["1", "3"] {
+        success(
+            &Command::new(work.path().join("regions"))
+                .args(["--task-workers", workers])
+                .output()
+                .unwrap(),
+        );
+    }
+}

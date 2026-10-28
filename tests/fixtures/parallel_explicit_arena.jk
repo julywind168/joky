@@ -1,0 +1,55 @@
+import joky/arena.{type Arena}
+import joky/check
+import joky/mem
+import joky/iter.{range}
+import joky/task
+
+fn observe(text: &String) -> Int32 { 0 }
+struct Point { x: Int32, y: Int32 }
+trait Read { fn value(&self) @noescape -> Int32 }
+impl Read for Point { fn value(&self) -> Int32 { self.x + self.y } }
+fn make(arena: &Arena, n: Int32) -> &mut Point { arena.alloc(Point { x: n, y: 2 }) }
+fn forward(arena: &Arena, n: Int32) -> &mut Point { make(arena, n) }
+fn scratch(n: Int32) -> Int32 {
+    let arena = Arena.new()
+    let point = forward(&arena, n)
+    let view: &dyn Read = &*point
+    let result = view.value()
+    {
+        let inner = Arena.new()
+        let pair = inner.alloc((&*point, result))
+        let (p, saved) = (*pair)
+        check.assert(p.x + p.y == saved, "nested arena")
+    }
+    mem.drop(arena)
+    result
+}
+fn compute(n: Int32) @suspends -> Int32 {
+    let marker = if n == 20 { "left" } else { "right" }
+    observe(&marker)
+    var total = 0
+    for index in range(0, 128) { total += scratch(n) }
+    task.yield_now()
+    observe(&marker)
+    total
+}
+fn main() @suspends -> Int32 {
+    let (a, b) = join { | compute(20) | compute(18) }
+    check.assert(a + b == 42 * 128, "parallel scratch regions")
+    0
+}
+fn fail_inside() -> Int32 {
+    let arena = Arena.new()
+    let value = arena.alloc(1)
+    check.assert((*value) == 0, "arena failure")
+    (*value)
+}
+fn failed() @suspends -> Int32 { fail_inside() }
+fn wait_inside() {
+    let arena = Arena.new()
+    let value = arena.alloc(1)
+    let marker = "ready"
+    observe(&marker)
+    while true { (*(value) = 1) }
+}
+fn parked() @suspends { wait_inside() }

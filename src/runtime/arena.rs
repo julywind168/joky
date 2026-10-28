@@ -179,6 +179,17 @@ impl Arena {
             external: Default::default(),
         }
     }
+    /// Release a nonescaping explicit region's parallel allocations.
+    /// Local allocations are reclaimed by the ordinary Arena destructor.
+    ///
+    /// # Safety
+    /// This must be a private child region, with no live references or exported
+    /// owners. The region must not be used again after this call.
+    pub(crate) unsafe fn release_region(&mut self) {
+        if let Some((_, Some(shard))) = &mut self.parallel {
+            shard.release_region();
+        }
+    }
     // Buffer metadata holds a nonowning pointer; the arena pins this budget,
     // and transfer only accepts another arena with the identical budget owner.
     pub(crate) fn account_pointer(&self) -> *const Budget {

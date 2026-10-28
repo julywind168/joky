@@ -47,6 +47,13 @@ impl FunctionPlan {
         if let (Flow::Value(Some(src)), Some(target @ Type::DynTrait(_))) = (&flow, expected) {
             if &src.ty != target {
                 let interface = target.dyn_interface().unwrap();
+                if src.ty.contains_explicit_arena() {
+                    return Err(type_error(
+                        &self.current_span,
+                        ErrorCode::TypeMismatch,
+                        "Arena owners cannot be stored in owning dyn objects",
+                    ));
+                }
                 if src.ty.contains_references() || !src.ty.is_buffer_element() {
                     return Err(type_error(
                         &self.current_span,

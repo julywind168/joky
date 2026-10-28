@@ -12,6 +12,14 @@ struct Region {
     _charge: ExternalCharge,
 }
 
+impl Drop for Region {
+    fn drop(&mut self) {
+        // The compiler forbids escaping references and owning payloads. This
+        // child region is never transported or shared with another worker.
+        unsafe { self.arena.release_region() };
+    }
+}
+
 fn allocation_error() -> Error {
     Error::new_with_code(
         ErrorPhase::Runtime,
@@ -221,5 +229,31 @@ mod tests {
         assert_eq!(budget.bytes.get(), 0);
         drop(parent);
         LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+    #[test]
+    fn explicit_arena_parallel_regions_refund_before_root_completion() {
+        use crate::runtime::parallel::{Storage, TaskBudget};
+        let budget = TaskBudget::new(16 << 10);
+        let root = Storage::new(vec![budget.clone()]).unwrap();
+        let mut parent = Arena::with_storage(root.clone());
+        let stable = parent.allocate(8, 8).unwrap().cast::<u64>();
+        unsafe { stable.as_ptr().write(42) };
+        for _ in 0..16 {
+            let first = new(&mut parent).unwrap();
+            let second = new(&mut parent).unwrap();
+            unsafe {
+                allocate(first.as_ptr(), 8192, 64).unwrap();
+                assert!(allocate(second.as_ptr(), 8192, 64).is_err());
+                let used = budget.used();
+                Buffer::release(&mut parent, first.as_ptr()).unwrap();
+                assert!(budget.used() + 8192 <= used);
+                allocate(second.as_ptr(), 8192, 64).unwrap();
+                Buffer::release(&mut parent, second.as_ptr()).unwrap();
+                assert_eq!(stable.as_ptr().read(), 42);
+            }
+        }
+        drop(parent);
+        drop(root);
+        assert_eq!(budget.used(), 0);
     }
 }

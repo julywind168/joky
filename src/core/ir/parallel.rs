@@ -98,6 +98,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                             .map(|ty| (ty, share)),
                     );
                 }
+                Type::Resource(ref name) if worker_local && name.as_ref() == "arena.Arena" => {}
                 Type::Resource(ref name)
                     if !share
                         && (crate::runtime::tcp::transferable_type(name)
@@ -407,9 +408,6 @@ pub(crate) fn analyse(
                 Op::FunctionRef(slot, _) if !matches!(slot.ty, Type::Function(_)) => {
                     Some("raw function address lacks immutable thread evidence")
                 }
-                Op::ArenaNew { .. } | Op::ArenaAlloc { .. } => {
-                    Some("explicit arena capability is Local")
-                }
                 Op::DomainModule(_) | Op::OutboxEmit { .. } => {
                     Some("state domain operation is Local")
                 }
@@ -589,6 +587,18 @@ mod tests {
                 worker_local: true,
             }
         );
+        let arena = Type::Resource("arena.Arena".into());
+        for ty in [arena.clone(), Type::reference(arena, false)] {
+            assert_eq!(
+                qualify(&ty),
+                Qualification {
+                    transfer: false,
+                    share: false,
+                    worker_local: true
+                }
+            );
+            assert!(packet::classify(&ty, &|ty| Ok(ty.clone()), &|_| false).is_none());
+        }
         assert!(!qualify(&Type::Ptr).transfer);
         assert!(!qualify(&Type::Resource("HostResource".into())).share);
         for name in [

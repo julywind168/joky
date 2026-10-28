@@ -136,6 +136,15 @@ fn explicit_arena_drop_refunds_payloads_within_the_scope() {
 
 #[test]
 fn explicit_arena_rejects_escaping_references_and_capability_forgery() {
+    let erasure =
+        format!("{IMPORT}trait Mark {{}} fn bad() {{ let erased: dyn Mark = Arena.new(); }}");
+    let error = frontend_error(&erasure, &crate::ModuleSources::new());
+    assert!(
+        error
+            .message()
+            .contains("Arena owners cannot be stored in owning dyn objects"),
+        "{error}"
+    );
     for body in [
         "fn bad() -> &mut Int32 { let arena = Arena.new(); arena.alloc(42) }",
         "fn bad() -> (Option<&Int32>,) { let arena = Arena.new(); let p = arena.alloc(42); (Some((&*p)),) }",
@@ -149,6 +158,10 @@ fn explicit_arena_rejects_escaping_references_and_capability_forgery() {
         "fn bad() { let arena = Arena.new(); let p = arena.alloc(42); let q: &Int32 = p; let exclusive: &mut Int32 = q; }",
         "fn bad(arena: &Arena, shared: &Int32) -> &mut Int32 { shared }",
         "fn bad(arena: &mut Arena) {}",
+        "struct Hidden { arena: Arena }",
+        "fn bad() { let arena = Arena.new(); let f = move || { arena }; }",
+        "fn child(arena: Arena) @suspends {} fn bad() @suspends { let arena = Arena.new(); scope { branch { child(arena) } } }",
+        "fn child(p: &Int32) @suspends {} fn bad() @suspends { let arena = Arena.new(); let p = arena.alloc(1); let (a, b) = join { | child(p) | child(p) } }",
         "fn bad() -> Arena { Arena.new() }",
         "fn bad() { let arena = Arena.new(); let copy = (arena,); }",
         "fn identity<T>(value: T) -> T { value } fn bad() { identity(Arena.new()); }",
