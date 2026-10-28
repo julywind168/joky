@@ -30,6 +30,8 @@ mod dyn_tests;
 mod function_tests;
 #[cfg(test)]
 mod isolate_tests;
+#[cfg(test)]
+mod migration_tests;
 mod places;
 #[cfg(test)]
 mod tcp_tests;

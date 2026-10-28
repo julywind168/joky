@@ -186,6 +186,18 @@ pub(crate) fn compile(
         builder.symbol(name, ptr);
     }
     for (name, ptr) in crate::runtime::error::symbols() {
+        builder.symbol(
+            "__joky_vm_migration_open",
+            crate::stdlib::migration_open_native as *const u8,
+        );
+        builder.symbol(
+            "__joky_vm_migration_command",
+            crate::stdlib::migration_command_native as *const u8,
+        );
+        builder.symbol(
+            "__joky_vm_migration_diagnostic",
+            crate::stdlib::migration_diagnostic_native as *const u8,
+        );
         builder.symbol(name, ptr);
     }
     builder.symbol(

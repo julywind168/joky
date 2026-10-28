@@ -12,6 +12,7 @@ pub(crate) enum HostEntry {
     Fs(super::fs::Operation),
     VmCall,
     VmSource,
+    VmMigration(crate::core::vm::MigrationOperation),
     Domain(super::domain::Operation),
     ResourceFactory(Rc<super::resource::ResourceFactoryV1>),
     ResourceIo {

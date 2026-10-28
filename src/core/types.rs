@@ -1570,6 +1570,7 @@ impl Default for TypeRegistry {
             resources: BTreeSet::from([
                 "arena.Arena".into(),
                 VM_OWNER.into(),
+                "vm.MigrationOwner".into(),
                 "domain.TimerOwner".into(),
                 "domain.DirectoryOwner".into(),
                 "outbox.QueueOwner".into(),
@@ -1603,6 +1604,7 @@ impl Default for TypeRegistry {
             named: BTreeSet::from([
                 "arena.Arena".into(),
                 VM_OWNER.into(),
+                "vm.MigrationOwner".into(),
                 VM_FUNCTION.into(),
                 "admission.Token".into(),
                 "domain.Handle".into(),
@@ -1634,6 +1636,7 @@ impl Default for TypeRegistry {
                 "joky/internal/vm".into(),
                 BTreeMap::from([
                     ("Owner".into(), VM_OWNER.into()),
+                    ("MigrationOwner".into(), "vm.MigrationOwner".into()),
                     ("Function".into(), VM_FUNCTION.into()),
                 ]),
             )]),

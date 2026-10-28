@@ -143,3 +143,52 @@ pub(crate) fn source_signature() -> FunctionSignature {
         Type::String,
     )
 }
+
+/// Owning migration sessions have a fixed command packet and a separate error read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MigrationOperation {
+    Open,
+    Command,
+    Diagnostic,
+}
+impl MigrationOperation {
+    pub(crate) fn lookup(name: &str) -> Option<Self> {
+        match name {
+            "__vm_migration_open" => Some(Self::Open),
+            "__vm_migration_command" => Some(Self::Command),
+            "__vm_migration_diagnostic" => Some(Self::Diagnostic),
+            _ => None,
+        }
+    }
+    pub(crate) fn symbol(self) -> &'static str {
+        match self {
+            Self::Open => "__joky_vm_migration_open",
+            Self::Command => "__joky_vm_migration_command",
+            Self::Diagnostic => "__joky_vm_migration_diagnostic",
+        }
+    }
+    pub(crate) fn signature(self) -> FunctionSignature {
+        let owner = Type::Resource("vm.MigrationOwner".into());
+        match self {
+            Self::Open => FunctionSignature::new(
+                vec![Type::reference(Type::Resource("vm.Owner".into()), false)],
+                owner,
+            ),
+            Self::Command => FunctionSignature::new(
+                vec![
+                    Type::reference(owner, true),
+                    Type::UInt64,
+                    Type::UInt64,
+                    Type::String,
+                    Type::String,
+                    Type::String,
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+                ],
+                Type::UInt64,
+            ),
+            Self::Diagnostic => {
+                FunctionSignature::new(vec![Type::reference(owner, true)], Type::String)
+            }
+        }
+    }
+}

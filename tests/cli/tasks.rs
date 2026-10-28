@@ -709,3 +709,26 @@ fn parallel_explicit_arena_executes_in_standalone_aot() {
         );
     }
 }
+
+#[path = "../fixtures/migration_session.rs"]
+mod migration_fixture;
+#[test]
+fn migration_sessions_run_in_one_standalone_aot_binary() {
+    let work = Workspace::new();
+    work.write("migration.jk", &migration_fixture::source());
+    let build = work
+        .command()
+        .args(["build", "--parallel", "migration.jk", "-o", "migration"])
+        .env("JOKY_RUNTIME", runtime_archive())
+        .output()
+        .unwrap();
+    success(&build);
+    for workers in ["1", "3"] {
+        success(
+            &Command::new(work.path().join("migration"))
+                .args(["--task-workers", workers])
+                .output()
+                .unwrap(),
+        );
+    }
+}

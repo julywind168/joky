@@ -138,7 +138,7 @@ pub(crate) fn compile<M: Module>(
             .filter(|op| op.needs_adapter())
         {
             let family = match builtin {
-                Builtin::VmCall | Builtin::VmSource => "vm",
+                Builtin::VmCall | Builtin::VmSource | Builtin::VmMigration(_) => "vm",
                 Builtin::Domain(_) => "domain",
                 Builtin::Dns => "dns",
                 Builtin::Fs(_) => "fs",
@@ -444,6 +444,9 @@ pub(crate) fn compile<M: Module>(
                 Adapter::Builtin(builtin) => match builtin {
                     Builtin::Dns => lower::runtime_entry(&mut builder, &refs, "__joky_dns_poll"),
                     Builtin::VmCall => lower::runtime_entry(&mut builder, &refs, "__joky_vm_call"),
+                    Builtin::VmMigration(op) => {
+                        lower::runtime_entry(&mut builder, &refs, op.symbol())
+                    }
                     Builtin::VmSource => {
                         lower::runtime_entry(&mut builder, &refs, "__joky_vm_source")
                     }

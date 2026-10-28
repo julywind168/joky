@@ -4946,6 +4946,42 @@ Rust 嵌入方可使用 `VmEngine::load_named_source(name, source)` 保留诊断
 `VmEngine::publish_source(source)` 对该引擎域注册表执行同样的原子兼容发布。
 行为示例见 [文件加载／发布 fixture](../tests/fixtures/vm_source.jk)。
 
+### 拥有型迁移会话（Local／Parallel）
+
+`Vm.migration() @suspends -> Result<Migration, MigrationError>` 独占该 VM 的迁移槽。
+同一 VM 的 `share()` 别名再次申请会返回 `Busy`；已有旧接口候选时也不能申请。
+会话保留 VM 的拥有权，可在同一 Parallel 任务树内移动到其他 worker，但不能共享或复制。
+显式关闭任一 VM 别名会使会话失效，后续命令返回 `Unavailable`。
+
+| 会话方法（均 `@suspends`） | 返回值与行为 |
+| --- | --- |
+| `schema(&mut self)` | `Result<UInt64, MigrationError>`，读取唯一存活域的 schema |
+| `prepare(&mut self, schema: UInt64, source: String, method: String)` | `Result<Unit, MigrationError>`，构造单根候选 |
+| `begin(&mut self, schema: UInt64, source: String, start: String, advance: String)` | `Result<Unit, MigrationError>`，开始增量迁移 |
+| `begin_batch(&mut self, source: String)` | `Result<Unit, MigrationError>`，捕获完整批次 |
+| `stage(&mut self, start: String, advance: String)` | `Result<Unit, MigrationError>`，为批次类型构造候选；空 `advance` 表示一次性构造 |
+| `step(&mut self, budget: UInt64)` | `Result<Bool, MigrationError>`；`true` 已完成，`false` 尚需推进 |
+| `publish(self)` | `Result<Unit, MigrationError>`；消费会话，校验并原子发布 |
+| `cancel(self)` | `Result<Unit, MigrationError>`；消费会话并释放未发布候选 |
+
+`MigrationError` 含 `kind: MigrationErrorKind` 和 `diagnostic: Diagnostic`。
+分类为 `Compile`、`Incompatible`、`Conflict`、`Runtime`、`Busy`、`Unavailable`；
+其中 `Conflict` 包括旧 schema、修订、模块绑定、候选阶段等迁移前置条件不再成立，具体原因看诊断。
+迁移操作失败直接返回完整诊断，不读写 `vm.error_code()`／`vm.print_error()` 的线程局部错误槽。
+任务预算耗尽或执行器终止仍可能直接中止任务。
+错误后的候选保留／消费规则与下述旧迁移接口一致；无论成功或失败，消费型 `publish` 都结束会话。
+丢弃会话、任务取消、VM 关闭会回收未发布候选，不需要显式 `cancel`。
+
+Parallel 下，读取 schema、准备、stage、step、publish 会挂起等待已授权 `when` 尝试排空，
+期间阻止新授权；不等待普通 VM 流程结束，也不阻塞控制线程等待 worker。
+编译、构造与一次 step 仍是同步工作，`budget` 仍是业务提示，不提供抢占或自动重试。
+发布前预留固定回执空间，成功回传不再分配数据包；但调用者在提交点之后仍可能被取消或失败，
+所以任务取消不等于“没有发布”，已提交的数据不会回滚。
+
+旧的 `vm.prepare_migration` 等同步自由函数继续保持 Local；会话占用槽时这些函数拒绝操作该槽。
+完整可执行覆盖见 [迁移会话 fixture](../tests/fixtures/migration_session.jk) 与其
+[源码组装器](../tests/fixtures/migration_session.rs)。以下旧接口说明中的布局、纯度、冲突和预算规则同样适用于会话。
+
 ### 显式状态迁移
 
 迁移入口是 `fn upgrade(old: &PreviousState) -> Room`。`PreviousState` 由运行时根据
@@ -5118,11 +5154,12 @@ R7c 的控制代理绑定同一任务树。`Vm.share()` 返回独立拥有句柄
 R8 将业务脚本中的 `when`（含生成的状态方法与创建回退）交给同一 worker 池：完整访问集一起授权，
 冲突写入排队，共享读可并行，不相交域可同时计算；只复制写域。根、目录条目和 outbox 消息由控制端一次提交。
 `publish_source`／`publish_file` 挂起等待已授权尝试排空，期间阻止新授权；不等待旧普通流程整体结束。
+`Vm.migration()` 及其会话命令也走控制代理，支持单根、增量和批量迁移。
 旧的同步反射、注册和迁移接口仍保持 Local；同步发布、迁移或调整域限额遇到活动授权时返回 InvalidState，
 调用方可在域操作结束后重试，不能阻塞控制线程等待自己推进。显式快照／提案和旧原地操作保持既有语义，
 经保守的排空屏障执行。此处不承诺同一 scope 的源码顺序入队（R9），也不开放直接捕获 Local 域 owner 到 worker。
 
-同树 worker 可移动 VM、目录、准入池／permit、邮箱／消息和文件 owner 的代理，
+同树 worker 可移动 VM、迁移会话、目录、准入池／permit、邮箱／消息和文件 owner 的代理，
 控制端持有实际 Local 资源；命令复制文本和数据包，返回复制结果或新的代理。静态借用
 join/race 的全部分支留在调用 worker，仍检查每个直接／间接目标的完整效果，不能借此
 调用任意 Local 宿主绑定。文件操作沿用准备时配置的 FileService，不新增文件访问权限。

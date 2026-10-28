@@ -206,3 +206,73 @@ impl LoadError {
         }
     }
 }
+
+// One owning session reserves the VM's migration slot until it is dropped.
+pub struct Migration { owner: vm.MigrationOwner }
+pub enum MigrationErrorKind { Compile, Incompatible, Conflict, Runtime, Busy, Unavailable }
+pub struct MigrationError { pub kind: MigrationErrorKind, pub diagnostic: Diagnostic }
+extern fn __vm_migration_open(owner: &vm.Owner) @suspends -> vm.MigrationOwner
+extern fn __vm_migration_command(owner: &mut vm.MigrationOwner, operation: UInt64, number: UInt64,
+    source: String, start: String, advance: String, packet: &mut Buffer<UInt64>) @suspends -> UInt64
+extern fn __vm_migration_diagnostic(owner: &mut vm.MigrationOwner) @suspends -> String
+
+impl Vm {
+    pub fn migration(&self) @suspends -> Result<Migration, MigrationError> {
+        var session = Migration { owner: __vm_migration_open(&self.owner) }
+        session.command(0, 0, "", "", "")?
+        Ok(session)
+    }
+}
+impl Migration {
+    fn command(&mut self, operation: UInt64, number: UInt64, source: String, start: String,
+        advance: String) @suspends -> Result<UInt64, MigrationError> {
+        var packet = buffer.allocate::<UInt64>(4)
+        for _ in range(0, 4) { buffer.initialize_next(&mut packet, 0) }
+        let status = __vm_migration_command(&mut self.owner, operation, number, source, start, advance, &mut packet)
+        if status == 0 { return Ok(buffer.load(&packet, 0)) }
+        let kind = match status {
+            1 => MigrationErrorKind.Compile
+            2 => MigrationErrorKind.Incompatible
+            3 => MigrationErrorKind.Conflict
+            5 => MigrationErrorKind.Busy
+            6 => MigrationErrorKind.Unavailable
+            _ => MigrationErrorKind.Runtime
+        }
+        Err(MigrationError { kind: kind, diagnostic: Diagnostic {
+            message: __vm_migration_diagnostic(&mut self.owner),
+            has_span: buffer.load(&packet, 3) != 0,
+            start: buffer.load(&packet, 1), end: buffer.load(&packet, 2)
+        } })
+    }
+    pub fn schema(&mut self) @suspends -> Result<UInt64, MigrationError> {
+        self.command(1, 0, "", "", "")
+    }
+    pub fn prepare(&mut self, schema: UInt64, source: String, method: String) @suspends -> Result<Unit, MigrationError> {
+        self.command(2, schema, source, method, "")?
+        Ok({})
+    }
+    pub fn begin(&mut self, schema: UInt64, source: String, start: String, advance: String) @suspends -> Result<Unit, MigrationError> {
+        self.command(3, schema, source, start, advance)?
+        Ok({})
+    }
+    pub fn begin_batch(&mut self, source: String) @suspends -> Result<Unit, MigrationError> {
+        self.command(4, 0, source, "", "")?
+        Ok({})
+    }
+    pub fn stage(&mut self, start: String, advance: String) @suspends -> Result<Unit, MigrationError> {
+        self.command(5, 0, "", start, advance)?
+        Ok({})
+    }
+    // true means complete; budget is a hint to the synchronous migration callback.
+    pub fn step(&mut self, budget: UInt64) @suspends -> Result<Bool, MigrationError> {
+        Ok(self.command(6, budget, "", "", "")? == 0)
+    }
+    pub fn publish(var self) @suspends -> Result<Unit, MigrationError> {
+        self.command(7, 0, "", "", "")?
+        Ok({})
+    }
+    pub fn cancel(var self) @suspends -> Result<Unit, MigrationError> {
+        self.command(8, 0, "", "", "")?
+        Ok({})
+    }
+}

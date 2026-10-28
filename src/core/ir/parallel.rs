@@ -246,6 +246,7 @@ pub(crate) fn analyse(
                         crate::core::builtins::Builtin::Dns
                         | crate::core::builtins::Builtin::VmCall
                         | crate::core::builtins::Builtin::VmSource
+                        | crate::core::builtins::Builtin::VmMigration(_)
                         | crate::core::builtins::Builtin::Fs(_) => true,
                         crate::core::builtins::Builtin::Domain(op) => {
                             crate::runtime::parallel::control::Operation::domain(op).is_some()

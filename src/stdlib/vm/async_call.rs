@@ -15,9 +15,10 @@ pub(super) struct HandleState {
     pub(super) engine: RefCell<VmEngine>,
     session: RefCell<Option<Session>>,
     pub(super) modules: RefCell<Vec<Weak<dyn Any>>>,
-    migration: RefCell<Option<Migration>>,
+    pub(super) migration: RefCell<Option<Migration>>,
+    pub(super) migration_claimed: Cell<bool>,
 }
-enum Migration {
+pub(super) enum Migration {
     Single(Box<crate::vm::state_domains::migration::PreparedMigration>),
     Batch(Box<crate::vm::state_domains::migration::batch::Batch>),
 }
@@ -44,6 +45,7 @@ impl HandleState {
             session: RefCell::new(None),
             modules: RefCell::new(Vec::new()),
             migration: RefCell::new(None),
+            migration_claimed: Cell::new(false),
         }
     }
     pub(super) fn remember(&self, engine: &VmEngine) {
@@ -122,7 +124,7 @@ struct MigrationContext {
     executor: HostExecutor,
     owners: Vec<Rc<dyn Any>>,
 }
-fn migration_context(handle: u64) -> Result<MigrationContext, Error> {
+fn migration_context(handle: u64, claimed: bool) -> Result<MigrationContext, Error> {
     let executor = current_executor().ok_or_else(|| {
         runtime_error(
             ErrorCode::InvalidState,
@@ -130,6 +132,7 @@ fn migration_context(handle: u64) -> Result<MigrationContext, Error> {
         )
     })?;
     let state = lookup(handle)?;
+    check_claim(&state, claimed)?;
     state.bind(&executor)?;
     {
         let engine = state.engine.try_borrow().map_err(|_| {
@@ -151,12 +154,7 @@ fn migration_context(handle: u64) -> Result<MigrationContext, Error> {
 }
 #[export_name = "joky_vm_domain_schema"]
 pub(crate) extern "C" fn domain_schema(handle: u64) -> u64 {
-    operation(0, || {
-        let MigrationContext {
-            executor, owners, ..
-        } = migration_context(handle)?;
-        crate::vm::state_domains::migration::schema(&executor.domains(), &owners)
-    })
+    operation(0, || domain_schema_result(handle, false))
 }
 #[export_name = "joky_vm_prepare_migration_v1"]
 /// # Safety
@@ -168,32 +166,7 @@ pub(crate) unsafe extern "C" fn prepare_migration(
     method: *const u8,
 ) -> i32 {
     operation(1, || {
-        let source = borrow(source)?;
-        let method = borrow(method)?;
-        let MigrationContext {
-            state,
-            executor,
-            owners,
-        } = migration_context(handle)?;
-        if state.migration.borrow().is_some() {
-            return Err(runtime_error(
-                ErrorCode::InvalidState,
-                "A migration is already prepared",
-            ));
-        }
-        let engine = state.engine.try_borrow().map_err(|_| {
-            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
-        })?;
-        let plan = crate::vm::state_domains::migration::prepare(
-            &engine,
-            &executor.domains(),
-            &owners,
-            schema,
-            source,
-            method,
-        )?;
-        *state.migration.borrow_mut() = Some(Migration::Single(Box::new(plan)));
-        Ok(0)
+        prepare_migration_result(handle, false, schema, borrow(source)?, borrow(method)?)
     })
 }
 #[export_name = "joky_vm_begin_migration_v1"]
@@ -207,34 +180,14 @@ pub(crate) unsafe extern "C" fn begin_migration(
     advance: *const u8,
 ) -> i32 {
     operation(1, || {
-        let source = borrow(source)?;
-        let start = borrow(start)?;
-        let advance = borrow(advance)?;
-        let MigrationContext {
-            state,
-            executor,
-            owners,
-        } = migration_context(handle)?;
-        if state.migration.borrow().is_some() {
-            return Err(runtime_error(
-                ErrorCode::InvalidState,
-                "A migration is already prepared",
-            ));
-        }
-        let engine = state.engine.try_borrow().map_err(|_| {
-            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
-        })?;
-        let plan = crate::vm::state_domains::migration::begin(
-            &engine,
-            &executor.domains(),
-            &owners,
+        begin_migration_result(
+            handle,
+            false,
             schema,
-            source,
-            start,
-            advance,
-        )?;
-        *state.migration.borrow_mut() = Some(Migration::Single(Box::new(plan)));
-        Ok(0)
+            borrow(source)?,
+            borrow(start)?,
+            borrow(advance)?,
+        )
     })
 }
 #[export_name = "joky_vm_begin_migration_batch_v1"]
@@ -242,29 +195,7 @@ pub(crate) unsafe extern "C" fn begin_migration(
 /// The aligned text descriptor must borrow live immutable UTF-8 during this call.
 pub(crate) unsafe extern "C" fn begin_migration_batch(handle: u64, source: *const u8) -> i32 {
     operation(1, || {
-        let source = borrow(source)?;
-        let MigrationContext {
-            state,
-            executor,
-            owners,
-        } = migration_context(handle)?;
-        if state.migration.borrow().is_some() {
-            return Err(runtime_error(
-                ErrorCode::InvalidState,
-                "A migration is already prepared",
-            ));
-        }
-        let engine = state.engine.try_borrow().map_err(|_| {
-            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
-        })?;
-        let batch = crate::vm::state_domains::migration::batch::begin(
-            &engine,
-            &executor.domains(),
-            &owners,
-            source,
-        )?;
-        *state.migration.borrow_mut() = Some(Migration::Batch(Box::new(batch)));
-        Ok(0)
+        begin_migration_batch_result(handle, false, borrow(source)?)
     })
 }
 #[export_name = "joky_vm_stage_migration_v1"]
@@ -276,125 +207,251 @@ pub(crate) unsafe extern "C" fn stage_migration(
     advance: *const u8,
 ) -> i32 {
     operation(1, || {
-        let start = borrow(start)?;
-        let advance = borrow(advance)?;
-        let MigrationContext {
-            state,
-            executor,
-            owners,
-        } = migration_context(handle)?;
-        let engine = state.engine.try_borrow().map_err(|_| {
-            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
-        })?;
-        let plan = state
-            .migration
-            .borrow_mut()
-            .take()
-            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
-        let Migration::Batch(mut batch) = plan else {
-            return Err(runtime_error(
-                ErrorCode::InvalidState,
-                "Migration is not a batch",
-            ));
-        };
-        crate::vm::state_domains::migration::batch::stage(
-            &engine,
-            &executor.domains(),
-            &owners,
-            &mut batch,
-            start,
-            advance,
-        )?;
-        *state.migration.borrow_mut() = Some(Migration::Batch(batch));
-        Ok(0)
+        stage_migration_result(handle, false, borrow(start)?, borrow(advance)?)
     })
 }
 #[export_name = "joky_vm_step_migration"]
 pub(crate) extern "C" fn step_migration(handle: u64, budget: u64) -> i32 {
-    operation(-1, || {
-        let MigrationContext {
-            state,
-            executor,
-            owners,
-        } = migration_context(handle)?;
-        let engine = state.engine.try_borrow().map_err(|_| {
-            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
-        })?;
-        let mut plan = state
-            .migration
-            .borrow_mut()
-            .take()
-            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
-        let done = match &mut plan {
-            Migration::Single(plan) => crate::vm::state_domains::migration::step(
-                &engine,
-                &executor.domains(),
-                &owners,
-                plan,
-                budget,
-            )?,
-            Migration::Batch(plan) => crate::vm::state_domains::migration::batch::step(
-                &engine,
-                &executor.domains(),
-                &owners,
-                plan,
-                budget,
-            )?,
-        };
-        *state.migration.borrow_mut() = Some(plan);
-        Ok(if done { 0 } else { 1 })
-    })
+    operation(-1, || step_migration_result(handle, false, budget))
 }
 #[export_name = "joky_vm_publish_migration"]
 pub(crate) extern "C" fn publish_migration(handle: u64) -> i32 {
-    operation(1, || {
-        let MigrationContext {
-            state,
-            executor,
-            owners,
-        } = migration_context(handle)?;
-        let mut engine = state.engine.try_borrow_mut().map_err(|_| {
-            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
-        })?;
-        // Reserve bookkeeping before publication so remembering the new module
-        // cannot allocate after the state and entry have switched.
-        state.modules.borrow_mut().try_reserve(1).map_err(|_| {
-            runtime_error(
-                ErrorCode::ResourceLimit,
-                "Migration module allocation failed",
-            )
-        })?;
-        let plan = state
-            .migration
-            .borrow_mut()
-            .take()
-            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
-        match plan {
-            Migration::Single(plan) => crate::vm::state_domains::migration::publish(
-                &mut engine,
-                &executor.domains(),
-                &owners,
-                *plan,
-            )?,
-            Migration::Batch(plan) => crate::vm::state_domains::migration::batch::publish(
-                &mut engine,
-                &executor.domains(),
-                &owners,
-                *plan,
-            )?,
-        }
-        state.remember(&engine);
-        Ok(0)
-    })
+    operation(1, || publish_migration_result(handle, false))
 }
 #[export_name = "joky_vm_cancel_migration"]
 pub(crate) extern "C" fn cancel_migration(handle: u64) -> i32 {
-    operation(1, || {
-        let state = lookup(handle)?;
-        let plan = state.migration.borrow_mut().take();
-        drop(plan);
-        Ok(0)
-    })
+    operation(1, || cancel_migration_result(handle, false))
+}
+
+fn check_claim(state: &HandleState, claimed: bool) -> Result<(), Error> {
+    if state.migration_claimed.get() != claimed {
+        return Err(runtime_error(
+            ErrorCode::InvalidState,
+            "Migration slot is owned by another session",
+        ));
+    }
+    Ok(())
+}
+pub(super) fn domain_schema_result(handle: u64, claimed: bool) -> Result<u64, Error> {
+    let MigrationContext {
+        executor, owners, ..
+    } = migration_context(handle, claimed)?;
+    crate::vm::state_domains::migration::schema(&executor.domains(), &owners)
+}
+pub(super) fn prepare_migration_result(
+    handle: u64,
+    claimed: bool,
+    schema: u64,
+    source: &str,
+    method: &str,
+) -> Result<i32, Error> {
+    let MigrationContext {
+        state,
+        executor,
+        owners,
+    } = migration_context(handle, claimed)?;
+    if state.migration.borrow().is_some() {
+        return Err(runtime_error(
+            ErrorCode::InvalidState,
+            "A migration is already prepared",
+        ));
+    }
+    let engine = state
+        .engine
+        .try_borrow()
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
+    let plan = crate::vm::state_domains::migration::prepare(
+        &engine,
+        &executor.domains(),
+        &owners,
+        schema,
+        source,
+        method,
+    )?;
+    *state.migration.borrow_mut() = Some(Migration::Single(Box::new(plan)));
+    Ok(0)
+}
+pub(super) fn begin_migration_result(
+    handle: u64,
+    claimed: bool,
+    schema: u64,
+    source: &str,
+    start: &str,
+    advance: &str,
+) -> Result<i32, Error> {
+    let MigrationContext {
+        state,
+        executor,
+        owners,
+    } = migration_context(handle, claimed)?;
+    if state.migration.borrow().is_some() {
+        return Err(runtime_error(
+            ErrorCode::InvalidState,
+            "A migration is already prepared",
+        ));
+    }
+    let engine = state
+        .engine
+        .try_borrow()
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
+    let plan = crate::vm::state_domains::migration::begin(
+        &engine,
+        &executor.domains(),
+        &owners,
+        schema,
+        source,
+        start,
+        advance,
+    )?;
+    *state.migration.borrow_mut() = Some(Migration::Single(Box::new(plan)));
+    Ok(0)
+}
+pub(super) fn begin_migration_batch_result(
+    handle: u64,
+    claimed: bool,
+    source: &str,
+) -> Result<i32, Error> {
+    let MigrationContext {
+        state,
+        executor,
+        owners,
+    } = migration_context(handle, claimed)?;
+    if state.migration.borrow().is_some() {
+        return Err(runtime_error(
+            ErrorCode::InvalidState,
+            "A migration is already prepared",
+        ));
+    }
+    let engine = state
+        .engine
+        .try_borrow()
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
+    let batch = crate::vm::state_domains::migration::batch::begin(
+        &engine,
+        &executor.domains(),
+        &owners,
+        source,
+    )?;
+    *state.migration.borrow_mut() = Some(Migration::Batch(Box::new(batch)));
+    Ok(0)
+}
+pub(super) fn stage_migration_result(
+    handle: u64,
+    claimed: bool,
+    start: &str,
+    advance: &str,
+) -> Result<i32, Error> {
+    let MigrationContext {
+        state,
+        executor,
+        owners,
+    } = migration_context(handle, claimed)?;
+    let engine = state
+        .engine
+        .try_borrow()
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
+    let plan = state
+        .migration
+        .borrow_mut()
+        .take()
+        .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
+    let Migration::Batch(mut batch) = plan else {
+        return Err(runtime_error(
+            ErrorCode::InvalidState,
+            "Migration is not a batch",
+        ));
+    };
+    crate::vm::state_domains::migration::batch::stage(
+        &engine,
+        &executor.domains(),
+        &owners,
+        &mut batch,
+        start,
+        advance,
+    )?;
+    *state.migration.borrow_mut() = Some(Migration::Batch(batch));
+    Ok(0)
+}
+pub(super) fn step_migration_result(handle: u64, claimed: bool, budget: u64) -> Result<i32, Error> {
+    let MigrationContext {
+        state,
+        executor,
+        owners,
+    } = migration_context(handle, claimed)?;
+    let engine = state
+        .engine
+        .try_borrow()
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
+    let mut plan = state
+        .migration
+        .borrow_mut()
+        .take()
+        .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
+    let done = match &mut plan {
+        Migration::Single(plan) => crate::vm::state_domains::migration::step(
+            &engine,
+            &executor.domains(),
+            &owners,
+            plan,
+            budget,
+        )?,
+        Migration::Batch(plan) => crate::vm::state_domains::migration::batch::step(
+            &engine,
+            &executor.domains(),
+            &owners,
+            plan,
+            budget,
+        )?,
+    };
+    *state.migration.borrow_mut() = Some(plan);
+    Ok(if done { 0 } else { 1 })
+}
+pub(super) fn publish_migration_result(handle: u64, claimed: bool) -> Result<i32, Error> {
+    let MigrationContext {
+        state,
+        executor,
+        owners,
+    } = migration_context(handle, claimed)?;
+    let mut engine = state
+        .engine
+        .try_borrow_mut()
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
+    // Reserve bookkeeping before publication so remembering the new module
+    // cannot allocate after the state and entry have switched.
+    state.modules.borrow_mut().try_reserve(1).map_err(|_| {
+        runtime_error(
+            ErrorCode::ResourceLimit,
+            "Migration module allocation failed",
+        )
+    })?;
+    let plan = state
+        .migration
+        .borrow_mut()
+        .take()
+        .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
+    match plan {
+        Migration::Single(plan) => crate::vm::state_domains::migration::publish(
+            &mut engine,
+            &executor.domains(),
+            &owners,
+            *plan,
+        )?,
+        Migration::Batch(plan) => crate::vm::state_domains::migration::batch::publish(
+            &mut engine,
+            &executor.domains(),
+            &owners,
+            *plan,
+        )?,
+    }
+    state.remember(&engine);
+    Ok(0)
+}
+pub(super) fn cancel_migration_result(handle: u64, claimed: bool) -> Result<i32, Error> {
+    let state = lookup(handle)?;
+    check_claim(&state, claimed)?;
+    let plan = state.migration.borrow_mut().take();
+    drop(plan);
+    Ok(0)
 }
 
 unsafe extern "C" fn stop(frame: *mut CpsFrame, _: u32) {

@@ -35,6 +35,7 @@ pub(crate) enum Operation {
     VmClose,
     VmCall,
     VmSource,
+    VmMigration(crate::core::vm::MigrationOperation),
     Domain(crate::runtime::domain::Operation),
     Fs(crate::runtime::fs::Operation),
 }
@@ -73,6 +74,24 @@ impl Operation {
         match self {
             Self::VmCreate => (vec![Word], Resource),
             Self::VmClose => (vec![Resource], Word),
+            Self::VmMigration(op) => match op {
+                crate::core::vm::MigrationOperation::Open => (vec![Kind::Resource], Kind::Resource),
+                crate::core::vm::MigrationOperation::Diagnostic => {
+                    (vec![Kind::Resource], Kind::Bytes(1, false))
+                }
+                crate::core::vm::MigrationOperation::Command => (
+                    vec![
+                        Kind::Resource,
+                        Kind::Word,
+                        Kind::Word,
+                        Kind::Bytes(1, false),
+                        Kind::Bytes(1, false),
+                        Kind::Bytes(1, false),
+                        Kind::Bytes(8, true),
+                    ],
+                    Kind::Word,
+                ),
+            },
             Self::VmCall => (
                 vec![
                     Resource,
@@ -125,6 +144,7 @@ pub(crate) fn resource_type(name: &str) -> bool {
     matches!(
         name,
         "vm.Owner"
+            | "vm.MigrationOwner"
             | "domain.DirectoryOwner"
             | "admission.PoolOwner"
             | "admission.PermitOwner"
@@ -500,6 +520,19 @@ pub(crate) unsafe fn poll(
             Kind::Bytes(stride, _) => stride,
             _ => unreachable!(),
         };
+        if matches!(
+            op,
+            Operation::VmMigration(crate::core::vm::MigrationOperation::Command)
+        ) {
+            let packet = &*(frame.slots[index] as *const Buffer);
+            debug_assert_eq!(packet.len() as usize * stride, bytes.len());
+            for (i, item) in bytes.chunks_exact(stride).enumerate() {
+                packet
+                    .load(i as u64)?
+                    .copy_from_nonoverlapping(item.as_ptr(), stride);
+            }
+            continue;
+        }
         let replacement = buffer(arena, &bytes, stride)?;
         Buffer::replace(
             arena,
@@ -536,6 +569,7 @@ struct Call {
     frame: Box<CpsFrame>,
     buffers: Vec<u64>,
     keep: Vec<Arc<Proxy>>,
+    prepared_reply: Option<Reply>,
     #[cfg(test)]
     counted: bool,
     request: Arc<Request>,
@@ -572,6 +606,7 @@ impl Call {
             frame: Box::new(CpsFrame::try_new(input.len())?),
             buffers: Vec::new(),
             keep: Vec::new(),
+            prepared_reply: None,
             #[cfg(test)]
             counted: false,
             request,
@@ -594,6 +629,29 @@ impl Call {
                 }
             };
         }
+        if matches!(
+            call.request.op,
+            Operation::VmMigration(crate::core::vm::MigrationOperation::Command)
+        ) {
+            // Preflight all reply storage before a command can commit. The command cannot resize this packet.
+            let packet = &*(call.frame.slots[6] as *const Buffer);
+            if packet.len() != 4 {
+                return Err(invalid("Invalid migration result packet"));
+            }
+            let core = call
+                .request
+                .core
+                .upgrade()
+                .ok_or_else(|| invalid("Control driver closed"))?;
+            let charge = core.root.accounts().reserve(
+                std::mem::size_of::<Reply>() + std::mem::size_of::<(usize, Vec<u8>)>() + 32,
+            )?;
+            call.prepared_reply = Some(Reply {
+                value: Value::Word(0),
+                updates: vec![(6, copy_buffer(call.frame.slots[6], 8)?)],
+                _charge: charge,
+            });
+        }
         #[cfg(test)]
         if matches!(call.request.op, Operation::VmCall) {
             if let Some(core) = call.request.core.upgrade() {
@@ -612,6 +670,7 @@ impl Call {
                     .map(|r| Some(r.as_ptr() as u64))
             }
             Operation::VmClose => Ok(Some(crate::stdlib::VM_CLOSE(frame.slots[0]) as u64)),
+            Operation::VmMigration(op) => crate::stdlib::migration_poll(arena, frame, op),
             Operation::VmCall => crate::stdlib::call_poll(frame),
             Operation::VmSource => {
                 if crate::vm::state_domains::parallel::gate(frame) {
@@ -630,6 +689,21 @@ impl Call {
         value: u64,
         resources: &mut HashMap<u64, LocalResource>,
     ) -> Result<Reply, Error> {
+        if let Some(mut reply) = self.prepared_reply.take() {
+            let packet = &*(self.frame.slots[6] as *const Buffer);
+            for (i, item) in reply.updates[0]
+                .1
+                .as_chunks_mut::<8>()
+                .0
+                .iter_mut()
+                .enumerate()
+            {
+                item.as_mut_ptr()
+                    .copy_from_nonoverlapping(packet.load(i as u64)?, 8);
+            }
+            reply.value = Value::Word(value);
+            return Ok(reply);
+        }
         let (inputs, result) = self.request.op.layout();
         let mut charge_bytes = std::mem::size_of::<Reply>();
         for (index, kind) in inputs.iter().enumerate() {
@@ -870,6 +944,61 @@ pub(crate) unsafe fn close_vm(bits: u64) -> Result<u64, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn migration_command_reply_is_reserved_before_execution() {
+        let budget = super::super::TaskBudget::new(32 << 20);
+        let storage = Storage::new(vec![budget.clone()]).unwrap();
+        let guard = super::super::Guard::enter(&storage);
+        let (driver, core) = Driver::start(storage.clone(), None, Default::default()).unwrap();
+        core.outstanding.fetch_add(1, Ordering::Relaxed);
+        let request = Arc::new(Request {
+            op: Operation::VmMigration(crate::core::vm::MigrationOperation::Command),
+            core: Arc::downgrade(&core),
+            _receipt: None,
+            _sequence: 0,
+            state: Mutex::new(RequestState {
+                input: Some(vec![
+                    Value::Word(0),
+                    Value::Word(7),
+                    Value::Word(0),
+                    Value::Bytes(vec![], 1),
+                    Value::Bytes(vec![], 1),
+                    Value::Bytes(vec![], 1),
+                    Value::Bytes(vec![0; 32], 8),
+                ]),
+                result: None,
+                cancelled: false,
+                completed: false,
+            }),
+            wake: None,
+            done: std::sync::Condvar::new(),
+            _charge: storage
+                .accounts()
+                .reserve(std::mem::size_of::<Request>())
+                .unwrap(),
+        });
+        let mut resources = HashMap::new();
+        let mut call = unsafe { Call::new(request, &resources) }.unwrap();
+        let held = storage
+            .accounts()
+            .reserve((32 << 20) - budget.used())
+            .unwrap();
+        assert!(storage.accounts().reserve(1).is_err());
+        unsafe {
+            (&*(call.frame.slots[6] as *const Buffer))
+                .load(0)
+                .unwrap()
+                .cast::<u64>()
+                .write(42);
+        }
+        let reply = unsafe { call.finish(&core, 0, &mut resources) }.unwrap();
+        assert!(matches!(reply.value, Value::Word(0)));
+        assert_eq!(&reply.updates[0].1[..8], &42_u64.to_ne_bytes());
+        drop((held, reply, call));
+        driver.join();
+        drop((core, guard, storage));
+        assert_eq!(budget.used(), 0);
+    }
     #[test]
     fn parallel_control_proxy_identity_rejects_another_tree_and_refunds() {
         let budget = super::super::TaskBudget::new(32 << 20);

@@ -66,6 +66,7 @@ impl Host {
                     }
                     control::Operation::VmCall => HostEntry::VmCall,
                     control::Operation::VmSource => HostEntry::VmSource,
+                    control::Operation::VmMigration(op) => HostEntry::VmMigration(op),
                     control::Operation::Domain(op) => HostEntry::Domain(op),
                     control::Operation::Fs(op) => HostEntry::Fs(op),
                 },
@@ -141,6 +142,9 @@ impl Host {
             }
             HostEntry::VmCall if binding.signature == crate::core::vm::call_signature() => {
                 Some(control::Operation::VmCall)
+            }
+            HostEntry::VmMigration(op) if binding.signature == op.signature() => {
+                Some(control::Operation::VmMigration(*op))
             }
             HostEntry::VmSource if binding.signature == crate::core::vm::source_signature() => {
                 Some(control::Operation::VmSource)

@@ -13,6 +13,7 @@ pub(crate) enum Builtin {
     Vm(Box<BindingSpec>),
     VmCall,
     VmSource,
+    VmMigration(super::vm::MigrationOperation),
     Tcp(tcp::Operation),
     Dns,
     Fs(crate::runtime::fs::Operation),
@@ -25,6 +26,8 @@ impl Builtin {
             Some(Self::VmCall)
         } else if name == "__vm_source" {
             Some(Self::VmSource)
+        } else if let Some(op) = super::vm::MigrationOperation::lookup(name) {
+            Some(Self::VmMigration(op))
         } else if let Some(op) = tcp::operation(name) {
             Some(Self::Tcp(op))
         } else if let Some(op) = crate::runtime::fs::operation(name) {
@@ -49,8 +52,10 @@ impl Builtin {
         c_abi: bool,
     ) -> Result<(), Error> {
         match self {
-            Self::VmCall | Self::VmSource => {
-                let expected = if matches!(self, Self::VmSource) {
+            Self::VmCall | Self::VmSource | Self::VmMigration(_) => {
+                let expected = if let Self::VmMigration(op) = self {
+                    op.signature()
+                } else if matches!(self, Self::VmSource) {
                     super::vm::source_signature()
                 } else {
                     super::vm::call_signature()
@@ -86,12 +91,14 @@ impl Builtin {
         let Item::ExternFn(f) = item else {
             let Item::FnDef(f) = item else { unreachable!() };
             return Err(match self {
-                Self::Vm(_) | Self::VmCall | Self::VmSource => Error::new_with_code(
-                    ErrorPhase::TypeCheck,
-                    ErrorCode::ReservedName,
-                    "VM runtime names require checked extern declarations",
-                )
-                .with_span(f.span),
+                Self::Vm(_) | Self::VmCall | Self::VmSource | Self::VmMigration(_) => {
+                    Error::new_with_code(
+                        ErrorPhase::TypeCheck,
+                        ErrorCode::ReservedName,
+                        "VM runtime names require checked extern declarations",
+                    )
+                    .with_span(f.span)
+                }
                 _ => super::ffi::error(
                     f.span,
                     "TCP runtime names require checked extern declarations",

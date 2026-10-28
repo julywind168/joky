@@ -272,5 +272,9 @@ pub(crate) use async_call::{
 #[cfg(test)]
 mod server_tests;
 
+mod migration;
 mod source;
+pub(crate) use migration::{
+    migration_command_native, migration_diagnostic_native, migration_open_native, migration_poll,
+};
 pub(crate) use source::{source_poll, source_poll_native};

@@ -3,7 +3,7 @@ use super::*;
 use crate::runtime::{buffer::Buffer, resource::ResourceFactoryV1};
 use std::{cell::Cell, ffi::c_void};
 
-struct Owner {
+pub(super) struct Owner {
     handle: Rc<Cell<Option<u64>>>,
 }
 impl Drop for Owner {
@@ -20,6 +20,25 @@ fn shutdown(handle: u64) {
     if let Some(state) = state {
         state.close();
     }
+}
+impl Owner {
+    pub(super) fn id(&self) -> Result<u64, Error> {
+        self.handle
+            .get()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "VM resource is closed"))
+    }
+}
+pub(super) unsafe fn retain(bits: u64) -> Result<Owner, Error> {
+    let resource = (bits as *const Buffer)
+        .as_ref()
+        .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "Null VM resource"))?
+        .resource_ref()?;
+    let token = resource.control_token(release)?;
+    let owner = &*token.cast::<Owner>();
+    owner.id()?;
+    Ok(Owner {
+        handle: owner.handle.clone(),
+    })
 }
 unsafe extern "C" fn create(mode: u64, output: *mut *mut c_void) -> i32 {
     let handle = super::create_with_mode(if mode == 0 {

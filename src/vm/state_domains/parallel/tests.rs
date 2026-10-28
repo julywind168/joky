@@ -250,7 +250,7 @@ fn parallel_domains_fifo_cancel_close_and_publication_gate() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for action in ["commit", "cancel", "close", "publish"] {
+        for action in ["commit", "cancel", "close", "publish", "migration_cancel"] {
             let budget = TaskBudget::new(64 << 20);
             let storage = Storage::new(vec![budget.clone()]).unwrap();
             let guard = Guard::enter(&storage);
@@ -290,6 +290,31 @@ fn parallel_domains_fifo_cancel_close_and_publication_gate() {
                 "cancel" => first.cancel(),
                 "close" => {
                     a.close();
+                }
+                "migration_cancel" => {
+                    frame.slots = vec![0; 7];
+                    frame.slots[1] = 7;
+                    // An actual migration command must park before validating its packet.
+                    let arena = unsafe { &mut *crate::runtime::cps::arena(&mut frame) };
+                    let empty = crate::runtime::buffer::Buffer::copy_bytes(arena, b"").unwrap();
+                    frame.slots[3..7].fill(empty.as_ptr() as u64);
+                    assert_eq!(
+                        unsafe {
+                            crate::stdlib::migration_poll(
+                                arena,
+                                &mut frame,
+                                crate::core::vm::MigrationOperation::Command,
+                            )
+                        }
+                        .unwrap(),
+                        None
+                    );
+                    assert!(!frame.host_context.is_null());
+                    frame.stop_host(crate::runtime::borrowed_host::STOP_CANCELLED);
+                    assert!(CONTEXT.with(|c| c.borrow().as_ref().unwrap().barriers == 0));
+                    unsafe {
+                        crate::runtime::buffer::Buffer::release(arena, empty.as_ptr()).unwrap();
+                    }
                 }
                 "publish" => {
                     assert_eq!(
@@ -349,7 +374,7 @@ fn parallel_domains_fifo_cancel_close_and_publication_gate() {
                     }]
                 );
             }
-            drop((first, second, a, b, vm));
+            drop((first, second, a, b, vm, frame));
             drive();
             drop(scope);
             parent.cancel();

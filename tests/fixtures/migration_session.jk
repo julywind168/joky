@@ -1,0 +1,95 @@
+import joky/vm
+import joky/domain
+import joky/task
+import joky/check
+
+fn finish(var session: vm.Migration) @suspends {
+    while !session.step(2)! { task.yield_now() }
+    session.publish()!
+}
+fn control(engine: &vm.Vm, directory: domain.DirectoryHandle, kind: Int32) @suspends {
+    while engine.call::<domain.DirectoryHandle, Int32>("probe", directory) == -1 { task.yield_now() }
+    let alias = engine.share()
+    var session = engine.migration()!
+    match alias.migration() {
+        Err(error) => { check.assert(match error.kind { vm.MigrationErrorKind.Busy => true, _ => false }, "competing session is busy") }
+        Ok(_) => { check.assert(false, "competing session must fail") }
+    }
+    if kind == 2 {
+        session.begin_batch(@BATCH_NEW@)!
+        session.stage("start", "advance")!
+        session.stage("upgrade_ledger", "")!
+    } else {
+        let schema = session.schema()!
+        match session.prepare(schema, "fn broken(", "upgrade") {
+            Err(error) => {
+                check.assert(match error.kind { vm.MigrationErrorKind.Compile => true, _ => false }, "compile error is explicit")
+                check.assert(error.diagnostic.message.byte_length() > 0, "diagnostic text is retained")
+            }
+            Ok(_) => { check.assert(false, "invalid source must fail") }
+        }
+        if kind == 0 {
+            session.prepare(schema, @NEW@, "upgrade")!
+            check.assert(engine.call::<domain.DirectoryHandle, Int32>("bump", directory) == 45, "business write survives preparation")
+            match session.publish() {
+                Err(error) => { check.assert(match error.kind { vm.MigrationErrorKind.Conflict => true, _ => false }, "publication reports conflict") }
+                Ok(_) => { check.assert(false, "stale publication must fail") }
+            }
+            // A failed publication consumed the session and left the business write intact.
+            check.assert(engine.call::<domain.DirectoryHandle, Int32>("probe", directory) == 45, "conflict preserves business write")
+            var retry = alias.migration()!
+            let current = retry.schema()!
+            retry.prepare(current, @NEW@, "upgrade")!
+            retry.publish()!
+            check.assert(engine.call::<domain.DirectoryHandle, Int32>("probe", directory) == 46, "retry publishes new schema")
+            return
+        }
+        session.begin(schema, @INCREMENTAL_NEW@, "start", "advance")!
+    }
+    // The owning session moves to a branch; no Local handle crosses worker threads.
+    join { | finish(session) | task.yield_now() };
+    check.assert(engine.call::<domain.DirectoryHandle, Int32>("probe", directory) == if kind == 2 { 194 } else { 43 }, "migration preserves owning payloads")
+}
+fn run_case(kind: Int32) @suspends {
+    let directory_owner = domain.directory(4)
+    let directory = directory_owner.handle()
+    let engine = vm.Vm.interpreter()
+    engine.load_source(if kind == 0 { @OLD@ } else { if kind == 1 { @INCREMENTAL_OLD@ } else { @BATCH_OLD@ } })!
+    race { | engine.call::<domain.DirectoryHandle, Unit>("hold", directory) | control(&engine, directory, kind) };
+    check.assert(engine.close() == 0, "VM closes after migration")
+}
+fn detached() @suspends -> vm.Migration {
+    let engine = vm.Vm.interpreter()
+    engine.migration()!
+}
+fn lifetime() @suspends {
+    detached().cancel()!
+    let engine = vm.Vm.interpreter()
+    { let unused = engine.migration()! }
+    engine.migration()!.cancel()!
+    let alias = engine.share()
+    var session = engine.migration()!
+    check.assert(alias.close() == 0, "alias closes the VM")
+    match session.schema() {
+        Err(error) => { check.assert(match error.kind { vm.MigrationErrorKind.Unavailable => true, _ => false }, "closed VM invalidates migration") }
+        Ok(_) => { check.assert(false, "closed migration must fail") }
+    }
+}
+fn main() @suspends -> Int32 {
+    lifetime()
+    run_case(0)
+    run_case(1)
+    run_case(2)
+    0
+}
+
+fn legacy_guard() @suspends -> Int32 {
+    let engine = vm.Vm.interpreter()
+    let session = engine.migration()!
+    check.assert(vm.cancel_migration(&engine) != 0, "legacy cancel cannot steal a session")
+    check.assert(vm.publish_migration(&engine) != 0, "legacy publish cannot steal a session")
+    check.assert(engine.migration().is_err(), "legacy calls preserve reservation")
+    session.cancel()!
+    engine.migration()!.cancel()!
+    0
+}

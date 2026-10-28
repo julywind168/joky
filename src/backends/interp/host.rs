@@ -58,6 +58,7 @@ impl BoundHost {
             }
             HostEntry::VmCall
             | HostEntry::VmSource
+            | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
             | HostEntry::Tcp(_)
@@ -81,6 +82,7 @@ impl BoundHost {
             self.binding.entry,
             HostEntry::VmCall
                 | HostEntry::VmSource
+                | HostEntry::VmMigration(_)
                 | HostEntry::Domain(_)
                 | HostEntry::Dns
                 | HostEntry::Tcp(_)
@@ -209,6 +211,7 @@ impl HostPending {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
             HostEntry::VmCall
             | HostEntry::VmSource
+            | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
             | HostEntry::Tcp(_)
@@ -245,6 +248,7 @@ impl HostPending {
                 host.binding.entry,
                 HostEntry::VmCall
                     | HostEntry::VmSource
+                    | HostEntry::VmMigration(_)
                     | HostEntry::Domain(_)
                     | HostEntry::Dns
                     | HostEntry::Tcp(_)
@@ -350,6 +354,16 @@ impl HostPending {
         if self.host.name == "__vm_share" {
             return unsafe { crate::stdlib::share_vm(arena, self.frame.slots[0]) }
                 .map(|value| Some(Value::Reference(value as *mut u8)));
+        }
+        if let HostEntry::VmMigration(op) = self.host.binding.entry {
+            return unsafe { crate::stdlib::migration_poll(arena, self.frame.as_mut(), op) }.map(
+                |r| {
+                    r.map(|bits| match op {
+                        crate::core::vm::MigrationOperation::Command => Value::UInt64(bits),
+                        _ => Value::Reference(bits as *mut u8),
+                    })
+                },
+            );
         }
         if matches!(self.host.binding.entry, HostEntry::VmSource) {
             if crate::runtime::parallel::pool::active() {

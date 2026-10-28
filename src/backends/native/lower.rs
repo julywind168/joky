@@ -525,6 +525,13 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_dns_poll", vec![ptr], vec![types::I32]),
         ("__joky_vm_call", vec![ptr], vec![types::I32]),
         ("__joky_vm_source", vec![ptr], vec![types::I32]),
+        ("__joky_vm_migration_open", vec![ptr], vec![types::I32]),
+        ("__joky_vm_migration_command", vec![ptr], vec![types::I32]),
+        (
+            "__joky_vm_migration_diagnostic",
+            vec![ptr],
+            vec![types::I32],
+        ),
         ("__joky_tcp_poll", vec![ptr, types::I32], vec![types::I32]),
         ("__joky_fs_poll", vec![ptr, types::I32], vec![types::I32]),
         (

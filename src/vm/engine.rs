@@ -878,6 +878,7 @@ impl VmEngine {
                 let entry = match builtin {
                     Builtin::VmCall => HostEntry::VmCall,
                     Builtin::VmSource => HostEntry::VmSource,
+                    Builtin::VmMigration(op) => HostEntry::VmMigration(*op),
                     Builtin::Domain(op) => HostEntry::Domain(*op),
                     Builtin::Tcp(op) => HostEntry::Tcp(*op),
                     Builtin::Fs(op) => HostEntry::Fs(*op),
@@ -997,7 +998,8 @@ impl VmEngine {
                 | HostEntry::Fs(_)
                 | HostEntry::Dns
                 | HostEntry::VmCall
-                | HostEntry::VmSource => {
+                | HostEntry::VmSource
+                | HostEntry::VmMigration(_) => {
                     unreachable!("Network runtime adapter")
                 }
                 HostEntry::Direct(ptr) | HostEntry::C(ptr) => {
