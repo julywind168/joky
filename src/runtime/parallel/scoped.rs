@@ -9,11 +9,13 @@ use crate::{
     Error, Type,
 };
 use std::{alloc::Layout, ptr::NonNull, rc::Rc, sync::Arc};
+mod graph;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Shape {
     element: Layout,
     plain: bool,
+    graph: Option<Arc<graph::Element>>,
 }
 impl Shape {
     pub(crate) fn of(ty: &Type) -> Option<Self> {
@@ -21,31 +23,47 @@ impl Shape {
         if reference.mutable {
             return None;
         }
-        let element = match &reference.target {
-            Type::String => Type::UInt8,
-            Type::BufferSlice(element) => (**element).clone(),
-            Type::Record(record)
-                if record.array && !record.indirect && record.fields.len() == 1 =>
-            {
-                reference.target.array_element_type()?.clone()
+        let mut target = &reference.target;
+        if target.is_owner() && !target.is_inline_owner() {
+            while let Type::Record(r) = target {
+                target = &r.fields.first()?.ty;
             }
-            _ => reference.target.clone(),
+        }
+        let element = match target {
+            Type::String => &Type::UInt8,
+            Type::Buffer(element) | Type::BufferSlice(element) => element,
+            _ => target,
         };
         use crate::core::types::walk::{TypeEdges, TypeWalk};
-        // Copy alone is insufficient: references, callable values and phantom
-        // capability arguments must not cross in a shared element. Drop requires
-        // an owning record, so the owner-free restriction also excludes hooks.
-        if !TypeWalk::new(&element, TypeEdges::Fields).all(|ty| match ty {
-            Type::Record(r) => !r.indirect && r.owners.is_empty() && r.closure.is_none(),
-            Type::Tuple(_) | Type::FixedArray(_) | Type::Unit | Type::Bool | Type::Rune => true,
+        // Include phantom arguments and zero-sized fields. References, handles,
+        // closures, enums and unaudited container protocols remain local.
+        if !TypeWalk::new(&reference.target, TypeEdges::Fields).all(|ty| match ty {
+            Type::Record(r) => !r.indirect && r.closure.is_none() && !r.list && !r.map && !r.set,
+            Type::Tuple(_)
+            | Type::FixedArray(_)
+            | Type::Unit
+            | Type::Bool
+            | Type::Rune
+            | Type::String
+            | Type::Buffer(_) => true,
+            Type::BufferSlice(_) => std::ptr::eq(ty, &reference.target),
             _ => ty.integer().is_some() || ty.is_float(),
         }) {
             return None;
         }
         let layout = element.storage_layout().ok()?;
         let mut shape = Self::checked(layout.size, layout.align).ok()?;
-        shape.plain = !matches!(&reference.target, Type::String | Type::BufferSlice(_))
-            && !matches!(&reference.target, Type::Record(r) if r.array);
+        shape.plain = !matches!(
+            target,
+            Type::String | Type::Buffer(_) | Type::BufferSlice(_)
+        );
+        if TypeWalk::new(element, TypeEdges::Fields).any(Type::is_owner_lane) {
+            let graph = graph::Element::of(element)?;
+            // An owning phantom argument does not add a physical owner lane.
+            if graph.owning() {
+                shape.graph = Some(Arc::new(graph));
+            }
+        }
         Some(shape)
     }
     fn checked(size: usize, align: usize) -> Result<Self, Error> {
@@ -59,18 +77,34 @@ impl Shape {
         Ok(Self {
             element: Layout::from_size_align(size, align).map_err(|_| invalid())?,
             plain: false,
+            graph: None,
         })
     }
     pub(crate) fn encode(&self, words: &mut Vec<u64>) {
-        // Physical evidence from the checked compiler, not a user-supplied type
-        // certificate. Admission above proves the complete pointer-free type tree.
-        words.extend([
-            if self.plain { 100 } else { 99 },
-            self.element.size() as u64,
-            self.element.align() as u64,
-        ]);
+        if let Some(graph) = &self.graph {
+            words.push(if self.plain { 102 } else { 101 });
+            graph.encode(words);
+        } else {
+            words.extend([
+                if self.plain { 100 } else { 99 },
+                self.element.size() as u64,
+                self.element.align() as u64,
+            ]);
+        }
     }
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
+        if let [kind @ (101 | 102), rest @ ..] = words {
+            let mut rest = rest;
+            let graph = graph::Element::decode(&mut rest, 0, &mut 0)?;
+            if !rest.is_empty() || !graph.owning() {
+                return Err(invalid());
+            }
+            return Ok(Self {
+                element: graph.layout,
+                plain: *kind == 102,
+                graph: Some(Arc::new(graph)),
+            });
+        }
         let [kind @ (99 | 100), size, align] = *words else {
             return Err(invalid());
         };
@@ -89,10 +123,17 @@ impl Shape {
     pub(crate) unsafe fn buffer(&self, word: u64) -> *const Buffer {
         word as *const Buffer
     }
+    /// # Safety
+    /// `word` is a live initialized shared reference of this compiler-certified
+    /// shape on the current worker. Its source remains frozen through capture.
     pub(crate) unsafe fn eligible(&self, word: u64) -> bool {
-        self.source(word).is_some()
+        self.source(word).is_some_and(|source| {
+            self.graph
+                .as_ref()
+                .is_none_or(|graph| graph.eligible(source.data, source.len, &mut 0))
+        })
     }
-    unsafe fn source(&self, word: u64) -> Option<(NonNull<u8>, usize, Option<Arc<Scope>>)> {
+    unsafe fn source(&self, word: u64) -> Option<Source> {
         if self.plain {
             let data = NonNull::new(word as *mut u8)?;
             if !(word as usize).is_multiple_of(self.element.align()) {
@@ -111,14 +152,29 @@ impl Shape {
                     .then(|| loan.range.origin.clone())
                 })
             }) {
-                return Some((data, 1, Some(origin)));
+                return Some(Source {
+                    data,
+                    len: 1,
+                    capacity: 1,
+                    origin: Some(origin),
+                });
             }
             super::current()?
                 .owns_range(data, self.element.size(), self.element.align())
-                .then_some((data, 1, None))
+                .then_some(Source {
+                    data,
+                    len: 1,
+                    capacity: 1,
+                    origin: None,
+                })
         } else {
-            let source = self.buffer(word).as_ref()?.scoped_range(self.layout())?;
-            Some((source.data, source.len, source.origin.cloned()))
+            let buffer = self.buffer(word).as_ref()?;
+            let source = if let Some(graph) = &self.graph {
+                buffer.scoped_elements(self.layout(), graph.owners())?
+            } else {
+                buffer.scoped_range(self.layout())?
+            };
+            Some(source)
         }
     }
 }
@@ -144,10 +200,11 @@ impl InputShape {
     }
 }
 
-pub(crate) struct Source<'a> {
+pub(crate) struct Source {
     pub(crate) data: NonNull<u8>,
     pub(crate) len: usize,
-    pub(crate) origin: Option<&'a Arc<Scope>>,
+    pub(crate) capacity: usize,
+    pub(crate) origin: Option<Arc<Scope>>,
 }
 
 pub(crate) struct Scope {
@@ -173,20 +230,23 @@ impl Scope {
 struct Range {
     data: NonNull<u8>,
     len: usize,
+    capacity: usize,
     element: Layout,
     scope: Arc<Scope>,
     origin: Arc<Scope>,
     _charge: Option<Lease>,
     plain: bool,
+    snapshot: Option<graph::Snapshot>,
 }
-// SAFETY: capture requires compiler-certified shared pointer-free storage owned by
-// this parent task or received under a bounded loan. Each hop retains the original
+// SAFETY: capture requires compiler-certified storage owned by this parent task
+// or received under a bounded loan. Owning lanes are traversed only on the sender,
+// replaced by zero in snapshots, and reconstructed as receiver-local views.
+// Pointer-free leaves alone retain shared data addresses. Each hop retains the original
 // lease directly, without foreign headers or a recursive lease chain. Local
 // cancellation drains this subtree before dropping its frames.
 // The static group and worker-root failure barrier retain the source owner until
 // every reader is cleaned. Only payload bytes cross; Buffer/Rc/frame metadata do
-// not. Buffer inputs install a worker-local header; plain inputs keep the
-// certified payload address, with provenance retained separately by the Job.
+// not. Each installed node has separate worker-local provenance held by the Job.
 unsafe impl Send for Range {}
 
 /// Stable, worker-local provenance for installed headers and their slices.
@@ -224,18 +284,23 @@ impl Loan {
         &self,
         data: NonNull<u8>,
         len: usize,
+        capacity: usize,
         element: Layout,
-    ) -> Option<Source<'_>> {
+    ) -> Option<Source> {
         if pool::identity() != Some(self.task) || element != self.range.element {
             return None;
         }
-        if !contains_range(self.range.data, self.range.len, data, len, element) {
+        if capacity < len
+            || capacity > self.range.capacity
+            || !contains_range(self.range.data, self.range.len, data, len, element)
+        {
             return None;
         }
         Some(Source {
             data,
             len,
-            origin: Some(&self.range.origin),
+            capacity,
+            origin: Some(self.range.origin.clone()),
         })
     }
 }
@@ -279,22 +344,19 @@ impl Input {
         // Packet already charges its storage, including this boxed body.
         Self::Owned(Box::new(packet))
     }
+    /// # Safety
+    /// The checked reference has this shape and stays immutable and live until
+    /// `scope` drains all readers. Capture executes on the source task's worker.
     pub(crate) unsafe fn borrow(shape: Shape, word: u64, scope: Arc<Scope>) -> Result<Self, Error> {
         if pool::identity() != Some(scope.parent) {
             return Err(invalid());
         }
-        let (data, len, origin) = shape.source(word).ok_or_else(invalid)?;
-        let range = Range {
-            data,
-            len,
-            element: shape.layout(),
-            origin: origin.unwrap_or_else(|| scope.clone()),
-            plain: shape.plain,
-            scope,
-            _charge: super::reserve_current(
-                std::mem::size_of::<Loan>() + 2 * std::mem::size_of::<usize>(),
-            )?,
-        };
+        let _metadata =
+            super::reserve_current(shape.graph.as_ref().map_or(0, |graph| graph.bytes()))?;
+        if !shape.eligible(word) {
+            return Err(invalid());
+        }
+        let range = Range::capture(&shape, word, scope)?;
         #[cfg(test)]
         observe(&range, word as usize, true);
         Ok(Self::Borrowed(Borrowed { range }))
@@ -314,34 +376,83 @@ impl Input {
     ) -> Result<Vec<u64>, Error> {
         match self {
             Self::Owned(packet) => packet.install(arena, cleanups, base, None),
-            Self::Borrowed(borrowed) => {
-                let range = borrowed.range;
-                if pool::parent_identity() != Some(range.scope.parent) || range.scope.identity == 0
-                {
-                    return Err(invalid());
-                }
-                // Keep provenance through execution AND all local view cleanup.
-                // Arena headers contain only this worker-local pointer; storing an
-                // owning Arc in them would cycle through Scope's shared Storage.
-                loans.push(Rc::new(Loan {
-                    task: pool::identity().ok_or_else(invalid)?,
-                    range,
-                }));
-                let loan = &**loans.last().unwrap();
-                let range = &loan.range;
-                let word = if range.plain {
-                    range.data.as_ptr() as u64
-                } else {
-                    unsafe {
-                        Buffer::scoped_view(arena, range.data, range.len, range.element, loan)?
-                    }
-                    .as_ptr() as u64
-                };
-                #[cfg(test)]
-                observe(range, word as usize, false);
-                Ok(vec![word])
-            }
+            Self::Borrowed(borrowed) => Ok(vec![borrowed.range.install(arena, loans, true)?]),
         }
+    }
+}
+
+impl Range {
+    unsafe fn capture(shape: &Shape, word: u64, scope: Arc<Scope>) -> Result<Self, Error> {
+        let Source {
+            data,
+            len,
+            capacity,
+            origin,
+        } = shape.source(word).ok_or_else(invalid)?;
+        // Prepay the Rc allocation and the receiving Job's loan-vector growth.
+        // Four pointer slots per node cover both the initial capacity and growth.
+        let charge = super::reserve_current(
+            std::mem::size_of::<Loan>()
+                + 2 * std::mem::size_of::<usize>()
+                + 4 * std::mem::size_of::<Rc<Loan>>(),
+        )?;
+        let snapshot = shape
+            .graph
+            .as_ref()
+            .filter(|g| g.owning())
+            .map(|g| g.capture(data, len, &scope))
+            .transpose()?;
+        Ok(Self {
+            data,
+            len,
+            capacity,
+            element: shape.layout(),
+            origin: origin.unwrap_or_else(|| scope.clone()),
+            plain: shape.plain,
+            scope,
+            _charge: charge,
+            snapshot,
+        })
+    }
+    fn install(
+        mut self,
+        arena: &mut Arena,
+        loans: &mut Vec<Rc<Loan>>,
+        observed: bool,
+    ) -> Result<u64, Error> {
+        if pool::parent_identity() != Some(self.scope.parent) || self.scope.identity == 0 {
+            return Err(invalid());
+        }
+        let copied = self.snapshot.is_some();
+        let data = match self.snapshot.take() {
+            Some(snapshot) => snapshot.install(arena, self.element, self.len, loans)?,
+            None => self.data,
+        };
+        // Each node's loan is stable and local; arena headers contain no Arc/Rc.
+        // Parent scope fences also cover copied intermediate pointer tables.
+        let original = self.data;
+        self.data = data;
+        loans.push(Rc::new(Loan {
+            task: pool::identity().ok_or_else(invalid)?,
+            range: self,
+        }));
+        let loan = &**loans.last().unwrap();
+        let range = &loan.range;
+        let word = if range.plain {
+            data.as_ptr() as u64
+        } else {
+            unsafe {
+                Buffer::scoped_view(arena, data, range.len, range.capacity, range.element, loan)?
+            }
+            .as_ptr() as u64
+        };
+        #[cfg(test)]
+        if observed {
+            observe_installed(range, original, word as usize, copied);
+        }
+        #[cfg(not(test))]
+        let _ = (observed, original, copied);
+        Ok(word)
     }
 }
 
@@ -349,6 +460,7 @@ impl Input {
 #[derive(Clone)]
 pub(crate) struct Observation {
     pub(crate) plain: bool,
+    pub(crate) copied: bool,
     pub(crate) parent: u64,
     pub(crate) task: u64,
     pub(crate) scope: u64,
@@ -366,6 +478,7 @@ static OBSERVATIONS: std::sync::Mutex<Vec<Observation>> = std::sync::Mutex::new(
 fn observe(range: &Range, header: usize, source: bool) {
     OBSERVATIONS.lock().unwrap().push(Observation {
         plain: range.plain,
+        copied: range.snapshot.is_some(),
         parent: range.scope.parent,
         task: pool::identity().unwrap(),
         scope: range.scope.identity,
@@ -377,6 +490,18 @@ fn observe(range: &Range, header: usize, source: bool) {
         source,
         thread: std::thread::current().id(),
     });
+}
+#[cfg(test)]
+fn observe_installed(range: &Range, original: NonNull<u8>, header: usize, copied: bool) {
+    observe(range, header, false);
+    let mut observations = OBSERVATIONS.lock().unwrap();
+    let observation = observations
+        .iter_mut()
+        .rev()
+        .find(|o| !o.source && o.task == pool::identity().unwrap() && o.header == header)
+        .unwrap();
+    observation.data = original.as_ptr() as usize;
+    observation.copied = copied;
 }
 #[cfg(test)]
 pub(crate) fn observations(parent: u64) -> Vec<Observation> {
@@ -409,12 +534,53 @@ pub(crate) fn tree_observations(parent: u64) -> Vec<Observation> {
 mod tests {
     use super::*;
     #[test]
+    fn scoped_borrow_graph_descriptors_reject_corrupt_fields_and_depth() {
+        let shape = Shape::of(&Type::reference(
+            Type::BufferSlice(Arc::new(Type::String)),
+            false,
+        ))
+        .unwrap();
+        let mut valid = Vec::new();
+        shape.encode(&mut valid);
+        assert!(Shape::decode(&valid).is_ok());
+        for length in 0..valid.len() {
+            assert!(Shape::decode(&valid[..length]).is_err());
+        }
+        // Root size/alignment, field count/offset/kind, and child metadata.
+        for (index, value) in [
+            (1, 0),
+            (2, 16),
+            (3, u64::MAX),
+            (4, 1),
+            (5, 10),
+            (7, 0),
+            (8, u64::MAX),
+            (9, 1),
+        ] {
+            let mut bad = valid.clone();
+            bad[index] = value;
+            assert!(Shape::decode(&bad).is_err(), "{index}={value}");
+        }
+        let mut deep = vec![101];
+        for _ in 0..34 {
+            deep.extend([8, 8, 1, 0, 9]);
+        }
+        deep.extend([1, 1, 1, 0, 1]);
+        assert!(Shape::decode(&deep).is_err());
+    }
+    #[test]
     fn scoped_borrow_aggregate_shapes_check_fields_and_phantom_arguments() {
         let registry = crate::stdlib::module_registry();
         let types = registry.types();
         let source = r#"
             import joky/array.{type Array}
             import joky/fixed_array.{type FixedArray}
+            import joky/drop.{type Drop}
+            import joky/map.{type Map}
+            import joky/list.{type List}
+            import joky/set.{type Set}
+            struct Tracked { text: String }
+            impl Drop for Tracked { fn drop(&mut self) {} }
             struct Plain { flag: Bool, payload: (UInt8, Float64), row: FixedArray<Int32, 2> }
             struct Empty { value: Unit }
             struct Pointer { value: Ptr }
@@ -423,8 +589,8 @@ mod tests {
             struct Owner { value: String }
             struct Phantom<T> { value: Int32 }
             enum Choice { One(Int32), Empty }
-            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32) {}
-            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, d: &Array<Owner>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, j: &Owner, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain) {}
+            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32, h: &Array<Owner>, i: &Owner, j: &Array<Array<Owner>>, k: &Phantom<String>) {}
+            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain, n: &Tracked, o: &Array<Tracked>, p: &Map<Int32, String>, q: &List<String>, r: &Set<Int32>) {}
         "#;
         let ast = types
             .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())
@@ -464,6 +630,7 @@ mod tests {
             Type::String,
             Type::BufferSlice(Arc::new(Type::Int32)),
             Type::BufferSlice(Arc::new(Type::Bool)),
+            Type::BufferSlice(Arc::new(Type::String)),
             Type::BufferSlice(Arc::new(Type::Unit)),
             Type::BufferSlice(Arc::new(Type::tuple(vec![Type::UInt8, Type::Float64]))),
         ] {
@@ -476,7 +643,6 @@ mod tests {
             assert!(Shape::of(&Type::reference(target, true)).is_none());
         }
         for target in [
-            Type::BufferSlice(Arc::new(Type::String)),
             Type::BufferSlice(Arc::new(Type::Named("domain.Handle".into()))),
             Type::BufferSlice(Arc::new(Type::Named("admission.Token".into()))),
         ] {

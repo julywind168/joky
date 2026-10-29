@@ -181,7 +181,8 @@ fn classify(
             if InputShape::of(ty).is_err() {
                 return local(format!(
                     "{target} #{} has unsupported cross-worker input type `{ty}`",
-                    index + 1
+                    index + 1,
+                    ty = sig.params[index],
                 ));
             }
         }

@@ -300,7 +300,10 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         .replace("    values[0] = 42", "    checkpoint()\n    values[0] = 42");
     let plain = include_str!("../../../tests/fixtures/scoped_borrow_plain.jk")
         .replace("task.yield_now()", "checkpoint()");
+    let owners = include_str!("../../../tests/fixtures/scoped_borrow_owners.jk")
+        .replace("task.yield_now()", "checkpoint()");
     for (source, cases) in [
+        (owners, vec![("main", 54), ("dynamic", 42), ("strings", 10)]),
         (
             source,
             vec![
@@ -585,8 +588,12 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
     }
 }
 
-fn callback_and_plain_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
+fn scoped_graph_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
     for (source, cases) in [
+        (
+            include_str!("../../../tests/fixtures/scoped_borrow_owners.jk"),
+            &[("main", 54), ("dynamic", 42), ("strings", 10)][..],
+        ),
         (
             include_str!("../../../tests/fixtures/scoped_borrow_callbacks.jk"),
             &[("main", 39), ("dynamic", 42)][..],
@@ -641,12 +648,12 @@ fn callback_and_plain_budgets(amounts: impl Clone + IntoIterator<Item = usize>) 
 
 #[test]
 fn scoped_borrow_callback_and_plain_budget_boundaries() {
-    callback_and_plain_budgets([0, 512, 4096, 16384, 65536, 1 << 20, 4 << 20]);
+    scoped_graph_budgets([0, 512, 4096, 16384, 65536, 1 << 20, 4 << 20]);
 }
 #[test]
 #[ignore = "exhaustive: ordinary local storage, scoped inputs and callback allocation failures"]
 fn exhaustive_scoped_borrow_plain_budgets() {
-    callback_and_plain_budgets((0..(4 << 20)).step_by(128));
+    scoped_graph_budgets((0..(4 << 20)).step_by(128));
 }
 
 #[test]

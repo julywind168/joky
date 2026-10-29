@@ -231,7 +231,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
     let _serial = SERIAL.lock().unwrap();
     for (mode, scenario) in [VmMode::Jit, VmMode::Interpreter]
         .into_iter()
-        .flat_map(|mode| (0..12).map(move |scenario| (mode, scenario)))
+        .flat_map(|mode| (0..15).map(move |scenario| (mode, scenario)))
     {
         let kind = scenario / 3;
         let dynamic = kind != 0;
@@ -324,7 +324,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         } else {
             source
         };
-        let source = if kind >= 2 {
+        let source = if (2..4).contains(&kind) {
             let (view, setup, read) = if kind == 2 {
                 (
                     "&(Int32, Float64)",
@@ -352,13 +352,35 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         } else {
             source
         };
+        let source = if kind == 4 {
+            source
+                .replace(
+                    "import joky/string",
+                    "import joky/string\nimport joky/array.{type Array}",
+                )
+                .replace(
+                    "text: &String) @suspends",
+                    "text: &Array<Array<String>>) @suspends",
+                )
+                .replace(
+                    "string.byte_length(text)",
+                    "string.byte_length(text.borrow_ref(0).borrow_ref(0))",
+                )
+                .replace(
+                    "helper(&source.text)",
+                    "let values = [[\"nested source\"]]; helper(&values)",
+                )
+        } else {
+            source
+        };
         // Exercise an indirect language call while the source is pinned by
         // nested readers. The callback contract is checked by the frontend.
         let view = match kind {
             0 => "&String",
             1 => "&Array<(Int32, Float64)>",
             2 => "&(Int32, Float64)",
-            _ => "&FixedArray<Int32, 2>",
+            3 => "&FixedArray<Int32, 2>",
+            _ => "&Array<Array<String>>",
         };
         let source = format!("{} fn callback(text: {view}) @suspends -> UInt64 {{ let call: fn({view}) @suspends @noescape -> UInt64 = reader; call(text) }}",
             source.replace("| reader(text)", "| callback(text)"));

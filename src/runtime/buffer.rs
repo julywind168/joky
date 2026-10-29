@@ -528,16 +528,20 @@ impl Buffer {
 
     /// A current-task owner or a received, bounded loan. Both origin pointers
     /// and loan pointers are local; only the immutable original lease is forwarded.
-    pub(crate) fn scoped_range(
+    pub(crate) fn scoped_range(&self, element: Layout) -> Option<super::parallel::scoped::Source> {
+        self.scoped_elements(element, std::iter::empty())
+    }
+    pub(crate) fn scoped_elements(
         &self,
         element: Layout,
-    ) -> Option<super::parallel::scoped::Source<'_>> {
+        owners: impl Iterator<Item = usize>,
+    ) -> Option<super::parallel::scoped::Source> {
         let task = super::parallel::pool::identity()?;
         if let Some(loan) = unsafe { self.loan.as_ref() } {
             if self.element != element {
                 return None;
             }
-            return loan.source(self.data, self.len, element);
+            return loan.source(self.data, self.len, self.capacity, element);
         }
         let origin = unsafe { self.origin.as_ref()? };
         if task == 0
@@ -545,16 +549,24 @@ impl Buffer {
             || origin.origin != self.origin
             || self.element != element
             || origin.element != element
+            || self.capacity < self.len
+            || self.capacity > origin.capacity
             || origin.resource.is_some()
             || origin.dynamic.is_some()
             || origin.failed_store.is_some()
             || origin.release_active
             || origin.failed_descriptor
-            || origin
-                .cleanup
-                .as_ref()
-                .is_some_and(|c| !c.owners.is_empty() || !c.hooks.is_empty())
+            || origin.cleanup.as_ref().is_some_and(|c| !c.hooks.is_empty())
             || origin.metadata_parallel.is_none()
+        {
+            return None;
+        }
+        if !origin
+            .cleanup
+            .as_ref()
+            .into_iter()
+            .flat_map(|c| c.owners.iter().copied())
+            .eq(owners)
         {
             return None;
         }
@@ -570,6 +582,7 @@ impl Buffer {
         Some(super::parallel::scoped::Source {
             data: self.data,
             len: self.len,
+            capacity: self.capacity,
             origin: None,
         })
     }
@@ -581,11 +594,15 @@ impl Buffer {
         arena: &mut Arena,
         data: NonNull<u8>,
         len: usize,
+        capacity: usize,
         element: Layout,
         loan: *const super::parallel::scoped::Loan,
     ) -> Result<NonNull<Self>, Error> {
         let mut view = Self::view(arena, data.as_ptr(), len, element)?;
         view.as_mut().loan = loan;
+        // Observable source capacity is metadata only. Read bounds and transport
+        // eligibility still use the initialized length, including copied tables.
+        view.as_mut().capacity = capacity;
         Ok(view)
     }
     /// Exclusive owned-packet installation, never a borrowed view handoff.

@@ -1,9 +1,47 @@
 //! Conservative call-graph evidence for scoped read-only task inputs.
 use super::*;
+use crate::core::ir::FunctionPlan;
+use std::sync::Arc;
 
 /// Recover finite nominal layouts for private task input evidence. Language
 /// signatures remain shallow; only this compiler-owned descriptor is expanded.
 pub(crate) fn signature(plan: &ModulePlan, name: &str) -> crate::FunctionSignature {
+    fn expand(body: &FunctionPlan, ty: &Type, depth: usize, work: &mut usize) -> Option<Type> {
+        *work += 1;
+        if depth > 32 || *work > 65_536 {
+            return None;
+        }
+        let mut ty = body.pointee(ty, &body.type_registry).ok()?;
+        if body.has_custom_drop(&ty) {
+            return None;
+        }
+        match &mut ty {
+            Type::Record(r) => {
+                let r = Arc::make_mut(r);
+                for field in &mut r.fields {
+                    field.ty = expand(body, &field.ty, depth + 1, work)?;
+                }
+                for argument in &mut r.arguments {
+                    *argument = argument
+                        .try_map_type(|ty| expand(body, ty, depth + 1, work).ok_or(()))
+                        .ok()?;
+                }
+            }
+            Type::Tuple(t) => {
+                ty = Type::tuple(
+                    t.elements
+                        .iter()
+                        .map(|element| expand(body, element, depth + 1, work))
+                        .collect::<Option<Vec<_>>>()?,
+                );
+            }
+            Type::Buffer(element) | Type::BufferSlice(element) => {
+                *element = Arc::new(expand(body, element, depth + 1, work)?);
+            }
+            _ => {}
+        }
+        Some(ty)
+    }
     let signature = &plan.functions[name].signature;
     let params = signature
         .params
@@ -15,8 +53,10 @@ pub(crate) fn signature(plan: &ModulePlan, name: &str) -> crate::FunctionSignatu
             let Some(body) = plan.bodies.get(name) else {
                 return ty.clone();
             };
-            let Ok(target) = body.pointee(&reference.target, &body.type_registry) else {
-                return ty.clone();
+            let Some(target) = expand(body, &reference.target, 0, &mut 0) else {
+                // Private evidence must remain inadmissible even when the
+                // original signature already contains a fully expanded owner.
+                return Type::reference(Type::Ptr, reference.mutable);
             };
             let resolved = Type::reference(target, reference.mutable);
             if crate::runtime::parallel::scoped::Shape::of(&resolved).is_some() {

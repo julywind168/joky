@@ -21,7 +21,7 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
         let view = &mut *(input.header as *mut Buffer);
         let data = view.data;
         let len = view.len;
-        let element = Layout::new::<(i32, f64)>();
+        let element = view.element;
         let mut checked = u64::from(view.scoped_range(element).is_some());
         view.len = len + 1;
         checked |= u64::from(view.scoped_range(element).is_none()) << 1;
@@ -32,12 +32,64 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
         view.data = NonNull::new_unchecked(data.as_ptr().add(1));
         checked |= u64::from(view.scoped_range(element).is_none()) << 3;
         view.data = data;
-        checked |= u64::from(view.scoped_range(Layout::new::<i64>()).is_none()) << 4;
+        let wrong_layout = if element.size() == 8 {
+            Layout::new::<i32>()
+        } else {
+            Layout::new::<i64>()
+        };
+        checked |= u64::from(view.scoped_range(wrong_layout).is_none()) << 4;
         view.data = NonNull::new_unchecked(data.as_ptr().add(len * element.size()));
         view.len = 0;
         checked |= u64::from(view.scoped_range(element).is_some()) << 5;
         view.data = data;
         view.len = len;
+        if element == Layout::new::<*mut Buffer>() {
+            let shape = parallel::scoped::Shape::of(&Type::reference(
+                Type::BufferSlice(Arc::new(Type::String)),
+                false,
+            ))
+            .unwrap();
+            checked |= u64::from(shape.eligible(input.header as u64)) << 7;
+            let child = &mut *view.data.as_ptr().cast::<*mut Buffer>().read();
+            let child_len = child.len;
+            child.len += 1;
+            checked |= u64::from(!shape.eligible(input.header as u64)) << 8;
+            child.len = child_len;
+            let loan = child.loan;
+            child.loan = std::ptr::null();
+            checked |= u64::from(!shape.eligible(input.header as u64)) << 9;
+            child.loan = loan;
+            let arena = &mut *crate::runtime::cps::arena(frame);
+            let mut owner = Buffer::allocate(arena, 0, 8, 8).unwrap();
+            owner
+                .as_mut()
+                .configure(ElementCleanup {
+                    owners: vec![0],
+                    hooks: vec![],
+                })
+                .unwrap();
+            checked |= u64::from(
+                owner
+                    .as_ref()
+                    .scoped_elements(element, [0].into_iter())
+                    .is_some(),
+            ) << 10;
+            checked |= u64::from(
+                owner
+                    .as_ref()
+                    .scoped_elements(element, [8].into_iter())
+                    .is_none(),
+            ) << 11;
+            owner.as_mut().failed_descriptor = true;
+            checked |= u64::from(
+                owner
+                    .as_ref()
+                    .scoped_elements(element, [0].into_iter())
+                    .is_none(),
+            ) << 12;
+            owner.as_mut().failed_descriptor = false;
+            Buffer::release(arena, owner.as_ptr()).unwrap();
+        }
         let unproven = Buffer::view(
             &mut *crate::runtime::cps::arena(frame),
             data.as_ptr(),
@@ -56,7 +108,10 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
             }
         }
     }
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
+    for (mode, owning) in [VmMode::Jit, VmMode::Interpreter]
+        .into_iter()
+        .flat_map(|mode| [false, true].map(move |owning| (mode, owning)))
+    {
         let mut vm = VmEngine::with_mode(mode);
         unsafe {
             vm.register_parallel_suspending_fn(
@@ -68,7 +123,8 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
             )
             .unwrap();
         }
-        vm.load_source(r#"
+        let source = r#"
+            import joky/string
             import joky/slice.{type Slice}
             import joky/task
             extern fn inspect() @suspends -> Int32
@@ -83,7 +139,15 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
                 let (a, b) = join { | reader(values.slice(1, 3)) | task.yield_now() }
                 a
             }
-        "#).unwrap_or_else(|e| panic!("{e}"));
+        "#;
+        let source = if owning {
+            source.replace("&Slice<(Int32, Float64)>", "&Slice<String>")
+                .replace("values[0].0 + values[1].0", "int32(slice.borrow_ref(values, 0).byte_length()) + int32(slice.borrow_ref(values, 1).byte_length())")
+                .replace("[(2, 1.5), (3, 2.5), (5, 3.5), (7, 4.5)]", "[\"xx\", \"abc\", \"hello\", \"last\"]")
+        } else {
+            source.to_owned()
+        };
+        vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
         let budget = parallel::TaskBudget::new(1 << 20);
         let mut pool = parallel::ParallelExecutor::new(3, 16).unwrap();
         let task = vm
@@ -98,7 +162,7 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
         }
         assert_eq!(
             task.take_result().unwrap().value(),
-            &TaskValue::Scalar(InstanceValue::Int32(143)),
+            &TaskValue::Scalar(InstanceValue::Int32(if owning { 8207 } else { 143 })),
             "{mode:?}"
         );
         let tree = parallel::scoped::tree_observations(task.identity());

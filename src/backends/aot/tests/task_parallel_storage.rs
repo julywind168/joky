@@ -1451,6 +1451,25 @@ fn scoped_borrow_plain_on_all_backends() {
     );
 }
 
+#[test]
+fn scoped_borrow_owners_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/scoped_borrow_owners.jk"),
+        &[
+            ("main", 54, 2),
+            ("dynamic", 42, 1),
+            ("strings", 10, 2),
+            ("transparent", 6, 2),
+            ("tuples", 14, 2),
+            ("capacities", 56, 2),
+            ("failed", 0, 2),
+            ("parked", 0, 1),
+            ("isolated", 27, 2),
+        ],
+        "scoped-owners",
+    );
+}
+
 fn scoped_borrow_cases(source: &str, cases: &[(&str, i32, usize)], label: &str) {
     use crate::vm::{InstanceValue, VmEngine, VmMode};
     use std::time::{Duration, Instant};
@@ -1530,6 +1549,23 @@ fn scoped_borrow_cases(source: &str, cases: &[(&str, i32, usize)], label: &str) 
                     "{mode:?}/{workers}/{name}: admission differs"
                 );
                 let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
+                if label == "scoped-owners" && *name == "main" {
+                    assert_eq!(
+                        tree.iter().filter(|o| o.source).count(),
+                        18,
+                        "nested owner or projected String stayed local"
+                    );
+                    let leaves: Vec<_> = tree
+                        .iter()
+                        .filter(|o| o.source && !o.copied && o.len == 3)
+                        .collect();
+                    assert_eq!(leaves.len(), 8);
+                    assert!(
+                        leaves.iter().all(|leaf| leaf.data == leaves[0].data),
+                        "String bytes were copied with owner tables"
+                    );
+                    assert!(tree.iter().any(|o| !o.source && o.copied && o.plain));
+                }
                 for reader in tree.iter().filter(|o| !o.source) {
                     let sender = tree
                         .iter()
@@ -1540,7 +1576,7 @@ fn scoped_borrow_cases(source: &str, cases: &[(&str, i32, usize)], label: &str) 
                                 && o.len == reader.len
                         })
                         .unwrap();
-                    if reader.plain {
+                    if reader.plain && !reader.copied {
                         assert_eq!(
                             reader.header, sender.header,
                             "ordinary reference payload was copied"
