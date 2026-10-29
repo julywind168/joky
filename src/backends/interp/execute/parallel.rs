@@ -133,26 +133,14 @@ pub(crate) fn start_root(
 }
 impl Execution {
     pub(super) fn scoped_concurrent(&self, module: &BytecodeModule) -> bool {
-        if !crate::runtime::parallel::scoped::allowed() {
+        if !pool::active() {
             return false;
-        }
-        let mut cursor = Some(self.current);
-        while let Some(id) = cursor {
-            let node = self.node(id);
-            if let Activation::User(frame) = &node.activation {
-                if matches!(frame.pending, Some(Pending::Concurrent { .. }))
-                    || !frame.task_scopes.is_empty()
-                {
-                    return false;
-                }
-            }
-            cursor = node.parent;
         }
         let Activation::User(frame) = &self.node(self.current).activation else {
             return false;
         };
         let Instruction::Concurrent {
-            kind: ConcurrentKind::Join,
+            kind: ConcurrentKind::Join | ConcurrentKind::Race,
             branches,
             ..
         } = &frame.function.code[frame.pc]
@@ -275,12 +263,15 @@ impl Execution {
         } else {
             None
         };
-        let mut factories = Vec::new();
-        for (target, args, _, _) in &branches {
-            factories.push(self.remote_factory(module, *target, args, scope.clone())?);
-        }
         let mut group = pool::Group::new(kind);
-        group.publish(factories)?;
+        let _capture = group.capture_guard();
+        let publication = (|| {
+            let mut factories = Vec::new();
+            for (target, args, _, _) in &branches {
+                factories.push(self.remote_factory(module, *target, args, scope.clone())?);
+            }
+            group.publish(factories)
+        })();
         self.frame_mut(self.current).pending = Some(Pending::Parallel {
             group: Box::new(group),
             branches: branches
@@ -289,7 +280,7 @@ impl Execution {
                 .collect(),
             delivered: false,
         });
-        Ok(())
+        publication
     }
     pub(super) fn remote_branch(&mut self, module: &BytecodeModule) -> Result<(), Error> {
         let frame = self.frame_mut(self.current);

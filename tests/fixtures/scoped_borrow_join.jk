@@ -2,6 +2,8 @@ import joky/array.{type Array}
 import joky/slice.{type Slice}
 import joky/string
 import joky/task
+import joky/check
+import joky/drop.{type Drop}
 
 fn array_sum(values: &Array<Int32>) @suspends -> Int32 {
     var total = 0
@@ -88,4 +90,55 @@ fn parked() @suspends -> Int32 {
     let values = [3, 5, 7, 11]
     let (a, b) = join { | array_sum(&values) | forever(&values) }
     a + b
+}
+
+fn nested_owned(anchor: &Int32) @suspends -> Int32 {
+    var values = [3, 5, 7, 11]
+    let (a, b) = join { | array_sum(&values) | slice_sum(values.slice(1, 4)) }
+    values[0] = 42
+    a + b + values[0]
+}
+fn local_forever(anchor: &Int32) @suspends -> Int32 { while true { task.yield_now() } }
+fn nested_race() @suspends -> Int32 {
+    let anchor = 1
+    race { | nested_owned(&anchor) | local_forever(&anchor) }
+}
+fn borrowed_race() @suspends -> Int32 {
+    var values = [3, 5, 7, 11]
+    let result = race { | array_sum(&values) | forever(&values) }
+    values[0] = 42
+    result + values[0]
+}
+fn nested_isolate() @suspends -> Int32 {
+    var values = [3, 5, 7, 11]
+    let view = &values
+    let result = isolate {
+        let (a, b) = join { | array_sum(view) | invalid_index(view) }
+        a + b
+    }
+    values[0] = 42
+    match result { Ok(_) => 0, Err(_) => values[0] }
+}
+struct FailedResult { text: String }
+impl Drop for FailedResult { fn drop(&mut self) { check.panic("result cleanup failed") } }
+fn produced(text: &String) @suspends -> FailedResult {
+    task.yield_now()
+    FailedResult { text: string.clone(text) }
+}
+fn delayed_failure(text: &String) @suspends {
+    task.sleep_ms(2)
+    check.panic("reader failed")
+}
+fn isolated_results() @suspends -> Int32 {
+    let text = "retained source"
+    let result = isolate {
+        let (a, b) = join { | produced(&text) | delayed_failure(&text) }
+    }
+    task.yield_now()
+    match result { Ok(_) => 0, Err(_) => 7 }
+}
+
+fn nested_isolated_success() @suspends -> Int32 {
+    let anchor = 1
+    match isolate { nested_owned(&anchor) } { Ok(value) => value, Err(_) => -1 }
 }

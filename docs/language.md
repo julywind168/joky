@@ -5078,7 +5078,7 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 
 默认 `ExecutionMode::Local` 在宿主线程顺序推进任务；Godot 继续主线程驱动。
 显式 `Parallel { workers }` 使用 1–256 个固定 worker，把同一根任务的 join/race/branch
-及后代独立调度。受检的只读借用静态 join 可以跨 worker，具体边界见下文；
+及后代独立调度。受检的只读借用静态 join/race 可以跨 worker，具体边界见下文；
 其他合法的借用 join/race 整组留在当前 worker 顺序推进，拥有型动态分支仍可分配到其他 worker。
 CLI 的 run/build 使用 `--parallel` 或 `--task-workers N` 显式启用 Parallel；
 N=1 仍要求完整并行资格，不等同于 Local。入口须为无参数、返回 Unit 或 Int32 的 `@suspends main`。
@@ -5131,16 +5131,17 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 
-静态 `join` 的直接语言函数调用支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
+静态 `join`／`race` 的直接语言函数调用支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
 其中 T 限整数、浮点数、Bool、Rune。来源必须属于当前任务的拥有存储，slice 可追溯到该来源；
 负载不复制，每个接收 worker 创建独立的非拥有视图和游标。可混合现有拥有参数，结果仍须满足拥有／值包规则。
-分支可挂起；全部读者与清理结束后父任务才恢复，因此 join 后可再次修改、移动或销毁来源。
+分支可挂起；全部读者与清理结束后父任务才恢复，因此 join/race 后可再次修改、移动或销毁来源。
+race 选出结果后先取消并排空败方；局部 join/race 分支和 isolate 中也可启动符合条件的借用组。
+局部取消或 isolate 恢复会先等待该子树的远程读者及未领取结果清理，再释放来源或继续父任务。
 
 这一准入同时检查完整 Parallel 调用图、来源和当前并发上下文。包含间接调用、函数值或宿主引用 ABI
 的分支调用图保守回退；外部来源、跨 worker 再转发的借用、含拥有元素的容器、名义宿主能力、
-`&mut`、标量／FixedArray 地址、借用结果及借用闭包不在范围内。局部 join/race 分支或 isolate
-中的借用 join 保留本地路径，避免局部取消恢复时跳过读者排空；普通 helper 调用链可使用新路径。
-任一分支无法证明资格时整个 join 沿用本地执行，前端借用与逃逸规则仍然生效。
+`&mut`、标量／FixedArray 地址、借用结果、借用闭包及动态 branch 的借用捕获不在范围内。
+任一分支无法证明资格时整个 join/race 沿用本地执行，前端借用与逃逸规则仍然生效。
 公共 `TaskValue`、根任务参数与普通 Packet 不接受引用。示例见
 [scoped_borrow_join.jk](../tests/fixtures/scoped_borrow_join.jk)。
 

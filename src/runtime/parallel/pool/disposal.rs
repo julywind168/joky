@@ -3,10 +3,26 @@ use super::*;
 
 pub(super) type Work = Box<dyn FnOnce() -> Result<(), Error> + Send>;
 
+thread_local! { static CAPTURE: RefCell<Option<Arc<Arbiter>>> = const { RefCell::new(None) }; }
+/// Bind captures prepared before publication to their recoverable group too.
+/// The guard stays on the source worker; only immutable arbitration crosses.
+pub(crate) struct CaptureGuard(Option<Arc<Arbiter>>);
+impl CaptureGuard {
+    pub(super) fn enter(boundary: Option<Arc<Arbiter>>) -> Self {
+        Self(CAPTURE.with(|slot| slot.replace(boundary)))
+    }
+}
+impl Drop for CaptureGuard {
+    fn drop(&mut self) {
+        CAPTURE.with(|slot| slot.replace(self.0.take()));
+    }
+}
+
 /// A return belongs to its consumer's task; otherwise waiting for the producer
 /// to finish before taking its result would deadlock its cleanup barrier.
 pub(crate) struct CleanupReceipt {
     task: Arc<Task>,
+    boundary: Option<Arc<Arbiter>>,
     _charge: Lease,
 }
 impl CleanupReceipt {
@@ -14,6 +30,14 @@ impl CleanupReceipt {
         let task = CURRENT
             .with(|slot| slot.borrow().clone())
             .ok_or_else(|| invalid("Portable cleanup requires a worker task"))?;
+        let boundary = if returned {
+            task.group
+                .as_ref()
+                .filter(|(arbiter, _)| !arbiter.propagate_failure)
+                .map(|(arbiter, _)| arbiter.clone())
+        } else {
+            CAPTURE.with(|slot| slot.borrow().clone())
+        };
         let task = if returned {
             task.parent
                 .as_ref()
@@ -29,6 +53,7 @@ impl CleanupReceipt {
         task.cleanups_pending.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
             task,
+            boundary,
             _charge: charge,
         })
     }
@@ -36,8 +61,14 @@ impl CleanupReceipt {
     pub(crate) fn defer(self, work: Work) {
         let task = self.task.clone();
         lock(&task.cleanups).push(Box::new(move || {
-            let _receipt = self;
-            work()
+            let receipt = self;
+            match (work(), &receipt.boundary) {
+                (Err(error), Some(boundary)) => {
+                    boundary.cleanup_failed(error);
+                    Ok(())
+                }
+                (result, _) => result,
+            }
         }));
         task.wake();
     }

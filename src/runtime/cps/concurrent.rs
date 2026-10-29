@@ -120,6 +120,20 @@ pub(crate) unsafe extern "C" fn polled(frame: *mut CpsFrame, index: usize, statu
 /// callbacks and their borrowed resources remain live through this call.
 #[export_name = "__joky_cps_concurrent_drain_v1"]
 pub(crate) unsafe extern "C" fn drain(frame: *mut CpsFrame) -> i32 {
+    let mut ready = true;
+    let mut failure = None;
+    for child in (*frame).children.iter_mut().flatten() {
+        match child.drain_remote_subtree() {
+            None => ready = false,
+            Some(Err(error)) => {
+                crate::runtime::isolate::retain_failure(&mut failure, error);
+            }
+            Some(Ok(())) => {}
+        }
+    }
+    if !ready {
+        return 1;
+    }
     let begin = (*frame)
         .concurrent
         .as_mut()
@@ -130,11 +144,21 @@ pub(crate) unsafe extern "C" fn drain(frame: *mut CpsFrame) -> i32 {
         Ok(true) => {
             let children = std::mem::take(&mut (*frame).children);
             let outcome = crate::runtime::error::checked(|| drop(children));
-            (*frame)
+            if let Err(error) = outcome {
+                crate::runtime::isolate::retain_failure(&mut failure, error);
+            }
+            let outcome = failure.map_or(Ok(()), Err);
+            let fatal = outcome
+                .as_ref()
+                .err()
+                .filter(|e| crate::runtime::isolate::code(e).is_none())
+                .cloned();
+            let drained = (*frame)
                 .concurrent
                 .as_mut()
                 .expect("draining static group")
-                .finish_drain(outcome)
+                .finish_drain(outcome);
+            fatal.map_or(drained, Err)
         }
         Err(error) => Err(error),
     };

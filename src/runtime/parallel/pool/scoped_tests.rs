@@ -3,6 +3,56 @@ use super::*;
 use std::{sync::mpsc, time::Duration};
 
 #[test]
+fn scoped_borrow_parent_cancel_during_poll_cannot_deliver_missing_results() {
+    struct Reader;
+    impl Job for Reader {
+        fn poll(&mut self) -> Poll<Result<Output, Error>> {
+            wait_for_wake();
+            Poll::Pending
+        }
+    }
+    struct Parent;
+    impl Job for Parent {
+        fn poll(&mut self) -> Poll<Result<Output, Error>> {
+            let mut group = Group::new(0);
+            group
+                .publish(vec![Box::new(|| Ok(Box::new(Reader)))])
+                .unwrap();
+            // Inject cancellation after the driver's entry check, while this
+            // polling turn still owns the group. The reader uses another worker.
+            CURRENT.with(|slot| slot.borrow().as_ref().unwrap().cancel());
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !group.handles.iter().all(Handle::cleaned) {
+                if Instant::now() >= deadline {
+                    return Poll::Ready(Err(invalid("Reader cancellation timed out")));
+                }
+                thread::yield_now();
+            }
+            Poll::Ready(match group.poll() {
+                Ok(true) => group.take(0),
+                Ok(false) => Err(invalid("Cleaned reader remained pending")),
+                Err(error) => Err(error),
+            })
+        }
+    }
+    let mut pool = ParallelExecutor::new(2, 8).unwrap();
+    let budget = super::super::TaskBudget::new(1 << 20);
+    let task = pool
+        .submit(
+            Storage::new(vec![budget.clone()]).unwrap(),
+            Arc::new(()),
+            Box::new(|| Ok(Box::new(Parent))),
+        )
+        .unwrap();
+    task.wait().unwrap();
+    let error = task.take().unwrap().err().unwrap();
+    assert_eq!(error.code(), ErrorCode::Cancelled, "{error}");
+    drop(task);
+    pool.wait_closed();
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
 fn scoped_borrow_publication_failure_never_starts_a_partial_batch() {
     for capacity in [1, 2] {
         let mut pool = ParallelExecutor::new(3, capacity).unwrap();

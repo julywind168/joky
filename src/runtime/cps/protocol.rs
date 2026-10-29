@@ -116,7 +116,7 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
         }
         (*frame).task_protocol.push(Scope {
             remote: (kind != 3
-                && !crate::runtime::isolate::active()
+                && (kind != 2 || !crate::runtime::isolate::active())
                 && crate::runtime::parallel::pool::active())
             .then(|| crate::runtime::parallel::pool::Group::new(kind)),
             _charge: charge,
@@ -292,8 +292,7 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
             })
         {
             let record = &mut (&mut (*frame).task_protocol)[index];
-            if record.kind == 0
-                && crate::runtime::parallel::scoped::allowed()
+            if matches!(record.kind, 0 | 1)
                 && record.prepared.iter_mut().all(|(_, child)| {
                     let code = child.task_code.as_ref().unwrap().clone();
                     super::parallel::scoped_eligible(child, &code)
@@ -304,8 +303,14 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
                 record.remote = None;
             }
         }
+        // Owned groups inside isolate retain their existing local path. Only
+        // the certified scoped path is newly admitted at this boundary.
+        if crate::runtime::isolate::active() && scoped.is_none() {
+            (&mut (*frame).task_protocol)[index].remote = None;
+        }
         let record = &(&(*frame).task_protocol)[index];
-        if record.remote.is_some() {
+        if let Some(remote) = &record.remote {
+            let _capture = remote.capture_guard();
             let prepared = std::mem::take(&mut (&mut (*frame).task_protocol)[index].prepared);
             let mut factories = Vec::new();
             let mut entries = Vec::new();
@@ -645,6 +650,24 @@ pub(crate) unsafe extern "C" fn drain(scope: u64) -> i32 {
     } else if let Some(dynamic) = (*frame).task_scopes.last_mut() {
         dynamic.cancel();
     }
+    let mut drain_failure = None;
+    if kind == 2 {
+        let mut ready = true;
+        if let Some(dynamic) = (*frame).task_scopes.last_mut() {
+            for (_, child, _) in dynamic.entries_mut() {
+                match child.drain_remote_subtree() {
+                    None => ready = false,
+                    Some(Err(error)) => {
+                        crate::runtime::isolate::retain_failure(&mut drain_failure, error);
+                    }
+                    Some(Ok(())) => {}
+                }
+            }
+        }
+        if !ready {
+            return 1;
+        }
+    }
     (&mut (*frame).task_protocol)[index].draining = true;
     let prepared = std::mem::take(&mut (&mut (*frame).task_protocol)[index].prepared);
     let outcome = crate::runtime::error::checked(|| {
@@ -657,17 +680,24 @@ pub(crate) unsafe extern "C" fn drain(scope: u64) -> i32 {
                 (*frame).task_scopes.pop();
             }
         } else if (*frame).concurrent.is_some() {
-            super::concurrent::drain(frame);
+            return super::concurrent::drain(frame);
         }
+        0
     });
     context(frame);
     let record = &mut (&mut (*frame).task_protocol)[index];
     record.draining = false;
+    if matches!(outcome, Ok(1)) {
+        return 1;
+    }
     record.drained = true;
     if let Err(error) = outcome {
+        crate::runtime::isolate::retain_failure(&mut drain_failure, error);
+    }
+    if let Some(error) = drain_failure {
         if record.terminal != Some(3) {
             record.terminal = Some(2);
-            record.failure.get_or_insert(error);
+            crate::runtime::isolate::retain_failure(&mut record.failure, error);
         }
     }
     record

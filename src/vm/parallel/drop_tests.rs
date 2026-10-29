@@ -580,3 +580,213 @@ fn scoped_borrow_host_reference_abi_keeps_the_whole_group_local() {
         assert_eq!(budget.used(), 0);
     }
 }
+
+#[test]
+fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
+    use std::sync::{Condvar, OnceLock};
+    static SELECTED_POLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static GATE: OnceLock<(Mutex<(bool, bool)>, Condvar)> = OnceLock::new();
+    unsafe extern "C" fn hold(_: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        let (state, wake) = GATE.get().unwrap();
+        let mut state = state.lock().unwrap();
+        state.0 = true;
+        wake.notify_all();
+        let (state, timeout) = wake
+            .wait_timeout_while(state, Duration::from_secs(15), |s| !s.1)
+            .unwrap();
+        if timeout.timed_out() && !state.1 {
+            crate::runtime::error::record_error(Error::new(
+                ErrorPhase::Runtime,
+                "reader release timed out",
+            ));
+            return 3;
+        }
+        OBSERVED
+            .lock()
+            .unwrap()
+            .push(("reader stopped".into(), std::thread::current().id()));
+        0
+    }
+    unsafe extern "C" fn selected(_: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        if !GATE.get().unwrap().0.lock().unwrap().0 {
+            crate::runtime::parallel::pool::io_waker().unwrap().wake();
+            return 1;
+        }
+        SELECTED_POLL.store(
+            crate::runtime::parallel::pool::poll_count(),
+            std::sync::atomic::Ordering::Release,
+        );
+        OBSERVED
+            .lock()
+            .unwrap()
+            .push(("selected".into(), std::thread::current().id()));
+        0
+    }
+    unsafe extern "C" fn fail(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        if selected(frame) == 1 {
+            return 1;
+        }
+        crate::runtime::error::record_error(Error::new(ErrorPhase::Runtime, "isolated failure"));
+        3
+    }
+    unsafe extern "C" fn resumed(_: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        OBSERVED
+            .lock()
+            .unwrap()
+            .push(("resumed".into(), std::thread::current().id()));
+        0
+    }
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let (state, wake) = GATE.get().unwrap();
+            state.lock().unwrap().1 = true;
+            wake.notify_all();
+        }
+    }
+    let _serial = SERIAL.lock().unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = engine(mode);
+        for (name, callback) in [
+            ("hold", hold as crate::runtime::cps::CpsEntry),
+            ("selected", selected),
+            ("fail", fail),
+            ("resumed", resumed),
+        ] {
+            unsafe {
+                vm.register_parallel_suspending_fn(
+                    name,
+                    FunctionSignature::new(vec![], Type::Unit),
+                    callback,
+                    0,
+                    Arc::new(()),
+                )
+                .unwrap();
+            }
+        }
+        vm.load_source(
+            r#"
+            import joky/drop.{type Drop}
+            import joky/string
+            import joky/task
+            extern fn trace(text: &String) -> Int32
+            extern fn hold() @suspends
+            extern fn selected() @suspends
+            extern fn fail() @suspends
+            extern fn resumed() @suspends
+            struct Source { text: String }
+            impl Drop for Source { fn drop(&mut self) { trace(&self.text); } }
+            fn reader(text: &String) @suspends -> UInt64 {
+                let before = string.byte_length(text)
+                hold()
+                before + string.byte_length(text)
+            }
+            fn owned() @suspends -> Int32 {
+                let source = Source { text: "source destroyed" }
+                let (a, b) = join { | reader(&source.text) | task.yield_now() }
+                0
+            }
+            fn losing(anchor: &Int32) @suspends -> Int32 { owned() }
+            fn winning(anchor: &Int32) @suspends -> Int32 { selected(); 7 }
+            fn local_race() @suspends -> Int32 {
+                let anchor = 1
+                let value = race { | losing(&anchor) | winning(&anchor) }
+                resumed()
+                value
+            }
+            fn isolated() @suspends -> Int32 {
+                let result = isolate { scope { branch { owned(); }; fail() }; 0 }
+                resumed()
+                match result { Ok(_) => 0, Err(_) => 7 }
+            }
+        "#,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        for (name, cancel) in [
+            ("local_race", false),
+            ("local_race", true),
+            ("isolated", false),
+            ("isolated", true),
+        ] {
+            *GATE
+                .get_or_init(|| (Mutex::new((false, false)), Condvar::new()))
+                .0
+                .lock()
+                .unwrap() = (false, false);
+            OBSERVED.lock().unwrap().clear();
+            let budget = TaskBudget::new(4 << 20);
+            let mut pool = ParallelExecutor::new(3, 16).unwrap();
+            let task = vm
+                .prepare_parallel_task(name, vec![], vec![budget.clone()])
+                .unwrap()
+                .submit(&pool)
+                .unwrap();
+            let release = Release;
+            wait(|| {
+                OBSERVED
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(name, _)| name == "selected")
+            });
+            wait(|| {
+                task.handle.poll_count() > SELECTED_POLL.load(std::sync::atomic::Ordering::Acquire)
+            });
+            assert_eq!(
+                OBSERVED
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>(),
+                ["selected"],
+                "{mode:?} {name}: premature cleanup or recovery"
+            );
+            let observations = crate::runtime::parallel::scoped::observations(task.identity());
+            assert_eq!(
+                observations.iter().filter(|o| !o.source).count(),
+                1,
+                "nested join stayed local"
+            );
+            if cancel {
+                task.request_cancel();
+            }
+            drop(release);
+            wait(|| task.is_finished());
+            let result = task.take_result();
+            if cancel {
+                assert_eq!(result.err().unwrap().code(), ErrorCode::Cancelled);
+            } else {
+                assert_eq!(
+                    result.unwrap().value(),
+                    &TaskValue::Scalar(InstanceValue::Int32(7))
+                );
+            }
+            drop(task);
+            pool.wait_closed();
+            let events = OBSERVED.lock().unwrap();
+            let names: Vec<_> = events.iter().map(|(name, _)| name.as_str()).collect();
+            if cancel {
+                assert_eq!(names, ["selected", "reader stopped", "source destroyed"]);
+            } else {
+                assert_eq!(
+                    names,
+                    ["selected", "reader stopped", "source destroyed", "resumed"]
+                );
+            }
+            let source = events
+                .iter()
+                .find(|(name, _)| name == "source destroyed")
+                .unwrap();
+            assert_eq!(
+                source.1,
+                observations.iter().find(|o| o.source).unwrap().thread
+            );
+            assert_ne!(
+                source.1,
+                observations.iter().find(|o| !o.source).unwrap().thread
+            );
+            assert_eq!(budget.used(), 0, "{mode:?} {name}");
+        }
+    }
+}

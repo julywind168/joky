@@ -1,4 +1,4 @@
-//! The generated isolate child stays local so borrowed captures never cross workers.
+//! The isolate activation stays local; recovery waits for its remote descendants.
 use super::{protocol, task, CpsFrame};
 use crate::runtime::{error, isolate};
 
@@ -50,15 +50,17 @@ pub(crate) unsafe extern "C" fn drain(parent: *mut CpsFrame) -> u64 {
     }
     protocol::context(parent);
     let scope = (*parent).task_protocol.last().unwrap().id;
-    if let Err(failure) = error::checked(|| protocol::join(scope)) {
-        match isolate::code(&failure) {
+    match error::checked(|| protocol::join(scope)) {
+        Ok(1) => return u64::MAX,
+        Ok(_) => {}
+        Err(failure) => match isolate::code(&failure) {
             Some(code) => {
                 if (*parent).isolated_failure == 0 {
                     (*parent).isolated_failure = code;
                 }
             }
             None => error::record_error(failure),
-        }
+        },
     }
     if (*parent).isolated_failure != 0 {
         let scope = (*parent).task_protocol.last_mut().unwrap();

@@ -58,6 +58,8 @@ struct State {
     deadline: Option<Instant>,
 }
 struct Task {
+    #[cfg(test)]
+    polls: AtomicUsize,
     id: u64,
     worker: usize,
     shared: Arc<Shared>,
@@ -191,6 +193,26 @@ thread_local! {
     static WAITING: Cell<bool> = const { Cell::new(false) };
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
     static CLEANING: Cell<bool> = const { Cell::new(false) };
+}
+#[cfg(test)]
+pub(crate) fn cleanup_count() -> usize {
+    CURRENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .unwrap()
+            .cleanups_pending
+            .load(Ordering::Acquire)
+    })
+}
+#[cfg(test)]
+pub(crate) fn poll_count() -> usize {
+    CURRENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .unwrap()
+            .polls
+            .load(Ordering::Acquire)
+    })
 }
 pub(crate) fn identity() -> Option<u64> {
     CURRENT.with(|c| c.borrow().as_ref().map(|task| task.id))
@@ -362,6 +384,10 @@ impl DomainSpawner {
     }
 }
 impl Handle {
+    #[cfg(test)]
+    pub(crate) fn poll_count(&self) -> usize {
+        self.0.polls.load(Ordering::Acquire)
+    }
     #[cfg(test)]
     pub(crate) fn identity(&self) -> u64 {
         self.0.id
@@ -662,6 +688,8 @@ fn publish(
         let worker = q.next_worker;
         q.next_worker = (worker + 1) % q.ready.len();
         let task = Arc::new(Task {
+            #[cfg(test)]
+            polls: AtomicUsize::new(0),
             id,
             worker,
             shared: shared.clone(),
@@ -805,6 +833,8 @@ fn run(shared: Arc<Shared>, worker: usize) {
                 item.terminal = Some(result);
             }
         }
+        #[cfg(test)]
+        task.polls.fetch_add(1, Ordering::Release);
         if item.terminal.is_some() {
             let children: Vec<_> = lock(&task.state)
                 .children
@@ -938,11 +968,19 @@ pub(crate) struct Group {
     taken: Vec<bool>,
 }
 impl Group {
+    fn retain_failure(&mut self, error: Error) {
+        if self.arbiter.propagate_failure {
+            self.failure.get_or_insert(error);
+        } else {
+            crate::runtime::isolate::retain_failure(&mut self.failure, error);
+        }
+    }
     pub(crate) fn new(kind: u32) -> Self {
         Self {
             arbiter: Arc::new(Arbiter {
                 parent: CURRENT.with(|c| c.borrow().as_ref().map(Arc::downgrade)),
                 kind,
+                propagate_failure: !crate::runtime::isolate::active(),
                 state: Mutex::new(Arbitration {
                     selected: None,
                     failure: None,
@@ -957,6 +995,11 @@ impl Group {
             taken: Vec::new(),
         }
     }
+    pub(crate) fn capture_guard(&self) -> disposal::CaptureGuard {
+        disposal::CaptureGuard::enter(
+            (!self.arbiter.propagate_failure).then(|| self.arbiter.clone()),
+        )
+    }
     pub(crate) fn publish(&mut self, factories: Vec<Factory>) -> Result<(), Error> {
         if self.selected.is_some() || self.failure.is_some() {
             return Err(invalid("Parallel scope is closed"));
@@ -967,10 +1010,13 @@ impl Group {
         Ok(())
     }
     pub(crate) fn poll(&mut self) -> Result<bool, Error> {
-        {
+        let (selected, failure) = {
             let arbitration = lock(&self.arbiter.state);
-            self.selected = arbitration.selected;
-            self.failure = arbitration.failure.clone();
+            (arbitration.selected, arbitration.failure.clone())
+        };
+        self.selected = selected;
+        if let Some(error) = failure {
+            self.retain_failure(error);
         }
         if !self.handles.iter().all(Handle::cleaned) {
             wait_for_wake();
@@ -985,25 +1031,62 @@ impl Group {
         }
         if let Some(task) = CURRENT.with(|slot| slot.borrow().clone()) {
             if let Err(error) = disposal::drain(&task) {
-                self.failure.get_or_insert(error);
+                self.retain_failure(error);
             }
+        }
+        let failure = lock(&self.arbiter.state).failure.clone();
+        if let Some(error) = failure {
+            self.retain_failure(error);
         }
         // Cancellation itself is expected for losers; a real cleanup failure is not.
         let mut ordered: Vec<_> = self.handles.iter().enumerate().collect();
         ordered.sort_by_key(|(_, h)| h.sequence());
+        let mut failures = Vec::new();
         for (i, h) in ordered {
             if self.selected != Some(i) && h.failed() {
                 if let Some(Err(error)) = h.take() {
                     if error.code() != ErrorCode::Cancelled {
-                        self.failure.get_or_insert(error);
+                        failures.push(error);
                     }
                 }
             }
         }
+        for error in failures {
+            self.retain_failure(error);
+        }
         if let Some(error) = &self.failure {
             return Err(error.clone());
         }
+        // Cancellation may arrive after the driver's entry check and drain all
+        // children during this poll. Their cancelled packets are not results.
+        check_cancelled()?;
         Ok(true)
+    }
+    /// Local cancellation must also dispose unclaimed results before recovery.
+    /// Their portable cleanup receipts belong to the consuming parent task.
+    pub(crate) fn cancel_and_drain(&mut self) -> Result<bool, Error> {
+        self.cancel();
+        let outcome = self.poll();
+        if matches!(outcome, Ok(false)) {
+            return Ok(false);
+        }
+        for handle in &self.handles {
+            drop(handle.take());
+        }
+        let cleanup = CURRENT
+            .with(|slot| slot.borrow().clone())
+            .map_or(Ok(()), |task| disposal::drain(&task));
+        let failure = lock(&self.arbiter.state).failure.clone();
+        if let Some(error) = failure {
+            self.retain_failure(error);
+        }
+        if let Err(error) = outcome {
+            self.retain_failure(error);
+        }
+        if let Err(error) = cleanup {
+            self.retain_failure(error);
+        }
+        self.failure.clone().map_or(Ok(true), Err)
     }
     pub(crate) fn next_result(&self) -> Option<usize> {
         if self.kind == 1 {
@@ -1050,6 +1133,7 @@ struct Arbitration {
 struct Arbiter {
     parent: Option<Weak<Task>>,
     kind: u32,
+    propagate_failure: bool,
     state: Mutex<Arbitration>,
 }
 impl Arbiter {
@@ -1069,7 +1153,11 @@ impl Arbiter {
                 let Some(error) = error else {
                     return;
                 };
-                state.failure.get_or_insert(error);
+                if self.propagate_failure {
+                    state.failure.get_or_insert(error);
+                } else {
+                    crate::runtime::isolate::retain_failure(&mut state.failure, error);
+                }
             } else {
                 if self.kind != 1 && error.is_none() {
                     return;
@@ -1092,8 +1180,34 @@ impl Arbiter {
         }
         if let Some(error) = failure {
             if let Some(parent) = self.parent.as_ref().and_then(Weak::upgrade) {
-                parent.fail(error);
+                if self.propagate_failure {
+                    parent.fail(error);
+                } else {
+                    parent.wake();
+                }
             }
+        }
+    }
+
+    fn cleanup_failed(&self, error: Error) {
+        let children = {
+            let mut state = lock(&self.state);
+            if self.propagate_failure {
+                state.failure.get_or_insert(error);
+            } else {
+                crate::runtime::isolate::retain_failure(&mut state.failure, error);
+            }
+            state
+                .children
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>()
+        };
+        for child in children {
+            child.cancel();
+        }
+        if let Some(parent) = self.parent.as_ref().and_then(Weak::upgrade) {
+            parent.wake();
         }
     }
 }

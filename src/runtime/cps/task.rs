@@ -317,7 +317,6 @@ pub(crate) unsafe extern "C" fn poll(child: *mut CpsFrame) -> i32 {
         (*child).cleanup = std::mem::replace(&mut prepared.inputs.cleanup, std::ptr::null_mut());
     }
     // No reference to metadata or capture storage spans generated/host code.
-    let _local = crate::runtime::parallel::scoped::LocalGuard::enter();
     (*child).task_polling = true;
     let status = entry(child);
     (*child).task_polling = false;

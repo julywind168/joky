@@ -33,3 +33,17 @@ pub(crate) fn code(error: &Error) -> Option<u64> {
         _ => 8,
     })
 }
+
+/// Preserve the first recoverable error, but never let it hide an ABI violation
+/// or cancellation reported by a later cleanup in the same isolated subtree.
+pub(crate) fn retain_failure(failure: &mut Option<Error>, error: Error) {
+    if failure.is_none()
+        || failure
+            .as_ref()
+            .is_some_and(|e| e.code() == ErrorCode::Cancelled)
+            && error.code() != ErrorCode::Cancelled
+        || code(&error).is_none() && failure.as_ref().is_some_and(|e| code(e).is_some())
+    {
+        *failure = Some(error);
+    }
+}

@@ -8,24 +8,7 @@ use crate::{
     runtime::{arena::Arena, buffer::Buffer, cleanup::Cleanups},
     Error, Type,
 };
-use std::{alloc::Layout, cell::Cell, ptr::NonNull, sync::Arc};
-
-thread_local! { static LOCAL_DEPTH: Cell<usize> = const { Cell::new(0) }; }
-pub(crate) struct LocalGuard;
-impl LocalGuard {
-    pub(crate) fn enter() -> Self {
-        LOCAL_DEPTH.with(|v| v.set(v.get() + 1));
-        Self
-    }
-}
-impl Drop for LocalGuard {
-    fn drop(&mut self) {
-        LOCAL_DEPTH.with(|v| v.set(v.get() - 1));
-    }
-}
-pub(crate) fn allowed() -> bool {
-    pool::active() && !crate::runtime::isolate::active() && LOCAL_DEPTH.with(|v| v.get() == 0)
-}
+use std::{alloc::Layout, ptr::NonNull, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Shape {
@@ -156,7 +139,7 @@ struct Range {
     _charge: Option<Lease>,
 }
 // SAFETY: capture requires compiler-certified shared scalar storage owned by
-// this parent task. Admission excludes locally cancellable ancestor groups.
+// this parent task. Local cancellation drains this subtree before dropping its frames.
 // The static group and worker-root failure barrier retain the source owner until
 // every reader is cleaned. Only payload bytes cross; Buffer/Rc/frame metadata do
 // not. install creates a new nonowning header on the receiving worker.

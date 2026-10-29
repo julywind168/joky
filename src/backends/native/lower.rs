@@ -1632,14 +1632,22 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
     if let Some(failure) = failure {
         let code = helper(builder, refs, "__joky_isolate_drain_v1", &[frame]);
         check_call(builder, refs, Some(frame), None);
+        let waiting = builder.ins().icmp_imm_u(IntCC::Equal, code, -1);
+        let drained = builder.create_block();
+        builder.ins().brif(waiting, pending, &[], drained, &[]);
+        builder.switch_to_block(drained);
         store(builder, slots, failure, code);
         builder
             .ins()
             .brif(code, received, &[], collect_results, &[]);
     } else {
         let scope = task_scope(builder, refs, frame, 0);
-        task_call(builder, refs, frame, "__joky_task_join_v1", &[scope]);
+        let status = task_call(builder, refs, frame, "__joky_task_join_v1", &[scope]);
         check_call(builder, refs, Some(frame), None);
+        let waiting = builder.ins().icmp_imm_u(IntCC::Equal, status, 1);
+        let drained = builder.create_block();
+        builder.ins().brif(waiting, pending, &[], drained, &[]);
+        builder.switch_to_block(drained);
         task_call(builder, refs, frame, "__joky_task_drain_v1", &[scope]);
         check_call(builder, refs, Some(frame), None);
         builder.ins().jump(collect_results, &[]);

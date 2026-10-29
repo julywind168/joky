@@ -356,6 +356,7 @@ pub(super) struct Frame {
     slots: Vec<Value>,
     pc: usize,
     pending: Option<Pending>,
+    draining_remote: bool,
     task_scopes: Vec<LocalTaskScope<usize>>,
     remote_scopes: Option<Box<parallel::Scopes>>,
 }
@@ -388,6 +389,7 @@ impl Frame {
             slots,
             pc: 0,
             pending: None,
+            draining_remote: false,
             task_scopes: Vec::new(),
             remote_scopes: None,
         })
@@ -544,6 +546,7 @@ pub(super) struct Execution {
     asynchronous: bool,
     cooperative_yield: bool,
     isolated_recovery: bool,
+    isolated_drain: Option<(usize, usize, u64)>,
     round_child: Option<usize>,
     arena: crate::runtime::arena::Arena,
 }
@@ -574,6 +577,7 @@ impl Execution {
             asynchronous,
             cooperative_yield: false,
             isolated_recovery: false,
+            isolated_drain: None,
             round_child: None,
             arena: crate::runtime::arena::Arena::default(),
         }
@@ -646,37 +650,9 @@ impl Execution {
                 {
                     group.stop(None);
                 }
-                let mut cleanup = self.drain_concurrent(parent);
-                let pending = self.frame_mut(parent).pending.take();
-                if let Some(Pending::Concurrent { branches, .. }) = pending {
-                    for branch in branches {
-                        if let Some(packet) = branch.packet {
-                            if let Some((_, owner)) = packet.owner {
-                                if let Err(next) = unsafe { owner.run(&mut self.arena) } {
-                                    if cleanup.is_ok()
-                                        || crate::runtime::isolate::code(&next).is_none()
-                                    {
-                                        cleanup = Err(next);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if self.round_child.is_some_and(|id| self.nodes[id].is_none()) {
-                    self.round_child = None;
-                }
+                self.isolated_drain = Some((parent, slot, code));
                 self.current = parent;
-                if let Err(cleanup) = cleanup {
-                    if crate::runtime::isolate::code(&cleanup).is_none() {
-                        return self.fail(cleanup);
-                    }
-                }
-                let frame = self.frame_mut(parent);
-                frame.slots[slot] = Value::UInt64(code);
-                frame.pc += 2; // Concurrent and its already completed cleanup barrier.
-                self.isolated_recovery = true;
-                return Poll::Pending;
+                return self.finish_isolate();
             }
         }
         let mut cursor = Some(self.current);
@@ -702,6 +678,44 @@ impl Execution {
             }
         }
         Poll::Failed(error)
+    }
+
+    fn finish_isolate(&mut self) -> Poll {
+        let (parent, slot, code) = self.isolated_drain.unwrap();
+        let mut cleanup = match self.drain_concurrent(parent) {
+            Ok(false) => return Poll::Pending,
+            Ok(true) => Ok(()),
+            Err(error) => Err(error),
+        };
+        self.isolated_drain = None;
+        let pending = self.frame_mut(parent).pending.take();
+        if let Some(Pending::Concurrent { branches, .. }) = pending {
+            for branch in branches {
+                if let Some(packet) = branch.packet {
+                    if let Some((_, owner)) = packet.owner {
+                        if let Err(next) = unsafe { owner.run(&mut self.arena) } {
+                            if cleanup.is_ok() || crate::runtime::isolate::code(&next).is_none() {
+                                cleanup = Err(next);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if self.round_child.is_some_and(|id| self.nodes[id].is_none()) {
+            self.round_child = None;
+        }
+        self.current = parent;
+        if let Err(cleanup) = cleanup {
+            if crate::runtime::isolate::code(&cleanup).is_none() {
+                return self.fail(cleanup);
+            }
+        }
+        let frame = self.frame_mut(parent);
+        frame.slots[slot] = Value::UInt64(code);
+        frame.pc += 2; // Concurrent and its already completed cleanup barrier.
+        self.isolated_recovery = true;
+        Poll::Pending
     }
 
     fn release(&mut self) {
@@ -1288,25 +1302,91 @@ impl Execution {
 
     /// Stop losing subtrees before result handoff, retaining packets in the
     /// parent until cleanup succeeds. No group borrow spans host stop or Drop.
-    fn drain_concurrent(&mut self, parent: usize) -> Result<(), Error> {
-        let roots = {
-            let Some(Pending::Concurrent { group, branches }) = &mut self.frame_mut(parent).pending
+    fn drain_concurrent(&mut self, parent: usize) -> Result<bool, Error> {
+        let roots: Vec<_> = {
+            let Some(Pending::Concurrent { branches, group }) = &self.frame_mut(parent).pending
             else {
                 unreachable!()
             };
-            if !group.begin_drain()? {
-                return Ok(());
+            if group.drain_finished() {
+                return Ok(true);
             }
-            branches
-                .iter_mut()
-                .filter_map(|branch| branch.child.take())
-                .collect()
+            branches.iter().filter_map(|branch| branch.child).collect()
         };
-        let outcome = self.release_subtrees(roots, None);
+        let Some(remote) = self.drain_remote_subtrees(&roots) else {
+            return Ok(false);
+        };
+        let Some(Pending::Concurrent { group, branches }) = &mut self.frame_mut(parent).pending
+        else {
+            unreachable!()
+        };
+        if !group.begin_drain()? {
+            return Ok(true);
+        }
+        for branch in branches {
+            branch.child = None;
+        }
+        let cleanup = self.release_subtrees(roots, None);
+        if self.round_child.is_some_and(|id| self.nodes[id].is_none()) {
+            self.round_child = None;
+        }
+        let mut failure = remote.err();
+        if let Err(error) = cleanup {
+            crate::runtime::isolate::retain_failure(&mut failure, error);
+        }
+        let outcome = failure.map_or(Ok(()), Err);
         let Some(Pending::Concurrent { group, .. }) = &mut self.frame_mut(parent).pending else {
             unreachable!()
         };
-        group.finish_drain(outcome)
+        let fatal = outcome
+            .as_ref()
+            .err()
+            .filter(|e| crate::runtime::isolate::code(e).is_none())
+            .cloned();
+        let drained = group.finish_drain(outcome);
+        fatal.map_or(drained, Err).map(|_| true)
+    }
+
+    /// Keep every local node and source owner until all remote work in precisely
+    /// these subtrees has acknowledged cleanup. Unrelated groups stay runnable.
+    fn drain_remote_subtrees(&mut self, roots: &[usize]) -> Option<Result<(), Error>> {
+        let mut pending = roots.to_vec();
+        let mut ready = true;
+        let mut failure = None;
+        while let Some(id) = pending.pop() {
+            let Activation::User(frame) = &mut self.node_mut(id).activation else {
+                continue;
+            };
+            frame.draining_remote = true;
+            match &mut frame.pending {
+                Some(Pending::Call { child, .. }) => pending.push(*child),
+                Some(Pending::Concurrent { branches, .. }) => {
+                    pending.extend(branches.iter().filter_map(|b| b.child))
+                }
+                _ => {}
+            }
+            for scope in &frame.task_scopes {
+                pending.extend(scope.entries().map(|(_, child, _)| *child));
+            }
+            let groups = frame
+                .remote_scopes
+                .iter_mut()
+                .flat_map(|scopes| &mut scopes.groups)
+                .chain(match &mut frame.pending {
+                    Some(Pending::Parallel { group, .. }) => Some(&mut **group),
+                    _ => None,
+                });
+            for group in groups {
+                match group.cancel_and_drain() {
+                    Ok(false) => ready = false,
+                    Err(error) => {
+                        crate::runtime::isolate::retain_failure(&mut failure, error);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        ready.then(|| failure.map_or(Ok(()), Err))
     }
 
     fn release_subtrees(
@@ -1410,6 +1490,9 @@ impl Execution {
             let Activation::User(frame) = &self.node(id).activation else {
                 continue;
             };
+            if frame.draining_remote {
+                continue;
+            }
             match &frame.pending {
                 Some(Pending::Call { child, .. }) => pending.push(Visit::Frame(*child)),
                 Some(Pending::Concurrent { branches, .. }) => pending.extend(
@@ -1455,6 +1538,9 @@ impl Execution {
             let Activation::User(frame) = &mut node.activation else {
                 continue;
             };
+            if frame.draining_remote {
+                continue;
+            }
             for scope in &mut frame.task_scopes {
                 scope.finish_round();
             }
@@ -1707,8 +1793,10 @@ impl Execution {
                         return Some(self.fail(error));
                     }
                     if group.is_selected() {
-                        if let Err(error) = self.drain_concurrent(parent) {
-                            return Some(self.fail(error));
+                        match self.drain_concurrent(parent) {
+                            Ok(false) => return Some(Poll::Pending),
+                            Err(error) => return Some(self.fail(error)),
+                            Ok(true) => {}
                         }
                         if let Err(error) = self.accept_concurrent_results(parent) {
                             return Some(self.fail(error));
@@ -1725,7 +1813,11 @@ impl Execution {
         let _float_env = crate::runtime::float_env::Guard::enter();
         loop {
             self.isolated_recovery = false;
-            let result = self.poll_inner(module);
+            let result = if self.isolated_drain.is_some() {
+                self.finish_isolate()
+            } else {
+                self.poll_inner(module)
+            };
             if self.isolated_recovery {
                 continue;
             }
@@ -1781,7 +1873,21 @@ impl Execution {
                         self.current = *child;
                         continue;
                     }
-                    Some(Pending::Concurrent { group, .. }) if group.is_selected() => {}
+                    Some(Pending::Concurrent { group, .. }) if group.is_selected() => {
+                        if !group.drain_finished() {
+                            let parent = self.current;
+                            match self.drain_concurrent(parent) {
+                                Ok(false) => return Poll::Pending,
+                                Err(error) => return self.fail(error),
+                                Ok(true) => {}
+                            }
+                            if let Err(error) = self.accept_concurrent_results(parent) {
+                                return self.fail(error);
+                            }
+                            self.frame_mut(parent).pc += 1;
+                            continue;
+                        }
+                    }
                     Some(Pending::Concurrent { group, branches }) => {
                         match group.next() {
                             Ok(GroupPoll::Child(index)) => {

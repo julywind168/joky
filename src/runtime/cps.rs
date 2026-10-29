@@ -72,6 +72,7 @@ pub struct CpsFrame {
     concurrent_results: Vec<Option<Box<CpsFrame>>>,
     prepared: Option<task::Prepared>,
     task_polling: bool,
+    draining_remote: bool,
     task_entries: std::collections::BTreeMap<(usize, usize, usize), Rc<task::CheckedEntry>>,
     task_code: Option<Rc<task::CheckedEntry>>,
     task_protocol: Vec<protocol::Scope>,
@@ -109,6 +110,7 @@ impl CpsFrame {
             concurrent_results: Vec::new(),
             prepared: None,
             task_polling: false,
+            draining_remote: false,
             task_entries: Default::default(),
             task_code: None,
             task_protocol: Vec::new(),
@@ -155,6 +157,46 @@ impl CpsFrame {
             }
         }
         self.concurrent_results.clear();
+    }
+
+    /// Cancel only this local activation subtree, retaining every owner until
+    /// its remote descendants and their cleanup receipts have stopped. No user
+    /// continuation may poll these frames after cancellation starts.
+    fn drain_remote_subtree(&mut self) -> Option<Result<(), crate::Error>> {
+        let mut pending = vec![self as *mut Self];
+        let mut ready = true;
+        let mut failure = None;
+        while let Some(pointer) = pending.pop() {
+            // The local activation tree is exclusive for this polling turn.
+            let frame = unsafe { &mut *pointer };
+            frame.draining_remote = true;
+            pending.extend(
+                frame
+                    .children
+                    .iter_mut()
+                    .flatten()
+                    .map(|child| &mut **child as *mut Self),
+            );
+            for scope in &mut frame.task_scopes {
+                pending.extend(
+                    scope
+                        .entries_mut()
+                        .map(|(_, child, _)| &mut **child as *mut Self),
+                );
+            }
+            for scope in &mut frame.task_protocol {
+                if let Some(group) = &mut scope.remote {
+                    match group.cancel_and_drain() {
+                        Ok(false) => ready = false,
+                        Err(error) => {
+                            crate::runtime::isolate::retain_failure(&mut failure, error);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        ready.then(|| failure.map_or(Ok(()), Err))
     }
 
     pub(crate) fn release(&mut self) {
@@ -479,6 +521,12 @@ pub unsafe extern "C" fn task_join(frame: *mut CpsFrame) -> i32 {
         if let Some(error) = failure {
             let scope = &mut (&mut (*frame).task_scopes)[index];
             scope.fail(error.clone());
+            // Error propagation retains this scope for the worker-root or
+            // isolate subtree barrier; dropping it here could free a reader's source.
+            if super::parallel::pool::children_pending() {
+                super::error::record_error(error);
+                return RUNTIME_ERROR;
+            }
             let cleanup = drain_dynamic_scope(frame, index);
             (*frame).task_scopes.pop();
             super::error::record_error(cleanup.err().unwrap_or(error));
@@ -779,6 +827,9 @@ unsafe fn round_select(root: *mut CpsFrame) -> Option<(*mut DynamicTaskScope, Ch
             Visit::Child(scope, index) => return Some((scope, index)),
             Visit::Frame(frame) => &mut *frame,
         };
+        if frame.draining_remote {
+            continue;
+        }
         // Reverse insertion preserves pre-order: dynamic scopes in source
         // order, then the suspended body's ordinary call/join children.
         if !frame
@@ -816,6 +867,9 @@ unsafe fn round_reset(root: *mut CpsFrame) {
     let mut pending = vec![root];
     while let Some(frame) = pending.pop() {
         let frame = &mut *frame;
+        if frame.draining_remote {
+            continue;
+        }
         if !frame
             .task_protocol
             .last()

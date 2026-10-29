@@ -94,6 +94,12 @@ pub(crate) fn current_error() -> Option<Error> {
 pub fn record_error(value: Error) {
     ERROR.with(|error| {
         let mut error = error.borrow_mut();
+        // Isolated recovery may retain an earlier recoverable error while
+        // destroying sources. A later ABI violation must still escape it.
+        if super::isolate::active() {
+            super::isolate::retain_failure(&mut error, value);
+            return;
+        }
         // Cancellation starts unwinding; a real cleanup failure must remain
         // observable (in particular when draining a successful race's loser).
         if error

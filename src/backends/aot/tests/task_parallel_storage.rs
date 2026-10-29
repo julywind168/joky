@@ -1247,3 +1247,69 @@ fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
         }
     }
 }
+
+#[test]
+fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
+    use crate::vm::{InstanceValue, VmEngine, VmMode};
+    const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_join.jk");
+    let cases = [
+        ("nested_race", 91),
+        ("borrowed_race", 68),
+        ("nested_isolate", 42),
+        ("isolated_results", 7),
+    ];
+    let names: Vec<_> = cases.iter().map(|(name, _)| *name).collect();
+    let (_scratch, entries, library) = linked_task_entries(SOURCE, &names, "scoped-nested");
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+        }
+        for workers in [1, 3] {
+            let budget = TaskBudget::new(4 << 20);
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(workers, 32).unwrap();
+            for (index, (name, expected)) in cases.iter().enumerate() {
+                let prepared = if let Some(vm) = &vm {
+                    vm.prepare_parallel_task(name, vec![], vec![budget.clone()])
+                        .unwrap_or_else(|e| panic!("{e}"))
+                } else {
+                    let entry = &entries[index];
+                    unsafe {
+                        entry.prepare(
+                            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                            library.clone(),
+                            vec![],
+                            vec![budget.clone()],
+                        )
+                    }
+                    .unwrap()
+                };
+                let task = prepared.submit(&pool).unwrap();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                while !task.is_finished() {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "{mode:?}/{workers}/{name}: stuck"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                assert_eq!(
+                    task.take_result()
+                        .unwrap_or_else(|e| panic!("{mode:?}/{workers}/{name}: {e}"))
+                        .value(),
+                    &TaskValue::Scalar(InstanceValue::Int32(*expected))
+                );
+                let observations = crate::runtime::parallel::scoped::observations(task.identity());
+                assert_eq!(
+                    observations.iter().filter(|o| o.source).count(),
+                    2,
+                    "{mode:?}/{workers}/{name}: group stayed local"
+                );
+                drop(task);
+            }
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}/{workers}");
+        }
+    }
+}
