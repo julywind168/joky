@@ -22,23 +22,70 @@ fn slice_sum(values: &Slice<Int32>) @suspends -> Int32 {
 }
 
 fn text_size(text: &String) @suspends -> Int32 {
+    let copied = string.clone(text)
+    let runes = string.rune_count(text)
     var count = 0
     for byte in slice.iter(string.bytes(text)) {
         task.yield_now()
         count += 1
     }
+    if runes != string.rune_count(&copied) || uint64(count) != string.byte_length(&copied) { return -1 }
     count
 }
 
 fn main() @suspends -> Int32 {
     var values = [3, 5, 7, 11]
     let text = "héllo 世界"
-    let (whole, overlap, bytes, empty) = join {
+    let empty_values: Array<Int32> = []
+    let empty_text = ""
+    let (whole, overlap, bytes, empty, empty_array, empty_string) = join {
         | array_sum(&values)
         | slice_sum(values.slice(1, 4))
         | text_size(&text)
         | slice_sum(values.slice(4, 4))
+        | array_sum(&empty_values)
+        | text_size(&empty_text)
     }
     values[0] = 42
-    whole + overlap + bytes + empty + values[0]
+    whole + overlap + bytes + empty + empty_array + empty_string + values[0]
+}
+
+// Borrow in an ordinary helper after the source has moved to another worker.
+fn keep(values: &Array<Int32>, text: String) @suspends -> String {
+    array_sum(values)
+    task.yield_now()
+    text
+}
+fn inspect(values: &Array<Int32>, text: &String) @suspends -> UInt64 {
+    let (kept, count) = join {
+        | keep(values, "kept")
+        | text_size(text)
+    }
+    string.byte_length(&kept) + uint64(count)
+}
+fn moved(values: Array<Int32>, text: String) @suspends -> UInt64 {
+    inspect(&values, &text)
+}
+fn advanced() @suspends -> UInt64 {
+    let values = [3, 5, 7, 11]
+    let (count, _) = join { | moved(values, "héllo 世界") | task.yield_now() }
+    count
+}
+
+fn invalid_index(values: &Array<Int32>) @suspends -> Int32 {
+    task.yield_now()
+    values[99]
+}
+fn failed() @suspends -> Int32 {
+    let values = [3, 5, 7, 11]
+    let (a, b) = join { | array_sum(&values) | invalid_index(&values) }
+    a + b
+}
+fn forever(values: &Array<Int32>) @suspends -> Int32 {
+    while true { array_sum(values); }
+}
+fn parked() @suspends -> Int32 {
+    let values = [3, 5, 7, 11]
+    let (a, b) = join { | array_sum(&values) | forever(&values) }
+    a + b
 }

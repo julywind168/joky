@@ -278,6 +278,7 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
                 "Publication contains foreign, repeated or reordered child tokens",
             ));
         }
+        let mut scoped = None;
         if record.kind != 2
             && record.remote.is_some()
             && record.prepared.iter().any(|(_, child)| {
@@ -290,7 +291,18 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
                     .is_err()
             })
         {
-            (&mut (*frame).task_protocol)[index].remote = None;
+            let record = &mut (&mut (*frame).task_protocol)[index];
+            if record.kind == 0
+                && crate::runtime::parallel::scoped::allowed()
+                && record.prepared.iter_mut().all(|(_, child)| {
+                    let code = child.task_code.as_ref().unwrap().clone();
+                    super::parallel::scoped_eligible(child, &code)
+                })
+            {
+                scoped = Some(crate::runtime::parallel::scoped::Scope::new(record.id)?);
+            } else {
+                record.remote = None;
+            }
         }
         let record = &(&(*frame).task_protocol)[index];
         if record.remote.is_some() {
@@ -299,7 +311,7 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
             let mut entries = Vec::new();
             for (_, child) in prepared {
                 let code = child.task_code.as_ref().unwrap().clone();
-                factories.push(super::parallel::factory(child, &code)?);
+                factories.push(super::parallel::factory(child, &code, scoped.clone())?);
                 entries.push(code);
             }
             let record = &mut (&mut (*frame).task_protocol)[index];

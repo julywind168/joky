@@ -7,6 +7,7 @@ pub(crate) mod packet;
 pub(crate) mod place;
 pub(crate) mod pool;
 mod portable;
+pub(crate) mod scoped;
 mod storage;
 pub use pool::{ParallelExecutor, ParallelSubmitter};
 use std::cell::RefCell;
@@ -260,7 +261,12 @@ impl OwnedBuffer {
         }
         self.owner
             .take()
-            .map(std::ptr::NonNull::as_ptr)
+            .map(|owner| {
+                unsafe {
+                    super::buffer::Buffer::adopt_task(owner.as_ptr());
+                }
+                owner.as_ptr()
+            })
             .ok_or_else(|| {
                 crate::Error::new_with_code(
                     crate::ErrorPhase::Runtime,

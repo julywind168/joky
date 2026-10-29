@@ -34,6 +34,8 @@ mod isolate_tests;
 mod migration_tests;
 mod places;
 #[cfg(test)]
+mod scoped_tests;
+#[cfg(test)]
 mod tcp_tests;
 mod value;
 use super::{InstanceValue, InterpreterLimits};
@@ -393,6 +395,10 @@ pub struct ParallelTask {
     handle: crate::runtime::parallel::pool::Handle,
 }
 impl ParallelTask {
+    #[cfg(test)]
+    pub(crate) fn identity(&self) -> u64 {
+        self.handle.identity()
+    }
     pub fn request_cancel(&self) {
         self.handle.cancel();
     }

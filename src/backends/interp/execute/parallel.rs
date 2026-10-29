@@ -2,7 +2,9 @@
 use super::*;
 use crate::runtime::parallel::{
     packet::{Packet, Shape},
-    pool, Lease,
+    pool,
+    scoped::{Input, InputShape, Scope},
+    Lease,
 };
 pub(super) struct Scopes {
     pub(super) groups: Vec<pool::Group>,
@@ -17,13 +19,14 @@ impl Scopes {
     }
 }
 fn install(
-    packet: Packet,
+    packet: Input,
     ty: &Type,
     arena: &mut crate::runtime::arena::Arena,
     cleanups: &mut crate::runtime::cleanup::Cleanups,
     base: usize,
+    loans: &mut Vec<Arc<Scope>>,
 ) -> Result<Vec<Value>, Error> {
-    let words = packet.install(arena, cleanups, base, None)?;
+    let words = packet.install(arena, cleanups, base, loans)?;
     ty.value_lanes()
         .iter()
         .zip(words)
@@ -33,7 +36,7 @@ fn install(
 fn start_worker(
     module: Rc<BytecodeModule>,
     target: usize,
-    packets: Vec<Packet>,
+    packets: Vec<Input>,
     limits: InterpreterLimits,
 ) -> Result<Box<dyn pool::Job>, Error> {
     match &module.callees[target] {
@@ -41,6 +44,7 @@ fn start_worker(
         Callee::Host(host) => {
             let mut arena = crate::runtime::arena::Arena::default();
             let mut values = Vec::new();
+            let mut loans = Vec::new();
             for (packet, ty) in packets.into_iter().zip(&host.signature().params) {
                 let mut value = install(
                     packet,
@@ -48,6 +52,7 @@ fn start_worker(
                     &mut arena,
                     &mut Default::default(),
                     values.len(),
+                    &mut loans,
                 )?;
                 if *ty == Type::Unit {
                     value.push(Value::Unit);
@@ -59,6 +64,7 @@ fn start_worker(
                 pending,
                 arena,
                 ret: host.signature().ret.clone(),
+                _loans: loans,
             }))
         }
         _ => Err(abi_error("Unavailable parallel callee")),
@@ -67,15 +73,19 @@ fn start_worker(
 fn start_function(
     module: Rc<BytecodeModule>,
     function: Arc<BytecodeFunction>,
-    packets: Vec<Packet>,
+    packets: Vec<Input>,
     limits: InterpreterLimits,
 ) -> Result<Box<dyn pool::Job>, Error> {
     let shape = Shape::of(&function.info.signature.ret)?;
-    let shape_charge =
-        crate::runtime::parallel::reserve_current(std::mem::size_of::<Worker>() + shape.bytes())?;
+    let shape_charge = crate::runtime::parallel::reserve_current(
+        std::mem::size_of::<Worker>()
+            + shape.bytes()
+            + packets.len() * std::mem::size_of::<Arc<Scope>>(),
+    )?;
     let args = vec![Value::Unit; function.info.parameter_slots()];
     let mut execution = Execution::new(Frame::new(function.clone(), args.iter())?, limits, true);
     let mut base = 0;
+    let mut loans = Vec::new();
     for (packet, ty) in packets.into_iter().zip(&function.info.signature.params) {
         // Install directly in the activation so partial installation is cleaned
         // if a later packet conversion fails.
@@ -86,6 +96,7 @@ fn start_function(
             &mut execution.arena,
             frame.activation.cleanups_mut(),
             base,
+            &mut loans,
         )?;
         execution.frame_mut(0).slots[base..base + values.len()].clone_from_slice(&values);
         base += ty.parameter_slots();
@@ -98,6 +109,7 @@ fn start_function(
         execution,
         module,
         _shape_charge: shape_charge,
+        _loans: loans,
     }))
 }
 pub(crate) fn start_root(
@@ -112,14 +124,75 @@ pub(crate) fn start_root(
         .get(name)
         .cloned()
         .ok_or_else(|| abi_error("Unknown parallel entry"))?;
-    start_function(module, function, packets, limits)
+    start_function(
+        module,
+        function,
+        packets.into_iter().map(Input::owned).collect(),
+        limits,
+    )
 }
 impl Execution {
+    pub(super) fn scoped_concurrent(&self, module: &BytecodeModule) -> bool {
+        if !crate::runtime::parallel::scoped::allowed() {
+            return false;
+        }
+        let mut cursor = Some(self.current);
+        while let Some(id) = cursor {
+            let node = self.node(id);
+            if let Activation::User(frame) = &node.activation {
+                if matches!(frame.pending, Some(Pending::Concurrent { .. }))
+                    || !frame.task_scopes.is_empty()
+                {
+                    return false;
+                }
+            }
+            cursor = node.parent;
+        }
+        let Activation::User(frame) = &self.node(self.current).activation else {
+            return false;
+        };
+        let Instruction::Concurrent {
+            kind: ConcurrentKind::Join,
+            branches,
+            ..
+        } = &frame.function.code[frame.pc]
+        else {
+            return false;
+        };
+        branches.iter().all(|branch| {
+            if branch.indirect.is_some() {
+                return false;
+            }
+            let Some(Callee::User(function)) = branch.target.and_then(|id| module.callees.get(id))
+            else {
+                return false;
+            };
+            if !function.scoped || Shape::of(&function.info.signature.ret).is_err() {
+                return false;
+            }
+            let mut base = 0;
+            function.info.signature.params.iter().all(|ty| {
+                let Ok(input) = InputShape::of(ty) else {
+                    return false;
+                };
+                let eligible = match input {
+                    InputShape::Owned(_) => true,
+                    InputShape::Borrowed(shape) => branch.args[base]
+                        .and_then(|key| frame.slots[key].instance_bits().ok())
+                        .is_some_and(|word| unsafe { shape.eligible(word) }),
+                };
+                base += ty.parameter_slots();
+                eligible
+            })
+        })
+    }
+
     fn remote_factory(
         &mut self,
         module: &BytecodeModule,
         target: usize,
         args: &[Option<usize>],
+        scope: Option<Arc<Scope>>,
     ) -> Result<pool::Factory, Error> {
         let code = pool::code::<crate::vm::parallel::Code>()
             .ok_or_else(|| abi_error("Missing frozen interpreter code"))?;
@@ -135,21 +208,38 @@ impl Execution {
         let mut packets = Vec::new();
         let mut base = 0;
         for ty in &sig.params {
-            let shape = Shape::of(ty)?;
-            let words = args[base..base + shape.lanes()]
-                .iter()
-                .map(|source| {
-                    source.map_or(Ok(0), |src| {
-                        self.frame_mut(self.current).slots[src].instance_bits()
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let entry = shape
-                .owners()
-                .first()
-                .and_then(|key| args[base + key])
-                .and_then(|key| self.frame_mut(self.current).cleanups.take(key));
-            packets.push(unsafe { Packet::capture(shape, words, entry, &mut self.arena)? });
+            let input = if scope.is_some() {
+                InputShape::of(ty)?
+            } else {
+                InputShape::Owned(Shape::of(ty)?)
+            };
+            match input {
+                InputShape::Borrowed(shape) => {
+                    let key = args[base].ok_or_else(|| abi_error("Missing scoped input"))?;
+                    let word = self.frame_mut(self.current).slots[key].instance_bits()?;
+                    packets.push(unsafe {
+                        Input::borrow(shape, word, scope.as_ref().unwrap().clone())?
+                    });
+                }
+                InputShape::Owned(shape) => {
+                    let words = args[base..base + shape.lanes()]
+                        .iter()
+                        .map(|source| {
+                            source.map_or(Ok(0), |src| {
+                                self.frame_mut(self.current).slots[src].instance_bits()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let entry = shape
+                        .owners()
+                        .first()
+                        .and_then(|key| args[base + key])
+                        .and_then(|key| self.frame_mut(self.current).cleanups.take(key));
+                    packets.push(Input::owned(unsafe {
+                        Packet::capture(shape, words, entry, &mut self.arena)?
+                    }));
+                }
+            }
             base += ty.parameter_slots();
         }
         let limits = self.limits;
@@ -157,7 +247,11 @@ impl Execution {
             start_worker(frozen.instantiate()?, target, packets, limits)
         }))
     }
-    pub(super) fn remote_concurrent(&mut self, module: &BytecodeModule) -> Result<(), Error> {
+    pub(super) fn remote_concurrent(
+        &mut self,
+        module: &BytecodeModule,
+        scoped: bool,
+    ) -> Result<(), Error> {
         let frame = self.frame_mut(self.current);
         let Instruction::Concurrent { kind, branches, .. } = &frame.function.code[frame.pc] else {
             unreachable!()
@@ -176,9 +270,14 @@ impl Execution {
                 Ok((target, b.args.clone(), b.done, b.result))
             })
             .collect::<Result<_, Error>>()?;
+        let scope = if scoped {
+            Some(Scope::new(crate::runtime::task_scope::fresh_identity()?)?)
+        } else {
+            None
+        };
         let mut factories = Vec::new();
         for (target, args, _, _) in &branches {
-            factories.push(self.remote_factory(module, *target, args)?);
+            factories.push(self.remote_factory(module, *target, args, scope.clone())?);
         }
         let mut group = pool::Group::new(kind);
         group.publish(factories)?;
@@ -198,7 +297,7 @@ impl Execution {
             unreachable!()
         };
         let (target, args) = (*target, args.clone());
-        let factory = self.remote_factory(module, target, &args)?;
+        let factory = self.remote_factory(module, target, &args, None)?;
         let frame = self.frame_mut(self.current);
         frame
             .remote_scopes
@@ -290,6 +389,7 @@ struct Worker {
     execution: Execution,
     module: Rc<BytecodeModule>,
     _shape_charge: Option<Lease>,
+    _loans: Vec<Arc<Scope>>,
 }
 impl pool::Job for Worker {
     fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {
@@ -322,6 +422,7 @@ struct HostWorker {
     pending: HostPending,
     arena: crate::runtime::arena::Arena,
     ret: Type,
+    _loans: Vec<Arc<Scope>>,
 }
 impl pool::Job for HostWorker {
     fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {

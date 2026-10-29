@@ -21,6 +21,7 @@ pub(super) struct CheckedEntry {
     pub(super) entry: CpsEntry,
     pub(super) frame_slots: usize,
     pub(super) layout: CheckedLayout,
+    pub(super) scoped: bool,
     pub(super) inputs: Vec<(usize, usize)>,
     pub(super) result_key: Option<usize>,
     pub(super) result_lanes: usize,
@@ -34,7 +35,8 @@ impl Drop for CheckedEntry {
 
 /// Bind immutable module metadata to a non-reused entry token in this frame's
 /// code snapshot. The native caller retains module and callback code through
-/// cleanup, as required by the Local CPS ABI; this is not a parallel credential.
+/// cleanup, as required by the CPS ABI. The private qualification bit certifies
+/// the scoped read-only call graph; it does not bypass Parallel qualification.
 /// # Safety
 /// Parent and descriptors are live on the serialized task thread. Descriptor
 /// data is immutable; an indirect descriptor has the compiler-checked signature.
@@ -94,6 +96,7 @@ pub(crate) unsafe extern "C" fn register(
             entry,
             frame_slots,
             layout,
+            scoped: descriptor_ref.qualification == 1 && descriptor_ref.entry.is_some(),
             inputs,
             result_key: (descriptor_ref.result_key != usize::MAX)
                 .then_some(descriptor_ref.result_key),
@@ -148,7 +151,7 @@ impl NativeTaskEntryV1 {
             )
         };
         if self.version != ENTRY_VERSION
-            || self.qualification != 0
+            || self.qualification > 1
             || self.layout.is_null()
             || self.layout_words > 1_048_576
         {
@@ -314,6 +317,7 @@ pub(crate) unsafe extern "C" fn poll(child: *mut CpsFrame) -> i32 {
         (*child).cleanup = std::mem::replace(&mut prepared.inputs.cleanup, std::ptr::null_mut());
     }
     // No reference to metadata or capture storage spans generated/host code.
+    let _local = crate::runtime::parallel::scoped::LocalGuard::enter();
     (*child).task_polling = true;
     let status = entry(child);
     (*child).task_polling = false;
@@ -432,7 +436,7 @@ mod tests {
             assert!(next > token);
             for (version, qualification, slots, length) in [
                 (ENTRY_VERSION + 1, 0, 1, words.len()),
-                (ENTRY_VERSION, 1, 1, words.len()),
+                (ENTRY_VERSION, 2, 1, words.len()),
                 (ENTRY_VERSION, 0, 0, words.len()),
                 (ENTRY_VERSION, 0, usize::MAX, words.len()),
                 (ENTRY_VERSION, 0, 1, words.len() - 1),

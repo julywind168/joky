@@ -17,6 +17,9 @@ pub(crate) enum DynDispatch {
 }
 
 pub(crate) struct Buffer {
+    // Local provenance only. Remote readers receive fresh headers with no origin.
+    origin: *const Buffer,
+    owner_task: u64,
     pub(crate) dynamic: Option<DynDispatch>,
     resource: Option<super::resource::OwnedResource>,
     data: NonNull<u8>,
@@ -322,6 +325,8 @@ impl Buffer {
     fn empty(element: Layout) -> Self {
         Self {
             // No bytes are accessed for empty or zero-sized storage.
+            origin: std::ptr::null(),
+            owner_task: 0,
             data: NonNull::new(element.align() as *mut u8).unwrap(),
             len: 0,
             capacity: 0,
@@ -397,6 +402,8 @@ impl Buffer {
         // Publish only after both allocations succeed. Failures remain charged
         // to the arena and are released together with the root task.
         let mut value = Self::empty(element);
+        value.origin = owner.as_ptr();
+        value.owner_task = super::parallel::pool::identity().unwrap_or(0);
         if bytes != 0 {
             value.data = arena.allocate(payload.size(), payload.align())?;
         }
@@ -505,13 +512,66 @@ impl Buffer {
         }
         // The parent allocation already proved every offset fits usize/isize.
         unsafe {
-            Self::view(
+            let mut view = Self::view(
                 arena,
                 self.address(start as usize),
                 (end - start) as usize,
                 self.element,
-            )
+            )?;
+            view.as_mut().origin = self.origin;
+            Ok(view)
         }
+    }
+
+    /// Immutable initialized scalar range belonging to the CURRENT task, not
+    /// merely another allocation in the shared storage root. Local slices retain
+    /// their origin; installed remote views deliberately have no origin.
+    pub(crate) fn scoped_range(&self, element: Layout) -> Option<(NonNull<u8>, usize)> {
+        let task = super::parallel::pool::identity()?;
+        let origin = unsafe { self.origin.as_ref()? };
+        if task == 0
+            || element.size() == 0
+            || origin.owner_task != task
+            || origin.origin != self.origin
+            || self.element != element
+            || origin.element != element
+            || origin.resource.is_some()
+            || origin.dynamic.is_some()
+            || origin.failed_store.is_some()
+            || origin.release_active
+            || origin.failed_descriptor
+            || origin
+                .cleanup
+                .as_ref()
+                .is_some_and(|c| !c.owners.is_empty() || !c.hooks.is_empty())
+            || origin.metadata_parallel.is_none()
+        {
+            return None;
+        }
+        let offset = (self.data.as_ptr() as usize).checked_sub(origin.data.as_ptr() as usize)?;
+        let bytes = self.len.checked_mul(element.size())?;
+        if offset % element.size() != 0
+            || offset.checked_add(bytes)? > origin.len.checked_mul(element.size())?
+        {
+            return None;
+        }
+        Some((self.data, self.len))
+    }
+    /// # Safety
+    /// Called only by a scoped input holding its source lease. The source stays
+    /// immutable and live until this worker and all derived views are cleaned.
+    pub(crate) unsafe fn scoped_view(
+        arena: &mut Arena,
+        data: NonNull<u8>,
+        len: usize,
+        element: Layout,
+    ) -> Result<NonNull<Self>, Error> {
+        Self::view(arena, data.as_ptr(), len, element)
+    }
+    /// Exclusive owned-packet installation, never a borrowed view handoff.
+    pub(crate) unsafe fn adopt_task(owner: *mut Self) {
+        (*owner).origin = owner;
+        (*owner).owner_task = super::parallel::pool::identity().unwrap_or(0);
     }
 
     /// Create a nonowning header retained by the root task arena.
@@ -528,6 +588,8 @@ impl Buffer {
         element: Layout,
     ) -> Result<NonNull<Self>, Error> {
         let value = Self {
+            origin: std::ptr::null(),
+            owner_task: 0,
             data: NonNull::new(data).unwrap(),
             len,
             capacity: len,
@@ -1144,6 +1206,7 @@ impl Buffer {
             arena.release((*destination).data);
         }
         destination.write(value);
+        (*destination).origin = destination;
         arena.release(NonNull::new_unchecked(source.cast()));
         Ok(())
     }

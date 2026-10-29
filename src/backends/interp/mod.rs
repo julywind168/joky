@@ -228,6 +228,7 @@ struct BytecodeBranch {
 }
 
 struct BytecodeFunction {
+    scoped: bool,
     place_result: Arc<[crate::runtime::place::CopyNode]>,
     name: String,
     spans: Vec<Span>,
@@ -412,6 +413,7 @@ pub(crate) fn compile(
         .enumerate()
         .map(|(id, name)| (name.clone(), id))
         .collect();
+    let scoped = crate::core::ir::parallel::scoped::callees(&plan);
     let mut functions = HashMap::new();
     let mut tables = HashMap::new();
     let mut layouts = places::Layouts::default();
@@ -420,6 +422,7 @@ pub(crate) fn compile(
             let mut function =
                 lower_function(&plan.functions[name], body, &ids, &mut tables, &mut layouts)?;
             function.name.clone_from(name);
+            function.scoped = scoped.contains(name);
             functions.insert(name.clone(), Arc::new(function));
         }
     }
@@ -833,6 +836,7 @@ fn lower_unoptimized(
         ));
     }
     Ok(BytecodeFunction {
+        scoped: false,
         place_result: if info.signature.ret.is_place() {
             layouts.get(&info.signature.ret).program.clone()
         } else {

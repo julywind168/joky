@@ -5,6 +5,7 @@ use crate::{Error, ErrorCode, ErrorPhase, Type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub(crate) mod packet;
+pub(crate) mod scoped;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Qualification {

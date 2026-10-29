@@ -78,12 +78,22 @@ fn linked_task_entries(
 fn scoped_borrow_join_preserves_values_on_all_backends() {
     use crate::vm::{InstanceValue, VmEngine, VmMode};
     const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_join.jk");
-    let (_scratch, entries, library) = linked_task_entries(SOURCE, &["main"], "scoped-borrow");
+    let (_scratch, entries, library) =
+        linked_task_entries(SOURCE, &["main", "advanced"], "scoped-borrow");
     for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
         let mut vm = mode.map(VmEngine::with_mode);
         if let Some(vm) = &mut vm {
             vm.set_prelude_enabled(false);
             vm.load_source(SOURCE).unwrap();
+            let mut local = vm.call_async("main", &[]).unwrap();
+            for _ in 0..10000 {
+                if local.is_finished() {
+                    break;
+                }
+                local.resume().unwrap();
+            }
+            assert!(local.is_finished());
+            assert_eq!(local.cps_result(), Some(104));
         }
         for workers in [1, 3] {
             let budget = TaskBudget::new(4 << 20);
@@ -113,6 +123,62 @@ fn scoped_borrow_join_preserves_values_on_all_backends() {
                 &TaskValue::Scalar(InstanceValue::Int32(104)),
                 "{mode:?}, {workers}"
             );
+            let observations = crate::runtime::parallel::scoped::observations(task.identity());
+            let sources: Vec<_> = observations.iter().filter(|o| o.source).collect();
+            let targets: Vec<_> = observations.iter().filter(|o| !o.source).collect();
+            assert_eq!(
+                sources.len(),
+                6,
+                "{mode:?}, {workers}: borrowed join was not admitted"
+            );
+            assert_eq!(
+                targets.len(),
+                6,
+                "{mode:?}, {workers}: missing installed views"
+            );
+            for target in &targets {
+                assert!(
+                    sources
+                        .iter()
+                        .any(|source| source.scope == target.scope && source.data == target.data),
+                    "payload copied during transport"
+                );
+            }
+            if workers > 1 {
+                assert!(
+                    targets
+                        .iter()
+                        .any(|target| target.thread != sources[0].thread),
+                    "readers did not leave the parent worker"
+                );
+            } else {
+                assert!(targets
+                    .iter()
+                    .all(|target| target.thread == sources[0].thread));
+            }
+            let advanced = if let Some(vm) = &vm {
+                vm.prepare_parallel_task("advanced", vec![], vec![budget.clone()])
+                    .unwrap()
+            } else {
+                let entry = &entries[1];
+                unsafe {
+                    entry.prepare(
+                        *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                        library.clone(),
+                        vec![],
+                        vec![budget.clone()],
+                    )
+                }
+                .unwrap()
+            };
+            let advanced = advanced.submit(&pool).unwrap();
+            advanced.wait().unwrap();
+            assert_eq!(
+                advanced.take_result().unwrap().value(),
+                &TaskValue::Scalar(InstanceValue::UInt64(17)),
+                "{mode:?}, {workers}"
+            );
+            drop(advanced);
             drop((result, task));
             pool.wait_closed();
             assert_eq!(budget.used(), 0, "{mode:?}, {workers}");
@@ -1127,4 +1193,57 @@ fn task_parallel_map_values_and_roots_on_all_backends() {
     assert_eq!(output.value(), &expected);
     drop(output);
     assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
+    use std::time::{Duration, Instant};
+    const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_join.jk");
+    let (_scratch, entries, library) =
+        linked_task_entries(SOURCE, &["failed", "parked"], "scoped-stop");
+    for workers in [1, 3] {
+        for (index, entry) in entries.iter().enumerate() {
+            let budget = TaskBudget::new(4 << 20);
+            let prepared = unsafe {
+                entry.prepare(
+                    *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                    library.clone(),
+                    vec![],
+                    vec![budget.clone()],
+                )
+            }
+            .unwrap();
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(workers, 16).unwrap();
+            let task = prepared.submit(&pool).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            if index == 1 {
+                while crate::runtime::parallel::scoped::observations(task.identity())
+                    .iter()
+                    .filter(|o| !o.source)
+                    .count()
+                    != 2
+                {
+                    assert!(
+                        Instant::now() < deadline,
+                        "AOT borrowed readers did not start"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                task.request_cancel();
+            }
+            while !task.is_finished() {
+                assert!(Instant::now() < deadline, "AOT borrowed task did not drain");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let error = task.take_result().err().unwrap();
+            if index == 1 {
+                assert_eq!(error.code(), crate::ErrorCode::Cancelled);
+            } else {
+                assert_eq!(error.code(), crate::ErrorCode::RuntimeError, "{error}");
+            }
+            drop(task);
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{workers}, {index}");
+        }
+    }
 }

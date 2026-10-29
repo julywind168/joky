@@ -8,6 +8,7 @@ pub(super) fn descriptors<M: Module>(
     reachable: &HashSet<String>,
     ids: &HashMap<String, FuncId>,
 ) -> Result<HashMap<String, HashMap<String, DataId>>, Error> {
+    let scoped = crate::core::ir::parallel::scoped::callees(plan);
     let mut targets = Vec::new();
     for (parent, body) in &plan.bodies {
         if !reachable.contains(parent) {
@@ -96,6 +97,10 @@ pub(super) fn descriptors<M: Module>(
         // the Rust declaration, never a second handwritten C frame layout.
         let mut bytes = vec![0; std::mem::size_of::<NativeTaskEntryV1>()];
         for (offset, value) in [
+            (
+                std::mem::offset_of!(NativeTaskEntryV1, qualification),
+                usize::from(scoped.contains(&name)),
+            ),
             (
                 std::mem::offset_of!(NativeTaskEntryV1, input_count),
                 inputs.len(),

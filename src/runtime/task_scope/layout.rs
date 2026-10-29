@@ -1,16 +1,17 @@
 //! Versioned physical capture/result layouts emitted by the checked compiler.
-//! These describe Local storage, not Transfer/Share or parallel admission.
+//! Physical evidence only: parallel admission also requires code and source proofs.
 use crate::core::ir::parallel::packet::Kind;
+use crate::runtime::parallel::packet::Shape;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 9;
+pub(crate) const VERSION: usize = 10;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v9",
+        "Invalid task entry layout v10",
     )
 }
 
@@ -66,6 +67,8 @@ fn value(out: &mut Vec<u64>, ty: &Type) -> Result<(), Error> {
     }
     let mut shape = Vec::new();
     if let Ok(value) = crate::runtime::parallel::packet::Shape::of(ty) {
+        value.encode(&mut shape);
+    } else if let Some(value) = crate::runtime::parallel::scoped::Shape::of(ty) {
         value.encode(&mut shape);
     }
     out.push(shape.len() as u64);
@@ -138,6 +141,65 @@ impl Reader<'_> {
     }
 }
 
+fn packet_shape(reader: &mut Reader<'_>) -> Result<Shape, Error> {
+    let words = reader.0;
+    let (inputs, _) = reader.value()?;
+    let kind = Kind::decode((words[0] >> 3) as usize).ok_or_else(invalid)?;
+    if !kind.implemented() || words[0] & 4 != 0 {
+        return Err(invalid());
+    }
+    let nodes = 6 + words[5] as usize * 2;
+    let start = nodes + 1 + words[nodes] as usize * 5;
+    let shape = Shape::decode(&words[start + 1..start + 1 + words[start] as usize])?;
+    if let Shape::Place(layout) = &shape {
+        let stored = CheckedLayout::place(words).ok_or_else(invalid)?;
+        if layout.size != stored.size
+            || layout.align != stored.align
+            || layout.nodes != stored.nodes
+        {
+            return Err(invalid());
+        }
+    }
+    if matches!(shape, Shape::Place(_)) != (words[0] & 2 != 0)
+        || shape.inputs() != inputs
+        || shape.lanes() != words[2] as usize
+        || (!shape.owners().is_empty()) != (words[0] & 1 != 0)
+        || shape.aggregate()
+            != matches!(
+                kind,
+                Kind::Tuple
+                    | Kind::Record
+                    | Kind::Enum
+                    | Kind::Array
+                    | Kind::FixedArray
+                    | Kind::List
+                    | Kind::Map
+                    | Kind::Set
+            )
+    {
+        return Err(invalid());
+    }
+    if !matches!(
+        (kind, &shape),
+        (Kind::Scalar, Shape::Unit | Shape::Scalar(_))
+            | (Kind::String, Shape::String)
+            | (Kind::Resource | Kind::Dynamic, Shape::Buffer)
+            | (Kind::Function, Shape::Function)
+            | (
+                Kind::Tuple | Kind::Record | Kind::Array | Kind::List | Kind::Map | Kind::Set,
+                Shape::Product(_)
+            )
+            | (Kind::Enum, Shape::Sum(_))
+            | (
+                Kind::FixedArray | Kind::Tuple | Kind::Record | Kind::Enum,
+                Shape::Place(_)
+            )
+    ) {
+        return Err(invalid());
+    }
+    Ok(shape)
+}
+
 impl CheckedLayout {
     /// Borrow compiler-managed Copy layouts without allocating capture metadata.
     pub(crate) fn input_places(&self) -> impl Iterator<Item = (usize, Place<'_>)> {
@@ -183,75 +245,42 @@ impl CheckedLayout {
         ),
         Error,
     > {
-        use crate::runtime::parallel::packet::Shape;
-        fn shape(reader: &mut Reader<'_>) -> Result<Shape, Error> {
-            let words = reader.0;
-            let (inputs, _) = reader.value()?;
-            let kind = Kind::decode((words[0] >> 3) as usize).ok_or_else(invalid)?;
-            if !kind.implemented() || words[0] & 4 != 0 {
-                return Err(invalid());
-            }
-            let nodes = 6 + words[5] as usize * 2;
-            let start = nodes + 1 + words[nodes] as usize * 5;
-            let shape = Shape::decode(&words[start + 1..start + 1 + words[start] as usize])?;
-            if let Shape::Place(layout) = &shape {
-                let stored = CheckedLayout::place(words).ok_or_else(invalid)?;
-                if layout.size != stored.size
-                    || layout.align != stored.align
-                    || layout.nodes != stored.nodes
-                {
-                    return Err(invalid());
-                }
-            }
-            if matches!(shape, Shape::Place(_)) != (words[0] & 2 != 0)
-                || shape.inputs() != inputs
-                || shape.lanes() != words[2] as usize
-                || (!shape.owners().is_empty()) != (words[0] & 1 != 0)
-                || shape.aggregate()
-                    != matches!(
-                        kind,
-                        Kind::Tuple
-                            | Kind::Record
-                            | Kind::Enum
-                            | Kind::Array
-                            | Kind::FixedArray
-                            | Kind::List
-                            | Kind::Map
-                            | Kind::Set
-                    )
-            {
-                return Err(invalid());
-            }
-            if !matches!(
-                (kind, &shape),
-                (Kind::Scalar, Shape::Unit | Shape::Scalar(_))
-                    | (Kind::String, Shape::String)
-                    | (Kind::Resource | Kind::Dynamic, Shape::Buffer)
-                    | (Kind::Function, Shape::Function)
-                    | (
-                        Kind::Tuple
-                            | Kind::Record
-                            | Kind::Array
-                            | Kind::List
-                            | Kind::Map
-                            | Kind::Set,
-                        Shape::Product(_)
-                    )
-                    | (Kind::Enum, Shape::Sum(_))
-                    | (
-                        Kind::FixedArray | Kind::Tuple | Kind::Record | Kind::Enum,
-                        Shape::Place(_)
-                    )
-            ) {
-                return Err(invalid());
-            }
-            Ok(shape)
-        }
         let mut reader = Reader(&self.words[2..]);
         let inputs = (0..self.words[1])
-            .map(|_| shape(&mut reader))
+            .map(|_| packet_shape(&mut reader))
             .collect::<Result<_, _>>()?;
-        Ok((inputs, shape(&mut reader)?))
+        Ok((inputs, packet_shape(&mut reader)?))
+    }
+
+    pub(crate) fn scoped_shapes(
+        &self,
+    ) -> Result<
+        (
+            Vec<crate::runtime::parallel::scoped::InputShape>,
+            crate::runtime::parallel::packet::Shape,
+        ),
+        Error,
+    > {
+        use crate::runtime::parallel::scoped::{InputShape, Shape};
+        let mut reader = Reader(&self.words[2..]);
+        let mut inputs = Vec::new();
+        for _ in 0..self.words[1] {
+            let words = reader.0;
+            if words[0] & 4 == 0 {
+                inputs.push(InputShape::Owned(packet_shape(&mut reader)?));
+            } else {
+                let (count, _) = reader.value()?;
+                if words[0] != ((Kind::Local as u64) << 3 | 4) || count != 1 || words[2] != 1 {
+                    return Err(invalid());
+                }
+                let nodes = 6 + words[5] as usize * 2;
+                let start = nodes + 1 + words[nodes] as usize * 5;
+                inputs.push(InputShape::Borrowed(Shape::decode(
+                    &words[start + 1..start + 1 + words[start] as usize],
+                )?));
+            }
+        }
+        Ok((inputs, packet_shape(&mut reader)?))
     }
 
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {

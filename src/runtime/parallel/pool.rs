@@ -192,6 +192,19 @@ thread_local! {
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
     static CLEANING: Cell<bool> = const { Cell::new(false) };
 }
+pub(crate) fn identity() -> Option<u64> {
+    CURRENT.with(|c| c.borrow().as_ref().map(|task| task.id))
+}
+pub(crate) fn parent_identity() -> Option<u64> {
+    CURRENT.with(|c| {
+        c.borrow()
+            .as_ref()?
+            .parent
+            .as_ref()?
+            .upgrade()
+            .map(|task| task.id)
+    })
+}
 pub(crate) fn active() -> bool {
     CURRENT.with(|c| c.borrow().is_some())
 }
@@ -349,6 +362,10 @@ impl DomainSpawner {
     }
 }
 impl Handle {
+    #[cfg(test)]
+    pub(crate) fn identity(&self) -> u64 {
+        self.0.id
+    }
     #[cfg(test)]
     pub(crate) fn domain_spawner(&self) -> DomainSpawner {
         DomainSpawner {

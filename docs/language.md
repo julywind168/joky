@@ -5078,8 +5078,9 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 
 默认 `ExecutionMode::Local` 在宿主线程顺序推进任务；Godot 继续主线程驱动。
 显式 `Parallel { workers }` 使用 1–256 个固定 worker，把同一根任务的 join/race/branch
-及后代独立调度。含借用参数的静态 join/race 留在当前 worker 顺序推进，拥有型动态分支
-仍可分配到其他 worker。CLI 的 run/build 使用 `--parallel` 或 `--task-workers N` 显式启用 Parallel；
+及后代独立调度。受检的只读借用静态 join 可以跨 worker，具体边界见下文；
+其他合法的借用 join/race 整组留在当前 worker 顺序推进，拥有型动态分支仍可分配到其他 worker。
+CLI 的 run/build 使用 `--parallel` 或 `--task-workers N` 显式启用 Parallel；
 N=1 仍要求完整并行资格，不等同于 Local。入口须为无参数、返回 Unit 或 Int32 的 `@suspends main`。
 
 `build --parallel` 默认数量为 1；`build --task-workers N` 把 N 作为构建默认值。
@@ -5117,7 +5118,7 @@ List 保留整数链与空闲槽，Map/Set 保留桶、缓存哈希、反向位�
 捕获树须满足同一内部包准入规则，具体 Drop 的完整调用图也须通过检查。支持 Fn／FnMut／FnOnce、嵌套拥有环境和
 未调用即丢弃；闭包的具体目标及完整调用图必须通过资格检查，即使接收者不调用它也不例外。
 代码与任务共同保活，VM 重载或释放不改变已准备任务使用的闭包目标。
-这不开放跨 worker 借用或共享闭包，也不开放闭包作为并发结果、容器元素或宿主 TaskValue。
+这不开放捕获借用的跨 worker 闭包或共享闭包，也不开放闭包作为并发结果、容器元素或宿主 TaskValue。
 示例见 [parallel_owned_closures.jk](../tests/fixtures/parallel_owned_closures.jk)。
 非捕获语言函数值可作为同树内部输入或聚合字段传入 worker，并用于普通或挂起间接调用。
 资格保守检查冻结模块中所有同签名、同挂起效果的函数值目标，任一目标依赖 Local 代码即拒绝
@@ -5129,8 +5130,22 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含 BorrowHash/BorrowEq
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
+
+静态 `join` 的直接语言函数调用支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
+其中 T 限整数、浮点数、Bool、Rune。来源必须属于当前任务的拥有存储，slice 可追溯到该来源；
+负载不复制，每个接收 worker 创建独立的非拥有视图和游标。可混合现有拥有参数，结果仍须满足拥有／值包规则。
+分支可挂起；全部读者与清理结束后父任务才恢复，因此 join 后可再次修改、移动或销毁来源。
+
+这一准入同时检查完整 Parallel 调用图、来源和当前并发上下文。包含间接调用、函数值或宿主引用 ABI
+的分支调用图保守回退；外部来源、跨 worker 再转发的借用、含拥有元素的容器、名义宿主能力、
+`&mut`、标量／FixedArray 地址、借用结果及借用闭包不在范围内。局部 join/race 分支或 isolate
+中的借用 join 保留本地路径，避免局部取消恢复时跳过读者排空；普通 helper 调用链可使用新路径。
+任一分支无法证明资格时整个 join 沿用本地执行，前端借用与逃逸规则仍然生效。
+公共 `TaskValue`、根任务参数与普通 Packet 不接受引用。示例见
+[scoped_borrow_join.jk](../tests/fixtures/scoped_borrow_join.jk)。
+
 worker 内部使用资格单独检查：Array／Slice 的 Iter、Map 的成对 Iter 与 Entry 支持共享和
-可变借用遍历、泛型辅助函数及循环内挂起。游标与原容器始终留在所属 worker，挂起恢复不迁移。
+可变借用遍历、泛型辅助函数及循环内挂起。游标只在创建它的 worker 使用，挂起恢复不迁移。
 含游标借用的 join/race 在同一 worker 顺序推进；共享游标别名仍共享位置。
 这不授予游标 Transfer／Share：宿主根参数和结果、跨 worker 参数和结果、branch 捕获仍拒绝
 游标及其引用。原有来源、独占借用、结构性修改和逃逸限制保持不变；取消由容器拥有者清理元素。

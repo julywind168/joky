@@ -1205,8 +1205,11 @@ impl Execution {
                     }
                 )
             {
-                return self.remote_concurrent(module);
+                return self.remote_concurrent(module, false);
             }
+        }
+        if self.scoped_concurrent(module) {
+            return self.remote_concurrent(module, true);
         }
         let id = self.current;
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
