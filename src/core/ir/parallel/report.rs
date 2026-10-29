@@ -282,6 +282,30 @@ mod tests {
     }
 
     #[test]
+    fn parallel_report_aggregate_borrows_use_shared_admission() {
+        let report = report(
+            r#"
+            import joky/array.{type Array}
+            struct Point { x: Int32, y: Float64 }
+            fn read(values: &Array<Point>) @suspends {}
+            fn main() @suspends {
+                let values = [Point { x: 1, y: 2.5 }]
+                let view = &values
+                join { | read(view) | read(view) };
+                scope { branch { read(view) } }
+            }
+        "#,
+            "main",
+        );
+        assert!(report.entry_error.is_none());
+        assert_eq!(report.sites.len(), 2);
+        assert!(report
+            .sites
+            .iter()
+            .all(|s| s.disposition == ParallelDisposition::RuntimeChecked));
+    }
+
+    #[test]
     fn parallel_report_distinguishes_entry_rejection_from_local_fallback() {
         let source = "extern fn unknown() fn helper() @suspends { unknown() } fn main() @suspends { join { | helper() | helper() }; }";
         let rejected = report(source, "main");

@@ -1,4 +1,4 @@
-//! Private, nonescaping inputs for a compiler-certified static join/race. Ordinary
+//! Private, nonescaping inputs for compiler-certified structured tasks. Ordinary
 //! packets and public TaskValue inputs never accept references.
 use super::{
     packet::{invalid, Packet, Shape as OwnedShape},
@@ -12,7 +12,7 @@ use std::{alloc::Layout, ptr::NonNull, rc::Rc, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Shape {
-    element: Type,
+    element: Layout,
 }
 impl Shape {
     pub(crate) fn of(ty: &Type) -> Option<Self> {
@@ -30,53 +30,48 @@ impl Shape {
             }
             _ => return None,
         };
-        Self::tag(&element)?;
-        Some(Self { element })
+        use crate::core::types::walk::{TypeEdges, TypeWalk};
+        // Copy alone is insufficient: references, callable values and phantom
+        // capability arguments must not cross in a shared element. Drop requires
+        // an owning record, so the owner-free restriction also excludes hooks.
+        if !TypeWalk::new(&element, TypeEdges::Fields).all(|ty| match ty {
+            Type::Record(r) => !r.indirect && r.owners.is_empty() && r.closure.is_none(),
+            Type::Tuple(_) | Type::FixedArray(_) | Type::Unit | Type::Bool | Type::Rune => true,
+            _ => ty.integer().is_some() || ty.is_float(),
+        }) {
+            return None;
+        }
+        let layout = element.storage_layout().ok()?;
+        Self::checked(layout.size, layout.align).ok()
     }
-    fn tag(ty: &Type) -> Option<u64> {
-        Some(match ty {
-            Type::Bool => 1,
-            Type::Int8 => 2,
-            Type::UInt8 => 3,
-            Type::Int16 => 4,
-            Type::UInt16 => 5,
-            Type::Int32 => 6,
-            Type::UInt32 => 7,
-            Type::Rune => 8,
-            Type::Float32 => 9,
-            Type::Int64 => 10,
-            Type::UInt64 => 11,
-            Type::Float64 => 12,
-            _ => return None,
+    fn checked(size: usize, align: usize) -> Result<Self, Error> {
+        if size > 64 * 1024 * 1024
+            || !align.is_power_of_two()
+            || align > std::mem::align_of::<u64>()
+            || !size.is_multiple_of(align)
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            element: Layout::from_size_align(size, align).map_err(|_| invalid())?,
         })
     }
     pub(crate) fn encode(&self, words: &mut Vec<u64>) {
-        words.extend([99, Self::tag(&self.element).unwrap()]);
+        // Physical evidence from the checked compiler, not a user-supplied type
+        // certificate. Admission above proves the complete pointer-free type tree.
+        words.extend([99, self.element.size() as u64, self.element.align() as u64]);
     }
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
-        let [99, tag] = *words else {
+        let [99, size, align] = *words else {
             return Err(invalid());
         };
-        let element = match tag {
-            1 => Type::Bool,
-            2 => Type::Int8,
-            3 => Type::UInt8,
-            4 => Type::Int16,
-            5 => Type::UInt16,
-            6 => Type::Int32,
-            7 => Type::UInt32,
-            8 => Type::Rune,
-            9 => Type::Float32,
-            10 => Type::Int64,
-            11 => Type::UInt64,
-            12 => Type::Float64,
-            _ => return Err(invalid()),
-        };
-        Ok(Self { element })
+        Self::checked(
+            usize::try_from(size).map_err(|_| invalid())?,
+            usize::try_from(align).map_err(|_| invalid())?,
+        )
     }
     pub(crate) fn layout(&self) -> Layout {
-        let layout = self.element.storage_layout().unwrap();
-        Layout::from_size_align(layout.size, layout.align).unwrap()
+        self.element
     }
     /// Compiler layout proves a live shared reference. String, Slice and the
     /// single-field Array wrapper all name a Buffer header directly.
@@ -145,7 +140,7 @@ struct Range {
     origin: Arc<Scope>,
     _charge: Option<Lease>,
 }
-// SAFETY: capture requires compiler-certified shared scalar storage owned by
+// SAFETY: capture requires compiler-certified shared pointer-free storage owned by
 // this parent task or received under a bounded loan. Each hop retains the original
 // lease directly, without foreign headers or a recursive lease chain. Local
 // cancellation drains this subtree before dropping its frames.
@@ -167,17 +162,10 @@ impl Loan {
         len: usize,
         element: Layout,
     ) -> Option<Source<'_>> {
-        if pool::identity() != Some(self.task)
-            || element != self.range.element
-            || element.size() == 0
-        {
+        if pool::identity() != Some(self.task) || element != self.range.element {
             return None;
         }
-        let offset = (data.as_ptr() as usize).checked_sub(self.range.data.as_ptr() as usize)?;
-        let bytes = len.checked_mul(element.size())?;
-        if offset % element.size() != 0
-            || offset.checked_add(bytes)? > self.range.len.checked_mul(element.size())?
-        {
+        if !contains_range(self.range.data, self.range.len, data, len, element) {
             return None;
         }
         Some(Source {
@@ -186,6 +174,33 @@ impl Loan {
             origin: Some(&self.range.origin),
         })
     }
+}
+
+/// Zero-sized elements share a sentinel; their logical length still cannot grow.
+/// Nonzero elements must remain aligned to, and inside, the received element range.
+pub(crate) fn contains_range(
+    source: NonNull<u8>,
+    source_len: usize,
+    data: NonNull<u8>,
+    len: usize,
+    element: Layout,
+) -> bool {
+    if element.size() == 0 {
+        return data == source && len <= source_len;
+    }
+    let Some(offset) = (data.as_ptr() as usize).checked_sub(source.as_ptr() as usize) else {
+        return false;
+    };
+    let Some(bytes) = len.checked_mul(element.size()) else {
+        return false;
+    };
+    let Some(end) = offset.checked_add(bytes) else {
+        return false;
+    };
+    offset % element.size() == 0
+        && source_len
+            .checked_mul(element.size())
+            .is_some_and(|limit| end <= limit)
 }
 
 pub(crate) struct Borrowed {
@@ -327,11 +342,63 @@ pub(crate) fn tree_observations(parent: u64) -> Vec<Observation> {
 mod tests {
     use super::*;
     #[test]
+    fn scoped_borrow_aggregate_shapes_check_fields_and_phantom_arguments() {
+        let registry = crate::stdlib::module_registry();
+        let types = registry.types();
+        let source = r#"
+            import joky/array.{type Array}
+            import joky/fixed_array.{type FixedArray}
+            struct Plain { flag: Bool, payload: (UInt8, Float64), row: FixedArray<Int32, 2> }
+            struct Empty { value: Unit }
+            struct Pointer { value: Ptr }
+            struct Reference { value: &Int32 }
+            struct Callback { value: fn(Int32) -> Int32 }
+            struct Owner { value: String }
+            struct Phantom<T> { value: Int32 }
+            enum Choice { One(Int32), Empty }
+            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>) {}
+            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, d: &Array<Owner>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>) {}
+        "#;
+        let ast = types
+            .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())
+            .unwrap_or_else(|e| panic!("{e}"));
+        let prepared = crate::core::prepared::PreparedModule::new(&ast, types, registry.metadata())
+            .unwrap_or_else(|e| panic!("{e}"));
+        let imports = registry
+            .import_layouts(prepared.ast(), &Default::default())
+            .unwrap();
+        let plan = prepared.plan(&imports).unwrap_or_else(|e| panic!("{e}"));
+        for ty in &plan.functions["accepted"].signature.params {
+            let shape = Shape::of(ty).unwrap_or_else(|| panic!("{ty}"));
+            let mut encoded = Vec::new();
+            shape.encode(&mut encoded);
+            assert_eq!(Shape::decode(&encoded).unwrap().layout(), shape.layout());
+        }
+        for ty in &plan.functions["rejected"].signature.params {
+            assert!(Shape::of(ty).is_none(), "{ty}");
+        }
+    }
+
+    #[test]
+    fn scoped_borrow_zero_sized_ranges_keep_logical_bounds() {
+        let sentinel = NonNull::<u8>::dangling();
+        let other = NonNull::<u64>::dangling().cast::<u8>();
+        let unit = Layout::new::<()>();
+        assert!(contains_range(sentinel, 3, sentinel, 3, unit));
+        assert!(contains_range(sentinel, 3, sentinel, 0, unit));
+        assert!(!contains_range(sentinel, 3, sentinel, 4, unit));
+        assert!(!contains_range(sentinel, 3, other, 0, unit));
+        assert!(!contains_range(sentinel, 0, sentinel, 1, unit));
+    }
+
+    #[test]
     fn scoped_borrow_shapes_keep_packets_mutation_and_nominal_capabilities_closed() {
         for target in [
             Type::String,
             Type::BufferSlice(Arc::new(Type::Int32)),
             Type::BufferSlice(Arc::new(Type::Bool)),
+            Type::BufferSlice(Arc::new(Type::Unit)),
+            Type::BufferSlice(Arc::new(Type::tuple(vec![Type::UInt8, Type::Float64]))),
         ] {
             let ty = Type::reference(target.clone(), false);
             let shape = Shape::of(&ty).unwrap();
@@ -349,7 +416,18 @@ mod tests {
         ] {
             assert!(Shape::of(&Type::reference(target, false)).is_none());
         }
-        for words in [vec![], vec![99], vec![99, 0], vec![99, 13], vec![99, 1, 0]] {
+        for words in [
+            vec![],
+            vec![99],
+            vec![99, 0],
+            vec![99, 6],
+            vec![99, 13],
+            vec![99, 1, 0],
+            vec![99, 1, 2],
+            vec![99, 16, 16],
+            vec![99, u64::MAX, 1],
+            vec![99, 4, 4, 0],
+        ] {
             assert!(Shape::decode(&words).is_err());
         }
     }

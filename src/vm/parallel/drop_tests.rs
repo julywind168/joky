@@ -293,6 +293,36 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         } else {
             source
         };
+        // Static groups keep text coverage; dynamic captures exercise padded
+        // aggregate buffers through the same failure/cancel/close lifetime fence.
+        let source = if dynamic {
+            source
+                .replace("import joky/string", "import joky/array.{type Array}")
+                .replace(
+                    "struct Source { text: String }",
+                    "struct Source { text: String, values: Array<(Int32, Float64)> }",
+                )
+                .replace(
+                    "fn reader(text: &String)",
+                    "fn reader(text: &Array<(Int32, Float64)>)",
+                )
+                .replace(
+                    "fn relay(text: &String)",
+                    "fn relay(text: &Array<(Int32, Float64)>)",
+                )
+                .replace(
+                    "fn helper(text: &String)",
+                    "fn helper(text: &Array<(Int32, Float64)>)",
+                )
+                .replace("string.byte_length(text)", "uint64(text[0].0)")
+                .replace(
+                    "Source { text: \"source destroyed\" }",
+                    "Source { text: \"source destroyed\", values: [(7, 1.5)] }",
+                )
+                .replace("helper(&source.text)", "helper(&source.values)")
+        } else {
+            source
+        };
         vm.load_source(&source).unwrap();
         let budget = TaskBudget::new(4 << 20);
         let prepared = vm

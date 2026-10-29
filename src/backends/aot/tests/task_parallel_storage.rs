@@ -1208,6 +1208,8 @@ fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
             "forwarded_parked",
             "dynamic_failed",
             "dynamic_parked",
+            "aggregate_failed",
+            "aggregate_parked",
         ],
         "scoped-stop",
     );
@@ -1280,6 +1282,10 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
         ("dynamic_views", 12),
         ("dynamic_mixed", 9),
         ("dynamic_break_continue", 44),
+        ("aggregate_readers", 109),
+        ("aggregate_capture", 30),
+        ("aggregate_zero", 9),
+        ("aggregate_layouts", 12),
     ];
     let names: Vec<_> = cases.iter().map(|(name, _)| *name).collect();
     let (_scratch, entries, library) = linked_task_entries(SOURCE, &names, "scoped-nested");
@@ -1329,12 +1335,14 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
                     match *name {
                         "forwarded" | "dynamic_views" => 3,
                         "dynamic_shared" => 4,
+                        "aggregate_readers" => 5,
+                        "aggregate_capture" => 1,
                         "dynamic_return" => 1,
                         _ => 2,
                     },
                     "{mode:?}/{workers}/{name}: group stayed local"
                 );
-                if name.starts_with("dynamic") {
+                if name.starts_with("dynamic") || name.starts_with("aggregate") {
                     let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
                     for reader in tree.iter().filter(|o| !o.source) {
                         assert_eq!(reader.origin_parent, task.identity());

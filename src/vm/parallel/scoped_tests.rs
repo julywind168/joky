@@ -185,6 +185,8 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
         for (name, expected) in [
             ("isolated_inputs", InstanceValue::Int32(12)),
             ("advanced", InstanceValue::UInt64(17)),
+            ("aggregate_readers", InstanceValue::Int32(109)),
+            ("aggregate_zero", InstanceValue::Int32(9)),
             ("forwarded", InstanceValue::Int32(145)),
             ("dynamic_shared", InstanceValue::Int32(42)),
             ("dynamic_inputs", InstanceValue::Int32(12)),
@@ -231,6 +233,7 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
                                     | "isolated_inputs"
                                     | "forwarded_isolate"
                                     | "dynamic_inputs"
+                                    | "aggregate_readers"
                             ));
                             assert_eq!(
                                 value.value(),
@@ -266,7 +269,9 @@ fn scoped_borrow_budget_boundaries() {
 #[test]
 #[ignore = "exhaustive: scoped descriptors, view installation, mixed owners and results"]
 fn exhaustive_scoped_borrow_budgets() {
-    budgets((0..(1 << 20)).step_by(128));
+    // The shared aggregate fixture increases frozen interpreter metadata.
+    // Preserve every failure boundary and stop each case at its first success.
+    budgets((0..(4 << 20)).step_by(128));
 }
 
 #[test]
@@ -309,6 +314,10 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
             ("nested_isolated_success", 91),
             ("forwarded", 145),
             ("dynamic_return", 26),
+            // A race loser may be cancelled by its winner before the host can
+            // request root cancellation; sweep a joining dynamic relay instead.
+            ("aggregate_capture", 30),
+            ("aggregate_zero", 9),
         ] {
             let mut complete = false;
             for boundary in 0..64 {

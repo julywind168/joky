@@ -21,19 +21,19 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
         let view = &mut *(input.header as *mut Buffer);
         let data = view.data;
         let len = view.len;
-        let element = Layout::new::<i32>();
+        let element = Layout::new::<(i32, f64)>();
         let mut checked = u64::from(view.scoped_range(element).is_some());
         view.len = len + 1;
         checked |= u64::from(view.scoped_range(element).is_none()) << 1;
         view.len = len;
         // The owner still has this prefix, but the received loan excludes it.
-        view.data = NonNull::new_unchecked(data.as_ptr().sub(4));
+        view.data = NonNull::new_unchecked(data.as_ptr().sub(element.size()));
         checked |= u64::from(view.scoped_range(element).is_none()) << 2;
         view.data = NonNull::new_unchecked(data.as_ptr().add(1));
         checked |= u64::from(view.scoped_range(element).is_none()) << 3;
         view.data = data;
         checked |= u64::from(view.scoped_range(Layout::new::<i64>()).is_none()) << 4;
-        view.data = NonNull::new_unchecked(data.as_ptr().add(len * 4));
+        view.data = NonNull::new_unchecked(data.as_ptr().add(len * element.size()));
         view.len = 0;
         checked |= u64::from(view.scoped_range(element).is_some()) << 5;
         view.data = data;
@@ -72,14 +72,14 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
             import joky/slice.{type Slice}
             import joky/task
             extern fn inspect() @suspends -> Int32
-            fn sum(values: &Slice<Int32>) @suspends -> Int32 { task.yield_now(); values[0] + values[1] }
-            fn reader(values: &Slice<Int32>) @suspends -> Int32 {
+            fn sum(values: &Slice<(Int32, Float64)>) @suspends -> Int32 { task.yield_now(); values[0].0 + values[1].0 }
+            fn reader(values: &Slice<(Int32, Float64)>) @suspends -> Int32 {
                 let checked = inspect()
                 let (a, b) = join { | sum(values) | sum(values) }
                 checked + a + b
             }
             fn root() @suspends -> Int32 {
-                let values = [2, 3, 5, 7]
+                let values = [(2, 1.5), (3, 2.5), (5, 3.5), (7, 4.5)]
                 let (a, b) = join { | reader(values.slice(1, 3)) | task.yield_now() }
                 a
             }

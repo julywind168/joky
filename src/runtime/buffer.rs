@@ -541,7 +541,6 @@ impl Buffer {
         }
         let origin = unsafe { self.origin.as_ref()? };
         if task == 0
-            || element.size() == 0
             || origin.owner_task != task
             || origin.origin != self.origin
             || self.element != element
@@ -559,11 +558,13 @@ impl Buffer {
         {
             return None;
         }
-        let offset = (self.data.as_ptr() as usize).checked_sub(origin.data.as_ptr() as usize)?;
-        let bytes = self.len.checked_mul(element.size())?;
-        if offset % element.size() != 0
-            || offset.checked_add(bytes)? > origin.len.checked_mul(element.size())?
-        {
+        if !super::parallel::scoped::contains_range(
+            origin.data,
+            origin.len,
+            self.data,
+            self.len,
+            element,
+        ) {
             return None;
         }
         Some(super::parallel::scoped::Source {
