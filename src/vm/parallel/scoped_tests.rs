@@ -15,7 +15,7 @@ fn wait(mut ready: impl FnMut() -> bool) {
 }
 
 #[test]
-fn scoped_borrow_nested_groups_and_retransfer_boundary() {
+fn scoped_borrow_nested_groups_forward_received_views() {
     let source = format!(
         r#"{SOURCE}
         fn nested(values: &Array<Int32>) @suspends -> Int32 {{
@@ -62,11 +62,25 @@ fn scoped_borrow_nested_groups_and_retransfer_boundary() {
                 remote_inputs,
                 "{mode:?} {name}"
             );
-            for child in observations.iter().filter(|o| !o.source) {
-                assert!(
-                    crate::runtime::parallel::scoped::observations(child.task).is_empty(),
-                    "a borrowed view was forwarded to another worker"
+            let forwarded: Vec<_> = observations
+                .iter()
+                .filter(|o| !o.source)
+                .flat_map(|child| crate::runtime::parallel::scoped::observations(child.task))
+                .collect();
+            if name != "isolated" {
+                assert_eq!(
+                    forwarded.iter().filter(|o| o.source).count(),
+                    2,
+                    "{mode:?} {name}"
                 );
+                let original = observations.iter().find(|o| o.source).unwrap();
+                for input in &forwarded {
+                    assert_eq!(
+                        (input.origin_parent, input.origin_scope),
+                        (original.origin_parent, original.origin_scope)
+                    );
+                    assert_eq!((input.data, input.len), (original.data, original.len));
+                }
             }
             drop(task);
             pool.wait_closed();
@@ -123,6 +137,9 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
         for (name, expected) in [
             ("isolated_inputs", InstanceValue::Int32(12)),
             ("advanced", InstanceValue::UInt64(17)),
+            ("forwarded", InstanceValue::Int32(145)),
+            ("forwarded_race", InstanceValue::Int32(94)),
+            ("forwarded_isolate", InstanceValue::Int32(94)),
             ("nested_race", InstanceValue::Int32(91)),
             ("borrowed_race", InstanceValue::Int32(68)),
             ("nested_isolated_success", InstanceValue::Int32(91)),
@@ -159,7 +176,7 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
                         if !success {
                             assert!(matches!(
                                 name,
-                                "nested_isolated_success" | "isolated_inputs"
+                                "nested_isolated_success" | "isolated_inputs" | "forwarded_isolate"
                             ));
                             assert_eq!(
                                 value.value(),
@@ -233,7 +250,11 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         }
         vm.load_source(&format!("{source}\nextern fn checkpoint() @suspends"))
             .unwrap();
-        for (name, expected) in [("main", 104), ("nested_isolated_success", 91)] {
+        for (name, expected) in [
+            ("main", 104),
+            ("nested_isolated_success", 91),
+            ("forwarded", 145),
+        ] {
             let mut complete = false;
             for boundary in 0..64 {
                 COUNT.store(0, Ordering::SeqCst);

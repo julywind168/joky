@@ -3,7 +3,7 @@ use super::*;
 use crate::runtime::parallel::{
     packet::{Packet, Shape},
     pool,
-    scoped::{Input, InputShape, Scope},
+    scoped::{Input, InputShape, Loan, Scope},
     Lease,
 };
 pub(super) struct Scopes {
@@ -24,7 +24,7 @@ fn install(
     arena: &mut crate::runtime::arena::Arena,
     cleanups: &mut crate::runtime::cleanup::Cleanups,
     base: usize,
-    loans: &mut Vec<Arc<Scope>>,
+    loans: &mut Vec<Rc<Loan>>,
 ) -> Result<Vec<Value>, Error> {
     let words = packet.install(arena, cleanups, base, loans)?;
     ty.value_lanes()
@@ -80,12 +80,12 @@ fn start_function(
     let shape_charge = crate::runtime::parallel::reserve_current(
         std::mem::size_of::<Worker>()
             + shape.bytes()
-            + packets.len() * std::mem::size_of::<Arc<Scope>>(),
+            + packets.len() * std::mem::size_of::<Rc<Loan>>(),
     )?;
     let args = vec![Value::Unit; function.info.parameter_slots()];
+    let mut loans = Vec::new();
     let mut execution = Execution::new(Frame::new(function.clone(), args.iter())?, limits, true);
     let mut base = 0;
-    let mut loans = Vec::new();
     for (packet, ty) in packets.into_iter().zip(&function.info.signature.params) {
         // Install directly in the activation so partial installation is cleaned
         // if a later packet conversion fails.
@@ -380,7 +380,7 @@ struct Worker {
     execution: Execution,
     module: Rc<BytecodeModule>,
     _shape_charge: Option<Lease>,
-    _loans: Vec<Arc<Scope>>,
+    _loans: Vec<Rc<Loan>>,
 }
 impl pool::Job for Worker {
     fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {
@@ -413,7 +413,7 @@ struct HostWorker {
     pending: HostPending,
     arena: crate::runtime::arena::Arena,
     ret: Type,
-    _loans: Vec<Arc<Scope>>,
+    _loans: Vec<Rc<Loan>>,
 }
 impl pool::Job for HostWorker {
     fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {

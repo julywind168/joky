@@ -4,6 +4,112 @@ use super::*;
 use std::sync::Barrier;
 
 #[test]
+fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
+    use crate::runtime::{cps::CpsFrame, parallel};
+    use crate::vm::{InstanceValue, TaskValue, VmEngine, VmMode};
+    use crate::{FunctionSignature, Type};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+    unsafe extern "C" fn inspect(frame: *mut CpsFrame) -> i32 {
+        let task = parallel::pool::identity().unwrap();
+        let input = parallel::scoped::observations(parallel::pool::parent_identity().unwrap())
+            .into_iter()
+            .find(|o| !o.source && o.task == task)
+            .unwrap();
+        let view = &mut *(input.header as *mut Buffer);
+        let data = view.data;
+        let len = view.len;
+        let element = Layout::new::<i32>();
+        let mut checked = u64::from(view.scoped_range(element).is_some());
+        view.len = len + 1;
+        checked |= u64::from(view.scoped_range(element).is_none()) << 1;
+        view.len = len;
+        // The owner still has this prefix, but the received loan excludes it.
+        view.data = NonNull::new_unchecked(data.as_ptr().sub(4));
+        checked |= u64::from(view.scoped_range(element).is_none()) << 2;
+        view.data = NonNull::new_unchecked(data.as_ptr().add(1));
+        checked |= u64::from(view.scoped_range(element).is_none()) << 3;
+        view.data = data;
+        checked |= u64::from(view.scoped_range(Layout::new::<i64>()).is_none()) << 4;
+        view.data = NonNull::new_unchecked(data.as_ptr().add(len * 4));
+        view.len = 0;
+        checked |= u64::from(view.scoped_range(element).is_some()) << 5;
+        view.data = data;
+        view.len = len;
+        let unproven = Buffer::view(
+            &mut *crate::runtime::cps::arena(frame),
+            data.as_ptr(),
+            len,
+            element,
+        );
+        match unproven {
+            Ok(unproven) => {
+                checked |= u64::from(unproven.as_ref().scoped_range(element).is_none()) << 6;
+                (*frame).result = checked;
+                0
+            }
+            Err(error) => {
+                crate::runtime::error::record_error(error);
+                3
+            }
+        }
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_parallel_suspending_fn(
+                "inspect",
+                FunctionSignature::new(vec![], Type::Int32),
+                inspect,
+                0,
+                Arc::new(()),
+            )
+            .unwrap();
+        }
+        vm.load_source(r#"
+            import joky/slice.{type Slice}
+            import joky/task
+            extern fn inspect() @suspends -> Int32
+            fn sum(values: &Slice<Int32>) @suspends -> Int32 { task.yield_now(); values[0] + values[1] }
+            fn reader(values: &Slice<Int32>) @suspends -> Int32 {
+                let checked = inspect()
+                let (a, b) = join { | sum(values) | sum(values) }
+                checked + a + b
+            }
+            fn root() @suspends -> Int32 {
+                let values = [2, 3, 5, 7]
+                let (a, b) = join { | reader(values.slice(1, 3)) | task.yield_now() }
+                a
+            }
+        "#).unwrap_or_else(|e| panic!("{e}"));
+        let budget = parallel::TaskBudget::new(1 << 20);
+        let mut pool = parallel::ParallelExecutor::new(3, 16).unwrap();
+        let task = vm
+            .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap()
+            .submit(&pool)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !task.is_finished() {
+            assert!(Instant::now() < deadline, "{mode:?}: view probe stalled");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            task.take_result().unwrap().value(),
+            &TaskValue::Scalar(InstanceValue::Int32(143)),
+            "{mode:?}"
+        );
+        let tree = parallel::scoped::tree_observations(task.identity());
+        assert_eq!(tree.iter().filter(|o| o.source).count(), 3);
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
 fn scoped_borrow_storage_root_does_not_replace_an_owner_lease() {
     use crate::runtime::parallel::{Storage, TaskBudget};
     let budget = TaskBudget::new(1 << 20);

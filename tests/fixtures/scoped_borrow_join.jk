@@ -142,3 +142,74 @@ fn nested_isolated_success() @suspends -> Int32 {
     let anchor = 1
     match isolate { nested_owned(&anchor) } { Ok(value) => value, Err(_) => -1 }
 }
+
+// Each level narrows only the view it received; siblings share overlapping bytes.
+fn relay_slice(values: &Slice<Int32>, depth: Int32) @suspends -> Int32 {
+    if depth == 0 { return slice_sum(values) }
+    let (a, b) = join {
+        | relay_slice(slice.slice(values, 1, slice.len(values)), depth - 1)
+        | slice_sum(slice.slice(values, 0, 2))
+    }
+    a + b
+}
+fn relay_array(values: &Array<Int32>) @suspends -> Int32 {
+    let (a, b) = join { | relay_slice(values.slice(0, values.len()), 2) | array_sum(values) }
+    a + b
+}
+fn relay_text(text: &String, depth: Int32) @suspends -> Int32 {
+    if depth == 0 { return text_size(text) }
+    let (a, b) = join { | relay_text(text, depth - 1) | text_size(text) }
+    a + b
+}
+fn relay_empty(values: &Slice<Int32>) @suspends -> Int32 {
+    let (a, b) = join { | slice_sum(values) | slice_sum(slice.slice(values, 0, 0)) }
+    a + b
+}
+fn forwarded() @suspends -> Int32 {
+    var values = [3, 5, 7, 11]
+    let text = "héllo 世界"
+    let (a, b, c) = join {
+        | relay_array(&values)
+        | relay_text(&text, 2)
+        | relay_empty(values.slice(4, 4))
+    }
+    values[0] = 42
+    a + b + c + values[0]
+}
+fn relay_race(values: &Array<Int32>) @suspends -> Int32 {
+    race { | array_sum(values) | forever(values) }
+}
+fn forwarded_race() @suspends -> Int32 {
+    var values = [3, 5, 7, 11]
+    let (a, b) = join { | relay_race(&values) | array_sum(&values) }
+    values[0] = 42
+    a + b + values[0]
+}
+fn relay_isolate(values: &Array<Int32>) @suspends -> Int32 {
+    match isolate { failed_reader(values) } { Ok(_) => 0, Err(_) => array_sum(values) }
+}
+fn failed_reader(values: &Array<Int32>) @suspends -> Int32 {
+    let (a, b) = join { | array_sum(values) | invalid_index(values) }
+    a + b
+}
+fn forwarded_isolate() @suspends -> Int32 {
+    var values = [3, 5, 7, 11]
+    let (a, b) = join { | relay_isolate(&values) | array_sum(&values) }
+    values[0] = 42
+    a + b + values[0]
+}
+
+fn forwarded_failed() @suspends -> Int32 {
+    let values = [3, 5, 7, 11]
+    let (a, b) = join { | failed_reader(&values) | array_sum(&values) }
+    a + b
+}
+fn parked_reader(values: &Array<Int32>) @suspends -> Int32 {
+    let (a, b) = join { | array_sum(values) | forever(values) }
+    a + b
+}
+fn forwarded_parked() @suspends -> Int32 {
+    let values = [3, 5, 7, 11]
+    let (a, b) = join { | parked_reader(&values) | array_sum(&values) }
+    a + b
+}

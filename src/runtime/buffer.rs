@@ -17,8 +17,9 @@ pub(crate) enum DynDispatch {
 }
 
 pub(crate) struct Buffer {
-    // Local provenance only. Remote readers receive fresh headers with no origin.
+    // Local provenance only. Remote headers point at a loan on their own worker.
     origin: *const Buffer,
+    loan: *const super::parallel::scoped::Loan,
     owner_task: u64,
     pub(crate) dynamic: Option<DynDispatch>,
     resource: Option<super::resource::OwnedResource>,
@@ -326,6 +327,7 @@ impl Buffer {
         Self {
             // No bytes are accessed for empty or zero-sized storage.
             origin: std::ptr::null(),
+            loan: std::ptr::null(),
             owner_task: 0,
             data: NonNull::new(element.align() as *mut u8).unwrap(),
             len: 0,
@@ -519,15 +521,24 @@ impl Buffer {
                 self.element,
             )?;
             view.as_mut().origin = self.origin;
+            view.as_mut().loan = self.loan;
             Ok(view)
         }
     }
 
-    /// Immutable initialized scalar range belonging to the CURRENT task, not
-    /// merely another allocation in the shared storage root. Local slices retain
-    /// their origin; installed remote views deliberately have no origin.
-    pub(crate) fn scoped_range(&self, element: Layout) -> Option<(NonNull<u8>, usize)> {
+    /// A current-task owner or a received, bounded loan. Both origin pointers
+    /// and loan pointers are local; only the immutable original lease is forwarded.
+    pub(crate) fn scoped_range(
+        &self,
+        element: Layout,
+    ) -> Option<super::parallel::scoped::Source<'_>> {
         let task = super::parallel::pool::identity()?;
+        if let Some(loan) = unsafe { self.loan.as_ref() } {
+            if self.element != element {
+                return None;
+            }
+            return loan.source(self.data, self.len, element);
+        }
         let origin = unsafe { self.origin.as_ref()? };
         if task == 0
             || element.size() == 0
@@ -555,18 +566,26 @@ impl Buffer {
         {
             return None;
         }
-        Some((self.data, self.len))
+        Some(super::parallel::scoped::Source {
+            data: self.data,
+            len: self.len,
+            origin: None,
+        })
     }
     /// # Safety
     /// Called only by a scoped input holding its source lease. The source stays
     /// immutable and live until this worker and all derived views are cleaned.
+    /// `loan` belongs to this worker and outlives its execution and view cleanup.
     pub(crate) unsafe fn scoped_view(
         arena: &mut Arena,
         data: NonNull<u8>,
         len: usize,
         element: Layout,
+        loan: *const super::parallel::scoped::Loan,
     ) -> Result<NonNull<Self>, Error> {
-        Self::view(arena, data.as_ptr(), len, element)
+        let mut view = Self::view(arena, data.as_ptr(), len, element)?;
+        view.as_mut().loan = loan;
+        Ok(view)
     }
     /// Exclusive owned-packet installation, never a borrowed view handoff.
     pub(crate) unsafe fn adopt_task(owner: *mut Self) {
@@ -589,6 +608,7 @@ impl Buffer {
     ) -> Result<NonNull<Self>, Error> {
         let value = Self {
             origin: std::ptr::null(),
+            loan: std::ptr::null(),
             owner_task: 0,
             data: NonNull::new(data).unwrap(),
             len,

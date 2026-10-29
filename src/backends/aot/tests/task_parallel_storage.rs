@@ -1199,8 +1199,11 @@ fn task_parallel_map_values_and_roots_on_all_backends() {
 fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
     use std::time::{Duration, Instant};
     const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_join.jk");
-    let (_scratch, entries, library) =
-        linked_task_entries(SOURCE, &["failed", "parked"], "scoped-stop");
+    let (_scratch, entries, library) = linked_task_entries(
+        SOURCE,
+        &["failed", "parked", "forwarded_failed", "forwarded_parked"],
+        "scoped-stop",
+    );
     for workers in [1, 3] {
         for (index, entry) in entries.iter().enumerate() {
             let budget = TaskBudget::new(4 << 20);
@@ -1216,16 +1219,20 @@ fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
             let mut pool = crate::runtime::parallel::ParallelExecutor::new(workers, 16).unwrap();
             let task = prepared.submit(&pool).unwrap();
             let deadline = Instant::now() + Duration::from_secs(20);
-            if index == 1 {
-                while crate::runtime::parallel::scoped::observations(task.identity())
-                    .iter()
-                    .filter(|o| !o.source)
-                    .count()
-                    != 2
-                {
+            if index % 2 == 1 {
+                loop {
+                    let observations =
+                        crate::runtime::parallel::scoped::tree_observations(task.identity());
+                    let readers = observations
+                        .iter()
+                        .filter(|o| !o.source && (index < 2 || o.parent != task.identity()))
+                        .count();
+                    if readers == 2 {
+                        break;
+                    }
                     assert!(
                         Instant::now() < deadline,
-                        "AOT borrowed readers did not start"
+                        "AOT borrowed descendants did not start"
                     );
                     std::thread::sleep(Duration::from_millis(1));
                 }
@@ -1236,7 +1243,7 @@ fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
                 std::thread::sleep(Duration::from_millis(1));
             }
             let error = task.take_result().err().unwrap();
-            if index == 1 {
+            if index % 2 == 1 {
                 assert_eq!(error.code(), crate::ErrorCode::Cancelled);
             } else {
                 assert_eq!(error.code(), crate::ErrorCode::RuntimeError, "{error}");
@@ -1257,6 +1264,9 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
         ("borrowed_race", 68),
         ("nested_isolate", 42),
         ("isolated_results", 7),
+        ("forwarded", 145),
+        ("forwarded_race", 94),
+        ("forwarded_isolate", 94),
     ];
     let names: Vec<_> = cases.iter().map(|(name, _)| *name).collect();
     let (_scratch, entries, library) = linked_task_entries(SOURCE, &names, "scoped-nested");
@@ -1303,9 +1313,51 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
                 let observations = crate::runtime::parallel::scoped::observations(task.identity());
                 assert_eq!(
                     observations.iter().filter(|o| o.source).count(),
-                    2,
+                    if *name == "forwarded" { 3 } else { 2 },
                     "{mode:?}/{workers}/{name}: group stayed local"
                 );
+                if name.starts_with("forwarded") {
+                    let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
+                    assert!(
+                        tree.iter().any(|o| o.source && o.parent != task.identity()),
+                        "{mode:?}/{name}: forwarding stayed local"
+                    );
+                    let original_scope = observations.iter().find(|o| o.source).unwrap().scope;
+                    for reader in tree.iter().filter(|o| !o.source) {
+                        assert_eq!(
+                            (reader.origin_parent, reader.origin_scope),
+                            (task.identity(), original_scope)
+                        );
+                        let sender = tree
+                            .iter()
+                            .find(|o| {
+                                o.source
+                                    && o.scope == reader.scope
+                                    && o.data == reader.data
+                                    && o.len == reader.len
+                            })
+                            .unwrap();
+                        assert_ne!(reader.header, sender.header, "headers crossed workers");
+                    }
+                    if *name == "forwarded" {
+                        let mut deepest = 0;
+                        for reader in tree.iter().filter(|o| !o.source) {
+                            let mut task = reader.task;
+                            let mut depth = 0;
+                            while let Some(input) =
+                                tree.iter().find(|o| !o.source && o.task == task)
+                            {
+                                depth += 1;
+                                task = input.parent;
+                            }
+                            deepest = deepest.max(depth);
+                        }
+                        assert!(deepest >= 4, "multi-level relay stayed local");
+                        assert!(tree
+                            .iter()
+                            .any(|o| o.source && o.len == 0 && o.parent != task.identity()));
+                    }
+                }
                 drop(task);
             }
             pool.wait_closed();

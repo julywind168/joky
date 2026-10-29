@@ -1,4 +1,4 @@
-//! Private, nonescaping inputs for a compiler-certified static join. Ordinary
+//! Private, nonescaping inputs for a compiler-certified static join/race. Ordinary
 //! packets and public TaskValue inputs never accept references.
 use super::{
     packet::{invalid, Packet, Shape as OwnedShape},
@@ -8,7 +8,7 @@ use crate::{
     runtime::{arena::Arena, buffer::Buffer, cleanup::Cleanups},
     Error, Type,
 };
-use std::{alloc::Layout, ptr::NonNull, sync::Arc};
+use std::{alloc::Layout, ptr::NonNull, rc::Rc, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Shape {
@@ -111,6 +111,12 @@ impl InputShape {
     }
 }
 
+pub(crate) struct Source<'a> {
+    pub(crate) data: NonNull<u8>,
+    pub(crate) len: usize,
+    pub(crate) origin: Option<&'a Arc<Scope>>,
+}
+
 pub(crate) struct Scope {
     parent: u64,
     pub(crate) identity: u64,
@@ -136,14 +142,51 @@ struct Range {
     len: usize,
     element: Layout,
     scope: Arc<Scope>,
+    origin: Arc<Scope>,
     _charge: Option<Lease>,
 }
 // SAFETY: capture requires compiler-certified shared scalar storage owned by
-// this parent task. Local cancellation drains this subtree before dropping its frames.
+// this parent task or received under a bounded loan. Each hop retains the original
+// lease directly, without foreign headers or a recursive lease chain. Local
+// cancellation drains this subtree before dropping its frames.
 // The static group and worker-root failure barrier retain the source owner until
 // every reader is cleaned. Only payload bytes cross; Buffer/Rc/frame metadata do
 // not. install creates a new nonowning header on the receiving worker.
 unsafe impl Send for Range {}
+
+/// Stable, worker-local provenance for installed headers and their slices.
+/// The job retains this allocation through all descendant and local view cleanup.
+pub(crate) struct Loan {
+    task: u64,
+    range: Range,
+}
+impl Loan {
+    pub(crate) fn source(
+        &self,
+        data: NonNull<u8>,
+        len: usize,
+        element: Layout,
+    ) -> Option<Source<'_>> {
+        if pool::identity() != Some(self.task)
+            || element != self.range.element
+            || element.size() == 0
+        {
+            return None;
+        }
+        let offset = (data.as_ptr() as usize).checked_sub(self.range.data.as_ptr() as usize)?;
+        let bytes = len.checked_mul(element.size())?;
+        if offset % element.size() != 0
+            || offset.checked_add(bytes)? > self.range.len.checked_mul(element.size())?
+        {
+            return None;
+        }
+        Some(Source {
+            data,
+            len,
+            origin: Some(&self.range.origin),
+        })
+    }
+}
 
 pub(crate) struct Borrowed {
     range: Range,
@@ -161,20 +204,23 @@ impl Input {
         if pool::identity() != Some(scope.parent) {
             return Err(invalid());
         }
-        let (data, len) = shape
+        let Source { data, len, origin } = shape
             .buffer(word)
             .as_ref()
             .and_then(|b| b.scoped_range(shape.layout()))
             .ok_or_else(invalid)?;
-        #[cfg(test)]
-        observe(&scope, data.as_ptr() as usize, true);
         let range = Range {
             data,
             len,
             element: shape.layout(),
+            origin: origin.cloned().unwrap_or_else(|| scope.clone()),
             scope,
-            _charge: super::reserve_current(std::mem::size_of::<Borrowed>())?,
+            _charge: super::reserve_current(
+                std::mem::size_of::<Loan>() + 2 * std::mem::size_of::<usize>(),
+            )?,
         };
+        #[cfg(test)]
+        observe(&range, word as usize, true);
         Ok(Self::Borrowed(Borrowed { range }))
     }
     pub(crate) fn inputs(&self) -> usize {
@@ -188,7 +234,7 @@ impl Input {
         arena: &mut Arena,
         cleanups: &mut Cleanups,
         base: usize,
-        loans: &mut Vec<Arc<Scope>>,
+        loans: &mut Vec<Rc<Loan>>,
     ) -> Result<Vec<u64>, Error> {
         match self {
             Self::Owned(packet) => packet.install(arena, cleanups, base, None),
@@ -198,13 +244,21 @@ impl Input {
                 {
                     return Err(invalid());
                 }
-                // Keep the scope through execution AND all local view cleanup.
-                loans.push(range.scope.clone());
-                let view =
-                    unsafe { Buffer::scoped_view(arena, range.data, range.len, range.element)? };
+                // Keep provenance through execution AND all local view cleanup.
+                // Arena headers contain only this worker-local pointer; storing an
+                // owning Arc in them would cycle through Scope's shared Storage.
+                loans.push(Rc::new(Loan {
+                    task: pool::identity().ok_or_else(invalid)?,
+                    range,
+                }));
+                let loan = &**loans.last().unwrap();
+                let range = &loan.range;
+                let view = unsafe {
+                    Buffer::scoped_view(arena, range.data, range.len, range.element, loan)?
+                };
                 let word = view.as_ptr() as u64;
                 #[cfg(test)]
-                observe(&range.scope, range.data.as_ptr() as usize, false);
+                observe(range, word as usize, false);
                 Ok(vec![word])
             }
         }
@@ -218,18 +272,26 @@ pub(crate) struct Observation {
     pub(crate) task: u64,
     pub(crate) scope: u64,
     pub(crate) data: usize,
+    pub(crate) len: usize,
+    pub(crate) header: usize,
+    pub(crate) origin_parent: u64,
+    pub(crate) origin_scope: u64,
     pub(crate) thread: std::thread::ThreadId,
     pub(crate) source: bool,
 }
 #[cfg(test)]
 static OBSERVATIONS: std::sync::Mutex<Vec<Observation>> = std::sync::Mutex::new(Vec::new());
 #[cfg(test)]
-fn observe(scope: &Scope, data: usize, source: bool) {
+fn observe(range: &Range, header: usize, source: bool) {
     OBSERVATIONS.lock().unwrap().push(Observation {
-        parent: scope.parent,
+        parent: range.scope.parent,
         task: pool::identity().unwrap(),
-        scope: scope.identity,
-        data,
+        scope: range.scope.identity,
+        data: range.data.as_ptr() as usize,
+        len: range.len,
+        header,
+        origin_parent: range.origin.parent,
+        origin_scope: range.origin.identity,
         source,
         thread: std::thread::current().id(),
     });
@@ -243,6 +305,22 @@ pub(crate) fn observations(parent: u64) -> Vec<Observation> {
         .filter(|o| o.parent == parent)
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn tree_observations(parent: u64) -> Vec<Observation> {
+    let mut pending = vec![parent];
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    while let Some(task) = pending.pop() {
+        if !seen.insert(task) {
+            continue;
+        }
+        let observations = observations(task);
+        pending.extend(observations.iter().filter(|o| !o.source).map(|o| o.task));
+        result.extend(observations);
+    }
+    result
 }
 
 #[cfg(test)]

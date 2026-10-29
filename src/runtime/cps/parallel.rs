@@ -3,10 +3,10 @@ use super::{task::CheckedEntry, CpsFrame};
 use crate::runtime::parallel::{
     packet::{invalid, Packet, Shape},
     pool,
-    scoped::{Input, InputShape, Scope},
+    scoped::{Input, InputShape, Loan, Scope},
 };
 use crate::Error;
-use std::{sync::Arc, task::Poll};
+use std::{rc::Rc, sync::Arc, task::Poll};
 
 pub(super) unsafe fn scoped_eligible(child: &mut CpsFrame, code: &CheckedEntry) -> bool {
     if !code.scoped {
@@ -103,12 +103,12 @@ fn start_inputs(
     let shape_charge = crate::runtime::parallel::reserve_current(
         std::mem::size_of::<NativeJob>()
             + result.bytes()
-            + packets.len() * std::mem::size_of::<Arc<Scope>>(),
+            + packets.len() * std::mem::size_of::<Rc<Loan>>(),
     )?;
+    let mut loans = Vec::new();
     let mut frame = Box::new(CpsFrame::try_new(slots)?);
     frame.parallel_return = true;
     let mut offset = 0;
-    let mut loans = Vec::new();
     for packet in packets {
         let inputs = packet.inputs();
         let words = unsafe {
@@ -134,7 +134,7 @@ struct NativeJob {
     result_offset: usize,
     result: Shape,
     _shape_charge: Option<crate::runtime::parallel::Lease>,
-    _loans: Vec<Arc<Scope>>,
+    _loans: Vec<Rc<Loan>>,
 }
 impl pool::Job for NativeJob {
     fn poll(&mut self) -> Poll<Result<pool::Output, Error>> {

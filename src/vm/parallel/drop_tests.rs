@@ -258,6 +258,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         let source = r#"
             import joky/drop.{type Drop}
             import joky/string
+            import joky/task
             extern fn trace(text: &String) -> Int32
             extern fn hold_reader() @suspends
             extern fn fail_parent() @suspends
@@ -268,9 +269,13 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
                 hold_reader()
                 before + string.byte_length(text)
             }
+            fn relay(text: &String) @suspends -> UInt64 {
+                let (a, b) = join { | reader(text) | task.yield_now() }
+                a
+            }
             fn peer() @suspends -> UInt64 { PEER; 0 }
             fn helper(text: &String) @suspends {
-                let (a, b) = join { | reader(text) | peer() }
+                let (a, b) = join { | relay(text) | peer() }
             }
             fn root() @suspends {
                 let source = Source { text: "source destroyed" }
@@ -284,7 +289,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
             .prepare_parallel_task("root", vec![], vec![budget.clone()])
             .unwrap();
         drop(vm);
-        let mut pool = ParallelExecutor::new(3, 16).unwrap();
+        let mut pool = ParallelExecutor::new(4, 16).unwrap();
         let task = prepared.submit(&pool).unwrap();
         let release = Release;
         wait(|| GATE.get().unwrap().0.lock().unwrap().0);
@@ -319,6 +324,13 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
             1,
             "{mode:?}: reader did not receive a scoped view"
         );
+        let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
+        assert_eq!(
+            tree.iter().filter(|o| !o.source).count(),
+            2,
+            "remote reader did not forward its loan"
+        );
+        assert!(tree.iter().all(|o| o.origin_parent == task.identity()));
         drop(release);
         task.wait().unwrap();
         let error = task.take_result().err().unwrap();
@@ -681,9 +693,13 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
                 hold()
                 before + string.byte_length(text)
             }
+            fn relay(text: &String) @suspends -> UInt64 {
+                let (a, b) = join { | reader(text) | task.yield_now() }
+                a
+            }
             fn owned() @suspends -> Int32 {
                 let source = Source { text: "source destroyed" }
-                let (a, b) = join { | reader(&source.text) | task.yield_now() }
+                let (a, b) = join { | relay(&source.text) | task.yield_now() }
                 0
             }
             fn losing(anchor: &Int32) @suspends -> Int32 { owned() }
@@ -715,7 +731,7 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
                 .unwrap() = (false, false);
             OBSERVED.lock().unwrap().clear();
             let budget = TaskBudget::new(4 << 20);
-            let mut pool = ParallelExecutor::new(3, 16).unwrap();
+            let mut pool = ParallelExecutor::new(4, 16).unwrap();
             let task = vm
                 .prepare_parallel_task(name, vec![], vec![budget.clone()])
                 .unwrap()
@@ -748,6 +764,13 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
                 1,
                 "nested join stayed local"
             );
+            let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
+            assert_eq!(
+                tree.iter().filter(|o| !o.source).count(),
+                2,
+                "remote reader did not forward its loan"
+            );
+            assert!(tree.iter().all(|o| o.origin_parent == task.identity()));
             if cancel {
                 task.request_cancel();
             }
