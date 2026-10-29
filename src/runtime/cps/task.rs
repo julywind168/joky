@@ -9,7 +9,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
-pub(crate) const ENTRY_VERSION: usize = 1;
+pub(crate) const ENTRY_VERSION: usize = 2;
 
 thread_local! {
     static ENTRIES: RefCell<BTreeMap<u64, Weak<CheckedEntry>>> = const { RefCell::new(BTreeMap::new()) };
@@ -43,17 +43,20 @@ impl Drop for CheckedEntry {
 #[export_name = "__joky_task_entry_v1"]
 pub(crate) unsafe extern "C" fn register(
     parent: *mut CpsFrame,
-    descriptor: *const NativeTaskEntryV1,
+    descriptor: *const NativeTaskEntryV2,
     indirect: *const usize,
 ) -> u64 {
     let checked = || {
-        let descriptor_ref = descriptor.as_ref().ok_or_else(|| {
-            Error::new_with_code(
+        // Inspect the common prefix before forming a reference to the larger v2
+        // envelope: old objects may only provide the shorter v1 allocation.
+        if descriptor.is_null() || *descriptor.cast::<usize>() != ENTRY_VERSION {
+            return Err(Error::new_with_code(
                 ErrorPhase::Abi,
                 ErrorCode::AbiError,
-                "Missing task entry descriptor",
-            )
-        })?;
+                "Invalid local task entry descriptor version",
+            ));
+        }
+        let descriptor_ref = &*descriptor;
         let (entry, frame_slots, layout) = descriptor_ref.check(indirect)?;
         // Addresses only deduplicate immutable metadata within this live code
         // snapshot. They are never exposed or accepted as task/entry identities.
@@ -96,7 +99,7 @@ pub(crate) unsafe extern "C" fn register(
             entry,
             frame_slots,
             layout,
-            scoped: descriptor_ref.qualification == 1 && descriptor_ref.entry.is_some(),
+            scoped: descriptor_ref.qualification == 1,
             inputs,
             result_key: (descriptor_ref.result_key != usize::MAX)
                 .then_some(descriptor_ref.result_key),
@@ -126,7 +129,7 @@ pub(super) fn lookup(parent: &CpsFrame, id: u64) -> Option<Rc<CheckedEntry>> {
 
 /// Read-only module data, emitted with native relocations rather than compiler addresses.
 #[repr(C)]
-pub(crate) struct NativeTaskEntryV1 {
+pub(crate) struct NativeTaskEntryV2 {
     pub version: usize,
     pub qualification: usize,
     pub entry: Option<CpsEntry>,
@@ -136,9 +139,12 @@ pub(crate) struct NativeTaskEntryV1 {
     pub input_keys: *const usize,
     pub input_count: usize,
     pub result_key: usize,
+    /// Relocated (entry, frame_slots) pairs in this immutable module snapshot.
+    pub scoped_targets: *const usize,
+    pub scoped_target_count: usize,
 }
 
-impl NativeTaskEntryV1 {
+impl NativeTaskEntryV2 {
     unsafe fn check(
         &self,
         indirect: *const usize,
@@ -147,13 +153,16 @@ impl NativeTaskEntryV1 {
             Error::new_with_code(
                 ErrorPhase::Abi,
                 ErrorCode::AbiError,
-                "Invalid local task entry descriptor v1",
+                "Invalid local task entry descriptor v2",
             )
         };
         if self.version != ENTRY_VERSION
             || self.qualification > 1
             || self.layout.is_null()
             || self.layout_words > 1_048_576
+            || self.scoped_target_count > 65_536
+            || (self.scoped_target_count != 0 && self.scoped_targets.is_null())
+            || (self.scoped_target_count != 0 && (self.qualification == 0 || self.entry.is_some()))
         {
             return Err(bad());
         }
@@ -167,6 +176,15 @@ impl NativeTaskEntryV1 {
             ),
             _ => return Err(bad()),
         };
+        if self.qualification == 1
+            && self.entry.is_none()
+            && !(0..self.scoped_target_count).any(|index| {
+                *self.scoped_targets.add(index * 2) == entry as usize
+                    && *self.scoped_targets.add(index * 2 + 1) == frame_slots
+            })
+        {
+            return Err(bad());
+        }
         if frame_slots < layout.slot_counts().0
             || frame_slots > isize::MAX as usize / std::mem::size_of::<u64>()
         {
@@ -410,7 +428,7 @@ mod tests {
             crate::Type::Int32,
         ))
         .unwrap();
-        let descriptor = NativeTaskEntryV1 {
+        let descriptor = NativeTaskEntryV2 {
             version: ENTRY_VERSION,
             qualification: 0,
             entry: Some(entry),
@@ -420,6 +438,8 @@ mod tests {
             input_keys: std::ptr::null(),
             input_count: 0,
             result_key: usize::MAX,
+            scoped_targets: std::ptr::null(),
+            scoped_target_count: 0,
         };
         let mut first = CpsFrame::new(0);
         let mut second = CpsFrame::new(0);
@@ -440,7 +460,7 @@ mod tests {
                 (ENTRY_VERSION, 0, usize::MAX, words.len()),
                 (ENTRY_VERSION, 0, 1, words.len() - 1),
             ] {
-                let invalid = NativeTaskEntryV1 {
+                let invalid = NativeTaskEntryV2 {
                     version,
                     qualification,
                     entry: Some(entry),
@@ -450,6 +470,8 @@ mod tests {
                     input_keys: std::ptr::null(),
                     input_count: 0,
                     result_key: usize::MAX,
+                    scoped_targets: std::ptr::null(),
+                    scoped_target_count: 0,
                 };
                 assert!(crate::runtime::error::checked(|| register(
                     &mut second,
@@ -460,6 +482,96 @@ mod tests {
             }
             assert_eq!(second.task_entries.len(), 1);
         }
+    }
+
+    #[test]
+    fn scoped_indirect_entries_check_frozen_target_and_frame_pair() {
+        unsafe extern "C" fn first(_: *mut CpsFrame) -> i32 {
+            0
+        }
+        unsafe extern "C" fn second(_: *mut CpsFrame) -> i32 {
+            1
+        }
+        let words = crate::runtime::task_scope::layout::encode(&crate::FunctionSignature::new(
+            vec![crate::Type::Int32],
+            crate::Type::Int32,
+        ))
+        .unwrap();
+        let targets = [
+            first as *const () as usize,
+            1,
+            second as *const () as usize,
+            3,
+        ];
+        let descriptor = NativeTaskEntryV2 {
+            version: ENTRY_VERSION,
+            qualification: 1,
+            entry: None,
+            frame_slots: 0,
+            layout: words.as_ptr(),
+            layout_words: words.len(),
+            input_keys: std::ptr::null(),
+            input_count: 0,
+            result_key: usize::MAX,
+            scoped_targets: targets.as_ptr(),
+            scoped_target_count: 2,
+        };
+        let mut parent = CpsFrame::new(0);
+        unsafe {
+            for pair in [
+                [first as *const () as usize, 1],
+                [second as *const () as usize, 3],
+            ] {
+                let token = crate::runtime::error::checked(|| {
+                    register(&mut parent, &descriptor, pair.as_ptr())
+                })
+                .unwrap();
+                assert!(lookup(&parent, token).unwrap().scoped);
+            }
+            for pair in [
+                [first as *const () as usize, 3],
+                [second as *const () as usize, 1],
+                [0, 1],
+            ] {
+                assert!(crate::runtime::error::checked(|| register(
+                    &mut parent,
+                    &descriptor,
+                    pair.as_ptr()
+                ))
+                .is_err());
+            }
+            for (targets, count) in [
+                (std::ptr::null(), 1),
+                (targets.as_ptr(), 0),
+                (targets.as_ptr(), 65_537),
+            ] {
+                let invalid = NativeTaskEntryV2 {
+                    scoped_targets: targets,
+                    scoped_target_count: count,
+                    ..descriptor
+                };
+                assert!(invalid
+                    .check([first as *const () as usize, 1].as_ptr())
+                    .is_err());
+            }
+            let one_target = NativeTaskEntryV2 {
+                scoped_target_count: 1,
+                ..descriptor
+            };
+            assert!(one_target
+                .check([second as *const () as usize, 3].as_ptr())
+                .is_err());
+            // Only a version word is accessible: rejecting old metadata must
+            // not construct a reference to a full v2 envelope first.
+            let old = 1usize;
+            assert!(crate::runtime::error::checked(|| register(
+                &mut parent,
+                (&old as *const usize).cast(),
+                std::ptr::null()
+            ))
+            .is_err());
+        }
+        assert_eq!(parent.task_entries.len(), 2);
     }
 
     #[test]

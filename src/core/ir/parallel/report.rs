@@ -56,6 +56,7 @@ pub fn explain_parallel(
         .collect();
     let effects = analyse(&plan, &prepared, &hosts);
     let rejected = scoped::rejections(&plan);
+    let indirect_entries = scoped::indirect_entries(&plan, &rejected);
     let mut pending = vec![entry.to_owned()];
     let mut seen = HashSet::new();
     let mut sites = Vec::new();
@@ -68,6 +69,13 @@ pub fn explain_parallel(
         };
         for (index, op) in body.ops.iter().enumerate() {
             pending.extend(op.dependencies().cloned());
+            if let Op::Concurrent { branches, .. } = op {
+                for branch in branches {
+                    if let Some(Ok(evidence)) = indirect_entries.get(&branch.name) {
+                        pending.extend(evidence.targets.iter().cloned());
+                    }
+                }
+            }
             let (construct, inputs) = match op {
                 Op::Concurrent {
                     kind: ConcurrentKind::Isolate,
@@ -101,7 +109,14 @@ pub fn explain_parallel(
             };
             let (disposition, reason) = match effects.require(&name) {
                 Err(error) => (ParallelDisposition::Rejected, error.message().into()),
-                Ok(()) => classify(&inputs, &plan, &effects, &rejected, construct),
+                Ok(()) => classify(
+                    &inputs,
+                    &plan,
+                    &effects,
+                    &rejected,
+                    &indirect_entries,
+                    construct,
+                ),
             };
             sites.push(ParallelSite {
                 span: body.op_spans[index],
@@ -156,6 +171,7 @@ fn classify(
     plan: &ModulePlan,
     effects: &Effects,
     rejected: &HashMap<String, String>,
+    indirect_entries: &HashMap<String, Result<scoped::IndirectEvidence, String>>,
     construct: &str,
 ) -> (ParallelDisposition, String) {
     use crate::runtime::parallel::{packet::Shape as Owned, scoped::InputShape};
@@ -170,13 +186,26 @@ fn classify(
     let borrowed = inputs
         .iter()
         .any(|(_, sig, _)| sig.params.iter().any(|ty| Owned::of(ty).is_err()));
-    for (branch, (name, sig, _)) in inputs.iter().enumerate() {
+    for (branch, (name, sig, indirect)) in inputs.iter().enumerate() {
         let target = if construct == "branch" {
             "capture".into()
         } else {
             format!("branch {} `{}` argument", branch + 1, display_name(name))
         };
-        let signature = scoped::signature(plan, name);
+        let signature = if *indirect && borrowed {
+            match indirect_entries.get(*name) {
+                Some(Ok(evidence)) => evidence.signature.clone(),
+                Some(Err(reason)) => return local(format!("branch {}: {reason}", branch + 1)),
+                None => {
+                    return local(format!(
+                        "branch {} lacks frozen target evidence",
+                        branch + 1
+                    ))
+                }
+            }
+        } else {
+            scoped::signature(plan, name)
+        };
         for (index, ty) in signature.params.iter().enumerate() {
             if InputShape::of(ty).is_err() {
                 return local(format!(
@@ -197,7 +226,7 @@ fn classify(
     if borrowed {
         for (branch, (name, _, indirect)) in inputs.iter().enumerate() {
             if *indirect {
-                return local(format!("branch {} uses an indirect target; borrowed groups require direct language entries", branch + 1));
+                continue;
             }
             if let Some(reason) = rejected.get(*name) {
                 return local(format!(
@@ -324,6 +353,35 @@ mod tests {
                 assert!(site.reason.contains("drop"), "{}", site.reason);
             }
         }
+    }
+
+    #[test]
+    fn parallel_report_indirect_borrows_check_all_frozen_candidates() {
+        let positive = report(
+            include_str!("../../../../tests/fixtures/scoped_borrow_indirect.jk"),
+            "main",
+        );
+        assert!(positive.entry_error.is_none());
+        assert!(!positive.sites.is_empty());
+        assert!(
+            positive
+                .sites
+                .iter()
+                .all(|site| site.disposition == ParallelDisposition::RuntimeChecked),
+            "{:?}",
+            positive.sites
+        );
+        let negative = report(
+            include_str!("../../../../tests/fixtures/scoped_borrow_indirect_local.jk"),
+            "local",
+        );
+        assert!(negative.entry_error.is_none());
+        assert_eq!(negative.sites[0].disposition, ParallelDisposition::Local);
+        assert!(
+            negative.sites[0].reason.contains("candidate `bad`"),
+            "{:?}",
+            negative.sites
+        );
     }
 
     #[test]

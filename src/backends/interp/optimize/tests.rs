@@ -31,6 +31,7 @@ pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunc
         &ids,
         &mut HashMap::new(),
         &mut Default::default(),
+        &HashMap::new(),
     )
     .unwrap()
 }
@@ -613,6 +614,7 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
                             &ids,
                             &mut HashMap::new(),
                             &mut Default::default(),
+                            &HashMap::new(),
                         )
                         .unwrap(),
                     ),
@@ -682,6 +684,7 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
                             &ids,
                             &mut HashMap::new(),
                             &mut Default::default(),
+                            &HashMap::new(),
                         )
                         .unwrap(),
                     ),
@@ -751,6 +754,7 @@ fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
                             &ids,
                             &mut HashMap::new(),
                             &mut Default::default(),
+                            &HashMap::new(),
                         )
                         .unwrap(),
                     ),
@@ -827,6 +831,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
                                 &ids,
                                 &mut HashMap::new(),
                                 &mut Default::default(),
+                                &HashMap::new(),
                             )
                             .unwrap(),
                         ),
@@ -917,6 +922,7 @@ fn method_receivers_and_constant_values_match_unoptimized_execution() {
                             &ids,
                             &mut HashMap::new(),
                             &mut Default::default(),
+                            &HashMap::new(),
                         )
                         .unwrap(),
                     ),

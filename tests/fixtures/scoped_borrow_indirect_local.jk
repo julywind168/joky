@@ -1,0 +1,12 @@
+import joky/string
+import joky/io.{println}
+
+fn safe(value: &String) @suspends @noescape -> Int32 { int32(value.byte_length()) }
+fn bad(value: &String) @suspends @noescape -> Int32 { println(1); 0 }
+fn expose() -> fn(&String) @suspends @noescape -> Int32 { bad }
+fn local() @suspends -> Int32 {
+    let value = "abc"
+    let callback = safe
+    let (a, b) = join { | callback(&value) | safe(&value) }
+    a + b
+}

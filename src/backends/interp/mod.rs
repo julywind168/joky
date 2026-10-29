@@ -219,6 +219,7 @@ struct AggregateCall {
 }
 
 struct BytecodeBranch {
+    scoped_targets: Vec<usize>,
     result: Option<usize>,
     results: Vec<usize>,
     indirect: Option<usize>,
@@ -415,13 +416,34 @@ pub(crate) fn compile(
         .map(|(id, name)| (name.clone(), id))
         .collect();
     let scoped = crate::core::ir::parallel::scoped::callees(&plan);
+    let indirect = crate::core::ir::parallel::scoped::indirect_entries(
+        &plan,
+        &crate::core::ir::parallel::scoped::rejections(&plan),
+    );
+    let scoped_targets: HashMap<_, _> = indirect
+        .into_iter()
+        .filter_map(|(name, evidence)| {
+            evidence.ok().map(|e| {
+                (
+                    name,
+                    e.targets.iter().map(|name| ids[name]).collect::<Vec<_>>(),
+                )
+            })
+        })
+        .collect();
     let mut functions = HashMap::new();
     let mut tables = HashMap::new();
     let mut layouts = places::Layouts::default();
     for name in &names {
         if let Some(body) = plan.bodies.get(name) {
-            let mut function =
-                lower_function(&plan.functions[name], body, &ids, &mut tables, &mut layouts)?;
+            let mut function = lower_function(
+                &plan.functions[name],
+                body,
+                &ids,
+                &mut tables,
+                &mut layouts,
+                &scoped_targets,
+            )?;
             function.name.clone_from(name);
             function.scoped = scoped.contains(name);
             function.task_signature = crate::core::ir::parallel::scoped::signature(&plan, name);
@@ -518,8 +540,9 @@ fn lower_function(
     ids: &HashMap<String, usize>,
     tables: &mut HashMap<usize, Arc<DynMethodTable>>,
     layouts: &mut places::Layouts,
+    scoped_targets: &HashMap<String, Vec<usize>>,
 ) -> Result<BytecodeFunction, Error> {
-    let mut function = lower_unoptimized(info, plan, ids, tables, layouts)?;
+    let mut function = lower_unoptimized(info, plan, ids, tables, layouts, scoped_targets)?;
     // The current optimizer reasons about values, not addressable aliasing.
     if !info.needs_arena && !plan.has_references() && !plan.has_buffers() {
         optimize::optimize(&mut function);
@@ -534,6 +557,7 @@ fn lower_unoptimized(
     ids: &HashMap<String, usize>,
     tables: &mut HashMap<usize, Arc<DynMethodTable>>,
     layouts: &mut places::Layouts,
+    scoped_targets: &HashMap<String, Vec<usize>>,
 ) -> Result<BytecodeFunction, Error> {
     // Labels are compile-time markers, not executable instructions. Consecutive
     // labels share a PC; a terminal label maps to code.len() for completion.
@@ -788,6 +812,10 @@ fn lower_unoptimized(
                 branches: branches
                     .iter()
                     .map(|branch| BytecodeBranch {
+                        scoped_targets: scoped_targets
+                            .get(&branch.name)
+                            .cloned()
+                            .unwrap_or_default(),
                         result: branch
                             .result
                             .as_ref()

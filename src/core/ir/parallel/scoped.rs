@@ -86,6 +86,101 @@ pub(crate) fn signature(plan: &ModulePlan, name: &str) -> crate::FunctionSignatu
     crate::FunctionSignature::new(params, signature.ret.clone())
 }
 
+/// Frozen targets share both the language signature/effect and the expanded
+/// task layout. Backends must additionally check the selected runtime entry.
+pub(crate) struct IndirectEvidence {
+    pub(crate) signature: crate::FunctionSignature,
+    pub(crate) targets: Vec<String>,
+}
+
+fn language_targets<'a>(
+    plan: &ModulePlan,
+    targets: &callables::Targets<'a>,
+    ty: &Type,
+) -> Result<BTreeSet<&'a str>, &'static str> {
+    let Type::Function(function) = ty else {
+        return Err("indirect call lacks a checked function type");
+    };
+    let candidates: BTreeSet<_> = targets.matching(function).collect();
+    if candidates.is_empty() {
+        Err("indirect call has no frozen language targets")
+    } else if candidates.len() > 65_536 {
+        Err("indirect call has too many frozen language targets")
+    } else if targets.dynamic_matching(function).next().is_some() {
+        Err("indirect call may use dynamic dispatch outside the scoped callback protocol")
+    } else if candidates
+        .iter()
+        .any(|name| !plan.bodies.contains_key(*name))
+    {
+        Err("indirect call may target a host ABI; scoped callbacks require language code")
+    } else {
+        Ok(candidates)
+    }
+}
+
+pub(crate) fn indirect_entries(
+    plan: &ModulePlan,
+    rejected: &HashMap<String, String>,
+) -> HashMap<String, Result<IndirectEvidence, String>> {
+    use crate::runtime::{
+        parallel::{packet::Shape, scoped::InputShape},
+        task_scope::layout,
+    };
+    let targets = callables::Targets::new(plan);
+    let mut entries = HashMap::new();
+    for body in plan.bodies.values() {
+        for op in &body.ops {
+            let Op::Concurrent { branches, .. } = op else {
+                continue;
+            };
+            for branch in branches {
+                let Some(slot) = &branch.indirect else {
+                    continue;
+                };
+                entries.entry(branch.name.clone()).or_insert_with(|| {
+                    let candidates =
+                        language_targets(plan, &targets, &slot.ty).map_err(str::to_owned)?;
+                    let mut first = None;
+                    for name in &candidates {
+                        if let Some(reason) = rejected.get(*name) {
+                            return Err(format!("candidate `{}`: {reason}", display_name(name)));
+                        }
+                        let signature = signature(plan, name);
+                        if signature
+                            .params
+                            .iter()
+                            .any(|ty| InputShape::of(ty).is_err())
+                            || Shape::of(&signature.ret).is_err()
+                        {
+                            return Err(format!(
+                                "candidate `{}` has an unsupported task packet layout",
+                                display_name(name)
+                            ));
+                        }
+                        let words =
+                            layout::encode(&signature).map_err(|e| e.message().to_owned())?;
+                        if let Some((_, expected)) = &first {
+                            if expected != &words {
+                                return Err(
+                                    "indirect candidates have different expanded task layouts"
+                                        .into(),
+                                );
+                            }
+                        } else {
+                            first = Some((signature, words));
+                        }
+                    }
+                    Ok(IndirectEvidence {
+                        signature: first.unwrap().0,
+                        targets: candidates.into_iter().map(str::to_owned).collect(),
+                    })
+                });
+            }
+        }
+    }
+    entries
+}
+
 pub(crate) fn callees(plan: &ModulePlan) -> HashSet<String> {
     let rejected = rejections(plan);
     plan.bodies
@@ -110,24 +205,12 @@ pub(crate) fn rejections(plan: &ModulePlan) -> HashMap<String, String> {
                     Op::Call {
                         indirect: Some(slot),
                         ..
-                    } => match &slot.ty {
-                        Type::Function(function) => {
-                            let candidates: BTreeSet<_> = targets.matching(function).collect();
-                            if candidates.is_empty() {
-                                Some("indirect call has no frozen language targets")
-                            } else if targets.dynamic_matching(function).next().is_some() {
-                                Some("indirect call may use dynamic dispatch outside the scoped callback protocol")
-                            } else if candidates
-                                .iter()
-                                .any(|name| !plan.bodies.contains_key(*name))
-                            {
-                                Some("indirect call may target a host ABI; scoped callbacks require language code")
-                            } else {
-                                dependencies.extend(candidates.into_iter().map(str::to_owned));
-                                None
-                            }
+                    } => match language_targets(plan, &targets, &slot.ty) {
+                        Ok(candidates) => {
+                            dependencies.extend(candidates.into_iter().map(str::to_owned));
+                            None
                         }
-                        _ => Some("indirect call lacks a checked function type"),
+                        Err(reason) => Some(reason),
                     },
                     Op::FunctionRef(slot, _) if !matches!(slot.ty, Type::Function(_)) => {
                         Some("raw function address is outside the scoped callback protocol")
@@ -135,10 +218,20 @@ pub(crate) fn rejections(plan: &ModulePlan) -> HashMap<String, String> {
                     Op::FunctionRef(_, target) if !plan.bodies.contains_key(target) => Some(
                         "function value targets a host ABI; scoped callbacks require language code",
                     ),
-                    Op::Concurrent { branches, .. }
-                        if branches.iter().any(|b| b.indirect.is_some()) =>
-                    {
-                        Some("call graph contains an indirect concurrent target")
+                    Op::Concurrent { branches, .. } => {
+                        let mut failure = None;
+                        for branch in branches {
+                            if let Some(slot) = &branch.indirect {
+                                match language_targets(plan, &targets, &slot.ty) {
+                                    Ok(candidates) => dependencies
+                                        .extend(candidates.into_iter().map(str::to_owned)),
+                                    Err(reason) => {
+                                        failure.get_or_insert(reason);
+                                    }
+                                }
+                            }
+                        }
+                        failure
                     }
                     _ => None,
                 };

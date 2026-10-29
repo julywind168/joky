@@ -77,16 +77,16 @@ fn isolated() @suspends -> Int32 {
 // All same-signature frozen candidates are checked, even if this root passes safe.
 fn safe(n: Int64) @suspends -> Int32 { int32(n) }
 fn leaf() @suspends -> Int32 { 1 }
-fn blocked(n: Int64) @suspends -> Int32 {
+fn nested_candidate(n: Int64) @suspends -> Int32 {
     let target = leaf
     let (a, b) = join { | target() | leaf() }
     a + b
 }
-fn expose_blocked() -> fn(Int64) @suspends -> Int32 { blocked }
+fn expose_nested_candidate() -> fn(Int64) @suspends -> Int32 { nested_candidate }
 fn conservative(values: &Array<Int32>, callback: fn(Int64) @suspends -> Int32) @suspends -> Int32 {
     callback(int64(values[0]))
 }
-fn fallback() @suspends -> Int32 {
+fn nested_indirect_candidates() @suspends -> Int32 {
     let values = [1, 2, 3]
     let (a, b) = join { | conservative(&values, safe) | invoke(&values) }
     a + b

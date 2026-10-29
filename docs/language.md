@@ -5164,7 +5164,7 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 
-静态 `join`／`race` 的直接语言函数调用支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
+静态 `join`／`race` 的直接语言函数调用和受检函数值入口支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
 以及普通数据的 `&T`。支持整数、浮点数、Bool、Rune、Unit、普通 struct、元组和符合现有元素限制的
 FixedArray，以及普通 enum、Option、Result；也支持 String 字段、Array/String 元素，以及这些拥有类型的有限递归组合。
 也支持 `&List<T>`、`&Map<K, V>`、`&Set<T>` 及符合语言存储规则的有限嵌套组合。
@@ -5192,11 +5192,13 @@ List 的已初始化槽位和 Map 的桶表也计入图检查与快照预算，�
 race 选出结果后先取消并排空败方；局部 join/race 分支和 isolate 中也可启动符合条件的借用组。
 局部取消或 isolate 恢复会先等待该子树的远程读者及未领取结果清理，再释放来源或继续父任务。
 
-这一准入同时检查完整 Parallel 调用图、来源和当前并发上下文。直接分支入口内部可以使用普通语言函数值，
+这一准入同时检查完整 Parallel 调用图、来源和当前并发上下文。分支入口及其内部可以使用普通语言函数值，
 包括同步／挂起间接调用、泛型转发和递归。编译器检查冻结模块中全部同签名、同挂起效果的候选目标及其
 传递调用和清理依赖；任一候选不能证明只读调用资格，整个借用组仍回退本地，即使当前实参只选择安全目标。
 引用实参仍须符合已有的不逃逸规则，例如挂起回调类型 `fn(&Array<Int32>) @suspends @noescape -> Int32`。
-没有冻结目标、宿主函数值、动态方法分派、宿主引用 ABI 及间接 join/race 入口仍不获得这一资格。
+间接 join/race 入口还要求全部候选具有相同的展开后任务布局；运行时选中的实际入口必须属于该冻结候选集。
+可混合直接与间接入口，也可在动态 branch 内使用间接 join/race；不新增语法或公共借用参数。
+没有冻结目标、宿主函数值、动态方法分派及宿主引用 ABI 仍不获得这一资格。
 无受检租约的外部来源、上述范围以外的拥有类型、名义宿主能力、
 `&mut`、借用结果及通用借用闭包不在跨 worker 范围内。
 任一分支无法证明资格时整个 join/race 沿用本地执行，前端借用与逃逸规则仍然生效。
@@ -5212,7 +5214,8 @@ race 选出结果后先取消并排空败方；局部 join/race 分支和 isolat
 [scoped_borrow_join.jk](../tests/fixtures/scoped_borrow_join.jk) 和
 [scoped_borrow_callbacks.jk](../tests/fixtures/scoped_borrow_callbacks.jk)、
 [scoped_borrow_plain.jk](../tests/fixtures/scoped_borrow_plain.jk)、
-[scoped_borrow_owners.jk](../tests/fixtures/scoped_borrow_owners.jk)。
+[scoped_borrow_owners.jk](../tests/fixtures/scoped_borrow_owners.jk)、
+[scoped_borrow_indirect.jk](../tests/fixtures/scoped_borrow_indirect.jk)。
 
 worker 内部使用资格单独检查：Array／Slice 的 Iter、Map 的成对 Iter 与 Entry 支持共享和
 可变借用遍历、泛型辅助函数及循环内挂起。游标只在创建它的 worker 使用，挂起恢复不迁移。

@@ -63,12 +63,26 @@ pub(crate) fn compile<M: Module>(
         })
         .map(|(name, _)| name.clone())
         .collect();
+    let indirect = crate::core::ir::parallel::scoped::indirect_entries(
+        plan,
+        &crate::core::ir::parallel::scoped::rejections(plan),
+    );
     let mut pending: Vec<_> = reachable.iter().cloned().collect();
     while let Some(name) = pending.pop() {
         let Some(body) = plan.bodies.get(&name) else {
             continue;
         };
-        for dependency in body.ops.iter().flat_map(Op::dependencies) {
+        let frozen = body
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Concurrent { branches, .. } => Some(branches),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|branch| indirect.get(&branch.name).and_then(|e| e.as_ref().ok()))
+            .flat_map(|e| &e.targets);
+        for dependency in body.ops.iter().flat_map(Op::dependencies).chain(frozen) {
             if reachable.insert(dependency.clone()) {
                 pending.push(dependency.clone());
             }

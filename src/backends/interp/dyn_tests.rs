@@ -21,6 +21,7 @@ fn borrowed_dyn_v4_interpreter_checks_table_slot_signature_and_function_id() {
             &ids,
             &mut HashMap::new(),
             &mut Default::default(),
+            &HashMap::new(),
         )
         .unwrap();
         let mut changed = false;

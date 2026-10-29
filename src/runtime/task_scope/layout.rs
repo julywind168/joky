@@ -4,7 +4,7 @@ use crate::core::ir::parallel::packet::Kind;
 use crate::runtime::parallel::packet::Shape;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
-// Private layout words evolve independently of the NativeTaskEntryV1 envelope.
+// Private layout words evolve independently of the NativeTaskEntryV2 envelope.
 pub(crate) const VERSION: usize = 16;
 
 fn invalid() -> Error {

@@ -52,6 +52,12 @@ fn linked_task_entries(
         "__joky_task_sleep_ms".into(),
         crate::stdlib::task::sleep_internal as *const u8,
     );
+    let registry = crate::stdlib::module_registry();
+    let output = registry.binding("__joky_write_stdout").unwrap();
+    let crate::runtime::bindings::HostEntry::Direct(entry) = output.entry.as_ref().unwrap() else {
+        panic!("Expected the native stdout binding");
+    };
+    symbols.insert("joky_io_write_stdout_v2".into(), *entry);
     let object = scratch.path().join("code.o");
     let bridge = scratch.path().join("bridge.o");
     let library = scratch.path().join("code.so");
@@ -1422,8 +1428,8 @@ fn scoped_borrow_callbacks_on_all_backends() {
         ("main", 39, 2),
         ("dynamic", 42, 1),
         ("isolated", 10, 2),
-        ("fallback", 11, 0),
-        ("indirect_group", 20, 0),
+        ("nested_indirect_candidates", 11, 2),
+        ("indirect_group", 20, 2),
         ("failed", 0, 2),
         ("parked", 0, 1),
     ];
@@ -1680,5 +1686,34 @@ fn scoped_borrow_collections_on_all_backends() {
             ("swapped_views", 5, 2),
         ],
         "scoped-collections",
+    );
+}
+
+#[test]
+fn scoped_borrow_indirect_entries_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/scoped_borrow_indirect.jk"),
+        &[
+            ("main", 13, 2),
+            ("forwarded", 13, 2),
+            ("generic_forwarded", 12, 2),
+            ("dynamic", 42, 1),
+            ("failed", 0, 2),
+            ("parked", 0, 1),
+            ("raced", 6, 2),
+            ("isolated", 3, 2),
+            ("owned_result", 6, 2),
+            ("mixed", 16, 1),
+        ],
+        "scoped-indirect",
+    );
+}
+
+#[test]
+fn scoped_borrow_indirect_unselected_candidate_keeps_group_local() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/scoped_borrow_indirect_local.jk"),
+        &[("local", 6, 0)],
+        "scoped-indirect-local",
     );
 }

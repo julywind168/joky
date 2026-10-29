@@ -803,8 +803,8 @@ mod tests {
             crate::Type::Int32,
         ))
         .unwrap();
-        let descriptor = task::NativeTaskEntryV1 {
-            version: 1,
+        let descriptor = task::NativeTaskEntryV2 {
+            version: task::ENTRY_VERSION,
             qualification: 0,
             entry: Some(ready),
             frame_slots: 1,
@@ -813,6 +813,8 @@ mod tests {
             input_keys: std::ptr::null(),
             input_count: 0,
             result_key: usize::MAX,
+            scoped_targets: std::ptr::null(),
+            scoped_target_count: 0,
         };
         let mut frame = CpsFrame::new(1);
         let mut foreign = CpsFrame::new(0);
@@ -887,7 +889,7 @@ mod tests {
             unsafe extern "C" fn failure(_: *mut CpsFrame) -> i32 {
                 report(invalid("Original task failure"))
             }
-            let descriptor = task::NativeTaskEntryV1 {
+            let descriptor = task::NativeTaskEntryV2 {
                 entry: Some(failure),
                 ..descriptor
             };

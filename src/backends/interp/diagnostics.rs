@@ -148,6 +148,7 @@ fn dump_while_bytecode() {
             &HashMap::new(),
             &mut HashMap::new(),
             &mut Default::default(),
+            &HashMap::new(),
         )
         .unwrap();
         println!(

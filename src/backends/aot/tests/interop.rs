@@ -433,7 +433,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         type BindTask = unsafe extern "C" fn(
             unsafe extern "C" fn(
                 *mut cps::CpsFrame,
-                *const cps::task::NativeTaskEntryV1,
+                *const cps::task::NativeTaskEntryV2,
                 *const usize,
             ) -> u64,
             unsafe extern "C" fn(*mut cps::CpsFrame, usize, u64) -> *mut cps::CpsFrame,

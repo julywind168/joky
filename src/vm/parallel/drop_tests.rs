@@ -404,8 +404,18 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
             5 => "&Option<String>",
             _ => "&List<Map<Int32, Set<String>>>",
         };
-        let source = format!("{} fn callback(text: {view}) @suspends -> UInt64 {{ let call: fn({view}) @suspends @noescape -> UInt64 = reader; call(text) }}",
+        let source = format!("{} fn callback(text: {view}) @suspends @noescape -> UInt64 {{ let call: fn({view}) @suspends @noescape -> UInt64 = reader; call(text) }}",
             source.replace("| reader(text)", "| callback(text)"));
+        // Reuse the nested collection lifetime gate for an indirect branch
+        // entry, including the old module snapshot after reload and VM drop.
+        let source = if kind == 6 {
+            source.replace(
+                "let (a, b) = join { | callback(text)",
+                "let target = callback; let (a, b) = join { | target(text)",
+            )
+        } else {
+            source
+        };
         vm.load_source(&source).unwrap();
         let budget = TaskBudget::new(4 << 20);
         let prepared = vm

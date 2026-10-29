@@ -148,10 +148,16 @@ impl Execution {
             return false;
         };
         branches.iter().all(|branch| {
-            branch.indirect.is_none()
-                && branch
-                    .target
-                    .is_some_and(|target| self.scoped_input(module, frame, target, &branch.args))
+            let target = match branch.indirect {
+                Some(slot) => match frame.slots[slot] {
+                    Value::Function(target) if branch.scoped_targets.contains(&target) => {
+                        Some(target)
+                    }
+                    _ => None,
+                },
+                None => branch.target,
+            };
+            target.is_some_and(|target| self.scoped_input(module, frame, target, &branch.args))
         })
     }
 
