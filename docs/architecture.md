@@ -465,6 +465,9 @@ String/Array 输入转移真实 Buffer，宿主结果递归
 CPS 帧、解释器激活、Rc 清理状态在所属 worker 创建/销毁。任务状态与通知世代受短锁保护；
 Running 期间 wake 在 Pending 交接时重检，Cleaned 后通知无效；代码、宿主回调和 Drop 均在锁外。
 父任务等待子树时让出 worker，子任务完成时直接仲裁并请求败方取消，不依赖父 worker 空闲。
+worker 根在生成代码内部失败时，若远程子任务尚未 cleaned，原生失败 CPS 调用链、解释器激活树及
+ParallelExecution 内层 Job 都保留到池完成子树排空；只保留最外层 RootJob 或 Storage 不足以阻止提前析构。
+最终清理仍在父 worker 执行。该根任务终止规则不构成局部作用域的跨 worker 借用资格；借用传输尚未开放。
 原生 CPS 调用图和解释器非清理指令检查取消；清理阶段屏蔽新的取消，错误和结果只在完整屏障后公开。
 
 定时等待记录只有任务身份和 deadline，无跨线程帧指针；队列空时使用条件变量及最近截止时间。

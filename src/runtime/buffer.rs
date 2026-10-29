@@ -1149,6 +1149,10 @@ impl Buffer {
     }
 }
 
+#[cfg(test)]
+#[path = "buffer/scoped_tests.rs"]
+mod scoped_tests;
+
 /// Project a checked fixed-array element or construct a borrowed slice header.
 ///
 /// # Safety

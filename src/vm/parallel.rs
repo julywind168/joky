@@ -313,8 +313,16 @@ impl ParallelExecution {
                         .map(|v| *v)
                         .map_err(|_| invalid("Invalid parallel root result"))
                 });
-                // Teardown stays in the root storage context, including failures.
-                let cleanup = crate::runtime::error::checked(|| drop(self.task.take()));
+                // A submitted root can fail while descendants still execute.
+                // Retain the inner job as well as this outer wrapper: the pool
+                // drops both on this worker after descendant cleanup completes.
+                // Manually driven executions have no pool children and retain
+                // their immediate terminal teardown behavior.
+                let cleanup = if pool::children_pending() {
+                    Ok(())
+                } else {
+                    crate::runtime::error::checked(|| drop(self.task.take()))
+                };
                 let result = match (result, cleanup) {
                     (Ok(packet), Ok(())) => Ok(packet),
                     (Err(error), Err(cleanup)) if error.code() == ErrorCode::Cancelled => {

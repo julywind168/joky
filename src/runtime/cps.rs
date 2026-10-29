@@ -531,6 +531,18 @@ pub(crate) unsafe extern "C" fn arena(frame: *mut CpsFrame) -> *mut Arena {
 /// readable, but generated code must not access its arena after this call.
 #[export_name = "__joky_cps_finish"]
 pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
+    // Generated failure returns can arrive while remote children are still in
+    // their polling/stop callbacks. Keep the worker root intact for Job::drop;
+    // retaining its arena alone would not prevent explicit owner destruction.
+    // Failure propagates through the retained CPS call chain to the worker root.
+    // Successful helpers still release normally; scope-local cancellation needs
+    // its own drain protocol before admitting borrowed remote inputs.
+    if ((*frame).state != DONE || super::error::joky_runtime_error_code() != 0)
+        && super::parallel::pool::children_pending()
+    {
+        (*frame).state = FAILED;
+        return;
+    }
     let returned = (*frame).returned_cleanup.take();
     let retained_arena = returned.as_ref().and((*frame).arena.clone());
     (*frame).release();

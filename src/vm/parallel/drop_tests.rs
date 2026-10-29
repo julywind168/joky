@@ -49,6 +49,138 @@ fn wait(mut ready: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(1));
     }
 }
+
+#[test]
+fn scoped_borrow_failed_worker_root_defers_destructors_until_children_stop() {
+    use std::sync::{Condvar, OnceLock};
+    static GATE: OnceLock<(Mutex<(bool, bool)>, Condvar)> = OnceLock::new();
+    unsafe extern "C" fn hold(_: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        let (state, wake) = GATE.get().unwrap();
+        let mut state = state.lock().unwrap();
+        state.0 = true;
+        wake.notify_all();
+        let (state, timeout) = wake
+            .wait_timeout_while(state, Duration::from_secs(15), |s| !s.1)
+            .unwrap();
+        if timeout.timed_out() && !state.1 {
+            crate::runtime::error::record_error(Error::new(
+                ErrorPhase::Runtime,
+                "Reader release timed out",
+            ));
+            return 3;
+        }
+        OBSERVED
+            .lock()
+            .unwrap()
+            .push(("reader stopped".into(), std::thread::current().id()));
+        0
+    }
+    unsafe extern "C" fn fail(_: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        if !GATE.get().unwrap().0.lock().unwrap().0 {
+            return 1;
+        }
+        OBSERVED
+            .lock()
+            .unwrap()
+            .push(("parent failed".into(), std::thread::current().id()));
+        crate::runtime::error::record_error(Error::new(
+            ErrorPhase::Runtime,
+            "Parent probe failure",
+        ));
+        3
+    }
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let (state, wake) = GATE.get().unwrap();
+            state.lock().unwrap().1 = true;
+            wake.notify_all();
+        }
+    }
+    let _serial = SERIAL.lock().unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        *GATE
+            .get_or_init(|| (Mutex::new((false, false)), Condvar::new()))
+            .0
+            .lock()
+            .unwrap() = (false, false);
+        OBSERVED.lock().unwrap().clear();
+        let mut vm = engine(mode);
+        for (name, entry) in [
+            ("hold_reader", hold as crate::runtime::cps::CpsEntry),
+            ("fail_parent", fail),
+        ] {
+            unsafe {
+                vm.register_parallel_suspending_fn(
+                    name,
+                    FunctionSignature::new(vec![], Type::Unit),
+                    entry,
+                    0,
+                    Arc::new(()),
+                )
+                .unwrap();
+            }
+        }
+        vm.load_source(
+            r#"
+            import joky/drop.{type Drop}
+            extern fn trace(text: &String) -> Int32
+            extern fn hold_reader() @suspends
+            extern fn fail_parent() @suspends
+            struct Source { text: String }
+            impl Drop for Source { fn drop(&mut self) { trace(&self.text); } }
+            fn root() @suspends {
+                let source = Source { text: "source destroyed" }
+                scope { branch { hold_reader() }; fail_parent() }
+            }
+        "#,
+        )
+        .unwrap();
+        let budget = TaskBudget::new(4 << 20);
+        let prepared = vm
+            .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap();
+        drop(vm);
+        let mut pool = ParallelExecutor::new(3, 16).unwrap();
+        let task = prepared.submit(&pool).unwrap();
+        let release = Release;
+        // Stopping is observed after Job::poll has returned the error. Merely
+        // seeing the failing callback would race the generated unwind itself.
+        wait(|| task.handle.stopping());
+        let before_release = OBSERVED.lock().unwrap().clone();
+        assert_eq!(
+            before_release
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>(),
+            ["parent failed"],
+            "{mode:?}: early source destruction"
+        );
+        drop(release);
+        task.wait().unwrap();
+        assert!(task
+            .take_result()
+            .err()
+            .unwrap()
+            .message()
+            .contains("Parent probe failure"));
+        drop(task);
+        pool.wait_closed();
+        let events = OBSERVED.lock().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["parent failed", "reader stopped", "source destroyed"],
+            "{mode:?}"
+        );
+        assert_eq!(events[0].1, events[2].1);
+        assert_ne!(events[0].1, events[1].1);
+        assert_eq!(budget.used(), 0, "{mode:?}");
+    }
+}
+
 #[test]
 fn parallel_drop_values_transfer_return_cancel_and_retain_code() {
     let _serial = SERIAL.lock().unwrap();

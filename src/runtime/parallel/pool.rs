@@ -16,6 +16,8 @@ use std::{
     time::Instant,
 };
 mod disposal;
+#[cfg(test)]
+mod scoped_tests;
 pub(crate) use disposal::CleanupReceipt;
 pub(crate) type Output = Box<dyn Any + Send>;
 pub(crate) type Factory = Box<dyn FnOnce() -> Result<Box<dyn Job>, Error> + Send>;
@@ -193,6 +195,16 @@ thread_local! {
 pub(crate) fn active() -> bool {
     CURRENT.with(|c| c.borrow().is_some())
 }
+/// A failed worker activation may retain its local owners until Job::drop.
+/// The terminal driver cancels descendants and drops the job only after their
+/// cleanup acknowledgements. This query never waits on a worker.
+pub(crate) fn children_pending() -> bool {
+    CURRENT.with(|c| {
+        c.borrow()
+            .as_ref()
+            .is_some_and(|task| !task.children_cleaned())
+    })
+}
 pub(crate) fn check_cancelled() -> Result<(), Error> {
     if CLEANING.with(Cell::get) {
         return Ok(());
@@ -357,6 +369,11 @@ impl Handle {
     #[cfg(test)]
     pub(crate) fn waiting(&self) -> bool {
         lock(&self.0.state).phase == Phase::Waiting
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stopping(&self) -> bool {
+        lock(&self.0.state).phase == Phase::Stopping
     }
     pub(crate) fn cancel(&self) {
         self.0.cancel();

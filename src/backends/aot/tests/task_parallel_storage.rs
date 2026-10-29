@@ -75,6 +75,52 @@ fn linked_task_entries(
 }
 
 #[test]
+fn scoped_borrow_join_preserves_values_on_all_backends() {
+    use crate::vm::{InstanceValue, VmEngine, VmMode};
+    const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_join.jk");
+    let (_scratch, entries, library) = linked_task_entries(SOURCE, &["main"], "scoped-borrow");
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(SOURCE).unwrap();
+        }
+        for workers in [1, 3] {
+            let budget = TaskBudget::new(4 << 20);
+            let prepared = if let Some(vm) = &vm {
+                vm.prepare_parallel_task("main", vec![], vec![budget.clone()])
+                    .unwrap()
+            } else {
+                let entry = &entries[0];
+                unsafe {
+                    entry.prepare(
+                        *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                        library.clone(),
+                        vec![],
+                        vec![budget.clone()],
+                    )
+                }
+                .unwrap()
+            };
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(workers, 16).unwrap();
+            let task = prepared.submit(&pool).unwrap();
+            task.wait().unwrap();
+            let result = task
+                .take_result()
+                .unwrap_or_else(|e| panic!("{mode:?}, {workers}: {e}"));
+            assert_eq!(
+                result.value(),
+                &TaskValue::Scalar(InstanceValue::Int32(104)),
+                "{mode:?}, {workers}"
+            );
+            drop((result, task));
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}, {workers}");
+        }
+    }
+}
+
+#[test]
 fn task_parallel_aggregate_values_and_roots_on_all_backends() {
     use crate::vm::{parallel::aggregates, InstanceValue, VmEngine, VmMode};
     let names = [

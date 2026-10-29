@@ -1,0 +1,44 @@
+import joky/array.{type Array}
+import joky/slice.{type Slice}
+import joky/string
+import joky/task
+
+fn array_sum(values: &Array<Int32>) @suspends -> Int32 {
+    var total = 0
+    for value in values {
+        task.yield_now()
+        total += *value
+    }
+    total
+}
+
+fn slice_sum(values: &Slice<Int32>) @suspends -> Int32 {
+    var total = 0
+    for value in slice.iter(values) {
+        task.yield_now()
+        total += *value
+    }
+    total
+}
+
+fn text_size(text: &String) @suspends -> Int32 {
+    var count = 0
+    for byte in slice.iter(string.bytes(text)) {
+        task.yield_now()
+        count += 1
+    }
+    count
+}
+
+fn main() @suspends -> Int32 {
+    var values = [3, 5, 7, 11]
+    let text = "héllo 世界"
+    let (whole, overlap, bytes, empty) = join {
+        | array_sum(&values)
+        | slice_sum(values.slice(1, 4))
+        | text_size(&text)
+        | slice_sum(values.slice(4, 4))
+    }
+    values[0] = 42
+    whole + overlap + bytes + empty + values[0]
+}

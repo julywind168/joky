@@ -687,9 +687,15 @@ impl Execution {
             }
             cursor = node.parent;
         }
-        // Drop every sibling and local value immediately, even if a scheduler
-        // retains the failed continuation to inspect its structured error.
-        let cleanup = self.release_for(Some(&error));
+        // A parallel worker root must retain its complete activation tree until
+        // remote children acknowledge cleanup. The pool drives cancellation and
+        // eventually drops this Execution on its own worker. Local continuations
+        // still release immediately, including when a caller retains the error.
+        let cleanup = if crate::runtime::parallel::pool::children_pending() {
+            Ok(())
+        } else {
+            self.release_for(Some(&error))
+        };
         if error.code() == ErrorCode::Cancelled {
             if let Err(cleanup) = cleanup {
                 error = cleanup;
