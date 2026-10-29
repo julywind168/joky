@@ -1,6 +1,7 @@
 //! User-facing commands; compiler and runtime internals stay in the library.
 mod build;
 mod diagnostic;
+mod explain;
 mod format;
 mod project;
 mod workers;
@@ -13,20 +14,22 @@ use joky::{
 };
 use std::{ffi::OsString, path::PathBuf};
 
-const HELP: &str = "Joky — run, build and format Joky programs
+const HELP: &str = "Joky — run, build, inspect and format Joky programs
 
 Usage:
   joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml]
   joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
+  joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky fmt [--check] <file.jk>
   joky fmt [--check] --stdin
   joky --help
   joky --version
 
 Commands:
-  fmt      Format a source file without resolving imports or running code
-  run      Execute the program with the JIT compiler (or the interpreter)
-  build    Compile a native executable using the system C compiler (cc)
+  explain-parallel  Explain dispatch eligibility without running the program
+  fmt              Format a source file without resolving imports or running code
+  run              Execute the program with the JIT compiler (or the interpreter)
+  build            Compile a native executable using the system C compiler (cc)
 
 Options:
   --check             Report formatting differences without writing (exit 1)
@@ -39,7 +42,7 @@ Options:
   -h, --help           Show this help
   -V, --version        Show the version
 
-Without an input, run/build find the nearest joky.toml in the current directory or its parents.
+Without an input, run/build/explain-parallel find the nearest joky.toml in the current directory or its parents.
 Projects declare [project] name, entry, source-root (default \".\"), and resources.
 Project builds default to <project>/dist/<name>; run them directly after moving the bundle.
 Single-file builds default to the source path without .jk.
@@ -57,6 +60,10 @@ enum Command {
     Help,
     Version,
     Format(format::Options),
+    Explain {
+        source: PathBuf,
+        prelude: bool,
+    },
     Run {
         source: PathBuf,
         interpreter: bool,
@@ -88,6 +95,9 @@ impl Command {
         }
         if command == "fmt" {
             return format::parse(args);
+        }
+        if command == "explain-parallel" {
+            return explain::parse(args);
         }
         let build = command == "build";
         if !build && command != "run" {
@@ -228,6 +238,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
             return 0;
         }
         Command::Format(options) => return format::execute(options),
+        Command::Explain { source, prelude } => return explain::execute(source, *prelude),
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
     let result = (|| -> Result<u8, Error> {

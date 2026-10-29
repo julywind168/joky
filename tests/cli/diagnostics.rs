@@ -638,3 +638,98 @@ fn raw_and_multiline_string_diagnostics_preserve_file_and_line() {
         }
     }
 }
+
+#[test]
+fn explain_parallel_reports_groups_captures_and_runtime_conditions_without_running() {
+    let work = Workspace::new();
+    work.write(
+        "main.jk",
+        r#"
+        import joky/array.{type Array}
+        import joky/io.{println}
+        fn read(values: &Array<Int32>) @suspends -> UInt64 { values.len() }
+        fn local(value: &Int32) @suspends -> Int32 { 1 }
+        fn owned() @suspends -> Int32 { 2 }
+        fn main() @suspends {
+            let values = [1, 2]
+            let scalar = 1
+            let (a, b) = join { | read(&values) | owned() }
+            let c = race { | local(&scalar) | owned() }
+            let view = &values
+            scope { branch { read(view); } }
+            let (e, f) = join { | owned() | owned() }
+            println("PROGRAM_EXECUTED")
+        }
+    "#,
+    );
+    let output = work
+        .command()
+        .args(["explain-parallel", "main.jk"])
+        .env("JOKY_TASK_WORKERS", "invalid")
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    success(&output);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("entry: eligible"), "{text}");
+    assert!(text.contains("join in main: runtime-check"), "{text}");
+    assert!(text.contains("race in main: local"), "{text}");
+    assert!(
+        text.contains("unsupported cross-worker input type `&Int32`"),
+        "{text}"
+    );
+    assert!(text.contains("branch in main: runtime-check"), "{text}");
+    assert!(text.contains("join in main: eligible"), "{text}");
+    assert!(text.contains("whole group stays local"), "{text}");
+    assert!(!text.contains("PROGRAM_EXECUTED"));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        text.as_bytes(),
+        work.cli(&["explain-parallel", "main.jk"]).stdout
+    );
+    work.assert_no_build_files();
+}
+
+#[test]
+fn explain_parallel_resolves_projects_and_reports_rejection_and_source_errors() {
+    let work = Workspace::new();
+    work.write(
+        "joky.toml",
+        "[project]\nname = 'probe'\nentry = 'main.jk'\n",
+    );
+    work.write(
+        "main.jk",
+        "import app/reader fn main() @suspends { reader.start() }",
+    );
+    work.write("app/reader.jk", "fn read(value: &Int32) @suspends {} pub fn start() @suspends { let x = 1; let view = &x; scope { branch { read(view) } } }");
+    let output = work.cli(&["explain-parallel", "--no-prelude"]);
+    success(&output);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("app/reader.jk:1:"), "{text}");
+    assert!(text.contains("capture #1"), "{text}");
+    work.write(
+        "main.jk",
+        "extern fn unknown() fn main() @suspends { scope { branch { unknown() } } }",
+    );
+    let output = work.cli(&["explain-parallel", "."]);
+    failure(&output, "Unknown CLI host function `unknown`");
+    assert!(output.stdout.is_empty());
+    work.write("main.jk", "fn main() { }");
+    let output = work.cli(&["explain-parallel", "joky.toml"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("@suspends"));
+    work.write("main.jk", "fn main() @suspends { missing() }");
+    failure(&work.cli(&["explain-parallel", "."]), "missing");
+    failure(
+        &work.cli(&["explain-parallel", "--task-workers", "3"]),
+        "Unknown explain-parallel option",
+    );
+    failure(
+        &work.cli(&["explain-parallel", "a.jk", "b.jk"]),
+        "exactly one source",
+    );
+    failure(
+        &work.cli(&["explain-parallel", "--no-prelude", "--no-prelude"]),
+        "more than once",
+    );
+}

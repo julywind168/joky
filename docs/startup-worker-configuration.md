@@ -739,3 +739,35 @@ isolate 内的受检只读捕获同样可派发，失败仍归属原隔离边界
 - `git diff --check` 通过；默认检查开始后仅修改说明文档，没有重复执行整套检查。
 
 未运行 Release、完整 stress、Linux 实机或性能测量。
+
+
+### 13.12 W6f：并行资格与回退原因诊断（已实现并验收）
+
+增加 `joky explain-parallel`，支持源码文件、项目目录、manifest 与当前目录项目发现。
+不执行程序或创建池，通过共享 IR 显示入口资格及具体可达并发位置的静态派发条件。
+区分拥有包可派发、只读输入待运行时来源检查、本地回退与完整 Parallel 资格拒绝；
+标出分支参数／动态捕获、类型与调用链，明确静态 join/race 整组回退及动态 branch 独立判定。
+只读调用图的既有拒绝集合改为保留确定性原因，运行准入条件保持一致。
+
+不新增可跨 worker 的类型，不扩展宿主引用 ABI，不提供运行时派发追踪或动态线程扩缩容。
+当前接口与限制见[并行资格诊断](language.md#并行资格诊断)。
+
+针对性验证覆盖：
+
+- CLI 报告状态、参数／捕获编号、导入依赖源码位置、项目发现与 manifest 入口；
+  无效 worker 环境变量及空 PATH 下仍能生成报告，不执行程序或产生构建文件。
+- 结构化报告区分 Parallel 拒绝与本地回退，追踪间接函数值和宿主引用 ABI 的阻断原因，
+  保留安全递归及 isolate 内只读派发资格，排除无具体依赖的并发代码。
+- `cargo test scoped_borrow_nested_race_and_isolate_on_all_backends --lib` 通过：
+  共用 fixture 覆盖 JIT／解释器／链接 AOT、1／3 worker、13 个嵌套与动态借用场景。
+- 实际运行 `target/debug/joky explain-parallel examples/chat`：入口与连接 branch 获得资格，
+  main 及 session 的借用 race 正确报告本地回退，没有启动 chat 服务。
+
+2026-10-29，macOS 本机 Debug 验收：
+
+- 新增的两个 CLI 诊断测试与两个结构化报告测试通过。
+- `./scripts/check.sh` 一次完整通过：fmt、全目标 Clippy、Debug 库测试（1772 通过，153 忽略）、
+  CLI（340 通过，8 忽略）、其余默认测试及 while／Map 短输入三后端正确性检查均通过。
+- 默认检查开始后仅补充文档，未重复运行整套检查；最终 `git diff --check` 通过。
+
+未运行 Release、完整 stress、Linux 实机或性能测量。

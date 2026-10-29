@@ -5,7 +5,21 @@ use crate::{Error, ErrorCode, ErrorPhase, Type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub(crate) mod packet;
+pub mod report;
 pub(crate) mod scoped;
+
+fn display_name(name: &str) -> String {
+    if name.starts_with("__joky_task_") {
+        "<branch body>".into()
+    } else if let Some((_, template)) = name
+        .strip_prefix("__joky_generic_")
+        .and_then(|suffix| suffix.split_once('_'))
+    {
+        format!("{template}<…>")
+    } else {
+        name.into()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Qualification {

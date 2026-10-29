@@ -43,6 +43,8 @@ fn main() {
   支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
   VM、文件、目录、准入与邮箱通过任务树控制代理使用，业务 `when` 按完整域访问集在 worker 并行计算并统一提交，Godot 回调保持 Local；
   [模式与准入范围](docs/language.md#任务执行模式)。
+- `joky explain-parallel <文件或项目>` 静态解释并行准入与本地回退原因，显示源码位置、参数或捕获及调用链，不执行程序；
+  [报告状态与限制](docs/language.md#并行资格诊断)。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
 
 ## 源码格式化

@@ -17,6 +17,9 @@ mod string_query_model;
 // Stable public entry points; implementation modules remain private.
 pub use backends::aot;
 pub use core::ffi;
+pub use core::ir::parallel::report::{
+    explain_parallel, ParallelDisposition, ParallelReport, ParallelSite,
+};
 pub use core::parser;
 pub use core::types::memory_layout;
 pub use core::{

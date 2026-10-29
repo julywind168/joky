@@ -531,6 +531,13 @@ CLI 生成的 AOT 启动层解析参数／环境后填写 `JokyExecutionConfigV1
 `ParallelEntry::standalone_main_v1` 保留原固定配置行为，`standalone_driver_v1` 提供调用者包装的受检入口。
 数量只在池构造时生效，不改变线程归属、资源生命周期或清理屏障；1 worker 仍遵守 Parallel 准入。
 用户接口与配置优先级见[任务执行模式](language.md#任务执行模式)。
+
+静态 `explain_parallel` 报告经共享 PreparedModule 生成同一 ModulePlan，复用 Parallel effects、
+拥有包 Shape 与只读 InputShape；不生成代码或运行任务。作用域调用图分析保留确定性的拒绝原因，
+派发准入与诊断共用同一结果，间接调用、宿主引用 ABI 及清理依赖不另建白名单。
+报告只遍历入口的具体代码依赖，来源证明与动态 isolate 上下文留给运行时；
+标准绑定上下文及 CLI 状态定义见[并行资格诊断](language.md#并行资格诊断)。
+
 [joky_executor.h](../include/joky_executor.h) 的静态入口描述由编译器受检证据生成，
 不验证任意原生指针的安全性。版本/大小检查不能替代代码保活、精确帧布局和链接 ABI 的不安全契约。
 热更新只影响新准备包，旧任务保留旧代码至清理完成。私有 CPS/存储 ABI 变化需同时重编 AOT 对象与运行库。

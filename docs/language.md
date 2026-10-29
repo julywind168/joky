@@ -5088,7 +5088,7 @@ N=1 仍要求完整并行资格，不等同于 Local。入口须为无参数、�
 单文件与项目产物规则相同。优先级是启动参数 > 环境变量 > 构建默认值；未生效的低优先级值不解析。
 `run --parallel` 也读取该环境变量，显式 `run --task-workers N` 优先；两个选项可同时出现，
 同一选项重复则报错。不指定模式仍为 Local，环境变量不能单独启用 Parallel。
-`build` 不读取此变量，fmt／帮助／版本查询也不受影响。
+`build` 不读取此变量，explain-parallel／fmt／帮助／版本查询也不受影响。
 
 数量仅接受十进制数字且值为 1–256；空值、正负号、空白、溢出与越界均拒绝。
 Local 执行收到 worker 环境配置会报错，Local 原生程序也拒绝 worker 启动参数。
@@ -5099,6 +5099,34 @@ Local 执行收到 worker 环境配置会报错，Local 原生程序也拒绝 wo
 配置解析属于 CLI 启动层；Rust/C 嵌入调用仍只采用显式配置，不读取环境变量。
 `ParallelEntry::standalone_main_v1` 保留固定数量语义；`standalone_driver_v1` 为自定义启动包装
 提供接收数量的 C 函数，由运行时在执行受检入口前验证数量，生成器本身不读取参数或环境。
+
+### 并行资格诊断
+
+`joky explain-parallel <file.jk | project-dir | joky.toml>` 检查普通 CLI 入口与静态并行资格。
+省略路径时向上发现最近的项目，可用 `--no-prelude` 关闭隐式导入。
+命令只解析、检查和规划源码，不执行程序、创建 worker 池或调用链接器；不读取 `JOKY_TASK_WORKERS`。
+例如在仓库根目录运行 `target/debug/joky explain-parallel examples/chat`。
+
+报告先显示 `main` 的入口资格，再按文件与源码位置列出具体代码依赖可达的 `join`／`race`／`branch`／`isolate`：
+
+| 状态 | 含义 |
+| --- | --- |
+| `eligible` | 拥有输入与结果包满足派发条件；动态 isolate 内仍保持本地路径 |
+| `runtime-check` | 只读输入形状与直接调用图合格，执行时仍须证明来源属于当前任务或已收到的有界借用 |
+| `local` | 该位置需要本地执行；说明不支持的参数／捕获类型、间接调用或阻断调用链；isolate 主体本身也标为本地 |
+| `rejected` | 完整 Parallel 调用图不合格，不能把它当成已获 Parallel 资格后的本地回退 |
+
+`join`／`race` 任一分支不满足跨 worker 条件时整组回退；动态 `branch` 则每次登记独立决定。
+参数和捕获从 1 编号；捕获顺序为分支首次使用绑定的顺序。调用链也包含隐式析构依赖。
+报告复用当前编译器与运行时准入规则，但不是执行轨迹：实际 worker 数量、动态 isolate 上下文、
+借用来源和调度均在运行时确定。具体依赖可达不等于实际执行路径，间接调用也不进行路径敏感展开。
+报告只采用标准宿主绑定；CLI 仍拒绝未知 extern，不从声明推断自定义宿主的 ParallelSafe 契约。
+嵌入宿主可用 Rust `explain_parallel` 获取结构化报告，但该 API 同样采用标准绑定上下文。
+
+入口合格时退出码为 0，即使有本地回退；入口不合格或源码／参数错误时为 1。
+资格报告写 stdout，源码与命令错误写 stderr。
+
+### 宿主提交与任务包
 
 Rust 在本地 VM 中 `prepare_parallel_task` 冻结代码及拥有输入，通过
 `PreparedParallelTask::submit(&ParallelExecutor)` 或可跨线程的 `ParallelSubmitter::submit`
