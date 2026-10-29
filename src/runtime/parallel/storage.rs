@@ -116,6 +116,8 @@ impl Drop for Lease {
 }
 
 struct Allocation {
+    task: Option<u64>,
+    payload_size: usize,
     finalize: Option<unsafe fn(*mut u8)>,
     pointer: NonNull<u8>,
     layout: Layout,
@@ -204,6 +206,46 @@ impl Storage {
             .iter()
             .any(|shard| lock(shard).allocations.iter().any(|a| a.pointer == pointer))
     }
+    /// Compiler-checked references establish initialization and type. Allocation
+    /// identity additionally proves this is live storage owned by this task,
+    /// rather than another task's allocation in the same shared storage root.
+    pub(crate) fn owns_range(&self, data: NonNull<u8>, size: usize, align: usize) -> bool {
+        let Some(task) = super::pool::identity() else {
+            return false;
+        };
+        if !(data.as_ptr() as usize).is_multiple_of(align) {
+            return false;
+        }
+        lock(&self.0.shards).iter().any(|shard| {
+            lock(shard).allocations.iter().any(|allocation| {
+                allocation.task == Some(task)
+                    && (data.as_ptr() as usize)
+                        .checked_sub(allocation.pointer.as_ptr() as usize)
+                        .and_then(|offset| offset.checked_add(size))
+                        .is_some_and(|end| end <= allocation.payload_size)
+            })
+        })
+    }
+
+    /// Exclusive owned-packet adoption changes the task allowed to originate
+    /// ordinary borrows from this allocation. ZST sentinels have no allocation.
+    ///
+    /// # Safety
+    /// The caller is installing the exclusive payload owner in the current task;
+    /// no outstanding language borrow or previous owner may still access it.
+    pub(crate) unsafe fn adopt_allocation(&self, pointer: NonNull<u8>) {
+        for shard in lock(&self.0.shards).iter() {
+            if let Some(allocation) = lock(shard)
+                .allocations
+                .iter_mut()
+                .find(|a| a.pointer == pointer)
+            {
+                allocation.task = super::pool::identity();
+                return;
+            }
+        }
+    }
+
     /// Install only a thread-safe runtime metadata finalizer after initialization.
     /// No language destructor or local callback may be installed here.
     pub(crate) fn finalize_with(&self, pointer: NonNull<u8>, finalize: unsafe fn(*mut u8)) {
@@ -274,6 +316,8 @@ impl LocalShard {
         }
         let pointer = NonNull::new(unsafe { alloc(layout) }).ok_or_else(limited)?;
         shard.allocations.push(Allocation {
+            task: super::pool::identity(),
+            payload_size: size,
             finalize: None,
             pointer,
             layout,

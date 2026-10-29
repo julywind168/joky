@@ -5160,10 +5160,13 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 
 静态 `join`／`race` 的直接语言函数调用支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
-T 支持整数、浮点数、Bool、Rune、Unit，以及递归由这些类型组成的普通 struct、元组和 FixedArray。
+以及普通数据的 `&T`。T 支持整数、浮点数、Bool、Rune、Unit，以及递归由这些类型组成的
+普通 struct、元组和 FixedArray。普通数据可整体借用，也可借用其字段和 FixedArray 元素。
 完整字段树与名义类型实参须无引用、原始指针、函数值、资源和拥有字段；不能仅凭 Copy 放行。
 零大小元素和空区间也支持。enum、String 元素、嵌套拥有容器及自定义 Drop 元素仍不在本子集内。
-来源须为当前任务的拥有存储，或当前任务收到的受检只读借用；
+来源须为当前任务的受检存储，或当前任务收到的受检只读借用；普通数据验证独立分配的任务身份、
+有效区间和对齐，不能只凭共享存储根中的地址通过。挂起函数的局部数据与任务帧分开保存，
+循环重入复用存储。接收方使用原数据地址，字段／元素再借用只能落在已收到的区间内；
 slice 可追溯到该来源，接收方可把收到的区间或其子区间继续借给静态 join/race 或动态 branch 子任务；
 负载不复制，每个接收 worker 创建独立的非拥有视图和游标。可混合现有拥有参数，结果仍须满足拥有／值包规则。
 分支可挂起；全部读者与清理结束后父任务才恢复，因此 join/race 后可再次修改、移动或销毁来源。
@@ -5176,7 +5179,7 @@ race 选出结果后先取消并排空败方；局部 join/race 分支和 isolat
 引用实参仍须符合已有的不逃逸规则，例如挂起回调类型 `fn(&Array<Int32>) @suspends @noescape -> Int32`。
 没有冻结目标、宿主函数值、动态方法分派、宿主引用 ABI 及间接 join/race 入口仍不获得这一资格。
 无受检租约的外部来源、含拥有元素的容器、名义宿主能力、
-`&mut`、标量／FixedArray 地址、借用结果及通用借用闭包不在跨 worker 范围内。
+`&mut`、借用结果及通用借用闭包不在跨 worker 范围内。
 任一分支无法证明资格时整个 join/race 沿用本地执行，前端借用与逃逸规则仍然生效。
 动态 `scope/branch` 的引用捕获也支持上述只读类型与来源检查。每次登记独立决定是否跨 worker；
 通过 Parallel 调用图检查、但不能证明跨 worker 借用条件的分支保留在当前 worker，
@@ -5188,7 +5191,8 @@ race 选出结果后先取消并排空败方；局部 join/race 分支和 isolat
 
 公共 `TaskValue`、根任务参数与普通 Packet 不接受引用。示例见
 [scoped_borrow_join.jk](../tests/fixtures/scoped_borrow_join.jk) 和
-[scoped_borrow_callbacks.jk](../tests/fixtures/scoped_borrow_callbacks.jk)。
+[scoped_borrow_callbacks.jk](../tests/fixtures/scoped_borrow_callbacks.jk)、
+[scoped_borrow_plain.jk](../tests/fixtures/scoped_borrow_plain.jk)。
 
 worker 内部使用资格单独检查：Array／Slice 的 Iter、Map 的成对 Iter 与 Entry 支持共享和
 可变借用遍历、泛型辅助函数及循环内挂起。游标只在创建它的 worker 使用，挂起恢复不迁移。

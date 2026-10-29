@@ -228,6 +228,7 @@ struct BytecodeBranch {
 }
 
 struct BytecodeFunction {
+    task_signature: crate::FunctionSignature,
     scoped: bool,
     place_result: Arc<[crate::runtime::place::CopyNode]>,
     name: String,
@@ -423,6 +424,7 @@ pub(crate) fn compile(
                 lower_function(&plan.functions[name], body, &ids, &mut tables, &mut layouts)?;
             function.name.clone_from(name);
             function.scoped = scoped.contains(name);
+            function.task_signature = crate::core::ir::parallel::scoped::signature(&plan, name);
             functions.insert(name.clone(), Arc::new(function));
         }
     }
@@ -474,7 +476,7 @@ fn task_entries(callees: &[Callee]) -> Result<TaskEntries, Error> {
     let mut task_entries = HashMap::new();
     for callee in callees {
         let (suspends, signature) = match callee {
-            Callee::User(function) => (function.info.suspends, &function.info.signature),
+            Callee::User(function) => (function.info.suspends, &function.task_signature),
             Callee::Host(host) => (host.suspends(), host.signature()),
             Callee::Unavailable(signature, suspends) => (*suspends, signature),
         };
@@ -836,6 +838,7 @@ fn lower_unoptimized(
         ));
     }
     Ok(BytecodeFunction {
+        task_signature: info.signature.clone(),
         scoped: false,
         place_result: if info.signature.ret.is_place() {
             layouts.get(&info.signature.ret).program.clone()

@@ -1,6 +1,34 @@
 //! Conservative call-graph evidence for scoped read-only task inputs.
 use super::*;
 
+/// Recover finite nominal layouts for private task input evidence. Language
+/// signatures remain shallow; only this compiler-owned descriptor is expanded.
+pub(crate) fn signature(plan: &ModulePlan, name: &str) -> crate::FunctionSignature {
+    let signature = &plan.functions[name].signature;
+    let params = signature
+        .params
+        .iter()
+        .map(|ty| {
+            let Some(reference) = ty.reference_type() else {
+                return ty.clone();
+            };
+            let Some(body) = plan.bodies.get(name) else {
+                return ty.clone();
+            };
+            let Ok(target) = body.pointee(&reference.target, &body.type_registry) else {
+                return ty.clone();
+            };
+            let resolved = Type::reference(target, reference.mutable);
+            if crate::runtime::parallel::scoped::Shape::of(&resolved).is_some() {
+                resolved
+            } else {
+                ty.clone()
+            }
+        })
+        .collect();
+    crate::FunctionSignature::new(params, signature.ret.clone())
+}
+
 pub(crate) fn callees(plan: &ModulePlan) -> HashSet<String> {
     let rejected = rejections(plan);
     plan.bodies

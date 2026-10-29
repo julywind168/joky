@@ -648,13 +648,13 @@ fn explain_parallel_reports_groups_captures_and_runtime_conditions_without_runni
         import joky/array.{type Array}
         import joky/io.{println}
         fn read(values: &Array<Int32>) @suspends -> UInt64 { values.len() }
-        fn local(value: &Int32) @suspends -> Int32 { 1 }
+        fn local(value: &mut Int32) @suspends -> Int32 { 1 }
         fn owned() @suspends -> Int32 { 2 }
         fn main() @suspends {
             let values = [1, 2]
-            let scalar = 1
+            var scalar = 1
             let (a, b) = join { | read(&values) | owned() }
-            let c = race { | local(&scalar) | owned() }
+            let c = race { | local(&mut scalar) | owned() }
             let view = &values
             scope { branch { read(view); } }
             let (e, f) = join { | owned() | owned() }
@@ -675,7 +675,7 @@ fn explain_parallel_reports_groups_captures_and_runtime_conditions_without_runni
     assert!(text.contains("join in main: runtime-check"), "{text}");
     assert!(text.contains("race in main: local"), "{text}");
     assert!(
-        text.contains("unsupported cross-worker input type `&Int32`"),
+        text.contains("unsupported cross-worker input type `&mut Int32`"),
         "{text}"
     );
     assert!(text.contains("branch in main: runtime-check"), "{text}");
@@ -706,7 +706,10 @@ fn explain_parallel_resolves_projects_and_reports_rejection_and_source_errors() 
     success(&output);
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("app/reader.jk:1:"), "{text}");
-    assert!(text.contains("capture #1"), "{text}");
+    assert!(
+        text.contains("branch in app/reader.start: runtime-check"),
+        "{text}"
+    );
     work.write(
         "main.jk",
         "extern fn unknown() fn main() @suspends { scope { branch { unknown() } } }",

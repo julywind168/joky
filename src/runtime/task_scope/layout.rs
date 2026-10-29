@@ -5,13 +5,13 @@ use crate::runtime::parallel::packet::Shape;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 12;
+pub(crate) const VERSION: usize = 13;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v12",
+        "Invalid task entry layout v13",
     )
 }
 
@@ -344,7 +344,7 @@ mod tests {
             .unwrap();
         assert_eq!(inputs[0].owners(), [0]);
         assert_eq!(output.owners(), [0]);
-        for legacy in [1, 11] {
+        for legacy in [1, 11, 12] {
             words[0] = legacy;
             assert!(CheckedLayout::decode(&words).is_err());
         }

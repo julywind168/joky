@@ -575,6 +575,33 @@ pub(crate) unsafe extern "C" fn arena(frame: *mut CpsFrame) -> *mut Arena {
         .get()
 }
 
+/// Stable local bytes are separate from the mutably accessed CPS slots during
+/// parallel execution. Reentry reuses the same allocation until this activation
+/// is cleaned, after all scoped descendants stop. Local mode keeps its frame ABI.
+#[export_name = "__joky_cps_local_v1"]
+unsafe extern "C" fn local(
+    frame: *mut CpsFrame,
+    offset: usize,
+    size: usize,
+    align: usize,
+) -> *mut u8 {
+    if !super::parallel::pool::active() {
+        return (*frame).slots.as_mut_ptr().add(offset).cast();
+    }
+    let cleanup = cleanup(frame);
+    match (*cleanup)
+        .entries
+        .places
+        .materialize(&mut *(*cleanup).arena, offset, size, align)
+    {
+        Ok(pointer) => pointer.as_ptr(),
+        Err(error) => {
+            super::error::record_error(error);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// # Safety
 /// The frame must be exclusively borrowed and terminal. Result slots remain
 /// readable, but generated code must not access its arena after this call.
@@ -728,7 +755,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 44] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 45] {
     [
         ("__joky_task_context_v1", protocol::context as *const u8),
         (
@@ -776,6 +803,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 44] {
         ("__joky_cps_finish_return_v1", finish_return as *const u8),
         ("__joky_cps_finish_place_v1", finish_place as *const u8),
         ("__joky_cps_slots", slots as *const u8),
+        ("__joky_cps_local_v1", local as *const u8),
         ("__joky_cps_child", child as *const u8),
         ("__joky_cps_release_child", release_child as *const u8),
         ("__joky_cps_child_at", child_at as *const u8),

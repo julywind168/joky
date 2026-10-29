@@ -778,7 +778,7 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | join/race/branch 与多层 scope | 原有顺序推进 | 固定 worker 分支调度，单 worker 也可推进 |
 | 标量、String、Array、List、Map/Set、嵌套元组/struct/enum（含 Option/Result）输入/结果 | 支持 | 受检包；完整类型树无引用、未获资格资源或自定义 Drop |
 | FixedArray、含它的 Copy 聚合、Array<FixedArray> | 参数/返回/捕获跨挂起，安全视图服从借用规则 | 独立 Copy 快照，保持元素与存储组合限制 |
-| 引用跨任务包 | 按原有规则 | 尚未开放 |
+| 结构化只读借用 | 按原有规则 | 支持受检 String、Array/Slice 和普通数据（标量、struct、元组、FixedArray）；来源、类型及调用图须获资格，公共引用包与可变借用不开放，详见[语言参考](language.md#任务执行模式) |
 | 非捕获语言函数值 | 按原有规则 | 冻结目标集合证明调用图；支持同树内部输入与聚合字段，不进入 TaskValue；join/race 结果限制不变 |
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
 | task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |

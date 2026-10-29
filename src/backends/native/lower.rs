@@ -570,6 +570,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cleanup_finish", vec![ptr], vec![]),
         ("__joky_cleanup_finish_return", vec![ptr, ptr], vec![]),
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
+        ("__joky_cps_local_v1", vec![ptr, ptr, ptr, ptr], vec![ptr]),
         ("__joky_cps_arena", vec![ptr], vec![ptr]),
         ("__joky_cps_cleanup_v2", vec![ptr], vec![ptr]),
         (
@@ -2528,9 +2529,20 @@ fn lower_ops(
                 }
                 let layout = target.storage_layout().expect("validated memory layout");
                 let pointer = if matches!(op, Op::Local { .. }) {
-                    if let SlotAccess::Frames { slots } = &*slots {
-                        let offset = plan.cps_local_slots[&dst.index] * 8;
-                        builder.ins().iadd_imm_u(*slots, offset as i64)
+                    if let Some(frame) = mode.frame() {
+                        let offset = builder
+                            .ins()
+                            .iconst(ptr_ty, plan.cps_local_slots[&dst.index] as i64);
+                        let size = builder.ins().iconst(ptr_ty, layout.size as i64);
+                        let align = builder.ins().iconst(ptr_ty, layout.align as i64);
+                        let pointer = helper(
+                            builder,
+                            refs,
+                            "__joky_cps_local_v1",
+                            &[frame, offset, size, align],
+                        );
+                        check_call(builder, refs, mode.frame(), mode.cleanup());
+                        pointer
                     } else {
                         let storage = builder.create_sized_stack_slot(StackSlotData::new(
                             StackSlotKind::ExplicitSlot,

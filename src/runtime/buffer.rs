@@ -592,6 +592,9 @@ impl Buffer {
     pub(crate) unsafe fn adopt_task(owner: *mut Self) {
         (*owner).origin = owner;
         (*owner).owner_task = super::parallel::pool::identity().unwrap_or(0);
+        if let Some(root) = super::parallel::current() {
+            root.adopt_allocation((*owner).data);
+        }
     }
 
     /// Create a nonowning header retained by the root task arena.

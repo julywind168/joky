@@ -169,7 +169,7 @@ impl Execution {
             return false;
         }
         let mut base = 0;
-        function.info.signature.params.iter().all(|ty| {
+        function.task_signature.params.iter().all(|ty| {
             let Ok(input) = InputShape::of(ty) else {
                 return false;
             };
@@ -198,7 +198,7 @@ impl Execution {
         };
         let frozen = frozen.clone();
         let sig = match &module.callees[target] {
-            Callee::User(f) => &f.info.signature,
+            Callee::User(f) => &f.task_signature,
             Callee::Host(h) => h.signature(),
             _ => return Err(abi_error("Unavailable parallel callee")),
         };
@@ -424,6 +424,7 @@ struct Worker {
 }
 impl pool::Job for Worker {
     fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {
+        let _loans = crate::runtime::parallel::scoped::LoanGuard::enter(&self._loans);
         match self.execution.poll(&self.module) {
             Poll::Pending => {
                 let mut plan = crate::runtime::driver::WaitPlan::default();

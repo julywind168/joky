@@ -231,9 +231,10 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
     let _serial = SERIAL.lock().unwrap();
     for (mode, scenario) in [VmMode::Jit, VmMode::Interpreter]
         .into_iter()
-        .flat_map(|mode| (0..6).map(move |scenario| (mode, scenario)))
+        .flat_map(|mode| (0..12).map(move |scenario| (mode, scenario)))
     {
-        let dynamic = scenario >= 3;
+        let kind = scenario / 3;
+        let dynamic = kind != 0;
         let scenario = scenario % 3;
         *GATE
             .get_or_init(|| (Mutex::new((false, false)), Condvar::new()))
@@ -295,7 +296,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         };
         // Static groups keep text coverage; dynamic captures exercise padded
         // aggregate buffers through the same failure/cancel/close lifetime fence.
-        let source = if dynamic {
+        let source = if kind == 1 {
             source
                 .replace("import joky/string", "import joky/array.{type Array}")
                 .replace(
@@ -323,12 +324,41 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         } else {
             source
         };
+        let source = if kind >= 2 {
+            let (view, setup, read) = if kind == 2 {
+                (
+                    "&(Int32, Float64)",
+                    "let values = (7, 1.5)",
+                    "uint64(text.0)",
+                )
+            } else {
+                (
+                    "&FixedArray<Int32, 2>",
+                    "let values: FixedArray<Int32, 2> = [7, 9]",
+                    "uint64(*text.borrow_ref(0))",
+                )
+            };
+            source
+                .replace(
+                    "import joky/string",
+                    "import joky/fixed_array.{type FixedArray}",
+                )
+                .replace(
+                    "text: &String) @suspends",
+                    &format!("text: {view}) @suspends"),
+                )
+                .replace("string.byte_length(text)", read)
+                .replace("helper(&source.text)", &format!("{setup}; helper(&values)"))
+        } else {
+            source
+        };
         // Exercise an indirect language call while the source is pinned by
         // nested readers. The callback contract is checked by the frontend.
-        let view = if dynamic {
-            "&Array<(Int32, Float64)>"
-        } else {
-            "&String"
+        let view = match kind {
+            0 => "&String",
+            1 => "&Array<(Int32, Float64)>",
+            2 => "&(Int32, Float64)",
+            _ => "&FixedArray<Int32, 2>",
         };
         let source = format!("{} fn callback(text: {view}) @suspends -> UInt64 {{ let call: fn({view}) @suspends @noescape -> UInt64 = reader; call(text) }}",
             source.replace("| reader(text)", "| callback(text)"));

@@ -138,6 +138,7 @@ struct NativeJob {
 }
 impl pool::Job for NativeJob {
     fn poll(&mut self) -> Poll<Result<pool::Output, Error>> {
+        let _loans = crate::runtime::parallel::scoped::LoanGuard::enter(&self._loans);
         let result = crate::runtime::error::checked(|| unsafe { (self.entry)(&mut *self.frame) });
         match result {
             Ok(1) => {

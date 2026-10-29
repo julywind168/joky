@@ -176,7 +176,8 @@ fn classify(
         } else {
             format!("branch {} `{}` argument", branch + 1, display_name(name))
         };
-        for (index, ty) in sig.params.iter().enumerate() {
+        let signature = scoped::signature(plan, name);
+        for (index, ty) in signature.params.iter().enumerate() {
             if InputShape::of(ty).is_err() {
                 return local(format!(
                     "{target} #{} has unsupported cross-worker input type `{ty}`",
@@ -346,6 +347,20 @@ mod tests {
             .sites
             .iter()
             .all(|s| s.disposition == ParallelDisposition::RuntimeChecked));
+    }
+
+    #[test]
+    fn parallel_report_plain_borrows_resolve_nominal_layouts() {
+        let report = report(
+            include_str!("../../../../tests/fixtures/scoped_borrow_plain.jk"),
+            "main",
+        );
+        assert!(report.entry_error.is_none());
+        assert_eq!(report.sites.len(), 2);
+        assert!(report
+            .sites
+            .iter()
+            .all(|site| site.disposition == ParallelDisposition::RuntimeChecked));
     }
 
     #[test]

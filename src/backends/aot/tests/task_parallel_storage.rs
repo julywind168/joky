@@ -20,7 +20,7 @@ fn linked_task_entries(
     compiler.set_prelude_enabled(false).unwrap();
     compiler
         .compile_module(&crate::parser::parse(source).unwrap())
-        .unwrap();
+        .unwrap_or_else(|e| panic!("{e}"));
     let entries: Vec<_> = names
         .iter()
         .map(|name| compiler.parallel_entry(name).unwrap())
@@ -1416,8 +1416,6 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
 
 #[test]
 fn scoped_borrow_callbacks_on_all_backends() {
-    use crate::vm::{InstanceValue, VmEngine, VmMode};
-    use std::time::{Duration, Instant};
     const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_callbacks.jk");
     // Expected value and number of borrowed inputs sent by the root.
     let cases = [
@@ -1429,13 +1427,40 @@ fn scoped_borrow_callbacks_on_all_backends() {
         ("failed", 0, 2),
         ("parked", 0, 1),
     ];
+    scoped_borrow_cases(SOURCE, &cases, "scoped-callbacks");
+}
+
+#[test]
+fn scoped_borrow_plain_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/scoped_borrow_plain.jk"),
+        &[
+            ("main", 33, 2),
+            ("dynamic", 42, 1),
+            ("arrays", 21, 2),
+            ("zero", 1, 2),
+            ("matrices", 42, 2),
+            ("generic", 42, 2),
+            ("owned_source", 42, 1),
+            ("isolated", 7, 2),
+            ("reuse", 56, 16),
+            ("failed", 0, 2),
+            ("parked", 0, 1),
+        ],
+        "scoped-plain",
+    );
+}
+
+fn scoped_borrow_cases(source: &str, cases: &[(&str, i32, usize)], label: &str) {
+    use crate::vm::{InstanceValue, VmEngine, VmMode};
+    use std::time::{Duration, Instant};
     let names: Vec<_> = cases.iter().map(|(name, _, _)| *name).collect();
-    let (_scratch, entries, library) = linked_task_entries(SOURCE, &names, "scoped-callbacks");
+    let (_scratch, entries, library) = linked_task_entries(source, &names, label);
     for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
         let mut vm = mode.map(VmEngine::with_mode);
         if let Some(vm) = &mut vm {
             vm.set_prelude_enabled(false);
-            vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+            vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
         }
         for workers in [1, 3] {
             let budget = TaskBudget::new(4 << 20);
@@ -1515,13 +1540,31 @@ fn scoped_borrow_callbacks_on_all_backends() {
                                 && o.len == reader.len
                         })
                         .unwrap();
-                    assert_ne!(sender.header, reader.header);
-                    assert_eq!(reader.origin_parent, task.identity());
+                    if reader.plain {
+                        assert_eq!(
+                            reader.header, sender.header,
+                            "ordinary reference payload was copied"
+                        );
+                        assert_eq!(reader.header, reader.data);
+                    } else {
+                        assert_ne!(sender.header, reader.header);
+                    }
+                    assert_eq!(reader.origin_parent, sender.origin_parent);
+                    if *name != "owned_source" {
+                        assert_eq!(reader.origin_parent, task.identity());
+                    }
+                }
+                if *name == "owned_source" {
+                    assert_eq!(
+                        tree.iter().filter(|o| o.source).count(),
+                        3,
+                        "moved array element stayed local"
+                    );
                 }
                 if *name == "main" {
                     assert!(
                         tree.iter().any(|o| o.source && o.parent != task.identity()),
-                        "nested callback stayed local"
+                        "nested reader stayed local"
                     );
                     let sender = observations.iter().find(|o| o.source).unwrap();
                     if workers > 1 {
@@ -1529,7 +1572,7 @@ fn scoped_borrow_callbacks_on_all_backends() {
                             observations
                                 .iter()
                                 .any(|o| !o.source && o.thread != sender.thread),
-                            "callback stayed on parent worker"
+                            "reader stayed on parent worker"
                         );
                     }
                 }

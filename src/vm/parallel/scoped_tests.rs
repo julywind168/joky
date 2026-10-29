@@ -298,6 +298,8 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
     let callbacks = include_str!("../../../tests/fixtures/scoped_borrow_callbacks.jk")
         .replace("task.yield_now()", "checkpoint()")
         .replace("    values[0] = 42", "    checkpoint()\n    values[0] = 42");
+    let plain = include_str!("../../../tests/fixtures/scoped_borrow_plain.jk")
+        .replace("task.yield_now()", "checkpoint()");
     for (source, cases) in [
         (
             source,
@@ -311,6 +313,10 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
             ],
         ),
         (callbacks, vec![("main", 39), ("dynamic", 42)]),
+        (
+            plain,
+            vec![("main", 33), ("dynamic", 42), ("arrays", 21), ("zero", 1)],
+        ),
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
@@ -539,12 +545,12 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
             import joky/string
             extern fn await_local() @suspends
             extern fn release() @suspends
-            fn local(anchor: &Int32) @suspends { release() }
+            fn local(anchor: &mut Int32) @suspends { release() }
             fn root() @suspends -> UInt64 {
                 let text = "shared"
                 let view = &text
-                let anchor = 1
-                let same_worker = &anchor
+                var anchor = 1
+                let same_worker = &mut anchor
                 scope {
                     branch { await_local(); string.byte_length(view); }
                     branch { local(same_worker) }
@@ -579,49 +585,85 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
     }
 }
 
-#[test]
-fn scoped_borrow_callback_budget_boundaries() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.set_prelude_enabled(false);
-        vm.load_source(include_str!(
-            "../../../tests/fixtures/scoped_borrow_callbacks.jk"
-        ))
-        .unwrap();
-        for (name, expected) in [("main", 39), ("dynamic", 42)] {
-            let mut success = false;
-            for bytes in [0, 512, 4096, 16384, 65536, 1 << 20, 4 << 20] {
-                let budget = TaskBudget::new(bytes);
-                let mut pool = ParallelExecutor::new(3, 32).unwrap();
-                let result = vm
-                    .prepare_parallel_task(name, vec![], vec![budget.clone()])
-                    .and_then(|p| p.submit(&pool))
-                    .and_then(|task| {
-                        wait(|| task.is_finished());
-                        task.take_result()
-                    });
-                match &result {
-                    Ok(value) => {
-                        assert_eq!(
-                            value.value(),
-                            &TaskValue::Scalar(InstanceValue::Int32(expected))
-                        );
-                        success = true;
+fn callback_and_plain_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
+    for (source, cases) in [
+        (
+            include_str!("../../../tests/fixtures/scoped_borrow_callbacks.jk"),
+            &[("main", 39), ("dynamic", 42)][..],
+        ),
+        (
+            include_str!("../../../tests/fixtures/scoped_borrow_plain.jk"),
+            &[("main", 33), ("dynamic", 42), ("arrays", 21), ("zero", 1)][..],
+        ),
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(false);
+            vm.load_source(source).unwrap();
+            for &(name, expected) in cases {
+                let mut success = false;
+                for bytes in amounts.clone() {
+                    let budget = TaskBudget::new(bytes);
+                    let mut pool = ParallelExecutor::new(3, 32).unwrap();
+                    let result = vm
+                        .prepare_parallel_task(name, vec![], vec![budget.clone()])
+                        .and_then(|p| p.submit(&pool))
+                        .and_then(|task| {
+                            wait(|| task.is_finished());
+                            task.take_result()
+                        });
+                    match &result {
+                        Ok(value) => {
+                            assert_eq!(
+                                value.value(),
+                                &TaskValue::Scalar(InstanceValue::Int32(expected))
+                            );
+                            success = true;
+                        }
+                        Err(error) => assert_eq!(
+                            error.code(),
+                            ErrorCode::ResourceLimit,
+                            "{mode:?}/{name}/{bytes}: {error}"
+                        ),
                     }
-                    Err(error) => assert_eq!(
-                        error.code(),
-                        ErrorCode::ResourceLimit,
-                        "{mode:?}/{name}/{bytes}: {error}"
-                    ),
+                    drop(result);
+                    pool.wait_closed();
+                    assert_eq!(budget.used(), 0, "{mode:?}/{name}/{bytes}");
+                    if success {
+                        break;
+                    }
                 }
-                drop(result);
-                pool.wait_closed();
-                assert_eq!(budget.used(), 0, "{mode:?}/{name}/{bytes}");
-                if success {
-                    break;
-                }
+                assert!(success);
             }
-            assert!(success);
         }
+    }
+}
+
+#[test]
+fn scoped_borrow_callback_and_plain_budget_boundaries() {
+    callback_and_plain_budgets([0, 512, 4096, 16384, 65536, 1 << 20, 4 << 20]);
+}
+#[test]
+#[ignore = "exhaustive: ordinary local storage, scoped inputs and callback allocation failures"]
+fn exhaustive_scoped_borrow_plain_budgets() {
+    callback_and_plain_budgets((0..(4 << 20)).step_by(128));
+}
+
+#[test]
+fn scoped_borrow_plain_captures_keep_mutation_and_escape_rejected() {
+    let declarations = r#"
+        import joky/task
+        struct Point { value: Int32 }
+        fn read(value: &Point) @suspends { task.yield_now(); value.value; }
+    "#;
+    for body in [
+        "var value = Point { value: 1 }; let view = &value; scope { branch { read(view) }; value.value = 2 }",
+        "var value = Point { value: 1 }; let view = &value; scope { branch { read(view) }; let write = &mut value }",
+        "scope { { let value = Point { value: 1 }; let view = &value; branch { read(view) } } }",
+    ] {
+        let mut vm = VmEngine::new();
+        let error = vm.load_source(&format!("{declarations} fn root() @suspends {{ {body} }}")).unwrap_err();
+        assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{body}: {error}");
+        assert!(error.message().to_lowercase().contains("borrow"), "{body}: {error}");
     }
 }

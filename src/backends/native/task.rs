@@ -76,7 +76,8 @@ pub(super) fn descriptors<M: Module>(
         module
             .define_data(input_data, &input_desc)
             .map_err(|e| compile_error(e.to_string()))?;
-        let words = crate::runtime::task_scope::layout::encode(&info.signature)?;
+        let signature = crate::core::ir::parallel::scoped::signature(plan, &name);
+        let words = crate::runtime::task_scope::layout::encode(&signature)?;
         let mut bytes = Vec::new();
         for word in &words {
             bytes.extend(match module.isa().endianness() {

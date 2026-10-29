@@ -13,6 +13,7 @@ use std::{alloc::Layout, ptr::NonNull, rc::Rc, sync::Arc};
 #[derive(Clone, Debug)]
 pub(crate) struct Shape {
     element: Layout,
+    plain: bool,
 }
 impl Shape {
     pub(crate) fn of(ty: &Type) -> Option<Self> {
@@ -28,7 +29,7 @@ impl Shape {
             {
                 reference.target.array_element_type()?.clone()
             }
-            _ => return None,
+            _ => reference.target.clone(),
         };
         use crate::core::types::walk::{TypeEdges, TypeWalk};
         // Copy alone is insufficient: references, callable values and phantom
@@ -42,7 +43,10 @@ impl Shape {
             return None;
         }
         let layout = element.storage_layout().ok()?;
-        Self::checked(layout.size, layout.align).ok()
+        let mut shape = Self::checked(layout.size, layout.align).ok()?;
+        shape.plain = !matches!(&reference.target, Type::String | Type::BufferSlice(_))
+            && !matches!(&reference.target, Type::Record(r) if r.array);
+        Some(shape)
     }
     fn checked(size: usize, align: usize) -> Result<Self, Error> {
         if size > 64 * 1024 * 1024
@@ -54,21 +58,28 @@ impl Shape {
         }
         Ok(Self {
             element: Layout::from_size_align(size, align).map_err(|_| invalid())?,
+            plain: false,
         })
     }
     pub(crate) fn encode(&self, words: &mut Vec<u64>) {
         // Physical evidence from the checked compiler, not a user-supplied type
         // certificate. Admission above proves the complete pointer-free type tree.
-        words.extend([99, self.element.size() as u64, self.element.align() as u64]);
+        words.extend([
+            if self.plain { 100 } else { 99 },
+            self.element.size() as u64,
+            self.element.align() as u64,
+        ]);
     }
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
-        let [99, size, align] = *words else {
+        let [kind @ (99 | 100), size, align] = *words else {
             return Err(invalid());
         };
-        Self::checked(
+        let mut shape = Self::checked(
             usize::try_from(size).map_err(|_| invalid())?,
             usize::try_from(align).map_err(|_| invalid())?,
-        )
+        )?;
+        shape.plain = kind == 100;
+        Ok(shape)
     }
     pub(crate) fn layout(&self) -> Layout {
         self.element
@@ -79,9 +90,36 @@ impl Shape {
         word as *const Buffer
     }
     pub(crate) unsafe fn eligible(&self, word: u64) -> bool {
-        self.buffer(word)
-            .as_ref()
-            .is_some_and(|b| b.scoped_range(self.layout()).is_some())
+        self.source(word).is_some()
+    }
+    unsafe fn source(&self, word: u64) -> Option<(NonNull<u8>, usize, Option<Arc<Scope>>)> {
+        if self.plain {
+            let data = NonNull::new(word as *mut u8)?;
+            if !(word as usize).is_multiple_of(self.element.align()) {
+                return None;
+            }
+            if let Some(origin) = ACTIVE_LOANS.with(|active| {
+                // The poll guard holds the immutable loan slice alive. No foreign
+                // header, Rc or frame is accessed; each loan belongs to this task.
+                (&*active.get()).iter().find_map(|loan| {
+                    let bytes = loan.range.len.checked_mul(loan.range.element.size())?;
+                    let offset = (word as usize).checked_sub(loan.range.data.as_ptr() as usize)?;
+                    (pool::identity() == Some(loan.task)
+                        && offset
+                            .checked_add(self.element.size())
+                            .is_some_and(|end| end <= bytes))
+                    .then(|| loan.range.origin.clone())
+                })
+            }) {
+                return Some((data, 1, Some(origin)));
+            }
+            super::current()?
+                .owns_range(data, self.element.size(), self.element.align())
+                .then_some((data, 1, None))
+        } else {
+            let source = self.buffer(word).as_ref()?.scoped_range(self.layout())?;
+            Some((source.data, source.len, source.origin.cloned()))
+        }
     }
 }
 
@@ -139,6 +177,7 @@ struct Range {
     scope: Arc<Scope>,
     origin: Arc<Scope>,
     _charge: Option<Lease>,
+    plain: bool,
 }
 // SAFETY: capture requires compiler-certified shared pointer-free storage owned by
 // this parent task or received under a bounded loan. Each hop retains the original
@@ -146,7 +185,8 @@ struct Range {
 // cancellation drains this subtree before dropping its frames.
 // The static group and worker-root failure barrier retain the source owner until
 // every reader is cleaned. Only payload bytes cross; Buffer/Rc/frame metadata do
-// not. install creates a new nonowning header on the receiving worker.
+// not. Buffer inputs install a worker-local header; plain inputs keep the
+// certified payload address, with provenance retained separately by the Job.
 unsafe impl Send for Range {}
 
 /// Stable, worker-local provenance for installed headers and their slices.
@@ -154,6 +194,30 @@ unsafe impl Send for Range {}
 pub(crate) struct Loan {
     task: u64,
     range: Range,
+}
+thread_local! {
+    static ACTIVE_LOANS: std::cell::Cell<*const [Rc<Loan>]> = const {
+        std::cell::Cell::new(std::ptr::slice_from_raw_parts(NonNull::<Rc<Loan>>::dangling().as_ptr(), 0))
+    };
+}
+/// Ordinary references have no Buffer header. Poll-local lookup supplies their
+/// received provenance without changing the language reference representation.
+pub(crate) struct LoanGuard<'a> {
+    previous: *const [Rc<Loan>],
+    _loans: std::marker::PhantomData<&'a [Rc<Loan>]>,
+}
+impl<'a> LoanGuard<'a> {
+    pub(crate) fn enter(loans: &'a [Rc<Loan>]) -> Self {
+        Self {
+            previous: ACTIVE_LOANS.with(|active| active.replace(loans)),
+            _loans: Default::default(),
+        }
+    }
+}
+impl Drop for LoanGuard<'_> {
+    fn drop(&mut self) {
+        ACTIVE_LOANS.with(|active| active.set(self.previous));
+    }
 }
 impl Loan {
     pub(crate) fn source(
@@ -219,16 +283,13 @@ impl Input {
         if pool::identity() != Some(scope.parent) {
             return Err(invalid());
         }
-        let Source { data, len, origin } = shape
-            .buffer(word)
-            .as_ref()
-            .and_then(|b| b.scoped_range(shape.layout()))
-            .ok_or_else(invalid)?;
+        let (data, len, origin) = shape.source(word).ok_or_else(invalid)?;
         let range = Range {
             data,
             len,
             element: shape.layout(),
-            origin: origin.cloned().unwrap_or_else(|| scope.clone()),
+            origin: origin.unwrap_or_else(|| scope.clone()),
+            plain: shape.plain,
             scope,
             _charge: super::reserve_current(
                 std::mem::size_of::<Loan>() + 2 * std::mem::size_of::<usize>(),
@@ -268,10 +329,14 @@ impl Input {
                 }));
                 let loan = &**loans.last().unwrap();
                 let range = &loan.range;
-                let view = unsafe {
-                    Buffer::scoped_view(arena, range.data, range.len, range.element, loan)?
+                let word = if range.plain {
+                    range.data.as_ptr() as u64
+                } else {
+                    unsafe {
+                        Buffer::scoped_view(arena, range.data, range.len, range.element, loan)?
+                    }
+                    .as_ptr() as u64
                 };
-                let word = view.as_ptr() as u64;
                 #[cfg(test)]
                 observe(range, word as usize, false);
                 Ok(vec![word])
@@ -283,6 +348,7 @@ impl Input {
 #[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct Observation {
+    pub(crate) plain: bool,
     pub(crate) parent: u64,
     pub(crate) task: u64,
     pub(crate) scope: u64,
@@ -299,6 +365,7 @@ static OBSERVATIONS: std::sync::Mutex<Vec<Observation>> = std::sync::Mutex::new(
 #[cfg(test)]
 fn observe(range: &Range, header: usize, source: bool) {
     OBSERVATIONS.lock().unwrap().push(Observation {
+        plain: range.plain,
         parent: range.scope.parent,
         task: pool::identity().unwrap(),
         scope: range.scope.identity,
@@ -356,8 +423,8 @@ mod tests {
             struct Owner { value: String }
             struct Phantom<T> { value: Int32 }
             enum Choice { One(Int32), Empty }
-            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>) {}
-            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, d: &Array<Owner>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>) {}
+            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32) {}
+            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, d: &Array<Owner>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, j: &Owner, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain) {}
         "#;
         let ast = types
             .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())
@@ -368,13 +435,13 @@ mod tests {
             .import_layouts(prepared.ast(), &Default::default())
             .unwrap();
         let plan = prepared.plan(&imports).unwrap_or_else(|e| panic!("{e}"));
-        for ty in &plan.functions["accepted"].signature.params {
+        for ty in &crate::core::ir::parallel::scoped::signature(&plan, "accepted").params {
             let shape = Shape::of(ty).unwrap_or_else(|| panic!("{ty}"));
             let mut encoded = Vec::new();
             shape.encode(&mut encoded);
             assert_eq!(Shape::decode(&encoded).unwrap().layout(), shape.layout());
         }
-        for ty in &plan.functions["rejected"].signature.params {
+        for ty in &crate::core::ir::parallel::scoped::signature(&plan, "rejected").params {
             assert!(Shape::of(ty).is_none(), "{ty}");
         }
     }
@@ -409,7 +476,6 @@ mod tests {
             assert!(Shape::of(&Type::reference(target, true)).is_none());
         }
         for target in [
-            Type::Int32,
             Type::BufferSlice(Arc::new(Type::String)),
             Type::BufferSlice(Arc::new(Type::Named("domain.Handle".into()))),
             Type::BufferSlice(Arc::new(Type::Named("admission.Token".into()))),
@@ -429,6 +495,87 @@ mod tests {
             vec![99, 4, 4, 0],
         ] {
             assert!(Shape::decode(&words).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod plain_tests {
+    use super::*;
+    use crate::runtime::cps::CpsFrame;
+    use crate::vm::{InstanceValue, TaskValue, VmEngine, VmMode};
+
+    #[test]
+    fn scoped_borrow_plain_provenance_rejects_foreign_wide_and_expired_sources() {
+        unsafe extern "C" fn inspect(frame: *mut CpsFrame) -> i32 {
+            let input = observations(pool::parent_identity().unwrap())
+                .into_iter()
+                .find(|o| !o.source && o.task == pool::identity().unwrap())
+                .unwrap();
+            let shape = Shape::of(&Type::reference(Type::Int32, false)).unwrap();
+            let data = input.data as u64;
+            let mut bits = u64::from(shape.eligible(data));
+            bits |= u64::from(!shape.eligible(data + 1)) << 1;
+            bits |= u64::from(!shape.eligible(data + 4)) << 2;
+            let wider = Shape::of(&Type::reference(Type::Int64, false)).unwrap();
+            bits |= u64::from(!wider.eligible(data)) << 3;
+            bits |= u64::from(!shape.eligible(0)) << 4;
+            let root = super::super::current().unwrap();
+            bits |= u64::from(!root.owns_range(NonNull::new_unchecked(data as *mut u8), 4, 4)) << 5;
+            let mut arena = Arena::default();
+            let local = arena.allocate(4, 4).unwrap();
+            local.cast::<i32>().as_ptr().write(42);
+            bits |= u64::from(shape.eligible(local.as_ptr() as u64)) << 6;
+            arena.release(local);
+            bits |= u64::from(!shape.eligible(local.as_ptr() as u64)) << 7;
+            let unowned = 42i32;
+            bits |= u64::from(!shape.eligible((&unowned as *const i32) as u64)) << 8;
+            (*frame).result = bits;
+            0
+        }
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            unsafe {
+                vm.register_parallel_suspending_fn(
+                    "inspect",
+                    crate::FunctionSignature::new(vec![], Type::Int32),
+                    inspect,
+                    0,
+                    Arc::new(()),
+                )
+                .unwrap();
+            }
+            vm.load_source(
+                r#"
+                import joky/task
+                extern fn inspect() @suspends -> Int32
+                struct Pair { a: Int32, b: Int32 }
+                fn reader(value: &Int32) @suspends -> Int32 { inspect() + *value }
+                fn root() @suspends -> Int32 {
+                    let pair = Pair { a: 7, b: 9 }
+                    let (a, b) = join { | reader(&pair.a) | task.yield_now() }
+                    a
+                }
+            "#,
+            )
+            .unwrap();
+            assert!(vm.parallel_signature("reader").is_err());
+            let budget = crate::runtime::parallel::TaskBudget::new(4 << 20);
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(3, 16).unwrap();
+            let task = vm
+                .prepare_parallel_task("root", vec![], vec![budget.clone()])
+                .unwrap()
+                .submit(&pool)
+                .unwrap();
+            task.wait().unwrap();
+            assert_eq!(
+                task.take_result().unwrap().value(),
+                &TaskValue::Scalar(InstanceValue::Int32(518)),
+                "{mode:?}"
+            );
+            drop(task);
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0);
         }
     }
 }
