@@ -148,30 +148,39 @@ impl Execution {
             return false;
         };
         branches.iter().all(|branch| {
-            if branch.indirect.is_some() {
-                return false;
-            }
-            let Some(Callee::User(function)) = branch.target.and_then(|id| module.callees.get(id))
-            else {
+            branch.indirect.is_none()
+                && branch
+                    .target
+                    .is_some_and(|target| self.scoped_input(module, frame, target, &branch.args))
+        })
+    }
+
+    fn scoped_input(
+        &self,
+        module: &BytecodeModule,
+        frame: &Frame,
+        target: usize,
+        args: &[Option<usize>],
+    ) -> bool {
+        let Some(Callee::User(function)) = module.callees.get(target) else {
+            return false;
+        };
+        if !function.scoped || Shape::of(&function.info.signature.ret).is_err() {
+            return false;
+        }
+        let mut base = 0;
+        function.info.signature.params.iter().all(|ty| {
+            let Ok(input) = InputShape::of(ty) else {
                 return false;
             };
-            if !function.scoped || Shape::of(&function.info.signature.ret).is_err() {
-                return false;
-            }
-            let mut base = 0;
-            function.info.signature.params.iter().all(|ty| {
-                let Ok(input) = InputShape::of(ty) else {
-                    return false;
-                };
-                let eligible = match input {
-                    InputShape::Owned(_) => true,
-                    InputShape::Borrowed(shape) => branch.args[base]
-                        .and_then(|key| frame.slots[key].instance_bits().ok())
-                        .is_some_and(|word| unsafe { shape.eligible(word) }),
-                };
-                base += ty.parameter_slots();
-                eligible
-            })
+            let eligible = match input {
+                InputShape::Owned(_) => true,
+                InputShape::Borrowed(shape) => args[base]
+                    .and_then(|key| frame.slots[key].instance_bits().ok())
+                    .is_some_and(|word| unsafe { shape.eligible(word) }),
+            };
+            base += ty.parameter_slots();
+            eligible
         })
     }
 
@@ -282,13 +291,44 @@ impl Execution {
         });
         publication
     }
-    pub(super) fn remote_branch(&mut self, module: &BytecodeModule) -> Result<(), Error> {
+    pub(super) fn remote_branch(&mut self, module: &BytecodeModule) -> Result<bool, Error> {
         let frame = self.frame_mut(self.current);
         let Instruction::TaskBranch { target, args } = &frame.function.code[frame.pc] else {
             unreachable!()
         };
         let (target, args) = (*target, args.clone());
-        let factory = self.remote_factory(module, target, &args, None)?;
+        let Activation::User(frame) = &self.node(self.current).activation else {
+            unreachable!()
+        };
+        let Callee::User(function) = &module.callees[target] else {
+            return Ok(false);
+        };
+        let borrowed = function
+            .info
+            .signature
+            .params
+            .iter()
+            .any(|ty| Shape::of(ty).is_err());
+        let scope = if borrowed {
+            if !self.scoped_input(module, frame, target, &args) {
+                return Ok(false);
+            }
+            Some(Scope::new(crate::runtime::task_scope::fresh_identity()?)?)
+        } else {
+            if crate::runtime::isolate::active() {
+                return Ok(false);
+            }
+            None
+        };
+        let _capture = frame
+            .remote_scopes
+            .as_ref()
+            .unwrap()
+            .groups
+            .last()
+            .unwrap()
+            .capture_guard();
+        let factory = self.remote_factory(module, target, &args, scope)?;
         let frame = self.frame_mut(self.current);
         frame
             .remote_scopes
@@ -299,7 +339,7 @@ impl Execution {
             .unwrap()
             .publish(vec![factory])?;
         frame.pc += 1;
-        Ok(())
+        Ok(true)
     }
     pub(super) fn poll_remote(&mut self, module: &BytecodeModule) -> Result<bool, Error> {
         let id = self.current;

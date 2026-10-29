@@ -96,7 +96,7 @@ fn scoped_borrow_nested_groups_forward_received_views() {
     }
 }
 
-fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
+fn input_engine(mode: VmMode) -> VmEngine {
     unsafe extern "C" fn cleanups(frame: *mut CpsFrame) -> i32 {
         (*frame).result = crate::runtime::parallel::pool::cleanup_count() as u64;
         0
@@ -107,6 +107,21 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
         struct Input {{ text: String }}
         impl Drop for Input {{ fn drop(&mut self) {{}} }}
         fn with_input(text: &String, input: Input) @suspends -> Int32 {{ text_size(text) }}
+        fn dynamic_inputs() @suspends -> Int32 {{
+            let result = isolate {{
+                let text = "source"
+                let view = &text
+                let first = Input {{ text: "first" }}
+                let second = Input {{ text: "second" }}
+                scope {{
+                    branch {{ with_input(view, first); }}
+                    branch {{ with_input(view, second); }}
+                }}
+                12
+            }}
+            if cleanups() != 0 {{ return -2 }}
+            match result {{ Ok(value) => value, Err(_) => -1 }}
+        }}
         fn isolated_inputs() @suspends -> Int32 {{
             let result = isolate {{
                 let text = "source"
@@ -121,23 +136,59 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
         }}
     "#
     );
+    let mut vm = VmEngine::with_mode(mode);
+    unsafe {
+        vm.register_parallel_suspending_fn(
+            "cleanups",
+            FunctionSignature::new(vec![], Type::Int32),
+            cleanups,
+            0,
+            Arc::new(()),
+        )
+        .unwrap();
+    }
+    vm.load_source(&source).unwrap();
+    vm
+}
+
+#[test]
+fn scoped_borrow_unpublished_dynamic_inputs_finish_cleanup_before_recovery() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        unsafe {
-            vm.register_parallel_suspending_fn(
-                "cleanups",
-                FunctionSignature::new(vec![], Type::Int32),
-                cleanups,
-                0,
-                Arc::new(()),
-            )
+        let vm = input_engine(mode);
+        let budget = TaskBudget::new(4 << 20);
+        // The root occupies the only slot: capture succeeds, publication fails,
+        // and there is no child whose lifetime could incidentally delay recovery.
+        let mut pool = ParallelExecutor::new(1, 1).unwrap();
+        let task = vm
+            .prepare_parallel_task("dynamic_inputs", vec![], vec![budget.clone()])
+            .unwrap()
+            .submit(&pool)
             .unwrap();
-        }
-        vm.load_source(&source).unwrap();
+        wait(|| task.is_finished());
+        assert_eq!(
+            task.take_result().unwrap().value(),
+            &TaskValue::Scalar(InstanceValue::Int32(-1)),
+            "{mode:?}"
+        );
+        let observations = crate::runtime::parallel::scoped::observations(task.identity());
+        assert_eq!(observations.iter().filter(|o| o.source).count(), 1);
+        assert!(!observations.iter().any(|o| !o.source));
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0);
+    }
+}
+
+fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = input_engine(mode);
         for (name, expected) in [
             ("isolated_inputs", InstanceValue::Int32(12)),
             ("advanced", InstanceValue::UInt64(17)),
             ("forwarded", InstanceValue::Int32(145)),
+            ("dynamic_shared", InstanceValue::Int32(42)),
+            ("dynamic_inputs", InstanceValue::Int32(12)),
+            ("dynamic_views", InstanceValue::Int32(12)),
             ("forwarded_race", InstanceValue::Int32(94)),
             ("forwarded_isolate", InstanceValue::Int32(94)),
             ("nested_race", InstanceValue::Int32(91)),
@@ -154,7 +205,7 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
                     .and_then(|task| {
                         wait(|| task.is_finished());
                         let result = task.take_result();
-                        if name == "isolated_inputs"
+                        if matches!(name, "isolated_inputs" | "dynamic_inputs")
                             && result
                                 .as_ref()
                                 .is_ok_and(|value| value.value() == &TaskValue::Scalar(expected))
@@ -176,7 +227,10 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
                         if !success {
                             assert!(matches!(
                                 name,
-                                "nested_isolated_success" | "isolated_inputs" | "forwarded_isolate"
+                                "nested_isolated_success"
+                                    | "isolated_inputs"
+                                    | "forwarded_isolate"
+                                    | "dynamic_inputs"
                             ));
                             assert_eq!(
                                 value.value(),
@@ -207,7 +261,7 @@ fn budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
 }
 #[test]
 fn scoped_borrow_budget_boundaries() {
-    budgets([0, 512, 4096, 16384, 65536, 1 << 20]);
+    budgets([0, 512, 4096, 16384, 65536, 1 << 20, 4 << 20]);
 }
 #[test]
 #[ignore = "exhaustive: scoped descriptors, view installation, mixed owners and results"]
@@ -254,6 +308,7 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
             ("main", 104),
             ("nested_isolated_success", 91),
             ("forwarded", 145),
+            ("dynamic_return", 26),
         ] {
             let mut complete = false;
             for boundary in 0..64 {
@@ -401,6 +456,103 @@ fn scoped_borrow_isolate_does_not_hide_fatal_source_cleanup() {
                 .filter(|o| o.source)
                 .count(),
             2
+        );
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
+fn scoped_borrow_dynamic_capture_keeps_sources_read_only_until_join() {
+    let declarations = r#"
+        import joky/array.{type Array}
+        import joky/task
+        fn read(values: &Array<Int32>) @suspends { task.yield_now(); values.len(); }
+    "#;
+    for body in [
+        "var values = [1, 2]; let view = &values; scope { branch { read(view) }; values[0] = 9 }",
+        "var values = [1, 2]; let view = &values; scope { branch { read(view) }; let moved = values }",
+        "var values = [1, 2]; let view = &values; scope { branch { read(view) }; let write = &mut values; write[0] = 9 }",
+        "scope { { let values = [1, 2]; let view = &values; branch { read(view) } } }",
+    ] {
+        let mut vm = VmEngine::new();
+        let error = vm.load_source(&format!("{declarations} fn root() @suspends {{ {body} }}")).unwrap_err();
+        assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{body}: {error}");
+        assert!(error.message().to_lowercase().contains("borrow"), "{body}: {error}");
+    }
+}
+
+#[test]
+fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
+    static READY: AtomicBool = AtomicBool::new(false);
+    unsafe extern "C" fn await_local(_: *mut CpsFrame) -> i32 {
+        if READY.load(Ordering::Acquire) {
+            return 0;
+        }
+        crate::runtime::parallel::pool::io_waker().unwrap().wake();
+        1
+    }
+    unsafe extern "C" fn release(_: *mut CpsFrame) -> i32 {
+        READY.store(true, Ordering::Release);
+        0
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        READY.store(false, Ordering::Release);
+        let mut vm = VmEngine::with_mode(mode);
+        for (name, callback) in [
+            ("await_local", await_local as crate::runtime::cps::CpsEntry),
+            ("release", release),
+        ] {
+            unsafe {
+                vm.register_parallel_suspending_fn(
+                    name,
+                    FunctionSignature::new(vec![], Type::Unit),
+                    callback,
+                    0,
+                    Arc::new(()),
+                )
+                .unwrap();
+            }
+        }
+        vm.load_source(
+            r#"
+            import joky/string
+            extern fn await_local() @suspends
+            extern fn release() @suspends
+            fn local(anchor: &Int32) @suspends { release() }
+            fn root() @suspends -> UInt64 {
+                let text = "shared"
+                let view = &text
+                let anchor = 1
+                let same_worker = &anchor
+                scope {
+                    branch { await_local(); string.byte_length(view); }
+                    branch { local(same_worker) }
+                }
+                string.byte_length(&text)
+            }
+        "#,
+        )
+        .unwrap();
+        let budget = TaskBudget::new(4 << 20);
+        let mut pool = ParallelExecutor::new(1, 16).unwrap();
+        let task = vm
+            .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap()
+            .submit(&pool)
+            .unwrap();
+        wait(|| task.is_finished());
+        assert_eq!(
+            task.take_result().unwrap().value(),
+            &TaskValue::Scalar(InstanceValue::UInt64(6))
+        );
+        assert_eq!(
+            crate::runtime::parallel::scoped::observations(task.identity())
+                .iter()
+                .filter(|o| !o.source)
+                .count(),
+            1
         );
         drop(task);
         pool.wait_closed();

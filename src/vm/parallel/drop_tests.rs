@@ -231,8 +231,10 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
     let _serial = SERIAL.lock().unwrap();
     for (mode, scenario) in [VmMode::Jit, VmMode::Interpreter]
         .into_iter()
-        .flat_map(|mode| (0..3).map(move |scenario| (mode, scenario)))
+        .flat_map(|mode| (0..6).map(move |scenario| (mode, scenario)))
     {
+        let dynamic = scenario >= 3;
+        let scenario = scenario % 3;
         *GATE
             .get_or_init(|| (Mutex::new((false, false)), Condvar::new()))
             .0
@@ -283,6 +285,14 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
             }
         "#
         .replace("PEER", if scenario == 0 { "fail_parent()" } else { "{}" });
+        let source = if dynamic {
+            source.replace(
+                "let (a, b) = join { | relay(text) | peer() }",
+                "scope { branch { relay(text); }; peer(); }",
+            )
+        } else {
+            source
+        };
         vm.load_source(&source).unwrap();
         let budget = TaskBudget::new(4 << 20);
         let prepared = vm
@@ -702,6 +712,27 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
                 let (a, b) = join { | relay(&source.text) | task.yield_now() }
                 0
             }
+            fn dynamic_owned() @suspends -> Int32 {
+                let source = Source { text: "source destroyed" }
+                let view = &source.text
+                scope { branch { relay(view); } }
+                0
+            }
+            fn dynamic_isolated() @suspends -> Int32 {
+                let result = isolate { scope { branch { dynamic_owned(); }; fail() }; 0 }
+                resumed()
+                match result { Ok(_) => 0, Err(_) => 7 }
+            }
+            fn dynamic_selected() @suspends {
+                let source = Source { text: "source destroyed" }
+                let view = &source.text
+                scope { branch { relay(view); }; selected() }
+            }
+            fn dynamic_normal() @suspends -> Int32 {
+                dynamic_selected()
+                resumed()
+                7
+            }
             fn losing(anchor: &Int32) @suspends -> Int32 { owned() }
             fn winning(anchor: &Int32) @suspends -> Int32 { selected(); 7 }
             fn local_race() @suspends -> Int32 {
@@ -723,6 +754,10 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
             ("local_race", true),
             ("isolated", false),
             ("isolated", true),
+            ("dynamic_isolated", false),
+            ("dynamic_isolated", true),
+            ("dynamic_normal", false),
+            ("dynamic_normal", true),
         ] {
             *GATE
                 .get_or_init(|| (Mutex::new((false, false)), Condvar::new()))

@@ -1201,7 +1201,14 @@ fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
     const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_join.jk");
     let (_scratch, entries, library) = linked_task_entries(
         SOURCE,
-        &["failed", "parked", "forwarded_failed", "forwarded_parked"],
+        &[
+            "failed",
+            "parked",
+            "forwarded_failed",
+            "forwarded_parked",
+            "dynamic_failed",
+            "dynamic_parked",
+        ],
         "scoped-stop",
     );
     for workers in [1, 3] {
@@ -1225,7 +1232,7 @@ fn scoped_borrow_aot_failure_and_cancellation_release_storage() {
                         crate::runtime::parallel::scoped::tree_observations(task.identity());
                     let readers = observations
                         .iter()
-                        .filter(|o| !o.source && (index < 2 || o.parent != task.identity()))
+                        .filter(|o| !o.source && (index != 3 || o.parent != task.identity()))
                         .count();
                     if readers == 2 {
                         break;
@@ -1267,6 +1274,12 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
         ("forwarded", 145),
         ("forwarded_race", 94),
         ("forwarded_isolate", 94),
+        ("dynamic_shared", 42),
+        ("dynamic_return", 26),
+        ("dynamic_isolate", 42),
+        ("dynamic_views", 12),
+        ("dynamic_mixed", 9),
+        ("dynamic_break_continue", 44),
     ];
     let names: Vec<_> = cases.iter().map(|(name, _)| *name).collect();
     let (_scratch, entries, library) = linked_task_entries(SOURCE, &names, "scoped-nested");
@@ -1313,9 +1326,36 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
                 let observations = crate::runtime::parallel::scoped::observations(task.identity());
                 assert_eq!(
                     observations.iter().filter(|o| o.source).count(),
-                    if *name == "forwarded" { 3 } else { 2 },
+                    match *name {
+                        "forwarded" | "dynamic_views" => 3,
+                        "dynamic_shared" => 4,
+                        "dynamic_return" => 1,
+                        _ => 2,
+                    },
                     "{mode:?}/{workers}/{name}: group stayed local"
                 );
+                if name.starts_with("dynamic") {
+                    let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
+                    for reader in tree.iter().filter(|o| !o.source) {
+                        assert_eq!(reader.origin_parent, task.identity());
+                        let sender = tree
+                            .iter()
+                            .find(|o| {
+                                o.source
+                                    && o.scope == reader.scope
+                                    && o.data == reader.data
+                                    && o.len == reader.len
+                            })
+                            .unwrap();
+                        assert_ne!(sender.header, reader.header);
+                    }
+                    if *name == "dynamic_shared" {
+                        assert!(
+                            tree.iter().any(|o| o.source && o.parent != task.identity()),
+                            "nested dynamic capture stayed local"
+                        );
+                    }
+                }
                 if name.starts_with("forwarded") {
                     let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
                     assert!(

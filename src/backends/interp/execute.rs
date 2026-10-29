@@ -1565,8 +1565,8 @@ impl Execution {
     }
 
     fn start_task_branch(&mut self, module: &BytecodeModule) -> Result<(), Error> {
-        if crate::runtime::parallel::pool::active() && !crate::runtime::isolate::active() {
-            return self.remote_branch(module);
+        if crate::runtime::parallel::pool::active() && self.remote_branch(module)? {
+            return Ok(());
         }
         let id = self.current;
         let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
@@ -1903,37 +1903,20 @@ impl Execution {
                         }
                         continue;
                     }
-                    Some(Pending::TaskJoin)
-                        if frame
-                            .remote_scopes
-                            .as_ref()
-                            .is_some_and(|scopes| !scopes.groups.is_empty()) =>
-                    {
-                        match frame
+                    Some(Pending::TaskJoin) => {
+                        // Both local fallback children and remote readers belong
+                        // to this scope. Keep advancing locals while remotes wait.
+                        let remote_ready = match frame
                             .remote_scopes
                             .as_mut()
-                            .unwrap()
-                            .groups
-                            .last_mut()
-                            .unwrap()
-                            .poll()
+                            .and_then(|scopes| scopes.groups.last_mut())
                         {
-                            Ok(true) => {
-                                frame.remote_scopes.as_mut().unwrap().groups.pop();
-                                frame.task_scopes.pop();
-                                frame.pending = None;
-                                frame.pc += 1;
-                            }
-                            Ok(false) => {
-                                if let Some(poll) = self.bubble(None) {
-                                    return poll;
-                                }
-                            }
-                            Err(error) => return self.fail(error),
-                        }
-                        continue;
-                    }
-                    Some(Pending::TaskJoin) => {
+                            Some(group) => match group.poll() {
+                                Ok(ready) => ready,
+                                Err(error) => return self.fail(error),
+                            },
+                            None => true,
+                        };
                         // Advance the joining scope's children in registration
                         // order; finished children are skipped in place.
                         let scope = self
@@ -1952,6 +1935,12 @@ impl Execution {
                             }
                             continue;
                         }
+                        if !remote_ready {
+                            if let Some(poll) = self.bubble(None) {
+                                return poll;
+                            }
+                            continue;
+                        }
                         // Every registered child and its cleanup finished.
                         // Use the same explicit drain state as static groups.
                         scope.close();
@@ -1961,6 +1950,9 @@ impl Execution {
                         }
                         let frame = self.frame_mut(self.current);
                         frame.task_scopes.pop();
+                        if let Some(scopes) = &mut frame.remote_scopes {
+                            scopes.groups.pop();
+                        }
                         frame.pending = None;
                         frame.pc += 1;
                         continue;
@@ -2778,7 +2770,7 @@ fn run_frame(
             Instruction::ConcurrentFinish => return Step::ConcurrentFinish,
             Instruction::TaskScopeEnter => {
                 frame.task_scopes.push(Default::default());
-                if crate::runtime::parallel::pool::active() && !crate::runtime::isolate::active() {
+                if crate::runtime::parallel::pool::active() {
                     if frame.remote_scopes.is_none() {
                         match parallel::Scopes::new() {
                             Ok(scopes) => frame.remote_scopes = Some(scopes),

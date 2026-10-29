@@ -240,6 +240,16 @@ pub(crate) fn children_pending() -> bool {
             .is_some_and(|task| !task.children_cleaned())
     })
 }
+/// Uninstalled captures can owe cleanup even if publication created no child.
+/// Keep failed local frames (and their group arbitration) until the drain path
+/// has run those receipts; otherwise isolate could recover before their Drop.
+pub(crate) fn cleanup_pending() -> bool {
+    CURRENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|task| task.cleanups_pending.load(Ordering::Acquire) != 0)
+    })
+}
 pub(crate) fn check_cancelled() -> Result<(), Error> {
     if CLEANING.with(Cell::get) {
         return Ok(());

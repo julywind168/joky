@@ -316,20 +316,20 @@ pub(crate) fn analyse(
         }
         for op in &body.ops {
             dependencies.extend(op.dependencies().cloned());
-            let packet_signature = |signature: &crate::FunctionSignature| {
-                signature
-                    .params
-                    .iter()
-                    .chain(std::iter::once(&signature.ret))
-                    .all(|ty| {
+            let branch_supported = |name: &String| {
+                plan.functions.get(name).is_some_and(|f| {
+                    let owned = |ty| {
                         packet::classify(ty, &resolve, &|_| false)
                             .is_some_and(packet::Kind::implemented)
-                    })
-            };
-            let packet_supported = |name: &String| {
-                plan.functions
-                    .get(name)
-                    .is_some_and(|f| packet_signature(&f.signature))
+                    };
+                    f.signature.params.iter().all(|ty| {
+                        // Cursor references and thread-bound capabilities
+                        // retain their existing dynamic-capture rejection.
+                        owned(ty)
+                            || (ty.reference_type().is_some()
+                                && qualify_with(ty, &resolve).transfer)
+                    }) && owned(&f.signature.ret)
+                })
             };
             let mut indirects = Vec::new();
             match op {
@@ -399,8 +399,8 @@ pub(crate) fn analyse(
                 {
                     Some("parallel group requires supported owned packets or worker-local borrows")
                 }
-                Op::TaskBranch { entry, .. } if !packet_supported(entry) => {
-                    Some("parallel branch captures require supported reference-free owning packets")
+                Op::TaskBranch { entry, .. } if !branch_supported(entry) => {
+                    Some("parallel branch captures require supported owned packets or worker-local borrows")
                 }
                 Op::DynTable { table, .. }
                     if !qualify_with(&table.self_type, &resolve).worker_local =>

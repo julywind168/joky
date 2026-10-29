@@ -21,6 +21,7 @@ pub(super) struct Scope {
     pub(super) failure: Option<Error>,
     draining: bool,
     pub(super) drained: bool,
+    local_joined: bool,
 }
 
 impl Scope {
@@ -115,10 +116,8 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
             super::task_scope_enter(frame);
         }
         (*frame).task_protocol.push(Scope {
-            remote: (kind != 3
-                && (kind != 2 || !crate::runtime::isolate::active())
-                && crate::runtime::parallel::pool::active())
-            .then(|| crate::runtime::parallel::pool::Group::new(kind)),
+            remote: (kind != 3 && crate::runtime::parallel::pool::active())
+                .then(|| crate::runtime::parallel::pool::Group::new(kind)),
             _charge: charge,
             id,
             kind,
@@ -131,6 +130,7 @@ pub(crate) unsafe extern "C" fn open(kind: u32, capacity: usize) -> u64 {
             failure: None,
             draining: false,
             drained: false,
+            local_joined: false,
         });
         Ok(id)
     })();
@@ -279,8 +279,8 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
             ));
         }
         let mut scoped = None;
-        if record.kind != 2
-            && record.remote.is_some()
+        let mut use_remote = record.remote.is_some();
+        if use_remote
             && record.prepared.iter().any(|(_, child)| {
                 child
                     .task_code
@@ -292,7 +292,7 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
             })
         {
             let record = &mut (&mut (*frame).task_protocol)[index];
-            if matches!(record.kind, 0 | 1)
+            if matches!(record.kind, 0..=2)
                 && record.prepared.iter_mut().all(|(_, child)| {
                     let code = child.task_code.as_ref().unwrap().clone();
                     super::parallel::scoped_eligible(child, &code)
@@ -300,16 +300,22 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
             {
                 scoped = Some(crate::runtime::parallel::scoped::Scope::new(record.id)?);
             } else {
-                record.remote = None;
+                use_remote = false;
             }
         }
         // Owned groups inside isolate retain their existing local path. Only
         // the certified scoped path is newly admitted at this boundary.
         if crate::runtime::isolate::active() && scoped.is_none() {
+            use_remote = false;
+        }
+        // A dynamic scope can already contain remote children. Local fallback
+        // affects only this registration and must retain their drain barrier.
+        if !use_remote && (&(*frame).task_protocol)[index].kind != 2 {
             (&mut (*frame).task_protocol)[index].remote = None;
         }
         let record = &(&(*frame).task_protocol)[index];
-        if let Some(remote) = &record.remote {
+        if use_remote {
+            let remote = record.remote.as_ref().unwrap();
             let _capture = remote.capture_guard();
             let prepared = std::mem::take(&mut (&mut (*frame).task_protocol)[index].prepared);
             let mut factories = Vec::new();
@@ -391,6 +397,46 @@ pub(crate) unsafe extern "C" fn join(scope: u64) -> i32 {
     if !record.prepared.is_empty() {
         return report(invalid("Unpublished task captures remain"));
     }
+    if record.kind == 2 {
+        (&mut (*frame).task_protocol)[index].closed = true;
+        let outcome = (|| {
+            let remote_ready = match (&mut (*frame).task_protocol)[index].remote.as_mut() {
+                Some(remote) => remote.poll()?,
+                None => true,
+            };
+            if !(&(*frame).task_protocol)[index].local_joined {
+                let depth = (*frame).task_scopes.len();
+                (&mut (*frame).task_protocol)[index].draining = true;
+                let result = crate::runtime::error::checked(|| super::task_join(frame));
+                context(frame);
+                (&mut (*frame).task_protocol)[index].draining = false;
+                (&mut (*frame).task_protocol)[index].local_joined =
+                    (*frame).task_scopes.len() < depth;
+                match result? {
+                    0 => {}
+                    1 => return Ok(false),
+                    _ => return Err(invalid("Task join failed")),
+                }
+            }
+            Ok(remote_ready)
+        })();
+        let record = &mut (&mut (*frame).task_protocol)[index];
+        return match outcome {
+            Ok(false) => 1,
+            Ok(true) => {
+                record.terminal = Some(0);
+                record.drained = true;
+                0
+            }
+            Err(error) => {
+                // Error observation does not authorize releasing local sources:
+                // the failure path still drains both kinds of child.
+                record.terminal = Some(2);
+                record.failure = Some(error.clone());
+                report(error)
+            }
+        };
+    }
     if record.remote.is_some() {
         let record = &mut (&mut (*frame).task_protocol)[index];
         record.closed = true;
@@ -409,27 +455,19 @@ pub(crate) unsafe extern "C" fn join(scope: u64) -> i32 {
             }
         };
     }
-    let kind = record.kind;
-    if kind != 2 && !record.published {
+    if !record.published {
         return report(invalid("Static tasks have not been published"));
     }
     (&mut (*frame).task_protocol)[index].closed = true;
-    if kind != 2
-        && !(*frame)
-            .concurrent
-            .as_ref()
-            .is_some_and(|group| group.is_selected())
+    if !(*frame)
+        .concurrent
+        .as_ref()
+        .is_some_and(|group| group.is_selected())
     {
         return 1;
     }
     (&mut (*frame).task_protocol)[index].draining = true;
-    let result = crate::runtime::error::checked(|| {
-        if kind == 2 {
-            super::task_join(frame)
-        } else {
-            super::concurrent::drain(frame)
-        }
-    });
+    let result = crate::runtime::error::checked(|| super::concurrent::drain(frame));
     context(frame);
     let record = &mut (&mut (*frame).task_protocol)[index];
     record.draining = false;
@@ -581,7 +619,7 @@ pub(crate) unsafe extern "C" fn cancel(scope: u64) -> i32 {
             }
             record.terminal.get_or_insert(3);
             record.closed = true;
-            if record.kind == 2 {
+            if record.kind == 2 && !record.local_joined {
                 if let Some(dynamic) = (*frame).task_scopes.last_mut() {
                     dynamic.cancel();
                 }
@@ -616,7 +654,7 @@ pub(crate) unsafe extern "C" fn drain(scope: u64) -> i32 {
     if record.terminal.is_none() {
         return join(scope);
     }
-    if record.remote.is_some() {
+    if record.kind != 2 && record.remote.is_some() {
         let record = &mut (&mut (*frame).task_protocol)[index];
         return match record.remote.as_mut().unwrap().poll() {
             Ok(false) => 1,
@@ -647,11 +685,23 @@ pub(crate) unsafe extern "C" fn drain(scope: u64) -> i32 {
         if let Some(group) = &mut (*frame).concurrent {
             group.stop(None);
         }
-    } else if let Some(dynamic) = (*frame).task_scopes.last_mut() {
-        dynamic.cancel();
+    } else if !record.local_joined {
+        if let Some(dynamic) = (*frame).task_scopes.last_mut() {
+            dynamic.cancel();
+        }
     }
     let mut drain_failure = None;
     if kind == 2 {
+        if let Some(remote) = (&mut (*frame).task_protocol)[index].remote.as_mut() {
+            match remote.cancel_and_drain() {
+                Ok(false) => return 1,
+                Err(error) => crate::runtime::isolate::retain_failure(&mut drain_failure, error),
+                Ok(true) => {}
+            }
+        }
+    }
+    let local_pending = kind == 2 && !(&(*frame).task_protocol)[index].local_joined;
+    if local_pending {
         let mut ready = true;
         if let Some(dynamic) = (*frame).task_scopes.last_mut() {
             for (_, child, _) in dynamic.entries_mut() {
@@ -672,14 +722,15 @@ pub(crate) unsafe extern "C" fn drain(scope: u64) -> i32 {
     let prepared = std::mem::take(&mut (&mut (*frame).task_protocol)[index].prepared);
     let outcome = crate::runtime::error::checked(|| {
         drop(prepared);
-        if kind == 2 {
+        if local_pending {
             if let Some(last) = (*frame).task_scopes.len().checked_sub(1) {
                 if let Err(error) = super::drain_dynamic_scope(frame, last) {
                     report(error);
                 }
                 (*frame).task_scopes.pop();
+                (&mut (*frame).task_protocol)[index].local_joined = true;
             }
-        } else if (*frame).concurrent.is_some() {
+        } else if kind != 2 && (*frame).concurrent.is_some() {
             return super::concurrent::drain(frame);
         }
         0
@@ -720,11 +771,7 @@ pub(crate) unsafe extern "C" fn release(scope: u64) -> i32 {
         return report(invalid("Cannot release a live or enclosing task scope"));
     }
     let kind = record.kind;
-    let remote = record.remote.is_some();
     let record = (*frame).task_protocol.pop().unwrap();
-    if remote && kind == 2 {
-        (*frame).task_scopes.pop();
-    }
     let outcome = crate::runtime::error::checked(|| {
         if kind != 2 {
             super::release_children(frame);
