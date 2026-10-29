@@ -1523,11 +1523,11 @@ fn scoped_borrow_cases(source: &str, cases: &[(&str, i32, usize)], label: &str) 
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 let result = task.take_result();
-                if matches!(*name, "failed" | "parked") {
+                if matches!(*name, "failed" | "enum_failed" | "parked") {
                     let error = result.err().unwrap();
                     assert_eq!(
                         error.code(),
-                        if *name == "failed" {
+                        if matches!(*name, "failed" | "enum_failed") {
                             crate::ErrorCode::RuntimeError
                         } else {
                             crate::ErrorCode::Cancelled
@@ -1625,15 +1625,38 @@ fn fixed_array_owned_elements_on_all_backends() {
     scoped_borrow_cases(
         include_str!("../../../../tests/fixtures/fixed_array_owned.jk"),
         &[
-            ("suite", 140, 0),
+            ("suite", 150, 0),
             ("suspended", 10, 0),
             ("transferred", 20, 0),
             ("borrowed", 20, 2),
             ("dynamic", 10, 1),
             ("dynamic_moved", 10, 0),
             ("failed", 0, 0),
+            ("enum_failed", 0, 0),
             ("parked", 0, 1),
         ],
         "fixed-owned",
+    );
+}
+
+#[test]
+fn scoped_borrow_enums_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/scoped_borrow_enums.jk"),
+        &[
+            ("main", 12, 2),
+            ("arrays", 12, 2),
+            ("results", 17, 2),
+            ("plain_values", 42, 3),
+            ("dynamic", 2, 1),
+            ("fixed_borrow", 10, 2),
+            ("fixed_move", 12, 0),
+            ("fixed_buffered", 5, 0),
+            ("failed", 0, 2),
+            ("parked", 0, 1),
+            ("isolated", 3, 2),
+            ("raced", 4, 2),
+        ],
+        "scoped-enums",
     );
 }

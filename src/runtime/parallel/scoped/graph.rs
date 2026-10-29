@@ -8,6 +8,7 @@ const LIMIT: usize = 65_536;
 pub(super) struct Element {
     pub layout: Layout,
     fields: Vec<Field>,
+    owners: Vec<usize>,
 }
 #[derive(Clone, Debug)]
 struct Field {
@@ -18,6 +19,7 @@ struct Field {
 enum Kind {
     Bytes(usize),
     Owner(Arc<Element>),
+    Enum(Layout, Vec<(usize, Element)>),
 }
 
 impl Element {
@@ -75,6 +77,32 @@ impl Element {
                             }
                         }
                     }
+                    Type::Enum(e) => {
+                        let crate::memory_layout::MemoryLayoutShape::Enum { variants, .. } =
+                            layout.shape
+                        else {
+                            return None;
+                        };
+                        let mut payloads = Vec::with_capacity(variants.len());
+                        let mut end = 4;
+                        for (variant, location) in e.variants.iter().zip(variants) {
+                            let payload = build(
+                                variant.payload.as_ref().unwrap_or(&Type::Unit),
+                                depth + 1,
+                                work,
+                            )?;
+                            let offset = location.payload.map_or(end, |p| p.offset);
+                            end = offset + payload.layout.size();
+                            payloads.push((offset, payload));
+                        }
+                        out.push(Field {
+                            offset,
+                            kind: Kind::Enum(
+                                Shape::checked(layout.size, layout.align).ok()?.element,
+                                payloads,
+                            ),
+                        });
+                    }
                     Type::String | Type::Buffer(_) => {
                         let element = match ty {
                             Type::Buffer(e) => &**e,
@@ -94,30 +122,54 @@ impl Element {
                 Some(())
             }
             flatten(ty, 0, depth, work, &mut fields)?;
-            Some(Element { layout, fields })
+            Some(Element::new(layout, fields))
         }
         build(ty, 0, &mut 0)
+    }
+    fn new(layout: Layout, fields: Vec<Field>) -> Self {
+        let mut owners = Vec::new();
+        for field in &fields {
+            match &field.kind {
+                Kind::Owner(_) => owners.push(field.offset),
+                Kind::Enum(_, variants) => {
+                    for (offset, payload) in variants {
+                        owners.extend(payload.owners().map(|owner| field.offset + offset + owner));
+                    }
+                }
+                Kind::Bytes(_) => {}
+            }
+        }
+        Self {
+            layout,
+            fields,
+            owners,
+        }
     }
     pub fn bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + 2 * std::mem::size_of::<usize>()
             + self.fields.capacity() * std::mem::size_of::<Field>()
+            + self.owners.capacity() * std::mem::size_of::<usize>()
             + self
                 .fields
                 .iter()
                 .map(|field| match &field.kind {
                     Kind::Owner(element) => element.bytes(),
+                    Kind::Enum(_, variants) => {
+                        variants.capacity() * std::mem::size_of::<(usize, Element)>()
+                            + variants.iter().map(|(_, e)| e.bytes()).sum::<usize>()
+                    }
                     Kind::Bytes(_) => 0,
                 })
                 .sum::<usize>()
     }
-    pub fn owning(&self) -> bool {
-        self.fields.iter().any(|f| matches!(f.kind, Kind::Owner(_)))
-    }
-    pub fn owners(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn structured(&self) -> bool {
         self.fields
             .iter()
-            .filter_map(|f| matches!(f.kind, Kind::Owner(_)).then_some(f.offset))
+            .any(|f| !matches!(f.kind, Kind::Bytes(_)))
+    }
+    pub fn owners(&self) -> impl Iterator<Item = usize> + '_ {
+        self.owners.iter().copied()
     }
     pub fn encode(&self, words: &mut Vec<u64>) {
         words.extend([
@@ -132,6 +184,18 @@ impl Element {
                 Kind::Owner(element) => {
                     words.push(9);
                     element.encode(words);
+                }
+                Kind::Enum(layout, variants) => {
+                    words.extend([
+                        10,
+                        layout.size() as u64,
+                        layout.align() as u64,
+                        variants.len() as u64,
+                    ]);
+                    for (offset, payload) in variants {
+                        words.push(*offset as u64);
+                        payload.encode(words);
+                    }
                 }
             }
         }
@@ -161,15 +225,48 @@ impl Element {
         for _ in 0..count {
             let offset = word(words)?;
             let tag = word(words)?;
-            let (kind, width) = match tag {
-                1 | 2 | 4 | 8 => (Kind::Bytes(tag), tag),
+            let (kind, width, alignment) = match tag {
+                1 | 2 | 4 | 8 => (Kind::Bytes(tag), tag, tag),
                 9 => (
                     Kind::Owner(Arc::new(Self::decode(words, depth + 1, work)?)),
-                    8,
+                    std::mem::size_of::<usize>(),
+                    std::mem::align_of::<usize>(),
                 ),
+                10 => {
+                    let size = word(words)?;
+                    let align = word(words)?;
+                    let layout = Shape::checked(size, align)?.element;
+                    let count = word(words)?;
+                    if size < 4
+                        || align < 4
+                        || count == 0
+                        || count > LIMIT
+                        || count > words.len() / 4
+                    {
+                        return Err(invalid());
+                    }
+                    let mut variants = Vec::with_capacity(count);
+                    let mut end = 4;
+                    for _ in 0..count {
+                        let offset = word(words)?;
+                        let payload = Self::decode(words, depth + 1, work)?;
+                        if offset < end
+                            || !offset.is_multiple_of(payload.layout.align())
+                            || payload.layout.align() > align
+                        {
+                            return Err(invalid());
+                        }
+                        end = offset
+                            .checked_add(payload.layout.size())
+                            .filter(|end| *end <= size)
+                            .ok_or_else(invalid)?;
+                        variants.push((offset, payload));
+                    }
+                    (Kind::Enum(layout, variants), size, align)
+                }
                 _ => return Err(invalid()),
             };
-            if offset < end || !offset.is_multiple_of(width) || width > align {
+            if offset < end || !offset.is_multiple_of(alignment) || alignment > align {
                 return Err(invalid());
             }
             end = offset
@@ -178,7 +275,7 @@ impl Element {
                 .ok_or_else(invalid)?;
             fields.push(Field { offset, kind });
         }
-        Ok(Self { layout, fields })
+        Ok(Self::new(layout, fields))
     }
     /// # Safety
     /// Data must be live initialized storage of this compiler-certified element
@@ -195,22 +292,35 @@ impl Element {
         }
         *work = next;
         for i in 0..len {
+            let base = data.as_ptr().add(i * self.layout.size());
             for f in &self.fields {
-                if let Kind::Owner(element) = &f.kind {
-                    let owner = data
-                        .as_ptr()
-                        .add(i * self.layout.size() + f.offset)
-                        .cast::<*const Buffer>()
-                        .read();
-                    let Some(buffer) = owner.as_ref() else {
-                        return false;
-                    };
-                    let Some(source) = buffer.scoped_elements(element.layout, element.owners())
-                    else {
-                        return false;
-                    };
-                    if element.owning() && !element.eligible(source.data, source.len, work) {
-                        return false;
+                let source = base.add(f.offset);
+                match &f.kind {
+                    Kind::Bytes(_) => {}
+                    Kind::Owner(element) => {
+                        let owner = source.cast::<*const Buffer>().read();
+                        let Some(buffer) = owner.as_ref() else {
+                            return false;
+                        };
+                        let Some(source) = buffer.scoped_elements(element.layout, element.owners())
+                        else {
+                            return false;
+                        };
+                        if element.structured() && !element.eligible(source.data, source.len, work)
+                        {
+                            return false;
+                        }
+                    }
+                    Kind::Enum(_, variants) => {
+                        let tag = source.cast::<i32>().read();
+                        let Some((offset, payload)) =
+                            usize::try_from(tag).ok().and_then(|tag| variants.get(tag))
+                        else {
+                            return false;
+                        };
+                        if !payload.eligible(NonNull::new_unchecked(source.add(*offset)), 1, work) {
+                            return false;
+                        }
                     }
                 }
             }
@@ -240,29 +350,58 @@ impl Element {
             _charge: charge,
         };
         for i in 0..len {
-            for f in &self.fields {
-                let offset = i * self.layout.size() + f.offset;
-                let source = data.as_ptr().add(offset);
-                match &f.kind {
-                    Kind::Bytes(size) => std::ptr::copy_nonoverlapping(
-                        source,
-                        snapshot.words.as_mut_ptr().cast::<u8>().add(offset),
-                        *size,
-                    ),
-                    Kind::Owner(element) => {
-                        let shape = Shape {
-                            element: element.layout,
-                            plain: false,
-                            graph: Some(element.clone()),
-                        };
-                        let range =
-                            Range::capture(&shape, source.cast::<u64>().read(), scope.clone())?;
-                        snapshot.children.push((offset, range));
-                    }
+            let offset = i * self.layout.size();
+            self.capture_fields(data.as_ptr().add(offset), offset, scope, &mut snapshot)?;
+        }
+        Ok(snapshot)
+    }
+    unsafe fn capture_fields(
+        &self,
+        data: *const u8,
+        base: usize,
+        scope: &Arc<Scope>,
+        snapshot: &mut Snapshot,
+    ) -> Result<(), Error> {
+        for f in &self.fields {
+            let offset = base + f.offset;
+            let source = data.add(f.offset);
+            match &f.kind {
+                Kind::Bytes(size) => std::ptr::copy_nonoverlapping(
+                    source,
+                    snapshot.words.as_mut_ptr().cast::<u8>().add(offset),
+                    *size,
+                ),
+                Kind::Owner(element) => {
+                    let shape = Shape {
+                        element: element.layout,
+                        plain: false,
+                        graph: Some(element.clone()),
+                    };
+                    let range = Range::capture(
+                        &shape,
+                        source.cast::<usize>().read() as u64,
+                        scope.clone(),
+                    )?;
+                    snapshot.children.push((offset, range));
+                }
+                Kind::Enum(_, variants) => {
+                    let tag = source.cast::<i32>().read();
+                    let (child, payload) = usize::try_from(tag)
+                        .ok()
+                        .and_then(|tag| variants.get(tag))
+                        .ok_or_else(invalid)?;
+                    snapshot
+                        .words
+                        .as_mut_ptr()
+                        .cast::<u8>()
+                        .add(offset)
+                        .cast::<i32>()
+                        .write(tag);
+                    payload.capture_fields(source.add(*child), offset + child, scope, snapshot)?;
                 }
             }
         }
-        Ok(snapshot)
+        Ok(())
     }
 }
 
@@ -291,5 +430,86 @@ impl Snapshot {
             }
         }
         Ok(data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enum_graph() -> Element {
+        let bytes = Element::new(
+            Layout::from_size_align(1, 1).unwrap(),
+            vec![Field {
+                offset: 0,
+                kind: Kind::Bytes(1),
+            }],
+        );
+        let text = Element::new(
+            Layout::from_size_align(8, 8).unwrap(),
+            vec![Field {
+                offset: 0,
+                kind: Kind::Owner(Arc::new(bytes)),
+            }],
+        );
+        let empty = Element::new(Layout::from_size_align(0, 1).unwrap(), vec![]);
+        let layout = Layout::from_size_align(16, 8).unwrap();
+        Element::new(
+            layout,
+            vec![Field {
+                offset: 0,
+                kind: Kind::Enum(layout, vec![(4, empty), (8, text)]),
+            }],
+        )
+    }
+
+    #[test]
+    fn scoped_borrow_enum_graph_skips_inactive_owners_and_checks_tags() {
+        let graph = enum_graph();
+        assert_eq!(graph.owners().collect::<Vec<_>>(), [8]);
+        // The inactive payload is deliberately not a dereferenceable pointer.
+        let mut data = [0u64, u64::MAX];
+        let pointer = NonNull::new(data.as_mut_ptr().cast::<u8>()).unwrap();
+        unsafe {
+            assert!(graph.eligible(pointer, 1, &mut 0));
+            pointer.as_ptr().cast::<i32>().write(-1);
+            assert!(!graph.eligible(pointer, 1, &mut 0));
+            pointer.as_ptr().cast::<i32>().write(2);
+            assert!(!graph.eligible(pointer, 1, &mut 0));
+            pointer.as_ptr().cast::<i32>().write(1);
+            pointer.as_ptr().add(8).cast::<usize>().write(0);
+            assert!(!graph.eligible(pointer, 1, &mut 0));
+        }
+    }
+
+    #[test]
+    fn scoped_borrow_enum_descriptors_reject_overlapping_variants_and_bad_layouts() {
+        let graph = enum_graph();
+        let mut encoded = Vec::new();
+        graph.encode(&mut encoded);
+        let mut source = encoded.as_slice();
+        let decoded = Element::decode(&mut source, 0, &mut 0).unwrap();
+        assert!(source.is_empty());
+        assert_eq!(decoded.owners().collect::<Vec<_>>(), [8]);
+        for length in 0..encoded.len() {
+            assert!(Element::decode(&mut &encoded[..length], 0, &mut 0).is_err());
+        }
+        // Enum extent, alignment, variant count and payload regions.
+        for (index, value) in [
+            (5, 0),
+            (6, 16),
+            (7, 0),
+            (7, u64::MAX),
+            (8, 0),
+            (12, 4),
+            (12, 16),
+        ] {
+            let mut bad = encoded.clone();
+            bad[index] = value;
+            assert!(
+                Element::decode(&mut bad.as_slice(), 0, &mut 0).is_err(),
+                "{index}={value}"
+            );
+        }
     }
 }

@@ -90,7 +90,7 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
                 Type::Record(r) => {
                     r.closure.is_none() && !r.indirect && !r.list && !r.map && !r.set
                 }
-                Type::Enum(e) => !element.is_owner() && !e.indirect,
+                Type::Enum(e) => !e.indirect,
                 Type::Parameter(p) => {
                     p.kind == ParameterKind::Type
                         && p.callable.is_none()

@@ -810,6 +810,26 @@ fn resolve_type_at_depth(
             };
             let mut element = a.element.clone();
             resolve(&mut element, aliases, registry, depth + 1, cache)?;
+            // A reference alias may substitute a shallow nominal into an inline
+            // array element. Recover its checked value layout before validation.
+            if TypeWalk::new(&element, TypeEdges::Inline).any(|ty| {
+                matches!(ty, Type::Record(r) if r.indirect)
+                    || matches!(ty, Type::Enum(e) if e.indirect)
+            }) {
+                let nominals = registry
+                    .forwards
+                    .borrow()
+                    .values()
+                    .chain(aliases.values())
+                    .filter_map(|definition| match definition {
+                        TypeDefinition::Type(ty) => {
+                            ty.nominal().map(|(_, id)| (id.to_string(), ty.clone()))
+                        }
+                        TypeDefinition::Alias(_) => None,
+                    })
+                    .collect();
+                element = indirect::materialize(&element, &nominals, registry)?;
+            }
             *ty = registry.fixed_array(element, a.length.clone())?;
             if initializing {
                 let Type::FixedArray(a) = ty else {

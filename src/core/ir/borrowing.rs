@@ -1895,22 +1895,29 @@ fn analyze(
                 }
                 PlaceOp::Read { dst, reference, .. } if dst.ty.is_owner() => {
                     check_access(reference, true, &state, &alive, Some(dst.index), &[])?;
-                    state.insert(
-                        dst.index,
-                        Reference {
-                            origins: BTreeSet::from([Origin::new(loan)]),
-                            loans: Set::from([loan]),
-                            storage: true,
-                            ..Default::default()
-                        },
-                    );
+                    // Flattened aggregates may have several owning payload slots.
+                    // Register every lane, including inactive enum lanes, just as
+                    // ordinary aggregate returns do.
+                    for dst in refs(dst) {
+                        state.insert(
+                            dst.index,
+                            Reference {
+                                origins: BTreeSet::from([Origin::new(loan)]),
+                                loans: Set::from([loan]),
+                                storage: true,
+                                ..Default::default()
+                            },
+                        );
+                    }
                 }
                 PlaceOp::Write {
                     reference, value, ..
                 } if value.ty.is_owner() => {
                     check_access(reference, true, &state, &alive, Some(value.index), &[])?;
-                    check_access(value, true, &state, &alive, Some(reference.index), &[])?;
-                    state.get_mut(&value.index).unwrap().invalid = true;
+                    for value in refs(value) {
+                        check_access(&value, true, &state, &alive, Some(reference.index), &[])?;
+                        state.get_mut(&value.index).unwrap().invalid = true;
+                    }
                 }
                 PlaceOp::Load { reference, .. } => {
                     check_access(reference, false, &state, &live[pc], None, &[])?;

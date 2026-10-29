@@ -27,6 +27,23 @@ pub(crate) fn signature(plan: &ModulePlan, name: &str) -> crate::FunctionSignatu
                         .ok()?;
                 }
             }
+            Type::Enum(e) => {
+                let e = Arc::make_mut(e);
+                for variant in &mut e.variants {
+                    if let Some(payload) = &mut variant.payload {
+                        *payload = expand(body, payload, depth + 1, work)?;
+                    }
+                }
+                for argument in &mut e.arguments {
+                    *argument = argument
+                        .try_map_type(|ty| expand(body, ty, depth + 1, work).ok_or(()))
+                        .ok()?;
+                }
+            }
+            Type::FixedArray(a) => {
+                let a = Arc::make_mut(a);
+                a.element = expand(body, &a.element, depth + 1, work)?;
+            }
             Type::Tuple(t) => {
                 ty = Type::tuple(
                     t.elements

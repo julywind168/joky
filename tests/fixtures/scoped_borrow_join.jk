@@ -215,12 +215,13 @@ fn forwarded_parked() @suspends -> Int32 {
     a + b
 }
 
-enum LocalAnchor { Value(Int32) }
+struct LocalAnchor { value: String }
+impl Drop for LocalAnchor { fn drop(&mut self) {} }
 fn local_anchor(anchor: &LocalAnchor) @suspends { task.yield_now() }
 fn dynamic_shared() @suspends -> Int32 {
     var values = [3, 5, 7, 11]
     let view = &values
-    let anchor = LocalAnchor.Value(1)
+    let anchor = LocalAnchor { value: "local" }
     let local = &anchor
     scope {
         branch { local_anchor(local) }

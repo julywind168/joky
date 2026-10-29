@@ -55,7 +55,7 @@ fn suspended() @suspends -> Int32 {
     size(&value)
 }
 fn suite() @suspends -> Int32 {
-    literal() + moved() + generated() + replaced() + records() + mixed() + nested() + reassigned() + empty() + destructured() + changed_record() + buffered() + views() + swapped()
+    literal() + moved() + generated() + replaced() + records() + mixed() + nested() + reassigned() + empty() + destructured() + changed_record() + buffered() + views() + swapped() + enum_owned()
 }
 fn relay(value: FixedArray<String, 2>) @suspends -> FixedArray<String, 2> {
     task.yield_now()
@@ -128,7 +128,7 @@ fn buffered() -> Int32 {
     size(&value)
 }
 fn cancel_target() @suspends -> Int32 {
-    let value = generated()
+    let value = generated() + enum_owned() - 10
     task.yield_now()
     let [a, b] = relay(words())
     value + int32(a.byte_length() + b.byte_length()) + 22
@@ -151,3 +151,24 @@ fn swapped() -> Int32 {
     selected = Some(b)
     match selected { Some(value) => size(&value), None => 0 }
 }
+
+fn enum_owned() -> Int32 {
+    var value = fixed_array.from_fn::<Option<String>, 3>(move |i: UInt64| {
+        if i == 1 { None } else { Some("hello") }
+    })
+    value.set(0, None)
+    value.set(1, Some("world"))
+    let [a, b, c] = value
+    match a { Some(s) => int32(s.byte_length()), None => 0 } +
+        match b { Some(s) => int32(s.byte_length()), None => 0 } +
+        match c { Some(s) => int32(s.byte_length()), None => 0 }
+}
+fn enum_failed() @suspends -> Int32 {
+    let values = fixed_array.from_fn::<Option<String>, 4>(move |i: UInt64| {
+        if i == 2 { check.panic("partial enum initialization") }
+        if i == 1 { None } else { Some("partial") }
+    })
+    int32(values.len())
+}
+
+fn relay_options(value: FixedArray<Option<String>, 2>) @suspends -> FixedArray<Option<String>, 2> { task.yield_now(); value }

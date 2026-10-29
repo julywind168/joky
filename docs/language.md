@@ -1289,8 +1289,8 @@ impl<T, const N: UInt64> Tag<T, N> {
 `import joky/fixed_array.{type FixedArray}` 提供 `FixedArray<T, N>` 类型；它不在 prelude 中。
 长度属于类型身份，支持透明别名、嵌套数组和有限聚合。
 元素接受固定数值、Bool、Rune、Unit、无引用 Copy 聚合，以及 String、Array 和它们组成的
-普通记录／元组／嵌套 FixedArray。完整元素树仍拒绝引用、Ptr、函数值、opaque、闭包、
-资源、自定义 Drop、dyn、List/Map/Set 和拥有型枚举；零长度与 phantom 参数也不能绕过检查。
+普通记录／元组／枚举／嵌套 FixedArray，包括 Option<String>。完整元素树仍拒绝引用、Ptr、函数值、opaque、闭包、
+资源、自定义 Drop、dyn 和 List/Map/Set；零长度与 phantom 参数也不能绕过检查。
 泛型 `FixedArray<T, N>` 本身不要求 T: Copy，具体存储资格在实例化时检查。
 
 元素为 Copy 时，数组及含数组的 Copy 聚合具有值语义：赋值、传参、返回和整数组解引用读取
@@ -5166,15 +5166,17 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 
 静态 `join`／`race` 的直接语言函数调用支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
 以及普通数据的 `&T`。支持整数、浮点数、Bool、Rune、Unit、普通 struct、元组和符合现有元素限制的
-FixedArray；也支持 String 字段、Array/String 元素，以及这些拥有类型的有限递归组合。
-完整字段树与名义类型实参须无引用、原始指针、函数值、资源、自定义 Drop、dyn、enum 和 Map/List/Set；
+FixedArray，以及普通 enum、Option、Result；也支持 String 字段、Array/String 元素，以及这些拥有类型的有限递归组合。
+完整字段树与名义类型实参须无引用、原始指针、函数值、资源、自定义 Drop、dyn 和 Map/List/Set；
 不能仅凭 Copy 或一般 Share 资格放行。空容器、空切片和零大小普通元素也支持。
 FixedArray<String, N>、嵌套拥有数组和混合拥有字段与 FixedArray 的普通记录也可借用，
-存储与借用资格分别检查，拥有型枚举及自定义 Drop 等仍不获只读借用资格。
+存储与借用资格分别检查，自定义 Drop 等仍不获只读借用资格。
+枚举检查全部变体及类型实参的资格，运行时只读取当前活动载荷；空变体也不能绕过类型限制。
 来源须为当前任务的受检存储，或当前任务收到的受检只读借用；普通数据验证独立分配的任务身份、
 有效区间和对齐，不能只凭共享存储根中的地址通过。挂起函数的局部数据与任务帧分开保存，循环重入复用存储。
-无拥有字段的数据继续共享原地址；含拥有字段的记录／容器在发送方检查整个可达拥有图，
+不含枚举与拥有字段的数据继续共享原地址；含拥有字段的记录／容器在发送方检查整个可达拥有图，
 接收方复制必要的字段和指针表、重建本地非拥有视图头，文本字节及无拥有元素的叶子负载仍共享。
+枚举复制标签与当前活动载荷的初始化字段，不读取非活动载荷或填充字节；其中 String 字节与普通 Array 叶子仍共享。
 每个视图和游标属于接收 worker，不直接读取其他 worker 的控制块；视图销毁不执行原对象的析构。
 Array 的 `capacity()` 保留来源容量，切片与索引访问仍受初始化长度限制。
 字段／元素和 slice 再借用只能保持或缩小收到的区间，可继续交给静态 join/race 或动态 branch 子任务。

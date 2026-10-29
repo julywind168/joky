@@ -802,6 +802,7 @@ fn fixed_array_owned_elements_execute() {
             "buffered",
             "views",
             "swapped",
+            "enum_owned",
         ] {
             assert_eq!(
                 vm.call_int32_0(name)
@@ -823,7 +824,6 @@ fn fixed_array_owned_elements_reject_invalid_moves_and_copy_apis() {
         "fn bad() { var a: FixedArray<String,2> = [\"a\",\"b\"]; let r = &a; a = [\"c\",\"d\"]; r.len(); }",
         "fn bad() { let a: FixedArray<String,2> = [\"a\",\"b\"]; a.get(0); }",
         "fn bad() { let a: FixedArray<String,2> = [\"a\",\"b\"]; let b: FixedArray<String,2> = [..a]; }",
-        "fn bad() { let a: FixedArray<Option<FixedArray<String,2>>,0> = []; }",
         "fn bad() { fixed_array.repeat::<String,0>(\"a\"); }",
         "fn bad() { let a: FixedArray<String,0> = []; let b = a; a.len(); b.len(); }",
         "fn bad() { var a: FixedArray<String,2> = [\"a\",\"b\"]; let r = a.borrow_ref(0); a.set(0,\"c\"); r.byte_length(); }",

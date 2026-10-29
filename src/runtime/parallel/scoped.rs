@@ -36,9 +36,10 @@ impl Shape {
         };
         use crate::core::types::walk::{TypeEdges, TypeWalk};
         // Include phantom arguments and zero-sized fields. References, handles,
-        // closures, enums and unaudited container protocols remain local.
+        // closures and unaudited container protocols remain local.
         if !TypeWalk::new(&reference.target, TypeEdges::Fields).all(|ty| match ty {
             Type::Record(r) => !r.indirect && r.closure.is_none() && !r.list && !r.map && !r.set,
+            Type::Enum(e) => !e.indirect && !e.variants.is_empty(),
             Type::Tuple(_)
             | Type::FixedArray(_)
             | Type::Unit
@@ -57,10 +58,12 @@ impl Shape {
             target,
             Type::String | Type::Buffer(_) | Type::BufferSlice(_)
         );
-        if TypeWalk::new(element, TypeEdges::Fields).any(Type::is_owner_lane) {
+        if TypeWalk::new(element, TypeEdges::Fields)
+            .any(|ty| ty.is_owner_lane() || matches!(ty, Type::Enum(_)))
+        {
             let graph = graph::Element::of(element)?;
             // An owning phantom argument does not add a physical owner lane.
-            if graph.owning() {
+            if graph.structured() {
                 shape.graph = Some(Arc::new(graph));
             }
         }
@@ -96,7 +99,7 @@ impl Shape {
         if let [kind @ (101 | 102), rest @ ..] = words {
             let mut rest = rest;
             let graph = graph::Element::decode(&mut rest, 0, &mut 0)?;
-            if !rest.is_empty() || !graph.owning() {
+            if !rest.is_empty() || !graph.structured() {
                 return Err(invalid());
             }
             return Ok(Self {
@@ -399,7 +402,7 @@ impl Range {
         let snapshot = shape
             .graph
             .as_ref()
-            .filter(|g| g.owning())
+            .filter(|g| g.structured())
             .map(|g| g.capture(data, len, &scope))
             .transpose()?;
         Ok(Self {
@@ -588,9 +591,12 @@ mod tests {
             struct Callback { value: fn(Int32) -> Int32 }
             struct Owner { value: String }
             struct Phantom<T> { value: Int32 }
-            enum Choice { One(Int32), Empty }
-            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32, h: &Array<Owner>, i: &Owner, j: &Array<Array<Owner>>, k: &Phantom<String>) {}
-            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain, n: &Tracked, o: &Array<Tracked>, p: &Map<Int32, String>, q: &List<String>, r: &Set<Int32>) {}
+            enum Choice { One(Int32), Empty, Hidden(Ptr) }
+            enum OwnedChoice { Text(String), Empty }
+            enum HiddenDrop { Empty, Value(Tracked) }
+            enum PhantomChoice<T> { Empty }
+            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32, h: &Array<Owner>, i: &Owner, j: &Array<Array<Owner>>, k: &Phantom<String>, l: &OwnedChoice, m: &Array<OwnedChoice>) {}
+            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain, n: &Tracked, o: &Array<Tracked>, p: &Map<Int32, String>, q: &List<String>, r: &Set<Int32>, s: &HiddenDrop, t: &PhantomChoice<Ptr>) {}
         "#;
         let ast = types
             .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())

@@ -302,7 +302,18 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         .replace("task.yield_now()", "checkpoint()");
     let owners = include_str!("../../../tests/fixtures/scoped_borrow_owners.jk")
         .replace("task.yield_now()", "checkpoint()");
+    let enums = include_str!("../../../tests/fixtures/scoped_borrow_enums.jk")
+        .replace("task.yield_now()", "checkpoint()");
     for (source, cases) in [
+        (
+            enums,
+            vec![
+                ("main", 12),
+                ("dynamic", 2),
+                ("arrays", 12),
+                ("fixed_move", 12),
+            ],
+        ),
         (owners, vec![("main", 54), ("dynamic", 42), ("strings", 10)]),
         (
             source,
@@ -591,6 +602,15 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
 fn scoped_graph_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
     for (source, cases) in [
         (
+            include_str!("../../../tests/fixtures/scoped_borrow_enums.jk"),
+            &[
+                ("main", 12),
+                ("dynamic", 2),
+                ("arrays", 12),
+                ("fixed_move", 12),
+            ][..],
+        ),
+        (
             include_str!("../../../tests/fixtures/scoped_borrow_owners.jk"),
             &[("main", 54), ("dynamic", 42), ("strings", 10)][..],
         ),
@@ -672,5 +692,23 @@ fn scoped_borrow_plain_captures_keep_mutation_and_escape_rejected() {
         let error = vm.load_source(&format!("{declarations} fn root() @suspends {{ {body} }}")).unwrap_err();
         assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{body}: {error}");
         assert!(error.message().to_lowercase().contains("borrow"), "{body}: {error}");
+    }
+}
+
+#[test]
+fn scoped_borrow_enum_captures_reject_variant_changes_and_escaping_sources() {
+    let declarations = r#"
+        import joky/task
+        enum Choice { Empty, Text(String) }
+        fn read(value: &Choice) @suspends { task.yield_now(); match value { Choice.Empty => {}, Choice.Text(_) => {} } }
+    "#;
+    for body in [
+        "var value = Choice.Text(\"x\"); let view = &value; scope { branch { read(view) }; value = Choice.Empty }",
+        "var value = Choice.Text(\"x\"); let view = &value; scope { branch { read(view) }; let write = &mut value }",
+        "scope { { let value = Choice.Text(\"x\"); let view = &value; branch { read(view) } } }",
+    ] {
+        let source = format!("{declarations} fn root() @suspends {{ {body} }}");
+        let error = VmEngine::new().load_source(&source).unwrap_err();
+        assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{body}: {error}");
     }
 }

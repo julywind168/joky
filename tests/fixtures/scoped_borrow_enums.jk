@@ -1,0 +1,113 @@
+import joky/array.{type Array}
+import joky/fixed_array.{type FixedArray}
+import joky/option.{type Option, Some, None}
+import joky/result.{type Result, Ok, Err}
+import joky/slice.{type Slice}
+import joky/string
+import joky/task
+import joky/check
+
+struct Detail { marker: UInt8, text: Option<String> }
+enum Choice { Empty, Text(String), Values(Array<Int32>), Detail(Detail) }
+enum Plain { Empty, Number(Int32), Zero(Unit) }
+fn text(value: &String) @suspends -> Int32 { task.yield_now(); int32(value.byte_length()) }
+fn score(value: &Choice) -> Int32 {
+    match value {
+        Choice.Empty => 0
+        Choice.Text(s) => int32(s.byte_length())
+        Choice.Values(a) => { var total = 0; for item in a { total += *item }; total }
+        Choice.Detail(d) => int32(d.marker) + match &d.text { Some(s) => int32(s.byte_length()), None => 0 }
+    }
+}
+fn read(value: &Choice) @suspends -> Int32 {
+    task.yield_now()
+    match value {
+        Choice.Text(s) => { let (a, b) = join { | text(s) | text(s) }; a + b }
+        _ => score(value)
+    }
+}
+fn main() @suspends -> Int32 {
+    var value = Choice.Text("abc")
+    let (a, b) = join { | read(&value) | read(&value) }
+    value = Choice.Empty
+    a + b + score(&value)
+}
+fn values() -> Array<Choice> { [Choice.Empty, Choice.Text("abc"), Choice.Values([3, 4]), Choice.Detail(Detail { marker: 1, text: Some("x") })] }
+fn rows(values: &Slice<Choice>) @suspends -> Int32 {
+    task.yield_now()
+    var total = 0
+    for value in values { total += score(value) }
+    total
+}
+fn arrays() @suspends -> Int32 {
+    var data = values()
+    let (a, b) = join { | rows(data.slice(0, 4)) | rows(data.slice(0, 0)) }
+    data[1] = Choice.Empty
+    a + b
+}
+fn read_result(value: &Result<Option<String>, Array<Choice>>) @suspends -> Int32 {
+    task.yield_now()
+    match value { Ok(value) => match value { Some(s) => int32(s.byte_length()), None => 0 }, Err(a) => rows(a.slice(0, a.len())) }
+}
+fn results() @suspends -> Int32 {
+    let a: Result<Option<String>, Array<Choice>> = Ok(Some("hello"))
+    let b: Result<Option<String>, Array<Choice>> = Err(values())
+    let (x, y) = join { | read_result(&a) | read_result(&b) }
+    x + y
+}
+fn plain(value: &Plain) @suspends -> Int32 {
+    task.yield_now()
+    match value { Plain.Empty => 0, Plain.Number(n) => n, Plain.Zero(_) => 1 }
+}
+fn plain_values() @suspends -> Int32 {
+    let a = Plain.Empty
+    let b = Plain.Number(41)
+    let c = Plain.Zero({})
+    let (x, y, z) = join { | plain(&a) | plain(&b) | plain(&c) }
+    x + y + z
+}
+fn dynamic() @suspends -> Int32 {
+    var value = Choice.Detail(Detail { marker: 1, text: Some("abc") })
+    let view = &value
+    scope { branch { if read(view) != 4 { check.panic("bad enum capture") } } }
+    value = Choice.Text("ok")
+    score(&value)
+}
+fn make_fixed() -> FixedArray<Option<String>, 3> { [None, Some("abc"), Some("de")] }
+fn relay(value: FixedArray<Option<String>, 3>) @suspends -> FixedArray<Option<String>, 3> { task.yield_now(); value }
+fn fixed_score(value: &FixedArray<Option<String>, 3>) @suspends -> Int32 {
+    task.yield_now()
+    var total = 0
+    for item in value.slice(0, 3) { total += match item { Some(s) => int32(s.byte_length()), None => 0 } }
+    total
+}
+fn fixed_borrow() @suspends -> Int32 {
+    let value = make_fixed()
+    let (a, b) = join { | fixed_score(&value) | fixed_score(&value) }
+    a + b
+}
+fn fixed_move() @suspends -> Int32 {
+    var value = make_fixed()
+    value.set(0, Some("xy"))
+    let (a, b) = join { | relay(value) | relay(make_fixed()) }
+    fixed_score(&a) + fixed_score(&b)
+}
+fn fixed_buffered() @suspends -> Int32 {
+    var values: Array<FixedArray<Option<String>, 3>> = [make_fixed(), make_fixed()]
+    let value = values.pop()!
+    fixed_score(&value)
+}
+fn forever(value: &Choice) @suspends -> Int32 { while true { task.yield_now(); score(value); } }
+fn fail(value: &Choice) @suspends -> Int32 { task.yield_now(); score(value); check.panic("reader failed") }
+fn failed() @suspends -> Int32 { let value = Choice.Text("abc"); let (a, b) = join { | forever(&value) | fail(&value) }; a + b }
+fn parked() @suspends { let value = Choice.Text("abc"); let view = &value; scope { branch { forever(view); } } }
+fn isolated() @suspends -> Int32 {
+    let value = Choice.Text("abc")
+    let view = &value
+    let result = isolate { let (a, b) = join { | forever(view) | fail(view) }; a + b }
+    match result { Ok(_) => 0, Err(_) => score(&value) }
+}
+fn raced() @suspends -> Int32 {
+    let value = Choice.Detail(Detail { marker: 1, text: Some("abc") })
+    race { | read(&value) | forever(&value) }
+}

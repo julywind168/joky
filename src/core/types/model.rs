@@ -1028,6 +1028,7 @@ pub(crate) fn fresh_type_id() -> u64 {
 }
 
 /// A resolved nominal enum. Its layout is private to the compiler.
+#[derive(Clone)]
 pub struct EnumType {
     pub(crate) owners: Vec<Arc<Type>>,
     pub(crate) indirect: bool,
@@ -1057,6 +1058,7 @@ impl PartialEq for EnumType {
 }
 impl Eq for EnumType {}
 
+#[derive(Clone)]
 pub(crate) struct EnumVariant {
     pub name: String,
     pub payload: Option<Type>,

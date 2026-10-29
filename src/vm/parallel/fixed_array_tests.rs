@@ -233,13 +233,26 @@ fn task_fixed_array_owned_host_values_round_trip_and_refund() {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(include_str!("../../../tests/fixtures/fixed_array_owned.jk"))
             .unwrap();
-        for name in ["relay", "relay_entries"] {
+        for name in ["relay", "relay_entries", "relay_options"] {
             let signature = vm.parallel_signature(name).unwrap();
             let element = signature.params[0].fixed_array_element_type().unwrap().0;
             let elements = if name == "relay" {
                 vec![
                     TaskValue::String("hello".into()),
                     TaskValue::String("world".into()),
+                ]
+            } else if name == "relay_options" {
+                vec![
+                    TaskValue::Enum {
+                        ty: element.clone(),
+                        variant: element.enum_variant("None").unwrap().0,
+                        payload: None,
+                    },
+                    TaskValue::Enum {
+                        ty: element.clone(),
+                        variant: element.enum_variant("Some").unwrap().0,
+                        payload: Some(Box::new(TaskValue::String("hello".into()))),
+                    },
                 ]
             } else {
                 let row = element.record_field_type("values").unwrap();

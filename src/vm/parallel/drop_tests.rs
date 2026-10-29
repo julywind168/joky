@@ -231,7 +231,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
     let _serial = SERIAL.lock().unwrap();
     for (mode, scenario) in [VmMode::Jit, VmMode::Interpreter]
         .into_iter()
-        .flat_map(|mode| (0..15).map(move |scenario| (mode, scenario)))
+        .flat_map(|mode| (0..18).map(move |scenario| (mode, scenario)))
     {
         let kind = scenario / 3;
         let dynamic = kind != 0;
@@ -373,6 +373,16 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         } else {
             source
         };
+        let source = if kind == 5 {
+            source
+                .replace("import joky/string", "import joky/string\nimport joky/option.{type Option, Some, None}")
+                .replace("extern fn trace", "fn enum_size(value: &Option<String>) -> UInt64 { match value { Some(s) => string.byte_length(s), None => 0 } }\nextern fn trace")
+                .replace("text: &String) @suspends", "text: &Option<String>) @suspends")
+                .replace("string.byte_length(text)", "enum_size(text)")
+                .replace("helper(&source.text)", "let values = Some(\"enum source\"); helper(&values)")
+        } else {
+            source
+        };
         // Exercise an indirect language call while the source is pinned by
         // nested readers. The callback contract is checked by the frontend.
         let view = match kind {
@@ -380,7 +390,8 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
             1 => "&Array<(Int32, Float64)>",
             2 => "&(Int32, Float64)",
             3 => "&FixedArray<Int32, 2>",
-            _ => "&Array<Array<String>>",
+            4 => "&Array<Array<String>>",
+            _ => "&Option<String>",
         };
         let source = format!("{} fn callback(text: {view}) @suspends -> UInt64 {{ let call: fn({view}) @suspends @noescape -> UInt64 = reader; call(text) }}",
             source.replace("| reader(text)", "| callback(text)"));
