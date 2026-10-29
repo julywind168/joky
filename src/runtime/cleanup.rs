@@ -553,7 +553,7 @@ unsafe extern "C" fn swap(left: *mut u8, right: *mut u8, size: usize) {
 #[export_name = "__joky_buffer_swap"]
 unsafe extern "C" fn swap_buffer(left: *mut Buffer, right: *mut Buffer) {
     // Matching exclusive buffer capabilities keep their stable handle identities.
-    std::ptr::swap(left, right);
+    Buffer::swap(left, right);
 }
 
 pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {

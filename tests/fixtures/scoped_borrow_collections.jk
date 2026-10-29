@@ -1,0 +1,171 @@
+import joky/array.{type Array}
+import joky/list.{type List}
+import joky/map.{type Map}
+import joky/set.{type Set}
+import joky/option.{type Option, Some, None}
+import joky/hash.{type BorrowHash}
+import joky/eq.{type BorrowEq}
+import joky/string
+import joky/task
+import joky/check
+import joky/mem
+import joky/slice.{type Slice}
+
+fn text(value: &String) @suspends -> Int32 { task.yield_now(); int32(value.byte_length()) }
+fn make_list() -> List<String> {
+    var values = List.with_capacity::<String>(17)
+    values.push_back("a"); values.push_back("bb"); values.push_back("ccc"); values.push_back("dddd")
+    values.remove(1)
+    values.push_front("xy")
+    values.pop_back()
+    values.reverse()
+    values
+}
+fn read_list(values: &List<String>) @suspends -> Int32 {
+    var total = int32(values.capacity())
+    var index: UInt64 = 0
+    while index < values.len() {
+        let value = values.borrow_ref(index)
+        let (a, b) = join { | text(value) | text(value) }
+        total += int32(index + 1) * (a + b)
+        index += 1
+    }
+    total
+}
+fn main() @suspends -> Int32 {
+    var values = make_list()
+    let (a, b) = join { | read_list(&values) | read_list(&values) }
+    values.clear()
+    a + b
+}
+
+struct Key { id: Int32 }
+impl BorrowHash for Key { fn hash_ref(&self) -> UInt64 { 0 } }
+impl BorrowEq for Key { fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id } }
+fn make_map() -> Map<Key, Option<String>> {
+    var table = Map.with_capacity::<Key, Option<String>>(17)
+    table.insert(Key { id: 1 }, Some("abc"))
+    table.insert(Key { id: 2 }, None)
+    let first = Key { id: 1 }; table.remove_by_ref(&first)
+    table.insert(Key { id: 3 }, Some("de"))
+    table.insert(Key { id: 4 }, Some("x"))
+    let last = Key { id: 4 }; table.remove_by_ref(&last)
+    table
+}
+fn read_map(table: &Map<Key, Option<String>>) @suspends -> Int32 {
+    let second = Key { id: 2 }; let third = Key { id: 3 }; let fourth = Key { id: 4 }
+    check.assert(table.capacity() >= 17, "lost map capacity")
+    check.assert(table.contains_key_by_ref(&second), "missing empty value")
+    check.assert(!table.contains_key_by_ref(&fourth), "deleted key found")
+    var total = 0
+    for (key, value) in table {
+        task.yield_now()
+        total += key.id * match value { Some(s) => int32(s.byte_length()), None => 0 }
+    }
+    match table.value_ref(&third) {
+        Some(s) => { let (a, b) = join { | text(s) | text(s) }; total + a + b }
+        None => 0
+    }
+}
+fn maps() @suspends -> Int32 {
+    var table = make_map()
+    let (a, b) = join { | read_map(&table) | read_map(&table) }
+    table.insert(Key { id: 3 }, Some("changed"))
+    a + b
+}
+fn make_set() -> Set<String> {
+    var values = Set.with_capacity::<String>(17)
+    values.insert("a"); values.insert("bb"); values.insert("ccc")
+    let removed = "bb"; values.remove(&removed); values.insert("dd")
+    values
+}
+fn read_set(values: &Set<String>) @suspends -> Int32 {
+    let present = "ccc"; let removed = "bb"
+    check.assert(values.capacity() >= 17, "lost set capacity")
+    check.assert(values.contains(&present) && !values.contains(&removed), "bad set query")
+    var total = 0
+    for value in values.elements() { total += text(value) }
+    total
+}
+fn sets() @suspends -> Int32 {
+    var values = make_set()
+    let (a, b) = join { | read_set(&values) | read_set(&values) }
+    values.clear()
+    a + b
+}
+struct Bundle { lists: Array<List<String>>, table: Map<Key, Option<String>>, selected: Option<Set<String>> }
+fn make_bundle() -> Bundle { Bundle { lists: [make_list()], table: make_map(), selected: Some(make_set()) } }
+fn bundle(value: &Bundle) @suspends -> Int32 {
+    let (a, b) = join { | read_list(value.lists.borrow_ref(0)) | read_map(&value.table) }
+    a + b + match &value.selected { Some(s) => read_set(s), None => 0 }
+}
+fn nested() @suspends -> Int32 {
+    let value = make_bundle()
+    let (a, b) = join { | bundle(&value) | bundle(&value) }
+    a + b
+}
+fn dynamic() @suspends -> Int32 {
+    var value = make_bundle()
+    let view = &value
+    scope { branch { check.assert(bundle(view) == 55, "bad dynamic containers") } }
+    value.selected = None
+    42
+}
+fn empty_read(a: &List<String>, b: &Map<Int32, String>, c: &Set<String>) @suspends -> Int32 {
+    task.yield_now()
+    check.assert(a.is_empty() && b.is_empty() && c.is_empty(), "nonempty containers")
+    let missing = "missing"
+    check.assert(!b.contains_key(99) && !c.contains(&missing), "false query hit")
+    var count = 0
+    for (_, _) in b { count += 1 }
+    for _ in c.elements() { count += 1 }
+    count
+}
+fn empty() @suspends -> Int32 {
+    let a = List.new::<String>(); let b = Map.new::<Int32, String>(); let c = Set.new::<String>()
+    let (x, y) = join { | empty_read(&a, &b, &c) | empty_read(&a, &b, &c) }
+    x + y
+}
+fn forever(value: &Bundle) @suspends -> Int32 { while true { task.yield_now(); bundle(value); } }
+fn fail(value: &Bundle) @suspends -> Int32 { task.yield_now(); check.panic("collection reader failed") }
+fn failed() @suspends -> Int32 { let value = make_bundle(); let (a, b) = join { | forever(&value) | fail(&value) }; a + b }
+fn parked() @suspends { let value = make_bundle(); let view = &value; scope { branch { forever(view); } } }
+fn raced() @suspends -> Int32 { let value = make_bundle(); race { | bundle(&value) | forever(&value) } }
+fn isolated() @suspends -> Int32 {
+    let value = make_bundle()
+    let view = &value
+    let result = isolate { let (a, b) = join { | forever(view) | fail(view) }; a + b }
+    match result { Ok(_) => 0, Err(_) => bundle(&value) }
+}
+
+fn cursor_next(cursor: &map.Iter<Int32, Int32>) @suspends -> Int32 {
+    task.yield_now()
+    if map.advance(cursor) { *map.entry_value(map.current(cursor)) } else { 0 }
+}
+fn local_cursor() @suspends -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 10); table.insert(2, 20)
+    let cursor = table.iter()
+    let (a, b) = join { | cursor_next(cursor) | cursor_next(cursor) }
+    a + b
+}
+
+fn array_texts(values: &Array<String>) @suspends -> Int32 {
+    var total = 0
+    for value in values { total += text(value) }
+    total
+}
+fn slice_texts(values: &Slice<String>) @suspends -> Int32 {
+    var total = 0
+    for value in values { total += text(value) }
+    total
+}
+fn swapped_views() @suspends -> Int32 {
+    var left = ["a"]
+    var right = ["bb"]
+    mem.swap(&mut left, &mut right)
+    let old = mem.replace(&mut right, ["ccc"])
+    mem.drop(old)
+    let (a, b) = join { | array_texts(&left) | slice_texts(right.slice(0, 1)) }
+    a + b
+}

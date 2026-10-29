@@ -1660,3 +1660,25 @@ fn scoped_borrow_enums_on_all_backends() {
         "scoped-enums",
     );
 }
+
+#[test]
+fn scoped_borrow_collections_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/scoped_borrow_collections.jk"),
+        &[
+            ("main", 78, 2),
+            ("maps", 20, 2),
+            ("sets", 12, 2),
+            ("nested", 110, 2),
+            ("dynamic", 42, 1),
+            ("empty", 0, 6),
+            ("failed", 0, 2),
+            ("parked", 0, 1),
+            ("raced", 55, 2),
+            ("isolated", 55, 4),
+            ("local_cursor", 30, 0),
+            ("swapped_views", 5, 2),
+        ],
+        "scoped-collections",
+    );
+}

@@ -36,9 +36,10 @@ impl Shape {
         };
         use crate::core::types::walk::{TypeEdges, TypeWalk};
         // Include phantom arguments and zero-sized fields. References, handles,
-        // closures and unaudited container protocols remain local.
+        // closures and capabilities remain local. List/Map/Set use the same
+        // finite field graph; query protocols require separate call-graph evidence.
         if !TypeWalk::new(&reference.target, TypeEdges::Fields).all(|ty| match ty {
-            Type::Record(r) => !r.indirect && r.closure.is_none() && !r.list && !r.map && !r.set,
+            Type::Record(r) => !r.indirect && r.closure.is_none(),
             Type::Enum(e) => !e.indirect && !e.variants.is_empty(),
             Type::Tuple(_)
             | Type::FixedArray(_)
@@ -595,8 +596,8 @@ mod tests {
             enum OwnedChoice { Text(String), Empty }
             enum HiddenDrop { Empty, Value(Tracked) }
             enum PhantomChoice<T> { Empty }
-            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32, h: &Array<Owner>, i: &Owner, j: &Array<Array<Owner>>, k: &Phantom<String>, l: &OwnedChoice, m: &Array<OwnedChoice>) {}
-            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain, n: &Tracked, o: &Array<Tracked>, p: &Map<Int32, String>, q: &List<String>, r: &Set<Int32>, s: &HiddenDrop, t: &PhantomChoice<Ptr>) {}
+            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32, h: &Array<Owner>, i: &Owner, j: &Array<Array<Owner>>, k: &Phantom<String>, l: &OwnedChoice, m: &Array<OwnedChoice>, n: &Map<Int32, String>, o: &List<String>, p: &Set<Int32>) {}
+            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain, n: &Tracked, o: &Array<Tracked>, p: &Map<Int32, Tracked>, q: &List<Pointer>, r: &Set<Phantom<Ptr>>, s: &HiddenDrop, t: &PhantomChoice<Ptr>, u: &map.Iter<Int32, String>, v: &map.Entry<Int32, String>) {}
         "#;
         let ast = types
             .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())

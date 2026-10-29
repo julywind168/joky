@@ -507,6 +507,22 @@ mod tests {
                 let key = BadEq { id: 1 }
                 value.contains(&key)
             }
+            fn query<K: BorrowHash + BorrowEq, V>(value: &Map<K, V>, key: &K) @noescape(key) -> Bool {
+                value.contains_key_by_ref(key)
+            }
+            fn borrowed_hash(value: &Map<BadHash, Int32>) @suspends -> Bool {
+                let key = BadHash { id: 1 }
+                query(value, &key)
+            }
+            fn borrowed_eq(value: &Set<BadEq>) @suspends -> Bool {
+                let key = BadEq { id: 1 }
+                value.contains(&key)
+            }
+            fn borrowed_branches() @suspends -> Bool {
+                let value = Map.new::<BadHash, Int32>()
+                let (a, b) = join { | borrowed_hash(&value) | borrowed_hash(&value) }
+                a
+            }
             fn child(value: Map<BadHash, Int32>) @suspends -> Bool { hash_map(value) }
             fn branches(value: Map<BadHash, Int32>) @suspends -> Bool {
                 let (a, b) = join { | child(value) | child(Map.new::<BadHash, Int32>()) }
@@ -520,6 +536,10 @@ mod tests {
         let prepared =
             crate::core::prepared::PreparedModule::new(&ast, &types, &Default::default()).unwrap();
         let plan = prepared.plan(&Default::default()).unwrap();
+        for name in ["borrowed_hash", "borrowed_eq"] {
+            let signature = scoped::signature(&plan, name);
+            assert!(crate::runtime::parallel::scoped::Shape::of(&signature.params[0]).is_some());
+        }
         let effects = analyse(&plan, &prepared, &HashSet::new());
         effects.require("carry").unwrap();
         effects.require_packet("carry").unwrap();
@@ -529,6 +549,9 @@ mod tests {
             "hash_value_map",
             "eq_value_set",
             "branches",
+            "borrowed_hash",
+            "borrowed_eq",
+            "borrowed_branches",
         ] {
             assert!(effects.require(name).is_err(), "{name}");
         }
@@ -539,6 +562,9 @@ mod tests {
             "hash_value_map",
             "eq_value_set",
             "branches",
+            "borrowed_hash",
+            "borrowed_eq",
+            "borrowed_branches",
         ] {
             admitted.require(name).unwrap();
         }

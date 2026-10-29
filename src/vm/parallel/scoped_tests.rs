@@ -304,7 +304,13 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         .replace("task.yield_now()", "checkpoint()");
     let enums = include_str!("../../../tests/fixtures/scoped_borrow_enums.jk")
         .replace("task.yield_now()", "checkpoint()");
+    let collections = include_str!("../../../tests/fixtures/scoped_borrow_collections.jk")
+        .replace("task.yield_now()", "checkpoint()");
     for (source, cases) in [
+        (
+            collections,
+            vec![("main", 78), ("maps", 20), ("dynamic", 42)],
+        ),
         (
             enums,
             vec![
@@ -602,6 +608,10 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
 fn scoped_graph_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
     for (source, cases) in [
         (
+            include_str!("../../../tests/fixtures/scoped_borrow_collections.jk"),
+            &[("main", 78), ("maps", 20), ("dynamic", 42)][..],
+        ),
+        (
             include_str!("../../../tests/fixtures/scoped_borrow_enums.jk"),
             &[
                 ("main", 12),
@@ -708,6 +718,21 @@ fn scoped_borrow_enum_captures_reject_variant_changes_and_escaping_sources() {
         "scope { { let value = Choice.Text(\"x\"); let view = &value; branch { read(view) } } }",
     ] {
         let source = format!("{declarations} fn root() @suspends {{ {body} }}");
+        let error = VmEngine::new().load_source(&source).unwrap_err();
+        assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{body}: {error}");
+    }
+}
+
+#[test]
+fn scoped_borrow_collection_captures_keep_mutation_and_escape_rejected() {
+    let source = include_str!("../../../tests/fixtures/scoped_borrow_collections.jk");
+    for body in [
+        "var value = make_list(); let view = &value; scope { branch { read_list(view); }; value.push_back(\"x\") }",
+        "var value = make_map(); let view = &value; scope { branch { read_map(view); }; value.clear() }",
+        "var value = make_set(); let view = &value; scope { branch { read_set(view); }; let write = &mut value }",
+        "scope { { let value = make_map(); let view = &value; branch { read_map(view); } } }",
+    ] {
+        let source = format!("{source} fn invalid() @suspends {{ {body} }}");
         let error = VmEngine::new().load_source(&source).unwrap_err();
         assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{body}: {error}");
     }

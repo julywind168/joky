@@ -1217,6 +1217,18 @@ impl Buffer {
         error.map_or(Ok(()), Err)
     }
 
+    /// Exchange owned contents while retaining each stable header's identity.
+    /// # Safety
+    /// Both pointers are live, exclusively borrowed owners with matching layouts
+    /// on the same task. No element or slice loans remain live during the swap.
+    pub(crate) unsafe fn swap(left: *mut Self, right: *mut Self) {
+        std::ptr::swap(left, right);
+        // Provenance points to the header that now owns the payload. Keeping
+        // the exchanged pointers could follow a retired temporary after replace.
+        (*left).origin = left;
+        (*right).origin = right;
+    }
+
     /// Both handles are live, exclusively accessible, same-element owners.
     /// Transfer the source payload, releasing the old payload and source header.
     pub(crate) unsafe fn replace(

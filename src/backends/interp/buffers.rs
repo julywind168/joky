@@ -155,7 +155,7 @@ pub(super) fn execute(
             let right = pointer(&slots[right.index])?;
             unsafe {
                 if target.is_owner() && !target.is_inline_owner() {
-                    std::ptr::swap(left, right);
+                    Buffer::swap(left, right);
                 } else {
                     std::ptr::swap_nonoverlapping(
                         left.cast::<u8>(),
@@ -184,7 +184,7 @@ pub(super) fn execute(
                         value.ty.storage_layout().unwrap().size,
                     );
                 } else {
-                    std::ptr::swap(left, right);
+                    Buffer::swap(left, right);
                 }
             }
         }
