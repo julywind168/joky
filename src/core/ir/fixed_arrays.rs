@@ -87,12 +87,8 @@ pub(super) fn eligible(ty: &Type) -> bool {
         | Type::BufferElement(t)
         | Type::BufferIterator(t)
         | Type::BufferPairIterator(t)
-        | Type::BufferEntry(t) => t.is_place() && eligible(t),
-        Type::Record(r) if r.array => r
-            .arguments
-            .iter()
-            .filter_map(|a| a.as_type())
-            .all(|t| t.is_place() && eligible(t)),
+        | Type::BufferEntry(t) => eligible(t),
+        Type::Record(r) if r.array => r.arguments.iter().filter_map(|a| a.as_type()).all(eligible),
         _ => {
             matches!(
                 target,
@@ -135,6 +131,19 @@ impl FunctionPlan {
     }
 
     pub(super) fn check_fixed_array(&self, ty: &Type) -> Result<(), Error> {
+        if ty.contains_fixed_array()
+            && crate::core::types::walk::TypeWalk::new(
+                ty,
+                crate::core::types::walk::TypeEdges::Fields,
+            )
+            .any(|node| self.has_custom_drop(node))
+        {
+            return Err(type_error(
+                &self.current_span,
+                ErrorCode::TypeMismatch,
+                "FixedArray storage does not support custom Drop",
+            ));
+        }
         if ty.contains_fixed_array() && !eligible(ty) {
             return Err(type_error(&self.current_span, ErrorCode::TypeMismatch,
                 format!("FixedArray is not supported in this context: {ty}; requires supported array values or views")));
@@ -205,7 +214,7 @@ impl FunctionPlan {
 impl Type {
     pub(crate) fn place_child(&self, index: usize) -> (usize, Type) {
         use crate::core::types::memory_layout::MemoryLayoutShape as Shape;
-        let layout = self.memory_layout().unwrap();
+        let layout = self.storage_layout().unwrap();
         match (self, &layout.shape) {
             (Self::Record(r), Shape::Record(fields)) => {
                 (fields[index].offset, r.fields[index].ty.clone())
@@ -221,16 +230,49 @@ impl Type {
         }
     }
 
+    /// Bounded offsets for the existing dynamic-buffer cleanup ABI. Inline place
+    /// operations themselves retain the compact repeated-element program.
+    pub(crate) fn place_owner_offsets(&self) -> Vec<usize> {
+        fn walk(
+            nodes: &[crate::runtime::place::CopyNode],
+            i: usize,
+            base: usize,
+            out: &mut Vec<usize>,
+        ) {
+            let n = nodes[i];
+            let base = base + n.offset as usize;
+            match n.kind {
+                4 => out.push(base),
+                2 => {
+                    for item in 0..n.count as usize {
+                        walk(nodes, i + 1, base + item * n.stride as usize, out);
+                    }
+                }
+                _ => {
+                    let mut child = i + 1;
+                    while child < n.end as usize {
+                        walk(nodes, child, base, out);
+                        child = nodes[child].end as usize;
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.place_copy_program(), 0, 0, &mut out);
+        out
+    }
     /// One descriptor subtree per element shape, independent of array length.
     pub(crate) fn place_copy_program(&self) -> Vec<crate::runtime::place::CopyNode> {
         use crate::core::types::memory_layout::MemoryLayoutShape as Shape;
         use crate::runtime::place::CopyNode;
         fn build(ty: &Type, offset: usize, nodes: &mut Vec<CopyNode>) {
-            let layout = ty.memory_layout().expect("validated concrete place layout");
+            let layout = ty
+                .storage_layout()
+                .expect("validated concrete place layout");
             let index = nodes.len();
             nodes.push(CopyNode {
                 offset: offset as u64,
-                kind: 0,
+                kind: if ty.is_owner_lane() { 4 } else { 0 },
                 count: layout.size as u64,
                 stride: 0,
                 end: 0,

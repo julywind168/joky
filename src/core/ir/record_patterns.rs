@@ -23,6 +23,7 @@ enum BindingKind {
 }
 
 struct BindingLeaf {
+    owner: Option<Slot>,
     name: String,
     slot: Option<Slot>,
     span: Span,
@@ -507,6 +508,7 @@ impl FunctionPlan {
         &mut self,
         checked: &CheckedBinding,
         value: Option<Slot>,
+        owner: Option<&Slot>,
         leaves: &mut Vec<BindingLeaf>,
     ) -> Result<(), Error> {
         if !checked.binds() {
@@ -515,6 +517,7 @@ impl FunctionPlan {
         self.current_span = checked.span;
         match &checked.kind {
             BindingKind::Any(name) => leaves.push(BindingLeaf {
+                owner: owner.cloned(),
                 name: name.clone().expect("binding name"),
                 slot: value,
                 span: checked.span,
@@ -523,7 +526,12 @@ impl FunctionPlan {
                 let base = value.as_ref().unwrap();
                 for (offset, child) in children {
                     let value = self.place_read(base, *offset, child.ty.clone())?;
-                    self.lower_binding_pattern(child, value, leaves)?;
+                    self.lower_binding_pattern(
+                        child,
+                        value.clone(),
+                        value.as_ref().filter(|v| v.ty.is_owner()),
+                        leaves,
+                    )?;
                 }
             }
             BindingKind::Tuple(children) => {
@@ -531,14 +539,19 @@ impl FunctionPlan {
                 for (index, (offset, child)) in children.iter().enumerate() {
                     if checked.ty.is_place() {
                         let slot = self.place_child(value.as_ref().unwrap(), index)?;
-                        self.lower_binding_pattern(child, slot, leaves)?;
+                        self.lower_binding_pattern(
+                            child,
+                            slot.clone(),
+                            slot.as_ref().filter(|v| v.ty.is_owner()),
+                            leaves,
+                        )?;
                         continue;
                     }
                     let slot = (child.ty != Type::Unit).then(|| Slot {
                         index: base + offset,
                         ty: child.ty.clone(),
                     });
-                    self.lower_binding_pattern(child, slot, leaves)?;
+                    self.lower_binding_pattern(child, slot, owner, leaves)?;
                 }
             }
             BindingKind::Record(children) => {
@@ -549,7 +562,12 @@ impl FunctionPlan {
                 for (index, child) in children {
                     if checked.ty.is_place() {
                         let slot = self.place_child(value.as_ref().unwrap(), *index)?;
-                        self.lower_binding_pattern(child, slot, leaves)?;
+                        self.lower_binding_pattern(
+                            child,
+                            slot.clone(),
+                            slot.as_ref().filter(|v| v.ty.is_owner()),
+                            leaves,
+                        )?;
                         continue;
                     }
                     let field = &record.fields[*index];
@@ -557,7 +575,7 @@ impl FunctionPlan {
                         index: base + field.offset,
                         ty: field.ty.clone(),
                     });
-                    self.lower_binding_pattern(child, slot, leaves)?;
+                    self.lower_binding_pattern(child, slot, owner, leaves)?;
                 }
             }
         }
@@ -616,18 +634,23 @@ impl FunctionPlan {
         let checked = self.check_binding_pattern(pattern, &slot_type(&value), types, &mut names)?;
         let mut leaves = Vec::new();
         let owner = value.as_ref().filter(|slot| slot.ty.is_owner()).cloned();
-        self.lower_binding_pattern(&checked, value, &mut leaves)?;
+        self.lower_binding_pattern(&checked, value, owner.as_ref(), &mut leaves)?;
         for leaf in leaves {
             self.current_span = leaf.span;
             let slot = if slot_type(&leaf.slot).reference_type().is_some() {
                 self.reference_value(leaf.slot, true)?
             } else if let Some(src) = leaf.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
                 let dst = self.slot(src.ty.clone())?;
-                self.emit(Op::Buffer(BufferOp::Detach {
-                    dst: dst.clone(),
-                    src: src.clone(),
-                    owner: owner.clone().expect("owner leaf"),
-                }));
+                let root = leaf.owner.as_ref().expect("owner leaf");
+                if root.ty.is_place() || root.index == src.index && root.ty == src.ty {
+                    self.emit(Op::Copy(dst.clone(), src.clone()));
+                } else {
+                    self.emit(Op::Buffer(BufferOp::Detach {
+                        dst: dst.clone(),
+                        src: src.clone(),
+                        owner: root.clone(),
+                    }));
+                }
                 Some(dst)
             } else if mutable || owner.is_some() {
                 self.snapshot(&leaf.slot)?

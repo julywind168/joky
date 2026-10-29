@@ -199,7 +199,11 @@ pub(super) fn execute(
                     dyn_borrow(slots, dst.index, owner)?;
                 }
             } else {
-                slots[dst.index] = value;
+                slots[dst.index] = if src.ty.is_place() {
+                    Value::Reference(places::pointer(&value))
+                } else {
+                    value
+                };
             }
         }
         BufferOp::Access { .. } => unreachable!("owner access markers are erased after checking"),
@@ -344,7 +348,10 @@ pub(super) fn execute(
                             (*pointer(arg(0))?).load(count(arg(1))?)?
                         };
                         if let Some(dst) = dst {
-                            if *intrinsic == BufferIntrinsic::TakeLast && dst.ty.is_owner() {
+                            if *intrinsic == BufferIntrinsic::TakeLast
+                                && dst.ty.is_owner()
+                                && !dst.ty.is_place()
+                            {
                                 let entry = (*pointer(arg(0))?)
                                     .element_entry(data)
                                     .expect("owning element cleanup");
@@ -357,6 +364,9 @@ pub(super) fn execute(
                                     layout.size,
                                     layout.align,
                                 )?;
+                                cleanups
+                                    .places
+                                    .describe(arena, dst.index, &instruction.program)?;
                                 crate::runtime::place::copy(p.as_ptr(), data, &instruction.program);
                                 slots[dst.index] = Value::Place(p.as_ptr());
                             }
@@ -384,6 +394,9 @@ pub(super) fn execute(
                         };
                         let value = args.last().unwrap();
                         if value.ty.is_place() {
+                            if element.is_owner() {
+                                data.write_bytes(0, layout.size);
+                            }
                             crate::runtime::place::copy(
                                 data,
                                 places::pointer(&slots[value.index]),

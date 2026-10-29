@@ -932,3 +932,40 @@ isolate 内的受检只读捕获同样可派发，失败仍归属原隔离边界
 - `cargo build` 刷新最终 Debug CLI 与运行库；最后仅更新说明与验收记录，`git diff --check` 通过。
 
 未运行 Release、完整 stress、Linux 实机或性能测量。
+
+
+### 13.17 W6k：FixedArray 拥有元素
+
+保留内联位置存储，开放 String、Array、普通拥有记录／元组和嵌套 FixedArray 元素，
+以及普通记录混合拥有字段与 FixedArray。元素为 Copy 时仍复制；拥有元素按值移动，
+get/repeat 和数组展开仍要求 Copy。拥有型枚举不能作为元素，但外层 Option/Result 可包装拥有数组。
+自定义 Drop、资源、dyn、引用、闭包与 List/Map/Set 存储保持现有限制。
+
+紧凑描述增加拥有 Buffer 叶子，移动后清零源槽；部分初始化、覆盖、解构、正常结束及取消
+共用同一清理描述，载荷、描述和登记均计入任务预算。动态 Array 可存储拥有 FixedArray，
+沿用 Buffer 的拥有偏移与扩容协议。共享／独占借用继续阻止冲突访问，不隐式复制拥有元素。
+
+三后端接通普通调用、挂起参数／结果、join、动态 branch 的拥有捕获及只读作用域借用。
+Parallel 包分别交接位置字段和真实 Buffer 树，准备／安装失败各自清理已接收部分；
+宿主 TaskValue 支持相同元素组合，结果丢弃与池关闭后预算最终归零。
+私有任务布局升为 15，已有 AOT 对象与运行库须一起重编；公共入口 ABI 保持不变。
+
+2026-10-29，macOS 本机 Debug 验收完成：
+
+- 最终 `cargo test fixed_array --lib`：55 通过、10 忽略。拥有元素 fixture 覆盖三后端、
+  1／3 worker、移动／解构／替换／交换、嵌套与混合聚合、Array 存储、切片迭代、挂起、
+  静态 join、动态捕获、只读借用、部分初始化失败与取消；保持既有 Copy、布局和 C 互操作回归。
+- 宿主 String／拥有记录元素往返、准备任务丢弃、最终预算归零、32 KiB 下千次替换通过。
+  静态拒绝覆盖移动后使用、冲突借用、Copy 专用 API、自定义 Drop 与间接持有拥有数组的枚举。
+- `cargo test fixed_array_owned --lib -- --ignored` 与
+  `cargo test exhaustive_task_fixed_array --lib -- --ignored` 通过：新增拥有元素逐指令取消及
+  预算密集扫描，并回归已有 Local CPS／Parallel Copy 数组的预算失败和取消清理。
+- 只调用一次 `./scripts/check.sh`：fmt、全目标 Clippy 通过；库测试 1790 通过、2 失败、156 忽略。
+  两处失败为旧测试仍要求 String 数组、无 Copy 约束的按值解构被拒绝；改为引用元素与借用移出边界后，
+  两项定向复验通过。没有重跑库全量，原脚本本身并非一遍无失败通过。
+- 按原脚本补齐尚未执行的主程序、全部默认集成测试及文档测试，全部通过；CLI 为 340 通过、8 忽略。
+  while（0／1000）与 Map（0／32）短输入三后端正确性检查通过，默认检查范围已完成。
+- 最后审核补齐拥有型枚举的递归准入判定后，仅复验 fmt、全目标 Clippy 与上述 55 项 FixedArray 测试，
+  均通过。最终仅更新验收记录，`git diff --check` 通过。
+
+未运行 Release、完整 stress、Linux 实机或性能测量。

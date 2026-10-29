@@ -159,7 +159,19 @@ impl TaskValue {
         let mut packet = Packet::empty(Shape::of(ty)?)?;
         if ty.is_place() {
             unsafe {
-                places::write(self, ty, packet.place_storage())?;
+                let pointer = packet.place_storage();
+                let program = ty.place_copy_program();
+                if let Err(error) = places::write(self, ty, pointer, arena) {
+                    let _ = crate::runtime::place::dispose(arena, pointer, &program);
+                    return Err(error);
+                }
+                let result =
+                    Packet::capture(packet.shape.clone(), vec![pointer as u64], None, arena);
+                let cleanup = crate::runtime::place::dispose(arena, pointer, &program);
+                return match (result, cleanup) {
+                    (Ok(packet), Ok(())) => Ok(packet),
+                    (Err(error), _) | (_, Err(error)) => Err(error),
+                };
             }
         } else {
             fill(self, ty, &mut packet, 0, arena)?;
@@ -168,173 +180,170 @@ impl TaskValue {
     }
 }
 
-pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<ParallelOutput, Error> {
-    fn measure(ty: &Type, words: &[u64]) -> Result<usize, Error> {
-        if ty.is_place() {
-            return unsafe { places::measure(ty, words[0] as *const u8) };
+pub(super) fn measure(ty: &Type, words: &[u64]) -> Result<usize, Error> {
+    if ty.is_place() {
+        return unsafe { places::measure(ty, words[0] as *const u8) };
+    }
+    let children = match ty {
+        Type::Record(r) if r.array => {
+            let mut bytes = 0usize;
+            unsafe {
+                arrays::visit(ty, words[0], true, |element, words| {
+                    bytes = bytes
+                        .checked_add(measure(element, words)?)
+                        .ok_or_else(|| invalid("Parallel array result size overflow"))?;
+                    Ok(())
+                })?;
+            }
+            bytes
         }
-        let children = match ty {
-            Type::Record(r) if r.array => {
-                let mut bytes = 0usize;
+        Type::Record(r) if r.list => {
+            let mut bytes = 0usize;
+            unsafe {
+                lists::visit(ty, words, true, |element, words| {
+                    bytes = bytes
+                        .checked_add(measure(element, words)?)
+                        .ok_or_else(|| invalid("Parallel list result size overflow"))?;
+                    Ok(())
+                })?;
+            }
+            bytes
+        }
+        Type::String => unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.len(),
+        Type::Tuple(t) => {
+            let mut base = 0;
+            let mut bytes = 0;
+            for ty in &t.elements {
+                let end = base + ty.scalar_types().len();
+                bytes += measure(ty, &words[base..end])?;
+                base = end;
+            }
+            bytes
+        }
+        Type::Record(r) => {
+            if r.map {
                 unsafe {
-                    arrays::visit(ty, words[0], true, |element, words| {
-                        bytes = bytes
-                            .checked_add(measure(element, words)?)
-                            .ok_or_else(|| invalid("Parallel array result size overflow"))?;
-                        Ok(())
-                    })?;
+                    maps::validate(ty, words)?;
                 }
-                bytes
             }
-            Type::Record(r) if r.list => {
-                let mut bytes = 0usize;
-                unsafe {
-                    lists::visit(ty, words, true, |element, words| {
-                        bytes = bytes
-                            .checked_add(measure(element, words)?)
-                            .ok_or_else(|| invalid("Parallel list result size overflow"))?;
-                        Ok(())
-                    })?;
-                }
-                bytes
+            let mut bytes = 0;
+            for f in &r.fields {
+                bytes += measure(
+                    &f.ty,
+                    &words[f.offset..f.offset + f.ty.scalar_types().len()],
+                )?;
             }
-            Type::String => {
-                unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.len()
+            bytes
+        }
+        Type::Enum(e) => {
+            let v = e
+                .variants
+                .get(words[0] as usize)
+                .ok_or_else(|| invalid("Invalid parallel enum result"))?;
+            v.payload.as_ref().map_or(Ok(0), |ty| {
+                measure(ty, &words[v.offset..v.offset + ty.scalar_types().len()])
+            })?
+        }
+        _ => 0,
+    };
+    children
+        .checked_add(std::mem::size_of::<TaskValue>())
+        .ok_or_else(|| invalid("Parallel result size overflow"))
+}
+pub(super) fn read(ty: &Type, words: &[u64]) -> Result<TaskValue, Error> {
+    if ty.is_place() {
+        return unsafe { places::read(ty, words[0] as *const u8) };
+    }
+    Ok(match ty {
+        Type::Record(r) if r.array => {
+            let mut elements = Vec::with_capacity(unsafe { arrays::length(words[0])? });
+            unsafe {
+                arrays::visit(ty, words[0], false, |element, words| {
+                    elements.push(read(element, words)?);
+                    Ok(())
+                })?;
             }
-            Type::Tuple(t) => {
-                let mut base = 0;
-                let mut bytes = 0;
-                for ty in &t.elements {
-                    let end = base + ty.scalar_types().len();
-                    bytes += measure(ty, &words[base..end])?;
-                    base = end;
-                }
-                bytes
+            TaskValue::Array {
+                ty: ty.clone(),
+                elements,
             }
-            Type::Record(r) => {
-                if r.map {
-                    unsafe {
-                        maps::validate(ty, words)?;
-                    }
-                }
-                let mut bytes = 0;
-                for f in &r.fields {
-                    bytes += measure(
+        }
+        Type::Record(r) if r.list => {
+            let mut elements = Vec::with_capacity(unsafe { lists::length(ty, words)? });
+            unsafe {
+                lists::visit(ty, words, false, |element, words| {
+                    elements.push(read(element, words)?);
+                    Ok(())
+                })?;
+            }
+            TaskValue::List {
+                ty: ty.clone(),
+                elements,
+            }
+        }
+        Type::String => TaskValue::String(
+            unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.to_owned(),
+        ),
+        Type::Tuple(t) => {
+            let mut base = 0;
+            let mut values = Vec::with_capacity(t.elements.len());
+            for ty in &t.elements {
+                let end = base + ty.scalar_types().len();
+                values.push(read(ty, &words[base..end])?);
+                base = end;
+            }
+            TaskValue::Tuple(values)
+        }
+        Type::Record(r) => {
+            let fields = r
+                .fields
+                .iter()
+                .map(|f| {
+                    read(
                         &f.ty,
                         &words[f.offset..f.offset + f.ty.scalar_types().len()],
-                    )?;
+                    )
+                })
+                .collect::<Result<_, _>>()?;
+            if r.map {
+                TaskValue::Map(TaskMap {
+                    ty: ty.clone(),
+                    fields,
+                })
+            } else if r.set {
+                TaskValue::Set(TaskSet {
+                    ty: ty.clone(),
+                    fields,
+                })
+            } else {
+                TaskValue::Record {
+                    ty: ty.clone(),
+                    fields,
                 }
-                bytes
             }
-            Type::Enum(e) => {
-                let v = e
-                    .variants
-                    .get(words[0] as usize)
-                    .ok_or_else(|| invalid("Invalid parallel enum result"))?;
-                v.payload.as_ref().map_or(Ok(0), |ty| {
-                    measure(ty, &words[v.offset..v.offset + ty.scalar_types().len()])
-                })?
-            }
-            _ => 0,
-        };
-        children
-            .checked_add(std::mem::size_of::<TaskValue>())
-            .ok_or_else(|| invalid("Parallel result size overflow"))
-    }
-    fn read(ty: &Type, words: &[u64]) -> Result<TaskValue, Error> {
-        if ty.is_place() {
-            return unsafe { places::read(ty, words[0] as *const u8) };
         }
-        Ok(match ty {
-            Type::Record(r) if r.array => {
-                let mut elements = Vec::with_capacity(unsafe { arrays::length(words[0])? });
-                unsafe {
-                    arrays::visit(ty, words[0], false, |element, words| {
-                        elements.push(read(element, words)?);
-                        Ok(())
-                    })?;
-                }
-                TaskValue::Array {
-                    ty: ty.clone(),
-                    elements,
-                }
-            }
-            Type::Record(r) if r.list => {
-                let mut elements = Vec::with_capacity(unsafe { lists::length(ty, words)? });
-                unsafe {
-                    lists::visit(ty, words, false, |element, words| {
-                        elements.push(read(element, words)?);
-                        Ok(())
-                    })?;
-                }
-                TaskValue::List {
-                    ty: ty.clone(),
-                    elements,
-                }
-            }
-            Type::String => TaskValue::String(
-                unsafe { crate::runtime::owned_text::borrow(words[0] as *const _) }?.to_owned(),
-            ),
-            Type::Tuple(t) => {
-                let mut base = 0;
-                let mut values = Vec::with_capacity(t.elements.len());
-                for ty in &t.elements {
-                    let end = base + ty.scalar_types().len();
-                    values.push(read(ty, &words[base..end])?);
-                    base = end;
-                }
-                TaskValue::Tuple(values)
-            }
-            Type::Record(r) => {
-                let fields = r
-                    .fields
-                    .iter()
-                    .map(|f| {
-                        read(
-                            &f.ty,
-                            &words[f.offset..f.offset + f.ty.scalar_types().len()],
-                        )
+        Type::Enum(e) => {
+            let variant = words[0] as usize;
+            let v = &e.variants[variant];
+            TaskValue::Enum {
+                ty: ty.clone(),
+                variant,
+                payload: v
+                    .payload
+                    .as_ref()
+                    .map(|ty| {
+                        read(ty, &words[v.offset..v.offset + ty.scalar_types().len()]).map(Box::new)
                     })
-                    .collect::<Result<_, _>>()?;
-                if r.map {
-                    TaskValue::Map(TaskMap {
-                        ty: ty.clone(),
-                        fields,
-                    })
-                } else if r.set {
-                    TaskValue::Set(TaskSet {
-                        ty: ty.clone(),
-                        fields,
-                    })
-                } else {
-                    TaskValue::Record {
-                        ty: ty.clone(),
-                        fields,
-                    }
-                }
+                    .transpose()?,
             }
-            Type::Enum(e) => {
-                let variant = words[0] as usize;
-                let v = &e.variants[variant];
-                TaskValue::Enum {
-                    ty: ty.clone(),
-                    variant,
-                    payload: v
-                        .payload
-                        .as_ref()
-                        .map(|ty| {
-                            read(ty, &words[v.offset..v.offset + ty.scalar_types().len()])
-                                .map(Box::new)
-                        })
-                        .transpose()?,
-                }
-            }
-            _ => TaskValue::Scalar(
-                InstanceValue::from_bits(ty, words.first().copied().unwrap_or(0))
-                    .ok_or_else(|| invalid("Invalid parallel scalar result"))?,
-            ),
-        })
-    }
+        }
+        _ => TaskValue::Scalar(
+            InstanceValue::from_bits(ty, words.first().copied().unwrap_or(0))
+                .ok_or_else(|| invalid("Invalid parallel scalar result"))?,
+        ),
+    })
+}
+pub(super) fn output(packet: &Packet, ty: &Type, root: &Storage) -> Result<ParallelOutput, Error> {
     let charge = root.accounts().reserve(measure(ty, &packet.words)?)?;
     Ok(ParallelOutput {
         value: read(ty, &packet.words)?,

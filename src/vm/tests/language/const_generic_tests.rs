@@ -68,7 +68,7 @@ fn fixed_array_f1_invalid_constants_and_value_operations_are_rejected() {
         assert!(result.is_err(),"accepted: {source}");
     }
     // Each public compilation entry rejects the same unsupported value boundary.
-    let source="import joky/fixed_array.{type FixedArray}\nstruct Mixed { values:FixedArray<Int32,2>, text:String } fn f(x:Mixed) {}";
+    let source="import joky/fixed_array.{type FixedArray}\nstruct Mixed { values:FixedArray<Int32,2>, text:&Int32 } fn f(x:Mixed) {}";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let error = VmEngine::with_mode(mode).load_source(source).unwrap_err();
         assert!(

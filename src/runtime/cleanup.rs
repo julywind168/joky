@@ -318,7 +318,9 @@ impl Cleanups {
                 error.get_or_insert(next);
             }
         }
-        self.places.finish(arena);
+        if let Err(next) = self.places.finish(arena) {
+            error.get_or_insert(next);
+        }
         error.map_or(Ok(()), Err)
     }
 }

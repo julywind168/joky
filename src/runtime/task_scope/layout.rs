@@ -5,13 +5,13 @@ use crate::runtime::parallel::packet::Shape;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV1 envelope.
-pub(crate) const VERSION: usize = 14;
+pub(crate) const VERSION: usize = 15;
 
 fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Abi,
         ErrorCode::AbiError,
-        "Invalid task entry layout v14",
+        "Invalid task entry layout v15",
     )
 }
 
@@ -163,7 +163,9 @@ fn packet_shape(reader: &mut Reader<'_>) -> Result<Shape, Error> {
     if matches!(shape, Shape::Place(_)) != (words[0] & 2 != 0)
         || shape.inputs() != inputs
         || shape.lanes() != words[2] as usize
-        || (!shape.owners().is_empty()) != (words[0] & 1 != 0)
+        || (!shape.owners().is_empty()
+            || matches!(&shape, Shape::Place(layout) if layout.nodes.iter().any(|n| n.kind == 4)))
+            != (words[0] & 1 != 0)
         || shape.aggregate()
             != matches!(
                 kind,
@@ -344,7 +346,7 @@ mod tests {
             .unwrap();
         assert_eq!(inputs[0].owners(), [0]);
         assert_eq!(output.owners(), [0]);
-        for legacy in [1, 11, 12, 13] {
+        for legacy in [1, 11, 12, 13, 14] {
             words[0] = legacy;
             assert!(CheckedLayout::decode(&words).is_err());
         }

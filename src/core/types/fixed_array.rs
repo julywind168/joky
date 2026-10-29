@@ -10,14 +10,15 @@ fn failure(code: ErrorCode, message: &str) -> Error {
 }
 
 impl Type {
-    /// Plain inline data accepted by fixed-array places and dynamic elements.
+    /// Reference-free storage accepted by fixed-array places and dynamic elements.
     /// Rigid template obligations are rechecked after specialization.
     pub(crate) fn is_fixed_array_data(&self) -> bool {
         TypeWalk::new(self, TypeEdges::Fields).all(|ty| match ty {
-            Type::Record(r) => r.owners.is_empty() && r.closure.is_none(),
-            Type::Enum(e) => e.owners.is_empty(),
+            Type::Record(r) => r.closure.is_none() && !r.indirect && !r.list && !r.map && !r.set,
+            Type::Enum(e) => !e.indirect,
             Type::Tuple(_) | Type::FixedArray(_) | Type::Unit | Type::Bool | Type::Rune => true,
-            Type::Parameter(p) => p.copy,
+            Type::Parameter(p) => p.callable.is_none(),
+            Type::String | Type::Buffer(_) => true,
             _ => ty.integer().is_some() || ty.is_float(),
         })
     }
@@ -83,12 +84,15 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
                 | Type::Rune
                 | Type::Unit
                 | Type::FixedArray(_)
-                | Type::Tuple(_) => true,
-                Type::Record(r) => r.closure.is_none() && r.owners.is_empty() && !r.indirect,
-                Type::Enum(e) => e.owners.is_empty() && !e.indirect,
+                | Type::Tuple(_)
+                | Type::String
+                | Type::Buffer(_) => true,
+                Type::Record(r) => {
+                    r.closure.is_none() && !r.indirect && !r.list && !r.map && !r.set
+                }
+                Type::Enum(e) => !element.is_owner() && !e.indirect,
                 Type::Parameter(p) => {
                     p.kind == ParameterKind::Type
-                        && p.copy
                         && p.callable.is_none()
                         && registry.parameters.contains_key(&p.id)
                 }
@@ -98,7 +102,7 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
                 return Err(failure(
                     ErrorCode::TypeMismatch,
                     &format!(
-                        "FixedArray element {element} requires finite reference-free Copy data"
+                        "FixedArray element {element} requires finite reference-free data with ordinary owners"
                     ),
                 ));
             }
@@ -305,7 +309,6 @@ mod tests {
             "FixedArray<(Unit,Unit),65536>",
             "Option<FixedArray<Unit,65536>>",
             "FixedArray<Ptr,0>",
-            "FixedArray<String,0>",
             "FixedArray<fn()->Unit,0>",
             "FixedArray<&Int32,0>",
             "FixedArray<Phantom<Ptr>,0>",

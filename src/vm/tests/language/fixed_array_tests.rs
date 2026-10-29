@@ -148,8 +148,6 @@ fn fixed_array_f2a_rejects_unopened_contexts() {
         "fn bad()->Option<FixedArray<Unit,65536>> {Some(fixed_array.repeat::<Unit,65536>({}))}",
         "struct Bad<T> { a:T, r:&Int32 } fn bad(x:&Bad<FixedArray<Int32,2>>) {}",
 
-        "import joky/array.{type Array} struct Outer { data: Array<FixedArray<Int32,2>> } fn bad(x: Outer) {}",
-        "fn bad() { let a = (fixed_array.repeat::<Int32,2>(1), \"owner\") }",
         "import joky/list.{type List} fn bad() { let a = List.new::<FixedArray<Int32,2>>() }",
         "fn bad(x: FixedArray<Int32,2>) -> &FixedArray<Int32,2> { &x }",
         "struct Packet { data:FixedArray<Int32,2> } fn bad() { let p=Packet{data:fixed_array.repeat::<Int32,2>(1)}; let f=||{p.data.len()}; f(); }",
@@ -510,8 +508,6 @@ fn fixed_array_f5_rejects_recursive_wrappers_at_closed_boundaries() {
         "fn bad(){let values=Map.new::<Int32,Nested>()}",
         "fn bad(){let values=Set.new::<Nested>()}",
         "fn bad(){let values=List.new::<Array<Row>>()}",
-        "fn bad(){let values=Wrapper{value:Array.new::<Row>()}}",
-        "fn bad(){let values=Some(Array.new::<Row>())}",
         "extern fn foreign(p:Nested)",
         "extern fn foreign(p:&Nested) @suspends",
         "fn bad()->&Nested{let p=make(); &p}",
@@ -773,4 +769,112 @@ fn exhaustive_task_fixed_array_local_budget_failures() {
         }
         assert!(completed, "{mode:?}");
     }
+}
+
+#[test]
+fn fixed_array_owned_elements_execute() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/fixed_array_owned.jk"
+        ))
+        .unwrap_or_else(|e| {
+            panic!(
+                "{mode:?}: {e} {:?}",
+                e.span().and_then(|s| e
+                    .sources()
+                    .get(s.source_id())
+                    .map(|f| (f.name(), s.slice(f.text()))))
+            )
+        });
+        for name in [
+            "literal",
+            "moved",
+            "generated",
+            "replaced",
+            "records",
+            "mixed",
+            "nested",
+            "reassigned",
+            "empty",
+            "destructured",
+            "changed_record",
+            "buffered",
+            "views",
+            "swapped",
+        ] {
+            assert_eq!(
+                vm.call_int32_0(name)
+                    .unwrap_or_else(|e| panic!("{mode:?} {name}: {e}")),
+                10,
+                "{mode:?} {name}"
+            );
+            arena::LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?} {name}"));
+        }
+    }
+}
+
+#[test]
+fn fixed_array_owned_elements_reject_invalid_moves_and_copy_apis() {
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+    let types = crate::TypeRegistry::default();
+    for body in [
+        "fn bad() { let a: FixedArray<String,2> = [\"a\",\"b\"]; let b = a; a.len(); b.len(); }",
+        "fn bad() { var a: FixedArray<String,2> = [\"a\",\"b\"]; let r = &a; a = [\"c\",\"d\"]; r.len(); }",
+        "fn bad() { let a: FixedArray<String,2> = [\"a\",\"b\"]; a.get(0); }",
+        "fn bad() { let a: FixedArray<String,2> = [\"a\",\"b\"]; let b: FixedArray<String,2> = [..a]; }",
+        "fn bad() { let a: FixedArray<Option<FixedArray<String,2>>,0> = []; }",
+        "fn bad() { fixed_array.repeat::<String,0>(\"a\"); }",
+        "fn bad() { let a: FixedArray<String,0> = []; let b = a; a.len(); b.len(); }",
+        "fn bad() { var a: FixedArray<String,2> = [\"a\",\"b\"]; let r = a.borrow_ref(0); a.set(0,\"c\"); r.byte_length(); }",
+        "fn bad() { let a: FixedArray<String,2> = [\"a\",\"b\"]; let x = *a.borrow_ref(0); }",
+        "import joky/drop.{type Drop} struct Owned { text: String } impl Drop for Owned { fn drop(&mut self) {} } fn bad() { let a: FixedArray<Owned,0> = []; }",
+    ] {
+        let source = format!("import joky/fixed_array.{{type FixedArray}}\nimport joky/string\n{body}");
+        let result = crate::parser::parse(&source).map_err(crate::Error::from)
+            .and_then(|module| PreparedModule::new(&module, &types, &BindingRegistry::default()))
+            .and_then(|prepared| prepared.plan(&Default::default()));
+        assert!(result.is_err(), "accepted: {source}");
+    }
+}
+
+#[test]
+fn fixed_array_owned_elements_reuse_with_bounded_storage() {
+    let _restore = RestoreLimit(arena::LIMIT.with(|limit| limit.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/fixed_array_owned.jk"
+        ))
+        .unwrap();
+        arena::LIMIT.with(|limit| limit.set(32 * 1024));
+        assert_eq!(vm.call_int32_0("reuse").unwrap(), 10, "{mode:?}");
+        arena::LIMIT.with(|limit| limit.set(arena::MAX_BYTES));
+    }
+}
+
+fn owned_cancellation(sweep: super::support::CancellationSweep) {
+    let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+    vm.load_source(include_str!(
+        "../../../../tests/fixtures/fixed_array_owned.jk"
+    ))
+    .unwrap();
+    super::support::assert_cancellation(
+        &mut vm,
+        "cancel_target",
+        10000,
+        sweep,
+        || {},
+        || arena::LIVE.with(|live| live.get()),
+        || arena::LIVE.with(|live| assert_eq!(live.get(), 0)),
+    );
+}
+#[test]
+fn fixed_array_owned_elements_cancellation_boundaries() {
+    owned_cancellation(super::support::CancellationSweep::ResourceBoundaries);
+}
+#[test]
+#[ignore = "exhaustive: owning fixed-array initialization, moves and returns at every instruction"]
+fn exhaustive_fixed_array_owned_elements_cancellation() {
+    owned_cancellation(super::support::CancellationSweep::EveryInstruction);
 }

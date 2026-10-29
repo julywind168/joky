@@ -38,20 +38,32 @@ pub(super) fn input(
     let mut owner = Buffer::allocate(arena, elements.len() as u64, layout.size, layout.align)?;
     let built = (|| {
         unsafe {
-            if first_owner.is_some() {
+            if element.is_owner() {
                 owner.as_mut().configure(ElementCleanup {
-                    owners: locations
-                        .iter()
-                        .filter(|(_, t)| t.is_owner_lane())
-                        .map(|(offset, _)| *offset)
-                        .collect(),
+                    owners: if element.is_place() {
+                        element.place_owner_offsets()
+                    } else {
+                        locations
+                            .iter()
+                            .filter(|(_, t)| t.is_owner_lane())
+                            .map(|(offset, _)| *offset)
+                            .collect()
+                    },
                     hooks: vec![],
                 })?;
             }
             for value in elements {
                 let dst = owner.as_ref().initialize_next()?;
                 if element.is_place() {
-                    super::places::write(value, element, dst)?;
+                    dst.write_bytes(0, layout.size);
+                    if let Err(error) = super::places::write(value, element, dst, arena) {
+                        let _ = crate::runtime::place::dispose(
+                            arena,
+                            dst,
+                            &element.place_copy_program(),
+                        );
+                        return Err(error);
+                    }
                     owner.as_mut().commit_next();
                     continue;
                 }

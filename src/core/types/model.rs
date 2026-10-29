@@ -284,6 +284,9 @@ impl Type {
     }
     /// A movable owning value, including aggregates with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
+        if self.is_place() {
+            return TypeWalk::new(self, TypeEdges::Inline).any(Type::is_owner_lane);
+        }
         match self {
             Self::Record(r) => {
                 !r.owners.is_empty()
@@ -308,7 +311,10 @@ impl Type {
             }
             ty = &record.fields[0].ty;
         }
-        matches!(ty, Self::Enum(_) | Self::Tuple(_))
+        matches!(
+            ty,
+            Self::Enum(_) | Self::Tuple(_) | Self::FixedArray(_) | Self::FixedArrayInit(_)
+        )
     }
     pub(crate) fn is_buffer_target(&self) -> bool {
         self.is_owner()
@@ -375,6 +381,7 @@ impl Type {
                 | Type::DynTrait(_)
                 | Type::Parameter(_)
                 | Type::Projection(_) => true,
+                Type::FixedArray(array) => safe_storage(&array.element),
                 Type::Buffer(element) => {
                     if element.is_owner() {
                         safe_storage(element)
@@ -451,7 +458,7 @@ impl Type {
             return false;
         }
         if self.contains_fixed_array() {
-            return self.is_place() && self.is_fixed_array_data();
+            return self.is_fixed_array_data();
         }
         // Indirect identities carry no value layout. Their declaration bodies
         // are checked separately before any storage operation is planned.

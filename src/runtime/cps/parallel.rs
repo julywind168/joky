@@ -194,16 +194,12 @@ pub(super) unsafe fn take(
     lanes: *mut u64,
     count: usize,
 ) -> Result<(), Error> {
-    let packet = output.downcast::<Packet>().map_err(|_| invalid())?;
+    let mut packet = output.downcast::<Packet>().map_err(|_| invalid())?;
     if packet.words.len() != count {
         return Err(invalid());
     }
-    if let Shape::Place(layout) = &packet.shape {
-        crate::runtime::place::copy(
-            *lanes as *mut u8,
-            packet.words[0] as *const u8,
-            &layout.nodes,
-        );
+    if matches!(&packet.shape, Shape::Place(_)) {
+        packet.install_place(&mut *super::arena(frame), *lanes as *mut u8)?;
         return Ok(());
     }
     let arena = super::arena(frame);

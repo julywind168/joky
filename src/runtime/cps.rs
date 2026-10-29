@@ -24,12 +24,12 @@ type DynamicTaskScope = LocalTaskScope<Box<CpsFrame>>;
 
 struct ReturnedPlace {
     arena: Rc<UnsafeCell<Arena>>,
-    pointer: std::ptr::NonNull<u8>,
+    payload: Option<super::place::Payload>,
 }
 impl Drop for ReturnedPlace {
     fn drop(&mut self) {
         unsafe {
-            (*self.arena.get()).release(self.pointer);
+            let _ = self.payload.take().unwrap().release(&mut *self.arena.get());
         }
     }
 }
@@ -630,7 +630,7 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
     }
 }
 
-/// Retain a completed Copy result until the caller has copied it.
+/// Retain a completed inline result and its owners until received or discarded.
 /// # Safety
 /// The frame owns a fully initialized place at the compiler-selected result slot.
 #[export_name = "__joky_cps_finish_place_v1"]
@@ -642,7 +642,7 @@ pub(crate) unsafe extern "C" fn finish_place(frame: *mut CpsFrame, slot: usize) 
         .expect("registered Copy result");
     (*frame).place_result = Some(ReturnedPlace {
         arena: (*frame).arena.as_ref().unwrap().clone(),
-        pointer,
+        payload: Some(pointer),
     });
 }
 

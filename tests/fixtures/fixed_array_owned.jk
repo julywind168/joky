@@ -1,0 +1,153 @@
+import joky/fixed_array.{type FixedArray}
+import joky/array.{type Array}
+import joky/string
+import joky/mem
+import joky/task
+import joky/check
+import joky/option.{type Option, Some, None}
+
+fn words() -> FixedArray<String, 2> { ["hello", "world"] }
+fn identity(value: FixedArray<String, 2>) -> FixedArray<String, 2> { value }
+fn size(value: &FixedArray<String, 2>) -> Int32 {
+    int32(value.borrow_ref(0).byte_length() + value.borrow_ref(1).byte_length())
+}
+fn literal() -> Int32 { let value = words(); size(&value) }
+fn moved() -> Int32 { let value = words(); let next = identity(value); size(&next) }
+fn generated() -> Int32 {
+    let value = fixed_array.from_fn::<String, 2>(move |i: UInt64| { if i == 0 { "hello" } else { "world" } })
+    size(&value)
+}
+fn replaced() -> Int32 {
+    var value = words()
+    value.set(0, "hi")
+    value.set(9, "unused")
+    let old = mem.replace(value.borrow_mut_ref(1), "ok")
+    size(&value) + int32(old.byte_length()) + 1
+}
+struct Entry { label: String, values: Array<Int32> }
+fn records() -> Int32 {
+    let value: FixedArray<Entry, 2> = [Entry { label: "hello", values: [1, 2] }, Entry { label: "x", values: [2, 3] }]
+    let first = value.borrow_ref(0)
+    int32(first.label.byte_length() + first.values.len()) + first.values.get(0)! + first.values.get(1)!
+}
+struct Mixed { label: String, values: FixedArray<Int32, 2> }
+fn mixed() -> Int32 {
+    let value = Mixed { label: "hello", values: [2, 3] }
+    int32(value.label.byte_length()) + value.values.get(0)! + value.values.get(1)!
+}
+fn nested() -> Int32 {
+    let value: FixedArray<FixedArray<String, 2>, 2> = [words(), words()]
+    size(value.borrow_ref(0))
+}
+fn reassigned() -> Int32 {
+    var value = words()
+    var i = 0
+    while i < 8 { value = words(); i += 1 }
+    size(&value)
+}
+fn empty() -> Int32 {
+    let value: FixedArray<String, 0> = []
+    int32(value.len()) + 10
+}
+fn suspended() @suspends -> Int32 {
+    let value = words()
+    task.yield_now()
+    size(&value)
+}
+fn suite() @suspends -> Int32 {
+    literal() + moved() + generated() + replaced() + records() + mixed() + nested() + reassigned() + empty() + destructured() + changed_record() + buffered() + views() + swapped()
+}
+fn relay(value: FixedArray<String, 2>) @suspends -> FixedArray<String, 2> {
+    task.yield_now()
+    value
+}
+fn transferred() @suspends -> Int32 {
+    let (a, b) = join { | relay(words()) | relay(words()) }
+    size(&a) + size(&b)
+}
+fn reader(value: &FixedArray<String, 2>) @suspends -> Int32 {
+    task.yield_now()
+    size(value)
+}
+fn borrowed() @suspends -> Int32 {
+    let value = words()
+    let (a, b) = join { | reader(&value) | reader(&value) }
+    a + b
+}
+fn dynamic() @suspends -> Int32 {
+    let value = words()
+    let view = &value
+    scope { branch { reader(view); } }
+    size(&value)
+}
+fn failed() @suspends -> Int32 {
+    let values = fixed_array.from_fn::<String, 4>(move |i: UInt64| {
+        let x = 1 / (int32(i) - 2)
+        if x == 99 { "unused" } else { "partial" }
+    })
+    int32(values.len())
+}
+fn waiting(value: &FixedArray<String, 2>) @suspends {
+    while true { task.yield_now(); size(value); }
+}
+fn parked() @suspends -> Int32 {
+    let value = words()
+    let view = &value
+    scope { branch { waiting(view) } }
+    0
+}
+fn reuse() -> Int32 {
+    var value = words()
+    var i = 0
+    while i < 1000 {
+        value = words()
+        value.set(0, "hello")
+        i += 1
+    }
+    size(&value)
+}
+
+fn dynamic_moved() @suspends -> Int32 {
+    let value = words()
+    scope { branch { task.yield_now(); if size(&value) != 10 { check.panic("bad capture") } } }
+    10
+}
+fn destructured() -> Int32 {
+    let [a, b] = words()
+    int32(a.byte_length() + b.byte_length())
+}
+fn changed_record() -> Int32 {
+    var value = Mixed { label: "old", values: [2, 3] }
+    value.label = "hello"
+    let Mixed { label, values } = value
+    int32(label.byte_length()) + values.get(0)! + values.get(1)!
+}
+fn buffered() -> Int32 {
+    var rows: Array<FixedArray<String, 2>> = [words(), words()]
+    let value = rows.pop()!
+    size(&value)
+}
+fn cancel_target() @suspends -> Int32 {
+    let value = generated()
+    task.yield_now()
+    let [a, b] = relay(words())
+    value + int32(a.byte_length() + b.byte_length()) + 22
+}
+fn relay_entries(value: FixedArray<Entry, 2>) @suspends -> FixedArray<Entry, 2> { task.yield_now(); value }
+
+fn views() -> Int32 {
+    let value = words()
+    let view = value.slice(0, 2)
+    var total = 0
+    for item in view { total += int32(item.byte_length()) }
+    total
+}
+fn swapped() -> Int32 {
+    var a = words()
+    var b: FixedArray<String, 2> = ["x", "y"]
+    mem.swap(&mut a, &mut b)
+    var selected: Option<FixedArray<String, 2>> = Some(a)
+    selected = None
+    selected = Some(b)
+    match selected { Some(value) => size(&value), None => 0 }
+}

@@ -204,6 +204,9 @@ pub(crate) struct Slot {
 
 impl Slot {
     pub(crate) fn owner_key(&self) -> usize {
+        if self.ty.is_place() {
+            return self.index;
+        }
         self.scalars()
             .find(|s| s.ty.is_owner_lane())
             .expect("owning value")
@@ -1867,6 +1870,7 @@ impl FunctionPlan {
                 failure: None,
                 ..
             }
+            | Op::Place(PlaceOp::Read { dst, .. })
             | Op::ReadOwner { dst: Some(dst), .. }
             | Op::Buffer(BufferOp::Extract { dst, .. } | BufferOp::Detach { dst, .. })
                 if dst.ty.is_owner() =>
@@ -2397,7 +2401,7 @@ impl FunctionPlan {
                 if is_owner {
                     let dst = binding.slot.unwrap();
                     self.emit(Op::Copy(dst.clone(), value.unwrap()));
-                    if let Some(reference) = place {
+                    if let Some(reference) = place.filter(|_| !dst.ty.is_place()) {
                         self.emit(Op::StoreOwner {
                             reference: reference.clone(),
                             path: vec![],

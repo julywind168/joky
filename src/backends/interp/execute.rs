@@ -347,7 +347,6 @@ fn lookup(module: &BytecodeModule, name: &str) -> Result<Arc<BytecodeFunction>, 
 }
 
 pub(super) struct Frame {
-    captures: Vec<(Vec<u64>, crate::runtime::arena::ExternalCharge)>,
     _parallel_charge: Option<crate::runtime::parallel::Lease>,
     cleanups: crate::runtime::cleanup::Cleanups,
     cleanup_locals: memory::Locals,
@@ -380,7 +379,6 @@ impl Frame {
             *slot = value.clone();
         }
         Ok(Self {
-            captures: Vec::new(),
             _parallel_charge: charge,
             cleanups: Default::default(),
             cleanup_locals: Default::default(),
@@ -450,7 +448,6 @@ struct ResultPacket {
 }
 
 struct PreparedUser {
-    captures: Vec<(Vec<u64>, crate::runtime::arena::ExternalCharge)>,
     _parallel_charge: Option<crate::runtime::parallel::Lease>,
     entry: Rc<TaskEntry>,
     inputs: Vec<Value>,
@@ -692,6 +689,17 @@ impl Execution {
         if let Some(Pending::Concurrent { branches, .. }) = pending {
             for branch in branches {
                 if let Some(packet) = branch.packet {
+                    if let Some((bytes, _, nodes)) = &packet.place {
+                        if let Err(next) = unsafe {
+                            crate::runtime::place::dispose(
+                                &mut self.arena,
+                                bytes.as_ptr().cast_mut().cast(),
+                                nodes,
+                            )
+                        } {
+                            cleanup = Err(next);
+                        }
+                    }
                     if let Some((_, owner)) = packet.owner {
                         if let Err(next) = unsafe { owner.run(&mut self.arena) } {
                             if cleanup.is_ok() || crate::runtime::isolate::code(&next).is_none() {
@@ -805,40 +813,43 @@ impl Execution {
                     ));
                 }
                 let mut inputs: Vec<_> = Self::arguments(frame, args).cloned().collect();
-                let mut captures = Vec::with_capacity(entry.layout.input_places().count());
-                for (base, layout) in entry.layout.input_places() {
-                    if layout.align > std::mem::align_of::<u64>() {
-                        return Err(abi_error("Invalid Copy alignment"));
-                    }
-                    let charge =
-                        arena.reserve_external(
-                            layout.size.max(1).div_ceil(8) * 8
-                                + std::mem::size_of::<(
-                                    Vec<u64>,
-                                    crate::runtime::arena::ExternalCharge,
-                                )>(),
-                        )?;
-                    let mut copy = vec![0u64; layout.size.max(1).div_ceil(8)];
-                    unsafe {
-                        crate::runtime::place::copy(
-                            copy.as_mut_ptr().cast(),
-                            places::pointer(&inputs[base]),
-                            layout.nodes,
-                        );
-                    }
-                    inputs[base] = Value::Place(copy.as_mut_ptr().cast());
-                    captures.push((copy, charge));
-                }
-                Ok(Activation::Prepared(PreparedUser {
-                    captures,
-                    _parallel_charge: crate::runtime::parallel::reserve_current(
+                let mut cleanups = crate::runtime::cleanup::Cleanups::default();
+                let prepared = (|| {
+                    let charge = crate::runtime::parallel::reserve_current(
                         std::mem::size_of::<PreparedUser>()
                             + args.len() * std::mem::size_of::<Value>(),
-                    )?,
-                    entry: entry.clone(),
-                    inputs,
-                    cleanups: Default::default(),
-                }))
+                    )?;
+                    for (base, layout) in entry.layout.input_places() {
+                        let destination =
+                            cleanups
+                                .places
+                                .materialize(arena, base, layout.size, layout.align)?;
+                        cleanups.places.describe(arena, base, layout.nodes)?;
+                        unsafe {
+                            crate::runtime::place::copy(
+                                destination.as_ptr(),
+                                places::pointer(&inputs[base]),
+                                layout.nodes,
+                            );
+                        }
+                        inputs[base] = Value::Place(destination.as_ptr());
+                    }
+                    Ok(charge)
+                })();
+                match prepared {
+                    Ok(charge) => Ok(Activation::Prepared(PreparedUser {
+                        _parallel_charge: charge,
+                        entry: entry.clone(),
+                        inputs,
+                        cleanups,
+                    })),
+                    Err(error) => {
+                        unsafe {
+                            let _ = cleanups.finish(arena);
+                        }
+                        Err(error)
+                    }
+                }
             }
             Callee::Host(host) => {
                 HostPending::new(host.clone(), Self::arguments(frame, args)).map(Activation::Host)
@@ -853,7 +864,6 @@ impl Execution {
             };
             let mut frame = Frame::new(function.clone(), prepared.inputs.iter())?;
             frame.cleanups = std::mem::take(&mut prepared.cleanups);
-            frame.captures = std::mem::take(&mut prepared.captures);
             self.node_mut(self.current).activation = Activation::User(frame);
         }
         Ok(())
@@ -1097,7 +1107,14 @@ impl Execution {
                             places::pointer(&child.slots[source]),
                             &child.function.place_result,
                         );
-                        child.cleanups.finish(&mut self.arena)?;
+                        if let Err(error) = child.cleanups.finish(&mut self.arena) {
+                            let _ = crate::runtime::place::dispose(
+                                &mut self.arena,
+                                copy.as_mut_ptr().cast(),
+                                &child.function.place_result,
+                            );
+                            return Err(error);
+                        }
                     }
                     let pointer = copy.as_mut_ptr().cast();
                     place = Some((copy, charge, child.function.place_result.clone()));
@@ -1450,6 +1467,15 @@ impl Execution {
                         {
                             let branch = &mut branches[index];
                             if let Some(packet) = branch.packet.take() {
+                                if let Some((bytes, _, nodes)) = &packet.place {
+                                    if let Err(next) = crate::runtime::place::dispose(
+                                        &mut self.arena,
+                                        bytes.as_ptr().cast_mut().cast(),
+                                        nodes,
+                                    ) {
+                                        error.get_or_insert(next);
+                                    }
+                                }
                                 if let Some((_, entry)) = packet.owner {
                                     if let Err(next) = entry.run(&mut self.arena) {
                                         error.get_or_insert(next);
@@ -2324,7 +2350,7 @@ fn run_frame(
             }
             Instruction::Place(op) => {
                 if let Err(error) =
-                    places::execute(op, &mut frame.slots, arena, &mut frame.cleanups.places)
+                    places::execute(op, &mut frame.slots, arena, &mut frame.cleanups)
                 {
                     return Step::Failed(error);
                 }

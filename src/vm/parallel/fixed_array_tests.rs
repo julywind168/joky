@@ -226,3 +226,111 @@ fn exhaustive_task_fixed_array_budget_failures() {
         assert!(completed);
     }
 }
+
+#[test]
+fn task_fixed_array_owned_host_values_round_trip_and_refund() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../../tests/fixtures/fixed_array_owned.jk"))
+            .unwrap();
+        for name in ["relay", "relay_entries"] {
+            let signature = vm.parallel_signature(name).unwrap();
+            let element = signature.params[0].fixed_array_element_type().unwrap().0;
+            let elements = if name == "relay" {
+                vec![
+                    TaskValue::String("hello".into()),
+                    TaskValue::String("world".into()),
+                ]
+            } else {
+                let row = element.record_field_type("values").unwrap();
+                vec![
+                    TaskValue::Record {
+                        ty: element.clone(),
+                        fields: vec![
+                            TaskValue::String("hello".into()),
+                            TaskValue::Array {
+                                ty: row.clone(),
+                                elements: vec![TaskValue::Scalar(InstanceValue::Int32(42))]
+                            },
+                        ]
+                    };
+                    2
+                ]
+            };
+            let value = TaskValue::FixedArray {
+                ty: signature.params[0].clone(),
+                elements,
+            };
+            let budget = TaskBudget::new(1 << 20);
+            let prepared = vm
+                .prepare_parallel_task(name, vec![value.clone()], vec![budget.clone()])
+                .unwrap();
+            drop(prepared);
+            assert_eq!(budget.used(), 0, "{mode:?}: unstarted input");
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(3, 8).unwrap();
+            let task = vm
+                .prepare_parallel_task(name, vec![value.clone()], vec![budget.clone()])
+                .unwrap()
+                .submit(&pool)
+                .unwrap();
+            task.wait().unwrap();
+            let output = task.take_result().unwrap();
+            assert_eq!(output.value(), &value, "{mode:?}");
+            drop((output, task));
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}: completed output");
+        }
+    }
+}
+
+fn owned_fixed_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../../tests/fixtures/fixed_array_owned.jk"))
+            .unwrap();
+        for (name, expected) in [("transferred", 20), ("borrowed", 20), ("dynamic_moved", 10)] {
+            let mut success = false;
+            for bytes in amounts.clone() {
+                let budget = TaskBudget::new(bytes);
+                let mut pool = crate::runtime::parallel::ParallelExecutor::new(3, 16).unwrap();
+                let result = vm
+                    .prepare_parallel_task(name, vec![], vec![budget.clone()])
+                    .and_then(|p| p.submit(&pool))
+                    .and_then(|task| {
+                        task.wait()?;
+                        task.take_result()
+                    });
+                match &result {
+                    Ok(value) => {
+                        assert_eq!(
+                            value.value(),
+                            &TaskValue::Scalar(InstanceValue::Int32(expected))
+                        );
+                        success = true;
+                    }
+                    Err(error) => assert_eq!(
+                        error.code(),
+                        crate::ErrorCode::ResourceLimit,
+                        "{mode:?}/{name}/{bytes}: {error}"
+                    ),
+                }
+                drop(result);
+                pool.wait_closed();
+                assert_eq!(budget.used(), 0, "{mode:?}/{name}/{bytes}");
+                if success {
+                    break;
+                }
+            }
+            assert!(success, "{mode:?}/{name}: no successful budget");
+        }
+    }
+}
+#[test]
+fn task_fixed_array_owned_budget_boundaries() {
+    owned_fixed_budgets([0, 512, 4096, 16384, 65536, 1 << 20]);
+}
+#[test]
+#[ignore = "exhaustive: owning place construction, capture, installation and result budgets"]
+fn exhaustive_task_fixed_array_owned_budgets() {
+    owned_fixed_budgets((0..(1 << 20)).step_by(128));
+}

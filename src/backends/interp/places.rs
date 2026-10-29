@@ -2,10 +2,7 @@
 //! language array: language copies always execute this typed copy program.
 use super::*;
 use crate::core::ir::PlaceOp;
-use crate::runtime::{
-    arena::Arena,
-    place::{CopyNode, Places},
-};
+use crate::runtime::{arena::Arena, place::CopyNode};
 
 pub(super) struct Instruction {
     op: PlaceOp,
@@ -29,13 +26,13 @@ impl Layouts {
         if let Some((_, layout)) = self.0.iter().find(|(known, _)| known == ty) {
             return layout.clone();
         }
-        let shape = ty.memory_layout().unwrap();
+        let shape = ty.storage_layout().unwrap();
         let array = match ty {
             Type::FixedArray(a) | Type::FixedArrayInit(a) => Some(a),
             _ => None,
         };
         let element = array.map_or(ty, |a| &a.element);
-        let child = if array.is_some() && element.is_place() {
+        let child = if array.is_some() {
             Some(self.get(element))
         } else {
             None
@@ -45,7 +42,7 @@ impl Layouts {
             size: shape.size,
             align: shape.align,
             length: array.map_or(0, |_| ty.fixed_length()),
-            stride: element.memory_layout().unwrap().size,
+            stride: element.storage_layout().unwrap().size,
             program: ty.place_copy_program().into(),
             fields: if element.is_place() {
                 Vec::new()
@@ -75,8 +72,9 @@ pub(super) fn execute(
     op: &Instruction,
     slots: &mut [Value],
     arena: &mut Arena,
-    places: &mut Places,
+    cleanups: &mut crate::runtime::cleanup::Cleanups,
 ) -> Result<(), Error> {
+    let places = &mut cleanups.places;
     match &op.op {
         PlaceOp::View {
             reference,
@@ -104,6 +102,12 @@ pub(super) fn execute(
                     to,
                 )?
             };
+            let element = &reference.ty.fixed_shape().element;
+            let pointer = if end.is_none() && element.is_owner() && !element.is_inline_owner() {
+                unsafe { pointer.cast::<*mut u8>().read_unaligned() }
+            } else {
+                pointer
+            };
             slots[dst.index] = Value::Reference(pointer);
         }
         PlaceOp::Swap {
@@ -129,7 +133,7 @@ pub(super) fn execute(
                     temp.as_ptr(),
                     &op.layout.program,
                 );
-                places.end(arena, *temporary);
+                places.end(arena, *temporary)?;
             }
         }
         PlaceOp::Alias { dst, src } => {
@@ -140,6 +144,10 @@ pub(super) fn execute(
         }
         PlaceOp::Allocate(dst) => {
             let p = places.materialize(arena, dst.index, op.layout.size, op.layout.align)?;
+            unsafe {
+                crate::runtime::place::dispose(arena, p.as_ptr(), &op.layout.program)?;
+            }
+            places.describe(arena, dst.index, &op.layout.program)?;
             slots[dst.index] = Value::Place(p.as_ptr());
         }
         PlaceOp::Read {
@@ -150,21 +158,28 @@ pub(super) fn execute(
             let source = unsafe { pointer(&slots[reference.index]).add(*offset) };
             if dst.ty.is_place() {
                 let p = places.materialize(arena, dst.index, op.layout.size, op.layout.align)?;
+                places.describe(arena, dst.index, &op.layout.program)?;
                 unsafe {
-                    crate::runtime::place::copy(p.as_ptr(), source, &op.layout.program);
+                    crate::runtime::place::replace(arena, p.as_ptr(), source, &op.layout.program)?;
                 }
                 slots[dst.index] = Value::Place(p.as_ptr());
             } else {
                 for ((offset, ty), slot) in op.layout.fields.iter().zip(dst.scalars()) {
                     slots[slot.index] = unsafe { memory::read_scalar(source.add(*offset), ty) };
+                    if ty.is_owner_lane() {
+                        unsafe {
+                            source.add(*offset).cast::<usize>().write_unaligned(0);
+                        }
+                    }
                 }
             }
         }
         PlaceOp::Copy { dst, src } => {
             let source = pointer(&slots[src.index]);
             let p = places.materialize(arena, dst.index, op.layout.size, op.layout.align)?;
+            places.describe(arena, dst.index, &op.layout.program)?;
             unsafe {
-                crate::runtime::place::copy(p.as_ptr(), source, &op.layout.program);
+                crate::runtime::place::replace(arena, p.as_ptr(), source, &op.layout.program)?;
             }
             slots[dst.index] = Value::Place(p.as_ptr());
         }
@@ -175,15 +190,20 @@ pub(super) fn execute(
         } => unsafe {
             let destination = pointer(&slots[reference.index]).add(*offset);
             if value.ty.is_place() {
-                crate::runtime::place::copy(
+                crate::runtime::place::replace(
+                    arena,
                     destination,
                     pointer(&slots[value.index]),
                     &op.layout.program,
-                );
+                )?;
             } else {
+                crate::runtime::place::dispose(arena, destination, &op.layout.program)?;
                 for ((offset, _), slot) in op.layout.fields.iter().zip(value.scalars()) {
                     memory::write_scalar(destination.add(*offset), &slots[slot.index]);
                 }
+            }
+            if value.ty.is_owner() && !value.ty.is_place() {
+                cleanups.take(value.owner_key());
             }
         },
         PlaceOp::Begin(dst) => {
@@ -194,14 +214,16 @@ pub(super) fn execute(
                 op.layout.align,
                 op.layout.length,
             )?;
+            places.describe(arena, dst.index, &op.layout.program)?;
             slots[dst.index] = Value::Place(p.as_ptr());
         }
         PlaceOp::MoveInit { dst, src, publish } => {
             let p = places.move_value(arena, dst.index, pointer(&slots[src.index]), *publish)?;
+            places.describe(arena, dst.index, &op.layout.program)?;
             slots[dst.index] = Value::Place(p.as_ptr());
         }
         PlaceOp::End(slot) => unsafe {
-            places.end(arena, slot.index);
+            places.end(arena, slot.index)?;
         },
         PlaceOp::WriteNext { reference, value }
         | PlaceOp::Store {
@@ -225,6 +247,15 @@ pub(super) fn execute(
                 };
                 unsafe { base.add(index as usize * op.layout.stride) }
             };
+            if matches!(&op.op, PlaceOp::Store { .. }) {
+                unsafe {
+                    crate::runtime::place::dispose(
+                        arena,
+                        p,
+                        &op.layout.element.as_ref().unwrap().program,
+                    )?;
+                }
+            }
             if let Some(value) = value.as_ref().filter(|s| s.ty.is_place()) {
                 let layout = op.layout.element.as_ref().unwrap();
                 if matches!(&op.op, PlaceOp::Load { .. }) {
@@ -253,8 +284,16 @@ pub(super) fn execute(
                     }
                 }
             }
+            if !matches!(&op.op, PlaceOp::Load { .. }) {
+                if let Some(value) = value
+                    .as_ref()
+                    .filter(|v| v.ty.is_owner() && !v.ty.is_place())
+                {
+                    cleanups.take(value.owner_key());
+                }
+            }
             if matches!(&op.op, PlaceOp::WriteNext { .. }) {
-                places.commit_pointer(base)?;
+                cleanups.places.commit_pointer(base)?;
             }
         }
     }

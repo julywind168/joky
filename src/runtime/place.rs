@@ -1,4 +1,4 @@
-//! Task-charged storage for compiler-managed Copy values. Physical reclamation
+//! Task-charged storage for compiler-managed inline values. Physical reclamation
 //! is independent of the source language's ownership and Drop capabilities.
 use super::arena::Arena;
 use crate::{Error, ErrorCode, ErrorPhase};
@@ -10,7 +10,7 @@ use std::ptr::NonNull;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CopyNode {
     pub offset: u64,
-    /// 0: scalar bytes, 1: fields, 2: homogeneous array, 3: tagged enum.
+    /// 0: scalar bytes, 1: fields, 2: homogeneous array, 3: tagged enum, 4: owning buffer pointer.
     pub kind: u64,
     /// Scalar byte width, array length, or number of enum variants.
     pub count: u64,
@@ -18,31 +18,48 @@ pub(crate) struct CopyNode {
     pub end: u64,
 }
 
-/// Copy logical fields without reading padding or inactive enum payloads.
+/// Copy value fields and move owning pointers, skipping padding and inactive variants.
 ///
 /// # Safety
 /// `nodes` must be a compiler-validated, bounded, finite copy program. Source
 /// and destination must have its complete layout and valid alignment. Source
-/// is fully initialized; destinations are disjoint or exactly identical. The
-/// module owning the descriptor must remain alive throughout this call.
+/// is fully initialized and its ownership lanes are exclusively writable. The
+/// destination has no live owners; regions are disjoint or exactly identical.
+/// The module owning the descriptor must remain alive throughout this call.
 pub(crate) unsafe fn copy(dst: *mut u8, src: *const u8, nodes: &[CopyNode]) {
-    unsafe fn visit(dst: *mut u8, src: *const u8, nodes: &[CopyNode], index: usize) {
+    copy_fields(dst, src, nodes, true);
+}
+/// Snapshot fields without taking ownership when `moving` is false.
+///
+/// # Safety
+/// The layout, lifetime and nonoverlap requirements of `copy` apply. A snapshot
+/// borrows its pointers until its caller explicitly adopts each owner; it must
+/// never independently release a pointer still owned by the source.
+pub(crate) unsafe fn copy_fields(dst: *mut u8, src: *const u8, nodes: &[CopyNode], moving: bool) {
+    unsafe fn visit(dst: *mut u8, src: *const u8, nodes: &[CopyNode], index: usize, moving: bool) {
         let node = nodes[index];
         let dst = dst.add(node.offset as usize);
         let src = src.add(node.offset as usize);
         match node.kind {
             0 => std::ptr::copy_nonoverlapping(src, dst, node.count as usize),
+            4 => {
+                dst.cast::<usize>()
+                    .write_unaligned(src.cast::<usize>().read_unaligned());
+                if moving {
+                    src.cast_mut().cast::<usize>().write_unaligned(0);
+                }
+            }
             1 => {
                 let mut child = index + 1;
                 while child < node.end as usize {
-                    visit(dst, src, nodes, child);
+                    visit(dst, src, nodes, child, moving);
                     child = nodes[child].end as usize;
                 }
             }
             2 => {
                 for item in 0..node.count as usize {
                     let offset = item * node.stride as usize;
-                    visit(dst.add(offset), src.add(offset), nodes, index + 1);
+                    visit(dst.add(offset), src.add(offset), nodes, index + 1, moving);
                 }
             }
             3 => {
@@ -51,7 +68,7 @@ pub(crate) unsafe fn copy(dst: *mut u8, src: *const u8, nodes: &[CopyNode]) {
                 let mut child = index + 1;
                 for variant in 0..node.count {
                     if variant == tag as u64 {
-                        visit(dst, src, nodes, child);
+                        visit(dst, src, nodes, child, moving);
                         break;
                     }
                     child = nodes[child].end as usize;
@@ -61,14 +78,126 @@ pub(crate) unsafe fn copy(dst: *mut u8, src: *const u8, nodes: &[CopyNode]) {
         }
     }
     if !std::ptr::eq(dst, src) {
-        visit(dst, src, nodes, 0);
+        visit(dst, src, nodes, 0, moving);
     }
+}
+
+/// Enumerate only active ownership fields. Arrays retain one descriptor subtree.
+///
+/// # Safety
+/// The bounded compiler descriptor matches the live, writable allocation. Tags
+/// are initialized; every active ownership lane is initialized or zeroed.
+pub(crate) unsafe fn owners(data: *mut u8, nodes: &[CopyNode], visit: &mut impl FnMut(*mut usize)) {
+    unsafe fn walk(
+        data: *mut u8,
+        nodes: &[CopyNode],
+        index: usize,
+        visit: &mut impl FnMut(*mut usize),
+    ) {
+        let node = nodes[index];
+        let data = data.add(node.offset as usize);
+        match node.kind {
+            4 => visit(data.cast()),
+            1 | 3 => {
+                let tag = (node.kind == 3).then(|| data.cast::<i32>().read_unaligned());
+                let mut child = index + 1;
+                let mut variant = 0;
+                while child < node.end as usize {
+                    if tag.is_none_or(|tag| tag == variant) {
+                        walk(data, nodes, child, visit);
+                    }
+                    child = nodes[child].end as usize;
+                    variant += 1;
+                }
+            }
+            2 => {
+                for item in 0..node.count as usize {
+                    walk(
+                        data.add(item * node.stride as usize),
+                        nodes,
+                        index + 1,
+                        visit,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    walk(data, nodes, 0, visit);
+}
+
+/// Clear each lane before releasing it, including on an interrupted construction.
+///
+/// # Safety
+/// The requirements of `owners` apply. Nonzero lanes own live buffers in `arena`,
+/// with ordinary cleanup only; uninitialized lanes are zeroed.
+pub(crate) unsafe fn dispose(
+    arena: &mut Arena,
+    data: *mut u8,
+    nodes: &[CopyNode],
+) -> Result<(), Error> {
+    let mut error = None;
+    owners(data, nodes, &mut |lane| {
+        let owner = lane.read_unaligned();
+        lane.write_unaligned(0);
+        if owner != 0 {
+            if let Err(next) = super::buffer::Buffer::release(arena, owner as *mut _) {
+                error.get_or_insert(next);
+            }
+        }
+    });
+    error.map_or(Ok(()), Err)
+}
+
+pub(crate) struct Payload {
+    pub(crate) pointer: NonNull<u8>,
+    program: Option<(NonNull<CopyNode>, usize)>,
+}
+impl Payload {
+    /// # Safety
+    /// The original arena and all owned buffers are live; no aliases may use
+    /// the detached payload after this call.
+    pub(crate) unsafe fn release(self, arena: &mut Arena) -> Result<(), Error> {
+        let result = if let Some((nodes, len)) = self.program {
+            let result = dispose(
+                arena,
+                self.pointer.as_ptr(),
+                std::slice::from_raw_parts(nodes.as_ptr(), len),
+            );
+            arena.release(nodes.cast());
+            result
+        } else {
+            Ok(())
+        };
+        arena.release(self.pointer);
+        result
+    }
+}
+
+/// Replace a destination while preserving identity for self-moves.
+///
+/// # Safety
+/// Both regions satisfy `copy` layout and exclusive access requirements. The
+/// destination may own buffers satisfying `dispose`; source owners stay live
+/// through destination cleanup.
+pub(crate) unsafe fn replace(
+    arena: &mut Arena,
+    dst: *mut u8,
+    src: *const u8,
+    nodes: &[CopyNode],
+) -> Result<(), Error> {
+    if !std::ptr::eq(dst, src) {
+        dispose(arena, dst, nodes)?;
+        copy(dst, src, nodes);
+    }
+    Ok(())
 }
 
 struct Registration {
     next: Option<NonNull<Registration>>,
     key: usize,
     payload: Option<NonNull<u8>>,
+    program: Option<(NonNull<CopyNode>, usize)>,
     initialized: u64,
     length: u64,
 }
@@ -118,6 +247,7 @@ impl Places {
                         next: self.head,
                         key,
                         payload: None,
+                        program: None,
                         initialized: 0,
                         length,
                     });
@@ -176,9 +306,43 @@ impl Places {
         node.payload.ok_or_else(|| invalid("Place slot has ended"))
     }
 
-    /// Detach a completed Copy result; its receiver now releases the allocation.
-    pub(crate) fn take(&mut self, key: usize) -> Option<NonNull<u8>> {
-        unsafe { self.find(key)?.as_mut().payload.take() }
+    /// Detach a completed result; its receiver releases both payload and owners.
+    pub(crate) fn take(&mut self, key: usize) -> Option<Payload> {
+        let node = unsafe { self.find(key)?.as_mut() };
+        Some(Payload {
+            pointer: node.payload.take()?,
+            program: node.program.take(),
+        })
+    }
+
+    /// Copy cleanup metadata into charged task storage before installing any owners.
+    pub(crate) fn describe(
+        &mut self,
+        arena: &mut Arena,
+        key: usize,
+        nodes: &[CopyNode],
+    ) -> Result<(), Error> {
+        if !nodes.iter().any(|n| n.kind == 4) {
+            return Ok(());
+        }
+        let node = unsafe {
+            self.find(key)
+                .ok_or_else(|| invalid("Unknown place slot"))?
+                .as_mut()
+        };
+        if node.program.is_none() {
+            let pointer = arena
+                .allocate(
+                    std::mem::size_of_val(nodes),
+                    std::mem::align_of::<CopyNode>(),
+                )?
+                .cast::<CopyNode>();
+            unsafe {
+                std::ptr::copy_nonoverlapping(nodes.as_ptr(), pointer.as_ptr(), nodes.len());
+            }
+            node.program = Some((pointer, nodes.len()));
+        }
+        Ok(())
     }
 
     /// End a scope's payload while retaining its charged registration for reuse.
@@ -186,12 +350,9 @@ impl Places {
     /// # Safety
     /// No value or reference may access this slot after this call. The arena
     /// must be the same task arena used by begin, and must outlive this registry.
-    pub(crate) unsafe fn end(&mut self, arena: &mut Arena, key: usize) {
-        if let Some(mut node) = self.find(key) {
-            if let Some(payload) = node.as_mut().payload.take() {
-                arena.release(payload);
-            }
-        }
+    pub(crate) unsafe fn end(&mut self, arena: &mut Arena, key: usize) -> Result<(), Error> {
+        self.take(key)
+            .map_or(Ok(()), |payload| payload.release(arena))
     }
 
     /// Release every remaining payload and descriptor, including partial values.
@@ -199,16 +360,25 @@ impl Places {
     /// # Safety
     /// All child activations and callbacks using these places have ended. The
     /// arena is the live arena originally used for every registration.
-    pub(crate) unsafe fn finish(&mut self, arena: &mut Arena) {
+    pub(crate) unsafe fn finish(&mut self, arena: &mut Arena) -> Result<(), Error> {
         let mut next = self.head.take();
-        while let Some(node) = next {
-            let registration = node.as_ref();
+        let mut error = None;
+        while let Some(mut node) = next {
+            let registration = node.as_mut();
             next = registration.next;
-            if let Some(payload) = registration.payload {
-                arena.release(payload);
+            if let Some(pointer) = registration.payload.take() {
+                if let Err(next) = (Payload {
+                    pointer,
+                    program: registration.program.take(),
+                })
+                .release(arena)
+                {
+                    error.get_or_insert(next);
+                }
             }
             arena.release(node.cast());
         }
+        error.map_or(Ok(()), Err)
     }
 }
 
@@ -273,6 +443,7 @@ impl Places {
                         next: self.head,
                         key,
                         payload: None,
+                        program: None,
                         initialized: 0,
                         length: 0,
                     });
@@ -288,6 +459,7 @@ impl Places {
             let source = source.as_mut();
             let destination = destination.as_mut();
             destination.payload = source.payload.take();
+            destination.program = source.program.take();
             destination.length = source.length;
             destination.initialized = source.initialized;
         }
@@ -380,7 +552,7 @@ unsafe extern "C" fn native_commit(frame: *mut super::cleanup::NativeFrame, poin
 }
 #[export_name = "__joky_place_end"]
 unsafe extern "C" fn native_end(frame: *mut super::cleanup::NativeFrame, key: usize) {
-    (*frame).entries.places.end(&mut *(*frame).arena, key);
+    recorded((*frame).entries.places.end(&mut *(*frame).arena, key));
 }
 #[export_name = "__joky_place_copy"]
 unsafe extern "C" fn native_copy(
@@ -391,7 +563,59 @@ unsafe extern "C" fn native_copy(
 ) {
     copy(dst, src, std::slice::from_raw_parts(nodes, count));
 }
-pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
+#[export_name = "__joky_place_describe"]
+unsafe extern "C" fn native_describe(
+    frame: *mut super::cleanup::NativeFrame,
+    key: usize,
+    nodes: *const CopyNode,
+    count: usize,
+) {
+    recorded((*frame).entries.places.describe(
+        &mut *(*frame).arena,
+        key,
+        std::slice::from_raw_parts(nodes, count),
+    ));
+}
+#[export_name = "__joky_place_dispose"]
+unsafe extern "C" fn native_dispose(
+    arena: *mut Arena,
+    data: *mut u8,
+    nodes: *const CopyNode,
+    count: usize,
+) {
+    recorded(dispose(
+        &mut *arena,
+        data,
+        std::slice::from_raw_parts(nodes, count),
+    ));
+}
+#[export_name = "__joky_place_replace"]
+unsafe extern "C" fn native_replace(
+    arena: *mut Arena,
+    dst: *mut u8,
+    src: *const u8,
+    nodes: *const CopyNode,
+    count: usize,
+) {
+    recorded(replace(
+        &mut *arena,
+        dst,
+        src,
+        std::slice::from_raw_parts(nodes, count),
+    ));
+}
+#[export_name = "__joky_place_initialize"]
+unsafe extern "C" fn native_initialize(
+    dst: *mut u8,
+    src: *const u8,
+    nodes: *const CopyNode,
+    count: usize,
+    size: usize,
+) {
+    dst.write_bytes(0, size);
+    copy(dst, src, std::slice::from_raw_parts(nodes, count));
+}
+pub(crate) fn symbols() -> [(&'static str, *const u8); 11] {
     [
         ("__joky_place_begin", native_begin as *const u8),
         ("__joky_place_materialize", native_materialize as *const u8),
@@ -400,6 +624,10 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
         ("__joky_place_commit", native_commit as *const u8),
         ("__joky_place_end", native_end as *const u8),
         ("__joky_place_copy", native_copy as *const u8),
+        ("__joky_place_initialize", native_initialize as *const u8),
+        ("__joky_place_replace", native_replace as *const u8),
+        ("__joky_place_describe", native_describe as *const u8),
+        ("__joky_place_dispose", native_dispose as *const u8),
     ]
 }
 
@@ -451,7 +679,7 @@ mod tests {
         );
         assert!(places.publish(1).is_err());
         unsafe {
-            places.end(&mut arena, 2);
+            places.end(&mut arena, 2).unwrap();
         }
         let metadata = budget.bytes.get();
         for _ in 0..1000 {
@@ -459,14 +687,14 @@ mod tests {
             assert!(budget.bytes.get() > metadata);
             places.publish(2).unwrap();
             unsafe {
-                places.end(&mut arena, 2);
-                places.end(&mut arena, 2);
+                places.end(&mut arena, 2).unwrap();
+                places.end(&mut arena, 2).unwrap();
             }
             assert_eq!(budget.bytes.get(), metadata);
         }
         unsafe {
-            places.finish(&mut arena);
-            places.finish(&mut arena);
+            places.finish(&mut arena).unwrap();
+            places.finish(&mut arena).unwrap();
         }
         assert_eq!(budget.bytes.get(), 0);
     }

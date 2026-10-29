@@ -117,7 +117,7 @@ fn array_patterns_reject_invalid_types_coverage_and_borrows() {
         ("fn bad() { let a: FixedArray<Int32, 2> = [1] }", ErrorCode::TypeMismatch),
         ("fn bad() { let a = [1, true] }", ErrorCode::TypeMismatch),
         ("fn bad() { let a: Array<UInt8> = [256] }", ErrorCode::TypeMismatch),
-        ("fn bad() { let a: FixedArray<String, 1> = [\"x\"] }", ErrorCode::TypeMismatch),
+        ("fn bad(x: &String) { let a: FixedArray<&String, 1> = [x] }", ErrorCode::TypeMismatch),
         ("fn bad() { let a = [1, 2]; let b: FixedArray<Int32, 2> = a }", ErrorCode::TypeMismatch),
         ("fn bad(a: Array<Int32>) -> Int32 { match a { [] => 0, [0, ..] => 1 } }", ErrorCode::NonExhaustiveMatch),
         ("fn bad(a: Array<Int32>) -> Int32 { match a { [] => 0, [x] => x } }", ErrorCode::NonExhaustiveMatch),

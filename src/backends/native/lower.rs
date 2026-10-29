@@ -446,6 +446,18 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_place_end", vec![ptr, ptr], vec![]),
         ("__joky_place_copy", vec![ptr, ptr, ptr, ptr], vec![]),
         (
+            "__joky_place_initialize",
+            vec![ptr, ptr, ptr, ptr, ptr],
+            vec![],
+        ),
+        (
+            "__joky_place_replace",
+            vec![ptr, ptr, ptr, ptr, ptr],
+            vec![],
+        ),
+        ("__joky_place_describe", vec![ptr, ptr, ptr, ptr], vec![]),
+        ("__joky_place_dispose", vec![ptr, ptr, ptr, ptr], vec![]),
+        (
             "__joky_place_view",
             vec![
                 ptr,
@@ -2107,9 +2119,13 @@ fn lower_ops(
                     }
                 }
                 BufferOp::Borrow { dst, src, place } => {
-                    let source = place
-                        .clone()
-                        .unwrap_or_else(|| src.scalars().find(|s| s.ty.is_owner_lane()).unwrap());
+                    let source = place.clone().unwrap_or_else(|| {
+                        if src.ty.is_place() {
+                            src.clone()
+                        } else {
+                            src.scalars().find(|s| s.ty.is_owner_lane()).unwrap()
+                        }
+                    });
                     let value = slots.read(builder, &source);
                     if dst.ty.dyn_interface().is_some() {
                         let value = if place.is_some() {
@@ -2329,7 +2345,8 @@ fn lower_ops(
                             let pointer = builder.inst_results(call)[0];
                             if let Some(dst) = dst {
                                 if dst.ty.is_place() {
-                                    let p = place_materialize(builder, refs, ptr_ty, mode, dst);
+                                    let p =
+                                        place_materialize(builder, refs, data, ptr_ty, mode, dst);
                                     place_copy(builder, refs, data, ptr_ty, element, p, pointer);
                                     slots.write(builder, dst, p);
                                 }
@@ -2360,7 +2377,23 @@ fn lower_ops(
                             let value = args.last().unwrap();
                             if value.ty.is_place() {
                                 let src = slots.read(builder, value);
-                                place_copy(builder, refs, data, ptr_ty, element, pointer, src);
+                                if element.is_owner() {
+                                    let (_, descriptor, count) = data
+                                        .places
+                                        .iter()
+                                        .find(|(known, _, _)| known == element)
+                                        .unwrap();
+                                    let descriptor =
+                                        builder.ins().symbol_value(ptr_ty, *descriptor);
+                                    let count = builder.ins().iconst(ptr_ty, *count as i64);
+                                    let size = builder.ins().iconst(ptr_ty, layout.size as i64);
+                                    builder.ins().call(
+                                        refs["__joky_place_initialize"],
+                                        &[pointer, src, descriptor, count, size],
+                                    );
+                                } else {
+                                    place_copy(builder, refs, data, ptr_ty, element, pointer, src);
+                                }
                             }
                             for ((offset, _), src) in (if element.is_place() {
                                 Vec::new()
@@ -3172,7 +3205,11 @@ fn lower_cps(
                 .ins()
                 .store(MemFlagsData::new(), value, frame, result_offset);
         }
-        if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_owner()) {
+        if let Some(result) = plan
+            .result
+            .as_ref()
+            .filter(|s| s.ty.is_owner() && !s.ty.is_place())
+        {
             if result.ty == Type::String {
                 let value = load(builder, slots, result);
                 builder
@@ -3300,7 +3337,11 @@ fn lower_direct(
             );
         }
         if let Some(cleanup) = cleanup {
-            if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_owner()) {
+            if let Some(result) = plan
+                .result
+                .as_ref()
+                .filter(|s| s.ty.is_owner() && !s.ty.is_place())
+            {
                 let owner = result.scalars().find(|s| s.ty.is_owner_lane()).unwrap();
                 let index = builder.ins().iconst(ptr_ty, owner.index as i64);
                 builder
@@ -3929,14 +3970,112 @@ fn place_copy(
         .call(refs["__joky_place_copy"], &[dst, src, descriptor, count]);
 }
 
-fn place_materialize(
+#[allow(clippy::too_many_arguments)]
+fn place_dispose(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    data: &DataRefs,
+    ptr_ty: types::Type,
+    mode: ExecMode<'_>,
+    ty: &Type,
+    pointer: Value,
+) {
+    if !ty.is_owner() {
+        return;
+    }
+    let (_, descriptor, count) = data
+        .places
+        .iter()
+        .find(|(known, _, _)| known == ty)
+        .unwrap();
+    let descriptor = builder.ins().symbol_value(ptr_ty, *descriptor);
+    let count = builder.ins().iconst(ptr_ty, *count as i64);
+    builder.ins().call(
+        refs["__joky_place_dispose"],
+        &[mode.arena(), pointer, descriptor, count],
+    );
+    check_call(builder, refs, mode.frame(), mode.cleanup());
+}
+fn place_forget(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
     mode: ExecMode<'_>,
+    value: &Slot,
+) {
+    if value.ty.is_owner() && !value.ty.is_place() {
+        let key = builder.ins().iconst(ptr_ty, value.owner_key() as i64);
+        builder.ins().call(
+            refs["__joky_cleanup_forget"],
+            &[mode.cleanup().unwrap(), key],
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_replace(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    data: &DataRefs,
+    ptr_ty: types::Type,
+    mode: ExecMode<'_>,
+    ty: &Type,
+    dst: Value,
+    src: Value,
+) {
+    if !ty.is_owner() {
+        place_copy(builder, refs, data, ptr_ty, ty, dst, src);
+        return;
+    }
+    let (_, descriptor, count) = data
+        .places
+        .iter()
+        .find(|(known, _, _)| known == ty)
+        .unwrap();
+    let descriptor = builder.ins().symbol_value(ptr_ty, *descriptor);
+    let count = builder.ins().iconst(ptr_ty, *count as i64);
+    builder.ins().call(
+        refs["__joky_place_replace"],
+        &[mode.arena(), dst, src, descriptor, count],
+    );
+    check_call(builder, refs, mode.frame(), mode.cleanup());
+}
+
+fn place_describe(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    data: &DataRefs,
+    ptr_ty: types::Type,
+    mode: ExecMode<'_>,
+    dst: &Slot,
+) {
+    if !dst.ty.is_owner() {
+        return;
+    }
+    let (_, descriptor, count) = data
+        .places
+        .iter()
+        .find(|(known, _, _)| known == &dst.ty)
+        .unwrap();
+    let descriptor = builder.ins().symbol_value(ptr_ty, *descriptor);
+    let count = builder.ins().iconst(ptr_ty, *count as i64);
+    let key = builder.ins().iconst(ptr_ty, dst.index as i64);
+    builder.ins().call(
+        refs["__joky_place_describe"],
+        &[mode.cleanup().unwrap(), key, descriptor, count],
+    );
+    check_call(builder, refs, mode.frame(), mode.cleanup());
+}
+
+fn place_materialize(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    data: &DataRefs,
+    ptr_ty: types::Type,
+    mode: ExecMode<'_>,
     dst: &Slot,
 ) -> Value {
-    let layout = dst.ty.memory_layout().unwrap();
+    let layout = dst.ty.storage_layout().unwrap();
     let key = builder.ins().iconst(ptr_ty, dst.index as i64);
     let size = builder.ins().iconst(ptr_ty, layout.size as i64);
     let align = builder.ins().iconst(ptr_ty, layout.align as i64);
@@ -3947,6 +4086,7 @@ fn place_materialize(
         &[mode.cleanup().unwrap(), key, size, align],
     );
     check_call(builder, refs, mode.frame(), mode.cleanup());
+    place_describe(builder, refs, data, ptr_ty, mode, dst);
     pointer
 }
 
@@ -3970,7 +4110,7 @@ fn lower_place(
             dst,
         } => {
             let base = slots.read(builder, reference);
-            let element = reference.ty.fixed_shape().element.memory_layout().unwrap();
+            let element = reference.ty.fixed_shape().element.storage_layout().unwrap();
             let length = builder
                 .ins()
                 .iconst(types::I64, reference.ty.fixed_length() as i64);
@@ -4006,6 +4146,17 @@ fn lower_place(
                 ],
             );
             check_call(builder, refs, mode.frame(), mode.cleanup());
+            let element = &reference.ty.fixed_shape().element;
+            let pointer = if !matches!(
+                dst.ty.reference_type().unwrap().target,
+                Type::BufferSlice(_)
+            ) && element.is_owner()
+                && !element.is_inline_owner()
+            {
+                builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
+            } else {
+                pointer
+            };
             slots.write(builder, dst, pointer);
         }
         PlaceOp::Swap {
@@ -4018,7 +4169,7 @@ fn lower_place(
                 index: *temporary,
                 ty: target.clone(),
             };
-            let storage = place_materialize(builder, refs, ptr_ty, mode, &temp);
+            let storage = place_materialize(builder, refs, data, ptr_ty, mode, &temp);
             let left = slots.read(builder, left);
             let right = slots.read(builder, right);
             place_copy(builder, refs, data, ptr_ty, target, storage, left);
@@ -4038,7 +4189,8 @@ fn lower_place(
             slots.write(builder, dst, pointer);
         }
         PlaceOp::Allocate(dst) => {
-            let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
+            let pointer = place_materialize(builder, refs, data, ptr_ty, mode, dst);
+            place_dispose(builder, refs, data, ptr_ty, mode, &dst.ty, pointer);
             slots.write(builder, dst, pointer);
         }
         PlaceOp::Read {
@@ -4049,8 +4201,8 @@ fn lower_place(
             let source = slots.read(builder, reference);
             let source = builder.ins().iadd_imm_u(source, *offset as i64);
             if dst.ty.is_place() {
-                let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
-                place_copy(builder, refs, data, ptr_ty, &dst.ty, pointer, source);
+                let pointer = place_materialize(builder, refs, data, ptr_ty, mode, dst);
+                place_replace(builder, refs, data, ptr_ty, mode, &dst.ty, pointer, source);
                 slots.write(builder, dst, pointer);
             } else {
                 for ((offset, ty), slot) in dst
@@ -4067,13 +4219,19 @@ fn lower_place(
                         offset as i32,
                     );
                     slots.write(builder, &slot, value);
+                    if ty.is_owner_lane() {
+                        let zero = builder.ins().iconst(ptr_ty, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::new(), zero, source, offset as i32);
+                    }
                 }
             }
         }
         PlaceOp::Copy { dst, src } => {
             let source = slots.read(builder, src);
-            let pointer = place_materialize(builder, refs, ptr_ty, mode, dst);
-            place_copy(builder, refs, data, ptr_ty, &dst.ty, pointer, source);
+            let pointer = place_materialize(builder, refs, data, ptr_ty, mode, dst);
+            place_replace(builder, refs, data, ptr_ty, mode, &dst.ty, pointer, source);
             slots.write(builder, dst, pointer);
         }
         PlaceOp::Write {
@@ -4085,8 +4243,11 @@ fn lower_place(
             let pointer = builder.ins().iadd_imm_u(pointer, *offset as i64);
             if value.ty.is_place() {
                 let source = slots.read(builder, value);
-                place_copy(builder, refs, data, ptr_ty, &value.ty, pointer, source);
+                place_replace(
+                    builder, refs, data, ptr_ty, mode, &value.ty, pointer, source,
+                );
             } else {
+                place_dispose(builder, refs, data, ptr_ty, mode, &value.ty, pointer);
                 for ((offset, _), slot) in value
                     .ty
                     .storage_scalars()
@@ -4100,9 +4261,10 @@ fn lower_place(
                         .store(MemFlagsData::new(), source, pointer, offset as i32);
                 }
             }
+            place_forget(builder, refs, ptr_ty, mode, value);
         }
         PlaceOp::Begin(dst) => {
-            let layout = dst.ty.memory_layout().unwrap();
+            let layout = dst.ty.storage_layout().unwrap();
             let key = builder.ins().iconst(ptr_ty, dst.index as i64);
             let size = builder.ins().iconst(ptr_ty, layout.size as i64);
             let align = builder.ins().iconst(ptr_ty, layout.align as i64);
@@ -4116,6 +4278,7 @@ fn lower_place(
                 &[mode.cleanup().unwrap(), key, size, align, length],
             );
             check_call(builder, refs, mode.frame(), mode.cleanup());
+            place_describe(builder, refs, data, ptr_ty, mode, dst);
             slots.write(builder, dst, pointer);
         }
         PlaceOp::MoveInit { dst, src, publish } => {
@@ -4148,7 +4311,7 @@ fn lower_place(
         } => {
             let base = slots.read(builder, reference);
             let element = &reference.ty.fixed_shape().element;
-            let stride = element.memory_layout().unwrap().size;
+            let stride = element.storage_layout().unwrap().size;
             let pointer = if matches!(op, PlaceOp::WriteNext { .. }) {
                 let stride = builder.ins().iconst(ptr_ty, stride as i64);
                 let pointer = helper(
@@ -4173,9 +4336,12 @@ fn lower_place(
                 };
                 builder.ins().iadd(base, offset)
             };
+            if matches!(op, PlaceOp::Store { .. }) {
+                place_dispose(builder, refs, data, ptr_ty, mode, element, pointer);
+            }
             if let Some(value) = value.as_ref().filter(|s| s.ty.is_place()) {
                 if matches!(op, PlaceOp::Load { .. }) {
-                    let dst = place_materialize(builder, refs, ptr_ty, mode, value);
+                    let dst = place_materialize(builder, refs, data, ptr_ty, mode, value);
                     place_copy(builder, refs, data, ptr_ty, element, dst, pointer);
                     slots.write(builder, value, dst);
                 } else {
@@ -4203,6 +4369,11 @@ fn lower_place(
                             .ins()
                             .store(MemFlagsData::new(), value, pointer, offset as i32);
                     }
+                }
+            }
+            if !matches!(op, PlaceOp::Load { .. }) {
+                if let Some(value) = value {
+                    place_forget(builder, refs, ptr_ty, mode, value);
                 }
             }
             if matches!(op, PlaceOp::WriteNext { .. }) {

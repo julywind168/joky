@@ -109,16 +109,15 @@ impl FunctionPlan {
         }
         let failure = self.slot(Type::UInt64)?;
         let done = self.slot(Type::Bool)?;
-        let cleanup =
-            result
-                .as_ref()
-                .filter(|s| s.ty.is_owner())
-                .map(|value| CleanupOp::Register {
-                    value: value.clone(),
-                    place: None,
-                    hooks: vec![],
-                    elements: vec![],
-                });
+        let cleanup = result
+            .as_ref()
+            .filter(|s| s.ty.is_owner() && !s.ty.is_place())
+            .map(|value| CleanupOp::Register {
+                value: value.clone(),
+                place: None,
+                hooks: vec![],
+                elements: vec![],
+            });
         let state = self.state_count;
         self.state_count += 1;
         self.emit(Op::Concurrent {

@@ -229,6 +229,13 @@ impl FunctionPlan {
     }
 
     pub(super) fn register_owner(&mut self, value: Slot, place: Option<Slot>) {
+        if value.ty.is_place() {
+            self.emit(Op::Place(PlaceOp::Copy {
+                dst: value.clone(),
+                src: value,
+            }));
+            return;
+        }
         self.ops.push(Op::Cleanup(CleanupOp::Register {
             value,
             place,
@@ -261,6 +268,8 @@ impl FunctionPlan {
                     buffer,
                     owners: if self.generics.borrow().checking {
                         Vec::new()
+                    } else if element.is_place() {
+                        element.place_owner_offsets()
                     } else {
                         element
                             .storage_scalars()
@@ -286,6 +295,10 @@ impl FunctionPlan {
         Ok(())
     }
     fn owner_hooks(&mut self, ty: Type, span: Span) -> Result<Vec<DropHook>, Error> {
+        if ty.is_place() {
+            self.check_fixed_array(&ty)?;
+            return Ok(Vec::new());
+        }
         let mut hooks = Vec::new();
         let mut before = 0;
         let mut work = vec![(ty, 0, Vec::new())];

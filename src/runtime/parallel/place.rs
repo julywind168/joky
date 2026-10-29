@@ -1,4 +1,5 @@
-//! Compact, pointer-free descriptions of Copy snapshots sent between workers.
+//! Compact, pointer-free descriptions of inline values sent between workers.
+//! Owning lanes are relocated through OwnedBuffer, never shared as raw headers.
 use super::packet::invalid;
 use crate::{runtime::place::CopyNode, Error, Type};
 
@@ -21,6 +22,25 @@ impl Layout {
         };
         value.validate()?;
         Ok(value)
+    }
+    pub(crate) fn owner_count(&self) -> usize {
+        fn count(nodes: &[CopyNode], i: usize) -> usize {
+            let node = nodes[i];
+            if node.kind == 4 {
+                return 1;
+            }
+            if node.kind == 2 {
+                return node.count as usize * count(nodes, i + 1);
+            }
+            let mut sum = 0;
+            let mut child = i + 1;
+            while child < node.end as usize {
+                sum += count(nodes, child);
+                child = nodes[child].end as usize;
+            }
+            sum
+        }
+        count(&self.nodes, 0)
     }
     pub(crate) fn bytes(&self) -> usize {
         self.nodes.capacity() * std::mem::size_of::<CopyNode>()
@@ -51,6 +71,10 @@ impl Layout {
             }
             match n.kind {
                 0 if children == 0 && matches!(n.count, 0 | 1 | 2 | 4 | 8) => {
+                    extent = n.count as usize;
+                    work = 1;
+                }
+                4 if children == 0 && n.count as usize == std::mem::size_of::<usize>() => {
                     extent = n.count as usize;
                     work = 1;
                 }
@@ -96,7 +120,7 @@ impl Layout {
     /// Self is validated; source is a live initialized value of this exact layout.
     pub(crate) unsafe fn snapshot(&self, source: *const u8) -> Vec<u64> {
         let mut words = vec![0u64; self.size.max(1).div_ceil(8)];
-        crate::runtime::place::copy(words.as_mut_ptr().cast(), source, &self.nodes);
+        crate::runtime::place::copy_fields(words.as_mut_ptr().cast(), source, &self.nodes, false);
         words
     }
 }

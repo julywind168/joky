@@ -761,7 +761,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
     }
     if signature.ret.is_owner()
         && !info.uses_arena
-        && !matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::ArenaNew))
+        && !matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::ArenaNew | CompilerIntrinsic::FixedArrayBegin))
         // An empty owning enum initializes its inactive owner lanes to null.
         && !plan.ops.iter().any(|op| {
             matches!(op, Op::Literal(dst, Constant::NullPtr) if dst.ty.is_owner_lane())

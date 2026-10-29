@@ -1,4 +1,4 @@
-//! Backend-independent lanes, exclusive String/Array owners and Copy snapshots.
+//! Backend-independent lanes, exclusive String/Array owners and inline snapshots.
 use super::{Lease, OwnedBuffer};
 use crate::{
     runtime::{
@@ -323,17 +323,21 @@ pub(crate) struct Packet {
 impl Packet {
     pub(crate) fn empty(shape: Shape) -> Result<Self, Error> {
         let lanes = shape.lanes();
+        let owners = match &shape {
+            Shape::Place(layout) => layout.owner_count(),
+            _ => lanes,
+        };
         let charge = super::reserve_current(
             std::mem::size_of::<Self>()
                 + shape.bytes()
                 + match &shape { Shape::Place(layout) => layout.size.max(1).div_ceil(8) * 8, _ => 0 }
                 // Cover lanes, capture/install scratch and the owner index list.
-                + lanes * (32 + std::mem::size_of::<(usize, OwnedBuffer)>()),
+                + lanes * 32 + owners * std::mem::size_of::<(usize, OwnedBuffer)>(),
         )?;
         Ok(Self {
             shape,
             words: vec![0; lanes],
-            owners: Vec::with_capacity(lanes),
+            owners: Vec::with_capacity(owners),
             place: None,
             cleanup: None,
             _charge: charge,
@@ -342,8 +346,9 @@ impl Packet {
     /// Consume a complete compiler-owned value, releasing remaining owners on failure.
     /// # Safety
     /// Every active String/Array lane is live and exclusively owned by `entry`.
-    /// A Copy lane points to a fully initialized value of the checked layout and
-    /// remains live through this call. Its original storage stays with the caller.
+    /// A place lane points to a fully initialized value of the checked layout.
+    /// Its storage stays with the caller, which releases any owners not adopted
+    /// here. Adopted owning lanes are cleared in the exclusively writable source.
     pub(crate) unsafe fn capture(
         shape: Shape,
         words: Vec<u64>,
@@ -405,7 +410,32 @@ impl Packet {
                 packet.owners.push((index, owner));
             }
             if let Shape::Place(layout) = &packet.shape {
-                let snapshot = layout.snapshot(words[0] as *const u8);
+                let source = words[0] as *mut u8;
+                let mut snapshot = layout.snapshot(source);
+                let mut error = None;
+                crate::runtime::place::owners(
+                    snapshot.as_mut_ptr().cast(),
+                    &layout.nodes,
+                    &mut |lane| {
+                        let raw = lane.read_unaligned() as *mut Buffer;
+                        let offset = lane as usize - snapshot.as_ptr() as usize;
+                        if raw.is_null() || error.is_some() {
+                            return;
+                        }
+                        match OwnedBuffer::new(arena, NonNull::new_unchecked(raw)) {
+                            Ok(owner) => {
+                                source.add(offset).cast::<usize>().write_unaligned(0);
+                                packet.owners.push((offset, owner));
+                            }
+                            Err(next) => {
+                                error = Some(next);
+                            }
+                        }
+                    },
+                );
+                if let Some(error) = error {
+                    return Err(error);
+                }
                 words[0] = snapshot.as_ptr() as u64;
                 packet.place = Some(snapshot);
             }
@@ -421,7 +451,7 @@ impl Packet {
     /// Native returns have already detached their cleanup registration.
     /// # Safety
     /// `words` is the successful generated return, whose owners are now exclusive.
-    /// A returned Copy place stays live in its completed frame through this call.
+    /// A returned place stays live in its completed frame through this call.
     pub(crate) unsafe fn returned(
         shape: Shape,
         mut words: Vec<u64>,
@@ -458,12 +488,9 @@ impl Packet {
                 cleanups
                     .places
                     .materialize(arena, base, layout.size, layout.align)?;
+            cleanups.places.describe(arena, base, &layout.nodes)?;
             unsafe {
-                crate::runtime::place::copy(
-                    destination.as_ptr(),
-                    self.words[0] as *const u8,
-                    &layout.nodes,
-                );
+                self.install_place(arena, destination.as_ptr())?;
             }
             self.words[0] = destination.as_ptr() as u64;
         }
@@ -494,10 +521,35 @@ impl Packet {
         }
         Ok(self.words)
     }
-    /// Initialize the already charged Copy storage for a checked host value.
+    /// # Safety
+    /// The destination has this layout and a live cleanup registration in `arena`,
+    /// and is exclusively writable throughout the fallible handoff.
+    pub(crate) unsafe fn install_place(
+        &mut self,
+        arena: &mut Arena,
+        destination: *mut u8,
+    ) -> Result<(), Error> {
+        let Shape::Place(layout) = &self.shape else {
+            return Err(invalid());
+        };
+        crate::runtime::place::dispose(arena, destination, &layout.nodes)?;
+        crate::runtime::place::copy(destination, self.words[0] as *const u8, &layout.nodes);
+        crate::runtime::place::owners(destination, &layout.nodes, &mut |lane| {
+            lane.write_unaligned(0)
+        });
+        for (offset, owner) in &mut self.owners {
+            let raw = owner.take(arena)?;
+            destination
+                .add(*offset)
+                .cast::<*mut Buffer>()
+                .write_unaligned(raw);
+        }
+        Ok(())
+    }
+    /// Initialize the already charged inline storage for a checked host value.
     pub(crate) fn place_storage(&mut self) -> *mut u8 {
         let Shape::Place(layout) = &self.shape else {
-            unreachable!("Copy packet");
+            unreachable!("Place packet");
         };
         let data = self
             .place

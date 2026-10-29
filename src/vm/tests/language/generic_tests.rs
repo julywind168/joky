@@ -553,7 +553,7 @@ fn generic_copy_contracts_reject_invalid_templates_before_instantiation() {
         ("trait Mark {} impl<T: Copy> Mark for T {} fn need<T: Mark>(x: T) {} fn bad() { need(\"owned\") }", "does not satisfy trait bound"),
         ("struct Box<T> { value: T } impl<T: Copy> Box<T> { fn copied(&self) -> T { self.value } } fn bad(x: &Box<String>) { x.copied() }", "Copy bound"),
         ("fn bad<F: Copy + Fn() -> Int32>(f: F) {}", "Copy cannot be combined"),
-        ("import joky/fixed_array.{type FixedArray} fn bad<T>(values: FixedArray<T, 2>) -> T { let [first, last] = values; first }", "Copy"),
+        ("import joky/fixed_array.{type FixedArray} fn bad<T>(values: &FixedArray<T, 2>) -> T { let [first, last] = *values; first }", "Copy"),
     ] {
         let error = super::support::frontend_error(source, &crate::ModuleSources::new());
         assert!(error.message().contains(message), "{source}: {error}");

@@ -628,6 +628,20 @@ impl FunctionPlan {
         self.op_spans = spans;
         for op in &mut self.ops {
             let next = match op {
+                Op::Buffer(BufferOp::End(owner)) if owner.ty.is_place() => {
+                    Some(PlaceOp::End(owner.clone()))
+                }
+                Op::Buffer(BufferOp::Replace {
+                    src,
+                    owner,
+                    place,
+                    path,
+                    ..
+                }) if owner.ty.is_place() => Some(PlaceOp::Write {
+                    reference: place.clone(),
+                    value: src.clone(),
+                    offset: owner.ty.storage_field_path(path).unwrap().0,
+                }),
                 Op::Buffer(BufferOp::SwapReferences {
                     left,
                     right,
@@ -654,35 +668,55 @@ impl FunctionPlan {
                     dst: Some(dst),
                     reference,
                     path,
-                } if dst.ty.is_place() => Some(PlaceOp::Read {
-                    offset: reference
-                        .ty
-                        .reference_type()
-                        .unwrap()
-                        .target
-                        .storage_field_path(path)
-                        .unwrap()
-                        .0,
-                    dst: dst.clone(),
-                    reference: reference.clone(),
-                }),
+                }
+                | Op::ReadOwner {
+                    dst: Some(dst),
+                    reference,
+                    path,
+                    ..
+                } if dst.ty.is_place()
+                    || reference.ty.reference_type().unwrap().target.is_place() =>
+                {
+                    Some(PlaceOp::Read {
+                        offset: reference
+                            .ty
+                            .reference_type()
+                            .unwrap()
+                            .target
+                            .storage_field_path(path)
+                            .unwrap()
+                            .0,
+                        dst: dst.clone(),
+                        reference: reference.clone(),
+                    })
+                }
                 Op::WriteMemory {
                     reference,
                     path,
                     value: Some(value),
                     target,
-                } if target.is_place() => Some(PlaceOp::Write {
-                    offset: reference
-                        .ty
-                        .reference_type()
-                        .unwrap()
-                        .target
-                        .storage_field_path(path)
-                        .unwrap()
-                        .0,
-                    reference: reference.clone(),
-                    value: value.clone(),
-                }),
+                }
+                | Op::StoreOwner {
+                    reference,
+                    path,
+                    value: Some(value),
+                    target,
+                } if target.is_place()
+                    || reference.ty.reference_type().unwrap().target.is_place() =>
+                {
+                    Some(PlaceOp::Write {
+                        offset: reference
+                            .ty
+                            .reference_type()
+                            .unwrap()
+                            .target
+                            .storage_field_path(path)
+                            .unwrap()
+                            .0,
+                        reference: reference.clone(),
+                        value: value.clone(),
+                    })
+                }
                 _ => None,
             };
             if let Some(next) = next {

@@ -227,6 +227,10 @@ pub(crate) unsafe extern "C" fn prepare(
                 layout.size,
                 layout.align,
             )?;
+            (*target)
+                .entries
+                .places
+                .describe(&mut *(*target).arena, base, layout.nodes)?;
             crate::runtime::place::copy(destination.as_ptr(), source, layout.nodes);
             (&mut (*inputs).slots)[base] = destination.as_ptr() as u64;
         }

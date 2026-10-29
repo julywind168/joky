@@ -150,7 +150,10 @@ impl FunctionPlan {
         // arguments do. Owning expression results move into this temporary.
         let name = format!("$call_argument_{}", self.slot_count);
         self.borrowed_names.require_place(name.clone());
-        if let Some(owner) = value.as_ref().filter(|slot| slot.ty.is_owner()) {
+        if let Some(owner) = value
+            .as_ref()
+            .filter(|slot| slot.ty.is_owner() && !slot.ty.is_place())
+        {
             self.argument_scopes.last_mut().unwrap().insert(owner.index);
         }
         let start = self.local_scopes.last().unwrap().len();
@@ -636,16 +639,15 @@ impl FunctionPlan {
             } else {
                 None
             };
-            let cleanup =
-                result
-                    .as_ref()
-                    .filter(|s| s.ty.is_owner())
-                    .map(|value| CleanupOp::Register {
-                        value: value.clone(),
-                        place: None,
-                        hooks: vec![],
-                        elements: vec![],
-                    });
+            let cleanup = result
+                .as_ref()
+                .filter(|s| s.ty.is_owner() && !s.ty.is_place())
+                .map(|value| CleanupOp::Register {
+                    value: value.clone(),
+                    place: None,
+                    hooks: vec![],
+                    elements: vec![],
+                });
             planned.push(ConcurrentBranch {
                 result,
                 cleanup,
@@ -661,7 +663,10 @@ impl FunctionPlan {
             Some(ty) if ty != Type::Unit => Some(self.slot(ty)?),
             _ => None,
         };
-        if let Some(value) = result.as_ref().filter(|slot| slot.ty.is_owner()) {
+        if let Some(value) = result
+            .as_ref()
+            .filter(|slot| slot.ty.is_owner() && !slot.ty.is_place())
+        {
             for branch in &mut planned {
                 branch.cleanup = Some(CleanupOp::Register {
                     value: value.clone(),

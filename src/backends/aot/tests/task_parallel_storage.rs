@@ -1619,3 +1619,21 @@ fn scoped_borrow_cases(source: &str, cases: &[(&str, i32, usize)], label: &str) 
         }
     }
 }
+
+#[test]
+fn fixed_array_owned_elements_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/fixed_array_owned.jk"),
+        &[
+            ("suite", 140, 0),
+            ("suspended", 10, 0),
+            ("transferred", 20, 0),
+            ("borrowed", 20, 2),
+            ("dynamic", 10, 1),
+            ("dynamic_moved", 10, 0),
+            ("failed", 0, 0),
+            ("parked", 0, 1),
+        ],
+        "fixed-owned",
+    );
+}

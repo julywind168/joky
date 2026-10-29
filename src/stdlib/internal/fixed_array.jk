@@ -1,28 +1,28 @@
 import joky/slice as slices.{type Slice}
 
 // Only these embedded definitions receive compiler-owned value/token identities.
-type FixedArray<T: Copy, const N: UInt64> = T
-type Init<T: Copy, const N: UInt64> = T
+type FixedArray<T, const N: UInt64> = T
+type Init<T, const N: UInt64> = T
 
 #intrinsic("fixed_array.begin")
-fn begin<T: Copy, const N: UInt64>() -> Init<T, N>
+fn begin<T, const N: UInt64>() -> Init<T, N>
 #intrinsic("fixed_array.write_next")
-fn write_next<T: Copy, const N: UInt64>(token: &mut Init<T, N>, value: T)
+fn write_next<T, const N: UInt64>(token: &mut Init<T, N>, value: T)
 #intrinsic("fixed_array.finish")
-fn finish<T: Copy, const N: UInt64>(token: Init<T, N>) -> FixedArray<T, N>
+fn finish<T, const N: UInt64>(token: Init<T, N>) -> FixedArray<T, N>
 #intrinsic("fixed_array.load")
 fn load<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> T
 #intrinsic("fixed_array.store")
-fn store<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T)
+fn store<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T)
 
 #intrinsic("fixed_array.borrow_ref")
-fn borrow_ref<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T
+fn borrow_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T
 
 #intrinsic("fixed_array.borrow_mut_ref")
-fn borrow_mut_ref<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T
+fn borrow_mut_ref<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T
 
 #intrinsic("fixed_array.slice")
-fn slice<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T>
+fn slice<T, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T>
 
 #intrinsic("fixed_array.slice_mut")
-fn slice_mut<T: Copy, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T>
+fn slice_mut<T, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T>

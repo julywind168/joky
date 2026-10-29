@@ -756,7 +756,7 @@ let matrix: FixedArray<FixedArray<Int32, 2>, 2> = [[1, 2], [3, 4]]
 字面值通过编译器私有别名引入数组库，不需要 prelude，也不向用户作用域引入 `Array`、
 `array` 等名称；书写类型注解仍需普通 import。动态构造逐项移动拥有值，必要时扩容，
 中途返回、失败和取消清理已初始化内容；元素表达式可按普通规则挂起，恢复不重放副作用。
-固长构造复用受检初始化令牌，仅在完整初始化后发布值，保留原有 Copy 元素和同步使用限制。
+固长构造复用受检初始化令牌，仅在完整初始化后发布值；支持下述普通拥有元素及跨挂起使用。
 数组项中的 `..expr` 展开一个序列，可在任意位置出现多次：
 
 ```joky
@@ -770,7 +770,7 @@ let joined: FixedArray<Int32, 5> = [..fixed, 0, ..&fixed]
 | 展开表达式的类型 | 行为 |
 | --- | --- |
 | `Array<T>` | 消费数组并移动元素；即使 T 是 Copy 或数组为空，源绑定也不可再用 |
-| `FixedArray<T, N>` | 复制元素，源绑定仍可用 |
+| `FixedArray<T, N>` | 仅允许 Copy 元素，复制后源绑定仍可用 |
 | `&Array<T>`、`&FixedArray<T, N>`、`&Slice<T>` 及其独占引用 | 仅允许 Copy 元素；独占引用按重借用处理 |
 
 展开不会隐式 clone；例如 `[..&names]` 在 names 为 `Array<String>` 时被拒绝。
@@ -1287,37 +1287,41 @@ impl<T, const N: UInt64> Tag<T, N> {
 关联常量定义也不能依赖尚未实例化的 N；需要读取 N 时使用普通方法返回值。
 
 `import joky/fixed_array.{type FixedArray}` 提供 `FixedArray<T, N>` 类型；它不在 prelude 中。
-F1 已支持该类型及透明别名、嵌套形状、Copy 记录/元组/枚举中的布局元数据，
-长度属于类型身份。元素限固定数值、Bool、Rune、Unit 及递归无引用 Copy 聚合；
-Ptr、函数值、opaque、引用、拥有者和闭包不能作为元素，零长度与 phantom 参数也不能绕过检查。
-在泛型声明中使用 `FixedArray<T, N>` 时，T 必须声明 `Copy`；具体元素的无引用布局仍在实例化时检查。
+长度属于类型身份，支持透明别名、嵌套数组和有限聚合。
+元素接受固定数值、Bool、Rune、Unit、无引用 Copy 聚合，以及 String、Array 和它们组成的
+普通记录／元组／嵌套 FixedArray。完整元素树仍拒绝引用、Ptr、函数值、opaque、闭包、
+资源、自定义 Drop、dyn、List/Map/Set 和拥有型枚举；零长度与 phantom 参数也不能绕过检查。
+泛型 `FixedArray<T, N>` 本身不要求 T: Copy，具体存储资格在实例化时检查。
 
-**F2 已支持数组值及聚合组合。** T 可以是上述元素，包含有限的 Copy 记录、元组、枚举和嵌套数组；
-数组及含数组的 Copy 聚合具有值语义，赋值、直接/函数值间接参数和返回、整数组解引用读取得到独立副本。
-支持整个数组的共享/独占引用、解引用写入，以及 `joky/mem` 的 `replace/swap`。
+元素为 Copy 时，数组及含数组的 Copy 聚合具有值语义：赋值、传参、返回和整数组解引用读取
+取得独立副本。含拥有元素时按值操作移动所有权，原绑定不能继续使用，包括 `FixedArray<String, 0>`。
+支持普通记录同时包含 String／Array 与 FixedArray 字段，也支持外层 Option/Result 包装这些数组。
+整个数组及元素可共享／独占借用，支持解引用写入和 `joky/mem` 的 replace/swap。
+拥有元素可经借用读取、解构移出，或用 replace 取出并补入新值；不会隐式 clone。
 
 从 `joky/fixed_array` 导入以下函数；除构造函数外，也可通过数组的固有方法调用：
 
 | 函数 | 行为 |
 | --- | --- |
-| `repeat::<T, N>(value)` | value 只求值一次，复制为 N 个元素 |
+| `repeat::<T, N>(value)` | 要求 T: Copy，value 只求值一次，复制为 N 个元素 |
 | `from_fn::<T, N>(init)` | 接受 `FnMut(UInt64) -> T`，按 0 到 N−1 顺序调用，支持函数指针、Fn 和 FnMut 闭包 |
 | `len(&array)` / `is_empty(&array)` | 返回 UInt64 长度 / Bool；方法为 `array.len()` / `array.is_empty()` |
-| `get(&array, index)` | 返回元素副本 `Option<T>`，越界返回 None |
-| `set(&mut array, index, value)` | 成功写入返回 true，越界返回 false；value 在检查前按普通实参求值 |
+| `get(&array, index)` | 要求 T: Copy，返回元素副本 `Option<T>`，越界返回 None |
+| `set(&mut array, index, value)` | 替换并清理旧元素，成功返回 true，越界返回 false 并清理传入值；value 在检查前按普通实参求值 |
 | `borrow_ref(&array, index)` / `borrow_mut_ref(&mut array, index)` | 返回 `&T` / `&mut T`；越界产生受检运行时错误 |
 | `slice(&array, start, end)` / `slice_mut(&mut array, start, end)` | 返回 `&Slice<T>` / `&mut Slice<T>`；检查 `start <= end <= N`，允许空区间 |
 
 N=0 和零大小元素合法；空数组的 from_fn 不调用回调，但仍清理回调环境。
 单维长度与完整值逻辑工作量均不超过 65,536，对象字节数不超过 64 MiB 且受目标地址空间限制。
-载荷和清理登记占用任务 arena 预算，退出作用域后回收；数组的语言 Copy 语义不意味着共享载荷。
+载荷、拥有字段清理描述和登记占用任务 arena 预算，退出作用域后回收；部分初始化失败或取消也清理已构造元素。
+数组的语言 Copy 语义不意味着共享载荷。
 
 支持含数组记录/元组/Option/Result 的构造、字段操作、模式匹配/解构及分支合并。
-嵌套数组的 `get` 返回独立的 `Option<FixedArray<…>>`；from_fn 回调也可以返回数组或含数组的 Copy 聚合。
+Copy 元素嵌套数组的 `get` 返回独立的 `Option<FixedArray<…>>`；from_fn 回调也可以返回数组或含数组的普通聚合。
 外层包装仍计入完整值限额，例如内层工作量已达 65,536 时，额外 Option 标签会使 get 的结果超限。
 
-动态 `Array<T>` 可内联存储上述含数组 Copy 值，支持读取副本、覆盖、扩容、移出和释放；
-已有副本不受容器迁移或后续修改影响。F3 已开放其元素引用/切片，以及固定数组的元素引用和切片。
+动态 `Array<T>` 可内联存储上述含数组的普通值，支持覆盖、扩容、移出和释放；仅 Copy 元素可读取副本。
+已有副本不受容器迁移或后续修改影响。支持其元素引用／切片，以及固定数组的元素引用和切片。
 切片复用 `joky/slice` 的读取、写入、子切片和元素借用操作，可从嵌套数组、记录字段及 Array 元素继续派生。
 同一固定数组的所有下标保守共用借用范围；空切片、N=0 和零大小元素也保留来源与独占限制。
 视图存活时禁止冲突访问、整体替换或结束来源；来自 Array 元素的视图也阻止父容器扩容、替换及移出。
@@ -1325,15 +1329,16 @@ N=0 和零大小元素合法；空数组的 from_fn 不调用回调，但仍清�
 模块函数、方法、函数值和泛型 helper 沿用相同的来源与 noescape 检查。
 元素引用不分配视图头部；每次切片/子切片的头部计入任务预算并保留到根任务结束，但不拥有或保活载荷。
 重复创建切片可能耗尽头部预算；载荷仍按作用域及时回收。
-List/Map/Set 和其他拥有聚合尚不接受数组或其 Array 包装。
+List/Map/Set、自定义 Drop 等受限存储尚不接受数组或其 Array 包装。
 支持 Local 挂起函数中的数组值、参数/返回、join/race 结果及 branch 按值捕获；已有
-Array<FixedArray> 也可跨挂起。安全引用和切片可随来源跨挂起，但不能成为并行任务包。
-branch 在发布前复制捕获，父任务之后修改原数组不影响子任务；返回值在接收方复制完成前保活。
-Parallel 对固定数组及含它的 Copy 聚合使用独立快照，保留同样的元素类型限制。
+Array<FixedArray> 也可跨挂起。安全引用和切片可随来源跨挂起；只读跨 worker 输入遵守作用域借用规则。
+branch 发布前复制 Copy 捕获或移动拥有捕获；返回值在接收方取得所有权前保活。
+Parallel 对位置字段使用独立快照，拥有字段经受检 Buffer 树交接，保留同样的元素类型限制。
 普通闭包捕获、显式 Arena/alloc 存储、持久实例/状态域及普通 direct/CPS 宿主值边界仍不支持。
 from_fn 的初始化回调保持同步；它与普通挂起函数的按值传参是不同能力。
 兼容数组字段与同步引用可按[固定数组与 C 指针适配](#固定数组与-c-指针适配)跨 C 边界；数组字面值及下标访问见上文；尚无默认 Eq。
-首版 F0–F5 已验收，历史覆盖与限制见 [FixedArray 记录](fixed-array-storage-ownership.md#f5集成验收与文档发布)；跨挂起与跨任务扩展见 [TP8](task-parallel-executor.md#18-tp8-fixedarray-跨挂起与跨任务)。
+首版 F0–F5 已验收，历史覆盖与限制见 [FixedArray 记录](fixed-array-storage-ownership.md#f5集成验收与文档发布)；跨挂起与跨任务扩展见 [TP8](task-parallel-executor.md#18-tp8-fixedarray-跨挂起与跨任务)，
+拥有元素扩展见 [W6k](startup-worker-configuration.md#1317-w6kfixedarray-拥有元素)。
 
 ## 函数值
 
@@ -3082,7 +3087,7 @@ fn inspect(values: &Array<Int32>) -> Int32 {
 再绑定为独占元素引用。来源数组和外层拥有者仍受约束，视图存活期间不能扩容、移动、
 覆盖或借用整个数组进行冲突访问。无引用元素与 Slice 的引用可跨挂起，仍不能逃逸原存储的生命周期。
 
-按值匹配 FixedArray 复制值，原值仍可用；命名余段为 `FixedArray<T, N-K>`，K 是前后缀项数，
+按值匹配 Copy 元素的 FixedArray 复制值，原值仍可用；拥有元素数组则消费原值并移动绑定。命名余段为 `FixedArray<T, N-K>`，K 是前后缀项数，
 当前要求具体长度，类型中的 `N-K` 由编译器计算，不开放源码常量算术。
 按值匹配 Array 消费整个数组，元素绑定取得所有权，命名余段是保序的 `Array<T>`，可继续移动
 或跨挂起持有。忽略的拥有元素在匹配作用域清理。所有长度、字面量和嵌套标签检查通过以后
@@ -5152,8 +5157,8 @@ List 保留整数链与空闲槽，Map/Set 保留桶、缓存哈希、反向位�
 资格保守检查冻结模块中所有同签名、同挂起效果的函数值目标，任一目标依赖 Local 代码即拒绝
 该间接调用；没有可验证目标也拒绝。`join`／`race` 的结果仍不能包含函数值或引用。
 Rust TaskValue 和宿主函数 ABI 不接纳函数值，不能用原始地址或仅有签名的描述伪造证据。
-FixedArray 及包含它的无引用 Copy 聚合使用独立存储快照；Array 可存储这些 Copy 值。
-含 FixedArray 的混合拥有聚合仍受固定数组存储限制；并行支持不额外放宽其类型组合。
+FixedArray 及包含它的普通无引用聚合使用独立位置快照；其中 String／Array 拥有字段移动真实 Buffer 树。
+Array 可存储这些值，混合 String／Array 与 FixedArray 字段的普通记录也支持；仍遵守固定数组元素限制。
 Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit 元素可用。
 仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含 BorrowHash/BorrowEq
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
@@ -5164,8 +5169,8 @@ Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit �
 FixedArray；也支持 String 字段、Array/String 元素，以及这些拥有类型的有限递归组合。
 完整字段树与名义类型实参须无引用、原始指针、函数值、资源、自定义 Drop、dyn、enum 和 Map/List/Set；
 不能仅凭 Copy 或一般 Share 资格放行。空容器、空切片和零大小普通元素也支持。
-这不改变存储组合规则：FixedArray 仍只接受无引用 Copy 元素，`FixedArray<String, N>` 及
-混合拥有字段与 FixedArray 的拥有存储组合仍未开放。
+FixedArray<String, N>、嵌套拥有数组和混合拥有字段与 FixedArray 的普通记录也可借用，
+存储与借用资格分别检查，拥有型枚举及自定义 Drop 等仍不获只读借用资格。
 来源须为当前任务的受检存储，或当前任务收到的受检只读借用；普通数据验证独立分配的任务身份、
 有效区间和对齐，不能只凭共享存储根中的地址通过。挂起函数的局部数据与任务帧分开保存，循环重入复用存储。
 无拥有字段的数据继续共享原地址；含拥有字段的记录／容器在发送方检查整个可达拥有图，
@@ -5242,7 +5247,8 @@ join/race 的全部分支留在调用 worker，仍检查每个直接／间接目
 构造和收取聚合值，`TaskValue::Array { ty, elements }` 表示标准库数组的已初始化元素序列。
 `TaskValue::List { ty, elements }` 表示 List 的逻辑元素序列，输入构造有效链，输出不暴露
 底层稠密数组或空闲节点。标准 Array/List/Map/Set 不能用 Record 值伪造私有字段。
-`TaskValue::FixedArray { ty, elements }` 表示固定数组，元素数量必须精确等于类型中的 N。
+`TaskValue::FixedArray { ty, elements }` 表示固定数组，元素数量必须精确等于类型中的 N；
+支持合资格的 String／Array／普通记录元素，准备失败、结果丢弃及取消均归还对应拥有存储。
 Array/List 宿主输入以元素数为初始容量；宿主输出只包含有效元素，Vec 容量不代表语言容器容量。
 Map/Set 使用 `TaskValue::Map(TaskMap)` / `TaskValue::Set(TaskSet)`；快照仅由受检结果创建，
 没有公开构造器或可变键访问。可查询 `value_type`、`len`、`is_empty`，通过 Map 的
