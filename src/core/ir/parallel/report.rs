@@ -260,9 +260,16 @@ mod tests {
             .iter()
             .find(|s| s.construct == "join" && s.disposition == ParallelDisposition::Local)
             .unwrap();
-        assert!(local.reason.contains("reader"), "{}", local.reason);
-        assert!(local.reason.contains("callback"), "{}", local.reason);
-        assert!(local.reason.contains("function value"), "{}", local.reason);
+        assert!(local.reason.contains("printer"), "{}", local.reason);
+        assert_eq!(
+            report
+                .sites
+                .iter()
+                .filter(|s| s.construct == "join"
+                    && s.disposition == ParallelDisposition::RuntimeChecked)
+                .count(),
+            2
+        );
         assert!(report
             .sites
             .iter()
@@ -279,6 +286,42 @@ mod tests {
             .sites
             .iter()
             .any(|s| s.construct == "isolate" && s.disposition == ParallelDisposition::Local));
+    }
+
+    #[test]
+    fn parallel_report_scoped_callbacks_include_unused_candidates_and_cleanup() {
+        for body in [
+            "println(value); value",
+            r#"let guard = Guard { value: "cleanup" }; value"#,
+        ] {
+            let source = format!(
+                r#"
+                import joky/array.{{type Array}}
+                import joky/drop.{{type Drop}}
+                struct Guard {{ value: String }}
+                impl Drop for Guard {{ fn drop(&mut self) {{ println(self.value) }} }}
+                fn safe(value: Int32) -> Int32 {{ value }}
+                fn bad(value: Int32) -> Int32 {{ {body} }}
+                fn expose() -> fn(Int32) -> Int32 {{ bad }}
+                fn reader(values: &Array<Int32>, callback: fn(Int32) -> Int32) @suspends -> Int32 {{ callback(values[0]) }}
+                fn main() @suspends {{
+                    let values = [1]
+                    join {{ | reader(&values, safe) | reader(&values, safe) }};
+                }}
+            "#
+            );
+            let report = report(&source, "main");
+            assert!(report.entry_error.is_none(), "{:?}", report.entry_error);
+            assert_eq!(report.sites.len(), 1);
+            let site = &report.sites[0];
+            assert_eq!(site.disposition, ParallelDisposition::Local);
+            for witness in ["reader", "bad", "host reference ABI"] {
+                assert!(site.reason.contains(witness), "{}", site.reason);
+            }
+            if body.contains("Guard") {
+                assert!(site.reason.contains("drop"), "{}", site.reason);
+            }
+        }
     }
 
     #[test]

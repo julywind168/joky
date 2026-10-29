@@ -295,70 +295,80 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         .replace("task.yield_now()", "checkpoint()")
         .replace("    let (whole,", "    checkpoint()\n    let (whole,")
         .replace("    values[0] = 42", "    checkpoint()\n    values[0] = 42");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        unsafe {
-            vm.register_parallel_suspending_fn(
-                "checkpoint",
-                FunctionSignature::new(vec![], Type::Unit),
-                checkpoint,
-                0,
-                Arc::new(()),
-            )
-            .unwrap();
-        }
-        vm.load_source(&format!("{source}\nextern fn checkpoint() @suspends"))
-            .unwrap();
-        for (name, expected) in [
-            ("main", 104),
-            ("nested_isolated_success", 91),
-            ("forwarded", 145),
-            ("dynamic_return", 26),
-            // A race loser may be cancelled by its winner before the host can
-            // request root cancellation; sweep a joining dynamic relay instead.
-            ("aggregate_capture", 30),
-            ("aggregate_zero", 9),
-        ] {
-            let mut complete = false;
-            for boundary in 0..64 {
-                COUNT.store(0, Ordering::SeqCst);
-                TARGET.store(boundary, Ordering::SeqCst);
-                PARKED.store(false, Ordering::SeqCst);
-                let budget = TaskBudget::new(4 << 20);
-                let mut pool = ParallelExecutor::new(3, 32).unwrap();
-                let task = vm
-                    .prepare_parallel_task(name, vec![], vec![budget.clone()])
-                    .unwrap()
-                    .submit(&pool)
-                    .unwrap();
-                wait(|| PARKED.load(Ordering::SeqCst) || task.is_finished());
-                complete = !PARKED.load(Ordering::SeqCst);
-                if !complete {
-                    task.request_cancel();
-                }
-                wait(|| task.is_finished());
-                let result = task.take_result();
-                if complete {
-                    assert_eq!(
-                        result.as_ref().unwrap().value(),
-                        &TaskValue::Scalar(InstanceValue::Int32(expected))
-                    );
-                } else {
-                    let error = result.as_ref().err().unwrap();
-                    assert_eq!(
-                        error.code(),
-                        ErrorCode::Cancelled,
-                        "{mode:?} {name} checkpoint {boundary}: {error}"
-                    );
-                }
-                drop((result, task));
-                pool.wait_closed();
-                assert_eq!(budget.used(), 0, "{mode:?} {name} checkpoint {boundary}");
-                if complete {
-                    break;
-                }
+    let callbacks = include_str!("../../../tests/fixtures/scoped_borrow_callbacks.jk")
+        .replace("task.yield_now()", "checkpoint()")
+        .replace("    values[0] = 42", "    checkpoint()\n    values[0] = 42");
+    for (source, cases) in [
+        (
+            source,
+            vec![
+                ("main", 104),
+                ("nested_isolated_success", 91),
+                ("forwarded", 145),
+                ("dynamic_return", 26),
+                ("aggregate_capture", 30),
+                ("aggregate_zero", 9),
+            ],
+        ),
+        (callbacks, vec![("main", 39), ("dynamic", 42)]),
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            unsafe {
+                vm.register_parallel_suspending_fn(
+                    "checkpoint",
+                    FunctionSignature::new(vec![], Type::Unit),
+                    checkpoint,
+                    0,
+                    Arc::new(()),
+                )
+                .unwrap();
             }
-            assert!(complete);
+            vm.load_source(&format!("{source}\nextern fn checkpoint() @suspends"))
+                .unwrap();
+            // Sweep joins, not races whose winner may cancel a parked loser first.
+            for &(name, expected) in &cases {
+                let mut complete = false;
+                for boundary in 0..64 {
+                    COUNT.store(0, Ordering::SeqCst);
+                    TARGET.store(boundary, Ordering::SeqCst);
+                    PARKED.store(false, Ordering::SeqCst);
+                    let budget = TaskBudget::new(4 << 20);
+                    let mut pool = ParallelExecutor::new(3, 32).unwrap();
+                    let task = vm
+                        .prepare_parallel_task(name, vec![], vec![budget.clone()])
+                        .unwrap()
+                        .submit(&pool)
+                        .unwrap();
+                    wait(|| PARKED.load(Ordering::SeqCst) || task.is_finished());
+                    complete = !PARKED.load(Ordering::SeqCst);
+                    if !complete {
+                        task.request_cancel();
+                    }
+                    wait(|| task.is_finished());
+                    let result = task.take_result();
+                    if complete {
+                        assert_eq!(
+                            result.as_ref().unwrap().value(),
+                            &TaskValue::Scalar(InstanceValue::Int32(expected))
+                        );
+                    } else {
+                        let error = result.as_ref().err().unwrap();
+                        assert_eq!(
+                            error.code(),
+                            ErrorCode::Cancelled,
+                            "{mode:?} {name} checkpoint {boundary}: {error}"
+                        );
+                    }
+                    drop((result, task));
+                    pool.wait_closed();
+                    assert_eq!(budget.used(), 0, "{mode:?} {name} checkpoint {boundary}");
+                    if complete {
+                        break;
+                    }
+                }
+                assert!(complete);
+            }
         }
     }
 }
@@ -566,5 +576,52 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
         drop(task);
         pool.wait_closed();
         assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
+fn scoped_borrow_callback_budget_boundaries() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(include_str!(
+            "../../../tests/fixtures/scoped_borrow_callbacks.jk"
+        ))
+        .unwrap();
+        for (name, expected) in [("main", 39), ("dynamic", 42)] {
+            let mut success = false;
+            for bytes in [0, 512, 4096, 16384, 65536, 1 << 20, 4 << 20] {
+                let budget = TaskBudget::new(bytes);
+                let mut pool = ParallelExecutor::new(3, 32).unwrap();
+                let result = vm
+                    .prepare_parallel_task(name, vec![], vec![budget.clone()])
+                    .and_then(|p| p.submit(&pool))
+                    .and_then(|task| {
+                        wait(|| task.is_finished());
+                        task.take_result()
+                    });
+                match &result {
+                    Ok(value) => {
+                        assert_eq!(
+                            value.value(),
+                            &TaskValue::Scalar(InstanceValue::Int32(expected))
+                        );
+                        success = true;
+                    }
+                    Err(error) => assert_eq!(
+                        error.code(),
+                        ErrorCode::ResourceLimit,
+                        "{mode:?}/{name}/{bytes}: {error}"
+                    ),
+                }
+                drop(result);
+                pool.wait_closed();
+                assert_eq!(budget.used(), 0, "{mode:?}/{name}/{bytes}");
+                if success {
+                    break;
+                }
+            }
+            assert!(success);
+        }
     }
 }

@@ -5170,8 +5170,12 @@ slice 可追溯到该来源，接收方可把收到的区间或其子区间继�
 race 选出结果后先取消并排空败方；局部 join/race 分支和 isolate 中也可启动符合条件的借用组。
 局部取消或 isolate 恢复会先等待该子树的远程读者及未领取结果清理，再释放来源或继续父任务。
 
-这一准入同时检查完整 Parallel 调用图、来源和当前并发上下文。包含间接调用、函数值或宿主引用 ABI
-的分支调用图保守回退；无受检租约的外部来源、含拥有元素的容器、名义宿主能力、
+这一准入同时检查完整 Parallel 调用图、来源和当前并发上下文。直接分支入口内部可以使用普通语言函数值，
+包括同步／挂起间接调用、泛型转发和递归。编译器检查冻结模块中全部同签名、同挂起效果的候选目标及其
+传递调用和清理依赖；任一候选不能证明只读调用资格，整个借用组仍回退本地，即使当前实参只选择安全目标。
+引用实参仍须符合已有的不逃逸规则，例如挂起回调类型 `fn(&Array<Int32>) @suspends @noescape -> Int32`。
+没有冻结目标、宿主函数值、动态方法分派、宿主引用 ABI 及间接 join/race 入口仍不获得这一资格。
+无受检租约的外部来源、含拥有元素的容器、名义宿主能力、
 `&mut`、标量／FixedArray 地址、借用结果及通用借用闭包不在跨 worker 范围内。
 任一分支无法证明资格时整个 join/race 沿用本地执行，前端借用与逃逸规则仍然生效。
 动态 `scope/branch` 的引用捕获也支持上述只读类型与来源检查。每次登记独立决定是否跨 worker；
@@ -5183,7 +5187,8 @@ race 选出结果后先取消并排空败方；局部 join/race 分支和 isolat
 借用也可在 isolate 内登记，失败恢复前排空所属读者，不取消隔离区外的兄弟分支。
 
 公共 `TaskValue`、根任务参数与普通 Packet 不接受引用。示例见
-[scoped_borrow_join.jk](../tests/fixtures/scoped_borrow_join.jk)。
+[scoped_borrow_join.jk](../tests/fixtures/scoped_borrow_join.jk) 和
+[scoped_borrow_callbacks.jk](../tests/fixtures/scoped_borrow_callbacks.jk)。
 
 worker 内部使用资格单独检查：Array／Slice 的 Iter、Map 的成对 Iter 与 Entry 支持共享和
 可变借用遍历、泛型辅助函数及循环内挂起。游标只在创建它的 worker 使用，挂起恢复不迁移。

@@ -1413,3 +1413,130 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
         }
     }
 }
+
+#[test]
+fn scoped_borrow_callbacks_on_all_backends() {
+    use crate::vm::{InstanceValue, VmEngine, VmMode};
+    use std::time::{Duration, Instant};
+    const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_callbacks.jk");
+    // Expected value and number of borrowed inputs sent by the root.
+    let cases = [
+        ("main", 39, 2),
+        ("dynamic", 42, 1),
+        ("isolated", 10, 2),
+        ("fallback", 11, 0),
+        ("indirect_group", 20, 0),
+        ("failed", 0, 2),
+        ("parked", 0, 1),
+    ];
+    let names: Vec<_> = cases.iter().map(|(name, _, _)| *name).collect();
+    let (_scratch, entries, library) = linked_task_entries(SOURCE, &names, "scoped-callbacks");
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+        }
+        for workers in [1, 3] {
+            let budget = TaskBudget::new(4 << 20);
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(workers, 32).unwrap();
+            for (index, (name, expected, inputs)) in cases.iter().enumerate() {
+                let prepared = if let Some(vm) = &vm {
+                    vm.prepare_parallel_task(name, vec![], vec![budget.clone()])
+                        .unwrap()
+                } else {
+                    let entry = &entries[index];
+                    unsafe {
+                        entry.prepare(
+                            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                            library.clone(),
+                            vec![],
+                            vec![budget.clone()],
+                        )
+                    }
+                    .unwrap()
+                };
+                let task = prepared.submit(&pool).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(20);
+                if *name == "parked" {
+                    while !crate::runtime::parallel::scoped::observations(task.identity())
+                        .iter()
+                        .any(|o| !o.source)
+                    {
+                        assert!(
+                            Instant::now() < deadline,
+                            "{mode:?}/{workers}: reader did not start"
+                        );
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    task.request_cancel();
+                }
+                while !task.is_finished() {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{mode:?}/{workers}/{name}: stuck"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                let result = task.take_result();
+                if matches!(*name, "failed" | "parked") {
+                    let error = result.err().unwrap();
+                    assert_eq!(
+                        error.code(),
+                        if *name == "failed" {
+                            crate::ErrorCode::RuntimeError
+                        } else {
+                            crate::ErrorCode::Cancelled
+                        },
+                        "{mode:?}/{workers}/{name}: {error}"
+                    );
+                } else {
+                    assert_eq!(
+                        result
+                            .unwrap_or_else(|e| panic!("{mode:?}/{workers}/{name}: {e}"))
+                            .value(),
+                        &TaskValue::Scalar(InstanceValue::Int32(*expected))
+                    );
+                }
+                let observations = crate::runtime::parallel::scoped::observations(task.identity());
+                assert_eq!(
+                    observations.iter().filter(|o| o.source).count(),
+                    *inputs,
+                    "{mode:?}/{workers}/{name}: admission differs"
+                );
+                let tree = crate::runtime::parallel::scoped::tree_observations(task.identity());
+                for reader in tree.iter().filter(|o| !o.source) {
+                    let sender = tree
+                        .iter()
+                        .find(|o| {
+                            o.source
+                                && o.scope == reader.scope
+                                && o.data == reader.data
+                                && o.len == reader.len
+                        })
+                        .unwrap();
+                    assert_ne!(sender.header, reader.header);
+                    assert_eq!(reader.origin_parent, task.identity());
+                }
+                if *name == "main" {
+                    assert!(
+                        tree.iter().any(|o| o.source && o.parent != task.identity()),
+                        "nested callback stayed local"
+                    );
+                    let sender = observations.iter().find(|o| o.source).unwrap();
+                    if workers > 1 {
+                        assert!(
+                            observations
+                                .iter()
+                                .any(|o| !o.source && o.thread != sender.thread),
+                            "callback stayed on parent worker"
+                        );
+                    }
+                }
+                drop(task);
+            }
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}/{workers}");
+        }
+    }
+}

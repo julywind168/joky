@@ -323,11 +323,21 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         } else {
             source
         };
+        // Exercise an indirect language call while the source is pinned by
+        // nested readers. The callback contract is checked by the frontend.
+        let view = if dynamic {
+            "&Array<(Int32, Float64)>"
+        } else {
+            "&String"
+        };
+        let source = format!("{} fn callback(text: {view}) @suspends -> UInt64 {{ let call: fn({view}) @suspends @noescape -> UInt64 = reader; call(text) }}",
+            source.replace("| reader(text)", "| callback(text)"));
         vm.load_source(&source).unwrap();
         let budget = TaskBudget::new(4 << 20);
         let prepared = vm
             .prepare_parallel_task("root", vec![], vec![budget.clone()])
             .unwrap();
+        vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
         drop(vm);
         let mut pool = ParallelExecutor::new(4, 16).unwrap();
         let task = prepared.submit(&pool).unwrap();

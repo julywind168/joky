@@ -4,6 +4,7 @@ use super::{ModulePlan, Op};
 use crate::{Error, ErrorCode, ErrorPhase, Type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod callables;
 pub(crate) mod packet;
 pub mod report;
 pub(crate) mod scoped;
@@ -196,18 +197,7 @@ pub(crate) fn analyse(
     // Keep a closed set of targets per calling signature in this frozen module;
     // an indirect edge depends on every possible target, including cleanup effects.
     // Host boundaries below cannot introduce new callable values.
-    let targets: Vec<_> = plan
-        .bodies
-        .values()
-        .flat_map(|body| &body.ops)
-        .filter_map(|op| match op {
-            Op::FunctionRef(slot, name) => match &slot.ty {
-                Type::Function(function) => Some((function, name)),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
+    let targets = callables::Targets::new(plan);
     let dyn_tables: Vec<_> = plan
         .bodies
         .values()
@@ -367,21 +357,9 @@ pub(crate) fn analyse(
                     continue;
                 };
                 let mut found = false;
-                for table in &dyn_tables {
-                    for (method, target) in table.interface.methods.iter().zip(&table.methods) {
-                        if method.signature == function.signature && !function.suspends {
-                            found = true;
-                            dependencies.insert(target.clone());
-                        }
-                    }
-                }
-                for (candidate, target) in &targets {
-                    if candidate.signature == function.signature
-                        && candidate.suspends == function.suspends
-                    {
-                        found = true;
-                        dependencies.insert((*target).clone());
-                    }
+                for target in targets.matching(function) {
+                    found = true;
+                    dependencies.insert(target.to_owned());
                 }
                 if !found {
                     reasons.entry(name.clone()).or_insert_with(|| {

@@ -12,21 +12,56 @@ pub(crate) fn callees(plan: &ModulePlan) -> HashSet<String> {
 
 /// Keep the first deterministic witness as well as the admission decision.
 pub(crate) fn rejections(plan: &ModulePlan) -> HashMap<String, String> {
+    let targets = callables::Targets::new(plan);
     let mut rejected = HashMap::new();
+    let mut edges = HashMap::<String, BTreeSet<String>>::new();
     for (name, info) in &plan.functions {
         let reason = if let Some(body) = plan.bodies.get(name) {
-            body.ops.iter().find_map(|op| match op {
-                Op::Call {
-                    indirect: Some(_), ..
-                } => Some("call graph contains an indirect call"),
-                Op::FunctionRef(..) => Some("call graph contains a function value"),
-                Op::Concurrent { branches, .. }
-                    if branches.iter().any(|b| b.indirect.is_some()) =>
-                {
-                    Some("call graph contains an indirect concurrent target")
+            let dependencies = edges.entry(name.clone()).or_default();
+            let mut reason = None;
+            for op in &body.ops {
+                dependencies.extend(op.dependencies().cloned());
+                let failure = match op {
+                    Op::Call {
+                        indirect: Some(slot),
+                        ..
+                    } => match &slot.ty {
+                        Type::Function(function) => {
+                            let candidates: BTreeSet<_> = targets.matching(function).collect();
+                            if candidates.is_empty() {
+                                Some("indirect call has no frozen language targets")
+                            } else if targets.dynamic_matching(function).next().is_some() {
+                                Some("indirect call may use dynamic dispatch outside the scoped callback protocol")
+                            } else if candidates
+                                .iter()
+                                .any(|name| !plan.bodies.contains_key(*name))
+                            {
+                                Some("indirect call may target a host ABI; scoped callbacks require language code")
+                            } else {
+                                dependencies.extend(candidates.into_iter().map(str::to_owned));
+                                None
+                            }
+                        }
+                        _ => Some("indirect call lacks a checked function type"),
+                    },
+                    Op::FunctionRef(slot, _) if !matches!(slot.ty, Type::Function(_)) => {
+                        Some("raw function address is outside the scoped callback protocol")
+                    }
+                    Op::FunctionRef(_, target) if !plan.bodies.contains_key(target) => Some(
+                        "function value targets a host ABI; scoped callbacks require language code",
+                    ),
+                    Op::Concurrent { branches, .. }
+                        if branches.iter().any(|b| b.indirect.is_some()) =>
+                    {
+                        Some("call graph contains an indirect concurrent target")
+                    }
+                    _ => None,
+                };
+                if reason.is_none() {
+                    reason = failure;
                 }
-                _ => None,
-            })
+            }
+            reason
         } else if info
             .signature
             .params
@@ -50,14 +85,8 @@ pub(crate) fn rejections(plan: &ModulePlan) -> HashMap<String, String> {
             if rejected.contains_key(*name) {
                 continue;
             }
-            let mut dependencies: Vec<_> = plan.bodies[*name]
-                .ops
+            if let Some(dependency) = edges[*name]
                 .iter()
-                .flat_map(Op::dependencies)
-                .collect();
-            dependencies.sort();
-            if let Some(dependency) = dependencies
-                .into_iter()
                 .find(|dep| rejected.contains_key(*dep) || !plan.functions.contains_key(*dep))
             {
                 let label = display_name(dependency);
@@ -76,4 +105,28 @@ pub(crate) fn rejections(plan: &ModulePlan) -> HashMap<String, String> {
         }
     }
     rejected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoped_callbacks_require_known_language_targets() {
+        let source = r#"
+            fn missing(callback: fn(Int64) -> Int64) -> Int64 { callback(1) }
+            fn suspended(value: Int64) @suspends -> Int64 { value }
+            fn expose() -> fn(Int64) @suspends -> Int64 { suspended }
+        "#;
+        let types = crate::TypeRegistry::default().with_prelude(false);
+        let ast = types
+            .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())
+            .unwrap();
+        let prepared =
+            crate::core::prepared::PreparedModule::new(&ast, &types, &Default::default()).unwrap();
+        let plan = prepared.plan(&Default::default()).unwrap();
+        let rejected = rejections(&plan);
+        assert!(rejected["missing"].contains("no frozen language targets"));
+        assert!(!rejected.contains_key("suspended"));
+    }
 }

@@ -1,0 +1,99 @@
+import joky/array.{type Array}
+import joky/task
+import joky/check
+
+type Reader = fn(Int32) -> Int32
+struct Callback { call: Reader }
+fn increment(value: Int32) -> Int32 { value + 1 }
+fn double(value: Int32) -> Int32 { value * 2 }
+fn apply<T, U>(value: T, callback: fn(T) -> U) -> U { callback(value) }
+fn sum(values: &Array<Int32>) @suspends -> Int32 {
+    var total = 0
+    for value in values {
+        let transform = if *value == 2 { double } else { increment }
+        task.yield_now()
+        total += apply(*value, transform)
+    }
+    total
+}
+fn invoke(values: &Array<Int32>) @suspends -> Int32 {
+    let callback: fn(&Array<Int32>) @suspends @noescape -> Int32 = sum
+    callback(values)
+}
+fn wrapped(values: &Array<Int32>, callback: Callback) @suspends -> Int32 { callback.call(invoke(values)) }
+fn recursive(n: Int32) @suspends -> Int32 {
+    task.yield_now()
+    if n == 0 { 1 } else { let again = recursive; again(n - 1) }
+}
+fn relay(values: &Array<Int32>) @suspends -> Int32 {
+    let (a, b) = join { | invoke(values) | wrapped(values, Callback { call: increment }) }
+    a + b + recursive(2)
+}
+fn main() @suspends -> Int32 {
+    var values = [1, 2, 3]
+    let (a, b) = join { | relay(&values) | invoke(&values) }
+    values[0] = 7
+    a + b + values[0]
+}
+fn dynamic() @suspends -> Int32 {
+    var values = [1, 2, 3]
+    let view = &values
+    let callback = increment
+    scope { branch { if callback(invoke(view)) != 11 { check.panic("bad callback capture") } } }
+    values[0] = 42
+    values[0]
+}
+fn fail(values: &Array<Int32>) @suspends -> Int32 {
+    task.yield_now()
+    check.panic("callback reader failed")
+}
+fn forever(values: &Array<Int32>) @suspends -> Int32 { while true { sum(values); } }
+fn indirect_fail(values: &Array<Int32>) @suspends -> Int32 {
+    let callback: fn(&Array<Int32>) @suspends @noescape -> Int32 = fail
+    callback(values)
+}
+fn indirect_forever(values: &Array<Int32>) @suspends -> Int32 {
+    let callback: fn(&Array<Int32>) @suspends @noescape -> Int32 = forever
+    callback(values)
+}
+fn failed() @suspends -> Int32 {
+    let values = [1, 2, 3]
+    let (a, b) = join { | invoke(&values) | indirect_fail(&values) }
+    a + b
+}
+fn parked() @suspends {
+    let values = [1, 2, 3]
+    let view = &values
+    scope { branch { indirect_forever(view); } }
+}
+fn isolated() @suspends -> Int32 {
+    let values = [1, 2, 3]
+    let view = &values
+    match isolate { race { | invoke(view) | indirect_forever(view) } } {
+        Ok(value) => value, Err(_) => -1
+    }
+}
+
+// All same-signature frozen candidates are checked, even if this root passes safe.
+fn safe(n: Int64) @suspends -> Int32 { int32(n) }
+fn leaf() @suspends -> Int32 { 1 }
+fn blocked(n: Int64) @suspends -> Int32 {
+    let target = leaf
+    let (a, b) = join { | target() | leaf() }
+    a + b
+}
+fn expose_blocked() -> fn(Int64) @suspends -> Int32 { blocked }
+fn conservative(values: &Array<Int32>, callback: fn(Int64) @suspends -> Int32) @suspends -> Int32 {
+    callback(int64(values[0]))
+}
+fn fallback() @suspends -> Int32 {
+    let values = [1, 2, 3]
+    let (a, b) = join { | conservative(&values, safe) | invoke(&values) }
+    a + b
+}
+fn indirect_group() @suspends -> Int32 {
+    let values = [1, 2, 3]
+    let callback: fn(&Array<Int32>) @suspends @noescape -> Int32 = sum
+    let (a, b) = join { | callback(&values) | invoke(&values) }
+    a + b
+}
