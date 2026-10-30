@@ -199,3 +199,114 @@ fn parallel_control_keeps_file_authority_and_rejects_host_capability_packets() {
         pool.wait_closed();
     }
 }
+
+#[test]
+fn scoped_borrow_vm_graphs_share_identity_and_drain_on_cancel() {
+    use crate::runtime::parallel::scoped;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../../tests/fixtures/scoped_borrow_vm.jk"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        for workers in [1, 3] {
+            let budget = TaskBudget::new(32 << 20);
+            let mut pool = ParallelExecutor::new(workers, 32).unwrap();
+            for name in ["main", "parked"] {
+                let task = vm
+                    .prepare_parallel_task(name, vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                if name == "parked" {
+                    let deadline = Instant::now() + Duration::from_secs(20);
+                    while scoped::observations(task.identity())
+                        .iter()
+                        .filter(|o| !o.source)
+                        .count()
+                        < 2
+                        || !pool.control_observations().iter().any(|(_, n)| *n > 0)
+                    {
+                        assert!(!task.is_finished(), "{:?}", task.take_result().err());
+                        assert!(Instant::now() < deadline, "borrowed VM calls did not start");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    task.request_cancel();
+                }
+                wait(&task);
+                let result = task.take_result();
+                if name == "parked" {
+                    assert_eq!(result.err().unwrap().code(), ErrorCode::Cancelled);
+                } else {
+                    assert_eq!(
+                        result.unwrap().value(),
+                        &TaskValue::Scalar(InstanceValue::Int32(0))
+                    );
+                    let tree = scoped::tree_observations(task.identity());
+                    assert!(
+                        tree.iter().any(|o| o.source && o.parent != task.identity()),
+                        "nested VM loans stayed local"
+                    );
+                    let observations = scoped::observations(task.identity());
+                    assert!(
+                        observations.iter().any(|o| o.source && o.plain && o.copied),
+                        "Script snapshot stayed local"
+                    );
+                    assert!(
+                        observations
+                            .iter()
+                            .any(|o| !o.source && !o.plain && o.len == 0),
+                        "direct VM loan stayed local"
+                    );
+                    if workers > 1 {
+                        let sender = observations.iter().find(|o| o.source).unwrap();
+                        assert!(observations
+                            .iter()
+                            .any(|o| !o.source && o.thread != sender.thread));
+                    }
+                }
+                assert!(pool.control_observations().iter().all(|(_, n)| *n == 0));
+                drop(task);
+            }
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}/{workers}");
+        }
+    }
+}
+
+#[test]
+fn scoped_borrow_vm_budget_failures_refund_partial_graphs() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../../tests/fixtures/scoped_borrow_vm.jk"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        let mut success = false;
+        for bytes in [0, 4096, 65536, 524288, 1048576, 2097152, 8388608, 33554432] {
+            let budget = TaskBudget::new(bytes);
+            let mut pool = ParallelExecutor::new(3, 32).unwrap();
+            let result = vm
+                .prepare_parallel_task("main", vec![], vec![budget.clone()])
+                .and_then(|p| p.submit(&pool))
+                .and_then(|task| {
+                    wait(&task);
+                    task.take_result()
+                });
+            match &result {
+                Ok(value) => {
+                    assert_eq!(value.value(), &TaskValue::Scalar(InstanceValue::Int32(0)));
+                    success = true;
+                }
+                Err(error) => assert_eq!(
+                    error.code(),
+                    ErrorCode::ResourceLimit,
+                    "{mode:?}/{bytes}: {error}"
+                ),
+            }
+            drop(result);
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}/{bytes}");
+            if success {
+                break;
+            }
+        }
+        assert!(success);
+    }
+}

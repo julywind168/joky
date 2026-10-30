@@ -246,6 +246,7 @@ pub(crate) fn rejections(plan: &ModulePlan) -> HashMap<String, String> {
             .iter()
             .chain(std::iter::once(&info.signature.ret))
             .any(Type::contains_references)
+            && !scoped_builtin(name, &info.signature, info.suspends)
         {
             Some("host reference ABI is outside the scoped view protocol")
         } else {
@@ -283,6 +284,21 @@ pub(crate) fn rejections(plan: &ModulePlan) -> HashMap<String, String> {
         }
     }
     rejected
+}
+
+/// VM adapters use receiver-local headers and copy requests to the
+/// control thread. Mutable arguments must still be local: scoped input shapes
+/// never admit mutable references. Generic host reference ABIs remain excluded.
+fn scoped_builtin(name: &str, signature: &crate::FunctionSignature, suspends: bool) -> bool {
+    use crate::core::builtins::Builtin;
+    Builtin::lookup(name).is_some_and(|builtin| {
+        builtin.validate(signature, suspends, false).is_ok()
+            && match builtin {
+                Builtin::VmCall | Builtin::VmSource | Builtin::VmMigration(_) => true,
+                Builtin::Vm(_) => matches!(name, "__vm_create" | "__vm_share" | "__vm_close"),
+                _ => false,
+            }
+    })
 }
 
 #[cfg(test)]

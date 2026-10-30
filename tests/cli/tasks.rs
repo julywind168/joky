@@ -516,30 +516,32 @@ fn task_parallel_function_values_runs_in_standalone_aot() {
 
 #[test]
 fn task_parallel_control_bridge_runs_in_standalone_aot() {
-    let work = Workspace::new();
-    work.write(
-        "parallel_control.jk",
+    for source in [
         include_str!("../fixtures/parallel_control.jk"),
-    );
-    let build = work
-        .command()
-        .args([
-            "build",
-            "--task-workers",
-            "3",
-            "parallel_control.jk",
-            "-o",
-            "parallel_control",
-        ])
-        .env("JOKY_RUNTIME", runtime_archive())
-        .output()
-        .unwrap();
-    success(&build);
-    success(
-        &Command::new(work.path().join("parallel_control"))
+        include_str!("../fixtures/scoped_borrow_vm.jk"),
+    ] {
+        let work = Workspace::new();
+        work.write("parallel_control.jk", source);
+        let build = work
+            .command()
+            .args([
+                "build",
+                "--task-workers",
+                "3",
+                "parallel_control.jk",
+                "-o",
+                "parallel_control",
+            ])
+            .env("JOKY_RUNTIME", runtime_archive())
             .output()
-            .unwrap(),
-    );
+            .unwrap();
+        success(&build);
+        success(
+            &Command::new(work.path().join("parallel_control"))
+                .output()
+                .unwrap(),
+        );
+    }
 }
 
 #[test]

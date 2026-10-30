@@ -352,7 +352,18 @@ impl Buffer {
     pub(crate) fn resource_ref(&self) -> Result<&super::resource::OwnedResource, Error> {
         self.resource
             .as_ref()
+            .or_else(|| unsafe { self.loan.as_ref() }.and_then(|loan| loan.resource()))
             .ok_or_else(|| bounds_error("Expected a registered resource owner"))
+    }
+
+    /// Shared resource capture only inspects a header belonging to this task.
+    pub(crate) fn scoped_resource(&self) -> bool {
+        if let Some(loan) = unsafe { self.loan.as_ref() } {
+            return loan.resource().is_some();
+        }
+        super::parallel::pool::identity() == Some(self.owner_task)
+            && std::ptr::eq(self.origin, self)
+            && self.resource.is_some()
     }
 
     pub(crate) fn resource_mut(&mut self) -> Result<&mut super::resource::OwnedResource, Error> {

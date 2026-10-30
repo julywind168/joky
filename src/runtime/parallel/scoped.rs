@@ -15,6 +15,7 @@ mod graph;
 pub(crate) struct Shape {
     element: Layout,
     plain: bool,
+    shared_vm: bool,
     graph: Option<Arc<graph::Element>>,
 }
 impl Shape {
@@ -49,12 +50,16 @@ impl Shape {
             | Type::String
             | Type::Buffer(_) => true,
             Type::BufferSlice(_) => std::ptr::eq(ty, &reference.target),
+            Type::Resource(name) => name.as_ref() == "vm.Owner",
             _ => ty.integer().is_some() || ty.is_float(),
         }) {
             return None;
         }
         let layout = element.storage_layout().ok()?;
         let mut shape = Self::checked(layout.size, layout.align).ok()?;
+        if matches!(target, Type::Resource(name) if name.as_ref() == "vm.Owner") {
+            return Some(Self::vm());
+        }
         shape.plain = !matches!(
             target,
             Type::String | Type::Buffer(_) | Type::BufferSlice(_)
@@ -81,11 +86,22 @@ impl Shape {
         Ok(Self {
             element: Layout::from_size_align(size, align).map_err(|_| invalid())?,
             plain: false,
+            shared_vm: false,
             graph: None,
         })
     }
+    fn vm() -> Self {
+        Self {
+            element: Layout::new::<u64>(),
+            plain: false,
+            shared_vm: true,
+            graph: None,
+        }
+    }
     pub(crate) fn encode(&self, words: &mut Vec<u64>) {
-        if let Some(graph) = &self.graph {
+        if self.shared_vm {
+            words.push(103);
+        } else if let Some(graph) = &self.graph {
             words.push(if self.plain { 102 } else { 101 });
             graph.encode(words);
         } else {
@@ -97,6 +113,9 @@ impl Shape {
         }
     }
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
+        if words == [103] {
+            return Ok(Self::vm());
+        }
         if let [kind @ (101 | 102), rest @ ..] = words {
             let mut rest = rest;
             let graph = graph::Element::decode(&mut rest, 0, &mut 0)?;
@@ -106,6 +125,7 @@ impl Shape {
             return Ok(Self {
                 element: graph.layout,
                 plain: *kind == 102,
+                shared_vm: false,
                 graph: Some(Arc::new(graph)),
             });
         }
@@ -138,7 +158,16 @@ impl Shape {
         })
     }
     unsafe fn source(&self, word: u64) -> Option<Source> {
-        if self.plain {
+        if self.shared_vm {
+            super::control::SharedVm::capture(word).ok()?;
+            // The transport holds the proxy identity, never a foreign header.
+            Some(Source {
+                data: NonNull::<u64>::dangling().cast(),
+                len: 0,
+                capacity: 0,
+                origin: None,
+            })
+        } else if self.plain {
             let data = NonNull::new(word as *mut u8)?;
             if !(word as usize).is_multiple_of(self.element.align()) {
                 return None;
@@ -215,7 +244,7 @@ pub(crate) struct Scope {
     parent: u64,
     pub(crate) identity: u64,
     _root: Storage,
-    _code: Arc<crate::vm::parallel::Code>,
+    _code: Arc<dyn std::any::Any + Send + Sync>,
     _charge: Option<Lease>,
 }
 impl Scope {
@@ -224,7 +253,7 @@ impl Scope {
             parent: pool::identity().ok_or_else(invalid)?,
             identity,
             _root: super::current().ok_or_else(invalid)?,
-            _code: pool::code().ok_or_else(invalid)?,
+            _code: pool::code_owner().ok_or_else(invalid)?,
             _charge: super::reserve_current(
                 std::mem::size_of::<Self>() + 2 * std::mem::size_of::<usize>(),
             )?,
@@ -241,6 +270,7 @@ struct Range {
     _charge: Option<Lease>,
     plain: bool,
     snapshot: Option<graph::Snapshot>,
+    shared_vm: Option<super::control::SharedVm>,
 }
 // SAFETY: capture requires compiler-certified storage owned by this parent task
 // or received under a bounded loan. Owning lanes are traversed only on the sender,
@@ -258,6 +288,7 @@ unsafe impl Send for Range {}
 pub(crate) struct Loan {
     task: u64,
     range: Range,
+    resource: Option<crate::runtime::resource::OwnedResource>,
 }
 thread_local! {
     static ACTIVE_LOANS: std::cell::Cell<*const [Rc<Loan>]> = const {
@@ -284,6 +315,11 @@ impl Drop for LoanGuard<'_> {
     }
 }
 impl Loan {
+    pub(crate) fn resource(&self) -> Option<&crate::runtime::resource::OwnedResource> {
+        (pool::identity() == Some(self.task))
+            .then_some(self.resource.as_ref())
+            .flatten()
+    }
     pub(crate) fn source(
         &self,
         data: NonNull<u8>,
@@ -398,7 +434,13 @@ impl Range {
         let charge = super::reserve_current(
             std::mem::size_of::<Loan>()
                 + 2 * std::mem::size_of::<usize>()
-                + 4 * std::mem::size_of::<Rc<Loan>>(),
+                + 4 * std::mem::size_of::<Rc<Loan>>()
+                + if shape.shared_vm {
+                    crate::runtime::resource::OwnedResource::event_bytes()
+                        + std::mem::size_of::<usize>() // Box<Arc<Proxy>> token
+                } else {
+                    0
+                },
         )?;
         let snapshot = shape
             .graph
@@ -416,6 +458,11 @@ impl Range {
             scope,
             _charge: charge,
             snapshot,
+            shared_vm: if shape.shared_vm {
+                Some(super::control::SharedVm::capture(word)?)
+            } else {
+                None
+            },
         })
     }
     fn install(
@@ -436,9 +483,11 @@ impl Range {
         // Parent scope fences also cover copied intermediate pointer tables.
         let original = self.data;
         self.data = data;
+        let resource = self.shared_vm.take().map(|vm| vm.install()).transpose()?;
         loans.push(Rc::new(Loan {
             task: pool::identity().ok_or_else(invalid)?,
             range: self,
+            resource,
         }));
         let loan = &**loans.last().unwrap();
         let range = &loan.range;
@@ -539,6 +588,18 @@ mod tests {
     use super::*;
     #[test]
     fn scoped_borrow_graph_descriptors_reject_corrupt_fields_and_depth() {
+        let vm = Shape::of(&Type::reference(
+            Type::tuple(vec![Type::Resource("vm.Owner".into()), Type::Int32]),
+            false,
+        ))
+        .unwrap();
+        let mut encoded = Vec::new();
+        vm.encode(&mut encoded);
+        assert!(Shape::decode(&encoded).is_ok());
+        // A VM field occupies an aligned owner lane, never scalar payload bytes.
+        for bad in [vec![102, 4, 4, 1, 0, 11], vec![102, 16, 8, 1, 4, 11]] {
+            assert!(Shape::decode(&bad).is_err());
+        }
         let shape = Shape::of(&Type::reference(
             Type::BufferSlice(Arc::new(Type::String)),
             false,
@@ -634,6 +695,7 @@ mod tests {
     #[test]
     fn scoped_borrow_shapes_keep_packets_mutation_and_nominal_capabilities_closed() {
         for target in [
+            Type::Resource("vm.Owner".into()),
             Type::String,
             Type::BufferSlice(Arc::new(Type::Int32)),
             Type::BufferSlice(Arc::new(Type::Bool)),
@@ -650,6 +712,10 @@ mod tests {
             assert!(Shape::of(&Type::reference(target, true)).is_none());
         }
         for target in [
+            Type::Resource("vm.MigrationOwner".into()),
+            Type::Resource("tcp.Stream".into()),
+            Type::Resource("outbox.QueueOwner".into()),
+            Type::Resource("custom.Owner".into()),
             Type::BufferSlice(Arc::new(Type::Named("domain.Handle".into()))),
             Type::BufferSlice(Arc::new(Type::Named("admission.Token".into()))),
         ] {
@@ -657,6 +723,7 @@ mod tests {
         }
         for words in [
             vec![],
+            vec![103, 0],
             vec![99],
             vec![99, 0],
             vec![99, 6],

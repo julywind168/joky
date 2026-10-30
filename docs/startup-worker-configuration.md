@@ -1,6 +1,6 @@
 # 启动时 worker 配置与并行能力演进计划
 
-状态：2026-10-30，W0–W2 已实现并验收，验证记录见第 8 节；W3 已实现并验收，W3a 记录见第 9 节、W3b–W3d 联合验收见第 10 节；W4 已实现并验收（第 11 节），W5a 审计完成，W5b 迁移桥已实现并验收（第 12 节）；W5c 暂缓；W6a 可行性设计完成；W6b-1 已实现根任务失败排空基础；W6b-2／W6b-3 已联合接通三后端受检静态 join 借用，验收记录见 13.8；W6c 已接通局部子树异步排空、嵌套借用组和只读 race，记录见 13.9；W6d 只读再借用已实现并验收，记录见 13.10；W6e 动态只读捕获已实现并验收，记录见 13.11；W6f 资格诊断已实现并验收，记录见 13.12；W6g 只读聚合元素已实现并验收，记录见 13.13；W6h 分支内部受检回调已实现并验收，记录见 13.14；W6i 普通数据只读借用已实现并验收，记录见 13.15；W6j 拥有元素只读借用已实现并验收，记录见 13.16；W6k FixedArray 拥有元素已实现并验收，记录见 13.17；W6l 枚举只读借用与 FixedArray 枚举元素已实现并验收，记录见 13.18；W6m List／Map／Set 只读借用已实现并验收，记录见 13.19；W6n 受检间接 join/race 借用入口已实现并验收，见 13.20；W6o FixedArray 与 List／Map／Set 双向组合已实现并验收，见 13.21；W6p 带自定义 Drop 的普通数据只读借用已实现并验收，见 13.22。
+状态：2026-10-30，W0–W2 已实现并验收，验证记录见第 8 节；W3 已实现并验收，W3a 记录见第 9 节、W3b–W3d 联合验收见第 10 节；W4 已实现并验收（第 11 节），W5a 审计完成，W5b 迁移桥已实现并验收（第 12 节）；W5c 暂缓；W6a 可行性设计完成；W6b-1 已实现根任务失败排空基础；W6b-2／W6b-3 已联合接通三后端受检静态 join 借用，验收记录见 13.8；W6c 已接通局部子树异步排空、嵌套借用组和只读 race，记录见 13.9；W6d 只读再借用已实现并验收，记录见 13.10；W6e 动态只读捕获已实现并验收，记录见 13.11；W6f 资格诊断已实现并验收，记录见 13.12；W6g 只读聚合元素已实现并验收，记录见 13.13；W6h 分支内部受检回调已实现并验收，记录见 13.14；W6i 普通数据只读借用已实现并验收，记录见 13.15；W6j 拥有元素只读借用已实现并验收，记录见 13.16；W6k FixedArray 拥有元素已实现并验收，记录见 13.17；W6l 枚举只读借用与 FixedArray 枚举元素已实现并验收，记录见 13.18；W6m List／Map／Set 只读借用已实现并验收，记录见 13.19；W6n 受检间接 join/race 借用入口已实现并验收，见 13.20；W6o FixedArray 与 List／Map／Set 双向组合已实现并验收，见 13.21；W6p 带自定义 Drop 的普通数据只读借用已实现并验收，见 13.22；W6q 受检 VM 资源只读借用已实现，见 13.23。
 本文记录启动时选择 worker 数量的目标、决策与实施顺序。当前行为以[语言参考](language.md#任务执行模式)为准，
 执行器与 ABI 不变量见[架构说明](architecture.md)。
 
@@ -1150,3 +1150,38 @@ FixedArray 的自定义 Drop 元素存储、资源／dyn／含引用存储及独
 （1807 通过、157 忽略）、CLI（340 通过、8 忽略）、其余默认集成与文档测试，以及
 while（0／1000）和 Map（0／32）短输入三后端正确性检查。之后只更新文档，未重复运行代码检查。
 `git diff --check` 通过；未运行 Release、完整 stress、Linux 实机或性能测量。
+
+
+### 13.23 W6q：受检 VM 资源只读借用（阶段 1）
+
+开放 `&vm.Vm`、`&vm.Owner` 及已有合法普通存储中的 VM 字段；覆盖静态 join/race、动态 branch、
+嵌套再借用和聚合快照。只读约束作用于句柄借用，VM 内部调用、重载与关闭仍遵循已有共享代理语义。
+
+发送方核对当前任务、私有代理类型与控制树；跨线程只传 VM 代理身份。接收方安装本地资源视图，
+其 token／ResourceEvent 由 Loan 持有并计入预算，帧停止后归还；不转移源 owner 析构责任，不隐式 close。
+VM 创建标记与 owned-transfer 资格分离，其他控制资源不能冒充共享 VM。
+私有物理布局升为 17，入口外层仍为 v2，AOT 对象和运行库需要一起重编。
+独立 AOT 验证暴露并修复了 Scope 对 VM 编译模块的错误类型假定：现在直接保留根任务的实际
+code/authority owner，兼容进程常驻代码与文件权限对象，嵌入式 VM 的旧代码保活语义不变。
+
+不开放 Mailbox、TCP、迁移 owner、任意外部资源或 `&mut` 资源的跨 worker 输入。
+VM 内置适配器获得受检调用资格，其他宿主引用 ABI 保持原有限制。
+因此 chat 的 `&Script` 已不再是类型阻挡点，但顶层 race 仍受 `admission.Pool.handle` 的宿主引用 ABI 限制；
+`session.run` 的下一阻挡点是 `&mut Mailbox`，超时读取仍是 `&mut BufferedTcpReader`。
+这些限制不通过改写 chat 或扩大通用宿主借用权限绕过。
+
+执行用例见 [scoped_borrow_vm.jk](../tests/fixtures/scoped_borrow_vm.jk)，覆盖结构体与 Array 的 VM 字段、
+嵌套和动态借用、独立 share 结果、重载后的身份一致性、race／isolate 排空、取消及预算归还。
+
+2026-10-30，macOS 本机 Debug 定向验证：
+
+- `cargo test --lib -- scoped_ parallel_control task_layout_versions`：55 通过、3 项穷举忽略。
+  包含 VM 代理类型／控制树拒绝、布局版本、现有三后端借用回归，以及新用例的 JIT／解释器 1 与 3 worker 派发、取消和预算归还。
+- 修复独立 AOT 保活对象后，仅重跑受影响的 5 项 VM 借用、嵌套再借用及来源析构／旧模块保活测试，全部通过。
+- `cargo test --test cli task_parallel_control_bridge_runs_in_standalone_aot`：通过，运行原有控制桥及新 VM 借用 fixture。
+- `cargo test --test chat chat_parallel_real_tcp_on_all_backends -- --ignored --nocapture`：通过。
+  覆盖 JIT／解释器宿主 3 worker、AOT 宿主 1／3 worker，分别搭配 JIT／解释器脚本的真实 TCP、重载与关闭场景。
+- `cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 和 `git diff --check` 通过。
+- `explain-parallel examples/chat` 确认剩余阻挡点与上文一致。
+
+按用户要求未运行 `scripts/check.sh`、全量测试、穷举、Release 或性能测量。

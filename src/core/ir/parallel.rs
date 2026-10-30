@@ -322,16 +322,18 @@ pub(crate) fn analyse(
             dependencies.extend(op.dependencies().cloned());
             let branch_supported = |name: &String| {
                 plan.functions.get(name).is_some_and(|f| {
-                    let owned = |ty| {
+                    let signature = scoped::signature(plan, name);
+                    let owned = |ty: &Type| {
                         packet::classify(ty, &resolve, &|_| false)
                             .is_some_and(packet::Kind::implemented)
                     };
-                    f.signature.params.iter().all(|ty| {
+                    signature.params.iter().all(|ty| {
                         // Cursor references and thread-bound capabilities
                         // retain their existing dynamic-capture rejection.
                         owned(ty)
                             || (ty.reference_type().is_some()
-                                && qualify_with(ty, &resolve).transfer)
+                                && (qualify_with(ty, &resolve).transfer
+                                    || crate::runtime::parallel::scoped::Shape::of(ty).is_some()))
                     }) && owned(&f.signature.ret)
                 })
             };

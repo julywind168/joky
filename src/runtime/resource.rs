@@ -274,6 +274,9 @@ impl Drop for ResourceLease {
     }
 }
 impl OwnedResource {
+    pub(crate) fn event_bytes() -> usize {
+        std::mem::size_of::<EventState>() + 2 * std::mem::size_of::<usize>()
+    }
     pub(crate) fn from_token(
         token: NonNull<c_void>,
         release: ResourceReleaseV1,

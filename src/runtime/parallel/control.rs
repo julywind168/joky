@@ -373,8 +373,29 @@ impl Core {
 }
 struct Proxy {
     id: u64,
+    shared_vm: bool,
     core: Arc<Core>,
     _charge: Lease,
+}
+/// Send-safe identity only; the resource and its arena stay on the control thread.
+pub(super) struct SharedVm(Arc<Proxy>);
+impl SharedVm {
+    pub(super) unsafe fn capture(bits: u64) -> Result<Self, Error> {
+        let buffer = (bits as *const Buffer)
+            .as_ref()
+            .ok_or_else(|| invalid("Null shared VM"))?;
+        if !buffer.scoped_resource() {
+            return Err(invalid("Shared VM belongs to another task"));
+        }
+        let value = proxy(bits, &pool::control()?)?;
+        if !value.shared_vm || value.core.closed.load(Ordering::Acquire) {
+            return Err(invalid("Resource is not a live shared VM proxy"));
+        }
+        Ok(Self(value))
+    }
+    pub(super) fn install(self) -> Result<OwnedResource, Error> {
+        proxy_resource(self.0)
+    }
 }
 impl Drop for Proxy {
     fn drop(&mut self) {
@@ -409,10 +430,11 @@ unsafe fn proxy(bits: u64, core: &Arc<Core>) -> Result<Arc<Proxy>, Error> {
     Ok(proxy.clone())
 }
 fn adopt(arena: &mut Arena, proxy: Arc<Proxy>) -> Result<u64, Error> {
+    Ok(Buffer::external(arena, proxy_resource(proxy)?)?.as_ptr() as u64)
+}
+fn proxy_resource(proxy: Arc<Proxy>) -> Result<OwnedResource, Error> {
     let token = NonNull::new(Box::into_raw(Box::new(proxy)).cast()).unwrap();
-    let resource = OwnedResource::from_token(token, release)
-        .inspect_err(|_| unsafe { release(token.as_ptr()) })?;
-    Ok(Buffer::external(arena, resource)?.as_ptr() as u64)
+    OwnedResource::from_token(token, release).inspect_err(|_| unsafe { release(token.as_ptr()) })
 }
 unsafe fn byte_len(bits: u64, stride: usize) -> Result<usize, Error> {
     let buffer = (bits as *const Buffer)
@@ -742,6 +764,7 @@ impl Call {
                     .map_err(|_| invalid("Control identities exhausted"))?;
                 let proxy = Arc::new(Proxy {
                     id,
+                    shared_vm: matches!(self.request.op, Operation::VmCreate),
                     core: core.clone(),
                     _charge: core.root.accounts().reserve(
                         std::mem::size_of::<Proxy>() + std::mem::size_of::<LocalResource>(),
@@ -944,6 +967,60 @@ pub(crate) unsafe fn close_vm(bits: u64) -> Result<u64, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scoped_borrow_vm_rejects_other_proxy_kinds_and_control_trees() {
+        struct Probe;
+        impl pool::Job for Probe {
+            fn poll(&mut self) -> std::task::Poll<Result<pool::Output, Error>> {
+                let result = (|| unsafe {
+                    let root = super::super::current().unwrap();
+                    let mut arena = Arena::with_storage(root.clone());
+                    let core = pool::control()?;
+                    let owner = create_vm(&mut arena, 1)?.as_ptr() as u64;
+                    let shared = SharedVm::capture(owner)?.install()?;
+                    let alias = Buffer::external(&mut arena, shared)?.as_ptr() as u64;
+                    assert!(SharedVm::capture(alias).is_ok());
+                    let (driver, other) = Driver::start(root.clone(), None, Default::default())?;
+                    for (tree, shared_vm) in [(core.clone(), false), (other.clone(), true)] {
+                        let forged = adopt(
+                            &mut arena,
+                            Arc::new(Proxy {
+                                id: u64::MAX,
+                                shared_vm,
+                                core: tree,
+                                _charge: root.accounts().reserve(std::mem::size_of::<Proxy>())?,
+                            }),
+                        )?;
+                        assert!(SharedVm::capture(forged).is_err());
+                        Buffer::release(&mut arena, forged as *mut Buffer)?;
+                    }
+                    driver.join();
+                    assert!(SharedVm::capture(0).is_err());
+                    Buffer::release(&mut arena, owner as *mut Buffer)?;
+                    assert!(SharedVm::capture(owner).is_err());
+                    // Dropping the source alias does not invalidate the copied identity.
+                    assert!(SharedVm::capture(alias).is_ok());
+                    Buffer::release(&mut arena, alias as *mut Buffer)?;
+                    Ok(Box::new(()) as pool::Output)
+                })();
+                std::task::Poll::Ready(result)
+            }
+        }
+        let budget = super::super::TaskBudget::new(32 << 20);
+        let mut executor = pool::ParallelExecutor::new(1, 8).unwrap();
+        let task = executor
+            .submit(
+                Storage::new(vec![budget.clone()]).unwrap(),
+                Arc::new(()),
+                Box::new(|| Ok(Box::new(Probe))),
+            )
+            .unwrap();
+        task.wait().unwrap();
+        task.take().unwrap().unwrap();
+        drop(task);
+        executor.wait_closed();
+        assert_eq!(budget.used(), 0);
+    }
     #[test]
     fn migration_command_reply_is_reserved_before_execution() {
         let budget = super::super::TaskBudget::new(32 << 20);

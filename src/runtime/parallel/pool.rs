@@ -273,7 +273,12 @@ pub(crate) fn check_cancelled() -> Result<(), Error> {
 }
 
 pub(crate) fn code<T: Any + Send + Sync>() -> Option<Arc<T>> {
-    CURRENT.with(|c| c.borrow().as_ref()?.code.clone().downcast().ok())
+    code_owner()?.downcast().ok()
+}
+/// Preserve the root's code/authority owner without assuming a VM entry.
+/// Standalone AOT code is process-resident and carries file authority here.
+pub(crate) fn code_owner() -> Option<Arc<dyn Any + Send + Sync>> {
+    CURRENT.with(|c| Some(c.borrow().as_ref()?.code.clone()))
 }
 /// A control request retains cleanup responsibility until its Local frame is gone.
 pub(crate) struct ControlReceipt(Arc<Task>);

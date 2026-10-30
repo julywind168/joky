@@ -18,6 +18,7 @@ struct Field {
 #[derive(Clone, Debug)]
 enum Kind {
     Bytes(usize),
+    SharedVm,
     Owner(Arc<Element>),
     Enum(Layout, Vec<(usize, Element)>),
 }
@@ -44,6 +45,10 @@ impl Element {
                 }
                 let layout = ty.storage_layout().ok()?;
                 match ty {
+                    Type::Resource(name) if name.as_ref() == "vm.Owner" => out.push(Field {
+                        offset,
+                        kind: Kind::SharedVm,
+                    }),
                     Type::Record(r) => {
                         let crate::memory_layout::MemoryLayoutShape::Record(locations) =
                             layout.shape
@@ -130,7 +135,7 @@ impl Element {
         let mut owners = Vec::new();
         for field in &fields {
             match &field.kind {
-                Kind::Owner(_) => owners.push(field.offset),
+                Kind::Owner(_) | Kind::SharedVm => owners.push(field.offset),
                 Kind::Enum(_, variants) => {
                     for (offset, payload) in variants {
                         owners.extend(payload.owners().map(|owner| field.offset + offset + owner));
@@ -159,7 +164,7 @@ impl Element {
                         variants.capacity() * std::mem::size_of::<(usize, Element)>()
                             + variants.iter().map(|(_, e)| e.bytes()).sum::<usize>()
                     }
-                    Kind::Bytes(_) => 0,
+                    Kind::Bytes(_) | Kind::SharedVm => 0,
                 })
                 .sum::<usize>()
     }
@@ -181,6 +186,7 @@ impl Element {
             words.push(f.offset as u64);
             match &f.kind {
                 Kind::Bytes(size) => words.push(*size as u64),
+                Kind::SharedVm => words.push(11),
                 Kind::Owner(element) => {
                     words.push(9);
                     element.encode(words);
@@ -227,6 +233,7 @@ impl Element {
             let tag = word(words)?;
             let (kind, width, alignment) = match tag {
                 1 | 2 | 4 | 8 => (Kind::Bytes(tag), tag, tag),
+                11 => (Kind::SharedVm, 8, 8),
                 9 => (
                     Kind::Owner(Arc::new(Self::decode(words, depth + 1, work)?)),
                     std::mem::size_of::<usize>(),
@@ -297,6 +304,11 @@ impl Element {
                 let source = base.add(f.offset);
                 match &f.kind {
                     Kind::Bytes(_) => {}
+                    Kind::SharedVm => {
+                        if !Shape::vm().eligible(source.cast::<u64>().read()) {
+                            return false;
+                        }
+                    }
                     Kind::Owner(element) => {
                         let owner = source.cast::<*const Buffer>().read();
                         let Some(buffer) = owner.as_ref() else {
@@ -375,6 +387,7 @@ impl Element {
                     let shape = Shape {
                         element: element.layout,
                         plain: false,
+                        shared_vm: false,
                         graph: Some(element.clone()),
                     };
                     let range = Range::capture(
@@ -383,6 +396,12 @@ impl Element {
                         scope.clone(),
                     )?;
                     snapshot.children.push((offset, range));
+                }
+                Kind::SharedVm => {
+                    snapshot.children.push((
+                        offset,
+                        Range::capture(&Shape::vm(), source.cast::<u64>().read(), scope.clone())?,
+                    ));
                 }
                 Kind::Enum(_, variants) => {
                     let tag = source.cast::<i32>().read();

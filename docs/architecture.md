@@ -195,7 +195,7 @@ Local 实际调用后按编译器类型描述登记结果包；Parallel 分派�
 原生入口描述符包含版本、作用域借用凭据、帧槽数、物理布局与捕获清理键映射，数据通过 AOT relocation
 关联代码。清理回调由已检查的捕获登记及结果收集代码提供；Local 代码保活仍由调用方的模块/
 AOT 所有者契约保证。解释器入口直接持有所属快照的 callee；两者都不能据此跨线程传递 Rc。
-CPS 私有入口外层 `NativeTaskEntryV2` 使用版本 2，内嵌私有物理布局使用版本 16；AOT 对象与运行库须一起重编。
+CPS 私有入口外层 `NativeTaskEntryV2` 使用版本 2，内嵌私有物理布局使用版本 17；AOT 对象与运行库须一起重编。
 C 侧不透明类型 `JokyTaskEntryV1` 与宿主任务参数 ABI 不变。登记桥保留 `__joky_task_entry_v1` 调用约定，
 先读取版本前缀，拒绝旧描述符后才读取 v2 新增字段。
 版本 10 为共享 String／普通标量 Array／Slice 附带私有借用形状；普通 `parallel_shapes` 仍拒绝引用。
@@ -251,6 +251,17 @@ Buffer 内容交换保留稳定表头身份：`mem.swap` 与 `mem.replace` 的 B
 Buffer 来源可保留元素 hooks，但仍须核对任务身份、拥有字段偏移、元素布局及有效区间，并拒绝失败或正在清理的来源。
 快照和远程 Buffer 头不复制 hooks；所有读者停止后，由原任务清理原值，失败和取消也不转移析构责任。
 FixedArray 自定义 Drop 元素及宿主任务值边界保持原有限制，私有布局和入口 ABI 无需升级。
+
+版本 17 增加 VM 资源借用：根标签 103 表示直接 `&vm.Owner`，元素图标签 11 表示 VM 资源字段。
+准入仅允许 `vm.Owner`，并要求完整 VM 内置调用契约；不把 owned-transfer 资源名单当作 shared-borrow 名单。
+运行时先核对源头属于当前任务或本地 Loan，再检查私有控制代理 callback、VM 创建标记及同一控制树身份。
+跨线程数据只包含 `Arc<Proxy>`，真实 VM 与 Local arena 仍归控制线程；聚合快照中的资源地址先清零，再安装接收端头。
+每个接收 Loan 独占自己的代理 token 和 ResourceEvent，Arena 视图通过本地 Loan 获取只读资源接口，
+`resource_mut` 不接受该视图。帧及其未完成操作先停止，再释放 Loan；部分安装失败也释放已安装代理。
+代理 token、事件与凭据计入任务预算。显式 share 的新拥有别名可以独立存活，临时引用释放不关闭逻辑 VM；
+跨 worker 可共享句柄不意味着其内部 VM 状态不可变化。Scope 保留根任务的实际 code/authority owner，
+不要求它一定是 VM 编译模块；独立 AOT 的代码常驻进程，其文件权限对象也得到保活。
+普通 TaskValue、公开引用 ABI 与入口外层 v2 不变。
 
 私有 `parallel::scoped::Input` 的借用分支传受检叶子数据区间、去掉拥有指针的快照、布局及作用域租约，不传 Buffer／帧／Rc。
 Buffer 保存当前拥有任务身份及本地 origin，slice 延续 origin；普通拥有包安装更新根 Buffer 的任务身份，
