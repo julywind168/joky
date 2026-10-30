@@ -103,6 +103,7 @@ pub(crate) enum Operation {
     DirectoryInsertOwnedNamed,
     DirectoryRemoveNamed,
     DirectoryRemoveNamedIf,
+    OutboxReceiveBytes,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +168,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__outbox_batch" => Operation::OutboxBatch,
         "__outbox_stage" => Operation::OutboxStage,
         "__outbox_receive" => Operation::OutboxReceive,
+        "__outbox_receive_bytes" => Operation::OutboxReceiveBytes,
         "__outbox_attach" => Operation::OutboxAttach,
         "__outbox_attach_pair" => Operation::OutboxAttachPair,
         "__outbox_attach_set" => Operation::OutboxAttachSet,
@@ -403,6 +405,10 @@ impl Operation {
             Self::OutboxBatch => (vec![i.clone(), i], batch),
             Self::OutboxStage => (vec![Type::reference(batch, true), i, bytes], Type::Int32),
             Self::OutboxReceive => (vec![Type::reference(queue, true)], message),
+            Self::OutboxReceiveBytes => (
+                vec![Type::reference(queue, true)],
+                Type::tuple(vec![Type::Bool, bytes]),
+            ),
             Self::OutboxMessageClosed => (vec![Type::reference(message, false)], Type::Bool),
             Self::OutboxMessageBytes => (vec![Type::reference(message, true)], bytes),
             Self::OutboxAttach | Self::OutboxAttachPair | Self::OutboxAttachSet => (
@@ -628,6 +634,19 @@ impl Operation {
         if self == Self::OutboxMessageBytes && bytes(&actual.ret) {
             actual.ret = Type::Buffer(std::sync::Arc::new(Type::UInt8));
         }
+        if self == Self::OutboxReceiveBytes {
+            if let Type::Tuple(tuple) = &actual.ret {
+                if tuple.elements.len() == 2
+                    && tuple.elements[0] == Type::Bool
+                    && bytes(&tuple.elements[1])
+                {
+                    actual.ret = Type::tuple(vec![
+                        Type::Bool,
+                        Type::Buffer(std::sync::Arc::new(Type::UInt8)),
+                    ]);
+                }
+            }
+        }
         if !suspends || actual != self.signature() {
             return Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
@@ -754,6 +773,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         98 => Operation::DirectoryInsertOwnedNamed,
         99 => Operation::DirectoryRemoveNamed,
         100 => Operation::DirectoryRemoveNamedIf,
+        101 => Operation::OutboxReceiveBytes,
 
         _ => {
             super::error::record_error(Error::new_with_code(
@@ -770,6 +790,9 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
             if op == Operation::OutboxMessageBytes {
                 // Native aggregate results follow the one parameter lane.
                 (&mut (*frame).slots)[1] = value;
+            } else if op == Operation::OutboxReceiveBytes {
+                // The presence flag is set by poll; the owned buffer is lane two.
+                (&mut (*frame).slots)[2] = value;
             }
             0
         }

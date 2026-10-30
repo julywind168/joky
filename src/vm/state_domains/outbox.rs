@@ -394,7 +394,7 @@ pub(super) unsafe fn poll(
     op: Operation,
 ) -> Result<Option<u64>, Error> {
     let result = poll_inner(arena, frame, registry, op);
-    if result.is_err() && op == Operation::OutboxReceive {
+    if result.is_err() && matches!(op, Operation::OutboxReceive | Operation::OutboxReceiveBytes) {
         stop(frame, 0);
     }
     result
@@ -477,7 +477,7 @@ unsafe fn poll_inner(
             message.take();
             Ok(Some(output.as_ptr() as usize as u64))
         }
-        Operation::OutboxHandle | Operation::OutboxReceive => {
+        Operation::OutboxHandle | Operation::OutboxReceive | Operation::OutboxReceiveBytes => {
             let lease = lease(frame.slots[0])?;
             let stored = &*lease.token().cast::<Stored<Owner>>();
             let owner = stored.value.borrow();
@@ -489,6 +489,22 @@ unsafe fn poll_inner(
             }
             let mut queue = owner.queue.borrow_mut();
             if queue.closed || !queue.messages.is_empty() {
+                if op == Operation::OutboxReceiveBytes {
+                    // Prepare the owned result before dequeuing. Allocation failure
+                    // leaves the front intact, including a zero-byte message.
+                    let message = queue.messages.front();
+                    let output = Buffer::copy_bytes(
+                        arena,
+                        message.map_or(&[], |message| message.bytes.as_slice()),
+                    )?;
+                    frame.slots[1] = u64::from(message.is_some());
+                    if let Some(message) = queue.messages.pop_front() {
+                        queue.bytes -= message.bytes.len();
+                    }
+                    drop(queue);
+                    stop(frame, 0);
+                    return Ok(Some(output.as_ptr() as u64));
+                }
                 // Allocate result ownership before removing the queue's front.
                 let output = adopt(arena, None::<Message>)?;
                 let result_lease = commits::lease(output)?;

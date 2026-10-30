@@ -765,6 +765,7 @@ pub(crate) unsafe fn poll(
                 | Operation::OutboxHandle
                 | Operation::OutboxClose
                 | Operation::OutboxReceive
+                | Operation::OutboxReceiveBytes
                 | Operation::OutboxMessageClosed
                 | Operation::OutboxMessageBytes
         )
@@ -819,6 +820,7 @@ pub(crate) unsafe fn poll(
         | Operation::OutboxBatch
         | Operation::OutboxStage
         | Operation::OutboxReceive
+        | Operation::OutboxReceiveBytes
         | Operation::OutboxAttach
         | Operation::OutboxAttachPair
         | Operation::OutboxAttachSet

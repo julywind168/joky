@@ -287,6 +287,8 @@ Rust Release 不代表 Joky 生成代码另开了优化选项，后者仍使用�
 [共享分配索引优化](reports/chat-storage-index-2026-10-30.md)。
 在此基础上省去受审计 helper 返回后的浮点环境重置，结果见
 [浮点环境调用边界优化](reports/chat-float-env-2026-10-30.md)。
+合并 outbox 领取／关闭查询／字节提取为一次控制接收，结果见
+[outbox 单次接收优化](reports/chat-outbox-receive-2026-10-30.md)。
 
 ### Rust/Tokio 应用对照
 

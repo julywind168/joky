@@ -17,13 +17,14 @@ fn exercise(settings: &Settings) @suspends -> Int32 {
     directory.handle();
     directory.close()
     let engine = vm.Vm.interpreter()
-    engine.load_source("import joky/domain import joky/outbox\nstruct State {{ value: Int32 }}\nfn make(value: Int32) -> State {{ State {{ value }} }}\nfn send(target: outbox.Handle) @suspends {{ let owner = domain.create(make, 0); let handle = owner.handle(); when \"send\" (mut handle) {{ handle.value += 1; let bytes = \"中\\0🙂\".into_bytes(); target.send(&bytes); let result: Result<Unit, Int32> = Ok({{}}); result }}.unwrap(); }}")!
+    engine.load_source("import joky/domain import joky/outbox\nstruct State {{ value: Int32 }}\nfn make(value: Int32) -> State {{ State {{ value }} }}\nfn send(target: outbox.Handle) @suspends {{ let owner = domain.create(make, 0); let handle = owner.handle(); when \"send\" (mut handle) {{ handle.value += 1; let bytes = \"中\\0🙂\".into_bytes(); target.send(&bytes); let empty = \"\".into_bytes(); target.send(&empty); let result: Result<Unit, Int32> = Ok({{}}); result }}.unwrap(); }}")!
     var queue = outbox.create(settings.messages, settings.bytes)
     let target = queue.handle()
     publish(&engine, target)
     let message = queue.receive()!
     let text = String.from_utf8(message)!
     if !text.equals("中\0🙂") { return -1 }
+    if !queue.receive()!.is_empty() { return -5 }
     let (_, end) = join { | closed(target) | queue.receive() }
     if end.is_some() { return -2 }
     var control = outbox.create(1, 1)

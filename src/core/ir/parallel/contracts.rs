@@ -50,6 +50,7 @@ pub(super) fn builtin(
                 | OutboxHandle
                 | OutboxClose
                 | OutboxReceive
+                | OutboxReceiveBytes
                 | OutboxMessageClosed
                 | OutboxMessageBytes => Contract::Scoped,
                 _ => Contract::Parallel,
@@ -105,6 +106,11 @@ mod tests {
             (
                 "__domain_admission_status",
                 Operation::AdmissionStatus,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__outbox_receive_bytes",
+                Operation::OutboxReceiveBytes,
                 Some(Contract::Scoped),
             ),
             (
@@ -238,6 +244,7 @@ mod tests {
         for op in [
             Operation::AdmissionHandle,
             Operation::OutboxReceive,
+            Operation::OutboxReceiveBytes,
             Operation::OutboxMessageBytes,
             Operation::DirectoryHandle,
         ] {

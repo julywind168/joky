@@ -64,6 +64,7 @@ impl Operation {
                 | OutboxHandle
                 | OutboxClose
                 | OutboxReceive
+                | OutboxReceiveBytes
                 | OutboxMessageClosed
                 | OutboxMessageBytes
         )
@@ -113,6 +114,9 @@ impl Operation {
                 ],
                 Bytes(1, false),
             ),
+            Self::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes) => {
+                (vec![Resource], Bytes(1, false))
+            }
             Self::Domain(op) => {
                 fn kind(ty: &Type) -> Kind {
                     match ty {
@@ -157,6 +161,8 @@ pub(crate) fn resource_type(name: &str) -> bool {
 enum Value {
     Word(u64),
     Bytes(Vec<u8>, usize),
+    // Reply-only: an empty message is distinct from a closed mailbox.
+    Received(Vec<u8>, bool),
     Resource(Arc<Proxy>),
 }
 struct Reply {
@@ -580,6 +586,11 @@ pub(crate) unsafe fn poll(
     let result = match response.value {
         Value::Word(value) => value,
         Value::Bytes(bytes, stride) => buffer(arena, &bytes, stride)?,
+        Value::Received(bytes, present) => {
+            let output = buffer(arena, &bytes, 1)?;
+            frame.slots[1] = u64::from(present);
+            output
+        }
         Value::Resource(value) => adopt(arena, value)?,
     };
     stop(frame, crate::runtime::borrowed_host::STOP_COMPLETED);
@@ -640,7 +651,17 @@ impl Call {
             .take()
             .ok_or_else(|| invalid("Control request already started"))?;
         let mut call = Self {
-            frame: Box::new(CpsFrame::try_new(input.len())?),
+            frame: Box::new(CpsFrame::try_new(
+                input.len()
+                    + if matches!(
+                        request.op,
+                        Operation::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes)
+                    ) {
+                        2
+                    } else {
+                        0
+                    },
+            )?),
             buffers: Vec::new(),
             keep: Vec::new(),
             prepared_reply: None,
@@ -651,6 +672,7 @@ impl Call {
         for (i, value) in input.into_iter().enumerate() {
             call.frame.slots[i] = match value {
                 Value::Word(value) => value,
+                Value::Received(_, _) => unreachable!("receive values are replies only"),
                 Value::Bytes(bytes, stride) => {
                     let value = buffer(&mut *cps::arena(&mut *call.frame), &bytes, stride)?;
                     call.buffers.push(value);
@@ -728,6 +750,7 @@ impl Call {
                 Operation::Domain(
                     crate::runtime::domain::Operation::AdmissionAcquire
                         | crate::runtime::domain::Operation::OutboxReceive
+                        | crate::runtime::domain::Operation::OutboxReceiveBytes
                 )
             )
         {
@@ -785,7 +808,14 @@ impl Call {
             Kind::Bytes(stride, _) => {
                 let bytes = copy_buffer(value, stride)?;
                 Buffer::release(&mut *cps::arena(&mut *self.frame), value as *mut Buffer)?;
-                Value::Bytes(bytes, stride)
+                if matches!(
+                    self.request.op,
+                    Operation::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes)
+                ) {
+                    Value::Received(bytes, self.frame.slots[1] != 0)
+                } else {
+                    Value::Bytes(bytes, stride)
+                }
             }
             Kind::Resource => {
                 if resources.len() >= LIMIT {

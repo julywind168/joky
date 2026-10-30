@@ -143,6 +143,7 @@ impl Builtin {
     pub(crate) fn result_slots(&self) -> usize {
         match self {
             Self::Domain(op) if op.status_payload() => 2,
+            Self::Domain(domain::Operation::OutboxReceiveBytes) => 2,
             Self::Domain(domain::Operation::OutboxMessageBytes) | Self::Dns => 1,
             Self::Tcp(op) if op.is_read() => 1,
             Self::Fs(op) if op.returns_bytes() => 1,

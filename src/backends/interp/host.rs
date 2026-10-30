@@ -229,6 +229,7 @@ impl HostPending {
                 + if matches!(
                     host.binding.entry,
                     HostEntry::Domain(op) if op.status_payload()
+                        || op == crate::runtime::domain::Operation::OutboxReceiveBytes
                 ) {
                     2
                 } else {
@@ -296,6 +297,15 @@ impl HostPending {
     }
 
     pub(super) fn aggregate_result(&self) -> Option<[Option<Value>; 2]> {
+        if matches!(
+            self.host.binding.entry,
+            HostEntry::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes)
+        ) {
+            return Some([
+                Some(Value::Bool(self.frame.slots[1] != 0)),
+                Some(Value::Reference(self.frame.result as usize as *mut u8)),
+            ]);
+        }
         if matches!(
             self.host.binding.entry,
             HostEntry::Domain(op) if op.status_payload()
@@ -393,7 +403,9 @@ impl HostPending {
                     value
                         .map(|bits| {
                             self.frame.result = bits;
-                            if op.status_payload() {
+                            if op.status_payload()
+                                || op == crate::runtime::domain::Operation::OutboxReceiveBytes
+                            {
                                 Ok(Value::Unit)
                             } else if matches!(
                                 op,

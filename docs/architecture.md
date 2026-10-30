@@ -1105,11 +1105,15 @@ Reject 目标任一失败不产生部分投递，也不触发 Disconnect 溢出�
 多 worker 域调度尚未开放，不以这一路径声称跨线程原子性。Request 额外保存一个失败邮箱 token，三种回执通过追加的
 私有 CommitFailedOutbox 操作（编号 92）查询，公共 CPS 帧 ABI 不变。该 token 仅描述已完成
 拒绝，不持有 Mailbox；暂存限额溢出或非邮箱拒绝不记录目标。接收等待只注册一个 waker，由独占 Mailbox 借用约束并发接收；
-stop 在帧清理时撤销等待。完成接收先分配 MessageOwner 再出队，再复制到任务的 Array<UInt8>，
-避免把运行时存储或模块所有权交给业务。消息纯数据化允许 Script 卸载后继续写出。
+stop 在帧清理时撤销等待。标准库接收使用单次 OutboxReceiveBytes 操作，返回
+`(Bool, Array<UInt8>)` 并包装为 Option；状态位区分零字节消息和关闭。先分配结果字节再出队，
+这一步分配失败保留队首。Parallel 通过一次控制请求传回状态与自有字节副本，在调用任务内
+安装 Array，不跨线程传递语言指针，也不创建中间 MessageOwner 代理；取消仍等待控制回执清理。
+旧的接收／消息查询／字节提取操作保留兼容。消息纯数据化允许 Script 卸载后继续写出。
 
-私有域操作分发使用 Outbox 编号 43–53，并追加 Disconnect 创建操作 94；字节数组边界检查 Array<UInt8> 名义包装和单 Buffer
-布局。原生返回数组使用参数之后的聚合结果槽，解释器返回同一拥有指针；公开 CPS 帧 ABI 不变。
+私有域操作分发使用 Outbox 编号 43–53，并追加 Disconnect 创建操作 94、单次接收操作 101；
+字节数组边界检查 Array<UInt8> 名义包装和单 Buffer 布局。单次接收原生结果使用参数之后的
+两个聚合槽（状态、拥有 Buffer），解释器解码相同的 Bool 与拥有指针；公开 CPS 帧 ABI 不变。
 API、拒绝结果与在途取消边界见[语言参考](language.md#提交式出站信箱-jokyoutbox)。
 
 ## 域目录与状态所有权
