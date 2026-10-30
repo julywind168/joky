@@ -11,6 +11,20 @@ fn add64(a: Float64, b: Float64) -> Float64 { dirty(); a + b }
 fn add32(a: Float32, b: Float32) -> Float32 { dirty(); a + b }
 fn half(a: Float64) -> Float64 { dirty(); a * 0.5 }
 fn half32(a: Float32) -> Float32 { dirty(); a * 0.5 }
+fn buffer_helpers(a: Float64, b: Float64) -> Float64 {
+    let values = [a, b]
+    var total: Float64 = 0.0
+    for value in &values {
+        dirty()
+        total += *value
+    }
+    total + values.get(1)!
+}
+fn buffer_bounds(a: Float64) -> Float64 {
+    let values = [a]
+    dirty()
+    values.get(7)!
+}
 fn indirect(a: Float64, b: Float64) -> Float64 {
     let f = add64
     f(a, b)

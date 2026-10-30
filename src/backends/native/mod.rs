@@ -113,6 +113,7 @@ pub(crate) fn compile<M: Module>(
         }
     }
     let mut ids = lower::declare_helpers(module)?;
+    let float_effects = float_env::Effects::runtime_helpers(&ids);
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
     let mut adapters = HashMap::new();
@@ -511,7 +512,7 @@ pub(crate) fn compile<M: Module>(
                 }
             }
             builder.finalize(target);
-            float_env::instrument(module, &mut ctx.func, &ids);
+            float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
             module
                 .define_function(ids[name], &mut ctx)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -592,7 +593,7 @@ pub(crate) fn compile<M: Module>(
             );
             builder.finalize(target);
         }
-        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids);
+        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
         module
             .define_function(ids[name], &mut ctx)
             .map_err(|e| compile_error(format!("Failed to define {name}: {e:?}")))?;
@@ -640,7 +641,7 @@ pub(crate) fn compile<M: Module>(
             lower::arena_entry(&mut builder, body, &refs);
         }
         builder.finalize(module.target_config());
-        float_env::instrument(module, &mut ctx.func, &ids);
+        float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -662,7 +663,7 @@ pub(crate) fn compile<M: Module>(
         let body = module.declare_func_in_func(entry, builder.func);
         lower::instance_entry(&mut builder, body, info);
         builder.finalize(module.target_config());
-        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids);
+        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(e.to_string()))?;

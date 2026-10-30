@@ -100,7 +100,7 @@ mod environment {
                 vm.call_float64_0("folded_tiny").unwrap().to_bits(),
                 0x8000000000000
             );
-            for name in ["add64", "indirect", "closure_borrowed64"] {
+            for name in ["add64", "indirect", "closure_borrowed64", "buffer_helpers"] {
                 assert_eq!(
                     vm.call_float64_2(name, 1.0, f64::from_bits(0x3ca0000000000000))
                         .unwrap()
@@ -140,6 +140,7 @@ mod environment {
             );
             assert_eq!(vm.call_int32_0("integer_result").unwrap(), 1);
             assert!(vm.call_float64_1("fail", 1.0).is_err());
+            assert!(vm.call_float64_1("buffer_bounds", 1.0).is_err());
             assert_eq!(testing::state(), saved, "{mode:?} error");
 
             for cancel in [false, true] {

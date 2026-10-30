@@ -285,3 +285,5 @@ Rust Release 不代表 Joky 生成代码另开了优化选项，后者仍使用�
 本机首轮结论与复现参数见 [2026-10-30 记录](reports/chat-workers-2026-10-30.md)。
 后续共享分配索引与锁外释放的三轮新旧对照、单客户端延迟和 CPU 成本见
 [共享分配索引优化](reports/chat-storage-index-2026-10-30.md)。
+在此基础上省去受审计 helper 返回后的浮点环境重置，结果见
+[浮点环境调用边界优化](reports/chat-float-env-2026-10-30.md)。
