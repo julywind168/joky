@@ -51,7 +51,7 @@ impl Default for Arena {
 pub(crate) struct Budget {
     pub bytes: Counter,
     pub limit: Counter,
-    pub shared: Option<std::sync::Mutex<super::parallel::Lease>>,
+    pub shared: Option<super::parallel::SharedLease>,
 }
 /// Atomic accounting shared by independently owned domain arenas.
 #[derive(Default)]
@@ -90,11 +90,7 @@ impl Budget {
                 )
             })?;
         if let Some(shared) = &self.shared {
-            if let Err(error) = shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .add(amount)
-            {
+            if let Err(error) = shared.add(amount) {
                 self.bytes
                     .0
                     .fetch_sub(amount, std::sync::atomic::Ordering::AcqRel);
@@ -105,10 +101,7 @@ impl Budget {
     }
     pub(crate) fn refund(&self, amount: usize) {
         if let Some(shared) = &self.shared {
-            shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .refund(amount);
+            shared.refund(amount);
         }
         let previous = self
             .bytes
@@ -760,10 +753,13 @@ mod tests {
 
     #[test]
     fn arena_region_transfers_keep_shared_counters_and_accounts_balanced() {
+        let task = super::super::parallel::TaskBudget::new(1 << 20);
+        let root = super::super::parallel::Storage::new(vec![task.clone()]).unwrap();
+        let baseline = task.used();
         let budget = std::sync::Arc::new(Budget {
             bytes: (0).into(),
             limit: (16384).into(),
-            ..Default::default()
+            shared: Some(root.accounts().shared_lease()),
         });
         let mut parent = Arena::with_budget(budget.clone(), Some(1024));
         parent.credit_imported();
@@ -779,13 +775,50 @@ mod tests {
         assert_eq!(account.bytes.get(), charged);
         assert_eq!(child.task_bytes.get(), charged);
         assert_eq!(budget.bytes.get(), charged);
+        assert_eq!(task.used(), baseline + charged);
         drop(child);
         assert_eq!(account.bytes.get(), parent.bytes);
         assert_eq!(parent.task_bytes.get(), parent.bytes);
         drop(parent);
         assert_eq!(account.bytes.get(), 0);
         assert_eq!(budget.bytes.get(), 0);
+        assert_eq!(task.used(), baseline);
+        drop((budget, root));
+        assert_eq!(task.used(), 0);
         LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+
+    #[test]
+    fn arena_shared_budget_rejection_rolls_back_only_the_new_charge() {
+        let task = super::super::parallel::TaskBudget::new(1 << 20);
+        let root = super::super::parallel::Storage::new(vec![task.clone()]).unwrap();
+        let baseline = task.used();
+        let held = root.accounts().reserve((1 << 20) - baseline - 5).unwrap();
+        let budget = Budget {
+            bytes: (0).into(),
+            limit: (10).into(),
+            shared: Some(root.accounts().shared_lease()),
+        };
+        budget.charge(5).unwrap();
+        // Local admission succeeds, but the shared parent refuses the addition.
+        assert_eq!(
+            budget.charge(1).unwrap_err().code(),
+            ErrorCode::ResourceLimit
+        );
+        assert_eq!(budget.bytes.get(), 5);
+        assert_eq!(task.used(), 1 << 20);
+        drop(held);
+        // Local rejection must not charge the now-available parent either.
+        assert_eq!(
+            budget.charge(6).unwrap_err().code(),
+            ErrorCode::ResourceLimit
+        );
+        assert_eq!(budget.bytes.get(), 5);
+        assert_eq!(task.used(), baseline + 5);
+        budget.refund(5);
+        assert_eq!(budget.bytes.get(), 0);
+        drop((budget, root));
+        assert_eq!(task.used(), 0);
     }
 
     #[test]

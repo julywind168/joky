@@ -48,6 +48,13 @@ impl TaskBudget {
 #[derive(Clone)]
 pub(crate) struct Accounts(Arc<[TaskBudget]>);
 impl Accounts {
+    pub(crate) fn shared_lease(&self) -> SharedLease {
+        SharedLease {
+            accounts: self.clone(),
+            bytes: AtomicUsize::new(0),
+        }
+    }
+
     pub(crate) fn empty_lease(&self) -> Lease {
         Lease {
             accounts: self.clone(),
@@ -68,41 +75,21 @@ impl Accounts {
         lease.resize(amount)?;
         Ok(lease)
     }
-}
-/// Unique refund authority. Moving a packet never refunds its storage.
-pub(crate) struct Lease {
-    accounts: Accounts,
-    bytes: usize,
-}
-impl Lease {
-    pub(crate) fn add(&mut self, amount: usize) -> Result<(), Error> {
-        self.resize(self.bytes.checked_add(amount).ok_or_else(limited)?)
-    }
-    pub(crate) fn refund(&mut self, amount: usize) {
-        assert!(self.bytes >= amount);
+    fn refund(&self, amount: usize) {
         if amount == 0 {
             return;
         }
-        for budget in self.accounts.0.iter() {
+        for budget in self.0.iter() {
             budget.0.used.fetch_sub(amount, Ordering::Relaxed);
         }
-        self.bytes -= amount;
     }
-
-    pub(crate) fn resize(&mut self, bytes: usize) -> Result<(), Error> {
-        if bytes <= self.bytes {
-            self.refund(self.bytes - bytes);
+    fn charge(&self, additional: usize) -> Result<(), Error> {
+        if additional == 0 {
             return Ok(());
         }
         // The sorted identities impose one lock order even for overlapping roots.
-        let _guards: Vec<_> = self
-            .accounts
-            .0
-            .iter()
-            .map(|b| lock(&b.0.admission))
-            .collect();
-        let additional = bytes - self.bytes;
-        if self.accounts.0.iter().any(|budget| {
+        let _guards: Vec<_> = self.0.iter().map(|b| lock(&b.0.admission)).collect();
+        if self.0.iter().any(|budget| {
             budget
                 .0
                 .used
@@ -116,10 +103,30 @@ impl Lease {
         // therefore only decrease after preflight. RMW updates preserve those
         // concurrent refunds; a load/store pair would lose them. These counters
         // account for bytes, not publication of the storage they cover.
-        for budget in self.accounts.0.iter() {
+        for budget in self.0.iter() {
             budget.0.used.fetch_add(additional, Ordering::Relaxed);
         }
-        self.bytes = bytes;
+        Ok(())
+    }
+}
+/// Unique refund authority. Moving a packet never refunds its storage.
+pub(crate) struct Lease {
+    accounts: Accounts,
+    bytes: usize,
+}
+impl Lease {
+    pub(crate) fn refund(&mut self, amount: usize) {
+        assert!(self.bytes >= amount);
+        self.accounts.refund(amount);
+        self.bytes -= amount;
+    }
+    pub(crate) fn resize(&mut self, bytes: usize) -> Result<(), Error> {
+        if bytes <= self.bytes {
+            self.refund(self.bytes - bytes);
+        } else {
+            self.accounts.charge(bytes - self.bytes)?;
+            self.bytes = bytes;
+        }
         Ok(())
     }
 }
@@ -127,6 +134,47 @@ impl Drop for Lease {
     fn drop(&mut self) {
         // Refund needs no allocation or admission lock, including during unwind.
         self.refund(self.bytes);
+    }
+}
+
+/// One aggregate refund authority shared by independently owned domain arenas.
+/// Callers refund only completed charges, once per allocation. Borrowing this
+/// owner throughout each operation prevents final cleanup during admission.
+pub(crate) struct SharedLease {
+    accounts: Accounts,
+    bytes: AtomicUsize,
+}
+impl SharedLease {
+    pub(crate) fn add(&self, amount: usize) -> Result<(), Error> {
+        if amount == 0 {
+            return Ok(());
+        }
+        // Reserve aggregate headroom before parent admission, including when
+        // there are no parent budgets. Concurrent refunds must not be lost.
+        self.bytes
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |bytes| {
+                bytes.checked_add(amount)
+            })
+            .map_err(|_| limited())?;
+        if let Err(error) = self.accounts.charge(amount) {
+            self.bytes.fetch_sub(amount, Ordering::Relaxed);
+            return Err(error);
+        }
+        Ok(())
+    }
+    pub(crate) fn refund(&self, amount: usize) {
+        if amount == 0 {
+            return;
+        }
+        let previous = self.bytes.fetch_sub(amount, Ordering::Relaxed);
+        assert!(previous >= amount);
+        self.accounts.refund(amount);
+    }
+}
+impl Drop for SharedLease {
+    fn drop(&mut self) {
+        // Exclusive destruction means all in-flight admissions have completed.
+        self.accounts.refund(*self.bytes.get_mut());
     }
 }
 
@@ -788,9 +836,8 @@ mod tests {
         let accounts = Accounts::new(vec![budget.clone()]);
         let mut lease = accounts.reserve(usize::MAX - 1).unwrap();
         assert!(accounts.reserve(2).is_err());
-        assert!(lease.add(2).is_err());
         assert_eq!(budget.used(), usize::MAX - 1);
-        lease.add(1).unwrap();
+        lease.resize(usize::MAX).unwrap();
         drop(lease);
         assert_eq!(budget.used(), 0);
     }
@@ -813,7 +860,7 @@ mod tests {
                     for _ in 0..1000 {
                         let mut lease = accounts.reserve(3).unwrap();
                         lease.resize(1).unwrap();
-                        lease.add(3).unwrap();
+                        lease.resize(4).unwrap();
                         drop(lease);
                     }
                 });
@@ -837,5 +884,99 @@ mod tests {
         assert_eq!(budget.used(), 0);
         drop(budget);
         assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn shared_lease_refunds_while_parent_admission_is_pending() {
+        for fail in [false, true] {
+            let budget = TaskBudget::new(20);
+            let accounts = Accounts::new(vec![budget.clone()]);
+            let shared = Arc::new(accounts.shared_lease());
+            shared.add(8).unwrap();
+            let held = accounts.reserve(if fail { 12 } else { 0 }).unwrap();
+            let admission = lock(&budget.0.admission);
+            let charging = shared.clone();
+            let worker = std::thread::spawn(move || charging.add(12));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while shared.bytes.load(Ordering::Relaxed) != 20 && std::time::Instant::now() < deadline
+            {
+                std::thread::yield_now();
+            }
+            let pending = shared.bytes.load(Ordering::Relaxed) == 20;
+            let refunding = shared.clone();
+            let (tx, rx) = mpsc::channel();
+            let refund = std::thread::spawn(move || {
+                refunding.refund(8);
+                tx.send(()).unwrap();
+            });
+            let completed = rx.recv_timeout(std::time::Duration::from_secs(5));
+            drop(admission);
+            let result = worker.join().unwrap();
+            refund.join().unwrap();
+            assert!(pending, "charge must reach parent admission");
+            completed.expect("old charges can be refunded during admission");
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(
+                shared.bytes.load(Ordering::Relaxed),
+                if fail { 0 } else { 12 }
+            );
+            assert_eq!(budget.used(), 12);
+            drop(shared);
+            assert_eq!(budget.used(), if fail { 12 } else { 0 });
+            drop(held);
+            assert_eq!(budget.used(), 0);
+        }
+    }
+
+    #[test]
+    fn shared_lease_concurrent_updates_and_final_refund_preserve_other_owners() {
+        let budgets: Vec<_> = (0..3).map(|_| TaskBudget::new(100)).collect();
+        let accounts = Accounts::new(budgets.clone());
+        let other = accounts.reserve(11).unwrap();
+        let shared = accounts.shared_lease();
+        shared.add(7).unwrap();
+        let gate = Barrier::new(4);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    gate.wait();
+                    for _ in 0..1000 {
+                        shared.add(3).unwrap();
+                        shared.refund(1);
+                        shared.add(2).unwrap();
+                        shared.refund(4);
+                    }
+                });
+            }
+        });
+        assert_eq!(shared.bytes.load(Ordering::Relaxed), 7);
+        assert!(budgets.iter().all(|budget| budget.used() == 18));
+        drop(shared);
+        assert!(budgets.iter().all(|budget| budget.used() == 11));
+        drop(other);
+        assert!(budgets.iter().all(|budget| budget.used() == 0));
+    }
+
+    #[test]
+    fn shared_lease_rejects_overflow_and_partial_parent_charges() {
+        let empty = Accounts::new(Vec::new()).shared_lease();
+        empty.add(usize::MAX).unwrap();
+        assert!(empty.add(1).is_err());
+        empty.add(0).unwrap();
+        empty.refund(0);
+        assert_eq!(empty.bytes.load(Ordering::Relaxed), usize::MAX);
+        empty.refund(usize::MAX);
+        assert_eq!(empty.bytes.load(Ordering::Relaxed), 0);
+
+        let mut budgets: Vec<_> = (0..3).map(|_| TaskBudget::new(100)).collect();
+        budgets.sort_by_key(|budget| Arc::as_ptr(&budget.0));
+        Arc::get_mut(&mut budgets[2].0).unwrap().limit = 10;
+        let shared = Accounts::new(budgets.clone()).shared_lease();
+        shared.add(7).unwrap();
+        assert!(shared.add(4).is_err());
+        assert_eq!(shared.bytes.load(Ordering::Relaxed), 7);
+        assert!(budgets.iter().all(|budget| budget.used() == 7));
+        drop(shared);
+        assert!(budgets.iter().all(|budget| budget.used() == 0));
     }
 }

@@ -380,7 +380,7 @@ impl Domains {
                 bytes: (0).into(),
                 limit: (limits.max_state_bytes).into(),
                 shared: crate::runtime::parallel::current()
-                    .map(|root| std::sync::Mutex::new(root.accounts().empty_lease())),
+                    .map(|root| root.accounts().shared_lease()),
             }),
             limits,
             parallel: Default::default(),

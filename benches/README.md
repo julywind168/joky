@@ -295,6 +295,8 @@ Rust Release 不代表 Joky 生成代码另开了优化选项，后者仍使用�
 [控制桥字节传输优化](reports/chat-byte-transfer-2026-10-30.md)。
 共享任务预算随后保留收费准入锁、将退款改为原子减法，结果见
 [预算退款优化](reports/chat-budget-2026-10-31.md)。
+域 Arena 外层共享记账锁的后续优化见
+[Arena 共享预算优化](reports/chat-arena-budget-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 
