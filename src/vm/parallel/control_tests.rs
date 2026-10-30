@@ -310,3 +310,97 @@ fn scoped_borrow_vm_budget_failures_refund_partial_graphs() {
         assert!(success);
     }
 }
+
+#[test]
+fn scoped_borrow_admission_calls_dispatch_and_cancel_pending_acquires() {
+    use crate::runtime::parallel::scoped;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static WAITING: AtomicUsize = AtomicUsize::new(0);
+    unsafe extern "C" fn waiting(_: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        WAITING.fetch_add(1, Ordering::Release);
+        0
+    }
+    let source = include_str!("../../../tests/fixtures/scoped_borrow_admission.jk")
+        .replace(
+            "struct Settings",
+            "extern fn waiting() @suspends\nstruct Settings",
+        )
+        .replace(
+            "    let pending = handle.acquire()!",
+            "    waiting(); let pending = handle.acquire()!",
+        );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_parallel_suspending_fn(
+                "waiting",
+                FunctionSignature::new(vec![], Type::Unit),
+                waiting,
+                0,
+                Arc::new(()),
+            )
+            .unwrap();
+        }
+        vm.load_source(&source)
+            .unwrap_or_else(|error| panic!("{error}"));
+        for workers in [1, 3] {
+            for close in [false, true] {
+                let budget = TaskBudget::new(4 << 20);
+                let mut pool = ParallelExecutor::new(workers, 32).unwrap();
+                let task = vm
+                    .prepare_parallel_task("main", vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                wait(&task);
+                assert_eq!(
+                    task.take_result().unwrap().value(),
+                    &TaskValue::Scalar(InstanceValue::Int32(0))
+                );
+                let tree = scoped::tree_observations(task.identity());
+                assert!(
+                    tree.iter().any(|o| o.source && o.parent != task.identity()),
+                    "nested admission readers stayed local"
+                );
+                let roots = scoped::observations(task.identity());
+                assert!(roots.iter().any(|o| !o.source));
+                if workers > 1 {
+                    let sender = roots.iter().find(|o| o.source).unwrap();
+                    assert!(roots.iter().any(|o| !o.source && o.thread != sender.thread));
+                }
+                drop(task);
+                WAITING.store(0, Ordering::Release);
+                let task = vm
+                    .prepare_parallel_task("parked", vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while WAITING.load(Ordering::Acquire) != 2
+                    || !pool.control_observations().iter().any(|(_, n)| *n == 2)
+                {
+                    assert!(!task.is_finished(), "{:?}", task.take_result().err());
+                    assert!(
+                        Instant::now() < deadline,
+                        "both admission waiters must be pending"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                if close {
+                    pool.request_close();
+                } else {
+                    task.request_cancel();
+                }
+                wait(&task);
+                assert_eq!(
+                    task.take_result().err().unwrap().code(),
+                    ErrorCode::Cancelled
+                );
+                assert!(pool.control_observations().iter().all(|(_, n)| *n == 0));
+                drop(task);
+                pool.wait_closed();
+                assert_eq!(budget.used(), 0, "{mode:?}/{workers}/{close}");
+            }
+        }
+    }
+}

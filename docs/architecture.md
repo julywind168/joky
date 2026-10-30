@@ -263,6 +263,14 @@ FixedArray 自定义 Drop 元素及宿主任务值边界保持原有限制，私
 不要求它一定是 VM 编译模块；独立 AOT 的代码常驻进程，其文件权限对象也得到保活。
 普通 TaskValue、公开引用 ABI 与入口外层 v2 不变。
 
+内置适配器的 Parallel 与 scoped 调用权限统一由 `core::ir::parallel::contracts` 校验，
+先验证完整保留签名与挂起约定，再区分仅 Parallel 和允许 scoped 调用的契约。根任务和借用调用图共用该表，
+一般宿主仍依赖实际绑定身份；物理包、引用形状、来源和生命周期证明不并入这张调用权限表。
+除 VM 外，admission 的 create／handle／close／try／acquire／status 获得 scoped 调用资格。
+它们只向控制线程传标量 token 或同树代理，不传来源引用地址；Pool／Permit 仍是调用任务自己的资源。
+worker stop 撤销请求，控制侧停止等待并释放资源保活，再通过 ControlReceipt 参与任务排空；
+不能把 stop 仅提交取消请求等同于控制侧已经同步停止。资源的共享借用白名单仍仅包含 vm.Owner。
+
 私有 `parallel::scoped::Input` 的借用分支传受检叶子数据区间、去掉拥有指针的快照、布局及作用域租约，不传 Buffer／帧／Rc。
 Buffer 保存当前拥有任务身份及本地 origin，slice 延续 origin；普通拥有包安装更新根 Buffer 的任务身份，
 尚未更新身份的嵌套拥有图不获得新来源证明。远程视图的 origin 仍为空，另存所属 worker 的

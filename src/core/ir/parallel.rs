@@ -5,6 +5,7 @@ use crate::{Error, ErrorCode, ErrorPhase, Type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod callables;
+mod contracts;
 pub(crate) mod packet;
 pub mod report;
 pub(crate) mod scoped;
@@ -234,8 +235,6 @@ pub(crate) fn analyse(
             );
         }
         let Some(body) = plan.bodies.get(name) else {
-            let tcp = crate::runtime::tcp::operation(name)
-                .is_some_and(|op| op.validate(signature, info.suspends).is_ok());
             use crate::core::types::walk::{TypeEdges, TypeWalk};
             let callable = signature
                 .params
@@ -245,24 +244,8 @@ pub(crate) fn analyse(
                     TypeWalk::new(ty, TypeEdges::Fields)
                         .any(|ty| matches!(ty, Type::Function(_)) || ty.is_closure_value())
                 });
-            let control = crate::core::builtins::Builtin::lookup(name).is_some_and(|builtin| {
-                builtin.validate(signature, info.suspends, false).is_ok()
-                    && match builtin {
-                        crate::core::builtins::Builtin::Dns
-                        | crate::core::builtins::Builtin::VmCall
-                        | crate::core::builtins::Builtin::VmSource
-                        | crate::core::builtins::Builtin::VmMigration(_)
-                        | crate::core::builtins::Builtin::Fs(_) => true,
-                        crate::core::builtins::Builtin::Domain(op) => {
-                            crate::runtime::parallel::control::Operation::domain(op).is_some()
-                        }
-                        crate::core::builtins::Builtin::Vm(_) => {
-                            matches!(name.as_str(), "__vm_create" | "__vm_share" | "__vm_close")
-                        }
-                        _ => false,
-                    }
-            });
-            if callable || (!hosts.contains(name) && !tcp && !control) {
+            let builtin = contracts::builtin(name, signature, info.suspends).is_some();
+            if callable || (!hosts.contains(name) && !builtin) {
                 reasons.insert(
                     name.clone(),
                     "host binding has no explicit ParallelSafe contract".into(),

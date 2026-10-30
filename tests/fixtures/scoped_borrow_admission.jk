@@ -1,0 +1,62 @@
+import joky/admission
+import joky/check
+import joky/task
+
+struct Settings { capacity: UInt64, answer: Int32 }
+
+// Only ordinary settings are borrowed. Each reader owns its pool and permits.
+fn exercise(settings: &Settings) @suspends -> Int32 {
+    let pool = admission.create(settings.capacity, 1)
+    let handle = pool.handle()
+    let permit = match handle.try_acquire() { Ok(value) => value, Err(_) => return -1 }
+    match handle.try_acquire() {
+        Err(admission.AcquireError.Full) => {}
+        _ => return -2
+    }
+    permit.release()
+    let next = match handle.acquire() { Ok(value) => value, Err(_) => return -3 }
+    pool.close()
+    match handle.try_acquire() {
+        Err(admission.AcquireError.Closed) => {}
+        _ => return -4
+    }
+    next.release()
+    settings.answer
+}
+fn nested(settings: &Settings) @suspends -> Int32 {
+    let (a, b) = join { | exercise(settings) | exercise(settings) }
+    a + b
+}
+fn blocked(settings: &Settings) @suspends -> Int32 {
+    let pool = admission.create(settings.capacity, 1)
+    let handle = pool.handle()
+    let permit = handle.acquire()!
+    let pending = handle.acquire()!
+    pending.release()
+    permit.release()
+    -1
+}
+fn fail(settings: &Settings) @suspends -> Int32 {
+    let _ = exercise(settings)
+    check.panic("admission reader failed")
+}
+fn main() @suspends -> Int32 {
+    let settings = Settings { capacity: 1, answer: 21 }
+    let (a, b) = join { | nested(&settings) | nested(&settings) }
+    if a + b != 84 { return 1 }
+    let view = &settings
+    scope {
+        branch { if exercise(view) != 21 { check.panic("bad admission result") } }
+    }
+    let winner = race { | blocked(&settings) | exercise(&settings) }
+    if winner != 21 { return 2 }
+    let failure = isolate { join { | fail(view) | blocked(view) } }
+    if failure.is_ok() { return 3 }
+    if exercise(&settings) != 21 { return 4 }
+    0
+}
+fn parked() @suspends -> Int32 {
+    let settings = Settings { capacity: 1, answer: 21 }
+    let (a, b) = join { | blocked(&settings) | blocked(&settings) }
+    a + b
+}

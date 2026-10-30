@@ -686,7 +686,7 @@ impl Call {
     unsafe fn poll(&mut self) -> Result<Option<u64>, Error> {
         let frame = &mut *self.frame;
         let arena = &mut *cps::arena(frame);
-        match self.request.op {
+        let result = match self.request.op {
             Operation::VmCreate => {
                 crate::runtime::resource::invoke(arena, &crate::stdlib::VM_FACTORY, frame.slots[0])
                     .map(|r| Some(r.as_ptr() as u64))
@@ -703,7 +703,23 @@ impl Call {
             }
             Operation::Domain(op) => crate::runtime::domain::poll(arena, frame, op),
             Operation::Fs(op) => crate::runtime::fs::poll(arena, frame, op),
+        };
+        // Cancellation probes must wait until admission has registered its
+        // waiter, not merely until the worker has submitted a command.
+        #[cfg(test)]
+        if !self.counted
+            && matches!(result, Ok(None))
+            && matches!(
+                self.request.op,
+                Operation::Domain(crate::runtime::domain::Operation::AdmissionAcquire)
+            )
+        {
+            if let Some(core) = self.request.core.upgrade() {
+                core.active_calls.fetch_add(1, Ordering::Release);
+                self.counted = true;
+            }
         }
+        result
     }
     unsafe fn finish(
         &mut self,

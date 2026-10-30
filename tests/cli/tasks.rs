@@ -519,6 +519,7 @@ fn task_parallel_control_bridge_runs_in_standalone_aot() {
     for source in [
         include_str!("../fixtures/parallel_control.jk"),
         include_str!("../fixtures/scoped_borrow_vm.jk"),
+        include_str!("../fixtures/scoped_borrow_admission.jk"),
     ] {
         let work = Workspace::new();
         work.write("parallel_control.jk", source);

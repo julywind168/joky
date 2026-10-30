@@ -262,6 +262,45 @@ mod tests {
     }
 
     #[test]
+    fn parallel_report_admission_calls_do_not_admit_shared_resource_inputs() {
+        let calls = report(
+            include_str!("../../../../tests/fixtures/scoped_borrow_admission.jk"),
+            "main",
+        );
+        assert!(calls.entry_error.is_none());
+        assert!(calls.sites.iter().any(|site| site.construct == "branch"));
+        for site in &calls.sites {
+            assert_eq!(
+                site.disposition,
+                if site.construct == "isolate" {
+                    ParallelDisposition::Local
+                } else {
+                    ParallelDisposition::RuntimeChecked
+                },
+                "{}",
+                site.reason
+            );
+        }
+        let shared = report(
+            r#"
+            import joky/admission
+            fn read(pool: &admission.Pool) @suspends { pool.handle(); }
+            fn main() @suspends {
+                let pool = admission.create(1, 1)
+                join { | read(&pool) | read(&pool) };
+            }
+        "#,
+            "main",
+        );
+        assert!(shared.entry_error.is_none());
+        assert_eq!(shared.sites.len(), 1);
+        assert_eq!(shared.sites[0].disposition, ParallelDisposition::Local);
+        assert!(shared.sites[0]
+            .reason
+            .contains("unsupported cross-worker input type"));
+    }
+
+    #[test]
     fn parallel_report_traces_scoped_call_graph_and_concrete_dependencies() {
         let report = report(
             r#"
