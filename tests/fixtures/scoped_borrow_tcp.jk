@@ -1,0 +1,117 @@
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type TcpReader, type TcpWriter, type Shutdown, type IoError, type ErrorKind}
+import joky/check
+import joky/task
+
+struct Settings { byte: UInt8, split: Bool }
+
+fn closed(result: Result<Unit, IoError>) {
+    if let Err(error) = result {
+        match error.kind() {
+            ErrorKind.NotConnected => {}
+            _ => check.panic("unexpected shutdown error")
+        }
+    }
+}
+
+fn send(settings: &Settings, var writer: TcpWriter) @suspends {
+    check.assert(writer.local_addr().is_ok(), "writer address")
+    check.assert(writer.peer_addr().is_ok(), "writer peer")
+    writer.write_all([settings.byte, settings.byte])!
+    writer.shutdown()!
+    writer.shutdown()!
+    writer.close()!
+}
+fn receive(settings: &Settings, var reader: TcpReader) @suspends {
+    check.assert(reader.local_addr().is_ok(), "reader address")
+    check.assert(reader.peer_addr().is_ok(), "reader peer")
+    var count: UInt64 = 0
+    while true {
+        let bytes = reader.read(1)!
+        if bytes.len() == 0 { break }
+        check.assert(bytes.get(0)! == settings.byte, "borrowed payload")
+        count += bytes.len()
+    }
+    check.assert(count == 2, "complete payload")
+    closed(reader.shutdown())
+    closed(reader.close())
+}
+fn exchange(settings: &Settings, var stream: TcpStream) @suspends {
+    check.assert(stream.local_addr().is_ok(), "stream address")
+    check.assert(stream.peer_addr().is_ok(), "stream peer")
+    stream.write_all([settings.byte])!
+    check.assert(stream.read(1)!.get(0)! == settings.byte, "stream payload")
+    if settings.split {
+        let (reader, writer) = stream.split()
+        join { | send(settings, writer) | receive(settings, reader) };
+    } else {
+        closed(stream.shutdown(Shutdown.Both))
+        stream.close()!
+    }
+}
+fn client(settings: &Settings, address: Address) @suspends {
+    exchange(settings, TcpStream.connect(address)!)
+}
+fn server(settings: &Settings, var listener: TcpListener) @suspends {
+    let stream = listener.accept()!
+    listener.close()!
+    exchange(settings, stream)
+}
+fn round(settings: &Settings) @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let address = listener.local_addr()!
+    join { | client(settings, address) | server(settings, listener) };
+}
+fn pending_accept(settings: &Settings) @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    check.assert(settings.byte == 42, "borrow before accept")
+    listener.accept()!;
+}
+fn pending_read(settings: &Settings, var stream: TcpStream) @suspends {
+    check.assert(settings.byte == 42, "borrow before read")
+    stream.read(1)!;
+}
+fn connect(address: Address) @suspends -> TcpStream { TcpStream.connect(address)! }
+fn accept(var listener: TcpListener) @suspends -> TcpStream { listener.accept()! }
+fn fail() @suspends { check.panic("cancel sibling") }
+
+fn main() @suspends {
+    let plain = Settings { byte: 42, split: false }
+    let halves = Settings { byte: 42, split: true }
+    let plain_view = &plain
+    let halves_view = &halves
+    scope {
+        branch { round(plain_view) }
+        branch { round(halves_view) }
+    }
+    race { | pending_accept(&plain) | task.sleep_ms(5) };
+    let settings = &halves
+    let failure = isolate {
+        join { | pending_accept(settings) | fail() };
+        0
+    }
+    check.assert(failure.is_err(), "isolated failure")
+    round(&plain)
+}
+fn parked_accept() @suspends {
+    let settings = Settings { byte: 42, split: false }
+    join { | pending_accept(&settings) | pending_accept(&settings) };
+}
+fn parked_read() @suspends {
+    let settings = Settings { byte: 42, split: false }
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let address = listener.local_addr()!
+    let (client, server) = join { | connect(address) | accept(listener) }
+    join { | pending_read(&settings, client) | pending_read(&settings, server) };
+}
+
+// No peer can report a secondary protocol failure before the allocation error.
+fn allocate(settings: &Settings) @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    check.assert(settings.byte == 42, "borrow in allocation probe")
+    check.assert(listener.local_addr()!.port() != 0, "bound address")
+    listener.close()!
+}
+fn allocation_budget() @suspends {
+    let settings = Settings { byte: 42, split: false }
+    join { | allocate(&settings) | allocate(&settings) };
+}

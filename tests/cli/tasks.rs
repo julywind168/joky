@@ -461,29 +461,37 @@ fn task_parallel_stdout_preserves_writes_and_reports_errors_on_all_backends() {
 #[test]
 fn task_parallel_tcp_handoff_runs_in_standalone_aot() {
     let work = Workspace::new();
-    work.write(
-        "parallel_tcp.jk",
-        include_str!("../fixtures/parallel_tcp.jk"),
-    );
-    let build = work
-        .command()
-        .args([
-            "build",
-            "--task-workers",
-            "3",
-            "parallel_tcp.jk",
-            "-o",
-            "parallel_tcp",
-        ])
-        .env("JOKY_RUNTIME", runtime_archive())
-        .output()
-        .unwrap();
-    success(&build);
-    success(
-        &Command::new(work.path().join("parallel_tcp"))
+    for (name, source) in [
+        ("parallel_tcp", include_str!("../fixtures/parallel_tcp.jk")),
+        (
+            "scoped_borrow_tcp",
+            include_str!("../fixtures/scoped_borrow_tcp.jk"),
+        ),
+    ] {
+        work.write(&format!("{name}.jk"), source);
+        let build = work
+            .command()
+            .args([
+                "build",
+                "--task-workers",
+                "3",
+                &format!("{name}.jk"),
+                "-o",
+                name,
+            ])
+            .env("JOKY_RUNTIME", runtime_archive())
             .output()
-            .unwrap(),
-    );
+            .unwrap();
+        success(&build);
+        for workers in ["1", "3"] {
+            success(
+                &Command::new(work.path().join(name))
+                    .args(["--task-workers", workers])
+                    .output()
+                    .unwrap(),
+            );
+        }
+    }
 }
 
 #[test]

@@ -301,6 +301,48 @@ mod tests {
     }
 
     #[test]
+    fn parallel_report_tcp_calls_do_not_admit_resource_reference_inputs() {
+        let calls = report(
+            include_str!("../../../../tests/fixtures/scoped_borrow_tcp.jk"),
+            "main",
+        );
+        assert!(calls.entry_error.is_none());
+        assert!(calls.sites.iter().any(|site| site.construct == "branch"));
+        for site in &calls.sites {
+            assert_eq!(
+                site.disposition,
+                if site.construct == "isolate" {
+                    ParallelDisposition::Local
+                } else {
+                    ParallelDisposition::RuntimeChecked
+                },
+                "{}",
+                site.reason
+            );
+        }
+        let borrowed = report(
+            r#"
+            import joky/tcp.{type Address, type TcpListener}
+            fn shared(listener: &TcpListener) @suspends {}
+            fn accept(listener: &mut TcpListener) @suspends { listener.accept()!; }
+            fn idle() @suspends {}
+            fn main() @suspends {
+                var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+                join { | shared(&listener) | shared(&listener) };
+                race { | accept(&mut listener) | idle() };
+            }
+        "#,
+            "main",
+        );
+        assert!(borrowed.entry_error.is_none());
+        assert_eq!(borrowed.sites.len(), 2);
+        for site in &borrowed.sites {
+            assert_eq!(site.disposition, ParallelDisposition::Local);
+            assert!(site.reason.contains("unsupported cross-worker input type"));
+        }
+    }
+
+    #[test]
     fn parallel_report_traces_scoped_call_graph_and_concrete_dependencies() {
         let report = report(
             r#"

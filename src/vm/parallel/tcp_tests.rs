@@ -223,12 +223,13 @@ fn parallel_tcp_pool_close_interrupts_real_write_backpressure() {
     let source = r#"
         import joky/tcp.{type Address, type TcpStream}
         import joky/array.{type Array}
-        fn fill(port: UInt16) @suspends {
-            var stream = match TcpStream.connect(Address.ipv4(0x7f000001, port)) {
+        struct Settings { port: UInt16, byte: UInt8 }
+        fn fill(settings: &Settings) @suspends {
+            var stream = match TcpStream.connect(Address.ipv4(0x7f000001, settings.port)) {
                 Ok(stream) => stream, Err(_) => panic("connect")
             }
             var hello = Array.new::<UInt8>()
-            hello.push(42)
+            hello.push(settings.byte)
             if stream.write_all(hello).is_err() { panic("hello") }
             while true {
                 var bytes = Array.with_capacity::<UInt8>(16384)
@@ -236,6 +237,11 @@ fn parallel_tcp_pool_close_interrupts_real_write_backpressure() {
                 while i < 16384 { bytes.push(7); i += 1 }
                 if stream.write_all(bytes).is_err() { panic("write") }
             }
+        }
+        fn main(port: UInt16) @suspends {
+            let settings = Settings { port, byte: 42 }
+            let view = &settings
+            scope { branch { fill(view) } }
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -257,12 +263,12 @@ fn parallel_tcp_pool_close_interrupts_real_write_backpressure() {
         let budget = TaskBudget::new(8 << 20);
         let prepared = vm
             .prepare_parallel_task(
-                "fill",
+                "main",
                 vec![TaskValue::Scalar(InstanceValue::UInt16(port))],
                 vec![budget.clone()],
             )
             .unwrap();
-        let mut pool = ParallelExecutor::new(1, 8).unwrap();
+        let mut pool = ParallelExecutor::new(3, 8).unwrap();
         let task = prepared.submit(&pool).unwrap();
         let stream = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
         peer.join().unwrap();
@@ -283,6 +289,11 @@ fn parallel_tcp_pool_close_interrupts_real_write_backpressure() {
             );
             std::thread::sleep(Duration::from_millis(1));
         };
+        let observations = crate::runtime::parallel::scoped::observations(task.identity());
+        let source = observations.iter().find(|o| o.source).unwrap();
+        assert!(observations
+            .iter()
+            .any(|o| !o.source && o.thread != source.thread));
         // The peer is still connected and intentionally does not drain payloads.
         pool.request_close();
         wait(&task);
@@ -295,6 +306,120 @@ fn parallel_tcp_pool_close_interrupts_real_write_backpressure() {
         assert_eq!(reactor.registration_count(), 0);
         assert_eq!(reactor.socket_count(), 0);
         assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
+fn scoped_borrow_tcp_calls_dispatch_and_drain_pending_io() {
+    use crate::runtime::parallel::scoped;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../../tests/fixtures/scoped_borrow_tcp.jk"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        for workers in [1, 3] {
+            let budget = TaskBudget::new(8 << 20);
+            let mut pool = ParallelExecutor::new(workers, 32).unwrap();
+            let task = vm
+                .prepare_parallel_task("main", vec![], vec![budget.clone()])
+                .unwrap()
+                .submit(&pool)
+                .unwrap();
+            wait(&task);
+            task.take_result().unwrap();
+            let tree = scoped::tree_observations(task.identity());
+            assert!(tree.iter().any(|o| o.source && o.parent != task.identity()));
+            let roots = scoped::observations(task.identity());
+            let sender = roots.iter().find(|o| o.source).unwrap();
+            assert!(roots.iter().any(|o| !o.source));
+            if workers > 1 {
+                assert!(roots.iter().any(|o| !o.source && o.thread != sender.thread));
+            }
+            drop(task);
+            // Observe actual reactor registrations, not merely entry into the
+            // function: both accepts/reads must be Pending before cancellation.
+            for entry in ["parked_accept", "parked_read"] {
+                // Each accept also reserves a permit for its future socket.
+                let sockets = if entry == "parked_accept" { 4 } else { 2 };
+                let task = vm
+                    .prepare_parallel_task(entry, vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(20);
+                let reactor = loop {
+                    if let Some(reactor) = pool.reactor() {
+                        if reactor.registration_count() == 2 && reactor.socket_count() == sockets {
+                            break reactor;
+                        }
+                    }
+                    assert!(
+                        !task.is_finished(),
+                        "{entry}: {:?}",
+                        task.take_result().err()
+                    );
+                    assert!(Instant::now() < deadline, "{entry} did not park");
+                    std::thread::sleep(Duration::from_millis(1));
+                };
+                let observations = scoped::observations(task.identity());
+                assert!(observations.iter().any(|o| !o.source));
+                if entry == "parked_read" {
+                    pool.request_close();
+                } else {
+                    task.request_cancel();
+                }
+                wait(&task);
+                assert_eq!(
+                    task.take_result().err().unwrap().code(),
+                    ErrorCode::Cancelled
+                );
+                drop(task);
+                assert_eq!(reactor.registration_count(), 0);
+                assert_eq!(reactor.socket_count(), 0);
+            }
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}/{workers}");
+        }
+    }
+}
+
+#[test]
+fn scoped_borrow_tcp_budget_failures_refund_readers_and_io() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../../tests/fixtures/scoped_borrow_tcp.jk"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        let mut success = false;
+        for bytes in [0, 4096, 16384, 65536, 262144, 1048576, 8388608] {
+            let budget = TaskBudget::new(bytes);
+            let mut pool = ParallelExecutor::new(3, 32).unwrap();
+            let result = vm
+                .prepare_parallel_task("allocation_budget", vec![], vec![budget.clone()])
+                .and_then(|prepared| prepared.submit(&pool))
+                .and_then(|task| {
+                    wait(&task);
+                    task.take_result()
+                });
+            success = result.is_ok();
+            if let Err(error) = &result {
+                assert_eq!(
+                    error.code(),
+                    ErrorCode::ResourceLimit,
+                    "{mode:?}/{bytes}: {error}"
+                );
+            }
+            drop(result);
+            let reactor = pool.reactor();
+            pool.wait_closed();
+            if let Some(reactor) = reactor {
+                assert_eq!(reactor.registration_count(), 0);
+                assert_eq!(reactor.socket_count(), 0);
+            }
+            assert_eq!(budget.used(), 0, "{mode:?}/{bytes}");
+            if success {
+                break;
+            }
+        }
+        assert!(success);
     }
 }
 

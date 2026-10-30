@@ -271,6 +271,13 @@ FixedArray 自定义 Drop 元素及宿主任务值边界保持原有限制，私
 worker stop 撤销请求，控制侧停止等待并释放资源保活，再通过 ControlReceipt 参与任务排空；
 不能把 stop 仅提交取消请求等同于控制侧已经同步停止。资源的共享借用白名单仍仅包含 vm.Owner。
 
+TCP 的固定内置操作也获得 scoped 调用资格，但端点必须是调用任务内部的拥有资源。
+接收端引用和标量输出地址只由该任务的执行帧使用；Pending 请求持有本地 ResourceLease、
+受预算限制的字节副本和 reactor 注册，不把这些地址交给其他 worker 或 reactor。
+stop 先使事件失效并同步撤销注册，再释放租约与请求存储，随后才能排空借用帧、归还来源。
+撤销注册失败会毒化 I/O source，旧 token 仍失效；取消不撤销已经发生的网络读写。
+此调用权限不授予 `&TcpListener`、`&mut TcpStream` 或其他 TCP 资源引用跨 worker 的输入资格。
+
 私有 `parallel::scoped::Input` 的借用分支传受检叶子数据区间、去掉拥有指针的快照、布局及作用域租约，不传 Buffer／帧／Rc。
 Buffer 保存当前拥有任务身份及本地 origin，slice 延续 origin；普通拥有包安装更新根 Buffer 的任务身份，
 尚未更新身份的嵌套拥有图不获得新来源证明。远程视图的 origin 仍为空，另存所属 worker 的

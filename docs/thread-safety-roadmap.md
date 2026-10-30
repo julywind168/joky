@@ -1,6 +1,6 @@
 # 线程安全与并行资格收敛路线
 
-状态：2026-10-30，S0 必要收敛与 S1 最小接口集合已实现，记录见第 7 节；S1 其余接口及 S2–S6 待实施。
+状态：2026-10-30，S0 必要收敛、S1 admission 最小集合及 TCP 调用契约已实现，记录见第 7–8 节；S1 其余接口及 S2–S6 待实施。
 起始实现基线为 W6q（`22525a4`）。
 
 本文承接[启动时 worker 配置与并行能力演进计划](startup-worker-configuration.md)，
@@ -39,7 +39,7 @@ Local 与 Parallel 继续是不同执行模式，Parallel 的 1 worker 不等同
 
 ## 2. 起始基础与缺口（W6q）
 
-以下以 W6q 为起点，本轮交付后的变化见第 7 节。已有能力的详细范围与测试记录引用 W 系列文档，
+以下以 W6q 为起点，后续交付的变化见第 7–8 节。已有能力的详细范围与测试记录引用 W 系列文档，
 不在这里复制完整类型支持表。
 
 | 方面 | 已有基础 | 接下来的缺口 |
@@ -104,7 +104,7 @@ W6q 后 chat 的已知阻挡点是：
 
 ## 4. 实施顺序
 
-以下顺序体现依赖和业务收益，不是一次性大重构要求。S0 必要收敛和 S1 的 admission 最小集合已完成；
+以下顺序体现依赖和业务收益，不是一次性大重构要求。S0 必要收敛和 S1 的 admission、TCP 调用集合已完成；
 S1 中其他宿主适配器仍需逐项审查，不能把最小集合交付解释为整个宿主引用 ABI 已开放。
 
 | 阶段 | 工作 | 完成标准 |
@@ -255,7 +255,7 @@ BufferedTcpReader 还包含缓冲区、已消费位置和剩余数据，借出�
 具体交付见下节，后续继续按这一粒度审计和验证接口。
 
 
-## 7. S0 必要收敛与 S1 最小集合交付
+## 7. S0 必要收敛与 S1 admission 最小集合交付
 
 ### 7.1 判定入口与本次收敛范围
 
@@ -322,3 +322,78 @@ chat 的顶层 race 已不再被 admission.handle 阻挡；当前首个阻挡点
 
 本轮未额外执行 ignored 的 chat 实网矩阵：此次只清除了一个调用资格阻挡，chat 相关子组仍保持本地派发。
 未运行 Release、完整 stress、额外穷举或性能测量。
+
+## 8. S1 TCP 调用契约
+
+本次继续消除受检调用造成的阻挡，开放全部 20 个固定 TCP 内置操作的 scoped 调用资格。
+这不是 S4 的 TCP 独占借用：任务仍须自己创建或接收拥有型端点，只借用普通配置等已获资格的数据。
+`&TcpListener`、`&TcpStream`、读写半部及其可变引用均不能成为跨 worker 的借用输入；
+BufferedTcpReader 的缓冲区、游标与端点归还协议也未改变。
+
+### 8.1 参数权限、绑定与停止审计
+
+| 操作 | 引用与 Pending 数据 | 结束与错误 |
+| --- | --- | --- |
+| bind／connect | 地址为标量；错误槽位属于调用帧；connect 保留受预算约束的连接 source、socket permit 与注册 | 成功交付拥有端点，失败返回原 IoError；终止先撤销注册，再释放未交付 source／permit |
+| accept | 本任务 ListenerOwner 的可变引用；取得 ResourceLease；注册持有监听 source，错误槽位只由调用任务填写 | 接收成功后交付新的拥有端点；取消撤销注册并释放租约、未交付 permit |
+| read／write（含半部） | 本任务端点租约；write 在开始时复制输入，read 使用有界宿主字节区；请求不保存借用设置的地址 | poll 返回时才在调用 worker 构造结果、填写错误槽位；stop 丢弃注册和请求，不把已发生读写回滚 |
+| 地址查询 | 本任务端点租约；地址和错误输出是该调用帧的标量槽位 | 同步取得地址并写入槽位，不把槽位交给 reactor |
+| split／shutdown／close（含半部） | 本任务端点租约；split 延用读写半部的共享连接与方向状态协议 | 正常、失败都走既有 stop／Drop；关闭或分割只改变调用任务拥有的端点状态 |
+
+契约先经过 `Builtin::validate` 的完整类型、可变性与挂起约定检查；执行端仍验证
+`HostEntry::Tcp` 的实际操作、Scalar ABI 与签名，普通函数指针不能冒充该适配器。
+VM 禁止覆盖保留内置绑定，外部资源注册不能伪造 TCP owner。
+泛用 extern 引用、stdout、DNS、outbox、目录和文件的 scoped 权限没有随 TCP 一并扩大。
+
+Pending 请求保存本地 `ResourceLease`、字节副本和 reactor 注册。reactor 只操作自己的 source／就绪表，
+不解引用任务帧、标量输出地址或借用视图。Request stop 先使 ResourceEvent 失效，
+再通过 IoRegistration Drop 同步撤销注册，之后字段析构释放租约和字节预算。
+撤销注册失败会毒化 source 并使旧 token 失效，不能恢复成可用的过期请求。
+因此借用任务的清理屏障可以继续保证先停止访问，再归还普通配置来源。
+没有新增运行时布局、ABI、资源来源或取消路径。
+
+### 8.2 行为覆盖
+
+[scoped_borrow_tcp.jk](../tests/fixtures/scoped_borrow_tcp.jk) 覆盖借用普通设置的动态 branch、
+嵌套 join、完整 TcpStream 与读写半部的真实回环通信、地址查询、显式 shutdown／close、race 取消和 isolate 失败恢复。
+专门的 parked 入口让两个 accept 或 read 确实进入 reactor Pending 后再触发根取消或池关闭；
+检查注册与 socket 计数归零、真实借用派发和最终预算归零。
+已有真实写背压用例也改为由借用设置的子任务执行，并验证它离开来源 worker 后仍能被池关闭中断。
+分配失败测试使用无对端通信的 bind／地址查询／close 借用组，按递增预算扫描，到首次成功且完整清理后停止。
+正常预算的通信测试独立断言完整负载；不能要求低预算下并发连接一定先报告 ResourceLimit，
+因为对端因分配失败关闭后，本端可能先观察到 EOF／协议失败。
+独立 AOT 复用同一 fixture，同一产物分别以 1／3 worker 启动。
+
+静态回归检查错误签名、可变性、挂起约定、ABI 与宿主入口不能获得契约，
+报告可执行 TCP 调用组的 runtime-check，同时继续报告资源引用输入的整组本地回退。
+
+### 8.3 chat 与下一步
+
+`explain-parallel examples/chat` 的入口仍合格，顶层 race 的首个阻挡点从 `TcpListener.accept`
+变为 `report_failure → println → __joky_write_stdout`。`session.run` 的 `&mut Mailbox`
+与超时读的 `&mut BufferedTcpReader` 仍保持本地，不能将清除 TCP 调用阻挡描述为 chat 已全面跨 worker。
+下一步继续 S1，审查 stdout 的实际 TextViewV2 绑定证据和同步只读文本契约；
+随后根据新的调用链决定是否补充目录、outbox 或文件接口，再进入 S2。
+
+### 8.4 验证记录
+
+2026-10-30，macOS 本机 Debug 验证：
+
+- `cargo test --lib -- scoped_borrow_tcp parallel_tcp_contract parallel_report_tcp parallel_tcp_pool_close`：最终版本 5 项通过。
+  覆盖 JIT／解释器、1／3 worker、实际派发、正常与失败清理、挂起 accept/read 取消、写背压以及预算不足。
+- `cargo test --test cli task_parallel_tcp_handoff_runs_in_standalone_aot`：通过；两个 fixture 的同一 AOT 产物分别以 1／3 worker 运行。
+- `cargo test --test chat chat_parallel_real_tcp_on_all_backends -- --ignored --nocapture`：通过；
+  8 个场景覆盖 JIT／解释器／AOT、两种脚本 VM，以及 AOT 启动时 1／3 worker，包含真实网络、重载与关闭。
+- `./scripts/check.sh` 只执行一次。格式与全目标 Clippy 通过；库测试 1817 通过、157 忽略，
+  唯一失败为本次新增预算测试错误地要求并发连接总先报告 ResourceLimit。
+  单独复现到第 13 次时，对端关闭后先触发了 `complete payload` 断言，确认了测试对错误先后顺序的依赖。
+- 修正仅涉及新 fixture 的预算入口与测试选择，不改变已经检查的生产实现。改用无对端通信的资源操作后，
+  上述 5 项重新通过；预算用例额外连续 20 次通过。没有重跑已经通过的全部库测试，也不将首次脚本执行记作完整通过。
+- 修正后再次通过 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`，并补完首次脚本未执行的后续项：
+  `cargo test --bins --test '*'`（含 340 项 CLI 回归及其余默认集成测试）、`cargo test --doc`、
+  `cargo test --bench while -- --iterations 0,1000` 和 `cargo test --bench map -- --iterations 0,32`，均通过。
+  更新后的共享 fixture 也由 CLI AOT 回归重新覆盖。
+- `explain-parallel examples/chat`、文档相对链接与 `git diff --check` 已核对。
+
+未运行 Release、完整 stress、额外穷举或性能测量。此次沿用已有资源存储和停止实现，
+额外验证聚焦新开放调用与借用生命周期的组合；最终验收只补充文档，没有再跑整套检查。
