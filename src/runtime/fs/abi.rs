@@ -2,7 +2,11 @@
 //!
 //! Registration is unsafe: callbacks and context must remain valid through all
 //! retained references, never unwind or reenter Joky, and synchronize their own
-//! workers. Submit copies input views before return. Poll transfers each result
+//! workers. The same context may receive concurrent callbacks from arbitrary
+//! threads, including shutdown and release callbacks. Context, operation, file
+//! and result tokens must not depend on thread affinity; the host synchronizes
+//! shared state and retains storage used by background work after stop/release.
+//! Submit copies input views before return. Poll transfers each result
 //! once. Stop revokes delivery without joining workers. Release callbacks only
 //! release storage or schedule cleanup; they never perform blocking file I/O.
 //! Hosts enforce bounded admission, including reserved per-file close capacity.

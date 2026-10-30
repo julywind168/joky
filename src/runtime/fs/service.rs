@@ -23,7 +23,9 @@ impl FileService {
     }
     /// Install a nonblocking host service, retaining its context after validation.
     /// # Safety
-    /// The descriptor must obey the protocol and lifetime contract in `abi`.
+    /// The descriptor must obey the protocol, lifetime and concurrent-callback
+    /// contract in `abi`. Its context and tokens must support arbitrary threads;
+    /// descriptor validation cannot establish those guarantees.
     pub unsafe fn from_descriptor(descriptor: FileServiceV1) -> Result<Self, Error> {
         Ok(Self(Service::External(External::new(descriptor)?)))
     }
