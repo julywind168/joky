@@ -195,15 +195,21 @@ impl Host {
             (HostCode::TextView(expected), HostEntry::Direct(entry)) => {
                 binding.abi == HostAbiKind::TextViewV2
                     && *entry == expected as *const u8
-                    && binding.signature
-                        == crate::FunctionSignature::new(
-                            vec![crate::Type::reference(crate::Type::String, false)],
-                            crate::Type::Int32,
-                        )
+                    && binding.signature == crate::core::builtins::stdout_signature()
+                    && (host.name != crate::core::builtins::STDOUT_NAME || host.is_stdout())
             }
             _ => false,
         };
         (matches && binding.signature == host.signature).then(|| host.clone())
+    }
+
+    pub(crate) fn is_stdout(&self) -> bool {
+        self.name == crate::core::builtins::STDOUT_NAME
+            && self.signature == crate::core::builtins::stdout_signature()
+            && matches!(self.code, HostCode::TextView(entry) if std::ptr::fn_addr_eq(
+                entry,
+                crate::stdlib::output::joky_io_write_stdout_v2 as unsafe extern "C" fn(*const u8) -> i32,
+            ))
     }
 }
 

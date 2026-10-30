@@ -563,7 +563,10 @@ impl TypeRegistry {
                     .with_span(function.span));
                 }
                 let builtin = super::builtins::Builtin::lookup(&function.name);
-                if let Some(builtin @ super::builtins::Builtin::Vm(_)) = &builtin {
+                if let Some(
+                    builtin @ (super::builtins::Builtin::Vm(_) | super::builtins::Builtin::Stdout),
+                ) = &builtin
+                {
                     builtin.validate_extern(function)?;
                 }
                 let unsupported_buffer = |ty: &Type| {

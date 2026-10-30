@@ -5181,7 +5181,7 @@ FixedArray 的元素存储仍不接受自定义 Drop；此能力不开放独占�
 接收 worker 获得指向同一个控制线程 VM 的临时代理，支持静态 join/race、动态 branch 和嵌套再借用。
 这里的“只读”指共享借用 VM 句柄；`call`、`load_source` 等仍可以改变 VM 内部状态，语义与 `share()` 一致。
 显式 `share()` 产生独立拥有别名；临时借用结束只归还代理引用，不执行 `Vm.close()`。
-完整调用图仍须受检；VM、TCP 内置操作及下述 admission 最小集合获准在借用任务内调用，其他宿主引用 ABI 仍可能使整个组留在本地。
+完整调用图仍须受检；VM、TCP、stdout 内置操作及下述 admission 最小集合获准在借用任务内调用，其他宿主引用 ABI 仍可能使整个组留在本地。
 Mailbox、TCP、迁移 owner、任意外部资源和所有 `&mut` 资源借用仍不在跨 worker 输入范围内。
 借用任务内部可以创建或接收拥有型 admission 资源，并调用 `Pool.handle`、`Pool.close`、
 `Handle.try_acquire`／`acquire` 和内部 permit 状态查询；这些操作通过既有控制桥传递标量 token 或代理身份。
@@ -5189,6 +5189,8 @@ Mailbox、TCP、迁移 owner、任意外部资源和所有 `&mut` 资源借用�
 同样，借用普通设置的任务可创建或接收拥有型 TCP 端点，执行 bind／connect／accept、读写、地址查询、
 split、shutdown 与 close。TCP 引用仅在调用任务内部使用，挂起操作在取消时先停止，再归还普通数据借用。
 这不开放来源任务的 TCP 端点或 BufferedTcpReader 的跨 worker 借用，也不改变已发生 I/O 的外部效果。
+借用任务也可使用 `print`／`println`；每次 stdout 写入同步完成且不保留文本引用，`Show` 实现及清理代码
+仍须通过调用资格检查。普通外部文本函数不会自动获得此权限。stdout 可能阻塞当前 worker，取消等待正在执行的输出返回。
 枚举检查全部变体及类型实参的资格，运行时只读取当前活动载荷；空变体也不能绕过类型限制。
 来源须为当前任务的受检存储，或当前任务收到的受检只读借用；普通数据验证独立分配的任务身份、
 有效区间和对齐，不能只凭共享存储根中的地址通过。挂起函数的局部数据与任务帧分开保存，循环重入复用存储。

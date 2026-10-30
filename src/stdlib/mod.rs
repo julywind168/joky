@@ -1,6 +1,6 @@
 //! Built-in binding registry and runtime ownership tracking.
 pub(crate) mod domain;
-mod output;
+pub(crate) mod output;
 pub(crate) mod task;
 mod vm;
 

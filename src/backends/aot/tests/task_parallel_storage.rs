@@ -58,6 +58,10 @@ fn linked_task_entries(
         panic!("Expected the native stdout binding");
     };
     symbols.insert("joky_io_write_stdout_v2".into(), *entry);
+    symbols.insert(
+        "__joky_domain_poll_v3".into(),
+        crate::runtime::domain::poll_native as *const u8,
+    );
     let object = scratch.path().join("code.o");
     let bridge = scratch.path().join("bridge.o");
     let library = scratch.path().join("code.so");

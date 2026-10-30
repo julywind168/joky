@@ -627,13 +627,47 @@ fn parallel_stdout_frozen_evidence_survives_reload_and_vm_drop() {
         CALLS.fetch_add(1, Ordering::Relaxed);
         0
     }
-    let source = "fn root() @suspends ->Int32 {print(\"\"); 42}";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
+    let source = r#"
+        import joky/task
+        import joky/internal/output
+        fn write(text: &String) @suspends -> Int32 {
+            output.__joky_write_stdout(text);
+            print(text)
+            21
+        }
+        fn nested(text: &String) @suspends -> Int32 {
+            let (a, b) = join { | write(text) | write(text) }
+            a + b
+        }
+        fn root() @suspends -> Int32 {
+            let text = ""
+            let view = &text
+            scope { branch { write(view); } }
+            nested(&text)
+        }
+        fn hold(text: &String) @suspends {
+            write(text);
+            task.sleep_ms(60000)
+        }
+        fn parked() @suspends {
+            let text = ""
+            join { | hold(&text) | hold(&text) };
+        }
+    "#;
+    for (mode, workers) in [
+        (VmMode::Jit, 1),
+        (VmMode::Jit, 3),
+        (VmMode::Interpreter, 1),
+        (VmMode::Interpreter, 3),
+    ] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap();
         let budget = TaskBudget::new(1 << 20);
         let prepared = vm
             .prepare_parallel_task("root", vec![], vec![budget.clone()])
+            .unwrap();
+        let parked = vm
+            .prepare_parallel_task("parked", vec![], vec![budget.clone()])
             .unwrap();
         let rejected = unsafe {
             vm.register_text_fn(
@@ -646,12 +680,46 @@ fn parallel_stdout_frozen_evidence_survives_reload_and_vm_drop() {
         assert_eq!(rejected.code(), ErrorCode::DuplicateDefinition);
         vm.load_source("fn replacement() ->Int32 {99}").unwrap();
         drop(vm);
-        let mut pool = crate::runtime::parallel::ParallelExecutor::new(2, 8).unwrap();
+        let mut pool = crate::runtime::parallel::ParallelExecutor::new(workers, 8).unwrap();
         let task = prepared.submit(&pool).unwrap();
         task.wait().unwrap();
         assert_eq!(
             task.take_result().unwrap().into_value(),
             TaskValue::Scalar(InstanceValue::Int32(42))
+        );
+        let observations = crate::runtime::parallel::scoped::observations(task.identity());
+        let source = observations.iter().find(|o| o.source).unwrap();
+        assert!(observations.iter().any(|o| !o.source));
+        if workers > 1 {
+            assert!(observations
+                .iter()
+                .any(|o| !o.source && o.thread != source.thread));
+        }
+        drop(task);
+        let task = parked.submit(&pool).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while crate::runtime::parallel::scoped::observations(task.identity())
+            .iter()
+            .filter(|o| !o.source)
+            .count()
+            != 2
+        {
+            assert!(!task.is_finished());
+            assert!(
+                std::time::Instant::now() < deadline,
+                "stdout readers did not start"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if workers == 1 {
+            task.request_cancel();
+        } else {
+            pool.request_close();
+        }
+        task.wait().unwrap();
+        assert_eq!(
+            task.take_result().err().unwrap().code(),
+            ErrorCode::Cancelled
         );
         pool.wait_closed();
         drop((task, pool));

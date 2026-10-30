@@ -426,35 +426,39 @@ fn task_parallel_stdout_preserves_writes_and_reports_errors_on_all_backends() {
         .unwrap();
     success(&build);
     for backend in ["jit", "interpreter", "aot"] {
-        let command = || {
-            if backend == "aot" {
-                Command::new(work.path().join("output"))
-            } else {
-                let mut cmd = work.command();
-                cmd.args(["run", "--task-workers", "2"]);
-                if backend == "interpreter" {
-                    cmd.arg("--interpreter");
+        for workers in ["1", "3"] {
+            let command = || {
+                if backend == "aot" {
+                    let mut cmd = Command::new(work.path().join("output"));
+                    cmd.args(["--task-workers", workers]);
+                    cmd
+                } else {
+                    let mut cmd = work.command();
+                    cmd.args(["run", "--task-workers", workers]);
+                    if backend == "interpreter" {
+                        cmd.arg("--interpreter");
+                    }
+                    cmd.arg("output.jk");
+                    cmd
                 }
-                cmd.arg("output.jk");
-                cmd
-            }
-        };
-        let output = command().output().unwrap();
-        success(&output);
-        assert!(output.stderr.is_empty(), "{backend}: {:?}", output.stderr);
-        let text = String::from_utf8(output.stdout).unwrap();
-        let mut lines = text.lines();
-        assert_eq!(lines.next(), Some("42"));
-        let mut records: Vec<_> = lines.map(str::to_owned).collect();
-        records.sort();
-        assert_eq!(records, expected, "{backend}");
-        // An unconnected datagram socket fails writes without SIGPIPE or a
-        // pipe-reader race. Invalid/read-only fds can be ignored by Rust stdout.
-        let failed = command()
-            .stdout(Stdio::from(OwnedFd::from(UnixDatagram::unbound().unwrap())))
-            .output()
-            .unwrap();
-        failure(&failed, "Destination address required");
+            };
+            let output = command().output().unwrap();
+            success(&output);
+            assert!(output.stderr.is_empty(), "{backend}: {:?}", output.stderr);
+            let text = String::from_utf8(output.stdout).unwrap();
+            let mut lines = text.lines();
+            assert_eq!(lines.next(), Some("42"));
+            let mut records: Vec<_> = lines.map(str::to_owned).collect();
+            records.sort();
+            assert_eq!(records, expected, "{backend}");
+            // An unconnected datagram socket fails writes without SIGPIPE or a
+            // pipe-reader race. Invalid/read-only fds can be ignored by Rust stdout.
+            let failed = command()
+                .stdout(Stdio::from(OwnedFd::from(UnixDatagram::unbound().unwrap())))
+                .output()
+                .unwrap();
+            failure(&failed, "Destination address required");
+        }
     }
 }
 

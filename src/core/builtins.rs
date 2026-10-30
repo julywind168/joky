@@ -10,6 +10,7 @@ use crate::{
 /// Registered VM operations use host entries; typed calls and other families need adapters.
 #[derive(Clone, Debug)]
 pub(crate) enum Builtin {
+    Stdout,
     Vm(Box<BindingSpec>),
     VmCall,
     VmSource,
@@ -22,7 +23,9 @@ pub(crate) enum Builtin {
 
 impl Builtin {
     pub(crate) fn lookup(name: &str) -> Option<Self> {
-        if name == "__vm_call" {
+        if name == STDOUT_NAME {
+            Some(Self::Stdout)
+        } else if name == "__vm_call" {
             Some(Self::VmCall)
         } else if name == "__vm_source" {
             Some(Self::VmSource)
@@ -42,7 +45,7 @@ impl Builtin {
     }
 
     pub(crate) fn needs_adapter(&self) -> bool {
-        !matches!(self, Self::Vm(_))
+        !matches!(self, Self::Vm(_) | Self::Stdout)
     }
 
     pub(crate) fn validate(
@@ -52,6 +55,16 @@ impl Builtin {
         c_abi: bool,
     ) -> Result<(), Error> {
         match self {
+            Self::Stdout => {
+                if c_abi || suspends || *signature != stdout_signature() {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Stdout requires its exact synchronous compiler-owned signature",
+                    ));
+                }
+                Ok(())
+            }
             Self::VmCall | Self::VmSource | Self::VmMigration(_) => {
                 let expected = if let Self::VmMigration(op) = self {
                     op.signature()
@@ -91,6 +104,12 @@ impl Builtin {
         let Item::ExternFn(f) = item else {
             let Item::FnDef(f) = item else { unreachable!() };
             return Err(match self {
+                Self::Stdout => Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::ReservedName,
+                    "Stdout runtime name requires a checked extern declaration",
+                )
+                .with_span(f.span),
                 Self::Vm(_) | Self::VmCall | Self::VmSource | Self::VmMigration(_) => {
                     Error::new_with_code(
                         ErrorPhase::TypeCheck,
@@ -130,6 +149,16 @@ impl Builtin {
             _ => 0,
         }
     }
+}
+
+pub(crate) const STDOUT_NAME: &str = "__joky_write_stdout";
+pub(crate) const STDOUT_SYMBOL: &str = "joky_io_write_stdout_v2";
+
+pub(crate) fn stdout_signature() -> FunctionSignature {
+    FunctionSignature::new(
+        vec![crate::Type::reference(crate::Type::String, false)],
+        crate::Type::Int32,
+    )
 }
 
 /// External registration ABI is independent of the compiler-owned contract.

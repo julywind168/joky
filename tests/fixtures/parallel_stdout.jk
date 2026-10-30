@@ -1,20 +1,25 @@
 import joky/task
 
-fn emit(id: Int32) @suspends {
+import joky/internal/output
+fn write(text: &String) @suspends { output.__joky_write_stdout(text); }
+fn emit(payload: &String, id: Int32) @suspends {
     var item = 0
     while item < 8 {
-        println("worker={id};item={item};__PAYLOAD__\0🙂")
+        let line = "worker={id};item={item};{payload}\0🙂\n"
+        join { | write(&line) | task.yield_now() };
         task.yield_now()
         item += 1
     }
 }
 fn main() @suspends {
-    print(42)
-    print("\n")
+    let header = "42\n"
+    join { | write(&header) | task.yield_now() };
+    let payload = "__PAYLOAD__"
+    let view = &payload
     scope {
-        branch { emit(0) }
-        branch { emit(1) }
-        branch { emit(2) }
-        branch { emit(3) }
+        branch { emit(view, 0) }
+        branch { emit(view, 1) }
+        branch { emit(view, 2) }
+        branch { emit(view, 3) }
     }
 }

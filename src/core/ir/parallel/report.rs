@@ -343,15 +343,38 @@ mod tests {
     }
 
     #[test]
+    fn parallel_report_stdout_calls_admit_borrowed_text() {
+        let report = report(
+            include_str!("../../../../tests/fixtures/parallel_stdout.jk"),
+            "main",
+        );
+        assert!(report.entry_error.is_none());
+        assert!(report.sites.iter().any(|s| s.construct == "branch"));
+        assert!(
+            report
+                .sites
+                .iter()
+                .all(|s| s.disposition == ParallelDisposition::RuntimeChecked),
+            "{:?}",
+            report.sites
+        );
+    }
+
+    #[test]
     fn parallel_report_traces_scoped_call_graph_and_concrete_dependencies() {
         let report = report(
             r#"
             import joky/array.{type Array}
             import joky/task
+            import joky/domain
             fn number() -> Int32 { 1 }
             fn callback() -> Int32 { let f = number; f() }
             fn reader(values: &Array<Int32>) @suspends -> Int32 { callback() }
-            fn printer(values: &Array<Int32>) @suspends -> Int32 { println(1); 1 }
+            fn printer(values: &Array<Int32>) @suspends -> Int32 {
+                let directory = domain.directory(1)
+                directory.handle();
+                1
+            }
             fn recurse(values: &Array<Int32>, n: Int32) @suspends -> Int32 {
                 if n == 0 { 1 } else { recurse(values, n - 1) }
             }
@@ -401,17 +424,18 @@ mod tests {
     }
 
     #[test]
-    fn parallel_report_scoped_callbacks_include_unused_candidates_and_cleanup() {
+    fn scoped_rejections_include_unused_callbacks_and_cleanup() {
         for body in [
-            "println(value); value",
+            "let text = \"callback\"; unchecked(&text); value",
             r#"let guard = Guard { value: "cleanup" }; value"#,
         ] {
             let source = format!(
                 r#"
                 import joky/array.{{type Array}}
                 import joky/drop.{{type Drop}}
+                extern fn unchecked(text: &String) -> Int32
                 struct Guard {{ value: String }}
-                impl Drop for Guard {{ fn drop(&mut self) {{ println(self.value) }} }}
+                impl Drop for Guard {{ fn drop(&mut self) {{ unchecked(&self.value); }} }}
                 fn safe(value: Int32) -> Int32 {{ value }}
                 fn bad(value: Int32) -> Int32 {{ {body} }}
                 fn expose() -> fn(Int32) -> Int32 {{ bad }}
@@ -422,16 +446,26 @@ mod tests {
                 }}
             "#
             );
-            let report = report(&source, "main");
-            assert!(report.entry_error.is_none(), "{:?}", report.entry_error);
-            assert_eq!(report.sites.len(), 1);
-            let site = &report.sites[0];
-            assert_eq!(site.disposition, ParallelDisposition::Local);
+            let vm = crate::vm::VmEngine::new();
+            let types = vm.type_registry();
+            let ast = types
+                .resolve_with_modules(&crate::parser::parse(&source).unwrap(), &Default::default())
+                .unwrap();
+            let registry = crate::stdlib::module_registry();
+            let prepared =
+                crate::core::prepared::PreparedModule::new(&ast, types, registry.metadata())
+                    .unwrap();
+            let imports = registry
+                .import_layouts(prepared.ast(), &Default::default())
+                .unwrap();
+            let plan = prepared.plan(&imports).unwrap();
+            let rejected = scoped::rejections(&plan);
+            let reason = &rejected["main"];
             for witness in ["reader", "bad", "host reference ABI"] {
-                assert!(site.reason.contains(witness), "{}", site.reason);
+                assert!(reason.contains(witness), "{reason}");
             }
             if body.contains("Guard") {
-                assert!(site.reason.contains("drop"), "{}", site.reason);
+                assert!(reason.contains("drop"), "{reason}");
             }
         }
     }

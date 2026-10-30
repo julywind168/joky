@@ -1,6 +1,6 @@
 # 线程安全与并行资格收敛路线
 
-状态：2026-10-30，S0 必要收敛、S1 admission 最小集合及 TCP 调用契约已实现，记录见第 7–8 节；S1 其余接口及 S2–S6 待实施。
+状态：2026-10-30，S0 必要收敛、S1 admission 最小集合及 TCP／stdout 调用契约已实现，记录见第 7–9 节；S1 其余接口及 S2–S6 待实施。
 起始实现基线为 W6q（`22525a4`）。
 
 本文承接[启动时 worker 配置与并行能力演进计划](startup-worker-configuration.md)，
@@ -39,7 +39,7 @@ Local 与 Parallel 继续是不同执行模式，Parallel 的 1 worker 不等同
 
 ## 2. 起始基础与缺口（W6q）
 
-以下以 W6q 为起点，后续交付的变化见第 7–8 节。已有能力的详细范围与测试记录引用 W 系列文档，
+以下以 W6q 为起点，后续交付的变化见第 7–9 节。已有能力的详细范围与测试记录引用 W 系列文档，
 不在这里复制完整类型支持表。
 
 | 方面 | 已有基础 | 接下来的缺口 |
@@ -104,7 +104,7 @@ W6q 后 chat 的已知阻挡点是：
 
 ## 4. 实施顺序
 
-以下顺序体现依赖和业务收益，不是一次性大重构要求。S0 必要收敛和 S1 的 admission、TCP 调用集合已完成；
+以下顺序体现依赖和业务收益，不是一次性大重构要求。S0 必要收敛和 S1 的 admission、TCP、stdout 调用集合已完成；
 S1 中其他宿主适配器仍需逐项审查，不能把最小集合交付解释为整个宿主引用 ABI 已开放。
 
 | 阶段 | 工作 | 完成标准 |
@@ -397,3 +397,84 @@ Pending 请求保存本地 `ResourceLease`、字节副本和 reactor 注册。re
 
 未运行 Release、完整 stress、额外穷举或性能测量。此次沿用已有资源存储和停止实现，
 额外验证聚焦新开放调用与借用生命周期的组合；最终验收只补充文档，没有再跑整套检查。
+
+## 9. S1 stdout 调用契约
+
+stdout 已纳入统一的固定内置契约，借用任务可以使用 print／println，或由标准库调用同步输出入口。
+此阶段不开放通用宿主引用 ABI，不修改资源借用形状、任务布局或 TextViewV2 ABI。
+
+### 9.1 绑定与访问审计
+
+| 边界 | 已检查的证据与权限 |
+| --- | --- |
+| 语言声明 | 保留名称 `__joky_write_stdout`，固定 `&String -> Int32`；只读、同步、非 C ABI；普通函数定义不能冒充内置声明 |
+| 模块注册 | 固定链接符号 `joky_io_write_stdout_v2`；有进程内入口时，必须携带可验证的 TextViewV2 宿主证据，并匹配实际输出函数身份 |
+| 宿主证书 | 核对实际入口、ABI、完整签名和保活 owner；一般文本宿主证书改名为 stdout 仍被拒绝 |
+| JIT／AOT | 继续使用现有文本视图转换，在调用 worker 栈上构造描述符；不为同步输出生成 CPS 挂起适配器 |
+| 解释器 | 从接收 worker 的本地视图创建调用内临时描述符；引用的字节在调用结束前保持有效 |
+| 输出实现 | 只读取 UTF-8 字节；整次 write_all 持有 stdout 锁，不保留描述符、字节指针或回调；错误进入 worker 本地错误通道 |
+| 停止与清理 | 无 Pending 请求；同步调用返回后才可清理当前帧、结束借用并归还来源；取消不会提前释放正在访问的文本 |
+
+stdout 的同步写可能阻塞 worker，不保证操作系统写入可被取消中断。已有输出不会因为任务失败而回滚，
+多次 print 也不因此组成原子事务。共享调用表仅授予这个受检入口权限，
+Show、动态目标、嵌套调用和析构代码仍须各自通过资格检查。
+
+### 9.2 行为与拒绝覆盖
+
+[parallel_stdout.jk](../tests/fixtures/parallel_stdout.jk) 改为动态 branch 借用共享 payload，
+并在嵌套 join 中直接把借用文本交给内置 TextViewV2 入口。三后端以 1／3 worker 执行，
+验证超出常见管道原子写尺寸的 UTF-8、内嵌 NUL 和完整记录不交错；失败输出也从借用子任务内触发。
+测试使用内部输出模块是为了直接验证接收视图的 ABI，普通应用仍使用 print／println。
+
+冻结入口测试覆盖重载并销毁 VM 后的借用输出、实际远程派发、根取消／池关闭和最终预算归零。
+错误签名、可变参数、挂起声明、C ABI、空指针、缺失 owner、伪造证书及错误链接符号保留拒绝回归。
+普通文本宿主的真实执行仍验证整个借用组留在本地，Local-only Show 实现不能因 stdout 获准而被放行。
+
+先前用 println 表示“未受检宿主”的负例已经不再成立：间接候选的三后端 fixture 改用尚未开放的目录接口，
+清理依赖测试改为显式普通文本宿主，并直接检查 scoped 调用图的拒绝链；不删除原有拒绝责任。
+AOT 测试桥补上目录轮询符号，以便继续链接这个未被选中的候选。
+
+### 9.3 chat 与下一步
+
+`explain-parallel examples/chat` 的入口仍合格。顶层 race 的首个阻挡点从 stdout 变为
+`connection → session.run → session.send → Mailbox.receive → __outbox_message_bytes`。
+`session.run` 的 `&mut Mailbox` 与超时读的 `&mut BufferedTcpReader` 仍保持本地。
+下一步继续 S1 的 outbox 消息读取／接收接口审计，再根据新的阻断链检查目录及文件接口；
+不把本次输出资格等同于整个 S1 已完成或进入 S2 的独占借用开放。
+
+### 9.4 验收中发现的 race 结果竞态
+
+默认检查暴露 `task_parallel_aggregate_values_and_roots_on_all_backends` 的一次
+`InvalidState: Missing parallel result`，发生在 JIT 的 root／variant=0。
+这次不是旧的“预算立即归零”断言：`pool::Group::poll` 先读取仲裁快照，再检查子任务 cleaned 标志；
+若赢家在两步之间产生，旧快照仍是 None，败方结果清理就会连赢家结果一起丢弃。
+该路径在本次修改之前已存在，聚合用例单独连续 20 次通过不足以排除这个时序。
+
+修复在全部子任务 cleaned 屏障之后刷新赢家，再清理败方结果。
+测试专用的一次性线程局部钩子固定“读取旧快照 → 子任务全部完成 → 读取 cleaned”顺序：
+未修复时确定性复现同一个 Missing parallel result，修复后通过，保留赢家并最终归还全部预算。
+该修复独立提交为 `e35915e`，不混入 stdout 的功能提交；未扩大资源借用权限或修改结果 ABI。
+
+### 9.5 验证记录
+
+2026-10-30，macOS 本机 Debug 验证：
+
+- stdout／声明与绑定证据／调用图／普通宿主拒绝／间接候选的针对性库测试共 10 项通过；
+  其中冻结入口覆盖 JIT／解释器、1／3 worker、真实派发、重载、取消与池关闭。
+- `cargo test --test cli task_parallel_stdout_preserves_writes_and_reports_errors_on_all_backends` 通过，
+  覆盖三后端、1／3 worker 的完整输出和借用子任务内的 I/O 失败。
+- `cargo test --test chat chat_parallel_real_tcp_on_all_backends -- --ignored --nocapture` 通过，
+  8 个实网场景覆盖两种脚本 VM、三后端、AOT 启动时 1／3 worker，以及重载与关闭。
+- `./scripts/check.sh` 执行一次：格式与全目标 Clippy 通过；库测试 1819 通过、157 忽略，
+  唯一失败为上节定位并修复的 race 结果竞态。首次脚本执行不记作完整通过。
+- 单独补完脚本因失败未执行的 `cargo test --bins --test '*'`（含 340 项 CLI 及其余默认集成测试）、
+  `cargo test --doc`、while 的 `0,1000` 与 Map 的 `0,32` 短输入三后端正确性检查，均通过。
+- 竞态修复之后重验实际影响范围：格式、全目标 Clippy、
+  `cargo test --lib -- parallel scoped task_pool task_scope`（193 通过、19 忽略）、
+  `cargo test --lib exhaustive_task_parallel_aggregate_budget_failures -- --ignored`（通过）、
+  `cargo test --test cli tasks::`（23 通过，含 stdout 和 TCP 的三后端任务回归）。
+  确定性竞态回归先验证失败再验证修复；没有以重复通过的概率替代竞态证明。
+- chat 静态报告、文档相对链接与 `git diff --check` 已核对。
+
+未运行 Release、完整 stress、额外无关穷举或性能测量。竞态修复后仅重验任务调度及其调用入口，
+没有重复整套语言检查或 chat 矩阵；最终验收只补充文档。

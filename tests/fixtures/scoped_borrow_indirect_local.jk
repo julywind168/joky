@@ -1,8 +1,12 @@
 import joky/string
-import joky/io.{println}
+import joky/domain
 
 fn safe(value: &String) @suspends @noescape -> Int32 { int32(value.byte_length()) }
-fn bad(value: &String) @suspends @noescape -> Int32 { println(1); 0 }
+fn bad(value: &String) @suspends @noescape -> Int32 {
+    let directory = domain.directory(1)
+    directory.handle();
+    0
+}
 fn expose() -> fn(&String) @suspends @noescape -> Int32 { bad }
 fn local() @suspends -> Int32 {
     let value = "abc"

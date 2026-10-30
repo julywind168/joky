@@ -278,6 +278,14 @@ stop 先使事件失效并同步撤销注册，再释放租约与请求存储，
 撤销注册失败会毒化 I/O source，旧 token 仍失效；取消不撤销已经发生的网络读写。
 此调用权限不授予 `&TcpListener`、`&mut TcpStream` 或其他 TCP 资源引用跨 worker 的输入资格。
 
+stdout 是固定同步内置契约：`__joky_write_stdout` 仅接受 `&String -> Int32`，禁止可变引用、
+挂起与 C ABI 声明。模块注册检查 TextViewV2 证据、实际入口和固定链接符号；普通文本宿主证书不能改名冒充它。
+JIT／AOT 在调用 worker 的栈上构造文本描述符，解释器使用调用内临时描述符；二者都从本地 Buffer／Loan
+读取受检字节视图，输出入口不接收其他 worker 的 Buffer 或 Rc。stdout 的整次写操作持锁，
+返回前结束对描述符和字节的访问，错误写入 worker 本地错误通道。没有 Pending 请求或保留的输入指针。
+同步写可能阻塞 worker；取消须等该次调用返回后才能清理帧、归还来源，不承诺中断操作系统写入。
+print／println 的 Show 实现、间接目标和清理依赖仍须逐项通过调用图检查。
+
 私有 `parallel::scoped::Input` 的借用分支传受检叶子数据区间、去掉拥有指针的快照、布局及作用域租约，不传 Buffer／帧／Rc。
 Buffer 保存当前拥有任务身份及本地 origin，slice 延续 origin；普通拥有包安装更新根 Buffer 的任务身份，
 尚未更新身份的嵌套拥有图不获得新来源证明。远程视图的 origin 仍为空，另存所属 worker 的
