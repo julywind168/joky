@@ -414,12 +414,13 @@ impl Buffer {
             .checked_mul(capacity)
             .ok_or_else(capacity_error)?;
         let payload = Layout::from_size_align(bytes, align).map_err(|_| capacity_error())?;
+        if arena.parallel_root().is_some() {
+            return Self::allocate_parallel(arena, element, payload, capacity);
+        }
         let layout = Layout::new::<Self>();
         let owner = arena
             .allocate(layout.size(), layout.align())?
             .cast::<Self>();
-        // Publish only after both allocations succeed. Failures remain charged
-        // to the arena and are released together with the root task.
         let mut value = Self::empty(element);
         value.origin = owner.as_ptr();
         value.owner_task = super::parallel::pool::identity().unwrap_or(0);
@@ -429,15 +430,32 @@ impl Buffer {
         value.capacity = capacity;
         value.metadata_budget = arena.budget_pointer();
         value.metadata_account = arena.account_pointer();
+        unsafe { owner.as_ptr().write(value) };
+        Ok(owner)
+    }
+
+    fn allocate_parallel(
+        arena: &mut Arena,
+        element: Layout,
+        payload: Layout,
+        capacity: usize,
+    ) -> Result<NonNull<Self>, Error> {
+        // The empty header is already safe for metadata cleanup if payload
+        // allocation fails. Register its finalizer with the allocation once.
+        let mut owner = unsafe {
+            arena.allocate_initialized(Self::empty(element), Self::finalize_parallel_metadata)?
+        };
+        let pointer = owner.as_ptr();
+        let value = unsafe { owner.as_mut() };
+        value.origin = pointer;
+        value.owner_task = super::parallel::pool::identity().unwrap_or(0);
+        if payload.size() != 0 {
+            value.data = arena.allocate(payload.size(), payload.align())?;
+        }
+        value.capacity = capacity;
+        value.metadata_budget = arena.budget_pointer();
+        value.metadata_account = arena.account_pointer();
         value.metadata_parallel = arena.metadata_lease();
-        unsafe {
-            owner.as_ptr().write(value);
-        }
-        if let Some(root) = arena.parallel_root() {
-            // A later failure may precede language cleanup registration. The
-            // allocation owns this thread-safe accounting field independently.
-            root.finalize_with(owner.cast(), Self::finalize_parallel_metadata);
-        }
         Ok(owner)
     }
 

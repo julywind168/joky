@@ -378,17 +378,6 @@ impl Storage {
         true
     }
 
-    /// Install only a thread-safe runtime metadata finalizer after initialization.
-    /// No language destructor or local callback may be installed here.
-    pub(crate) fn finalize_with(&self, pointer: NonNull<u8>, finalize: unsafe fn(*mut u8)) {
-        assert!(
-            self.with_allocation(pointer, |allocation| {
-                assert!(allocation.finalize.is_none());
-                allocation.finalize = Some(finalize);
-            }),
-            "validated metadata allocation"
-        );
-    }
     /// # Safety
     /// No capability may access `pointer` after this call, on any worker.
     pub(crate) unsafe fn release(&self, pointer: NonNull<u8>) {
@@ -455,13 +444,42 @@ impl LocalShard {
             .sum()
     }
     pub(crate) fn allocate(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, Error> {
+        self.allocate_with(size, align, |_| {}, None)
+    }
+
+    /// Initialize runtime metadata before publishing its allocation and finalizer.
+    /// # Safety
+    /// `finalize` must accept the initialized value and may run on any worker.
+    /// It may destroy only thread-safe runtime metadata, not language values.
+    pub(crate) unsafe fn allocate_initialized<T>(
+        &mut self,
+        value: T,
+        finalize: unsafe fn(*mut u8),
+    ) -> Result<NonNull<T>, Error> {
+        let layout = Layout::new::<T>();
+        self.allocate_with(
+            layout.size(),
+            layout.align(),
+            |pointer| pointer.cast::<T>().as_ptr().write(value),
+            Some(finalize),
+        )
+        .map(NonNull::cast)
+    }
+
+    fn allocate_with(
+        &mut self,
+        size: usize,
+        align: usize,
+        initialize: impl FnOnce(NonNull<u8>),
+        finalize: Option<unsafe fn(*mut u8)>,
+    ) -> Result<NonNull<u8>, Error> {
         let layout = Layout::from_size_align(size.max(1), align).map_err(|_| limited())?;
         let bytes = layout.pad_to_align().size();
         let charge = self.root.accounts().reserve(bytes)?;
         let pointer = NonNull::new(unsafe { alloc(layout) }).ok_or_else(limited)?;
         // Keep unpublished storage in an owning guard. Any metadata admission
         // failure drops it only after the index/shard guards have been released.
-        let allocation = Allocation {
+        let mut allocation = Allocation {
             task: super::pool::identity(),
             payload_size: size,
             finalize: None,
@@ -469,6 +487,9 @@ impl LocalShard {
             layout,
             _charge: charge,
         };
+        // Initialization and any failure cleanup stay outside registry locks.
+        initialize(pointer);
+        allocation.finalize = finalize;
         let mut index = lock(&self.root.0.index[bucket(pointer)]);
         let position = index.find(pointer).expect_err("new allocation address");
         let Index {
@@ -521,16 +542,12 @@ mod tests {
         count.fetch_add(1, Ordering::Relaxed);
     }
     fn tracked(shard: &mut LocalShard, count: &Arc<AtomicUsize>) -> NonNull<u8> {
-        let layout = Layout::new::<Arc<AtomicUsize>>();
-        let pointer = shard.allocate(layout.size(), layout.align()).unwrap();
         unsafe {
-            pointer
-                .cast::<Arc<AtomicUsize>>()
-                .as_ptr()
-                .write(count.clone())
-        };
-        shard.root.finalize_with(pointer, count_finalizer);
-        pointer
+            shard
+                .allocate_initialized(count.clone(), count_finalizer)
+                .unwrap()
+                .cast()
+        }
     }
 
     #[test]
@@ -668,15 +685,13 @@ mod tests {
             let root = Storage::new(vec![budget.clone()]).unwrap();
             let mut shard = root.shard().unwrap();
             let count = Arc::new(AtomicUsize::new(0));
-            let layout = Layout::new::<Probe>();
-            let pointer = shard.allocate(layout.size(), layout.align()).unwrap();
+            let value = Probe {
+                root: root.clone(),
+                shard: shard.shard.clone(),
+                count: count.clone(),
+            };
             unsafe {
-                pointer.cast::<Probe>().as_ptr().write(Probe {
-                    root: root.clone(),
-                    shard: shard.shard.clone(),
-                    count: count.clone(),
-                });
-                root.finalize_with(pointer, finalize);
+                let pointer = shard.allocate_initialized(value, finalize).unwrap().cast();
                 if region {
                     shard.release_region()
                 } else {
@@ -685,6 +700,65 @@ mod tests {
             }
             assert_eq!(count.load(Ordering::Relaxed), 1);
             drop((shard, root));
+            assert_eq!(budget.used(), 0);
+        }
+    }
+    #[test]
+    fn parallel_storage_initialized_metadata_failures_finalize_outside_locks() {
+        struct Probe {
+            root: Storage,
+            shard: Arc<Mutex<Shard>>,
+            count: Arc<AtomicUsize>,
+        }
+        unsafe fn finalize(pointer: *mut u8) {
+            let probe = pointer.cast::<Probe>().read();
+            assert!(probe.shard.try_lock().is_ok());
+            assert!(probe
+                .root
+                .0
+                .index
+                .iter()
+                .all(|index| index.try_lock().is_ok()));
+            assert!(!probe.root.contains(NonNull::new(pointer).unwrap()));
+            probe.count.fetch_add(1, Ordering::Relaxed);
+        }
+        for prewarm_index in [false, true] {
+            let budget = TaskBudget::new(1 << 20);
+            let root = Storage::new(vec![budget.clone()]).unwrap();
+            let mut shard = root.shard().unwrap();
+            if prewarm_index {
+                for index in &root.0.index {
+                    let mut index = lock(index);
+                    let Index {
+                        locations,
+                        metadata,
+                    } = &mut *index;
+                    reserve_slot(locations, metadata).unwrap();
+                }
+            }
+            let count = Arc::new(AtomicUsize::new(0));
+            let probe = Probe {
+                root: root.clone(),
+                shard: shard.shard.clone(),
+                count: count.clone(),
+            };
+            // Admit the initialized payload, then reject either index or slot
+            // metadata. Its finalizer must run once after every guard unlocks.
+            let held = root
+                .accounts()
+                .reserve((1 << 20) - budget.used() - Layout::new::<Probe>().pad_to_align().size())
+                .unwrap();
+            let before = budget.used();
+            assert!(unsafe { shard.allocate_initialized(probe, finalize) }.is_err());
+            assert_eq!(count.load(Ordering::Relaxed), 1);
+            assert_eq!(budget.used(), before);
+            assert_eq!(lock(&shard.shard).live, 0);
+            assert!(root
+                .0
+                .index
+                .iter()
+                .all(|index| lock(index).locations.is_empty()));
+            drop((held, shard, root));
             assert_eq!(budget.used(), 0);
         }
     }
@@ -876,6 +950,9 @@ mod tests {
         let weak = Arc::downgrade(&budget.0);
         let root = Storage::new(vec![budget.clone()]).unwrap();
         let mut arena = crate::runtime::arena::Arena::with_storage(root.clone());
+        // The header is initialized and registered before payload admission
+        // fails. Root fallback must safely finalize that empty header too.
+        assert!(crate::runtime::buffer::Buffer::allocate(&mut arena, 1 << 20, 1, 1).is_err());
         // Simulate failure between initialized allocation and cleanup registration.
         crate::runtime::buffer::Buffer::copy_bytes(&mut arena, b"unpublished").unwrap();
         drop(arena);

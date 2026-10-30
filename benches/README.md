@@ -297,6 +297,8 @@ Rust Release 不代表 Joky 生成代码另开了优化选项，后者仍使用�
 [预算退款优化](reports/chat-budget-2026-10-31.md)。
 域 Arena 外层共享记账锁的后续优化见
 [Arena 共享预算优化](reports/chat-arena-budget-2026-10-31.md)。
+Buffer 头部分配与 finalizer 登记合并见
+[Buffer 头部登记优化](reports/chat-header-registration-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 

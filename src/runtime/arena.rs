@@ -393,6 +393,38 @@ impl Arena {
     pub(crate) fn allocate(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, Error> {
         self.allocate_with_limit(size, align, self.allocation_limit()?)
     }
+
+    /// Initialize a runtime value before registering its parallel finalizer.
+    /// Local arenas retain their ordinary explicit-cleanup contract.
+    /// # Safety
+    /// `finalize` must accept `value` immediately after initialization and may
+    /// destroy only thread-safe runtime metadata on any worker, not language
+    /// values. Local callers must explicitly clean up any owned fields.
+    pub(crate) unsafe fn allocate_initialized<T>(
+        &mut self,
+        value: T,
+        finalize: unsafe fn(*mut u8),
+    ) -> Result<NonNull<T>, Error> {
+        let limit = self.allocation_limit()?;
+        let layout = Layout::new::<T>();
+        if let Some((root, shard)) = &mut self.parallel {
+            if layout.size() > limit {
+                return Err(allocation_error());
+            }
+            if shard.is_none() {
+                *shard = Some(root.shard()?);
+            }
+            return shard
+                .as_mut()
+                .unwrap()
+                .allocate_initialized(value, finalize);
+        }
+        let pointer = self
+            .allocate_with_limit(layout.size(), layout.align(), limit)?
+            .cast::<T>();
+        pointer.as_ptr().write(value);
+        Ok(pointer)
+    }
     /// Charge host-owned bytes against the same peak as language allocations.
     /// The refund handle remains valid even if the interpreter moves its arena.
     pub(crate) fn metadata_lease(&self) -> Option<super::parallel::Lease> {
