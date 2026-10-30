@@ -126,8 +126,10 @@ struct Allocation {
 // This wrapper owns raw storage and explicitly audited thread-safe metadata
 // finalizers, never language destructors or local callbacks. Access to payloads
 // is governed by checked language ownership and packet admission.
-// The shard mutex serializes registration/removal. A removed allocation has no
-// outstanding language capability; root destruction occurs after the last reader.
+// Index bucket -> shard locking serializes registration/removal; stable slots
+// preserve every other index location. A removed allocation has no outstanding
+// language capability; root destruction occurs after the last reader. Cleanup
+// runs only after the removed record is detached from both locked registries.
 unsafe impl Send for Allocation {}
 impl Drop for Allocation {
     fn drop(&mut self) {
@@ -139,10 +141,57 @@ impl Drop for Allocation {
         }
     }
 }
+// Stable slots keep index locations valid when unrelated allocations are released.
+enum Slot {
+    Occupied(Allocation),
+    Vacant(Option<usize>),
+}
 struct Shard {
-    allocations: Vec<Allocation>,
+    allocations: Vec<Slot>,
+    free: Option<usize>,
+    live: usize,
     metadata: Lease,
     _charge: Lease,
+}
+const INDEX_BUCKETS: usize = 16;
+struct Location {
+    address: usize,
+    shard: Arc<Mutex<Shard>>,
+    slot: usize,
+}
+struct Index {
+    // Sorted, explicitly charged storage: lookup is logarithmic within one
+    // bucket. Insert/remove only move locations, never allocation records.
+    locations: Vec<Location>,
+    metadata: Lease,
+}
+impl Index {
+    fn find(&self, pointer: NonNull<u8>) -> Result<usize, usize> {
+        self.locations
+            .binary_search_by_key(&(pointer.as_ptr() as usize), |l| l.address)
+    }
+}
+fn bucket(pointer: NonNull<u8>) -> usize {
+    // Use high mixed bits so aligned or adjacent allocations spread across locks.
+    let address = (pointer.as_ptr() as u64) >> 4;
+    (address.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 60) as usize
+}
+fn reserve_slot<T>(values: &mut Vec<T>, metadata: &mut Lease) -> Result<(), Error> {
+    if values.len() < values.capacity() {
+        return Ok(());
+    }
+    let capacity = values.len().checked_add(1).ok_or_else(limited)?;
+    let old = metadata.bytes;
+    metadata.resize(
+        capacity
+            .checked_mul(std::mem::size_of::<T>())
+            .ok_or_else(limited)?,
+    )?;
+    if values.try_reserve_exact(1).is_err() {
+        metadata.resize(old).expect("refund allocation metadata");
+        return Err(limited());
+    }
+    Ok(())
 }
 #[derive(Clone)]
 pub(crate) struct Storage(Arc<Root>);
@@ -150,6 +199,9 @@ struct Root {
     _charge: Lease,
     accounts: Accounts,
     shards: Mutex<Vec<Arc<Mutex<Shard>>>>,
+    // Lock order: one index bucket -> one shard. No indexed operation acquires
+    // the root shard-list lock, and no path acquires an index while holding a shard.
+    index: [Mutex<Index>; INDEX_BUCKETS],
 }
 pub(crate) struct LocalShard {
     root: Storage,
@@ -163,6 +215,12 @@ impl Storage {
         )?;
         Ok(Self(Arc::new(Root {
             _charge: charge,
+            index: std::array::from_fn(|_| {
+                Mutex::new(Index {
+                    locations: Vec::new(),
+                    metadata: accounts.empty_lease(),
+                })
+            }),
             accounts,
             shards: Mutex::new(Vec::new()),
         })))
@@ -179,7 +237,7 @@ impl Storage {
         // A detached packet still has allocations, and a live arena retains an Arc.
         if let Some(shard) = shards
             .iter()
-            .find(|s| Arc::strong_count(s) == 1 && lock(s).allocations.is_empty())
+            .find(|s| Arc::strong_count(s) == 1 && lock(s).live == 0)
         {
             return Ok(LocalShard {
                 root: self.clone(),
@@ -192,6 +250,8 @@ impl Storage {
         shards.try_reserve_exact(1).map_err(|_| limited())?;
         let shard = Arc::new(Mutex::new(Shard {
             allocations: Vec::new(),
+            free: None,
+            live: 0,
             metadata: self.accounts().reserve(0)?,
             _charge: charge,
         }));
@@ -202,9 +262,7 @@ impl Storage {
         })
     }
     pub(crate) fn contains(&self, pointer: NonNull<u8>) -> bool {
-        lock(&self.0.shards)
-            .iter()
-            .any(|shard| lock(shard).allocations.iter().any(|a| a.pointer == pointer))
+        lock(&self.0.index[bucket(pointer)]).find(pointer).is_ok()
     }
     /// Compiler-checked references establish initialization and type. Allocation
     /// identity additionally proves this is live storage owned by this task,
@@ -217,7 +275,10 @@ impl Storage {
             return false;
         }
         lock(&self.0.shards).iter().any(|shard| {
-            lock(shard).allocations.iter().any(|allocation| {
+            lock(shard).allocations.iter().any(|slot| {
+                let Slot::Occupied(allocation) = slot else {
+                    return false;
+                };
                 allocation.task == Some(task)
                     && (data.as_ptr() as usize)
                         .checked_sub(allocation.pointer.as_ptr() as usize)
@@ -234,43 +295,59 @@ impl Storage {
     /// The caller is installing the exclusive payload owner in the current task;
     /// no outstanding language borrow or previous owner may still access it.
     pub(crate) unsafe fn adopt_allocation(&self, pointer: NonNull<u8>) {
-        for shard in lock(&self.0.shards).iter() {
-            if let Some(allocation) = lock(shard)
-                .allocations
-                .iter_mut()
-                .find(|a| a.pointer == pointer)
-            {
-                allocation.task = super::pool::identity();
-                return;
-            }
-        }
+        self.with_allocation(pointer, |allocation| {
+            allocation.task = super::pool::identity();
+        });
+    }
+
+    fn with_allocation(&self, pointer: NonNull<u8>, update: impl FnOnce(&mut Allocation)) -> bool {
+        let index = lock(&self.0.index[bucket(pointer)]);
+        let Ok(position) = index.find(pointer) else {
+            return false;
+        };
+        let location = &index.locations[position];
+        let mut shard = lock(&location.shard);
+        let Slot::Occupied(allocation) = &mut shard.allocations[location.slot] else {
+            unreachable!("registered allocation slot")
+        };
+        assert_eq!(allocation.pointer, pointer);
+        update(allocation);
+        true
     }
 
     /// Install only a thread-safe runtime metadata finalizer after initialization.
     /// No language destructor or local callback may be installed here.
     pub(crate) fn finalize_with(&self, pointer: NonNull<u8>, finalize: unsafe fn(*mut u8)) {
-        for shard in lock(&self.0.shards).iter() {
-            let mut shard = lock(shard);
-            if let Some(allocation) = shard.allocations.iter_mut().find(|a| a.pointer == pointer) {
+        assert!(
+            self.with_allocation(pointer, |allocation| {
                 assert!(allocation.finalize.is_none());
                 allocation.finalize = Some(finalize);
-                return;
-            }
-        }
-        panic!("validated metadata allocation");
+            }),
+            "validated metadata allocation"
+        );
     }
     /// # Safety
     /// No capability may access `pointer` after this call, on any worker.
     pub(crate) unsafe fn release(&self, pointer: NonNull<u8>) {
-        let shards = lock(&self.0.shards);
-        for shard in shards.iter() {
-            let mut shard = lock(shard);
-            if let Some(index) = shard.allocations.iter().position(|a| a.pointer == pointer) {
-                drop(shard.allocations.swap_remove(index));
-                return;
-            }
-        }
-        panic!("validated parallel allocation");
+        let allocation = {
+            let mut index = lock(&self.0.index[bucket(pointer)]);
+            let position = index.find(pointer).expect("validated parallel allocation");
+            let location = index.locations.remove(position);
+            let mut shard = lock(&location.shard);
+            let free = shard.free;
+            let Slot::Occupied(allocation) =
+                std::mem::replace(&mut shard.allocations[location.slot], Slot::Vacant(free))
+            else {
+                unreachable!("registered allocation slot")
+            };
+            assert_eq!(allocation.pointer, pointer);
+            shard.free = Some(location.slot);
+            shard.live -= 1;
+            allocation
+        };
+        // Index and shard locks are gone before finalizers, deallocation and
+        // budget refunds. The removed record carries the sole cleanup authority.
+        drop(allocation);
     }
 }
 impl LocalShard {
@@ -280,49 +357,90 @@ impl LocalShard {
     /// No references or owners into this shard may remain live or be exported.
     /// The caller exclusively owns the region and runs on its owning worker.
     pub(crate) unsafe fn release_region(&mut self) {
+        // Exclusive region teardown: no owner/reference into these slots may be
+        // used concurrently. Retire every index entry before any finalizer runs.
+        let count = lock(&self.shard).allocations.len();
+        for slot in 0..count {
+            let pointer = match &lock(&self.shard).allocations[slot] {
+                Slot::Occupied(allocation) => allocation.pointer,
+                Slot::Vacant(_) => continue,
+            };
+            let mut index = lock(&self.root.0.index[bucket(pointer)]);
+            let position = index.find(pointer).expect("registered region allocation");
+            let location = index.locations.remove(position);
+            assert!(Arc::ptr_eq(&location.shard, &self.shard));
+            assert_eq!(location.slot, slot);
+        }
         let allocations = {
             let mut shard = lock(&self.shard);
             let allocations = std::mem::take(&mut shard.allocations);
+            shard.free = None;
+            shard.live = 0;
             shard.metadata.resize(0).expect("refund region metadata");
             allocations
         };
-        // Keep even runtime finalizers outside the shard lock.
         drop(allocations);
     }
     pub(crate) fn bytes(&self) -> usize {
         lock(&self.shard)
             .allocations
             .iter()
-            .map(|a| a._charge.bytes)
+            .map(|slot| match slot {
+                Slot::Occupied(allocation) => allocation._charge.bytes,
+                Slot::Vacant(_) => 0,
+            })
             .sum()
     }
     pub(crate) fn allocate(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, Error> {
         let layout = Layout::from_size_align(size.max(1), align).map_err(|_| limited())?;
         let bytes = layout.pad_to_align().size();
         let charge = self.root.accounts().reserve(bytes)?;
-        let mut shard = lock(&self.shard);
-        if shard.allocations.len() == shard.allocations.capacity() {
-            let capacity = shard.allocations.len().checked_add(1).ok_or_else(limited)?;
-            let old = shard.metadata.bytes;
-            shard.metadata.resize(
-                capacity
-                    .checked_mul(std::mem::size_of::<Allocation>())
-                    .ok_or_else(limited)?,
-            )?;
-            if shard.allocations.try_reserve_exact(1).is_err() {
-                shard.metadata.resize(old).expect("refund metadata");
-                return Err(limited());
-            }
-        }
         let pointer = NonNull::new(unsafe { alloc(layout) }).ok_or_else(limited)?;
-        shard.allocations.push(Allocation {
+        // Keep unpublished storage in an owning guard. Any metadata admission
+        // failure drops it only after the index/shard guards have been released.
+        let allocation = Allocation {
             task: super::pool::identity(),
             payload_size: size,
             finalize: None,
             pointer,
             layout,
             _charge: charge,
-        });
+        };
+        let mut index = lock(&self.root.0.index[bucket(pointer)]);
+        let position = index.find(pointer).expect_err("new allocation address");
+        let Index {
+            locations,
+            metadata,
+        } = &mut *index;
+        reserve_slot(locations, metadata)?;
+        let mut shard = lock(&self.shard);
+        let slot = if let Some(slot) = shard.free {
+            let Slot::Vacant(next) = shard.allocations[slot] else {
+                unreachable!("free allocation slot")
+            };
+            shard.free = next;
+            shard.allocations[slot] = Slot::Occupied(allocation);
+            slot
+        } else {
+            let Shard {
+                allocations,
+                metadata,
+                ..
+            } = &mut *shard;
+            reserve_slot(allocations, metadata)?;
+            let slot = allocations.len();
+            allocations.push(Slot::Occupied(allocation));
+            slot
+        };
+        shard.live += 1;
+        index.locations.insert(
+            position,
+            Location {
+                address: pointer.as_ptr() as usize,
+                shard: self.shard.clone(),
+                slot,
+            },
+        );
         Ok(pointer)
     }
 }
@@ -330,7 +448,183 @@ impl LocalShard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Barrier;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Barrier,
+    };
+
+    unsafe fn count_finalizer(pointer: *mut u8) {
+        let count = pointer.cast::<Arc<AtomicUsize>>().read();
+        count.fetch_add(1, Ordering::Relaxed);
+    }
+    fn tracked(shard: &mut LocalShard, count: &Arc<AtomicUsize>) -> NonNull<u8> {
+        let layout = Layout::new::<Arc<AtomicUsize>>();
+        let pointer = shard.allocate(layout.size(), layout.align()).unwrap();
+        unsafe {
+            pointer
+                .cast::<Arc<AtomicUsize>>()
+                .as_ptr()
+                .write(count.clone())
+        };
+        shard.root.finalize_with(pointer, count_finalizer);
+        pointer
+    }
+
+    #[test]
+    fn parallel_storage_index_retires_slots_regions_and_detached_owners() {
+        let budget = TaskBudget::new(1 << 20);
+        let root = Storage::new(vec![budget.clone()]).unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut first = root.shard().unwrap();
+        let mut second = root.shard().unwrap();
+        let owners: Vec<_> = (0..64).map(|_| tracked(&mut first, &count)).collect();
+        let other = tracked(&mut second, &count);
+        for (i, &pointer) in owners.iter().enumerate() {
+            if i % 2 == 0 {
+                unsafe { root.release(pointer) }
+            }
+        }
+        for (i, &pointer) in owners.iter().enumerate() {
+            assert_eq!(root.contains(pointer), i % 2 != 0);
+        }
+        // Reuse vacant slots without invalidating locations of the other owners.
+        let replacement = tracked(&mut first, &count);
+        for (i, &pointer) in owners.iter().enumerate() {
+            if i % 2 != 0 {
+                assert!(root.contains(pointer));
+            }
+        }
+        unsafe { first.release_region() };
+        assert!(!root.contains(replacement));
+        assert!(owners.iter().all(|p| !root.contains(*p)));
+        assert!(root.contains(other));
+        assert_eq!(count.load(Ordering::Relaxed), 65);
+        let detached = tracked(&mut first, &count);
+        drop((first, second));
+        assert!(root.contains(detached));
+        unsafe { root.release(detached) };
+        assert_eq!(count.load(Ordering::Relaxed), 66);
+        // Root fallback also destroys still-registered runtime metadata once.
+        drop(root);
+        assert_eq!(count.load(Ordering::Relaxed), 67);
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn parallel_storage_index_metadata_failures_refund_unpublished_payloads() {
+        for prewarm_index in [false, true] {
+            let budget = TaskBudget::new(1 << 16);
+            let root = Storage::new(vec![budget.clone()]).unwrap();
+            let mut shard = root.shard().unwrap();
+            if prewarm_index {
+                for bucket in &root.0.index {
+                    let mut bucket = lock(bucket);
+                    let Index {
+                        locations,
+                        metadata,
+                    } = &mut *bucket;
+                    reserve_slot(locations, metadata).unwrap();
+                }
+            }
+            // Permit the payload allocation, but not the next index/slot record.
+            let held = root
+                .accounts()
+                .reserve((1 << 16) - budget.used() - 8)
+                .unwrap();
+            let before = budget.used();
+            assert!(shard.allocate(8, 8).is_err());
+            assert_eq!(budget.used(), before);
+            assert_eq!(lock(&shard.shard).live, 0);
+            assert!(root.0.index.iter().all(|b| lock(b).locations.is_empty()));
+            drop(held);
+            let value = shard.allocate(8, 8).unwrap();
+            assert!(root.contains(value));
+            unsafe { root.release(value) };
+            drop((shard, root));
+            assert_eq!(budget.used(), 0);
+        }
+    }
+
+    #[test]
+    fn parallel_storage_lookup_and_release_do_not_lock_unrelated_partitions() {
+        let budget = TaskBudget::new(1 << 20);
+        let root = Storage::new(vec![budget.clone()]).unwrap();
+        let mut shard = root.shard().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let pointer = tracked(&mut shard, &count);
+        let unrelated = (bucket(pointer) + 1) % INDEX_BUCKETS;
+        let (tx, rx) = mpsc::channel();
+        let root_list = lock(&root.0.shards);
+        let unrelated_bucket = lock(&root.0.index[unrelated]);
+        let worker_root = root.clone();
+        let address = pointer.as_ptr() as usize;
+        let worker = std::thread::spawn(move || {
+            let pointer = NonNull::new(address as *mut u8).unwrap();
+            assert!(worker_root.contains(pointer));
+            unsafe {
+                worker_root.adopt_allocation(pointer);
+                worker_root.release(pointer);
+            }
+            assert!(!worker_root.contains(pointer));
+            tx.send(()).unwrap();
+        });
+        let completed = rx.recv_timeout(std::time::Duration::from_secs(5));
+        drop((unrelated_bucket, root_list));
+        worker.join().unwrap();
+        completed.expect("indexed access must not wait on unrelated partitions");
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+        drop((shard, root));
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn parallel_storage_finalizers_run_after_all_storage_locks_are_released() {
+        struct Probe {
+            root: Storage,
+            shard: Arc<Mutex<Shard>>,
+            count: Arc<AtomicUsize>,
+        }
+        unsafe fn finalize(pointer: *mut u8) {
+            let probe = pointer.cast::<Probe>().read();
+            assert!(probe.root.0.shards.try_lock().is_ok());
+            assert!(probe.shard.try_lock().is_ok());
+            assert!(probe
+                .root
+                .0
+                .index
+                .iter()
+                .all(|bucket| bucket.try_lock().is_ok()));
+            assert!(!probe.root.contains(NonNull::new(pointer).unwrap()));
+            let mut nested = probe.root.shard().unwrap();
+            let value = nested.allocate(8, 8).unwrap();
+            probe.root.release(value);
+            probe.count.fetch_add(1, Ordering::Relaxed);
+        }
+        for region in [false, true] {
+            let budget = TaskBudget::new(1 << 20);
+            let root = Storage::new(vec![budget.clone()]).unwrap();
+            let mut shard = root.shard().unwrap();
+            let count = Arc::new(AtomicUsize::new(0));
+            let layout = Layout::new::<Probe>();
+            let pointer = shard.allocate(layout.size(), layout.align()).unwrap();
+            unsafe {
+                pointer.cast::<Probe>().as_ptr().write(Probe {
+                    root: root.clone(),
+                    shard: shard.shard.clone(),
+                    count: count.clone(),
+                });
+                root.finalize_with(pointer, finalize);
+                if region {
+                    shard.release_region()
+                } else {
+                    root.release(pointer)
+                }
+            }
+            assert_eq!(count.load(Ordering::Relaxed), 1);
+            drop((shard, root));
+            assert_eq!(budget.used(), 0);
+        }
+    }
     #[test]
     fn parallel_storage_reuses_only_empty_unowned_shards() {
         let budget = TaskBudget::new(1 << 20);
@@ -359,7 +653,14 @@ mod tests {
             root.release(value);
         }
         drop(shard);
-        let stable = budget.used();
+        let index_bytes = || {
+            root.0
+                .index
+                .iter()
+                .map(|bucket| lock(bucket).metadata.bytes)
+                .sum::<usize>()
+        };
+        let stable = budget.used() - index_bytes();
         for _ in 0..128 {
             let mut shard = root.shard().unwrap();
             let value = shard.allocate(8, 8).unwrap();
@@ -367,7 +668,11 @@ mod tests {
                 root.release(value);
             }
             drop(shard);
-            assert_eq!(budget.used(), stable);
+            assert_eq!(budget.used() - index_bytes(), stable);
+            // Only one allocation is live at a time. Allocator address reuse may
+            // warm different buckets, but each caches at most one location.
+            assert!(index_bytes() <= INDEX_BUCKETS * std::mem::size_of::<Location>());
+            assert_eq!(lock(&root.0.shards).len(), 2);
         }
         drop(root);
         assert_eq!(budget.used(), 0);
