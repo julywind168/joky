@@ -476,6 +476,9 @@ unsafe fn copy_buffer(bits: u64, stride: usize) -> Result<Vec<u8>, Error> {
     let buffer = (bits as *const Buffer)
         .as_ref()
         .ok_or_else(|| invalid("Null control buffer"))?;
+    if stride == 1 {
+        return Ok(buffer.bytes()?.to_vec());
+    }
     let mut bytes = Vec::with_capacity(
         (buffer.len() as usize)
             .checked_mul(stride)
@@ -487,6 +490,9 @@ unsafe fn copy_buffer(bits: u64, stride: usize) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 unsafe fn buffer(arena: &mut Arena, bytes: &[u8], stride: usize) -> Result<u64, Error> {
+    if stride == 1 {
+        return Ok(Buffer::copy_bytes(arena, bytes)?.as_ptr() as u64);
+    }
     let mut b = Buffer::allocate(arena, (bytes.len() / stride) as u64, stride, stride)?;
     for item in bytes.chunks_exact(stride) {
         b.as_ref()
@@ -651,17 +657,7 @@ impl Call {
             .take()
             .ok_or_else(|| invalid("Control request already started"))?;
         let mut call = Self {
-            frame: Box::new(CpsFrame::try_new(
-                input.len()
-                    + if matches!(
-                        request.op,
-                        Operation::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes)
-                    ) {
-                        2
-                    } else {
-                        0
-                    },
-            )?),
+            frame: Box::new(CpsFrame::try_new(input.len())?),
             buffers: Vec::new(),
             keep: Vec::new(),
             prepared_reply: None,
@@ -738,6 +734,35 @@ impl Call {
                     Ok(None)
                 }
             }
+            Operation::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes) => {
+                let core = self
+                    .request
+                    .core
+                    .upgrade()
+                    .ok_or_else(|| invalid("Control driver closed"))?;
+                let executor = crate::runtime::executor::current_executor()
+                    .ok_or_else(|| invalid("Outbox receive requires an executor"))?;
+                crate::vm::state_domains::receive_outbox_bytes(
+                    frame,
+                    &executor.domains(),
+                    |bytes| {
+                        let mut size = std::mem::size_of::<Reply>();
+                        add_bytes(&mut size, bytes.len())?;
+                        core.root.accounts().reserve(size)
+                    },
+                )
+                .map(|received| {
+                    received.map(|received| {
+                        let present = received.bytes.is_some();
+                        self.prepared_reply = Some(Reply {
+                            value: Value::Received(received.bytes.unwrap_or_default(), present),
+                            updates: Vec::new(),
+                            _charge: received.prepared,
+                        });
+                        0
+                    })
+                })
+            }
             Operation::Domain(op) => crate::runtime::domain::poll(arena, frame, op),
             Operation::Fs(op) => crate::runtime::fs::poll(arena, frame, op),
         };
@@ -768,6 +793,12 @@ impl Call {
         resources: &mut HashMap<u64, LocalResource>,
     ) -> Result<Reply, Error> {
         if let Some(mut reply) = self.prepared_reply.take() {
+            if matches!(
+                self.request.op,
+                Operation::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes)
+            ) {
+                return Ok(reply);
+            }
             let packet = &*(self.frame.slots[6] as *const Buffer);
             for (i, item) in reply.updates[0]
                 .1
@@ -808,14 +839,7 @@ impl Call {
             Kind::Bytes(stride, _) => {
                 let bytes = copy_buffer(value, stride)?;
                 Buffer::release(&mut *cps::arena(&mut *self.frame), value as *mut Buffer)?;
-                if matches!(
-                    self.request.op,
-                    Operation::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes)
-                ) {
-                    Value::Received(bytes, self.frame.slots[1] != 0)
-                } else {
-                    Value::Bytes(bytes, stride)
-                }
+                Value::Bytes(bytes, stride)
             }
             Kind::Resource => {
                 if resources.len() >= LIMIT {

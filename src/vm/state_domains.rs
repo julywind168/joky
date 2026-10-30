@@ -29,7 +29,7 @@ pub(crate) mod diagnostics;
 mod directory;
 pub(crate) mod migration;
 mod outbox;
-pub(crate) use outbox::emit;
+pub(crate) use outbox::{emit, receive_bytes as receive_outbox_bytes};
 mod pairs;
 pub(crate) mod parallel;
 mod reads;

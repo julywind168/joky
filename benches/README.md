@@ -289,6 +289,8 @@ Rust Release 不代表 Joky 生成代码另开了优化选项，后者仍使用�
 [浮点环境调用边界优化](reports/chat-float-env-2026-10-30.md)。
 合并 outbox 领取／关闭查询／字节提取为一次控制接收，结果见
 [outbox 单次接收优化](reports/chat-outbox-receive-2026-10-30.md)。
+随后对控制桥整段字节复制和出站 Vec 移交分别测量，结果见
+[控制桥字节传输优化](reports/chat-byte-transfer-2026-10-30.md)。
 
 ### Rust/Tokio 应用对照
 

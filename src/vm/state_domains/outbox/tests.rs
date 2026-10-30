@@ -633,3 +633,64 @@ fn disconnect_control_validation_and_failed_creation_preserve_ownership() {
     assert!(vm.domains.borrow().outboxes.is_empty());
     assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
 }
+
+#[test]
+fn outbox_owned_receive_preflights_budget_and_moves_bytes() {
+    use crate::runtime::parallel::{Storage, TaskBudget};
+
+    let vm = VmEngine::new();
+    let mut arena = Arena::default();
+    let owner = create(&vm.domains, 1, 3).unwrap();
+    let queue = owner.queue.clone();
+    let mut outgoing = batch(&vm.domains, 1, 3).unwrap();
+    outgoing
+        .stage(&vm.domains.borrow(), owner.token, &[0, 255, 42])
+        .unwrap();
+    outgoing.prepare(&vm.domains.borrow()).unwrap();
+    outgoing.publish();
+    drop(outgoing);
+    let token = adopt(&mut arena, owner).unwrap();
+    let original = queue.borrow().messages[0].bytes.as_ptr();
+    let queued_budget = vm.domains.borrow().budget.bytes.get();
+    let budget = TaskBudget::new(1 << 20);
+    let storage = Storage::new(vec![budget.clone()]).unwrap();
+    let baseline = budget.used();
+    let held = storage.accounts().reserve((1 << 20) - baseline).unwrap();
+    let mut frame = CpsFrame::new(1);
+    frame.slots[0] = token;
+    let receive = |frame: &mut CpsFrame| unsafe {
+        receive_bytes(frame, &vm.domains, |bytes| {
+            storage.accounts().reserve(17 + bytes.len())
+        })
+    };
+    assert!(matches!(receive(&mut frame), Err(error) if error.code() == ErrorCode::ResourceLimit));
+    assert_eq!(queue.borrow().bytes, 3);
+    assert_eq!(queue.borrow().messages[0].bytes.as_ptr(), original);
+    assert_eq!(vm.domains.borrow().budget.bytes.get(), queued_budget);
+    drop(held);
+
+    let received = receive(&mut frame).unwrap().unwrap();
+    let bytes = received.bytes.as_ref().unwrap();
+    assert_eq!(bytes, &[0, 255, 42]);
+    assert_eq!(bytes.as_ptr(), original, "dequeue must move the allocation");
+    assert!(queue.borrow().messages.is_empty());
+    assert_eq!(queue.borrow().bytes, 0);
+    assert_eq!(vm.domains.borrow().budget.bytes.get(), queued_budget - 3);
+    assert_eq!(
+        budget.used(),
+        baseline + 20,
+        "reply owns replacement accounting"
+    );
+    drop(received); // Also models a cancelled reply that the worker never installs.
+    assert_eq!(budget.used(), baseline);
+    queue.borrow_mut().close();
+    let closed = receive(&mut frame).unwrap().unwrap();
+    assert!(closed.bytes.is_none());
+    drop(closed);
+    assert_eq!(budget.used(), baseline);
+    unsafe { Buffer::release(&mut arena, token as *mut Buffer).unwrap() };
+    drop((frame, queue, storage));
+    assert_eq!(budget.used(), 0);
+    assert!(vm.domains.borrow().outboxes.is_empty());
+    assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+}

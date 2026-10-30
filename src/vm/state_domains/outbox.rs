@@ -384,6 +384,70 @@ unsafe extern "C" fn stop(frame: *mut CpsFrame, _: u32) {
         drop(Box::from_raw(context.cast::<Wait>()));
     }
 }
+fn park(
+    frame: &mut CpsFrame,
+    owner: &Rc<RefCell<Mailbox>>,
+    queue: &mut Mailbox,
+) -> Result<(), Error> {
+    let waker = current_waker().ok_or_else(|| invalid("Outbox receive requires a task waker"))?;
+    if frame.host_context.is_null() {
+        if queue.waiter.is_some() {
+            return Err(invalid("Outbox already has a receiver"));
+        }
+        frame.host_context = Box::into_raw(Box::new(Wait {
+            queue: owner.clone(),
+        }))
+        .cast();
+        frame.host_stop = Some(stop);
+    }
+    queue.waiter = Some(waker);
+    frame.wake = None;
+    Ok(())
+}
+
+pub(crate) struct Received<T> {
+    pub bytes: Option<Vec<u8>>,
+    pub prepared: T,
+}
+/// Prepare result storage/accounting before removing the front. The callback is
+/// runtime-only and cannot reenter the executor. A control caller reserves its
+/// reply lease here, so queue accounting never drops before replacement coverage.
+/// Only the owned byte vector and prepared result escape, never a mailbox borrow.
+///
+/// # Safety
+/// Slot zero is a live QueueOwner in this registry; the frame owns its waiter
+/// until completion or stop. The caller must keep the owner alive while pending.
+pub(crate) unsafe fn receive_bytes<T>(
+    frame: &mut CpsFrame,
+    registry: &Rc<RefCell<Domains>>,
+    prepare: impl FnOnce(&[u8]) -> Result<T, Error>,
+) -> Result<Option<Received<T>>, Error> {
+    let result = (|| {
+        let lease = lease(frame.slots[0])?;
+        let stored = &*lease.token().cast::<Stored<Owner>>();
+        let owner = stored.value.borrow();
+        let mut queue = owner.queue.borrow_mut();
+        if queue.registry != registry.borrow().identity {
+            return Err(invalid("Outbox belongs to another executor"));
+        }
+        if !queue.closed && queue.messages.is_empty() {
+            park(frame, &owner.queue, &mut queue)?;
+            return Ok(None);
+        }
+        let prepared = prepare(queue.messages.front().map_or(&[], |m| m.bytes.as_slice()))?;
+        let bytes = queue.messages.pop_front().map(|message| {
+            queue.bytes -= message.bytes.len();
+            message.bytes
+        });
+        Ok(Some(Received { bytes, prepared }))
+    })();
+    // All queue/resource borrows are gone before clearing the registered waiter.
+    if !matches!(result, Ok(None)) {
+        stop(frame, 0);
+    }
+    result
+}
+
 /// # Safety
 /// Slots obey the compiler-checked signature. Resource and byte buffer owners,
 /// scalar output places, and the arena stay live until completion or stop.
@@ -477,7 +541,15 @@ unsafe fn poll_inner(
             message.take();
             Ok(Some(output.as_ptr() as usize as u64))
         }
-        Operation::OutboxHandle | Operation::OutboxReceive | Operation::OutboxReceiveBytes => {
+        Operation::OutboxReceiveBytes => {
+            let received =
+                receive_bytes(frame, registry, |bytes| Buffer::copy_bytes(arena, bytes))?;
+            Ok(received.map(|received| {
+                frame.slots[1] = u64::from(received.bytes.is_some());
+                received.prepared.as_ptr() as u64
+            }))
+        }
+        Operation::OutboxHandle | Operation::OutboxReceive => {
             let lease = lease(frame.slots[0])?;
             let stored = &*lease.token().cast::<Stored<Owner>>();
             let owner = stored.value.borrow();
@@ -489,22 +561,6 @@ unsafe fn poll_inner(
             }
             let mut queue = owner.queue.borrow_mut();
             if queue.closed || !queue.messages.is_empty() {
-                if op == Operation::OutboxReceiveBytes {
-                    // Prepare the owned result before dequeuing. Allocation failure
-                    // leaves the front intact, including a zero-byte message.
-                    let message = queue.messages.front();
-                    let output = Buffer::copy_bytes(
-                        arena,
-                        message.map_or(&[], |message| message.bytes.as_slice()),
-                    )?;
-                    frame.slots[1] = u64::from(message.is_some());
-                    if let Some(message) = queue.messages.pop_front() {
-                        queue.bytes -= message.bytes.len();
-                    }
-                    drop(queue);
-                    stop(frame, 0);
-                    return Ok(Some(output.as_ptr() as u64));
-                }
                 // Allocate result ownership before removing the queue's front.
                 let output = adopt(arena, None::<Message>)?;
                 let result_lease = commits::lease(output)?;
@@ -517,20 +573,7 @@ unsafe fn poll_inner(
                 stop(frame, 0);
                 return Ok(Some(output));
             }
-            let waker =
-                current_waker().ok_or_else(|| invalid("Outbox receive requires a task waker"))?;
-            if frame.host_context.is_null() {
-                if queue.waiter.is_some() {
-                    return Err(invalid("Outbox already has a receiver"));
-                }
-                frame.host_context = Box::into_raw(Box::new(Wait {
-                    queue: owner.queue.clone(),
-                }))
-                .cast();
-                frame.host_stop = Some(stop);
-            }
-            queue.waiter = Some(waker);
-            frame.wake = None;
+            park(frame, &owner.queue, &mut queue)?;
             Ok(None)
         }
         _ => unreachable!(),
