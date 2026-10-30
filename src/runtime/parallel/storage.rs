@@ -3,7 +3,10 @@ use crate::{Error, ErrorCode, ErrorPhase};
 use std::{
     alloc::{alloc, dealloc, Layout},
     ptr::NonNull,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 
 fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -24,17 +27,21 @@ fn limited() -> Error {
 pub struct TaskBudget(Arc<Budget>);
 struct Budget {
     limit: usize,
-    used: Mutex<usize>,
+    admission: Mutex<()>,
+    used: AtomicUsize,
 }
 impl TaskBudget {
     pub fn new(limit: usize) -> Self {
         Self(Arc::new(Budget {
             limit,
-            used: Mutex::new(0),
+            admission: Mutex::new(()),
+            used: AtomicUsize::new(0),
         }))
     }
     pub fn used(&self) -> usize {
-        *lock(&self.0.used)
+        // Do not observe a charge before its multi-budget admission completes.
+        let _guard = lock(&self.0.admission);
+        self.0.used.load(Ordering::Relaxed)
     }
 }
 
@@ -73,34 +80,44 @@ impl Lease {
     }
     pub(crate) fn refund(&mut self, amount: usize) {
         assert!(self.bytes >= amount);
+        if amount == 0 {
+            return;
+        }
         for budget in self.accounts.0.iter() {
-            *lock(&budget.0.used) -= amount;
+            budget.0.used.fetch_sub(amount, Ordering::Relaxed);
         }
         self.bytes -= amount;
     }
 
     pub(crate) fn resize(&mut self, bytes: usize) -> Result<(), Error> {
+        if bytes <= self.bytes {
+            self.refund(self.bytes - bytes);
+            return Ok(());
+        }
         // The sorted identities impose one lock order even for overlapping roots.
-        let mut guards: Vec<_> = self.accounts.0.iter().map(|b| lock(&b.0.used)).collect();
-        if bytes > self.bytes {
-            let additional = bytes - self.bytes;
-            if guards
-                .iter()
-                .zip(self.accounts.0.iter())
-                .any(|(used, budget)| {
-                    used.checked_add(additional)
-                        .is_none_or(|n| n > budget.0.limit)
-                })
-            {
-                return Err(limited());
-            }
-            for used in &mut guards {
-                **used += additional;
-            }
-        } else {
-            for used in &mut guards {
-                **used -= self.bytes - bytes;
-            }
+        let _guards: Vec<_> = self
+            .accounts
+            .0
+            .iter()
+            .map(|b| lock(&b.0.admission))
+            .collect();
+        let additional = bytes - self.bytes;
+        if self.accounts.0.iter().any(|budget| {
+            budget
+                .0
+                .used
+                .load(Ordering::Relaxed)
+                .checked_add(additional)
+                .is_none_or(|n| n > budget.0.limit)
+        }) {
+            return Err(limited());
+        }
+        // While admission is locked, only unique leases can refund. Usage can
+        // therefore only decrease after preflight. RMW updates preserve those
+        // concurrent refunds; a load/store pair would lose them. These counters
+        // account for bytes, not publication of the storage they cover.
+        for budget in self.accounts.0.iter() {
+            budget.0.used.fetch_add(additional, Ordering::Relaxed);
         }
         self.bytes = bytes;
         Ok(())
@@ -108,10 +125,8 @@ impl Lease {
 }
 impl Drop for Lease {
     fn drop(&mut self) {
-        // Refund needs no allocation, including during unwinding or OOM cleanup.
-        for budget in self.accounts.0.iter() {
-            *lock(&budget.0.used) -= self.bytes;
-        }
+        // Refund needs no allocation or admission lock, including during unwind.
+        self.refund(self.bytes);
     }
 }
 
@@ -715,6 +730,98 @@ mod tests {
         assert_eq!(wins, 1);
         assert_eq!(one.used(), 0);
         assert_eq!(two.used(), 0);
+    }
+
+    #[test]
+    fn parallel_budget_refunds_do_not_wait_for_admission() {
+        let one = TaskBudget::new(100);
+        let two = TaskBudget::new(100);
+        let accounts = Accounts::new(vec![one.clone(), two.clone()]);
+        let mut shrinking = accounts.reserve(40).unwrap();
+        let dropped = accounts.reserve(30).unwrap();
+        let first = lock(&one.0.admission);
+        let second = lock(&two.0.admission);
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            shrinking.resize(25).unwrap();
+            shrinking.refund(5);
+            shrinking.resize(20).unwrap();
+            drop(dropped);
+            drop(accounts.reserve(0).unwrap());
+            tx.send(shrinking).unwrap();
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(5));
+        // Always release the gates before joining, even if a regression blocks.
+        drop((first, second));
+        worker.join().unwrap();
+        let remaining = result.expect("refund and unchanged usage must not wait for admission");
+        assert_eq!((one.used(), two.used()), (20, 20));
+        drop(remaining);
+        assert_eq!((one.used(), two.used()), (0, 0));
+    }
+
+    #[test]
+    fn parallel_budget_failed_growth_preserves_every_charge() {
+        for count in [0, 1, 2, 5] {
+            let mut budgets: Vec<_> = (0..count).map(|_| TaskBudget::new(100)).collect();
+            budgets.sort_by_key(|budget| Arc::as_ptr(&budget.0));
+            if let Some(last) = budgets.last_mut() {
+                Arc::get_mut(&mut last.0).unwrap().limit = 19;
+            }
+            let accounts = Accounts::new(budgets.clone());
+            let mut lease = accounts.reserve(10).unwrap();
+            if count > 0 {
+                assert_eq!(
+                    lease.resize(20).unwrap_err().code(),
+                    ErrorCode::ResourceLimit
+                );
+                assert!(budgets.iter().all(|b| b.used() == 10));
+            }
+            lease.resize(12).unwrap();
+            lease.refund(2);
+            lease.resize(3).unwrap();
+            assert!(budgets.iter().all(|b| b.used() == 3));
+            drop(lease);
+            assert!(budgets.iter().all(|b| b.used() == 0));
+        }
+        let budget = TaskBudget::new(usize::MAX);
+        let accounts = Accounts::new(vec![budget.clone()]);
+        let mut lease = accounts.reserve(usize::MAX - 1).unwrap();
+        assert!(accounts.reserve(2).is_err());
+        assert!(lease.add(2).is_err());
+        assert_eq!(budget.used(), usize::MAX - 1);
+        lease.add(1).unwrap();
+        drop(lease);
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn parallel_budget_concurrent_growth_and_refunds_preserve_live_leases() {
+        let budgets: Vec<_> = (0..3).map(|_| TaskBudget::new(100)).collect();
+        let accounts = Accounts::new(budgets.clone());
+        let retained = accounts.reserve(7).unwrap();
+        let gate = Barrier::new(4);
+        std::thread::scope(|scope| {
+            for offset in 0..4 {
+                let mut selected = budgets.clone();
+                selected.rotate_left(offset % 3);
+                selected.truncate(2);
+                let accounts = Accounts::new(selected);
+                let gate = &gate;
+                scope.spawn(move || {
+                    gate.wait();
+                    for _ in 0..1000 {
+                        let mut lease = accounts.reserve(3).unwrap();
+                        lease.resize(1).unwrap();
+                        lease.add(3).unwrap();
+                        drop(lease);
+                    }
+                });
+            }
+        });
+        assert!(budgets.iter().all(|b| b.used() == 7));
+        drop(retained);
+        assert!(budgets.iter().all(|b| b.used() == 0));
     }
     #[test]
     fn parallel_unregistered_buffer_refunds_metadata_and_drops_budget_references() {
