@@ -973,6 +973,11 @@ fn run(shared: Arc<Shared>, worker: usize) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static AFTER_ARBITRATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Per-scope arbitration. The owner reads only synchronized terminal packets.
 pub(crate) struct Group {
     arbiter: Arc<Arbiter>,
@@ -1033,10 +1038,18 @@ impl Group {
         if let Some(error) = failure {
             self.retain_failure(error);
         }
+        #[cfg(test)]
+        if let Some(callback) = AFTER_ARBITRATION.with(|slot| slot.borrow_mut().take()) {
+            callback();
+        }
         if !self.handles.iter().all(Handle::cleaned) {
             wait_for_wake();
             return Ok(false);
         }
+        // A winner can be published after the first snapshot but before the
+        // last cleaned flag is observed. Refresh after that barrier, before
+        // discarding losing results, or a stale None also discards the winner.
+        self.selected = lock(&self.arbiter.state).selected;
         if self.kind == 1 {
             for (index, handle) in self.handles.iter().enumerate() {
                 if self.selected != Some(index) && !handle.failed() {
@@ -1230,6 +1243,63 @@ impl Arbiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn task_pool_race_completion_between_snapshot_and_drain_keeps_winner() {
+        struct Child(Arc<AtomicBool>);
+        impl Job for Child {
+            fn poll(&mut self) -> Poll<Result<Output, Error>> {
+                if self.0.load(Ordering::Acquire) {
+                    Poll::Ready(Ok(Box::new(42usize)))
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+        struct Parent;
+        impl Job for Parent {
+            fn poll(&mut self) -> Poll<Result<Output, Error>> {
+                let open = Arc::new(AtomicBool::new(false));
+                let mut group = Group::new(1);
+                let factories: Vec<Factory> = (0..2)
+                    .map(|_| {
+                        let open = open.clone();
+                        Box::new(move || Ok(Box::new(Child(open)) as Box<dyn Job>)) as Factory
+                    })
+                    .collect();
+                group.publish(factories).unwrap();
+                let handles = group.handles.clone();
+                AFTER_ARBITRATION.with(|slot| {
+                    *slot.borrow_mut() = Some(Box::new(move || {
+                        open.store(true, Ordering::Release);
+                        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+                        while !handles.iter().all(Handle::cleaned) {
+                            assert!(Instant::now() < deadline, "race children did not drain");
+                            std::thread::yield_now();
+                        }
+                    }));
+                });
+                assert!(group.poll().unwrap());
+                let winner = lock(&group.arbiter.state).selected.unwrap();
+                Poll::Ready(group.take(winner))
+            }
+        }
+        let budget = super::super::TaskBudget::new(1 << 20);
+        let root = Storage::new(vec![budget.clone()]).unwrap();
+        let mut pool = ParallelExecutor::new(3, 8).unwrap();
+        let task = pool
+            .submit(root, Arc::new(()), Box::new(|| Ok(Box::new(Parent))))
+            .unwrap();
+        task.wait().unwrap();
+        let result = task
+            .take()
+            .unwrap()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(*result.downcast::<usize>().unwrap(), 42);
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0);
+    }
+
     #[test]
     fn task_pool_running_notification_survives_pending_and_late_wake_is_inert() {
         struct Probe {
