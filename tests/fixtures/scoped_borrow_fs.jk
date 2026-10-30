@@ -1,0 +1,47 @@
+import joky/fs
+import joky/dns
+import joky/task
+import joky/check
+
+struct Settings { path: String, text: String }
+fn exercise(settings: &Settings) @suspends -> Int32 {
+    let addresses = dns.lookup("localhost", 7777)!
+    if addresses.len() == 0 { return -7 }
+    var options = fs.OpenOptions.new()
+    options.write = true
+    options.create = true
+    options.truncate = true
+    var file = fs.open(settings.path.clone(), options)!
+    file.write_text(settings.text.clone())!
+    if file.seek(fs.SeekFrom.Start(0))! != 0 { return -1 }
+    let text = file.read_text()!
+    if !text.equals(&settings.text) { return -2 }
+    let eof = file.read(1)!
+    if eof.len() != 0 { return -3 }
+    if file.read(0).is_ok() { return -4 }
+    file.sync_all()!
+    file.close()!
+    match fs.open("", options) {
+        Err(error) => { if error.message.is_empty() { return -5 } }
+        Ok(_) => return -6
+    }
+    21
+}
+fn main() @suspends -> Int32 {
+    let first = Settings { path: "first.bin", text: "中\0🙂" }
+    let second = Settings { path: "second.bin", text: "second\0文件" }
+    let (a, b) = join { | exercise(&first) | exercise(&second) }
+    if a + b != 42 { return 1 }
+    let view = &first
+    scope { branch { if exercise(view) != 21 { check.panic("bad file result") } } }
+    0
+}
+fn read(path: &String) @suspends {
+    var file = fs.open(path.clone(), fs.OpenOptions.new())!
+    file.read(16);
+}
+fn parked() @suspends {
+    let path = "blocked"
+    let view = &path
+    scope { branch { read(view) } }
+}

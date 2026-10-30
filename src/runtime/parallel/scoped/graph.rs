@@ -388,6 +388,7 @@ impl Element {
                         element: element.layout,
                         plain: false,
                         shared_vm: false,
+                        exclusive_queue: false,
                         graph: Some(element.clone()),
                     };
                     let range = Range::capture(

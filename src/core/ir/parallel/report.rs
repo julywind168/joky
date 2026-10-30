@@ -208,8 +208,13 @@ fn classify(
         };
         for (index, ty) in signature.params.iter().enumerate() {
             if InputShape::of(ty).is_err() {
+                let guidance = if ty.reference_type().is_some_and(|r| r.mutable) {
+                    "; exclusive resource loans currently support Mailbox only; retain local execution or move a qualifying owner into the task"
+                } else {
+                    ""
+                };
                 return local(format!(
-                    "{target} #{} has unsupported cross-worker input type `{ty}`",
+                    "{target} #{} has unsupported cross-worker input type `{ty}`{guidance}",
                     index + 1,
                     ty = sig.params[index],
                 ));
@@ -242,7 +247,7 @@ fn classify(
                 ));
             }
         }
-        (ParallelDisposition::RuntimeChecked, "read-only input shapes and call graph qualify; runtime must verify current-task ownership or a received bounded loan for every borrowed input".into())
+        (ParallelDisposition::RuntimeChecked, "scoped input shapes and call graph qualify; runtime must verify source ownership and the shared-view or exclusive-resource permission for every borrowed input".into())
     } else {
         (ParallelDisposition::Eligible, "owned input and result packets qualify outside isolate; inside isolate this group remains local".into())
     }
@@ -298,6 +303,54 @@ mod tests {
         assert!(shared.sites[0]
             .reason
             .contains("unsupported cross-worker input type"));
+    }
+
+    #[test]
+    fn parallel_report_outbox_calls_and_exclusive_inputs_qualify() {
+        let calls = report(
+            include_str!("../../../../tests/fixtures/scoped_borrow_outbox.jk"),
+            "main",
+        );
+        assert!(calls.entry_error.is_none());
+        assert!(calls.sites.iter().any(|site| site.construct == "branch"
+            && site.disposition == ParallelDisposition::RuntimeChecked));
+        assert!(calls
+            .sites
+            .iter()
+            .all(|site| site.disposition != ParallelDisposition::Local));
+        assert!(calls
+            .sites
+            .iter()
+            .all(|site| !site.reason.contains("host reference ABI")));
+    }
+
+    #[test]
+    fn parallel_report_exclusive_support_does_not_admit_shared_mailboxes_or_mutable_data() {
+        let report = report(
+            r#"
+            import joky/outbox
+            fn shared(queue: &outbox.Mailbox) @suspends { queue.handle(); }
+            fn change(value: &mut Int32) @suspends { *value += 1 }
+            fn main() @suspends {
+                let queue = outbox.create(1, 0)
+                join { | shared(&queue) | shared(&queue) };
+                var a = 1
+                var b = 2
+                join { | change(&mut a) | change(&mut b) };
+            }
+        "#,
+            "main",
+        );
+        assert!(report.entry_error.is_none());
+        assert_eq!(report.sites.len(), 2);
+        assert!(report
+            .sites
+            .iter()
+            .all(|site| site.disposition == ParallelDisposition::Local));
+        assert!(report
+            .sites
+            .iter()
+            .any(|site| site.reason.contains("Mailbox only")));
     }
 
     #[test]
@@ -366,14 +419,15 @@ mod tests {
             r#"
             import joky/array.{type Array}
             import joky/task
-            import joky/domain
+            trait Value { fn value(&self) @noescape -> Int32 }
+            struct Item { n: Int32 }
+            impl Value for Item { fn value(&self) -> Int32 { self.n } }
             fn number() -> Int32 { 1 }
             fn callback() -> Int32 { let f = number; f() }
             fn reader(values: &Array<Int32>) @suspends -> Int32 { callback() }
             fn printer(values: &Array<Int32>) @suspends -> Int32 {
-                let directory = domain.directory(1)
-                directory.handle();
-                1
+                let item: dyn Value = Item { n: 1 }
+                item.value()
             }
             fn recurse(values: &Array<Int32>, n: Int32) @suspends -> Int32 {
                 if n == 0 { 1 } else { recurse(values, n - 1) }
@@ -409,7 +463,7 @@ mod tests {
             .sites
             .iter()
             .any(|s| s.disposition == ParallelDisposition::Local
-                && s.reason.contains("host reference ABI")));
+                && s.reason.contains("dynamic dispatch")));
         assert!(
             report
                 .sites

@@ -645,11 +645,16 @@ fn net6_dns_parallel_completion_cancellation_and_pool_close() {
     use crate::vm::{InstanceValue, TaskValue};
     let source = r#"
         import joky/dns
+        import joky/task
         extern fn install(service: UInt64) @suspends
-        fn pending(service: UInt64) @suspends -> Int32 {
-            install(service)
+        fn lookup(service: &UInt64) @suspends -> Int32 {
+            install(*service)
             let addresses = dns.lookup("controlled.test", 443)!
             if addresses.len() == 1 { 42 } else { 1 }
+        }
+        fn pending(service: UInt64) @suspends -> Int32 {
+            let (value, _) = join { | lookup(&service) | task.yield_now() }
+            value
         }
         fn next(service: UInt64) @suspends -> Int32 {
             install(service)
@@ -691,9 +696,12 @@ fn net6_dns_parallel_completion_cancellation_and_pool_close() {
             .unwrap_or_else(|error| panic!("{error}"));
         let argument =
             TaskValue::Scalar(InstanceValue::UInt64(Arc::as_ptr(&service) as usize as u64));
-        for action in ["complete", "cancel", "close"] {
+        for (workers, action) in [1, 3]
+            .into_iter()
+            .flat_map(|workers| ["complete", "cancel", "close"].map(|action| (workers, action)))
+        {
             let budget = TaskBudget::new(8 << 20);
-            let mut pool = ParallelExecutor::new(1, 16).unwrap();
+            let mut pool = ParallelExecutor::new(workers, 16).unwrap();
             let task = vm
                 .prepare_parallel_task("pending", vec![argument.clone()], vec![budget.clone()])
                 .unwrap_or_else(|error| panic!("{error}"))
@@ -734,6 +742,11 @@ fn net6_dns_parallel_completion_cancellation_and_pool_close() {
                 // Cancellation refunds task storage, but a running OS request retains its quota.
                 wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 1);
             }
+            let observed = crate::runtime::parallel::scoped::observations(task.identity());
+            let sender = observed.iter().find(|o| o.source).unwrap();
+            assert!(observed
+                .iter()
+                .any(|o| !o.source && (workers == 1 || o.thread != sender.thread)));
             drop(task);
             pool.wait_closed();
             assert_eq!(budget.used(), 0, "{mode:?}: {action}");

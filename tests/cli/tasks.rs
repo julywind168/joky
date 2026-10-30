@@ -532,6 +532,9 @@ fn task_parallel_control_bridge_runs_in_standalone_aot() {
         include_str!("../fixtures/parallel_control.jk"),
         include_str!("../fixtures/scoped_borrow_vm.jk"),
         include_str!("../fixtures/scoped_borrow_admission.jk"),
+        include_str!("../fixtures/scoped_borrow_outbox.jk"),
+        include_str!("../fixtures/scoped_borrow_fs.jk"),
+        include_str!("../fixtures/exclusive_mailbox.jk"),
     ] {
         let work = Workspace::new();
         work.write("parallel_control.jk", source);
@@ -549,11 +552,15 @@ fn task_parallel_control_bridge_runs_in_standalone_aot() {
             .output()
             .unwrap();
         success(&build);
-        success(
-            &Command::new(work.path().join("parallel_control"))
-                .output()
-                .unwrap(),
-        );
+        for workers in ["1", "3"] {
+            success(
+                &Command::new(work.path().join("parallel_control"))
+                    .current_dir(work.path())
+                    .args(["--task-workers", workers])
+                    .output()
+                    .unwrap(),
+            );
+        }
     }
 }
 

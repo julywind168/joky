@@ -366,6 +366,12 @@ impl Buffer {
             && self.resource.is_some()
     }
 
+    /// Exclusive loans begin only at a current-task owning header. Received
+    /// views cannot lend again, even if their underlying proxy is still live.
+    pub(crate) fn scoped_owned_resource(&self) -> bool {
+        self.loan.is_null() && self.scoped_resource()
+    }
+
     pub(crate) fn resource_mut(&mut self) -> Result<&mut super::resource::OwnedResource, Error> {
         self.resource
             .as_mut()

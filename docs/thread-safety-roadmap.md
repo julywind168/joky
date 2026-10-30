@@ -1,6 +1,6 @@
 # 线程安全与并行资格收敛路线
 
-状态：2026-10-30，S0 必要收敛、S1 admission 最小集合及 TCP／stdout 调用契约已实现，记录见第 7–9 节；S1 其余接口及 S2–S6 待实施。
+状态：2026-10-30，S0 必要收敛、S1 受检接口及 S2/S3 Mailbox 独占借用已实现；S4 按明确限制收敛，S5 诊断已调整，S6 本轮审查与合并验收已完成。阶段记录见第 7–13 节。
 起始实现基线为 W6q（`22525a4`）。
 
 本文承接[启动时 worker 配置与并行能力演进计划](startup-worker-configuration.md)，
@@ -58,7 +58,7 @@ W6q 后 chat 的已知阻挡点是：
 - session 的收发 race 仍包含 `&mut Mailbox`。
 - 带超时的读取 race 仍包含 `&mut BufferedTcpReader`。
 
-这是当前报告暴露的首个阻挡点集合，不代表清除它们后一定没有其他依赖限制。
+这是起点版本报告暴露的首个阻挡点集合，不代表清除它们后一定没有其他依赖限制。
 每次扩展后都重新检查完整调用链，包括日志、析构、回调和内部资源操作。
 
 ## 3. 统一资格模型
@@ -104,18 +104,18 @@ W6q 后 chat 的已知阻挡点是：
 
 ## 4. 实施顺序
 
-以下顺序体现依赖和业务收益，不是一次性大重构要求。S0 必要收敛和 S1 的 admission、TCP、stdout 调用集合已完成；
-S1 中其他宿主适配器仍需逐项审查，不能把最小集合交付解释为整个宿主引用 ABI 已开放。
+以下顺序体现依赖和业务收益。S1 已审查 chat 需要的固定内置适配器，S2/S3 已实现 Mailbox 接收权借用；
+S4 保留 TCP 引用限制并采用现有拥有端点迁移。通用宿主引用 ABI、任意 `&mut T` 并未开放。
 
 | 阶段 | 工作 | 完成标准 |
 | --- | --- | --- |
 | S0：规则与证据收敛（必要收敛已完成） | 梳理现有判定入口，统一共享的名义展开、资格依据及拒绝原因 | 各后端与诊断对既有用例作出一致决定；没有无意扩张准入 |
-| S1：受检宿主引用接口（最小集合已完成） | 审计 chat 调用链，开放最小、可证明安全的内置适配器集合 | 每个新接口有绑定身份、参数权限和停止契约；实际调用与诊断一致 |
-| S2：独占借用基础 | 定义跨 worker 借出、执行、停止、归还及失败恢复协议 | 正常、取消和部分安装失败均不存在冲突访问或重复清理 |
-| S3：Mailbox 独占借用 | 使用 S2 接通唯一接收方，同时保留发送／关闭句柄行为 | 收发与关闭并发、等待取消、借用后继续使用来源均符合原语义 |
-| S4：TCP 与缓冲状态归还 | 接通合适的 TCP 端点和 BufferedTcpReader，明确完整状态归属 | 部分读写、缓冲剩余数据、超时与取消后恢复都无丢失、重复或悬空访问 |
-| S5：诊断与标准库收尾 | 统一报告原因和可行替代路径，按稳定规则整理业务例子 | 用户能区分安全限制、暂未实现与运行时条件，不需要猜测后端细节 |
-| S6：安全边界审计与验收 | 审查共享状态、适配器信任边界、清理和后端一致性 | 高价值服务路径可按线程数部署；剩余限制、证据及未验证项明确记录 |
+| S1：受检宿主引用接口（已完成） | 审计 chat 调用链，开放最小、可证明安全的内置适配器集合 | 每个新接口有绑定身份、参数权限和停止契约；实际调用与诊断一致 |
+| S2：独占借用基础（已完成） | 定义跨 worker 借出、执行、停止、归还及失败恢复协议 | 正常、取消和部分安装失败均不存在冲突访问或重复清理 |
+| S3：Mailbox 独占借用（已完成） | 使用 S2 接通唯一接收方，同时保留发送／关闭句柄行为 | 收发与关闭并发、等待取消、借用后继续使用来源均符合原语义 |
+| S4：TCP 与缓冲状态归还（保留限制） | 接通合适的 TCP 端点和 BufferedTcpReader，明确完整状态归属 | 部分读写、缓冲剩余数据、超时与取消后恢复都无丢失、重复或悬空访问 |
+| S5：诊断与标准库收尾（已完成） | 统一报告原因和可行替代路径，按稳定规则整理业务例子 | 用户能区分安全限制、暂未实现与运行时条件，不需要猜测后端细节 |
+| S6：安全边界审计与验收（本轮已完成） | 审查共享状态、适配器信任边界、清理和后端一致性 | 高价值服务路径可按线程数部署；剩余限制、证据及未验证项明确记录 |
 
 实施顺序是先完成 **S0 的必要收敛与 S1 的受检接口**，获得规则和实际服务路径上的收益，再进入独占借用。
 S0 不先重写整个类型系统；S2 与第一个 Mailbox 行为用例一起设计，避免只交付没有执行证据的抽象。
@@ -478,3 +478,94 @@ AOT 测试桥补上目录轮询符号，以便继续链接这个未被选中的�
 
 未运行 Release、完整 stress、额外无关穷举或性能测量。竞态修复后仅重验任务调度及其调用入口，
 没有重复整套语言检查或 chat 矩阵；最终验收只补充文档。
+
+## 10. S1 剩余接口：outbox、directory、文件与 DNS
+
+审查并开放的调用集合：outbox create/create_disconnect/handle/close/receive/message_closed/message_bytes，
+directory create/handle/close，全部固定文件适配器及 DNS lookup。域事务、outbox 批次不因这一列表自动获得控制桥资格。
+完整签名、挂起效果、保留名称及实际 HostEntry 仍由共用 Builtin/Host 证据检查；普通 extern 引用调用仍受限。
+
+| 接口 | 引用和 Pending 数据 | 停止与失败 |
+| --- | --- | --- |
+| directory 生命周期 | worker 传标量或同树 proxy；Local registry/RefCell 仅在控制线程访问 | 同步操作不保留引用；请求持有 proxy，关闭语义不变 |
+| outbox receive | Local Wait 保留队列 Rc 和 waiter；worker 请求只保留 proxy | stop 删除 waiter；ControlReceipt 延后 cleaned，直到控制请求清理完成 |
+| outbox 消息提取 | 先分配消息 owner 再出队；bytes 复制后消费，回复再次复制成接收方 Buffer | 未交付结果释放；取消不把已消费消息放回队列，不遗失清理责任 |
+| 文件 | 输入副本、Local 资源租约、拥有型 service ticket；结果在调用任务安装 | stop 撤销脚本访问；运行中的 OS 工作保留自己的字节与额度，关闭后续清理由服务推进 |
+| DNS | 拥有主机名、packet 和唤醒能力；错误槽只由调用任务 poll 写入 | 取消清除唤醒／未消费结果；运行中的系统查询可继续，绝不访问原帧 |
+
+S1 完成后的 chat 顶层 race 已是 runtime-check，不再被上述宿主调用链阻断。
+Mailbox 与 BufferedTcpReader 的输入资格仍分别交给 S3、S4，不能用调用豁免代替资源协议。
+负向间接候选测试改用拥有型 dyn 的动态分派，继续验证“未选中的不合格候选也使整组本地执行”；
+不再使用本轮已获资格的 directory 作为拒绝样例。普通外部引用 ABI 的独立拒绝测试保留。
+
+## 11. S2/S3：Mailbox 独占接收权
+
+使用现有 `&mut outbox.Mailbox`，没有新增语法。直接 QueueOwner 与标准 Mailbox 包装获得私有 scoped 形状，
+布局版本升到 18、标签 104；公开入口 envelope 仍为 v2，编译器与 AOT 运行库需要一起重编。
+
+| 状态 | 权限与责任 |
+| --- | --- |
+| 来源可用 | 当前任务持有拥有型 Buffer；私有 callback、Mailbox 创建标记及控制树身份均匹配 |
+| 借出准备 | 预付交接、接收端事件和归还元数据；失败不改变来源 |
+| 已交接 | CAS 取得整期独占权限；来源 proxy 调用及拥有迁移拒绝，接收代理保有同一队列身份 |
+| 使用中 | 接收端本地事件与每次 Local ResourceLease 独立；可连续收消息，Handle 继续发送／关闭 |
+| 停止中 | worker 停止帧；队列中的请求与 Call.keep 保持临时 proxy，控制线程先删除 waiter 再释放保活 |
+| 已归还 | 最后一个临时 proxy 释放 Return，以原子写恢复来源；不分配、不销毁队列、不复制回语言指针 |
+
+源帧仍等结构化子树与 ControlReceipt 清理屏障；仅回调 stop 返回或函数结果就绪都不足以提前销毁来源。
+部分输入构造或接收端安装失败也走同一归还路径。接收者不能把独占代理作为拥有值传出，
+也不能再次跨 worker 借出；收到的借用在内部 join/race 中允许按原语义本地重借用。
+共享 `&Mailbox`、任意聚合可变借用、TCP/File/迁移 owner 以及一般 `&mut T` 不在此次准入内。
+
+原队列关闭责任始终属于来源；归还后可以继续接收，外部 Handle 已关闭它时则保持关闭状态。
+取消可能消费并释放尚未返回的消息，沿用原 receive 契约，不承诺事务性回滚。
+`session.run` 保留 outgoing/control 到 on_close 之后的原有顺序，无需改成提前销毁队列的拥有值迁移。
+
+## 12. S4/S5：保留 TCP 借用限制与诊断收尾
+
+S4 按本计划允许的“明确限制”结束本轮审查，不实现跨 worker TCP 引用：
+
+- Mailbox 的真实可变状态位于控制线程，整期借用只需要交接接收权；TCP 的资源头、操作租约和 reactor 登记
+  属于执行任务，不能直接复用 Mailbox proxy。
+- BufferedTcpReader 还包含 ReceiveBuffer.bytes/offset/capacity/state；完整读取另有 ReadProgress 和已消费前缀。
+  现有 read_frame 契约已注明取消后应结束协议连接，不能把保留 socket 解释为可重放读取。
+  可靠可恢复的跨线程归还需要完整缓冲及部分消息状态协议，属于另一个功能，不能用单个 busy 标志解决。
+- chat 的 receive 已拥有整个 BufferedTcpReader，send 已拥有 TcpWriter；这些拥有值可迁移。
+  读取与 timeout 的内部 race 在所在 worker 协作，不阻止各连接、收发任务跨 worker，也不会把 I/O 等待变成阻塞线程。
+  继续扩大这一内部 race 的派发范围收益有限，本轮不改变可观察的取消／关闭语义。
+
+S5 将 runtime-check 描述从仅只读改为 scoped 权限，并在不支持的可变输入后解释目前只有 Mailbox 独占协议，
+可保留本地执行或移动已具备资格的拥有值。报告仍直接复用准入规则；类型合格不等于当前实例一定派发。
+不为减少 local 标签重写 chat 或 session，不新增无语义依据的 clone/share 建议。
+
+## 13. S6 审查与合并验证
+
+本轮审查范围是新增接口资格、独占代理与归还链，以及它们共用的任务／控制桥边界；不是对全部 unsafe Rust/C 的形式化证明。
+关键证据包括：来源 Buffer 所属任务、私有释放回调、队列创建标记、同树控制身份、独占 CAS、
+不含源地址的代理传输、Local waiter 停止、请求保活、子树 cleaned 屏障和无分配归还。
+共享 VM 路径及普通数据借用仍使用原协议；新增字段不赋予一般资源或普通可变对象跨 worker 权限。
+
+按本次任务约定，S1/S2/S3 合并运行默认 Debug 检查，不逐接口重复全量测试。2026-10-30 本机验证：
+
+- 新增 outbox/directory、文件、独占 Mailbox 定向执行测试，以及 DNS 原有取消测试的借用派发版本通过；
+  JIT／解释器均覆盖 1／3 worker，实际线程观测、等待取消、池关闭与最终预算归零。
+- Mailbox race 的测试宿主等到控制线程确实注册 receive waiter 后才允许另一分支获胜，随后继续使用同一来源收消息；
+  纯 Mailbox parked 入口另行验证跨 worker，观测不能由混合参数中的共享 VM 满足。
+- `cargo test --lib exhaustive_exclusive_mailbox_allocation_failures -- --ignored` 通过：
+  Debug 中按 64 字节步长扫描到首次完整成功并检查清理，不扩大到无关压力矩阵。
+- `cargo test --test cli task_parallel_control_bridge_runs_in_standalone_aot` 通过：
+  6 个控制桥／借用 fixture，各编译一次，同一 AOT 产物以 1／3 worker 启动；含 outbox、文件/DNS 和 Mailbox。
+- `cargo test --test chat chat_parallel_real_tcp_on_all_backends -- --ignored --nocapture` 通过：
+  8 组实网场景覆盖两种脚本 VM、JIT／解释器和 AOT 1／3 worker，包含重载与关闭。
+- `./scripts/check.sh` 完整通过：格式、全目标 Clippy、1829 项库测试、340 项 CLI、其余默认集成测试、
+  doctest 和 while/Map 短输入三后端正确性检查均通过。启动时先发现测试重复导入 ScratchDir，
+  Clippy 拦截后改为复用现有测试工具；完整 Debug 测试只运行一遍。最后细化的测试（独立零预算安装失败、Mailbox 专属派发观测、AOT 启动配置与穷举上界）
+  仅定向重验，并通过全目标 Clippy，不重新启动整套检查。
+
+未运行 Release、完整 stress、性能测量、TSan／Miri 或其他平台检查。
+目标仍是安全 Joky 的数据竞争防护，不宣称全部 unsafe 代码已获得形式化证明。
+
+
+本轮结果：chat 顶层 race 与 session 收发 race 均为 runtime-check，serve 的拥有型 branch 仍合格；
+isolate 主体和 BufferedTcpReader 超时 race 保持本地。以上静态结果与真实服务行为均已验证。
+后续若需要扩展 TCP 借用、通用可变聚合或借用 dyn，另立协议与收益明确的阶段；这些能力不属于本轮未完成的验收项。

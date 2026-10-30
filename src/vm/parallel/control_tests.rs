@@ -404,3 +404,246 @@ fn scoped_borrow_admission_calls_dispatch_and_cancel_pending_acquires() {
         }
     }
 }
+
+#[test]
+fn scoped_borrow_outbox_calls_dispatch_and_cancel_pending_receives() {
+    use crate::runtime::parallel::scoped;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../tests/fixtures/scoped_borrow_outbox.jk"
+        ))
+        .unwrap_or_else(|error| panic!("{error}"));
+        for workers in [1, 3] {
+            for close in [false, true] {
+                let budget = TaskBudget::new(4 << 20);
+                let mut pool = ParallelExecutor::new(workers, 32).unwrap();
+                let task = vm
+                    .prepare_parallel_task("main", vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                wait(&task);
+                assert_eq!(
+                    task.take_result().unwrap().value(),
+                    &TaskValue::Scalar(InstanceValue::Int32(0))
+                );
+                let tree = scoped::tree_observations(task.identity());
+                assert!(
+                    tree.iter().any(|o| o.source && o.parent != task.identity()),
+                    "nested outbox readers stayed local"
+                );
+                let roots = scoped::observations(task.identity());
+                assert!(roots.iter().any(|o| !o.source));
+                if workers > 1 {
+                    let sender = roots.iter().find(|o| o.source).unwrap();
+                    assert!(roots.iter().any(|o| !o.source && o.thread != sender.thread));
+                }
+                drop(task);
+                let task = vm
+                    .prepare_parallel_task("parked", vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !pool.control_observations().iter().any(|(_, n)| *n == 2) {
+                    assert!(!task.is_finished(), "{:?}", task.take_result().err());
+                    assert!(
+                        Instant::now() < deadline,
+                        "both outbox waiters must be pending"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                if close {
+                    pool.request_close();
+                } else {
+                    task.request_cancel();
+                }
+                wait(&task);
+                assert_eq!(
+                    task.take_result().err().unwrap().code(),
+                    ErrorCode::Cancelled
+                );
+                assert!(pool.control_observations().iter().all(|(_, n)| *n == 0));
+                drop(task);
+                pool.wait_closed();
+                assert_eq!(budget.used(), 0, "{mode:?}/{workers}/{close}");
+            }
+        }
+    }
+}
+
+fn control_budget_cases(source: &str, expected: i32, limits: impl Iterator<Item = usize> + Clone) {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let mut success = false;
+        for limit in limits.clone() {
+            let budget = TaskBudget::new(limit);
+            let mut pool = ParallelExecutor::new(3, 16).unwrap();
+            let task = vm
+                .prepare_parallel_task("allocation_budget", vec![], vec![budget.clone()])
+                .and_then(|prepared| prepared.submit(&pool));
+            let result = match task {
+                Ok(task) => {
+                    wait(&task);
+                    task.take_result()
+                }
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(result) => {
+                    assert_eq!(
+                        result.value(),
+                        &TaskValue::Scalar(InstanceValue::Int32(expected))
+                    );
+                    success = true;
+                }
+                Err(error) => assert_eq!(error.code(), ErrorCode::ResourceLimit, "{error}"),
+            }
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}/{limit}");
+            if success {
+                break;
+            }
+        }
+        assert!(success);
+    }
+}
+#[test]
+fn scoped_borrow_control_allocation_failures_refund_partial_replies() {
+    for (source, expected) in [
+        (
+            include_str!("../../../tests/fixtures/scoped_borrow_outbox.jk"),
+            42,
+        ),
+        (
+            include_str!("../../../tests/fixtures/exclusive_mailbox.jk"),
+            0,
+        ),
+    ] {
+        control_budget_cases(source, expected, (10..=23).map(|power| 1 << power));
+    }
+}
+#[test]
+#[ignore = "exhaustive: scan exclusive Mailbox handoff and reply allocation boundaries"]
+fn exhaustive_exclusive_mailbox_allocation_failures() {
+    control_budget_cases(
+        include_str!("../../../tests/fixtures/exclusive_mailbox.jk"),
+        0,
+        (4096..=1 << 23).step_by(64),
+    );
+}
+
+#[test]
+fn exclusive_mailbox_loans_return_after_receives_failure_and_cancel() {
+    use crate::runtime::parallel::scoped;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static READY: AtomicBool = AtomicBool::new(false);
+    static RELEASE: AtomicBool = AtomicBool::new(false);
+    unsafe extern "C" fn ready(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        READY.store(true, Ordering::Release);
+        if RELEASE.load(Ordering::Acquire) {
+            (*frame).wake = None;
+            (*frame).result = 42;
+            0
+        } else {
+            (*frame).wake = Some(crate::runtime::driver::Wake::Immediate);
+            1
+        }
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_parallel_suspending_fn(
+                "ready",
+                FunctionSignature::new(vec![], Type::Int32),
+                ready,
+                0,
+                Arc::new(()),
+            )
+            .unwrap();
+        }
+        let source = include_str!("../../../tests/fixtures/exclusive_mailbox.jk").replace(
+            "fn ready() @suspends -> Int32 { task.yield_now(); 42 }",
+            "extern fn ready() @suspends -> Int32",
+        );
+        vm.load_source(&source)
+            .unwrap_or_else(|error| panic!("{error}"));
+        for workers in [1, 3] {
+            for close in [false, true] {
+                READY.store(false, Ordering::Release);
+                RELEASE.store(false, Ordering::Release);
+                let budget = TaskBudget::new(4 << 20);
+                let mut pool = ParallelExecutor::new(workers, 32).unwrap();
+                let task = vm
+                    .prepare_parallel_task("main", vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !READY.load(Ordering::Acquire)
+                    || !pool.control_observations().iter().any(|(_, n)| *n == 1)
+                {
+                    assert!(!task.is_finished(), "{:?}", task.take_result().err());
+                    assert!(Instant::now() < deadline, "race receiver never registered");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                RELEASE.store(true, Ordering::Release);
+                wait(&task);
+                assert_eq!(
+                    task.take_result().unwrap().value(),
+                    &TaskValue::Scalar(InstanceValue::Int32(0))
+                );
+                let roots = scoped::observations(task.identity());
+                assert!(roots.iter().any(|o| !o.source));
+                if workers > 1 {
+                    let sender = roots.iter().find(|o| o.source).unwrap();
+                    assert!(roots.iter().any(|o| !o.source && o.thread != sender.thread));
+                }
+                assert!(
+                    scoped::tree_observations(task.identity())
+                        .iter()
+                        .all(|o| o.parent == task.identity()),
+                    "exclusive reborrow dispatched again"
+                );
+                drop(task);
+                let task = vm
+                    .prepare_parallel_task("parked", vec![], vec![budget.clone()])
+                    .unwrap()
+                    .submit(&pool)
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !pool.control_observations().iter().any(|(_, n)| *n == 2) {
+                    assert!(!task.is_finished(), "{:?}", task.take_result().err());
+                    assert!(
+                        Instant::now() < deadline,
+                        "both outbox waiters must be pending"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                // This entry has only Mailbox inputs, so the observation cannot
+                // be satisfied by the shared VM argument used in main.
+                let parked = scoped::observations(task.identity());
+                let sender = parked.iter().find(|o| o.source).unwrap();
+                assert!(parked
+                    .iter()
+                    .any(|o| !o.source && (workers == 1 || o.thread != sender.thread)));
+                if close {
+                    pool.request_close();
+                } else {
+                    task.request_cancel();
+                }
+                wait(&task);
+                assert_eq!(
+                    task.take_result().err().unwrap().code(),
+                    ErrorCode::Cancelled
+                );
+                assert!(pool.control_observations().iter().all(|(_, n)| *n == 0));
+                drop(task);
+                pool.wait_closed();
+                assert_eq!(budget.used(), 0, "{mode:?}/{workers}/{close}");
+            }
+        }
+    }
+}

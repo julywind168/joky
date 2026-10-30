@@ -371,9 +371,15 @@ impl Core {
         Ok(request)
     }
 }
+mod exclusive;
+pub(super) use exclusive::ExclusiveQueue;
+
 struct Proxy {
     id: u64,
     shared_vm: bool,
+    mailbox: bool,
+    exclusive: AtomicBool,
+    loan: Option<Arc<exclusive::Return>>,
     core: Arc<Core>,
     _charge: Lease,
 }
@@ -399,6 +405,10 @@ impl SharedVm {
 }
 impl Drop for Proxy {
     fn drop(&mut self) {
+        // A borrowed proxy returns permission; only the original owns close.
+        if self.loan.is_some() {
+            return;
+        }
         let mut q = lock(&self.core.queue);
         if !q.closing {
             q.releases.push(self.id);
@@ -415,7 +425,9 @@ pub(crate) unsafe fn transferable(token: NonNull<c_void>, callback: ResourceRele
         return false;
     }
     let proxy = token.cast::<Arc<Proxy>>().as_ref();
-    !proxy.core.closed.load(Ordering::Acquire)
+    proxy.loan.is_none()
+        && !proxy.exclusive.load(Ordering::Acquire)
+        && !proxy.core.closed.load(Ordering::Acquire)
 }
 unsafe fn proxy(bits: u64, core: &Arc<Core>) -> Result<Arc<Proxy>, Error> {
     let resource = (bits as *const Buffer)
@@ -426,6 +438,9 @@ unsafe fn proxy(bits: u64, core: &Arc<Core>) -> Result<Arc<Proxy>, Error> {
     let proxy = &*token.cast::<Arc<Proxy>>();
     if !Arc::ptr_eq(core, &proxy.core) {
         return Err(invalid("Control proxy belongs to another task tree"));
+    }
+    if proxy.exclusive.load(Ordering::Acquire) {
+        return Err(invalid("Control resource is exclusively borrowed"));
     }
     Ok(proxy.clone())
 }
@@ -704,14 +719,16 @@ impl Call {
             Operation::Domain(op) => crate::runtime::domain::poll(arena, frame, op),
             Operation::Fs(op) => crate::runtime::fs::poll(arena, frame, op),
         };
-        // Cancellation probes must wait until admission has registered its
-        // waiter, not merely until the worker has submitted a command.
+        // Cancellation probes wait for a registered waiter, not just submission.
         #[cfg(test)]
         if !self.counted
             && matches!(result, Ok(None))
             && matches!(
                 self.request.op,
-                Operation::Domain(crate::runtime::domain::Operation::AdmissionAcquire)
+                Operation::Domain(
+                    crate::runtime::domain::Operation::AdmissionAcquire
+                        | crate::runtime::domain::Operation::OutboxReceive
+                )
             )
         {
             if let Some(core) = self.request.core.upgrade() {
@@ -781,6 +798,15 @@ impl Call {
                 let proxy = Arc::new(Proxy {
                     id,
                     shared_vm: matches!(self.request.op, Operation::VmCreate),
+                    mailbox: matches!(
+                        self.request.op,
+                        Operation::Domain(
+                            crate::runtime::domain::Operation::OutboxCreate
+                                | crate::runtime::domain::Operation::OutboxCreateDisconnect
+                        )
+                    ),
+                    exclusive: AtomicBool::new(false),
+                    loan: None,
                     core: core.clone(),
                     _charge: core.root.accounts().reserve(
                         std::mem::size_of::<Proxy>() + std::mem::size_of::<LocalResource>(),
@@ -1003,6 +1029,9 @@ mod tests {
                             Arc::new(Proxy {
                                 id: u64::MAX,
                                 shared_vm,
+                                mailbox: false,
+                                exclusive: AtomicBool::new(false),
+                                loan: None,
                                 core: tree,
                                 _charge: root.accounts().reserve(std::mem::size_of::<Proxy>())?,
                             }),

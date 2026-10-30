@@ -27,6 +27,8 @@ mod drop_tests;
 #[cfg(test)]
 mod dyn_tests;
 #[cfg(test)]
+mod fs_tests;
+#[cfg(test)]
 mod function_tests;
 #[cfg(test)]
 mod isolate_tests;

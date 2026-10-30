@@ -195,7 +195,7 @@ Local 实际调用后按编译器类型描述登记结果包；Parallel 分派�
 原生入口描述符包含版本、作用域借用凭据、帧槽数、物理布局与捕获清理键映射，数据通过 AOT relocation
 关联代码。清理回调由已检查的捕获登记及结果收集代码提供；Local 代码保活仍由调用方的模块/
 AOT 所有者契约保证。解释器入口直接持有所属快照的 callee；两者都不能据此跨线程传递 Rc。
-CPS 私有入口外层 `NativeTaskEntryV2` 使用版本 2，内嵌私有物理布局使用版本 17；AOT 对象与运行库须一起重编。
+CPS 私有入口外层 `NativeTaskEntryV2` 使用版本 2，内嵌私有物理布局使用版本 18；AOT 对象与运行库须一起重编。
 C 侧不透明类型 `JokyTaskEntryV1` 与宿主任务参数 ABI 不变。登记桥保留 `__joky_task_entry_v1` 调用约定，
 先读取版本前缀，拒绝旧描述符后才读取 v2 新增字段。
 版本 10 为共享 String／普通标量 Array／Slice 附带私有借用形状；普通 `parallel_shapes` 仍拒绝引用。
@@ -262,6 +262,23 @@ FixedArray 自定义 Drop 元素及宿主任务值边界保持原有限制，私
 跨 worker 可共享句柄不意味着其内部 VM 状态不可变化。Scope 保留根任务的实际 code/authority owner，
 不要求它一定是 VM 编译模块；独立 AOT 的代码常驻进程，其文件权限对象也得到保活。
 普通 TaskValue、公开引用 ABI 与入口外层 v2 不变。
+
+版本 18 增加独占 Mailbox 根标签 104，仅用于 `&mut outbox.QueueOwner` 和标准 Mailbox 包装。
+不把该标签加入普通字段图或拥有包；其他可变借用、任意包装和收到的独占借用再跨 worker 交接仍不准入。
+来源须为当前任务自己的拥有型 Buffer，随后核对私有 proxy callback、Mailbox 创建标记、同一控制树与存活状态。
+控制代理上的整期 exclusive 标记与 Local 资源每次调用的 ResourceLease 分开：来源访问／拥有迁移被标记阻止，
+接收方获得独立代理与本地事件，正常执行多次 receive 不会被整期标记误判为操作 busy。
+交接前预付临时 Proxy 与 Return 元数据，CAS 取得来源权限；Return 保持原 Proxy，接收代理本身不发送资源 release。
+每个排队请求及控制线程 Call.keep 都保持这个临时 Proxy，stop 先移除 waiter，再释放请求保活；
+最后一个临时代理引用释放时，Return 以 Release 写恢复来源权限，归还不分配内存。部分安装失败遵循相同 Drop 路径。
+来源的结构化帧同时受 Scope、代码保活、子树 cleaned 屏障与 ControlReceipt 约束，不能只因用户函数返回而销毁。
+Handle 的标量身份不取得接收权，可按原契约发送／关闭；Mailbox 被关闭时归还的是原已关闭身份，不重建队列。
+
+S1 的 outbox 接收／消息提取和 directory 创建／handle／close 采用相同受检 Domain 适配器；
+文件适配器将输入字节复制到控制线程，再由文件服务持有独立请求，DNS 也只把拥有的主机名与结果交给 resolver。
+二者都可能在脚本取消后继续完成系统调用；服务保有数据及额度，脚本视图可以安全释放。
+这与 TCP 的取消登记清理、同步 stdout 的返回屏障是不同停止契约，不能归纳成“所有 stop 都等待系统调用完成”。
+
 
 内置适配器的 Parallel 与 scoped 调用权限统一由 `core::ir::parallel::contracts` 校验，
 先验证完整保留签名与挂起约定，再区分仅 Parallel 和允许 scoped 调用的契约。根任务和借用调用图共用该表，

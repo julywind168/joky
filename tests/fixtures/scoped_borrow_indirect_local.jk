@@ -1,11 +1,12 @@
 import joky/string
-import joky/domain
+trait Value { fn value(&self) @noescape -> Int32 }
+struct Item { n: Int32 }
+impl Value for Item { fn value(&self) -> Int32 { self.n } }
 
 fn safe(value: &String) @suspends @noescape -> Int32 { int32(value.byte_length()) }
 fn bad(value: &String) @suspends @noescape -> Int32 {
-    let directory = domain.directory(1)
-    directory.handle();
-    0
+    let item: dyn Value = Item { n: 0 }
+    item.value()
 }
 fn expose() -> fn(&String) @suspends @noescape -> Int32 { bad }
 fn local() @suspends -> Int32 {

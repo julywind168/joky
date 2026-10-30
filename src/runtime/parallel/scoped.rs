@@ -1,4 +1,4 @@
-//! Private, nonescaping inputs for compiler-certified structured tasks. Ordinary
+//! Private shared views and exclusive resource loans for structured tasks. Ordinary
 //! packets and public TaskValue inputs never accept references.
 use super::{
     packet::{invalid, Packet, Shape as OwnedShape},
@@ -16,13 +16,23 @@ pub(crate) struct Shape {
     element: Layout,
     plain: bool,
     shared_vm: bool,
+    exclusive_queue: bool,
     graph: Option<Arc<graph::Element>>,
 }
 impl Shape {
     pub(crate) fn of(ty: &Type) -> Option<Self> {
         let reference = ty.reference_type()?;
         if reference.mutable {
-            return None;
+            // First exclusive protocol: one Mailbox owner, no aggregate state,
+            // arbitrary wrappers, shared queue views or general mutable data.
+            let target = match &reference.target {
+                Type::Record(r) if r.name == "joky/outbox.Mailbox" && r.fields.len() == 1 => {
+                    &r.fields[0].ty
+                }
+                target => target,
+            };
+            return matches!(target, Type::Resource(name) if name.as_ref() == "outbox.QueueOwner")
+                .then(Self::queue);
         }
         let mut target = &reference.target;
         if target.is_owner() && !target.is_inline_owner() {
@@ -87,6 +97,7 @@ impl Shape {
             element: Layout::from_size_align(size, align).map_err(|_| invalid())?,
             plain: false,
             shared_vm: false,
+            exclusive_queue: false,
             graph: None,
         })
     }
@@ -95,11 +106,21 @@ impl Shape {
             element: Layout::new::<u64>(),
             plain: false,
             shared_vm: true,
+            exclusive_queue: false,
             graph: None,
         }
     }
+    fn queue() -> Self {
+        Self {
+            exclusive_queue: true,
+            shared_vm: false,
+            ..Self::vm()
+        }
+    }
     pub(crate) fn encode(&self, words: &mut Vec<u64>) {
-        if self.shared_vm {
+        if self.exclusive_queue {
+            words.push(104);
+        } else if self.shared_vm {
             words.push(103);
         } else if let Some(graph) = &self.graph {
             words.push(if self.plain { 102 } else { 101 });
@@ -113,6 +134,9 @@ impl Shape {
         }
     }
     pub(crate) fn decode(words: &[u64]) -> Result<Self, Error> {
+        if words == [104] {
+            return Ok(Self::queue());
+        }
         if words == [103] {
             return Ok(Self::vm());
         }
@@ -126,6 +150,7 @@ impl Shape {
                 element: graph.layout,
                 plain: *kind == 102,
                 shared_vm: false,
+                exclusive_queue: false,
                 graph: Some(Arc::new(graph)),
             });
         }
@@ -142,13 +167,13 @@ impl Shape {
     pub(crate) fn layout(&self) -> Layout {
         self.element
     }
-    /// Compiler layout proves a live shared reference. String, Slice and the
+    /// Compiler layout proves a live scoped reference. String, Slice and the
     /// single-field Array wrapper all name a Buffer header directly.
     pub(crate) unsafe fn buffer(&self, word: u64) -> *const Buffer {
         word as *const Buffer
     }
     /// # Safety
-    /// `word` is a live initialized shared reference of this compiler-certified
+    /// `word` is a live initialized scoped reference of this compiler-certified
     /// shape on the current worker. Its source remains frozen through capture.
     pub(crate) unsafe fn eligible(&self, word: u64) -> bool {
         self.source(word).is_some_and(|source| {
@@ -158,8 +183,14 @@ impl Shape {
         })
     }
     unsafe fn source(&self, word: u64) -> Option<Source> {
-        if self.shared_vm {
-            super::control::SharedVm::capture(word).ok()?;
+        if self.shared_vm || self.exclusive_queue {
+            if self.exclusive_queue {
+                if !super::control::ExclusiveQueue::eligible(word) {
+                    return None;
+                }
+            } else {
+                super::control::SharedVm::capture(word).ok()?;
+            }
             // The transport holds the proxy identity, never a foreign header.
             Some(Source {
                 data: NonNull::<u64>::dangling().cast(),
@@ -271,6 +302,7 @@ struct Range {
     plain: bool,
     snapshot: Option<graph::Snapshot>,
     shared_vm: Option<super::control::SharedVm>,
+    exclusive_queue: Option<super::control::ExclusiveQueue>,
 }
 // SAFETY: capture requires compiler-certified storage owned by this parent task
 // or received under a bounded loan. Owning lanes are traversed only on the sender,
@@ -279,7 +311,9 @@ struct Range {
 // lease directly, without foreign headers or a recursive lease chain. Local
 // cancellation drains this subtree before dropping its frames.
 // The static group and worker-root failure barrier retain the source owner until
-// every reader is cleaned. Only payload bytes cross; Buffer/Rc/frame metadata do
+// every reader is cleaned. Exclusive Mailbox inputs carry a control proxy and
+// a unique return guard instead of a source address. Only payload bytes or
+// checked proxy identities cross; Buffer/Rc/frame metadata do
 // not. Each installed node has separate worker-local provenance held by the Job.
 unsafe impl Send for Range {}
 
@@ -385,8 +419,8 @@ impl Input {
         Self::Owned(Box::new(packet))
     }
     /// # Safety
-    /// The checked reference has this shape and stays immutable and live until
-    /// `scope` drains all readers. Capture executes on the source task's worker.
+    /// The checked reference has this shape and stays live until `scope` drains.
+    /// Shared data is frozen; an exclusive source is inaccessible during its loan. Capture executes on the source task's worker.
     pub(crate) unsafe fn borrow(shape: Shape, word: u64, scope: Arc<Scope>) -> Result<Self, Error> {
         if pool::identity() != Some(scope.parent) {
             return Err(invalid());
@@ -435,7 +469,7 @@ impl Range {
             std::mem::size_of::<Loan>()
                 + 2 * std::mem::size_of::<usize>()
                 + 4 * std::mem::size_of::<Rc<Loan>>()
-                + if shape.shared_vm {
+                + if shape.shared_vm || shape.exclusive_queue {
                     crate::runtime::resource::OwnedResource::event_bytes()
                         + std::mem::size_of::<usize>() // Box<Arc<Proxy>> token
                 } else {
@@ -458,6 +492,11 @@ impl Range {
             scope,
             _charge: charge,
             snapshot,
+            exclusive_queue: if shape.exclusive_queue {
+                Some(super::control::ExclusiveQueue::capture(word)?)
+            } else {
+                None
+            },
             shared_vm: if shape.shared_vm {
                 Some(super::control::SharedVm::capture(word)?)
             } else {
@@ -483,7 +522,11 @@ impl Range {
         // Parent scope fences also cover copied intermediate pointer tables.
         let original = self.data;
         self.data = data;
-        let resource = self.shared_vm.take().map(|vm| vm.install()).transpose()?;
+        let resource = if let Some(queue) = self.exclusive_queue.take() {
+            Some(queue.install()?)
+        } else {
+            self.shared_vm.take().map(|vm| vm.install()).transpose()?
+        };
         loans.push(Rc::new(Loan {
             task: pool::identity().ok_or_else(invalid)?,
             range: self,
@@ -721,9 +764,17 @@ mod tests {
         ] {
             assert!(Shape::of(&Type::reference(target, false)).is_none());
         }
+        let queue = Type::reference(Type::Resource("outbox.QueueOwner".into()), true);
+        let shape = Shape::of(&queue).unwrap();
+        let mut words = Vec::new();
+        shape.encode(&mut words);
+        assert_eq!(words, [104]);
+        assert!(Shape::decode(&words).unwrap().exclusive_queue);
+        assert!(OwnedShape::of(&queue).is_err());
         for words in [
             vec![],
             vec![103, 0],
+            vec![104, 0],
             vec![99],
             vec![99, 0],
             vec![99, 6],

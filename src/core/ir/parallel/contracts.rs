@@ -32,11 +32,26 @@ pub(super) fn builtin(
             crate::runtime::parallel::control::Operation::domain(op)?;
             use crate::runtime::domain::Operation::*;
             match op {
-                // These commands carry scalar tokens or proxy identities only.
-                // Referenced owners stay local to the calling task; this does
-                // not admit &Pool, &Permit or mutable resource task inputs.
-                AdmissionCreate | AdmissionHandle | AdmissionClose | AdmissionTry
-                | AdmissionAcquire | AdmissionStatus => Contract::Scoped,
+                // These commands carry scalar tokens or proxy identities only;
+                // message bytes return as a copy. A control receipt keeps child
+                // cleanup pending until the local waiter and reply are dropped.
+                // This does not admit resource references as task inputs.
+                AdmissionCreate
+                | AdmissionHandle
+                | AdmissionClose
+                | AdmissionTry
+                | AdmissionAcquire
+                | AdmissionStatus
+                | DirectoryCreate
+                | DirectoryHandle
+                | DirectoryClose
+                | OutboxCreate
+                | OutboxCreateDisconnect
+                | OutboxHandle
+                | OutboxClose
+                | OutboxReceive
+                | OutboxMessageClosed
+                | OutboxMessageBytes => Contract::Scoped,
                 _ => Contract::Parallel,
             }
         }
@@ -45,7 +60,12 @@ pub(super) fn builtin(
         // its reactor registration before releasing that lease. This grants no
         // permission to capture a TCP resource reference in a task packet.
         Builtin::Tcp(_) => Contract::Scoped,
-        Builtin::Dns | Builtin::Fs(_) => Contract::Parallel,
+        // File calls copy bytes and retain control-local proxy identities.
+        // Native file tickets may outlive cancellation, never language addresses.
+        Builtin::Fs(_) => Contract::Scoped,
+        // Resolver tickets own the host name and result; the error slot is
+        // written only by the polling task, never by a resolver worker.
+        Builtin::Dns => Contract::Scoped,
     })
 }
 
@@ -90,12 +110,52 @@ mod tests {
             (
                 "__outbox_receive",
                 Operation::OutboxReceive,
-                Some(Contract::Parallel),
+                Some(Contract::Scoped),
             ),
             (
                 "__directory_handle",
                 Operation::DirectoryHandle,
-                Some(Contract::Parallel),
+                Some(Contract::Scoped),
+            ),
+            (
+                "__outbox_create",
+                Operation::OutboxCreate,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__outbox_create_disconnect",
+                Operation::OutboxCreateDisconnect,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__outbox_handle",
+                Operation::OutboxHandle,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__outbox_close",
+                Operation::OutboxClose,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__outbox_message_closed",
+                Operation::OutboxMessageClosed,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__outbox_message_bytes",
+                Operation::OutboxMessageBytes,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__directory_create",
+                Operation::DirectoryCreate,
+                Some(Contract::Scoped),
+            ),
+            (
+                "__directory_close",
+                Operation::DirectoryClose,
+                Some(Contract::Scoped),
             ),
             ("__outbox_stage", Operation::OutboxStage, None),
         ] {
@@ -108,7 +168,13 @@ mod tests {
         }
         let signature = Operation::AdmissionHandle.signature();
         assert_eq!(builtin("user_handle", &signature, true), None);
-        for name in ["admission.PoolOwner", "admission.PermitOwner"] {
+        for name in [
+            "admission.PoolOwner",
+            "admission.PermitOwner",
+            "domain.DirectoryOwner",
+            "outbox.QueueOwner",
+            "outbox.MessageOwner",
+        ] {
             let reference = Type::reference(Type::Resource(name.into()), false);
             assert!(crate::runtime::parallel::scoped::Shape::of(&reference).is_none());
         }
@@ -164,24 +230,31 @@ mod tests {
     }
 
     #[test]
-    fn parallel_admission_binding_requires_the_checked_adapter() {
+    fn parallel_control_binding_requires_the_checked_adapter() {
         use crate::runtime::{
             bindings::{HostAbiKind, HostBinding, HostEntry},
             parallel::Host,
         };
-        let mut binding = HostBinding {
-            abi: HostAbiKind::Scalar,
-            signature: Operation::AdmissionHandle.signature(),
-            entry: HostEntry::Domain(Operation::AdmissionHandle),
-            owner: None,
-        };
-        assert!(Host::from_binding(&binding).is_some());
-        binding.abi = HostAbiKind::TextViewV2;
-        assert!(Host::from_binding(&binding).is_none());
-        binding.abi = HostAbiKind::Scalar;
-        binding.entry = HostEntry::Domain(Operation::AdmissionStatus);
-        assert!(Host::from_binding(&binding).is_none());
-        binding.entry = HostEntry::Direct(std::ptr::null());
-        assert!(Host::from_binding(&binding).is_none());
+        for op in [
+            Operation::AdmissionHandle,
+            Operation::OutboxReceive,
+            Operation::OutboxMessageBytes,
+            Operation::DirectoryHandle,
+        ] {
+            let mut binding = HostBinding {
+                abi: HostAbiKind::Scalar,
+                signature: op.signature(),
+                entry: HostEntry::Domain(op),
+                owner: None,
+            };
+            assert!(Host::from_binding(&binding).is_some());
+            binding.abi = HostAbiKind::TextViewV2;
+            assert!(Host::from_binding(&binding).is_none());
+            binding.abi = HostAbiKind::Scalar;
+            binding.entry = HostEntry::Domain(Operation::AdmissionStatus);
+            assert!(Host::from_binding(&binding).is_none());
+            binding.entry = HostEntry::Direct(std::ptr::null());
+            assert!(Host::from_binding(&binding).is_none());
+        }
     }
 }

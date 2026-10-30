@@ -5,7 +5,7 @@ use crate::runtime::parallel::packet::Shape;
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 // Private layout words evolve independently of the NativeTaskEntryV2 envelope.
-pub(crate) const VERSION: usize = 17;
+pub(crate) const VERSION: usize = 18;
 
 fn invalid() -> Error {
     Error::new_with_code(
@@ -346,7 +346,7 @@ mod tests {
             .unwrap();
         assert_eq!(inputs[0].owners(), [0]);
         assert_eq!(output.owners(), [0]);
-        for legacy in [1, 11, 12, 13, 14, 15, 16] {
+        for legacy in [1, 11, 12, 13, 14, 15, 16, 17] {
             words[0] = legacy;
             assert!(CheckedLayout::decode(&words).is_err());
         }
