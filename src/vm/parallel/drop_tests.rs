@@ -393,10 +393,18 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         } else {
             source
         };
+        let source = if kind == 0 {
+            source
+                .replace("text: &String) @suspends", "text: &Source) @suspends")
+                .replace("string.byte_length(text)", "string.byte_length(&text.text)")
+                .replace("helper(&source.text)", "helper(&source)")
+        } else {
+            source
+        };
         // Exercise an indirect language call while the source is pinned by
         // nested readers. The callback contract is checked by the frontend.
         let view = match kind {
-            0 => "&String",
+            0 => "&Source",
             1 => "&Array<(Int32, Float64)>",
             2 => "&(Int32, Float64)",
             3 => "&FixedArray<Int32, 2>",
@@ -969,6 +977,53 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
                 observations.iter().find(|o| !o.source).unwrap().thread
             );
             assert_eq!(budget.used(), 0, "{mode:?} {name}");
+        }
+    }
+}
+
+#[test]
+fn scoped_borrow_custom_drop_runs_once_on_source_after_readers() {
+    let _serial = SERIAL.lock().unwrap();
+    let source = include_str!("../../../tests/fixtures/scoped_borrow_drop.jk").replace(
+        "fn trace(text: &String) -> Int32 { 0 }",
+        "extern fn trace(text: &String) -> Int32",
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for (name, count) in [
+            ("main", 4),
+            ("dynamic", 3),
+            ("containers", 2),
+            ("failed", 3),
+            ("raced", 3),
+            ("isolated", 3),
+        ] {
+            OBSERVED.lock().unwrap().clear();
+            let mut vm = engine(mode);
+            vm.set_prelude_enabled(false);
+            vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+            let budget = TaskBudget::new(4 << 20);
+            let prepared = vm
+                .prepare_parallel_task(name, vec![], vec![budget.clone()])
+                .unwrap();
+            vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
+            drop(vm);
+            let mut pool = ParallelExecutor::new(3, 32).unwrap();
+            let task = prepared.submit(&pool).unwrap();
+            wait(|| task.is_finished());
+            let result = task.take_result();
+            if name == "failed" {
+                assert_eq!(result.err().unwrap().code(), ErrorCode::RuntimeError);
+            } else {
+                result.unwrap();
+            }
+            drop(task);
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0);
+            let events = OBSERVED.lock().unwrap();
+            assert_eq!(events.len(), count, "{mode:?}/{name}: {events:?}");
+            assert!(events
+                .iter()
+                .all(|(text, thread)| text == "abc" && *thread == events[0].1));
         }
     }
 }

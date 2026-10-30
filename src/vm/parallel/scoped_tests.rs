@@ -310,7 +310,10 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         .replace("task.yield_now()", "checkpoint()");
     let fixed_collections = include_str!("../../../tests/fixtures/fixed_array_collections.jk")
         .replace("task.yield_now()", "checkpoint()");
+    let custom_drop = include_str!("../../../tests/fixtures/scoped_borrow_drop.jk")
+        .replace("task.yield_now()", "checkpoint()");
     for (source, cases) in [
+        (custom_drop, vec![("main", 42), ("dynamic", 42)]),
         (
             fixed_collections,
             vec![("main", 42), ("dynamic", 42), ("transferred", 42)],
@@ -482,12 +485,12 @@ fn scoped_borrow_isolate_does_not_hide_fatal_source_cleanup() {
             impl Drop for Source { fn drop(&mut self) { fatal_drop(&self.text); } }
             extern fn reader() @suspends
             extern fn fail() @suspends
-            fn borrowed(text: &String) @suspends { reader() }
-            fn sibling(text: &String) @suspends { fail() }
+            fn borrowed(source: &Source) @suspends { reader() }
+            fn sibling(source: &Source) @suspends { fail() }
             fn root() @suspends -> Int32 {
                 let result = isolate {
                     let source = Source { text: "source" }
-                    join { | borrowed(&source.text) | sibling(&source.text) }
+                    join { | borrowed(&source) | sibling(&source) }
                 }
                 99
             }
@@ -619,6 +622,10 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
 
 fn scoped_graph_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
     for (source, cases) in [
+        (
+            include_str!("../../../tests/fixtures/scoped_borrow_drop.jk"),
+            &[("main", 42), ("dynamic", 42)][..],
+        ),
         (
             include_str!("../../../tests/fixtures/fixed_array_collections.jk"),
             &[("main", 42), ("transferred", 42)][..],

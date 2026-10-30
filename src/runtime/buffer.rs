@@ -556,11 +556,13 @@ impl Buffer {
             || origin.failed_store.is_some()
             || origin.release_active
             || origin.failed_descriptor
-            || origin.cleanup.as_ref().is_some_and(|c| !c.hooks.is_empty())
             || origin.metadata_parallel.is_none()
         {
             return None;
         }
+        // Element hooks remain on the frozen source owner. Borrowed headers
+        // carry only a loan and never inherit cleanup callbacks. The storage
+        // offsets must still match the compiler-certified element graph.
         if !origin
             .cleanup
             .as_ref()

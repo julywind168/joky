@@ -674,6 +674,11 @@ mod tests {
             struct Tracked { value: Int32, text: String }
             impl Drop for Tracked { fn drop(&mut self) { local(self.value); } }
             fn destructor() @suspends { let value = Tracked { value: 1, text: "owned" }; }
+            fn inspect(value: &Tracked) @suspends -> Int32 { value.value }
+            fn destructor_borrow() @suspends -> Int32 {
+                let value = Tracked { value: 1, text: "owned" }
+                let (a, b) = join { | inspect(&value) | inspect(&value) }; a + b
+            }
             fn even(n: Int32) -> Int32 { if n == 0 { 42 } else { odd(n - 1) } }
             fn odd(n: Int32) -> Int32 { even(n - 1) }
             fn bad_a(n: Int32) -> Int32 { if n == 0 { local(n) } else { bad_b(n - 1) } }
@@ -703,11 +708,13 @@ mod tests {
             "indirect",
             "opaque_box",
             "destructor",
+            "destructor_borrow",
         ] {
             assert!(effects.require(name).is_err(), "{name}");
         }
         let effects = analyse(&plan, &prepared, &HashSet::from(["local".into()]));
         effects.require("children").unwrap();
+        effects.require("destructor_borrow").unwrap();
         assert!(effects.require("indirect").is_err());
     }
 }

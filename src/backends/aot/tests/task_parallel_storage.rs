@@ -1340,7 +1340,7 @@ fn scoped_borrow_nested_race_and_isolate_on_all_backends() {
                     observations.iter().filter(|o| o.source).count(),
                     match *name {
                         "forwarded" | "dynamic_views" => 3,
-                        "dynamic_shared" => 4,
+                        "dynamic_shared" => 6,
                         "aggregate_readers" => 5,
                         "aggregate_capture" => 1,
                         "dynamic_return" => 1,
@@ -1738,5 +1738,22 @@ fn fixed_array_collections_on_all_backends() {
             ("isolated", 42, 2),
         ],
         "fixed-collections",
+    );
+}
+
+#[test]
+fn scoped_borrow_custom_drop_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/scoped_borrow_drop.jk"),
+        &[
+            ("main", 42, 2),
+            ("dynamic", 42, 1),
+            ("containers", 12, 4),
+            ("failed", 0, 2),
+            ("parked", 0, 1),
+            ("raced", 21, 2),
+            ("isolated", 42, 2),
+        ],
+        "scoped-drop",
     );
 }

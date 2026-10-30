@@ -596,8 +596,8 @@ mod tests {
             enum OwnedChoice { Text(String), Empty }
             enum HiddenDrop { Empty, Value(Tracked) }
             enum PhantomChoice<T> { Empty }
-            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32, h: &Array<Owner>, i: &Owner, j: &Array<Array<Owner>>, k: &Phantom<String>, l: &OwnedChoice, m: &Array<OwnedChoice>, n: &Map<Int32, String>, o: &List<String>, p: &Set<Int32>) {}
-            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain, n: &Tracked, o: &Array<Tracked>, p: &Map<Int32, Tracked>, q: &List<Pointer>, r: &Set<Phantom<Ptr>>, s: &HiddenDrop, t: &PhantomChoice<Ptr>, u: &map.Iter<Int32, String>, v: &map.Entry<Int32, String>) {}
+            fn accepted(a: &Array<Plain>, b: &Array<Empty>, c: &Array<FixedArray<Int32, 0>>, d: &Plain, e: &Empty, f: &FixedArray<Int32, 3>, g: &Int32, h: &Array<Owner>, i: &Owner, j: &Array<Array<Owner>>, k: &Phantom<String>, l: &OwnedChoice, m: &Array<OwnedChoice>, n: &Map<Int32, String>, o: &List<String>, p: &Set<Int32>, n1: &Tracked, o1: &Array<Tracked>, p1: &Map<Int32, Tracked>, s1: &HiddenDrop) {}
+            fn rejected(a: &Array<Pointer>, b: &Array<Reference>, c: &Array<Callback>, e: &Array<Phantom<Ptr>>, f: &Array<Choice>, g: &Pointer, h: &Reference, i: &Callback, k: &Phantom<Ptr>, l: &Choice, m: &mut Plain, q: &List<Pointer>, r: &Set<Phantom<Ptr>>, t: &PhantomChoice<Ptr>, u: &map.Iter<Int32, String>, v: &map.Entry<Int32, String>) {}
         "#;
         let ast = types
             .resolve_with_modules(&crate::parser::parse(source).unwrap(), &Default::default())

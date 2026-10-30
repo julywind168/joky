@@ -1,0 +1,55 @@
+import joky/drop.{type Drop}
+import joky/array.{type Array}
+import joky/option.{type Option, Some, None}
+import joky/list.{type List}
+import joky/map.{type Map}
+import joky/task
+import joky/check
+import joky/string
+
+fn trace(text: &String) -> Int32 { 0 }
+struct Tracked { text: String }
+impl Drop for Tracked { fn drop(&mut self) { trace(&self.text); } }
+struct Bundle { item: Tracked, rows: Array<Tracked>, choice: Option<Tracked> }
+fn tracked() -> Tracked { Tracked { text: "abc" } }
+fn make() -> Bundle { Bundle { item: tracked(), rows: [tracked()], choice: Some(tracked()) } }
+fn leaf(value: &Tracked) @suspends @noescape -> Int32 {
+    task.yield_now()
+    int32(string.byte_length(&value.text))
+}
+fn read(value: &Bundle) @suspends -> Int32 {
+    let target = leaf
+    let (a, b) = join { | target(&value.item) | leaf(array.borrow_ref(&value.rows, 0)) }
+    let c = match &value.choice { Some(item) => leaf(item), None => 0 }
+    check.assert(a + b + c == 9, "bad borrowed destructor-bearing data")
+    21
+}
+fn main() @suspends -> Int32 {
+    var value = make()
+    let (a, b) = join { | read(&value) | read(&value) }
+    value.item = tracked()
+    a + b
+}
+fn dynamic() @suspends -> Int32 {
+    let value = make(); let view = &value
+    scope { branch { check.assert(read(view) == 21, "bad dynamic loan") } }
+    42
+}
+fn fail(value: &Bundle) @suspends -> Int32 { task.yield_now(); check.panic("reader failed") }
+fn forever(value: &Bundle) @suspends -> Int32 { while true { task.yield_now(); read(value); } }
+fn failed() @suspends -> Int32 { let value = make(); let (a, b) = join { | read(&value) | fail(&value) }; a + b }
+fn parked() @suspends { let value = make(); let view = &value; scope { branch { forever(view); } } }
+fn raced() @suspends -> Int32 { let value = make(); race { | read(&value) | forever(&value) } }
+fn isolated() @suspends -> Int32 {
+    let value = make()
+    match isolate { let (a, b) = join { | read(&value) | fail(&value) }; a + b } { Ok(_) => 0, Err(_) => 42 }
+}
+fn containers_read(rows: &List<Tracked>, table: &Map<Int32, Tracked>) @suspends -> Int32 {
+    leaf(list.borrow_ref(rows, 0)) + leaf(map.borrow_ref(table, 0))
+}
+fn containers() @suspends -> Int32 {
+    var rows = List.new::<Tracked>(); rows.push_back(tracked())
+    var table = Map.new::<Int32, Tracked>(); table.insert(0, tracked())
+    let (a, b) = join { | containers_read(&rows, &table) | containers_read(&rows, &table) }
+    a + b
+}
