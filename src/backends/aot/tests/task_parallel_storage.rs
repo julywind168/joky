@@ -1529,11 +1529,14 @@ fn scoped_borrow_cases(source: &str, cases: &[(&str, i32, usize)], label: &str) 
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 let result = task.take_result();
-                if matches!(*name, "failed" | "enum_failed" | "parked") {
+                if matches!(
+                    *name,
+                    "failed" | "enum_failed" | "partial_failure" | "parked"
+                ) {
                     let error = result.err().unwrap();
                     assert_eq!(
                         error.code(),
-                        if matches!(*name, "failed" | "enum_failed") {
+                        if matches!(*name, "failed" | "enum_failed" | "partial_failure") {
                             crate::ErrorCode::RuntimeError
                         } else {
                             crate::ErrorCode::Cancelled
@@ -1715,5 +1718,25 @@ fn scoped_borrow_indirect_unselected_candidate_keeps_group_local() {
         include_str!("../../../../tests/fixtures/scoped_borrow_indirect_local.jk"),
         &[("local", 6, 0)],
         "scoped-indirect-local",
+    );
+}
+
+#[test]
+fn fixed_array_collections_on_all_backends() {
+    scoped_borrow_cases(
+        include_str!("../../../../tests/fixtures/fixed_array_collections.jk"),
+        &[
+            ("suite", 42, 0),
+            ("main", 42, 2),
+            ("transferred", 42, 4),
+            ("dynamic", 42, 1),
+            ("dynamic_moved", 42, 0),
+            ("failed", 0, 2),
+            ("partial_failure", 0, 0),
+            ("parked", 0, 1),
+            ("raced", 21, 2),
+            ("isolated", 42, 2),
+        ],
+        "fixed-collections",
     );
 }

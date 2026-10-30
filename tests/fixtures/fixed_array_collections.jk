@@ -1,0 +1,199 @@
+import joky/fixed_array.{type FixedArray}
+import joky/array.{type Array}
+import joky/list.{type List}
+import joky/map.{type Map}
+import joky/set.{type Set}
+import joky/option.{type Option, Some, None}
+import joky/eq.{type BorrowEq}
+import joky/hash.{type BorrowHash}
+import joky/string
+import joky/mem
+import joky/task
+import joky/check
+
+type Row = FixedArray<String, 2>
+type Lists = FixedArray<List<String>, 2>
+type Maps = FixedArray<Map<Int32, String>, 2>
+type Sets = FixedArray<Set<String>, 2>
+fn row() -> Row { ["a", "bb"] }
+fn row_size(value: &Row) -> Int32 { int32(value.borrow_ref(0).byte_length() + value.borrow_ref(1).byte_length()) }
+struct Key { id: Int32, value: Row }
+impl BorrowHash for Key { fn hash_ref(&self) -> UInt64 { 0 } }
+impl BorrowEq for Key {
+    fn eq_ref(&self, other: &Self) -> Bool {
+        let left = &self.value; let right = &other.value
+        self.id == other.id && string.equals(left.borrow_ref(0), right.borrow_ref(0)) && string.equals(left.borrow_ref(1), right.borrow_ref(1))
+    }
+}
+fn key() -> Key { key_at(0) }
+fn key_at(id: Int32) -> Key { Key { id, value: row() } }
+
+fn make_list() -> List<String> {
+    var values = List.with_capacity::<String>(8)
+    values.push_back("a"); values.push_front("bb"); values.push_back("removed")
+    values.pop_back(); values.reverse()
+    values
+}
+fn make_map() -> Map<Int32, String> {
+    var values = Map.new::<Int32, String>()
+    var i = 0
+    while i < 16 { values.insert(i, "ab"); i += 1 }
+    values.remove(3); values.insert(3, "xy")
+    values
+}
+fn make_set() -> Set<String> {
+    var values = Set.new::<String>()
+    values.insert("a"); values.insert("bb"); values.insert("removed")
+    let removed = "removed"; values.remove(&removed)
+    values
+}
+fn lists() -> Lists { [make_list(), make_list()] }
+fn maps() -> Maps { [make_map(), make_map()] }
+fn sets() -> Sets { [make_set(), make_set()] }
+fn forward() -> Int32 {
+    var a = lists(); var b = maps(); var c = sets()
+    list.push_back(a.borrow_mut_ref(0), "ccc")
+    map.insert(b.borrow_mut_ref(0), 4, "xyz")
+    set.insert(c.borrow_mut_ref(0), "ccc")
+    check.assert(list.len(a.borrow_ref(0)) == 3 && map.len(b.borrow_ref(0)) == 16 && set.len(c.borrow_ref(0)) == 3, "bad fixed containers")
+    a.set(1, make_list()); b.set(9, make_map()); c.set(1, make_set())
+    let old = mem.replace(a.borrow_mut_ref(0), make_list())
+    check.assert(old.len() == 3, "lost replaced list")
+    var other = lists(); mem.swap(&mut a, &mut other)
+    let [first, second] = b
+    check.assert(first.len() == 16 && second.len() == 16, "lost moved maps")
+    let made = fixed_array.from_fn::<List<String>, 2>(move |i: UInt64| { make_list() })
+    check.assert(list.len(made.borrow_ref(1)) == 2, "bad generated list")
+    42
+}
+fn reverse() -> Int32 {
+    var a = List.new::<Row>()
+    var b = Map.new::<Int32, Row>()
+    var i = 0
+    while i < 20 { a.push_back(row()); b.insert(i, row()); i += 1 }
+    a.remove(3); a.push_front(row()); a.reverse()
+    b.remove(3); b.insert(3, row())
+    check.assert(row_size(list.borrow_ref(&a, 0)) == 3 && row_size(map.borrow_ref(&b, 3)) == 3, "lost fixed-array payload")
+    let old = mem.replace(list.borrow_mut_ref(&mut a, 0), ["ccc", "dddd"])
+    check.assert(row_size(&old) == 3, "bad replaced row")
+    let entries = b.into_entries()
+    check.assert(entries.len() == 20, "lost map rows")
+    let values = a.into_array()
+    check.assert(row_size(values.borrow_ref(0)) == 7, "lost list rows")
+    42
+}
+fn keys() -> Int32 {
+    var table = Map.new::<Key, String>()
+    var selected = Set.new::<Key>()
+    let without_protocol = Set.new::<Row>()
+    check.assert(without_protocol.is_empty(), "bad empty fixed-array set")
+    table.insert(key(), "first"); table.insert(key(), "second")
+    selected.insert(key()); selected.insert(key())
+    let key = key()
+    check.assert(table.len() == 1 && selected.len() == 1 && selected.contains(&key), "bad owning key identity")
+    check.assert(string.equals(table.value_ref(&key), "second"), "bad key replacement")
+    table.remove_by_ref(&key); selected.remove(&key)
+    check.assert(table.is_empty() && selected.is_empty(), "bad key removal")
+    42
+}
+fn collisions() -> Int32 {
+    var table = Map.new::<Key, String>()
+    var selected = Set.new::<Key>()
+    var i = 0
+    while i < 20 { table.insert(key_at(i), "collision"); selected.insert(key_at(i)); i += 1 }
+    var i = 0
+    while i < 20 {
+        let k = key_at(i)
+        check.assert(selected.contains(&k) && string.equals(table.value_ref(&k), "collision"), "lost colliding key")
+        table.remove_by_ref(&k); selected.remove(&k); i += 1
+    }
+    check.assert(table.is_empty() && selected.is_empty(), "lost colliding key cleanup")
+    42
+}
+struct Bundle { lists: Lists, maps: Maps, sets: Sets, rows: List<Row> }
+fn bundle() -> Bundle {
+    var rows = List.new::<Row>(); rows.push_back(row())
+    Bundle { lists: lists(), maps: maps(), sets: sets(), rows }
+}
+fn text(value: &String) @suspends -> Int32 { task.yield_now(); int32(value.byte_length()) }
+fn read(value: &Bundle) @suspends -> Int32 {
+    let first = list.borrow_ref(fixed_array.borrow_ref(&value.lists, 0), 0)
+    let (a, b) = join { | text(first) | text(first) }
+    check.assert(a + b == 2, "bad nested loan")
+    check.assert(map.len(fixed_array.borrow_ref(&value.maps, 1)) == 16 && set.len(fixed_array.borrow_ref(&value.sets, 0)) == 2, "bad borrowed containers")
+    check.assert(row_size(list.borrow_ref(&value.rows, 0)) == 3, "bad borrowed rows")
+    21
+}
+fn main() @suspends -> Int32 {
+    var value = bundle()
+    let (a, b) = join { | read(&value) | read(&value) }
+    value.lists = lists()
+    a + b
+}
+fn relay(value: Bundle) @suspends -> Bundle { task.yield_now(); value }
+fn transferred() @suspends -> Int32 {
+    let (a, b) = join { | relay(bundle()) | relay(bundle()) }
+    read(&a) + read(&b)
+}
+fn dynamic() @suspends -> Int32 {
+    let value = bundle(); let view = &value
+    scope { branch { check.assert(read(view) == 21, "bad captured loan") } }
+    42
+}
+fn dynamic_moved() @suspends -> Int32 {
+    let value = bundle()
+    scope { branch { check.assert(read(&value) == 21, "bad moved containers") } }
+    42
+}
+fn forever(value: &Bundle) @suspends -> Int32 { while true { task.yield_now(); read(value); } }
+fn fail(value: &Bundle) @suspends -> Int32 { task.yield_now(); check.panic("fixed collection reader failed") }
+fn failed() @suspends -> Int32 { let value = bundle(); let (a, b) = join { | read(&value) | fail(&value) }; a + b }
+fn parked() @suspends { let value = bundle(); let view = &value; scope { branch { forever(view); } } }
+fn raced() @suspends -> Int32 { let value = bundle(); race { | read(&value) | forever(&value) } }
+fn isolated() @suspends -> Int32 {
+    let value = bundle(); let view = &value
+    match isolate { let (a, b) = join { | read(view) | fail(view) }; a + b } { Ok(_) => 0, Err(_) => 42 }
+}
+fn empty() -> Int32 {
+    let a: FixedArray<List<String>, 0> = []
+    let b: FixedArray<Map<Int32, Row>, 0> = []
+    let c: FixedArray<Set<Row>, 0> = []
+    check.assert(a.is_empty() && b.is_empty() && c.is_empty(), "nonempty zero array")
+    42
+}
+struct Wrapped<T> { value: T }
+fn wrapped() -> Int32 {
+    var values = List.new::<Wrapped<Option<Maps>>>()
+    values.push_back(Wrapped { value: Some(maps()) }); values.push_front(Wrapped { value: None })
+    let wrapper = values.pop_back()!
+    match wrapper.value {
+        Some(tables) => check.assert(map.len(tables.borrow_ref(0)) == 16, "lost wrapped maps"),
+        None => check.panic("lost wrapped payload")
+    }
+    42
+}
+fn array_wrapped() -> Int32 {
+    var rows: Array<Row> = []; rows.push(row())
+    var values = List.new::<Array<Row>>(); values.push_back(rows)
+    let rows = values.pop_front()!
+    check.assert(row_size(rows.borrow_ref(0)) == 3, "lost array-wrapped row")
+    42
+}
+fn suite() @suspends -> Int32 { check.assert(forward() == 42 && reverse() == 42 && keys() == 42 && collisions() == 42 && empty() == 42 && wrapped() == 42 && array_wrapped() == 42, "bad suite"); 42 }
+fn partial_failure() @suspends -> Int32 {
+    let values = fixed_array.from_fn::<Map<Int32, String>, 4>(move |i: UInt64| {
+        if i == 2 { check.panic("partial map construction") }
+        make_map()
+    })
+    int32(values.len())
+}
+fn cancel_target() @suspends -> Int32 {
+    var values = fixed_array.from_fn::<Map<Int32, Row>, 2>(move |i: UInt64| {
+        var table = Map.new::<Int32, Row>(); table.insert(int32(i), row()); table
+    })
+    task.yield_now()
+    let old = mem.replace(map.borrow_mut_ref(values.borrow_mut_ref(0), 0), ["ccc", "dddd"])
+    check.assert(row_size(&old) == 3, "bad cancellation probe")
+    task.yield_now()
+    42
+}

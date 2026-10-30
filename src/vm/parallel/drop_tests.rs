@@ -385,11 +385,11 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         };
         let source = if kind == 6 {
             source
-                .replace("import joky/string", "import joky/string\nimport joky/list.{type List}\nimport joky/map.{type Map}\nimport joky/set.{type Set}\nimport joky/slice")
-                .replace("extern fn trace", "fn collection_size(value: &List<Map<Int32, Set<String>>>) -> UInt64 { let table = list.borrow_ref(value, 0); let selected = map.borrow_ref(table, 7); let items = set.elements(selected); string.byte_length(slice.borrow_ref(items, 0)) }\nextern fn trace")
-                .replace("text: &String) @suspends", "text: &List<Map<Int32, Set<String>>>) @suspends")
+                .replace("import joky/string", "import joky/string\nimport joky/fixed_array.{type FixedArray}\nimport joky/list.{type List}\nimport joky/map.{type Map}\nimport joky/set.{type Set}\nimport joky/slice")
+                .replace("extern fn trace", "fn collection_size(value: &FixedArray<List<Map<Int32, Set<String>>>, 1>) -> UInt64 { let table = list.borrow_ref(fixed_array.borrow_ref(value, 0), 0); let selected = map.borrow_ref(table, 7); let items = set.elements(selected); string.byte_length(slice.borrow_ref(items, 0)) }\nextern fn trace")
+                .replace("text: &String) @suspends", "text: &FixedArray<List<Map<Int32, Set<String>>>, 1>) @suspends")
                 .replace("string.byte_length(text)", "collection_size(text)")
-                .replace("helper(&source.text)", "var selected = Set.new::<String>(); selected.insert(\"collection source\"); var table = Map.new::<Int32, Set<String>>(); table.insert(7, selected); var values = List.new::<Map<Int32, Set<String>>>(); values.push_back(table); helper(&values)")
+                .replace("helper(&source.text)", "var selected = Set.new::<String>(); selected.insert(\"collection source\"); var table = Map.new::<Int32, Set<String>>(); table.insert(7, selected); var values = List.new::<Map<Int32, Set<String>>>(); values.push_back(table); let fixed: FixedArray<List<Map<Int32, Set<String>>>, 1> = [values]; helper(&fixed)")
         } else {
             source
         };
@@ -402,7 +402,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
             3 => "&FixedArray<Int32, 2>",
             4 => "&Array<Array<String>>",
             5 => "&Option<String>",
-            _ => "&List<Map<Int32, Set<String>>>",
+            _ => "&FixedArray<List<Map<Int32, Set<String>>>, 1>",
         };
         let source = format!("{} fn callback(text: {view}) @suspends @noescape -> UInt64 {{ let call: fn({view}) @suspends @noescape -> UInt64 = reader; call(text) }}",
             source.replace("| reader(text)", "| callback(text)"));

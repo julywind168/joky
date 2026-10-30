@@ -682,13 +682,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         .iter()
         .chain(std::iter::once(&signature.ret))
     {
-        if ty.contains_fixed_array() && !super::fixed_arrays::eligible(ty) {
-            return Err(type_error(
-                &info.span,
-                ErrorCode::TypeMismatch,
-                format!("FixedArray is not supported in this context: {ty}"),
-            ));
-        }
+        plan.check_fixed_array(ty)?;
         if matches!(
             ty,
             Type::BufferElement(_)

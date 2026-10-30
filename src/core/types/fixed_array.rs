@@ -11,11 +11,13 @@ fn failure(code: ErrorCode, message: &str) -> Error {
 
 impl Type {
     /// Reference-free storage accepted by fixed-array places and dynamic elements.
-    /// Rigid template obligations are rechecked after specialization.
+    /// Rigid template obligations are rechecked after specialization. Shallow
+    /// buffer element identities are checked against complete declarations by
+    /// FunctionPlan::check_fixed_array; inline layout still rejects them.
     pub(crate) fn is_fixed_array_data(&self) -> bool {
         TypeWalk::new(self, TypeEdges::Fields).all(|ty| match ty {
-            Type::Record(r) => r.closure.is_none() && !r.indirect && !r.list && !r.map && !r.set,
-            Type::Enum(e) => !e.indirect,
+            Type::Record(r) => r.closure.is_none(),
+            Type::Enum(_) => true,
             Type::Tuple(_) | Type::FixedArray(_) | Type::Unit | Type::Bool | Type::Rune => true,
             Type::Parameter(p) => p.callable.is_none(),
             Type::String | Type::Buffer(_) => true,
@@ -26,6 +28,32 @@ impl Type {
 
 impl TypeRegistry {
     pub(crate) fn fixed_array(&self, element: Type, length: ConstArgument) -> Result<Type, Error> {
+        // Alias substitution can reach this constructor before the ordinary
+        // reference normalizer. Inline elements need their declaration layout.
+        let element = if TypeWalk::new(&element, TypeEdges::Inline).any(|ty| {
+            matches!(ty, Type::Record(r) if r.indirect) || matches!(ty, Type::Enum(e) if e.indirect)
+        }) {
+            let mut nominals = HashMap::new();
+            for definition in self.forwards.borrow().values() {
+                let TypeDefinition::Type(ty) = definition else {
+                    continue;
+                };
+                let Some((_, id)) = ty.nominal() else {
+                    continue;
+                };
+                let shallow = matches!(ty, Type::Record(r) if r.indirect)
+                    || matches!(ty, Type::Enum(e) if e.indirect);
+                // Imported spellings can still hold a shallow forward with
+                // the same identity as the completed declaration.
+                let id = id.to_string();
+                if !shallow || !nominals.contains_key(&id) {
+                    nominals.insert(id, ty.clone());
+                }
+            }
+            indirect::materialize(&element, &nominals, self)?
+        } else {
+            element
+        };
         let shape = Arc::new(FixedArrayType { element, length });
         let ty = Type::FixedArray(shape.clone());
         self.validate(&ty)?;
@@ -87,10 +115,8 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
                 | Type::Tuple(_)
                 | Type::String
                 | Type::Buffer(_) => true,
-                Type::Record(r) => {
-                    r.closure.is_none() && !r.indirect && !r.list && !r.map && !r.set
-                }
-                Type::Enum(e) => !e.indirect,
+                Type::Record(r) => r.closure.is_none(),
+                Type::Enum(_) => true,
                 Type::Parameter(p) => {
                     p.kind == ParameterKind::Type
                         && p.callable.is_none()

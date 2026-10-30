@@ -308,7 +308,13 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         .replace("task.yield_now()", "checkpoint()");
     let indirect = include_str!("../../../tests/fixtures/scoped_borrow_indirect.jk")
         .replace("task.yield_now()", "checkpoint()");
+    let fixed_collections = include_str!("../../../tests/fixtures/fixed_array_collections.jk")
+        .replace("task.yield_now()", "checkpoint()");
     for (source, cases) in [
+        (
+            fixed_collections,
+            vec![("main", 42), ("dynamic", 42), ("transferred", 42)],
+        ),
         (
             indirect,
             vec![("main", 13), ("dynamic", 42), ("owned_result", 6)],
@@ -613,6 +619,10 @@ fn scoped_borrow_dynamic_join_advances_local_children_while_readers_wait() {
 
 fn scoped_graph_budgets(amounts: impl Clone + IntoIterator<Item = usize>) {
     for (source, cases) in [
+        (
+            include_str!("../../../tests/fixtures/fixed_array_collections.jk"),
+            &[("main", 42), ("transferred", 42)][..],
+        ),
         (
             include_str!("../../../tests/fixtures/scoped_borrow_indirect.jk"),
             &[("main", 13), ("dynamic", 42), ("owned_result", 6)][..],

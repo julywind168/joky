@@ -1288,14 +1288,14 @@ impl<T, const N: UInt64> Tag<T, N> {
 
 `import joky/fixed_array.{type FixedArray}` 提供 `FixedArray<T, N>` 类型；它不在 prelude 中。
 长度属于类型身份，支持透明别名、嵌套数组和有限聚合。
-元素接受固定数值、Bool、Rune、Unit、无引用 Copy 聚合，以及 String、Array 和它们组成的
+元素接受固定数值、Bool、Rune、Unit、无引用 Copy 聚合，以及 String、Array、List、Map、Set 和它们组成的
 普通记录／元组／枚举／嵌套 FixedArray，包括 Option<String>。完整元素树仍拒绝引用、Ptr、函数值、opaque、闭包、
-资源、自定义 Drop、dyn 和 List/Map/Set；零长度与 phantom 参数也不能绕过检查。
+资源、自定义 Drop、dyn 和循环元素类型；零长度与 phantom 参数也不能绕过检查。
 泛型 `FixedArray<T, N>` 本身不要求 T: Copy，具体存储资格在实例化时检查。
 
 元素为 Copy 时，数组及含数组的 Copy 聚合具有值语义：赋值、传参、返回和整数组解引用读取
 取得独立副本。含拥有元素时按值操作移动所有权，原绑定不能继续使用，包括 `FixedArray<String, 0>`。
-支持普通记录同时包含 String／Array 与 FixedArray 字段，也支持外层 Option/Result 包装这些数组。
+支持普通记录同时包含 String／Array／List／Map／Set 与 FixedArray 字段，也支持外层 Option/Result 包装这些数组。
 整个数组及元素可共享／独占借用，支持解引用写入和 `joky/mem` 的 replace/swap。
 拥有元素可经借用读取、解构移出，或用 replace 取出并补入新值；不会隐式 clone。
 
@@ -1329,7 +1329,10 @@ Copy 元素嵌套数组的 `get` 返回独立的 `Option<FixedArray<…>>`；fro
 模块函数、方法、函数值和泛型 helper 沿用相同的来源与 noescape 检查。
 元素引用不分配视图头部；每次切片/子切片的头部计入任务预算并保留到根任务结束，但不拥有或保活载荷。
 重复创建切片可能耗尽头部预算；载荷仍按作用域及时回收。
-List/Map/Set、自定义 Drop 等受限存储尚不接受数组或其 Array 包装。
+List 元素、Map 的键／值及 Set 元素可包含上述固定数组，支持有限嵌套与泛型包装。
+键操作仍要求现有 Hash/Eq 或 BorrowHash/BorrowEq 协议：FixedArray 本身没有这些实现，
+可以使用含固定数组字段并实现借用键协议的普通记录；空 Set<FixedArray<…>> 的构造不代表支持插入。
+自定义 Drop、循环元素图及含引用存储仍不接受此组合。
 支持 Local 挂起函数中的数组值、参数/返回、join/race 结果及 branch 按值捕获；已有
 Array<FixedArray> 也可跨挂起。安全引用和切片可随来源跨挂起；只读跨 worker 输入遵守作用域借用规则。
 branch 发布前复制 Copy 捕获或移动拥有捕获；返回值在接收方取得所有权前保活。
@@ -5157,8 +5160,8 @@ List 保留整数链与空闲槽，Map/Set 保留桶、缓存哈希、反向位�
 资格保守检查冻结模块中所有同签名、同挂起效果的函数值目标，任一目标依赖 Local 代码即拒绝
 该间接调用；没有可验证目标也拒绝。`join`／`race` 的结果仍不能包含函数值或引用。
 Rust TaskValue 和宿主函数 ABI 不接纳函数值，不能用原始地址或仅有签名的描述伪造证据。
-FixedArray 及包含它的普通无引用聚合使用独立位置快照；其中 String／Array 拥有字段移动真实 Buffer 树。
-Array 可存储这些值，混合 String／Array 与 FixedArray 字段的普通记录也支持；仍遵守固定数组元素限制。
+FixedArray 及包含它的普通无引用聚合使用独立位置快照；其中 String／Array／List／Map／Set 拥有字段移动真实 Buffer 树。
+Array／List／Map／Set 可存储这些值，混合普通拥有字段与 FixedArray 的记录也支持；仍遵守固定数组元素限制。
 Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit 元素可用。
 仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含 BorrowHash/BorrowEq
 及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
@@ -5170,7 +5173,7 @@ FixedArray，以及普通 enum、Option、Result；也支持 String 字段、Arr
 也支持 `&List<T>`、`&Map<K, V>`、`&Set<T>` 及符合语言存储规则的有限嵌套组合。
 完整字段树与名义类型实参须无引用、原始指针、函数值、资源、自定义 Drop 或 dyn；
 不能仅凭 Copy 或一般 Share 资格放行。空容器、空切片和零大小普通元素也支持。
-FixedArray<String, N>、嵌套拥有数组和混合拥有字段与 FixedArray 的普通记录也可借用，
+FixedArray<String, N>、含 List／Map／Set 的固定数组、嵌套拥有数组和混合拥有字段与 FixedArray 的普通记录也可借用，
 存储与借用资格分别检查，自定义 Drop 等仍不获只读借用资格。
 枚举检查全部变体及类型实参的资格，运行时只读取当前活动载荷；空变体也不能绕过类型限制。
 来源须为当前任务的受检存储，或当前任务收到的受检只读借用；普通数据验证独立分配的任务身份、

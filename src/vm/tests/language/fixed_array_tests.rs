@@ -148,7 +148,6 @@ fn fixed_array_f2a_rejects_unopened_contexts() {
         "fn bad()->Option<FixedArray<Unit,65536>> {Some(fixed_array.repeat::<Unit,65536>({}))}",
         "struct Bad<T> { a:T, r:&Int32 } fn bad(x:&Bad<FixedArray<Int32,2>>) {}",
 
-        "import joky/list.{type List} fn bad() { let a = List.new::<FixedArray<Int32,2>>() }",
         "fn bad(x: FixedArray<Int32,2>) -> &FixedArray<Int32,2> { &x }",
         "struct Packet { data:FixedArray<Int32,2> } fn bad() { let p=Packet{data:fixed_array.repeat::<Int32,2>(1)}; let f=||{p.data.len()}; f(); }",
         "fn f(x:FixedArray<Int32,2>)->FixedArray<Int32,2>{x} fn bad(){let g=f; g(fixed_array.repeat::<Int32,3>(1));}",
@@ -504,10 +503,6 @@ fn fixed_array_f5_rejects_recursive_wrappers_at_closed_boundaries() {
         "fn bad(){let p=make(); let f=||{p.value;}; f();}",
         "fn bad(){let p=make(); let f=move ||{p.value;}; f();}",
         "fn bad(p:&Nested){let f=||{p.value;}; f();}",
-        "fn bad(){let values=List.new::<Nested>()}",
-        "fn bad(){let values=Map.new::<Int32,Nested>()}",
-        "fn bad(){let values=Set.new::<Nested>()}",
-        "fn bad(){let values=List.new::<Array<Row>>()}",
         "extern fn foreign(p:Nested)",
         "extern fn foreign(p:&Nested) @suspends",
         "fn bad()->&Nested{let p=make(); &p}",
@@ -877,4 +872,77 @@ fn fixed_array_owned_elements_cancellation_boundaries() {
 #[ignore = "exhaustive: owning fixed-array initialization, moves and returns at every instruction"]
 fn exhaustive_fixed_array_owned_elements_cancellation() {
     owned_cancellation(super::support::CancellationSweep::EveryInstruction);
+}
+
+#[test]
+fn fixed_array_collections_keep_invalid_elements_and_loans_rejected() {
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+    let prefix = r#"
+        import joky/fixed_array.{type FixedArray}
+        import joky/list.{type List}
+        import joky/map.{type Map}
+        import joky/set.{type Set}
+        import joky/drop.{type Drop}
+        struct Hidden { value: &Int32 }
+        struct Owned { text: String }
+        impl Drop for Owned { fn drop(&mut self) {} }
+        struct Wrapper { values: List<Owned> }
+        struct Recursive { children: List<Recursive> }
+        struct Key { value: FixedArray<String, 1> }
+    "#;
+    let module = crate::parser::parse(prefix).unwrap();
+    PreparedModule::new(
+        &module,
+        &crate::TypeRegistry::default(),
+        &BindingRegistry::default(),
+    )
+    .and_then(|prepared| prepared.plan(&Default::default()))
+    .unwrap_or_else(|error| panic!("invalid test declarations: {error}"));
+    for body in [
+        "fn bad(x: FixedArray<List<Hidden>, 0>) {}",
+        "fn bad(x: FixedArray<Map<Int32, Owned>, 0>) {}",
+        "fn bad(x: FixedArray<Wrapper, 0>) {}",
+        "fn bad(x: FixedArray<List<Recursive>, 0>) {}",
+        "fn bad() { let a: FixedArray<List<String>, 0> = []; let b = a; a.len(); b.len(); }",
+        "fn bad() { fixed_array.repeat::<List<String>, 0>(List.new::<String>()); }",
+        "fn bad() { var a: FixedArray<List<String>, 1> = [List.new::<String>()]; let r = a.borrow_ref(0); a.set(0, List.new::<String>()); r.len(); }",
+        "fn bad(x: &Key) { let moved = x.value; }",
+        "fn bad(x: &Key) { let changed = &mut x.value; }",
+        "fn bad(x: &mut Key) { let view = &x.value; let changed = &mut x.value; view.len(); changed.len(); }",
+        r#"fn bad(x: &Key) -> &FixedArray<String, 1> { let k = Key { value: ["x"] }; &k.value }"#,
+        r#"fn bad() { let a: FixedArray<String, 1> = ["x"]; var values = Set.new::<FixedArray<String, 1>>(); values.insert(a); }"#,
+    ] {
+        let source = format!("{prefix}\n{body}");
+        let result = crate::parser::parse(&source).map_err(crate::Error::from)
+            .and_then(|module| PreparedModule::new(&module, &crate::TypeRegistry::default(), &BindingRegistry::default()))
+            .and_then(|prepared| prepared.plan(&Default::default()));
+        let error = result.err().unwrap_or_else(|| panic!("accepted: {body}"));
+        assert!(!matches!(error.code(), ErrorCode::UnknownName | ErrorCode::UnknownType), "{body}: {error}");
+    }
+}
+
+fn collection_cancellation(sweep: super::support::CancellationSweep) {
+    let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+    vm.load_source(include_str!(
+        "../../../../tests/fixtures/fixed_array_collections.jk"
+    ))
+    .unwrap_or_else(|e| panic!("{e}"));
+    super::support::assert_cancellation(
+        &mut vm,
+        "cancel_target",
+        20000,
+        sweep,
+        || {},
+        || arena::LIVE.with(|live| live.get()),
+        || arena::LIVE.with(|live| assert_eq!(live.get(), 0)),
+    );
+}
+#[test]
+fn fixed_array_collections_cancellation_boundaries() {
+    collection_cancellation(super::support::CancellationSweep::ResourceBoundaries);
+}
+#[test]
+#[ignore = "exhaustive: fixed-array collection construction, replacement and cleanup at every instruction"]
+fn exhaustive_fixed_array_collections_cancellation() {
+    collection_cancellation(super::support::CancellationSweep::EveryInstruction);
 }

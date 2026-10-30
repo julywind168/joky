@@ -2099,12 +2099,10 @@ fn lower_ops(
                     place,
                 } => {
                     let left = slots.read(builder, reference);
-                    let right = slots.read(
-                        builder,
-                        place
-                            .as_ref()
-                            .unwrap_or(&value.scalars().find(|s| s.ty.is_owner_lane()).unwrap()),
-                    );
+                    let source = place
+                        .clone()
+                        .unwrap_or_else(|| value.scalars().find(|s| s.ty.is_owner_lane()).unwrap());
+                    let right = slots.read(builder, &source);
                     if place.is_some() {
                         let size = builder
                             .ins()

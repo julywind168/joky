@@ -209,6 +209,7 @@ pub(super) fn resolve<'a>(
             .collect();
         pending.reverse();
         let mut expanded = Vec::new();
+        let mut expanded_aliases = Vec::new();
         let mut seen_tuples = HashSet::new();
         let mut seen_functions = HashSet::new();
         let mut seen_enums = HashSet::new();
@@ -313,6 +314,50 @@ pub(super) fn resolve<'a>(
                             |(ty, _)| (indirect::substitute_syntax(ty, &substitutions), span),
                         ));
                     }
+                } else if let Some(TypeDefinition::Alias(alias)) = module
+                    .scope
+                    .as_ref()
+                    .and_then(|scope| scope.types.get(name))
+                    .and_then(|binding| binding.resolved.as_ref())
+                {
+                    // Imported aliases have no declaration node in this module.
+                    // Follow their substituted storage, so FixedArray<T, N>
+                    // orders T's layout while Array<T> still stops at Buffer.
+                    let key = (name.clone(), arguments.clone());
+                    if !expanded_aliases.contains(&key) {
+                        if expanded_aliases.len() >= 256 {
+                            return Err(error(
+                                ErrorCode::ResourceLimit,
+                                span,
+                                "Inline dependency expansion exceeds 256 imported aliases",
+                            ));
+                        }
+                        expanded_aliases.push(key);
+                        let substitutions = alias
+                            .parameters
+                            .iter()
+                            .zip(arguments)
+                            .map(|(p, ty)| (p.id, ty.clone()))
+                            .collect();
+                        let used: HashSet<_> = TypeWalk::new(&alias.target, TypeEdges::Fields)
+                            .filter_map(|ty| match ty {
+                                Type::Parameter(p) => Some(p.id),
+                                _ => None,
+                            })
+                            .collect();
+                        pending.extend(
+                            alias
+                                .parameters
+                                .iter()
+                                .zip(arguments)
+                                .filter(|(p, _)| !used.contains(&p.id))
+                                .filter_map(|(_, a)| a.as_type().map(|ty| (ty.clone(), span))),
+                        );
+                        pending.push((
+                            indirect::substitute_syntax(&alias.target, &substitutions),
+                            span,
+                        ));
+                    }
                 }
                 continue;
             }
@@ -398,6 +443,7 @@ pub(super) fn resolve<'a>(
     }
     // Dependency discovery may specialize shallow nominal identities. Layouts
     // must be rebuilt after their topological dependencies become concrete.
+    registry.fixed_arrays.borrow_mut().clear();
     registry.record_instances.borrow_mut().clear();
     registry.enum_instances.borrow_mut().clear();
     registry.alias_instances.borrow_mut().clear();
@@ -585,6 +631,7 @@ pub(super) fn resolve<'a>(
             .iter()
             .map(|(name, definition)| ((*name).to_owned(), definition.clone())),
     );
+    registry.fixed_arrays.borrow_mut().clear();
     registry.record_instances.borrow_mut().clear();
     registry.enum_instances.borrow_mut().clear();
     registry.alias_instances.borrow_mut().clear();

@@ -131,23 +131,91 @@ impl FunctionPlan {
     }
 
     pub(super) fn check_fixed_array(&self, ty: &Type) -> Result<(), Error> {
-        if ty.contains_fixed_array()
-            && crate::core::types::walk::TypeWalk::new(
-                ty,
-                crate::core::types::walk::TypeEdges::Fields,
-            )
-            .any(|node| self.has_custom_drop(node))
-        {
-            return Err(type_error(
-                &self.current_span,
-                ErrorCode::TypeMismatch,
-                "FixedArray storage does not support custom Drop",
-            ));
+        if !ty.contains_fixed_array() {
+            return Ok(());
         }
-        if ty.contains_fixed_array() && !eligible(ty) {
+        if !eligible(ty) {
             return Err(type_error(&self.current_span, ErrorCode::TypeMismatch,
                 format!("FixedArray is not supported in this context: {ty}; requires supported array values or views")));
         }
+        // Buffer elements retain shallow nominal identities. Inspect their
+        // actual declarations before admitting an inline owning value: hidden
+        // references, hooks and recursive graphs must not pass a shallow check.
+        fn visit(
+            plan: &FunctionPlan,
+            ty: &Type,
+            fixed: bool,
+            active: &mut Vec<(Type, bool)>,
+            seen: &mut Vec<(Type, bool)>,
+        ) -> Result<(), Error> {
+            if active.len() > 256 || seen.len() >= 65_536 {
+                return Err(type_error(
+                    &plan.current_span,
+                    ErrorCode::ResourceLimit,
+                    "FixedArray element graph exceeds its type work limit",
+                ));
+            }
+            let ty = plan.pointee(ty, &plan.type_registry)?;
+            let fixed = fixed || matches!(ty, Type::FixedArray(_) | Type::FixedArrayInit(_));
+            let key = (ty.clone(), fixed);
+            if active.contains(&key) {
+                return Err(type_error(
+                    &plan.current_span,
+                    ErrorCode::TypeMismatch,
+                    "FixedArray requires a finite element type graph",
+                ));
+            }
+            if seen.contains(&key) {
+                return Ok(());
+            }
+            if plan.has_custom_drop(&ty) {
+                return Err(type_error(
+                    &plan.current_span,
+                    ErrorCode::TypeMismatch,
+                    "FixedArray storage does not support custom Drop",
+                ));
+            }
+            if fixed && !matches!(ty, Type::FixedArrayInit(_)) && !ty.is_fixed_array_data() {
+                return Err(type_error(
+                    &plan.current_span,
+                    ErrorCode::TypeMismatch,
+                    "FixedArray elements require finite reference-free data with ordinary owners",
+                ));
+            }
+            active.push(key.clone());
+            let mut children: Vec<&Type> = Vec::new();
+            match &ty {
+                Type::Record(r) => {
+                    children.extend(r.fields.iter().map(|f| &f.ty));
+                    children.extend(r.arguments.iter().filter_map(|a| a.as_type()));
+                }
+                Type::Enum(e) => {
+                    children.extend(e.variants.iter().filter_map(|v| v.payload.as_ref()));
+                    children.extend(e.arguments.iter().filter_map(|a| a.as_type()));
+                }
+                Type::Tuple(t) => children.extend(&t.elements),
+                Type::FixedArray(a) | Type::FixedArrayInit(a) => children.push(&a.element),
+                Type::Buffer(t)
+                | Type::BufferElement(t)
+                | Type::BufferSlice(t)
+                | Type::BufferIterator(t)
+                | Type::BufferPairIterator(t)
+                | Type::BufferEntry(t) => children.push(t),
+                Type::Reference(r) => children.push(&r.target),
+                Type::Function(f) => {
+                    children.extend(&f.signature.params);
+                    children.push(&f.signature.ret);
+                }
+                _ => {}
+            }
+            for child in children {
+                visit(plan, child, fixed, active, seen)?;
+            }
+            active.pop();
+            seen.push(key);
+            Ok(())
+        }
+        visit(self, ty, false, &mut Vec::new(), &mut Vec::new())?;
         Ok(())
     }
 

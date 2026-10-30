@@ -644,7 +644,7 @@ impl FunctionPlan {
                 "Cannot borrow an array field through a shared reference as mutable",
             ));
         }
-        if target.is_owner() {
+        if target.is_owner() && !borrow {
             return Err(type_error(&expr.span(), ErrorCode::InvalidAssignment,
                 "Cannot move or replace an owning field through a borrowed wrapper; borrow the field instead"));
         }
