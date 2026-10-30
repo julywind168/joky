@@ -287,3 +287,16 @@ Rust Release 不代表 Joky 生成代码另开了优化选项，后者仍使用�
 [共享分配索引优化](reports/chat-storage-index-2026-10-30.md)。
 在此基础上省去受审计 helper 返回后的浮点环境重置，结果见
 [浮点环境调用边界优化](reports/chat-float-env-2026-10-30.md)。
+
+### Rust/Tokio 应用对照
+
+三轮交替测量及单客户端 RTT 见 [Joky / Tokio 对照报告](reports/chat-tokio-2026-10-30.md)。
+
+[独立对照工程](chat-tokio/README.md) 实现同样的聊天协议、扣费、成员变化与有界发送队列，
+用 `prepare-tokio` 接入同一个计时器。其业务静态编译，不包含 Joky 的内嵌 VM、热更新、
+通用域事务和共享分配预算；比较的是两种应用实现的总成本。
+
+`run --min-seconds 5` 可按完整消息批次延长每个样本，默认 0 仍只执行一批。
+两版使用相同 clients、rooms、workers、payload、warmup 和最短时长；CSV 的 broadcasts 为实际完成数，
+延长后的最终余额按实际发送数验证。至少运行数秒有助于降低 `ps` CPU 时间精度的影响，
+但不能消除 Python 客户端饱和。对照须报告 client CPU，不能将客户端受限的吞吐当作服务端容量上限。

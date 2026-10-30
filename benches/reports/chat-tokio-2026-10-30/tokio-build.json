@@ -1,0 +1,43 @@
+{
+  "utc": "2026-10-30T14:27:04Z",
+  "revision": "c1dc65f94a6703738a6149870a40eb6c1670afba",
+  "dirty": "M benches/README.md\n M benches/chat-workers.py\n?? benches/__pycache__/\n?? benches/chat-tokio/",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "logical_cpus": 8,
+  "python": "3.14.6 (main, Jun 30 2026, 05:55:20) [Clang 17.0.0 (https://github.com/swiftlang/llvm-project.git f403f1080b28ed3bf59",
+  "cpu": "Apple M1 Pro",
+  "argv": [
+    "benches/chat-workers.py",
+    "prepare-tokio",
+    "--binary",
+    "target/chat-tokio/release/chat-tokio",
+    "--profile",
+    "release",
+    "--output",
+    "target/benchmarks/chat-tokio/build"
+  ],
+  "implementation": "Rust/Tokio",
+  "profile": "release",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "script_vm": "none (static Rust business logic)",
+  "binary_sha256": "e8c1c0a97e7ddb53e9693bfaa249902b12b0b1570c7d20f246cf2e0e4b75a9c0",
+  "start_balance_cents": 1000000000000,
+  "run_args": [
+    "--chat-port",
+    "0",
+    "--admin-port",
+    "0",
+    "--balance-cents",
+    "1000000000000"
+  ],
+  "files": {
+    "source/Cargo.lock": "68c0b6cd170ab4dd93eab66fec18fa6b80e5f162d486c557d6ebfcd3f8809140",
+    "source/Cargo.toml": "83c1dbc1852e6fe8f6b597426b4ea5e7185ae2a1b1485a5d40fee003a4f00ced",
+    "source/README.md": "f64a315d72af73e386ab2282114fcca9596184e32ad133afab1f069e0b4fc236",
+    "source/src/main.rs": "edb478edeaf190d87a04ccf25fab3237b30f99750298798331f3970ca65a6055",
+    "source/src/tests.rs": "16b5786ceedbb1f08272df9ac613f04f48bdcddd9d2480f257ada4c13c1257db",
+    "source/tests/protocol.rs": "d3fc69c3bbf37b8ac3ab074229f50eb6d3e0f199b8a9f8ecd58fd398d8426a40",
+    "app/chat": "e8c1c0a97e7ddb53e9693bfaa249902b12b0b1570c7d20f246cf2e0e4b75a9c0"
+  }
+}

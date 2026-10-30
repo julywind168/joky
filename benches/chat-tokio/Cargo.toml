@@ -1,0 +1,18 @@
+[package]
+name = "chat-tokio"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Keep the comparison independent of the compiler's dependencies and lockfile.
+[workspace]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"

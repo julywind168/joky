@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build once, then measure the chat AOT host with configurable worker counts."""
+"""Prepare immutable chat artifacts, then measure Joky or Rust/Tokio workers."""
 import argparse
 import asyncio
 import csv
@@ -78,6 +78,27 @@ def prepare(args):
         joky_sha256=digest(joky), runtime_sha256=digest(runtime),
         start_balance_cents=BALANCE,
         files={str(p.relative_to(out)): digest(p) for folder in [source, out / "app"]
+               for p in sorted(folder.rglob("*")) if p.is_file()},
+    )
+    save_json(out / "build.json", metadata)
+    print(f"Prepared {out / 'app/chat'}", flush=True)
+
+
+def prepare_tokio(args):
+    out = args.output.resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    source = ROOT / "benches/chat-tokio"
+    shutil.copytree(source, out / "source", ignore=shutil.ignore_patterns("target", ".gitignore"))
+    (out / "app").mkdir()
+    shutil.copy2(args.binary.resolve(), out / "app/chat")
+    shutil.copy2(__file__, out / "runner.py")
+    metadata = environment()
+    metadata.update(
+        implementation="Rust/Tokio", profile=args.profile,
+        rustc=command("rustc", "--version"), script_vm="none (static Rust business logic)",
+        binary_sha256=digest(args.binary.resolve()), start_balance_cents=BALANCE,
+        run_args=["--chat-port", "0", "--admin-port", "0", "--balance-cents", str(BALANCE)],
+        files={str(p.relative_to(out)): digest(p) for folder in [out / "source", out / "app"]
                for p in sorted(folder.rglob("*")) if p.is_file()},
     )
     save_json(out / "build.json", metadata)
@@ -208,13 +229,13 @@ class Load:
             await asyncio.gather(replies, return_exceptions=True)
 
 
-async def sample(args, out, binary, workers, rooms, repeat, latency_writer):
+async def sample(args, out, binary, workers, rooms, repeat, latency_writer, run_args):
     label = f"r{rooms}-w{workers}-s{repeat}"
     peers, readers = [], []
     monitor = None
     stderr = (out / f"{label}.stderr").open("wb")
     server = await asyncio.create_subprocess_exec(
-        str(binary), "--task-workers", str(workers), cwd=binary.parent,
+        str(binary), *run_args, "--task-workers", str(workers), cwd=binary.parent,
         stdout=asyncio.subprocess.PIPE, stderr=stderr,
         env={key: val for key, val in os.environ.items() if key != "JOKY_TASK_WORKERS"})
     try:
@@ -251,7 +272,12 @@ async def sample(args, out, binary, workers, rooms, repeat, latency_writer):
         monitor = asyncio.create_task(observe())
         client_cpu = time.process_time()
         start = time.perf_counter()
-        await load.phase(args.messages, True)
+        batches = 0
+        while True:
+            await load.phase(args.messages, True)
+            batches += 1
+            if time.perf_counter() - start >= args.min_seconds:
+                break
         elapsed = time.perf_counter() - start
         client_cpu = time.process_time() - client_cpu
         final_cpu, final_rss = await usage(server.pid)
@@ -277,7 +303,7 @@ async def sample(args, out, binary, workers, rooms, repeat, latency_writer):
         stderr.close()
         if server.returncode or remaining or (out / f"{label}.stderr").stat().st_size:
             raise RuntimeError(f"Server failed: {label}, exit={server.returncode}")
-        broadcasts = args.clients * args.messages
+        broadcasts = args.clients * args.messages * batches
         return dict(rooms=rooms, workers=workers, sample=repeat, clients=args.clients,
                     payload_bytes=args.payload_bytes, broadcasts=broadcasts,
                     deliveries=broadcasts * (args.clients // rooms), elapsed_s=elapsed,
@@ -333,7 +359,8 @@ async def run(args):
             for rooms in args.rooms if repeat % 2 == 0 else list(reversed(args.rooms)):
                 for worker in workers:
                     row = await asyncio.wait_for(
-                        sample(args, out, build / "app/chat", worker, rooms, repeat, writer),
+                        sample(args, out, build / "app/chat", worker, rooms, repeat, writer,
+                               metadata.get("run_args", [])),
                         args.timeout)
                     rows.append(row)
                     file.flush()
@@ -385,6 +412,10 @@ def main():
     build.add_argument("--runtime", type=Path, required=True)
     build.add_argument("--profile", required=True, help="Caller-declared Rust tool/runtime build profile")
     build.add_argument("--output", type=Path, required=True)
+    tokio = commands.add_parser("prepare-tokio", help="Snapshot an already built Rust/Tokio server")
+    tokio.add_argument("--binary", type=Path, required=True)
+    tokio.add_argument("--profile", required=True, help="Caller-declared binary build profile")
+    tokio.add_argument("--output", type=Path, required=True)
     measure = commands.add_parser("run", help="Measure a previously prepared app without rebuilding")
     measure.add_argument("--build", type=Path, required=True)
     measure.add_argument("--output", type=Path, required=True)
@@ -395,14 +426,18 @@ def main():
     measure.add_argument("--warmup", type=int, default=10)
     measure.add_argument("--payload-bytes", type=int, default=64)
     measure.add_argument("--samples", type=int, default=5)
+    measure.add_argument("--min-seconds", type=float, default=0,
+                         help="Repeat complete message batches until this duration (default: one batch)")
     measure.add_argument("--timeout", type=float, default=180)
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args)
+    elif args.command == "prepare-tokio":
+        prepare_tokio(args)
     else:
         if not (1 <= args.clients <= 32 and 16 <= args.payload_bytes <= 1024
                 and 1 <= args.messages <= 100_000 and 1 <= args.warmup <= 100_000
-                and args.samples >= 1 and args.timeout > 0
+                and args.samples >= 1 and 0 <= args.min_seconds < args.timeout
                 and all(args.clients % room == 0 for room in args.rooms)):
             parser.error("Require 1..32 clients, dividing room counts, 16..1024 byte payloads, "
                          "1..100000 messages/warmup, positive samples and timeout")
