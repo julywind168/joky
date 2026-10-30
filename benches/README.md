@@ -231,3 +231,55 @@ python3 benches/json-startup.py \
 
 [R5 候选存储预算对照](reports/service-concurrency-r5-memory.md)记录全根快照与仅写域快照的
 内存预算差异和复现方法。该对照不计时，不代表吞吐测量。
+
+## Chat worker 扩展基线
+
+[chat-workers.py](chat-workers.py) 使用 Python 3.10+ 标准库和系统 `ps`，在 macOS/Linux
+测量 **AOT host + JIT 业务脚本**。先明确构建 Release 工具和运行时，再只构建一次应用：
+
+```sh
+cargo build --release --bin joky --lib
+python3 benches/chat-workers.py prepare \
+  --joky target/release/joky --runtime target/release/libjoky.a --profile release \
+  --output target/benchmarks/chat-workers/build
+python3 benches/chat-workers.py run \
+  --build target/benchmarks/chat-workers/build \
+  --clients 16 --rooms 1,4 --workers 1,2,4 \
+  --messages 100 --warmup 10 --samples 5 \
+  --output target/benchmarks/chat-workers/run1
+```
+
+输出目录必须不存在；独立重跑时复用同一 `--build`，更换 `--output`。
+prepare 复制 `examples/chat` 到输出目录，只将两个监听端口改为 0，并将初始余额从 500 分提高到
+10¹² 分以支持持续发送。保留正常扣费、事务、队列、解析和广播逻辑，不修改仓库示例。
+生成源码、打包资源、工具／运行时／应用 SHA-256、构建提交及 dirty 状态、Cargo.lock 和运行器快照均保存。
+`--profile` 是调用方对工具与运行时构建的声明，不是从二进制反推出的编译选项；
+Rust Release 不代表 Joky 生成代码另开了优化选项，后者仍使用当前默认设置。
+
+每个样本启动一个新进程，在进程启动、脚本编译、连接、加入房间及预热完成后开始计时。
+所有 worker 配置使用完全相同的 AOT 文件与业务脚本；每轮旋转 worker 顺序、交替房间场景顺序。
+启动 1 worker 仍是 Parallel 模式，额外控制／I/O／文件服务线程并不消失。
+
+测量口径：
+
+- 默认 16 个连接、1 或 4 个房间、64 字节消息正文，每连接先预热 10 条，再测量 100 条。
+  房间均分连接；广播包含发送者。每个连接最多一条未完成命令，等待本房间全部接收者收到后再发下一条。
+  这是有界闭环负载，不是固定到达率或最大容量测量；不代表过载时的排队延迟，不能消除 coordinated omission。
+- 每条广播核对 room、sender、顺序号和完整正文，拒绝丢失、重复、乱序、错误及提前断线。
+  测量后逐连接发送 balance，验证实际扣款并建立输出顺序屏障，最后通过 admin 正常关闭，要求退出成功且无诊断。
+- `broadcasts_s` 是完成的 say 命令数／墙钟时间；`deliveries_s` 是实际接收条数／墙钟时间。
+  延迟从客户端写入命令前到该消息所有接收者读到完整行，包含回环网络和客户端调度。
+  P50/P95/P99 是每个样本内单消息延迟的 nearest-rank 分位数；summary 是这些样本指标的中位数，不是合并分布的分位数。
+- 单房间 16 人与四房间各 4 人的每条广播工作量不同。只在相同房间布局内比较 worker 扩展，
+  不能把两种场景的命令吞吐之比当作去除锁竞争的收益。
+- server CPU 来自测量前后 `ps time` 的进程累计 CPU 差值／墙钟时间，包含该进程所有线程；
+  1.0 表示平均使用一个逻辑核，短样本受 `ps` 时间精度影响。CPU 快照略宽于墙钟计时区间。
+  client CPU 来自 Python `process_time`，用于发现负载发生器饱和；不含独立 `ps` 进程的 CPU。
+- RSS 在测量开始／结束及期间约每 250 ms 采样，报告采样最大值；不是精确峰值、arena 预算或泄漏证明。
+  后台采样也有开销。客户端和服务端共用本机，未固定亲和性，M 系列异构核及系统噪声会影响结果。
+- 上限 32 个客户端、16..1024 字节正文，用有界在途量控制示例默认队列压力；这不是慢消费者、满载连接数或长稳验收。
+
+每轮保存 `samples.csv`、逐消息原始 `latencies.csv`、`summary.csv`、`report.md`、环境和构建身份，
+以及每个样本的 stdout/stderr。异常时立即失败并清理本轮服务进程，已有样本保留；不把失败样本排除后继续报告成功。
+运行期间不要并行编译或执行压力测试。不设置耗时断言，也不接入默认 `check.sh`。
+本机首轮结论与复现参数见 [2026-10-30 记录](reports/chat-workers-2026-10-30.md)。

@@ -1,0 +1,27 @@
+rooms,thread,samples,mutex_wait,Arena::release,Arena::contains,Storage::finalize_with,other
+1,com.apple.main-thread  (serial),3479,16,0,0,0,16
+1,joky-dns-0,3479,0,0,0,0,0
+1,joky-dns-1,3479,0,0,0,0,0
+1,joky-dns-2,3479,0,0,0,0,0
+1,joky-dns-3,3479,0,0,0,0,0
+1,joky-task-0,3479,1478,341,542,558,37
+1,joky-task-1,3479,536,171,187,163,15
+1,joky-task-2,3479,1568,361,574,587,46
+1,joky-task-3,3479,564,204,172,161,27
+1,joky-file-0,3479,0,0,0,0,0
+1,joky-file-1,3479,0,0,0,0,0
+1,joky-control,3479,1231,183,436,219,393
+1,joky-io,3479,18,0,0,0,18
+4,com.apple.main-thread  (serial),3517,14,0,0,0,14
+4,joky-dns-0,3517,0,0,0,0,0
+4,joky-dns-1,3517,0,0,0,0,0
+4,joky-dns-2,3517,0,0,0,0,0
+4,joky-dns-3,3517,0,0,0,0,0
+4,joky-task-0,3517,1096,258,401,404,33
+4,joky-task-1,3517,1151,398,359,376,18
+4,joky-task-2,3517,1127,262,419,416,30
+4,joky-task-3,3517,1109,366,355,361,27
+4,joky-file-0,3517,0,0,0,0,0
+4,joky-file-1,3517,0,0,0,0,0
+4,joky-control,3517,1205,190,468,308,239
+4,joky-io,3517,9,0,0,0,9

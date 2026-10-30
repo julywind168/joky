@@ -1,0 +1,55 @@
+{
+  "utc": "2026-10-30T05:41:15Z",
+  "revision": "a9bfcde185023862914f8a25b3e3f1eee3c2f8a0",
+  "dirty": "M benches/README.md\n M examples/chat/README.md\n?? benches/chat-workers.py\n?? benches/reports/chat-workers-2026-10-30.md\n?? benches/reports/chat-workers-2026-10-30/",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "logical_cpus": 8,
+  "python": "3.14.6 (main, Jun 30 2026, 05:55:20) [Clang 17.0.0 (https://github.com/swiftlang/llvm-project.git f403f1080b28ed3bf59",
+  "cpu": "Apple M1 Pro",
+  "argv": [
+    "benches/chat-workers.py",
+    "prepare",
+    "--joky",
+    "target/release/joky",
+    "--runtime",
+    "target/release/libjoky.a",
+    "--profile",
+    "release",
+    "--output",
+    "target/benchmarks/chat-workers/build-symbols"
+  ],
+  "profile": "release",
+  "command": [
+    "/Users/windy/jokylang/jk/target/release/joky",
+    "build",
+    "/Users/windy/jokylang/jk/target/benchmarks/chat-workers/build-symbols/source",
+    "--parallel",
+    "-o",
+    "/Users/windy/jokylang/jk/target/benchmarks/chat-workers/build-symbols/app"
+  ],
+  "script_vm": "JIT (vm.Vm.new)",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "cc": "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+  "joky_sha256": "5600f0ddfae2b795ac50c771e2c334ffac119da60180c2c50d1c3280d9767994",
+  "runtime_sha256": "a2833e86b2045b556dd52e91b30d35312f47de6d19c4d75aa8c6ab0085d5f82c",
+  "start_balance_cents": 1000000000000,
+  "files": {
+    "source/.gitignore": "fe56da5f27d174b011ca65d2c1c9be83ca19ce1428e1594f8ed3ca037e8814ed",
+    "source/README.md": "bd98f0dbffd38df29e4fc8fef58dfd61f23a76367ab8e0e48f2eca287215933f",
+    "source/contract.jk": "91eec6a83b214a5efca0fa0819618a5b2ba7902b9fe493ccbedfdd37bac09edb",
+    "source/host/admin.jk": "796ff5877a97a95e4eea6f1f3571d298ff5e8c03f670920088eb5b9924a1d8ff",
+    "source/joky.toml": "79ec6955c075a22eff7985d65b23af6e45244b4496a7851c8f2f8c5967e96967",
+    "source/main.jk": "df45a345e7994af407c8bac82aabc75f61e49a272fc9121aaad75cf1a8ee29f3",
+    "source/script/main.jk": "a7b0d8d204fbe2e09b5491048ac974cdbdd2688fd15e2f1656b50bf2962bcf0e",
+    "app/.joky-bundle": "f6b6e0d3cb072deda4196507a77d5fc2267b8b42d20d67087171c38c9dc607ec",
+    "app/chat": "6c12a0399bfc1140310af46acaef998b92e490ea7f18f135c61cdbb9227af61c",
+    "app/contract.jk": "91eec6a83b214a5efca0fa0819618a5b2ba7902b9fe493ccbedfdd37bac09edb",
+    "app/script/main.jk": "a7b0d8d204fbe2e09b5491048ac974cdbdd2688fd15e2f1656b50bf2962bcf0e"
+  },
+  "profiling_only": true,
+  "linker_argument_override": {
+    "from": "-Wl,-dead_strip,-S,-x,-no_exported_symbols",
+    "to": "-Wl,-dead_strip,-no_exported_symbols"
+  }
+}

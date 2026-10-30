@@ -122,4 +122,5 @@ shutdown
 
 `cargo test --test chat -- --ignored` 执行三种宿主 × 两种脚本的实网矩阵，覆盖协议、扣费、
 热更新、满队列、房间回收、管理端隔离和主动停机；JIT／AOT 宿主覆盖 260 人，解释器宿主覆盖 40 人。
-这是功能示例，尚未做吞吐或长期运行验收。
+这是功能示例。AOT host + JIT 脚本的 worker 吞吐基线见
+[专项测量记录](../../benches/reports/chat-workers-2026-10-30.md)，尚未做长期运行或最大容量验收。
