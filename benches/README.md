@@ -301,7 +301,7 @@ Buffer 头部分配与 finalizer 登记合并见
 [Buffer 头部登记优化](reports/chat-header-registration-2026-10-31.md)。
 JIT／AOT `opt_level=speed` 的实验结果、浮点正确性阻碍及 0.137.1 性能对照见
 [生成代码优化实验](reports/chat-codegen-opt-2026-10-31.md)。
-浮点修复后的新一轮对照，以及每条消息的控制请求、分配和复制计数见
+浮点修复后的新一轮对照、每条消息的控制请求／分配／复制计数，以及三档优化的编译时间见
 [speed 与消息成本](reports/chat-speed-costs-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
