@@ -2837,3 +2837,21 @@ worker 的环境重新读取。嵌入 VM 和普通 FileService 构造默认没�
 描述符 ABI 保持不变。显式 `native_with_stdio` 授权进程 stdin；全局独占标记由实际后台句柄的 Drop
 释放，而不是在取消交付时提前释放。阻塞系统读取仅持有 Rust 字节缓冲；正在读取时取消沿用 FS 的
 关闭、保留 ticket 配额与延后清理契约。Joky Stdin 持有 4 KiB 缓冲并实施行／总量限制及错误失效规则。
+
+
+## 原生测试执行边界
+
+`FnDef::is_test` 保存模块顶层的 `#test` 标记；解析器验证无参、无泛型、Unit 签名。
+普通 import expansion 在绑定名字前移除测试函数，防止生产函数引用测试入口。
+`TypeRegistry::resolve_test_file_with_root` 仅保留根模块的测试，依赖仍按生产模式展开；
+返回已绑定作用域的 AST，Checker、VM 和 AOT 可以复用，不新增测试专属 IR 或运行时 ABI。
+
+CLI 测试发现先用 Checker 完成静态检查，按源码根相对路径与函数名稳定排序。
+每个测试启动同一可执行文件的内部 worker，显式传递源码根、函数名和后端选项；
+worker 创建独立 VmEngine，直接调用同步 Unit 入口或驱动 prepare_async，保留原始 SourceMap 诊断。
+父进程持续排空并有界捕获两个输出流，以操作系统退出状态判定成功，不解析用户输出作为控制协议。
+父进程逐项执行硬超时和 kill/wait；I/O 提前返回也通过 guard 回收子进程。
+首版每个子进程重新编译所属模块，以启动成本换取简单的隔离边界，尚无跨测试编译缓存。
+
+Joky 源码测试覆盖标准库与应用的公开行为；Rust 保留前端拒绝、ABI、内部资源计数、取消穷举和 CLI 路由责任。
+当前 CLI 只开放 JIT / 解释器测试运行；AOT 的生产排除语义由相关编译执行回归覆盖。

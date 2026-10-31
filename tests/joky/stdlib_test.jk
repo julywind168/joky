@@ -1,0 +1,48 @@
+import joky/string
+
+#test
+fn array_removal_preserves_owned_values_and_order() {
+    var values = ["first", "middle", "last"]
+    let removed = values.remove(1)!
+    assert(removed == "middle", "remove returns the owned element")
+    assert(values.len() == 2, "remove shortens the array")
+    assert(values[0] == "first", "prefix stays in place")
+    assert(values[1] == "last", "suffix shifts left")
+    assert(values.remove(2).is_none(), "out-of-range removal is absent")
+}
+
+#test
+fn string_counts_utf8_bytes_and_runes_separately() {
+    let text = "A中🙂"
+    assert(text.byte_length() == 8, "UTF-8 byte length")
+    assert(text.rune_count() == 3, "Unicode scalar count")
+    let(first, next) = text.next_rune(0)!
+    assert(first == 'A', "first rune")
+    assert(next == 1, "next byte offset")
+    assert(text.next_rune(8).is_none(), "end of text")
+}
+
+#test
+fn option_defaults_distinguish_eager_and_lazy_evaluation() {
+    let value = Some(42)
+    var calls = 0
+    assert(value.unwrap_or({ calls += 1; 0 }) == 42, "keep the value")
+    assert(calls == 1, "ordinary arguments are eager")
+    assert(value.unwrap_or_else(|| { calls += 1; 0 }) == 42, "keep the value lazily")
+    assert(calls == 1, "Some skips the fallback callback")
+    let empty: Option<Int32> = None
+    assert(empty.unwrap_or_else(|| { calls += 1; 7 }) == 7, "None calls the fallback")
+    assert(calls == 2, "fallback executes once")
+}
+
+#test
+fn result_transforms_success_and_recovers_errors() {
+    let success: Result<Int32, String> = Ok(20)
+    assert(success.map(| value | { value * 2 + 2 })! == 42, "map transforms success")
+    let failure: Result<Int32, String> = Err("missing")
+    let recovered = failure.unwrap_or_else(| error | {
+            assert(error == "missing", "fallback receives the owned error")
+            7
+        })
+    assert(recovered == 7, "fallback supplies the value")
+}

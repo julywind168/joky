@@ -234,7 +234,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
         };
         let method = FnDef {
             every: None,
-            derived_body: Some(crate::parser::ast::DerivedBody::Clone),
+            kind: crate::parser::ast::FunctionKind::Clone,
             noescape: Some(Box::new(NoEscape {
                 all: true,
                 params: vec![],
@@ -278,7 +278,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
 /// Select the argument shape after substitution and call the actual Clone trait,
 /// never an unrelated inherent method with the same spelling.
 pub(crate) fn prepare(function: &FnDef) -> std::borrow::Cow<'_, FnDef> {
-    if function.derived_body != Some(crate::parser::ast::DerivedBody::Clone) {
+    if function.kind != crate::parser::ast::FunctionKind::Clone {
         return std::borrow::Cow::Borrowed(function);
     }
     let mut function = function.clone();

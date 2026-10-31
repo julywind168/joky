@@ -7,6 +7,7 @@
 ## 使用参考
 
 - [语言与内置模块](language.md)
+- [用 Joky 编写与运行测试](language.md#原生测试)
 - [架构与嵌入约束](architecture.md)
 - [Joky Interpreter](interpreter.md)
 - [入门、安装与能力概览](../README.md)

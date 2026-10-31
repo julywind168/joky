@@ -656,3 +656,32 @@ fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
         assert!(parse(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn test_declarations_validate_signatures_and_preserve_formatting() {
+    let source = "#test\nfn checks_value() {}\n#test\npub fn suspends() @suspends {}\n";
+    let module = parse(source).unwrap();
+    assert!(module
+        .items
+        .iter()
+        .all(|item| matches!(item, Item::FnDef(f) if f.is_test())));
+    assert_eq!(super::super::format(source).unwrap(), source);
+    for source in [
+        "#test() fn f() {}",
+        "#test(1) fn f() {}",
+        "#test #test fn f() {}",
+        "#test #intrinsic(\"check.panic\") fn f() {}",
+        "#test fn main() {}",
+        "#test fn f(n: Int32) {}",
+        "#test fn f<T>() {}",
+        "#test fn f() -> Int32 { 1 }",
+        "#test extern fn f()",
+        "#test struct Value { value: Int32 }",
+        "#test enum Value { One }",
+        "#test const VALUE: Int32 = 1",
+        "impl Int32 { #test fn f() {} }",
+        "fn f() @test {}",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}

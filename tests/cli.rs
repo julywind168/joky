@@ -67,3 +67,6 @@ mod project;
 #[cfg(unix)]
 #[path = "cli/workers.rs"]
 mod workers;
+
+#[path = "cli/testing.rs"]
+mod testing;

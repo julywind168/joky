@@ -325,6 +325,17 @@ impl TypeRegistry {
         super::imports::resolve_file_with_root(path.as_ref(), root.as_ref(), self)
     }
 
+    /// Resolve a test root, retaining its #test functions in their private namespace.
+    /// Imported modules retain production semantics and exclude their own tests.
+    /// The returned resolved module can be checked or executed by either backend.
+    pub fn resolve_test_file_with_root(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        root: impl AsRef<std::path::Path>,
+    ) -> Result<Module, Error> {
+        super::imports::resolve_test_file_with_root(path.as_ref(), root.as_ref(), self)
+    }
+
     fn resolve_bound(&self, module: &Module) -> Result<Module, Error> {
         let scoped = self.compilation_scope().with_trait_environment(module);
         let registry = &scoped;

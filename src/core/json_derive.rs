@@ -310,7 +310,11 @@ fn implementation(
     body.push(call(format!("{result}.Result.Ok"), vec![output], span));
     let method = FnDef {
         every: None,
-        derived_body: encoding.then_some(crate::parser::ast::DerivedBody::JsonEncode),
+        kind: if encoding {
+            crate::parser::ast::FunctionKind::JsonEncode
+        } else {
+            crate::parser::ast::FunctionKind::Ordinary
+        },
         noescape: Some(Box::new(NoEscape {
             all: true,
             params: vec![],
@@ -369,7 +373,7 @@ fn implementation(
 /// Copy fields in an owning record need a local snapshot before borrowing.
 /// Select this after substitution: a generic field can become Copy or owning.
 pub(crate) fn prepare_encoding(function: &FnDef) -> std::borrow::Cow<'_, FnDef> {
-    if function.derived_body != Some(crate::parser::ast::DerivedBody::JsonEncode) {
+    if function.kind != crate::parser::ast::FunctionKind::JsonEncode {
         return std::borrow::Cow::Borrowed(function);
     }
     let mut function = function.clone();

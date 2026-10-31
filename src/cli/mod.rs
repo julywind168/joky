@@ -6,6 +6,7 @@ mod explain;
 mod format;
 mod project;
 mod source;
+mod testing;
 mod workers;
 
 use joky::{
@@ -16,9 +17,10 @@ use joky::{
 };
 use std::{ffi::OsString, path::PathBuf};
 
-const HELP: &str = "Joky — check, run, build, inspect and format Joky programs
+const HELP: &str = "Joky — check, test, run, build, inspect and format Joky programs
 
 Usage:
+  joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
   joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
   joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
@@ -29,6 +31,7 @@ Usage:
   joky --version
 
 Commands:
+  test             Run #test functions in isolated processes (default timeout: 30000 ms)
   check            Check syntax and semantics without running or generating code
   explain-parallel  Explain dispatch eligibility without running the program
   fmt              Format a source file without resolving imports or running code
@@ -38,7 +41,7 @@ Commands:
 Options:
   --check             Report formatting differences without writing (exit 1)
   --stdin             Read fmt input from stdin; write formatted source to stdout
-  --interpreter       Execute 'run' with the register bytecode interpreter
+  --interpreter       Execute 'run' or 'test' with the register bytecode interpreter
   --no-prelude        Disable implicit standard-library imports
   --parallel          Enable checked Parallel execution (default: 1 worker)
   --task-workers N    Enable Parallel with 1..256 workers; build sets a startup default
@@ -46,7 +49,7 @@ Options:
   -h, --help           Show this help
   -V, --version        Show the version
 
-Without an input, check/run/build/explain-parallel find the nearest joky.toml in the current directory or its parents.
+Without an input, check/test/run/build/explain-parallel find the nearest joky.toml in the current directory or its parents.
 Check allows single files without main; projects require a valid program entry.
 Successful checks are silent (exit 0); errors go to stderr (exit 1).
 Projects declare [project] name, entry, source-root (default \".\"), and resources.
@@ -66,6 +69,7 @@ Use @suspends on main for cooperative tasks; import joky/task for yield_now and 
 enum Command {
     Help,
     Version,
+    Test(testing::Options),
     Format(format::Options),
     Check {
         source: PathBuf,
@@ -110,6 +114,9 @@ impl Command {
         }
         if command == "explain-parallel" {
             return explain::parse(args);
+        }
+        if command == "test" {
+            return testing::parse(args);
         }
         if command == "check" {
             return check::parse(args);
@@ -258,6 +265,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
             println!("joky {}", env!("CARGO_PKG_VERSION"));
             return 0;
         }
+        Command::Test(options) => return testing::execute(options),
         Command::Format(options) => return format::execute(options),
         Command::Check { source, prelude } => return check::execute(source, *prelude),
         Command::Explain { source, prelude } => return explain::execute(source, *prelude),

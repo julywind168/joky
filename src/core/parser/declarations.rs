@@ -175,7 +175,7 @@ impl Parser {
         Ok((
             FnDef {
                 every: None,
-                derived_body: None,
+                kind: crate::parser::ast::FunctionKind::Ordinary,
                 noescape: (noescape || !noescape_params.is_empty()).then(|| {
                     Box::new(NoEscape {
                         all: noescape,
@@ -404,6 +404,9 @@ impl Parser {
             while self.peek() == &TokenKind::Hash {
                 self.advance();
                 attributes.push(self.parse_attribute(0)?);
+            }
+            if attributes.iter().any(|a| a.path == "test") {
+                return Err(self.error("#test requires a top-level function".into()));
             }
             let (every, attributes) = self.parse_every_attribute(attributes)?;
             if !attributes.is_empty() || (every.is_some() && trait_name.is_some()) {

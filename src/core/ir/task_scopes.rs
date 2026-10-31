@@ -167,7 +167,7 @@ impl FunctionPlan {
         );
         let task_def = FnDef {
             every: None,
-            derived_body: None,
+            kind: crate::parser::ast::FunctionKind::Ordinary,
             noescape: None,
             public: false,
             buffer_intrinsic: None,

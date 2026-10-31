@@ -28,13 +28,14 @@ fn main() {
 - `run` 默认使用 JIT，无需 C 编译器；`run --interpreter` 不生成机器码。
 - `check` 静态检查文件或项目，不执行、不生成产物，也不需要 `cc`；
   单文件允许没有 `main`，项目检查配置入口及其导入依赖。成功静默返回 0，错误返回 1。
+- `test` 运行 `#test` 函数，支持 JIT / 解释器、筛选、输出捕获与逐测试超时；不要求 `main`。
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
 - 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、借用式状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println` / `assert` / `panic`。
   支持后缀 `!` 强制解包与 `?` 失败提前返回（[语义](docs/language.md#optionresult-与-outcome-后缀解包)）。
   [Option / Result 示例](examples/option_result.jk)展示 `?` / `!`、`map`、默认值、`and` / `or` 和 `ok` / `err` 转换；普通默认值急切求值，`unwrap_or_else` 可按需执行同步回调。
-  也提供输出到 stderr 的 `eprint` / `eprintln`。`check` / `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
+  也提供输出到 stderr 的 `eprint` / `eprintln`。`check` / `test` / `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
 - 程序入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
   可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。
@@ -72,9 +73,36 @@ cargo run -- check examples/chat
 ```
 
 安装后可直接使用 `joky check <file.jk | project-dir | joky.toml>`；省略输入时向上查找最近的项目清单。
-检查覆盖语法、类型、泛型约束、所有权、借用、`@noescape` 和挂起限制，包括未调用的函数及泛型模板。
+检查覆盖语法、类型、泛型约束、所有权、借用、`@noescape` 和挂起限制，包括未调用的生产函数及泛型模板；`#test` 函数体由 `joky test` 检查。
 错误沿用源码位置和错误码，写入 stderr。`--no-prelude` 关闭隐式导入；以 `-` 开头的文件名放在 `--` 后。
 项目检查范围是入口及导入依赖，不递归扫描未导入文件；详细边界见[静态检查](docs/language.md#静态检查)。
+
+## 用 Joky 写测试
+
+测试函数前加 `#test`，使用已有的 `assert(condition, message)`：
+
+```joky
+fn add(left: Int32, right: Int32) -> Int32 { left + right }
+
+#test
+fn adds_numbers() {
+    assert(add(2, 3) == 5, "addition result")
+}
+```
+
+```sh
+cargo run -- test examples/testing.jk
+cargo run -- test --interpreter examples/testing.jk
+cargo run -- test examples/testing.jk --filter threshold
+cargo run -- test tests/joky --list
+cargo run -- test tests/joky
+```
+
+[完整示例](examples/testing.jk)还包含捕获局部阈值的流水线和 `@suspends` 测试；
+[标准库测试](tests/joky/stdlib_test.jk)用 Joky 检查 Array、String、Option 和 Result 的公开行为。
+每个测试使用独立进程，失败后继续；默认超时 30 秒，可用 `--timeout-ms` 调整。
+详细发现范围、诊断与首版限制见[原生测试](docs/language.md#原生测试)。
+编译器内部、拒绝诊断、ABI 和资源清理仍由 Rust 测试负责。
 
 ## 源码格式化
 

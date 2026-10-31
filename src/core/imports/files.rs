@@ -8,6 +8,15 @@ pub(crate) fn expand_with(
     registry: &TypeRegistry,
     provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
 ) -> Result<Module, Error> {
+    expand_with_tests(module, registry, provider, false)
+}
+
+fn expand_with_tests(
+    module: &Module,
+    registry: &TypeRegistry,
+    provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
+    include_tests: bool,
+) -> Result<Module, Error> {
     if module.scope.is_some() {
         return Ok(module.clone());
     }
@@ -37,7 +46,7 @@ pub(crate) fn expand_with(
             }
             &graph
         };
-        finish(module, registry, graph)
+        finish(module, registry, graph, include_tests)
     })();
     result.map_err(|error: Error| error.with_sources(&sources))
 }
@@ -67,6 +76,9 @@ fn load(
     sources.insert(file.clone());
     let mut module = crate::parser::parse_with_source(file.text(), file.id())?;
     Arc::make_mut(&mut module.sources).insert(file);
+    module
+        .items
+        .retain(|item| !matches!(item, Item::FnDef(f) if f.is_test()));
     stack.push(path.clone());
     for dependency in &module.imports {
         load(graph, dependency, registry, provider, stack, sources)?;
@@ -97,6 +109,23 @@ pub(crate) fn resolve_file_with_root(
     root: &Path,
     registry: &TypeRegistry,
 ) -> Result<Module, Error> {
+    resolve_entry(path, root, registry, false)
+}
+
+pub(crate) fn resolve_test_file_with_root(
+    path: &Path,
+    root: &Path,
+    registry: &TypeRegistry,
+) -> Result<Module, Error> {
+    resolve_entry(path, root, registry, true)
+}
+
+fn resolve_entry(
+    path: &Path,
+    root: &Path,
+    registry: &TypeRegistry,
+    include_tests: bool,
+) -> Result<Module, Error> {
     let entry = read_file(path)?;
     let path = path.canonicalize().map_err(|e| io_error(path, e))?;
     let root = root.canonicalize().map_err(|e| io_error(root, e))?;
@@ -119,25 +148,30 @@ pub(crate) fn resolve_file_with_root(
     let mut module = crate::parser::parse_with_source(entry.text(), entry.id())
         .map_err(|e| Error::from(e).with_sources(&sources))?;
     module.sources = Arc::new(sources);
-    let expanded = expand_with(&module, registry, &|name| {
-        let file = root.join(format!("{name}.jk"));
-        let file = file.canonicalize().map_err(|e| io_error(&file, e))?;
-        if !file.starts_with(&root) {
-            return Err(Error::new_with_code(
-                ErrorPhase::Resolve,
-                ErrorCode::InvalidImport,
-                format!(
-                    "Module '{name}' is outside the source root '{}'",
-                    root.display()
-                ),
-            ));
-        }
-        if file == path {
-            Ok(entry.clone())
-        } else {
-            read_file(&file)
-        }
-    })?;
+    let expanded = expand_with_tests(
+        &module,
+        registry,
+        &|name| {
+            let file = root.join(format!("{name}.jk"));
+            let file = file.canonicalize().map_err(|e| io_error(&file, e))?;
+            if !file.starts_with(&root) {
+                return Err(Error::new_with_code(
+                    ErrorPhase::Resolve,
+                    ErrorCode::InvalidImport,
+                    format!(
+                        "Module '{name}' is outside the source root '{}'",
+                        root.display()
+                    ),
+                ));
+            }
+            if file == path {
+                Ok(entry.clone())
+            } else {
+                read_file(&file)
+            }
+        },
+        include_tests,
+    )?;
     registry.resolve_aliases(&expanded)
 }
 

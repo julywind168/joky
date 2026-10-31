@@ -598,7 +598,7 @@ impl TraitMethod {
     pub(crate) fn definition(&self) -> FnDef {
         FnDef {
             every: None,
-            derived_body: None,
+            kind: crate::parser::ast::FunctionKind::Ordinary,
             name: self.name.clone(),
             params: self.params.clone(),
             ret_ty: self.ret_ty.clone(),
@@ -737,7 +737,9 @@ pub enum Item {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DerivedBody {
+pub(crate) enum FunctionKind {
+    Ordinary,
+    Test,
     JsonEncode,
     Clone,
 }
@@ -746,8 +748,8 @@ pub(crate) enum DerivedBody {
 pub struct FnDef {
     /// A positive literal period for an automatically scheduled state method.
     pub every: Option<std::num::NonZeroI32>,
-    /// Adjust generated field borrows after generic substitution.
-    pub(crate) derived_body: Option<DerivedBody>,
+    /// Ordinary, test-only, or generated body requiring derive-specific borrows.
+    pub(crate) kind: FunctionKind,
     /// Checked promise that borrowed arguments do not escape this call.
     pub noescape: Option<Box<NoEscape>>,
     pub public: bool,
@@ -766,6 +768,13 @@ pub struct FnDef {
     pub body: Expr,
     /// UTF-8 byte range covering this declaration.
     pub span: Span,
+}
+
+impl FnDef {
+    /// Whether source resolution must retain this function only for testing.
+    pub fn is_test(&self) -> bool {
+        self.kind == FunctionKind::Test
+    }
 }
 
 #[derive(Debug, Clone)]

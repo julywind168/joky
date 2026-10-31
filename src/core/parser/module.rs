@@ -35,6 +35,9 @@ impl Parser {
             if public {
                 self.advance();
             }
+            if attributes.iter().any(|a| a.path == "test") && self.peek() != &TokenKind::Fn {
+                return Err(self.error("#test requires a top-level function".into()));
+            }
             if attributes.iter().any(|a| a.path == "every") {
                 return Err(self.error(
                     "#every requires a method in an inherent impl for a #state type".into(),
@@ -45,7 +48,9 @@ impl Parser {
                 && !(self.peek() == &TokenKind::Enum
                     && attributes.iter().all(|a| a.path == "derive"))
                 && !(self.peek() == &TokenKind::Fn
-                    && attributes.iter().all(|a| a.path == "intrinsic"))
+                    && attributes
+                        .iter()
+                        .all(|a| matches!(a.path.as_str(), "intrinsic" | "test")))
             {
                 return Err(self.error("Declaration attributes currently require a struct".into()));
             }
@@ -75,7 +80,18 @@ impl Parser {
             declarations_started = true;
             match self.peek() {
                 TokenKind::Fn => {
-                    let intrinsic = self.parse_intrinsic_attribute(attributes)?;
+                    let is_test = attributes.iter().any(|a| a.path == "test");
+                    let intrinsic = if is_test {
+                        if attributes.len() != 1 || attributes[0].arguments.is_some() {
+                            return Err(self.error(
+                                "#test must appear once, without arguments or other attributes"
+                                    .into(),
+                            ));
+                        }
+                        None
+                    } else {
+                        self.parse_intrinsic_attribute(attributes)?
+                    };
                     self.advance();
                     let (mut function, intrinsic) =
                         self.parse_fn_with_intrinsic(start, intrinsic)?;
@@ -83,6 +99,18 @@ impl Parser {
                         module
                             .intrinsic_attributes
                             .push((module.items.len(), attribute));
+                    }
+                    if is_test
+                        && (function.name == "main"
+                            || !function.type_params.is_empty()
+                            || !function.params.is_empty()
+                            || function.ret_ty != Type::Unit)
+                    {
+                        return Err(Diagnostic::at(self.peek_line(), function.span,
+                            "#test requires a non-generic fn with no parameters and a Unit result, named other than main"));
+                    }
+                    if is_test {
+                        function.kind = FunctionKind::Test;
                     }
                     function.public = public;
                     module.items.push(Item::FnDef(function));

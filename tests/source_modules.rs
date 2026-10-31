@@ -863,3 +863,30 @@ fn record_fields_default_private_and_require_pub_for_cross_module_access() {
         );
     }
 }
+
+#[test]
+fn production_loading_excludes_test_bodies_and_exports() {
+    let modules = sources(&[(
+        "app/library",
+        "pub fn answer() -> Int32 { 42 } #test pub fn hidden_test() { missing_dependency_test_name() }",
+    )]);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source_with_modules(
+            "import app/library fn answer() -> Int32 { library.answer() } #test fn local_test() { missing_local_test_name() }",
+            &modules,
+        ).unwrap();
+        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+        assert!(vm.call_unit_0("local_test").is_err());
+        assert!(vm
+            .load_source_with_modules(
+                "import app/library fn answer() { library.hidden_test() }",
+                &modules,
+            )
+            .is_err());
+        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+        vm.load_source("fn answer() -> Int32 { 7 } #test fn local_test() { missing_test_name() }")
+            .unwrap();
+        assert_eq!(vm.call_int32_0("answer").unwrap(), 7);
+    }
+}

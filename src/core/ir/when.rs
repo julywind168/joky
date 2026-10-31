@@ -786,7 +786,7 @@ impl FunctionPlan {
             info.returns_interior = false;
             let mut definition = FnDef {
                 every: None,
-                derived_body: None,
+                kind: crate::parser::ast::FunctionKind::Ordinary,
                 noescape: Some(Box::new(crate::parser::ast::NoEscape {
                     all: true,
                     params: vec![],
@@ -1084,7 +1084,7 @@ pub(super) fn validate_states(
         }
         let f = FnDef {
             every: None,
-            derived_body: None,
+            kind: crate::parser::ast::FunctionKind::Ordinary,
             noescape: None,
             public: false,
             buffer_intrinsic: None,

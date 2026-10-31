@@ -12,7 +12,9 @@ use std::{
 
 mod files;
 mod sources;
-pub(crate) use files::{expand_with, resolve_file, resolve_file_with_root};
+pub(crate) use files::{
+    expand_with, resolve_file, resolve_file_with_root, resolve_test_file_with_root,
+};
 #[cfg(test)]
 pub(crate) use sources::{
     list_test_library, map_test_library, string_test_library, tcp_test_library,
@@ -104,7 +106,7 @@ pub(crate) fn expand<'a>(
         return Ok(Cow::Borrowed(module));
     }
     let standard = registry.standard.get_or_init(StandardLibrary::new);
-    Ok(Cow::Owned(finish(module, registry, standard)?))
+    Ok(Cow::Owned(finish(module, registry, standard, false)?))
 }
 
 /// Bind `module` against `graph` and assemble the expanded result. Both
@@ -113,8 +115,14 @@ pub(crate) fn finish(
     module: &Module,
     registry: &TypeRegistry,
     graph: &StandardLibrary,
+    include_tests: bool,
 ) -> Result<Module, Error> {
     let mut result = module.clone();
+    if !include_tests {
+        result
+            .items
+            .retain(|item| !matches!(item, Item::FnDef(f) if f.is_test()));
+    }
     super::json_derive::expand(&mut result)?;
     let (scope, required) = bind(&result, registry, &graph.modules, false, true)?;
     result.scope = Some(Arc::new(scope));

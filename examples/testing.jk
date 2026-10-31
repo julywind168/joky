@@ -1,0 +1,33 @@
+import joky/iter
+import joky/task
+
+fn add(left: Int32, right: Int32) -> Int32 { left + right }
+
+#test
+fn adds_numbers() {
+    assert(add(2, 3) == 5, "addition result")
+}
+
+#test
+fn filters_with_local_threshold() {
+    let scores = [55, 80, 65, 90]
+    let threshold = 60
+    let bonus = 5
+    var total = 0
+    for score in iter.shared(&scores)
+    .filter(| score | { *score >= threshold })
+    .map(| score | { *score + bonus })
+    .take(2)
+    {
+        total += score
+    }
+    assert(total == 155, "first two passing scores receive the bonus")
+    assert(scores.len() == 4, "the source remains available")
+}
+
+#test
+fn preserves_values_across_suspension() @suspends {
+    let value = add(20, 22)
+    task.yield_now()
+    assert(value == 42, "value survives suspension")
+}
