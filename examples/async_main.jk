@@ -1,8 +1,6 @@
 import joky/io.{println}
 import joky/task
 
-fn report_int32(value: Int32) { println(value) }
-
 fn increment(value: Int32) @suspends -> Int32 {
     task.sleep_ms(1)
     value + 1
@@ -10,6 +8,5 @@ fn increment(value: Int32) @suspends -> Int32 {
 
 fn main() @suspends {
     task.yield_now()
-    let f = increment
-    report_int32(f(41))
+    println(increment(41))
 }

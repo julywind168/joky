@@ -1337,7 +1337,7 @@ S2b 已提供受检的 `outbox.emit`，与候选状态一起原子发布；S2c �
 
 ## 13. 标准库与示例易用性优化清单
 
-状态：待实施，2026-10-31。目标是让标准库与示例优先表达业务意图，减少用户为了
+状态：实施中，2026-10-31。目标是让标准库与示例优先表达业务意图，减少用户为了
 类型推导、借用时机和容器分类而编写的辅助代码。本节记录工作范围与验收条件；
 下文的目标写法不表示已经支持，当前规则仍以 [language.md](language.md) 为准。
 不以增加关键字、通用运算符重载或完整生命周期语法为前提。
@@ -1367,27 +1367,34 @@ E5/E6 的引用结果与游标生命周期规则需要共同核对，不能只�
 
 ### 13.2 E0：更新已有能力的推荐写法
 
-- [ ] 更新 [json_derive.jk](../examples/json_derive.jk)、
+- [x] 更新 [json_derive.jk](../examples/json_derive.jk)、
   [json_struct.jk](../examples/json_struct.jk) 和相关 JSON 文本：优先原始字符串，
   避免为 JSON 的引号、花括号叠加转义。确定失败即终止的步骤可用后缀 `!`；
   展示业务错误处理的分支继续显式匹配，必要时保留更具体的失败消息。
-- [ ] 整理 [arrays.jk](../examples/arrays.jk)、[maps.jk](../examples/maps.jk)
+- [x] 整理 [arrays.jk](../examples/arrays.jk)、[maps.jk](../examples/maps.jk)
   及容器示例：日常操作优先方法形式，已有上下文时使用数组字面量；模块函数只在
   展示该入口时使用。把主动提前释放与作用域自动清理的教学目的说明白，
   不让基础示例暗示所有容器都必须手动 release，也不删除有意验证所有权转移的步骤。
-- [ ] 清理 [string_queries.jk](../examples/string_queries.jk) 中仅为打印而做的
+- [x] 清理 [string_queries.jk](../examples/string_queries.jk) 中仅为打印而做的
   Int32 转换；保留字节长度、Unicode 标量数量与偏移的区别。
-- [ ] 简化 [async_main.jk](../examples/async_main.jk) 的打印包装和间接调用；
+- [x] 简化 [async_main.jk](../examples/async_main.jk) 的打印包装和间接调用；
   函数值主题由专门示例承担。更新 [option_result.jk](../examples/option_result.jk)，
   展示 `?`、`!`、map 与惰性默认值，并让计算结果可观察。
-- [ ] 审查可用 if let / while let 缩短的分支。网络读取必须继续区分正常 EOF、
+- [x] 审查可用 if let / while let 缩短的分支。网络读取必须继续区分正常 EOF、
   协议错误与 I/O 错误，不把它们统一折叠成循环结束。
-- [ ] 按每个文件的主题整理导入、命名、换行和预期输出；标准库继续声明自身依赖，
+- [x] 按每个文件的主题整理导入、命名、换行和预期输出；标准库继续声明自身依赖，
   不依赖调用方 prelude。不统一改写专门展示别名、模块函数或边界行为的例子。
 
 验收：更新后的示例在其适用入口执行；已有共享 fixture 或测试引用示例时覆盖所有
 受影响入口。涉及生成代码的行为覆盖 JIT、解释器、AOT；核对输出、退出码、
 文件副作用及错误处理，不能只确认格式化或编译成功。
+
+E0 完成（2026-10-31）：更新七个主题示例及 Option/Result 输出断言，保留数组的
+无 prelude 入口、Map 提前释放演示及 JSON 错误分支。复用 CLI 的七个受影响测试：
+string_example、array_example、option_result_methods、json_typed_structs、
+json_derive_composition、suspending_cli_entries、generic_map_public_keys_values_and_examples，
+均通过并覆盖 JIT、解释器、AOT；后者同时覆盖 Map 示例。完整测试名见 tests/cli 各模块。
+本阶段未运行全量检查，按本轮约定留到全部完成后统一执行。
 
 ### 13.3 E1：容器表面 API 与诊断
 
@@ -1480,7 +1487,8 @@ E5/E6 的引用结果与游标生命周期规则需要共同核对，不能只�
 - [ ] 实施前核对最新语言参考及既有覆盖；计划中的审查结论不替代当前源码检查。
 - [ ] E0 按可执行示例改动验证，复用现有测试入口；仅增加独立测试时按
   [AGENTS.md](../AGENTS.md#按改动范围验证) 执行受影响测试及适用的格式/Clippy 检查。
-- [ ] E1–E6 的实现先运行针对性行为测试，再运行 `./scripts/check.sh`；
+- [ ] 本轮按用户要求，E1–E6 各阶段只运行针对性行为测试，全部完成后统一运行一次
+  `./scripts/check.sh`；
   所有权、生命周期或共享前端变化按实际影响补相关 Debug 穷举。
   标准库源码经编译期嵌入，修改后重新构建再验证。
 - [ ] 三后端覆盖按行为分配，复用共享 fixture，避免 VM、AOT、CLI 重复整套矩阵；

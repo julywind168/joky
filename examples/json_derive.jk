@@ -5,23 +5,18 @@ import joky/check.{assert, panic}
 
 #derive(ToJson, FromJson)
 struct User { name: String, age: UInt8, nickname: Option<String> }
-fn ensure(ok: Bool) { assert(ok, "typed JSON example") }
 fn main() {
-    let input = "{{\"name\":\"Ada\",\"age\":37}}"
-    match typed.decode::<User>(&input) {
-        Ok(user) => {
-            println(user.name)
-            println(user.age)
-            match typed.encode(&user) {
-                Ok(output) => { ensure(typed.decode::<User>(&output).is_ok()) }
-                Err(_) => panic("typed JSON example")
-            }
-        }
-        Err(_) => panic("typed JSON example")
-    }
-    let invalid = "{{\"name\":\"Ada\",\"age\":256}}"
+    let input = r#"{"name":"Ada","age":37}"#
+    let user = typed.decode::<User>(&input)!
+    println(user.name)
+    println(user.age)
+    let output = typed.encode(&user)!
+    assert(typed.decode::<User>(&output).is_ok(), "typed JSON roundtrip")
+
+    // Invalid input remains an ordinary error that callers can inspect.
+    let invalid = r#"{"name":"Ada","age":256}"#
     match typed.decode::<User>(&invalid) {
-        Err(typed.CodecError.Mapping(error)) => { println(error.pointer()) }
-        _ => panic("typed JSON example")
+        Err(typed.CodecError.Mapping(error)) => println(error.pointer())
+        _ => panic("Expected an out-of-range age")
     }
 }

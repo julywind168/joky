@@ -2,16 +2,14 @@ import joky/io.{println}
 import joky/array.{type Array}
 
 fn answer() -> Int32 {
-    var values: Array<Int32> = Array.new::<Int32>()
-    values.push(20)
+    var values: Array<Int32> = [20]
     let view = &values
     let first = view.get(0).unwrap_or(0)
     // The last use of view ends its borrow, so another push is allowed.
-    array.push(&mut values, 22)
+    values.push(22)
     let moved = values
-    let result = first + moved.get(1).unwrap_or(0)
-    moved.release()
-    result
+    // The moved array is cleaned up automatically on return.
+    first + moved.get(1).unwrap_or(0)
 }
 
 fn main() -> Int32 {

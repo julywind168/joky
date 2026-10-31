@@ -1029,7 +1029,7 @@ fn option_result_methods_run_and_build_with_explicit_or_default_imports() {
         (
             "option_result.jk",
             "option_result",
-            "42\n7\n4294967295\n42\n9\n7\n1\n",
+            "42\n7\n4294967295\n42\n9\n7\n1\n42\n42\n1\n42\ntrue\n",
             false,
         ),
         (

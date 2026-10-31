@@ -1,5 +1,10 @@
 import joky/io.{println}
 
+// Propagate a missing input, then transform its successful value.
+fn increment(value: Option<Int32>) -> Option<Int32> {
+    Some(value? + 1)
+}
+
 fn main() {
     let maybe = Some(42)
     if maybe.is_some() { println(maybe.unwrap_or(0)) }
@@ -16,5 +21,13 @@ fn main() {
     // Defaults and alternatives are eager, even if the receiver succeeds.
     var evaluated = 0
     let retained = maybe.unwrap_or({ evaluated = evaluated + 1; 0 })
-    println(evaluated)
+    println(evaluated) // 1
+    println(retained) // 42
+
+    // Unlike unwrap_or, this callback is skipped for Some.
+    let lazy = maybe.unwrap_or_else(|| { evaluated += 1; 0 })
+    println(lazy) // 42
+    println(evaluated) // still 1
+    println(increment(Some(40)).map(|value| { value + 1 })!) // 42
+    println(increment(None).is_none()) // true
 }

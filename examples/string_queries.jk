@@ -4,27 +4,22 @@ import joky/array.{type Array}
 
 // Byte offsets and Unicode scalar counts are deliberately different.
 fn main() {
-    var input = Array.new::<UInt8>()
-    input.push(0xe4)
-    input.push(0xb8)
-    input.push(0xad)
+    let input: Array<UInt8> = [0xe4, 0xb8, 0xad]
     match String.from_utf8(input) {
-        Err(error) => { println(int32(error.offset)) }
+        Err(error) => { println(error.offset) }
         Ok(value) => {
             let combined = string.concat(&value, "🙂e\u{301}")
             let piece = combined.substring(0, 7).unwrap_or("")
-            println(int32(piece.byte_length()))
-            println(int32(combined.rune_count()))
+            println(piece.byte_length())
+            println(combined.rune_count())
             var offset: UInt64 = 0
-            while offset < combined.byte_length() {
-                match combined.next_rune(offset) {
-                    Some((rune, next)) => { println(int32(rune.to_u32())); offset = next }
-                    None => { return }
-                }
+            while let Some((rune, next)) = combined.next_rune(offset) {
+                println(rune.to_u32())
+                offset = next
             }
             let number: Int64 = -9223372036854775808
             let decimal = number.to_string()
-            println(int32(decimal.byte_length()))
+            println(decimal.byte_length())
         }
     }
 }
