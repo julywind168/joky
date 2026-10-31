@@ -16,7 +16,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["Array", "IntoIter"]
+        ["Array", "IntoIter", "SharedIter"]
     );
     assert_eq!(
         array
@@ -34,12 +34,15 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "clear",
             "clone",
             "contains",
+            "extend_bytes",
             "get",
+            "get_ref",
             "insert",
             "into_iter",
             "is_empty",
             "iter",
             "iter_mut",
+            "iter_shared",
             "len",
             "new",
             "pop",
@@ -72,6 +75,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
                 "borrow_mut_ref",
                 "borrow_ref",
                 "get",
+                "get_ref",
                 "is_empty",
                 "iter",
                 "iter_mut",

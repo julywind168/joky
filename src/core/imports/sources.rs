@@ -470,6 +470,7 @@ impl StandardLibrary {
                     | SourceKind::Domain
                     | SourceKind::Vm
             ),
+            kind == SourceKind::User,
         )?;
         let mut exports = ImportScope::default();
         if reexport_imports {

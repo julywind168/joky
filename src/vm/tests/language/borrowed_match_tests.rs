@@ -218,7 +218,7 @@ fn borrowed_matches_keep_shared_type_and_pattern_restrictions() {
         "fn bad(value: &Option<Resource>) { match value { Some(r) => { r.id = 2 }, None => {} } }",
         "fn bad(value: &Option<Resource>) { match value { Some(r) => r.values.push(2), None => {} } }",
         "fn bad(value: &Option<Array<Int32>>) { match value { Some(r) => r.release(), None => {} } }",
-        "fn bad(value: &Option<Resource>) { match value { Some(r) => { let pair = (r, 1) }, None => {} } }",
+        "fn bad(value: &Option<Resource>) { match value { Some(r) => { let pair = (r, 1); alloc(pair); }, None => {} } }",
         "fn bad(value: &Option<Resource>) { match value { Some(r) => { alloc(r); }, None => {} } }",
         "fn bad(value: &Option<Resource>) { match value { Some(r) => { (*r); }, None => {} } }",
         "fn bad(value: &Option<Resource>) @suspends -> &Option<Resource> { match value { Some(_) => {}, None => {} }; value }",

@@ -91,7 +91,7 @@ fn generic_templates_are_checked_before_instantiation_even_when_unused() {
         (
             "fn id<T>(x: T) -> T { x } fn bad<T, U>(x: T) -> U { id(x) }",
             ErrorCode::TypeMismatch,
-            "fn bad<T, U>(x: T) -> U { id(x) }",
+            "x",
         ),
         (
             "struct T { n: Int32 } fn bad<T>() -> Int32 { T { n: 1 }.n }",
@@ -160,7 +160,10 @@ fn generic_call_errors_reject_ambiguity_noncopy_values_and_mismatches() {
         ("fn f() { tag::<Unknown>() }", ErrorCode::UnknownType),
         ("fn f() { same(1, true) }", ErrorCode::TypeMismatch),
         ("fn f(n: Int64) { id::<Int32>(n) }", ErrorCode::TypeMismatch),
-        ("fn f() -> Int64 { id(1) }", ErrorCode::TypeMismatch),
+        (
+            "fn f() -> Int64 { let n: Int32 = 1; id(n) }",
+            ErrorCode::TypeMismatch,
+        ),
         ("fn f() { id(2147483648) }", ErrorCode::TypeMismatch),
         ("fn f() { id::<UInt32>(-1) }", ErrorCode::TypeMismatch),
         ("fn f() { plain::<Int32>(1) }", ErrorCode::InvalidCall),

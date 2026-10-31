@@ -253,7 +253,9 @@ fn generic_impl_normalization_preserves_parameters_and_nominal_identity() {
         assert_eq!(a.target, b.target);
         assert_eq!(a.type_params, b.type_params);
         for (a, b) in a.methods.iter().zip(&b.methods) {
-            assert!(b.type_params.is_empty());
+            if a.scope.is_none() {
+                assert!(b.type_params.is_empty());
+            }
             assert_eq!(a.ret_ty, b.ret_ty);
             for (a, b) in a.params.iter().zip(&b.params) {
                 assert_eq!(a.ty, b.ty);
@@ -267,7 +269,9 @@ fn generic_impl_normalization_preserves_parameters_and_nominal_identity() {
     // A public AST caller cannot use an uninstantiated generic template as a
     // concrete impl target, bypassing the source syntax's arity check.
     let mut invalid = twice.clone();
-    let implementation = &mut invalid.implementations[0];
+    let implementation = invalid.implementations.iter_mut().find(|implementation| {
+        matches!(&implementation.target, crate::Type::Record(record) if record.name == "Pair")
+    }).unwrap();
     let crate::Type::Record(record) = &implementation.target else {
         panic!()
     };

@@ -240,7 +240,7 @@ fn static_traits_preserve_borrowing_and_conservative_template_effects() {
     for (extra, message) in [
         ("fn bad() { let x = Id { value: 1 }; x.set(42) }", "var binding"),
         ("fn bad() { var x = Id { value: 1 }; let r = x.view(); x.set(42); r.read(); }", "borrow"),
-        ("fn bad() { var x = Id { value: 1 }; x.set(x.read()) }", "borrow"),
+        ("fn bad() { var x = Id { value: 1 }; (&mut x).set(x.read()) }", "borrow"),
         ("fn bad() -> &Id { let x = Id { value: 1 }; view(&x) }", "local"),
         ("fn bad<T: Copy + View>(x: T) -> &T { view(&x) }", "local"),
         ("fn bad<T: Copy + Read>(x: T) -> Int32 { x.read() }", "retained"),

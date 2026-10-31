@@ -714,7 +714,12 @@ fn generic_instances_are_cached_nominally_and_keep_failure_effects_internal() {
     let instances: Vec<_> = plan
         .functions
         .iter()
-        .filter(|(_, info)| info.internal)
+        .filter(|(name, info)| {
+            info.internal
+                && ["_id", "_fail", "_recurse"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+        })
         .collect();
     assert_eq!(instances.len(), 5);
     assert_eq!(

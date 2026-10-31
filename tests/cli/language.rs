@@ -823,7 +823,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
         ),
         (
             "fn id<T>(n: T) -> T { n } fn main() { id(\"text\") }",
-            "Return type mismatch",
+            "type_mismatch",
         ),
         (
             "fn tag<T>() -> Int32 { 7 } fn main() { tag() }",
@@ -842,8 +842,8 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
             "outside Int32 range",
         ),
         (
-            "fn id<T>(n: T) -> T { n } fn main() { let n: Int64 = id(1) }",
-            "Type annotation mismatch",
+            "fn id<T>(n: T) -> T { n } fn main() { let input: Int32 = 1; let n: Int64 = id(input) }",
+            "Conflicting types",
         ),
         (
             "fn f(n: Int32) -> Int32 { n } fn main() { f::<Int32>(1) }",
@@ -1126,8 +1126,8 @@ fn generic_methods_run_build_and_report_template_errors() {
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad<U>(self, value: U) -> T { value } } fn main() {}", "type_mismatch"),
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad<Pair>(self, value: Pair) -> Self { self } } fn main() {}", "cannot shadow impl parameters or the impl target"),
         ("fn main() { Some(1).zip::<Int32, Bool>(Some(true)) }", "expected 1"),
-        ("fn main() { Some(1).zip::<String>(Some(\"text\")) }", "Return type mismatch"),
-        ("fn main() { Result.Ok::<Int32, Bool>(1).and(Result.Ok(\"text\")) }", "Return type mismatch"),
+        ("fn main() { Some(1).zip::<String>(Some(\"text\")) }", "type_mismatch"),
+        ("fn main() { Result.Ok::<Int32, Bool>(1).and(Result.Ok(\"text\")) }", "type_mismatch"),
     ] {
         work.write("invalid_method.jk", &format!("// 🙂\n{source}"));
         let output = work.cli(&["build", "invalid_method.jk"]);
@@ -1177,8 +1177,8 @@ fn generic_impls_run_build_and_report_template_errors() {
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad(self) -> T { self.value + self.value } } fn main() {}", "type_mismatch"),
         ("struct Pair<T> { value: T } impl<T> Pair<Int32> {} fn main() {}", "specialized implementations"),
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn method<T>(self, value: T) {} } fn main() {}", "cannot shadow impl parameters"),
-        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make() }", "Cannot infer type parameter"),
-        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "Return type mismatch"),
+        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { let value = Marker.make() }", "Cannot infer type parameter"),
+        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "type_mismatch"),
     ] {
         work.write("invalid_impl.jk", &format!("// 🙂\n{source}"));
         let output = work.cli(&["build", "invalid_impl.jk"]);
@@ -2967,6 +2967,18 @@ fn string_equality_executes_in_standalone_aot_without_prelude() {
         include_str!("../fixtures/string_equality.jk"),
     );
     work.assert_native("equality.jk", &["--no-prelude"], b"", 0);
+    work.write(
+        "comparison.jk",
+        r#"pub fn matches(a: &String, b: &String) @noescape -> Bool { a == b }"#,
+    );
+    work.write(
+        "imported_equality.jk",
+        r#"
+        import comparison
+        fn main() -> Int32 { if comparison.matches("中🙂", "中🙂") { 42 } else { 0 } }
+    "#,
+    );
+    work.assert_all_backends("imported_equality.jk", &["--no-prelude"], b"", 42);
 }
 
 #[test]

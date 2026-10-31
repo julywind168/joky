@@ -137,7 +137,7 @@ fn generic_method_errors_keep_the_previous_module() {
         ("fn f() { Pair { value: 1 }.pair::<Bool>(42) }", ErrorCode::TypeMismatch),
         ("fn f() { Pair { value: 1 }.pair::<String>(\"bad\") }", ErrorCode::TypeMismatch),
         ("fn f() { Pair { value: 1 }.phantom::<String>() }", ErrorCode::TypeMismatch),
-        ("fn f() { let result: Marker<Bool> = Pair { value: 1 }.phantom() }", ErrorCode::TypeMismatch),
+        ("fn f() { let result = Pair { value: 1 }.phantom() }", ErrorCode::TypeMismatch),
         ("fn f() { Pair { value: 1 }.same(42, true) }", ErrorCode::TypeMismatch),
         ("fn f() { Pair::<Int32>.make::<Int32, Bool>(42, true) }", ErrorCode::InvalidCall),
         ("fn f() { Pair.make::<Int32>(42, true) }", ErrorCode::InvalidCall),

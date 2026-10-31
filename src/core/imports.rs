@@ -116,7 +116,7 @@ pub(crate) fn finish(
 ) -> Result<Module, Error> {
     let mut result = module.clone();
     super::json_derive::expand(&mut result)?;
-    let (scope, required) = bind(&result, registry, &graph.modules, false)?;
+    let (scope, required) = bind(&result, registry, &graph.modules, false, true)?;
     result.scope = Some(Arc::new(scope));
     graph.append(&mut result, &required);
     result
@@ -126,11 +126,50 @@ pub(crate) fn finish(
     Ok(result)
 }
 
+// Type checking selects text equality later; only source modules with equality
+// expressions need the hidden implementation. Embedded libraries declare dependencies.
+fn uses_equality(module: &Module) -> bool {
+    use crate::parser::ast::{BinOp, Expr};
+    let mut pending: Vec<_> =
+        module
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::FnDef(function) => Some(&function.body),
+                Item::ExternFn(_) => None,
+            })
+            .chain(module.implementations.iter().flat_map(|implementation| {
+                implementation.methods.iter().map(|method| &method.body)
+            }))
+            .chain(module.traits.iter().flat_map(|definition| {
+                definition
+                    .methods
+                    .iter()
+                    .filter_map(|method| method.body.as_ref())
+            }))
+            .chain(module.constants.iter().map(|constant| &constant.value))
+            .collect();
+    while let Some(expression) = pending.pop() {
+        if matches!(
+            expression,
+            Expr::BinOp {
+                op: BinOp::Eq | BinOp::Ne,
+                ..
+            }
+        ) {
+            return true;
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
 fn bind(
     module: &Module,
     registry: &TypeRegistry,
     libraries: &BTreeMap<String, sources::SourceModule>,
     buffer_access: bool,
+    implicit_operators: bool,
 ) -> Result<(ImportScope, BTreeSet<String>), Error> {
     if let Some((_, attribute)) = module.intrinsic_attributes.first() {
         return Err(error(
@@ -162,7 +201,9 @@ fn bind(
                 .functions
                 .insert("$joky_text_equals".into(), equals.clone());
             scope.imported_functions.insert(equals.clone());
-            required.insert("joky/internal/text".into());
+            if implicit_operators && uses_equality(module) {
+                required.insert("joky/internal/text".into());
+            }
         }
     }
     let mut seen_paths = BTreeSet::new();

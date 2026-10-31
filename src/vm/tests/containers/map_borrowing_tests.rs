@@ -133,7 +133,7 @@ fn map_borrowing_rejects_conflicts_escape_and_invalid_view_representations() {
         "fn bad() -> &Array<Int32> { var m=Map.new::<Int32,Array<Int32>>(); m.insert(1,Array.new::<Int32>()); m.borrow_ref(1) }",
         "fn bad(m: &Map<Int32,Int32>) { Some(m.borrow(1)); }",
         "fn bad(m: &Map<Int32,Int32>) { (m.borrow(1), 0); }",
-        "fn bad(m: &Map<Int32,Array<Int32>>) { Some(m.borrow_ref(1)); }",
+        "fn bad(m: &Map<Int32,Array<Int32>>) { alloc(Some(m.borrow_ref(1))); }",
         "struct View { value: &Element<Int32> } fn bad(m: &Map<Int32,Int32>) { View { value: m.borrow(1) }; }",
         "extern fn host(v: &Element<Int32>) fn bad(m: &Map<Int32,Int32>) { host(m.borrow(1)) }",
         "fn bad(m: Map<Int32,Int32>) { m.release(); m.borrow(1); }",

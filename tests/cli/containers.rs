@@ -894,7 +894,7 @@ fn expanding_types_and_live_owner_loans_remain_rejected() {
         ("import joky/array.{type Array} struct Shared { reference: &Int32 } enum Value { Nil, Items(Array<Value>), Hidden(Array<Shared>) } fn main() {}", "type_mismatch"),
         ("struct First<T, U> { value: T } enum Bad { Pair((First<Int32, Bad>, First<Bad, Int32>)) } fn main() {}", "recursive_type"),
         ("import joky/array.{type Array} struct Outer { values: Array<Holder> } struct Holder { reference: &Int32 } fn bad(value: Outer) @suspends {} fn main() {}", "invalid_call"),
-        ("import joky/array.{type Array} struct Borrowed { target: &Owner } struct Owner { values: Array<Int32> } fn bad(values: Array<Borrowed>) {} fn main() {}", "type_mismatch"),
+        ("import joky/array.{type Array} struct Borrowed { target: &Owner } struct Owner { values: Array<Int32> } fn main() { let owner = Owner { values: Array.new::<Int32>() }; let saved = [Borrowed { target: &owner }]; }", "type_mismatch"),
     ] {
         work.write("invalid.jk", source);
         failure(&work.cli(&["build", "invalid.jk"]), code);

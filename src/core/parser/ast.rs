@@ -1353,3 +1353,71 @@ impl Pattern {
         }
     }
 }
+
+impl Expr {
+    /// Visit expression children in source order. Declaration scopes are handled by callers.
+    pub(crate) fn children(&self) -> Vec<&Expr> {
+        match self {
+            Expr::IndexedLoop(loop_) => vec![&loop_.body],
+            Expr::When(w) => w
+                .paths
+                .iter()
+                .flatten()
+                .flat_map(|p| [&p.directory, &p.key].into_iter().chain(p.create.iter()))
+                .chain(std::iter::once(&w.body))
+                .chain(w.missing.iter())
+                .chain(w.alias.iter())
+                .collect(),
+            Expr::AnonymousFunction(f) => vec![&f.body],
+            Expr::Invoke { callee, args, .. } => {
+                std::iter::once(callee.as_ref()).chain(args).collect()
+            }
+            Expr::MethodCall(c) => std::iter::once(&c.receiver).chain(&c.args).collect(),
+            Expr::Call { args, .. } => args.iter().collect(),
+            Expr::Let { value, .. }
+            | Expr::Var { value, .. }
+            | Expr::Assign { value, .. }
+            | Expr::Destructure { value, .. }
+            | Expr::Spread { value, .. }
+            | Expr::Unary { operand: value, .. }
+            | Expr::Field { base: value, .. }
+            | Expr::Isolate { body: value, .. }
+            | Expr::TaskScope { body: value, .. }
+            | Expr::Branch { body: value, .. } => vec![value],
+            Expr::Return { value, .. } => value.iter().map(Box::as_ref).collect(),
+            Expr::Index {
+                base: lhs,
+                index: rhs,
+                ..
+            }
+            | Expr::BinOp { lhs, rhs, .. }
+            | Expr::Logical { lhs, rhs, .. } => vec![lhs, rhs],
+            Expr::FieldAssign { target, value, .. } => vec![target, value],
+            Expr::While {
+                condition, body, ..
+            } => vec![condition, body],
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => std::iter::once(condition.as_ref())
+                .chain(std::iter::once(then_branch.as_ref()))
+                .chain(else_branch.iter().map(Box::as_ref))
+                .collect(),
+            Expr::Match { value, arms, .. } => std::iter::once(value.as_ref())
+                .chain(arms.iter().map(|a| &a.body))
+                .collect(),
+            Expr::Record { fields, .. } => fields.iter().map(|f| &f.value).collect(),
+            Expr::Array { elements, .. } | Expr::Tuple { elements, .. } => {
+                elements.iter().collect()
+            }
+            Expr::Unsafe { exprs, .. }
+            | Expr::Block { exprs, .. }
+            | Expr::Graph { exprs, .. }
+            | Expr::Sequence { exprs, .. } => exprs.iter().collect(),
+            Expr::Concurrent { branches, .. } => branches.iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+}
