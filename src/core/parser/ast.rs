@@ -893,6 +893,9 @@ pub(crate) enum CompilerIntrinsic {
 pub(crate) enum BufferIntrinsic {
     Allocate,
     Transfer,
+    AppendBytes,
+    FindByte,
+    Utf8Prefix,
     TakeLast,
     SwapElements,
     Len,

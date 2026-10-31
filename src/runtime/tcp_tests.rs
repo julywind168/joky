@@ -119,6 +119,89 @@ fn net2_tcp_read_copy_peak_failure_stops_and_refunds_the_request() {
     }
     assert_eq!(budget.bytes.get(), 0);
 }
+// The request must borrow the original owner across bounded writes. A payload
+// snapshot would exceed this budget; cancellation must refund the request alone.
+#[test]
+fn tcp_write_all_borrows_pending_input_and_refunds_on_completion_or_cancel() {
+    use std::time::{Duration, Instant};
+    for cancel in [false, true] {
+        let budget = std::sync::Arc::new(super::super::arena::Budget {
+            limit: super::super::arena::MAX_BYTES.into(),
+            ..Default::default()
+        });
+        let executor = HostExecutor::default();
+        let mut arena = Arena::with_budget(budget.clone(), None);
+        let (stream, mut peer) = pair();
+        let resource = adopt_stream(&mut arena, IoSource::new(stream), None).unwrap();
+        let data: Vec<_> = (0..3 * super::super::buffer::BYTE_CHUNK + 17)
+            .map(|index| index as u8)
+            .collect();
+        let input = Buffer::copy_bytes(&mut arena, &data).unwrap();
+        let baseline = arena.bytes();
+        budget.limit.set(baseline + std::mem::size_of::<Request>());
+        let mut code = 99u64;
+        let mut frame = CpsFrame::new(3);
+        frame.slots = vec![
+            resource.as_ptr() as usize as u64,
+            input.as_ptr() as usize as u64,
+            &mut code as *mut u64 as usize as u64,
+        ];
+        CONTEXT.with(|c| *c.borrow_mut() = Some((&mut arena, Operation::WriteAll)));
+        let group = TaskGroup::new();
+        executor
+            .spawn(&group, unsafe {
+                Continuation::from_native(probe, frame, Rc::new(()))
+            })
+            .unwrap();
+        let first = executor.poll(1).unwrap();
+        assert!(first.completed.is_empty());
+        assert_eq!(arena.bytes(), baseline + std::mem::size_of::<Request>());
+        assert_eq!(code, 99);
+        peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let receiver = std::thread::spawn(move || {
+            let mut received = Vec::new();
+            peer.read_to_end(&mut received).unwrap();
+            received
+        });
+        if cancel {
+            executor.cancel_group(&group);
+            assert_eq!(code, 99);
+        } else {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                assert!(Instant::now() < deadline, "write_all failed to resume");
+                let report = executor.poll(1).unwrap();
+                if let Some(done) = report.completed.into_iter().next() {
+                    assert_eq!(done.result.unwrap(), data.len() as u64);
+                    break;
+                }
+                if !report.ready {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+            assert_eq!(code, 0);
+        }
+        assert_eq!(arena.bytes(), baseline);
+        REACTOR.with(|r| assert_eq!(r.borrow().as_ref().unwrap().registration_count(), 0));
+        assert_eq!(executor.poll(1).unwrap().polled, 0);
+        // The language owner remains valid after the request descriptor is gone.
+        assert_eq!(unsafe { input.as_ref().bytes().unwrap() }, data);
+        unsafe {
+            Buffer::release(&mut arena, resource.as_ptr()).unwrap();
+            Buffer::release(&mut arena, input.as_ptr()).unwrap();
+        }
+        assert_eq!(budget.bytes.get(), 0);
+        let received = receiver.join().unwrap();
+        if cancel {
+            assert!(received.len() <= super::super::buffer::BYTE_CHUNK);
+            assert_eq!(received, data[..received.len()]);
+        } else {
+            assert_eq!(received, data);
+        }
+        CONTEXT.with(|c| c.borrow_mut().take());
+    }
+}
+
 #[test]
 fn net2_tcp_ipv6_scope_and_native_error_bits_roundtrip() {
     let endpoint = 6 | (443 << 8) | (42u64 << 32);

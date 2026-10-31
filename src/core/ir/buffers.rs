@@ -70,9 +70,12 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 45] = [
+    pub(crate) const ALL: [Self; 48] = [
         Self::Allocate,
         Self::Transfer,
+        Self::AppendBytes,
+        Self::FindByte,
+        Self::Utf8Prefix,
         Self::TakeLast,
         Self::SwapElements,
         Self::Len,
@@ -202,13 +205,18 @@ impl BufferIntrinsic {
         }
     }
     pub(crate) fn type_parameter_count(self) -> usize {
-        if matches!(self, Self::PairIter | Self::PairIterMut) {
+        if self.is_bytes() {
+            0
+        } else if matches!(self, Self::PairIter | Self::PairIterMut) {
             3
         } else if self.is_pair() {
             2
         } else {
             1
         }
+    }
+    pub(crate) fn is_bytes(self) -> bool {
+        matches!(self, Self::AppendBytes | Self::FindByte | Self::Utf8Prefix)
     }
     /// Validate the two initialized Array columns before reading their handles.
     pub(crate) fn pair_offsets(element: &Type) -> Option<[usize; 2]> {
@@ -306,6 +314,25 @@ impl BufferIntrinsic {
             ),
             Self::Allocate => (vec![Type::UInt64], owner),
             Self::Transfer => (vec![exclusive.clone(), exclusive], Type::Unit),
+            Self::AppendBytes => (
+                vec![
+                    exclusive,
+                    Type::reference(slice, false),
+                    Type::UInt64,
+                    Type::UInt64,
+                ],
+                Type::Unit,
+            ),
+            Self::FindByte => (
+                vec![
+                    Type::reference(slice, false),
+                    Type::UInt8,
+                    Type::UInt64,
+                    Type::UInt64,
+                ],
+                Type::UInt64,
+            ),
+            Self::Utf8Prefix => (vec![Type::reference(slice, false)], Type::UInt64),
             Self::TakeLast => (vec![exclusive], element.clone()),
             Self::SwapElements => (vec![exclusive, Type::UInt64, Type::UInt64], Type::Unit),
             Self::Len | Self::Capacity => (vec![shared], Type::UInt64),
@@ -453,6 +480,9 @@ impl BufferIntrinsic {
             Self::IterCurrentMut => "__joky_buffer_iter_current_mut",
             Self::Allocate => "__joky_buffer_allocate",
             Self::Transfer => "__joky_buffer_transfer",
+            Self::AppendBytes => "__joky_buffer_append_bytes",
+            Self::FindByte => "__joky_buffer_find_byte",
+            Self::Utf8Prefix => "__joky_buffer_utf8_prefix",
             Self::TakeLast => "__joky_buffer_take_last",
             Self::SwapElements => "__joky_buffer_swap_elements",
             Self::Len => "__joky_buffer_len",

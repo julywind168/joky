@@ -861,6 +861,7 @@ fn answer() -> Int32 {
 | `get(&Array<T>, UInt64) -> Option<T>` | 复制元素，越界返回 None |
 | `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
+| `array.extend_bytes(&mut Array<UInt8>, &Slice<UInt8>, start: UInt64, end: UInt64)` | 批量追加半开区间 [start, end) 的字节，必要时扩容；只提供模块函数 |
 | `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
 | `into_iter(Array<T>) -> IntoIter<T>` / `values.into_iter()` | 消费数组，按原下标正序逐项移出 T；无需 Copy |
 | `iter(&Array<T>) -> &Iter<T>` / `values.iter()` | 按正序借用为 &T，数组保留所有权 |
@@ -874,6 +875,9 @@ fn answer() -> Int32 {
 | `clear(&mut Array<T>)` | 清空所有元素，保留容量 |
 | `swap(&mut Array<T>, UInt64, UInt64) -> Bool` | 交换两个有效位置，长度/容量不变；任一索引越界返回 false，不修改数组 |
 
+- `extend_bytes` 要求 start <= end <= 源切片长度，非法范围终止任务并报告运行时错误；
+  空区间不改变长度。源保持只读，源切片不能同时借用目标数组；借用检查器拒绝冲突。
+  扩容沿用普通 Array 的容量和峰值预算，复制不建立持久切片或保留源借用。
 - 拥有者不是 Copy；绑定、赋值、按值传参和返回均执行移动。`var` 可在移动后重新赋值，
   只有可变绑定能取 `&mut`；独占视图可在同步 helper 中继续重借用。
 - `&Array<T>` 是可在局部复制的共享视图，`&mut Array<T>` 是独占视图。

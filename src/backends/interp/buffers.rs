@@ -266,6 +266,28 @@ pub(super) fn execute(
                         Buffer::transfer(pointer(arg(0))?, pointer(arg(1))?)?;
                         Value::Unit
                     }
+                    BufferIntrinsic::AppendBytes => {
+                        Buffer::append_bytes(
+                            pointer(arg(0))?,
+                            pointer(arg(1))?,
+                            count(arg(2))?,
+                            count(arg(3))?,
+                        )?;
+                        Value::Unit
+                    }
+                    BufferIntrinsic::FindByte => {
+                        let Value::UInt8(byte) = arg(1) else {
+                            return Err(abi_error("Invalid byte search argument"));
+                        };
+                        Value::UInt64((*pointer(arg(0))?).find_byte(
+                            *byte,
+                            count(arg(2))?,
+                            count(arg(3))?,
+                        )?)
+                    }
+                    BufferIntrinsic::Utf8Prefix => {
+                        Value::UInt64((*pointer(arg(0))?).utf8_prefix()?)
+                    }
                     BufferIntrinsic::CapacityLimit => {
                         Value::UInt64(Buffer::capacity_limit(layout.size))
                     }

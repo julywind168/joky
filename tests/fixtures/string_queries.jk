@@ -94,3 +94,16 @@ fn invalid_repeated() -> Int32 {
     }
     42
 }
+
+fn reversed_byte_range() -> Int32 {
+    let source = "source"
+    var output: Array<UInt8> = []
+    array.extend_bytes(&mut output, source.bytes(), 2, 1)
+    42
+}
+fn oversized_byte_range() -> Int32 {
+    let source = "source"
+    var output: Array<UInt8> = []
+    array.extend_bytes(&mut output, source.bytes(), 0, UInt64.MAX)
+    42
+}

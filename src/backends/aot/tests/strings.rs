@@ -23,7 +23,7 @@ fn string_queries_matches_models_in_independent_aot_objects() {
         harness.push_str(&format!("extern int32_t {name}(void);\n"));
     }
     harness.push_str(
-        "extern int32_t bad_offset(void), huge_offset(void), overflow(void);\nint main(void) {\n",
+        "extern int32_t bad_offset(void), huge_offset(void), overflow(void), reversed_byte_range(void), oversized_byte_range(void);\nint main(void) {\n",
     );
     for (name, expected) in &cases.integers {
         harness.push_str(&format!("if ({name}() != {expected} || joky_runtime_error_code()) {{ fprintf(stderr, \"{name} failed\\n\"); return 1; }}\n"));
@@ -40,7 +40,7 @@ fn string_queries_matches_models_in_independent_aot_objects() {
         let length = expected.len();
         harness.push_str(&format!("{{ const uint8_t expected_{index}[] = {{{bytes}}}; JokyOwnedTextV2 output = {{0}}; if (__joky_user_text_v2_{name}(&output) || joky_runtime_error_code() || output.byte_length != {length} || ({length} && memcmp(output.data, expected_{index}, {length}))) {{ fprintf(stderr, \"{name} failed\\n\"); return 2; }} joky_string_result_free_v2(&output); }}\n"));
     }
-    harness.push_str("if (bad_offset() != 0 || !joky_runtime_error_code()) return 3; joky_runtime_error_clear();\nif (huge_offset() != 0 || !joky_runtime_error_code()) return 4; joky_runtime_error_clear();\nif (overflow() != 0 || !joky_runtime_error_code()) return 5; joky_runtime_error_clear();\nreturn 0; }\n");
+    harness.push_str("if (bad_offset() != 0 || !joky_runtime_error_code()) return 3; joky_runtime_error_clear();\nif (huge_offset() != 0 || !joky_runtime_error_code()) return 4; joky_runtime_error_clear();\nif (overflow() != 0 || !joky_runtime_error_code()) return 5; joky_runtime_error_clear();\nif (reversed_byte_range() != 0 || !joky_runtime_error_code()) return 6; joky_runtime_error_clear();\nif (oversized_byte_range() != 0 || !joky_runtime_error_code()) return 7; joky_runtime_error_clear();\nreturn 0; }\n");
     std::fs::write(&host, harness).unwrap();
     link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     assert!(Command::new(program).status().unwrap().success());

@@ -28,11 +28,16 @@ fn string_queries_matches_utf8_substring_rune_and_decimal_models() {
             );
             LIVE.with(|live| assert_eq!(live.get(), 0));
         }
-        for name in ["bad_offset", "huge_offset"] {
+        for (name, message) in [
+            ("bad_offset", "offset"),
+            ("huge_offset", "offset"),
+            ("reversed_byte_range", "range"),
+            ("oversized_byte_range", "range"),
+        ] {
             let error = vm.call_int32_0(name).unwrap_err();
             assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
             assert!(error.span().is_some(), "{mode:?}, {name}: {error}");
-            assert!(error.message().contains("offset"));
+            assert!(error.message().contains(message));
             LIVE.with(|live| assert_eq!(live.get(), 0));
         }
         assert_eq!(
@@ -54,6 +59,8 @@ fn string_queries_rejects_byte_view_escape_writes_moves_and_private_freezing() {
         "import joky/mem\nimport joky/slice fn f() { var text = \"中\"; let view = text.bytes(); mem.replace(&mut text, \"next\").release(); slice.len(view); }",
         "import joky/slice fn f() @suspends { let text = \"中\"; let view = text.bytes(); join {}; slice.len(view); }",
         "import joky/array.{type Array} fn f() { let data = Array.new::<UInt8>(); String.from_utf8(data); data.release() }",
+        "import joky/array.{type Array} fn f() { var data: Array<UInt8> = [42]; let view = data.slice(0, 1); array.extend_bytes(&mut data, view, 0, 1) }",
+        "import joky/array.{type Array} fn f() { var data: Array<UInt8> = [42]; let view = data.slice(0, 1); data.release(); var out: Array<UInt8> = []; array.extend_bytes(&mut out, view, 0, 1) }",
         "import joky/string.{freeze_utf8} fn f() {}",
     ] {
         let error = super::support::frontend_error(source, &crate::ModuleSources::new());

@@ -23,7 +23,9 @@ fn buffer_parameters(
             "Invalid compiler buffer type parameter count",
         ));
     }
-    if intrinsic.is_pair() {
+    if intrinsic.is_bytes() {
+        Ok(Type::UInt8)
+    } else if intrinsic.is_pair() {
         Ok(Type::tuple(
             f.type_params.iter().cloned().map(Type::Parameter).collect(),
         ))

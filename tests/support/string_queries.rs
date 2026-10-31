@@ -35,6 +35,66 @@ pub fn cases() -> Cases {
         .map(|(name, value)| (name.into(), value.into()))
         .to_vec(),
     };
+    // Exercise scalar boundaries on both sides of the runtime's bounded scans.
+    // Build long prefixes as literals, keeping the generated program compact.
+    for (index, (padding, tail)) in [
+        (16381, "🙂!".as_bytes()),
+        (16382, "中!".as_bytes()),
+        (16383, "é!".as_bytes()),
+        (16384, "🙂!".as_bytes()),
+        (32767, "🙂!".as_bytes()),
+        (16383, &[0xf0, 0x90][..]),
+        (16383, &[0xf0, 0x90, 0x80, 0x41][..]),
+        (16384, &[0xff][..]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("byte_chunks_{index}");
+        let prefix = "a".repeat(padding);
+        let mut input = prefix.as_bytes().to_vec();
+        input.extend_from_slice(tail);
+        cases.source.push_str(&format!(
+            "\nfn {name}() -> Int32 {{ var data = \"{prefix}\".into_bytes(); "
+        ));
+        for byte in tail {
+            cases.source.push_str(&format!("data.push({byte}); "));
+        }
+        cases.source.push_str("match string.from_utf8(data) { ");
+        match std::str::from_utf8(&input) {
+            Ok(text) => {
+                let expected = literal(&text[padding..]);
+                cases.source.push_str(&format!(
+                    "Err(_) => 1, Ok(value) => {{ \
+                     if value.find(\"!\").unwrap_or(0) != {} {{ return 2 }}; \
+                     if value.find(\"z\").is_some() {{ return 3 }}; \
+                     let tail = value.substring({padding}, value.byte_length()).unwrap_or(\"\"); \
+                     if !tail.equals({expected}) {{ return 4 }}; \
+                     var copy = Array.new::<UInt8>(); copy.push(0); \
+                     array.extend_bytes(&mut copy, value.bytes(), 1, value.byte_length()); \
+                     array.extend_bytes(&mut copy, value.bytes(), 0, 0); \
+                     if copy.len() != value.byte_length() || copy[0] != 0 || copy[{}] != 33 {{ return 5 }}; \
+                     42 }}",
+                    text.len() - 1,
+                    text.len() - 1,
+                ));
+            }
+            Err(error) => {
+                let code = if error.error_len().is_some() {
+                    "InvalidSequence"
+                } else {
+                    "UnexpectedEnd"
+                };
+                cases.source.push_str(&format!(
+                    "Ok(_) => 6, Err(error) => {{ if error.offset != {} {{ return 7 }}; \
+                     match error.code {{ string.Utf8ErrorCode.{code} => 42, _ => 8 }} }}",
+                    error.valid_up_to(),
+                ));
+            }
+        }
+        cases.source.push_str("} }\n");
+        cases.integers.push((name, 42));
+    }
     let mut corpus = vec![
         vec![],
         b"ASCII\0tail".to_vec(),

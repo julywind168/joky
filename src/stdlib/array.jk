@@ -7,6 +7,7 @@ import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/iter as iteration.{type Iterator, type IntoIterator, type Iter}
+import joky/check
 
 pub struct Array<T> { storage: Buffer<T> }
 pub struct IntoIter<T> { values: Array<T> }
@@ -93,6 +94,9 @@ pub fn reserve<T>(values: &mut Array<T>, additional: UInt64) {
     // becomes limit + 1 and fails in allocate, without wrapping any arithmetic.
     let required = if additional > limit - length { limit + 1 } else { length + additional }
     if required <= capacity { return }
+    grow(values, required, capacity, limit)
+}
+fn grow<T>(values: &mut Buffer<T>, required: UInt64, capacity: UInt64, limit: UInt64) {
     let candidate = if capacity == 0 {
         if limit < 4 { limit } else { 4 }
     } else {
@@ -106,6 +110,14 @@ pub fn reserve<T>(values: &mut Array<T>, additional: UInt64) {
 pub fn push<T>(values: &mut Array<T>, value: T) {
     reserve(values, 1)
     buffer.initialize_next(&mut values.storage, value)
+}
+
+// Copy a borrowed byte range without creating a retained subslice header.
+// Validate before growing, then publish the appended prefix in one checked operation.
+pub fn extend_bytes(values: &mut Array<UInt8>, source: &Slice<UInt8>, start: UInt64, end: UInt64) {
+    if start > end || end > slices.len(source) { check.panic("Byte append range is outside the slice") }
+    reserve(values, end - start)
+    buffer.append_bytes(&mut values.storage, source, start, end)
 }
 pub fn take_last<T>(values: &mut Array<T>) -> T { buffer.take_last(&mut values.storage) }
 pub fn pop<T>(values: &mut Array<T>) -> Option<T> {

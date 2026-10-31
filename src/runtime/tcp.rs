@@ -1,4 +1,5 @@
-//! Compiler-checked TCP operations. Only bounded host storage crosses Pending.
+//! Compiler-checked TCP operations. Requests retain bounded host storage or
+//! immutable input storage owned by their live borrowing-host activation.
 use super::{
     arena::{Arena, ExternalCharge},
     borrowed_host::{STOP_COMPLETED, STOP_FAILED},
@@ -47,6 +48,8 @@ pub(crate) enum Operation {
     ShutdownWriter,
     CloseReader,
     CloseWriter,
+    WriteAll,
+    WriteAllHalf,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
@@ -64,6 +67,8 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__tcp_split_writer" => Operation::SplitWriter,
         "__tcp_read_half" => Operation::ReadHalf,
         "__tcp_write_half" => Operation::WriteHalf,
+        "__tcp_write_all" => Operation::WriteAll,
+        "__tcp_write_all_half" => Operation::WriteAllHalf,
         "__tcp_reader_addr" => Operation::ReaderAddr,
         "__tcp_writer_addr" => Operation::WriterAddr,
         "__tcp_shutdown_reader" => Operation::ShutdownReader,
@@ -78,7 +83,13 @@ impl Operation {
         matches!(self, Self::Read | Self::ReadHalf)
     }
     fn is_write(self) -> bool {
-        matches!(self, Self::Write | Self::WriteHalf)
+        matches!(
+            self,
+            Self::Write | Self::WriteHalf | Self::WriteAll | Self::WriteAllHalf
+        )
+    }
+    fn writes_all(self) -> bool {
+        matches!(self, Self::WriteAll | Self::WriteAllHalf)
     }
 
     pub(crate) fn validate(
@@ -92,9 +103,11 @@ impl Operation {
             Self::ReadHalf | Self::ReaderAddr | Self::ShutdownReader | Self::CloseReader => {
                 reader.clone()
             }
-            Self::WriteHalf | Self::WriterAddr | Self::ShutdownWriter | Self::CloseWriter => {
-                writer.clone()
-            }
+            Self::WriteHalf
+            | Self::WriteAllHalf
+            | Self::WriterAddr
+            | Self::ShutdownWriter
+            | Self::CloseWriter => writer.clone(),
             _ => Type::Resource("tcp.StreamOwner".into()),
         };
         let listener = Type::Resource("tcp.ListenerOwner".into());
@@ -124,7 +137,7 @@ impl Operation {
                 vec![reference(stream.clone()), scalar.clone(), error.clone()],
                 signature.ret.clone(),
             ),
-            Self::Write | Self::WriteHalf => (
+            Self::Write | Self::WriteHalf | Self::WriteAll | Self::WriteAllHalf => (
                 vec![
                     reference(stream.clone()),
                     signature.params.get(1).cloned().unwrap_or(Type::Unit),
@@ -481,7 +494,16 @@ pub(crate) struct Request {
     permit: Option<SocketPermit>,
     lease: Option<ResourceLease>,
     bytes: Vec<u8>,
+    write_input: Option<WriteInput>,
     _charge: ExternalCharge,
+}
+// The owning Array argument is held by the native CPS cleanup or interpreter
+// HostTask cleanup until after stop(). Its immutable payload cannot move while
+// this request is pending. This descriptor borrows it and never releases it.
+struct WriteInput {
+    data: NonNull<u8>,
+    len: usize,
+    offset: usize,
 }
 impl Request {
     fn stop_io(&mut self) -> Result<(), Error> {
@@ -513,7 +535,12 @@ unsafe fn set_error(frame: &CpsFrame, op: Operation, code: u64) {
     let index = match op {
         Operation::Bind | Operation::Connect => 3,
         Operation::Accept => 1,
-        Operation::Read | Operation::Write | Operation::ReadHalf | Operation::WriteHalf => 2,
+        Operation::Read
+        | Operation::Write
+        | Operation::ReadHalf
+        | Operation::WriteHalf
+        | Operation::WriteAll
+        | Operation::WriteAllHalf => 2,
         _ => unreachable!(),
     };
     *(frame.slots[index] as usize as *mut u64) = code;
@@ -547,9 +574,11 @@ unsafe fn begin(arena: &mut Arena, frame: &CpsFrame, op: Operation) -> Result<Re
         Operation::Read | Operation::ReadHalf => {
             usize::try_from(frame.slots[1]).map_err(|_| failure("TCP read limit overflow"))?
         }
-        Operation::Write | Operation::WriteHalf => (&*(frame.slots[1] as usize as *const Buffer))
-            .bytes()?
-            .len(),
+        Operation::Write | Operation::WriteHalf | Operation::WriteAll | Operation::WriteAllHalf => {
+            (&*(frame.slots[1] as usize as *const Buffer))
+                .bytes()?
+                .len()
+        }
         _ => 0,
     };
     let connecting_size = if op == Operation::Connect {
@@ -557,17 +586,27 @@ unsafe fn begin(arena: &mut Arena, frame: &CpsFrame, op: Operation) -> Result<Re
     } else {
         0
     };
-    let charge =
-        arena.reserve_external(std::mem::size_of::<Request>() + length + connecting_size)?;
+    let snapshot_bytes = if op.writes_all() { 0 } else { length };
+    let charge = arena
+        .reserve_external(std::mem::size_of::<Request>() + snapshot_bytes + connecting_size)?;
     let mut bytes = Vec::new();
     bytes
-        .try_reserve_exact(length)
+        .try_reserve_exact(snapshot_bytes)
         .map_err(|_| failure("TCP request allocation failed"))?;
-    if op.is_write() {
+    let write_input = if op.writes_all() {
+        let input = (&*(frame.slots[1] as usize as *const Buffer)).bytes()?;
+        Some(WriteInput {
+            data: NonNull::new(input.as_ptr().cast_mut()).unwrap(),
+            len: input.len(),
+            offset: 0,
+        })
+    } else if op.is_write() {
         bytes.extend_from_slice((&*(frame.slots[1] as usize as *const Buffer)).bytes()?);
+        None
     } else {
         bytes.resize(length, 0);
-    }
+        None
+    };
     let permit = if matches!(op, Operation::Bind | Operation::Connect | Operation::Accept) {
         Some(super::executor::current_reactor()?.reserve_socket()?)
     } else {
@@ -580,6 +619,7 @@ unsafe fn begin(arena: &mut Arena, frame: &CpsFrame, op: Operation) -> Result<Re
         permit,
         lease,
         bytes,
+        write_input,
         _charge: charge,
     })
 }
@@ -726,23 +766,38 @@ unsafe fn drive(
                     }
                 }
             }
-            Operation::Read | Operation::Write | Operation::ReadHalf | Operation::WriteHalf => {
+            Operation::Read
+            | Operation::Write
+            | Operation::ReadHalf
+            | Operation::WriteHalf
+            | Operation::WriteAll
+            | Operation::WriteAllHalf => {
                 let connection = match (&*socket, op) {
-                    (Socket::Stream(c), Operation::Read | Operation::Write)
+                    (
+                        Socket::Stream(c),
+                        Operation::Read | Operation::Write | Operation::WriteAll,
+                    )
                     | (Socket::Reader(c), Operation::ReadHalf)
-                    | (Socket::Writer(c), Operation::WriteHalf) => c,
+                    | (Socket::Writer(c), Operation::WriteHalf | Operation::WriteAllHalf) => c,
                     _ => return Err(failure("Invalid TCP direction owner")),
                 };
                 if op == Operation::ReadHalf && connection.read_closed.load(Ordering::Acquire) {
                     set_error(frame, op, 0);
                     return Ok(Some(Output::Owner(Buffer::copy_bytes(arena, &[])?)));
                 }
-                if op == Operation::WriteHalf && connection.write_closed.load(Ordering::Acquire) {
+                if matches!(op, Operation::WriteHalf | Operation::WriteAllHalf)
+                    && connection.write_closed.load(Ordering::Acquire)
+                {
                     set_error(frame, op, 4);
                     return Ok(Some(Output::Scalar(0)));
                 }
                 let source = &connection.source;
-                if op.is_write() && request.bytes.is_empty() {
+                if op.is_write()
+                    && request
+                        .write_input
+                        .as_ref()
+                        .map_or(request.bytes.is_empty(), |input| input.len == 0)
+                {
                     set_error(frame, op, 0);
                     return Ok(Some(Output::Scalar(0)));
                 }
@@ -759,15 +814,23 @@ unsafe fn drive(
                 let result = if op.is_read() {
                     source.with_io(|s| s.read(&mut request.bytes))
                 } else {
-                    source
-                        .with_io(|s| s.write(&request.bytes))
-                        .and_then(|count| {
-                            if count == 0 {
-                                Err(io::ErrorKind::WriteZero.into())
-                            } else {
-                                Ok(count)
-                            }
-                        })
+                    let bytes = if let Some(input) = &request.write_input {
+                        // Stop hooks dispose this descriptor before the activation
+                        // releases its owning argument, on every terminal path.
+                        std::slice::from_raw_parts(
+                            input.data.as_ptr().add(input.offset),
+                            (input.len - input.offset).min(super::buffer::BYTE_CHUNK),
+                        )
+                    } else {
+                        &request.bytes
+                    };
+                    source.with_io(|s| s.write(bytes)).and_then(|count| {
+                        if count == 0 {
+                            Err(io::ErrorKind::WriteZero.into())
+                        } else {
+                            Ok(count)
+                        }
+                    })
                 };
                 let (count, code) = match result {
                     Ok(count) => (count, 0),
@@ -779,6 +842,18 @@ unsafe fn drive(
                         return Ok(None);
                     }
                     Err(e) => (0, error_code(&e)),
+                };
+                let count = if let Some(input) = &mut request.write_input {
+                    input.offset += count;
+                    if code == 0 && input.offset < input.len {
+                        // One bounded write per poll preserves cancellation and
+                        // fairness without rebuilding a frame or copying a chunk.
+                        wake_current();
+                        return Ok(None);
+                    }
+                    input.offset
+                } else {
+                    count
                 };
                 request.stop_io()?;
                 // Both host bytes and language output are charged at the copy peak.
@@ -940,6 +1015,8 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, op: u32) -> i3
         17 => Operation::ShutdownWriter,
         18 => Operation::CloseReader,
         19 => Operation::CloseWriter,
+        20 => Operation::WriteAll,
+        21 => Operation::WriteAllHalf,
 
         _ => {
             super::error::record_error(failure("Invalid TCP operation"));

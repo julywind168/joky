@@ -34,8 +34,7 @@ fn parse(line: String) -> Command {
     let argument = if separator < line.byte_length() {
         line.substring(separator + 1, line.byte_length())!
     } else { "" }
-    let room = !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none()
-    if verb.equals("join") && room { Command.Join(argument) }
+    if verb.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() { Command.Join(argument) }
     else if line.equals("balance") { Command.Balance }
     else if line.equals("leave") { Command.Leave }
     else if verb.equals("say") && !argument.is_empty() { Command.Say(argument) }

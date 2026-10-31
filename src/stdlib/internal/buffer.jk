@@ -6,6 +6,12 @@ type Slice<T> = T
 
 #intrinsic("buffer.transfer")
 fn transfer<T>(source: &mut Buffer<T>, destination: &mut Buffer<T>)
+#intrinsic("buffer.append_bytes")
+fn append_bytes(destination: &mut Buffer<UInt8>, source: &Slice<UInt8>, start: UInt64, end: UInt64)
+#intrinsic("buffer.find_byte")
+fn find_byte(source: &Slice<UInt8>, byte: UInt8, start: UInt64, end: UInt64) -> UInt64
+#intrinsic("buffer.utf8_prefix")
+fn utf8_prefix(source: &Slice<UInt8>) -> UInt64
 #intrinsic("buffer.take_last")
 fn take_last<T>(source: &mut Buffer<T>) -> T
 #intrinsic("buffer.allocate")
