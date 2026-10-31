@@ -27,6 +27,8 @@ enum Node {
 /// Visits shared aggregate/signature nodes once, in the existing stack order.
 /// Pointer identity bounds shared DAGs without invoking structural type equality.
 pub(crate) struct TypeWalk<'a> {
+    // Leaf queries need no work stack; allocate only when visiting children.
+    root: Option<&'a Type>,
     pending: Vec<&'a Type>,
     seen: HashSet<Node>,
     edges: TypeEdges,
@@ -35,7 +37,8 @@ pub(crate) struct TypeWalk<'a> {
 impl<'a> TypeWalk<'a> {
     pub(crate) fn new(root: &'a Type, edges: TypeEdges) -> Self {
         Self {
-            pending: vec![root],
+            root: Some(root),
+            pending: Vec::new(),
             seen: HashSet::new(),
             edges,
         }
@@ -46,7 +49,7 @@ impl<'a> Iterator for TypeWalk<'a> {
     type Item = &'a Type;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(ty) = self.pending.pop() {
+        while let Some(ty) = self.root.take().or_else(|| self.pending.pop()) {
             let node = match ty {
                 Type::FixedArray(a) | Type::FixedArrayInit(a) => {
                     Some(Node::FixedArray(Arc::as_ptr(a)))
@@ -136,6 +139,29 @@ impl<'a> Iterator for TypeWalk<'a> {
 mod tests {
     use super::*;
     use crate::{parser::ast::Item, TypeRegistry};
+
+    #[test]
+    fn leaf_type_walks_yield_the_root_once_for_every_edge_policy() {
+        for root in [
+            Type::Unit,
+            Type::Int32,
+            Type::Float64,
+            Type::String,
+            Type::Ptr,
+        ] {
+            for edges in [
+                TypeEdges::Inline,
+                TypeEdges::Arguments,
+                TypeEdges::Storage,
+                TypeEdges::Fields,
+            ] {
+                let mut walk = TypeWalk::new(&root, edges);
+                assert!(std::ptr::eq(walk.next().unwrap(), &root));
+                assert!(walk.next().is_none());
+                assert!(walk.next().is_none());
+            }
+        }
+    }
 
     #[test]
     fn shared_type_dags_are_visited_once_and_keep_error_order() {

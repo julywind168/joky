@@ -88,7 +88,18 @@ impl Accounts {
             return Ok(());
         }
         // The sorted identities impose one lock order even for overlapping roots.
-        let _guards: Vec<_> = self.0.iter().map(|b| lock(&b.0.admission)).collect();
+        // Keep the common one/two-budget guard storage on the stack. Larger sets
+        // retain all remaining guards until the same preflight and charge finish.
+        let mut inline_guards = [None, None];
+        for (slot, budget) in inline_guards.iter_mut().zip(self.0.iter()) {
+            *slot = Some(lock(&budget.0.admission));
+        }
+        let _overflow_guards: Vec<_> = self
+            .0
+            .iter()
+            .skip(inline_guards.len())
+            .map(|budget| lock(&budget.0.admission))
+            .collect();
         if self.0.iter().any(|budget| {
             budget
                 .0
@@ -818,32 +829,37 @@ mod tests {
     fn parallel_shared_budgets_reserve_all_or_nothing() {
         let one = TaskBudget::new(100);
         let two = TaskBudget::new(100);
+        let extra: Vec<_> = (0..3).map(|_| TaskBudget::new(100)).collect();
+        let mut wider = vec![two.clone(), one.clone(), one.clone()];
+        wider.extend(extra.iter().cloned());
         let gate = Arc::new(Barrier::new(3));
         let release = Arc::new(Barrier::new(3));
-        let workers: Vec<_> = [
-            vec![one.clone(), two.clone()],
-            vec![two.clone(), one.clone(), one.clone()],
-        ]
-        .into_iter()
-        .map(|budgets| {
-            let gate = gate.clone();
-            let release = release.clone();
-            std::thread::spawn(move || {
-                let accounts = Accounts::new(budgets);
-                gate.wait();
-                let lease = accounts.reserve(80);
-                release.wait();
-                let ok = lease.is_ok();
-                gate.wait();
-                drop(lease);
-                ok
+        // An inline admission and an overlapping overflow admission must share
+        // the same lock order, deduplication and all-or-nothing outcome.
+        let workers: Vec<_> = [vec![one.clone(), two.clone()], wider]
+            .into_iter()
+            .map(|budgets| {
+                let gate = gate.clone();
+                let release = release.clone();
+                std::thread::spawn(move || {
+                    let accounts = Accounts::new(budgets);
+                    gate.wait();
+                    let lease = accounts.reserve(80);
+                    release.wait();
+                    let ok = lease.is_ok();
+                    gate.wait();
+                    drop(lease);
+                    ok
+                })
             })
-        })
-        .collect();
+            .collect();
         gate.wait();
         release.wait();
         assert_eq!(one.used(), 80);
         assert_eq!(two.used(), 80);
+        let extra_used = extra[0].used();
+        assert!(matches!(extra_used, 0 | 80));
+        assert!(extra.iter().all(|budget| budget.used() == extra_used));
         gate.wait();
         let wins = workers
             .into_iter()
@@ -852,6 +868,7 @@ mod tests {
         assert_eq!(wins, 1);
         assert_eq!(one.used(), 0);
         assert_eq!(two.used(), 0);
+        assert!(extra.iter().all(|budget| budget.used() == 0));
     }
 
     #[test]

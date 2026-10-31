@@ -318,6 +318,8 @@ JIT／AOT `opt_level=speed` 的实验结果、浮点正确性阻碍及 0.137.1 �
 [内部直接调用共享浮点保护](reports/chat-fp-boundaries-2026-10-31.md)。
 随后分离任务完成通知并按 worker 定向唤醒，见
 [任务完成通知与定向唤醒](reports/chat-targeted-wakes-2026-10-31.md)。
+随后根据新采样减少预算准入与类型遍历的小分配，见
+[预算准入与类型遍历的小分配](reports/chat-small-allocations-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 
