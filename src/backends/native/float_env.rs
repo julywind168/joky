@@ -1,8 +1,9 @@
 //! Protect native activations that compute floats or call external code.
 //! Arithmetic bodies run behind an opaque call boundary so optimization cannot
 //! move floating-point operations across environment changes. Integer-only bodies
-//! need inline guards only for unaudited external calls. Saved tokens belong to
-//! native activations, not CPS frames.
+//! may use private bodies under a protected caller. Only direct compiler-known
+//! calls can enter these bodies; exported and address-taken entries retain guards.
+//! Saved tokens belong to native activations, not CPS frames.
 use cranelift_codegen::{
     cursor::{Cursor, FuncCursor},
     ir::{
@@ -75,6 +76,78 @@ fn external_call(function: &Function, inst: Inst) -> bool {
     }
 }
 
+fn has_floats(function: &Function, instructions: &[Inst]) -> bool {
+    instructions.iter().any(|&inst| {
+        function
+            .dfg
+            .inst_args(inst)
+            .iter()
+            .chain(function.dfg.inst_results(inst))
+            .any(|&value| function.dfg.value_type(value).is_float())
+    })
+}
+
+/// Define a boundary entry and, when declared, its private execution body.
+/// Private bodies require Joky's standard FP control on entry and restore it
+/// after unknown calls. Only direct calls from another protected body use them;
+/// addresses, callbacks and resumable entry descriptors keep the guarded ABI.
+pub(super) fn define<M: Module>(
+    module: &mut M,
+    ctx: &mut Context,
+    id: FuncId,
+    helpers: &HashMap<String, FuncId>,
+    effects: &Effects,
+    bodies: &HashMap<FuncId, FuncId>,
+) -> Result<bool, Box<ModuleError>> {
+    let Some(&body) = bodies.get(&id) else {
+        let required = instrument(module, &mut ctx.func, helpers, effects)?;
+        module.define_function(id, ctx)?;
+        return Ok(required);
+    };
+    let instructions: Vec<_> = ctx
+        .func
+        .layout
+        .blocks()
+        .flat_map(|block| ctx.func.layout.block_insts(block))
+        .collect();
+    for &inst in &instructions {
+        let InstructionData::Call { func_ref, .. } = ctx.func.dfg.insts[inst] else {
+            continue;
+        };
+        let ExternalName::User(name) = ctx.func.dfg.ext_funcs[func_ref].name else {
+            continue;
+        };
+        let name = &ctx.func.params.user_named_funcs()[name];
+        if name.namespace != 0 {
+            continue;
+        }
+        if let Some(&target) = bodies.get(&FuncId::from_u32(name.index)) {
+            let reference = module.declare_func_in_func(target, &mut ctx.func);
+            let args = ctx.func.dfg.inst_args(inst).to_vec();
+            ctx.func.replace(inst).call(reference, &args);
+        }
+    }
+    if has_floats(&ctx.func, &instructions) {
+        reset_calls(module, &mut ctx.func, &instructions, helpers, effects)?;
+    } else {
+        let reset = module.declare_func_in_func(helpers["__joky_float_env_reset"], &mut ctx.func);
+        let mut cursor = FuncCursor::new(&mut ctx.func);
+        for inst in instructions {
+            if external_call(cursor.func, inst) && !effects.preserves(cursor.func, inst) {
+                cursor.goto_after_inst(inst);
+                cursor.ins().call(reset, &[]);
+            }
+        }
+    }
+    let signature = ctx.func.signature.clone();
+    module.define_function(body, ctx)?;
+    ctx.clear();
+    ctx.func.signature = signature;
+    wrap_body(module, &mut ctx.func, body, helpers);
+    module.define_function(id, ctx)?;
+    Ok(true)
+}
+
 /// Prepare an entry, defining private float bodies and bridges as needed.
 /// Return whether this entry requires the floating-point runtime helpers.
 pub(super) fn instrument<M: Module>(
@@ -88,15 +161,7 @@ pub(super) fn instrument<M: Module>(
         .blocks()
         .flat_map(|block| function.layout.block_insts(block))
         .collect();
-    let has_floats = instructions.iter().any(|&inst| {
-        function
-            .dfg
-            .inst_args(inst)
-            .iter()
-            .chain(function.dfg.inst_results(inst))
-            .any(|&value| function.dfg.value_type(value).is_float())
-    });
-    if has_floats {
+    if has_floats(function, &instructions) {
         isolate_body(module, function, &instructions, helpers, effects)?;
         return Ok(true);
     }
@@ -194,7 +259,7 @@ fn reset_bridge<M: Module>(
     Ok(id)
 }
 
-fn isolate_body<M: Module>(
+fn reset_calls<M: Module>(
     module: &mut M,
     function: &mut Function,
     instructions: &[Inst],
@@ -228,6 +293,17 @@ fn isolate_body<M: Module>(
         function.replace(inst).call(reference, &args);
     }
 
+    Ok(())
+}
+
+fn isolate_body<M: Module>(
+    module: &mut M,
+    function: &mut Function,
+    instructions: &[Inst],
+    helpers: &HashMap<String, FuncId>,
+    effects: &Effects,
+) -> Result<(), Box<ModuleError>> {
+    reset_calls(module, function, instructions, helpers, effects)?;
     // Preserve the original ABI and symbol in an arithmetic-free entry. Even
     // on Pending/error returns the inner activation finishes before restore.
     let signature = function.signature.clone();
@@ -236,6 +312,16 @@ fn isolate_body<M: Module>(
     std::mem::swap(&mut ctx.func, function);
     module.define_function(body, &mut ctx)?;
     function.signature = signature;
+    wrap_body(module, function, body, helpers);
+    Ok(())
+}
+
+fn wrap_body<M: Module>(
+    module: &mut M,
+    function: &mut Function,
+    body: FuncId,
+    helpers: &HashMap<String, FuncId>,
+) {
     let body = module.declare_func_in_func(body, function);
     let enter = module.declare_func_in_func(helpers["__joky_float_env_enter"], function);
     let restore = module.declare_func_in_func(helpers["__joky_float_env_restore"], function);
@@ -253,7 +339,6 @@ fn isolate_body<M: Module>(
     b.ins().return_(&values);
     b.seal_all_blocks();
     b.finalize(module.target_config());
-    Ok(())
 }
 
 #[cfg(test)]
@@ -285,6 +370,144 @@ mod tests {
     }
     extern "C" fn dirty() {
         testing::hostile();
+    }
+
+    // Exercise a hostile host that reenters an address-taken generated entry.
+    // Return a sentinel on an ABI violation rather than unwinding through C.
+    unsafe extern "C" fn reenter(target: usize, value: u64) -> u64 {
+        testing::hostile();
+        let saved = testing::state();
+        let call: unsafe extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(target) };
+        let result = unsafe { call(value) };
+        if testing::state() == saved {
+            result
+        } else {
+            0
+        }
+    }
+
+    #[test]
+    fn float_environment_private_calls_share_guards_but_addresses_and_reentry_do_not() {
+        for level in ["none", "speed", "speed_and_size"] {
+            for floating in [false, true] {
+                for route in 0..3 {
+                    let mut builder = JITBuilder::with_flags(
+                        &[("opt_level", level)],
+                        cranelift_module::default_libcall_names(),
+                    )
+                    .unwrap();
+                    builder.symbol("__joky_float_env_enter", counted_enter as *const u8);
+                    builder.symbol("__joky_float_env_reset", counted_reset as *const u8);
+                    builder.symbol("__joky_float_env_restore", counted_restore as *const u8);
+                    builder.symbol("dirty", dirty as *const u8);
+                    builder.symbol("reenter", reenter as *const u8);
+                    let mut module = JITModule::new(builder);
+                    let helpers = super::super::lower::declare_helpers(&mut module).unwrap();
+                    let effects = Effects::runtime_helpers(&helpers);
+                    let mut signature = module.make_signature();
+                    signature.params.push(AbiParam::new(types::I64));
+                    signature.returns.push(AbiParam::new(types::I64));
+                    let ids: Vec<_> = ["leaf", "middle", "root"]
+                        .iter()
+                        .map(|name| {
+                            module
+                                .declare_function(name, Linkage::Export, &signature)
+                                .unwrap()
+                        })
+                        .collect();
+                    let bodies = ids
+                        .iter()
+                        .map(|&id| (id, module.declare_anonymous_function(&signature).unwrap()))
+                        .collect();
+                    let dirty = module
+                        .declare_function("dirty", Linkage::Import, &module.make_signature())
+                        .unwrap();
+                    let mut host_signature = signature.clone();
+                    host_signature
+                        .params
+                        .insert(0, AbiParam::new(module.target_config().pointer_type()));
+                    let host = module
+                        .declare_function("reenter", Linkage::Import, &host_signature)
+                        .unwrap();
+                    for (index, &id) in ids.iter().enumerate() {
+                        let mut ctx = module.make_context();
+                        ctx.func.signature = signature.clone();
+                        let dirty = module.declare_func_in_func(dirty, &mut ctx.func);
+                        let host = module.declare_func_in_func(host, &mut ctx.func);
+                        let callee = module
+                            .declare_func_in_func(ids[index.saturating_sub(1)], &mut ctx.func);
+                        let indirect = ctx.func.import_signature(signature.clone());
+                        let mut frontend = FunctionBuilderContext::new();
+                        let mut b = FunctionBuilder::new(&mut ctx.func, &mut frontend);
+                        let entry = b.create_block();
+                        b.append_block_params_for_function_params(entry);
+                        b.switch_to_block(entry);
+                        let input = b.block_params(entry)[0];
+                        let result = if index == 0 {
+                            b.ins().call(dirty, &[]);
+                            if floating {
+                                let value = b.ins().bitcast(
+                                    types::F64,
+                                    cranelift_codegen::ir::MemFlagsData::new(),
+                                    input,
+                                );
+                                let half_ulp = b.ins().f64const(f64::from_bits(0x3ca0000000000000));
+                                let sum = b.ins().fadd(value, half_ulp);
+                                b.ins().bitcast(
+                                    types::I64,
+                                    cranelift_codegen::ir::MemFlagsData::new(),
+                                    sum,
+                                )
+                            } else {
+                                b.ins().iadd_imm_s(input, 1)
+                            }
+                        } else {
+                            let call = if index == 2 && route != 0 {
+                                let address = b
+                                    .ins()
+                                    .func_addr(module.target_config().pointer_type(), callee);
+                                if route == 1 {
+                                    b.ins().call_indirect(indirect, address, &[input])
+                                } else {
+                                    b.ins().call(host, &[address, input])
+                                }
+                            } else {
+                                b.ins().call(callee, &[input])
+                            };
+                            b.inst_results(call)[0]
+                        };
+                        b.ins().return_(&[result]);
+                        b.seal_all_blocks();
+                        b.finalize(module.target_config());
+                        assert!(
+                            define(&mut module, &mut ctx, id, &helpers, &effects, &bodies).unwrap()
+                        );
+                    }
+                    module.finalize_definitions().unwrap();
+                    let call: unsafe extern "C" fn(u64) -> u64 =
+                        unsafe { std::mem::transmute(module.get_finalized_function(ids[2])) };
+                    let _restore = Guard::enter();
+                    testing::hostile();
+                    let saved = testing::state();
+                    ENTERS.with(|n| n.set(0));
+                    RESTORES.with(|n| n.set(0));
+                    RESETS.with(|n| n.set(0));
+                    let input = if floating { 1.0f64.to_bits() } else { 41 };
+                    let expected = if floating { 1.0f64.to_bits() } else { 42 };
+                    assert_eq!(
+                        unsafe { call(input) },
+                        expected,
+                        "{level}/{floating}/{route}"
+                    );
+                    assert_eq!(testing::state(), saved);
+                    let guards = 1 + usize::from(route != 0);
+                    ENTERS.with(|n| assert_eq!(n.get(), guards));
+                    RESTORES.with(|n| assert_eq!(n.get(), guards));
+                    RESETS.with(|n| assert_eq!(n.get(), guards));
+                    unsafe { module.free_memory() };
+                }
+            }
+        }
     }
 
     #[test]

@@ -269,6 +269,21 @@ pub(crate) fn compile<M: Module>(
             .map_err(|error| compile_error(error.to_string()))?;
         ids.insert(name.clone(), id);
     }
+    // Runtime-backed definitions have private direct-call bodies. All published
+    // IDs and function addresses retain the protected entry, including CPS
+    // descriptors and Drop hooks. Scalar-only objects keep their runtime-free ABI.
+    let mut float_bodies = HashMap::new();
+    for name in &names {
+        let info = &functions[*name];
+        if (plan.bodies.contains_key(*name) || adapters.contains_key(*name))
+            && (info.needs_arena || info.suspends)
+        {
+            let body = module
+                .declare_anonymous_function(&lower::signature(module, info))
+                .map_err(|e| compile_error(e.to_string()))?;
+            float_bodies.insert(ids[*name], body);
+        }
+    }
     let mut instance_ids = HashMap::new();
     for name in &names {
         if plan.functions[*name].instance_entry {
@@ -512,11 +527,15 @@ pub(crate) fn compile<M: Module>(
                 }
             }
             builder.finalize(target);
-            float_env::instrument(module, &mut ctx.func, &ids, &float_effects)
-                .map_err(|e| compile_error(e.to_string()))?;
-            module
-                .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(format!("{e:?}")))?;
+            float_env::define(
+                module,
+                &mut ctx,
+                ids[name],
+                &ids,
+                &float_effects,
+                &float_bodies,
+            )
+            .map_err(|e| compile_error(e.to_string()))?;
             requires_runtime = true;
             continue;
         }
@@ -594,11 +613,15 @@ pub(crate) fn compile<M: Module>(
             );
             builder.finalize(target);
         }
-        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids, &float_effects)
-            .map_err(|e| compile_error(e.to_string()))?;
-        module
-            .define_function(ids[name], &mut ctx)
-            .map_err(|e| compile_error(format!("Failed to define {name}: {e:?}")))?;
+        requires_runtime |= float_env::define(
+            module,
+            &mut ctx,
+            ids[name],
+            &ids,
+            &float_effects,
+            &float_bodies,
+        )
+        .map_err(|e| compile_error(format!("Failed to define {name}: {e:?}")))?;
         requires_runtime |= info.suspends
             || info.may_fail
             || plan.bodies.get(name).is_some_and(|body| body.has_buffers());

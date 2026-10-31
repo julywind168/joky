@@ -314,6 +314,8 @@ JIT／AOT `opt_level=speed` 的实验结果、浮点正确性阻碍及 0.137.1 �
 [CPU 与等待路径采样](reports/chat-cpu-profile-2026-10-31.md)。
 全范围切片复用后的预算回归、长窗口性能和存储保留量见
 [全范围切片复用](reports/chat-full-slice-2026-10-31.md)。
+随后让已知内部直接调用共享浮点保护，边界回归与性能对照见
+[内部直接调用共享浮点保护](reports/chat-fp-boundaries-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 
