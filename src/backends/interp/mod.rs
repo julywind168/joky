@@ -244,6 +244,7 @@ struct BytecodeFunction {
 
 #[derive(Clone)]
 pub(crate) struct BytecodeModule {
+    request_contracts: crate::core::script::RequestContracts,
     _parallel_charge: Option<Arc<crate::runtime::parallel::Lease>>,
     pub(crate) parallel: crate::core::ir::parallel::Effects,
     parallel_hosts: HashMap<String, crate::runtime::parallel::Host>,
@@ -282,6 +283,11 @@ pub(crate) struct FrozenEntry {
     callees: Vec<FrozenCallee>,
 }
 impl BytecodeModule {
+    pub(crate) fn request_contract(&self, name: &str) -> Option<(&str, &str)> {
+        self.request_contracts
+            .get(name, self.functions.iter().map(|(name, f)| (name, &f.info)))
+    }
+
     pub(crate) fn freeze(&self, name: &str) -> Result<FrozenEntry, Error> {
         self.parallel.require_packet(name)?;
         let function = self
@@ -358,6 +364,7 @@ impl FrozenEntry {
             .collect::<Result<_, Error>>()?;
         let (task_targets, task_entries) = task_entries(&callees)?;
         Ok(Rc::new(BytecodeModule {
+            request_contracts: Default::default(),
             _parallel_charge: charge,
             parallel: Default::default(),
             parallel_hosts: HashMap::new(),
@@ -462,6 +469,7 @@ pub(crate) fn compile(
         .collect();
     let (task_targets, task_entries) = task_entries(&callees)?;
     Ok(BytecodeModule {
+        request_contracts: Default::default(),
         _parallel_charge: None,
         parallel: crate::core::ir::parallel::analyse(
             &plan,

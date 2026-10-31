@@ -275,3 +275,49 @@ fn root(_:Unit) @suspends ->Int32 {
         assert_eq!(error.code(), crate::ErrorCode::NotFound);
     }
 }
+
+#[test]
+fn script_request_contracts_follow_module_versions_and_recheck_values() {
+    fn finish(
+        mut task: crate::runtime::suspension::Continuation,
+        layout: Option<(usize, usize)>,
+    ) -> Vec<u64> {
+        while task.flat_result(layout).is_none() {
+            task.resume().unwrap();
+        }
+        task.flat_result(layout).unwrap()
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        let source = "struct Input { value:Bool }\n\
+            fn echo(input:Input) @suspends ->Input {input}";
+        vm.load_source(source).unwrap();
+        let old_contract = domain_schema(&vm.function_signature("echo").unwrap().ret).unwrap();
+        let prepare = |vm: &VmEngine, contract: &str, word| {
+            vm.prepare_script_call("echo", contract, contract, &[word])
+        };
+        let (old_task, old_layout) = prepare(&vm, &old_contract, 1).unwrap();
+        // A warm contract cache must never substitute for packet validation.
+        assert!(prepare(&vm, &old_contract, 2).is_err());
+        assert!(vm
+            .prepare_script_call("echo", &old_contract, "scalar:Bool", &[1])
+            .is_err());
+        vm.load_source(&source.replace("value:Bool", "value:Int32"))
+            .unwrap();
+        let new_contract = domain_schema(&vm.function_signature("echo").unwrap().ret).unwrap();
+        assert_ne!(old_contract, new_contract);
+        assert!(prepare(&vm, &old_contract, 1).is_err());
+        let (task, layout) = prepare(&vm, &new_contract, 42).unwrap();
+        assert_eq!(finish(task, layout), [42]);
+        assert!(vm.load_source("fn broken(").is_err());
+        let (task, layout) = prepare(&vm, &new_contract, 43).unwrap();
+        assert_eq!(finish(task, layout), [43]);
+        assert_eq!(finish(old_task, old_layout), [1]);
+        // Returning to a previous schema creates another independent module.
+        vm.load_source(source).unwrap();
+        assert!(prepare(&vm, &new_contract, 1).is_err());
+        let (task, layout) = prepare(&vm, &old_contract, 0).unwrap();
+        assert_eq!(finish(task, layout), [0]);
+        assert!(prepare(&vm, &old_contract, 2).is_err());
+    }
+}

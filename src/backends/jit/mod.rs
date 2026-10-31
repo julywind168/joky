@@ -24,6 +24,7 @@ pub(crate) struct CompiledFunction {
 
 /// Contains code and export metadata, never compilation contexts or source ASTs.
 pub(crate) struct CompiledModule {
+    pub(crate) request_contracts: crate::core::script::RequestContracts,
     pub version: ModuleId,
     pub files: Option<crate::runtime::fs::FileService>,
     pub sources: std::sync::Arc<crate::SourceMap>,
@@ -52,6 +53,7 @@ impl CompiledModule {
         owner: Rc<dyn Any>,
     ) -> Self {
         Self {
+            request_contracts: Default::default(),
             files: None,
             version: ModuleId(1),
             sources,
@@ -74,6 +76,7 @@ impl CompiledModule {
         owner: Rc<dyn Any>,
     ) -> Self {
         Self {
+            request_contracts: Default::default(),
             files: None,
             version: ModuleId(0),
             sources: Default::default(),
@@ -276,6 +279,7 @@ pub(crate) fn compile(
         })
         .collect();
     Ok(CompiledModule {
+        request_contracts: Default::default(),
         parallel_entries: compiled
             .parallel_entries
             .into_iter()

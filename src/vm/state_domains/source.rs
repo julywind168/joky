@@ -572,9 +572,7 @@ unsafe fn wait(
                     let (input, output, extra) = if value_request {
                         if !info.suspends
                             || info.signature.params.len() != 1
-                            || crate::core::script::domain_schema(&info.signature.params[0])
-                                .is_none()
-                            || crate::core::script::domain_schema(&info.signature.ret).is_none()
+                            || module.request_contract(name).is_none()
                         {
                             return Err(invalid("Invalid domain request value contract"));
                         }

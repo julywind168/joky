@@ -1,6 +1,44 @@
 //! Stable, bounded contracts for independently compiled Script entries.
 use crate::Type;
 
+/// Contracts belong to one immutable executable module. Reloads construct a new
+/// cache, while suspended calls retain their original module and contracts.
+#[derive(Clone, Default)]
+pub(crate) struct RequestContracts(
+    std::sync::OnceLock<std::collections::HashMap<String, (String, String)>>,
+);
+
+impl RequestContracts {
+    pub(crate) fn get<'a>(
+        &self,
+        name: &str,
+        entries: impl Iterator<Item = (&'a String, &'a crate::core::ir::FunctionInfo)>,
+    ) -> Option<(&str, &str)> {
+        self.0
+            .get_or_init(|| {
+                entries
+                    .filter_map(|(name, info)| {
+                        if !info.domain_request_entry
+                            || !info.suspends
+                            || info.signature.params.len() != 1
+                        {
+                            return None;
+                        }
+                        Some((
+                            name.clone(),
+                            (
+                                domain_schema(&info.signature.params[0])?,
+                                domain_schema(&info.signature.ret)?,
+                            ),
+                        ))
+                    })
+                    .collect()
+            })
+            .get(name)
+            .map(|(input, output)| (input.as_str(), output.as_str()))
+    }
+}
+
 pub(crate) const MAX_LANES: usize = 64;
 const MAX_DEPTH: usize = 8;
 const MAX_MEMBERS: usize = 64;

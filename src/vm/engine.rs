@@ -1719,6 +1719,19 @@ fn abi_error(code: ErrorCode, message: impl Into<String>) -> Error {
 }
 
 impl LoadedModule {
+    pub(super) fn request_contract(&self, name: &str) -> Option<(&str, &str)> {
+        match self {
+            Self::Jit(module) => module.request_contracts.get(
+                name,
+                module
+                    .request_entries
+                    .iter()
+                    .map(|(name, f)| (name, &f.info)),
+            ),
+            Self::Interpreter(module) => module.request_contract(name),
+        }
+    }
+
     fn check_script_contract(&self, name: &str, input: &str, output: &str) -> Result<(), Error> {
         let info = match self {
             Self::Jit(module) => module.request_entries.get(name).map(|f| &f.info),
@@ -1728,10 +1741,7 @@ impl LoadedModule {
             info.suspends
                 && info.domain_request_entry
                 && info.signature.params.len() == 1
-                && crate::core::script::domain_schema(&info.signature.params[0]).as_deref()
-                    == Some(input)
-                && crate::core::script::domain_schema(&info.signature.ret).as_deref()
-                    == Some(output)
+                && self.request_contract(name) == Some((input, output))
         }) {
             Ok(())
         } else {
@@ -1764,10 +1774,7 @@ impl LoadedModule {
         })?;
         if !info.suspends
             || info.signature.params.len() != 1
-            || crate::core::script::domain_schema(&info.signature.params[0]).as_deref()
-                != Some(input_schema)
-            || crate::core::script::domain_schema(&info.signature.ret).as_deref()
-                != Some(result_schema)
+            || self.request_contract(name) != Some((input_schema, result_schema))
             || !info.domain_request_entry
         {
             return Err(runtime_error(
@@ -1832,8 +1839,7 @@ impl LoadedModule {
         if !info.domain_request_entry
             || !info.suspends
             || info.signature.params.len() != 1
-            || crate::core::script::domain_schema(&info.signature.params[0]).is_none()
-            || crate::core::script::domain_schema(&info.signature.ret).is_none()
+            || self.request_contract(name).is_none()
         {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,

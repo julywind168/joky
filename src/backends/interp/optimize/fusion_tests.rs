@@ -104,6 +104,7 @@ fn fused_immediate_comparisons_and_materialized_bools_agree() {
 
 fn empty_module() -> BytecodeModule {
     BytecodeModule {
+        request_contracts: Default::default(),
         _parallel_charge: None,
         parallel: Default::default(),
         parallel_hosts: Default::default(),
