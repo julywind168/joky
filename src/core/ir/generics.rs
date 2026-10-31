@@ -318,6 +318,17 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Result<(Vec<crate::core::types::GenericArgument>, FunctionSignature), Error> {
+        self.generic_signature_expected(expr, vars, functions, types, None)
+    }
+
+    pub(super) fn generic_signature_expected(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<(Vec<crate::core::types::GenericArgument>, FunctionSignature), Error> {
         let Expr::Call {
             callee,
             type_args,
@@ -364,6 +375,21 @@ impl FunctionPlan {
         }
         drop(context);
         let mut inference = seed_inference(&template.type_params, type_args, *span)?;
+        if let Some(expected) = expected {
+            if unresolved(
+                &template.ret_ty,
+                &template.type_params,
+                &inference.substitutions,
+            ) {
+                unify(
+                    &template.ret_ty,
+                    expected,
+                    &template.type_params,
+                    &mut inference.substitutions,
+                    *span,
+                )?;
+            }
+        }
         // First use already known argument types, then default only unresolved
         // parameters. Hints never evaluate arguments or move source effects.
         inference_passes(&mut inference, true, |inference| {
@@ -738,6 +764,17 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Result<(String, FunctionInfo), Error> {
+        self.resolve_callee_expected(expr, vars, functions, types, None)
+    }
+
+    pub(super) fn resolve_callee_expected(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<(String, FunctionInfo), Error> {
         let Expr::Call {
             callee,
             type_args,
@@ -764,7 +801,8 @@ impl FunctionPlan {
             .templates
             .contains_key(name.as_ref().unwrap())
         {
-            let (arguments, signature) = self.generic_signature(expr, vars, functions, types)?;
+            let (arguments, signature) =
+                self.generic_signature_expected(expr, vars, functions, types, expected)?;
             let name = if matches!(
                 info.compiler_intrinsic,
                 Some(

@@ -2935,3 +2935,14 @@ fn mutable_parameters_run_in_standalone_aot() {
     );
     work.assert_native("mutable.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn contextual_calls_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "context.jk",
+        include_str!("../fixtures/contextual_calls.jk"),
+    );
+    work.assert_native("context.jk", &[], b"", 0);
+}

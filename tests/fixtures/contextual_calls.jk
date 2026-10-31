@@ -1,0 +1,49 @@
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/task
+
+fn empty<T>() -> Array<T> { Array.new() }
+fn identity<T>(value: T) -> T { value }
+fn consume(values: Array<Int32>) -> UInt64 { values.len() }
+fn nested() -> Array<Int32> { identity(empty()) }
+fn made<T>(count: &mut Int32) -> Array<T> {
+    *count += 1
+    Array.new()
+}
+fn apply<T, U, F: FnOnce(T) -> U>(value: T, transform: F) -> U { transform(value) }
+fn delayed<T>(value: T) @suspends -> T { task.yield_now(); value }
+
+type Numbers = Array<Int64>
+struct Factory { value: Int32 }
+impl Factory {
+    fn array<T>(&self) -> Array<T> { empty() }
+}
+fn compute() -> Int32 {
+    var values: Array<Int32> = Array.new()
+    values.push(42)
+    var names: Map<Int32, String> = Map.new()
+    names.insert(1, "context")
+    let wide: Numbers = empty()
+    let nested_values = nested()
+    let factory = Factory { value: 1 }
+    let members: Array<String> = factory.array()
+    assert(values[0] == 42 && names.len() == 1, "container context")
+    assert(wide.len() == 0 && nested_values.len() == 0 && members.len() == 0, "nested context")
+    assert(consume(empty()) == 0, "parameter context")
+    var count = 0
+    let once: Array<Int32> = identity(made(&mut count))
+    assert(count == 1 && once.is_empty(), "evaluate once")
+    let answer: UInt64 = apply(20, |n| { uint64(n) + 22 })
+    assert(answer == 42, "callable context")
+    values[0]
+}
+fn pending() @suspends -> Int32 {
+    var count = 0
+    let values: Array<Int32> = delayed(made(&mut count))
+    assert(count == 1 && values.is_empty(), "pending context")
+    delayed(identity(42))
+}
+fn main() @suspends {
+    assert(compute() == 42, "contextual calls")
+    assert(pending() == 42, "contextual suspension")
+}

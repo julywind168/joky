@@ -843,9 +843,12 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Option<Flow>, Error> {
         if let Some(call) = self.member_call(expr, vars, functions, types)? {
-            return self.expr(&call, vars, functions, suspends, types).map(Some);
+            return self
+                .expr_expected(&call, vars, functions, suspends, types, expected)
+                .map(Some);
         }
         if let Some(constant) = self.associated_constant(expr, vars, types)? {
             let value = constant.value.borrow().clone().ok_or_else(|| {

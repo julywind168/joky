@@ -559,3 +559,33 @@ fn generic_copy_contracts_reject_invalid_templates_before_instantiation() {
         assert!(error.message().contains(message), "{source}: {error}");
     }
 }
+
+#[test]
+fn contextual_calls_infer_results_without_replaying_arguments() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/contextual_calls.jk"
+        ))
+        .unwrap();
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        let mut task = vm.call_async("pending", &[]).unwrap();
+        while !task.is_finished() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+    }
+}
+
+#[test]
+fn contextual_calls_reject_missing_conflicting_and_unsatisfied_types() {
+    for source in [
+        "import joky/array.{type Array} fn main() { var a = Array.new(); a.push(1) }",
+        "fn identity<T>(value: T) -> T { value } fn main() { let x: Int64 = identity(true) }",
+        "fn identity<T>(value: T) -> T { value } fn main() { let x: Int64 = identity::<Bool>(true) }",
+        "import joky/array.{type Array} fn empty<T: Copy>() -> Array<T> { Array.new() } fn main() { let a: Array<String> = empty() }",
+    ] {
+        let error = super::support::frontend_error(source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), ErrorCode::TypeMismatch, "{source}: {error}");
+    }
+}

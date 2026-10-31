@@ -87,12 +87,13 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         // Argument temporaries live through the complete call, including later
         // argument evaluation, and end before the caller's next expression.
         self.local_scopes.push(Vec::new());
         self.argument_scopes.push(Default::default());
-        let flow = self.call_expr_inner(expr, vars, functions, suspends, types)?;
+        let flow = self.call_expr_inner(expr, vars, functions, suspends, types, expected)?;
         let temporary = self.argument_scopes.pop().unwrap();
         let locals = self.local_scopes.pop().unwrap();
         // Ordinary bindings introduced by argument sequences belong to the
@@ -204,6 +205,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         if let Expr::Invoke { callee, args, span } = expr {
             return self.invoke_expr(callee, args, *span, vars, functions, suspends, types);
@@ -344,7 +346,7 @@ impl FunctionPlan {
             self.emit(Op::Convert(dst.clone(), value.unwrap()));
             return Ok(Flow::Value(Some(dst)));
         }
-        let (name, info) = self.resolve_callee(expr, vars, functions, types)?;
+        let (name, info) = self.resolve_callee_expected(expr, vars, functions, types, expected)?;
         if let Some(intrinsic @ (CompilerIntrinsic::MemReplace | CompilerIntrinsic::MemSwap)) =
             &info.compiler_intrinsic
         {

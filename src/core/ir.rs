@@ -2055,7 +2055,7 @@ impl FunctionPlan {
                 return Ok(flow);
             }
         }
-        if let Some(flow) = self.member_expr(expr, vars, functions, suspends, types)? {
+        if let Some(flow) = self.member_expr(expr, vars, functions, suspends, types, expected)? {
             return Ok(flow);
         }
         if let Some(constructor) = self.enum_constructor(expr, vars)? {
@@ -2580,7 +2580,7 @@ impl FunctionPlan {
             }
             Expr::MethodCall(_) => unreachable!("method calls resolve before expression planning"),
             Expr::Invoke { .. } | Expr::Call { .. } => {
-                self.call_expr(expr, vars, functions, suspends, types)
+                self.call_expr(expr, vars, functions, suspends, types, expected)
             }
             Expr::Concurrent { .. } => self.concurrent_expr(expr, vars, functions, suspends, types),
             Expr::Isolate { .. } => {
