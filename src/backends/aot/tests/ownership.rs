@@ -19,12 +19,13 @@ fn drop_hooks_execute_in_standalone_native_code() {
         static int32_t events[64];
         static int count;
         void record_drop(int32_t value) { if (count < 64) events[count++] = value; }
-        extern int32_t drop_scope(void), drop_moves(void), drop_replace(void), drop_loops(void);
+        extern int32_t drop_reused_registration(void), drop_scope(void), drop_moves(void), drop_replace(void), drop_loops(void);
         extern int32_t drop_failure(void), drop_early(void), drop_nested(void), drop_generic(void);
         extern int32_t drop_discard(void), drop_partial(void), drop_failing_hook(void), drop_failed_return(void);
         extern int32_t drop_mutated_child(void), drop_reuse_budget(void), drop_leading_owner(void);
         int main(void) {
-            struct Case { int32_t (*call)(void); int failure; int count; int32_t events[3]; } cases[] = {
+            struct Case { int32_t (*call)(void); int failure; int count; int32_t events[4]; } cases[] = {
+                {drop_reused_registration, 1, 4, {1, 3, 2, 4}},
                 {drop_scope, 0, 2, {3, 1}}, {drop_moves, 0, 1, {1}},
                 {drop_replace, 0, 2, {1, 3}}, {drop_loops, 0, 3, {0, 1, 2}},
                 {drop_failure, 1, 2, {2, 1}}, {drop_early, 0, 2, {2, 1}},

@@ -383,7 +383,7 @@ mod tests {
                             keep_alive: None,
                             storage_size: 0,
                             storage: None,
-                            owners: vec![None],
+                            owners: [None].into(),
                             hooks: vec![(
                                 0,
                                 Hook::Native {
@@ -444,7 +444,7 @@ mod tests {
                         keep_alive: None,
                         storage_size: 0,
                         storage: None,
-                        owners: vec![None],
+                        owners: [None].into(),
                         hooks: vec![(
                             0,
                             Hook::Native {

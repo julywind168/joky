@@ -147,3 +147,13 @@ fn drop_reuse_budget() -> Int32 {
     released.release()
     42
 }
+
+// Failure must use declaration order after a moved binding is initialized again.
+fn drop_reused_registration() -> Int32 {
+    var first = resource(1)
+    let middle = resource(2)
+    let last = resource(3)
+    let moved = first
+    first = resource(4)
+    1 / 0
+}

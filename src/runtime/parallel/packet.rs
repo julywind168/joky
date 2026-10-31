@@ -502,7 +502,7 @@ impl Packet {
                 keep_alive: None,
                 storage_size: 0,
                 storage: None,
-                owners: vec![None; indices.len()],
+                owners: (0..indices.len()).map(|_| None).collect(),
                 hooks: vec![],
             };
             for (index, owner) in &mut self.owners {

@@ -1395,7 +1395,7 @@ impl VmEngine {
                                     keep_alive: None,
                                     storage_size: 0,
                                     storage: None,
-                                    owners: vec![Some(owner)],
+                                    owners: [Some(owner)].into(),
                                     hooks: vec![],
                                 },
                             );

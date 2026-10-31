@@ -32,6 +32,7 @@ fn drop_hooks_cover_scopes_moves_replacement_and_failure() {
         let vm = vm(mode);
         for (entry, expected) in [
             ("drop_scope", vec![3, 1]),
+            ("drop_reused_registration", vec![1, 3, 2, 4]),
             ("drop_moves", vec![1]),
             ("drop_replace", vec![1, 3]),
             ("drop_loops", vec![0, 1, 2]),
@@ -56,6 +57,7 @@ fn drop_hooks_cover_scopes_moves_replacement_and_failure() {
             let result = vm.call_int32_0(entry);
             if [
                 "drop_failure",
+                "drop_reused_registration",
                 "drop_partial",
                 "drop_failing_hook",
                 "drop_failed_return",

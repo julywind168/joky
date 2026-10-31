@@ -169,7 +169,7 @@ impl Payload {
             keep_alive: None,
             storage_size: size,
             storage: Some((data.as_ptr(), descriptor)),
-            owners: vec![],
+            owners: Default::default(),
             hooks: vec![],
         })
     }

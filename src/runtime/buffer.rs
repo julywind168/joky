@@ -224,7 +224,7 @@ impl ElementCleanup {
             keep_alive: None,
             storage_size: 0,
             storage: Some((data, self.clone())),
-            owners: vec![],
+            owners: Default::default(),
             hooks: vec![],
         }
     }

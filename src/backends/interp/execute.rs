@@ -914,7 +914,7 @@ impl Execution {
                         keep_alive: None,
                         storage_size: 0,
                         storage: None,
-                        owners: vec![Some(owner.as_ptr())],
+                        owners: [Some(owner.as_ptr())].into(),
                         hooks: vec![],
                     },
                 );
@@ -2165,7 +2165,7 @@ fn run_frame(
                     keep_alive: None,
                     storage_size: 0,
                     storage: None,
-                    owners: Vec::new(),
+                    owners: Default::default(),
                     hooks: vec![],
                 };
                 for owner in &owners {

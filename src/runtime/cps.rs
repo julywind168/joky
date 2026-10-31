@@ -1053,7 +1053,7 @@ pub unsafe extern "C" fn joky_cps_set_text_input_v2(
             keep_alive: None,
             storage_size: 0,
             storage: None,
-            owners: vec![Some(owner)],
+            owners: [Some(owner)].into(),
             hooks: vec![],
         },
     );

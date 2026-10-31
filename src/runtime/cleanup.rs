@@ -4,6 +4,9 @@ use super::{arena::Arena, buffer::Buffer};
 use crate::Error;
 use std::collections::BTreeMap;
 
+mod owners;
+use owners::Owners;
+
 pub(crate) type Callback = unsafe extern "C" fn(*mut u8, *mut Arena);
 
 pub(crate) type InterpretedCallback = std::rc::Rc<dyn Fn(*mut u8, &mut Arena) -> Result<(), Error>>;
@@ -98,7 +101,7 @@ pub(crate) struct Entry {
     /// Borrowed storage is read when cleanup runs, after enclosing Drop hooks.
     pub storage: Option<(*mut u8, super::buffer::ElementCleanup)>,
     // Handle-only entries have no inline storage or source-defined Drop hooks.
-    pub owners: Vec<Option<*mut Buffer>>,
+    pub owners: Owners,
     pub hooks: Vec<(usize, Hook)>,
 }
 
@@ -140,10 +143,44 @@ impl Entry {
     }
 }
 
+// The first live entry needs no tree node. Extra simultaneous entries retain
+// logarithmic lookup; declaration order remains exclusively in Cleanups::order.
+#[derive(Default)]
+struct Entries {
+    first: Option<(usize, Entry)>,
+    rest: BTreeMap<usize, Entry>,
+}
+impl Entries {
+    fn get_mut(&mut self, slot: &usize) -> Option<&mut Entry> {
+        if let Some((key, entry)) = &mut self.first {
+            if key == slot {
+                return Some(entry);
+            }
+        }
+        self.rest.get_mut(slot)
+    }
+    fn insert(&mut self, slot: usize, entry: Entry) {
+        if let Some(previous) = self.get_mut(&slot) {
+            *previous = entry;
+        } else if self.first.is_none() {
+            self.first = Some((slot, entry));
+        } else {
+            self.rest.insert(slot, entry);
+        }
+    }
+    fn remove(&mut self, slot: &usize) -> Option<Entry> {
+        if self.first.as_ref().is_some_and(|(key, _)| key == slot) {
+            self.first.take().map(|(_, entry)| entry)
+        } else {
+            self.rest.remove(slot)
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Cleanups {
     pub(crate) places: super::place::Places,
-    entries: BTreeMap<usize, Entry>,
+    entries: Entries,
     order: Vec<usize>,
 }
 
@@ -215,7 +252,7 @@ impl Cleanups {
                 keep_alive: entry.keep_alive.clone(),
                 storage_size: entry.storage_size,
                 storage: Some((*data, selected)),
-                owners: vec![],
+                owners: Default::default(),
                 hooks: vec![],
             };
         }
@@ -254,7 +291,7 @@ impl Cleanups {
         src: usize,
         arena: &mut Arena,
     ) -> Result<(), Error> {
-        let storage = self.entries[&slot].storage.clone();
+        let storage = self.entries.get_mut(&slot).unwrap().storage.clone();
         self.take_fields(slot, first, count).run(arena)?;
         let mut next = self.take(src).expect("replacement owner");
         if let Some(storage) = storage {
@@ -291,17 +328,18 @@ impl Cleanups {
         width: usize,
         arena: &mut Arena,
     ) -> Result<(), Error> {
-        let slots: Vec<_> = self
-            .order
-            .iter()
-            .rev()
-            .copied()
-            .filter(|slot| (start..start + width).contains(slot))
-            .collect();
+        if width == 1 {
+            return self.run(start, arena);
+        }
         let mut error = None;
-        for slot in slots {
-            if let Err(next) = self.run(slot, arena) {
-                error.get_or_insert(next);
+        // run removes entries but leaves declaration order intact. Copy each key
+        // before callbacks; no temporary list or entry borrow spans a destructor.
+        for index in (0..self.order.len()).rev() {
+            let slot = self.order[index];
+            if (start..start + width).contains(&slot) {
+                if let Err(next) = self.run(slot, arena) {
+                    error.get_or_insert(next);
+                }
             }
         }
         error.map_or(Ok(()), Err)
@@ -346,7 +384,7 @@ unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut 
             keep_alive: None,
             storage_size: 0,
             storage: None,
-            owners: vec![std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr)],
+            owners: [std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr)].into(),
             hooks: Vec::new(),
         },
     );
@@ -578,3 +616,6 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
         ("__joky_cleanup_finish_return", finish_return as *const u8),
     ]
 }
+
+#[cfg(test)]
+mod tests;
