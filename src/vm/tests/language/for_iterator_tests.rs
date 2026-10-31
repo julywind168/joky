@@ -363,3 +363,65 @@ fn iterator_adapters_cancel_at_resource_boundaries() {
 fn exhaustive_iterator_adapters_instruction_cancellation() {
     adapter_cancellation(CancellationSweep::EveryInstruction);
 }
+
+const SHARED_ADAPTERS: &str = include_str!("../../../../tests/fixtures/shared_combinators.jk");
+
+#[test]
+fn shared_combinators_preserve_sources_generic_composition_and_cleanup() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(SHARED_ADAPTERS)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+        assert!(vm
+            .call_unit_0("failed")
+            .unwrap_err()
+            .message()
+            .contains("shared predicate failed"));
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+#[test]
+fn shared_combinators_reject_storage_escape_conflicts_and_suspending_callbacks() {
+    for body in [
+        "fn bad() { var a = [\"a\"]; let cursor = a.iter_shared(); a.push(\"b\"); for _ in cursor {} }",
+        "fn bad() { let a = [\"a\"]; let cursor = a.iter_shared(); let copy = cursor; a.release(); for _ in copy {} }",
+        "fn bad() { var a = [\"a\"]; let (_, value) = iter.step_shared(a.iter_shared()); a.clear(); value.is_some(); }",
+        "fn bad() -> array.SharedIter<String> { let a = [\"a\"]; a.iter_shared() }",
+        "fn bad(a: Array<String>) -> array.SharedIter<String> { a.iter_shared() }",
+        "fn bad() { let a = [\"a\"]; let stored = [a.iter_shared()]; }",
+        "fn bad() { let a = [\"a\"]; alloc(a.iter_shared()); }",
+        "fn store<T: Copy>(value: T) { let saved = [value]; } fn bad() { let a = [\"a\"]; store(a.iter_shared()); }",
+        "fn store<T: Copy>(value: T) { alloc(value); } fn bad() { let a = [\"a\"]; store(a.iter_shared()); }",
+        "fn bad() { var a = [\"a\"]; let optional = Some(a.borrow_mut_ref(0)); }",
+        "fn leak(value: &Int32) -> Bool { alloc(value); true } fn bad() { let a = [1]; for _ in iter.filter_shared(a.iter_shared(), leak) {} }",
+        "fn delayed(value: &String) @suspends @noescape -> Bool { true } fn bad() { let a = [\"a\"]; for _ in iter.filter_shared(a.iter_shared(), delayed) {} }",
+        "fn bad() @suspends { let a = [\"a\"]; for _ in a.iter_shared() { task.yield_now() } }",
+    ] {
+        let source = format!("import joky/array.{{type Array}} import joky/iter import joky/task {body}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert!(matches!(error.code(), crate::ErrorCode::TypeMismatch | crate::ErrorCode::InvalidAssignment | crate::ErrorCode::InvalidCall), "{body}: {error}");
+    }
+}
+
+#[test]
+#[ignore = "exhaustive: cancel every shared adapter instruction"]
+fn exhaustive_shared_combinators_instruction_cancellation() {
+    let mut vm = VmEngine::new_interpreter();
+    vm.load_source(&format!(
+        "{SHARED_ADAPTERS}\nfn sweep() @suspends -> Int32 {{ compute() }}"
+    ))
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_cancellation(
+        &mut vm,
+        "sweep",
+        20_000,
+        CancellationSweep::EveryInstruction,
+        || {},
+        || LIVE.with(|n| n.get()),
+        || LIVE.with(|n| assert_eq!(n.get(), 0)),
+    );
+}

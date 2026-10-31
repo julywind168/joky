@@ -421,8 +421,12 @@ impl Type {
     pub(crate) fn is_copy_storage_value(&self) -> bool {
         self.is_copy_value() && !self.contains_buffers()
     }
+    /// Copy bounds grant duplication, not permission to retain a loan in storage.
+    pub(crate) fn is_copy_argument(&self) -> bool {
+        self.is_copy_storage_value() || self.is_scoped_shared_value()
+    }
     /// Shared owner references can travel in local aggregates and generic calls.
-    /// They remain ineligible for container/arena storage and Copy bounds.
+    /// They remain ineligible for container and arena storage.
     pub(crate) fn is_scoped_shared_value(&self) -> bool {
         self.is_copy_value()
             && self.contains_buffers()

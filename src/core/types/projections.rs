@@ -927,7 +927,7 @@ impl TypeRegistry {
             let Some(actual) = substitutions.get(&p.id) else {
                 return Ok(None);
             };
-            if (p.copy && !actual.is_copy_storage_value())
+            if (p.copy && !actual.is_copy_argument())
                 || !self.bounds_hold(&p.bounds, scope, actual, &substitutions)?
             {
                 return Ok(None);
@@ -1008,7 +1008,7 @@ impl TypeRegistry {
             .map_or(self.trait_environment.root.as_ref(), |(_, scope)| {
                 scope.as_ref()
             });
-        Ok((!parameter.copy || actual.is_copy_storage_value())
+        Ok((!parameter.copy || actual.is_copy_argument())
             && self.bounds_hold(&parameter.bounds, scope, actual, substitutions)?)
     }
 

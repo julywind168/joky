@@ -2979,3 +2979,35 @@ fn borrowed_queries_execute_in_standalone_aot() {
     );
     work.assert_native("queries.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn shared_combinators_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "shared.jk",
+        include_str!("../fixtures/shared_combinators.jk"),
+    );
+    work.assert_native("shared.jk", &["--no-prelude"], b"", 0);
+    work.write(
+        "adapters_example.jk",
+        include_str!("../../examples/iterator_adapters.jk"),
+    );
+    for args in [
+        vec!["run", "adapters_example.jk"],
+        vec!["run", "--interpreter", "adapters_example.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(
+            output.stdout,
+            b"0: 10\n1: 12\n2: 14\nAlice: 80\nBob: 90\nAlice\nBob\n4\n"
+        );
+    }
+    work.assert_native(
+        "adapters_example.jk",
+        &[],
+        b"0: 10\n1: 12\n2: 14\nAlice: 80\nBob: 90\nAlice\nBob\n4\n",
+        0,
+    );
+}

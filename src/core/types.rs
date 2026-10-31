@@ -158,7 +158,7 @@ impl TypeRegistry {
         match (p.kind, a) {
             (ParameterKind::Type, GenericArgument::Type(t)) => {
                 self.validate(t)?;
-                if p.copy && !t.is_copy_storage_value() {
+                if p.copy && !t.is_copy_argument() {
                     return Err(Error::new_with_code(
                         ErrorPhase::TypeCheck,
                         ErrorCode::TypeMismatch,

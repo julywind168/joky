@@ -1,0 +1,67 @@
+import joky/array.{type Array}
+import joky/check.{assert, panic}
+import joky/option.{type Option, Some, None}
+import joky/iter.{type SharedIterator, type SharedTake}
+
+fn step_shared() -> Int32 { panic("user shadow must not run") }
+fn prefix<I: Copy + SharedIterator>(input: I) -> SharedTake<I> { iter.take_shared(input, 2) }
+fn total_count<I: Copy + SharedIterator>(input: I) -> Int32 {
+    var total = 0
+    for _ in input { total += 1 }
+    total
+}
+struct Flicker { position: Int32 }
+impl SharedIterator for Flicker {
+    type Item = Int32
+    fn step(self) -> (Self, Option<Int32>) {
+        (Flicker { position: self.position + 1 }, if self.position == 1 { None } else { Some(self.position) })
+    }
+}
+fn keep(value: &String) @noescape -> Bool { value != "skip" }
+fn fail(value: &String) @noescape -> Bool { panic("shared predicate failed") }
+fn compute() -> Int32 {
+    var values = ["first", "skip", "last"]
+    var count = 0
+    for index, value in prefix(values.iter_shared()) {
+        assert(index == uint64(count), "shared loop index")
+        assert(value == if count == 0 { "first" } else { "skip" }, "ordered prefix")
+        count += 1
+    }
+    assert(count == 2 && values.len() == 3, "source survives")
+    var selected = 0
+    for value in iter.filter_shared(values.iter_shared(), keep) {
+        assert(value != "skip", "shared filter")
+        selected += 1
+    }
+    assert(selected == 2, "filter count")
+    assert(total_count(iter.take_shared(iter.filter_shared(values.iter_shared(), keep), 1)) == 1, "generic composition")
+    for _ in iter.take_shared(iter.filter_shared(values.iter_shared(), fail), 0) { panic("lazy take") }
+    let (cursor, a) = iter.step_shared(iter.take_shared(Flicker { position: 0 }, 3))
+    let (cursor, b) = iter.step_shared(cursor)
+    let (_, c) = iter.step_shared(cursor)
+    assert(a! == 0 && b.is_none() && c.is_none(), "fused take")
+    let (zipped, a) = iter.step_shared(iter.zip_shared(Flicker { position: 0 }, Flicker { position: 0 }))
+    let (zipped, b) = iter.step_shared(zipped)
+    let (_, c) = iter.step_shared(zipped)
+    assert(a.is_some() && b.is_none() && c.is_none(), "fused zip")
+    for value in iter.take_shared(values.iter_shared(), 0) { panic("take zero advanced") }
+    let other = ["a", "b"]
+    var paired = 0
+    for (left, right) in iter.zip_shared(values.iter_shared(), other.iter_shared()) {
+        assert(left != right, "zip references")
+        paired += 1
+    }
+    assert(paired == 2, "shorter zip")
+    let (cursor, first) = iter.step_shared(values.iter_shared())
+    let (_, second) = iter.step_shared(cursor)
+    assert(first! == "first" && second! == "skip", "element outlives next step")
+    for value in values.iter_shared() { assert(value == "first", "early exit"); break }
+    values.push("after")
+    assert(values.len() == 4, "borrow ends after traversal")
+    42
+}
+fn failed() {
+    let values = ["failure"]
+    for value in iter.filter_shared(values.iter_shared(), fail) { }
+}
+fn main() { assert(compute() == 42, "shared combinators") }

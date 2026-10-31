@@ -96,7 +96,7 @@ impl Traits {
     }
 
     pub fn check_bounds(&self, p: &TypeParameter, actual: &Type, span: Span) -> Result<(), Error> {
-        if p.copy && !actual.is_copy_storage_value() {
+        if p.copy && !actual.is_copy_argument() {
             return Err(type_error(
                 &span,
                 ErrorCode::TypeMismatch,

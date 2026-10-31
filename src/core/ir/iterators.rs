@@ -16,6 +16,20 @@ pub(super) fn paired_binding(value: &Expr) -> Option<&Expr> {
 }
 
 impl FunctionPlan {
+    fn is_shared_iterator(&self, ty: &Type) -> bool {
+        let context = self.generics.borrow();
+        let traits = &context.members.traits;
+        traits
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "joky/iter.SharedIterator")
+            .is_some_and(|definition| {
+                traits
+                    .satisfies(ty, definition.self_parameter.id)
+                    .unwrap_or(false)
+            })
+    }
+
     pub(super) fn iteration_input(
         &self,
         expr: &Expr,
@@ -76,6 +90,12 @@ impl FunctionPlan {
                 }
             }
         }
+        if self
+            .type_hint(value, vars, functions, types)
+            .is_some_and(|ty| self.is_shared_iterator(&ty))
+        {
+            return Some(value.clone());
+        }
         Some(Expr::Call {
             callee: "$joky_iter.into_iter".into(),
             type_args: vec![],
@@ -101,7 +121,59 @@ impl FunctionPlan {
         let [Expr::Unary { operand, .. }] = args.as_slice() else {
             return None;
         };
-        let Type::Reference(reference) = self.type_hint(operand, vars, functions, types)? else {
+        let input_type = self.type_hint(operand, vars, functions, types)?;
+        if self.is_shared_iterator(&input_type) {
+            let Expr::Ident { name, .. } = operand.as_ref() else {
+                return None;
+            };
+            let successor = format!("$shared_successor_{name}");
+            let item = format!("$shared_item_{name}");
+            let ident = |name: &str| Expr::Ident {
+                name: name.into(),
+                span,
+            };
+            return Some(Expr::Sequence {
+                exprs: vec![
+                    Expr::Destructure {
+                        pattern: BindingPattern::Tuple {
+                            elements: [successor.as_str(), item.as_str()]
+                                .into_iter()
+                                .map(|name| BindingPattern::Name {
+                                    name: name.into(),
+                                    span,
+                                })
+                                .collect(),
+                            span,
+                        },
+                        mutable: false,
+                        annotation: None,
+                        value: Box::new(Expr::Call {
+                            callee: "$joky_iter.step_shared".into(),
+                            type_args: vec![],
+                            args: vec![*operand.clone()],
+                            span,
+                        }),
+                        span,
+                    },
+                    Expr::Assign {
+                        name: name.clone(),
+                        value: Box::new(ident(&successor)),
+                        op: None,
+                        span,
+                    },
+                    Expr::Match {
+                        conditional: true,
+                        iteration: false,
+                        value: Box::new(ident(&item)),
+                        arms: arms.to_vec(),
+                        span,
+                    },
+                ],
+                trailing: true,
+                span,
+            });
+        }
+        let Type::Reference(reference) = input_type else {
             return None;
         };
         if !matches!(

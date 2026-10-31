@@ -64,6 +64,7 @@ impl<T> Array<T> {
     pub fn take_last(&mut self) -> T { take_last(self) }
     pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
     pub fn get_ref(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
+    pub fn iter_shared(&self) -> SharedIter<T> { iter_shared(self) }
     pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
     pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
     pub fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> { slice_mut(self, start, end) }
@@ -221,4 +222,18 @@ pub fn contains<T: BorrowEq>(values: &Array<T>, value: &T) -> Bool {
 
 pub fn get_ref<T>(values: &Array<T>, index: UInt64) -> Option<&T> {
     if index < len(values) { Some(borrow_ref(values, index)) } else { None }
+}
+
+// A composable shared traversal; the source owner remains outside the state.
+pub struct SharedIter<T> { values: &Array<T>, index: UInt64 }
+pub fn iter_shared<T>(values: &Array<T>) -> SharedIter<T> {
+    SharedIter { values, index: 0 }
+}
+impl<T> iteration.SharedIterator for SharedIter<T> {
+    type Item = &T
+    fn step(var self) -> (Self, Option<&T>) {
+        let value = get_ref(self.values, self.index)
+        if value.is_some() { self.index += 1 }
+        (self, value)
+    }
 }

@@ -1,5 +1,8 @@
 import joky/iter
+import joky/array.{type Array}
 import joky/io.{println}
+
+fn nonempty(value: &String) @noescape -> Bool { value != "" }
 
 fn main() {
     let offset = 10
@@ -12,4 +15,9 @@ fn main() {
     for (name, score) in iter.zip(["Alice", "Bob"], [80, 90]) {
         println("{name}: {score}")
     }
+
+    let names = ["Alice", "", "Bob", "Carol"]
+    let selected = iter.filter_shared(names.iter_shared(), nonempty)
+    for name in iter.take_shared(selected, 2) { println(name) }
+    println(names.len()) // The source still owns all four strings.
 }

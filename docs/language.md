@@ -843,10 +843,10 @@ Array / Slice 的 `get_ref(index)` 和 Map 的 `get_ref(&key)` 命中返回 `Som
 模块函数使用同名入口，首个参数为容器的共享引用。Map key 仅在查询期间借用，
 结果依赖 Map 的存储；临时 key 可自动借用，查询后可立即释放命名 key。
 
-共享拥有者引用现在可放进局部 Option、Result、记录或元组，也可经无 Copy 约束的泛型
-helper 传递。每个引用继续保留来源：活动结果阻止容器的修改、释放、移动与替换，
+共享拥有者引用可放进局部 Option、Result、记录或元组，也可通过泛型 helper 传递，
+包括 Copy 约束；Copy 只允许复制，不授予保存借用的权限。每个引用继续保留来源：活动结果阻止容器的修改、释放、移动与替换，
 最后使用后恢复权限；不能返回局部或按值拥有者的借用，不能把借用存进 Array、
-任务 arena、显式 arena 或持久状态。局部可复制不表示满足存储用的 Copy 约束。
+任务 arena、显式 arena 或持久状态。复制仍保留每个引用的来源；存储资格另行检查。
 含拥有值及引用的混合聚合、游标/切片视图聚合和 `Option<&mut T>` 仍不开放。
 
 对普通缺失使用 get_ref；已知存在且缺失应终止任务时保留 borrow_ref / value_ref。
@@ -922,7 +922,7 @@ fn answer() -> Int32 {
   即使数组随后扩容、pop、移动或离开作用域，复制出的共享引用仍可读取。先读取所需元素，再传给 push；
   `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
 - 数组拥有者可存入下述拥有记录；共享拥有者引用可组成局部借用聚合，见下文。
-  两者均不能作为 Copy 泛型实参、进入 alloc/graph，
+  拥有者仍不满足 Copy；共享拥有者引用可满足 Copy，但两者均不能进入 alloc/graph，
   也不能通过 *p / *p = next、Ptr 或宿主 ABI 访问控制块。
   元素存储树不含引用的 `Array<T>` 拥有者可以直接作为 `@suspends` 的参数、返回值和中间值；
   该能力也覆盖无引用拥有记录、枚举和元组（含自定义 Drop）。整个拥有对象的共享/独占引用
@@ -1027,7 +1027,7 @@ fn answer() -> Int32 {
 - 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
   无引用元素的 `Array<T>` 拥有者、数组视图及元素资源引用可以进入普通 `@suspends` 调用链、
   `join`、`race` 和 `scope/branch`；含引用元素数组、显式 Arena 能力和容器宿主 ABI 仍受原有限制。
-  元素资源引用不能存入聚合，不能通过 `*p` 移出资源；可通过 `*p = next` 替换整个资源，也不能通过共享引用取得独占访问。
+  共享元素资源引用可进入局部借用聚合，独占引用仍不能；不能通过 `*p` 移出资源；可通过 `*p = next` 替换整个资源，也不能通过共享引用取得独占访问。
   枚举元素支持 `match values.borrow_ref(index)`，载荷借用仍依赖整个原数组。
 
 ```joky
@@ -1121,7 +1121,8 @@ fn adjust() -> Int32 {
   活跃子借用阻止冲突访问父视图；最后使用后恢复父权限，所有视图最后使用后恢复数组权限。
   切片不拥有元素，不运行元素 Drop；替换后的新元素仍由原数组负责清理。
 - 同步泛型 helper 和跨模块别名可传递、返回来自借用输入的切片或元素引用；
-  不能返回局部或按值输入数组的视图，不能存入聚合、arena 对象或宿主 ABI；无引用元素视图可传入挂起函数。
+  不能返回局部或按值输入数组的视图；切片视图不能存入聚合，共享拥有元素引用可组成局部借用聚合。
+  两者不能存入 arena 对象或通过宿主 ABI 传递；无引用元素视图可传入挂起函数。
   Array 完整切片和 Slice 完整子切片不新增头部；其他区间的头部计入任务预算，在根任务结束时回收。
 
 完整示例见 [owning_slices.jk](../examples/owning_slices.jk)，三后端输出 21、42、3。
@@ -1275,7 +1276,8 @@ fn example() -> Int64 {
 - 类型参数只在所属函数签名及函数体的类型注解内有效，可以进入元组。不同函数中的同名参数具有不同身份。
   参数遮蔽同名模块类型；不能把被遮蔽的模块记录或枚举当作该参数的构造函数。
 - **普通泛型调用的类型实参允许 Copy 类型及拥有者**：支持的整数、Rune、Bool、Unit、函数值、共享引用、记录、枚举和元组，拥有者包括 String、StringBuilder 和数组。
-  透明别名按目标类型处理；数组视图、独占引用和宿主 opaque 类型不能绑定到 T。
+  透明别名按目标类型处理；共享拥有者引用及其局部聚合可作为实参，
+  Slice/游标视图、独占引用和宿主 opaque 类型仍不能绑定到 T。
   无约束 T 按可移动值检查；重复使用、从共享引用按值读取等复制操作需要声明 `T: Copy`。
   缺失约束在模板定义时拒绝，不会等到 String 等拥有型实参出现才报错。
   独立泛型函数值使用相同规则，`identity::<String>` 合法。
@@ -1283,14 +1285,15 @@ fn example() -> Int64 {
 - 推导先收集实参中已有的类型，再为仍未确定的整数字面量默认 Int32；例如 `first(1, true)`
   得到 `T = Int32, U = Bool`。重复出现的同一类型参数必须完全一致，没有隐式宽化。
   显式类型实参可以给未定型字面量提供上下文，`identity::<UInt64>(0xffff_ffff_ffff_ffff)` 合法。
-- 外层预期返回类型不反向决定泛型实参：`let n: Int64 = identity(1)` 报类型不匹配，
-  应写 `identity::<Int64>(1)` 或先声明 Int64 局部值。没有实参约束的参数、只有提前跳转的实参
-  及其他无法局部推导的情况需要显式类型实参；不做跨绑定或全局约束求解。
+- 明确的绑定、返回和已确定形参类型参与推导，例如 `let n: Int64 = identity(1)`。
+  期望返回类型先约束未定参数，再与实参类型校验；已有不同整数类型仍不隐式转换。
+  没有期望类型或实参信息时需要显式类型实参；不从后续赋值或调用做跨绑定推导。
 - **所有泛型函数在定义时检查，包括未使用的函数**。T 是任意允许的值类型，不能对它执行算术、
   比较、整数转换、未知字段访问或构造；`fn bad<T>(x: T) -> T { x + x }` 因缺少能力约束而报错。
   可以移动、返回 T，操作显式元组结构，并调用满足约束的其他泛型函数；固定 Int32 等类型上的操作不受影响。
   `Copy` 是编译器内建的结构能力，不能由用户实现；它可与普通 trait 约束组合，如 `T: Copy + Eq`。
   记录、枚举与透明别名也支持 `T: Copy`，例如 `struct Pair<T: Copy> { left: T, right: T }`；实例化时检查约束。
+  共享拥有者引用及其局部聚合也满足 Copy，复制不会解除借用；Array、alloc 等入口仍独立检查存储资格。
   类型声明暂不支持普通 trait 或 callable 约束；`Copy` 也不能与 `Fn` / `FnMut` / `FnOnce` 组合。
   仅复制元素的接口（例如 Array.get、List.front 和 Slice.get）要求 Copy，拥有型元素通过借用或移出接口访问。
 - 复制模板应明确写出能力：`fn duplicate<T: Copy>(value: T) -> (T, T) { (value, value) }`。
@@ -3295,9 +3298,9 @@ fn range_sum() -> Int32 {
 
 内置 Step 实现覆盖 Int8/16/32/64、UInt8/16/32/64。端点按普通泛型调用规则推导为同一类型：
 无约束整数字面量默认 Int32，一个已定型端点能约束另一个字面量，已有不同整数类型不能隐式混用。
-例如 `0..uint64(n)` 得到 `Range<UInt64>`。当前不会从循环体、接收变量或函数返回类型
-反向推导泛型调用的端点；写 `let r: Range<UInt64> = 0..uint64(3)`，或显式调用
-`range::<UInt64>(0, 3)`。旧类型标注 `Range` 应迁移为 `Range<Int32>`。
+例如 `0..uint64(n)` 得到 `Range<UInt64>`；明确上下文也可写
+`let r: Range<UInt64> = 0..3`，或显式调用 `range::<UInt64>(0, 3)`。
+不从循环体或后续使用反推端点类型。旧类型标注 `Range` 应迁移为 `Range<Int32>`。
 
 范围只递增；逆序范围为空，闭区间端点相等时产生一项。耗尽后 next 始终返回 None；
 即使终点为整数最大值，闭区间也不会计算 end + 1 或环绕。
@@ -3363,6 +3366,47 @@ fn numbered_scores() -> Int32 {
 带编号、共享与可变遍历均如此。循环体自身的分配不受此保证约束。
 `let (key, value) = entry` 使用同样规则；Entry 解构目前只接受两个名称或 `_`，
 不创建可存储的引用元组。显式 `entry_key` / `entry_value_mut` 保留原有的保守借用规则。
+
+### 共享遍历组合器
+
+Array 的 `values.iter_shared()` / `array.iter_shared(&values)` 返回
+`array.SharedIter<T>`，保留原数组的共享借用，元素为 `&T`。
+这是用于组合的同步值状态，与现有 `iter()` 的 advance/current 游标并存。
+
+| 入口 | 行为 |
+| --- | --- |
+| `iter.take_shared(input, count)` | 最多取 count 项，零项不推进输入 |
+| `iter.filter_shared(input, predicate)` | 按原顺序保留满足条件的共享元素；输入元素须为 `&T` |
+| `iter.zip_shared(left, right)` | 返回两侧元素的元组，任一侧结束即永久耗尽；先推进左侧 |
+| `iter.step_shared(input)` | 返回 `(后继状态, Option<元素>)`，用于显式推进和泛型 helper |
+
+```joky
+import joky/array.{type Array}
+import joky/iter
+
+fn keep(value: &String) @noescape -> Bool { value != "" }
+fn sample() -> UInt64 {
+    let values = ["first", "", "last"]
+    let selected = iter.filter_shared(values.iter_shared(), keep)
+    for value in iter.take_shared(selected, 2) { assert(value != "", "selected") }
+    values.len()
+}
+```
+
+共享状态实现标准 `SharedIterator`：关联 Item，`step(self) -> (Self, Option<Self.Item>)`。
+泛型入口写 `I: Copy + SharedIterator`；for 按标准身份调用 step 并保存后继状态，
+同名用户函数或 trait 不改变协议。状态按值复制，每份状态独立推进；所有副本继续借用同一数组。
+返回元素不依赖游标存储，可跨后续 step 使用，但仍阻止原数组的修改、释放或移动。
+适配器第一次收到 None 后永久耗尽；提前退出只结束适配器借用，不消费原数组元素。
+
+filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参数借用的函数值；
+不支持捕获环境的闭包，也不直接筛选 zip 产生的引用元组。可先分别筛选再 zip。
+共享组合器状态目前不能跨普通语言挂起、进入并发分支、容器、arena 或持久状态；
+解释器时间片与取消仍正常清理拥有者。借用不能逃出原数组的作用域。
+
+现有 Iterator/IntoIterator、take/filter/zip/map 以及独占 advance/current 协议保持原有行为。
+不隐式把 `&Array` 变成 SharedIterator；用 iter_shared 明确选择共享组合。
+本阶段不新增通用方法链、Slice 组合视图、共享 map 或独占组合器。
 
 ### IntoIterator 与自动转换
 

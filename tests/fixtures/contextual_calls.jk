@@ -1,6 +1,7 @@
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/task
+import joky/iter
 
 fn empty<T>() -> Array<T> { Array.new() }
 fn identity<T>(value: T) -> T { value }
@@ -19,6 +20,9 @@ impl Factory {
     fn array<T>(&self) -> Array<T> { empty() }
 }
 fn compute() -> Int32 {
+    let literal: Int64 = identity(1)
+    var range: iter.Range<UInt64> = 0..3
+    assert(literal == 1 && range.next()! == 0, "expected literal and range")
     var values: Array<Int32> = Array.new()
     values.push(42)
     var names: Map<Int32, String> = Map.new()

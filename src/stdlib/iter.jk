@@ -180,3 +180,69 @@ pub type Entry<K, V> = buffer.Entry<(K, V)>
 pub fn entries_advance<K, V>(cursor: &Entries<K, V>) -> Bool { buffer.pair_advance(cursor) }
 pub fn entries_current<K, V>(cursor: &Entries<K, V>) -> &Entry<K, V> { buffer.pair_current(cursor) }
 pub fn entries_current_mut<K, V>(cursor: &mut Entries<K, V>) -> &mut Entry<K, V> { buffer.pair_current_mut(cursor) }
+
+// Shared traversal threads state by value: no exclusive borrow of reference fields.
+// A step returns the successor state first, followed by an optional element.
+pub trait SharedIterator {
+    type Item
+    fn step(self) -> (Self, Option<Self.Item>)
+}
+
+pub fn step_shared<I: Copy + SharedIterator>(input: I) -> (I, Option<I.Item>) {
+    SharedIterator.step(input)
+}
+
+pub struct SharedTake<I: Copy> { source: I, remaining: UInt64 }
+pub fn take_shared<I: Copy + SharedIterator>(input: I, count: UInt64) -> SharedTake<I> {
+    SharedTake { source: input, remaining: count }
+}
+impl<I: Copy + SharedIterator> SharedIterator for SharedTake<I> {
+    type Item = I.Item
+    fn step(self) -> (Self, Option<I.Item>) {
+        let SharedTake { source, remaining } = self
+        if remaining == 0 { return (SharedTake { source, remaining }, None) }
+        let (source, value) = SharedIterator.step(source)
+        let remaining = if value.is_some() { remaining - 1 } else { 0 }
+        (SharedTake { source, remaining }, value)
+    }
+}
+
+pub struct SharedZip<I: Copy, J: Copy> { left: I, right: J, done: Bool }
+pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(left: I, right: J) -> SharedZip<I, J> {
+    SharedZip { left, right, done: false }
+}
+impl<I: Copy + SharedIterator, J: Copy + SharedIterator> SharedIterator for SharedZip<I, J> {
+    type Item = (I.Item, J.Item)
+    fn step(self) -> (Self, Option<Self.Item>) {
+        let SharedZip { left, right, done } = self
+        if done { return (SharedZip { left, right, done }, None) }
+        let (left, value) = SharedIterator.step(left)
+        let a = match value { Some(value) => value, None => { return (SharedZip { left, right, done: true }, None) } }
+        let (right, value) = SharedIterator.step(right)
+        let b = match value { Some(value) => value, None => { return (SharedZip { left, right, done: true }, None) } }
+        (SharedZip { left, right, done: false }, Some((a, b)))
+    }
+}
+
+pub struct SharedFilter<I: Copy, T> {
+    source: I
+    predicate: fn(&T) @noescape -> Bool
+    done: Bool
+}
+pub fn filter_shared<I: Copy + SharedIterator<Item = &T>, T>(input: I, predicate: fn(&T) @noescape -> Bool) -> SharedFilter<I, T> {
+    SharedFilter { source: input, predicate, done: false }
+}
+impl<I: Copy + SharedIterator<Item = &T>, T> SharedIterator for SharedFilter<I, T> {
+    type Item = &T
+    fn step(self) -> (Self, Option<&T>) {
+        let SharedFilter { source, predicate, done } = self
+        if done { return (SharedFilter { source, predicate, done }, None) }
+        var cursor = source
+        while true {
+            let (next, value) = SharedIterator.step(cursor)
+            cursor = next
+            let item = match value { Some(item) => item, None => { return (SharedFilter { source: cursor, predicate, done: true }, None) } }
+            if predicate(item) { return (SharedFilter { source: cursor, predicate, done: false }, Some(item)) }
+        }
+    }
+}
