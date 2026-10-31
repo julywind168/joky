@@ -18,6 +18,8 @@ use std::{
 mod disposal;
 #[cfg(test)]
 mod scoped_tests;
+#[cfg(test)]
+mod wake_tests;
 pub(crate) use disposal::CleanupReceipt;
 pub(crate) type Output = Box<dyn Any + Send>;
 pub(crate) type Factory = Box<dyn FnOnce() -> Result<Box<dyn Job>, Error> + Send>;
@@ -74,6 +76,7 @@ struct Task {
     parent: Option<Weak<Task>>,
     group: Option<(Arc<Arbiter>, usize)>,
     state: Mutex<State>,
+    completed: Condvar,
     factory: Mutex<Option<Factory>>,
     _charge: Lease,
 }
@@ -85,11 +88,19 @@ struct Queue {
 }
 struct Shared {
     queue: Mutex<Queue>,
-    wake: Condvar,
+    // Each queue has exactly one worker; completion waiters use Task::completed.
+    wake: Vec<Condvar>,
     sequence: AtomicU64,
     max_tasks: usize,
     io: Mutex<Option<IoDriver>>,
     controls: Mutex<Vec<super::control::Driver>>,
+}
+impl Shared {
+    fn wake_all_workers(&self) {
+        for wake in &self.wake {
+            wake.notify_one();
+        }
+    }
 }
 struct IoDriver {
     reactor: crate::runtime::reactor::Reactor,
@@ -146,7 +157,7 @@ pub(crate) fn io_reactor() -> Result<crate::runtime::reactor::Reactor, Error> {
                                 for task in tasks {
                                     task.fail(error.clone());
                                 }
-                                shared.wake.notify_all();
+                                shared.wake_all_workers();
                             }
                             driver.request_close();
                         }
@@ -351,7 +362,7 @@ impl Task {
         ) {
             state.phase = Phase::Ready;
             lock(&self.shared.queue).ready[self.worker].push_back(self.clone());
-            self.shared.wake.notify_all();
+            self.shared.wake[self.worker].notify_one();
         }
     }
     fn cancel(self: &Arc<Self>) {
@@ -456,23 +467,23 @@ impl Handle {
         if active() {
             return Err(invalid("Blocking task waits are forbidden on workers"));
         }
-        let mut q = lock(&self.0.shared.queue);
-        loop {
-            // Never acquire a task lock while holding the queue lock: wake uses
-            // the opposite order. The timed wait also tolerates a just-missed wake.
-            drop(q);
-            if self.cleaned() {
-                return Ok(());
-            }
-            q = lock(&self.0.shared.queue);
-            q = self
+        // The predicate and the wait use the same mutex as terminal publication.
+        // A completion cannot fall between checking the phase and going to sleep.
+        let mut state = lock(&self.0.state);
+        while state.phase != Phase::Cleaned {
+            #[cfg(test)]
+            BEFORE_COMPLETION_WAIT.with(|hook| {
+                if let Some(hook) = hook.borrow_mut().take() {
+                    hook();
+                }
+            });
+            state = self
                 .0
-                .shared
-                .wake
-                .wait_timeout(q, std::time::Duration::from_millis(10))
-                .unwrap_or_else(|e| e.into_inner())
-                .0;
+                .completed
+                .wait(state)
+                .unwrap_or_else(|e| e.into_inner());
         }
+        Ok(())
     }
 }
 impl ParallelExecutor {
@@ -502,7 +513,7 @@ impl ParallelExecutor {
                 closing: false,
                 next_worker: 0,
             }),
-            wake: Condvar::new(),
+            wake: (0..workers).map(|_| Condvar::new()).collect(),
             sequence: AtomicU64::new(1),
             max_tasks,
             io: Mutex::new(None),
@@ -549,7 +560,7 @@ impl ParallelExecutor {
         for task in tasks {
             task.cancel();
         }
-        self.shared.wake.notify_all();
+        self.shared.wake_all_workers();
         let reactor = lock(&self.shared.io).as_ref().map(|io| io.reactor.clone());
         if let Some(reactor) = reactor {
             reactor.request_close();
@@ -731,6 +742,7 @@ fn publish(
                 observer: None,
                 deadline: None,
             }),
+            completed: Condvar::new(),
             factory: Mutex::new(Some(factory)),
             _charge: charge,
         });
@@ -748,7 +760,11 @@ fn publish(
         q.ready[handle.0.worker].push_back(handle.0.clone());
     }
     drop(q);
-    shared.wake.notify_all();
+    // Round-robin assignment visits each destination at most once in this prefix.
+    // Publish the complete batch before waking any of its workers.
+    for handle in handles.iter().take(shared.wake.len()) {
+        shared.wake[handle.0.worker].notify_one();
+    }
     Ok(handles)
 }
 struct Local {
@@ -783,8 +799,7 @@ fn run(shared: Arc<Shared>, worker: usize) {
                     return;
                 }
                 if let Some(deadline) = deadline {
-                    let (next, timeout) = shared
-                        .wake
+                    let (next, timeout) = shared.wake[worker]
                         .wait_timeout(q, deadline.saturating_duration_since(Instant::now()))
                         .unwrap_or_else(|e| e.into_inner());
                     q = next;
@@ -792,7 +807,9 @@ fn run(shared: Arc<Shared>, worker: usize) {
                         break None;
                     }
                 } else {
-                    q = shared.wake.wait(q).unwrap_or_else(|e| e.into_inner());
+                    q = shared.wake[worker]
+                        .wait(q)
+                        .unwrap_or_else(|e| e.into_inner());
                 }
             }
         };
@@ -947,7 +964,7 @@ fn run(shared: Arc<Shared>, worker: usize) {
                 if let Some(parent) = task.parent.as_ref().and_then(Weak::upgrade) {
                     parent.wake();
                 }
-                shared.wake.notify_all();
+                task.completed.notify_all();
             } else {
                 let mut state = lock(&task.state);
                 state.phase = Phase::Stopping;
@@ -975,6 +992,7 @@ fn run(shared: Arc<Shared>, worker: usize) {
 
 #[cfg(test)]
 thread_local! {
+    static BEFORE_COMPLETION_WAIT: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
     static AFTER_ARBITRATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
 }
 

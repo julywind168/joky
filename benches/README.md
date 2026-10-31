@@ -316,6 +316,8 @@ JIT／AOT `opt_level=speed` 的实验结果、浮点正确性阻碍及 0.137.1 �
 [全范围切片复用](reports/chat-full-slice-2026-10-31.md)。
 随后让已知内部直接调用共享浮点保护，边界回归与性能对照见
 [内部直接调用共享浮点保护](reports/chat-fp-boundaries-2026-10-31.md)。
+随后分离任务完成通知并按 worker 定向唤醒，见
+[任务完成通知与定向唤醒](reports/chat-targeted-wakes-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 
