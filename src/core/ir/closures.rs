@@ -166,6 +166,14 @@ pub(super) fn free_names(
     Ok(names)
 }
 
+pub(super) fn capturing_function_pointer_error(span: Span) -> Error {
+    type_error(
+        &span,
+        ErrorCode::TypeMismatch,
+        "A capturing closure cannot be used as a function pointer; use a named function or a noncapturing closure. If the callback needs local state, use an explicit loop",
+    )
+}
+
 pub(super) fn callable_signature(ty: &Type) -> Option<(CallableKind, crate::FunctionSignature)> {
     match ty {
         Type::Function(f) if !f.suspends => Some((CallableKind::Fn, f.signature.clone())),
@@ -239,11 +247,7 @@ impl FunctionPlan {
         if let Some(Type::Function(pointer)) = expected {
             let signature = &pointer.signature;
             if !captures.is_empty() {
-                return Err(type_error(
-                    &function.span,
-                    ErrorCode::TypeMismatch,
-                    "Capturing closures cannot convert to function pointers",
-                ));
+                return Err(capturing_function_pointer_error(function.span));
             }
             let dst = self.slot(Type::Function(Arc::new(crate::core::types::FunctionType {
                 signature: signature.clone(),

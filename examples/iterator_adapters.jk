@@ -6,6 +6,7 @@ fn nonempty(value: &String) @noescape -> Bool { value != "" }
 
 fn main() {
     let offset = 10
+    // Ordinary adapters accept owning closures, including captured values.
     let mapped = iter.map(0..10, move |value| { value + offset })
     let even = iter.filter(mapped, move |value| { *value % 2 == 0 })
     for index, value in iter.take(even, 3) {
@@ -17,7 +18,8 @@ fn main() {
     }
 
     let names = ["Alice", "", "Bob", "Carol"]
-    let selected = iter.filter_shared(names.iter_shared(), nonempty)
-    for name in iter.take_shared(selected, 2) { println(name) }
+    // Borrowed pipelines use synchronous, noncapturing @noescape callbacks.
+    let selected = iter.shared(&names).filter(nonempty).take(2)
+    for name in selected { println(name) }
     println(names.len()) // The source still owns all four strings.
 }

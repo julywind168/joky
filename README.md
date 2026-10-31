@@ -114,7 +114,12 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 - [语言与内置模块](docs/language.md)：当前语法、求值顺序、类型准入与 API。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权和宿主 ABI。
 - [解释器设计](docs/interpreter.md)：字节码、预算、调度和运行时诊断。
-- [基础示例](examples/hello.jk)、[for 遍历与编号](examples/for.jk)、[整数范围](examples/ranges.jk)、[范围切片](examples/range_slices.jk)、[范围模式](examples/range_patterns.jk)、[泛型](examples/generics.jk)、[拥有闭包](examples/owned_closures.jk)、[惰性组合器](examples/iterator_adapters.jk)、[借用流水线](examples/borrowed_pipelines.jk)、[模式与枚举](examples/enums.jk)、[文本与格式化](examples/show.jk)、[容器](examples/maps.jk)。
+- [基础示例](examples/hello.jk)、[整数范围](examples/ranges.jk)、[范围切片](examples/range_slices.jk)、[范围模式](examples/range_patterns.jk)、[泛型](examples/generics.jk)、[拥有闭包](examples/owned_closures.jk)、[模式与枚举](examples/enums.jk)、[文本与格式化](examples/show.jk)、[容器](examples/maps.jk)。
+- 遍历入门先看 [for 遍历与编号](examples/for.jk)：`&values` 共享读取、`&mut values` 原地修改、`values` 消费数组。
+  再看 [借用流水线](examples/borrowed_pipelines.jk) 的 filter/map/take 方法链，以及
+  [普通组合器](examples/iterator_adapters.jk) 的消费式组合与捕获回调。借用流水线的回调须同步、无捕获且满足 `@noescape`，
+  map 结果限无引用 Copy 值；常见限制与替代写法见[语言参考](docs/language.md#借用流水线的常见错误)。
+- 进阶：[共享迭代协议](examples/shared_iterator_protocol.jk) 展示 `SharedIterator` 泛型入口、`step_shared` 显式推进和底层组合函数。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
 - [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。

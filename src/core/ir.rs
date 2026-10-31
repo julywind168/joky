@@ -1013,6 +1013,11 @@ impl ModulePlan {
             info.frame_slots = info.parameter_slots();
             info.internal = true;
             functions.insert(instance.name.clone(), info);
+            generics.borrow_mut().library_call_span = definition
+                .scope
+                .as_ref()
+                .filter(|scope| scope.lazy_functions)
+                .map(|_| instance.call_span);
             let plan = FunctionPlan::new(
                 &definition,
                 &functions,
@@ -1020,8 +1025,9 @@ impl ModulePlan {
                 &nominals,
                 generics.clone(),
                 instance.depth,
-            )?;
-            bodies.insert(instance.name, plan);
+            );
+            generics.borrow_mut().library_call_span = None;
+            bodies.insert(instance.name, plan?);
         }
         // Prove calls in unused templates without emitting their lazy helper
         // closure or instantiating executable generic bodies just for checking.

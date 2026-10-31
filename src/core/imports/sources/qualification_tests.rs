@@ -92,7 +92,10 @@ fn plain_copy_qualification_rejects_actual_owners_references_strings_and_aliases
             let e = VmEngine::with_mode(mode).load_module(&ast).unwrap_err();
             assert_eq!(e.code(), ErrorCode::TypeMismatch);
             assert!(e.message().contains(message), "{source}: {e}");
-            assert!(e.span().is_some());
+            assert_eq!(
+                e.span().unwrap().slice(&source),
+                Some(format!("qualification.guard::<{ty}>()").as_str()),
+            );
         }
         let e = crate::aot::AotCompiler::new("invalid-key-qualification")
             .unwrap()
@@ -104,17 +107,35 @@ fn plain_copy_qualification_rejects_actual_owners_references_strings_and_aliases
 #[test]
 fn plain_copy_qualification_follows_cross_module_concrete_arguments() {
     let mut modules = crate::ModuleSources::new();
-    modules.insert("keys", "import joky/test/qualification pub struct Key { value: &Int32 } pub fn check<T>() { qualification.guard::<T>() }").unwrap();
+    let keys = "import joky/test/qualification pub struct Key { value: &Int32 } pub fn check<T>() { qualification.guard::<T>() }";
+    modules.insert("keys", keys).unwrap();
     let registry = qualified_registry();
     let source = "import keys fn bad() { keys.check::<keys.Key>() }";
     let ast = registry
         .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
         .unwrap();
-    assert!(VmEngine::new()
-        .load_module(&ast)
-        .unwrap_err()
+    let error = VmEngine::new().load_module(&ast).unwrap_err();
+    assert!(error
         .message()
         .contains("reference-free Copy storage value"));
+    assert_eq!(
+        error.span().unwrap().slice(keys),
+        Some("qualification.guard::<T>()"),
+    );
+    // Nested embedded helpers preserve the original user call site.
+    let registry = qualified_registry_with("import joky/internal/types fn guard<T>() { types.require_plain_copy::<T>() } pub fn relay<T>() { guard::<T>() }");
+    let source = "import joky/test/qualification fn bad() { qualification.relay::<&Int32>() }";
+    let ast = registry
+        .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
+        .unwrap();
+    let error = VmEngine::new().load_module(&ast).unwrap_err();
+    assert!(error
+        .message()
+        .contains("reference-free Copy storage value"));
+    assert_eq!(
+        error.span().unwrap().slice(source),
+        Some("qualification.relay::<&Int32>()"),
+    );
     let fake =
         "fn require_plain_copy<T>() {} fn test() -> Int32 { require_plain_copy::<&Int32>(); 42 }";
     let mut vm = VmEngine::new();

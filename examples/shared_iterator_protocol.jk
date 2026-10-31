@@ -1,0 +1,26 @@
+import joky/array.{type Array}
+import joky/iter.{type SharedIterator}
+import joky/option.{type Option}
+import joky/io.{println}
+
+// Advanced: each step returns the next state and an optional item.
+fn count<I: Copy + SharedIterator>(var source: I) -> UInt64 {
+    var total: UInt64 = 0
+    while true {
+        let (next, item) = iter.step_shared(source)
+        source = next
+        if item.is_none() { return total }
+        total += 1
+    }
+}
+
+fn nonempty(value: &String) @noescape -> Bool { value != "" }
+
+fn main() {
+    let names = ["Alice", "", "Bob", "Carol"]
+    let selected = iter.take_shared(iter.filter_shared(names.iter_shared(), nonempty), 2)
+    println(count(selected))
+    // Shared state is Copy: counting one copy does not advance another.
+    for name in selected { println(name) }
+    println(names.len())
+}

@@ -609,6 +609,22 @@ pub(crate) fn unify(
                     pending.push((&a.signature.ret, &b.signature.ret));
                 }
             }
+            (Type::Function(a), Type::Function(b))
+                if !a.suspends && b.suspends || a.noescape && !b.noescape =>
+            {
+                let help = if !a.suspends && b.suspends {
+                    "Use a synchronous callback without @suspends"
+                } else {
+                    "Use an @noescape callback that does not retain or return argument borrows"
+                };
+                return Err(unification_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "Generic argument type mismatch: expected {formal}, got {actual}. {help}"
+                    ),
+                ));
+            }
             (Type::Buffer(a), Type::Buffer(b))
             | (Type::BufferElement(a), Type::BufferElement(b))
             | (Type::BufferSlice(a), Type::BufferSlice(b))

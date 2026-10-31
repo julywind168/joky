@@ -3408,7 +3408,8 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 
 现有 Iterator/IntoIterator、take/filter/zip/map 以及独占 advance/current 协议保持原有行为。
 不隐式把 `&Array` 变成 SharedIterator；用 iter_shared 明确选择共享组合。
-通用扩展方法与 Slice 组合视图仍未开放；数组共享流水线见下一节。
+通用扩展方法与 Slice 组合视图仍未开放。日常数组共享组合优先使用下一节的流水线方法；
+底层函数与显式推进见进阶示例 [shared_iterator_protocol.jk](../examples/shared_iterator_protocol.jk)。
 
 ### 共享流水线方法
 
@@ -3459,6 +3460,22 @@ for 与显式接口使用相同规则：`pipeline.into_parts()` 消费流水线�
 
 共享与独占的完整示例见 [borrowed_pipelines.jk](../examples/borrowed_pipelines.jk)，
 使用已有函数调用、跨行方法链、泛型推导、for、& / &mut 与 @noescape 语法。
+
+### 借用流水线的常见错误
+
+| 遇到的限制 | 原因与替代写法 |
+| --- | --- |
+| map 返回 String、Array 等拥有值，提示不满足 Copy | 共享状态和拥有结果的混合返回尚未开放；在普通 for 内创建结果，或在允许消费输入时使用普通 iter.map |
+| map 返回引用或含引用记录，提示 reference-free Copy | Copy 不代表无引用；返回数值等无引用 Copy 结果，或在普通共享 for 内直接使用借用值 |
+| 捕获局部阈值等变量的回调，提示 capturing closure | 此接口保存函数指针，没有回调环境；改用无捕获回调，或在显式 for 中读取阈值并筛选 |
+| 回调缺少 @noescape | 借用回调必须明确承诺不保存或返回参数借用；满足该契约后声明 @noescape，不能仅加注解绕过检查 |
+| 回调带 @suspends | 流水线推进只调用同步回调；需要挂起时，在适用的普通 for 中组织工作，并遵守元素借用的挂起规则 |
+| 独占流水线进入 for 或赋给另一绑定后再次使用 | 整个值会转移独占游标权限；使用接收移动的绑定，或在上次遍历结束后从原数组创建新流水线 |
+| 在 @suspends 函数中构造借用流水线 | 当前借用流水线只支持同步语言函数；把遍历放入同步 helper，只向挂起调用者返回无引用 Copy 或拥有结果 |
+
+这些诊断不表示需要更多类型参数。标准库在实例化时发现的类型资格错误指向触发它的调用，
+而不是要求修改 joky/iter 内部实现。当前尚未开放捕获回调、共享 map 的拥有/借用结果、
+独占 map/zip 或 Slice 流水线。
 
 ### IntoIterator 与自动转换
 

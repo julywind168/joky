@@ -17,6 +17,7 @@ const MAX_INSTANCE_DEPTH: usize = 32;
 pub(super) struct Instance {
     pub name: String,
     pub template: String,
+    pub call_span: Span,
     arguments: Vec<crate::core::types::GenericArgument>,
     pub signature: FunctionSignature,
     pub depth: usize,
@@ -30,6 +31,8 @@ pub(super) struct ClosureInstance {
 }
 
 pub(super) struct GenericContext {
+    /// Attribute embedded qualification failures to the user's library call.
+    pub library_call_span: Option<Span>,
     /// Declaring modules keep handle-method identity independent of the caller.
     pub when_modules: HashMap<String, String>,
     pub when_parents: HashMap<String, String>,
@@ -54,6 +57,7 @@ pub(super) struct GenericContext {
 impl GenericContext {
     pub fn new(module: &AstModule) -> Self {
         Self {
+            library_call_span: None,
             when_modules: module
                 .items
                 .iter()
@@ -112,13 +116,14 @@ impl GenericContext {
         depth: usize,
         span: Span,
     ) -> Result<String, Error> {
+        let call_span = self.library_call_span.unwrap_or(span);
         if matches!(
             self.templates[template].compiler_intrinsic,
             Some(CompilerIntrinsic::PlainCopy(_))
         ) {
             validate_plain_copy(
                 arguments[0].as_type().expect("intrinsic type argument"),
-                span,
+                call_span,
             )?;
         }
         if matches!(
@@ -127,7 +132,7 @@ impl GenericContext {
         ) {
             validate_reference_free(
                 arguments[0].as_type().expect("intrinsic type argument"),
-                span,
+                call_span,
             )?;
         }
         if self.checking {
@@ -146,6 +151,7 @@ impl GenericContext {
         self.instances.push(Instance {
             name: name.clone(),
             template: template.into(),
+            call_span,
             arguments,
             signature,
             depth,
@@ -486,6 +492,22 @@ impl FunctionPlan {
         types: &TypeRegistry,
         inference: &mut InferenceState,
     ) -> Result<(), Error> {
+        if matches!(formal, Type::Function(_)) {
+            if let Expr::AnonymousFunction(function) = arg {
+                if !super::closures::free_names(function, vars)?.is_empty() {
+                    return Err(super::closures::capturing_function_pointer_error(
+                        arg.span(),
+                    ));
+                }
+            } else if self
+                .hint(arg, vars, functions, types, inference.default)
+                .is_some_and(|ty| ty.closure_info().is_some_and(|c| c.pointer_entry.is_none()))
+            {
+                return Err(super::closures::capturing_function_pointer_error(
+                    arg.span(),
+                ));
+            }
+        }
         if inference.default && !unresolved(formal, inference.params, &inference.substitutions) {
             return Ok(());
         }

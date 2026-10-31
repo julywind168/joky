@@ -781,7 +781,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 _ => false,
             })
         {
-            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Only reference-free owning values may cross ordinary language suspension; buffer views and owners containing references require synchronous functions"));
+            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Only reference-free owning values may cross ordinary language suspension; buffer views and owners containing references require synchronous functions. Keep borrowed pipelines in a synchronous helper"));
         }
     }
     if signature.ret.is_owner()

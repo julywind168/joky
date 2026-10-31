@@ -3066,6 +3066,35 @@ fn borrowed_pipelines_example_matches_all_backends() {
         b"0: 5\n1: 3\n4\n11\n0\n12\n3\n",
         0,
     );
+    work.write(
+        "protocol.jk",
+        include_str!("../../examples/shared_iterator_protocol.jk"),
+    );
+    work.assert_all_backends("protocol.jk", &["--no-prelude"], b"2\nAlice\nBob\n4\n", 0);
+}
+
+#[test]
+fn borrowed_pipeline_diagnostics_explain_limits_at_user_sources() {
+    let work = Workspace::new();
+    for (body, message) in [
+        (r#"fn f(v: &String) @noescape -> String { "new" } fn main() { let a = ["a"]; for _ in iter.shared(&a).map(f) {} }"#, "does not satisfy Copy bound"),
+        ("fn f(v: &Int32) @noescape -> &Int32 { alloc(1) } fn main() { let a = [1]; for _ in iter.shared(&a).map(f) {} }", "reference-free Copy storage value"),
+        ("fn main() { let a = [1]; let offset = 1; for _ in iter.shared(&a).map(|n| { *n + offset }) {} }", "If the callback needs local state, use an explicit loop"),
+        ("fn main() { var a = [1]; let offset = 1; let keep = |n: &Int32| { *n > offset }; for _ in iter.exclusive(&mut a).filter(keep) {} }", "A capturing closure cannot be used as a function pointer"),
+        ("fn accept(callback: fn(Int32) -> Bool) {} fn main() { let offset = 1; accept(|n| { n > offset }) }", "A capturing closure cannot be used as a function pointer"),
+        ("fn f(v: &Int32) -> Bool { true } fn main() { var a = [1]; for _ in iter.exclusive(&mut a).filter(f) {} }", "Use an @noescape callback"),
+        ("fn f(v: &Int32) @suspends -> Int32 { *v } fn main() { let a = [1]; for _ in iter.shared(&a).map(f) {} }", "Use a synchronous callback without @suspends"),
+        ("fn main() { var a = [1]; let p = iter.exclusive(&mut a); let q = p; for _ in p {}; for _ in q {} }", "Use of a moved, sealed or uninitialized exclusive reference"),
+        ("fn main() @suspends { var a = [1]; for _ in iter.exclusive(&mut a) {} }", "Keep borrowed pipelines in a synchronous helper"),
+    ] {
+        work.write("invalid.jk", &format!("import joky/array.{{type Array}}\nimport joky/iter\n{body}\n"));
+        let output = work.cli(&["build", "invalid.jk"]);
+        failure(&output, message);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("invalid.jk:3:"), "{stderr}");
+        assert!(!stderr.contains("joky/iter.jk:"), "{stderr}");
+        assert!(!work.path().join("invalid").exists());
+    }
 }
 
 #[test]

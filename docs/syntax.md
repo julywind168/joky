@@ -1591,3 +1591,22 @@ CLI（349 通过、8 忽略）、其余集成测试（64 通过、3 忽略）及
 while 的 0/1000 步与 Map 的 0/32 项短输入正确性检查均通过三后端验证。
 另外单独通过了本轮共享/独占流水线的 Debug 逐指令取消穷举。
 文档相对文件链接与 `git diff --check` 通过；未运行 Release、全套 stress 或性能测量。
+
+### 13.11 借用流水线的诊断与示例整理
+
+- [x] 实际检查拥有/引用 map 结果、捕获回调、回调效果、独占重复使用与挂起函数限制的 CLI 诊断。
+- [x] 标准库泛型实例保留触发调用的位置，类型资格错误指回用户调用；多层标准库 helper
+  保留来源，用户模块内的调用仍指向该模块，不把所有泛型错误统一挪到外层。
+- [x] 捕获闭包传入函数指针时直接解释限制，避免先误报缺少类型参数；普通函数参数、
+  泛型参数和已有闭包值使用一致提示。缺少 noescape、挂起回调与流水线同步限制附带使用建议。
+- [x] 入门示例的共享组合改用方法链；新增
+  [shared_iterator_protocol.jk](../examples/shared_iterator_protocol.jk) 展示泛型协议与显式推进。
+  README 区分共享读取、独占修改、消费式遍历及进阶协议；语言参考补充常见错误与替代写法。
+
+验证记录（2026-10-31）：按用户要求仅做针对性验证，不运行全量检查。
+`cargo test --lib -- shared_pipeline exclusive_pipeline plain_copy_qualification closure_noncapturing function_values_ contextual_calls`
+共 28 项通过；受影响 CLI 流水线、回调失败、组合器与示例检查共 6 项通过，覆盖三个后端。
+增强位置断言后，plain_copy_qualification 四项复验通过；诊断显示测试补充普通函数指针入口时
+发现该入口仍用旧文案，统一提示后该项与三项 closure_noncapturing 回归均通过。
+`cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、文档相对文件链接与
+`git diff --check` 通过。未运行 Release、stress、发布验收或性能测量。

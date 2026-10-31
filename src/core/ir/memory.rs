@@ -119,10 +119,12 @@ impl FunctionPlan {
                 }
             }
             if let Some(closure) = src.ty.closure_info() {
-                if expected.suspends
-                    || expected.signature != closure.signature
-                    || closure.pointer_entry.is_none()
-                {
+                if closure.pointer_entry.is_none() {
+                    return Err(super::closures::capturing_function_pointer_error(
+                        self.current_span,
+                    ));
+                }
+                if expected.suspends || expected.signature != closure.signature {
                     return Err(type_error(
                         &self.current_span,
                         ErrorCode::TypeMismatch,
