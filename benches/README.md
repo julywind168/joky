@@ -308,6 +308,8 @@ JIT／AOT `opt_level=speed` 的实验结果、浮点正确性阻碍及 0.137.1 �
 [纯整数浮点保护优化](reports/chat-integer-fp-2026-10-31.md)。
 随后减少 Script／域请求契约的重复分配，结果见
 [请求契约缓存](reports/chat-request-contracts-2026-10-31.md)。
+仅判断域资格时省去 schema 字符串生成的后续实验未显示稳定收益，暂未采用，见
+[域资格校验实验](reports/chat-schema-check-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 
