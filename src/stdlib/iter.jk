@@ -280,10 +280,10 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     pub fn take(self, count: UInt64) -> SharedPipeline<SharedTake<I>, T> {
         SharedPipeline { source: take_shared(self.source, count) }
     }
-    pub fn filter(self, predicate: fn(T) @noescape -> Bool) -> SharedPipeline<SharedSelect<I, T>, T> {
+    pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(self, predicate: F) -> SharedPipeline<SharedSelect<I, T, F>, T> {
         SharedPipeline { source: SharedSelect { source: self.source, predicate, done: false } }
     }
-    pub fn map<U: Copy>(self, transform: fn(T) @noescape -> U) -> SharedPipeline<SharedMap<I, T, U>, U> {
+    pub fn map<U: Copy, F: Copy + Fn(T) @noescape -> U>(self, transform: F) -> SharedPipeline<SharedMap<I, T, U, F>, U> {
         types.require_plain_copy::<U>()
         SharedPipeline { source: SharedMap { source: self.source, transform, done: false } }
     }
@@ -292,8 +292,8 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     }
 }
 
-pub struct SharedSelect<I: Copy, T: Copy> { source: I, predicate: fn(T) @noescape -> Bool, done: Bool }
-impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedIterator for SharedSelect<I, T> {
+pub struct SharedSelect<I: Copy, T: Copy, F: Copy> { source: I, predicate: F, done: Bool }
+impl<I: Copy + SharedIterator<Item = T>, T: Copy, F: Copy + Fn(T) @noescape -> Bool> SharedIterator for SharedSelect<I, T, F> {
     type Item = T
     fn step(self) -> (Self, Option<T>) {
         let SharedSelect { source, predicate, done } = self
@@ -308,8 +308,8 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedIterator for SharedSelec
     }
 }
 
-pub struct SharedMap<I: Copy, T: Copy, U: Copy> { source: I, transform: fn(T) @noescape -> U, done: Bool }
-impl<I: Copy + SharedIterator<Item = T>, T: Copy, U: Copy> SharedIterator for SharedMap<I, T, U> {
+pub struct SharedMap<I: Copy, T: Copy, U: Copy, F: Copy> { source: I, transform: F, done: Bool }
+impl<I: Copy + SharedIterator<Item = T>, T: Copy, U: Copy, F: Copy + Fn(T) @noescape -> U> SharedIterator for SharedMap<I, T, U, F> {
     type Item = U
     fn step(self) -> (Self, Option<U>) {
         types.require_plain_copy::<U>()

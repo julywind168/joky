@@ -1113,7 +1113,7 @@ BoundedTypeParameters = "<", TypeParameter, { ",", TypeParameter }, [ "," ], ">"
 TypeParameter = Identifier, [ ":", Bound, { "+", Bound } ] ;
 TraitBound   = Name, [ "<", AssociatedEquality, { ",", AssociatedEquality }, [ "," ], ">" ] ;
 AssociatedEquality = Identifier, "=", Type ;
-Bound        = "Copy" | TraitBound | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", "->", Type ;
+Bound        = "Copy" | TraitBound | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", [ "@", "noescape" ], "->", Type ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
 CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
 CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
@@ -1610,3 +1610,33 @@ while 的 0/1000 步与 Map 的 0/32 项短输入正确性检查均通过三后�
 发现该入口仍用旧文案，统一提示后该项与三项 closure_noncapturing 回归均通过。
 `cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、文档相对文件链接与
 `git diff --check` 通过。未运行 Release、stress、发布验收或性能测量。
+
+### 13.12 共享流水线的捕获回调
+
+- [x] 共享 filter/map 改用 Copy + Fn 回调，按上下文推导闭包的参数和结果，支持只读捕获阈值、
+  偏移量和字符串。调用处不需要新增注解，示例见
+  [captured_pipeline.jk](../examples/captured_pipeline.jk)。
+- [x] 无拥有槽、无独占捕获的 Fn 借用环境具备局部 Copy 能力；允许受检局部记录、元组和
+  同步 helper 传递，复制仍保留来源，副本不复用可重写的原环境位置。
+  可变环境与拥有型 move 环境保持移动语义；容器、arena、枚举及宿主存储边界不放开。
+- [x] callable bound 支持复用 @noescape 标记。抽象调用保留契约，具体闭包通过实际函数体
+  与调用图验证，拒绝保存或返回参数借用；普通 Fn 约束不能伪造更强的 noescape 保证。
+- [x] 保留共享状态的惰性、复制、顺序、编号、take(0)、耗尽和源保留规则；
+  补充回调复制、原绑定结束、捕获失效、失败、提前返回及逐指令取消验证。
+- [x] 更新语言参考、架构约束和诊断用例。独占捕获、可变捕获、拥有型 move 回调、
+  共享 map 的拥有/引用输出、Slice 流水线与挂起回调继续暂缓。
+
+验证记录（2026-10-31）：遵照用户要求，本轮没有运行全量检查。
+
+- `cargo test --lib -- captured_pipeline shared_pipeline closure_tests`：33 通过、2 默认忽略；
+  首轮三项旧拒绝断言已按新的只读 Copy 能力调整并复验，继续保留存储和可变/拥有环境拒绝。
+- 受影响 CLI 检查 7 项通过，覆盖捕获 fixture 的独立 AOT、示例三个后端、关闭 prelude、
+  旧流水线兼容、诊断及回调失败。
+- `exhaustive_pipeline_instruction_cancellation` 与
+  `exhaustive_closure_interpreter_cancellation_every_instruction` 单独执行并通过。
+  流水线穷举包括共享、独占、捕获版本各自的正常遍历、continue/break 与提前返回。
+- 增强 noescape 断言时发现直接 alloc 引用会先触发存储类型错误；改用合法引用记录后，
+  直接保存、经 helper 保存及返回参数借用均确认由 noescape 检查拒绝，专项复验通过。
+- `cargo test --lib -- core::types:: noescape_inference`：50 项通过。
+  Rust 格式、Clippy、文档相对文件链接及 `git diff --check` 通过。
+  未运行 Release、全套 stress 或性能测量。

@@ -3071,6 +3071,25 @@ fn borrowed_pipelines_example_matches_all_backends() {
         include_str!("../../examples/shared_iterator_protocol.jk"),
     );
     work.assert_all_backends("protocol.jk", &["--no-prelude"], b"2\nAlice\nBob\n4\n", 0);
+    work.write(
+        "captured.jk",
+        include_str!("../../examples/captured_pipeline.jk"),
+    );
+    work.assert_all_backends("captured.jk", &["--no-prelude"], b"80\n65\n85\n70\n4\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn captured_pipeline_executes_in_standalone_aot_without_prelude() {
+    let work = Workspace::new();
+    work.write(
+        "captured.jk",
+        &include_str!("../fixtures/captured_pipeline.jk").replace(
+            "extern fn record(value: Int32) -> Int32",
+            "fn record(value: Int32) -> Int32 { value }",
+        ),
+    );
+    work.assert_native("captured.jk", &["--no-prelude"], b"", 0);
 }
 
 #[test]
@@ -3079,11 +3098,11 @@ fn borrowed_pipeline_diagnostics_explain_limits_at_user_sources() {
     for (body, message) in [
         (r#"fn f(v: &String) @noescape -> String { "new" } fn main() { let a = ["a"]; for _ in iter.shared(&a).map(f) {} }"#, "does not satisfy Copy bound"),
         ("fn f(v: &Int32) @noescape -> &Int32 { alloc(1) } fn main() { let a = [1]; for _ in iter.shared(&a).map(f) {} }", "reference-free Copy storage value"),
-        ("fn main() { let a = [1]; let offset = 1; for _ in iter.shared(&a).map(|n| { *n + offset }) {} }", "If the callback needs local state, use an explicit loop"),
+        ("fn main() { let a = [1]; var count = 0; for _ in iter.shared(&a).map(|n| { count += 1; *n + count }) {} }", "does not satisfy Copy bound"),
         ("fn main() { var a = [1]; let offset = 1; let keep = |n: &Int32| { *n > offset }; for _ in iter.exclusive(&mut a).filter(keep) {} }", "A capturing closure cannot be used as a function pointer"),
         ("fn accept(callback: fn(Int32) -> Bool) {} fn main() { let offset = 1; accept(|n| { n > offset }) }", "A capturing closure cannot be used as a function pointer"),
         ("fn f(v: &Int32) -> Bool { true } fn main() { var a = [1]; for _ in iter.exclusive(&mut a).filter(f) {} }", "Use an @noescape callback"),
-        ("fn f(v: &Int32) @suspends -> Int32 { *v } fn main() { let a = [1]; for _ in iter.shared(&a).map(f) {} }", "Use a synchronous callback without @suspends"),
+        ("fn f(v: &Int32) @suspends -> Int32 { *v } fn main() { let a = [1]; for _ in iter.shared(&a).map(f) {} }", "synchronous callback without @suspends"),
         ("fn main() { var a = [1]; let p = iter.exclusive(&mut a); let q = p; for _ in p {}; for _ in q {} }", "Use of a moved, sealed or uninitialized exclusive reference"),
         ("fn main() @suspends { var a = [1]; for _ in iter.exclusive(&mut a) {} }", "Keep borrowed pipelines in a synchronous helper"),
     ] {
@@ -3104,6 +3123,7 @@ fn borrowed_pipeline_callback_failures_stop_standalone_aot() {
     for fixture in [
         include_str!("../fixtures/shared_pipeline.jk"),
         include_str!("../fixtures/exclusive_pipeline.jk"),
+        include_str!("../fixtures/captured_pipeline.jk"),
     ] {
         let source = fixture
             .replace(

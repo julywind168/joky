@@ -232,8 +232,8 @@ impl Type {
     pub(crate) fn contains_closures(&self) -> bool {
         TypeWalk::new(self, TypeEdges::Storage).any(Type::is_closure_value)
     }
-    /// Only reference-free move environments may leave their creating scope.
-    /// Abstract callable parameters are checked again at concrete specialization.
+    /// Borrowed environments remain ineligible for persistent storage even when
+    /// read-only copies can travel through local aggregates and synchronous calls.
     pub(crate) fn contains_unstorable_closures(&self) -> bool {
         TypeWalk::new(self, TypeEdges::Fields)
             .any(|ty| ty.closure_info().is_some_and(|c| !c.storable))
@@ -291,7 +291,10 @@ impl Type {
             Self::Record(r) => {
                 !r.owners.is_empty()
                     || r.scalars.iter().any(Type::is_owner_lane)
-                    || r.closure.is_none() && r.scalars.iter().any(Type::is_callable_parameter)
+                    || r.closure.is_none()
+                        && r.scalars
+                            .iter()
+                            .any(|ty| ty.is_callable_parameter() && !ty.is_copy_value())
             }
             Self::Enum(e) => !e.owners.is_empty() || e.scalars.iter().any(Type::is_owner_lane),
             Self::Tuple(t) => !t.owners.is_empty() || t.scalars.iter().any(Type::is_owner_lane),
@@ -419,17 +422,17 @@ impl Type {
     }
     /// Buffer views can be copied locally, but cannot be stored or generalized.
     pub(crate) fn is_copy_storage_value(&self) -> bool {
-        self.is_copy_value() && !self.contains_buffers()
+        self.is_copy_value() && !self.contains_buffers() && !self.contains_unstorable_closures()
     }
     /// Copy bounds grant duplication, not permission to retain a loan in storage.
     pub(crate) fn is_copy_argument(&self) -> bool {
         self.is_copy_storage_value() || self.is_scoped_shared_value()
     }
-    /// Shared owner references can travel in local aggregates and generic calls.
+    /// Shared owner references and read-only borrowed closures can travel locally.
     /// They remain ineligible for container and arena storage.
     pub(crate) fn is_scoped_shared_value(&self) -> bool {
         self.is_copy_value()
-            && self.contains_buffers()
+            && (self.contains_buffers() || self.contains_unstorable_closures())
             && self.scalar_types().iter().all(|ty| {
                 if let Some(reference) = ty.reference_type() {
                     !reference.mutable
@@ -599,12 +602,16 @@ impl Type {
             lanes,
         }))
     }
-    /// Shared references are Copy values; exclusive capabilities never are.
+    /// Shared references and owner-free Fn environments are locally Copy.
+    /// Moving environments retain their owner identity; exclusive capabilities never copy.
     pub(crate) fn is_copy_value(&self) -> bool {
         self.is_copy_scalar()
             || self.is_aggregate()
                 && !self.is_owner()
-                && self.closure_info().is_none()
+                && !TypeWalk::new(self, TypeEdges::Inline).any(|ty| {
+                    ty.closure_info()
+                        .is_some_and(|c| c.storable || c.mode != CallableKind::Fn)
+                })
                 && !self
                     .scalar_types()
                     .iter()
@@ -800,6 +807,7 @@ impl std::fmt::Display for Type {
 #[derive(Debug, Clone)]
 pub(crate) struct CallableBound {
     pub mode: CallableKind,
+    pub noescape: bool,
     pub signature: crate::FunctionSignature,
     pub additional_signatures: Vec<crate::FunctionSignature>,
 }

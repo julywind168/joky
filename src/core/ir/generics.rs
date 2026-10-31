@@ -47,7 +47,8 @@ pub(super) struct GenericContext {
     pub generated_functions: HashMap<String, FunctionInfo>,
     pub closures: Vec<ClosureInstance>,
     pub callables: Vec<crate::core::types::FunctionType>,
-    pub abstract_callables: Vec<FunctionSignature>,
+    pub abstract_callables: Vec<(FunctionSignature, bool)>,
+    pub noescape_closures: std::collections::HashSet<String>,
     pub dyn_tables: Vec<Arc<DynTable>>,
     pub dyn_contracts: Vec<crate::core::types::DynMethodSlot>,
     pub definitions: std::collections::HashSet<String>,
@@ -94,6 +95,7 @@ impl GenericContext {
             closures: Vec::new(),
             callables: Vec::new(),
             abstract_callables: Vec::new(),
+            noescape_closures: Default::default(),
             dyn_tables: Vec::new(),
             dyn_contracts: Vec::new(),
             definitions: module
@@ -460,7 +462,7 @@ impl FunctionPlan {
             if ty.contains_explicit_arena() && !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) {
                 return Err(type_error(span, ErrorCode::TypeMismatch, "Arena capabilities cannot be generic type arguments"));
             }
-            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_unstorable_closures() || !ty.is_copy_storage_value() && !ty.is_scoped_borrowed_value() && !ty.is_owner()) {
+            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_unstorable_closures() && !ty.is_scoped_shared_value() || !ty.is_copy_storage_value() && !ty.is_scoped_borrowed_value() && !ty.is_owner()) {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
             }
@@ -470,6 +472,14 @@ impl FunctionPlan {
                 let Some((mode, actual)) = super::closures::callable_signature(ty) else { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable bound requires a synchronous language callable")); };
                 let required = FunctionSignature::new(bound.signature.params.iter().map(|t| substitute(t, &substitutions, types)).collect::<Result<_, _>>()?, substitute(&bound.signature.ret, &substitutions, types)?);
                 if mode > bound.mode || actual != required { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable capability or signature does not satisfy its bound")); }
+                if bound.noescape {
+                    let target = ty.reference_type().map_or(ty, |r| &r.target);
+                    if let Some(closure) = target.closure_info() {
+                        self.generics.borrow_mut().noescape_closures.insert(closure.entry.clone());
+                    } else if !super::closures::callable_noescape(target) {
+                        return Err(type_error(span, ErrorCode::TypeMismatch, "Callable bound requires a synchronous @noescape callback"));
+                    }
+                }
             }
             Ok(argument)
         }).collect::<Result<_, Error>>()?;
@@ -580,6 +590,13 @@ impl FunctionPlan {
                     self.hint(arg, vars, functions, types, inference.default)
                 };
                 if let Some(actual) = actual {
+                    if matches!(&actual, Type::Function(f) if f.suspends) {
+                        return Err(type_error(
+                            &arg.span(),
+                            ErrorCode::TypeMismatch,
+                            "Callable bound requires a synchronous callback without @suspends",
+                        ));
+                    }
                     if let Some((_, signature)) = super::closures::callable_signature(&actual) {
                         for (formal, actual) in bound
                             .signature

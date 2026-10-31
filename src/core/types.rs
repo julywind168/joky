@@ -1057,7 +1057,10 @@ pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
             "Dyn views cannot be stored in tuples",
         ));
     }
-    if elements.iter().any(Type::contains_closures) {
+    if elements
+        .iter()
+        .any(|ty| ty.contains_closures() && !ty.is_copy_value())
+    {
         return Err(Error::new_with_code(
             ErrorPhase::TypeCheck,
             ErrorCode::TypeMismatch,

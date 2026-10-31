@@ -1096,9 +1096,12 @@ impl ModulePlan {
             info.noescape = signature.noescape;
             functions.insert(format!("__joky_indirect_{index}"), info);
         }
-        for (index, signature) in generics.borrow().abstract_callables.iter().enumerate() {
+        for (index, (signature, noescape)) in
+            generics.borrow().abstract_callables.iter().enumerate()
+        {
             let mut info = FunctionInfo::indirect(signature.clone(), false, Span::empty(0));
             info.noescape_params = vec![0];
+            info.noescape = *noescape;
             info.frame_slots = info.parameter_slots();
             functions.insert(format!("__joky_callable_{index}"), info);
         }
@@ -1164,6 +1167,12 @@ impl ModulePlan {
             if !changed {
                 break;
             }
+        }
+        for name in &generics.borrow().noescape_closures {
+            // The ordinary borrowing pass proves the demanded contract against
+            // the concrete body; qualifying a closure does not trust its signature.
+            let info = functions.get_mut(name).expect("qualified closure entry");
+            info.noescape = true;
         }
         memory::check_module(&mut functions, &bodies)?;
         for body in bodies.values_mut() {
@@ -1781,7 +1790,12 @@ impl FunctionPlan {
                 if let Some(mode) = self.callable_modes.get(&src.index).copied() {
                     self.callable_modes.insert(dst.index, mode);
                 }
-                if let Some(place) = self.closure_places.get(&src.index).cloned() {
+                if let Some(place) = self
+                    .closure_places
+                    .get(&src.index)
+                    .filter(|_| !src.ty.is_copy_value())
+                    .cloned()
+                {
                     self.closure_places.entry(dst.index).or_insert(place);
                 }
             }
@@ -1826,7 +1840,12 @@ impl FunctionPlan {
                 self.op_spans.push(self.current_span);
                 return;
             }
-            if let Some(place) = self.closure_places.get(&src.index).cloned() {
+            if let Some(place) = self
+                .closure_places
+                .get(&src.index)
+                .filter(|_| !src.ty.is_copy_value())
+                .cloned()
+            {
                 self.closure_places.entry(dst.index).or_insert(place);
             }
             if let Some(mode) = self.callable_modes.get(&src.index).copied() {

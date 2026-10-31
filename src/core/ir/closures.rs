@@ -188,6 +188,15 @@ pub(super) fn callable_signature(ty: &Type) -> Option<(CallableKind, crate::Func
     }
 }
 
+pub(super) fn callable_noescape(ty: &Type) -> bool {
+    match ty {
+        Type::Function(f) => !f.suspends && f.noescape,
+        Type::Parameter(p) => p.callable.as_ref().is_some_and(|b| b.noescape),
+        Type::Reference(r) => callable_noescape(&r.target),
+        _ => false,
+    }
+}
+
 impl FunctionPlan {
     pub(super) fn replace_capture(&mut self, reference: Slot, value: Slot) -> Result<(), Error> {
         let value = self.snapshot(&Some(value))?.unwrap();
@@ -712,6 +721,7 @@ impl FunctionPlan {
                     c.generated_functions.clone(),
                     c.generated_bodies.len(),
                     c.instances.len(),
+                    c.noescape_closures.clone(),
                 )
             };
             for attempt in 0..2 {
@@ -758,6 +768,7 @@ impl FunctionPlan {
                             c.generated_functions.clone_from(&saved.2);
                             c.generated_bodies.truncate(saved.3);
                             c.instances.truncate(saved.4);
+                            c.noescape_closures.clone_from(&saved.5);
                         }
                         mode = CallableKind::FnOnce;
                         environment = make_environment(mode);
@@ -1005,6 +1016,7 @@ impl FunctionPlan {
                 },
             ));
         }
+        let noescape = callable_noescape(&value.ty);
         let concrete = value
             .ty
             .reference_type()
@@ -1110,6 +1122,7 @@ impl FunctionPlan {
                     .collect(),
                 signature.ret.clone(),
             );
+            let contract = (contract, noescape);
             let mut context = self.generics.borrow_mut();
             let index = context
                 .abstract_callables
@@ -1232,7 +1245,9 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                     live.insert(dst.index);
                 }
                 ClosureOp::Move { dst, src } => {
-                    live.remove(&src.index);
+                    if !src.ty.is_copy_value() {
+                        live.remove(&src.index);
+                    }
                     live.insert(dst.index);
                 }
                 ClosureOp::Consume(src) | ClosureOp::End(src) => {

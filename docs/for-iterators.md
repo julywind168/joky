@@ -766,3 +766,20 @@ continue、break 和 return 直接沿已有循环控制流处理。
 `cargo test --lib exhaustive_pipeline_instruction_cancellation -- --ignored` 通过，
 包括两类流水线各自的正常遍历、continue/break 与提前返回入口。
 完整示例为 [borrowed_pipelines.jk](../examples/borrowed_pipelines.jk)。
+
+## 25. 共享流水线的只读捕获回调
+
+共享 filter/map 使用普通泛型方法接收 `F: Copy + Fn(Item) @noescape -> R`。
+匿名函数按输入和返回路径推导类型，可直接读取外层阈值、偏移量或字符串；
+编译器为具体闭包体验证输入借用不逃逸，命名函数指针仍须显式声明 noescape。
+抽象 callable 调用也保留该契约，不能从普通 Fn 参数伪造更强约束。
+
+无拥有槽、无独占捕获的只读 Fn 环境满足局部 Copy，可组成借用记录与元组并经同步 helper 传递。
+复制保留所有捕获来源，副本使用独立环境存储；所有副本最后使用之前，被捕获对象不能修改或失效。
+共享流水线的状态协议仍是按值 step，保留复制、惰性、次序、编号、take(0) 与耗尽语义。
+已有命名回调、显式共享协议和普通消费式组合器继续可用。
+
+本阶段不开放可变捕获、拥有型 move 回调、共享 map 的拥有/引用输出、
+独占流水线捕获、Slice 流水线或挂起回调。Copy 借用环境仍不能进入枚举、容器、arena 或宿主 ABI。
+示例见 [captured_pipeline.jk](../examples/captured_pipeline.jk)，阶段验证记录见
+[语法计划 §13.12](syntax.md#1312-共享流水线的捕获回调)。

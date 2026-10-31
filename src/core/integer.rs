@@ -245,6 +245,6 @@ impl Type {
                 self,
                 Self::Bool | Self::Unit | Self::Ptr | Self::Function(_)
             )
-            || matches!(self, Self::Parameter(p) if p.callable.is_none() && p.copy)
+            || matches!(self, Self::Parameter(p) if p.copy)
     }
 }

@@ -931,6 +931,7 @@ pub(super) fn check_module(
     for (name, body) in bodies {
         let info = &functions[name];
         if info.signature.ret.contains_closures()
+            && !info.signature.ret.is_scoped_shared_value()
             && (info.signature.ret.contains_unstorable_closures()
                 || info.signature.ret.reference_type().is_some())
         {

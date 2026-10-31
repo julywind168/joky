@@ -49,7 +49,7 @@ impl TypeRegistry {
         // Validate even unused parameters before erasing the transparent alias.
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_unstorable_closures()
+            if arg.contains_unstorable_closures() && !arg.is_scoped_shared_value()
                 || !arg.is_copy_storage_value()
                     && !arg.is_scoped_borrowed_value()
                     && !arg.is_owner()
@@ -133,7 +133,7 @@ impl TypeRegistry {
         }
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_unstorable_closures()
+            if arg.contains_unstorable_closures() && !arg.is_scoped_shared_value()
                 || !arg.is_copy_storage_value()
                     && !arg.is_scoped_borrowed_value()
                     && !arg.is_owner()

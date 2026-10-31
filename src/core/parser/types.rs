@@ -303,10 +303,17 @@ impl Parser {
                                 self.expect_list_separator()?;
                             }
                             self.expect(&TokenKind::RParen)?;
-                            if self.peek() == &TokenKind::At {
-                                return Err(self
-                                    .error("Suspending callable bounds are not supported".into()));
-                            }
+                            let noescape = if self.peek() == &TokenKind::At {
+                                self.advance();
+                                if self.expect_ident()? != "noescape" {
+                                    return Err(self.error(
+                                        "Only @noescape is supported on callable bounds".into(),
+                                    ));
+                                }
+                                true
+                            } else {
+                                false
+                            };
                             self.expect(&TokenKind::Arrow)?;
                             let ret = self.parse_type()?;
                             let mode = match name.as_str() {
@@ -328,6 +335,8 @@ impl Parser {
                                 .map_or(mode, |b| b.mode.min(mode));
                             parameter.callable = Some(std::sync::Arc::new(CallableBound {
                                 mode,
+                                noescape: noescape
+                                    || parameter.callable.as_ref().is_some_and(|b| b.noescape),
                                 signature,
                                 additional_signatures,
                             }));
@@ -354,9 +363,6 @@ impl Parser {
                         }
                         self.advance();
                     }
-                }
-                if parameter.copy && parameter.callable.is_some() {
-                    return Err(self.error("Copy cannot be combined with callable bounds".into()));
                 }
                 type_params.push(std::sync::Arc::new(parameter));
                 if self.peek() != &TokenKind::Comma {

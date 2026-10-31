@@ -18,7 +18,7 @@ fn main() {
     }
 
     let names = ["Alice", "", "Bob", "Carol"]
-    // Borrowed pipelines use synchronous, noncapturing @noescape callbacks.
+    // Shared callbacks may borrow read-only locals; named functions declare @noescape.
     let selected = iter.shared(&names).filter(nonempty).take(2)
     for name in selected { println(name) }
     println(names.len()) // The source still owns all four strings.

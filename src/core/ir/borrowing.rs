@@ -1826,7 +1826,7 @@ fn analyze(
                         state.insert(dst.index, value);
                         // Callable moves preserve capture origins, but end the old
                         // abstract value just like concrete environment moves.
-                        if src.index != dst.index {
+                        if src.index != dst.index && !src.ty.is_copy_value() {
                             state.get_mut(&src.index).unwrap().invalid = true;
                         }
                     }

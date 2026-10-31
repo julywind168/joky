@@ -455,7 +455,6 @@ fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invali
         "fn f(value: &String) -> &String { value } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).map(f) {} }",
         "fn f(value: &Int32) @noescape -> &Int32 { alloc(1) } fn bad() { let a = [1]; for _ in iter.shared(&a).map(f) {} }",
         "fn f(value: &String) -> Bool { alloc(value); true } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).filter(f) {} }",
-        "fn bad() { let a = [1]; let offset = 1; for _ in iter.shared(&a).map(|n| { *n + offset }) {} }",
         "fn f(value: &Int32) @suspends -> Int32 { *value } fn bad() { let a = [1]; for _ in iter.shared(&a).map(f) {} }",
         "fn bad() { var a = [1]; let p = iter.shared(&a); a.push(2); for _ in p {} }",
         "fn bad() { let a = [1]; let p = iter.shared(&a); a.release(); for _ in p {} }",
@@ -468,6 +467,54 @@ fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invali
 }
 
 const EXCLUSIVE_PIPELINE: &str = include_str!("../../../../tests/fixtures/exclusive_pipeline.jk");
+
+const CAPTURED_PIPELINE: &str = include_str!("../../../../tests/fixtures/captured_pipeline.jk");
+
+#[test]
+fn captured_pipeline_borrows_callbacks_and_preserves_copy_state() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm_with_prelude(CAPTURED_PIPELINE, mode, false);
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        EVENTS.with(|events| events.borrow_mut().clear());
+        assert_eq!(vm.call_int32_0("lazy").unwrap(), 42);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [55, 80, 180, 65, 165]));
+        assert_eq!(vm.call_int32_0("early").unwrap(), 42);
+        assert!(vm
+            .call_unit_0("failed")
+            .unwrap_err()
+            .message()
+            .contains("captured callback failed"));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn captured_pipeline_rejects_mutation_escape_storage_and_retaining_callbacks() {
+    for source in [
+        "fn bad() { let a = [1]; var limit = 0; let p = iter.shared(&a).filter(|v| { *v > limit }); limit = 2; for _ in p {} }",
+        "fn bad() { var a = [1]; let limit = 0; let p = iter.shared(&a).filter(|v| { *v > limit }); a.push(2); for _ in p {} }",
+        "fn bad() { let a = [1]; let p = { let limit = 0; iter.shared(&a).filter(|v| { *v > limit }) }; for _ in p {} }",
+        "fn bad() { let a = [1]; let limit = 0; alloc(iter.shared(&a).filter(|v| { *v > limit })); }",
+        "fn bad() { let a = [1]; let limit = 0; let saved = [iter.shared(&a).filter(|v| { *v > limit })]; }",
+        "fn bad() { let a = [1]; var calls = 0; for _ in iter.shared(&a).filter(|v| { calls += 1; *v > calls }) {} }",
+        "fn bad() { let a = [1]; let limit = 0; for _ in iter.shared(&a).filter(move |v| { *v > limit }) {} }",
+        "fn bad() { let a = [1]; let limit = 0; for _ in iter.shared(&a).map(|v| { if *v > limit { v } else { v } }) {} }",
+        "fn bad() @suspends { let a = [1]; let limit = 0; for _ in iter.shared(&a).filter(|v| { *v > limit }) {} }",
+        "fn bad() { let n = 1; let f = || { n }; let saved = Some(f); }",
+        "fn require<F: Fn(&Int32) @noescape -> Bool>(f: F) {} fn bad<F: Fn(&Int32) -> Bool>(f: F) { require(f) }",
+    ] {
+        let source = format!("import joky/array.{{type Array}} import joky/iter {source}");
+        frontend_error(&source, &crate::ModuleSources::new());
+    }
+    for retention in ["alloc(Saved { value: v })", "retain(v)"] {
+        let source = format!("import joky/array.{{type Array}} import joky/iter struct Saved {{ value: &Int32 }} fn retain(v: &Int32) {{ alloc(Saved {{ value: v }}); }} fn bad() {{ let a = [1]; let limit = 0; for _ in iter.shared(&a).filter(|v| {{ {retention}; *v > limit }}) {{}} }}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.message().contains("@noescape"), "{error}");
+    }
+    let source = "fn apply<F: Fn(&Int32) @noescape -> &Int32>(f: F, n: &Int32) -> &Int32 { f(n) } fn bad() { let n = 1; apply(|v| { v }, &n); }";
+    let error = frontend_error(source, &crate::ModuleSources::new());
+    assert!(error.message().contains("@noescape"), "{error}");
+}
 
 #[test]
 fn exclusive_pipeline_chains_transfer_cursors_and_end_each_element_loan() {
@@ -525,7 +572,7 @@ fn exclusive_pipeline_rejects_duplicate_loans_storage_escape_and_retaining_callb
 #[test]
 #[ignore = "exhaustive: cancel every shared/exclusive pipeline and callback instruction"]
 fn exhaustive_pipeline_instruction_cancellation() {
-    for source in [SHARED_PIPELINE, EXCLUSIVE_PIPELINE] {
+    for source in [SHARED_PIPELINE, EXCLUSIVE_PIPELINE, CAPTURED_PIPELINE] {
         let entries = ["compute", "lazy", "early"];
         let wrappers = entries
             .iter()

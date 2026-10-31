@@ -1,0 +1,73 @@
+import joky/array.{type Array}
+import joky/check.{assert, panic}
+import joky/iter
+import joky/string
+
+extern fn record(value: Int32) -> Int32
+
+fn copy_callback<F: Copy + Fn(&Int32) @noescape -> Bool>(callback: F) -> F { callback }
+fn count<I: Copy + iter.SharedIterator>(input: I) -> UInt64 {
+    var total: UInt64 = 0
+    for _ in input { total += 1 }
+    total
+}
+fn compute() -> Int32 {
+    var scores = [55, 80, 65, 90]
+    let threshold = 60
+    let keep = copy_callback(|score| { *score >= threshold })
+    let selected = iter.shared(&scores).filter(keep).take(2)
+    var total = 0
+    for score in selected { total += *score }
+    assert(total == 145 && count(selected) == 2, "copied captured pipeline")
+    assert(keep(&threshold), "copied callback remains callable")
+    let nested = { let first = |v: &Int32| { *v >= threshold }; let second = first; second }
+    assert(count(iter.shared(&scores).filter(nested)) == 3, "copied environment outlives original binding")
+    let offset = 5
+    total = 0
+    for score in iter.shared(&scores).map(|score| { *score + offset }).take(2) { total += score }
+    assert(total == 145, "captured map")
+    let limit = 70
+    assert(count(iter.shared(&scores).map(|score| { *score + offset }).filter(|score| { score >= limit })) == 3, "captured filter after map")
+    assert(count(iter.shared(&scores).filter(keep).zip(iter.shared(&scores).filter(keep))) == 3, "captured zip")
+    scores.push(100)
+    assert(scores.len() == 5, "source reusable after last use")
+    let empty: Array<Int32> = []
+    assert(count(iter.shared(&empty).filter(keep)) == 0, "empty source")
+    let names = ["Alice", "", "Bob"]
+    let excluded = ""
+    assert(count(iter.shared(&names).filter(|name| { name != excluded })) == 2, "borrowed owner capture")
+    let (left, right) = (keep, keep)
+    assert(left(&threshold) && right(&threshold), "local Copy callback tuple")
+    42
+}
+fn lazy() -> Int32 {
+    let scores = [55, 80, 65, 90]
+    let threshold = 60
+    let offset = 5
+    let selected = iter.shared(&scores)
+        .filter(|score| { record(*score); *score >= threshold })
+        .map(|score| { record(100 + *score); *score + offset })
+        .take(2)
+    var total = 0
+    for index, score in selected {
+        total += score
+        if index == 0 { continue }
+        break
+    }
+    assert(total == 155, "lazy captured callbacks")
+    let zero = iter.shared(&scores).filter(|score| { if *score >= threshold { panic("take zero") }; false }).take(0)
+    assert(count(zero) == 0, "take zero does not call captures")
+    42
+}
+fn early() -> Int32 {
+    let names = ["owned"]
+    let excluded = ""
+    for _ in iter.shared(&names).filter(|name| { name != excluded }) { return 42 }
+    0
+}
+fn failed() {
+    let names = ["owned"]
+    let excluded = ""
+    for _ in iter.shared(&names).filter(|name| { if name != excluded { panic("captured callback failed") }; false }) {}
+}
+fn main() { assert(compute() == 42 && lazy() == 42 && early() == 42, "captured pipeline") }

@@ -105,10 +105,10 @@ fn closure_storage_factory_infers_nested_move_environment() {
 #[test]
 fn closure_storage_rejects_borrow_escape_copy_and_unsupported_storage() {
     for body in [
-        "let n = 1; let f = || { n }; wrap(f)",
-        "let n = 1; let r = &n; let f = move || { *r }; wrap(f)",
+        "let n = 1; let f = || { n }; alloc(wrap(f))",
+        "let n = 1; let r = &n; let f = move || { *r }; alloc(wrap(f))",
         "let p = alloc(1); let refs = [&*p]; let f = move || { refs.len() }; wrap(f)",
-        "let n = 1; let f = || { n }; let g = move || { f() }; wrap(g)",
+        "let n = 1; let f = || { n }; let g = move || { f() }; alloc(wrap(g))",
         "let f = move || { 1 }; let h = wrap(f); let other = h; let again = h",
         "let f = move || { 1 }; let h = wrap(f); let other = h.value; let again = h.value",
         "let f = move || { 1 }; let h = wrap(f); let r = &h; let other = h; consume_ref(r)",
@@ -159,8 +159,14 @@ fn closure_noncapturing_identity_and_move_rejections() {
         42,
     );
     executes("import joky/string fn probe() -> Int32 { let n = \"owner\"; var f = move || { string.byte_length(&n) }; let g = f; f = g; if f() == 5 { 42 } else { 0 } }", 42);
-    rejects("fn probe() { var f = || { 42 }; let g = f; f = g; g() }");
-    rejects("fn probe() { let f = || { 42 }; let p = &f; let g = f; p() }");
+    executes(
+        "fn probe() -> Int32 { var f = || { 42 }; let g = f; f = g; g() }",
+        42,
+    );
+    executes(
+        "fn probe() -> Int32 { let f = || { 21 }; let p = &f; let g = f; p() + g() }",
+        42,
+    );
     executes(
         "fn probe() -> Int32 { var f = || { 42 }; let g = f; f = g; f() }",
         42,
@@ -171,8 +177,14 @@ fn closure_noncapturing_identity_and_move_rejections() {
     rejects("fn probe() { while true { let f = || { continue } } }");
     rejects("fn probe() { let f = || { f() } }");
     rejects("fn probe() { let f = if true { || { 1 } } else { || { 1 } } }");
-    rejects("fn probe() { let a = || { 1 }; let b = a; a() }");
-    rejects("fn probe() { let a = || { 1 }; let b: fn() -> Int32 = a; a() }");
+    executes(
+        "fn probe() -> Int32 { let a = || { 21 }; let b = a; a() + b() }",
+        42,
+    );
+    executes(
+        "fn probe() -> Int32 { let a = || { 21 }; let b: fn() -> Int32 = a; a() + b() }",
+        42,
+    );
 }
 
 #[test]
@@ -191,8 +203,8 @@ fn closure_borrowed_capture_conflicts_and_escape_rejections() {
     rejects("fn probe() { let text = \"owned\"; let f = || -> String { text } }");
     rejects("fn probe() { let n = 1; let f = || -> &Int32 { &n } }");
     rejects("fn probe() { let n = 1; let f = || { n }; let p: fn() -> Int32 = f }");
-    rejects("fn probe() { let f = || {}; let pair = (f, 1) }");
-    rejects("fn bad<F: Fn() -> Int32>(f: &F) { let pair = (f, 1) } fn probe() {}");
+    rejects("fn probe() { var n = 0; let f = || { n += 1 }; let pair = (f, 1) }");
+    rejects("fn bad<F: FnMut() -> Int32>(f: &mut F) { let pair = (f, 1) } fn probe() {}");
     rejects("fn probe() { var n = 0; var f = |x: Int32| { n = n + x; n }; f({ f(1); 2 }) }");
     rejects("fn probe() { let value = \"once\"; let f = move |x: Int32| { let owned = value; x }; f({ f(1); 2 }) }");
 }
