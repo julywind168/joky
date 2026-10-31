@@ -819,6 +819,23 @@ let item = &mut values[0]
 完整行为和清理回归见 [indexing.jk](../tests/fixtures/indexing.jk) 与
 [indexing_cleanup.jk](../tests/fixtures/indexing_cleanup.jk)。
 
+## 容器查询接口约定
+
+日常调用优先使用方法；已有模块函数继续保留，采用相同算法与借用契约。
+`len()` / `is_empty()` 在 Array、Slice、Map、List、Set 上均可使用。
+
+| 容器 | 复制读取 / 存在性 | 元素借用 | 消费取出 |
+| --- | --- | --- | --- |
+| Array | `get(index)` 返回 Copy 元素的 Option | `borrow_ref` / `borrow_mut_ref`；缺失失败 | `remove` / `pop` 返回 Option |
+| Slice | `get(index)` 返回 Copy 元素的 Option | `borrow_ref` / `borrow_mut_ref`；缺失失败 | 不转移底层元素所有权 |
+| Map | `get` / `get_by_ref` 返回 Copy value 的 Option；`contains_key` / `contains_key_by_ref` 查询存在性 | `borrow_ref` / `borrow_mut_ref` 使用 Copy key，`value_ref` / `value_mut` 借用 key；缺失失败 | `remove` / `remove_by_ref` 返回 Option |
+| List | `get` / `front` / `back` 返回 Copy 元素的 Option | `borrow_ref` / `borrow_mut_ref`；缺失失败 | `remove` / `pop_front` / `pop_back` 返回 Option |
+| Set | `contains` 返回 Bool | 不提供元素借用查询入口 | `into_array` 消费整个集合；`remove` 返回是否删除 |
+
+`borrow` / `borrow_mut` 的 Element 视图入口继续保留，按各容器的元素准入使用。
+Slice 还提供 `set`、`slice` / `slice_mut` 方法；与同名模块函数具有相同的返回值、
+越界行为和来源约束。Slice 方法由标准库定义，用户不能通过 Slice 或其透明别名添加 impl。
+
 ## 动态数组
 
 显式导入 `joky/array` 后可使用 `Array<T>`。元素支持八种定宽整数、Float32 / Float64、Rune、Bool、Unit、Ptr，

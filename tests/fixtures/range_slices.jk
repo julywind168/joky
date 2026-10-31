@@ -31,9 +31,15 @@ fn arrays() {
     let frozen = &values[start..{ start = 3; start }]
     expect(sum(frozen) == 50)
     let region = &mut values[1..=2]
-    let inner = &mut region[0..1]
-    inner[0] += 2
+    expect(region.len() == 2 && !region.is_empty())
+    expect(region.get(2).is_none())
+    expect(region.set(0, 20))
+    expect(!region.set(2, 99))
+    expect(*region.borrow_ref(1) == 30)
+    let inner = region.slice_mut(0, 1)
+    *inner.borrow_mut_ref(0) += 2
     for value in &mut *region { *value += 1 }
+    expect(region.slice(2, 2).is_empty())
     expect(sum(&region[2..2]) == 0)
     expect(values[1] == 23 && values[2] == 31)
 }

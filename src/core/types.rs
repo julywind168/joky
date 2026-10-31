@@ -432,7 +432,12 @@ impl TypeRegistry {
             let trusted_fixed_array = matches!(target, Type::FixedArray(_))
                 && implementation.origin.as_deref() == Some("joky/fixed_array")
                 && implementation.trait_name.is_none();
-            let valid = if trusted_arena || trusted_fixed_array {
+            let trusted_slice = implementation.origin.as_deref() == Some("joky/slice")
+                && implementation.trait_name.is_none()
+                && matches!((target, implementation.type_params.as_slice()),
+                    (Type::BufferSlice(element), [parameter])
+                        if **element == Type::Parameter(parameter.clone()));
+            let valid = if trusted_arena || trusted_fixed_array || trusted_slice {
                 true
             } else if let Some((name, parameters, arguments)) = arguments {
                 (name == &implementation.target_name

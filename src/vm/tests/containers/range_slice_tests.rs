@@ -118,3 +118,29 @@ fn exhaustive_range_slices_instruction_cancellation() {
         },
     );
 }
+
+#[test]
+fn slice_members_preserve_alias_rejection_and_nested_diagnostics() {
+    for source in [
+        "import joky/slice.{type Slice} impl<T> Slice<T> { fn extra(&self) -> Int32 { 0 } }",
+        "import joky/slice.{type Slice} type View<T> = Slice<T> impl<T> View<T> { fn extra(&self) -> Int32 { 0 } }",
+    ] {
+        let error = frontend_error(source, &crate::ModuleSources::new());
+        assert!(error.message().contains("aliases and specialized"), "{error}");
+    }
+    for value in ["view.missing()", "keep(view.missing())"] {
+        let source = format!("fn keep<T>(value: T) -> T {{ value }} fn main() {{ let values = [1, 2]; let view = &values[0..2]; println({value}) }}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), crate::ErrorCode::UnknownName);
+        assert!(
+            error.message().contains("has no method 'missing'"),
+            "{error}"
+        );
+    }
+    let error = frontend_error(
+        "import joky/array.{type Array} fn main() { let values = Array.new() }",
+        &crate::ModuleSources::new(),
+    );
+    assert!(error.message().contains("Cannot infer"), "{error}");
+    assert!(!error.message().contains("joky/member/"), "{error}");
+}

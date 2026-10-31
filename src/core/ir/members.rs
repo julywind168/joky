@@ -64,6 +64,9 @@ fn constant_type_supported(ty: &Type) -> bool {
 }
 
 pub(super) fn owner_name(ty: &Type) -> String {
+    if matches!(ty, Type::BufferSlice(_)) {
+        return "joky/slice.Slice".into();
+    }
     ty.nominal()
         .map_or_else(|| ty.to_string(), |(name, _)| name.to_owned())
 }
@@ -74,7 +77,8 @@ pub(super) fn member_key(ty: &Type, name: &str) -> String {
 
 pub(super) fn same_owner(a: &Type, b: &Type) -> bool {
     match (a, b) {
-        (Type::FixedArray(_), Type::FixedArray(_)) => true,
+        (Type::FixedArray(_), Type::FixedArray(_))
+        | (Type::BufferSlice(_), Type::BufferSlice(_)) => true,
         (Type::Record(a), Type::Record(b)) => a.id == b.id,
         (Type::Enum(a), Type::Enum(b)) => a.id == b.id,
         _ => a == b,
@@ -722,6 +726,7 @@ impl FunctionPlan {
                 ],
                 (_, Type::Record(r)) => r.arguments.clone(),
                 (_, Type::Enum(e)) => e.arguments.clone(),
+                (_, Type::BufferSlice(element)) => vec![(**element).clone().into()],
                 _ => unreachable!("generic implementations have nominal targets"),
             }
         } else {

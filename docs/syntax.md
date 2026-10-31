@@ -1398,20 +1398,27 @@ json_derive_composition、suspending_cli_entries、generic_map_public_keys_value
 
 ### 13.3 E1：容器表面 API 与诊断
 
-- [ ] 以 Array、Slice、Map、List、Set 的公开接口建立小型对照表，明确长度、
+- [x] 以 Array、Slice、Map、List、Set 的公开接口建立小型对照表，明确长度、
   查询、复制读取、借用读取和消费取出的命名；说明各入口的未命中行为。
   当前 `get`、`borrow`、`borrow_ref`、`get_by_ref`、`value_ref` 不直接机械改名。
-- [ ] 为 Slice 的 len / is_empty 等常用操作设计方法入口，使切片前后调用形式一致。
+- [x] 为 Slice 的 len / is_empty 等常用操作设计方法入口，使切片前后调用形式一致。
   核对透明别名、内部视图类型的成员归属与可见性，避免为便利入口意外开放任意别名 impl。
   保留现有模块函数，定义两种入口的统一行为与来源约束。
-- [ ] 修正内层错误被外层泛型推导覆盖的诊断。例如当前 `println(view.len())`
+- [x] 修正内层错误被外层泛型推导覆盖的诊断。例如当前 `println(view.len())`
   在 view 为 Slice 时报告无法推导 println 的 T；应优先报告 Slice 没有 len 方法。
   修复后即使新增 Slice.len，也用其他不存在的成员保留这一回归责任。
-- [ ] 泛型与成员诊断优先使用用户可见类型和成员名，避免暴露
+- [x] 泛型与成员诊断优先使用用户可见类型和成员名，避免暴露
   `joky/member/...` 等内部符号；只在确实缺少类型信息时建议补显式泛型参数。
 
 验收：方法与模块函数具有相同结果、失败和借用行为；诊断指向实际出错的子表达式。
 成功路径执行生成代码；静态拒绝使用共享前端，不为每个后端重复同一诊断矩阵。
+
+E1 完成（2026-10-31）：Slice 的八个方法复用模块函数；只有标准库 Slice 定义
+可声明这些 impl，普通别名实现仍拒绝。增加容器入口对照表；嵌套泛型实参的无效成员
+优先报告原错误，缺少类型参数的成员诊断移除内部调用前缀。
+针对性验证通过：`cargo test --lib -- range_slices_preserve_views_order_bounds_and_mutability slice_members_preserve_alias_rejection_and_nested_diagnostics`，
+诊断补充后重跑第二项；`cargo test --test cli range_slices_execute_views_suspension_and_checked_closed_bounds_in_aot`。
+覆盖两种 VM 与独立 AOT，未运行全量检查。
 
 ### 13.4 E2：期望类型参与调用推导
 

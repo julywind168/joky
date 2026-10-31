@@ -5,6 +5,21 @@ import joky/element.{type Element}
 import joky/option.{type Option, Some, None}
 
 pub type Slice<T> = buffer.Slice<T>
+
+// Only this standard definition may attach methods to the internal view type.
+impl<T> Slice<T> {
+    pub fn len(&self) -> UInt64 { len(self) }
+    pub fn is_empty(&self) -> Bool { is_empty(self) }
+    pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
+    pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
+    pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
+    pub fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> { slice_mut(self, start, end) }
+}
+impl<T: Copy> Slice<T> {
+    pub fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
+    pub fn set(&mut self, index: UInt64, next: T) -> Bool { set(self, index, next) }
+}
+
 pub fn len<T>(values: &Slice<T>) -> UInt64 { buffer.slice_len(values) }
 pub fn is_empty<T>(values: &Slice<T>) -> Bool { len(values) == 0 }
 pub fn get<T: Copy>(values: &Slice<T>, index: UInt64) -> Option<T> {

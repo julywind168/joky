@@ -395,9 +395,32 @@ impl FunctionPlan {
         })?;
         self.materialize_inference(&mut inference, types, *span)?;
         let substitutions = inference.substitutions;
+        if template
+            .type_params
+            .iter()
+            .any(|p| substitutions.argument(p).is_none())
+        {
+            // Type hints deliberately suppress errors. Before reporting a missing
+            // outer parameter, surface an invalid member in its argument instead.
+            let mut local = vars.clone();
+            for arg in args {
+                let member = self.member_call(arg, &local, functions, types)?;
+                let call = member.as_ref().unwrap_or(arg);
+                if let Expr::Call { callee, .. } = call {
+                    if self
+                        .function_name(callee)
+                        .is_some_and(|name| self.generics.borrow().templates.contains_key(&name))
+                    {
+                        self.generic_signature(call, &local, functions, types)?;
+                    }
+                }
+                self.hint_bindings(arg, &mut local, functions, types);
+            }
+        }
+        let display_callee = callee.strip_prefix("joky/member/").unwrap_or(callee);
         let arguments: Vec<_> = template.type_params.iter().map(|p| {
             let argument = substitutions.argument(p).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
-                format!("Cannot infer {} parameter `{}` for `{callee}`; use explicit generic arguments", if p.kind == crate::core::types::ParameterKind::Const { "constant" } else { "type" }, p.name)))?;
+                format!("Cannot infer {} parameter `{}` for `{display_callee}`; use explicit generic arguments", if p.kind == crate::core::types::ParameterKind::Const { "constant" } else { "type" }, p.name)))?;
             types.validate_argument(p, &argument).map_err(|e| e.with_span(*span))?;
             let Some(ty) = argument.as_type() else { return Ok(argument); };
             types.validate(ty).map_err(|e| e.with_span(*span))?;
