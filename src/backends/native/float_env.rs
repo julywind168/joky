@@ -1,11 +1,17 @@
 //! Protect native activations that compute floats or call external code.
-//! Instrument the completed CFG so success, failure and Pending share the same
-//! exit rule. The saved register token is an SSA value, never a CPS frame field.
+//! Arithmetic bodies run behind an opaque call boundary so optimization cannot
+//! move floating-point operations across environment changes. Integer-only bodies
+//! retain inline guards. Saved tokens belong to native activations, not CPS frames.
 use cranelift_codegen::{
     cursor::{Cursor, FuncCursor},
-    ir::{ExternalName, Function, Inst, InstBuilder, InstructionData, Opcode},
+    ir::{
+        AbiParam, ExternalName, FuncRef, Function, Inst, InstBuilder, InstructionData, Opcode,
+        SigRef,
+    },
+    Context,
 };
-use cranelift_module::{FuncId, Module};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_module::{FuncId, Module, ModuleError};
 use std::collections::{HashMap, HashSet};
 
 /// A closed set of runtime declarations audited to preserve the thread's FP
@@ -68,30 +74,38 @@ fn external_call(function: &Function, inst: Inst) -> bool {
     }
 }
 
+/// Prepare an entry, defining private float bodies and bridges as needed.
+/// Return whether this entry requires the floating-point runtime helpers.
 pub(super) fn instrument<M: Module>(
     module: &mut M,
     function: &mut Function,
     helpers: &HashMap<String, FuncId>,
     effects: &Effects,
-) -> bool {
+) -> Result<bool, Box<ModuleError>> {
     let instructions: Vec<_> = function
         .layout
         .blocks()
         .flat_map(|block| function.layout.block_insts(block))
         .collect();
-    let needs_guard = instructions.iter().any(|&inst| {
-        external_call(function, inst)
-            || function
-                .dfg
-                .inst_args(inst)
-                .iter()
-                .chain(function.dfg.inst_results(inst))
-                .any(|&value| function.dfg.value_type(value).is_float())
+    let has_floats = instructions.iter().any(|&inst| {
+        function
+            .dfg
+            .inst_args(inst)
+            .iter()
+            .chain(function.dfg.inst_results(inst))
+            .any(|&value| function.dfg.value_type(value).is_float())
     });
-    if !needs_guard {
+    if has_floats {
+        isolate_body(module, function, &instructions, helpers, effects)?;
+        return Ok(true);
+    }
+    if !instructions
+        .iter()
+        .any(|&inst| external_call(function, inst))
+    {
         // Pure integer code, including calls to other generated functions,
         // still links without the runtime.
-        return false;
+        return Ok(false);
     }
     let enter = module.declare_func_in_func(helpers["__joky_float_env_enter"], function);
     let reset = module.declare_func_in_func(helpers["__joky_float_env_reset"], function);
@@ -112,7 +126,133 @@ pub(super) fn instrument<M: Module>(
             cursor.ins().call(reset, &[]);
         }
     }
-    true
+    Ok(true)
+}
+
+/// A bridge contains calls and ABI value forwarding only: no floating-point
+/// computation can be sunk past its reset or hoisted before its enter. Cranelift
+/// compiles each definition separately; these boundaries must not be inlined.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum CallTarget {
+    Direct(FuncRef),
+    Indirect(SigRef),
+}
+
+fn reset_bridge<M: Module>(
+    module: &mut M,
+    source: &Function,
+    target: CallTarget,
+    reset: FuncId,
+) -> Result<FuncId, Box<ModuleError>> {
+    let signature = match target {
+        CallTarget::Direct(reference) => source.dfg.ext_funcs[reference].signature,
+        CallTarget::Indirect(signature) => signature,
+    };
+    let signature = source.dfg.signatures[signature].clone();
+    let mut ctx = module.make_context();
+    ctx.func.signature = signature.clone();
+    if matches!(target, CallTarget::Indirect(_)) {
+        ctx.func
+            .signature
+            .params
+            .insert(0, AbiParam::new(module.target_config().pointer_type()));
+    }
+    let id = module.declare_anonymous_function(&ctx.func.signature)?;
+    let reset = module.declare_func_in_func(reset, &mut ctx.func);
+    let direct = if let CallTarget::Direct(reference) = target {
+        let mut declaration = source.dfg.ext_funcs[reference].clone();
+        declaration.signature = ctx.func.import_signature(signature.clone());
+        if let ExternalName::User(name) = declaration.name {
+            declaration.name = ExternalName::User(
+                ctx.func
+                    .declare_imported_user_function(source.params.user_named_funcs()[name].clone()),
+            );
+        }
+        Some(ctx.func.import_function(declaration))
+    } else {
+        None
+    };
+    let indirect = ctx.func.import_signature(signature);
+    let mut frontend = FunctionBuilderContext::new();
+    let mut b = FunctionBuilder::new(&mut ctx.func, &mut frontend);
+    let entry = b.create_block();
+    b.append_block_params_for_function_params(entry);
+    b.switch_to_block(entry);
+    let args = b.block_params(entry).to_vec();
+    let call = if let Some(reference) = direct {
+        b.ins().call(reference, &args)
+    } else {
+        b.ins().call_indirect(indirect, args[0], &args[1..])
+    };
+    let values = b.inst_results(call).to_vec();
+    b.ins().call(reset, &[]);
+    b.ins().return_(&values);
+    b.seal_all_blocks();
+    b.finalize(module.target_config());
+    module.define_function(id, &mut ctx)?;
+    Ok(id)
+}
+
+fn isolate_body<M: Module>(
+    module: &mut M,
+    function: &mut Function,
+    instructions: &[Inst],
+    helpers: &HashMap<String, FuncId>,
+    effects: &Effects,
+) -> Result<(), Box<ModuleError>> {
+    // Every untrusted call returns through a bridge that reestablishes the
+    // standard environment before optimized arithmetic can run again. Cache
+    // repeated targets within this body, including calls in different blocks.
+    let mut bridges = HashMap::new();
+    for &inst in instructions {
+        if !external_call(function, inst) || effects.preserves(function, inst) {
+            continue;
+        }
+        let target = match function.dfg.insts[inst] {
+            InstructionData::Call { func_ref, .. } => CallTarget::Direct(func_ref),
+            InstructionData::CallIndirect { sig_ref, .. } => CallTarget::Indirect(sig_ref),
+            _ => unreachable!("native lowering emits ordinary direct or indirect calls"),
+        };
+        let id = match bridges.entry(target) {
+            std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+            std::collections::hash_map::Entry::Vacant(entry) => *entry.insert(reset_bridge(
+                module,
+                function,
+                target,
+                helpers["__joky_float_env_reset"],
+            )?),
+        };
+        let reference = module.declare_func_in_func(id, function);
+        let args = function.dfg.inst_args(inst).to_vec();
+        function.replace(inst).call(reference, &args);
+    }
+
+    // Preserve the original ABI and symbol in an arithmetic-free entry. Even
+    // on Pending/error returns the inner activation finishes before restore.
+    let signature = function.signature.clone();
+    let body = module.declare_anonymous_function(&signature)?;
+    let mut ctx = Context::new();
+    std::mem::swap(&mut ctx.func, function);
+    module.define_function(body, &mut ctx)?;
+    function.signature = signature;
+    let body = module.declare_func_in_func(body, function);
+    let enter = module.declare_func_in_func(helpers["__joky_float_env_enter"], function);
+    let restore = module.declare_func_in_func(helpers["__joky_float_env_restore"], function);
+    let mut frontend = FunctionBuilderContext::new();
+    let mut b = FunctionBuilder::new(function, &mut frontend);
+    let entry = b.create_block();
+    b.append_block_params_for_function_params(entry);
+    b.switch_to_block(entry);
+    let args = b.block_params(entry).to_vec();
+    let entered = b.ins().call(enter, &[]);
+    let saved = b.inst_results(entered)[0];
+    let called = b.ins().call(body, &args);
+    let values = b.inst_results(called).to_vec();
+    b.ins().call(restore, &[saved]);
+    b.ins().return_(&values);
+    b.seal_all_blocks();
+    b.finalize(module.target_config());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -136,7 +276,17 @@ mod tests {
 
     #[test]
     fn float_environment_elides_audited_calls_but_resets_host_and_indirect_calls() {
-        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
+        for level in ["none", "speed", "speed_and_size"] {
+            check_call_boundaries(level);
+        }
+    }
+
+    fn check_call_boundaries(level: &str) {
+        let mut builder = JITBuilder::with_flags(
+            &[("opt_level", level)],
+            cranelift_module::default_libcall_names(),
+        )
+        .unwrap();
         for (name, pointer) in float_env::symbols() {
             builder.symbol(name, pointer);
         }
@@ -183,7 +333,7 @@ mod tests {
         b.ins().return_(&[sum]);
         b.seal_all_blocks();
         b.finalize(module.target_config());
-        assert!(instrument(&mut module, &mut ctx.func, &helpers, &effects));
+        assert!(instrument(&mut module, &mut ctx.func, &helpers, &effects).unwrap());
         module.define_function(function, &mut ctx).unwrap();
         module.finalize_definitions().unwrap();
         let call: unsafe extern "C" fn(f64, f64) -> f64 =

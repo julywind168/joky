@@ -141,7 +141,15 @@ impl AotCompiler {
         prefix: &str,
         registry: Rc<ModuleRegistry>,
     ) -> Result<Self, Error> {
-        let mut flags = settings::builder();
+        Self::with_codegen_settings(name, prefix, registry, settings::builder())
+    }
+
+    fn with_codegen_settings(
+        name: &str,
+        prefix: &str,
+        registry: Rc<ModuleRegistry>,
+        mut flags: settings::Builder,
+    ) -> Result<Self, Error> {
         flags
             .set("is_pic", "true")
             .map_err(|e| compile_error(e.to_string()))?;

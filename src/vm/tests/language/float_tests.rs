@@ -34,6 +34,10 @@ mod environment {
     extern "C" fn observe(value: f64) {
         OBSERVED.with(|v| v.borrow_mut().push(value.to_bits()));
     }
+    unsafe extern "C" fn dirty_value(value: f64) -> f64 {
+        dirty();
+        value
+    }
     unsafe extern "C" fn pause_poll(frame: *mut CpsFrame) -> i32 {
         testing::hostile();
         if (*frame).state == 0 {
@@ -78,6 +82,12 @@ mod environment {
                     observe as *const u8,
                 )
                 .unwrap();
+                vm.register_fn(
+                    "dirty_value",
+                    FunctionSignature::new(vec![Type::Float64], Type::Float64),
+                    dirty_value as *const u8,
+                )
+                .unwrap();
                 vm.register_suspending_fn(
                     "pause",
                     FunctionSignature::new(vec![], Type::Unit),
@@ -100,13 +110,39 @@ mod environment {
                 vm.call_float64_0("folded_tiny").unwrap().to_bits(),
                 0x8000000000000
             );
-            for name in ["add64", "indirect", "closure_borrowed64", "buffer_helpers"] {
+            for name in [
+                "add64",
+                "indirect",
+                "closure_borrowed64",
+                "buffer_helpers",
+                "pure64",
+                "before_host64",
+                "host_value64",
+                "branch64",
+                "loop64",
+            ] {
                 assert_eq!(
                     vm.call_float64_2(name, 1.0, f64::from_bits(0x3ca0000000000000))
                         .unwrap()
                         .to_bits(),
                     0x3ff0000000000000,
                     "{mode:?} {name}"
+                );
+                assert_eq!(testing::state(), saved);
+            }
+            assert_eq!(
+                vm.call_float64_2("branch64", -1.0, f64::from_bits(0x3ca0000000000000))
+                    .unwrap()
+                    .to_bits(),
+                (-1.0f64).to_bits(),
+            );
+            for name in ["pure32", "loop32"] {
+                assert_eq!(
+                    vm.call_float32_2(name, 1.0, f32::from_bits(0x33800000))
+                        .unwrap()
+                        .to_bits(),
+                    0x3f800000,
+                    "{mode:?} {name}",
                 );
                 assert_eq!(testing::state(), saved);
             }

@@ -4,12 +4,27 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn aot_float_environment_isolated_at_native_and_cps_boundaries() {
+    for level in ["none", "speed", "speed_and_size"] {
+        check_float_environment(level);
+    }
+}
+
+#[cfg(unix)]
+fn check_float_environment(level: &str) {
     use crate::runtime::float_env::{testing, Guard};
     let fixture = ScratchDir::new("float-environment");
     let object = fixture.path().join("float.o");
     let host = fixture.path().join("host.c");
     let executable = fixture.path().join("float");
-    let mut compiler = AotCompiler::new("float-environment").unwrap();
+    let mut flags = settings::builder();
+    flags.set("opt_level", level).unwrap();
+    let mut compiler = AotCompiler::with_codegen_settings(
+        "float-environment",
+        "",
+        crate::stdlib::module_registry(),
+        flags,
+    )
+    .unwrap();
     let ast = crate::parser::parse(include_str!(
         "../../../../tests/fixtures/float_environment.jk"
     ))
@@ -58,6 +73,8 @@ fn aot_float_environment_isolated_at_native_and_cps_boundaries() {
         static float value32(uint32_t b) { float v; memcpy(&v, &b, 4); return v; }
         extern double folded64(void), folded_tiny(void), add64(double, double), half(double), indirect(double, double), fail(double);
         extern float folded32(void), add32(float, float), half32(float);
+        extern double pure64(double, double), before_host64(double, double), host_value64(double, double), branch64(double, double), loop64(double, double);
+        extern float pure32(float, float), loop32(float, float);
         extern double closure_borrowed64(double, double), buffer_helpers(double, double), buffer_bounds(double);
         extern float closure_move32(float, float);
         extern int32_t integer_result(void), flowing(JokyCpsFrame *);
@@ -67,6 +84,7 @@ fn aot_float_environment_isolated_at_native_and_cps_boundaries() {
             set_env(HOSTILE);
             if (bits(folded64()) != UINT64_C(0x3ff0000000000000) || env() != HOSTILE) reentry_failed = 1;
         }
+        double dirty_value(double v) { dirty(); return v; }
         void observe(double v) { observed = bits(v); ++drops; }
         static int32_t pause_poll(JokyCpsFrame *f) {
             dirty();
@@ -87,6 +105,14 @@ fn aot_float_environment_isolated_at_native_and_cps_boundaries() {
             CHECK(bits(folded_tiny()) == UINT64_C(0x8000000000000));
             CHECK(env() == HOSTILE);
             CHECK(bits(add64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(bits(pure64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(bits(before_host64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(bits(host_value64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(bits(branch64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(bits(branch64(-1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0xbff0000000000000));
+            CHECK(bits(loop64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(bits32(pure32(1.0f, value32(UINT32_C(0x33800000)))) == UINT32_C(0x3f800000));
+            CHECK(bits32(loop32(1.0f, value32(UINT32_C(0x33800000)))) == UINT32_C(0x3f800000));
             CHECK(env() == HOSTILE);
             CHECK(bits(indirect(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
             CHECK(bits(closure_borrowed64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
@@ -134,7 +160,7 @@ fn aot_float_environment_isolated_at_native_and_cps_boundaries() {
     let output = Command::new(executable).output().unwrap();
     assert!(
         output.status.success(),
-        "{:?}: {}",
+        "{level}: {:?}: {}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );

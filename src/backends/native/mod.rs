@@ -512,7 +512,8 @@ pub(crate) fn compile<M: Module>(
                 }
             }
             builder.finalize(target);
-            float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
+            float_env::instrument(module, &mut ctx.func, &ids, &float_effects)
+                .map_err(|e| compile_error(e.to_string()))?;
             module
                 .define_function(ids[name], &mut ctx)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -593,7 +594,8 @@ pub(crate) fn compile<M: Module>(
             );
             builder.finalize(target);
         }
-        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
+        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids, &float_effects)
+            .map_err(|e| compile_error(e.to_string()))?;
         module
             .define_function(ids[name], &mut ctx)
             .map_err(|e| compile_error(format!("Failed to define {name}: {e:?}")))?;
@@ -641,7 +643,8 @@ pub(crate) fn compile<M: Module>(
             lower::arena_entry(&mut builder, body, &refs);
         }
         builder.finalize(module.target_config());
-        float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
+        float_env::instrument(module, &mut ctx.func, &ids, &float_effects)
+            .map_err(|e| compile_error(e.to_string()))?;
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -663,7 +666,8 @@ pub(crate) fn compile<M: Module>(
         let body = module.declare_func_in_func(entry, builder.func);
         lower::instance_entry(&mut builder, body, info);
         builder.finalize(module.target_config());
-        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids, &float_effects);
+        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids, &float_effects)
+            .map_err(|e| compile_error(e.to_string()))?;
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(e.to_string()))?;

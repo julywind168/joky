@@ -1,6 +1,7 @@
 import joky/float
 import joky/drop.{type Drop}
 extern fn dirty()
+extern fn dirty_value(value: Float64) -> Float64
 extern fn observe(value: Float64)
 extern fn pause() @suspends
 
@@ -9,6 +10,34 @@ fn folded32() -> Float32 { 1.0 + 5.9604645e-8 }
 fn folded_tiny() -> Float64 { 2.2250738585072014e-308 * 0.5 }
 fn add64(a: Float64, b: Float64) -> Float64 { dirty(); a + b }
 fn add32(a: Float32, b: Float32) -> Float32 { dirty(); a + b }
+fn pure64(a: Float64, b: Float64) -> Float64 { a + b }
+fn pure32(a: Float32, b: Float32) -> Float32 { a + b }
+fn before_host64(a: Float64, b: Float64) -> Float64 { let value = a + b; dirty(); value }
+fn host_value64(a: Float64, b: Float64) -> Float64 { dirty_value(a + b) + b }
+fn branch64(a: Float64, b: Float64) -> Float64 {
+    dirty()
+    if a > 0.0 { a + b } else { a - b }
+}
+fn loop64(a: Float64, b: Float64) -> Float64 {
+    var value = a
+    var index = 0
+    while index < 3 {
+        dirty()
+        value += b
+        index += 1
+    }
+    value
+}
+fn loop32(a: Float32, b: Float32) -> Float32 {
+    var value = a
+    var index = 0
+    while index < 3 {
+        dirty()
+        value += b
+        index += 1
+    }
+    value
+}
 fn half(a: Float64) -> Float64 { dirty(); a * 0.5 }
 fn half32(a: Float32) -> Float32 { dirty(); a * 0.5 }
 fn buffer_helpers(a: Float64, b: Float64) -> Float64 {
