@@ -44,6 +44,7 @@ pub(crate) enum BufferOp {
         src: Slot,
         /// Mixed records lend stable inline storage, not the buffer header.
         place: Option<Slot>,
+        reservation: bool,
     },
     /// Validate metadata access against the whole record's moved/borrowed state.
     Access { src: Slot, mutable: bool },

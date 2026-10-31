@@ -77,6 +77,7 @@ impl FunctionPlan {
                 self.register_owner(buffer.clone(), None);
                 let reference = self.slot(Type::reference(buffer.ty.clone(), true))?;
                 self.emit(Op::Buffer(BufferOp::Borrow {
+                    reservation: false,
                     dst: reference.clone(),
                     src: buffer.clone(),
                     place: None,

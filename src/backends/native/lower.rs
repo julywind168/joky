@@ -2122,7 +2122,9 @@ fn lower_ops(
                             .call(refs["__joky_buffer_swap"], &[left, right]);
                     }
                 }
-                BufferOp::Borrow { dst, src, place } => {
+                BufferOp::Borrow {
+                    dst, src, place, ..
+                } => {
                     let source = place.clone().unwrap_or_else(|| {
                         if src.ty.is_place() {
                             src.clone()

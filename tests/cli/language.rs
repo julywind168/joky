@@ -2946,3 +2946,14 @@ fn contextual_calls_execute_in_standalone_aot() {
     );
     work.assert_native("context.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn receiver_reservations_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "receivers.jk",
+        include_str!("../fixtures/receiver_reservations.jk"),
+    );
+    work.assert_native("receivers.jk", &[], b"", 0);
+}

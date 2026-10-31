@@ -3,7 +3,7 @@ use super::*;
 use std::collections::HashSet;
 
 // A projection stays within one local object; it never follows a reference.
-fn local_path(mut expr: &Expr) -> Option<(&str, Vec<String>)> {
+pub(super) fn local_path(mut expr: &Expr) -> Option<(&str, Vec<String>)> {
     let mut path = Vec::new();
     while let Expr::Field {
         base,
@@ -514,6 +514,7 @@ impl FunctionPlan {
                 mutable,
             ))?;
             self.emit(Op::Buffer(BufferOp::Borrow {
+                reservation: false,
                 dst: dst.clone(),
                 src: src.clone(),
                 place: binding.place.clone(),

@@ -233,7 +233,9 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             [owner, src, place].into_iter().flat_map(refs).collect(),
             refs(dst),
         ),
-        Op::Buffer(super::BufferOp::Borrow { dst, src, place }) => (
+        Op::Buffer(super::BufferOp::Borrow {
+            dst, src, place, ..
+        }) => (
             std::iter::once(src).chain(place).flat_map(refs).collect(),
             refs(dst),
         ),
@@ -990,6 +992,10 @@ fn analyze(
             matches!(
                 op,
                 Op::Reserve { .. }
+                    | Op::Buffer(super::BufferOp::Borrow {
+                        reservation: true,
+                        ..
+                    })
                     | Op::Project {
                         reservation: true,
                         ..
@@ -1602,12 +1608,17 @@ fn analyze(
                     check_access(&src, *mutable, &state, &live[pc], None, &[])?;
                 }
             }
-            Op::Buffer(super::BufferOp::Borrow { dst, src, place }) => {
+            Op::Buffer(super::BufferOp::Borrow {
+                dst,
+                src,
+                place,
+                reservation,
+            }) => {
                 let inputs = refs(src);
                 for src in &inputs {
                     check_access(
                         src,
-                        dst.ty.reference_type().unwrap().mutable,
+                        !reservation && dst.ty.reference_type().unwrap().mutable,
                         &state,
                         &alive,
                         Some(dst.index),
@@ -1623,7 +1634,7 @@ fn analyze(
                 if let Some(place) = place {
                     check_access(
                         place,
-                        dst.ty.reference_type().unwrap().mutable,
+                        !reservation && dst.ty.reference_type().unwrap().mutable,
                         &state,
                         &alive,
                         Some(dst.index),

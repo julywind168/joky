@@ -197,6 +197,7 @@ impl FunctionPlan {
         if value.ty.is_owner() {
             let dst = self.slot(Type::reference(value.ty.clone(), mutable))?;
             self.emit(Op::Buffer(BufferOp::Borrow {
+                reservation: false,
                 dst: dst.clone(),
                 src: value.clone(),
                 place: None,

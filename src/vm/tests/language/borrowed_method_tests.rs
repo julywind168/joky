@@ -61,7 +61,6 @@ fn borrowed_receivers_reject_conflicts_escapes_and_unsupported_places() {
         ("fn bad() { let c = Counter { value: 1 }; c.add(1) }", "var binding"),
         ("fn bad() { var c = Counter { value: 1 }; let view = c.view(); c.add(1); view.read(); }", "borrow"),
         ("fn bad() { var c = Counter { value: 1 }; let view = c.exclusive(); c.read(); view.add(1) }", "borrow"),
-        ("fn bad() { var c = Counter { value: 1 }; c.add(c.read()) }", "borrow"),
         ("fn bad() { var c = Counter { value: 1 }; c.add({ c.value = 2; 1 }) }", "borrow"),
         ("fn bad() { var c = Counter { value: 1 }; let view = c.view(); c = Counter { value: 2 }; view.read(); }", "borrow"),
         ("fn bad() -> &Counter { let c = Counter { value: 1 }; c.view() }", "local"),
@@ -272,5 +271,82 @@ fn borrowed_receivers_preserve_evaluation_order_pending_errors_and_cancellation(
             }
             LIVE.with(|live| assert_eq!(live.get(), 0));
         }
+    }
+}
+
+#[test]
+fn receiver_reservations_allow_reads_and_clean_up_on_all_exits() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/receiver_reservations.jk"
+        ))
+        .unwrap();
+        for entry in ["compute", "early"] {
+            assert_eq!(vm.call_int32_0(entry).unwrap(), 42);
+            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+        let error = vm.call_unit_0("failed").unwrap_err();
+        assert!(
+            error.message().contains("receiver argument failed"),
+            "{error}"
+        );
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        for (entry, cancel) in [
+            ("pending", false),
+            ("pending", true),
+            ("pending_argument", false),
+            ("pending_argument", true),
+        ] {
+            let mut task = vm.call_async(entry, &[]).unwrap();
+            if !cancel {
+                while !task.is_finished() {
+                    task.resume().unwrap();
+                }
+                assert_eq!(task.cps_result(), Some(42));
+            }
+            drop(task);
+            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
+#[test]
+fn receiver_reservations_reject_mutation_retained_borrows_and_suspending_arguments() {
+    let prefix = include_str!("../../../../tests/fixtures/receiver_reservations.jk");
+    for body in [
+        "fn bad() { var a = [1, 2]; a.push({ a.push(3); 4 }) }",
+        "fn bad() { var a = [1, 2]; a.push({ a.release(); 4 }) }",
+        "fn bad() { var a = [1, 2]; a.push({ a = [3]; 4 }) }",
+        "impl Counter { fn merge(&mut self, other: &Self) { self.value += other.value } } fn bad() { var c = Counter { value: 1 }; c.merge(c.view()) }",
+        "fn bad() @suspends { var c = Counter { value: 1 }; c.add({ task.yield_now(); c.read() }) }",
+        "fn bad() @suspends { var c = Counter { value: 1 }; c.add({ join { | task.yield_now() | task.yield_now() }; c.read() }) }",
+    ] {
+        let error = super::support::frontend_error(&format!("{prefix} {body}"), &crate::ModuleSources::new());
+        assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{error}");
+    }
+}
+
+#[test]
+#[ignore = "exhaustive: cancel at every receiver reservation instruction"]
+fn exhaustive_receiver_reservations_cancel_at_every_instruction() {
+    let mut vm = VmEngine::new_interpreter();
+    vm.load_source(&format!("{} fn sweep_compute() @suspends -> Int32 {{ compute() }} fn sweep_early() @suspends -> Int32 {{ early() }}", include_str!("../../../../tests/fixtures/receiver_reservations.jk")))
+    .unwrap();
+    for entry in [
+        "sweep_compute",
+        "sweep_early",
+        "pending",
+        "pending_argument",
+    ] {
+        super::support::assert_cancellation(
+            &mut vm,
+            entry,
+            4000,
+            super::support::CancellationSweep::EveryInstruction,
+            || {},
+            || crate::runtime::arena::LIVE.with(|n| n.get()),
+            || crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0)),
+        );
     }
 }

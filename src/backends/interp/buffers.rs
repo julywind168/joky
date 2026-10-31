@@ -188,7 +188,9 @@ pub(super) fn execute(
                 }
             }
         }
-        BufferOp::Borrow { dst, src, place } => {
+        BufferOp::Borrow {
+            dst, src, place, ..
+        } => {
             let value = slots[place.as_ref().map_or_else(|| src.owner_key(), |p| p.index)].clone();
             if dst.ty.dyn_interface().is_some() {
                 let mut owner = pointer(&value)?;

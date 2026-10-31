@@ -29,6 +29,10 @@ impl FunctionPlan {
             ));
         }
         let mut values = Vec::with_capacity(args.len());
+        let mut reserved_receiver = args.first().is_some_and(
+            |arg| matches!(arg, Expr::Call { callee, .. } if callee == "$reserve_receiver"),
+        );
+        let mut reservation_ops = 0..0;
         for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
             let temporary_start = self.local_scopes.last().unwrap().len();
             let automatic = !ty.contains_dyn()
@@ -37,7 +41,35 @@ impl FunctionPlan {
                 && !self
                     .type_hint(arg, vars, functions, types)
                     .is_some_and(|ty| ty.reference_type().is_some());
-            let flow = if automatic {
+            let op_start = self.ops.len();
+            let flow = if index == 0 && reserved_receiver {
+                let Expr::Call { args, .. } = arg else {
+                    unreachable!()
+                };
+                let flow =
+                    self.expr_expected(&args[0], vars, functions, suspends, types, Some(ty))?;
+                // Only member_call creates this marker, for a stable local path.
+                // Preserve address evaluation while deferring exclusive access.
+                for op in &mut self.ops[op_start..] {
+                    match op {
+                        Op::Reference {
+                            dst,
+                            src,
+                            moving: false,
+                        } => {
+                            *op = Op::Reserve {
+                                dst: dst.clone(),
+                                src: src.clone(),
+                            };
+                        }
+                        Op::Project { reservation, .. }
+                        | Op::Buffer(BufferOp::Borrow { reservation, .. }) => *reservation = true,
+                        _ => {}
+                    }
+                }
+                reservation_ops = op_start..self.ops.len();
+                flow
+            } else if automatic {
                 let (flow, borrowed) =
                     self.shared_argument(arg, ty, vars, functions, suspends, types)?;
                 if borrowed {
@@ -49,6 +81,37 @@ impl FunctionPlan {
             } else {
                 self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
             };
+            if reserved_receiver
+                && index > 0
+                && self.ops[op_start..].iter().any(|op| {
+                    matches!(
+                        op,
+                        Op::Call { state: Some(_), .. }
+                            | Op::Concurrent { .. }
+                            | Op::TaskBranch { .. }
+                            | Op::TaskJoin { .. }
+                    )
+                })
+            {
+                // Suspending arguments retain the original immediate-borrow
+                // contract. Do not broaden reservations across Pending, or reject
+                // existing calls whose arguments do not access the receiver.
+                for op in &mut self.ops[reservation_ops.clone()] {
+                    match op {
+                        Op::Reserve { dst, src } => {
+                            *op = Op::Reference {
+                                dst: dst.clone(),
+                                src: src.clone(),
+                                moving: false,
+                            };
+                        }
+                        Op::Project { reservation, .. }
+                        | Op::Buffer(BufferOp::Borrow { reservation, .. }) => *reservation = false,
+                        _ => {}
+                    }
+                }
+                reserved_receiver = false;
+            }
             let Flow::Value(value) = flow else {
                 if let Some(next) = later(index) {
                     return Err(unreachable_error(next));
@@ -65,7 +128,11 @@ impl FunctionPlan {
             let consuming = contract.is_some_and(|(_, info)| {
                 matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop))
             });
-            let value = self.reference_value(value, consuming)?;
+            let value = if index == 0 && reserved_receiver {
+                value
+            } else {
+                self.reference_value(value, consuming)?
+            };
             if ty.is_place() || matches!(arg, Expr::AnonymousFunction(_)) {
                 if let Some(scope) = self.argument_scopes.last_mut() {
                     scope.extend(
@@ -76,6 +143,10 @@ impl FunctionPlan {
                 }
             }
             extend_argument(&mut values, value);
+        }
+        if reserved_receiver {
+            // Activation checks that no argument retains a conflicting loan.
+            values[0] = self.reference_value(values[0].take(), false)?;
         }
         Ok(Some(values))
     }

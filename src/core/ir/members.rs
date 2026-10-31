@@ -714,6 +714,22 @@ impl FunctionPlan {
                 }
                 _ => receiver.clone(),
             };
+            let argument = if matches!(method.receiver, Some(Receiver::Borrowed { mutable: true }))
+                && !args.is_empty()
+                && receiver_ty.reference_type().is_none()
+                && super::locals::local_path(receiver).is_some_and(|(root, _)| {
+                    vars.get(root)
+                        .is_some_and(|binding| slot_type(&binding.slot).reference_type().is_none())
+                }) {
+                Expr::Call {
+                    callee: "$reserve_receiver".into(),
+                    type_args: vec![],
+                    args: vec![argument],
+                    span: receiver.span(),
+                }
+            } else {
+                argument
+            };
             arguments.push(argument);
         }
         arguments.extend_from_slice(args);

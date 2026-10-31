@@ -1,0 +1,53 @@
+import joky/array.{type Array}
+import joky/task
+
+struct Counter { value: Int32 }
+impl Counter {
+    fn read(&self) -> Int32 { self.value }
+    fn view(&self) -> &Self { self }
+    fn add(&mut self, value: Int32) { self.value += value }
+    fn delayed_add(&mut self, value: Int32) @suspends {
+        task.yield_now()
+        self.value += value
+    }
+}
+struct Pair { left: Counter, right: Counter }
+fn compute() -> Int32 {
+    var counter = Counter { value: 21 }
+    counter.add(counter.read())
+    assert(counter.value == 42, "receiver read")
+    var values = [20, 22]
+    values.push(values[0])
+    assert(values.len() == 3 && values[2] == 20, "array receiver")
+    var borrowed = Counter { value: 21 }
+    let view = borrowed.view()
+    borrowed.add(view.read())
+    assert(borrowed.value == 42, "shared argument ends before activation")
+    var pair = Pair { left: Counter { value: 20 }, right: Counter { value: 1 } }
+    pair.left.add({ pair.right.add(1); pair.left.read() + pair.right.read() })
+    assert(pair.left.value == 42, "disjoint field and evaluation once")
+    counter.value
+}
+fn early() -> Int32 {
+    var values = [1]
+    values.push(return 42)
+}
+fn failed() {
+    var values = ["owned"]
+    values.push({ panic("receiver argument failed") })
+}
+fn pending() @suspends -> Int32 {
+    var counter = Counter { value: 21 }
+    counter.delayed_add(counter.read())
+    counter.value
+}
+fn pending_argument() @suspends -> Int32 {
+    var counter = Counter { value: 21 }
+    counter.add({ task.yield_now(); 21 })
+    counter.value
+}
+fn main() @suspends {
+    assert(compute() == 42 && early() == 42, "receiver reservations")
+    assert(pending() == 42, "activated receiver may suspend")
+    assert(pending_argument() == 42, "existing suspending argument")
+}

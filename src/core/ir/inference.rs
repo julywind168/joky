@@ -94,6 +94,11 @@ impl FunctionPlan {
                 return Some(ty);
             }
         }
+        if let Expr::Call { callee, args, .. } = expr {
+            if callee == "$reserve_receiver" {
+                return self.hint(&args[0], vars, functions, types, default);
+            }
+        }
         if let Some(input) = self.iteration_input(expr, vars, functions, types) {
             return self.hint(&input, vars, functions, types, default);
         }

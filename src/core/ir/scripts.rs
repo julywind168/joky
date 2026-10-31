@@ -80,6 +80,7 @@ impl FunctionPlan {
             let src = dst.as_ref().unwrap().scalars().next().unwrap();
             let reference = self.slot(Type::reference(src.ty.clone(), true))?;
             self.emit(Op::Buffer(BufferOp::Borrow {
+                reservation: false,
                 dst: reference.clone(),
                 src,
                 place: None,
