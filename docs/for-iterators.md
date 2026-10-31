@@ -730,3 +730,16 @@ filter 只接受共享元素和同步 noescape 函数指针，回调失败沿原
 回调失败、提前退出、来源冲突与存储拒绝，以及 Debug 逐指令取消。示例见
 [iterator_adapters.jk](../examples/iterator_adapters.jk)，协议参考见
 [语言参考](language.md#共享遍历组合器)。
+
+## 23. 流水线包装与有限共享 map
+
+SharedPipeline 使用普通泛型固有方法提供 filter/map/take/zip。SharedSource 以按下标共享查询
+连接 Array 与 iter，避免模块循环导入；SharedView 在首次缺失后终止。
+map 的输入可以是共享引用或前级转换结果，输出通过既有 plain_copy 资格检查，
+不把 Copy 约束当作无引用存储资格。回调只接受同步 noescape 函数指针。
+这一步不开放混合拥有/借用聚合，也不新增通用扩展方法或 trait 泛型方法。
+
+验证：`cargo test --lib shared_pipeline` 两项通过；
+`cargo test --test cli shared_pipeline_executes_in_standalone_aot_without_prelude` 通过。
+覆盖惰性顺序、编号、复制状态、Copy 记录与 Unit 结果、map 后筛选、zip、take(0)、
+空输入、提前返回、失败清理，以及非法输出、捕获、逃逸、存储与源失效的拒绝。

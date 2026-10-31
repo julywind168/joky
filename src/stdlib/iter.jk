@@ -1,4 +1,5 @@
 import joky/internal/buffer
+import joky/internal/types
 import joky/option.{type Option, Some, None}
 
 pub trait Iterator {
@@ -243,6 +244,81 @@ impl<I: Copy + SharedIterator<Item = &T>, T> SharedIterator for SharedFilter<I, 
             cursor = next
             let item = match value { Some(item) => item, None => { return (SharedFilter { source: cursor, predicate, done: true }, None) } }
             if predicate(item) { return (SharedFilter { source: cursor, predicate, done: false }, Some(item)) }
+        }
+    }
+}
+
+// A source query keeps the shared pipeline independent of concrete containers.
+pub trait SharedSource {
+    type Item
+    fn get_shared(&self, index: UInt64) -> Option<&Self.Item>
+}
+
+pub struct SharedView<S> { source: &S, index: UInt64, done: Bool }
+impl<S: SharedSource> SharedIterator for SharedView<S> {
+    type Item = &S.Item
+    fn step(var self) -> (Self, Option<&S.Item>) {
+        if self.done { return (self, None) }
+        let item = SharedSource.get_shared(self.source, self.index)
+        if item.is_some() { self.index += 1 } else { self.done = true }
+        (self, item)
+    }
+}
+
+pub struct SharedPipeline<I: Copy, T: Copy> { source: I }
+pub fn shared<S: SharedSource>(source: &S) -> SharedPipeline<SharedView<S>, &S.Item> {
+    SharedPipeline { source: SharedView { source, index: 0, done: false } }
+}
+impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedIterator for SharedPipeline<I, T> {
+    type Item = T
+    fn step(self) -> (Self, Option<T>) {
+        let (source, value) = SharedIterator.step(self.source)
+        (SharedPipeline { source }, value)
+    }
+}
+impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
+    pub fn take(self, count: UInt64) -> SharedPipeline<SharedTake<I>, T> {
+        SharedPipeline { source: take_shared(self.source, count) }
+    }
+    pub fn filter(self, predicate: fn(T) @noescape -> Bool) -> SharedPipeline<SharedSelect<I, T>, T> {
+        SharedPipeline { source: SharedSelect { source: self.source, predicate, done: false } }
+    }
+    pub fn map<U: Copy>(self, transform: fn(T) @noescape -> U) -> SharedPipeline<SharedMap<I, T, U>, U> {
+        types.require_plain_copy::<U>()
+        SharedPipeline { source: SharedMap { source: self.source, transform, done: false } }
+    }
+    pub fn zip<J: Copy + SharedIterator<Item = U>, U: Copy>(self, other: SharedPipeline<J, U>) -> SharedPipeline<SharedZip<I, J>, (T, U)> {
+        SharedPipeline { source: zip_shared(self.source, other.source) }
+    }
+}
+
+pub struct SharedSelect<I: Copy, T: Copy> { source: I, predicate: fn(T) @noescape -> Bool, done: Bool }
+impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedIterator for SharedSelect<I, T> {
+    type Item = T
+    fn step(self) -> (Self, Option<T>) {
+        let SharedSelect { source, predicate, done } = self
+        if done { return (SharedSelect { source, predicate, done }, None) }
+        var cursor = source
+        while true {
+            let (next, value) = SharedIterator.step(cursor)
+            cursor = next
+            let item = match value { Some(item) => item, None => { return (SharedSelect { source: cursor, predicate, done: true }, None) } }
+            if predicate(item) { return (SharedSelect { source: cursor, predicate, done: false }, Some(item)) }
+        }
+    }
+}
+
+pub struct SharedMap<I: Copy, T: Copy, U: Copy> { source: I, transform: fn(T) @noescape -> U, done: Bool }
+impl<I: Copy + SharedIterator<Item = T>, T: Copy, U: Copy> SharedIterator for SharedMap<I, T, U> {
+    type Item = U
+    fn step(self) -> (Self, Option<U>) {
+        types.require_plain_copy::<U>()
+        let SharedMap { source, transform, done } = self
+        if done { return (SharedMap { source, transform, done }, None) }
+        let (source, value) = SharedIterator.step(source)
+        match value {
+            Some(item) => (SharedMap { source, transform, done: false }, Some(transform(item))),
+            None => (SharedMap { source, transform, done: true }, None)
         }
     }
 }

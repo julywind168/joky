@@ -1,0 +1,67 @@
+import joky/array.{type Array}
+import joky/check.{assert, panic}
+import joky/iter
+import joky/string
+
+extern fn record(value: Int32) -> Int32
+fn keep(value: &String) @noescape -> Bool {
+    record(int32(string.byte_length(value)))
+    value != ""
+}
+fn length(value: &String) @noescape -> UInt64 {
+    record(100 + int32(string.byte_length(value)))
+    string.byte_length(value)
+}
+fn long(value: UInt64) @noescape -> Bool { value > 3 }
+struct Measure { size: UInt64, present: Bool }
+fn measure(value: &String) @noescape -> Measure {
+    Measure { size: string.byte_length(value), present: value != "" }
+}
+fn discard(value: &String) @noescape { }
+fn failed_length(value: &String) @noescape -> UInt64 { panic("pipeline callback failed") }
+fn count<I: Copy + iter.SharedIterator>(values: I) -> UInt64 {
+    var total: UInt64 = 0
+    for _ in values { total += 1 }
+    total
+}
+fn compute() -> Int32 {
+    var names = ["Alice", "", "Bob", "Carol"]
+    let values = iter.shared(&names).map(measure).take(1)
+    for value in values { assert(value.size == 5 && value.present, "Copy record output") }
+    assert(count(values) == 1, "shared state is Copy")
+    assert(count(iter.shared(&names).map(discard)) == 4, "Unit output")
+    assert(count(iter.shared(&names).take(0).map(failed_length)) == 0, "take zero is lazy")
+    let scores = [10, 20]
+    var total = 0
+    for (name, score) in iter.shared(&names).zip(iter.shared(&scores)) {
+        total += int32(string.byte_length(name)) + *score
+    }
+    assert(total == 35, "shared zip order and shorter side")
+    let empty: Array<String> = []
+    assert(count(iter.shared(&empty).map(measure)) == 0, "empty pipeline")
+    names.push("last")
+    assert(names.len() == 5, "pipeline does not consume source")
+    42
+}
+fn lazy() -> Int32 {
+    let names = ["Alice", "", "Bob", "Carol"]
+    var total: UInt64 = 0
+    for index, value in iter.shared(&names).filter(keep).map(length).take(2) {
+        total += value + index
+    }
+    assert(total == 9, "indexed pipeline")
+    for value in iter.shared(&names).map(length).filter(long).take(1) {
+        assert(value == 5, "filter after map")
+    }
+    42
+}
+fn early() -> Int32 {
+    let names = ["a", "b"]
+    for value in iter.shared(&names).map(length) { return int32(value) }
+    0
+}
+fn failed() {
+    let names = ["owned"]
+    for _ in iter.shared(&names).map(failed_length) {}
+}
+fn main() { assert(compute() == 42 && lazy() == 42 && early() == 1, "shared pipeline") }

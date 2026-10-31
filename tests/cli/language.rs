@@ -3023,3 +3023,17 @@ fn shared_combinators_execute_in_standalone_aot() {
         0,
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn shared_pipeline_executes_in_standalone_aot_without_prelude() {
+    let work = Workspace::new();
+    work.write(
+        "pipeline.jk",
+        &include_str!("../fixtures/shared_pipeline.jk").replace(
+            "extern fn record(value: Int32) -> Int32",
+            "fn record(value: Int32) -> Int32 { value }",
+        ),
+    );
+    work.assert_native("pipeline.jk", &["--no-prelude"], b"", 0);
+}

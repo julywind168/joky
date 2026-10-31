@@ -3406,7 +3406,29 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 
 现有 Iterator/IntoIterator、take/filter/zip/map 以及独占 advance/current 协议保持原有行为。
 不隐式把 `&Array` 变成 SharedIterator；用 iter_shared 明确选择共享组合。
-本阶段不新增通用方法链、Slice 组合视图、共享 map 或独占组合器。
+通用扩展方法与 Slice 组合视图仍未开放；数组共享流水线见下一节。
+
+### 共享流水线方法
+
+`iter.shared(&values)` 借用 Array，返回 SharedPipeline；支持跨行
+`.filter(predicate).map(transform).take(count).zip(other)` 方法链。它实现 SharedIterator，
+可用于普通 for、编号循环和 `I: Copy + SharedIterator` 泛型入口。
+包装类型使用现有泛型固有方法，没有新增关键字或通用扩展方法。
+
+- filter 接受 `fn(Item) @noescape -> Bool`，保留原元素；初始 Item 为 &T。
+- map 接受 `fn(Item) @noescape -> U`，U 必须为不含引用的 Copy 数据，支持标量、
+  Unit、记录、枚举和元组；不支持拥有值、借用结果或捕获环境的闭包。
+- map 后可继续 filter、take 或 zip；此时回调接收转换后的值。
+- take/zip 保留既有共享组合规则；zip 接收另一个 SharedPipeline。
+- 构造与组合不执行回调，也不创建中间数组。每次推进才按方法顺序执行；
+  第一次 None 后永久耗尽。take(0) 不推进输入，失败与提前退出沿普通清理路径处理。
+- 状态可复制，但所有副本仍借用原容器；最后使用结束后才允许修改原容器。
+  仍不允许将借用状态存入容器、arena 或持久状态。
+
+SharedSource 的 `get_shared(&self, index: UInt64) -> Option<&Self.Item>` 接入共享源；
+Array 已实现该协议。返回引用须来自源对象，首个缺失项表示结束；实现不得依赖调用方的 prelude。
+`SharedPipeline<I, T>` 的 I 满足 Copy + SharedIterator<Item = T>，T 满足 Copy；
+可借助公开协议编写泛型 helper，而不必展开包装类型。
 
 ### IntoIterator 与自动转换
 

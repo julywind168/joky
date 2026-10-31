@@ -425,3 +425,44 @@ fn exhaustive_shared_combinators_instruction_cancellation() {
         || LIVE.with(|n| assert_eq!(n.get(), 0)),
     );
 }
+
+const SHARED_PIPELINE: &str = include_str!("../../../../tests/fixtures/shared_pipeline.jk");
+
+#[test]
+fn shared_pipeline_chains_map_plain_results_and_preserve_lazy_borrowing() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm_with_prelude(SHARED_PIPELINE, mode, false);
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        EVENTS.with(|events| events.borrow_mut().clear());
+        assert_eq!(vm.call_int32_0("lazy").unwrap(), 42);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [5, 105, 0, 3, 103, 105]));
+        EVENTS.with(|events| events.borrow_mut().clear());
+        assert_eq!(vm.call_int32_0("early").unwrap(), 1);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [101]));
+        assert!(vm
+            .call_unit_0("failed")
+            .unwrap_err()
+            .message()
+            .contains("pipeline callback failed"));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invalidation() {
+    for source in [
+        "fn f(value: &String) @noescape -> String { \"new\" } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).map(f) {} }",
+        "fn f(value: &String) -> &String { value } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).map(f) {} }",
+        "fn f(value: &Int32) @noescape -> &Int32 { alloc(1) } fn bad() { let a = [1]; for _ in iter.shared(&a).map(f) {} }",
+        "fn f(value: &String) -> Bool { alloc(value); true } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).filter(f) {} }",
+        "fn bad() { let a = [1]; let offset = 1; for _ in iter.shared(&a).map(|n| { *n + offset }) {} }",
+        "fn f(value: &Int32) @suspends -> Int32 { *value } fn bad() { let a = [1]; for _ in iter.shared(&a).map(f) {} }",
+        "fn bad() { var a = [1]; let p = iter.shared(&a); a.push(2); for _ in p {} }",
+        "fn bad() { let a = [1]; let p = iter.shared(&a); a.release(); for _ in p {} }",
+        "fn bad() { let a = [1]; alloc(iter.shared(&a)); }",
+        "fn bad() { let a = [1]; let saved = [iter.shared(&a)]; }",
+        "fn bad() { let p = { let a = [1]; iter.shared(&a) }; for _ in p {} }",
+    ] {
+        frontend_error(&format!("import joky/array.{{type Array}} import joky/iter {source}"), &crate::ModuleSources::new());
+    }
+}

@@ -237,3 +237,8 @@ impl<T> iteration.SharedIterator for SharedIter<T> {
         (self, value)
     }
 }
+
+impl<T> iteration.SharedSource for Array<T> {
+    type Item = T
+    fn get_shared(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
+}
