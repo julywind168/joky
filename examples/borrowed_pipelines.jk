@@ -1,0 +1,35 @@
+import joky/array.{type Array}
+import joky/iter
+import joky/string
+import joky/io.{println}
+
+fn nonempty(value: &String) @noescape -> Bool { value != "" }
+fn byte_length(value: &String) @noescape -> UInt64 { string.byte_length(value) }
+fn positive(value: &Int32) @noescape -> Bool { *value > 0 }
+
+fn shared_demo() {
+    let names = ["Alice", "", "Bob", "Carol"]
+    let lengths = iter.shared(&names)
+        .filter(nonempty)
+        .map(byte_length)
+        .take(2)
+
+    for index, length in lengths { println("{index}: {length}") }
+    println(names.len()) // The source still owns all four strings.
+}
+
+fn exclusive_demo() {
+    var scores = [1, 0, 2, 3]
+    for score in iter.exclusive(&mut scores)
+        .filter(positive)
+        .take(2)
+    {
+        *score += 10
+    }
+    for score in &scores { println(score) }
+}
+
+fn main() {
+    shared_demo()
+    exclusive_demo()
+}

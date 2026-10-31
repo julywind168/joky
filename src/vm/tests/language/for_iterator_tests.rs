@@ -466,3 +466,84 @@ fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invali
         frontend_error(&format!("import joky/array.{{type Array}} import joky/iter {source}"), &crate::ModuleSources::new());
     }
 }
+
+const EXCLUSIVE_PIPELINE: &str = include_str!("../../../../tests/fixtures/exclusive_pipeline.jk");
+
+#[test]
+fn exclusive_pipeline_chains_transfer_cursors_and_end_each_element_loan() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm_with_prelude(EXCLUSIVE_PIPELINE, mode, false);
+        EVENTS.with(|events| events.borrow_mut().clear());
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        EVENTS.with(|events| assert!(events.borrow().is_empty()));
+        assert_eq!(vm.call_int32_0("lazy").unwrap(), 42);
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 0, 2, 1]));
+        for entry in ["manual", "nested", "early"] {
+            assert_eq!(vm.call_int32_0(entry).unwrap(), 42);
+        }
+        assert!(vm
+            .call_unit_0("failed")
+            .unwrap_err()
+            .message()
+            .contains("exclusive predicate failed"));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn exclusive_pipeline_rejects_duplicate_loans_storage_escape_and_retaining_callbacks() {
+    for body in [
+        "fn bad() { var a = [1]; let p = iter.exclusive(&mut a); let q = p; for _ in p {}; for _ in q {} }",
+        "fn copy<T: Copy>(value: T) -> T { value } fn bad() { var a = [1]; let p = copy(iter.exclusive(&mut a)); for _ in p {} }",
+        "fn bad() { var a = [1]; let p = iter.exclusive(&mut a); let q = iter.exclusive(&mut a); for _ in p {}; for _ in q {} }",
+        "fn bad() { var a = [1]; let p = iter.exclusive(&mut a); a.push(2); for _ in p {} }",
+        "fn bad() { var a = [1]; let p = iter.exclusive(&mut a); a.release(); for _ in p {} }",
+        "fn bad() { var a = [1]; let p = iter.exclusive(&mut a); for _ in &a {}; for _ in p {} }",
+        "fn bad() { var a = [1]; alloc(iter.exclusive(&mut a)); }",
+        "fn bad() { var a = [1]; let saved = [iter.exclusive(&mut a)]; }",
+        "fn bad() { var a = [1]; let saved = Some(iter.exclusive(&mut a)); }",
+        "fn bad() { var a = [1]; var p = iter.exclusive(&mut a); let reference = &mut p; }",
+        "fn bad() { let p = { var a = [1]; iter.exclusive(&mut a) }; for _ in p {} }",
+        "fn bad() { var a = [1]; var (cursor, plan) = iter.exclusive(&mut a).into_parts(); iter.advance_exclusive(&mut plan, cursor); let element = iter.current_mut(cursor); iter.advance_exclusive(&mut plan, cursor); *element += 1; }",
+        "fn bad() { var a = [1]; for value in iter.exclusive(&mut a) { for other in iter.exclusive(&mut a) { *value += *other } } }",
+        "fn keep(value: &Int32) -> Bool { alloc(value); true } fn bad() { var a = [1]; for _ in iter.exclusive(&mut a).filter(keep) {} }",
+        "fn keep(value: &Int32) @suspends -> Bool { true } fn bad() { var a = [1]; for _ in iter.exclusive(&mut a).filter(keep) {} }",
+        "fn bad() { var a = [1]; let offset = 0; for _ in iter.exclusive(&mut a).filter(|n| { *n > offset }) {} }",
+        "fn bad() { var a = [1]; let p = iter.exclusive(&mut a); let pair = (p, p); }",
+        "fn bad() @suspends { var a = [1]; for _ in iter.exclusive(&mut a) {} }",
+        "struct Mixed { cursor: &mut iter.Iter<Int32>, reference: &Int32 } fn bad() {}",
+        "fn bad() { var a = [1]; let n = 1; let mixed = (a.iter_mut(), &n); }",
+        "enum Saved { Cursor(&mut iter.Iter<Int32>) } fn bad() {}",
+        "struct Fake { value: &mut Int32 } fn bad() {}",
+        "fn bad() { var a = [\"a\"]; let saved = Some(a.borrow_mut_ref(0)); }",
+    ] {
+        let error = frontend_error(&format!("import joky/array.{{type Array}} import joky/iter {body}"), &crate::ModuleSources::new());
+        assert!(matches!(error.code(), crate::ErrorCode::InvalidAssignment | crate::ErrorCode::TypeMismatch | crate::ErrorCode::InvalidCall), "{body}: {error}");
+    }
+}
+
+#[test]
+#[ignore = "exhaustive: cancel every shared/exclusive pipeline and callback instruction"]
+fn exhaustive_pipeline_instruction_cancellation() {
+    for source in [SHARED_PIPELINE, EXCLUSIVE_PIPELINE] {
+        let entries = ["compute", "lazy", "early"];
+        let wrappers = entries
+            .iter()
+            .map(|entry| format!("fn sweep_{entry}() @suspends -> Int32 {{ {entry}(); 42 }}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!("{source}\n{wrappers}");
+        let mut vm = parity_vm_with_prelude(&source, VmMode::Interpreter, false);
+        for entry in entries {
+            assert_cancellation(
+                &mut vm,
+                &format!("sweep_{entry}"),
+                20_000,
+                CancellationSweep::EveryInstruction,
+                || EVENTS.with(|events| events.borrow_mut().clear()),
+                || LIVE.with(|live| live.get()),
+                || LIVE.with(|live| assert_eq!(live.get(), 0)),
+            );
+        }
+    }
+}

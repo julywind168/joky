@@ -700,7 +700,7 @@ pub(super) fn member_type(
     let mut ty = ty.clone();
     resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
-    if !ty.is_copy_storage_value() && !ty.is_scoped_shared_value() && !ty.is_owner() {
+    if !ty.is_copy_storage_value() && !ty.is_scoped_borrowed_value() && !ty.is_owner() {
         let requirement = "Record fields and enum payloads require a Copy value or an owner";
         return Err(error(
             ErrorCode::TypeMismatch,
@@ -711,8 +711,28 @@ pub(super) fn member_type(
     Ok(ty)
 }
 
+fn validate_cursor_packet<'a>(
+    types: impl Iterator<Item = &'a Type> + Clone,
+    span: Span,
+) -> Result<(), Error> {
+    if types.clone().any(Type::is_scoped_cursor_value)
+        && types.clone().any(|ty| {
+            !ty.is_scoped_cursor_value()
+                && (!ty.is_copy_storage_value() || ty.contains_references())
+        })
+    {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            "Exclusive cursor packets require cursor loans and reference-free Copy metadata",
+        ));
+    }
+    Ok(())
+}
+
 /// Owning records contain one or more owners and reference-free Copy metadata.
 pub(super) fn record_owners(fields: &[RecordField], span: Span) -> Result<Vec<Arc<Type>>, Error> {
+    validate_cursor_packet(fields.iter().map(|field| &field.ty), span)?;
     let owners: Vec<_> = fields
         .iter()
         .filter(|field| field.ty.is_owner())
@@ -735,6 +755,17 @@ pub(super) fn record_owners(fields: &[RecordField], span: Span) -> Result<Vec<Ar
 
 /// Owning sums keep fixed owner lanes for every variant. Inactive lanes are null.
 pub(super) fn enum_owners(variants: &[EnumVariant], span: Span) -> Result<Vec<Arc<Type>>, Error> {
+    if variants
+        .iter()
+        .filter_map(|v| v.payload.as_ref())
+        .any(Type::is_scoped_cursor_value)
+    {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            "Exclusive cursor packets cannot be stored in enum payloads",
+        ));
+    }
     let owners: Vec<_> = variants
         .iter()
         .filter_map(|v| v.payload.as_ref())
@@ -810,7 +841,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     let mut depth = 1;
     for ty in &elements {
         registry.validate(ty)?;
-        if !ty.is_copy_storage_value() && !ty.is_scoped_shared_value() && !ty.is_owner() {
+        if !ty.is_copy_storage_value() && !ty.is_scoped_borrowed_value() && !ty.is_owner() {
             return Err(error(
                 ErrorCode::TypeMismatch,
                 span,
@@ -821,6 +852,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
         }
         extend_layout(&mut scalars, &mut depth, ty, span, "Tuple")?;
     }
+    validate_cursor_packet(elements.iter(), span)?;
     let owners: Vec<_> = elements
         .iter()
         .filter(|ty| ty.is_owner())

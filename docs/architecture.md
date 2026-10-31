@@ -167,8 +167,10 @@ for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条�
 隐式装载 iter/option/check 依赖不依赖 prelude，也不向用户值命名空间添加短名。
 条件 Match 保留 parser-authored iteration 标记；共享 IR 确认输入是 `&Iter<T>` / `&mut Iter<T>` 时，
 将该步改写为 advance 条件及直接 current/current_mut 绑定，普通 Iterator 仍走 Option。
-借用游标的 Type::BufferIterator 沿用 Buffer 视图的类型、来源及跨挂起检查，不能成为聚合字段
-或一般泛型实参；不放宽 `Option<&mut T>` 或 @noescape。每个游标在任务 arena 中分配独立描述符，
+借用游标的 Type::BufferIterator 沿用 Buffer 视图的类型、来源及跨挂起检查。
+共享游标不能成为聚合字段或一般泛型实参；独占游标允许与无引用 Copy 元数据组成局部记录/元组，
+按逐标量 Reference(move) 转移，不满足 Copy，不准入枚举、存储、对整个包取引用或普通语言挂起。
+不放宽 `Option<&mut T>` 或 @noescape。每个游标在任务 arena 中分配独立描述符，
 保存非拥有元素地址、长度、步幅和 Cell 位置；共享副本共享位置。生成的原语复用 BufferOp::Storage，
 JIT/AOT 共用三个私有 runtime helper，解释器调用相同的描述符实现，不改变 CPS 帧 ABI。
 Slice 的两个游标构造原语使用独立受检签名，并与 Array 构造复用同一 runtime helper；
@@ -493,6 +495,12 @@ CPS 保持 `CpsFrame` ABI：聚合结果位于 slots 中参数区之后的固定
 SharedIterator.step 以值传递后继状态，for 降低为普通解构、赋值与 match；
 不借此开放可变借用含引用的局部聚合。String 相等运算绑定可信文本函数，三后端共用
 普通共享调用期借用和临时存储清理，不新增比较 ABI 或用户运算符派发。
+
+独占流水线的 for 入口识别标准 ExclusivePipeline 的声明身份，一次性拆出独占游标与普通状态，
+状态在本地稳定位置上供 advance_exclusive 更新，元素仍通过原 current_mut 取得。
+没有新增运行时游标、比较或回调 ABI，也不在循环体后补隐藏状态写回；continue/break/return
+沿原控制流工作。显式 into_parts/advance_exclusive 与循环使用同一原语和借用检查。
+不可变绑定读取独占游标包也必须产生逐引用转移，不能像共享 Copy 聚合那样只别名同一槽。
 
 ## 局部值借用
 

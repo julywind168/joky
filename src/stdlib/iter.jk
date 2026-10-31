@@ -322,3 +322,67 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy, U: Copy> SharedIterator for Sh
         }
     }
 }
+
+// Cursor loans move separately from plain adapter state. Explicit parts and for
+// use the same checked advance/current protocol; no optional exclusive item exists.
+pub trait ExclusiveSource {
+    type Item
+    fn exclusive_cursor(&mut self) -> &mut Iter<Self.Item>
+}
+pub trait ExclusivePlan {
+    type Item
+    fn advance(&mut self, cursor: &Iter<Self.Item>) @noescape -> Bool
+}
+pub struct ExclusiveAll<T> {}
+impl<T> ExclusivePlan for ExclusiveAll<T> {
+    type Item = T
+    fn advance(&mut self, cursor: &Iter<T>) @noescape -> Bool { advance(cursor) }
+}
+pub struct ExclusivePipeline<P: Copy, T> { cursor: &mut Iter<T>, plan: P }
+pub fn exclusive<S: ExclusiveSource>(source: &mut S) -> ExclusivePipeline<ExclusiveAll<S.Item>, S.Item> {
+    ExclusivePipeline { cursor: ExclusiveSource.exclusive_cursor(source), plan: ExclusiveAll {} }
+}
+impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePipeline<P, T> {
+    pub fn take(self, count: UInt64) -> ExclusivePipeline<ExclusiveTake<P>, T> {
+        let ExclusivePipeline { cursor, plan } = self
+        ExclusivePipeline { cursor, plan: ExclusiveTake { source: plan, remaining: count } }
+    }
+    pub fn filter(self, predicate: fn(&T) @noescape -> Bool) -> ExclusivePipeline<ExclusiveFilter<P, T>, T> {
+        let ExclusivePipeline { cursor, plan } = self
+        ExclusivePipeline { cursor, plan: ExclusiveFilter { source: plan, predicate, done: false } }
+    }
+    pub fn into_parts(self) -> (&mut Iter<T>, P) {
+        types.require_plain_copy::<P>()
+        let ExclusivePipeline { cursor, plan } = self
+        (cursor, plan)
+    }
+}
+pub fn exclusive_parts<P: Copy + ExclusivePlan<Item = T>, T>(input: ExclusivePipeline<P, T>) -> (&mut Iter<T>, P) {
+    input.into_parts()
+}
+pub fn advance_exclusive<P: Copy + ExclusivePlan>(plan: &mut P, cursor: &Iter<P.Item>) @noescape -> Bool {
+    types.require_plain_copy::<P>()
+    ExclusivePlan.advance(plan, cursor)
+}
+pub struct ExclusiveTake<P: Copy> { source: P, remaining: UInt64 }
+impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveTake<P> {
+    type Item = P.Item
+    fn advance(&mut self, cursor: &Iter<P.Item>) @noescape -> Bool {
+        if self.remaining == 0 { return false }
+        self.remaining -= 1
+        if ExclusivePlan.advance(&mut self.source, cursor) { true }
+        else { self.remaining = 0; false }
+    }
+}
+pub struct ExclusiveFilter<P: Copy, T> { source: P, predicate: fn(&T) @noescape -> Bool, done: Bool }
+impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePlan for ExclusiveFilter<P, T> {
+    type Item = T
+    fn advance(&mut self, cursor: &Iter<T>) @noescape -> Bool {
+        if self.done { return false }
+        while ExclusivePlan.advance(&mut self.source, cursor) {
+            if (self.predicate)(current(cursor)) { return true }
+        }
+        self.done = true
+        false
+    }
+}

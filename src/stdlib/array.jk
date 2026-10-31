@@ -242,3 +242,8 @@ impl<T> iteration.SharedSource for Array<T> {
     type Item = T
     fn get_shared(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
 }
+
+impl<T> iteration.ExclusiveSource for Array<T> {
+    type Item = T
+    fn exclusive_cursor(&mut self) -> &mut Iter<T> { iter_mut(self) }
+}

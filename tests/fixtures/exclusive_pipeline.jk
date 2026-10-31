@@ -1,0 +1,70 @@
+import joky/array.{type Array}
+import joky/check.{assert, panic}
+import joky/iter
+
+extern fn record(value: Int32) -> Int32
+fn positive(value: &Int32) @noescape -> Bool { *value > 0 }
+fn observed(value: &Int32) @noescape -> Bool { record(*value) > 0 }
+fn fail(value: &String) @noescape -> Bool { panic("exclusive predicate failed") }
+fn nonempty(value: &String) @noescape -> Bool { value != "" }
+fn generic<P: Copy + iter.ExclusivePlan<Item = Int32>>(values: iter.ExclusivePipeline<P, Int32>) {
+    for value in values { *value += 10 }
+}
+fn compute() -> Int32 {
+    var values = [1, 0, 2, 3]
+    generic(iter.exclusive(&mut values).filter(positive).take(2))
+    assert(values[0] == 11 && values[1] == 0 && values[2] == 12 && values[3] == 3, "filter then take")
+    for value in iter.exclusive(&mut values).take(2).filter(positive) { *value += 100 }
+    assert(values[0] == 111 && values[2] == 12, "take before filter")
+    var empty: Array<Int32> = []
+    for _ in iter.exclusive(&mut empty).filter(positive).take(2) { panic("empty") }
+    for _ in iter.exclusive(&mut values).filter(observed).take(0) { panic("take zero") }
+    var names = ["a", "", "b"]
+    for name in iter.exclusive(&mut names).filter(nonempty).take(1) { *name = "replaced" }
+    assert(names[0] == "replaced" && names[2] == "b", "owned elements stay in source")
+    values.push(7)
+    assert(values.len() == 5, "source reusable after loop")
+    42
+}
+fn lazy() -> Int32 {
+    var values = [1, 0, 2, 3]
+    for index, value in iter.exclusive(&mut values).filter(observed).take(2) {
+        if index == 0 { continue }
+        *value += 20
+    }
+    assert(values[0] == 1 && values[2] == 22 && values[3] == 3, "index and continue")
+    for value in iter.exclusive(&mut values).filter(observed) { *value += 5; break }
+    assert(values[0] == 6, "break")
+    42
+}
+fn manual() -> Int32 {
+    var values = [1, 0, 2]
+    var (cursor, plan) = iter.exclusive(&mut values).filter(positive).take(1).into_parts()
+    assert(iter.advance_exclusive(&mut plan, cursor), "manual advance")
+    let value = iter.current_mut(cursor)
+    *value = 42
+    assert(!iter.advance_exclusive(&mut plan, cursor), "take exhausted")
+    assert(!iter.advance_exclusive(&mut plan, cursor), "fused take")
+    values[0]
+}
+fn nested() -> Int32 {
+    var left = [1, 2]
+    var right = [10, 20]
+    for a in iter.exclusive(&mut left).take(1) {
+        for b in iter.exclusive(&mut right).filter(positive) { *a += *b }
+    }
+    assert(left[0] == 31 && left[1] == 2, "independent nested loops")
+    42
+}
+fn early() -> Int32 {
+    var values = ["owned", "later"]
+    for _ in iter.exclusive(&mut values).filter(nonempty) { return 42 }
+    0
+}
+fn failed() {
+    var values = ["owned"]
+    for _ in iter.exclusive(&mut values).filter(fail) {}
+}
+fn main() {
+    assert(compute() == 42 && lazy() == 42 && manual() == 42 && nested() == 42 && early() == 42, "exclusive pipeline")
+}

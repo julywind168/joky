@@ -51,7 +51,7 @@ impl TypeRegistry {
             self.validate(arg)?;
             if arg.contains_unstorable_closures()
                 || !arg.is_copy_storage_value()
-                    && !arg.is_scoped_shared_value()
+                    && !arg.is_scoped_borrowed_value()
                     && !arg.is_owner()
                     && !arg.is_callable_parameter()
             {
@@ -135,7 +135,7 @@ impl TypeRegistry {
             self.validate(arg)?;
             if arg.contains_unstorable_closures()
                 || !arg.is_copy_storage_value()
-                    && !arg.is_scoped_shared_value()
+                    && !arg.is_scoped_borrowed_value()
                     && !arg.is_owner()
                     && !arg.is_callable_parameter()
             {
@@ -250,7 +250,9 @@ impl TypeRegistry {
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
             if arg.contains_closures()
-                || !arg.is_copy_storage_value() && !arg.is_scoped_shared_value() && !arg.is_owner()
+                || !arg.is_copy_storage_value()
+                    && !arg.is_scoped_borrowed_value()
+                    && !arg.is_owner()
             {
                 return Err(error(
                     ErrorCode::TypeMismatch,

@@ -254,7 +254,7 @@ fn resolve(
         registry.validate(argument)?;
         if argument.contains_unstorable_closures()
             || !argument.is_copy_storage_value()
-                && !argument.is_scoped_shared_value()
+                && !argument.is_scoped_borrowed_value()
                 && !argument.is_owner()
                 && !argument.is_callable_parameter()
         {

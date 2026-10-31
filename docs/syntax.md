@@ -1566,13 +1566,19 @@ Slice 组合视图及通用链式方法按 for 计划第 22 节的理由暂缓�
   未重新执行整套库测试或整套 CLI 测试。文档相对链接与 `git diff --check` 通过。
 - 未运行 Release、整套 stress 或性能计时；相关 Debug 逐指令取消覆盖见 E3/E5/E6。
 
-### 13.10 后续：借用流水线 demo
+### 13.10 借用流水线与 demo
 
 按目标 demo 推进，沿用现有调用、方法链、泛型、for 和借用语法。
 
 - [x] 共享包装入口 iter.shared，提供 filter/map/take/zip；map 首版仅接受同步
   noescape 函数，返回无引用 Copy 数据。阶段验证见 for 计划第 23 节。
-- [ ] 独占入口 iter.exclusive，提供 filter/take；游标独占权限只转移不复制，
+- [x] 独占入口 iter.exclusive，提供 filter/take；游标独占权限只转移不复制，
   循环与显式推进共享同一借用规则。暂不开放独占 zip 或通用可变引用聚合。
-- [ ] 加入可运行 demo，核对 JIT、解释器与 AOT 输出；补充受影响取消穷举。
+- [x] 加入可运行 demo，核对 JIT、解释器与 AOT 输出；补充受影响取消穷举。
 - [ ] 所有部分完成后统一执行默认 Debug 检查，记录修复与复验结果；不运行 Release。
+
+共享包装与有限 map 已提交为 784c7da；独占循环、显式推进和拒绝边界的针对性测试通过。
+[borrowed_pipelines.jk](../examples/borrowed_pipelines.jk) 在三后端输出一致：
+`0: 5`、`1: 3`、`4`、`11`、`0`、`12`、`3`（逐行）。
+共享与独占的正常遍历、continue/break、提前返回路径已通过 Debug 逐指令取消穷举；
+回调失败在两种 VM 与独立 AOT 验证。统一默认检查留在本次实现提交后执行。

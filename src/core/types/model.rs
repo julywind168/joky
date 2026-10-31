@@ -441,6 +441,27 @@ impl Type {
                 }
             })
     }
+    /// Local cursor packets transfer exclusive cursor loans alongside plain metadata.
+    /// They cannot be copied, stored, borrowed as a whole, or used as enum payloads.
+    pub(crate) fn is_scoped_cursor_value(&self) -> bool {
+        !self.is_owner()
+            && !matches!(self, Self::Enum(_))
+            && self.scalar_types().iter().any(|ty| {
+                ty.reference_type()
+                    .is_some_and(|r| r.mutable && matches!(r.target, Self::BufferIterator(_)))
+            })
+            && self.scalar_types().iter().all(|ty| {
+                if let Some(r) = ty.reference_type() {
+                    r.mutable && matches!(r.target, Self::BufferIterator(_))
+                } else {
+                    ty.is_copy_storage_value() && !ty.contains_references()
+                }
+            })
+    }
+    pub(crate) fn is_scoped_borrowed_value(&self) -> bool {
+        self.is_scoped_shared_value() || self.is_scoped_cursor_value()
+    }
+
     /// All underlying element types, including shallow nominal owner views.
     pub(crate) fn buffer_elements(&self) -> &[Arc<Type>] {
         if self
@@ -581,7 +602,13 @@ impl Type {
     /// Shared references are Copy values; exclusive capabilities never are.
     pub(crate) fn is_copy_value(&self) -> bool {
         self.is_copy_scalar()
-            || self.is_aggregate() && !self.is_owner() && self.closure_info().is_none()
+            || self.is_aggregate()
+                && !self.is_owner()
+                && self.closure_info().is_none()
+                && !self
+                    .scalar_types()
+                    .iter()
+                    .any(|ty| ty.reference_type().is_some_and(|r| r.mutable))
             || self.reference_type().is_some_and(|r| !r.mutable)
     }
     pub(crate) fn contains_references(&self) -> bool {

@@ -3037,3 +3037,56 @@ fn shared_pipeline_executes_in_standalone_aot_without_prelude() {
     );
     work.assert_native("pipeline.jk", &["--no-prelude"], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn exclusive_pipeline_executes_in_standalone_aot_without_prelude() {
+    let work = Workspace::new();
+    work.write(
+        "pipeline.jk",
+        &include_str!("../fixtures/exclusive_pipeline.jk").replace(
+            "extern fn record(value: Int32) -> Int32",
+            "fn record(value: Int32) -> Int32 { value }",
+        ),
+    );
+    work.assert_native("pipeline.jk", &["--no-prelude"], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn borrowed_pipelines_example_matches_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "pipelines.jk",
+        include_str!("../../examples/borrowed_pipelines.jk"),
+    );
+    work.assert_all_backends(
+        "pipelines.jk",
+        &["--no-prelude"],
+        b"0: 5\n1: 3\n4\n11\n0\n12\n3\n",
+        0,
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn borrowed_pipeline_callback_failures_stop_standalone_aot() {
+    let work = Workspace::new();
+    for fixture in [
+        include_str!("../fixtures/shared_pipeline.jk"),
+        include_str!("../fixtures/exclusive_pipeline.jk"),
+    ] {
+        let source = fixture
+            .replace(
+                "extern fn record(value: Int32) -> Int32",
+                "fn record(value: Int32) -> Int32 { value }",
+            )
+            .replace("fn main()", "fn fixture_main()");
+        work.write("failure.jk", &format!("{source}\nfn main() {{ failed() }}"));
+        success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
+        let output = Command::new(work.path().join("failure")).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("failed"));
+    }
+}

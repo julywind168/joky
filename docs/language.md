@@ -847,7 +847,8 @@ Array / Slice 的 `get_ref(index)` 和 Map 的 `get_ref(&key)` 命中返回 `Som
 包括 Copy 约束；Copy 只允许复制，不授予保存借用的权限。每个引用继续保留来源：活动结果阻止容器的修改、释放、移动与替换，
 最后使用后恢复权限；不能返回局部或按值拥有者的借用，不能把借用存进 Array、
 任务 arena、显式 arena 或持久状态。复制仍保留每个引用的来源；存储资格另行检查。
-含拥有值及引用的混合聚合、游标/切片视图聚合和 `Option<&mut T>` 仍不开放。
+含拥有值及引用的混合聚合、共享游标/切片视图聚合和 `Option<&mut T>` 仍不开放。
+独占 Iter 的局部转移包是受限例外，见[独占流水线方法](#独占流水线方法)。
 
 对普通缺失使用 get_ref；已知存在且缺失应终止任务时保留 borrow_ref / value_ref。
 Copy 元素需要独立值时继续 get / get_by_ref；需要转移所有权时使用 remove / pop。
@@ -3429,6 +3430,34 @@ SharedSource 的 `get_shared(&self, index: UInt64) -> Option<&Self.Item>` 接入
 Array 已实现该协议。返回引用须来自源对象，首个缺失项表示结束；实现不得依赖调用方的 prelude。
 `SharedPipeline<I, T>` 的 I 满足 Copy + SharedIterator<Item = T>，T 满足 Copy；
 可借助公开协议编写泛型 helper，而不必展开包装类型。
+
+### 独占流水线方法
+
+`iter.exclusive(&mut values)` 返回只可转移的 ExclusivePipeline，支持
+`.filter(predicate).take(count)`，也允许重复组合及交换顺序。filter 回调为同步
+`fn(&T) @noescape -> Bool`，只临时读取元素，不支持捕获闭包；循环体获得 &mut T。
+filter 后 take 计数命中项，take 后 filter 只检查前 count 个输入项。
+构造和组合不执行回调，take(0) 不推进来源，首次耗尽后保持结束。
+
+流水线按值进入 for 后不能再次使用或复制，也不满足 Copy。支持编号、continue、break、
+嵌套遍历不同数组及提前返回；当前元素最后使用前不能推进冲突游标，原数组也不能修改、
+移动或释放。循环最后使用结束后可再次访问数组。拥有型元素可通过当前 &mut T 原地替换。
+
+for 与显式接口使用相同规则：`pipeline.into_parts()` 消费流水线，返回
+`(&mut iter.Iter<T>, P)`；局部可用 `var (cursor, plan) = ...` 解构，
+`iter.advance_exclusive(&mut plan, cursor)` 推进，`iter.current_mut(cursor)` 取得当前项。
+`P: Copy + ExclusivePlan<Item = T>` 描述普通适配器状态，advance 方法有 noescape 契约；
+实际 P 还须通过无引用 Copy 检查。Array 实现 ExclusiveSource，以 exclusive_cursor 提供底层游标。
+泛型 helper 可按值接收 `ExclusivePipeline<P, T>` 并直接 for，不依赖特殊名称。
+
+局部记录和元组现在可包含 &mut Iter 及无引用 Copy 元数据；读取或传递整个包会转移游标借用权限，
+不能复制、存入容器/arena、作为枚举载荷，或对整个包取引用。
+不开放其他可变引用聚合、共享游标聚合、混合拥有/借用聚合或 `Option<&mut T>`。
+流水线只用于同步语言函数；不能跨普通 @suspends 调用或进入并发分支，
+解释器时间片及取消仍使用既有清理规则。独占 zip/map 不在本阶段范围内。
+
+共享与独占的完整示例见 [borrowed_pipelines.jk](../examples/borrowed_pipelines.jk)，
+使用已有函数调用、跨行方法链、泛型推导、for、& / &mut 与 @noescape 语法。
 
 ### IntoIterator 与自动转换
 

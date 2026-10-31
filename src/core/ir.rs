@@ -1987,6 +1987,9 @@ impl FunctionPlan {
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         if let Some(input) = self.iteration_input(expr, vars, functions, types) {
+            if let Some(plan) = iterators::exclusive_plan_input(&input) {
+                self.borrowed_names.require_place(plan.to_owned());
+            }
             return self.expr_expected(&input, vars, functions, suspends, types, expected);
         }
         if let Expr::Call {
@@ -2220,6 +2223,8 @@ impl FunctionPlan {
                     return Ok(Flow::Value(value));
                 }
                 if slot_type(&binding.slot).is_owner()
+                    || slot_type(&binding.slot).is_scoped_cursor_value()
+                        && slot_type(&binding.slot).is_aggregate()
                     || binding.mutable
                         && slot_type(&binding.slot).reference_type().is_none()
                         && !slot_type(&binding.slot).is_closure_value()

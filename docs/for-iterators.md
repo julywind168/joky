@@ -743,3 +743,26 @@ map 的输入可以是共享引用或前级转换结果，输出通过既有 pla
 `cargo test --test cli shared_pipeline_executes_in_standalone_aot_without_prelude` 通过。
 覆盖惰性顺序、编号、复制状态、Copy 记录与 Unit 结果、map 后筛选、zip、take(0)、
 空输入、提前返回、失败清理，以及非法输出、捕获、逃逸、存储与源失效的拒绝。
+
+## 24. 独占流水线：转移游标，独立更新适配器状态
+
+ExclusivePipeline 以局部只可转移的游标包连接 ExclusiveSource 与 ExclusivePlan。
+源提供 &mut Iter，take/filter 的计数器、同步 noescape 函数指针及嵌套计划均为普通无引用 Copy 值。
+for 入口消费一次包装值并解构游标/计划；推进只借用计划与游标，当前元素通过原 current_mut 获得。
+因此无需把后继游标和 &mut 元素放在同一返回值，也不需要循环体结束后的隐式写回。
+continue、break 和 return 直接沿已有循环控制流处理。
+
+本阶段仅准入 &mut Iter 加无引用 Copy 元数据的局部记录、元组和泛型传递；整个包的值读取
+执行转移，Copy 约束、枚举载荷、容器/arena 存储、整体取借用与普通语言挂起继续拒绝。
+共享视图、其他 &mut 引用、拥有值和借用的混合聚合不由此放开。
+回调不能保留元素引用或挂起；独占 zip/map、捕获回调及 Slice 流水线继续暂缓。
+
+公开 into_parts 与 advance_exclusive 供显式推进及泛型代码使用，for 不提供额外权限。
+验证包括嵌套与次序、take(0)、空来源、编号/continue/break/return、拥有元素替换、
+失败清理，以及重复使用、活跃元素时推进、别名、逃逸、存储和 Copy 约束拒绝。
+
+阶段验证：独占行为与拒绝矩阵两项通过，独立 AOT fixture 和示例三后端通过；
+共享/独占回调失败均在独立 AOT 验证。
+`cargo test --lib exhaustive_pipeline_instruction_cancellation -- --ignored` 通过，
+包括两类流水线各自的正常遍历、continue/break 与提前返回入口。
+完整示例为 [borrowed_pipelines.jk](../examples/borrowed_pipelines.jk)。
