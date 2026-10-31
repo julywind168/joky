@@ -5,7 +5,7 @@
 本轮没有改业务、运行时算法、浮点语义或其他 Cranelift 选项，实际依赖版本为 0.136.1。
 
 **结论：chat 有局部提速迹象，但发现确定的浮点正确性问题，不能直接默认开启。**
-实验设置和取证改动均已还原，保留默认 `none`；本提交只记录结果。
+实验设置和取证改动均已还原，保留默认 `none`；首次实验只记录结果，后续依赖升级见文末。
 
 ## 性能
 
@@ -98,4 +98,24 @@ python3 benches/chat-workers.py run \
 `speed` 下 `cargo test --test chat -- --ignored` 的串行／并行两项通过，覆盖三后端真实 TCP、协议及清理路径；
 `task_parallel_array_values_and_roots_on_all_backends` 通过；30 个性能样本均核对广播、顺序、余额和正常退出。
 浮点测试为 19 通过、1 失败，单独复现相同失败；还原 `none` 后，该用例通过。
-未运行全量检查或压力穷举，未验证其他架构。最终代码无改动，只提交文档并检查 diff。
+首次实验未运行全量检查或压力穷举，未验证其他架构。代码无改动，只提交文档并检查 diff。
+
+## Cranelift 0.137.1 升级复验
+
+随后将六个直接 Cranelift 依赖统一升级到 `0.137.1`，更新锁文件；现有代码无需 API 适配。
+版本信息见 [Cranelift 0.137.1](https://docs.rs/crate/cranelift/0.137.1)。
+在相同 ARM64 环境、默认 test profile 下，先验证 `none` 的 AOT 浮点环境用例通过，
+再临时对 JIT／AOT 开启 `speed`：`cargo test --lib float_` 仍为 19 通过、1 失败，
+失败用例与 C harness 第 68 行均相同。升级没有解除默认开启优化的阻碍。
+
+最终保留依赖升级、还原 `none`，不保留实验开关。新版的浮点纯运算分类仍没有表达
+enter／reset／restore 所要求的运算顺序；修复仍需要调整 Joky 的边界实现，并验证优化后的行为。
+只在返回前强制求值不足以验证入口、宿主回调、间接调用与 CPS 路径的完整契约。
+本轮不重新测量性能，上文吞吐数据仍属于 0.136.1，不能当作 0.137.1 的结果。
+实验补丁和测试日志留在 `target/benchmarks/cranelift-0.137.1/`。
+
+最终 `none` 设置下，`cargo test --lib backends::` 通过 165 项、默认忽略 4 项，
+`cargo test --lib float_` 通过 20 项（与后端测试有重叠），
+`cargo test --test chat -- --ignored` 通过串行／并行两项真实 TCP 测试。
+`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 和 diff 检查通过。
+未运行全量检查、压力穷举或 Release 构建。

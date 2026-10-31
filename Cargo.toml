@@ -6,12 +6,12 @@ description = "The Joky programming language: compiler, runtime, and standard li
 
 [dependencies]
 # Keep native code generation and unwinding, without compiler timing instrumentation.
-cranelift-codegen  = { version = "0.136", default-features = false, features = ["std", "host-arch", "unwind"] }
-cranelift-frontend = "0.136"
-cranelift-module   = "0.136"
-cranelift-jit      = "0.136"
-cranelift-native   = "0.136"
-cranelift-object   = "0.136"
+cranelift-codegen  = { version = "0.137.1", default-features = false, features = ["std", "host-arch", "unwind"] }
+cranelift-frontend = "0.137.1"
+cranelift-module   = "0.137.1"
+cranelift-jit      = "0.137.1"
+cranelift-native   = "0.137.1"
+cranelift-object   = "0.137.1"
 ariadne = { version = "0.6.0", features = ["auto-color"] }
 mio = { version = "1.2.4", features = ["os-poll", "net"] }
 toml = { version = "1.1.8", default-features = false, features = ["parse", "std", "serde"] }
