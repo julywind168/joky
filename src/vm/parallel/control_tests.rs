@@ -146,7 +146,11 @@ fn parallel_control_budget_failures_refund_commands_proxies_and_local_arenas() {
                 });
             success = result.is_ok();
             if let Err(error) = &result {
-                assert_eq!(error.code(), ErrorCode::ResourceLimit, "{mode:?}: {error}");
+                assert_eq!(
+                    error.code(),
+                    ErrorCode::ResourceLimit,
+                    "{mode:?}, budget={bytes}: {error}"
+                );
             }
             drop(result);
             pool.wait_closed();

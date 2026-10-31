@@ -665,13 +665,24 @@ impl Call {
             counted: false,
             request,
         };
+        // Publish the actual preparation error before partial cleanup runs the
+        // abandonment fallback in Drop. The driver's later completion is idempotent.
+        call.prepare(input, resources)
+            .inspect_err(|error| complete(&call.request, Err(error.clone())))?;
+        Ok(call)
+    }
+    unsafe fn prepare(
+        &mut self,
+        input: Vec<Value>,
+        resources: &HashMap<u64, LocalResource>,
+    ) -> Result<(), Error> {
         for (i, value) in input.into_iter().enumerate() {
-            call.frame.slots[i] = match value {
+            self.frame.slots[i] = match value {
                 Value::Word(value) => value,
                 Value::Received(_, _) => unreachable!("receive values are replies only"),
                 Value::Bytes(bytes, stride) => {
-                    let value = buffer(&mut *cps::arena(&mut *call.frame), &bytes, stride)?;
-                    call.buffers.push(value);
+                    let value = buffer(&mut *cps::arena(&mut *self.frame), &bytes, stride)?;
+                    self.buffers.push(value);
                     value
                 }
                 Value::Resource(proxy) => {
@@ -679,21 +690,21 @@ impl Call {
                         .get(&proxy.id)
                         .ok_or_else(|| invalid("Closed control resource"))?
                         .pointer;
-                    call.keep.push(proxy);
+                    self.keep.push(proxy);
                     value
                 }
             };
         }
         if matches!(
-            call.request.op,
+            self.request.op,
             Operation::VmMigration(crate::core::vm::MigrationOperation::Command)
         ) {
             // Preflight all reply storage before a command can commit. The command cannot resize this packet.
-            let packet = &*(call.frame.slots[6] as *const Buffer);
+            let packet = &*(self.frame.slots[6] as *const Buffer);
             if packet.len() != 4 {
                 return Err(invalid("Invalid migration result packet"));
             }
-            let core = call
+            let core = self
                 .request
                 .core
                 .upgrade()
@@ -701,20 +712,20 @@ impl Call {
             let charge = core.root.accounts().reserve(
                 std::mem::size_of::<Reply>() + std::mem::size_of::<(usize, Vec<u8>)>() + 32,
             )?;
-            call.prepared_reply = Some(Reply {
+            self.prepared_reply = Some(Reply {
                 value: Value::Word(0),
-                updates: vec![(6, copy_buffer(call.frame.slots[6], 8)?)],
+                updates: vec![(6, copy_buffer(self.frame.slots[6], 8)?)],
                 _charge: charge,
             });
         }
         #[cfg(test)]
-        if matches!(call.request.op, Operation::VmCall) {
-            if let Some(core) = call.request.core.upgrade() {
+        if matches!(self.request.op, Operation::VmCall) {
+            if let Some(core) = self.request.core.upgrade() {
                 core.active_calls.fetch_add(1, Ordering::Release);
-                call.counted = true;
+                self.counted = true;
             }
         }
-        Ok(call)
+        Ok(())
     }
     unsafe fn poll(&mut self) -> Result<Option<u64>, Error> {
         let frame = &mut *self.frame;
@@ -1120,6 +1131,46 @@ mod tests {
         executor.wait_closed();
         assert_eq!(budget.used(), 0);
     }
+    #[test]
+    fn parallel_control_partial_call_preparation_preserves_budget_error() {
+        let budget = super::super::TaskBudget::new(16 << 10);
+        let storage = Storage::new(vec![budget.clone()]).unwrap();
+        let guard = Guard::enter(&storage);
+        let request = Arc::new(Request {
+            op: Operation::VmSource,
+            core: Weak::new(),
+            _receipt: None,
+            _sequence: 0,
+            state: Mutex::new(RequestState {
+                // The second buffer cannot fit after a frame and first buffer
+                // have been prepared. Destruction must not mask this failure.
+                input: Some(vec![
+                    Value::Bytes(vec![0; 16], 1),
+                    Value::Bytes(vec![0; 1 << 20], 1),
+                ]),
+                result: None,
+                cancelled: false,
+                completed: false,
+            }),
+            wake: None,
+            done: std::sync::Condvar::new(),
+            _charge: storage
+                .accounts()
+                .reserve(std::mem::size_of::<Request>())
+                .unwrap(),
+        });
+        let error = unsafe { Call::new(request.clone(), &HashMap::new()) }
+            .err()
+            .unwrap();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        // Match the driver's completion path after the partial Call was dropped.
+        complete(&request, Err(error));
+        let result = lock(&request.state).result.take().unwrap();
+        assert_eq!(result.err().unwrap().code(), ErrorCode::ResourceLimit);
+        drop((request, guard, storage));
+        assert_eq!(budget.used(), 0);
+    }
+
     #[test]
     fn migration_command_reply_is_reserved_before_execution() {
         let budget = super::super::TaskBudget::new(32 << 20);
