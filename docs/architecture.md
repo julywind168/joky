@@ -50,6 +50,10 @@ VM 的标量调用与 runtime 的固定 C 签名分别用声明表维护，共�
 
 ## 语义与代码生成
 
+JIT／AOT 默认使用 Cranelift `opt_level=speed`，由 `DEFAULT_CODEGEN_OPT_LEVEL` 统一定义。
+该设置与 Rust 编译器／运行时的 Cargo profile 独立：Debug 构建同样生成经过速度优化的原生代码。
+浮点边界回归仍显式覆盖 `none`、`speed`、`speed_and_size`，不依赖默认值。
+
 `Op::dependencies` 统一枚举需要保留的具体函数，包括函数值、动态方法表、任务分支和清理回调。
 库函数补齐、惰性宿主保留、解释器绑定及原生可达性扫描共用该入口。间接调用的签名占位不代表代码入口；
 能力传播仍按实际执行的操作及其调用契约计算，不能把“引用函数”当成“执行函数”。

@@ -177,8 +177,11 @@ pub(crate) fn compile(
     version: ModuleId,
 ) -> Result<CompiledModule, Error> {
     let plan = prepared.plan(layouts)?;
-    let mut builder = JITBuilder::new(default_libcall_names())
-        .map_err(|error| compile_error(error.to_string()))?;
+    let mut builder = JITBuilder::with_flags(
+        &[("opt_level", crate::DEFAULT_CODEGEN_OPT_LEVEL)],
+        default_libcall_names(),
+    )
+    .map_err(|error| compile_error(error.to_string()))?;
     for &(name, ptr) in symbols {
         builder.symbol(name, ptr);
     }

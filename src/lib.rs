@@ -6,6 +6,9 @@ pub mod runtime;
 mod stdlib;
 pub mod vm;
 
+/// Default Cranelift optimization level for JIT and AOT, independent of Cargo profiles.
+pub const DEFAULT_CODEGEN_OPT_LEVEL: &str = "speed";
+
 #[cfg(test)]
 #[path = "../tests/support/string_collections.rs"]
 mod string_collection_model;

@@ -138,3 +138,10 @@ DirectoryLookup 1 次、DirectoryFound 1 次、WhenPaths 3 次；并发时部分
 原始脚本、样本、构建身份、补丁和产物保留于 `target/benchmarks/chat-compile-levels/`。
 临时设置已还原，常规 Release 工具／运行时恢复为干净 none 副本并核对哈希。
 仅提交本节结论与索引，不运行全量检查；文档链接与 diff 检查通过。
+
+## 后续默认配置
+
+完成上述对照后，JIT／AOT 默认统一切换为 `speed`；以上表格及当时还原为 `none` 的记录保持历史口径。
+while／Map 基准元数据同步读取 Joky 的默认配置，避免继续误报 Cranelift 库自身的 `none`。
+按用户要求不重复执行测试或性能测量，沿用此前 `speed` 下的后端、浮点、chat 验证与本报告的实测结果；
+本次只检查变更内容、格式和 diff。现有构建产物须重新构建后才采用新默认值。

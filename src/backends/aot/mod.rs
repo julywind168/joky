@@ -141,7 +141,11 @@ impl AotCompiler {
         prefix: &str,
         registry: Rc<ModuleRegistry>,
     ) -> Result<Self, Error> {
-        Self::with_codegen_settings(name, prefix, registry, settings::builder())
+        let mut flags = settings::builder();
+        flags
+            .set("opt_level", crate::DEFAULT_CODEGEN_OPT_LEVEL)
+            .map_err(|e| compile_error(e.to_string()))?;
+        Self::with_codegen_settings(name, prefix, registry, flags)
     }
 
     fn with_codegen_settings(

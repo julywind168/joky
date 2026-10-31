@@ -366,8 +366,7 @@ fn metadata(config: &Config, cc: &std::ffi::OsStr) -> String {
         .next()
         .unwrap_or("unavailable")
         .to_owned();
-    let default_opt_level =
-        cranelift_codegen::settings::Flags::new(cranelift_codegen::settings::builder()).opt_level();
+    let default_opt_level = joky::DEFAULT_CODEGEN_OPT_LEVEL;
     format!("timestamp_utc={}\nrevision={}\nworking_tree_dirty={}\nos={}\narch={}\ncpu={}\nrust={}\ncc={}\ndebug_assertions={}\niterations={:?}\nsamples={}\nsample_target_ms={}\nseed={}\ncodegen=current backend defaults, no benchmark-specific overrides\ncranelift_default_opt_level={}\ncall_boundary=AOT native symbol; JIT and Interpreter checked VmEngine API\n",
         command("date".as_ref(), &["-u", "+%Y-%m-%dT%H:%M:%SZ"]),
         command("git".as_ref(), &["rev-parse", "HEAD"]),

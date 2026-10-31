@@ -65,7 +65,8 @@ cargo bench --bench while -- --check
   每轮耗时为 `median / N`，不扣除基线；P95 使用 nearest-rank，15 样本时等于最大值。
   这是批次平均值的分布，不是单次调用延迟的 P95，也不提供置信区间。
 - 保留当前后端默认代码生成配置，不为基准修改优化级别；以本轮 `metadata.txt` 中的
-  `cranelift_default_opt_level` 和 `Cargo.lock` 快照为准。Rust bench 优化构建与 Joky 生成代码的优化级别是不同设置。
+  `cranelift_default_opt_level` 和 `Cargo.lock` 快照为准。该字段读取 Joky 的 `DEFAULT_CODEGEN_OPT_LEVEL`
+  （当前为 `speed`），不是 Cranelift 库自身的默认值。Rust bench 优化构建与 Joky 生成代码的优化级别是不同设置。
 
 ## 产物与解释
 
