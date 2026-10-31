@@ -85,6 +85,66 @@ fn linked_task_entries(
 }
 
 #[test]
+fn full_slices_keep_repeated_utf8_conversion_bounded_on_all_backends() {
+    use crate::vm::{InstanceValue, VmEngine, VmMode};
+    const SOURCE: &str = r#"
+        import joky/string
+        import joky/result.{type Result, Ok, Err}
+        fn main() @suspends -> Int32 {
+            var count = 0
+            while count < 1000 {
+                let bytes = [uint8(104), uint8(195), uint8(169)]
+                let text = match string.from_utf8(bytes) {
+                    Ok(text) => text, Err(_) => return -1
+                }
+                if string.byte_length(&text) != 3 { return -2 }
+                count += 1
+            }
+            count
+        }
+    "#;
+    let (_scratch, entries, library) = linked_task_entries(SOURCE, &["main"], "full-slice-utf8");
+    for mode in [Some(VmMode::Jit), Some(VmMode::Interpreter), None] {
+        let mut vm = mode.map(VmEngine::with_mode);
+        if let Some(vm) = &mut vm {
+            vm.set_prelude_enabled(false);
+            vm.load_source(SOURCE).unwrap();
+        }
+        // A retained Buffer header per conversion alone would exceed this limit.
+        let budget = TaskBudget::new(128 << 10);
+        let prepared = if let Some(vm) = &vm {
+            vm.prepare_parallel_task("main", vec![], vec![budget.clone()])
+                .unwrap()
+        } else {
+            let entry = &entries[0];
+            unsafe {
+                entry.prepare(
+                    *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                    library.clone(),
+                    vec![],
+                    vec![budget.clone()],
+                )
+            }
+            .unwrap()
+        };
+        let mut pool = crate::runtime::parallel::ParallelExecutor::new(1, 4).unwrap();
+        let task = prepared.submit(&pool).unwrap();
+        task.wait().unwrap();
+        let result = task
+            .take_result()
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        assert_eq!(
+            result.value(),
+            &TaskValue::Scalar(InstanceValue::Int32(1000))
+        );
+        drop(result);
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0, "{mode:?}");
+    }
+}
+
+#[test]
 fn scoped_borrow_join_preserves_values_on_all_backends() {
     use crate::vm::{InstanceValue, VmEngine, VmMode};
     const SOURCE: &str = include_str!("../../../../tests/fixtures/scoped_borrow_join.jk");

@@ -312,6 +312,8 @@ JIT／AOT `opt_level=speed` 的实验结果、浮点正确性阻碍及 0.137.1 �
 [域资格校验实验](reports/chat-schema-check-2026-10-31.md)。
 随后对 CPU、线程等待与索引增长做采样，下一步优先处理临时切片头的累计保留，见
 [CPU 与等待路径采样](reports/chat-cpu-profile-2026-10-31.md)。
+全范围切片复用后的预算回归、长窗口性能和存储保留量见
+[全范围切片复用](reports/chat-full-slice-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 

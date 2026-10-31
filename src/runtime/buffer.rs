@@ -534,7 +534,7 @@ impl Buffer {
         Ok(iterator)
     }
 
-    /// A borrowed header snapshots an initialized range, never owns its payload.
+    /// A borrowed slice snapshots an initialized range, never owns its payload.
     /// Checked code keeps the parent buffer loan alive until the last view use.
     pub(crate) fn slice(
         &self,
@@ -546,6 +546,12 @@ impl Buffer {
             return Err(bounds_error(
                 "Buffer slice is outside the initialized prefix",
             ));
+        }
+        // A full-range loan already has the required bounds and provenance.
+        // Slice operations cannot resize or release the header; checked loans
+        // keep it live and forbid owner mutation until the last view use.
+        if start == 0 && end == self.len() {
+            return Ok(NonNull::from(self));
         }
         // The parent allocation already proved every offset fits usize/isize.
         unsafe {

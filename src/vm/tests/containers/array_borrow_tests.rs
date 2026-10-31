@@ -165,7 +165,7 @@ fn borrowed_arrays_do_not_expose_owning_values_storage_or_host_capabilities() {
 }
 
 #[test]
-fn borrowed_arrays_element_borrows_do_not_allocate_and_slice_headers_are_charged() {
+fn borrowed_arrays_full_slices_reuse_headers_and_partial_slices_are_charged() {
     use crate::runtime::arena::{LIMIT, MAX_BYTES};
     struct Restore;
     impl Drop for Restore {
@@ -178,7 +178,7 @@ fn borrowed_arrays_element_borrows_do_not_allocate_and_slice_headers_are_charged
         import joky/element
         import joky/slice
         fn direct() -> Int32 {
-            var a = array.with_capacity::<Int32>(1)
+            var a = array.with_capacity::<Int32>(2)
             array.push(&mut a, 0)
             var i = 0
             while i < 42 {
@@ -189,21 +189,43 @@ fn borrowed_arrays_element_borrows_do_not_allocate_and_slice_headers_are_charged
             }
             array.get(&a, 0).unwrap_or(0)
         }
-        fn ranged() -> Int32 {
-            var a = array.with_capacity::<Int32>(1)
-            array.push(&mut a, 42)
+        fn full() -> Int32 {
+            var a = array.with_capacity::<Int32>(2)
+            array.push(&mut a, 0)
+            var i = 0
+            while i < 42 {
+                let whole = array.slice_mut(&mut a, 0, 1)
+                let nested = slice.slice_mut(whole, 0, 1)
+                let old = slice.get(nested, 0).unwrap_or(0)
+                slice.set(nested, 0, old + 1);
+                i += 1
+            }
             slice.get(array.slice(&a, 0, 1), 0).unwrap_or(0)
+        }
+        fn ranged() -> Int32 {
+            var a = array.with_capacity::<Int32>(2)
+            array.push(&mut a, 42)
+            array.push(&mut a, 0)
+            let part = array.slice_mut(&mut a, 0, 1)
+            var i = 0
+            while i < 42 {
+                let nested = slice.slice_mut(part, 0, 1)
+                slice.set(nested, 0, i + 1);
+                i += 1
+            }
+            slice.get(part, 0).unwrap_or(0)
         }
     "#;
     let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
     let header = std::mem::size_of::<crate::runtime::buffer::Buffer>() + record;
-    let base = header + std::mem::size_of::<i32>() + record;
+    let base = header + 2 * std::mem::size_of::<i32>() + record;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap();
         let _restore = Restore;
         LIMIT.with(|n| n.set(base));
         assert_eq!(vm.call_int32_0("direct").unwrap(), 42);
+        assert_eq!(vm.call_int32_0("full").unwrap(), 42);
         LIVE.with(|n| assert_eq!(n.get(), 0));
         assert_eq!(
             vm.call_int32_0("ranged").unwrap_err().code(),
