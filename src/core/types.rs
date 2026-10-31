@@ -569,7 +569,9 @@ impl TypeRegistry {
                 }
                 let builtin = super::builtins::Builtin::lookup(&function.name);
                 if let Some(
-                    builtin @ (super::builtins::Builtin::Vm(_) | super::builtins::Builtin::Stdout),
+                    builtin @ (super::builtins::Builtin::Vm(_)
+                    | super::builtins::Builtin::Stdout
+                    | super::builtins::Builtin::Stderr),
                 ) = &builtin
                 {
                     builtin.validate_extern(function)?;

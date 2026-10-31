@@ -45,7 +45,12 @@ fn startup_workers_native_parser_matches_run_policy() {
     let driver =
         "static int joky_parallel_main(uint32_t workers) { printf(\"%u\\n\", workers); return 0; }";
     let binary = link(
-        &startup(driver.into(), ExecutionMode::Parallel { workers: 1 }, false),
+        &startup(
+            driver.into(),
+            ExecutionMode::Parallel { workers: 1 },
+            false,
+            false,
+        ),
         work.path(),
         "parser",
         None,
@@ -94,7 +99,6 @@ fn startup_workers_native_parser_matches_run_policy() {
         vec!["--task-workers", "1", "--task-workers", "2"],
         vec!["unknown"],
         vec!["--parallel"],
-        vec!["--"],
     ] {
         let output = Command::new(&binary)
             .env_remove("JOKY_TASK_WORKERS")
@@ -104,6 +108,13 @@ fn startup_workers_native_parser_matches_run_policy() {
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
     }
+    let output = Command::new(&binary)
+        .env_remove("JOKY_TASK_WORKERS")
+        .args(["--", "--task-workers", "invalid", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"1\n");
     // An invalid lower-priority environment value is not parsed.
     let output = Command::new(&binary)
         .env("JOKY_TASK_WORKERS", "bad")
@@ -168,7 +179,7 @@ int32_t observe(JokyCpsFrame *frame) {
     let binary = link(
         &format!(
             "{}\n{probe}",
-            startup(driver, ExecutionMode::Parallel { workers: 3 }, false)
+            startup(driver, ExecutionMode::Parallel { workers: 3 }, false, true)
         ),
         work.path(),
         "parallel",

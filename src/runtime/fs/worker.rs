@@ -8,7 +8,7 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex, MutexGuard, Weak,
     },
     thread,
@@ -27,8 +27,12 @@ pub trait FileHandle: Send {
 /// SystemFailure and terminate the affected file. Engine thread rules still apply.
 pub trait FileSystem: Send + Sync + 'static {
     fn open(&self, path: &str, flags: u64) -> Result<Box<dyn FileHandle>, FsError>;
+    /// Optional exclusive standard input capability. The default grants no access.
+    fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
+        Err(FsError::new(1, "Host does not provide standard input"))
+    }
 }
-struct Native(PathBuf);
+struct Native(PathBuf, bool);
 impl FileSystem for Native {
     fn open(&self, path: &str, flags: u64) -> Result<Box<dyn FileHandle>, FsError> {
         let file = std::fs::OpenOptions::new()
@@ -41,6 +45,42 @@ impl FileSystem for Native {
             .open(self.0.join(path))
             .map_err(FsError::from)?;
         Ok(Box::new(file))
+    }
+    fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
+        if !self.1 {
+            return Err(FsError::new(1, "Host does not provide standard input"));
+        }
+        if STDIN_OWNED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(FsError::new(6, "Standard input already has a reader"));
+        }
+        Ok(Box::new(StandardInput))
+    }
+}
+static STDIN_OWNED: AtomicBool = AtomicBool::new(false);
+struct StandardInput;
+impl Drop for StandardInput {
+    fn drop(&mut self) {
+        STDIN_OWNED.store(false, Ordering::Release);
+    }
+}
+impl FileHandle for StandardInput {
+    fn read(&mut self, bytes: &mut [u8]) -> Result<usize, FsError> {
+        std::io::stdin().read(bytes).map_err(Into::into)
+    }
+    fn write(&mut self, _: &[u8]) -> Result<usize, FsError> {
+        Err(FsError::new(1, "Standard input is read-only"))
+    }
+    fn seek(&mut self, _: u32, _: u64) -> Result<u64, FsError> {
+        Err(FsError::new(1, "Standard input cannot seek"))
+    }
+    fn sync_all(&mut self) -> Result<(), FsError> {
+        Ok(())
+    }
+    fn close(self: Box<Self>) -> Result<(), FsError> {
+        Ok(())
     }
 }
 impl FileHandle for std::fs::File {
@@ -219,11 +259,18 @@ impl NativeService {
         Ok(Self(Arc::new(Handle(core))))
     }
     pub fn native(base: impl AsRef<Path>, limits: FileLimits) -> Result<Self, Error> {
+        Self::native_with_stdio(base, limits, false)
+    }
+    pub(crate) fn native_with_stdio(
+        base: impl AsRef<Path>,
+        limits: FileLimits,
+        stdio: bool,
+    ) -> Result<Self, Error> {
         let base = base
             .as_ref()
             .canonicalize()
             .map_err(|e| failure(format!("Invalid file base: {e}")))?;
-        Self::new(Arc::new(Native(base)), limits)
+        Self::new(Arc::new(Native(base, stdio)), limits)
     }
     pub fn shutdown(&self) {
         self.0 .0.shutdown();
@@ -278,7 +325,7 @@ impl NativeService {
             bytes: size,
             file: false,
         };
-        let file = if matches!(input, Input::Open(..)) {
+        let file = if matches!(input, Input::Open(..) | Input::Stdin) {
             if !reserve(&core.ledger.files, 1, core.limits.files) {
                 return Err(FsError::new(6, "Open file limit exceeded"));
             }
@@ -383,6 +430,7 @@ impl NativeFile {
     }
 }
 pub(crate) enum Input<'a> {
+    Stdin,
     Open(&'a str, u64),
     Read(u64),
     Write(&'a [u8]),
@@ -401,6 +449,7 @@ impl Input<'_> {
     fn snapshot(self) -> Action {
         match self {
             Self::Open(p, f) => Action::Open(p.to_owned(), f),
+            Self::Stdin => Action::Stdin,
             Self::Read(n) => Action::Read(n as usize),
             Self::Write(b) => Action::Write(b.to_vec()),
             Self::Seek(o, n) => Action::Seek(o, n),
@@ -409,6 +458,7 @@ impl Input<'_> {
     }
 }
 pub(crate) enum Action {
+    Stdin,
     Open(String, u64),
     Read(usize),
     Write(Vec<u8>),
@@ -492,7 +542,7 @@ impl NativeTicket {
         if queued {
             queue.jobs.retain(|t| !Arc::ptr_eq(t, self));
         }
-        let open = matches!(state.action, Some(Action::Open(..)));
+        let open = matches!(state.action, Some(Action::Open(..) | Action::Stdin));
         let packet = state.result.take();
         {
             let mut f = lock(&self.file.state);
@@ -539,8 +589,13 @@ impl Core {
     }
 }
 fn execute(backend: &dyn FileSystem, file: &Arc<NativeFile>, action: Action) -> Packet {
-    if let Action::Open(path, flags) = action {
-        return match backend.open(&path, flags) {
+    if matches!(action, Action::Open(..) | Action::Stdin) {
+        let opened = match action {
+            Action::Open(path, flags) => backend.open(&path, flags),
+            Action::Stdin => backend.stdin(),
+            _ => unreachable!(),
+        };
+        return match opened {
             Ok(handle) => {
                 lock(&file.state).handle = Some(handle);
                 Packet::ok(Data::File(Arc::new(FileCell::Native(file.clone()))))
@@ -574,7 +629,7 @@ fn execute(backend: &dyn FileSystem, file: &Arc<NativeFile>, action: Action) -> 
         }),
         Action::Seek(origin, offset) => handle.seek(origin, offset).map(Data::Count),
         Action::Sync => handle.sync_all().map(|_| Data::Unit),
-        Action::Open(..) => unreachable!(),
+        Action::Open(..) | Action::Stdin => unreachable!(),
     };
     lock(&file.state).handle = Some(handle);
     match result {

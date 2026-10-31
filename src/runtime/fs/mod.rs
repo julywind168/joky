@@ -86,6 +86,8 @@ pub(crate) enum Operation {
     TakeFile,
     TakeBytes,
     Count,
+    Process,
+    Stdin,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
@@ -100,6 +102,8 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__fs_file" => Operation::TakeFile,
         "__fs_bytes" => Operation::TakeBytes,
         "__fs_count" => Operation::Count,
+        "__process_read" => Operation::Process,
+        "__io_stdin" => Operation::Stdin,
         _ => return None,
     })
 }
@@ -118,6 +122,8 @@ impl Operation {
         let bytes = |t: &Type| matches!(t,Type::Record(r)if r.name=="joky/array.Array"&&r.arguments==[Type::UInt8]&&r.fields.len()==1&&matches!(&r.fields[0].ty,Type::Buffer(t)if **t==Type::UInt8));
         let (params, ret) = match self {
             Self::Open => (vec![Type::String, Type::UInt64], outcome),
+            Self::Stdin => (vec![], outcome),
+            Self::Process => (vec![Type::UInt64, Type::UInt64, Type::String], outcome),
             Self::Read => (vec![file, Type::UInt64], outcome),
             Self::Write => (
                 vec![file, sig.params.get(1).cloned().unwrap_or(Type::Unit)],
@@ -308,12 +314,34 @@ pub(crate) unsafe fn poll(
         return Err(failure("File operation has terminated"));
     }
     let result = (|| {
-        if (op as u32) >= Operation::Code as u32 {
+        if op == Operation::Process {
+            let service = CURRENT.with(|s| s.borrow().clone());
+            let key = super::owned_text::borrow(frame.slots[2] as usize as *const Buffer)?;
+            let value = service
+                .as_ref()
+                .and_then(FileService::process)
+                .ok_or_else(|| FsError::new(1, "Host does not provide process inputs"))
+                .and_then(|context| context.read(frame.slots[0], frame.slots[1], key));
+            let packet = match value {
+                Ok(super::process::Value::Count(n)) => Packet::ok(Data::Count(n)),
+                Ok(super::process::Value::Text(text)) => Packet::ok(Data::Bytes(text.into_bytes())),
+                Err(error) => Packet::error(error),
+            };
+            return outcome(arena, packet, service).map(Some);
+        }
+        if matches!(
+            op,
+            Operation::Code
+                | Operation::Message
+                | Operation::TakeFile
+                | Operation::TakeBytes
+                | Operation::Count
+        ) {
             return extract(arena, frame, op).map(Some);
         }
         if frame.host_context.is_null() {
             let mut loan = None;
-            let (service, file) = if op == Operation::Open {
+            let (service, file) = if matches!(op, Operation::Open | Operation::Stdin) {
                 (CURRENT.with(|s| s.borrow().clone()), None)
             } else {
                 let l = lease(frame.slots[0])?;
@@ -324,6 +352,7 @@ pub(crate) unsafe fn poll(
             };
             let mut immediate = None;
             let action = match op {
+                Operation::Stdin => Input::Stdin,
                 Operation::Open => {
                     let path = super::owned_text::borrow(frame.slots[0] as usize as *const Buffer)?;
                     if path.len() > 4096 {
@@ -451,6 +480,8 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, kind: u32) -> 
         9 => Operation::TakeFile,
         10 => Operation::TakeBytes,
         11 => Operation::Count,
+        12 => Operation::Process,
+        13 => Operation::Stdin,
         _ => return super::cps::INVALID_STATE,
     };
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {
@@ -477,7 +508,7 @@ pub unsafe extern "C" fn joky_fs_block_on_native(
     entry: super::cps::CpsEntry,
     frame: *mut CpsFrame,
 ) -> i32 {
-    let service = match FileService::native(".", FileLimits::default()) {
+    let service = match FileService::standalone() {
         Ok(service) => service,
         Err(error) => {
             (*frame).release();

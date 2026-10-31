@@ -1,0 +1,24 @@
+import joky/io
+import joky/json
+
+// Read a bounded JSON document from a pipe. Diagnostics stay off stdout.
+fn main() @suspends -> Int32 {
+    var input = match io.stdin() {
+        Ok(input) => input
+        Err(error) => { eprintln(error.message); return 1 }
+    }
+    let text = match input.read_text_limited(1048576) {
+        Ok(text) => text
+        Err(_) => { eprintln("Expected at most 1 MiB of UTF-8 input"); return 1 }
+    }
+    let value = match json.decode(&text) {
+        Ok(value) => value
+        Err(error) => { eprintln("Invalid JSON at byte {error.offset}"); return 2 }
+    }
+    let output = match json.encode(&value) {
+        Ok(output) => output
+        Err(_) => { eprintln("Could not encode JSON"); return 1 }
+    }
+    println(output)
+    0
+}

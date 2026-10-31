@@ -1,5 +1,6 @@
 // AOT chat host: owns sockets, directories and the script VM; business rules live in
 // script/main.jk and are republished through the admin port without dropping connections.
+import host/config as startup
 import host/admin
 import contract.{type Contract, type Host, type Call, type AccountInit, type Client, defaults, require_contract}
 import joky/vm
@@ -69,6 +70,12 @@ fn serve(script: &Script, host: Host, var listener: TcpListener) @suspends -> In
     0
 }
 fn main() @suspends -> Int32 {
+    let chat_port = match startup.port("JOKY_CHAT_PORT", 7777) {
+        Ok(port) => port, Err(error) => { eprintln(error); return 2 }
+    }
+    let admin_port = match startup.port("JOKY_ADMIN_PORT", 7778) {
+        Ok(port) => port, Err(error) => { eprintln(error); return 2 }
+    }
     let engine = vm.Vm.new()
     engine.module_file("contract", "contract.jk")!
     let entries = require_contract(&engine)
@@ -83,11 +90,11 @@ fn main() @suspends -> Int32 {
     let rooms = domain.directory(config.max_rooms)
     let accounts = domain.directory(config.max_clients)
     let host = Host { config, rooms: rooms.handle(), accounts: accounts.handle() }
-    var chat = match tcp.listen("127.0.0.1", 7777) {
-        Ok(listener) => listener, Err(_) => { println("Could not bind chat listener"); return 1 }
+    var chat = match tcp.listen("127.0.0.1", chat_port) {
+        Ok(listener) => listener, Err(_) => { eprintln("Could not bind chat listener"); return 1 }
     }
-    var admin_listener = match tcp.listen("127.0.0.1", 7778) {
-        Ok(listener) => listener, Err(_) => { println("Could not bind admin listener"); return 1 }
+    var admin_listener = match tcp.listen("127.0.0.1", admin_port) {
+        Ok(listener) => listener, Err(_) => { eprintln("Could not bind admin listener"); return 1 }
     }
     println("chat {chat.local_addr()!.port()}")
     println("admin {admin_listener.local_addr()!.port()}")

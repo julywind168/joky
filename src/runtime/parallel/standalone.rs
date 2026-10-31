@@ -107,7 +107,7 @@ pub unsafe extern "C" fn __joky_task_main_v1(
                 let task = pool.submit(
                     root,
                     Arc::new(super::control::Files(Some(
-                        crate::runtime::fs::FileService::native(".", Default::default())?,
+                        crate::runtime::fs::FileService::standalone()?,
                     ))),
                     Box::new(move || {
                         Ok(Box::new(MainJob {

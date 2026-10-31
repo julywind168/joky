@@ -191,6 +191,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
+        path: "joky/process",
+        source: include_str!("../../stdlib/process.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
         path: "joky/io",
         source: include_str!("../../stdlib/io.jk"),
         reexport_imports: false,

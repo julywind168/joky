@@ -133,6 +133,8 @@ impl Operation {
                 use crate::runtime::fs::Operation::*;
                 match op {
                     Open => (vec![Bytes(1, false), Word], Resource),
+                    Process => (vec![Word, Word, Bytes(1, false)], Resource),
+                    Stdin => (vec![], Resource),
                     Read => (vec![Resource, Word], Resource),
                     Write => (vec![Resource, Bytes(1, false)], Resource),
                     Seek => (vec![Resource, Word, Word], Resource),

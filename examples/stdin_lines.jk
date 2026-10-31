@@ -1,0 +1,19 @@
+import joky/io
+import joky/process
+
+// A line filter with a configurable prefix; also accepts an unterminated final line.
+fn main() @suspends -> Int32 {
+    let prefix = match process.env("JOKY_LINE_PREFIX") {
+        Ok(value) => value.unwrap_or("> ")
+        Err(error) => { eprintln(error.message); return 1 }
+    }
+    var input = io.stdin()!
+    while true {
+        match input.read_line(65536) {
+            Ok(Some(line)) => println("{prefix}{line}")
+            Ok(None) => break
+            Err(_) => { eprintln("Expected a UTF-8 line of at most 64 KiB"); return 1 }
+        }
+    }
+    0
+}

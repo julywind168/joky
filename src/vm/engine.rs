@@ -886,7 +886,7 @@ impl VmEngine {
                         crate::runtime::dns::initialize()?;
                         HostEntry::Dns
                     }
-                    Builtin::Vm(_) | Builtin::Stdout => unreachable!(),
+                    Builtin::Vm(_) | Builtin::Stdout | Builtin::Stderr => unreachable!(),
                 };
                 if self.mode == VmMode::Interpreter {
                     interpreter_hosts.insert(

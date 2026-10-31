@@ -326,10 +326,10 @@ stop 先使事件失效并同步撤销注册，再释放租约与请求存储，
 撤销注册失败会毒化 I/O source，旧 token 仍失效；取消不撤销已经发生的网络读写。
 此调用权限不授予 `&TcpListener`、`&mut TcpStream` 或其他 TCP 资源引用跨 worker 的输入资格。
 
-stdout 是固定同步内置契约：`__joky_write_stdout` 仅接受 `&String -> Int32`，禁止可变引用、
+stdout／stderr 是固定同步内置契约：`__joky_write_stdout`／`__joky_write_stderr` 仅接受 `&String -> Int32`，禁止可变引用、
 挂起与 C ABI 声明。模块注册检查 TextViewV2 证据、实际入口和固定链接符号；普通文本宿主证书不能改名冒充它。
 JIT／AOT 在调用 worker 的栈上构造文本描述符，解释器使用调用内临时描述符；二者都从本地 Buffer／Loan
-读取受检字节视图，输出入口不接收其他 worker 的 Buffer 或 Rc。stdout 的整次写操作持锁，
+读取受检字节视图，输出入口不接收其他 worker 的 Buffer 或 Rc。对应输出流的整次写入和刷新持锁，
 返回前结束对描述符和字节的访问，错误写入 worker 本地错误通道。没有 Pending 请求或保留的输入指针。
 同步写可能阻塞 worker；取消须等该次调用返回后才能清理帧、归还来源，不承诺中断操作系统写入。
 print／println 的 Show 实现、间接目标和清理依赖仍须逐项通过调用图检查。
@@ -2509,7 +2509,7 @@ JIT、解释器与 AOT 不分别实现插值操作码，字节码格式不变。
 为 `(&String) -> Int32`，宿主接收 TextViewV2 描述符，同步写 UTF-8 字节、不保留指针。
 三后端和独立 AOT 使用同一 Rust runtime 边界，避免各后端重复浮点格式化。
 R7a 为该入口附加受审计的同步 TextViewV2 并行宿主证据：精确签名与入口身份、不可变调用期
-借用、无保留指针、整个 write_all 持 stdout 锁，失败走 worker 本地错误通道。证据与 CPS 宿主
+借用、无保留指针、整个 write_all 与 flush 持对应输出流锁，失败走 worker 本地错误通道。证据与 CPS 宿主
 使用同一冻结机制，解释器在 worker 重建本地绑定；JIT 保活代码与证据，AOT 按同一注册表准入。
 该内部证据不扩展公开宿主注册 API，也不为同名或同签名的普通宿主自动授予资格。
 输出仍可能阻塞 worker，跨调用顺序不保证；Show 调用图继续接受普通并行资格检查。
@@ -2820,3 +2820,20 @@ join／race／branch 允许跨 worker 派发，Group 将失败保留在所属隔
 标记不关闭任务预算、取消检查、共享 reactor 或 VM 控制代理，每次 poll 返回时恢复，不能污染同线程其他任务。
 本地帧与 cleanup 元数据不跨线程；远程读者仅接收受检区间，外层 branch 沿用完整线程资格检查。
 `task.Failure` 仅保存固定分类，不分配动态诊断；它不提供回滚或重启保证。
+
+## 程序启动输入与 stdin
+
+`runtime::process::ProcessContext` 保存只读 OsString 参数、环境映射和调用者目录，验证总大小与项数，
+读取时严格转换 UTF-8。CLI 显式将快照附到 FileService；克隆能力与控制桥共享同一 Arc，不从当前
+worker 的环境重新读取。嵌入 VM 和普通 FileService 构造默认没有该快照，也没有 stdin 能力。
+`__process_read` 复用受检 FS outcome／复制文本 ABI，返回的语言内存仍计入任务预算。
+
+生成的 AOT 启动包装在解析自身 worker 参数后调用 `joky_process_init_v1`，传入 `--` 后的参数，
+再进入项目目录。该一次性全局快照仅供独立启动服务构造使用；嵌入调用不隐式继承它。
+无运行时依赖的纯标量产物不为未使用的过程输入额外链接 runtime。
+
+`__io_stdin` 通过同一 FS CPS 与 Parallel 控制桥创建拥有句柄，NativeService 新增独立的 stdin
+打开操作，不使用特殊路径或魔法 OpenOptions 位。FileSystem 的默认实现返回 Unsupported，V1 文件
+描述符 ABI 保持不变。显式 `native_with_stdio` 授权进程 stdin；全局独占标记由实际后台句柄的 Drop
+释放，而不是在取消交付时提前释放。阻塞系统读取仅持有 Rust 字节缓冲；正在读取时取消沿用 FS 的
+关闭、保留 ticket 配额与延后清理契约。Joky Stdin 持有 4 KiB 缓冲并实施行／总量限制及错误失效规则。

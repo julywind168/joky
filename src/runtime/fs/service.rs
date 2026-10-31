@@ -8,7 +8,10 @@ use super::{
 use crate::{runtime::executor::TaskWaker, Error};
 use std::{path::Path, sync::Arc};
 #[derive(Clone)]
-pub struct FileService(Service);
+pub struct FileService(
+    Service,
+    Option<Arc<crate::runtime::process::ProcessContext>>,
+);
 #[derive(Clone)]
 enum Service {
     Native(NativeService),
@@ -16,10 +19,45 @@ enum Service {
 }
 impl FileService {
     pub fn new(backend: Arc<dyn FileSystem>, limits: FileLimits) -> Result<Self, Error> {
-        Ok(Self(Service::Native(NativeService::new(backend, limits)?)))
+        Ok(Self(
+            Service::Native(NativeService::new(backend, limits)?),
+            None,
+        ))
     }
     pub fn native(base: impl AsRef<Path>, limits: FileLimits) -> Result<Self, Error> {
-        Ok(Self(Service::Native(NativeService::native(base, limits)?)))
+        Ok(Self(
+            Service::Native(NativeService::native(base, limits)?),
+            None,
+        ))
+    }
+    /// Explicitly grant filesystem and exclusive process stdin access.
+    /// Cancelling an in-flight read revokes delivery; the OS read may finish later.
+    pub fn native_with_stdio(base: impl AsRef<Path>, limits: FileLimits) -> Result<Self, Error> {
+        Ok(Self(
+            Service::Native(NativeService::native_with_stdio(base, limits, true)?),
+            None,
+        ))
+    }
+    /// Attach explicit startup inputs; clones and child tasks share this immutable snapshot.
+    pub fn with_process_context(
+        mut self,
+        context: crate::runtime::process::ProcessContext,
+    ) -> Self {
+        self.1 = Some(Arc::new(context));
+        self
+    }
+    pub(super) fn process(&self) -> Option<&crate::runtime::process::ProcessContext> {
+        self.1.as_deref()
+    }
+    pub(crate) fn standalone() -> Result<Self, Error> {
+        let context = crate::runtime::process::standalone();
+        let mut service = if context.is_some() {
+            Self::native_with_stdio(".", Default::default())?
+        } else {
+            Self::native(".", Default::default())?
+        };
+        service.1 = context;
+        Ok(service)
     }
     /// Install a nonblocking host service, retaining its context after validation.
     /// # Safety
@@ -27,7 +65,7 @@ impl FileService {
     /// contract in `abi`. Its context and tokens must support arbitrary threads;
     /// descriptor validation cannot establish those guarantees.
     pub unsafe fn from_descriptor(descriptor: FileServiceV1) -> Result<Self, Error> {
-        Ok(Self(Service::External(External::new(descriptor)?)))
+        Ok(Self(Service::External(External::new(descriptor)?), None))
     }
     pub fn shutdown(&self) {
         match &self.0 {

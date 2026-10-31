@@ -20,7 +20,7 @@ const HELP: &str = "Joky — check, run, build, inspect and format Joky programs
 
 Usage:
   joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
-  joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml]
+  joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
   joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky fmt [--check] <file.jk>
@@ -52,7 +52,8 @@ Successful checks are silent (exit 0); errors go to stderr (exit 1).
 Projects declare [project] name, entry, source-root (default \".\"), and resources.
 Project builds default to <project>/dist/<name>; run them directly after moving the bundle.
 Single-file builds default to the source path without .jk.
-Parallel executables accept --task-workers N at startup. Precedence:
+Program arguments follow -- after an explicit run input or in a native executable.
+Parallel executables accept --task-workers N before -- at startup. Precedence:
 startup option > JOKY_TASK_WORKERS > build default. Local rejects worker configuration.
 Run uses the same precedence after explicit --parallel or --task-workers; build ignores the environment.
 Programs start at fn main() or fn main() -> Int32.
@@ -77,6 +78,7 @@ enum Command {
     Run {
         source: PathBuf,
         interpreter: bool,
+        arguments: Vec<OsString>,
         prelude: bool,
         mode: ExecutionMode,
     },
@@ -119,6 +121,7 @@ impl Command {
                 command.to_string_lossy()
             )));
         }
+        let mut arguments = Vec::new();
         let mut source = None;
         let mut output = None;
         let mut interpreter = false;
@@ -130,7 +133,11 @@ impl Command {
             if !positional_only && (arg == "--help" || arg == "-h") {
                 return Ok(Self::Help);
             }
-            if !positional_only && arg == "--" {
+            if arg == "--" && (!positional_only || !build && source.is_some()) {
+                if !build && source.is_some() {
+                    arguments.extend(args);
+                    break;
+                }
                 positional_only = true;
                 continue;
             }
@@ -229,6 +236,7 @@ impl Command {
             Ok(Self::Run {
                 source,
                 interpreter,
+                arguments,
                 prelude,
                 mode,
             })
@@ -274,13 +282,18 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
                 VmMode::Jit
             },
         );
-        if matches!(command, Command::Run { .. }) {
-            vm.set_file_service(joky::runtime::fs::FileService::native(
-                project
-                    .as_ref()
-                    .map_or(std::path::Path::new("."), |p| p.root.as_path()),
-                Default::default(),
-            )?)?;
+        if let Command::Run { ref arguments, .. } = command {
+            let context = joky::runtime::process::ProcessContext::capture(arguments.clone())
+                .map_err(|error| cli_error_with_code(ErrorCode::IoError, error.message()))?;
+            vm.set_file_service(
+                joky::runtime::fs::FileService::native_with_stdio(
+                    project
+                        .as_ref()
+                        .map_or(std::path::Path::new("."), |p| p.root.as_path()),
+                    Default::default(),
+                )?
+                .with_process_context(context),
+            )?;
         }
         vm.set_prelude_enabled(prelude);
         let ast = match &project {

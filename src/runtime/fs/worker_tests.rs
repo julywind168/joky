@@ -55,6 +55,9 @@ struct TestFile {
     blocked: bool,
 }
 impl FileSystem for Backend {
+    fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
+        self.open("read", 1)
+    }
     fn open(&self, path: &str, _: u64) -> Result<Box<dyn FileHandle>, FsError> {
         if path == "open" {
             self.0.wait();
@@ -199,6 +202,38 @@ fn running_read_cancellation_closes_without_waiting() {
             .submit(Input::Read(1), Some(file.clone()), f.wake.clone()),
         Err(FsError { code: 7, .. })
     ));
+    f.state.release();
+    until(|| file.close_result().is_some());
+    drop(file);
+    f.drained();
+    assert_eq!(f.state.closed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn stdin_cancellation_retains_the_running_read_until_worker_cleanup() {
+    let f = Fixture::new();
+    let opened = f.submit(Input::Stdin, None);
+    f.ready(&opened);
+    let mut packet = opened.take().unwrap();
+    opened.stop();
+    let file = {
+        let Some(Data::File(cell)) = packet.data.take() else {
+            panic!("stdin did not open")
+        };
+        let FileCell::Native(file) = &*cell else {
+            unreachable!()
+        };
+        file.clone()
+    };
+    drop(opened);
+    drop(packet);
+    let request = f.submit(Input::Read(1024), Some(file.clone()));
+    until(|| f.state.entered.load(Ordering::SeqCst) == 1);
+    request.stop();
+    assert!(file.is_closed());
+    assert!(request.take().is_none());
+    assert!(file.close_result().is_none());
+    drop(request);
     f.state.release();
     until(|| file.close_result().is_some());
     drop(file);

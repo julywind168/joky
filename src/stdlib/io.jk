@@ -1,5 +1,11 @@
+import joky/fs
+import joky/mem
+import joky/array.{type Array}
+import joky/result.{type Result, Ok, Err}
+import joky/option.{type Option, Some, None}
+import joky/integer
 import joky/show.{type Show}
-import joky/string.{type StringBuilder}
+import joky/string.{type StringBuilder, type Utf8Error}
 
 extern fn __joky_write_stdout(text: &String) -> Int32
 
@@ -13,4 +19,94 @@ pub fn println<T: Show>(value: &T) @noescape {
     output.push('\n')
     let text = output.finish()
     __joky_write_stdout(&text);
+}
+
+extern fn __joky_write_stderr(text: &String) -> Int32
+
+pub fn eprint<T: Show>(value: &T) @noescape {
+    let text = Show.to_text(value)
+    __joky_write_stderr(&text);
+}
+pub fn eprintln<T: Show>(value: &T) @noescape {
+    var output = StringBuilder.new()
+    value.show(&mut output)
+    output.push('\n')
+    let text = output.finish()
+    __joky_write_stderr(&text);
+}
+
+pub fn flush_stdout() { print("") }
+pub fn flush_stderr() { eprint("") }
+
+
+pub enum ReadError { Io(fs.IoError), Utf8(Utf8Error), InvalidLimit, LimitExceeded, Closed }
+pub struct Stdin {
+    file: fs.File,
+    buffer: Array<UInt8>,
+    offset: UInt64,
+    eof: Bool,
+    failed: Bool,
+}
+pub fn stdin() @suspends -> Result<Stdin, fs.IoError> {
+    Ok(Stdin { file: fs.stdin()?, buffer: Array.new::<UInt8>(), offset: 0, eof: false, failed: false })
+}
+impl Stdin {
+    fn next_byte(&mut self) @suspends -> Result<Option<UInt8>, ReadError> {
+        if self.failed { return Err(ReadError.Closed) }
+        if self.offset == self.buffer.len() {
+            if self.eof { return Ok(None) }
+            let next = match self.file.read(4096) {
+                Ok(bytes) => bytes
+                Err(error) => { self.failed = true; return Err(ReadError.Io(error)) }
+            }
+            mem.drop(mem.replace(&mut self.buffer, next))
+            self.offset = 0
+            if self.buffer.len() == 0 { self.eof = true; return Ok(None) }
+        }
+        let byte = self.buffer.get(self.offset)
+        self.offset = self.offset + 1
+        Ok(byte)
+    }
+    fn collect(&mut self, line: Bool, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        if self.failed { return Err(ReadError.Closed) }
+        if limit == 0 || limit > 1048576 { return Err(ReadError.InvalidLimit) }
+        var bytes = Array.new::<UInt8>()
+        while true {
+            let byte = match self.next_byte()? {
+                Some(byte) => byte
+                None => { return if bytes.len() == 0 { Ok(None) } else { Ok(Some(bytes)) } }
+            }
+            if bytes.len() == limit { self.failed = true; return Err(ReadError.LimitExceeded) }
+            bytes.push(byte)
+            if line && byte == 10 { return Ok(Some(bytes)) }
+        }
+    }
+    fn decode(&mut self, bytes: Array<UInt8>) -> Result<String, ReadError> {
+        match String.from_utf8(bytes) {
+            Ok(text) => Ok(text)
+            Err(error) => { self.failed = true; Err(ReadError.Utf8(error)) }
+        }
+    }
+    // LF/CRLF are removed; EOF after a nonempty final fragment returns that fragment.
+    // The byte limit includes line endings. An I/O, limit or UTF-8 error poisons the reader.
+    pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
+        var bytes = match self.collect(true, limit)? {
+            Some(bytes) => bytes
+            None => { return Ok(None) }
+        }
+        let size = bytes.len()
+        if size > 0 && bytes.get(size - 1).unwrap_or(0) == 10 {
+            bytes.truncate(size - 1)
+            if size > 1 && bytes.get(size - 2).unwrap_or(0) == 13 { bytes.truncate(size - 2) }
+        }
+        Ok(Some(self.decode(bytes)?))
+    }
+    pub fn read_bytes_limited(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
+        Ok(match self.collect(false, limit)? { Some(bytes) => bytes, None => Array.new::<UInt8>() })
+    }
+    pub fn read_text_limited(&mut self, limit: UInt64) @suspends -> Result<String, ReadError> {
+        let bytes = self.read_bytes_limited(limit)?
+        self.decode(bytes)
+    }
+    pub fn close(self) @suspends -> Result<Unit, fs.IoError> { self.file.close() }
 }

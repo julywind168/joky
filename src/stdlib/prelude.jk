@@ -5,5 +5,5 @@ import joky/integer
 import joky/float
 import joky/string
 import joky/clone as cloning.{type Clone}
-import joky/io.{print, println}
+import joky/io.{print, println, eprint, eprintln}
 import joky/check.{assert, panic}

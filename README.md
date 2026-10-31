@@ -34,7 +34,7 @@ fn main() {
 - 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、借用式状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println` / `assert` / `panic`。
   支持后缀 `!` 强制解包与 `?` 失败提前返回（[语义](docs/language.md#optionresult-与-outcome-后缀解包)）。
   [Option / Result 示例](examples/option_result.jk)展示 `?` / `!`、`map`、默认值、`and` / `or` 和 `ok` / `err` 转换；普通默认值急切求值，`unwrap_or_else` 可按需执行同步回调。
-  `check` / `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
+  也提供输出到 stderr 的 `eprint` / `eprintln`。`check` / `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
 - 程序入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
   可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。
@@ -48,6 +48,21 @@ fn main() {
 - `joky explain-parallel <文件或项目>` 静态解释并行准入与本地回退原因，显示源码位置、参数或捕获及调用链，不执行程序；
   [报告状态与限制](docs/language.md#并行资格诊断)。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
+
+## 程序输入与输出
+
+程序可通过 `joky/process` 读取启动参数、只读环境快照和启动目录，通过 `joky/io` 读取有界 stdin。
+例如：
+
+```sh
+cargo run -- run examples/dns_lookup.jk -- localhost
+printf '%s\n' '{"answer":42}' | cargo run -- run examples/stdin_json.jk
+printf 'one\ntwo' | JOKY_LINE_PREFIX='item: ' cargo run -- run examples/stdin_lines.jk
+```
+
+`--` 后为程序参数，原生程序同样使用 `./program -- args...`；参数不含程序名。
+`print/println` 和 `eprint/eprintln` 每次写入后刷新，无换行提示也能立即输出。
+挂起入口、错误与 EOF 规则见[程序输入与标准流](docs/language.md#程序输入与标准流)。
 
 ## 源码静态检查
 

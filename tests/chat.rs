@@ -17,6 +17,46 @@ struct Server {
     child: Child,
     log: std::path::PathBuf,
 }
+
+#[test]
+fn chat_startup_environment_and_shutdown_match_host_backends() {
+    let work = scratch::ScratchDir::new("chat-startup");
+    let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/chat");
+    let bundle = work.path().join("bundle");
+    let built = Command::new(env!("CARGO_BIN_EXE_joky"))
+        .args(["build", "--parallel"])
+        .arg(&project)
+        .arg("-o")
+        .arg(&bundle)
+        .env("JOKY_RUNTIME", runtime::runtime_archive())
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{built:?}");
+    for backend in ["jit", "interpreter", "aot"] {
+        let mut command = if backend == "aot" {
+            Command::new(bundle.join("chat"))
+        } else {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
+            command.arg("run").arg(&project);
+            if backend == "interpreter" {
+                command.arg("--interpreter");
+            }
+            command
+        };
+        command
+            .current_dir(work.path())
+            .env_remove("JOKY_TASK_WORKERS");
+        let (mut server, chat, admin) =
+            Server::start(command, work.path().join(format!("{backend}.stderr")));
+        assert_ne!(chat, 0);
+        assert_ne!(admin, 0);
+        assert_ne!(chat, admin);
+        let mut peer = Peer::open(admin);
+        peer.send("shutdown\n");
+        peer.expect("shutting down\n");
+        server.expect_shutdown();
+    }
+}
 impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -30,6 +70,8 @@ impl Drop for Server {
 impl Server {
     fn start(mut command: Command, log: std::path::PathBuf) -> (Self, u16, u16) {
         let mut child = command
+            .env("JOKY_CHAT_PORT", "0")
+            .env("JOKY_ADMIN_PORT", "0")
             .stdout(Stdio::piped())
             .stderr(std::fs::File::create(&log).unwrap())
             .spawn()
@@ -411,13 +453,14 @@ fn chat_matrix(parallel: bool) {
         include_str!("../examples/chat/host/admin.jk"),
     )
     .unwrap();
-    assert_eq!(source.matches("\"127.0.0.1\", 7777").count(), 1);
-    assert_eq!(source.matches("\"127.0.0.1\", 7778").count(), 1);
+    std::fs::write(
+        app.join("host/config.jk"),
+        include_str!("../examples/chat/host/config.jk"),
+    )
+    .unwrap();
     assert_eq!(source.matches("    let config = defaults()").count(), 1);
     let path = app.join("main.jk");
     let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check\nimport joky/outbox")
-        .replace("\"127.0.0.1\", 7777", "\"127.0.0.1\", 0")
-        .replace("\"127.0.0.1\", 7778", "\"127.0.0.1\", 0")
         .replace("    let config = defaults()", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let config = defaults()");
     let source = if parallel {
         source.replace("    verify_publication(&engine)\n", "")

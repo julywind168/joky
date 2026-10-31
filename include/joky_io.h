@@ -4,11 +4,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Synchronously write exactly byte_length UTF-8 bytes, including embedded NULs.
+/* Synchronously write and flush byte_length UTF-8 bytes, including embedded NULs.
  * The descriptor and bytes remain live and immutable throughout the call.
  * Return 0 on success, -1 on failure; failure records the runtime error.
  * A failed write may have already emitted a prefix. No pointer is retained. */
 int32_t joky_io_write_stdout_v2(const JokyText *text);
+int32_t joky_io_write_stderr_v2(const JokyText *text);
 #ifdef __cplusplus
 }
 #endif

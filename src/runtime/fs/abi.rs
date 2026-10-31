@@ -179,6 +179,12 @@ impl External {
             raw.file_token = lock(&f.state).token;
         }
         match input {
+            Input::Stdin => {
+                return Err(FsError::new(
+                    1,
+                    "File service V1 does not provide standard input",
+                ))
+            }
             Input::Open(path, flags) => {
                 raw.operation_code = 1;
                 raw.path = path.as_ptr();

@@ -80,6 +80,7 @@ pub(super) fn startup(
     driver: String,
     mode: joky::runtime::parallel::ExecutionMode,
     project: bool,
+    runtime: bool,
 ) -> String {
     let (workers, call, driver) = match mode {
         joky::runtime::parallel::ExecutionMode::Local => (
@@ -101,7 +102,13 @@ pub(super) fn startup(
         ("", "", "")
     };
     let parser = include_str!("startup.c");
-    format!("{headers}\n{parser}\n{driver}\n{enter}\nint main(int argc, char **argv) {{\n    uint32_t workers = {workers};\n    if (joky_startup_workers(argc, argv, &workers) != 0) return 1;\n    {prepare}\n    return {call};\n}}\n")
+    let (process_decl, process_init) = if runtime {
+        ("extern int32_t joky_process_init_v1(int32_t, const char *const *);\nextern void joky_runtime_print_error(void);",
+         "if (joky_process_init_v1(argc - program_start, (const char *const *)(argv + program_start)) != 0) { joky_runtime_print_error(); return 1; }")
+    } else {
+        ("", "")
+    };
+    format!("{headers}\n{parser}\n{process_decl}\n{driver}\n{enter}\nint main(int argc, char **argv) {{\n    uint32_t workers = {workers};\n    int program_start = argc;\n    if (joky_startup_workers(argc, argv, &workers, &program_start) != 0) return 1;\n    {process_init}\n    {prepare}\n    return {call};\n}}\n")
 }
 
 #[cfg(test)]

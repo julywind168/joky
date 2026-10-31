@@ -3,6 +3,43 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn standard_error_and_flush_keep_output_streams_separate() {
+    let work = Workspace::new();
+    work.write(
+        "streams.jk",
+        r#"
+        import joky/io
+        fn report(text: &String) @suspends { eprint(text) }
+        fn main() @suspends {
+            print("data")
+            eprintln("error")
+            let message = "prompt> "
+            scope { branch { report(&message) } }
+            io.flush_stdout()
+            io.flush_stderr()
+        }
+    "#,
+    );
+    success(&work.cli(&["build", "streams.jk", "--parallel"]));
+    for backend in ["jit", "interpreter", "aot"] {
+        let output = if backend == "aot" {
+            Command::new(work.path().join("streams")).output().unwrap()
+        } else {
+            let mut command = work.command();
+            command.args(["run", "streams.jk", "--parallel"]);
+            if backend == "interpreter" {
+                command.arg("--interpreter");
+            }
+            command.output().unwrap()
+        };
+        success(&output);
+        assert_eq!(output.stdout, b"data", "{backend}");
+        assert_eq!(output.stderr, b"error\nprompt> ", "{backend}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn stdout_without_newline_is_preserved_on_every_entry_route() {
     let work = Workspace::new();
     for (annotation, flags) in [

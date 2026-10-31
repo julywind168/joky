@@ -80,7 +80,7 @@ pub(super) fn build(
     compiler.write_object(&object)?;
     let driver_source =
         parallel_main.unwrap_or(driver::render(&entry_point, main_slots, requires_runtime)?);
-    let driver_source = driver::startup(driver_source, mode, project);
+    let driver_source = driver::startup(driver_source, mode, project, requires_runtime);
     std::fs::write(&driver, driver_source).map_err(|error| {
         build_error(
             ErrorCode::IoError,

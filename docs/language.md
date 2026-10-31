@@ -2326,6 +2326,63 @@ fn read(value: Maybe<Int32>) -> Int32 {
 `prelude.jk` 列出默认提供的类型和构造器。库自身不隐式导入 prelude；用户的同名声明或新增方法不会改变库内部的名称解析。
 这些内嵌源码模块共享缓存和类型身份。用户模块使用相同的作用域与导入绑定机制，按每次编译的依赖图加载。
 
+## 程序输入与标准流
+
+入口继续使用 `fn main()` 或 `fn main() @suspends`，返回 Unit 或 Int32。
+`joky run <文件或项目> -- <程序参数>...` 把分隔符后的全部参数交给程序，包括空串、空格、
+Unicode、`--help` 和 `--task-workers`。原生产物使用 `./program [--task-workers N] -- <程序参数>...`。
+Joky 自身选项放在分隔符之前；项目自动发现时若要传参，显式写 `joky run . -- ...`。
+没有输入文件时的 `joky run -- -file.jk` 仍用于保护以 `-` 开头的源码文件名。
+
+`import joky/process` 提供以下挂起函数；错误类型为 `joky/fs.IoError`：
+
+| API | 返回值与规则 |
+| --- | --- |
+| `process.args()` | `Result<Array<String>, IoError>`；按原顺序返回应用参数，不包含程序名或 Joky 自身参数 |
+| `process.env(name: String)` | `Result<Option<String>, IoError>`；未设置为 `None`，空值为 `Some("")` |
+| `process.current_dir()` | `Result<String, IoError>`；程序启动时调用者的绝对工作目录 |
+| `process.resolve_path(path: String)` | `Result<String, IoError>`；相对路径按启动目录拼接，绝对路径保持不变，不检查文件是否存在 |
+
+参数、环境和目录在启动时拍快照，任务间只读共享；不提供修改环境或工作目录的 API。
+快照总文本上限为 4 MiB，参数与环境项合计最多 65536 项。环境名称不得为空或包含 `=`、NUL；
+非 UTF-8 参数或被查询的环境值返回 `InvalidInput`，不做有损替换。不存在的环境变量与编码错误不同。
+`resolve_path` 不接受空路径或 NUL，也不提供路径沙箱或规范化保证。
+
+项目资源仍按项目／应用目录解析；来自用户的文件参数应先用 `process.resolve_path` 转成绝对路径。
+原生启动在进入应用目录前保存调用者目录，因此 `run` 与搬动后的原生产物一致。
+嵌入 VM 默认不获得参数、环境或 stdin；Rust 宿主须显式提供 `ProcessContext` 和 stdin 能力，缺失时返回 `Unsupported`。
+
+`print` / `println` 写 stdout，`eprint` / `eprintln` 写 stderr，均接受实现 `Show` 的共享借用，
+默认 prelude 提供这四个函数。每次格式化完成后，在对应流的锁内写完并刷新；失败进入运行时错误通道。
+`io.flush_stdout()` / `io.flush_stderr()` 显式刷新，不添加任何输出。
+这些输出函数同步执行，可在受检 Parallel 任务中调用；不同流及不同调用之间不保证整体顺序。
+
+`import joky/io` 的输入 API：
+
+| API | 返回值 |
+| --- | --- |
+| `io.stdin() @suspends` | `Result<io.Stdin, fs.IoError>`；获取独占读者，已有读者时返回 `Busy` |
+| `input.read_line(limit: UInt64) @suspends` | `Result<Option<String>, io.ReadError>`；移除末尾 LF 或 CRLF，空行为 `Some("")`，无数据的 EOF 为 `None`，无换行的非空末行仍返回 `Some` |
+| `input.read_bytes_limited(limit: UInt64) @suspends` | `Result<Array<UInt8>, io.ReadError>`；读取剩余输入直至 EOF，允许非 UTF-8 字节 |
+| `input.read_text_limited(limit: UInt64) @suspends` | `Result<String, io.ReadError>`；读取剩余 UTF-8 文本，空输入返回空串 |
+| `input.close() @suspends` | `Result<Unit, fs.IoError>`；消费读者并等待其文件句柄清理，不关闭进程的 stdin 描述符 |
+
+所有读取上限均为 1..=1048576 字节；行上限包含 LF／CRLF，恰好等于上限且到达行尾／EOF 时成功。
+读者有 4 KiB 缓冲；各读取方法共享未消费数据。`ReadError` 包括 `Io(fs.IoError)`、
+`Utf8(string.Utf8Error)`、`InvalidLimit`、`LimitExceeded`、`Closed`。
+I/O、超限或 UTF-8 错误后读者失效，后续读取返回 `Closed`；非法上限不读取、不使读者失效。
+丢弃读者可能丢弃预读数据，连续读取应复用同一个读者。
+底层 `fs.stdin()` 返回同样独占的 `fs.File`，沿用文件 API 的逐块读取、内容上限与任务预算规则；
+需要行缓冲和上述错误失效规则时使用 `io.stdin()`。
+
+输入读取走有界文件服务，不阻塞任务 worker。取消撤销交付并关闭相关逻辑句柄，但不能保证中断
+已经开始的系统读取；该读取可能稍后消费输入。清理完成前独占 stdin 仍被占用，新读者返回 `Busy`。
+不应在取消后立即创建新读者继续同一输入协议。嵌入宿主的 `FileSystem::stdin` 默认不支持；
+文件服务 V1 C 描述符未扩展 stdin 操作。
+
+示例：[参数与文件](../examples/files.jk)、[域名参数](../examples/dns_lookup.jk)、
+[逐行过滤](../examples/stdin_lines.jk)、[JSON 管道](../examples/stdin_json.jk)。
+
 ## 静态检查
 
 `joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]` 复用编译器完整前端，
@@ -5850,7 +5907,7 @@ Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本
 
 `joky/show` 的 `to_text(&value) -> String` 生成拥有型文本，
 `append(&value, &mut output)` 向既有 builder 追加。
-默认 prelude 导入 `joky/io` 的 `print` / `println`；关闭 prelude 时可显式
+默认 prelude 导入 `joky/io` 的 `print` / `println` 和 `eprint` / `eprintln`；关闭 prelude 时可显式
 `import joky/io.{print, println}`。它们接受 `&T`，要求 `T: Show`，
 print 无换行，println 添加一个 LF。先完成整次格式化，再通过共享的 TextViewV2 宿主入口
 写入 stdout，支持 UTF-8 与内嵌 NUL；写入失败记录运行时错误，已输出的前缀不回滚。

@@ -95,21 +95,31 @@ impl ModuleRegistry {
             let mut wire = spec.signature.clone();
             if let Some(
                 builtin @ (crate::core::builtins::Builtin::Vm(_)
-                | crate::core::builtins::Builtin::Stdout),
+                | crate::core::builtins::Builtin::Stdout
+                | crate::core::builtins::Builtin::Stderr),
             ) = crate::core::builtins::Builtin::lookup(&spec.name)
             {
                 builtin.validate(&spec.signature, spec.suspends, false)?;
-                if matches!(builtin, crate::core::builtins::Builtin::Stdout)
-                    && (spec.symbol.as_deref() != Some(crate::core::builtins::STDOUT_SYMBOL)
+                let output_symbol = match builtin {
+                    crate::core::builtins::Builtin::Stdout => {
+                        Some(crate::core::builtins::STDOUT_SYMBOL)
+                    }
+                    crate::core::builtins::Builtin::Stderr => {
+                        Some(crate::core::builtins::STDERR_SYMBOL)
+                    }
+                    _ => None,
+                };
+                if output_symbol.is_some()
+                    && (spec.symbol.as_deref() != output_symbol
                         || binding.entry.is_some()
                             && !binding
                                 .host()
                                 .as_ref()
                                 .and_then(crate::runtime::parallel::Host::from_binding)
-                                .is_some_and(|host| host.is_stdout()))
+                                .is_some_and(|host| host.is_output() && host.name == spec.name))
                 {
                     return Err(abi_error(
-                        "Stdout binding requires its checked TextViewV2 entry",
+                        "Output binding requires its checked TextViewV2 entry",
                     ));
                 }
                 for ty in &mut wire.params {

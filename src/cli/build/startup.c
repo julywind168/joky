@@ -4,10 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int joky_startup_workers(int argc, char **argv, uint32_t *workers) {
+static int joky_startup_workers(int argc, char **argv, uint32_t *workers, int *program_start) {
+    *program_start = argc;
     const char *value = NULL;
     const char *source = "--task-workers";
     for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--") == 0) {
+            *program_start = i + 1;
+            break;
+        }
         if (strcmp(argv[i], "--task-workers") != 0) {
             fprintf(stderr, "Unknown startup argument: %s\n", argv[i]);
             return 1;

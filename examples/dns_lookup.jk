@@ -1,14 +1,18 @@
+import joky/process
 import joky/dns
 import joky/check.{assert}
 import joky/string
 
-// A finite system lookup using local name service, without public DNS access.
+// Defaults to local name service; an optional argument selects another host.
 fn main() @suspends -> Int32 {
-    let addresses = match dns.lookup("localhost", 443) {
+    var arguments = process.args()!
+    if arguments.len() > 1 { eprintln("usage: dns_lookup [host]"); return 2 }
+    let host = arguments.pop().unwrap_or("localhost")
+    let addresses = match dns.lookup(host.clone(), 443) {
         Ok(addresses) => addresses
-        Err(error) => { println(error.message); return 1 }
+        Err(error) => { eprintln(error.message); return 1 }
     }
-    assert(addresses.len() > 0, "localhost returns at least one address")
-    println("localhost resolved")
+    assert(addresses.len() > 0, "lookup returns at least one address")
+    println("{host} resolved")
     0
 }

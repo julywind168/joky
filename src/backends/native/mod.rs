@@ -158,7 +158,7 @@ pub(crate) fn compile<M: Module>(
                 Builtin::Dns => "dns",
                 Builtin::Fs(_) => "fs",
                 Builtin::Tcp(_) => "tcp",
-                Builtin::Vm(_) | Builtin::Stdout => unreachable!(),
+                Builtin::Vm(_) | Builtin::Stdout | Builtin::Stderr => unreachable!(),
             };
             adapters.insert(name.clone(), Adapter::Builtin(builtin));
             linkage = Linkage::Local;
@@ -483,7 +483,7 @@ pub(crate) fn compile<M: Module>(
                     Builtin::Domain(op) => lower::domain_entry(&mut builder, *op, &refs),
                     Builtin::Tcp(op) => lower::tcp_entry(&mut builder, *op, &refs),
                     Builtin::Fs(op) => lower::fs_entry(&mut builder, *op, &refs),
-                    Builtin::Vm(_) | Builtin::Stdout => unreachable!(),
+                    Builtin::Vm(_) | Builtin::Stdout | Builtin::Stderr => unreachable!(),
                 },
                 Adapter::Resource(descriptor) => {
                     let data = module.declare_data_in_func(*descriptor, builder.func);

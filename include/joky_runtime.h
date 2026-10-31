@@ -23,6 +23,13 @@ size_t joky_runtime_error_start(void);
 size_t joky_runtime_error_end(void);
 void joky_runtime_print_error(void);
 
+/* Generated standalone startup only: capture application arguments (without
+ * argv[0]), environment and caller directory before entering the bundle root.
+ * argc is nonnegative; argv points to argc live NUL-terminated strings.
+ * Call once. Returns 0 or -1 with a runtime error. Embedded VMs do not inherit
+ * this snapshot; Rust hosts attach ProcessContext explicitly to FileService. */
+int32_t joky_process_init_v1(int32_t argc, const char *const *argv);
+
 /* Compiler/runtime interface. Records the first failure in this invocation. */
 void __joky_runtime_division_by_zero(size_t start, size_t end);
 void __joky_runtime_invalid_shift(size_t start, size_t end);

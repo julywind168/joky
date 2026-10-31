@@ -57,9 +57,6 @@ def prepare(args):
     source = out / "source"
     shutil.copytree(ROOT / "examples/chat", source,
                     ignore=shutil.ignore_patterns("dist"))
-    main = source / "main.jk"
-    replace_once(main, '"127.0.0.1", 7777', '"127.0.0.1", 0')
-    replace_once(main, '"127.0.0.1", 7778', '"127.0.0.1", 0')
     replace_once(source / "script/main.jk",
                  "const START_BALANCE_CENTS: UInt64 = 500",
                  f"const START_BALANCE_CENTS: UInt64 = {BALANCE}")
@@ -237,7 +234,8 @@ async def sample(args, out, binary, workers, rooms, repeat, latency_writer, run_
     server = await asyncio.create_subprocess_exec(
         str(binary), *run_args, "--task-workers", str(workers), cwd=binary.parent,
         stdout=asyncio.subprocess.PIPE, stderr=stderr,
-        env={key: val for key, val in os.environ.items() if key != "JOKY_TASK_WORKERS"})
+        env={**{key: val for key, val in os.environ.items() if key != "JOKY_TASK_WORKERS"},
+             "JOKY_CHAT_PORT": "0", "JOKY_ADMIN_PORT": "0"})
     try:
         async def port(prefix):
             line = await asyncio.wait_for(server.stdout.readline(), 90)

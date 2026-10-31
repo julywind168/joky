@@ -196,19 +196,25 @@ impl Host {
                 binding.abi == HostAbiKind::TextViewV2
                     && *entry == expected as *const u8
                     && binding.signature == crate::core::builtins::stdout_signature()
-                    && (host.name != crate::core::builtins::STDOUT_NAME || host.is_stdout())
+                    && (!matches!(
+                        host.name.as_str(),
+                        crate::core::builtins::STDOUT_NAME | crate::core::builtins::STDERR_NAME
+                    ) || host.is_output())
             }
             _ => false,
         };
         (matches && binding.signature == host.signature).then(|| host.clone())
     }
 
-    pub(crate) fn is_stdout(&self) -> bool {
-        self.name == crate::core::builtins::STDOUT_NAME
-            && self.signature == crate::core::builtins::stdout_signature()
-            && matches!(self.code, HostCode::TextView(entry) if std::ptr::fn_addr_eq(
-                entry,
-                crate::stdlib::output::joky_io_write_stdout_v2 as unsafe extern "C" fn(*const u8) -> i32,
+    pub(crate) fn is_output(&self) -> bool {
+        let entry = match self.name.as_str() {
+            crate::core::builtins::STDOUT_NAME => crate::stdlib::output::joky_io_write_stdout_v2,
+            crate::core::builtins::STDERR_NAME => crate::stdlib::output::joky_io_write_stderr_v2,
+            _ => return false,
+        };
+        self.signature == crate::core::builtins::stdout_signature()
+            && matches!(self.code, HostCode::TextView(actual) if std::ptr::fn_addr_eq(
+                actual, entry as unsafe extern "C" fn(*const u8) -> i32,
             ))
     }
 }
