@@ -6,6 +6,49 @@ use super::{
 use crate::{parser::ast::Module, Error, TypeRegistry};
 use std::collections::HashMap;
 
+/// Standalone front-end checking with the standard host declarations.
+/// No VM, executable code, runtime services, or entry point is created.
+pub struct Checker {
+    types: TypeRegistry,
+}
+
+impl Default for Checker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Checker {
+    /// Create a checker with the same standard declarations as the CLI backends.
+    pub fn new() -> Self {
+        Self {
+            types: crate::stdlib::module_registry().types().clone(),
+        }
+    }
+
+    /// Configure implicit imports for subsequent source resolution.
+    pub fn set_prelude_enabled(&mut self, enabled: bool) {
+        self.types.set_prelude_enabled(enabled);
+    }
+
+    /// Resolve source files or in-memory modules with this checker's declarations.
+    pub fn type_registry(&self) -> &TypeRegistry {
+        &self.types
+    }
+
+    /// Check a resolved module, including unused functions and generic templates.
+    /// This runs the shared semantic and ownership passes without code generation.
+    /// Custom host registration and CLI entry-point policy are outside this API.
+    pub fn check_module(&self, module: &Module) -> Result<(), Error> {
+        let registry = crate::stdlib::module_registry();
+        let prepared = PreparedModule::new(module, &self.types, registry.metadata())?;
+        let imports = registry
+            .import_layouts(prepared.ast(), &HashMap::new())
+            .map_err(|error| error.with_sources(prepared.ast().sources()))?;
+        prepared.plan(&imports).map(|_| ())
+    }
+}
+
 /// Owns the normalized AST and declaration environment for one compilation.
 /// Backend output retains sources and code owners, never this preparation state.
 pub(crate) struct PreparedModule {

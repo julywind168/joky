@@ -18,6 +18,7 @@ fn user_file_diagnostics_name_the_dependency_and_full_cycle() {
             vec!["run", "main.jk"],
             vec!["run", "--interpreter", "main.jk"],
             vec!["build", "main.jk", "-o", "program"],
+            vec!["check", "main.jk"],
         ] {
             let output = work.cli(&args);
             failure(&output, "app/bad.jk:2");
@@ -104,7 +105,7 @@ fn invalid_assignment_diagnostic_marks_the_source_expression() {
 }
 
 #[test]
-fn run_and_build_report_source_and_entry_errors_consistently() {
+fn check_run_and_build_report_source_and_entry_errors_consistently() {
     let work = Workspace::new();
     for (source, message) in [
         ("fn helper() {}", "Missing entry point"),
@@ -134,7 +135,10 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
         ),
     ] {
         work.write("bad.jk", source);
-        for command in ["run", "build"] {
+        for command in ["run", "build", "check"] {
+            if command == "check" && message == "Missing entry point" {
+                continue;
+            }
             let output = work.cli(&[command, "bad.jk"]);
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("bad.jk:"));

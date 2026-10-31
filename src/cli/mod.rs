@@ -1,9 +1,11 @@
 //! User-facing commands; compiler and runtime internals stay in the library.
 mod build;
+mod check;
 mod diagnostic;
 mod explain;
 mod format;
 mod project;
+mod source;
 mod workers;
 
 use joky::{
@@ -14,9 +16,10 @@ use joky::{
 };
 use std::{ffi::OsString, path::PathBuf};
 
-const HELP: &str = "Joky — run, build, inspect and format Joky programs
+const HELP: &str = "Joky — check, run, build, inspect and format Joky programs
 
 Usage:
+  joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml]
   joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
@@ -26,6 +29,7 @@ Usage:
   joky --version
 
 Commands:
+  check            Check syntax and semantics without running or generating code
   explain-parallel  Explain dispatch eligibility without running the program
   fmt              Format a source file without resolving imports or running code
   run              Execute the program with the JIT compiler (or the interpreter)
@@ -42,7 +46,9 @@ Options:
   -h, --help           Show this help
   -V, --version        Show the version
 
-Without an input, run/build/explain-parallel find the nearest joky.toml in the current directory or its parents.
+Without an input, check/run/build/explain-parallel find the nearest joky.toml in the current directory or its parents.
+Check allows single files without main; projects require a valid program entry.
+Successful checks are silent (exit 0); errors go to stderr (exit 1).
 Projects declare [project] name, entry, source-root (default \".\"), and resources.
 Project builds default to <project>/dist/<name>; run them directly after moving the bundle.
 Single-file builds default to the source path without .jk.
@@ -60,6 +66,10 @@ enum Command {
     Help,
     Version,
     Format(format::Options),
+    Check {
+        source: PathBuf,
+        prelude: bool,
+    },
     Explain {
         source: PathBuf,
         prelude: bool,
@@ -98,6 +108,9 @@ impl Command {
         }
         if command == "explain-parallel" {
             return explain::parse(args);
+        }
+        if command == "check" {
+            return check::parse(args);
         }
         let build = command == "build";
         if !build && command != "run" {
@@ -238,6 +251,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
             return 0;
         }
         Command::Format(options) => return format::execute(options),
+        Command::Check { source, prelude } => return check::execute(source, *prelude),
         Command::Explain { source, prelude } => return explain::execute(source, *prelude),
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
@@ -327,6 +341,19 @@ fn validate_program(
     ast: &parser::ast::Module,
     types: &joky::TypeRegistry,
 ) -> Result<EntryPoint, Error> {
+    validate_module(ast, types)?.ok_or_else(|| {
+        Error::new_with_code(
+            ErrorPhase::TypeCheck,
+            ErrorCode::InvalidEntryPoint,
+            "Missing entry point: define fn main() or fn main() -> Int32",
+        )
+    })
+}
+
+fn validate_module(
+    ast: &parser::ast::Module,
+    types: &joky::TypeRegistry,
+) -> Result<Option<EntryPoint>, Error> {
     let mut main = None;
     for item in &ast.items {
         match item {
@@ -371,13 +398,7 @@ fn validate_program(
             }
         }
     }
-    main.ok_or_else(|| {
-        Error::new_with_code(
-            ErrorPhase::TypeCheck,
-            ErrorCode::InvalidEntryPoint,
-            "Missing entry point: define fn main() or fn main() -> Int32",
-        )
-    })
+    Ok(main)
 }
 
 fn run(

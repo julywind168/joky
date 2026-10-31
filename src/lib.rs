@@ -24,6 +24,7 @@ pub use core::ir::parallel::report::{
     explain_parallel, ParallelDisposition, ParallelReport, ParallelSite,
 };
 pub use core::parser;
+pub use core::prepared::Checker;
 pub use core::types::memory_layout;
 pub use core::{
     EntryAbi, Error, ErrorCode, ErrorPhase, FunctionSignature, ModuleSources, RuntimeFrame,

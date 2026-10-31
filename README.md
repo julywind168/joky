@@ -26,14 +26,16 @@ fn main() {
 ```
 
 - `run` 默认使用 JIT，无需 C 编译器；`run --interpreter` 不生成机器码。
+- `check` 静态检查文件或项目，不执行、不生成产物，也不需要 `cc`；
+  单文件允许没有 `main`，项目检查配置入口及其导入依赖。成功静默返回 0，错误返回 1。
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
 - 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、借用式状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println` / `assert` / `panic`。
   支持后缀 `!` 强制解包与 `?` 失败提前返回（[语义](docs/language.md#optionresult-与-outcome-后缀解包)）。
   [Option / Result 示例](examples/option_result.jk)展示 `?` / `!`、`map`、默认值、`and` / `or` 和 `ok` / `err` 转换；普通默认值急切求值，`unwrap_or_else` 可按需执行同步回调。
-  `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
-- CLI 入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
+  `check` / `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
+- 程序入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
   可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。
   关闭 prelude 时显式导入 `joky/io.{print, println}`；CLI 不再预注册类型专用打印宿主。
@@ -46,6 +48,18 @@ fn main() {
 - `joky explain-parallel <文件或项目>` 静态解释并行准入与本地回退原因，显示源码位置、参数或捕获及调用链，不执行程序；
   [报告状态与限制](docs/language.md#并行资格诊断)。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
+
+## 源码静态检查
+
+```sh
+cargo run -- check examples/captured_pipeline.jk
+cargo run -- check examples/chat
+```
+
+安装后可直接使用 `joky check <file.jk | project-dir | joky.toml>`；省略输入时向上查找最近的项目清单。
+检查覆盖语法、类型、泛型约束、所有权、借用、`@noescape` 和挂起限制，包括未调用的函数及泛型模板。
+错误沿用源码位置和错误码，写入 stderr。`--no-prelude` 关闭隐式导入；以 `-` 开头的文件名放在 `--` 后。
+项目检查范围是入口及导入依赖，不递归扫描未导入文件；详细边界见[静态检查](docs/language.md#静态检查)。
 
 ## 源码格式化
 

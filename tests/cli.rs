@@ -38,6 +38,8 @@ fn recording_cli_source(source: &str) -> String {
 mod arguments;
 #[path = "cli/build.rs"]
 mod build;
+#[path = "cli/check.rs"]
+mod check;
 #[path = "cli/containers.rs"]
 mod containers;
 #[path = "cli/diagnostics.rs"]

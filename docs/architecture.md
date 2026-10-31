@@ -96,6 +96,9 @@ AST、类型环境和绑定声明快照。宿主绑定提供完整 CPS frame 布
 `ModulePlan` 统一检查声明、调用、返回类型、赋值权限、作用域和挂起约定。
 `FunctionPlan` 保存 typed slots、操作、对应源码范围、控制流标签及挂起状态。
 三个后端消费相同结果，不在 lowering 中重新推导语言类型。
+`joky::Checker` 使用标准绑定声明与 CPS 布局，经同一 `PreparedModule` / `ModulePlan` 完成
+静态检查后丢弃规划结果，不创建 VM 或调用后端。CLI `check` 用其 `type_registry()` 解析文件，
+再调用 `check_module()`；入口和自定义 extern 的 CLI 限制仍由 CLI 层验证。
 `core::types::walk` 为只读类型检查提供按 Arc 指针去重的迭代遍历。`Arguments` 跟踪函数签名、
 引用目标、元组元素和名义类型实参；`Storage` 另包含名义类型的标量布局与内部缓冲元素。
 泛型未解析检查和名义身份校验使用前者，存储类型校验使用后者，并保留原有错误遍历顺序。
