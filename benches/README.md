@@ -304,6 +304,8 @@ JIT／AOT `opt_level=speed` 的实验结果、浮点正确性阻碍及 0.137.1 �
 [生成代码优化实验](reports/chat-codegen-opt-2026-10-31.md)。
 浮点修复后的新一轮对照、每条消息的控制请求／分配／复制计数，以及三档优化的编译时间见
 [speed 与消息成本](reports/chat-speed-costs-2026-10-31.md)。
+随后省去受审计纯整数调用的整组浮点保护，结果见
+[纯整数浮点保护优化](reports/chat-integer-fp-2026-10-31.md)。
 
 ### Rust/Tokio 应用对照
 

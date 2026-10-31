@@ -1,7 +1,8 @@
 //! Protect native activations that compute floats or call external code.
 //! Arithmetic bodies run behind an opaque call boundary so optimization cannot
 //! move floating-point operations across environment changes. Integer-only bodies
-//! retain inline guards. Saved tokens belong to native activations, not CPS frames.
+//! need inline guards only for unaudited external calls. Saved tokens belong to
+//! native activations, not CPS frames.
 use cranelift_codegen::{
     cursor::{Cursor, FuncCursor},
     ir::{
@@ -101,10 +102,10 @@ pub(super) fn instrument<M: Module>(
     }
     if !instructions
         .iter()
-        .any(|&inst| external_call(function, inst))
+        .any(|&inst| external_call(function, inst) && !effects.preserves(function, inst))
     {
-        // Pure integer code, including calls to other generated functions,
-        // still links without the runtime.
+        // Integer code and audited helpers preserve the caller's complete FP
+        // state. Generated callees establish and restore their own environment.
         return Ok(false);
     }
     let enter = module.declare_func_in_func(helpers["__joky_float_env_enter"], function);
@@ -265,13 +266,102 @@ mod tests {
     use cranelift_module::Linkage;
     use std::cell::Cell;
 
-    thread_local! { static RESETS: Cell<usize> = const { Cell::new(0) }; }
+    thread_local! {
+        static RESETS: Cell<usize> = const { Cell::new(0) };
+        static ENTERS: Cell<usize> = const { Cell::new(0) };
+        static RESTORES: Cell<usize> = const { Cell::new(0) };
+    }
+    extern "C" fn counted_enter() -> u64 {
+        ENTERS.with(|n| n.set(n.get() + 1));
+        float_env::enter()
+    }
+    unsafe extern "C" fn counted_restore(saved: u64) {
+        RESTORES.with(|n| n.set(n.get() + 1));
+        float_env::restore(saved);
+    }
     extern "C" fn counted_reset() {
         RESETS.with(|n| n.set(n.get() + 1));
         float_env::reset();
     }
     extern "C" fn dirty() {
         testing::hostile();
+    }
+
+    #[test]
+    fn float_environment_integer_helpers_elide_guards_but_unknown_calls_keep_them() {
+        for level in ["none", "speed", "speed_and_size"] {
+            for kind in 0..3 {
+                let mut builder = JITBuilder::with_flags(
+                    &[("opt_level", level)],
+                    cranelift_module::default_libcall_names(),
+                )
+                .unwrap();
+                builder.symbol("__joky_float_env_enter", counted_enter as *const u8);
+                builder.symbol("__joky_float_env_reset", counted_reset as *const u8);
+                builder.symbol("__joky_float_env_restore", counted_restore as *const u8);
+                builder.symbol(
+                    "joky_runtime_error_code",
+                    crate::runtime::error::joky_runtime_error_code as *const u8,
+                );
+                builder.symbol("untrusted", dirty as *const u8);
+                let mut module = JITModule::new(builder);
+                let helpers = super::super::lower::declare_helpers(&mut module).unwrap();
+                let effects = Effects::runtime_helpers(&helpers);
+                let host_sig = module.make_signature();
+                let host = module
+                    .declare_function("untrusted", Linkage::Import, &host_sig)
+                    .unwrap();
+                let mut ctx = module.make_context();
+                ctx.func.signature.returns = vec![AbiParam::new(types::I32)];
+                let function = module
+                    .declare_function("integer_probe", Linkage::Export, &ctx.func.signature)
+                    .unwrap();
+                let error =
+                    module.declare_func_in_func(helpers["joky_runtime_error_code"], &mut ctx.func);
+                let host = module.declare_func_in_func(host, &mut ctx.func);
+                let indirect = ctx.func.import_signature(host_sig);
+                let mut frontend = FunctionBuilderContext::new();
+                let mut b = FunctionBuilder::new(&mut ctx.func, &mut frontend);
+                let entry = b.create_block();
+                b.switch_to_block(entry);
+                b.ins().call(error, &[]);
+                if kind == 1 {
+                    b.ins().call(host, &[]);
+                } else if kind == 2 {
+                    let target = b.ins().iconst(
+                        module.target_config().pointer_type(),
+                        dirty as *const () as i64,
+                    );
+                    b.ins().call_indirect(indirect, target, &[]);
+                }
+                let call = b.ins().call(error, &[]);
+                let value = b.inst_results(call)[0];
+                b.ins().return_(&[value]);
+                b.seal_all_blocks();
+                b.finalize(module.target_config());
+                assert_eq!(
+                    instrument(&mut module, &mut ctx.func, &helpers, &effects).unwrap(),
+                    kind != 0
+                );
+                module.define_function(function, &mut ctx).unwrap();
+                module.finalize_definitions().unwrap();
+                let call: unsafe extern "C" fn() -> i32 =
+                    unsafe { std::mem::transmute(module.get_finalized_function(function)) };
+                let _restore = Guard::enter();
+                testing::hostile();
+                let saved = testing::state();
+                ENTERS.with(|n| n.set(0));
+                RESETS.with(|n| n.set(0));
+                RESTORES.with(|n| n.set(0));
+                assert_eq!(unsafe { call() }, 0);
+                assert_eq!(testing::state(), saved, "preserve control and status bits");
+                let expected = usize::from(kind != 0);
+                ENTERS.with(|n| assert_eq!(n.get(), expected));
+                RESETS.with(|n| assert_eq!(n.get(), expected));
+                RESTORES.with(|n| assert_eq!(n.get(), expected));
+                unsafe { module.free_memory() };
+            }
+        }
     }
 
     #[test]
