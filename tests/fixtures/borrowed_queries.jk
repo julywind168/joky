@@ -1,0 +1,46 @@
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/slice.{type Slice}
+
+type View = &Later
+struct Holder { value: View }
+enum Choice { Value(&Later) }
+type Hidden = Option<&Later>
+struct Later { value: Array<String> }
+
+struct Item { text: String, children: Array<String> }
+fn wrapped<T>(values: &Array<T>, index: UInt64) -> Option<&T> { values.get_ref(index) }
+fn forwarded<T>(value: Option<&T>) -> Option<&T> { value }
+fn from_slice<T>(values: &Slice<T>) -> Option<&T> { values.get_ref(0) }
+fn compute() -> Int32 {
+    let later = Later { value: ["forward"] }
+    let holder = Holder { value: &later }
+    let choice = Choice.Value(holder.value)
+    let hidden: Hidden = match choice { Choice.Value(value) => Some(value) }
+    let chosen = hidden!
+    assert(chosen.value.len() == 1, "forward shared aggregate layouts")
+    var values = ["first", "second"]
+    let found = forwarded(wrapped(&values, 1))
+    assert(match found { Some(value) => value == "second", None => false }, "array hit")
+    assert(values.get_ref(2).is_none(), "array miss")
+    assert(match from_slice(values.slice(0, 1)) { Some(value) => value == "first", None => false }, "slice hit")
+    assert(values.slice(0, 0).get_ref(0).is_none(), "slice miss")
+    values.push("third")
+    let records = [Item { text: "record", children: ["nested"] }]
+    let record = records.get_ref(0)!
+    assert(record.text == "record", "owning record")
+    assert(match record.children.get_ref(0) { Some(value) => value == "nested", None => false }, "nested owner")
+    var table: Map<String, Array<String>> = Map.new()
+    table.insert("key", ["value"])
+    let query = "key"
+    let result = table.get_ref(&query)
+    query.release()
+    let data = result!
+    assert(data.len() == 1, "map result does not depend on key")
+    assert(match data.get_ref(0) { Some(value) => value == "value", None => false }, "map nested value")
+    assert(table.get_ref("absent").is_none(), "map miss and temporary key")
+    table.clear()
+    assert(table.is_empty() && values.len() == 3, "last use ends borrow")
+    42
+}
+fn main() { assert(compute() == 42, "borrowed queries") }

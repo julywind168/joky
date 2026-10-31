@@ -688,6 +688,7 @@ impl TypeRegistry {
                 && ty.is_aggregate()
                 && ty.contains_buffers()
                 && !ty.is_owner()
+                && !ty.is_scoped_shared_value()
             {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,

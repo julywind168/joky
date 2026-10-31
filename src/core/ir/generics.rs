@@ -454,7 +454,7 @@ impl FunctionPlan {
             if ty.contains_explicit_arena() && !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) {
                 return Err(type_error(span, ErrorCode::TypeMismatch, "Arena capabilities cannot be generic type arguments"));
             }
-            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_unstorable_closures() || !ty.is_copy_storage_value() && !ty.is_owner()) {
+            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_unstorable_closures() || !ty.is_copy_storage_value() && !ty.is_scoped_shared_value() && !ty.is_owner()) {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
             }

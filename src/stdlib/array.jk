@@ -63,6 +63,7 @@ impl<T> Array<T> {
     pub fn insert(&mut self, index: UInt64, value: T) -> Bool { insert(self, index, value) }
     pub fn take_last(&mut self) -> T { take_last(self) }
     pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
+    pub fn get_ref(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
     pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
     pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
     pub fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> { slice_mut(self, start, end) }
@@ -216,4 +217,8 @@ impl<T: BorrowEq> Array<T> {
 pub fn contains<T: BorrowEq>(values: &Array<T>, value: &T) -> Bool {
     for item in values { if BorrowEq.eq_ref(item, value) { return true } }
     false
+}
+
+pub fn get_ref<T>(values: &Array<T>, index: UInt64) -> Option<&T> {
+    if index < len(values) { Some(borrow_ref(values, index)) } else { None }
 }

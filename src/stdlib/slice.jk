@@ -11,6 +11,7 @@ impl<T> Slice<T> {
     pub fn len(&self) -> UInt64 { len(self) }
     pub fn is_empty(&self) -> Bool { is_empty(self) }
     pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
+    pub fn get_ref(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
     pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
     pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
     pub fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> { slice_mut(self, start, end) }
@@ -38,3 +39,7 @@ pub fn borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T { buffe
 
 pub fn iter<T>(values: &Slice<T>) -> &Iter<T> { buffer.slice_iter(values) }
 pub fn iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T> { buffer.slice_iter_mut(values) }
+
+pub fn get_ref<T>(values: &Slice<T>, index: UInt64) -> Option<&T> {
+    if index < len(values) { Some(borrow_ref(values, index)) } else { None }
+}

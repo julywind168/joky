@@ -421,6 +421,22 @@ impl Type {
     pub(crate) fn is_copy_storage_value(&self) -> bool {
         self.is_copy_value() && !self.contains_buffers()
     }
+    /// Shared owner references can travel in local aggregates and generic calls.
+    /// They remain ineligible for container/arena storage and Copy bounds.
+    pub(crate) fn is_scoped_shared_value(&self) -> bool {
+        self.is_copy_value()
+            && self.contains_buffers()
+            && self.scalar_types().iter().all(|ty| {
+                if let Some(reference) = ty.reference_type() {
+                    !reference.mutable
+                        && (!ty.is_buffer_view() || reference.target.is_owner())
+                        && !reference.target.contains_dyn()
+                        && !reference.target.contains_explicit_arena()
+                } else {
+                    !ty.is_buffer_target() && !ty.is_callable_parameter()
+                }
+            })
+    }
     /// All underlying element types, including shallow nominal owner views.
     pub(crate) fn buffer_elements(&self) -> &[Arc<Type>] {
         if self

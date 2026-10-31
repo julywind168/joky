@@ -50,6 +50,7 @@ impl<K: BorrowEq + BorrowHash, V> Map<K, V> {
     pub fn contains_key_by_ref(&self, key: &K) @noescape(key) -> Bool { contains_key_by_ref(self, key) }
     pub fn remove_by_ref(&mut self, key: &K) @noescape(key) -> Option<V> { remove_by_ref(self, key) }
     pub fn value_ref(&self, key: &K) @noescape(key) -> &V { value_ref(self, key) }
+    pub fn get_ref(&self, key: &K) @noescape(key) -> Option<&V> { get_ref(self, key) }
     pub fn value_mut(&mut self, key: &K) @noescape(key) -> &mut V { value_mut(self, key) }
 }
 pub fn new<K, V>() -> Map<K, V> {
@@ -309,3 +310,7 @@ pub fn current_mut<K, V>(cursor: &mut Iter<K, V>) -> &mut Entry<K, V> { iteratio
 pub fn entry_key<K, V>(entry: &Entry<K, V>) -> &K { buffer.entry_key(entry) }
 pub fn entry_value<K, V>(entry: &Entry<K, V>) -> &V { buffer.entry_value(entry) }
 pub fn entry_value_mut<K, V>(entry: &mut Entry<K, V>) -> &mut V { buffer.entry_value_mut(entry) }
+
+pub fn get_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<&V> {
+    match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => table.values.get_ref(i), None => None }
+}

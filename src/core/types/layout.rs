@@ -700,7 +700,7 @@ pub(super) fn member_type(
     let mut ty = ty.clone();
     resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
-    if !ty.is_copy_storage_value() && !ty.is_owner() {
+    if !ty.is_copy_storage_value() && !ty.is_scoped_shared_value() && !ty.is_owner() {
         let requirement = "Record fields and enum payloads require a Copy value or an owner";
         return Err(error(
             ErrorCode::TypeMismatch,
@@ -715,6 +715,7 @@ pub(super) fn member_type(
 pub(super) fn record_owners(fields: &[RecordField], span: Span) -> Result<Vec<Arc<Type>>, Error> {
     let owners: Vec<_> = fields
         .iter()
+        .filter(|field| field.ty.is_owner())
         .flat_map(|field| field.ty.buffer_elements().iter().cloned())
         .collect();
     if !owners.is_empty()
@@ -737,6 +738,7 @@ pub(super) fn enum_owners(variants: &[EnumVariant], span: Span) -> Result<Vec<Ar
     let owners: Vec<_> = variants
         .iter()
         .filter_map(|v| v.payload.as_ref())
+        .filter(|ty| ty.is_owner())
         .flat_map(|ty| ty.buffer_elements().iter().cloned())
         .collect();
     if !owners.is_empty()
@@ -808,7 +810,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     let mut depth = 1;
     for ty in &elements {
         registry.validate(ty)?;
-        if !ty.is_copy_storage_value() && !ty.is_owner() {
+        if !ty.is_copy_storage_value() && !ty.is_scoped_shared_value() && !ty.is_owner() {
             return Err(error(
                 ErrorCode::TypeMismatch,
                 span,
@@ -821,6 +823,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     }
     let owners: Vec<_> = elements
         .iter()
+        .filter(|ty| ty.is_owner())
         .flat_map(|ty| ty.buffer_elements().iter().cloned())
         .collect();
     if !owners.is_empty()

@@ -818,7 +818,6 @@ fn owning_array_methods_preserve_moves_views_and_element_provenance() {
 fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() {
     for (body, message) in [
         ("fn bad() { let a = Array.new::<Int32>(); let b = a; a.len(); }", "moved"),
-        ("fn bad() { var a = Array.new::<Int32>(); a.push(a.get(0).unwrap_or(0)) }", "borrow"),
         ("fn bad() { var b = Batch.new::<Int32>(); let r = b.view(); b.add(1); r.len(); }", "borrow"),
         ("fn bad() { let b = Batch.new::<Int32>(); let a = b.values; b.get(0); }", "moved"),
         ("fn bad() { let b = Batch.new::<Int32>(); let a = b.values; let c = b.values }", "moved"),
@@ -830,14 +829,6 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
         ("fn bad(b: &Batch<Int32>) -> Array<Int32> { b.values }", "borrowed wrapper"),
         ("fn bad(b: &mut Batch<Int32>) { b.values = Array.new::<Int32>() }", "borrowed wrapper"),
         ("fn bad(b: Batch<Int32>) -> &Array<Int32> { &b.values }", "borrowed input"),
-        ("struct Hold { value: &Batch<Int32> } fn bad() {}", "buffer views"),
-        ("struct First { value: &Later } struct Later { value: Array<Int32> } fn bad() {}", "buffer views"),
-        ("enum First { Value(&Later) } struct Later { value: Array<Int32> } fn bad() {}", "buffer views"),
-        ("struct First { value: (&Later, Int32) } struct Later { value: Array<Int32> } fn bad() {}", "Tuple element"),
-        ("type View = &Later struct First { value: View } struct Later { value: Array<Int32> } fn bad() {}", "buffer views"),
-        ("type View<T> = &Later<T> struct First { value: View<Int32> } struct Later<T> { value: Array<T> } fn bad() {}", "buffer views"),
-        ("type Hidden = Option<&Later> struct Later { value: Array<Int32> } fn bad() {}", "Copy"),
-        ("type Hidden<T> = Option<&Later<T>> struct Later<T> { value: Array<T> } fn bad() {}", "Copy"),
         ("type Hidden = Array<&Later> struct Later { value: Array<Int32> } fn bad() {}", "Copy"),
         ("type View = &Later struct Later { value: Array<Int32> } extern fn host(value: View) fn bad() {}", "host ABI"),
         ("fn bad() { let a = Array.new::<&Batch<Int32>>() }", "Copy"),

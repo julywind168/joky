@@ -2968,3 +2968,14 @@ fn string_equality_executes_in_standalone_aot_without_prelude() {
     );
     work.assert_native("equality.jk", &["--no-prelude"], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn borrowed_queries_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "queries.jk",
+        include_str!("../fixtures/borrowed_queries.jk"),
+    );
+    work.assert_native("queries.jk", &[], b"", 0);
+}

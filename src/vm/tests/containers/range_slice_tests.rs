@@ -144,3 +144,58 @@ fn slice_members_preserve_alias_rejection_and_nested_diagnostics() {
     assert!(error.message().contains("Cannot infer"), "{error}");
     assert!(!error.message().contains("joky/member/"), "{error}");
 }
+
+#[test]
+fn borrowed_queries_preserve_owners_provenance_and_missing_results() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = super::VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/borrowed_queries.jk"
+        ))
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+#[test]
+fn borrowed_queries_reject_invalidation_storage_and_escape() {
+    for body in [
+        "fn bad() { var a = [\"a\"]; let found = a.get_ref(0); a.push(\"b\"); found.is_some(); }",
+        "fn bad() { var a = [\"a\"]; let found = a.get_ref(0); a.release(); found.is_some(); }",
+        "fn bad() { var a = [\"a\"]; let found = a.get_ref(0); a = [\"b\"]; found.is_some(); }",
+        "fn bad() -> Option<&String> { let a = [\"a\"]; a.get_ref(0) }",
+        "fn bad(a: Array<String>) -> Option<&String> { a.get_ref(0) }",
+        "fn bad() { let found = { let a = [\"a\"]; a.get_ref(0) }; found.is_some(); }",
+        "fn bad() { let a = [\"a\"]; alloc(a.get_ref(0)); }",
+        "fn bad() { let a = [\"a\"]; let saved = [a.get_ref(0)]; }",
+        "fn bad() { var a = [\"a\"]; let saved: Option<&mut String> = Some(a.borrow_mut_ref(0)); }",
+        "struct Invalid { owner: String, view: &String } fn bad() {}",
+        "fn bad(a: &Array<String>) @noescape -> Option<&String> { a.get_ref(0) }",
+        "fn bad() { var m: Map<String, String> = Map.new(); m.insert(\"k\", \"v\"); let r = m.get_ref(\"k\"); m.clear(); r.is_some(); }",
+    ] {
+        let source = format!("import joky/array.{{type Array}} import joky/map.{{type Map}} {body}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert!(matches!(error.code(), crate::ErrorCode::InvalidAssignment | crate::ErrorCode::TypeMismatch | crate::ErrorCode::InvalidCall), "{body}: {error}");
+    }
+}
+
+#[test]
+#[ignore = "exhaustive: cancel every borrowed query instruction"]
+fn exhaustive_borrowed_queries_cancel_at_every_instruction() {
+    let mut vm = super::VmEngine::new_interpreter();
+    let source = format!(
+        "{} fn sweep() @suspends -> Int32 {{ compute() }}",
+        include_str!("../../../../tests/fixtures/borrowed_queries.jk")
+    );
+    vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+    assert_cancellation(
+        &mut vm,
+        "sweep",
+        20_000,
+        CancellationSweep::EveryInstruction,
+        || {},
+        || LIVE.with(|n| n.get()),
+        || LIVE.with(|n| assert_eq!(n.get(), 0)),
+    );
+}

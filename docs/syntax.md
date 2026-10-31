@@ -1477,21 +1477,31 @@ E4 完成（2026-10-31）：相等运算通过编译器绑定的内部文本比�
 关闭 prelude、同名函数遮蔽、Unicode/NUL、求值顺序、提前返回和失败均有覆盖。
 `cargo test --lib -- string_equality_borrows_places_and_temporaries_without_prelude reject_invalid_assignment_loop_and_comparison_semantics reject_invalid_jumps_and_structurally_unreachable_expressions`
 通过三项；`cargo test --test cli string_equality_executes_in_standalone_aot_without_prelude`
-通过。聊天室命令已更新；真实 TCP 三后端集成验证结果在最终验收补记。
+通过。聊天室命令已更新；`cargo test --test chat chat_real_tcp_on_all_backends -- --ignored` 也已通过。
 
 ### 13.7 E5：可失败的借用查询
 
-- [ ] 先明确 Array / Slice / Map 的共享借用查询契约：命中返回借用，未命中正常
+- [x] 先明确 Array / Slice / Map 的共享借用查询契约：命中返回借用，未命中正常
   返回空结果，不复制拥有值，不以任务失败表示普通缺失。
-- [ ] 评估 `Option<&T>` 作为结果的类型准入、来源传播和逃逸检查；已有共享引用
+- [x] 评估 `Option<&T>` 作为结果的类型准入、来源传播和逃逸检查；已有共享引用
   聚合能力不等于任意局部或容器元素引用都可安全包装。接口名称在契约确定后冻结。
-- [ ] 覆盖 String、拥有记录和嵌套容器；Map 查询区分 key 的调用期借用与结果对
+- [x] 覆盖 String、拥有记录和嵌套容器；Map 查询区分 key 的调用期借用与结果对
   Map 存储的依赖，不错误地把结果绑定到查询 key。
-- [ ] 保留 Copy get、已知存在时的借用访问及消费取出的语义，说明迁移与推荐用法。
+- [x] 保留 Copy get、已知存在时的借用访问及消费取出的语义，说明迁移与推荐用法。
   可选独占借用另行设计，不自动开放 `Option<&mut T>`。
 
 验收：命中/未命中不改变容器；活动结果阻止使借用失效的修改或释放；结果最后使用后
 允许再次修改。覆盖匹配、包装函数、返回边界和非法逃逸，不能用克隆规避借用问题。
+
+E5 完成（2026-10-31）：Array / Slice / Map 新增 get_ref，共享拥有者引用可组成局部
+Option、记录与元组并通过普通泛型传递；仍不满足存储用 Copy 约束，不准入容器、
+arena、混合拥有聚合或可选独占引用。布局只统计实际拥有字段，借用来源沿现有逐引用
+数据流传播；Map key 标注调用期不逃逸，结果不绑定查询 key。
+`cargo test --lib borrowed_queries -- --include-ignored` 四项通过，包含逐指令取消；
+`cargo test --lib owning_array_methods_reject_aliases_private_access_and_unsupported_storage`
+对应项已随前一批针对性测试通过；`cargo test --test cli borrowed_queries_execute_in_standalone_aot`
+通过。共享 fixture 覆盖 String、拥有记录、嵌套容器、前向别名、泛型包装、未命中与最后使用；
+静态用例覆盖修改/释放/替换、逃逸、存储与 @noescape 契约。未运行全量检查。
 
 ### 13.8 E6：借用迭代与组合器
 

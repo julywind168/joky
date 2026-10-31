@@ -826,15 +826,32 @@ let item = &mut values[0]
 
 | 容器 | 复制读取 / 存在性 | 元素借用 | 消费取出 |
 | --- | --- | --- | --- |
-| Array | `get(index)` 返回 Copy 元素的 Option | `borrow_ref` / `borrow_mut_ref`；缺失失败 | `remove` / `pop` 返回 Option |
-| Slice | `get(index)` 返回 Copy 元素的 Option | `borrow_ref` / `borrow_mut_ref`；缺失失败 | 不转移底层元素所有权 |
-| Map | `get` / `get_by_ref` 返回 Copy value 的 Option；`contains_key` / `contains_key_by_ref` 查询存在性 | `borrow_ref` / `borrow_mut_ref` 使用 Copy key，`value_ref` / `value_mut` 借用 key；缺失失败 | `remove` / `remove_by_ref` 返回 Option |
+| Array | `get(index)` 返回 Copy 元素的 Option | `get_ref(index)` 返回 `Option<&T>`； `borrow_ref` / `borrow_mut_ref`；缺失失败 | `remove` / `pop` 返回 Option |
+| Slice | `get(index)` 返回 Copy 元素的 Option | `get_ref(index)` 返回 `Option<&T>`； `borrow_ref` / `borrow_mut_ref`；缺失失败 | 不转移底层元素所有权 |
+| Map | `get` / `get_by_ref` 返回 Copy value 的 Option；`contains_key` / `contains_key_by_ref` 查询存在性 | `get_ref(&key)` 返回 `Option<&V>`；`borrow_ref` / `borrow_mut_ref` 使用 Copy key，`value_ref` / `value_mut` 借用 key；缺失失败 | `remove` / `remove_by_ref` 返回 Option |
 | List | `get` / `front` / `back` 返回 Copy 元素的 Option | `borrow_ref` / `borrow_mut_ref`；缺失失败 | `remove` / `pop_front` / `pop_back` 返回 Option |
-| Set | `contains` 返回 Bool | 不提供元素借用查询入口 | `into_array` 消费整个集合；`remove` 返回是否删除 |
+| Set | `contains` 返回 Bool | 不提供元素借用查询入口 | `pop` 返回 Option；`into_array` 消费整个集合；`remove` 返回是否删除 |
 
 `borrow` / `borrow_mut` 的 Element 视图入口继续保留，按各容器的元素准入使用。
 Slice 还提供 `set`、`slice` / `slice_mut` 方法；与同名模块函数具有相同的返回值、
 越界行为和来源约束。Slice 方法由标准库定义，用户不能通过 Slice 或其透明别名添加 impl。
+
+### 可失败的共享借用查询
+
+Array / Slice 的 `get_ref(index)` 和 Map 的 `get_ref(&key)` 命中返回 `Some(&value)`，
+未命中返回 None；不复制、移动或克隆元素。拥有 String、拥有记录和嵌套容器均适用。
+模块函数使用同名入口，首个参数为容器的共享引用。Map key 仅在查询期间借用，
+结果依赖 Map 的存储；临时 key 可自动借用，查询后可立即释放命名 key。
+
+共享拥有者引用现在可放进局部 Option、Result、记录或元组，也可经无 Copy 约束的泛型
+helper 传递。每个引用继续保留来源：活动结果阻止容器的修改、释放、移动与替换，
+最后使用后恢复权限；不能返回局部或按值拥有者的借用，不能把借用存进 Array、
+任务 arena、显式 arena 或持久状态。局部可复制不表示满足存储用的 Copy 约束。
+含拥有值及引用的混合聚合、游标/切片视图聚合和 `Option<&mut T>` 仍不开放。
+
+对普通缺失使用 get_ref；已知存在且缺失应终止任务时保留 borrow_ref / value_ref。
+Copy 元素需要独立值时继续 get / get_by_ref；需要转移所有权时使用 remove / pop。
+引用元素本身仍沿用既有借用限制，不由 get_ref 开放嵌套引用。
 
 ## 动态数组
 
@@ -904,7 +921,8 @@ fn answer() -> Int32 {
 - get/pop 返回 T 的复制值，不借用数组控制块；含引用结果仍保留其指向对象的来源和权限。
   即使数组随后扩容、pop、移动或离开作用域，复制出的共享引用仍可读取。先读取所需元素，再传给 push；
   `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
-- 数组拥有者可存入下述拥有记录；视图仍不能存入任何聚合。两者均不能作为 Copy 泛型实参、进入 alloc/graph，
+- 数组拥有者可存入下述拥有记录；共享拥有者引用可组成局部借用聚合，见下文。
+  两者均不能作为 Copy 泛型实参、进入 alloc/graph，
   也不能通过 *p / *p = next、Ptr 或宿主 ABI 访问控制块。
   元素存储树不含引用的 `Array<T>` 拥有者可以直接作为 `@suspends` 的参数、返回值和中间值；
   该能力也覆盖无引用拥有记录、枚举和元组（含自定义 Drop）。整个拥有对象的共享/独占引用
