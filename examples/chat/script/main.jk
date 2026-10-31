@@ -34,10 +34,10 @@ fn parse(line: String) -> Command {
     let argument = if separator < line.byte_length() {
         line.substring(separator + 1, line.byte_length())!
     } else { "" }
-    if verb.equals("join") && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() { Command.Join(argument) }
-    else if line.equals("balance") { Command.Balance }
-    else if line.equals("leave") { Command.Leave }
-    else if verb.equals("say") && !argument.is_empty() { Command.Say(argument) }
+    if verb == "join" && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() { Command.Join(argument) }
+    else if line == "balance" { Command.Balance }
+    else if line == "leave" { Command.Leave }
+    else if verb == "say" && !argument.is_empty() { Command.Say(argument) }
     else { Command.Invalid }
 }
 fn dispatch(call: Call) @suspends -> Bool {
@@ -171,7 +171,7 @@ fn check_member(account: &Account, room: &Room) -> Result<Member, Rejection> {
     if room.has_member(member.id) { Ok(member) } else { Err(Rejection.Stale) }
 }
 fn enter(account: &mut Account, room: &mut Room, name: &String) -> Result<Member, Rejection> {
-    if !room.name.equals(name) { return Err(Rejection.Stale) }
+    if room.name != name { return Err(Rejection.Stale) }
     let member = account.member
     room.add_member(member)
     room.broadcast(notice("joined", &room.name, member.id))

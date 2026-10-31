@@ -259,7 +259,7 @@ fn reject_invalid_assignment_loop_and_comparison_semantics() {
                 ErrorCode::InvalidAssignment,
                 "x = 2",
             ),
-            ("\"a\" != \"b\"", ErrorCode::TypeMismatch, "\"a\" != \"b\""),
+            ("\"a\" < \"b\"", ErrorCode::TypeMismatch, "\"a\" < \"b\""),
             ("{} >= 1", ErrorCode::TypeMismatch, "{} >= 1"),
             ("(1 < 2) < 3", ErrorCode::TypeMismatch, "(1 < 2) < 3"),
             (
@@ -344,9 +344,9 @@ fn reject_invalid_jumps_and_structurally_unreachable_expressions() {
             ),
             (
                 "Int32",
-                "\"text\" == (return 1)",
+                "\"text\" < (return 1)",
                 ErrorCode::TypeMismatch,
-                "\"text\" == (return 1)",
+                "\"text\" < (return 1)",
             ),
             (
                 "Int32",

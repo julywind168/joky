@@ -1,0 +1,30 @@
+import joky/array.{type Array}
+import joky/check.{assert, panic}
+
+struct Label { text: String }
+fn next(var count: &mut Int32, expected: Int32) -> String {
+    assert(*count == expected, "left-to-right comparison")
+    *count += 1
+    "中🙂\0tail"
+}
+fn compute() -> Int32 {
+    let left = "中🙂\0tail"
+    let right = "中🙂\0tail"
+    assert(left == right && left != "中🙂\0tails", "byte content")
+    assert("" == "" && "" != "x" && "a" != "b", "empty and unequal")
+    assert("é" != "é", "no normalization")
+    let view = &left
+    assert(view == right && left == &right && view == &right, "borrowed inputs")
+    let label = Label { text: "中🙂\0tail" }
+    let values = ["中🙂\0tail", "different"]
+    assert(label.text == values[0] && values[1] != label.text, "places")
+    var count = 0
+    assert(next(&mut count, 0) == next(&mut count, 1), "temporary equality")
+    assert(count == 2 && left == right && label.text == left, "values survive")
+    42
+}
+fn failed() {
+    let _equal = "temporary" == { panic("comparison argument failed") }
+}
+fn early() -> Int32 { let _equal = "temporary" == (return 42) }
+fn main() { assert(compute() == 42 && early() == 42, "string equality") }

@@ -2957,3 +2957,14 @@ fn receiver_reservations_execute_in_standalone_aot() {
     );
     work.assert_native("receivers.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn string_equality_executes_in_standalone_aot_without_prelude() {
+    let work = Workspace::new();
+    work.write(
+        "equality.jk",
+        include_str!("../fixtures/string_equality.jk"),
+    );
+    work.assert_native("equality.jk", &["--no-prelude"], b"", 0);
+}

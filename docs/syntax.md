@@ -1463,14 +1463,21 @@ E3 完成（2026-10-31）：复用赋值的保留位置机制，仅对拥有局�
 
 ### 13.6 E4：String 相等运算
 
-- [ ] 支持 String 内容的 `==` / `!=`，比较只借用，双方在比较后仍可使用。
+- [x] 支持 String 内容的 `==` / `!=`，比较只借用，双方在比较后仍可使用。
   明确拥有值、引用、字段、下标位置与临时字符串的组合准入及调用期保活。
-- [ ] 确定与现有 equals / BorrowEq 的复用关系；本阶段不开放通用运算符重载，
+- [x] 确定与现有 equals / BorrowEq 的复用关系；本阶段不开放通用运算符重载，
   不改变其他类型的相等规则，也不引入字符串排序、隐式转换或 Unicode 规范化。
-- [ ] 更新聊天室命令判断等自然使用位置，保留 equals 入口的明确兼容策略。
+- [x] 更新聊天室命令判断等自然使用位置，保留 equals 入口的明确兼容策略。
 
 验收：空串、相同/不同内容、非 ASCII、内含 NUL、长度不同和临时表达式；
 比较不消费拥有值，操作数只求值一次，失败清理遵循原规则，三后端结果一致。
+
+E4 完成（2026-10-31）：相等运算通过编译器绑定的内部文本比较函数实现，
+沿用共享调用期借用；不消费字段或下标中的文本，临时值在调用结束及失败时清理。
+关闭 prelude、同名函数遮蔽、Unicode/NUL、求值顺序、提前返回和失败均有覆盖。
+`cargo test --lib -- string_equality_borrows_places_and_temporaries_without_prelude reject_invalid_assignment_loop_and_comparison_semantics reject_invalid_jumps_and_structurally_unreachable_expressions`
+通过三项；`cargo test --test cli string_equality_executes_in_standalone_aot_without_prelude`
+通过。聊天室命令已更新；真实 TCP 三后端集成验证结果在最终验收补记。
 
 ### 13.7 E5：可失败的借用查询
 

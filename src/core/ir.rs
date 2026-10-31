@@ -2504,6 +2504,44 @@ impl FunctionPlan {
                     "Arithmetic"
                 };
                 let hint = self.binary_hint(lhs, rhs, vars, functions, types);
+                if matches!(op, BinOp::Eq | BinOp::Ne)
+                    && hint.as_ref().is_some_and(|ty| {
+                        *ty == Type::String
+                            || ty
+                                .reference_type()
+                                .is_some_and(|r| r.target == Type::String)
+                    })
+                {
+                    let comparison = Expr::Call {
+                        callee: "$joky_text_equals".into(),
+                        type_args: vec![],
+                        args: [lhs.as_ref(), rhs.as_ref()]
+                            .into_iter()
+                            .map(|operand| {
+                                if indexing::is_index_place(operand) {
+                                    Expr::Unary {
+                                        op: UnaryOp::Borrow,
+                                        operand: Box::new(operand.clone()),
+                                        span: operand.span(),
+                                    }
+                                } else {
+                                    operand.clone()
+                                }
+                            })
+                            .collect(),
+                        span: *span,
+                    };
+                    let comparison = if *op == BinOp::Ne {
+                        Expr::Unary {
+                            op: UnaryOp::Not,
+                            operand: Box::new(comparison),
+                            span: *span,
+                        }
+                    } else {
+                        comparison
+                    };
+                    return self.expr(&comparison, vars, functions, suspends, types);
+                }
                 let operand_type = hint
                     .as_ref()
                     .or(expected.filter(|ty| !op.is_comparison() && ty.is_numeric()));

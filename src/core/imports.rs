@@ -154,6 +154,17 @@ fn bind(
         }
     }
     let mut required = BTreeSet::new();
+    // String equality is language syntax, including with the prelude disabled.
+    // Bind the implementation by its trusted declaration, never a user alias.
+    if let Some(text) = libraries.get("joky/internal/text") {
+        if let Some(equals) = text.exports.functions.get("equals") {
+            scope
+                .functions
+                .insert("$joky_text_equals".into(), equals.clone());
+            scope.imported_functions.insert(equals.clone());
+            required.insert("joky/internal/text".into());
+        }
+    }
     let mut seen_paths = BTreeSet::new();
     let mut explicit_types = BTreeSet::new();
     let mut explicit_values = BTreeSet::new();

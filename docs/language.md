@@ -5591,6 +5591,11 @@ fn sample() -> UInt64 {
 | `string.join(&parts, &separator)` | String，借用 Array<String> 与分隔符，返回独立拼接结果；总长度受检 |
 | `text.split(&separator)` / `string.split(&text, &separator)` | Result<Array<String>, SplitError>，复制各项；空分隔符为 Err(SplitError.EmptySeparator) |
 
+String 的 `==` / `!=` 按 UTF-8 字节内容比较，支持拥有值、共享/独占引用、内联字段、
+数组下标与临时字符串；按从左到右各求值一次，仅在比较期间借用，两侧仍可继续使用。
+无需 prelude 或显式导入；不进行 Unicode 规范化、隐式转换或排序，也不开放通用运算符重载。
+`equals` 和 `BorrowEq` 继续保留，与相等运算复用同一内容比较实现。
+
 byte_length、equals、find 等只读查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。
 非法 UTF-8 与空句柄不能成为合法语言 String。命名借用阻止移动、release 与冲突替换；
 单独 String 可跨 Pending 并移动到 join/race 分支，`&String` 也可在拥有者存活时跨挂起。
