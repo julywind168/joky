@@ -31,9 +31,10 @@ pub(super) fn binding() -> crate::modules::NativeBinding {
 pub unsafe extern "C" fn joky_io_write_stdout_v2(text: *const u8) -> i32 {
     let result = std::panic::catch_unwind(|| {
         let text = crate::runtime::string::borrow(text)?;
-        std::io::stdout()
-            .lock()
+        let mut output = std::io::stdout().lock();
+        output
             .write_all(text.as_bytes())
+            .and_then(|()| output.flush())
             .map_err(|error| {
                 Error::new_with_code(ErrorPhase::Runtime, ErrorCode::IoError, error.to_string())
             })

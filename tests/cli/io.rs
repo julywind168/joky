@@ -3,6 +3,23 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn stdout_without_newline_is_preserved_on_every_entry_route() {
+    let work = Workspace::new();
+    for (annotation, flags) in [
+        ("", vec![]),
+        (" @suspends", vec![]),
+        (" @suspends", vec!["--parallel"]),
+    ] {
+        work.write(
+            "prompt.jk",
+            &format!("fn main(){annotation} -> Int32 {{ print(\"prompt> \" ); 7 }}"),
+        );
+        work.assert_all_backends("prompt.jk", &flags, b"prompt> ", 7);
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn owning_slices_run_and_build_with_resource_replacement() {
     let work = Workspace::new();
     work.write(
