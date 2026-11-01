@@ -43,7 +43,7 @@ fn arm(
     domain: &DomainOwner,
     timer: &Owner,
     periodic: bool,
-    milliseconds: i32,
+    milliseconds: u64,
 ) -> Result<(), u64> {
     start(
         &vm.domains,
@@ -54,7 +54,7 @@ fn arm(
             name: "tick",
             input: Input::Scalar(2),
             periodic,
-            milliseconds,
+            nanoseconds: milliseconds * 1_000_000,
             limits: Default::default(),
         },
     )
@@ -319,9 +319,7 @@ fn domain_timers_limits_refund_admission_and_queued_work() {
     budget.limit.set(usize::MAX);
     let other = VmEngine::new();
     assert!(state(&other.domains, timer.token).is_none());
-    for milliseconds in [-1, 0] {
-        assert_eq!(arm(&vm, &domain, &timer, true, milliseconds), Err(3));
-    }
+    assert_eq!(arm(&vm, &domain, &timer, true, 0), Err(3));
     assert_eq!(budget.bytes.get(), baseline);
     vm.domains.borrow_mut().limits.max_requests = 0;
     arm(&vm, &domain, &timer, false, 0).unwrap();
@@ -395,7 +393,7 @@ fn migration_batch_invalidates_all_changed_timers_and_preserves_compatible_targe
                 name: "rules_tick",
                 input: Input::Scalar(2),
                 periodic: false,
-                milliseconds: 1000,
+                nanoseconds: 1_000_000_000,
                 limits: Default::default(),
             },
         )
@@ -448,7 +446,7 @@ fn arm_values(
     domain: &DomainOwner,
     timer: &Owner,
     periodic: bool,
-    milliseconds: i32,
+    milliseconds: u64,
 ) -> Result<(), u64> {
     start(
         &vm.domains,
@@ -459,7 +457,7 @@ fn arm_values(
             name: "tick",
             input: Input::Values(payload()),
             periodic,
-            milliseconds,
+            nanoseconds: milliseconds * 1_000_000,
             limits: Default::default(),
         },
     )
@@ -536,7 +534,9 @@ fn domain_timer_values_reject_changed_contracts_before_and_after_queueing() {
                 }
                 let mut source = VALUES.replace(from, to);
                 if from == "fn tick(" {
-                    source = source.replace(",tick,", ",replacement,");
+                    source = source
+                        .replace(",tick,", ",replacement,")
+                        .replace(", tick,", ", replacement,");
                 }
                 vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
                 vm.publish_domain_code().unwrap();
@@ -691,3 +691,46 @@ fn domain_timer_values_restore_caller_budget() {
 
 #[path = "every_tests.rs"]
 mod every_tests;
+
+#[test]
+fn domain_timers_typed_delays_preserve_nanoseconds_through_generated_adapters() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for source in [SOURCE, VALUES] {
+            let (vm, clock, domain, timer) = setup_source(mode, source);
+            let start = clock.time.get();
+            let group = TaskGroup::new();
+            let task = vm
+                .executor
+                .spawn(
+                    &group,
+                    vm.prepare_async("precision", &[InstanceValue::UInt64(250_000)])
+                        .unwrap(),
+                )
+                .unwrap();
+            for _ in 0..10 {
+                vm.poll_tasks(100).unwrap();
+            }
+            let report = vm.poll_tasks(100).unwrap();
+            assert_eq!(
+                report.next_deadline,
+                Some(start + Duration::from_nanos(250_000))
+            );
+            clock.time.set(start + Duration::from_nanos(249_999));
+            assert_eq!(vm.poll_tasks(100).unwrap().polled, 0);
+            clock.time.set(start + Duration::from_nanos(250_000));
+            let mut result = None;
+            for _ in 0..20 {
+                for done in vm.poll_tasks(100).unwrap().completed {
+                    if done.id == task {
+                        result = Some(done.result);
+                    }
+                }
+            }
+            assert_eq!(result, Some(Ok(42)));
+            drop(timer);
+            domain.close();
+            assert_eq!(vm.task_count(), 0);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+}

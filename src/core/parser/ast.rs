@@ -747,8 +747,8 @@ pub(crate) enum FunctionKind {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
-    /// A positive literal period for an automatically scheduled state method.
-    pub every: Option<std::num::NonZeroI32>,
+    /// Positive nanosecond period for an automatically scheduled state method.
+    pub every: Option<std::num::NonZeroU64>,
     /// Ordinary, test-only, or generated body requiring derive-specific borrows.
     pub(crate) kind: FunctionKind,
     /// Checked promise that borrowed arguments do not escape this call.
@@ -819,6 +819,7 @@ pub(crate) enum DomainAccessKind {
 }
 
 /// Identities installed on trusted embedded definitions, never parsed from text.
+/// Rare type payloads are boxed to keep ordinary function declarations compact.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
     /// Compiler-owned container adapters may return a checked fat dyn borrow.
@@ -833,7 +834,7 @@ pub(crate) enum CompilerIntrinsic {
     FixedArraySlice,
     ArenaNew,
     ArenaAlloc,
-    ScriptSchema(Type),
+    ScriptSchema(Box<Type>),
     ScriptPack,
     DomainValuePack,
     DomainValueUnpack,
@@ -848,7 +849,7 @@ pub(crate) enum CompilerIntrinsic {
     TimerStart(bool),
     TimerFinish,
     TimerValueFinish,
-    DirectoryType(Type),
+    DirectoryType(Box<Type>),
     DirectoryWitness,
     DirectoryRemoveIf,
     DirectoryRemoveIfFinish,
@@ -882,8 +883,8 @@ pub(crate) enum CompilerIntrinsic {
     MemSwap,
     Assert,
     Panic,
-    PlainCopy(Type),
-    ReferenceFree(Type),
+    PlainCopy(Box<Type>),
+    ReferenceFree(Box<Type>),
     /// Only the trusted Rune.from_u32 implementation can construct this scalar.
     RuneFromValidU32,
     TextClone,
@@ -1061,6 +1062,8 @@ pub struct AttributeArgument {
 
 #[derive(Debug, Clone)]
 pub enum AttributeValue {
+    /// Exact nanosecond count, distinct from untyped integer metadata.
+    Duration(u64),
     Literal(Literal),
     Name(Attribute),
 }

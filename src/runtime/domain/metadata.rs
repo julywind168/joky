@@ -1,4 +1,4 @@
-//! Internal domain module ABI v3. All addresses are relocations owned by the caller.
+//! Internal domain module ABI v4. All addresses are relocations owned by the caller.
 use crate::core::types::{
     fresh_type_id, EnumType, EnumVariant, RecordField, RecordType, TupleType,
 };
@@ -6,13 +6,13 @@ use crate::{core::ir::FunctionInfo, Error, ErrorCode, ErrorPhase, FunctionSignat
 use std::{collections::HashMap, sync::Arc};
 
 #[repr(C)]
-pub(crate) struct ModuleV3 {
+pub(crate) struct ModuleV4 {
     pub version: usize,
     pub count: usize,
-    pub entries: *const EntryV3,
+    pub entries: *const EntryV4,
 }
 #[repr(C)]
-pub(crate) struct EntryV3 {
+pub(crate) struct EntryV4 {
     pub name: *const u8,
     pub name_len: usize,
     pub signature: *const u8,
@@ -25,7 +25,7 @@ fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Runtime,
         ErrorCode::AbiError,
-        "Invalid domain module descriptor v3",
+        "Invalid domain module descriptor v4",
     )
 }
 fn scalar(code: u8) -> Option<Type> {
@@ -120,8 +120,8 @@ pub(crate) fn encode(info: &FunctionInfo) -> Vec<u8> {
     }
     encode_type(&mut out, &info.signature.ret);
     if let Some(period) = info.every {
-        // Optional scheduling metadata; ordinary v3 signatures are unchanged.
-        put_u64(&mut out, period as u64);
+        // Optional scheduling metadata; ordinary v4 signatures are unchanged.
+        put_u64(&mut out, period);
     }
     out
 }
@@ -135,11 +135,14 @@ impl Reader<'_> {
         self.bytes = rest;
         Ok(byte)
     }
-    fn number(&mut self) -> Result<usize, Error> {
+    fn unsigned(&mut self) -> Result<u64, Error> {
         let b = self.bytes.get(..8).ok_or_else(invalid)?;
         let n = u64::from_le_bytes(b.try_into().unwrap());
         self.bytes = &self.bytes[8..];
-        usize::try_from(n).map_err(|_| invalid())
+        Ok(n)
+    }
+    fn number(&mut self) -> Result<usize, Error> {
+        usize::try_from(self.unsigned()?).map_err(|_| invalid())
     }
     fn text(&mut self) -> Result<String, Error> {
         let n = self.number()?;
@@ -335,7 +338,7 @@ impl Reader<'_> {
 /// Its code and immutable data must remain live until every derived root stops;
 /// raw C callers retain them explicitly rather than supplying a Rust code owner.
 pub(crate) unsafe fn decode(
-    entry: &EntryV3,
+    entry: &EntryV4,
     records: &mut HashMap<(u64, Vec<u8>), Type>,
 ) -> Result<(String, FunctionInfo), Error> {
     if entry.name_len > 1048576
@@ -364,11 +367,11 @@ pub(crate) unsafe fn decode(
     let every = if r.bytes.is_empty() {
         None
     } else {
-        let period = r.number()?;
-        if entry.kind != 0 || !(1..=i32::MAX as usize).contains(&period) {
+        let period = r.unsigned()?;
+        if entry.kind != 0 || period == 0 {
             return Err(invalid());
         }
-        Some(period as i32)
+        Some(period)
     };
     if !r.bytes.is_empty() {
         return Err(invalid());
@@ -421,6 +424,38 @@ pub(crate) fn decode_value_type(bytes: &[u8]) -> Result<Type, Error> {
 #[cfg(test)]
 mod const_tests {
     use super::*;
+    #[test]
+    fn duration_period_metadata_preserves_full_uint64_and_rejects_zero() {
+        for nanos in [1, 250_000, u64::MAX] {
+            let mut info = FunctionInfo::indirect(
+                FunctionSignature::new(vec![], Type::Unit),
+                false,
+                Span::empty(0),
+            );
+            info.every = Some(nanos);
+            let signature = encode(&info);
+            let entry = EntryV4 {
+                name: b"tick".as_ptr(),
+                name_len: 4,
+                signature: signature.as_ptr(),
+                signature_len: signature.len(),
+                entry: std::ptr::NonNull::<u8>::dangling().as_ptr(),
+                slots: 1,
+                kind: 0,
+            };
+            // Decode reads the borrowed name/signature; it does not invoke the code pointer.
+            let (_, decoded) = unsafe { decode(&entry, &mut HashMap::new()) }.unwrap();
+            assert_eq!(decoded.every, Some(nanos));
+            let mut invalid = signature.clone();
+            let len = invalid.len();
+            invalid[len - 8..].fill(0);
+            let entry = EntryV4 {
+                signature: invalid.as_ptr(),
+                ..entry
+            };
+            assert!(unsafe { decode(&entry, &mut HashMap::new()) }.is_err());
+        }
+    }
     #[test]
     fn fixed_array_f1_const_nominal_arguments_round_trip_without_host_width_loss() {
         let module=crate::TypeRegistry::new().with_prelude(false).resolve_aliases(&crate::parser::parse("struct Tag<const N: UInt64> { value: Int32 } fn a(x:Tag<18446744073709551615>) {} fn b(x:Tag<0>) {}").unwrap()).unwrap();

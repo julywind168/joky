@@ -8,7 +8,7 @@ fn assert(value: Bool) { let message = "domain deadline"; check.assert(value, &m
 fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, 7)
     let reader = owner.read_handle()
-    let expired = domain.deadline_after(0)
+    let expired = domain.deadline_after(0ms)
     let candidate = domain.candidate_from(domain.snapshot_from(reader, read), owner.handle(), make, 99)
     task.yield_now()
     var rejected = domain.commit_before(owner.handle(), candidate, &expired)
@@ -17,7 +17,7 @@ fn lifecycle() @suspends -> Int32 {
     let snapshot = domain.snapshot_from(reader, read)
     assert(match snapshot.check() { Current => true, _ => false })
     // The deadline is created before preparation and remains independent of it.
-    let later = domain.deadline_after(2147483647)
+    let later = domain.deadline_after(2147483647ms)
     let next = domain.candidate_from(snapshot, owner.handle(), make, 12)
     task.yield_now()
     var committed = domain.commit_before(owner.handle(), next, &later)

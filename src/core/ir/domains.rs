@@ -221,7 +221,7 @@ impl FunctionPlan {
                             crate::runtime::domain::module_type(),
                             Type::UInt64,
                             crate::runtime::domain::handle_type(),
-                            Type::Int32,
+                            values[2].as_ref().unwrap().ty.clone(),
                             Type::String,
                             target.signature.params[1].clone(),
                             Type::Bool,

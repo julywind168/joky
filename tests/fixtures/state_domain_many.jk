@@ -64,7 +64,7 @@ fn lifecycle() @suspends ->Int32 {
     let fresh=capture(pr,ar,br,rr)
     assert(domain.read_snapshot(&fresh,rr,allowed)==1)
     let next=transfer(fresh,ph,ah,bh)
-    let deadline=domain.deadline_after(100000)
+    let deadline=domain.deadline_after(100000ms)
     var committed=domain.commit_set_before(next,&deadline)
     assert(match committed.wait() { Ok(_)=>true, _=>false })
     assert(committed.revision(pr).unwrap().unwrap_or(0)==1 && committed.revision(ar).unwrap().unwrap_or(0)==1 && committed.revision(br).unwrap().unwrap_or(0)==1)

@@ -177,6 +177,7 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
     work.write(
         "async_main.jk",
         r#"import joky/task
+import joky/domain
 import joky/io.{println}
 fn value(n: Int32, waits: Int32) @suspends -> Int32 {
     var i = 0
@@ -185,6 +186,7 @@ fn value(n: Int32, waits: Int32) @suspends -> Int32 {
 }
 fn main() @suspends {
     task.sleep(250us)
+    let deadline = domain.deadline_after(0ns)
     let (a, b) = join { | value(40, 2) | value(2, 0) }
     let winner = race { | value(a + b, 0) | value(0, 3) }
     println(&winner)

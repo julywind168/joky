@@ -34,7 +34,7 @@ fn lifecycle() @suspends ->Int32 {
     let next=fresh.value()
     let candidate=domain.candidate_from(fresh, ah, make, next)
     task.yield_now()
-    let deadline=domain.deadline_after(100000)
+    let deadline=domain.deadline_after(100000ms)
     var success=domain.commit_before(ah,candidate,&deadline)
     assert(match success.wait() { Ok(revision)=>revision==1, _=>false })
     let duplicate=domain.snapshot_pair(ah.read_only(),ah.read_only(),same)

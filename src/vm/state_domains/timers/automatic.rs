@@ -3,7 +3,7 @@ use super::*;
 
 pub(in crate::vm::state_domains) struct Registration {
     name: String,
-    period: i32,
+    period: u64,
     state: Rc<RefCell<State>>,
 }
 
@@ -146,7 +146,7 @@ pub(in crate::vm::state_domains) fn prepare(
                 module,
                 name: &name,
                 input: Input::Scalar(0),
-                milliseconds: period,
+                nanoseconds: period,
                 periodic: true,
                 limits,
             },
@@ -243,7 +243,7 @@ pub(in crate::vm::state_domains) fn prepare_new(
             .executor
             .upgrade()
             .ok_or_else(|| invalid("Periodic executor is closed"))?;
-        let delay = Duration::from_millis(period as u64);
+        let delay = Duration::from_nanos(period);
         let due = now
             .checked_add(delay)
             .ok_or_else(|| limited("Periodic deadline overflow"))?;

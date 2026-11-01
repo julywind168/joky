@@ -5,7 +5,7 @@ impl Parser {
     pub(super) fn parse_every_attribute(
         &self,
         mut attributes: Vec<Attribute>,
-    ) -> Result<(Option<std::num::NonZeroI32>, Vec<Attribute>), Diagnostic> {
+    ) -> Result<(Option<std::num::NonZeroU64>, Vec<Attribute>), Diagnostic> {
         let Some(index) = attributes.iter().position(|a| a.path == "every") else {
             return Ok((None, attributes));
         };
@@ -21,20 +21,14 @@ impl Parser {
             Some(
                 [AttributeArgument {
                     name: None,
-                    value:
-                        AttributeValue::Literal(Literal::Integer {
-                            magnitude,
-                            negative: false,
-                        }),
+                    value: AttributeValue::Duration(nanos),
                     ..
                 }],
-            ) if *magnitude > 0 && *magnitude <= i32::MAX as u64 => {
-                Ok((std::num::NonZeroI32::new(*magnitude as i32), attributes))
-            }
+            ) if *nanos > 0 => Ok((std::num::NonZeroU64::new(*nanos), attributes)),
             _ => Err(Diagnostic::at(
                 self.peek_line(),
                 attribute.span,
-                "#every requires one positive Int32 millisecond literal",
+                "#every requires one positive Duration literal, such as #every(1s)",
             )),
         }
     }
@@ -110,6 +104,10 @@ impl Parser {
                     None
                 };
                 let value = match self.peek().clone() {
+                    TokenKind::DurationLit(nanos) => {
+                        self.advance();
+                        AttributeValue::Duration(nanos)
+                    }
                     TokenKind::Ident(_) => AttributeValue::Name(self.parse_attribute(depth + 1)?),
                     TokenKind::StrLit(value) => {
                         self.advance();

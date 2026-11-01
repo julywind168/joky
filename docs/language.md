@@ -4579,7 +4579,7 @@ Timer 的输入也支持上述传递值契约；重复触发时每次建立独�
 | --- | --- |
 | `candidate_from<B, R, S, A>(Snapshot<B, R>, WriteHandle<S>, fn(A) -> S, A) -> Candidate<S>` | 消费完整快照及全部读取凭据，以命名、同步、受检的构造器在独立 arena 中创建目标域的完整候选根 |
 | `commit_to<S>(WriteHandle<S>, Candidate<S>) -> CommitReceipt` | 消费候选，预留回执并申请 FIFO 提交；返回时不保证已经发布 |
-| `deadline_after(Int32) -> CommitDeadline` | 从当前执行器时钟创建不可伪造的截止凭据，参数为非负毫秒数，0 表示立即到期 |
+| `deadline_after(Duration) -> CommitDeadline` | 从当前执行器时钟创建不可伪造的截止凭据，参数为非负时长，`0ns` 表示立即到期 |
 | `commit_before<S>(WriteHandle<S>, Candidate<S>, &CommitDeadline) -> CommitReceipt` | 消费候选，按同一 FIFO 提交；发布前检查截止凭据 |
 | `receipt.wait(&mut self) -> Result<UInt64,CommitError>` | 等待终态，可重复读取；不消费回执 |
 | `receipt.cancel(&self)` | 请求取消尚未发布的提交；已确定的终态保持不变 |
@@ -4626,7 +4626,7 @@ S 支持上述 HR1 无引用、无用户 Drop 的拥有记录图，A 支持标�
 发布前重新读取该执行器的 `Clock`，`now >= deadline` 时返回 `Expired` 并回收候选；
 旧状态与修订不变，不依赖到期定时器已触发。检查不自动取消计算或唤醒尚未提交的任务。
 默认时钟为真实单调时间；嵌入宿主配置模拟时钟后，有效期随该时钟推进，暂停时也暂停。
-当前不支持同时选择多个时钟或业务阶段凭据。该毫秒参数仅相对绑定时钟，不是墙钟时间戳。
+当前不支持同时选择多个时钟或业务阶段凭据。该时长仅相对绑定时钟，不是墙钟时间戳。
 截止时间只约束最后一次检查，不保证发布及后续清理在截止之前完成。
 
 关闭、域失败或取消若已先成为提交终态，不改写成 `Expired`；有效凭据的发布检查在修订冲突
@@ -4925,8 +4925,8 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 | `domain.timer() -> Timer` | 创建 Idle 定时器，元数据计入执行器共享状态预算 |
 | `Timer.handle(&self) -> TimerHandle` | 取得当前执行器的弱能力 |
 | `Timer.close(self)` | 关闭、取消排队调用并释放所有者 |
-| `domain.after<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记一次调用，延迟非负；0 表示排队执行，不在登记期间调用 |
-| `domain.every<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记周期调用，间隔必须大于 0，第一次在一个间隔后到期 |
+| `domain.after<S,A>(timer: TimerHandle, target: WriteHandle<S>, duration: Duration, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记一次调用，延迟非负；`0ns` 表示排队执行，不在登记期间调用 |
+| `domain.every<S,A>(timer: TimerHandle, target: WriteHandle<S>, duration: Duration, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记周期调用，间隔必须大于 `0ns`，第一次在一个间隔后到期 |
 | `TimerHandle.cancel(self)` | 取消尚未开始的调用，Active 变为 Cancelled；其他终态不变 |
 | `TimerHandle.status(self) -> TimerStatus` | 观察 Idle / Active / Completed / Cancelled / Closed / InvalidAccess / ResourceLimit / Failed |
 
@@ -4934,6 +4934,7 @@ AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只�
 不允许宿主调用、闭包或挂起。空记录与嵌套 Unit 也遵循同一资格及计数限制。
 输入表达式只求值一次。Copy 输入保存独立副本；String／Array 拥有值按值移动，需保留原值时显式构造副本。
 每次调用使用同一份保存值，不保留操作内对输入副本的修改，也不自动计算实际经过时间。业务需要 dt 时自行选择固定步长或显式建模时间。
+时长支持纳秒精度；周期为零或无法表示单调截止时间时返回 InvalidDelay。
 时钟是登记所在执行器的单调 Clock：普通运行使用真实单调时间，嵌入宿主可用模拟时钟控制暂停。
 不提供每个定时器单独选择时钟、持久化或重启恢复。
 
@@ -4961,10 +4962,11 @@ Timer 登记/取消即时生效，不参与候选事务。tick 是普通短域�
 
 ### 周期声明 `#every`
 
-`#every(1000)` 标注 `#state` 类型的固有方法，声明 1000 毫秒周期。方法必须是非泛型、
+`#every(1s)` 标注 `#state` 类型的固有方法，声明一秒周期。方法必须是非泛型、
 同步、无宿主调用的受检域写操作，只接受 `&mut self`，返回 Unit。尚不支持额外输入、dt、
 泛型 impl、trait 方法或顶层函数。配置从状态字段读取；普通方法调用仍正常执行一次方法体。
-属性参数须为一个正 Int32 整数字面量（1–2147483647），不接受常量名或运行时表达式，
+属性参数须为一个正 Duration 字面量，例如 `#every(250us)`、`#every(1.5s)`；精确存储为 UInt64 纳秒。
+不接受无单位整数、零、负值、常量名或运行时表达式，
 不得重复或与其他方法属性组合。即使没有创建实例，也会检查声明资格。
 
 每个状态域实例创建成功时自动登记该类型的全部周期方法，由状态域拥有登记；
@@ -5920,7 +5922,9 @@ Duration 是独立的 Copy 记录类型，内部表示非负的 UInt64 纳秒数
 后缀区分大小写，紧邻十进制数字；支持小数和数字之间的单个下划线，例如 `1_000.5ms`。
 转换使用精确十进制计算，不经过浮点数。结果必须是整数纳秒且不超过 UInt64 最大值：
 `0.1us` 合法，`0.1ns`、负值、溢出、指数记法和十六进制时长均拒绝。
-时长不能直接作为模块/关联常量、模式或属性参数；`#every`、域定时器和 session 的 `idle_ms` 沿用原有接口。
+时长不能直接作为模块/关联常量或模式；`#every` 接受正时长字面量。
+`domain.after/every`、`domain.deadline_after` 和 session 的 `idle_timeout` 均使用 Duration，
+不再接受无单位的整数毫秒；例如 `#every(1000)` 改为 `#every(1s)`，`idle_ms = 1000` 改为 `idle_timeout = 1s`。
 
 `Duration.from_nanos(UInt64)` 直接构造；`from_micros`、`from_millis`、`from_secs`、
 `from_mins`、`from_hours` 返回 `Option<Duration>`，换算溢出时返回 None。
@@ -6262,8 +6266,8 @@ scope 主体直接声明的局部值保留到 join 完成；return、break、con
 ## 连接运行组件 joky/session
 
 显式导入 `joky/session`。`Options` 的公开字段为 `max_line_bytes`、`queue_messages`、
-`queue_bytes` 和 `idle_ms`；`defaults()` 分别返回 4096、64、65536 和 0。
-行长含结束符，容量沿用 TCP／outbox 的有效范围。`idle_ms = 0` 关闭超时；非零值限制
+`queue_bytes`（以上均为 UInt64）和 `idle_timeout: Duration`；`defaults()` 分别返回 4096、64、65536 和 `0ns`。
+行长含结束符，容量沿用 TCP／outbox 的有效范围。`idle_timeout = 0ns` 关闭超时；例如 `idle_timeout = 30s` 限制
 等到下一条完整行的时间，零散字节不会重置期限。
 
 `create(options) @suspends -> Connection` 创建 Disconnect 出站队列和独立的 Reject 控制队列。

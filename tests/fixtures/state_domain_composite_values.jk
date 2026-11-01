@@ -77,7 +77,7 @@ fn lifecycle() @suspends ->Int32 {
     var receipt=domain.commit_set(candidate); assert(receipt.wait().is_ok())
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==22 && y.value().unwrap().unwrap_or((-1,-1)).0==0)
     let timer=domain.timer(); let t=timer.handle()
-    domain.after(t,x,0,tick,input(30)).unwrap()
+    domain.after(t,x,0ms,tick,input(30)).unwrap()
     while match t.status() {Active=>true,_=>false} {task.yield_now()}
     assert(x.value().unwrap().unwrap_or((-1,-1)).0==30)
     timer.close(); a.close()

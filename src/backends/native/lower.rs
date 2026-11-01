@@ -547,7 +547,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_tcp_poll", vec![ptr, types::I32], vec![types::I32]),
         ("__joky_fs_poll", vec![ptr, types::I32], vec![types::I32]),
         (
-            "__joky_domain_poll_v3",
+            "__joky_domain_poll_v4",
             vec![ptr, types::I32],
             vec![types::I32],
         ),
@@ -3951,7 +3951,7 @@ pub(super) fn domain_entry(
     builder.seal_block(entry);
     let frame = builder.block_params(entry)[0];
     let kind = builder.ins().iconst(types::I32, op as i64);
-    let status = helper(builder, refs, "__joky_domain_poll_v3", &[frame, kind]);
+    let status = helper(builder, refs, "__joky_domain_poll_v4", &[frame, kind]);
     builder.ins().return_(&[status]);
     builder.seal_all_blocks();
 }

@@ -82,7 +82,7 @@ fn verify_snapshots(x:domain.WriteHandle<State>,y:domain.WriteHandle<State>) @su
 }
 fn verify_timer(x:domain.WriteHandle<State>) @suspends {
     let timer=domain.timer(); let t=timer.handle()
-    domain.every(t,x,1,tick,"repeated🙂").unwrap()
+    domain.every(t,x,1ms,tick,"repeated🙂").unwrap()
     while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep_ms(1)}
     t.cancel(); timer.close()
     assert(x.value().unwrap().equals("repeated🙂"))

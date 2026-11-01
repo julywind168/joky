@@ -303,30 +303,11 @@ fn state_domains_deadlines_run_in_standalone_aot() {
 }
 
 #[test]
-#[cfg(unix)]
-fn state_domains_deadlines_reject_negative_durations_in_all_backends() {
-    let work = Workspace::new();
-    work.write(
-        "negative.jk",
-        "import joky/domain fn main() @suspends { let deadline = domain.deadline_after(-1) }",
-    );
-    let rejected = |output: std::process::Output| {
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr)
-            .contains("Commit deadline duration must be nonnegative"));
-    };
-    rejected(work.cli(&["run", "negative.jk"]));
-    rejected(work.cli(&["run", "--interpreter", "negative.jk"]));
-    success(&work.cli(&["build", "negative.jk"]));
-    rejected(Command::new(work.path().join("negative")).output().unwrap());
-}
-
-#[test]
 fn state_domains_deadlines_reject_forgery_before_build() {
     let work = Workspace::new();
     for source in [
         "import joky/domain fn main() @suspends { let d = domain.CommitDeadline { storage: 1 } }",
-        "extern fn __domain_deadline_after(n: UInt64) @suspends -> domain.DeadlineOwner fn main() @suspends { let d = __domain_deadline_after(1) }",
+        "extern fn __domain_deadline_after(n: Int32) @suspends -> domain.DeadlineOwner fn main() @suspends { let d = __domain_deadline_after(1) }",
         "import joky/domain struct State { n: Int32 } fn make(n: Int32) -> State { State { n:n } } fn read(s: &State) -> Int32 { s.n } fn main() @suspends { let o=domain.create(make,1); let c=domain.candidate_from(domain.snapshot_from(o.read_handle(),read), o.handle(), make, 2); let d=0; let r=domain.commit_before(o.handle(),c,&d) }",
     ] {
         work.write("forged.jk", source);
@@ -873,6 +854,17 @@ fn domain_timers_run_in_all_backends() {
     let work = Workspace::new();
     work.write("timers.jk", include_str!("../fixtures/domain_timers.jk"));
     work.assert_all_backends("timers.jk", &[], b"", 0);
+    work.write(
+        "precise.jk",
+        &format!(
+            "{}\nfn main() @suspends {{ assert(precision(250us.as_nanos()) == 42) }}",
+            include_str!("../fixtures/domain_timers.jk").replace(
+                "fn main() @suspends ->Int32",
+                "fn lifecycle() @suspends ->Int32"
+            )
+        ),
+    );
+    work.assert_native("precise.jk", &[], b"", 0);
 }
 
 #[test]
@@ -886,10 +878,10 @@ fn tick(room:&mut Room,amount:Int32) { room.value=room.value+amount }
 fn hold(timer:domain.TimerHandle) @suspends {
     let room=domain.create(make,10)
     let message="timer Script"
-    check.assert(domain.after(timer,room.handle(),100000,tick,2).is_ok(),&message)
+    check.assert(domain.after(timer,room.handle(),100000ms,tick,2).is_ok(),&message)
     while match timer.status() { Active=>true,_=>false } { task.yield_now() }
     check.assert(match timer.status() { Cancelled=>true,_=>false },&message)
-    check.assert(domain.after(timer,room.handle(),0,tick,2).is_ok(),&message)
+    check.assert(domain.after(timer,room.handle(),0ms,tick,2).is_ok(),&message)
     while match timer.status() { Active=>true,_=>false } { task.yield_now() }
     check.assert(match timer.status() { Completed=>true,_=>false },&message)
     check.assert(domain.read_from(room.read_handle(),read).unwrap()==30,&message)
@@ -937,8 +929,8 @@ fn domain_timers_reject_unsafe_contracts_in_all_frontends() {
         "import joky/domain fn main() @suspends { let timer=domain.TimerHandle{identity:1} }".to_owned(),
         "extern fn __timer_create(n:Int32) @suspends -> domain.TimerOwner fn main() @suspends { let timer=__timer_create(1) }".to_owned(),
         "extern fn forge() -> domain.TimerOwner fn main() {let timer=forge()}".to_owned(),
-        "import joky/domain import joky/array.{type Array} struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:Array<Ptr>){} fn main() @suspends{let room=domain.create(make,0); let timer=domain.timer(); domain.after(timer.handle(),room.handle(),0,tick,Array.new::<Ptr>());}".to_owned(),
-        "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} extern fn external(value:Int32) fn tick(room:&mut Room,value:Int32){external(value)} fn main() @suspends{let room=domain.create(make,0); let timer=domain.timer(); domain.after(timer.handle(),room.handle(),0,tick,1);}".to_owned(),
+        "import joky/domain import joky/array.{type Array} struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:Array<Ptr>){} fn main() @suspends{let room=domain.create(make,0); let timer=domain.timer(); domain.after(timer.handle(),room.handle(),0ms,tick,Array.new::<Ptr>());}".to_owned(),
+        "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} extern fn external(value:Int32) fn tick(room:&mut Room,value:Int32){external(value)} fn main() @suspends{let room=domain.create(make,0); let timer=domain.timer(); domain.after(timer.handle(),room.handle(),0ms,tick,1);}".to_owned(),
     ] {
         work.write("bad_timer.jk", &source);
         for args in [vec!["run","bad_timer.jk"],vec!["run","--interpreter","bad_timer.jk"],vec!["build","bad_timer.jk"]] {
@@ -1143,10 +1135,10 @@ fn main() @suspends {{
     verify(domain.read_from(a.read_handle(),read).unwrap())
     verify(domain.read_from(b.read_handle(),read).unwrap())
     let timer=domain.timer(); let t=timer.handle()
-    domain.after(t,a.handle(),0,tick,{value}).unwrap()
+    domain.after(t,a.handle(),0ms,tick,{value}).unwrap()
     while match t.status() {{Active=>true,_=>false}} {{task.yield_now()}}
     check.assert(domain.read_from(a.read_handle(),count).unwrap()==1,&message)
-    domain.every(t,a.handle(),100000,tick,{value}).unwrap(); t.cancel()
+    domain.every(t,a.handle(),100000ms,tick,{value}).unwrap(); t.cancel()
 }}
 "#));
         work.assert_all_backends("bound.jk", &[], b"", 0);
@@ -1671,6 +1663,17 @@ fn domain_timer_values_run_in_all_backends() {
         include_str!("../fixtures/domain_timer_values.jk"),
     );
     work.assert_all_backends("timer_values.jk", &[], b"", 0);
+    work.write(
+        "precise_values.jk",
+        &format!(
+            "{}\nfn main() @suspends {{ assert(precision(250us.as_nanos()) == 42) }}",
+            include_str!("../fixtures/domain_timer_values.jk").replace(
+                "fn main() @suspends ->Int32",
+                "fn lifecycle() @suspends ->Int32"
+            )
+        ),
+    );
+    work.assert_native("precise_values.jk", &[], b"", 0);
 }
 
 #[test]
@@ -1713,7 +1716,7 @@ fn domain_timer_values_reject_invalid_inputs_and_effects() {
 struct State {{n:Int32}}
 fn make(n:Int32)->State {{State{{n:n}}}}
 fn tick(s:&mut State,p:{ty}) {effect} {{{body}}}
-fn main() @suspends {{let o=domain.create(make,0); let t=domain.timer(); domain.after(t.handle(),o.handle(),0,tick,{value});}}"#));
+fn main() @suspends {{let o=domain.create(make,0); let t=domain.timer(); domain.after(t.handle(),o.handle(),0ms,tick,{value});}}"#));
         let output = work.cli(&["build", "rejected_timer.jk"]);
         assert!(!output.status.success());
         let error = String::from_utf8_lossy(&output.stderr);
@@ -1726,7 +1729,7 @@ fn main() @suspends {{let o=domain.create(make,0); let t=domain.timer(); domain.
 struct State {n:Int32} struct P {n:Int32}
 fn make(n:Int32)->State {State{n:n}}
 fn tick<T>(s:&mut State,p:T) {let text="timer"; io.print(&text)}
-fn arm<T>(t:domain.TimerHandle,h:domain.WriteHandle<State>,p:T) @suspends {domain.after(t,h,0,tick::<T>,p);}
+fn arm<T>(t:domain.TimerHandle,h:domain.WriteHandle<State>,p:T) @suspends {domain.after(t,h,0ms,tick::<T>,p);}
 fn main() @suspends {let o=domain.create(make,0); let t=domain.timer(); arm(t.handle(),o.handle(),P{n:1});}
 "#);
     failure(
@@ -1747,10 +1750,10 @@ fn assert(ok:Bool) {let message="timer record publication"; check.assert(ok,&mes
 fn hold(t:domain.TimerHandle) @suspends {
     let room=domain.create(make,10); let h=room.handle()
     var p=Payload{step:2,tag:18446744073709551615}
-    assert(domain.after(t,h,100000,tick,p).is_ok())
+    assert(domain.after(t,h,100000ms,tick,p).is_ok())
     while match t.status(){Active=>true,_=>false} {task.yield_now()}
     assert(match t.status(){Cancelled=>true,_=>false})
-    let result=domain.after(t,h,0,tick,p)
+    let result=domain.after(t,h,0ms,tick,p)
     p.step=99
     if INCOMPATIBLE {
         assert(match result {Err(InvalidAccess)=>true,_=>false})
@@ -2260,7 +2263,7 @@ fn every_declarations_run_in_all_backends() {
     work.write(
         "every.jk",
         &include_str!("../fixtures/domain_every.jk")
-            .replace("#every(100000)", "#every(1)")
+            .replace("#every(100000ms)", "#every(250us)")
             .replace("{lifecycle()}", "{lifecycle(); live(); failure()}"),
     );
     work.assert_all_backends("every.jk", &[], b"", 0);
@@ -2283,14 +2286,14 @@ fn every_declarations_reject_invalid_entries() {
         "fn tick(&mut self){let n=self.value; io.println(&n)}",
         "fn tick(&mut self){helper(self)}",
     ] {
-        work.write("invalid.jk", &format!("import joky/io #state struct Room{{value:Int32}} fn helper(s:&mut Room){{let n=s.value; io.println(&n)}} impl Room{{#every(1) {method}}} fn main(){{}}"));
+        work.write("invalid.jk", &format!("import joky/io #state struct Room{{value:Int32}} fn helper(s:&mut Room){{let n=s.value; io.println(&n)}} impl Room{{#every(1ms) {method}}} fn main(){{}}"));
         failure(&work.cli(&["build", "invalid.jk"]), "#every requires");
     }
     for source in [
-        "struct Room{value:Int32} impl Room{#every(1) fn tick(&mut self){}}",
-        "#state struct Room{value:Int32} #every(1) fn tick(s:&mut Room){}",
-        "struct Room<T>{value:T} impl<T> Room<T>{#every(1) fn tick(&mut self){}}",
-        "#state struct Room{value:Int32} trait Tick{fn tick(&mut self);} impl Tick for Room{#every(1) fn tick(&mut self){}}",
+        "struct Room{value:Int32} impl Room{#every(1ms) fn tick(&mut self){}}",
+        "#state struct Room{value:Int32} #every(1ms) fn tick(s:&mut Room){}",
+        "struct Room<T>{value:T} impl<T> Room<T>{#every(1ms) fn tick(&mut self){}}",
+        "#state struct Room{value:Int32} trait Tick{fn tick(&mut self);} impl Tick for Room{#every(1ms) fn tick(&mut self){}}",
     ] {
         work.write("invalid.jk",&format!("{source} fn main(){{}}"));
         failure(&work.cli(&["build","invalid.jk"]),"error:");
@@ -2306,7 +2309,7 @@ fn every_declarations_import_aliases_preserve_automatic_methods() {
         r#"#state pub struct Room{pub n:Int32}
 pub fn make(n:Int32)->Room{Room{n:n}}
 fn increment(room:&mut Room){room.n+=1}
-impl Room{#every(1) fn tick(&mut self){increment(self)}}
+impl Room{#every(1ms) fn tick(&mut self){increment(self)}}
 pub fn read(room:&Room)->Int32{room.n}"#,
     );
     work.write("imported.jk",r#"import room.{make as open} import joky/domain import joky/task import joky/check
@@ -2321,7 +2324,7 @@ check.assert(match domain.periodic_status(o.read_handle(),"tick"){Active=>true,_
 fn every_declarations_script_publication_updates_automatic_methods() {
     let base = r#"import joky/domain import joky/task
 #state struct Room{value:Int32}
-impl Room{#every(100000) fn tick(&mut self){self.value=10}}
+impl Room{#every(100000ms) fn tick(&mut self){self.value=10}}
 fn make(n:Int32)->Room{Room{value:n}}
 fn read(room:&Room)->Int32{room.value}
 fn hold(d:domain.DirectoryHandle) @suspends {
@@ -2336,14 +2339,14 @@ fn status(d:domain.DirectoryHandle) @suspends ->Int32 {
 }"#;
     for action in ["add", "remove", "change"] {
         let old = if action == "add" {
-            base.replace("#every(100000)", "")
+            base.replace("#every(100000ms)", "")
         } else {
             base.into()
         };
         let next = if action == "remove" {
-            base.replace("#every(100000)", "")
+            base.replace("#every(100000ms)", "")
         } else {
-            base.replace("#every(100000)", "#every(1)")
+            base.replace("#every(100000ms)", "#every(1ms)")
                 .replace("self.value=10", "self.value=42")
         };
         let expected = if action == "remove" { 10 } else { 42 };
@@ -2385,14 +2388,14 @@ fn main() @suspends {{
 fn every_declarations_migration_runs_in_all_host_and_script_backends() {
     let old = r#"import joky/domain import joky/task
 #state struct Room{value:Int32}
-impl Room{#every(100000) fn tick(&mut self){self.value+=1}}
+impl Room{#every(100000ms) fn tick(&mut self){self.value+=1}}
 fn make(n:Int32)->Room{Room{value:n}}
 fn read(room:&Room)->Int32{room.value}
 fn hold(d:domain.DirectoryHandle) @suspends {let room=domain.create(make,10); d.insert(0,room.handle()).unwrap(); while true{task.yield_now()}}
 fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {match domain.lookup::<Room>(d,0){Some(h)=>domain.read_from(h,read).unwrap(),None=>-1}}"#;
     let next = r#"import joky/domain
 #state struct Room{value:Int64}
-impl Room{#every(1) fn tick(&mut self){self.value=42}}
+impl Room{#every(1ms) fn tick(&mut self){self.value=42}}
 fn upgrade(old:&PreviousState)->Room{Room{value:int64(old.value)}}
 fn read(room:&Room)->Int32{int32(room.value)}
 fn probe(d:domain.DirectoryHandle) @suspends ->Int32 {match domain.lookup::<Room>(d,0){Some(h)=>domain.read_from(h,read).unwrap(),None=>-1}}"#;

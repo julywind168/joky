@@ -1739,8 +1739,8 @@ fn exhaustive_pure_composite_domain_cancellation() {
 fn owned_text_domain_cancellation_source() -> String {
     include_str!("../../../../tests/fixtures/state_domain_text_values.jk")
         .replace(
-            "domain.every(t,x,1,tick,\"repeated🙂\")",
-            "domain.after(t,x,0,tick,\"repeated🙂\")",
+            "domain.every(t,x,1ms,tick,\"repeated🙂\")",
+            "domain.after(t,x,0ms,tick,\"repeated🙂\")",
         )
         .replace(
             "while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep_ms(1)}",
@@ -1845,8 +1845,8 @@ fn domain_value_allocation_failures(source: &str) {
 fn owned_array_domain_cancellation_source() -> String {
     include_str!("../../../../tests/fixtures/state_domain_array_values.jk")
         .replace(
-            "domain.every(t,h,1,tick,strings())",
-            "domain.after(t,h,0,tick,strings())",
+            "domain.every(t,h,1ms,tick,strings())",
+            "domain.after(t,h,0ms,tick,strings())",
         )
         .replace(
             "while domain.read_from(h.read_only(),count)!<8 {task.sleep_ms(1)}",

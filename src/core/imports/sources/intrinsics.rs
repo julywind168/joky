@@ -82,14 +82,16 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::Mem, "mem.drop") => MemDrop,
             (SourceKind::Mem, "mem.replace") => MemReplace,
             (SourceKind::Mem, "mem.swap") => MemSwap,
-            (SourceKind::TypeCheck, "types.plain_copy") => PlainCopy(parameter(f)?),
-            (SourceKind::TypeCheck, "types.reference_free") => ReferenceFree(parameter(f)?),
-            (SourceKind::Vm, "vm.schema") => ScriptSchema(parameter(f)?),
+            (SourceKind::TypeCheck, "types.plain_copy") => PlainCopy(Box::new(parameter(f)?)),
+            (SourceKind::TypeCheck, "types.reference_free") => {
+                ReferenceFree(Box::new(parameter(f)?))
+            }
+            (SourceKind::Vm, "vm.schema") => ScriptSchema(Box::new(parameter(f)?)),
             (SourceKind::Vm, "vm.pack") => ScriptPack,
             (SourceKind::Vm, "vm.unpack") => ScriptUnpack,
             (SourceKind::Domain, "domain.value_pack") => DomainValuePack,
             (SourceKind::Domain, "domain.value_unpack") => DomainValueUnpack,
-            (SourceKind::Domain, "domain.lookup_type") => DirectoryType(parameter(f)?),
+            (SourceKind::Domain, "domain.lookup_type") => DirectoryType(Box::new(parameter(f)?)),
             (SourceKind::Domain, "domain.module") => DomainModule,
             (SourceKind::Domain, "domain.readonly") => DomainReadOnly,
             (SourceKind::Domain, "domain.pack") => DomainPack,

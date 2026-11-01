@@ -368,7 +368,7 @@ struct Schedule<'a> {
     module: &'a LoadedModule,
     name: &'a str,
     input: Input,
-    milliseconds: i32,
+    nanoseconds: u64,
     periodic: bool,
     limits: InterpreterLimits,
 }
@@ -391,11 +391,11 @@ fn start_state(
     if state.borrow().job.is_some() || state.borrow().status == Status::Active {
         return Err(2);
     }
-    if schedule.milliseconds < 0 || (schedule.periodic && schedule.milliseconds == 0) {
+    if schedule.periodic && schedule.nanoseconds == 0 {
         return Err(3);
     }
     let executor = registry.borrow().executor.upgrade().ok_or(1u64)?;
-    let delay = Duration::from_millis(schedule.milliseconds as u64);
+    let delay = Duration::from_nanos(schedule.nanoseconds);
     let now = prepared.map_or_else(|| executor.now(), |(_, now)| now);
     let due = now.checked_add(delay).ok_or(3u64)?;
     // Recheck owner and target after the external clock callback.
@@ -586,7 +586,7 @@ pub(super) unsafe fn poll(
                     module: &module,
                     name,
                     input,
-                    milliseconds: slots[3] as i32,
+                    nanoseconds: slots[3],
                     periodic: slots[6] != 0,
                     limits: crate::runtime::suspension::current_limits(),
                 },

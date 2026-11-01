@@ -64,7 +64,7 @@ fn award(ctx:Context) @suspends ->Result<Int32,AwardError> {
 }
 fn start_tick(ctx:Context) @suspends ->Bool {
     match domain.lookup_write::<Clock>(ctx.directory,3) {
-        Some(h)=>domain.every(ctx.timer,h,1,tick,1).is_ok(),None=>false
+        Some(h)=>domain.every(ctx.timer,h,1ms,tick,1).is_ok(),None=>false
     }
 }
 fn request(ctx:Context) @suspends ->Int32 {

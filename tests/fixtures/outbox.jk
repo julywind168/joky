@@ -158,7 +158,7 @@ fn cancelled_and_expired() @suspends {
         assert(received.get(0).unwrap_or(0)==7)
     }
     let next=domain.candidate_from(domain.snapshot_from(h.read_only(),read), h, make, 8).with_outbox(staged(target,8))
-    let deadline=domain.deadline_after(0)
+    let deadline=domain.deadline_after(0ms)
     var expired=domain.commit_before(h,next,&deadline)
     assert(match expired.wait() { Err(Expired)=>true, _=>false })
     assert(domain.read_from(h.read_only(),read).unwrap()==if published { 7 } else { 0 })

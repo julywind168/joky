@@ -193,3 +193,17 @@ fn duration_sleep_and_timeout_execute_on_parallel_workers() {
         pool.wait_closed();
     }
 }
+
+#[test]
+fn duration_entry_points_reject_untyped_and_negative_delays() {
+    for source in [
+        "import joky/domain fn f() @suspends { let d = domain.deadline_after(1); }",
+        "import joky/domain fn f() @suspends { let d = domain.deadline_after(-1ms); }",
+        "import joky/session fn f() { var options = session.defaults(); options.idle_timeout = 1000; }",
+        "import joky/session fn f() { var options = session.defaults(); options.idle_ms = 1000; }",
+    ] { frontend_error(source, &crate::ModuleSources::new()); }
+    for (operation, delay) in [("after", "1"), ("after", "-1ms"), ("every", "1")] {
+        let source = format!("import joky/domain struct S {{ n:Int32 }} fn tick(s:&mut S,n:Int32) {{s.n+=n}} fn f(t:domain.TimerHandle,h:domain.WriteHandle<S>) @suspends {{domain.{operation}(t,h,{delay},tick,1);}}");
+        frontend_error(&source, &crate::ModuleSources::new());
+    }
+}

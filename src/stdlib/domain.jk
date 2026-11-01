@@ -3,6 +3,7 @@ import joky/option.{type Option, Some, None}
 import joky/outbox.{type Batch}
 import joky/result.{type Result, Ok, Err}
 import joky/check
+import joky/time.{type Duration}
 
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
 extern fn __domain_read_scalar(method: String) @suspends -> (Int32, UInt64)
@@ -231,11 +232,11 @@ extern fn __domain_commit_cancel(receipt: &domain.CommitOwner) @suspends
 pub struct Candidate<S> { storage: domain.CandidateOwner }
 pub struct CommitReceipt { storage: domain.CommitOwner }
 // Deadlines use the creating executor's monotonic clock, not wall time.
-extern fn __domain_deadline_after(milliseconds: Int32) @suspends -> domain.DeadlineOwner
+extern fn __domain_deadline_after(nanoseconds: UInt64) @suspends -> domain.DeadlineOwner
 extern fn __domain_commit_before(handle: domain.Handle, candidate: &mut domain.CandidateOwner, deadline: &domain.DeadlineOwner) @suspends -> domain.CommitOwner
 pub struct CommitDeadline { storage: domain.DeadlineOwner }
-pub fn deadline_after(milliseconds: Int32) @suspends -> CommitDeadline {
-    CommitDeadline { storage: __domain_deadline_after(milliseconds) }
+pub fn deadline_after(duration: Duration) @suspends -> CommitDeadline {
+    CommitDeadline { storage: __domain_deadline_after(duration.as_nanos()) }
 }
 pub enum CommitError { Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
 pub enum RevisionError { Pending, Failed(CommitError), InvalidAccess }
@@ -600,7 +601,7 @@ extern fn __timer_close(timer:UInt64) @suspends
 extern fn __timer_cancel(timer:UInt64) @suspends
 extern fn __timer_status(timer:UInt64) @suspends -> Int32
 extern fn __domain_periodic_status(target:domain.Handle,method:String) @suspends -> Int32
-extern fn __timer_start(module:domain.Module, timer:UInt64, target:domain.Handle, milliseconds:Int32, operation:String, input:UInt64, periodic:Bool) @suspends -> Int32
+extern fn __timer_start(module:domain.Module, timer:UInt64, target:domain.Handle, nanoseconds:UInt64, operation:String, input:UInt64, periodic:Bool) @suspends -> Int32
 pub struct Timer { storage:domain.TimerOwner }
 pub struct TimerHandle { identity:UInt64 }
 pub enum TimerStatus { Idle, Active, Completed, Cancelled, Closed, InvalidAccess, ResourceLimit, Failed }
@@ -630,8 +631,8 @@ impl TimerHandle {
     }
 }
 #intrinsic("domain.finish_timer")
-fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, milliseconds:Int32, operation:String, input:UInt64, periodic:Bool) @suspends -> Result<Unit,TimerError> {
-    let status=__timer_start(module,timer,target,milliseconds,operation,input,periodic)
+fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, duration:Duration, operation:String, input:UInt64, periodic:Bool) @suspends -> Result<Unit,TimerError> {
+    let status=__timer_start(module,timer,target,duration.as_nanos(),operation,input,periodic)
     if status==0 { return Ok({}) }
     if status==1 { return Err(TimerError.Closed) }
     if status==2 { return Err(TimerError.Busy) }
@@ -639,11 +640,11 @@ fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, millis
     if status==4 { return Err(TimerError.InvalidAccess) }
     Err(TimerError.ResourceLimit)
 }
-extern fn __timer_start_values(module:domain.Module,timer:UInt64,target:domain.Handle,milliseconds:Int32,operation:String,input:&Buffer<UInt64>,periodic:Bool) @suspends -> Int32
+extern fn __timer_start_values(module:domain.Module,timer:UInt64,target:domain.Handle,nanoseconds:UInt64,operation:String,input:&Buffer<UInt64>,periodic:Bool) @suspends -> Int32
 #intrinsic("domain.finish_timer_value")
-fn finish_timer_value<A>(module:domain.Module,timer:UInt64,target:domain.Handle,milliseconds:Int32,operation:String,input:A,periodic:Bool) @suspends -> Result<Unit,TimerError> {
+fn finish_timer_value<A>(module:domain.Module,timer:UInt64,target:domain.Handle,duration:Duration,operation:String,input:A,periodic:Bool) @suspends -> Result<Unit,TimerError> {
     let packet=pack_value(input)
-    let status=__timer_start_values(module,timer,target,milliseconds,operation,&packet.storage,periodic)
+    let status=__timer_start_values(module,timer,target,duration.as_nanos(),operation,&packet.storage,periodic)
     if status==0 { return Ok({}) }
     if status==1 { return Err(TimerError.Closed) }
     if status==2 { return Err(TimerError.Busy) }
@@ -652,12 +653,12 @@ fn finish_timer_value<A>(module:domain.Module,timer:UInt64,target:domain.Handle,
     Err(TimerError.ResourceLimit)
 }
 #intrinsic("domain.after")
-pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
-    finish_timer_value::<A>(module(),timer.identity,target.token,milliseconds,"",input,false)
+pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, duration:Duration, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
+    finish_timer_value::<A>(module(),timer.identity,target.token,duration,"",input,false)
 }
 #intrinsic("domain.every")
-pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
-    finish_timer_value::<A>(module(),timer.identity,target.token,milliseconds,"",input,true)
+pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, duration:Duration, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
+    finish_timer_value::<A>(module(),timer.identity,target.token,duration,"",input,true)
 }
 
 // Compiler-generated when and handle-method calls use a variable-size access packet.

@@ -1,18 +1,18 @@
 import joky/outbox
+import joky/time.{type Duration}
+import joky/task
 import joky/result.{Ok, Err}
 import joky/option.{type Option, Some, None}
 import joky/tcp.{type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
-
-extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends
 
 pub struct Options {
     pub max_line_bytes: UInt64,
     pub queue_messages: UInt64,
     pub queue_bytes: UInt64,
-    pub idle_ms: UInt64
+    pub idle_timeout: Duration
 }
 pub fn defaults() -> Options {
-    Options { max_line_bytes: 4096, queue_messages: 64, queue_bytes: 65536, idle_ms: 0 }
+    Options { max_line_bytes: 4096, queue_messages: 64, queue_bytes: 65536, idle_timeout: 0ns }
 }
 // Copyable output endpoint; send stages bytes in when, close stops the session.
 pub type Output = outbox.Handle
@@ -29,11 +29,11 @@ impl Connection {
 fn read(reader: &mut BufferedTcpReader, limit: UInt64) @suspends -> Option<String> {
     match reader.read_line(limit) { Ok(line) => line, Err(_) => None }
 }
-fn timeout(milliseconds: UInt64) @suspends -> Option<String> { __joky_task_sleep_ms(milliseconds); None }
+fn timeout(duration: Duration) @suspends -> Option<String> { task.sleep(duration); None }
 fn receive<S, T>(shared: &S, ctx: &T, var reader: BufferedTcpReader, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options) @suspends @noescape {
     while true {
-        let next = if options.idle_ms == 0 { read(&mut reader, options.max_line_bytes) }
-        else { race { | read(&mut reader, options.max_line_bytes) | timeout(options.idle_ms) } }
+        let next = if options.idle_timeout.is_zero() { read(&mut reader, options.max_line_bytes) }
+        else { race { | read(&mut reader, options.max_line_bytes) | timeout(options.idle_timeout) } }
         let line = match next { Some(line) => line, None => return }
         if !on_line(shared, ctx, line) { return }
     }

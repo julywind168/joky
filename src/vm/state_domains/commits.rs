@@ -45,9 +45,7 @@ pub(super) struct Deadline {
     registry: u64,
     at: Instant,
 }
-fn deadline_after(registry: &Rc<RefCell<Domains>>, milliseconds: i32) -> Result<Deadline, Error> {
-    let duration = u64::try_from(milliseconds)
-        .map_err(|_| invalid("Commit deadline duration must be nonnegative"))?;
+fn deadline_after(registry: &Rc<RefCell<Domains>>, nanoseconds: u64) -> Result<Deadline, Error> {
     let (identity, executor) = {
         let domains = registry.borrow();
         (
@@ -61,7 +59,7 @@ fn deadline_after(registry: &Rc<RefCell<Domains>>, milliseconds: i32) -> Result<
     // A host clock may reenter the VM. No registry borrow crosses that callback.
     let at = executor
         .now()
-        .checked_add(Duration::from_millis(duration))
+        .checked_add(Duration::from_nanos(nanoseconds))
         .ok_or_else(|| limited("Commit deadline overflow"))?;
     Ok(Deadline {
         registry: identity,
@@ -361,7 +359,7 @@ pub(super) unsafe fn poll(
         return bundles::poll(arena, frame, registry, op);
     }
     if op == Operation::DeadlineAfter {
-        return adopt(arena, deadline_after(registry, frame.slots[0] as i32)?).map(Some);
+        return adopt(arena, deadline_after(registry, frame.slots[0])?).map(Some);
     }
     if matches!(
         op,
@@ -902,7 +900,7 @@ mod tests {
     #[test]
     fn state_domains_deadline_partial_adoption_refunds_storage() {
         let vm = VmEngine::new();
-        let deadline = deadline_after(&vm.domains, 10).unwrap();
+        let deadline = deadline_after(&vm.domains, 10_000_000).unwrap();
         let live = crate::runtime::arena::LIVE.with(|n| n.get());
         for limit in [0, std::mem::size_of::<Stored<Deadline>>()] {
             let budget = std::sync::Arc::new(Budget {
@@ -928,7 +926,11 @@ mod tests {
                     .create_domain("make", &[InstanceValue::Int32(7)])
                     .unwrap();
                 let baseline = vm.domains.borrow().budget.bytes.get();
-                let deadline = deadline_after(&vm.domains, 10).unwrap();
+                let deadline = deadline_after(&vm.domains, 250_000).unwrap();
+                assert_eq!(
+                    deadline.at,
+                    clock.time.get() + Duration::from_nanos(250_000)
+                );
                 let mut next = candidate(&vm, &owner, 12);
                 next.deadline = Some(deadline);
                 let receipt = admit(&vm.domains, token(&vm, &owner), next);
@@ -966,9 +968,8 @@ mod tests {
             let clock = CommitClock::new();
             vm.configure_tasks(clock.clone(), 64).unwrap();
             vm.load_source(OWNED).unwrap();
-            assert!(deadline_after(&vm.domains, -1).is_err());
             let foreign = VmEngine::with_mode(mode);
-            let foreign_deadline = deadline_after(&foreign.domains, 10).unwrap();
+            let foreign_deadline = deadline_after(&foreign.domains, 10_000_000).unwrap();
             for action in 0..4 {
                 let owner = vm
                     .create_domain("make", &[InstanceValue::Int32(7)])

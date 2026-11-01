@@ -45,6 +45,10 @@ fn linked_task_entries(
         crate::stdlib::task::sleep_ms as *const u8,
     );
     symbols.insert(
+        "joky_task_sleep_ns".into(),
+        crate::stdlib::task::sleep_ns as *const u8,
+    );
+    symbols.insert(
         "__joky_task_yield_now".into(),
         crate::stdlib::task::yield_internal as *const u8,
     );
@@ -59,7 +63,7 @@ fn linked_task_entries(
     };
     symbols.insert("joky_io_write_stdout_v2".into(), *entry);
     symbols.insert(
-        "__joky_domain_poll_v3".into(),
+        "__joky_domain_poll_v4".into(),
         crate::runtime::domain::poll_native as *const u8,
     );
     let object = scratch.path().join("code.o");

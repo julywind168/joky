@@ -45,7 +45,7 @@ fn run(scenario: UInt64) @suspends {
     let stream = listener.accept()!
     var options = session.defaults()
     options.max_line_bytes = 5
-    if scenario == 2 { options.idle_ms = 1 }
+    if scenario == 2 { options.idle_timeout = 1ms }
     let connection = session.create(options)
     let control = connection.stop_handle()
     let owner = domain.create(make, {})

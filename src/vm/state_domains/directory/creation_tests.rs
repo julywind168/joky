@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 const SOURCE: &str = r#"import joky/domain
 #state struct S { value:Int32 }
-impl S { #every(10) fn tick(&mut self) {self.value+=1} }
+impl S { #every(10ms) fn tick(&mut self) {self.value+=1} }
 fn make()->S {S{value:10}}
 fn read(s:&S)->Int32 {s.value}
 fn empty(s:&S)->Bool {s.value==0}
@@ -130,7 +130,7 @@ fn state_domains_creation_rolls_back_timers_on_rejection_cancellation_and_partia
             let source = if action == "task_limit" {
                 SOURCE.replace(
                     "fn make()",
-                    "impl S {#every(10) fn second(&mut self){self.value+=100}} fn make()",
+                    "impl S {#every(10ms) fn second(&mut self){self.value+=100}} fn make()",
                 )
             } else if action == "constructor" {
                 SOURCE.replace("S{value:10}", "let zero=0; S{value:10/zero}")

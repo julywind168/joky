@@ -460,7 +460,7 @@ fn parallel_domains_later_reader_waits_behind_an_earlier_waiting_writer() {
 
 const CREATION: &str = r#"import joky/domain
 #state struct State { n:Int32 }
-impl State { #every(100000) fn tick(&mut self) {self.n+=1} }
+impl State { #every(100000ms) fn tick(&mut self) {self.n+=1} }
 fn make()->State {State{n:10}}
 fn operation(routes:domain.DirectoryHandle,delta:Int32,reject:Bool) @suspends ->Int32 {
     when "r8probe" (mut room:State=routes.get_or_stage("room",make())) {

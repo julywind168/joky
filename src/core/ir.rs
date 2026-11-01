@@ -81,7 +81,8 @@ pub(crate) enum Constant {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
-    pub every: Option<i32>,
+    /// Positive scheduling period in nanoseconds.
+    pub every: Option<u64>,
     pub closure_entry: bool,
     pub noescape: bool,
     pub noescape_params: Vec<usize>,
@@ -783,7 +784,7 @@ impl ModulePlan {
             }
             let info = FunctionInfo {
                 every: match item {
-                    Item::FnDef(f) => f.every.map(std::num::NonZeroI32::get),
+                    Item::FnDef(f) => f.every.map(std::num::NonZeroU64::get),
                     _ => None,
                 },
                 closure_entry: false,

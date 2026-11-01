@@ -353,7 +353,7 @@ impl Operation {
                     m,
                     i,
                     token,
-                    Type::Int32,
+                    Type::UInt64,
                     text,
                     Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), false),
                     Type::Bool,
@@ -361,7 +361,7 @@ impl Operation {
                 Type::Int32,
             ),
             Self::TimerStart => (
-                vec![m, i.clone(), token, Type::Int32, text, i, Type::Bool],
+                vec![m, i.clone(), token, Type::UInt64, text, i, Type::Bool],
                 Type::Int32,
             ),
             Self::DirectoryCreate => (vec![i], directory),
@@ -601,7 +601,7 @@ impl Operation {
             Self::SnapshotPair | Self::SnapshotPairValues => {
                 (vec![m, token.clone(), token, text], snapshot_type())
             }
-            Self::DeadlineAfter => (vec![Type::Int32], deadline_type()),
+            Self::DeadlineAfter => (vec![Type::UInt64], deadline_type()),
             Self::CommitBefore => (
                 vec![
                     token,
@@ -664,7 +664,7 @@ pub(crate) mod metadata;
 pub(crate) extern "C" fn module_placeholder() -> u64 {
     0
 }
-#[export_name = "__joky_domain_poll_v3"]
+#[export_name = "__joky_domain_poll_v4"]
 /// # Safety
 /// `frame` must be a live, uniquely polled CPS frame with an attached arena and
 /// slots matching `kind`'s exact compiler-owned signature. Code and borrowed

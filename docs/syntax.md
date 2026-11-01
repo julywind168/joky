@@ -155,7 +155,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
-`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)`、`#derive(ToJson, FromJson)`、`#state`，以及 `#state` 固有方法前的 `#every(milliseconds)`，
+`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)`、`#derive(ToJson, FromJson)`、`#state`，以及 `#state` 固有方法前的 `#every(duration)`，
 不开放通用属性或用户属性宏；后续语法方向见 [Arena 设计 §2.5](arena-borrowing-ffi.md#25-后续属性系统的语法方向)。
 函数名、参数名和局部名称是单个标识符；`vm.call_int32` 是限定调用名，
 `vm.Vm` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。
@@ -554,7 +554,7 @@ W5 已将两种写法接入服务端联合示例，验证跨发布旧流程、�
 E0–E3 已将共同纯值契约扩展到具体枚举，包括 Option 和业务 Result；状态域与 Script 桥同样检查
 全部分支、具体类型参数与未使用槽位。V0–V3 已补齐元组和具体泛型记录载荷，支持与 Option／Result
 任意组合（仍受共同额度限制）；Map／资源载荷和泛型函数内的 `when` 仍未开放。
-T0–T3 的 `#every(正 Int32 毫秒字面量)` 已调整为 `#state` 固有方法上的自动周期声明；
+T0–T3 的 `#every(正 Duration 字面量)` 已调整为 `#state` 固有方法上的自动周期声明；
 仅支持非泛型同步 `fn(&mut self) -> Unit`，域创建时启动、关闭时停止，普通值与候选不启动。
 发布同步处理方法新增、删除及周期变化；具体规则见[周期声明](language.md#周期声明-every)。
 迁移声明及候选编辑语法糖另设切片。

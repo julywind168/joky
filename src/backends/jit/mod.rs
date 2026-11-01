@@ -248,7 +248,7 @@ pub(crate) fn compile(
         )])
         .chain(crate::runtime::float_env::symbols())
         .chain([(
-            "__joky_domain_poll_v3",
+            "__joky_domain_poll_v4",
             crate::runtime::domain::poll_native as *const u8,
         )])
     {

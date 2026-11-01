@@ -616,10 +616,11 @@ fn conditional_patterns_preserve_spans_and_match_payload_syntax() {
 #[test]
 fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
     for (period, value) in [
-        ("1", 1),
-        ("1_000", 1000),
-        ("0x10", 16),
-        ("2147483647", i32::MAX),
+        ("1ns", 1),
+        ("250us", 250_000),
+        ("1_000ms", 1_000_000_000),
+        ("1.5s", 1_500_000_000),
+        ("18446744073709551615ns", u64::MAX),
     ] {
         let source = format!("#state struct State{{n:Int32}} impl State {{#every({period}) pub fn tick(&mut self) {{}}}}");
         let module = parse(&source).unwrap();
@@ -631,15 +632,18 @@ fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
     for attr in [
         "#every",
         "#every()",
-        "#every(0)",
-        "#every(-1)",
-        "#every(2147483648)",
+        "#every(0ms)",
+        "#every(-1ms)",
+        "#every(1000)",
+        "#every(0x10)",
+        "#every(0.1ns)",
+        "#every(18446744073709551616ns)",
         "#every(1,2)",
         "#every(ms:1)",
         "#every(SECOND)",
         "#every(true)",
-        "#every(1) #every(2)",
-        "#every(1) #intrinsic(\"domain.every\")",
+        "#every(1ms) #every(2ms)",
+        "#every(1ms) #intrinsic(\"domain.every\")",
     ] {
         assert!(
             parse(&format!("impl State {{{attr} fn tick(&mut self){{}}}}")).is_err(),
@@ -647,11 +651,11 @@ fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
         );
     }
     for source in [
-        "#every(1) fn tick(s:&mut State){}",
-        "#every(1) extern fn tick(s:&mut State)",
-        "impl Trait for State {#every(1) fn tick(&mut self){}}",
-        "impl State {#every(1) fn tick(&mut self);}",
-        "impl State {#every(1) const N:Int32=1}",
+        "#every(1ms) fn tick(s:&mut State){}",
+        "#every(1ms) extern fn tick(s:&mut State)",
+        "impl Trait for State {#every(1ms) fn tick(&mut self){}}",
+        "impl State {#every(1ms) fn tick(&mut self);}",
+        "impl State {#every(1ms) const N:Int32=1}",
     ] {
         assert!(parse(source).is_err(), "{source}");
     }

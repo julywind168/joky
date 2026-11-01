@@ -62,7 +62,7 @@ fn snapshots_test(h:domain.WriteHandle<State>) @suspends {
 }
 fn timers_test(h:domain.WriteHandle<State>) @suspends {
     let timer=domain.timer(); let t=timer.handle()
-    domain.every(t,h,1,tick,strings()).unwrap()
+    domain.every(t,h,1ms,tick,strings()).unwrap()
     while domain.read_from(h.read_only(),count)!<8 {task.sleep_ms(1)}
     t.cancel(); timer.close()
 }

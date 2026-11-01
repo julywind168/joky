@@ -209,7 +209,7 @@ impl GenericContext {
             | CompilerIntrinsic::DirectoryType(ty),
         ) = &mut definition.compiler_intrinsic
         {
-            *ty =
+            **ty =
                 substitute(ty, &substitutions, types).map_err(|e| e.with_span(definition.span))?;
         }
         for param in &mut definition.params {

@@ -4,7 +4,7 @@ import joky/check
 #state
 struct Room {value:Int32,text:String}
 impl Room {
-    #every(100000)
+    #every(100000ms)
     fn tick(&mut self) {self.value+=1}
 }
 fn make(value:Int32)->Room {Room{value:value,text:"periodic state"}}
@@ -14,7 +14,7 @@ fn local()->Int32 {var room=make(0); room.tick(); room.value}
 #state
 struct Failing {value:Int32}
 impl Failing {
-    #every(1)
+    #every(1ms)
     fn tick(&mut self) {self.value=1/(self.value-10)}
 }
 fn make_failing(value:Int32)->Failing {Failing{value:value}}
