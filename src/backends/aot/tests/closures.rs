@@ -3,6 +3,31 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn concurrent_blocks_execute_relocated_entries_and_owned_results() {
+    check_arena_cps_fixture(
+        "concurrent-blocks",
+        include_str!("../../../../tests/fixtures/concurrent_blocks.jk"),
+        &[
+            ("blocks_join", "20,10,20,20", 4),
+            ("blocks_return", "40", 1),
+            ("blocks_question", "40", 1),
+            ("blocks_owned", "-1,40,1", 3),
+            ("blocks_aggregate", "39", 1),
+            ("blocks_owned_result", "-1,40,1", 3),
+            ("blocks_place_result", "40", 1),
+            ("blocks_closure_result", "39", 1),
+            ("blocks_isolated_return", "40", 1),
+            ("blocks_descendants", "40", 1),
+            ("blocks_borrowed", "19,19", 2),
+            ("blocks_mutable", "40", 1),
+            ("blocks_race", "-1,11,41,11,1", 5),
+        ],
+        |_| String::new(),
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn closure_owning_cleanup_executes_in_standalone_native_code() {
     let fixture = ScratchDir::new("closure-cleanup");
     let object = fixture.path().join("closures.o");

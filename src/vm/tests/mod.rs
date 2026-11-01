@@ -347,6 +347,8 @@ mod executor_tests;
 #[path = "tasks/json_tcp_tests.rs"]
 mod json_tcp_tests;
 
+#[path = "tasks/concurrent_block_tests.rs"]
+mod concurrent_block_tests;
 #[path = "tasks/race_tests.rs"]
 mod race_tests;
 

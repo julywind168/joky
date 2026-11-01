@@ -1,20 +1,15 @@
 import joky/task
 
-fn complete<T, F: FnOnce() @suspends -> T>(operation: F) @suspends -> Option<T> {
-    Some(operation())
-}
-fn expired<T>(milliseconds: UInt64) @suspends -> Option<T> {
-    task.sleep_ms(milliseconds)
-    None
-}
-
 fn with_timeout<T, F: FnOnce() @suspends -> T>(
     milliseconds: UInt64,
     operation: F
 ) @suspends -> Option<T> {
     race {
-        | complete(operation)
-        | expired::<T>(milliseconds)
+        | { Some(operation()) }
+        | {
+            task.sleep_ms(milliseconds)
+            None
+        }
     }
 }
 

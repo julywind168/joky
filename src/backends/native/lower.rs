@@ -3236,6 +3236,22 @@ fn lower_cps(
                 .ins()
                 .call(refs["__joky_cps_finish_place_v1"], &[frame, key]);
         }
+        if let Some(result) = plan
+            .result
+            .as_ref()
+            .filter(|s| s.ty.is_call_aggregate() && s.index != info.aggregate_result_offset())
+        {
+            // Inferred results retain a separate cleanup slot. Publish the ABI
+            // lanes after local cleanup, without overwriting that retained value.
+            let destination = Slot {
+                index: info.aggregate_result_offset(),
+                ty: result.ty.clone(),
+            };
+            for (source, destination) in result.scalars().zip(destination.scalars()) {
+                let value = load(builder, slots, &source);
+                store(builder, slots, &destination, value);
+            }
+        }
         let done = builder.ins().iconst(types::I32, DONE as i64);
         builder
             .ins()

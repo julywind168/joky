@@ -141,8 +141,8 @@ impl FunctionPlan {
             ));
         };
         let scope = frame.scope;
-        let (entry, capture_slots) =
-            self.nested_task(body, *span, Type::Unit, vars, functions, types)?;
+        let (entry, capture_slots, _) =
+            self.nested_task(body, *span, Some(Type::Unit), vars, functions, types)?;
         self.emit(Op::TaskBranch {
             scope,
             entry,
@@ -155,11 +155,13 @@ impl FunctionPlan {
         &mut self,
         body: &Expr,
         span: Span,
-        ret: Type,
+        ret: Option<Type>,
         vars: &HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
-    ) -> Result<(String, Vec<Option<Slot>>), Error> {
+    ) -> Result<(String, Vec<Option<Slot>>, Type), Error> {
+        let infer_return = ret.is_none();
+        let ret = ret.unwrap_or(Type::Unit);
         let captures = free_captures(body, vars);
         let entry = format!(
             "__joky_task_{}",
@@ -195,7 +197,7 @@ impl FunctionPlan {
             },
             span,
         };
-        let info = FunctionInfo {
+        let mut info = FunctionInfo {
             every: None,
             closure_entry: false,
             noescape: false,
@@ -229,27 +231,46 @@ impl FunctionPlan {
             .borrow_mut()
             .when_parents
             .insert(task_def.name.clone(), self.when_function.clone());
-        let plan = FunctionPlan::new(
+        let plan = FunctionPlan::new_with_return_inference(
             &task_def,
             functions,
             types,
             &self.nominals,
             self.generics.clone(),
             self.instantiation_depth,
+            infer_return,
         )?;
+        let ret = plan.return_type.clone();
+        info.signature.ret = ret.clone();
         // Captured values snapshot at registration: Copy inputs read the
         // current slot contents, owning inputs move out of the parent slot.
-        let mut capture_slots = Vec::new();
-        for (name, _) in &captures {
-            let value = vars.get(name).and_then(|binding| binding.slot.clone());
-            extend_argument(&mut capture_slots, value);
-        }
+        let capture_args: Vec<_> = captures
+            .iter()
+            .map(|(name, _)| Expr::Ident {
+                name: name.clone(),
+                span,
+            })
+            .collect();
+        let capture_slots = self
+            .checked_arguments(
+                &entry,
+                &capture_args,
+                &info.signature.params,
+                None,
+                span,
+                |_| None,
+                &mut vars.clone(),
+                functions,
+                true,
+                types,
+            )?
+            .expect("capture identifiers cannot diverge");
         self.nested.push(NestedTask {
             name: entry.clone(),
             info,
             plan,
         });
-        Ok((entry, capture_slots))
+        Ok((entry, capture_slots, ret))
     }
 
     /// Route an abrupt exit through every task scope it crosses: scopes

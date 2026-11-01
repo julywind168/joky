@@ -552,6 +552,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         let Expr::Concurrent {
             kind,
@@ -576,12 +577,27 @@ impl FunctionPlan {
                 format!("{keyword} requires at least one branch"),
             ));
         }
+        let empty_args = Vec::new();
         let mut planned = Vec::with_capacity(branches.len());
         let mut result_type = None;
         for (branch_index, source_branch) in branches.iter().enumerate() {
             let resolved = self.member_call(source_branch, vars, functions, types)?;
             let branch = resolved.as_ref().unwrap_or(source_branch);
+            let mut captures = None;
             let (name, params, ret, callee, args, branch_span, indirect) = match branch {
+                Expr::Block { span, .. } => {
+                    let expected = if *kind == ConcurrentKind::Race {
+                        expected.or(result_type.as_ref())
+                    } else if let Some(Type::Tuple(tuple)) = expected {
+                        tuple.elements.get(branch_index)
+                    } else {
+                        None
+                    };
+                    let (name, values, ret) =
+                        self.nested_task(branch, *span, expected.cloned(), vars, functions, types)?;
+                    captures = Some(values);
+                    (name, Vec::new(), ret, "block", &empty_args, span, None)
+                }
                 Expr::Invoke { callee, args, span } => {
                     let Flow::Value(value) = self.expr(callee, vars, functions, suspends, types)?
                     else {
@@ -664,7 +680,7 @@ impl FunctionPlan {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
-                        format!("{keyword} branches must be function calls"),
+                        format!("{keyword} branches must be function calls or blocks"),
                     ))
                 }
             };
@@ -688,23 +704,28 @@ impl FunctionPlan {
                 }
                 result_type = Some(ret.clone());
             }
-            let Some(values) = self.checked_arguments(
-                callee,
-                args,
-                &params,
-                None,
-                *branch_span,
-                |index| {
-                    args.get(index + 1)
-                        .or_else(|| branches.get(branch_index + 1))
-                },
-                vars,
-                functions,
-                suspends,
-                types,
-            )?
-            else {
-                return Ok(Flow::Diverged);
+            let values = if let Some(values) = captures {
+                values
+            } else {
+                let Some(values) = self.checked_arguments(
+                    callee,
+                    args,
+                    &params,
+                    None,
+                    *branch_span,
+                    |index| {
+                        args.get(index + 1)
+                            .or_else(|| branches.get(branch_index + 1))
+                    },
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                )?
+                else {
+                    return Ok(Flow::Diverged);
+                };
+                values
             };
             let done = self.slot(Type::Bool)?;
             let result = if *kind == ConcurrentKind::Join && ret != Type::Unit {

@@ -19,6 +19,9 @@ pub(super) fn has_loop_break(body: &Expr) -> bool {
         match expr {
             Expr::Break { .. } => return true,
             Expr::While { .. } | Expr::AnonymousFunction(_) | Expr::Branch { .. } => {}
+            Expr::Concurrent { branches, .. } => {
+                pending.extend(branches.iter().filter(|b| !matches!(b, Expr::Block { .. })));
+            }
             _ => pending.extend(closures::children(expr)),
         }
     }

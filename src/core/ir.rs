@@ -1750,6 +1750,31 @@ impl FunctionPlan {
         if let Some(exit) = plan.return_label {
             plan.emit(Op::Label(exit));
         }
+        if infer_return && f.suspends && plan.return_type.is_call_aggregate() {
+            if let Some(source) = plan.result.clone() {
+                // Inference discovers the result after local slots have been
+                // assigned. Keep its cleanup storage disjoint from the fixed
+                // CPS output region, which is published only at completion.
+                let width = source.ty.value_lanes().len();
+                let output_end = parameter_slots.checked_add(width);
+                let start = output_end.map(|end| plan.slot_count.max(end));
+                let end = start.and_then(|start| start.checked_add(width));
+                if end.is_none_or(|end| end >= i32::MAX as usize / 8) {
+                    return Err(type_error(
+                        &f.span,
+                        ErrorCode::InvalidState,
+                        "CPS frame is too large",
+                    ));
+                }
+                let result = Slot {
+                    index: start.unwrap(),
+                    ty: source.ty.clone(),
+                };
+                plan.slot_count = end.unwrap();
+                plan.emit(Op::Copy(result.clone(), source));
+                plan.result = Some(result);
+            }
+        }
         plan.resolve_cleanups()?;
         Ok(plan)
     }
@@ -2650,7 +2675,9 @@ impl FunctionPlan {
             Expr::Invoke { .. } | Expr::Call { .. } => {
                 self.call_expr(expr, vars, functions, suspends, types, expected)
             }
-            Expr::Concurrent { .. } => self.concurrent_expr(expr, vars, functions, suspends, types),
+            Expr::Concurrent { .. } => {
+                self.concurrent_expr(expr, vars, functions, suspends, types, expected)
+            }
             Expr::Isolate { .. } => {
                 self.isolate_expr(expr, vars, functions, suspends, types, expected)
             }

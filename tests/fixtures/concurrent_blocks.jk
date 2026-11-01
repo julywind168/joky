@@ -1,0 +1,144 @@
+import joky/drop.{type Drop}
+import joky/fixed_array.{type FixedArray}
+import joky/task
+extern fn record(value: Int32) -> Int32
+extern fn delayed_value(value: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
+
+struct Resource { id: Int32, text: String }
+impl Drop for Resource {
+    fn drop(&mut self) { record(self.id); }
+}
+fn resource(id: Int32) -> Resource {
+    let value = Resource { id, text: "owned capture" }
+    record(-id)
+    value
+}
+
+fn blocks_join() @suspends -> Int32 {
+    var number = 10
+    let (a, b) = join {
+        | {
+            record(number)
+            delayed_value(20)
+        }
+        | delayed_value({ number = 99; record(20) })
+    }
+    assert_eq(number, 99)
+    a + b
+}
+
+fn blocks_return() @suspends -> Int32 {
+    let (a, b) = join {
+        | { delayed_value(40); return 20 }
+        | {
+            let (value, _) = join { | { 22 } | {} }
+            value
+        }
+    }
+    a + b
+}
+
+fn blocks_question() @suspends -> Int32 {
+    let (a, b): (Option<Int32>, Int32) = join {
+        | {
+            delayed_value(40)
+            let value: Option<Int32> = None
+            Some(value?)
+        }
+        | { 42 }
+    }
+    match a { Some(_) => 0, None => b }
+}
+
+fn blocks_owned() @suspends -> Int32 {
+    let owner = resource(1)
+    let (a, b) = join {
+        | { delayed_value(40) + owner.id }
+        | { 0 }
+    }
+    a + b
+}
+
+fn blocks_aggregate() @suspends -> Int32 {
+    let (pair, b) = join {
+        | { let number = delayed_value(39); ("ok", number) }
+        | { 0 }
+    }
+    let (text, number) = pair
+    number + int32(text.byte_length()) + b
+}
+
+fn blocks_owned_result() @suspends -> Int32 {
+    let (value, _) = join {
+        | { let owner = resource(1); delayed_value(40); return owner }
+        | {}
+    }
+    value.id + 41
+}
+
+fn blocks_place_result() @suspends -> Int32 {
+    let (value, _) = join {
+        | { delayed_value(40); let values: FixedArray<String, 2> = ["ok", "owned"]; values }
+        | {}
+    }
+    int32(value.borrow_ref(0).byte_length()) + 40
+}
+
+fn blocks_closure_result() @suspends -> Int32 {
+    let operation = move || @suspends { let number = delayed_value(39); ("ok", number) }
+    let (text, number) = operation()
+    number + int32(text.byte_length())
+}
+
+fn blocks_isolated_return() @suspends -> Int32 {
+    let result: Result<Int32, task.Failure> = isolate {
+        race { | { delayed_value(40); return 42 } }
+    }
+    result.unwrap()
+}
+
+fn blocks_descendants() @suspends -> Int32 {
+    let (a, b) = join {
+        | { branch { delayed_value(40); }; return 20 }
+        | { 22 }
+    }
+    a + b
+}
+
+fn blocks_borrowed() @suspends -> Int32 {
+    let number = 1
+    let view = &number
+    let (a, b) = join {
+        | { delayed_value(19) + *view }
+        | { delayed_value(19) + *view }
+    }
+    a + b
+}
+
+fn blocks_mutable() @suspends -> Int32 {
+    var number = 1
+    let view = &mut number
+    join {
+        | { *view = delayed_value(40) }
+        | {}
+    }
+    number + 1
+}
+
+fn blocks_race() @suspends -> Int32 {
+    let owner = resource(1)
+    race {
+        | { while true { delayed_value(owner.id + 10); } }
+        | { delayed_value(41) }
+    }
+}
+
+fn blocks_failure() @suspends -> Int32 {
+    let owner = resource(1)
+    let (a, b) = join {
+        | { delayed_value(40); fail_now(); owner.id }
+        | { 1 }
+    }
+    a + b
+}

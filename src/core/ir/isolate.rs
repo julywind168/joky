@@ -4,6 +4,12 @@ use super::*;
 fn exits(expr: &Expr, loops: usize) -> Result<(), Error> {
     match expr {
         Expr::AnonymousFunction(_) | Expr::Branch { .. } => return Ok(()),
+        Expr::Concurrent { branches, .. } => {
+            for branch in branches.iter().filter(|b| !matches!(b, Expr::Block { .. })) {
+                exits(branch, loops)?;
+            }
+            return Ok(());
+        }
         Expr::Return { span, .. } | Expr::Break { span } | Expr::Continue { span }
             if matches!(expr, Expr::Return { .. }) || loops == 0 =>
         {
@@ -98,7 +104,8 @@ impl FunctionPlan {
             ));
         }
         let result_ty = self.isolate_result(&ret, types)?;
-        let (name, args) = self.nested_task(body, *span, ret.clone(), vars, functions, types)?;
+        let (name, args, _) =
+            self.nested_task(body, *span, Some(ret.clone()), vars, functions, types)?;
         let result = (ret != Type::Unit)
             .then(|| self.slot(ret.clone()))
             .transpose()?;
