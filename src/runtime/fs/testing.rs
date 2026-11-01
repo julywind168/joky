@@ -1,4 +1,4 @@
-//! Explicit test inputs, separate from immutable production process snapshots.
+//! Explicit test inputs and output capture, separate from production process snapshots.
 use super::{worker::Native, FileHandle, FileSystem, FsError};
 use crate::runtime::process::{ProcessContext, Value};
 use std::{
@@ -10,6 +10,7 @@ use std::{
 
 pub(super) struct Inputs(Mutex<State>);
 struct State {
+    output: [CapturedOutput; 2],
     arguments: Vec<OsString>,
     environment: BTreeMap<OsString, OsString>,
     directory: PathBuf,
@@ -21,6 +22,7 @@ struct State {
 impl Inputs {
     pub(super) fn new(directory: PathBuf) -> Self {
         Self(Mutex::new(State {
+            output: Default::default(),
             arguments: Vec::new(),
             environment: BTreeMap::new(),
             directory,
@@ -33,6 +35,23 @@ impl Inputs {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.0.lock().unwrap_or_else(|error| error.into_inner())
     }
+    pub(super) fn write_output(
+        &self,
+        stderr: bool,
+        text: &str,
+        emit: impl FnOnce() -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        // Serialize the tee and snapshot together, including parallel writers.
+        let mut state = self.lock();
+        if let Err(error) = emit() {
+            // write_all can fail after partial progress. Never publish a
+            // supposedly complete snapshot after such a failure.
+            state.output[usize::from(stderr)].failed = true;
+            return Err(error);
+        }
+        state.output[usize::from(stderr)].append(text);
+        Ok(())
+    }
     pub(super) fn read(&self, kind: u64, index: u64, key: &str) -> Result<Value, FsError> {
         let mut state = self.lock();
         state.freeze()?.read(kind, index, key)
@@ -44,6 +63,9 @@ impl Inputs {
         value: &str,
     ) -> Result<Option<String>, FsError> {
         let mut state = self.lock();
+        if matches!(kind, 5 | 6) {
+            return state.output[(kind - 5) as usize].snapshot().map(Some);
+        }
         // Inspecting the test directory is setup, not an application input read.
         if kind == 4 {
             return state
@@ -112,6 +134,41 @@ impl Inputs {
         Ok(None)
     }
 }
+
+#[derive(Default)]
+struct CapturedOutput {
+    text: String,
+    overflow: bool,
+    failed: bool,
+}
+impl CapturedOutput {
+    const LIMIT: usize = 1024 * 1024;
+
+    fn append(&mut self, text: &str) {
+        if self.overflow || self.failed {
+            return;
+        }
+        if text.len() > Self::LIMIT - self.text.len() {
+            self.overflow = true;
+            self.text.clear();
+        } else {
+            self.text.push_str(text);
+        }
+    }
+
+    fn snapshot(&self) -> Result<String, FsError> {
+        if self.failed {
+            Err(FsError::new(
+                10,
+                "Test output is incomplete after a write failure",
+            ))
+        } else if self.overflow {
+            Err(FsError::new(8, "Test output exceeds 1 MiB"))
+        } else {
+            Ok(self.text.clone())
+        }
+    }
+}
 impl State {
     fn freeze(&mut self) -> Result<&ProcessContext, FsError> {
         if self.snapshot.is_none() {
@@ -174,6 +231,35 @@ impl FileHandle for Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_output_bounds_snapshots_and_write_failures_are_independent() {
+        let inputs = Inputs::new(std::env::current_dir().unwrap());
+        inputs.write_output(false, "中\0🙂", || Ok(())).unwrap();
+        let first = inputs.configure(5, "", "").unwrap().unwrap();
+        inputs.configure(3, "", "still configurable").unwrap();
+        inputs.write_output(false, "\n", || Ok(())).unwrap();
+        assert_eq!(first, "中\0🙂");
+        assert_eq!(inputs.configure(5, "", "").unwrap().unwrap(), "中\0🙂\n");
+        inputs.read(0, 0, "").unwrap();
+        inputs
+            .write_output(true, &"x".repeat(CapturedOutput::LIMIT), || Ok(()))
+            .unwrap();
+        assert_eq!(
+            inputs.configure(6, "", "").unwrap().unwrap().len(),
+            CapturedOutput::LIMIT
+        );
+        inputs.write_output(true, "", || Ok(())).unwrap();
+        inputs.write_output(true, "🙂", || Ok(())).unwrap();
+        for _ in 0..2 {
+            assert_eq!(inputs.configure(6, "", "").unwrap_err().code(), 8);
+        }
+        assert_eq!(inputs.configure(5, "", "").unwrap().unwrap(), "中\0🙂\n");
+        assert!(inputs
+            .write_output(false, "lost", || Err(std::io::ErrorKind::BrokenPipe.into()))
+            .is_err());
+        assert_eq!(inputs.configure(5, "", "").unwrap_err().code(), 10);
+    }
 
     #[test]
     fn test_input_limits_preserve_the_previous_configuration() {

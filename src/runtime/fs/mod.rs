@@ -73,6 +73,18 @@ pub(crate) fn enter(service: Option<FileService>) -> Scope {
     Scope(CURRENT.with(|s| s.replace(service)))
 }
 
+pub(crate) fn write_output(
+    stderr: bool,
+    text: &str,
+    emit: impl FnOnce() -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let service = CURRENT.with(|s| s.borrow().clone());
+    match service {
+        Some(service) => service.write_output(stderr, text, emit),
+        None => emit(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub(crate) enum Operation {

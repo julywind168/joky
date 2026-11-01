@@ -826,6 +826,7 @@ fn run(shared: Arc<Shared>, worker: usize) {
             state.generation
         };
         CURRENT.with(|c| c.replace(Some(task.clone())));
+        let _files = crate::runtime::fs::enter(file_service(task.code.as_ref()));
         WAITING.with(|w| w.set(false));
         DEADLINE.with(|d| d.set(None));
         let _storage = Guard::enter(&task.root);
@@ -1509,6 +1510,18 @@ mod publication_tests {
     }
 }
 
+fn file_service(code: &(dyn Any + Send + Sync)) -> Option<crate::runtime::fs::FileService> {
+    if let Some(code) = code.downcast_ref::<crate::vm::parallel::Code>() {
+        match code {
+            crate::vm::parallel::Code::Native(e) => e.files.clone(),
+            crate::vm::parallel::Code::Interpreted(e) => e.files.clone(),
+        }
+    } else {
+        code.downcast_ref::<super::control::Files>()
+            .and_then(|files| files.0.clone())
+    }
+}
+
 pub(crate) fn control() -> Result<Arc<super::control::Core>, Error> {
     let task = CURRENT
         .with(|c| c.borrow().clone())
@@ -1535,16 +1548,7 @@ pub(crate) fn control() -> Result<Arc<super::control::Core>, Error> {
             "Local control driver limit exceeded",
         ));
     }
-    let files = if let Some(code) = task.code.downcast_ref::<crate::vm::parallel::Code>() {
-        match code {
-            crate::vm::parallel::Code::Native(e) => e.files.clone(),
-            crate::vm::parallel::Code::Interpreted(e) => e.files.clone(),
-        }
-    } else {
-        task.code
-            .downcast_ref::<super::control::Files>()
-            .and_then(|files| files.0.clone())
-    };
+    let files = file_service(task.code.as_ref());
     let mut parent = task.clone();
     while let Some(next) = parent.parent.as_ref().and_then(Weak::upgrade) {
         parent = next;

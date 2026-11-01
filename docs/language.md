@@ -2484,11 +2484,25 @@ joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture
 | `testing.remove_env(name: String)` | `Result<Unit, fs.IoError>`；删除环境变量，不存在时也成功 |
 | `testing.set_stdin(text: String)` | `Result<Unit, fs.IoError>`；整体替换 UTF-8 输入文本，允许空文本和 NUL |
 | `testing.temp_dir()` | `Result<String, fs.IoError>`；获取当前测试临时目录，不冻结输入 |
+| `testing.stdout()` | `Result<String, fs.IoError>`；读取当前累计标准输出的独立快照，不清空、不冻结输入 |
+| `testing.stderr()` | `Result<String, fs.IoError>`；读取当前累计标准错误输出的独立快照，不清空、不冻结输入 |
 
 每个测试开始时，参数列表与环境映射为空，stdin 为 EOF，不继承父进程参数、环境变量或终端输入。
 应用继续使用 `process.args()`、`process.env()`、`process.current_dir()`、`process.resolve_path()` 和
-`io.stdin()` / `fs.stdin()`，无需调用 testing 模块。标准输出捕获仍由测试运行器负责；
-当前没有在测试函数内查询捕获 stdout/stderr 的 API。
+`io.stdin()` / `fs.stdin()`，无需调用 testing 模块。
+
+每个测试的 stdout / stderr 初始为空，分别记录 `print` / `println`、`eprint` / `eprintln`
+产生的 UTF-8 文本，保留换行、NUL 与 Unicode。可用 `assert_eq(testing.stdout()!, expected)`
+断言输出，完整示例见 [testing_output.jk](../examples/testing_output.jk)。读取不清空，旧快照也不随新输出改变；
+没有清空接口。输出查询在输入冻结前后都可用，不冻结输入。
+并发输出按实际写入次序累计，单次输出调用不会互相拆分；查询仅保证包含已经完成的写入，
+需要完整任务输出时先 join 或结束 scope。
+
+两路输出各限 1 MiB（按 UTF-8 字节计），恰好达到上限可读取；任何一次写入使累计内容超限后，
+该路的后续查询一直返回 `fs.ErrorKind.LimitExceeded`，不会返回截断文本，也不影响另一条流。
+超限不阻止真实输出继续写出。运行器原有失败输出报告和 `--nocapture` 行为不变。
+真实输出写入失败仍按原有 IO 错误终止执行；嵌入宿主若随后继续查询，该路返回 `SystemFailure`，不声称快照完整。
+捕获仅覆盖 Joky 标准输出 API，不包括外部子进程、宿主直接写文件描述符、编译器诊断或测试报告。
 
 在首次 `process` 查询（即使查询返回错误）或首次打开 stdin 时，整组输入冻结；
 之后不能再修改配置，宿主拒绝更新并返回 `fs.ErrorKind.Busy`。先完成 setup，再调用应用；可以将 setup 写成普通辅助函数。
@@ -2506,10 +2520,10 @@ joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture
 父进程持有临时目录，在正常结束、运行时失败和硬超时终止子进程后删除；普通返回路径的清理错误会报告为失败。
 `--list` 不创建测试目录；临时文件没有自动保留选项。强制终止父进程或机器崩溃不保证清理。
 
-普通 `run/build` 和默认嵌入 VM 不授予测试配置能力；这些设置函数及 `temp_dir` 返回 `Unsupported`。
+普通 `run/build` 和默认嵌入 VM 不授予测试上下文能力；这些设置和查询函数均返回 `Unsupported`。
 Rust 嵌入测试可显式使用 `FileService::testing(existing_directory, limits)`，由宿主管理目录生命周期；
 克隆服务共享同一上下文，不同服务独立，配置不会修改操作系统环境、argv、当前目录或实际 stdin。
-若随后调用 `with_process_context`，该服务改用不可变过程快照并关闭测试配置接口，文件与 stdin 后端保留。
+若随后调用 `with_process_context`，该服务改用不可变过程快照并关闭测试配置、输出捕获和查询接口，文件与 stdin 后端保留。
 
 ## Joky 项目模式
 

@@ -1,4 +1,4 @@
-// Test setup is an explicit host capability; ordinary programs receive Unsupported.
+// Test setup and output snapshots require a host capability; ordinary programs receive Unsupported.
 import joky/array.{type Array}
 import joky/fs.{type IoError, type ErrorKind}
 import joky/result.{type Result, Ok, Err}
@@ -58,11 +58,18 @@ pub fn set_stdin(text: String) @suspends -> Result<Unit, IoError> {
 }
 // Unlike process.current_dir, this setup query does not freeze inputs.
 pub fn temp_dir() @suspends -> Result<String, IoError> {
-    var result = __test_input(4, "", "")
+    text_snapshot(4)
+}
+// Read cumulative output without clearing it or freezing application inputs.
+pub fn stdout() @suspends -> Result<String, IoError> { text_snapshot(5) }
+pub fn stderr() @suspends -> Result<String, IoError> { text_snapshot(6) }
+
+fn text_snapshot(kind: UInt64) @suspends -> Result<String, IoError> {
+    var result = __test_input(kind, "", "")
     let code = __fs_code(&mut result)
     if code != 0 { return Err(error(&mut result, code)) }
     match String.from_utf8(__fs_bytes(&mut result)) {
         Ok(value) => Ok(value)
-        Err(_) => Err(IoError { kind: ErrorKind.InvalidInput, message: "Test directory is not valid UTF-8" })
+        Err(_) => Err(IoError { kind: ErrorKind.InvalidInput, message: "Test snapshot is not valid UTF-8" })
     }
 }

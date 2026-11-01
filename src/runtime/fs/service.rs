@@ -43,7 +43,7 @@ impl FileService {
         ))
     }
     /// Attach explicit startup inputs; clones and child tasks share this immutable snapshot.
-    /// Replaces test configuration capability while retaining the file/stdin backend.
+    /// Replaces test configuration and capture while retaining the file/stdin backend.
     pub fn with_process_context(
         mut self,
         context: crate::runtime::process::ProcessContext,
@@ -52,7 +52,7 @@ impl FileService {
         self.2 = None;
         self
     }
-    /// Grant a test its own empty inputs and a filesystem rooted at an existing directory.
+    /// Grant empty test inputs, bounded output capture, and a filesystem at an existing directory.
     /// The caller owns directory cleanup. Paths retain native filesystem semantics.
     pub fn testing(base: impl AsRef<Path>, limits: FileLimits) -> Result<Self, Error> {
         let directory = base
@@ -97,6 +97,17 @@ impl FileService {
             .as_ref()
             .ok_or_else(|| FsError::new(1, "Host does not provide a test context"))?
             .configure(kind, key, value)
+    }
+    pub(super) fn write_output(
+        &self,
+        stderr: bool,
+        text: &str,
+        emit: impl FnOnce() -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        match &self.2 {
+            Some(inputs) => inputs.write_output(stderr, text, emit),
+            None => emit(),
+        }
     }
     pub(crate) fn standalone() -> Result<Self, Error> {
         let context = crate::runtime::process::standalone();

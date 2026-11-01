@@ -2874,6 +2874,12 @@ CPS ABI、结果预算与 Parallel 控制桥；原有 FS 操作编号保持不�
 
 Inputs 用互斥锁保护设置和首次读取。首次 process 查询或 stdin 获取将配置冻结为 ProcessContext，
 随后只读并拒绝新配置，保证 process.args 的多次宿主查询使用同一快照。
+`TestInput` 子操作 5 / 6 返回 stdout / stderr 的累计快照，不参与输入冻结；无需新增 FS 操作或修改 V1 ABI。
+标准输出 host 在真实流锁内，经当前 FileService 将成功写入的文本同步追加到测试上下文。
+真实输出与副本更新共用上下文锁，快照不会看到半次写入；每路最多保留 1 MiB，超限标记持续返回 LimitExceeded。
+同步 VM 调用、Local continuation 轮询和 Parallel worker 均绑定自己的服务作用域并在退出时恢复，
+冻结代码和服务克隆共享输出；无测试能力的入口仅写真实流。父进程的管道捕获独立保留，
+因此 `--nocapture` 与失败日志不依赖快照读取，也不把测试报告写入应用输出。
 内存 stdin 沿用 FileSystem / FileHandle 与原有 worker、取消及关闭协议；游标和独占读者标记属于上下文，
 不使用生产 stdin 的进程级标记。不同服务彼此隔离，服务克隆和共享它的 VM 看见同一上下文。
 父进程创建临时目录并通过内部 worker 参数显式传递；子进程仅将其作为文件服务根和逻辑过程目录，

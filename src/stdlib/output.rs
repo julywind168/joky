@@ -60,14 +60,18 @@ pub unsafe extern "C" fn joky_io_write_stderr_v2(text: *const u8) -> i32 {
 unsafe fn write(text: *const u8, stderr: bool) -> i32 {
     let result = std::panic::catch_unwind(|| {
         let text = crate::runtime::string::borrow(text)?;
-        fn emit(mut output: impl Write, bytes: &[u8]) -> std::io::Result<()> {
-            output.write_all(bytes)?;
-            output.flush()
+        fn emit(mut output: impl Write, text: &str, stderr: bool) -> std::io::Result<()> {
+            // Acquire the real stream before the capture lock, including when
+            // an embedding caller already holds its reentrant stdio lock.
+            crate::runtime::fs::write_output(stderr, text, || {
+                output.write_all(text.as_bytes())?;
+                output.flush()
+            })
         }
         let result = if stderr {
-            emit(std::io::stderr().lock(), text.as_bytes())
+            emit(std::io::stderr().lock(), text, true)
         } else {
-            emit(std::io::stdout().lock(), text.as_bytes())
+            emit(std::io::stdout().lock(), text, false)
         };
         result.map_err(|error| {
             Error::new_with_code(ErrorPhase::Runtime, ErrorCode::IoError, error.to_string())

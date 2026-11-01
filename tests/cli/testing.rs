@@ -369,8 +369,68 @@ fn main() @suspends {
     assert(testing.set_args(["x"]).err()!.kind == fs.ErrorKind.Unsupported, "arguments require the capability")
     assert(testing.set_stdin("input").err()!.kind == fs.ErrorKind.Unsupported, "stdin requires the capability")
     assert(testing.temp_dir().err()!.kind == fs.ErrorKind.Unsupported, "directory requires the capability")
+    assert(testing.stdout().err()!.kind == fs.ErrorKind.Unsupported, "stdout requires the capability")
+    assert(testing.stderr().err()!.kind == fs.ErrorKind.Unsupported, "stderr requires the capability")
 }
+
 "#);
     #[cfg(unix)]
     work.assert_all_backends("ordinary.jk", &["--no-prelude", "--parallel"], b"", 0);
+}
+
+#[test]
+fn test_output_snapshots_preserve_capture_and_nocapture_behavior() {
+    let work = Workspace::new();
+    work.write(
+        "output_test.jk",
+        include_str!("../../examples/testing_output.jk"),
+    );
+    for backend in [vec![], vec!["--interpreter"]] {
+        for nocapture in [false, true] {
+            let mut args = vec!["test", "output_test.jk"];
+            args.extend(backend.clone());
+            if nocapture {
+                args.push("--nocapture");
+            }
+            let output = work.cli(&args);
+            success(&output);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stdout.contains("2 passed; 0 failed"), "{stdout}");
+            assert_eq!(stdout.contains("Hello, Joky!"), nocapture, "{stdout}");
+            assert_eq!(stderr.contains("note: greeted"), nocapture, "{stderr}");
+        }
+    }
+    work.write("failure.jk", "import joky/testing\n#test fn fails() @suspends { print(\"visible output\"); eprint(\"visible error\"); assert_eq(testing.stdout()!, \"wrong\") }");
+    let output = work.cli(&["test", "failure.jk"]);
+    failed_test(&output, "visible output");
+    failed_test(&output, "visible error");
+    failed_test(&output, "expected: \"wrong\"");
+}
+
+#[test]
+fn test_output_snapshots_reject_overflow_without_stopping_output() {
+    let work = Workspace::new();
+    let chunk = "x".repeat(1024);
+    work.write("limit.jk", &format!(r#"
+import joky/testing
+import joky/fs
+#test fn limits() @suspends {{
+    var n = 0
+    while n < 1024 {{ print("{chunk}"); n += 1 }}
+    assert_eq(testing.stdout()!.byte_length(), 1048576)
+    print("")
+    assert_eq(testing.stdout()!.byte_length(), 1048576)
+    print("中")
+    assert(testing.stdout().err()!.kind == fs.ErrorKind.LimitExceeded, "never return truncated output")
+    assert(testing.stdout().err()!.kind == fs.ErrorKind.LimitExceeded, "overflow is sticky")
+    eprint("stderr remains available")
+    assert_eq(testing.stderr()!, "stderr remains available")
+}}
+"#));
+    for backend in [vec![], vec!["--interpreter"]] {
+        let mut args = vec!["test", "limit.jk"];
+        args.extend(backend);
+        success(&work.cli(&args));
+    }
 }

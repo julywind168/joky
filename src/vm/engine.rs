@@ -55,6 +55,7 @@ macro_rules! scalar_calls {
         $($(#[doc = concat!("Call a synchronous `", stringify!($variant),
             "` export with the declared parameter types.")]
         pub fn $method(&self, name: &str, $($arg: $arg_ty),*) -> Result<$rust, Error> {
+            let _files = crate::runtime::fs::enter(self.files.clone());
             let params = &[$(Type::$param),*];
             if self.mode == VmMode::Interpreter {
                 return match self.call_interpreter_values(
@@ -1298,6 +1299,7 @@ impl VmEngine {
     }
 
     fn call_text(&self, name: &str, input: Option<&str>) -> Result<String, Error> {
+        let _files = crate::runtime::fs::enter(self.files.clone());
         self.text_signature(name, input, false)?;
         if let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() {
             let args: Vec<_> = input
@@ -1474,6 +1476,7 @@ impl VmEngine {
     }
 
     pub fn call_unit_0(&self, name: &str) -> Result<(), Error> {
+        let _files = crate::runtime::fs::enter(self.files.clone());
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[]);
         }
@@ -1482,6 +1485,7 @@ impl VmEngine {
         Ok(())
     }
     pub fn call_unit_1(&self, name: &str, a: i32) -> Result<(), Error> {
+        let _files = crate::runtime::fs::enter(self.files.clone());
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[a]);
         }
@@ -1490,6 +1494,7 @@ impl VmEngine {
         Ok(())
     }
     pub fn call_unit_2(&self, name: &str, a: i32, b: i32) -> Result<(), Error> {
+        let _files = crate::runtime::fs::enter(self.files.clone());
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[a, b]);
         }

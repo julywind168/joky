@@ -97,6 +97,7 @@ cargo run -- test examples/testing.jk --filter threshold
 cargo run -- test tests/joky --list
 cargo run -- test tests/joky
 cargo run -- test examples/testing_inputs.jk
+cargo run -- test examples/testing_output.jk
 ```
 
 [完整示例](examples/testing.jk)还包含捕获局部阈值的流水线和 `@suspends` 测试；
@@ -104,6 +105,8 @@ cargo run -- test examples/testing_inputs.jk
 每个测试使用独立进程和临时目录，失败后继续；默认超时 30 秒，可用 `--timeout-ms` 调整。
 [输入注入示例](examples/testing_inputs.jk)用 `joky/testing` 设置参数、环境和文本 stdin，
 再用普通 `process` / `io` / `fs` API 运行应用并检查输出文件；临时文件由父进程清理。
+[输出断言示例](examples/testing_output.jk)用 `testing.stdout()` / `testing.stderr()` 查询累计输出，
+再用 `assert_eq` 检查内容；查询不清空，`--nocapture` 仍可显示应用输出。
 详细发现范围、诊断与首版限制见[原生测试](docs/language.md#原生测试)。
 编译器内部、拒绝诊断、ABI 和资源清理仍由 Rust 测试负责。
 

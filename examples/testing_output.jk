@@ -1,0 +1,33 @@
+import joky/testing
+import joky/io
+import joky/task
+
+fn greet() @suspends {
+    var input = io.stdin()!
+    let name = input.read_line(128)!.unwrap_or("guest")
+    input.close()!
+    print("Hello, ")
+    task.yield_now()
+    println("{name}!")
+}
+
+#test
+fn greets_user() @suspends {
+    assert_eq(testing.stdout()!, "")
+    testing.set_stdin("Joky\n")!
+    greet()
+    let first = testing.stdout()!
+    assert_eq(first, "Hello, Joky!\n")
+    assert_eq(testing.stdout()!, first)
+    assert_eq(testing.stderr()!, "")
+    eprint("note: ")
+    eprintln("greeted")
+    assert_eq(testing.stderr()!, "note: greeted\n")
+    assert_eq(testing.stdout()!, first)
+}
+
+#test
+fn starts_with_empty_output() @suspends {
+    assert_eq(testing.stdout()!, "")
+    assert_eq(testing.stderr()!, "")
+}
