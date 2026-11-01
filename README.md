@@ -40,7 +40,8 @@ fn main() {
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
   可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。
   关闭 prelude 时显式导入 `joky/io.{print, println}`；CLI 不再预注册类型专用打印宿主。
-- `import joky/task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
+- 时长字面量 `250ms` / `1.5s` 产生独立的 `joky/time.Duration`，支持纳秒到小时的单位、受检换算和格式化。
+  `import joky/task` 提供 `task.sleep(Duration)`、`task.timeout(Duration, operation)`、`task.yield_now()`，并保留 `sleep_ms(UInt64)`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
   支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
@@ -186,6 +187,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
   常见限制与替代写法见[语言参考](docs/language.md#借用流水线的常见错误)。
 - 进阶：[共享迭代协议](examples/shared_iterator_protocol.jk) 展示 `SharedIterator` 泛型入口、`step_shared` 显式推进和底层组合函数。
 - [挂起闭包与超时组合](examples/suspending_closures.jk)。
+- [时长字面量与定时等待](examples/durations.jk)。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
 - [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。

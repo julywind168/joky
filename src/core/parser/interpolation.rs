@@ -48,6 +48,7 @@ impl Parser {
                         return Err(parser.error("Interpolation requires an expression".into()));
                     }
                     let value = parser.parse_expr()?;
+                    self.durations |= parser.durations;
                     self.arrays |= parser.arrays;
                     self.iterators |= parser.iterators;
                     if parser.peek() != &TokenKind::Eof {

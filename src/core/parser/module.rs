@@ -134,6 +134,14 @@ impl Parser {
                 }
             }
         }
+        if self.durations && !module.imports.iter().any(|i| i.path == "joky/time") {
+            module.imports.push(Import {
+                path: "joky/time".into(),
+                alias: Some("$joky_time".into()),
+                members: vec![],
+                span: self.last_span,
+            });
+        }
         if self.arrays && !module.imports.iter().any(|i| i.path == "joky/array") {
             module.imports.push(Import {
                 path: "joky/array".into(),

@@ -5093,7 +5093,7 @@ OutboxFull／OutboxClosed 后，Some(identity) 指出本次检查遇到的一个
 - `HostExecutor::new(clock, max_tasks)` 接受 `Rc<dyn Clock>`；`Clock::now()` 返回单调前进的 Instant；只有声明
   `allows_blocking_wait()` 的真实单调时钟能使用阻塞等待，SystemClock 已声明，虚拟时钟默认拒绝。
   执行器可 Clone，副本共享同一任务表、状态域和额度；最后一个副本释放时停止剩余任务。
-  默认执行器使用系统时钟、4096 个活根限额。自定义时钟可暂停；`sleep_ms` 使用当前执行器时钟。
+  默认执行器使用系统时钟、4096 个活根限额。自定义时钟可暂停；`sleep` / `sleep_ms` 使用当前执行器时钟。
   用 `TaskGroup::new()` 建组，`spawn(&group, task)` 登记任务。组首次使用后绑定一个执行器。
 - `poll(max_polls)` 只推进本次就绪快照，每个根至多一次，按 FIFO 就绪顺序执行。
   返回 `PollReport`：实际轮询数、已释放任务资源的完成结果、是否仍有就绪工作、最近截止时间。
@@ -5715,7 +5715,7 @@ Map/Set 使用 `TaskValue::Map(TaskMap)` / `TaskValue::Set(TaskSet)`；快照仅
 必须来自对应冻结签名，字段、标量类型和标签精确匹配；新编译模块的同名类型不能冒充旧类型。
 这些入口独立于普通函数 ABI；CLI main 的 Unit/Int32 限制保持不变。
 
-显式不安全注册的标量 CPS 宿主及内置 task.yield_now/sleep_ms 可用；旧注册不会自动升级。
+显式不安全注册的标量 CPS 宿主及内置 task.yield_now/sleep/sleep_ms 可用；旧注册不会自动升级。
 准入失败发生在根执行前，不自动回退 Local。
 
 两种模式都先按源码顺序准备全部静态输入，再发布分支。join 结果位置按源码顺序；
@@ -5902,14 +5902,46 @@ cargo build --release
 C 嵌入接口见 [include/joky_vm.h](../include/joky_vm.h)，可运行示例为
 [examples/vm_runtime.c](../examples/vm_runtime.c)。
 
+## 时长字面量与 `joky/time`
+
+`250ms`、`1.5s`、`2min` 和 `1h` 产生 `joky/time.Duration`，无需为字面量显式导入模块；
+关闭 prelude 时同样可用。命名类型或调用构造方法时使用 `import joky/time.{type Duration}`。
+Duration 是独立的 Copy 记录类型，内部表示非负的 UInt64 纳秒数，不与整数隐式互换。
+
+| 后缀 | 单位 | 纳秒数 |
+|------|------|--------|
+| `ns` | 纳秒 | 1 |
+| `us` | 微秒 | 1,000 |
+| `ms` | 毫秒 | 1,000,000 |
+| `s` | 秒 | 1,000,000,000 |
+| `min` | 分钟 | 60,000,000,000 |
+| `h` | 小时 | 3,600,000,000,000 |
+
+后缀区分大小写，紧邻十进制数字；支持小数和数字之间的单个下划线，例如 `1_000.5ms`。
+转换使用精确十进制计算，不经过浮点数。结果必须是整数纳秒且不超过 UInt64 最大值：
+`0.1us` 合法，`0.1ns`、负值、溢出、指数记法和十六进制时长均拒绝。
+时长不能直接作为模块/关联常量、模式或属性参数；`#every`、域定时器和 session 的 `idle_ms` 沿用原有接口。
+
+`Duration.from_nanos(UInt64)` 直接构造；`from_micros`、`from_millis`、`from_secs`、
+`from_mins`、`from_hours` 返回 `Option<Duration>`，换算溢出时返回 None。
+`as_nanos`、`as_micros`、`as_millis`、`as_secs`、`as_mins`、`as_hours` 返回 UInt64，
+换算到较粗单位时向下取整。`is_zero()` 判断零时长，`compare(other)` 返回 -1、0 或 1；
+`checked_add(other)` / `checked_sub(other)` 返回 Option，溢出或不足时返回 None。
+支持 Eq / BorrowEq 等值比较；当前不提供时长的算术运算符或大小比较运算符。
+
+Duration 实现 Show，支持打印、插值和 `to_text()`。输出使用精确的十进制单位：
+整小时/整分钟优先，否则选择秒、毫秒、微秒或纳秒，并去掉无意义的小数尾零；零输出 `0ns`。
+可运行示例见 [durations.jk](../examples/durations.jk)。
+
 ## 内置标准库 `joky/task`
 
-`joky/task` 提供两个返回 Unit 的挂起函数，需要显式导入，关闭 prelude 时也可使用：
+`joky/task` 需要显式导入，关闭 prelude 时也可使用。等待函数返回 Unit：
 
 | 接口 | 行为 |
 |------|------|
 | `yield_now() @suspends` | 主动返回一次 Pending；恢复后完成，让 join/race 继续轮询其他分支 |
-| `sleep_ms(milliseconds: UInt64) @suspends` | 使用单调时钟等待指定毫秒数；零毫秒可以立即完成，无法表示的截止时间报告运行时错误 |
+| `sleep(duration: Duration) @suspends` | 使用单调时钟等待指定时长；保留纳秒精度，零时长可以立即完成，无法表示的截止时间报告运行时错误 |
+| `sleep_ms(milliseconds: UInt64) @suspends` | 保留的整数毫秒接口，等待与清理规则同上 |
 
 ```joky
 import joky/io.{println}
@@ -5918,7 +5950,7 @@ import joky/task
 fn report_int32(value: Int32) { println(value) }
 fn main() @suspends {
     task.yield_now()
-    task.sleep_ms(10)
+    task.sleep(10ms)
     report_int32(42)
 }
 ```
@@ -5927,6 +5959,24 @@ fn main() @suspends {
 退出码与同步 main 一致：Unit 为 0，Int32 取低 8 位，运行失败为 1。
 挂起效果仍沿调用链检查，不引入 await，也不会把同步调用自动转换为挂起调用。
 完整例子见 [async_main.jk](../examples/async_main.jk)。
+
+`task.timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) @suspends`
+返回 `Result<T, task.Timeout>`，在操作和等待之间执行 race。操作先完成时返回 Ok，
+计时分支先完成时返回 Err；返回前取消并清理未获胜分支及其拥有资源。操作自身的 Result 保留在 Ok 内，
+不会自动展平；运行时失败沿任务树传播，不转换成 Timeout。
+
+```joky
+let message = "completed"
+let result = task.timeout(250ms, move || @suspends {
+    task.sleep(1ms)
+    message
+})
+println(result!)
+```
+
+该片段放在挂起函数内。挂起闭包必须使用 move，捕获遵守现有拥有与挂起限制。
+超时是协作式的，不能抢占同步死循环或长时间不让出的操作；零时长也不保证必然超时，
+立即完成的操作仍可能先赢得 race。需要借用外部资源的挂起操作可直接使用 race 子任务块。
 
 CLI 的阻塞驱动器在定时器就绪前休眠，选择所有存活分支的最早截止时间；恢复不会重放已完成的副作用。
 Local 使用宿主时钟协作调度；Parallel 使用真实单调时钟唤醒实际等待的任务。
@@ -6315,7 +6365,7 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 [组合示例](../tests/fixtures/tcp_composition.jk) 包含三个并发客户端、write_all、
 `race { | pending(&mut listener) | task.sleep_ms(2) }` 超时取消、监听器复用和发送取消前缀验证。
 该例使用 Unit 分支和真实单调时间取消操作；返回数据时可将请求与定时器包装成相同的 Result 类型，
-标准库尚不提供通用超时包装。
+拥有式挂起闭包也可使用 `task.timeout(duration, operation)`；借用监听器的场景继续使用直接 race。
 [Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。
 域名解析使用下述 `joky/dns`；UDP、TLS 等另行分期。
 

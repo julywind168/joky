@@ -1,4 +1,5 @@
 //! Joky lexer.
+mod duration;
 mod strings;
 use super::ast::BinOp;
 use super::Diagnostic;
@@ -61,6 +62,7 @@ pub(crate) enum TokenKind {
     Ident(String),
     // Unsigned magnitude permits the special spelling of the signed minimum.
     IntLit(u64),
+    DurationLit(u64),
     FloatLit(String),
     /// Decimal member index following a dot, never a floating literal.
     TupleIndex(u64),
@@ -309,6 +311,11 @@ impl<'a> Lexer<'a> {
                 self.advance();
             }
             let spelling = &self.source[start..self.byte_pos];
+            if let Some(result) = duration::parse(spelling) {
+                return result
+                    .map(TokenKind::DurationLit)
+                    .map_err(|message| Diagnostic::at(self.line, start..self.byte_pos, message));
+            }
             let invalid = || {
                 Diagnostic::at(self.line, start..self.byte_pos, "Invalid floating literal: expected decimal digits on both sides of the dot and an optional signed exponent")
             };
@@ -337,6 +344,13 @@ impl<'a> Lexer<'a> {
             return Ok(TokenKind::FloatLit(spelling.replace('_', "")));
         }
         let spelling = &self.source[start..self.byte_pos];
+        if !spelling.starts_with("0x") && !spelling.starts_with("0b") {
+            if let Some(result) = duration::parse(spelling) {
+                return result
+                    .map(TokenKind::DurationLit)
+                    .map_err(|message| Diagnostic::at(self.line, start..self.byte_pos, message));
+            }
+        }
         let (radix, digits) = if let Some(digits) = spelling.strip_prefix("0x") {
             (16, digits)
         } else if let Some(digits) = spelling.strip_prefix("0b") {

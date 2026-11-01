@@ -1,22 +1,9 @@
 import joky/task
 
-fn with_timeout<T, F: FnOnce() @suspends -> T>(
-    milliseconds: UInt64,
-    operation: F
-) @suspends -> Option<T> {
-    race {
-        | { Some(operation()) }
-        | {
-            task.sleep_ms(milliseconds)
-            None
-        }
-    }
-}
-
 fn main() @suspends {
     let message = "Hello from a suspending closure"
-    let result = with_timeout(
-        1000,
+    let result = task.timeout(
+        1s,
         move || @suspends {
             task.yield_now()
             message

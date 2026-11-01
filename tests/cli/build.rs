@@ -184,6 +184,7 @@ fn value(n: Int32, waits: Int32) @suspends -> Int32 {
     n
 }
 fn main() @suspends {
+    task.sleep(250us)
     let (a, b) = join { | value(40, 2) | value(2, 0) }
     let winner = race { | value(a + b, 0) | value(0, 3) }
     println(&winner)

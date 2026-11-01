@@ -1,0 +1,67 @@
+import joky/option.{ type Option, Some, None }
+import joky/eq.{ type Eq }
+import joky/show.{ type Show }
+import joky/string.{ type StringBuilder }
+import joky/integer
+
+// A distinct Copy value; every UInt64 nanosecond count is valid.
+pub struct Duration { nanos: UInt64 }
+
+fn scaled(value: UInt64, scale: UInt64) -> Option<Duration> {
+    if value > 18446744073709551615 / scale { None }
+    else { Some(Duration { nanos: value * scale }) }
+}
+impl Duration {
+    pub fn from_nanos(value: UInt64) -> Duration { Duration { nanos: value } }
+    pub fn from_micros(value: UInt64) -> Option<Duration> { scaled(value, 1000) }
+    pub fn from_millis(value: UInt64) -> Option<Duration> { scaled(value, 1000000) }
+    pub fn from_secs(value: UInt64) -> Option<Duration> { scaled(value, 1000000000) }
+    pub fn from_mins(value: UInt64) -> Option<Duration> { scaled(value, 60000000000) }
+    pub fn from_hours(value: UInt64) -> Option<Duration> { scaled(value, 3600000000000) }
+    pub fn as_nanos(self) -> UInt64 { self.nanos }
+    pub fn as_micros(self) -> UInt64 { self.nanos / 1000 }
+    pub fn as_millis(self) -> UInt64 { self.nanos / 1000000 }
+    pub fn as_secs(self) -> UInt64 { self.nanos / 1000000000 }
+    pub fn as_mins(self) -> UInt64 { self.nanos / 60000000000 }
+    pub fn as_hours(self) -> UInt64 { self.nanos / 3600000000000 }
+    pub fn is_zero(self) -> Bool { self.nanos == 0 }
+    pub fn compare(self, other: Duration) -> Int32 {
+        if self.nanos < other.nanos { -1 } else if self.nanos > other.nanos { 1 } else { 0 }
+    }
+    pub fn checked_add(self, other: Duration) -> Option<Duration> {
+        if other.nanos > 18446744073709551615 - self.nanos { None }
+        else { Some(Duration { nanos: self.nanos + other.nanos }) }
+    }
+    pub fn checked_sub(self, other: Duration) -> Option<Duration> {
+        if self.nanos < other.nanos { None }
+        else { Some(Duration { nanos: self.nanos - other.nanos }) }
+    }
+    pub fn to_text(self) -> String {
+        var output = StringBuilder.new()
+        self.show(&mut output)
+        output.finish()
+    }
+}
+impl Eq for Duration { fn eq(self, other: Duration) -> Bool { self.nanos == other.nanos } }
+impl Show for Duration {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        let n = self.nanos
+        let(scale, suffix): (UInt64, String) = if n != 0 && n % 3600000000000 == 0 {(3600000000000, "h") }
+        else if n != 0 && n % 60000000000 == 0 {(60000000000, "min") }
+        else if n >= 1000000000 {(1000000000, "s") }
+        else if n >= 1000000 {(1000000, "ms") }
+        else if n >= 1000 {(1000, "us") }
+        else {(1, "ns") }
+        output.push_str((n / scale).to_string())
+        var remainder = n % scale
+        if remainder != 0 {
+            output.push('.')
+            while remainder != 0 {
+                remainder = remainder * 10
+                output.push_str((remainder / scale).to_string())
+                remainder = remainder % scale
+            }
+        }
+        output.push_str(&suffix)
+    }
+}

@@ -379,6 +379,7 @@ fn bind(
         // Compiler-generated calls use unspellable aliases so user names cannot
         // redirect compiler-generated library calls. Existing imports suffice.
         let compiler_alias = match import.path.as_str() {
+            "joky/time" => Some("$joky_time"),
             "joky/array" => Some("$joky_array"),
             "joky/iter" => Some("$joky_iter"),
             "joky/check" => Some("$joky_check"),

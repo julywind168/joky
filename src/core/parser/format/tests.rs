@@ -114,3 +114,11 @@ fn format_mutable_parameters() {
         "fn f(var value: Int32) -> Int32 { value += 1; value }\n",
     );
 }
+
+#[test]
+fn duration_literals_preserve_spelling_and_member_boundaries() {
+    assert_format(
+        "fn f(){let d=1_000.50ms\nlet n=250us.as_nanos()\nlet text=\"{1.5s}\"}",
+        "fn f() { let d = 1_000.50ms\n    let n = 250us.as_nanos()\n    let text = \"{1.5s}\" }\n",
+    );
+}

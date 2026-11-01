@@ -39,6 +39,20 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
+            TokenKind::DurationLit(n) => {
+                self.advance();
+                self.durations = true;
+                let span = self.span(start, self.last_span.end());
+                Ok(Expr::Call {
+                    callee: "$joky_time.Duration.from_nanos".into(),
+                    type_args: vec![],
+                    args: vec![Expr::Literal {
+                        literal: Literal::UInt64(n),
+                        span,
+                    }],
+                    span,
+                })
+            }
             TokenKind::IntLit(n) => {
                 self.advance();
                 Ok(Expr::Literal {

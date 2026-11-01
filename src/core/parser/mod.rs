@@ -66,6 +66,7 @@ struct Parser {
     impl_target: Option<Type>,
     impl_trait: Option<String>,
     interpolation: bool,
+    durations: bool,
     arrays: bool,
     iterators: bool,
 }
@@ -89,6 +90,7 @@ impl Parser {
             impl_target: None,
             impl_trait: None,
             interpolation: false,
+            durations: false,
             arrays: false,
             iterators: false,
         }

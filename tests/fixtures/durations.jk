@@ -1,0 +1,87 @@
+import joky/time.{ type Duration }
+import joky/task
+import joky/drop.{ type Drop }
+import joky/fixed_array.{ type FixedArray }
+extern fn record(value: Int32) -> Int32
+extern fn delayed_value(value: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
+
+struct Resource { id: Int32, text: String }
+impl Drop for Resource { fn drop(&mut self) { record(self.id); } }
+fn resource() -> Resource { let r = Resource { id: 1, text: "owned" }; record(-1); r }
+
+fn duration_values() -> Int32 {
+    let maximum: UInt64 = 18446744073709551615
+    assert_eq(250ms.as_nanos(), uint64(250000000))
+    assert_eq(1.5s, 1500ms)
+    assert_eq(2min, 120s)
+    assert_eq(1h, 60min)
+    assert_eq(1_000.000_001ms.as_nanos(), uint64(1000000001))
+    assert_eq(18446744073.709551615s.as_nanos(), maximum)
+    assert_eq(Duration.from_millis(250)!, 250ms)
+    assert_eq(Duration.from_micros(1)!, 1us)
+    assert_eq(Duration.from_secs(2)!, 2s)
+    assert_eq(Duration.from_mins(1)!, 1min)
+    assert_eq(Duration.from_hours(1)!, 1h)
+    assert(Duration.from_secs(18446744074).is_none(), "constructor overflow")
+    assert(18446744073709551615ns.checked_add(1ns).is_none(), "addition overflow")
+    assert(1ns.checked_sub(2ns).is_none(), "subtraction underflow")
+    assert_eq(1s.checked_add(250ms)!, 1.25s)
+    assert_eq(1s.checked_sub(250ms)!, 750ms)
+    assert_eq(1ms.compare(1s), -1)
+    assert_eq(1s.compare(1000ms), 0)
+    assert_eq(2s.compare(1s), 1)
+    assert(0ns.is_zero(), "zero duration")
+    assert_eq(1999ns.as_micros(), uint64(1))
+    assert_eq(1999us.as_millis(), uint64(1))
+    assert_eq(1999ms.as_secs(), uint64(1))
+    assert_eq(119s.as_mins(), uint64(1))
+    assert_eq(119min.as_hours(), uint64(1))
+    assert_eq(1.5s.to_text(), "1.5s")
+    assert_eq(1ns.to_text(), "1ns")
+    assert_eq(0ns.to_text(), "0ns")
+    assert_eq(250us.to_text(), "250us")
+    assert_eq(1.25ms.to_text(), "1.25ms")
+    assert_eq(2min.to_text(), "2min")
+    assert_eq(1h.to_text(), "1h")
+    assert_eq(3600.000000001s.to_text(), "3600.000000001s")
+    assert_eq("delay={250ms}", "delay=250ms")
+    42
+}
+fn duration_sleep() @suspends -> Int32 { task.sleep(250us); 42 }
+fn duration_zero() @suspends -> Int32 { task.sleep(0ns); 42 }
+fn duration_success() @suspends -> Int32 {
+    let owner = resource()
+    let result = task.timeout(1h, move || @suspends { delayed_value(40) + owner.id })
+    result.unwrap()
+}
+fn duration_elapsed() @suspends -> Int32 {
+    let owner = resource()
+    let result = task.timeout(0ns, move || @suspends { delayed_value(40) + owner.id })
+    match result { Err(_) => 42, Ok(_) => 0 }
+}
+fn duration_pending() @suspends -> Int32 {
+    let owner = resource()
+    let result = task.timeout(250us, move || @suspends { delayed_value(40) + owner.id })
+    match result { Err(_) => 42, Ok(n) => n }
+}
+fn duration_failure() @suspends -> Int32 {
+    let owner = resource()
+    let result = task.timeout(1h, move || @suspends { delayed_value(40); fail_now(); owner.id })
+    result.unwrap()
+}
+fn duration_owned_result() @suspends -> Int32 {
+    let owner = resource()
+    let result = task.timeout(1h, move || @suspends {(owner, delayed_value(40)) })
+    let(owner, value) = result.unwrap()
+    owner.id + value
+}
+fn duration_place_result() @suspends -> Int32 {
+    let result = task.timeout(1h, move || @suspends { delayed_value(40); let values: FixedArray<String, 2> = ["ok", "owned"]; values })
+    let result = result.unwrap()
+    int32(result.borrow_ref(0).byte_length()) + 40
+}
+fn duration_parallel() @suspends -> Int32 {
+    let result = task.timeout(1h, move || @suspends { task.sleep(1ns); 42 })
+    result.unwrap()
+}

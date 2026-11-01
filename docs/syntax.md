@@ -70,6 +70,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | `for [index,] pattern in input` | 已实现 Iterator/IntoIterator、Int32 半开 range、Array 消费与借用、Slice/Map 借用自动转换、整数编号推导、Map 键值解构及共享循环清理 | 范围运算符与组合器见 [分阶段计划](for-iterators.md) |
 | 一元 `-` / `!` / `~`、Bool 相等比较 | 已实现 | 保留；比较不可连续书写 |
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
+| 时长字面量 | 已实现 `ns/us/ms/s/min/h` 后缀、精确十进制换算及独立的 `joky/time.Duration` | 等待与超时见 [language.md](language.md#时长字面量与-jokytime) |
 | 字符串字面量 | 已实现转义与默认插值、`r` 原始字符串、三引号多行去缩进及组合 | 保留，见第 3 节 |
 | UInt8、Rune | 已实现 | 字节与 Unicode 标量规则见 language.md |
 | Float32 / Float64 | 已实现，含字面量、同型四则与比较、常量折叠、`float32`/`float64` 转换、IEEE 数学原语（sqrt/floor/ceil/trunc/round-ties-even）、受检 trunc/round 转整数、to_bits/from_bits、to_text 格式化、extern 值传递与 `#repr(C)` 字段 | 三后端语义见 language.md；三角函数、解析与向量库属后续 |
@@ -402,7 +403,7 @@ fn run_pair() @suspends {
 ```
 
 此形式当前已经支持；上例的自定义 `wait_tick` 需要嵌入方注册并驱动。
-纯 Joky 程序可导入 `joky/task`，使用 `yield_now()` / `sleep_ms(UInt64)`，
+纯 Joky 程序可导入 `joky/task`，使用 `yield_now()` / `sleep(Duration)` / `timeout(Duration, operation)`（保留 `sleep_ms(UInt64)`），
 再从 `fn main() @suspends` 调用 worker；CLI 的 JIT、解释器及独立 AOT 均能驱动。
 
 - 普通函数只能调用同步函数；`@suspends` 函数可调用两者，挂起约束沿调用链传播。
@@ -503,7 +504,7 @@ scope {
 | `first_ok` | 并发尝试候选，首个业务 Ok 获胜；候选 Err 不提前结束；全部 Err 时聚合失败 |
 | `first_completed` | 返回首个完成结果，其余任务继续由显式外层 scope 拥有；依赖可管理的任务句柄，不做隐式游离任务 |
 | 收集全部业务结果 | 让 join 的分支返回 Result，全部完成后检查各项；运行时失败仍按现有规则终止 |
-| 超时 | 使用 race 与计时器，或提供库包装；保留取消与清理屏障 |
+| 超时 | 已提供 `task.timeout(Duration, operation)`，使用 race 与计时器，保留取消与清理屏障 |
 | 限流 / 有界并发 | 准入许可、Channel 与库组合，分别控制活动任务数及队列容量 |
 | 监督与故障隔离 | 显式服务/所有者 API 定义重启和错误策略，不静默吞掉任意运行时错误 |
 | Actor、流水线、流 | 围绕有界通信与明确生命周期提供库抽象 |

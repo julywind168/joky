@@ -107,6 +107,9 @@ AST、类型环境和绑定声明快照。宿主绑定提供完整 CPS frame 布
 lexer 解析十进制、`0x`、`0b` 和数字间单下划线，整数 AST 保留幅值及直接负号，类型检查从局部上下文确定八种整数后按各自范围验证。
 浮点 token 要求小数点两侧都有十进制数字并验证可选带符号指数；上下文确定 Float32 / Float64，无约束默认 Float64，超出目标有限范围的字面量在类型检查拒绝。
 `core::integer::IntegerType` 集中定义整数位宽、符号及字面量范围，语义检查与原生 lowering 共用这些信息。
+时长 token 按十进制整数算法换算为 UInt64 纳秒，拒绝溢出与不足一纳秒的精度；parser 将其展开为
+`joky/time.Duration.from_nanos` 调用，通过编译器私有导入别名避免用户名称遮蔽，插值内同样生效。
+Duration 使用普通名义 Copy 记录布局，不新增标量类型或特殊后端 ABI。
 `core::float` 提供共享的 IEEE 运算内核，常量折叠与解释器共用；原生 lowering 使用目标 FPU 指令，不启用 fast-math 或代数重写，NaN、有符号零与次正规数按 IEEE 语义保留。
 `runtime::float_env` 在共享 IR 规划、后端编译、解释器执行及受检宿主调用期间建立标准
 浮点环境，退出时恢复调用线程的控制位和状态标志。ARM64 保存 FPCR/FPSR，x86_64 保存
@@ -2008,6 +2011,10 @@ CLI 接受同步或挂起 main（无参数，Unit/Int32 结果）。JIT/解释�
 continuation 交给 `runtime::driver::block_on`；AOT 的 C 驱动按 `cps_frame_slots` 分配
 完整根帧，调用 `joky_cps_block_on`，检查状态及原生错误通道后才读取结果，最后释放帧。
 
+`task.sleep(Duration)` 经 `joky_task_sleep_ns` 传递 UInt64 纳秒；保留的 `sleep_ms` 与它共享
+帧状态和受检单调截止时间计算，恢复沿用首次记录的截止时间。`task.timeout` 是标准库的
+泛型挂起 FnOnce 包装，直接通过 race 承接获胜结果及取消清理屏障。
+
 `joky/task` 的 yield/timer 唤醒元数据由等待中的 CPS 帧拥有。驱动只扫描存活帧，选择立即
 可运行状态或最早单调时钟截止时间；取消分支随帧删除元数据，没有全局定时器注册或后台线程。
 解释器还单独标记指令时间片让出，不能把所有 Pending 当作立即就绪。没有支持的唤醒来源时
@@ -2057,7 +2064,7 @@ VM 的 TaskId → InstanceId 归属记录保留到整批终态消费结束，期
 State 仍须等待取消与 stop 完成后再清理。
 组绑定一个执行器；组关闭不可再启动任务。轮询及 stop 不持任务注册表的 RefCell 借用。
 
-可嵌套恢复的线程局部上下文提供时钟和唤醒令牌，`sleep_ms` 在该上下文读取时钟，手动/CLI
+可嵌套恢复的线程局部上下文提供时钟和唤醒令牌，`sleep` / `sleep_ms` 在该上下文读取时钟，手动/CLI
 驱动继续使用系统单调时钟。截止时间随等待帧存在，执行器仅缓存各根的最早截止时间。
 根轮询额度不能限制单次 native 执行耗时，也不能限制根内部本轮遍历的子任务数量。
 

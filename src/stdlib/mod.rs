@@ -158,6 +158,11 @@ fn build_registry() -> ModuleRegistry {
             vec![Type::UInt64],
             task::sleep_ms as crate::runtime::cps::CpsEntry,
         ),
+        (
+            "sleep_ns",
+            vec![Type::UInt64],
+            task::sleep_ns as crate::runtime::cps::CpsEntry,
+        ),
     ]
     .into_iter()
     .map(|(name, params, entry)| {

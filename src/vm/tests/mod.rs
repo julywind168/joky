@@ -388,3 +388,6 @@ mod mutable_parameters_tests;
 
 #[path = "tasks/suspending_dyn_tests.rs"]
 mod suspending_dyn_tests;
+
+#[path = "tasks/duration_tests.rs"]
+mod duration_tests;

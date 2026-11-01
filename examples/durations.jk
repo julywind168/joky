@@ -1,0 +1,18 @@
+import joky/time.{ type Duration }
+import joky/task
+
+fn main() @suspends {
+    let interval = 250ms
+    let timeout = 1.5s
+    assert_eq(interval.checked_add(750ms)!, 1s)
+    assert_eq(Duration.from_millis(250)!, interval)
+    println("interval={interval}, timeout={timeout}")
+
+    task.sleep(250us)
+    let message = "completed"
+    let result = task.timeout(timeout, move || @suspends {
+            task.yield_now()
+            message
+        })
+    println(result.unwrap())
+}

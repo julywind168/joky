@@ -50,11 +50,31 @@ pub unsafe extern "C" fn yield_now(frame: *mut CpsFrame) -> i32 {
 #[export_name = "joky_task_sleep_ms"]
 pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
     let frame = &mut *frame;
+    sleep(
+        frame,
+        Duration::from_millis(frame.slots[0]),
+        "sleep_ms duration exceeds the monotonic clock range",
+    )
+}
+
+/// Wait for UInt64 nanoseconds in slot zero, using the executor's monotonic clock.
+/// # Safety
+/// The frame must satisfy the same initialization, exclusive access and polling
+/// contract as `sleep_ms`. It must contain one initialized parameter slot.
+#[export_name = "joky_task_sleep_ns"]
+pub unsafe extern "C" fn sleep_ns(frame: *mut CpsFrame) -> i32 {
+    let frame = &mut *frame;
+    sleep(
+        frame,
+        Duration::from_nanos(frame.slots[0]),
+        "sleep duration exceeds the monotonic clock range",
+    )
+}
+
+fn sleep(frame: &mut CpsFrame, duration: Duration, range_error: &str) -> i32 {
     if frame.state == 0 {
-        let Some(deadline) =
-            crate::runtime::executor::now().checked_add(Duration::from_millis(frame.slots[0]))
-        else {
-            return fail("sleep_ms duration exceeds the monotonic clock range");
+        let Some(deadline) = crate::runtime::executor::now().checked_add(duration) else {
+            return fail(range_error);
         };
         frame.wake = Some(Wake::Deadline(deadline));
         frame.state = 1;
@@ -67,7 +87,7 @@ pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
             crate::runtime::parallel::pool::wait_until(deadline);
             1
         }
-        _ => fail("Invalid sleep_ms frame state"),
+        _ => fail("Invalid sleep frame state"),
     }
 }
 
