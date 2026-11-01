@@ -12,7 +12,7 @@ mod storage;
 pub use pool::{ParallelExecutor, ParallelSubmitter};
 use std::cell::RefCell;
 pub use storage::TaskBudget;
-pub(crate) use storage::{Lease, LocalShard, SharedLease, Storage};
+pub(crate) use storage::{Lease, LocalShard, SharedLease, Storage, WeakStorage};
 thread_local! { static CURRENT: RefCell<Option<Storage>> = const { RefCell::new(None) }; }
 pub(crate) fn current() -> Option<Storage> {
     CURRENT.with(|root| root.borrow().clone())

@@ -14,8 +14,9 @@ use crate::{
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
 use std::{
+    cell::RefCell,
     collections::{BTreeSet, HashMap},
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -33,6 +34,8 @@ mod host;
 mod memory;
 mod optimize;
 mod places;
+#[cfg(test)]
+mod worker_tests;
 
 pub(crate) use execute::{
     call_instance, call_sync, cleanup_call, prepare_domain, prepare_scalar, prepare_script, start,
@@ -275,6 +278,7 @@ enum FrozenCallee {
     Unavailable(FunctionSignature, bool),
 }
 pub(crate) struct FrozenEntry {
+    dispatch_key: Arc<()>,
     pub(crate) files: Option<crate::runtime::fs::FileService>,
     pub(crate) info: FunctionInfo,
     pub(crate) version: ModuleId,
@@ -307,6 +311,7 @@ impl BytecodeModule {
     }
     fn freeze_function(&self, function: &BytecodeFunction) -> Result<FrozenEntry, Error> {
         Ok(FrozenEntry {
+            dispatch_key: Arc::new(()),
             files: self.files.clone(),
             info: function.info.clone(),
             version: self.version,
@@ -329,10 +334,41 @@ impl BytecodeModule {
         })
     }
 }
+struct WorkerModule {
+    code: std::sync::Weak<()>,
+    root: crate::runtime::parallel::WeakStorage,
+    module: Weak<BytecodeModule>,
+}
+thread_local! {
+    // Rc hosts and task-entry tokens stay on their worker. Weak entries must not
+    // retain code, callbacks or budget leases after the last activation ends.
+    static WORKER_MODULES: RefCell<Vec<WorkerModule>> = const { RefCell::new(Vec::new()) };
+}
 impl FrozenEntry {
     /// Construct worker-local dispatch, tokens and callback ownership. Instructions
     /// and constant/layout tables are shared; no source is compiled on the worker.
     pub(crate) fn instantiate(&self) -> Result<Rc<BytecodeModule>, Error> {
+        let root = crate::runtime::parallel::current();
+        if let Some(root) = &root {
+            let cached = WORKER_MODULES.with(|cache| {
+                let mut found = None;
+                cache.borrow_mut().retain(|entry| {
+                    let Some(module) = entry.module.upgrade() else {
+                        return false;
+                    };
+                    if entry.code.ptr_eq(&Arc::downgrade(&self.dispatch_key))
+                        && entry.root.same_root(root)
+                    {
+                        found = Some(module);
+                    }
+                    true
+                });
+                found
+            });
+            if let Some(module) = cached {
+                return Ok(module);
+            }
+        }
         // Local dispatch/token tables share their allocation across cleanup
         // snapshots. Executable instructions and immutable symbol/type/layout
         // tables are already shared with the frozen code owner.
@@ -363,7 +399,7 @@ impl FrozenEntry {
             })
             .collect::<Result<_, Error>>()?;
         let (task_targets, task_entries) = task_entries(&callees)?;
-        Ok(Rc::new(BytecodeModule {
+        let module = Rc::new(BytecodeModule {
             request_contracts: Default::default(),
             _parallel_charge: charge,
             parallel: Default::default(),
@@ -375,7 +411,17 @@ impl FrozenEntry {
             callees: callees.into(),
             task_targets,
             task_entries,
-        }))
+        });
+        if let Some(root) = root {
+            WORKER_MODULES.with(|cache| {
+                cache.borrow_mut().push(WorkerModule {
+                    code: Arc::downgrade(&self.dispatch_key),
+                    root: root.downgrade(),
+                    module: Rc::downgrade(&module),
+                });
+            });
+        }
+        Ok(module)
     }
 }
 

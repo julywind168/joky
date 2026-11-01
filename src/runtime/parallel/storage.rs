@@ -269,6 +269,13 @@ fn reserve_slot<T>(values: &mut Vec<T>, metadata: &mut Lease) -> Result<(), Erro
 }
 #[derive(Clone)]
 pub(crate) struct Storage(Arc<Root>);
+#[derive(Clone)]
+pub(crate) struct WeakStorage(std::sync::Weak<Root>);
+impl WeakStorage {
+    pub(crate) fn same_root(&self, root: &Storage) -> bool {
+        self.0.ptr_eq(&Arc::downgrade(&root.0))
+    }
+}
 struct Root {
     _charge: Lease,
     accounts: Accounts,
@@ -282,6 +289,9 @@ pub(crate) struct LocalShard {
     shard: Arc<Mutex<Shard>>,
 }
 impl Storage {
+    pub(crate) fn downgrade(&self) -> WeakStorage {
+        WeakStorage(Arc::downgrade(&self.0))
+    }
     pub(crate) fn new(budgets: Vec<TaskBudget>) -> Result<Self, Error> {
         let accounts = Accounts::new(budgets);
         let charge = accounts.reserve(
