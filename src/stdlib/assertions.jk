@@ -1,0 +1,57 @@
+import joky/check
+import joky/eq.{type BorrowEq}
+import joky/show.{type Show}
+import joky/string.{type StringBuilder}
+import joky/option.{Some, None}
+
+// Quote the Show representation so empty text and control characters stay visible.
+fn quoted<T: Show>(value: &T) @noescape -> String {
+    let text = Show.to_text(value)
+    var output = StringBuilder.new()
+    output.push('"')
+    var offset: UInt64 = 0
+    while offset < text.byte_length() {
+        match text.next_rune(offset) {
+            Some((rune, next)) => {
+                let scalar = rune.to_u32()
+                match rune {
+                    '"' => { output.push_str("\\\"") }
+                    '\\' => { output.push_str("\\\\") }
+                    '\n' => { output.push_str("\\n") }
+                    '\r' => { output.push_str("\\r") }
+                    '\t' => { output.push_str("\\t") }
+                    _ => {
+                        if scalar < 32 || scalar == 127 {
+                            output.push_str("\\u")
+                            output.push('{')
+                            output.push(hex_digit(scalar / 16))
+                            output.push(hex_digit(scalar % 16))
+                            output.push('}')
+                        } else { output.push(rune) }
+                    }
+                }
+                offset = next
+            }
+            None => { break }
+        }
+    }
+    output.push('"')
+    output.finish()
+}
+
+fn hex_digit(value: UInt32) -> Rune {
+    Rune.from_u32(if value < 10 { 48 + value } else { 87 + value }).unwrap_or('0')
+}
+
+// Ordinary borrowed calls evaluate each argument once and render only on failure.
+pub fn assert_eq<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape {
+    if !BorrowEq.eq_ref(actual, expected) {
+        check.panic("assert_eq failed\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}")
+    }
+}
+
+pub fn assert_ne<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape {
+    if BorrowEq.eq_ref(actual, expected) {
+        check.panic("assert_ne failed (values must differ)\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}")
+    }
+}

@@ -2,11 +2,16 @@ import joky/internal/text
 
 // By-value equality for reference-free Copy keys. Equality must be stable.
 pub trait Eq { fn eq(self, other: Self) -> Bool }
+impl Eq for Int8 { fn eq(self, other: Self) -> Bool { self == other } }
+impl Eq for Int16 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for Int32 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for Int64 { fn eq(self, other: Self) -> Bool { self == other } }
+impl Eq for UInt8 { fn eq(self, other: Self) -> Bool { self == other } }
+impl Eq for UInt16 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for UInt32 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for UInt64 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for Bool { fn eq(self, other: Self) -> Bool { self == other } }
+impl Eq for Rune { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for Unit { fn eq(self, other: Self) -> Bool { true } }
 
 // Borrowed equality must not retain either argument beyond this call.
@@ -15,3 +20,6 @@ impl<T: Copy + Eq> BorrowEq for T {
     fn eq_ref(&self, other: &Self) -> Bool { Eq.eq((*self), (*other)) }
 }
 impl BorrowEq for String { fn eq_ref(&self, other: &String) -> Bool { text.equals(self, other) } }
+// IEEE comparisons deliberately do not grant the stable Eq contract to floats.
+impl BorrowEq for Float32 { fn eq_ref(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl BorrowEq for Float64 { fn eq_ref(&self, other: &Self) -> Bool { (*self) == (*other) } }

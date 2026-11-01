@@ -7,7 +7,7 @@ use std::path::Path;
 /// context. Machine-readable error codes appear in the report header; errors
 /// without a source span retain their stable text representation.
 pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
-    let Some(span) = error.span() else {
+    let Some(span) = diagnostic_span(error) else {
         return error.to_string();
     };
     let (path, source) = error
@@ -16,8 +16,14 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
         .map_or((path, source), |file| (Path::new(file.name()), file.text()));
     let code = error.code();
     let code = (code != ErrorCode::Generic).then(|| code.as_str());
+    // Keep the value details in the header once, above the caller highlight.
+    let message = if error.span() != Some(span) {
+        error.message().lines().next().unwrap_or(error.message())
+    } else {
+        error.message()
+    };
     let rendered =
-        render_span(path, source, span, error.message(), code).unwrap_or_else(|| error.to_string());
+        render_span(path, source, span, message, code).unwrap_or_else(|| error.to_string());
     let header = error.line().map_or_else(
         || error.message().to_owned(),
         |line| format!("Line {line}: {}", error.message()),
@@ -57,6 +63,30 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
         let _ = write!(output, "\n  called at {}:{line}", path.display());
     }
     output
+}
+
+// Comparison assertions are ordinary library calls. Highlight their invocation
+// while preserving the original error and complete trace for embedding/debugging.
+fn diagnostic_span(error: &Error) -> Option<Span> {
+    let span = error.span()?;
+    let Some(file) = error.sources().get(span.source_id()) else {
+        return Some(span);
+    };
+    if file.name() != "joky/assertions.jk"
+        || error.code() != ErrorCode::RuntimeError
+        || !span
+            .slice(file.text())
+            .is_some_and(|text| text.starts_with("check.panic("))
+    {
+        return Some(span);
+    }
+    error
+        .native_call_sites()
+        .iter()
+        .copied()
+        .chain(error.runtime_trace().iter().map(|frame| frame.span))
+        .find(|caller| caller.source_id() != span.source_id())
+        .or(Some(span))
 }
 
 fn render_span(

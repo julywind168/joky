@@ -709,7 +709,8 @@ pub trait Eq { fn eq(self, other: Self) -> Bool }
 pub trait Hash { fn hash(self) -> UInt64 }
 ```
 
-标准实现覆盖 Int32、Int64、UInt32、UInt64、Bool、Unit；无引用 Copy 记录/枚举可自行实现。
+Eq 标准实现覆盖所有整数宽度、Bool、Rune、Unit；Hash 标准实现覆盖 Int32、Int64、UInt32、UInt64、Bool、Unit。
+无引用 Copy 记录/枚举可自行实现。
 Eq 必须是等价关系，相等 key 必须有相同 hash，存储期间结果应保持稳定。
 这些 trait 本身不改变 Copy 或引用分类；需要无引用 Copy 存储的容器还会检查真实类型资格。
 整数使用 UInt64 wrapping 混合，Int32 符号扩展、UInt32 零扩展；Bool 映射 0/1、Unit 映射 0。
@@ -729,6 +730,9 @@ pub trait BorrowHash { fn hash_ref(&self) @noescape -> UInt64 }
 64 位 FNV-1a wrapping hash；不做规范化，不承诺抗碰撞或持久化格式。
 实现自动继承 trait 的 noescape 约束，编译器检查返回、存储及转交调用的引用来源。
 同一 key 的相等和 hash 必须稳定，代数一致性由实现者保证。
+
+Float32 / Float64 另有直接的 BorrowEq 实现，沿用 IEEE `==`：NaN 不等于自身，正负零相等。
+它们没有 Eq / Hash 实现，不能因此用作标准 Map/Set 的 key。
 
 
 ## 数组字面值
@@ -2251,7 +2255,31 @@ false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清�
 析构中失败继续必要清理并保留首个错误。消息构造先失败时报告 ResourceLimit，assert 尚未执行。
 诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，Debug 和 Release 均执行检查。
 
-同模块的 `panic(message: &String)` 默认由 prelude 导入，可直接写 `panic("错误信息")`，
+默认 prelude 还提供 `joky/assertions` 的两个普通泛型函数：
+
+```joky
+pub fn assert_eq<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape
+pub fn assert_ne<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape
+```
+
+关闭 prelude 时显式导入 `joky/assertions.{assert_eq, assert_ne}`。两侧必须同型并实现
+`joky/eq.BorrowEq` 和 `joky/show.Show`；支持所有整数、Bool、Rune、Unit、String 及浮点数，
+用户类型可实现这两个 trait。容器仅有 Show 不足以用于相等断言，不隐式添加递归相等规则。
+它们借用参数，可直接写 `assert_eq(text, "ready")`，之后继续使用 text；实参从左到右各求值一次。
+拥有型下标元素仍须显式借用，如 `assert_eq(&values[0], "first")`。
+整数实参为另一侧的字面量提供类型推导，如 `assert_eq(text.byte_length(), 5)`；
+两个已经定型的不同整数类型仍需显式转换。
+成功时不调用 Show；失败时才显示 actual / expected 的 Show 文本，统一加双引号，
+转义引号、反斜杠、换行、回车、制表及其他 ASCII 控制字符。双引号表示显示文本，并非实参类型。
+浮点数使用精确 IEEE 比较，不含误差容限；需要近似比较时用 `assert` 写出容差条件。
+
+`check` / `run` / `test` 沿用普通调用的静态检查；运行时失败为 RuntimeError。
+CLI 的 `run/test` 将这两个断言的失败主定位放在调用处，保留完整调用轨迹；
+嵌入 API 仍保留标准库内原始错误位置及调用轨迹。独立 AOT 程序沿用现有字节区间诊断，
+显示相同的 actual / expected 与调用点区间，尚不渲染源码行。
+比较或显示方法自身出错时保留其真实错误来源。
+
+`joky/check` 的 `panic(message: &String)` 默认由 prelude 导入，可直接写 `panic("错误信息")`，
 也支持插值字符串与已有字符串的自动借用。关闭 prelude 时显式导入 `joky/check.{panic}`。
 它无条件产生终止性 RuntimeError，沿用 assert 的消息保活、调用位置与资源清理规则，不负责 IO。
 编译器将绑定到该内置函数的直接调用视为发散表达式，别名调用同样有效：
@@ -2415,6 +2443,7 @@ joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture
 - 仅用于模块顶层、无参数、无泛型、返回 Unit 的函数；名字不能是 `main`。
   可以加 `pub`，不需要加；可以同步，也可以标记 `@suspends`。`#test` 不接受括号、参数、重复或其他声明属性组合。
 - 同文件测试可访问私有函数、类型和方法。用 `assert(condition, message)` 检查条件，
+  用 `assert_eq(actual, expected)` / `assert_ne(actual, expected)` 比较值并在失败时显示两侧内容。
   断言失败、`panic`、运行时错误、子进程异常退出或超时均记为失败。
   测试文件不需要 `main`；若存在，检查其入口签名但不执行它。
 - 单文件只运行本文件的测试，导入只编译依赖的生产代码，不执行或类型检查依赖中的测试体。
@@ -2435,7 +2464,7 @@ joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture
   未发现测试或筛选无匹配也返回 1，避免空测试集误报成功。
 - 省略输入时向上发现清单；`--no-prelude` 规则不变，以 `-` 开头的文件名放在 `--` 后。
   首版不接受 AOT、Parallel、worker 参数或程序参数，不读取 `JOKY_TASK_WORKERS`。
-  测试 VM 提供下述独立输入与文件服务；AOT 测试运行、预期失败标记及相等断言辅助 API 留待后续。
+  测试 VM 提供下述独立输入与文件服务；AOT 测试运行及预期失败标记留待后续。
 
 普通 `check` / `run` / `build` 会解析测试声明并验证其签名，但在名字绑定前移除测试函数，
 不检查测试体类型、不生成测试入口，也不能从生产代码调用测试函数；导入声明仍按普通规则解析。

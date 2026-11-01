@@ -2856,6 +2856,13 @@ worker 创建独立 VmEngine，直接调用同步 Unit 入口或驱动 prepare_a
 Joky 源码测试覆盖标准库与应用的公开行为；Rust 保留前端拒绝、ABI、内部资源计数、取消穷举和 CLI 路由责任。
 当前 CLI 只开放 JIT / 解释器测试运行；AOT 的生产排除语义由相关编译执行回归覆盖。
 
+`joky/assertions.assert_eq/assert_ne` 是普通的借用泛型函数，显式调用 BorrowEq / Show，
+成功分支不构造诊断；失败复用 `check.panic` 和普通调用的清理、传播路径，不增加 intrinsic 或 ABI。
+断言模块独立于作为底层依赖的 `joky/check`，避免 Show、容器与 check 之间形成导入环。
+CLI 仅在原始失败位置是该模块的 `check.panic` 时，将主显示位置选为调用轨迹中的外部调用点；
+Error 本身及完整轨迹不变，用户比较／显示方法中的错误仍保留自身位置。
+独立 AOT 沿用现有字节区间报告。
+
 
 ### 测试输入与临时文件
 

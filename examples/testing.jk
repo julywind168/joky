@@ -5,7 +5,7 @@ fn add(left: Int32, right: Int32) -> Int32 { left + right }
 
 #test
 fn adds_numbers() {
-    assert(add(2, 3) == 5, "addition result")
+    assert_eq(add(2, 3), 5)
 }
 
 #test
@@ -21,13 +21,17 @@ fn filters_with_local_threshold() {
     {
         total += score
     }
-    assert(total == 155, "first two passing scores receive the bonus")
-    assert(scores.len() == 4, "the source remains available")
+    assert_eq(total, 155)
+    assert_eq(scores.len(), 4)
 }
 
 #test
 fn preserves_values_across_suspension() @suspends {
     let value = add(20, 22)
     task.yield_now()
-    assert(value == 42, "value survives suspension")
+    assert_eq(value, 42)
+    let text = "ready"
+    assert_eq(text, "ready")
+    assert_ne(text, "")
+    assert_eq(text.byte_length(), 5)
 }

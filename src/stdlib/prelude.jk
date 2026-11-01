@@ -7,3 +7,4 @@ import joky/string
 import joky/clone as cloning.{type Clone}
 import joky/io.{print, println, eprint, eprintln}
 import joky/check.{assert, panic}
+import joky/assertions.{assert_eq, assert_ne}

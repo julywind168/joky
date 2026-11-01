@@ -4,21 +4,21 @@ import joky/string
 fn array_removal_preserves_owned_values_and_order() {
     var values = ["first", "middle", "last"]
     let removed = values.remove(1)!
-    assert(removed == "middle", "remove returns the owned element")
-    assert(values.len() == 2, "remove shortens the array")
-    assert(values[0] == "first", "prefix stays in place")
-    assert(values[1] == "last", "suffix shifts left")
+    assert_eq(removed, "middle")
+    assert_eq(values.len(), 2)
+    assert_eq(&values[0], "first")
+    assert_eq(&values[1], "last")
     assert(values.remove(2).is_none(), "out-of-range removal is absent")
 }
 
 #test
 fn string_counts_utf8_bytes_and_runes_separately() {
     let text = "A中🙂"
-    assert(text.byte_length() == 8, "UTF-8 byte length")
-    assert(text.rune_count() == 3, "Unicode scalar count")
+    assert_eq(text.byte_length(), 8)
+    assert_eq(text.rune_count(), 3)
     let(first, next) = text.next_rune(0)!
-    assert(first == 'A', "first rune")
-    assert(next == 1, "next byte offset")
+    assert_eq(first, 'A')
+    assert_eq(next, 1)
     assert(text.next_rune(8).is_none(), "end of text")
 }
 
