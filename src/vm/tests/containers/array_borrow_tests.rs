@@ -165,7 +165,7 @@ fn borrowed_arrays_do_not_expose_owning_values_storage_or_host_capabilities() {
 }
 
 #[test]
-fn borrowed_arrays_full_slices_reuse_headers_and_partial_slices_are_charged() {
+fn borrowed_arrays_local_slices_reuse_headers_and_escaping_slices_are_charged() {
     use crate::runtime::arena::{LIMIT, MAX_BYTES};
     struct Restore;
     impl Drop for Restore {
@@ -215,6 +215,15 @@ fn borrowed_arrays_full_slices_reuse_headers_and_partial_slices_are_charged() {
             }
             slice.get(part, 0).unwrap_or(0)
         }
+        fn escaped(a: &array.Array<Int32>) -> &slice.Slice<Int32> {
+            array.slice(a, 0, 1)
+        }
+        fn escaping() -> Int32 {
+            var a = array.with_capacity::<Int32>(2)
+            array.push(&mut a, 42)
+            array.push(&mut a, 0)
+            slice.get(escaped(&a), 0).unwrap_or(0)
+        }
     "#;
     let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
     let header = std::mem::size_of::<crate::runtime::buffer::Buffer>() + record;
@@ -226,14 +235,15 @@ fn borrowed_arrays_full_slices_reuse_headers_and_partial_slices_are_charged() {
         LIMIT.with(|n| n.set(base));
         assert_eq!(vm.call_int32_0("direct").unwrap(), 42);
         assert_eq!(vm.call_int32_0("full").unwrap(), 42);
+        assert_eq!(vm.call_int32_0("ranged").unwrap(), 42);
         LIVE.with(|n| assert_eq!(n.get(), 0));
         assert_eq!(
-            vm.call_int32_0("ranged").unwrap_err().code(),
+            vm.call_int32_0("escaping").unwrap_err().code(),
             ErrorCode::ResourceLimit
         );
         LIVE.with(|n| assert_eq!(n.get(), 0));
         LIMIT.with(|n| n.set(base + header));
-        assert_eq!(vm.call_int32_0("ranged").unwrap(), 42);
+        assert_eq!(vm.call_int32_0("escaping").unwrap(), 42);
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }

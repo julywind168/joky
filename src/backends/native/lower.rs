@@ -832,6 +832,19 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             })?;
         ids.insert(intrinsic.symbol().into(), id);
     }
+    let mut signature = module.make_signature();
+    signature.params.extend(
+        [ptr, ptr, types::I64, types::I64, types::I64, ptr, ptr]
+            .into_iter()
+            .map(AbiParam::new),
+    );
+    signature.returns.push(AbiParam::new(ptr));
+    let id = module
+        .declare_function("__joky_buffer_slice_local", Linkage::Import, &signature)
+        .map_err(|e| {
+            Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
+        })?;
+    ids.insert("__joky_buffer_slice_local".into(), id);
     Ok(ids)
 }
 
@@ -2240,6 +2253,7 @@ fn lower_ops(
                     element,
                     args,
                     dst,
+                    scratch,
                 } => {
                     if let Some(cleanup) = mode.cleanup() {
                         for arg in args.iter().filter(|arg| {
@@ -2291,7 +2305,10 @@ fn lower_ops(
                         }
                         intrinsic if intrinsic.borrows_storage() => {
                             if intrinsic.allocates() {
-                                values.push(mode.arena());
+                                values.push(scratch.as_ref().map_or_else(
+                                    || mode.arena(),
+                                    |slot| slots.read(builder, slot),
+                                ));
                             }
                             values.extend(args.iter().map(|s| slots.read(builder, s)));
                         }
@@ -2315,7 +2332,12 @@ fn lower_ops(
                         values.push(builder.ins().iconst(ptr_ty, span.start() as i64));
                         values.push(builder.ins().iconst(ptr_ty, span.end() as i64));
                     }
-                    let call = builder.ins().call(refs[intrinsic.symbol()], &values);
+                    let symbol = if scratch.is_some() {
+                        "__joky_buffer_slice_local"
+                    } else {
+                        intrinsic.symbol()
+                    };
+                    let call = builder.ins().call(refs[symbol], &values);
                     if intrinsic.may_fail() {
                         check_call(builder, refs, mode.frame(), mode.cleanup());
                     }

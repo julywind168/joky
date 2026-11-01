@@ -69,6 +69,7 @@ impl FunctionPlan {
                 Constant::UInt64(crate::core::script::MAX_LANES as u64),
             ));
             self.emit(Op::Buffer(BufferOp::Storage {
+                scratch: None,
                 intrinsic: BufferIntrinsic::Allocate,
                 element: Type::UInt64,
                 args: vec![count],
@@ -125,6 +126,7 @@ impl FunctionPlan {
                     });
                 }
                 self.emit(Op::Buffer(BufferOp::Storage {
+                    scratch: None,
                     intrinsic: BufferIntrinsic::InitializeNext,
                     element: Type::UInt64,
                     args: vec![packet.clone(), bits],
@@ -136,6 +138,7 @@ impl FunctionPlan {
                 let at = self.slot(Type::UInt64)?;
                 self.emit(Op::Literal(at.clone(), Constant::UInt64(index as u64)));
                 self.emit(Op::Buffer(BufferOp::Storage {
+                    scratch: None,
                     intrinsic: BufferIntrinsic::Load,
                     element: Type::UInt64,
                     args: vec![values[0].clone().unwrap(), at],

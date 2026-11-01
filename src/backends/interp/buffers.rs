@@ -7,6 +7,7 @@ use crate::{
         buffer::{Buffer, BufferEntry, BufferIterator, BufferPairIterator},
     },
 };
+use std::ptr::NonNull;
 
 pub(super) unsafe fn dyn_borrow(
     slots: &mut [Value],
@@ -221,6 +222,7 @@ pub(super) fn execute(
             args,
             dst,
             element,
+            scratch,
         } => {
             let arg = |i: usize| &slots[args[i].index];
             let layout = instruction.layout.as_ref().unwrap();
@@ -349,12 +351,21 @@ pub(super) fn execute(
                     BufferIntrinsic::Slice
                     | BufferIntrinsic::SliceMut
                     | BufferIntrinsic::Subslice
-                    | BufferIntrinsic::SubsliceMut => Value::Reference(
-                        (*pointer(arg(0))?)
-                            .slice(arena, count(arg(1))?, count(arg(2))?)?
-                            .as_ptr()
-                            .cast(),
-                    ),
+                    | BufferIntrinsic::SubsliceMut => {
+                        let buffer = &*pointer(arg(0))?;
+                        let start = count(arg(1))?;
+                        let end = count(arg(2))?;
+                        let view = if let Some(scratch) = scratch {
+                            buffer.slice_local(
+                                NonNull::new(pointer(&slots[scratch.index])?).unwrap(),
+                                start,
+                                end,
+                            )?
+                        } else {
+                            buffer.slice(arena, start, end)?
+                        };
+                        Value::Reference(view.as_ptr().cast())
+                    }
                     BufferIntrinsic::SwapElements => {
                         (*pointer(arg(0))?).swap_elements(count(arg(1))?, count(arg(2))?)?;
                         Value::Unit

@@ -46,6 +46,7 @@ mod patterns;
 mod record_patterns;
 mod records;
 mod scripts;
+mod slice_locals;
 mod text;
 mod traits;
 mod tuples;
@@ -1222,6 +1223,7 @@ impl ModulePlan {
                 .collect();
             functions.retain(|name, _| !scope.lazy_hosts.contains(name) || used.contains(name));
         }
+        slice_locals::lower(&functions, &mut bodies);
         for (name, body) in &mut bodies {
             let info = functions.get_mut(name).unwrap();
             if info.suspends {

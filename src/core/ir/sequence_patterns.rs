@@ -150,6 +150,7 @@ impl FunctionPlan {
             self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
         }
         self.emit(Op::Buffer(BufferOp::Storage {
+            scratch: None,
             intrinsic,
             element,
             args,

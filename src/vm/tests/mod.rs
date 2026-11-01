@@ -16,6 +16,8 @@ mod array_borrow_iter_tests;
 
 #[path = "containers/array_borrow_tests.rs"]
 mod array_borrow_tests;
+#[path = "containers/local_slice_tests.rs"]
+mod local_slice_tests;
 
 #[path = "containers/array_into_iter_tests.rs"]
 mod array_into_iter_tests;

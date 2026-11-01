@@ -16,6 +16,8 @@ pub(crate) struct Arena {
         super::parallel::Storage,
         Option<super::parallel::LocalShard>,
     )>,
+    /// Reclaim private parallel storage after its last activation/cleanup owner.
+    reclaim_parallel_on_drop: bool,
     allocations: Vec<(NonNull<u8>, Layout)>,
     bytes: usize,
     external: Rc<Cell<usize>>,
@@ -34,6 +36,7 @@ impl Default for Arena {
             #[cfg(test)]
             tracked: true,
             parallel: super::parallel::current().map(|root| (root, None)),
+            reclaim_parallel_on_drop: false,
             allocations: Vec::new(),
             bytes: 0,
             external: Default::default(),
@@ -125,6 +128,13 @@ impl Arena {
         arena.parallel = Some((root, None));
         arena
     }
+    /// Interpreter locals never escape their activation except through cleanup
+    /// snapshots, whose Rc keeps this entire arena alive until the hook finishes.
+    pub(crate) fn for_locals() -> Self {
+        let mut arena = Self::default();
+        arena.reclaim_parallel_on_drop = true;
+        arena
+    }
     pub(crate) fn parallel_root(&self) -> Option<&super::parallel::Storage> {
         self.parallel.as_ref().map(|(root, _)| root)
     }
@@ -136,6 +146,7 @@ impl Arena {
             #[cfg(test)]
             tracked: true,
             parallel: None,
+            reclaim_parallel_on_drop: false,
             budget: Some(budget),
             account: Some(std::sync::Arc::new(Budget {
                 limit: (usize::MAX).into(),
@@ -156,6 +167,7 @@ impl Arena {
             #[cfg(test)]
             tracked: true,
             parallel: self.parallel.as_ref().map(|(root, _)| (root.clone(), None)),
+            reclaim_parallel_on_drop: false,
             task_bytes: self.task_bytes.clone(),
             budget: self.budget.clone(),
             account: self.budget.as_ref().map(|_| {
@@ -611,6 +623,11 @@ impl Drop for ExternalCharge {
 }
 impl Drop for Arena {
     fn drop(&mut self) {
+        if self.reclaim_parallel_on_drop {
+            // This arena is private local storage, not a root task allocation
+            // context. All activation/cleanup Rc owners have now released it.
+            unsafe { self.release_region() };
+        }
         self.task_bytes.set(self.task_bytes.get() - self.bytes);
         if let Some(parent) = &self.parent_account {
             parent.refund(self.bytes);

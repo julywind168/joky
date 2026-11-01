@@ -545,6 +545,35 @@ impl Buffer {
         start: u64,
         end: u64,
     ) -> Result<NonNull<Self>, Error> {
+        self.slice_with(start, end, || {
+            let layout = Layout::new::<Self>();
+            arena
+                .allocate(layout.size(), layout.align())
+                .map(NonNull::cast)
+        })
+    }
+
+    /// Initialize a nonowning descriptor in compiler-provided stable storage.
+    ///
+    /// # Safety
+    /// `storage` is aligned and writable for one Buffer, distinct from `self`.
+    /// All previous uses of that storage have ended. The compiler keeps it and
+    /// the payload alive until every use of the returned view has ended.
+    pub(crate) unsafe fn slice_local(
+        &self,
+        storage: NonNull<Self>,
+        start: u64,
+        end: u64,
+    ) -> Result<NonNull<Self>, Error> {
+        self.slice_with(start, end, || Ok(storage))
+    }
+
+    fn slice_with(
+        &self,
+        start: u64,
+        end: u64,
+        allocate: impl FnOnce() -> Result<NonNull<Self>, Error>,
+    ) -> Result<NonNull<Self>, Error> {
         if start > end || end > self.len() {
             return Err(bounds_error(
                 "Buffer slice is outside the initialized prefix",
@@ -558,14 +587,15 @@ impl Buffer {
         }
         // The parent allocation already proved every offset fits usize/isize.
         unsafe {
-            let mut view = Self::view(
-                arena,
+            let mut value = Self::view_value(
                 self.address(start as usize),
                 (end - start) as usize,
                 self.element,
-            )?;
-            view.as_mut().origin = self.origin;
-            view.as_mut().loan = self.loan;
+            );
+            value.origin = self.origin;
+            value.loan = self.loan;
+            let view = allocate()?;
+            view.as_ptr().write(value);
             Ok(view)
         }
     }
@@ -673,7 +703,19 @@ impl Buffer {
         len: usize,
         element: Layout,
     ) -> Result<NonNull<Self>, Error> {
-        let value = Self {
+        let value = Self::view_value(data, len, element);
+        let layout = Layout::new::<Self>();
+        let view = arena
+            .allocate(layout.size(), layout.align())?
+            .cast::<Self>();
+        unsafe {
+            view.as_ptr().write(value);
+        }
+        Ok(view)
+    }
+
+    fn view_value(data: *mut u8, len: usize, element: Layout) -> Self {
+        Self {
             origin: std::ptr::null(),
             loan: std::ptr::null(),
             owner_task: 0,
@@ -694,15 +736,7 @@ impl Buffer {
             release_active: false,
             dynamic: None,
             resource: None,
-        };
-        let layout = Layout::new::<Self>();
-        let view = arena
-            .allocate(layout.size(), layout.align())?
-            .cast::<Self>();
-        unsafe {
-            view.as_ptr().write(value);
         }
-        Ok(view)
     }
 
     pub(crate) fn initialize_next(&self) -> Result<*mut u8, Error> {
@@ -1640,6 +1674,26 @@ unsafe extern "C" fn slice(
         end,
     )
 }
+#[export_name = "__joky_buffer_slice_local"]
+unsafe extern "C" fn slice_local(
+    storage: *mut Buffer,
+    buffer: *const Buffer,
+    from: u64,
+    to: u64,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut Buffer {
+    located(
+        (*buffer)
+            .slice_local(NonNull::new_unchecked(storage), from, to)
+            .map(NonNull::as_ptr),
+        source,
+        start,
+        end,
+    )
+}
+
 #[export_name = "__joky_buffer_element_load"]
 unsafe extern "C" fn element_load(
     element: *mut u8,
@@ -1768,7 +1822,7 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 36] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 37] {
     [
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
@@ -1793,6 +1847,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 36] {
         ("__joky_buffer_allocate", allocate as *const u8),
         ("__joky_buffer_release", release as *const u8),
         ("__joky_buffer_slice", slice as *const u8),
+        ("__joky_buffer_slice_local", slice_local as *const u8),
         ("__joky_buffer_element_load", element_load as *const u8),
         ("__joky_buffer_len", len as *const u8),
         ("__joky_buffer_capacity", capacity as *const u8),

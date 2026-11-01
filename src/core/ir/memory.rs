@@ -69,6 +69,7 @@ impl FunctionPlan {
                 let capacity = self.slot(Type::UInt64)?;
                 self.emit(Op::Literal(capacity.clone(), Constant::UInt64(1)));
                 self.emit(Op::Buffer(BufferOp::Storage {
+                    scratch: None,
                     intrinsic: BufferIntrinsic::Allocate,
                     element: src.ty.clone(),
                     args: vec![capacity],
@@ -83,6 +84,7 @@ impl FunctionPlan {
                     place: None,
                 }));
                 self.emit(Op::Buffer(BufferOp::Storage {
+                    scratch: None,
                     intrinsic: BufferIntrinsic::InitializeNext,
                     element: src.ty.clone(),
                     args: vec![reference, src.clone()],

@@ -10,6 +10,8 @@ pub(crate) enum BufferOp {
         element: Type,
         args: Vec<Slot>,
         dst: Option<Slot>,
+        /// Proven nonescaping slice descriptor, in function-owned stable storage.
+        scratch: Option<Slot>,
     },
     /// Exchange borrowed storage with a registered temporary owner, without dropping either.
     Swap {
@@ -667,6 +669,7 @@ impl FunctionPlan {
             element: element.clone(),
             args,
             dst: dst.clone(),
+            scratch: None,
         }));
         if let Some(value) = dst.as_ref().filter(|value| value.ty.is_owner()) {
             self.register_owner(value.clone(), None);

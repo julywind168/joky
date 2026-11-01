@@ -137,7 +137,7 @@ fn refs(slot: &Slot) -> Vec<Slot> {
         .collect()
 }
 
-fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
+pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
         Op::Place(op) => match op {
             PlaceOp::View { reference, dst, .. } => (refs(reference), refs(dst)),
@@ -201,8 +201,10 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             },
             refs(dst),
         ),
-        Op::Buffer(super::BufferOp::Storage { args, dst, .. }) => (
-            args.iter().flat_map(refs).collect(),
+        Op::Buffer(super::BufferOp::Storage {
+            args, dst, scratch, ..
+        }) => (
+            args.iter().chain(scratch).flat_map(refs).collect(),
             dst.iter().flat_map(refs).collect(),
         ),
         Op::Buffer(super::BufferOp::SwapReferences { left, right, .. }) => {
@@ -329,7 +331,7 @@ impl FunctionPlan {
     }
 }
 // Calls flatten aggregates; source parameter effects must follow the same layout.
-fn call_arguments<'a>(
+pub(super) fn call_arguments<'a>(
     info: &FunctionInfo,
     name: &str,
     args: &'a [Option<Slot>],

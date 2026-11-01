@@ -4,10 +4,18 @@ use crate::{runtime::arena::Arena, Type};
 
 /// Each activation owns its stable local storage, including across instruction
 /// slices. Loop re-entry reinitializes a place instead of growing the task arena.
-#[derive(Default)]
 pub(super) struct Locals {
     arena: Rc<std::cell::RefCell<Arena>>,
     pointers: HashMap<usize, std::ptr::NonNull<u8>>,
+}
+
+impl Default for Locals {
+    fn default() -> Self {
+        Self {
+            arena: Rc::new(std::cell::RefCell::new(Arena::for_locals())),
+            pointers: HashMap::new(),
+        }
+    }
 }
 
 impl Locals {
