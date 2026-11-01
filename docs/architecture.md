@@ -2039,6 +2039,23 @@ release/Drop 用 Cancelled 收尾；取走清理入口后才调用，保证失�
 停止回调先于对象存储及代码 owner 释放，错误通道使用独立 checked 边界保留原始失败。
 描述符错误版本/缺少回调在注册时和运行时都拒绝；同步停止的真实行为仍是 unsafe 宿主契约。
 
+## 随机数边界
+
+`joky/random.Rng` 是私有字段的 Copy 记录，种子展开、状态推进、拒绝采样及洗牌均为 Joky 源码，
+依赖既有 UInt64 环绕算术和 Array 元素交换，不引入隐藏全局状态或每个 Rng 的 arena 分配。
+参考算法及用户契约见[语言参考](language.md#随机数-jokyrandom)。
+
+安全字节路径先构造完整初始化的拥有型 Array，再以独占 Slice 借用进入编译器私有
+`buffer.random_fill` 原语。其固定源码签名为 `&mut Slice<UInt8> -> Bool`；只有受信任存储定义可赋予原语身份。
+JIT/AOT 经 `__joky_buffer_random_fill` 调用，解释器调用同一个 Buffer 实现；原生 ABI 是 Buffer 指针、
+来源 ID 与范围，返回 UInt8 布尔值。输入布局仍验证为无拥有字段的字节存储，指针不保留，不跨回调或挂起。
+
+底层使用 getrandom 默认操作系统后端，不配置伪随机回退。按 BYTE_CHUNK 分块调用并在边界检查 worker 取消；
+熵源失败返回 false 并将当前输出归零，源库转为 Unavailable 并清理整个数组。归零不提供编译器屏障式安全擦除保证。
+布局、分配和取消失败仍通过既有运行时错误与清理通道传播，不能误报为熵不足。
+测试构建中的线程局部熵源探针覆盖部分写入后失败，与生产注册表分离；独立 AOT 使用真实系统随机源，
+共享运行时 AOT 验证相同失败传播与拥有资源清理。
+
 ## Continuation 与调度
 
 CLI 接受同步或挂起 main（无参数，Unit/Int32 结果）。JIT/解释器调用 `prepare_async` 后将

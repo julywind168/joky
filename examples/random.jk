@@ -1,0 +1,19 @@
+import joky/random.{ type Rng }
+import joky/result.{ Ok, Err }
+import joky/io.{ println }
+
+fn main() {
+    // Repeatable simulation/test values. Never use Rng for secrets.
+    var rng = Rng.seeded(42)
+    println(rng.next_u64())
+    println(rng.range(100, 500).unwrap_or(100))
+    var choices = ["first", "second", "third"]
+    random.shuffle(&mut rng, &mut choices)
+    for choice in choices { println(choice) }
+
+    // OS entropy for a future token encoder; handle unavailability explicitly.
+    match random.secure_bytes(32) {
+        Ok(bytes) => println(bytes.len())
+        Err(_) => println("Secure randomness unavailable")
+    }
+}

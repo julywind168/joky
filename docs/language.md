@@ -6039,6 +6039,41 @@ Instant 不用于持久化或跨进程传递，也不能转换为 Unix 时间；
 本接口不保留该元数据，因此显式拒绝。首版没有本地时区数据库、夏令时或自定义格式模板。
 可运行示例见 [time_points.jk](../examples/time_points.jk)。
 
+## 随机数 `joky/random`
+
+显式导入 `joky/random`；关闭 prelude 时同样可用。安全随机与可复现伪随机使用不同入口。
+
+`random.secure_bytes(length: UInt64) -> Result<Array<UInt8>, random.RandomError>`
+通过操作系统安全随机源填充普通拥有型字节数组。成功时长度恰为 length，
+源不可用或部分读取失败时返回 `Err(RandomError.Unavailable)`，不返回部分数组、不回退到 Rng。
+零长度返回空数组，不调用操作系统随机源；分配和容量失败沿用 Array 的终止性 ResourceLimit 错误。
+数组可以移动、返回或跨挂起保留，离开作用域、失败和取消时按普通拥有型容器规则清理；
+本接口没有提供专门的秘密内存或保证擦除。
+
+这是同步接口。[getrandom 的系统读取](https://docs.rs/getrandom/0.4.3/getrandom/fn.fill.html)
+在系统初始化等情况下可能阻塞，不承诺异步或硬实时行为；运行时按有界块读取并检查 worker 取消，
+但不能中断正在进行的系统调用。首版不提供向用户已有缓冲区写入的公开接口，避免暴露部分失败状态。
+
+`import joky/random.{type Rng}` 提供普通 Copy 记录，字段私有；**Rng 不用于 token、密钥或其他秘密**。
+采用 [xoshiro256++ 1.0](https://prng.di.unimi.it/xoshiro256plusplus.c)，
+用 [SplitMix64](https://prng.di.unimi.it/splitmix64.c) 的连续四个输出展开 UInt64 种子。
+所有 UInt64 种子（包括零）都合法，不使用时间、全局状态或系统随机源隐式初始化。
+同一种子与调用顺序在 JIT、解释器、AOT 和 worker 上产生相同序列；复制 Rng 会复制当前序列位置。
+并行任务各自持有状态，复制不会自动创建独立随机流。
+
+| 接口 | 行为 |
+|------|------|
+| `Rng.seeded(seed: UInt64) -> Rng` | 显式设种子，创建确定性状态 |
+| `rng.next_u64() -> UInt64` | 需要可变借用，产生完整 UInt64 范围的下一项 |
+| `rng.range(lower: UInt64, upper: UInt64) -> Option<UInt64>` | 半开区间 `[lower, upper)`；空或逆序区间返回 None 且不推进状态 |
+| `random.shuffle<T>(&mut Rng, &mut Array<T>)` | 原地 Fisher–Yates 洗牌，支持拥有型元素；空数组和单元素数组不推进状态 |
+
+范围采样丢弃小于 `2^64 mod (upper - lower)` 的候选后再取模，避免简单取模偏差；
+一次调用可能消耗多个候选。合法单元素区间消耗一个候选。
+`range` 的上界是 UInt64，无法表示 `2^64`；需要完整范围时使用 `next_u64()`。
+当前不提供浮点分布、自动随机种子、流跳跃或密码学伪随机生成器。
+可运行示例见 [random.jk](../examples/random.jk)。
+
 ## 内置标准库 `joky/task`
 
 `joky/task` 需要显式导入，关闭 prelude 时也可使用。等待函数返回 Unit：

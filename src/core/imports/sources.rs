@@ -58,6 +58,13 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/random",
+        source: include_str!("../../stdlib/random.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Operators,
         path: "joky/ops",
         source: include_str!("../../stdlib/ops.jk"),

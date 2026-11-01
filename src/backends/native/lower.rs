@@ -830,6 +830,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
                 vec![types::I64],
             ),
             BufferIntrinsic::Utf8Prefix => (vec![ptr], vec![types::I64]),
+            BufferIntrinsic::RandomFill => (vec![ptr], vec![types::I8]),
             BufferIntrinsic::Truncate => (vec![ptr, ptr, types::I64], vec![]),
             BufferIntrinsic::Replace => (vec![ptr, ptr, ptr], vec![]),
             BufferIntrinsic::Release => (vec![ptr, ptr], vec![]),

@@ -1,0 +1,98 @@
+import joky/random.{ type Rng, type RandomError }
+import joky/array.{ type Array }
+import joky/result.{ Ok, Err }
+import joky/check.{ assert }
+import joky/task
+
+// xoshiro256++ 1.0 / SplitMix64 reference vectors, in UInt64 arithmetic.
+fn random_vectors() -> Int32 {
+    var rng = Rng.seeded(0)
+    assert(rng.next_u64() == 5987356902031041503, "seed zero word one")
+    assert(rng.next_u64() == 7051070477665621255, "seed zero word two")
+    assert(rng.next_u64() == 6633766593972829180, "seed zero word three")
+    assert(rng.next_u64() == 211316841551650330, "seed zero word four")
+    var one = Rng.seeded(1)
+    assert(one.next_u64() == 14971601782005023387, "seed one")
+    var maximum = Rng.seeded(18446744073709551615)
+    assert(maximum.next_u64() == 6254647548650071986, "maximum seed")
+    var copy = rng
+    assert(copy.next_u64() == rng.next_u64(), "copied state")
+    42
+}
+fn random_ranges() -> Int32 {
+    var rng = Rng.seeded(0)
+    assert(rng.range(0, 0).is_none() && rng.range(2, 1).is_none(), "invalid interval")
+    assert(rng.next_u64() == 5987356902031041503, "invalid ranges preserve state")
+    var reject = Rng.seeded(0)
+    // The first six reference outputs are below the rejection threshold.
+    assert(reject.range(0, 9223372036854775809).unwrap_or(0) == 6590051340644581997, "rejection sample")
+    assert(reject.next_u64() == 15596884590815070553, "rejection consumes seven words")
+    assert(rng.range(18446744073709551614, 18446744073709551615).unwrap_or(0) == 18446744073709551614, "upper singleton")
+    for width in [uint64(1), 2, 3, 256, 9223372036854775809, 18446744073709551615] {
+        for i in 0 .. 32 {
+            assert(rng.range(0, width).unwrap_or(width) < width, "half-open range")
+        }
+    }
+    42
+}
+fn random_shuffle() -> Int32 {
+    var rng = Rng.seeded(0)
+    var values = [0, 1, 2, 3, 4, 5, 6, 7]
+    random.shuffle(&mut rng, &mut values)
+    let expected = [1, 3, 5, 6, 0, 4, 2, 7]
+    for i in uint64(0) .. 8 { assert(values[i] == expected[i], "shuffle vector") }
+    var words = ["zero", "one", "two", "three", "four", "five", "six", "seven"]
+    var words_rng = Rng.seeded(0)
+    random.shuffle(&mut words_rng, &mut words)
+    assert(words[0] == "one" && words[7] == "seven" && words[3] == "six", "owning shuffle")
+    var empty = Array.new::<Int32>()
+    var single = [42]
+    var unchanged = rng
+    random.shuffle(&mut rng, &mut empty)
+    random.shuffle(&mut rng, &mut single)
+    assert(rng.next_u64() == unchanged.next_u64() && single[0] == 42, "empty and singleton preserve state")
+    42
+}
+fn random_secure() -> Int32 {
+    for length in [uint64(0), 1, 32, 16385] {
+        let bytes = random.secure_bytes(length).unwrap()
+        assert(bytes.len() == length, "secure byte length")
+    }
+    42
+}
+fn random_zero() -> Int32 {
+    let bytes = random.secure_bytes(0).unwrap()
+    if bytes.is_empty() { 42 } else { 0 }
+}
+fn random_failure() -> Int32 {
+    match random.secure_bytes(16385) {
+        Err(RandomError.Unavailable) => 42
+        Ok(_) => 0
+    }
+}
+fn random_pattern() -> Int32 {
+    let bytes = random.secure_bytes(16385).unwrap()
+    for byte in bytes { assert(byte == 90, "injected entropy bytes") }
+    42
+}
+fn random_huge() -> Int32 { random.secure_bytes(18446744073709551615); 0 }
+fn random_pending() @suspends -> Int32 {
+    var rng = Rng.seeded(0)
+    assert(rng.next_u64() == 5987356902031041503, "before suspension")
+    let bytes = random.secure_bytes(32).unwrap()
+    task.yield_now()
+    assert(rng.next_u64() == 7051070477665621255 && bytes.len() == 32, "after suspension")
+    42
+}
+fn random_parallel() @suspends -> Int32 {
+    assert(random_vectors() == 42 && random_ranges() == 42 && random_shuffle() == 42, "worker random")
+    random_pending()
+}
+
+fn random_repeated() -> Int32 {
+    for i in 0..128 {
+        let bytes = random.secure_bytes(64).unwrap()
+        assert(bytes.len() == 64, "repeated byte length")
+    }
+    42
+}

@@ -908,6 +908,7 @@ pub(crate) enum BufferIntrinsic {
     AppendBytes,
     FindByte,
     Utf8Prefix,
+    RandomFill,
     TakeLast,
     SwapElements,
     Len,

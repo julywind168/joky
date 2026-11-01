@@ -402,3 +402,6 @@ mod suspending_arena_tests;
 
 #[path = "tasks/time_tests.rs"]
 mod time_tests;
+
+#[path = "language/random_tests.rs"]
+mod random_tests;

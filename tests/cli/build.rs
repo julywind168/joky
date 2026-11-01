@@ -178,6 +178,8 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         "async_main.jk",
         r#"import joky/task
 import joky/domain
+import joky/random
+import joky/check.{assert}
 import joky/io.{println}
 fn value(n: Int32, waits: Int32) @suspends -> Int32 {
     var i = 0
@@ -185,6 +187,8 @@ fn value(n: Int32, waits: Int32) @suspends -> Int32 {
     n
 }
 fn main() @suspends {
+    let entropy = random.secure_bytes(32).unwrap()
+    assert(entropy.len() == 32, "Installed entropy backend")
     task.sleep(250us)
     let deadline = domain.deadline_after(0ns)
     let (a, b) = join { | value(40, 2) | value(2, 0) }

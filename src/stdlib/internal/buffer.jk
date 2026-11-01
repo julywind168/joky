@@ -10,6 +10,8 @@ fn transfer<T>(source: &mut Buffer<T>, destination: &mut Buffer<T>)
 fn append_bytes(destination: &mut Buffer<UInt8>, source: &Slice<UInt8>, start: UInt64, end: UInt64)
 #intrinsic("buffer.find_byte")
 fn find_byte(source: &Slice<UInt8>, byte: UInt8, start: UInt64, end: UInt64) -> UInt64
+#intrinsic("buffer.random_fill")
+fn random_fill(destination: &mut Slice<UInt8>) -> Bool
 #intrinsic("buffer.utf8_prefix")
 fn utf8_prefix(source: &Slice<UInt8>) -> UInt64
 #intrinsic("buffer.take_last")

@@ -300,6 +300,7 @@ pub(super) fn execute(
                             count(arg(3))?,
                         )?)
                     }
+                    BufferIntrinsic::RandomFill => Value::Bool((*pointer(arg(0))?).fill_random()?),
                     BufferIntrinsic::Utf8Prefix => {
                         Value::UInt64((*pointer(arg(0))?).utf8_prefix()?)
                     }
