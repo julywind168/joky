@@ -35,6 +35,7 @@ pub(super) enum SourceKind {
     BufferStorage,
     BufferLibrary,
     DropTrait,
+    Operators,
     Check,
     TypeCheck,
     Integer,
@@ -56,6 +57,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Operators,
+        path: "joky/ops",
+        source: include_str!("../../stdlib/ops.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::Embedded,
         path: "joky/time",
@@ -570,6 +578,7 @@ impl StandardLibrary {
         }
         for declaration in &mut module.traits {
             declaration.is_drop = kind == SourceKind::DropTrait;
+            declaration.is_add = kind == SourceKind::Operators && declaration.name == "Add";
             let name = declaration.name.clone();
             declaration.name = format!("{path}.{name}");
             let binding = TraitBinding {

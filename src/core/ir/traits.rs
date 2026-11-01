@@ -626,3 +626,70 @@ impl FunctionPlan {
         }))
     }
 }
+
+impl FunctionPlan {
+    /// Select the trusted Add identity before evaluating either operand. Ordinary
+    /// call planning preserves left-to-right evaluation, moves and failure cleanup.
+    pub(super) fn addition_call(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Result<Option<Expr>, Error> {
+        let Expr::BinOp {
+            lhs,
+            op: BinOp::Add,
+            rhs,
+            span,
+        } = expr
+        else {
+            return Ok(None);
+        };
+        let Some(target) = self.binary_hint(lhs, rhs, vars, functions, types) else {
+            return Ok(None);
+        };
+        if target.is_numeric() {
+            return Ok(None);
+        }
+        let context = self.generics.borrow();
+        let id = context
+            .members
+            .traits
+            .definitions
+            .iter()
+            .find(|d| d.is_add)
+            .map(|d| d.self_parameter.id);
+        let method = match id {
+            Some(id) => {
+                context
+                    .members
+                    .trait_method(&target, "add", Some(id), &self.scope, *span)?
+            }
+            None => None,
+        }
+        .ok_or_else(|| {
+            type_error(
+                span,
+                ErrorCode::TypeMismatch,
+                format!("Type '{target}' does not implement joky/ops.Add for '+'"),
+            )
+        })?;
+        let type_args = if method.impl_parameters == 0 {
+            Vec::new()
+        } else {
+            match (&method.target, &target) {
+                (Type::Parameter(_), _) => vec![target.clone().into()],
+                (_, Type::Record(r)) => r.arguments.clone(),
+                (_, Type::Enum(e)) => e.arguments.clone(),
+                _ => unreachable!("generic trait targets are nominal or rigid"),
+            }
+        };
+        Ok(Some(Expr::Call {
+            callee: format!("joky/member/{}", method.function),
+            type_args,
+            args: vec![(**lhs).clone(), (**rhs).clone()],
+            span: *span,
+        }))
+    }
+}

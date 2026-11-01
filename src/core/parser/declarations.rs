@@ -345,6 +345,7 @@ impl Parser {
         self.impl_trait = None;
         Ok(TraitDef {
             is_drop: false,
+            is_add: false,
             public,
             name,
             self_parameter,

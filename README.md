@@ -40,7 +40,8 @@ fn main() {
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
   可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。
   关闭 prelude 时显式导入 `joky/io.{print, println}`；CLI 不再预注册类型专用打印宿主。
-- 时长字面量 `250ms` / `1.5s` 产生独立的 `joky/time.Duration`，支持纳秒到小时的单位、受检换算和格式化；
+- 时长字面量 `250ms` / `1.5s` 产生独立的 `joky/time.Duration`，支持纳秒到小时的单位、受检换算和格式化；`1h + 30min` 通过标准 `joky/ops.Add` 相加（溢出失败）。
+  自定义类型可实现同型、按值的 Add，支持 `T: Add` 静态泛型派发；
   `#every(1s)`、域定时器/提交截止时间及 session 的 `idle_timeout` 统一使用时长。
   `import joky/task` 提供 `task.sleep(Duration)`、`task.timeout(Duration, operation)`、`task.yield_now()`，并保留 `sleep_ms(UInt64)`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。

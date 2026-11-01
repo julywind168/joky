@@ -391,3 +391,6 @@ mod suspending_dyn_tests;
 
 #[path = "tasks/duration_tests.rs"]
 mod duration_tests;
+
+#[path = "language/add_tests.rs"]
+mod add_tests;

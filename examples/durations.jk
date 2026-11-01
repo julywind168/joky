@@ -3,8 +3,8 @@ import joky/task
 
 fn main() @suspends {
     let interval = 250ms
-    let timeout = 1.5s
-    assert_eq(interval.checked_add(750ms)!, 1s)
+    let timeout = 1s + 500ms
+    assert_eq(interval + 750ms, 1s)
     assert_eq(Duration.from_millis(250)!, interval)
     println("interval={interval}, timeout={timeout}")
 

@@ -120,12 +120,16 @@ impl FunctionPlan {
         if let Some(ty) = self.dyn_hint(expr, vars, functions, types) {
             return Some(ty);
         }
-        if let Some(call) = self
-            .member_call(expr, vars, functions, types)
-            .ok()
-            .flatten()
-        {
-            return self.hint(&call, vars, functions, types, default);
+        // Homogeneous addition has the operand type. Selecting its method here
+        // would recursively infer each subtree twice, including numeric chains.
+        if !matches!(expr, Expr::BinOp { op: BinOp::Add, .. }) {
+            if let Some(call) = self
+                .member_call(expr, vars, functions, types)
+                .ok()
+                .flatten()
+            {
+                return self.hint(&call, vars, functions, types, default);
+            }
         }
         if let Ok(Some((_, info))) = self.function_value_info(expr, vars, functions, types, false) {
             return Some(info.function_type());

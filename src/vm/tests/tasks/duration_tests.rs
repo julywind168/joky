@@ -112,7 +112,6 @@ fn duration_literals_reject_integer_mixing_and_negative_values() {
         "fn f() { let d = -1ms; }",
         "import joky/task fn f() @suspends { task.sleep(250); }",
         "import joky/task fn f() { task.sleep(1s); }",
-        "fn f() { let d = 1s + 250ms; }",
     ] {
         frontend_error(source, &crate::ModuleSources::new());
     }

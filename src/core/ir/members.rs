@@ -376,6 +376,9 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Result<Option<Expr>, Error> {
+        if let Some(call) = self.addition_call(expr, vars, functions, types)? {
+            return Ok(Some(call));
+        }
         if matches!(expr, Expr::Call { callee, .. } if matches!(callee.as_str(), "Ptr.null" | "Ptr.is_null"))
         {
             return Ok(None);

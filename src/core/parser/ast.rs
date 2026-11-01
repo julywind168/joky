@@ -572,6 +572,7 @@ pub struct ImplDef {
 #[derive(Debug, Clone)]
 pub struct TraitDef {
     pub(crate) is_drop: bool,
+    pub(crate) is_add: bool,
     pub public: bool,
     pub name: String,
     pub self_parameter: Arc<TypeParameter>,

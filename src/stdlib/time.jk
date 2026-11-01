@@ -1,3 +1,5 @@
+import joky/ops.{type Add}
+import joky/check.{panic}
 import joky/option.{ type Option, Some, None }
 import joky/eq.{ type Eq }
 import joky/show.{ type Show }
@@ -63,5 +65,14 @@ impl Show for Duration {
             }
         }
         output.push_str(&suffix)
+    }
+}
+
+impl Add for Duration {
+    fn add(self, other: Duration) -> Duration {
+        match self.checked_add(other) {
+            Some(value) => value
+            None => panic("Duration addition overflow")
+        }
     }
 }

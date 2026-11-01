@@ -2136,7 +2136,7 @@ fn example() -> Bool {
 点调用也保留现有局部借用限制：不借用临时值、不直接借用经 arena 引用解引用后的内联字段。
 
 首版不支持 trait 自身的类型参数、trait 方法独立泛型参数、关联类型默认值、GAT、trait 关联常量、
-继承、特化或运算符重载。标准 Eq / Hash 也是普通源码 trait，不是内建运算符协议；
+继承或特化。`+` 支持下述标准 Add 协议；其他运算符尚不提供 trait 重载。标准 Eq / Hash 也是普通源码 trait，不是内建运算符协议；
 编译器检查签名与约束，不证明相等关系、哈希一致性等代数规律。
 泛型类型实参支持 Copy 与拥有者；自动清理及 `Drop` 规则见下一节。
 
@@ -3164,6 +3164,31 @@ fn answer() -> Int32 {
 
 完整示例见 [tuples.jk](../examples/tuples.jk) 和 [owning_tuples.jk](../examples/owning_tuples.jk)。
 
+## 加法协议 `joky/ops.Add`
+
+整数与浮点的 `+` 保持原有内建语义。其他类型的 `+` 静态选择标准库 Add trait 的实现：
+
+```joky
+import joky/ops.{type Add}
+struct Count { value: Int32 }
+impl Add for Count {
+    fn add(self, other: Count) -> Count { Count { value: self.value + other.value } }
+}
+fn sum<T: Add>(left: T, right: T) -> T { left + right }
+fn main() { assert_eq(sum(Count { value: 20 }, Count { value: 22 }).value, 42) }
+```
+
+首版签名为 `fn add(self, other: Self) -> Self`：两侧与结果同型，按值消费非 Copy 操作数；
+左右操作数从左到右各求值一次，右侧可挂起，失败或取消沿用普通函数调用的清理规则。
+Add 本身同步；拥有值相加后不能继续使用已移动的操作数。标准库为八种整数和两种浮点提供 Add，
+因此数值也能传入 `T: Add` 泛型函数；整数仍按位宽环绕，浮点仍遵循 IEEE 语义。
+
+协议按标准 trait 身份识别：用户自定义同名 Add、同名固有 `add` 方法不会改变 `+`；
+导入别名不改变身份。定义实现的模块导入 Add 即可，使用该类型的模块无需再次导入 Add，
+关闭 prelude 时规则相同。显式调用 `Add.add(left, right)` 同样可用。
+不引入隐式类型转换、自动借用、异型 RHS、独立 Output 类型或动态运算符派发；
+`+=` 等复合赋值仍限于原有数值类型。`#every(1s + 250ms)` 仍不合法，可写 `#every(1.25s)`。
+
 ## 字符串字面量
 
 双引号字符串支持 UTF-8 文本，以及 `\n`、`\r`、`\t`、`\0`、`\"`、`\\` 六种简单转义，
@@ -3270,7 +3295,7 @@ CLI 源码运行渲染出错表达式；构建的独立程序向 stderr 报告�
 默认情况下循环本身不会自动挂起；Rust 嵌入接口可为解释器设置 `InterpreterLimits`，
 启用指令总预算、异步执行时间片和帧数量限制，详见 [解释器文档](interpreter.md#resource-limits)。
 支持 `+=`、`-=`、`*=`、`/=`、`%=`、`&=`、`|=`、`^=`、`<<=`、`>>=`，
-优先级与 `=` 相同，右结合，结果为 Unit；两侧类型和运算规则与对应二元运算一致。
+优先级与 `=` 相同，右结合，结果为 Unit；仅接受原有数值类型，两侧类型和运算规则与对应内建二元运算一致。
 目标可以是 `var`、其字段或可变引用指向的值。目标地址只求值一次，先快照旧值，再求右侧，
 最后计算并写回；右侧挂起不会重算地址或旧值，计算失败不会写回。
 例如 `var x = 10; x += { x = 100; 2 }` 最终为 12；右侧自身的副作用遵循既有借用规则，
@@ -5931,7 +5956,9 @@ Duration 是独立的 Copy 记录类型，内部表示非负的 UInt64 纳秒数
 `as_nanos`、`as_micros`、`as_millis`、`as_secs`、`as_mins`、`as_hours` 返回 UInt64，
 换算到较粗单位时向下取整。`is_zero()` 判断零时长，`compare(other)` 返回 -1、0 或 1；
 `checked_add(other)` / `checked_sub(other)` 返回 Option，溢出或不足时返回 None。
-支持 Eq / BorrowEq 等值比较；当前不提供时长的算术运算符或大小比较运算符。
+支持 Eq / BorrowEq 等值比较，以及通过 `joky/ops.Add` 派发的 `+`：`1h + 30min`。
+加法溢出时报 `Duration addition overflow` 运行时错误，不环绕；需要恢复时使用 `checked_add`。
+其他时长算术运算符、大小比较运算符及 `+=` 尚不支持；`#every` 仍只接受单个字面量。
 
 Duration 实现 Show，支持打印、插值和 `to_text()`。输出使用精确的十进制单位：
 整小时/整分钟优先，否则选择秒、毫秒、微秒或纳秒，并去掉无意义的小数尾零；零输出 `0ns`。
@@ -6044,7 +6071,7 @@ fn sample() -> UInt64 {
 
 String 的 `==` / `!=` 按 UTF-8 字节内容比较，支持拥有值、共享/独占引用、内联字段、
 数组下标与临时字符串；按从左到右各求值一次，仅在比较期间借用，两侧仍可继续使用。
-无需 prelude 或显式导入；不进行 Unicode 规范化、隐式转换或排序，也不开放通用运算符重载。
+无需 prelude 或显式导入；不进行 Unicode 规范化、隐式转换或排序，String 默认没有 Add 实现。
 `equals` 和 `BorrowEq` 继续保留，与相等运算复用同一内容比较实现。
 
 byte_length、equals、find 等只读查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。

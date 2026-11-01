@@ -1,0 +1,50 @@
+import joky/ops.{type Add}
+import joky/drop.{type Drop}
+import joky/mem
+extern fn record(value: Int32) -> Int32
+extern fn delayed_value(value: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
+struct Count { value: Int32 }
+impl Count { fn add(self, other: Count) -> Count { Count { value: 0 } } }
+impl Add for Count { fn add(self, other: Count) -> Count { Count { value: self.value + other.value } } }
+struct Pair<T> { value: T }
+impl<T: Add> Add for Pair<T> {
+    fn add(self, other: Pair<T>) -> Pair<T> { Pair { value: self.value + other.value } }
+}
+fn sum<T: Add>(left: T, right: T) -> T { left + right }
+fn add_values() -> Int32 {
+    assert_eq((1h + 30min + 250ms).as_millis(), uint64(5400250))
+    assert_eq(sum(1s, 250ms), 1.25s)
+    assert_eq(Add.add(1s, 250ms), 1.25s)
+    assert_eq(Add.add(Count { value: 20 }, Count { value: 22 }).value, 42)
+    assert_eq(sum(20, 22), 42)
+    assert_eq(sum(1.25, 2.75), 4.0)
+    assert_eq(sum(Pair { value: Count { value: 20 } }, Pair { value: Count { value: 22 } }).value.value, 42)
+    assert_eq((Count { value: 1 } + Count { value: 2 } + Count { value: 39 }).value, 42)
+    assert_eq((1 + 2 * 3), 7)
+    42
+}
+struct Owned { id: Int32, text: String }
+impl Drop for Owned { fn drop(&mut self) { record(self.id); } }
+fn owned(id: Int32) -> Owned { record(id + 100); Owned { id: id, text: "owner" } }
+impl Add for Owned {
+    fn add(self, other: Owned) -> Owned {
+        record(300);
+        let value = self.id + other.id
+        mem.drop(self)
+        mem.drop(other)
+        Owned { id: value, text: "result" }
+    }
+}
+fn add_pending() @suspends -> Int32 {
+    let result = owned(20) + owned(delayed_value(21))
+    result.id
+}
+fn add_failed_rhs() @suspends -> Int32 {
+    let result = owned(20) + { delayed_value(21); fail_now(); owned(22) }
+    result.id
+}
+fn add_overflow() -> Int32 {
+    let duration = 18446744073709551615ns + 1ns
+    int32(duration.as_nanos())
+}
