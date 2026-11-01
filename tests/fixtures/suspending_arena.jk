@@ -1,0 +1,72 @@
+import joky/arena.{type Arena}
+import joky/mem
+import joky/task
+
+extern fn arena_wait(value: &mut Int32) @suspends
+extern fn arena_probe(stage: Int32)
+
+struct RequestView { value: &Int32 }
+
+fn request_allocate(arena: &Arena) @suspends -> &mut Int32 {
+    task.yield_now()
+    arena.alloc(40)
+}
+
+fn request_wait(value: &mut Int32) @suspends {
+    arena_wait(value)
+}
+
+fn request_region() @suspends -> Int32 {
+    let arena = Arena.new()
+    let value = request_allocate(&arena)
+    request_wait(value)
+    let result = (*value)
+    mem.drop(arena)
+    arena_probe(1)
+    task.yield_now()
+    result
+}
+
+fn request_nested() @suspends -> Int32 {
+    let outer = Arena.new()
+    let value = outer.alloc(40)
+    let result = {
+        let inner = Arena.new()
+        let view = inner.alloc(RequestView { value: &*value })
+        task.yield_now()
+        (*view.value)
+    }
+    task.yield_now()
+    (*value) = result + 2
+    (*value)
+}
+
+fn request_owned(arena: Arena) @suspends -> Int32 {
+    let value = arena.alloc(40)
+    request_wait(value)
+    (*value)
+}
+
+fn request_transfer() @suspends -> Int32 { request_owned(Arena.new()) }
+
+fn request_failure() @suspends -> Int32 {
+    let arena = Arena.new()
+    let value = arena.alloc(40)
+    request_wait(value)
+    (*value) / 0
+}
+
+fn request_loop() @suspends -> Int32 {
+    var index = 0
+    while index < 1000 {
+        {
+            let arena = Arena.new()
+            let value = request_allocate(&arena)
+            request_wait(value)
+            if *value != 42 { return 0 }
+        }
+        arena_probe(1)
+        index += 1
+    }
+    42
+}

@@ -215,6 +215,7 @@ impl FunctionPlan {
                 ret,
             ),
             suspends: true,
+            uses_concurrency: false,
             may_fail: false,
             uses_arena: false,
             needs_arena: false,

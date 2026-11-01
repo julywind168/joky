@@ -101,6 +101,8 @@ pub(crate) struct FunctionInfo {
     pub extern_abi: ExternAbi,
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
+    /// May enter a task branch/join, including through a language call.
+    pub uses_concurrency: bool,
     /// Arithmetic/allocation failures or calls propagating a native runtime error.
     pub may_fail: bool,
     /// May allocate: preserves the existing ordinary-reference storage contract.
@@ -144,6 +146,7 @@ impl FunctionInfo {
             builtin: None,
             extern_abi: ExternAbi::Scalar,
             suspends,
+            uses_concurrency: suspends,
             may_fail: true,
             uses_arena: true,
             needs_arena: true,
@@ -788,7 +791,10 @@ impl ModulePlan {
                     _ => None,
                 },
                 closure_entry: false,
-                noescape: builtin.is_some()
+                // BorrowingHostV1 synchronously ends all pointer access in stop
+                // before returning completion, failure, or cancellation.
+                noescape: borrowing_host
+                    || builtin.is_some()
                     || types.resource_io.contains_key(name)
                     || matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
                 noescape_params: if let Item::FnDef(f) = item {
@@ -845,6 +851,7 @@ impl ModulePlan {
                 suspends,
                 // Abstract requirements have no body and promise no storage purity.
                 // Concrete instances are replanned against actual impl functions.
+                uses_concurrency: suspends && members.traits.requirements.contains(name),
                 may_fail: matches!(item, Item::ExternFn(_))
                     || members.traits.requirements.contains(name),
                 uses_arena: builtin.as_ref().is_some_and(Builtin::needs_adapter)

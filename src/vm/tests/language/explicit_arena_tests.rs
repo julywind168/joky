@@ -166,8 +166,6 @@ fn explicit_arena_rejects_escaping_references_and_capability_forgery() {
         "fn bad() { let arena = Arena.new(); let copy = (arena,); }",
         "fn identity<T>(value: T) -> T { value } fn bad() { identity(Arena.new()); }",
         "fn bad() { let arena = Arena.new(); arena.alloc(\"owned\"); }",
-        "fn tick() @suspends {} fn bad() @suspends { let arena = Arena.new(); tick(); arena.alloc(42); }",
-        "fn tick() @suspends {} fn bad() @suspends { let arena = Arena.new(); let p = arena.alloc(42); tick(); (*p); }",
         "fn bad() -> Int32 { let f = { let arena = Arena.new(); let p: &Int32 = arena.alloc(42); let f = || { (*p) }; f }; f() }",
         "fn bad() -> Int32 { let f = { let arena = Arena.new(); let p: &Int32 = arena.alloc(42); let f = move || { (*p) }; f }; f() }",
         "import joky/mem fn bad() -> Int32 { let arena = Arena.new(); let p: &Int32 = arena.alloc(42); let f = || { (*p) }; mem.drop(arena); f() }",

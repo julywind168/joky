@@ -194,6 +194,7 @@ fn evaluate(
             extern_abi: crate::core::builtins::ExternAbi::Scalar,
             signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),
             suspends: false,
+            uses_concurrency: false,
             may_fail: false,
             uses_arena: false,
             needs_arena: false,

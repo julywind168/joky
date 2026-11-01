@@ -8,7 +8,8 @@ JIT / 解释器 / AOT 共用语义检查。含引用聚合、引用间接递归�
 调用链及 join 分支可跨挂起保留 arena 对象；同步函数可借用无引用 Copy 局部值及其内联记录字段。
 2026-10-18 补充：同步显式 Arena 高级接口已实现，包含 `Arena.new()`、`arena.alloc(value)`、`&Arena` helper、
 作用域/显式 drop 回收及共享任务预算；首版不支持 Arena 按值返回、聚合/泛型携带、闭包捕获、持久化、reset 或跨挂起。
-本文中超出[当前语言规则](language.md#同步显式-arena)的扩展仍是目标设计；其他能力的最新状态以 language.md 为准。
+2026-11-01 补充：单任务调用链的显式 Arena 已支持跨语言挂起与异步借用宿主操作；并发共享仍不开放。
+本文中超出[当前语言规则](language.md#显式-arena-与请求级回收)的扩展仍是目标设计；其他能力的最新状态以 language.md 为准。
 阶段 5a 的布局属性确定为 #repr(C)，@ 保留给函数效果。
 当前可运行边界见[任务 arena 与引用](language.md#任务-arena-与引用)。
 阶段 7a / 7b.1 / 7b.2 的 `Array<T>` 已实现（Copy 元素可含普通共享引用）：显式导入 `joky/array`，支持受检值访问、push/pop、
@@ -88,7 +89,7 @@ fn run() {
 
 Arena 拥有者在运行时是指向堆上控制块的句柄。隐式 arena 能力不作为用户值暴露，也不能作为字段、
 类型实参或分配载荷。显式接口中的 `&mem` 仍是对控制块的特殊借用，不要求局部变量本身有稳定地址。
-显式 Arena 通过 `import joky/arena.{type Arena}` 使用；当前边界见[同步显式 arena](language.md#同步显式-arena)。
+显式 Arena 通过 `import joky/arena.{type Arena}` 使用；当前边界见[显式 arena 与请求级回收](language.md#显式-arena-与请求级回收)。
 普通 `&local` / `&mut local` 的可运行边界见下节。
 
 阶段 1 的可分配类型限定为四种现有整数、Bool、Unit 及由它们组成的记录、枚举和元组，

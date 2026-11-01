@@ -394,3 +394,6 @@ mod duration_tests;
 
 #[path = "language/add_tests.rs"]
 mod add_tests;
+
+#[path = "tasks/suspending_arena_tests.rs"]
+mod suspending_arena_tests;

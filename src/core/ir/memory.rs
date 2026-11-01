@@ -778,6 +778,12 @@ pub(super) fn check_module(
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,
         });
+        info.uses_concurrency = body.ops.iter().any(|op| {
+            matches!(
+                op,
+                Op::Concurrent { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. }
+            )
+        });
         info.needs_arena = body.is_destructor || body.has_buffers() || addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| matches!(op, Op::ArenaNew { .. } | Op::ArenaAlloc { .. })) || body.ops.iter().any(|op| {
             matches!(op, Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.needs_arena())
         });
@@ -785,6 +791,14 @@ pub(super) fn check_module(
     loop {
         let mut changed = false;
         for (name, body) in bodies {
+            if !functions[name].uses_concurrency
+                && body.ops.iter().any(
+                    |op| matches!(op, Op::Call { name, .. } if functions[name].uses_concurrency),
+                )
+            {
+                functions.get_mut(name).unwrap().uses_concurrency = true;
+                changed = true;
+            }
             if !reference_capability.contains(name)
                 && body.ops.iter().any(|op| match op {
                     Op::Call { name, .. } => reference_capability.contains(name),

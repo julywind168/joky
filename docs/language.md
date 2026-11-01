@@ -286,7 +286,7 @@ Copy 局部记录的不同字段可以分别借用后交换；拥有记录字段
 [arena.jk](../examples/arena.jk)，JIT、解释器与 AOT 输出均为 13、16。
 后续规划见 [Arena 设计](arena-borrowing-ffi.md)。
 
-### 同步显式 arena
+### 显式 arena 与请求级回收
 
 需要按循环、批次或局部作用域提前释放普通对象时，可显式导入 `joky/arena`：
 
@@ -317,17 +317,37 @@ fn run() -> Int32 {
   因此内层 arena 释放后，可以恢复对外层对象的独占访问；反向存储被拒绝。
 - Local 下显式 arena 的控制块和对象与隐式 task arena 共用 64 MiB 总额度，释放立即退还额度。
   每次 `Arena.new()` 不会获得新的独立任务额度。
-- 首版只支持同步使用。Arena 能力及其引用不能跨语言挂起点；解释器内部时间片及取消仍按拥有者清理。
+- Arena 拥有者、`&Arena` 能力及其依赖引用可以跨同一任务调用链的语言挂起点；恢复后对象地址保持不变。
+  同步或挂起 helper 都可接受 `&Arena`，返回的引用继续依赖该区域；按值传入 Arena 会转移清理责任。
+  失败和取消先同步停止仍借用对象的宿主操作，再清理区域。解释器内部时间片不会重放分配。
   Arena 不能作为聚合字段、普通泛型实参、闭包捕获或持久状态，也不能由用户函数按值返回；创建使用 `Arena.new()`。
   不提供 `&mut Arena`、reset 或逐对象 free，也不能将 Arena 擦除为拥有型 dyn 对象。
 
 Parallel worker 可以在同步区段创建、使用和释放显式 Arena，并调用同步 `&Arena` helper。
-Arena 及其依赖引用始终留在所属 worker；内部解释器时间片不迁移它们，也不开放跨语言挂起、
-跨 worker 参数／结果或 branch 捕获。各区域共享任务根预算，退出区域立即释放其载荷与分配表；
+Arena 及其依赖引用始终留在所属 worker，不开放跨 worker 参数／结果或 branch 捕获。各区域共享任务根预算，退出区域立即释放其载荷与分配表；
 空分片头可由任务根复用。三后端并行用例见 [parallel_explicit_arena.jk](../tests/fixtures/parallel_explicit_arena.jk)。
 
+显式 Arena 存活期间不能进入 `join`、`race`、动态分支或可能进入这些操作的 helper；限制沿调用链传播，
+包括递归调用。未知挂起函数值、动态挂起方法按可能进入并发处理；本阶段不开放区域能力的并发共享。
+请求自身可以是一个分支，但区域必须在分支内创建，不从外部捕获或传入。
+
+```joky
+import joky/arena.{type Arena}
+import joky/task
+
+fn request() @suspends -> Int32 {
+    let arena = Arena.new()
+    let value = arena.alloc(40)
+    task.sleep(1ms)
+    (*value) = (*value) + 2
+    *value
+} // Returning the value releases the region and its objects.
+
+fn main() @suspends { assert_eq(request(), 42) }
+```
+
 显式分配不改变 `alloc(value)` 的目标，也不会把 helper 内的 String、Array 等分配重定向到该 arena。
-三后端共享用例见 [explicit_arena.jk](../tests/fixtures/explicit_arena.jk)。
+三后端共享用例见 [explicit_arena.jk](../tests/fixtures/explicit_arena.jk) 与 [suspending_arena.jk](../tests/fixtures/suspending_arena.jk)；可运行示例见 [request_arena.jk](../examples/request_arena.jk)。
 
 ### 局部值借用
 
@@ -483,7 +503,7 @@ fn run() -> Int32 {
 - 调用可分配的函数时，所有含普通引用的实参都按可能被保存处理，包括 Unit 返回的函数和间接调用链。
   分配能力随调用图传播，不根据函数是否恰好保存某个参数来放宽规则；只读、无分配 helper 不延长到任务结束。
   返回依赖仍按签名合并。存入任务对象的引用必须来自当前隐式任务 arena；局部引用和显式子 arena 引用被拒绝。
-  显式 arena 的存储及提前结束借用规则见[同步显式 arena](#同步显式-arena)。
+  显式 arena 的存储及提前结束借用规则见[显式 arena 与请求级回收](#显式-arena-与请求级回收)。
 - 当前可构造链表、树及共享子节点的无环图；自环和循环共享图使用下一节的受检构图块。
   不允许独占引用字段或可变循环图。直接内联递归布局仍拒绝。
 

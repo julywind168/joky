@@ -69,3 +69,5 @@ mod suspending_dyn;
 mod durations;
 
 mod add_operators;
+
+mod suspending_arena;

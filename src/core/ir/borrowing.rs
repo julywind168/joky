@@ -1292,7 +1292,15 @@ fn analyze(
             Op::Concurrent { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
             _ => false,
         };
-        if suspending
+        // Stable explicit regions may cross ordinary CPS calls. Keep concurrency
+        // separate, including helpers and unknown suspending call contracts, so
+        // an arena-dependent reference cannot be laundered into a child task.
+        let concurrent = match &plan.ops[pc] {
+            Op::Call { name, .. } => functions[name].uses_concurrency,
+            Op::Concurrent { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
+            _ => false,
+        };
+        if concurrent
             && live[pc].iter().any(|index| {
                 state.get(index).is_some_and(|value| !value.invalid)
                     && (explicit_arena(&types[index])
@@ -1304,7 +1312,7 @@ fn analyze(
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,
-                "Explicit arenas and their references cannot remain live across suspension or enter concurrency",
+                "Explicit arenas and their references cannot enter concurrency or calls that may enter concurrency",
             ));
         }
         if suspending
@@ -1360,7 +1368,17 @@ fn analyze(
                     && !types[index].is_buffer_view()
                     && !types[index].is_suspend_safe_view()
                     && state.get(index).is_some_and(|value| {
-                        !value.invalid && value.storage && value.has_root(&owner_roots)
+                        // Explicit regions also admit Copy graphs with shared
+                        // references. Their stored loans last until region
+                        // cleanup; they are not relocatable container elements.
+                        let region_object = !value.arenas.is_empty()
+                            && types[index]
+                                .reference_type()
+                                .is_some_and(|r| r.target.is_copy_storage_value());
+                        !value.invalid
+                            && value.storage
+                            && value.has_root(&owner_roots)
+                            && !region_object
                     })
             })
         {
