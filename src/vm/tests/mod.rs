@@ -399,3 +399,6 @@ mod add_tests;
 
 #[path = "tasks/suspending_arena_tests.rs"]
 mod suspending_arena_tests;
+
+#[path = "tasks/time_tests.rs"]
+mod time_tests;

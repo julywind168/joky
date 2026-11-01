@@ -5997,6 +5997,48 @@ Duration 实现 Show，支持打印、插值和 `to_text()`。输出使用精确
 整小时/整分钟优先，否则选择秒、毫秒、微秒或纳秒，并去掉无意义的小数尾零；零输出 `0ns`。
 可运行示例见 [durations.jk](../examples/durations.jk)。
 
+### 单调时刻 `Instant`
+
+`import joky/time.{type Instant}` 提供用于耗时和截止等待的 Copy 值；字段私有，不能自行构造坐标。
+`Instant.now()` 使用当前执行器的时钟，HostExecutor 注入的虚拟时钟同样生效。
+`checked_add(Duration)` / `checked_sub(Duration)` 返回 `Option<Instant>`，坐标越过 UInt64 纳秒范围或早于该时钟起点时返回 None。
+`duration_since(earlier)` / `elapsed()` 返回 `Option<Duration>`，逆序或跨时钟返回 None；
+`compare(other)` 返回 `Option<Int32>`（-1、0、1），跨时钟返回 None，不提供大小运算符。
+
+`task.sleep_until(deadline) @suspends` 等待绝对截止时间（也可通过 `time.sleep_until` 调用）；
+已经到期时可以立即完成，恢复时不重新计算相对延迟。跨时钟或宿主不能表示的截止时间报运行时错误。
+Instant 的受检加法验证数值坐标范围，宿主时钟的可表示范围在等待时进一步验证。
+每个独立 HostExecutor 有自己的时钟身份，克隆共享身份；即使注入同一个 Clock 对象，两个独立执行器仍不能交换 Instant。
+直接驱动 continuation、阻塞驱动和 Parallel worker 共用进程系统时钟身份。
+Instant 不用于持久化或跨进程传递，也不能转换为 Unix 时间；读取它不会登记逐个时间句柄或向任务 arena 分配对象。
+
+### UTC 时间戳 `Timestamp`
+
+`import joky/time.{type Timestamp}` 提供字段私有的 Copy 值。支持公历 UTC 年份 0001..9999，
+以向下取整的 Unix 秒和非负纳秒小数保存时间；不表示闰秒。
+`Timestamp.now()` 读取一次系统墙钟，当前接口向下取整到微秒；墙钟可能被调整，不用于度量耗时。
+值的构造、运算与文本转换保留纳秒精度，实际墙钟分辨率取决于操作系统。
+
+| 接口 | 行为 |
+|------|------|
+| `from_unix_secs/millis/micros/nanos(Int64)` | 返回 `Option<Timestamp>`，超出日期范围返回 None |
+| `from_unix_parts(seconds: Int64, nanos: UInt32)` | 返回 Option，要求秒在范围内且 nanos 小于十亿 |
+| `as_unix_secs/millis/micros()` | 返回 Int64，向下取整；例如 Unix -1ns 转为毫秒是 -1 |
+| `as_unix_nanos()` | 返回 `Option<Int64>`，无法用 Int64 纳秒表示时返回 None |
+| `subsec_nanos()` | 返回 UInt32，范围 0..999999999 |
+| `checked_add/sub(Duration)` | 返回 Option，超出日期范围返回 None |
+| `duration_since(earlier)` | 返回 `Option<Duration>`，逆序或超过 UInt64 纳秒时返回 None |
+| `compare(other)` | 返回 -1、0 或 1；还支持 Eq / BorrowEq |
+| `parse(&String)` | 返回 Option，解析下述 RFC 3339 子集 |
+| `to_text()` / Show | 输出 UTC `YYYY-MM-DDTHH:MM:SS[.fraction]Z`，省略零小数和小数尾零 |
+
+解析接受 `T`/`t`、`Z`/`z` 或显式 `±HH:MM` 偏移，以及可选的 1..9 位小数，
+数字偏移归一到 UTC；必须提供秒和时区，无首尾空白。非法日期、闰秒、年份 0000、
+转换后越界、超过纳秒精度和 `-00:00` 均返回 None。
+其中 `-00:00` 在 [RFC 3339 §4.3](https://www.rfc-editor.org/rfc/rfc3339#section-4.3) 表示本地偏移未知；
+本接口不保留该元数据，因此显式拒绝。首版没有本地时区数据库、夏令时或自定义格式模板。
+可运行示例见 [time_points.jk](../examples/time_points.jk)。
+
 ## 内置标准库 `joky/task`
 
 `joky/task` 需要显式导入，关闭 prelude 时也可使用。等待函数返回 Unit：
@@ -6005,6 +6047,7 @@ Duration 实现 Show，支持打印、插值和 `to_text()`。输出使用精确
 |------|------|
 | `yield_now() @suspends` | 主动返回一次 Pending；恢复后完成，让 join/race 继续轮询其他分支 |
 | `sleep(duration: Duration) @suspends` | 使用单调时钟等待指定时长；保留纳秒精度，零时长可以立即完成，无法表示的截止时间报告运行时错误 |
+| `sleep_until(deadline: Instant) @suspends` | 等待当前时钟中的绝对时刻；到期可立即完成，跨时钟报运行时错误 |
 | `sleep_ms(milliseconds: UInt64) @suspends` | 保留的整数毫秒接口，等待与清理规则同上 |
 
 ```joky

@@ -1,0 +1,121 @@
+import joky/time.{type Duration, type Instant, type Timestamp}
+import joky/task
+import joky/option.{Some, None}
+import joky/array.{type Array}
+import joky/eq.{type Eq, type BorrowEq}
+import joky/check.{assert, panic}
+
+fn stamp(text: &String) -> Timestamp {
+    match Timestamp.parse(text) { Some(value) => value, None => panic("Invalid test timestamp") }
+}
+fn canonical(text: &String, expected: &String) {
+    let value = stamp(text)
+    assert(value.to_text() == expected, "canonical UTC")
+    let formatted = value.to_text()
+    assert(stamp(&formatted).compare(value) == 0, "timestamp round trip")
+}
+fn timestamp_values() -> Int32 {
+    let epoch = Timestamp.from_unix_secs(0).unwrap_or_else(move || { panic("epoch") })
+    assert(epoch.to_text() == "1970-01-01T00:00:00Z", "epoch")
+    let before = Timestamp.from_unix_millis(-1).unwrap_or(epoch)
+    assert(before.to_text() == "1969-12-31T23:59:59.999Z", "negative fraction")
+    assert(before.as_unix_secs() == -1 && before.as_unix_millis() == -1, "floor conversion")
+    assert(before.as_unix_micros() == -1000 && before.as_unix_nanos().unwrap_or(0) == -1000000, "units")
+    assert(before.checked_add(1ms).unwrap_or(before).eq(epoch), "carry")
+    assert(epoch.checked_sub(1ms).unwrap_or(epoch).eq(before), "borrow")
+    assert(epoch.duration_since(before).unwrap_or(0ns).eq(1ms), "difference")
+    assert(before.duration_since(epoch).is_none(), "reversed difference")
+    assert(Timestamp.from_unix_parts(0, 1000000000).is_none(), "invalid fraction")
+    assert(Timestamp.from_unix_secs(-62135596801).is_none(), "minimum range")
+    assert(Timestamp.from_unix_secs(253402300800).is_none(), "maximum range")
+    42
+}
+fn timestamp_limits() -> Int32 {
+    let first = stamp("0001-01-01T00:00:00Z")
+    let last = stamp("9999-12-31T23:59:59.999999999Z")
+    assert(first.as_unix_secs() == -62135596800 && last.as_unix_secs() == 253402300799, "calendar endpoints")
+    assert(first.checked_sub(1ns).is_none() && last.checked_add(1ns).is_none(), "date overflow")
+    assert(first.as_unix_nanos().is_none() && last.as_unix_nanos().is_none(), "integer overflow")
+    assert(last.duration_since(first).is_none(), "duration overflow")
+    let limits: Array<Int64> = [-9223372036854775808, -1, 0, 9223372036854775807]
+    for value in limits {
+        let timestamp = Timestamp.from_unix_nanos(value).unwrap_or(first)
+        assert(timestamp.as_unix_nanos().unwrap_or(42) == value, "nanosecond limits")
+    }
+    let high = Timestamp.from_unix_nanos(9223372036854775807).unwrap_or(first)
+    assert(high.checked_add(1ns).unwrap_or(first).as_unix_nanos().is_none(), "upper nanosecond edge")
+    let low = Timestamp.from_unix_nanos(-9223372036854775808).unwrap_or(first)
+    assert(low.checked_sub(1ns).unwrap_or(last).as_unix_nanos().is_none(), "lower nanosecond edge")
+    let epoch = Timestamp.from_unix_secs(0).unwrap_or(first)
+    let maximum = Duration.from_nanos(18446744073709551615)
+    let far = epoch.checked_add(maximum).unwrap_or(first)
+    assert(far.duration_since(epoch).unwrap_or(0ns).eq(maximum), "maximum duration")
+    assert(far.checked_add(1ns).unwrap_or(first).duration_since(epoch).is_none(), "duration overflow edge")
+    assert(far.checked_sub(maximum).unwrap_or(first).eq(epoch), "maximum subtraction")
+    42
+}
+fn timestamp_formats() -> Int32 {
+    canonical("0001-01-01T00:00:00Z", "0001-01-01T00:00:00Z")
+    canonical("9999-12-31T23:59:59.999999999Z", "9999-12-31T23:59:59.999999999Z")
+    canonical("2000-02-29T12:34:56.120000000Z", "2000-02-29T12:34:56.12Z")
+    canonical("2024-03-01T00:30:00+01:00", "2024-02-29T23:30:00Z")
+    canonical("1969-12-31T23:30:00-00:30", "1970-01-01T00:00:00Z")
+    canonical("2024-01-01t00:00:00.000000001z", "2024-01-01T00:00:00.000000001Z")
+    canonical("1970-01-01T00:00:00+00:00", "1970-01-01T00:00:00Z")
+    42
+}
+fn timestamp_rejects() -> Int32 {
+    for text in ["", "2024-01-01", "0000-01-01T00:00:00Z", "1900-02-29T00:00:00Z", "2023-02-29T00:00:00Z", "2024-04-31T00:00:00Z", "2024-13-01T00:00:00Z", "2024-01-01T24:00:00Z", "2024-01-01T00:00:60Z"] {
+        assert(Timestamp.parse(&text).is_none(), "invalid date")
+    }
+    for text in ["2024-01-01T00:00:00.Z", "2024-01-01T00:00:00.1234567890Z", "2024-01-01T00:00:00", "2024-01-01T00:00:00-00:00", "2024-01-01T00:00:00+24:00", "2024-01-01T00:00:00+00:60", "2024-01-01T00:00:00Zx", "0001-01-01T00:00:00+00:01", "9999-12-31T23:59:59-00:01"] {
+        assert(Timestamp.parse(&text).is_none(), "invalid RFC3339")
+    }
+    42
+}
+fn time_wall() -> Int32 {
+    let now = Timestamp.now()
+    assert(now.subsec_nanos() % 1000 == 0, "wall microsecond precision")
+    let formatted = now.to_text()
+    assert(stamp(&formatted).eq(now), "wall round trip")
+    42
+}
+fn time_instant() -> Int32 {
+    let start = Instant.now()
+    let later = start.checked_add(250us).unwrap_or(start)
+    assert(later.duration_since(start).unwrap_or(0ns).eq(250us), "instant addition")
+    assert(start.duration_since(later).is_none(), "instant reversed difference")
+    assert(start.compare(later).unwrap_or(0) == -1, "instant comparison")
+    assert(later.checked_sub(250us).unwrap_or(later).compare(start).unwrap_or(1) == 0, "instant subtraction")
+    42
+}
+fn time_wait() @suspends -> Int32 {
+    let start = Instant.now()
+    let deadline = start.checked_add(250us).unwrap_or(start)
+    task.sleep_until(deadline)
+    assert(start.elapsed().unwrap_or(0ns).compare(250us) >= 0, "elapsed clock")
+    task.sleep_until(deadline)
+    42
+}
+fn time_cancel() @suspends -> Int32 {
+    let owner = Timestamp.now().to_text()
+    let deadline = Instant.now().checked_add(1h).unwrap_or_else(move || { panic("instant range") })
+    task.sleep_until(deadline)
+    int32(owner.byte_length())
+}
+fn time_foreign() @suspends -> Int32 {
+    let owner = Timestamp.now().to_text()
+    let before = Instant.now()
+    task.yield_now()
+    let after = Instant.now()
+    assert(before.compare(after).is_none(), "foreign comparison")
+    assert(after.duration_since(before).is_none() && before.elapsed().is_none(), "foreign difference")
+    task.sleep_until(before)
+    int32(owner.byte_length())
+}
+fn time_parallel() @suspends -> Int32 {
+    assert(time_wall() == 42, "worker wall clock")
+    time_wait()
+}
+
+fn time_unix_micros() -> Int64 { Timestamp.now().as_unix_micros() }

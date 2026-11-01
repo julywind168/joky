@@ -43,6 +43,8 @@ fn main() {
 - 时长字面量 `250ms` / `1.5s` 产生独立的 `joky/time.Duration`，支持纳秒到小时的单位、受检换算和格式化；`1h + 30min` 通过标准 `joky/ops.Add` 相加（溢出失败）。
   自定义类型可实现同型、按值的 Add，支持 `T: Add` 静态泛型派发；
   `#every(1s)`、域定时器/提交截止时间及 session 的 `idle_timeout` 统一使用时长。
+  `joky/time.Instant` 提供单调耗时和受检截止运算，`Timestamp` 提供 Unix 换算与纳秒 UTC 文本（系统读取为微秒）；
+  `task.sleep_until(Instant)` 使用绝对截止时间，支持宿主虚拟时钟。
   `import joky/task` 提供 `task.sleep(Duration)`、`task.timeout(Duration, operation)`、`task.yield_now()`，并保留 `sleep_ms(UInt64)`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。

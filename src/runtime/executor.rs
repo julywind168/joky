@@ -205,6 +205,59 @@ pub(crate) fn now() -> Instant {
     clock.map_or_else(Instant::now, |c| c.now())
 }
 
+// Domain zero is the process system clock, shared by manual driving and workers.
+// Executor domains are lazy and never reused; unused clocks incur no callbacks.
+static SYSTEM_TIME_ORIGIN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+pub(crate) fn time_clock() -> Result<u64, Error> {
+    let Some(executor) = current_executor() else {
+        return Ok(0);
+    };
+    if let Some(id) = executor.inner.time_clock.get() {
+        return Ok(id);
+    }
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .map_err(|_| invalid("Clock identities exhausted"))?;
+    executor.inner.time_clock.set(Some(id));
+    Ok(id)
+}
+fn time_origin(clock: u64, now: Option<Instant>) -> Result<Instant, Error> {
+    if time_clock()? != clock {
+        return Err(invalid("Instant belongs to a different clock"));
+    }
+    if let Some(executor) = current_executor() {
+        if let Some(origin) = executor.inner.time_origin.get() {
+            return Ok(origin);
+        }
+        let origin = now.ok_or_else(|| invalid("Clock has no instant origin"))?;
+        executor.inner.time_origin.set(Some(origin));
+        Ok(origin)
+    } else {
+        Ok(*SYSTEM_TIME_ORIGIN.get_or_init(Instant::now))
+    }
+}
+pub(crate) fn time_ticks(clock: u64) -> Result<u64, Error> {
+    // Establish the system origin before taking the reading; virtual origins use
+    // their first reading without another callback or any retained time handles.
+    if clock == 0 {
+        SYSTEM_TIME_ORIGIN.get_or_init(Instant::now);
+    }
+    if time_clock()? != clock {
+        return Err(invalid("Instant belongs to a different clock"));
+    }
+    let now = now();
+    let origin = time_origin(clock, Some(now))?;
+    now.checked_duration_since(origin)
+        .and_then(|d| u64::try_from(d.as_nanos()).ok())
+        .ok_or_else(|| invalid("Monotonic clock moved before its origin or exceeded its range"))
+}
+pub(crate) fn time_deadline(clock: u64, ticks: u64) -> Result<Instant, Error> {
+    time_origin(clock, None)?
+        .checked_add(std::time::Duration::from_nanos(ticks))
+        .ok_or_else(|| invalid("Instant exceeds the monotonic clock range"))
+}
+
 pub(crate) trait TaskEnvironment {
     fn report_completion(&self) -> bool {
         true
@@ -272,6 +325,8 @@ struct ExecutorState {
     tasks: RefCell<BTreeMap<TaskId, Record>>,
     queue: Arc<Queue>,
     clock: Rc<dyn Clock>,
+    time_clock: Cell<Option<u64>>,
+    time_origin: Cell<Option<Instant>>,
     polling: Cell<bool>,
     schedule: Option<Rc<RefCell<controlled::Schedule>>>,
     max_tasks: usize,
@@ -314,6 +369,8 @@ impl HostExecutor {
                 tasks: RefCell::new(BTreeMap::new()),
                 queue: Arc::default(),
                 clock,
+                time_clock: Cell::new(None),
+                time_origin: Cell::new(None),
                 polling: Cell::new(false),
                 schedule,
                 max_tasks,

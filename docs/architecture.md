@@ -2049,6 +2049,17 @@ continuation 交给 `runtime::driver::block_on`；AOT 的 C 驱动按 `cps_frame
 帧状态和受检单调截止时间计算，恢复沿用首次记录的截止时间。`task.timeout` 是标准库的
 泛型挂起 FnOnce 包装，直接通过 race 承接获胜结果及取消清理屏障。
 
+`Instant` 和 `Timestamp` 使用普通私有字段 Copy 记录，不引入后端专用时间类型。
+Instant 保存时钟身份和 UInt64 纳秒坐标；HostExecutor 延迟分配非复用身份并记录首次读数为起点，
+克隆共享状态，系统直接驱动/阻塞驱动/Parallel 使用进程级身份 0 与 OnceLock 起点。
+`joky_time_clock/ticks` 经标量 ABI 读取，ticks 校验所属时钟及范围，不登记单个 Instant 或分配 arena 对象。
+`joky_task_sleep_until` 的两个参数槽是身份与坐标，每次 poll 校验时钟，初次将截止时间保存到帧唤醒元数据；
+跨执行器接管不能默默重新解释旧坐标。它与相对 sleep 共享到期轮询和取消清理。
+Timestamp 保存 Int64 秒及 UInt32 纳秒，源库负责受检运算、公历和 RFC 3339 子集；
+`joky_time_unix_micros` 用单次 SystemTime 读取返回 Int64 微秒，避免两次读取拼出不一致的秒和小数。
+Parallel 冻结只接受已审核时间操作的精确指针、ABI 和签名，不放宽任意同步宿主入口。
+C 声明随现有 `joky_task.h` 分发，须与配套运行时链接。
+
 `joky/task` 的 yield/timer 唤醒元数据由等待中的 CPS 帧拥有。驱动只扫描存活帧，选择立即
 可运行状态或最早单调时钟截止时间；取消分支随帧删除元数据，没有全局定时器注册或后台线程。
 解释器还单独标记指令时间片让出，不能把所有 Pending 当作立即就绪。没有支持的唤醒来源时

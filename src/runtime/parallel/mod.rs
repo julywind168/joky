@@ -48,6 +48,7 @@ pub(crate) enum HostCode {
     /// Synchronous immutable TextViewV2 input, no retained pointer or callback.
     /// Only audited runtime bindings construct this internal variant.
     TextView(unsafe extern "C" fn(*const u8) -> i32),
+    Time(crate::stdlib::time::Operation),
     Tcp(super::tcp::Operation),
     Dns,
     Control(control::Operation),
@@ -56,6 +57,7 @@ impl Host {
     pub(crate) fn binding(&self) -> super::bindings::HostBinding {
         use super::bindings::{HostAbiKind, HostEntry};
         let (abi, entry) = match self.code {
+            HostCode::Time(op) => (HostAbiKind::Scalar, HostEntry::Direct(op.entry())),
             HostCode::Control(op) => (
                 HostAbiKind::Scalar,
                 match op {
@@ -191,6 +193,11 @@ impl Host {
                 binding.abi == HostAbiKind::Scalar
                     && std::ptr::fn_addr_eq(*entry, expected)
                     && *slots == expected_slots
+            }
+            (HostCode::Time(op), HostEntry::Direct(entry)) => {
+                binding.abi == HostAbiKind::Scalar
+                    && *entry == op.entry()
+                    && binding.signature == op.signature()
             }
             (HostCode::TextView(expected), HostEntry::Direct(entry)) => {
                 binding.abi == HostAbiKind::TextViewV2

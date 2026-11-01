@@ -2,6 +2,7 @@
 pub(crate) mod domain;
 pub(crate) mod output;
 pub(crate) mod task;
+pub(crate) mod time;
 mod vm;
 
 use crate::{
@@ -147,6 +148,8 @@ fn build_registry() -> ModuleRegistry {
     // These static C ABI functions implement the exact signatures listed above.
     unsafe { registry.register_module("joky/internal/vm", vm_bindings()) }
         .expect("standard library bindings must be valid");
+    unsafe { registry.register_module("joky/internal/time_api", time::bindings()) }
+        .expect("Time bindings must be valid");
     let tasks = [
         (
             "yield_now",
@@ -157,6 +160,11 @@ fn build_registry() -> ModuleRegistry {
             "sleep_ms",
             vec![Type::UInt64],
             task::sleep_ms as crate::runtime::cps::CpsEntry,
+        ),
+        (
+            "sleep_until",
+            vec![Type::UInt64, Type::UInt64],
+            task::sleep_until as crate::runtime::cps::CpsEntry,
         ),
         (
             "sleep_ns",

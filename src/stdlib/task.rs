@@ -71,6 +71,26 @@ pub unsafe extern "C" fn sleep_ns(frame: *mut CpsFrame) -> i32 {
     )
 }
 
+/// Wait for an absolute instant using its original clock domain.
+/// # Safety
+/// Same frame contract as sleep_ns, with clock identity and ticks in slots 0/1.
+#[export_name = "joky_task_sleep_until"]
+pub unsafe extern "C" fn sleep_until(frame: *mut CpsFrame) -> i32 {
+    let frame = &mut *frame;
+    let deadline = match crate::runtime::executor::time_deadline(frame.slots[0], frame.slots[1]) {
+        Ok(value) => value,
+        Err(error) => {
+            error::record_error(error);
+            return RUNTIME_ERROR;
+        }
+    };
+    if frame.state == 0 {
+        frame.wake = Some(Wake::Deadline(deadline));
+        frame.state = 1;
+    }
+    poll_sleep(frame)
+}
+
 fn sleep(frame: &mut CpsFrame, duration: Duration, range_error: &str) -> i32 {
     if frame.state == 0 {
         let Some(deadline) = crate::runtime::executor::now().checked_add(duration) else {
@@ -79,6 +99,10 @@ fn sleep(frame: &mut CpsFrame, duration: Duration, range_error: &str) -> i32 {
         frame.wake = Some(Wake::Deadline(deadline));
         frame.state = 1;
     }
+    poll_sleep(frame)
+}
+
+fn poll_sleep(frame: &mut CpsFrame) -> i32 {
     match (frame.state, frame.wake) {
         (1, Some(Wake::Deadline(deadline))) if crate::runtime::executor::now() >= deadline => {
             complete(frame)
