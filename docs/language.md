@@ -6074,6 +6074,55 @@ Instant 不用于持久化或跨进程传递，也不能转换为 Unix 时间；
 当前不提供浮点分布、自动随机种子、流跳跃或密码学伪随机生成器。
 可运行示例见 [random.jk](../examples/random.jk)。
 
+## Hex 与 Base64 编解码
+
+显式导入 `joky/hex` 或 `joky/base64`，关闭 prelude 时同样可用。
+编码借用 `&Slice<UInt8>` 并返回拥有型 String；字符串可传 `text.bytes()`，数组可传
+`bytes.slice(0, bytes.len())`。解码借用 `&String` 并返回 `Result<Array<UInt8>, DecodeError>`，
+输出可以包含任意字节，不自动按 UTF-8 解释；需要文本时再调用 `string.from_utf8`。
+输入不被消费，输出不借用输入。错误时不返回部分输出，临时拥有存储自动清理；
+容量和分配失败沿用普通容器的 ResourceLimit 运行时错误。
+
+### `joky/hex`
+
+| 接口 | 行为 |
+|------|------|
+| `hex.encode(bytes)` | 每字节输出两个小写十六进制字符，无前缀 |
+| `hex.encode_upper(bytes)` | 输出大写十六进制字符 |
+| `hex.decode(text)` | 接受大小写或混合大小写；拒绝奇数长度、空白、分隔符和 `0x` 前缀 |
+
+`hex.DecodeError` 有 `InvalidLength` 和 `InvalidByte(UInt64)`；偏移为原输入中从零开始的字节位置。
+先检查奇偶长度，再按顺序检查字符。例如 `"0"` 为 InvalidLength，`"00xz"` 为 InvalidByte(2)。
+空输入编码为空字符串，解码为空数组。
+
+### `joky/base64`
+
+`base64.encode(bytes)` 和 `base64.decode(text)` 使用标准字母表与规范填充。
+下面的配置函数返回私有字段的 Copy 值 `base64.Encoding`，可调用 `.encode(bytes)` 和 `.decode(text)`：
+
+| 配置 | 字母表末两字符 | 填充规则 |
+|------|------|------|
+| `base64.standard()` | `+/` | 输出并要求必要的 `=` |
+| `base64.standard_no_pad()` | `+/` | 不输出且不接受 `=` |
+| `base64.url_safe()` | `-_` | 输出并要求必要的 `=` |
+| `base64.url_safe_no_pad()` | `-_` | 不输出且不接受 `=`，适合 URL token |
+
+不自动猜测配置、不混用两种字母表、不折行，也不忽略空白。
+按 [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648) 的字母表和编码规则实现，
+解码额外要求未使用的尾部位为零；例如 `"Zg=="` 合法，表示相同有效数据但尾部位非零的 `"Zh=="` 被拒绝。
+带填充模式的长度必须是 4 的倍数，且填充只能出现在末尾；无填充模式的长度模 4 不能为 1。
+
+`base64.DecodeError` 的种类如下。先检查整体长度，再从左到右检查数据字符，最后检查尾部位：
+
+- `InvalidLength`：长度不符合所选配置。
+- `InvalidByte(offset)`：字符不属于所选字母表，包括空白、NUL 和非 ASCII 字节。
+- `InvalidPadding(offset)`：不允许的 `=`，或 `=` 出现在允许的尾部填充之外。
+- `NonCanonical(offset)`：最后一个数据字符包含非零的未使用位。
+
+offset 均为原输入的字节偏移。解码成功的 Base64 文本再用相同配置编码，会得到完全相同的文本。
+首版只提供完整输入的编解码，没有流式状态或 MIME 宽松解码。
+可运行示例见 [codecs.jk](../examples/codecs.jk)，包含随机字节转 URL-safe 无填充 token。
+
 ## 内置标准库 `joky/task`
 
 `joky/task` 需要显式导入，关闭 prelude 时也可使用。等待函数返回 Unit：

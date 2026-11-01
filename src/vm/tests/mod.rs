@@ -405,3 +405,6 @@ mod time_tests;
 
 #[path = "language/random_tests.rs"]
 mod random_tests;
+
+#[path = "language/codecs_tests.rs"]
+mod codecs_tests;

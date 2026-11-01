@@ -1,0 +1,139 @@
+import joky/hex.{ type DecodeError as HexError }
+import joky/base64.{ type Encoding, type DecodeError as Base64Error }
+import joky/array.{ type Array }
+import joky/slice.{ type Slice }
+import joky/result.{ Ok, Err }
+import joky/check.{ assert, panic }
+import joky/task
+
+fn same(left: &Slice<UInt8>, right: &Slice<UInt8>) {
+    assert(slice.len(left) == slice.len(right), "decoded length")
+    for i in uint64(0) .. slice.len(left) { assert(*slice.borrow_ref(left, i) == *slice.borrow_ref(right, i), "decoded byte") }
+}
+fn vector(plain: &String, encoded: &String, hexadecimal: &String) {
+    assert(base64.encode(plain.bytes()) == encoded, "RFC 4648 base64 vector")
+    assert(hex.encode(plain.bytes()) == hexadecimal, "hex vector")
+    let decoded = base64.decode(encoded).unwrap()
+    same(decoded.slice(0, decoded.len()), plain.bytes())
+    let unhexed = hex.decode(hexadecimal).unwrap()
+    same(unhexed.slice(0, unhexed.len()), plain.bytes())
+}
+fn codecs_vectors() -> Int32 {
+    vector("", "", "")
+    vector("f", "Zg==", "66")
+    vector("fo", "Zm8=", "666f")
+    vector("foo", "Zm9v", "666f6f")
+    vector("foob", "Zm9vYg==", "666f6f62")
+    vector("fooba", "Zm9vYmE=", "666f6f6261")
+    vector("foobar", "Zm9vYmFy", "666f6f626172")
+    vector("你好", "5L2g5aW9", "e4bda0e5a5bd")
+    let binary: Array<UInt8> = [0, 255, 254, 128]
+    let view = binary.slice(0, binary.len())
+    assert(hex.encode_upper(view) == "00FFFE80", "uppercase output")
+    let mixed = hex.decode("00fFfE80").unwrap()
+    same(view, mixed.slice(0, mixed.len()))
+    assert(base64.encode(view) == "AP/+gA==", "binary standard")
+    assert(base64.standard_no_pad().encode(view) == "AP/+gA", "binary raw")
+    assert(base64.url_safe().encode(view) == "AP_-gA==", "binary URL")
+    assert(base64.url_safe_no_pad().encode(view) == "AP_-gA", "binary raw URL")
+    42
+}
+fn bad64(codec: Encoding, text: &String, kind: Int32, offset: UInt64) {
+    match codec.decode(text) {
+        Ok(_) => panic("Accepted malformed base64")
+        Err(error) => match error {
+            Base64Error.InvalidLength => assert(kind == 1, "length error")
+            Base64Error.InvalidByte(i) => assert(kind == 2 && i == offset, "byte error offset")
+            Base64Error.InvalidPadding(i) => assert(kind == 3 && i == offset, "padding error offset")
+            Base64Error.NonCanonical(i) => assert(kind == 4 && i == offset, "pad bit error offset")
+        }
+    }
+}
+fn codecs_rejections() -> Int32 {
+    let padded = base64.standard()
+    let raw = base64.standard_no_pad()
+    bad64(padded, "Zg", 1, 0)
+    bad64(padded, "Zg=", 1, 0)
+    bad64(raw, "A", 1, 0)
+    bad64(padded, "AA=A", 3, 2)
+    bad64(padded, "A===", 3, 1)
+    bad64(padded, "====", 3, 0)
+    bad64(padded, "Zm9v====", 3, 4)
+    bad64(raw, "Zg==", 3, 2)
+    bad64(padded, "Zm 9", 2, 2)
+    bad64(padded, "Zg\n=", 2, 2)
+    bad64(padded, "Zm9v\r\nAA", 2, 4)
+    bad64(padded, "Zm9vAA\0A", 2, 6)
+    bad64(padded, "AAé", 2, 2)
+    bad64(padded, "Zh==", 4, 1)
+    bad64(padded, "Zm9=", 4, 2)
+    bad64(raw, "Zh", 4, 1)
+    bad64(raw, "Zm9", 4, 2)
+    bad64(base64.url_safe(), "AP/+gA==", 2, 2)
+    bad64(base64.standard(), "AP_-gA==", 2, 2)
+    bad64(base64.url_safe_no_pad(), "AP_-gA==", 3, 6)
+    match hex.decode("0") { Err(HexError.InvalidLength) => {}, _ => panic("Odd hex length") }
+    match hex.decode("00xz") { Err(HexError.InvalidByte(i)) => assert(i == 2, "hex byte offset"), _ => panic("Invalid hex") }
+    match hex.decode("0 ") { Err(HexError.InvalidByte(i)) => assert(i == 1, "hex whitespace"), _ => panic("Hex whitespace") }
+    match hex.decode("é") { Err(HexError.InvalidByte(i)) => assert(i == 0, "hex UTF-8 offset"), _ => panic("Hex UTF-8") }
+    match hex.decode("0x12") { Err(HexError.InvalidByte(i)) => assert(i == 1, "hex prefix"), _ => panic("Hex prefix") }
+    42
+}
+fn roundtrip(codec: Encoding, bytes: &Slice<UInt8>) {
+    let text = codec.encode(bytes)
+    let decoded = codec.decode(&text).unwrap()
+    same(bytes, decoded.slice(0, decoded.len()))
+    assert(codec.encode(decoded.slice(0, decoded.len())) == text, "canonical round trip")
+}
+fn codecs_binary_boundaries() -> Int32 {
+    var bytes = Array.new::<UInt8>()
+    for i in uint64(0) .. 259 { bytes.push(uint8(i)) }
+    for length in [uint64(0), 1, 2, 3, 4, 5, 6, 255, 256, 257, 258, 259] {
+        let view = bytes.slice(0, length)
+        roundtrip(base64.standard(), view)
+        roundtrip(base64.standard_no_pad(), view)
+        roundtrip(base64.url_safe(), view)
+        roundtrip(base64.url_safe_no_pad(), view)
+        let text = hex.encode(view)
+        let decoded = hex.decode(&text).unwrap()
+        same(view, decoded.slice(0, decoded.len()))
+    }
+    42
+}
+fn codecs_repeated() -> Int32 {
+    for i in 0 .. 128 {
+        let bytes = hex.decode("00fffe80").unwrap()
+        let text = base64.url_safe_no_pad().encode(bytes.slice(0, bytes.len()))
+        let decoded = base64.url_safe_no_pad().decode(&text).unwrap()
+        assert(hex.encode(decoded.slice(0, decoded.len())) == "00fffe80", "repeated owner cleanup")
+        assert(base64.decode("Zm9vZh==").is_err(), "partial output cleanup")
+        assert(hex.decode("0011xz").is_err(), "partial hex cleanup")
+    }
+    42
+}
+fn codecs_pending() @suspends -> Int32 {
+    let input = hex.decode("00fffe80").unwrap()
+    let encoded = base64.encode(input.slice(0, input.len()))
+    let decoded = base64.decode(&encoded).unwrap()
+    task.yield_now()
+    assert(hex.encode(decoded.slice(0, decoded.len())) == "00fffe80", "owning values survive suspension")
+    42
+}
+fn codecs_parallel() @suspends -> Int32 {
+    assert(codecs_vectors() == 42 && codecs_rejections() == 42 && codecs_binary_boundaries() == 42, "worker codecs")
+    codecs_pending()
+}
+
+// Independent known answers from Python's standard base64 and bytes.hex codecs.
+fn codecs_golden_binary() -> Int32 {
+    var bytes = Array.new::<UInt8>()
+    for i in uint64(0)..256 { bytes.push(uint8(i)) }
+    let view = bytes.slice(0, bytes.len())
+    let b64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+    let hexadecimal = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
+    assert(base64.encode(view) == b64, "all-byte base64 vector")
+    assert(hex.encode(view) == hexadecimal, "all-byte hex vector")
+    let decoded = base64.decode(&b64).unwrap()
+    same(view, decoded.slice(0, decoded.len()))
+    42
+}

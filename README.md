@@ -49,6 +49,8 @@ fn main() {
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - `joky/random` 提供操作系统安全随机字节，以及显式设种子的非密码学 `Rng`、无偏整数范围采样和原地洗牌；
   同一种子与调用顺序在三个后端上可复现。示例：[random.jk](examples/random.jk)。
+- `joky/hex` 与 `joky/base64` 提供字节与文本编解码，包含 URL-safe/无填充配置、严格校验和错误字节偏移；
+  可直接将安全随机字节编码为 token。示例：[codecs.jk](examples/codecs.jk)。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
   支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
   VM、文件、目录、准入与邮箱通过任务树控制代理使用，业务 `when` 按完整域访问集在 worker 并行计算并统一提交，Godot 回调保持 Local；

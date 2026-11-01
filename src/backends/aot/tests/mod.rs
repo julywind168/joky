@@ -67,6 +67,7 @@ mod task_parallel_storage;
 
 mod suspending_dyn;
 
+mod codecs;
 mod durations;
 mod random;
 mod time_points;
