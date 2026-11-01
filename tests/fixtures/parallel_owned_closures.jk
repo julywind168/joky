@@ -11,6 +11,9 @@ fn invoke<F: FnOnce() -> String>(operation: F, id: Int32) @suspends -> String {
     task.yield_now()
     operation()
 }
+fn invoke_suspending<F: FnOnce() @suspends -> String>(operation: F) @suspends -> String {
+    operation()
+}
 fn repeat<F: FnMut() -> Int32>(var operation: F) @suspends -> Int32 {
     let first = operation()
     task.yield_now()
@@ -76,5 +79,17 @@ fn main() @suspends -> Int32 {
     let unused = move || { never_called }
     scope { branch { discard(unused) } }
     check.assert(cancelled().equals("winner"), "race releases losing environment")
+    let first = "suspending owned"
+    let operation = move || @suspends { observe(5); task.yield_now(); first }
+    let second = "suspending peer"
+    let (left, right) = join {
+        | invoke_suspending(operation)
+        | invoke_suspending(move || @suspends { observe(6); task.yield_now(); second })
+    }
+    check.assert(left.equals("suspending owned") && right.equals("suspending peer"), "suspending captures cross workers")
+    let losing = "cancelled inside closure"
+    let operation = move || @suspends { task.sleep_ms(60000); losing }
+    let winner = race { | invoke_suspending(operation) | fast("winner") }
+    check.assert(winner.equals("winner"), "race cancels active suspending environment")
     0
 }

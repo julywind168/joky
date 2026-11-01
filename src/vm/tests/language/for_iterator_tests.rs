@@ -311,13 +311,13 @@ fn iterator_adapters_reject_borrow_escape_consuming_callbacks_and_suspension() {
         "struct Mixed { n: Int32, items: String } fn bad() { var m = Mixed { n: 1, items: \"a\" }; let r = &mut m.n; let x = m.items; *r += 1 }",
         "struct Mixed { n: Int32, items: String } fn bad(m: &Mixed) { let r = &mut m.n; }",
 
-        "fn bad() { let n = 1; let values = iter.map(0..2, |x| { x + n }); }",
+        "fn bad() { let values = { let n = 1; iter.map(0..2, |x| { x + n }) }; for _ in values {} }",
         "fn bad() { let text = \"owned\"; let values = iter.map(0..2, move |x| { text }); }",
         "fn bad() { let values = iter.map([\"owned\"], move |x| { x }); for _ in values {} for _ in values {} }",
         "fn bad() { let a = [1, 2]; let values = iter.take(&a, 1); }",
         "fn bad() { for _ in iter.filter(0..3, move |x| { alloc(x); true }) {} }",
         "fn escape(x: &Int32) -> Bool { alloc(x); true } fn bad() { for _ in iter.filter(0..3, escape) {} }",
-        "fn bad() { let a = [1]; let r = &a; let values = iter.map(0..2, move |x| { r.len(); x }); }",
+        "fn bad() { let values = { let a = [1]; let r = &a; iter.map(0..2, move |x| { r.len(); x }) }; for _ in values {} }",
         "fn fail() @suspends -> Int32 { 1 } fn bad() { let values = iter.map(0..2, fail); }",
     ] {
         let source = format!("import joky/iter\nimport joky/task\n{source}");

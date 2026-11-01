@@ -303,17 +303,26 @@ impl Parser {
                                 self.expect_list_separator()?;
                             }
                             self.expect(&TokenKind::RParen)?;
-                            let noescape = if self.peek() == &TokenKind::At {
-                                self.advance();
-                                if self.expect_ident()? != "noescape" {
-                                    return Err(self.error(
-                                        "Only @noescape is supported on callable bounds".into(),
-                                    ));
-                                }
-                                true
-                            } else {
-                                false
-                            };
+                            let (suspends, noescape, names) = self.parse_fn_attrs()?;
+                            if !names.is_empty() {
+                                return Err(
+                                    self.error("Callable bounds require unnamed @noescape".into())
+                                );
+                            }
+                            if suspends && name != "FnOnce" {
+                                return Err(
+                                    self.error("Suspending callable bounds require FnOnce".into())
+                                );
+                            }
+                            if parameter
+                                .callable
+                                .as_ref()
+                                .is_some_and(|b| b.suspends != suspends)
+                            {
+                                return Err(self.error(
+                                    "Callable bounds must have the same suspension effect".into(),
+                                ));
+                            }
                             self.expect(&TokenKind::Arrow)?;
                             let ret = self.parse_type()?;
                             let mode = match name.as_str() {
@@ -334,6 +343,7 @@ impl Parser {
                                 .as_ref()
                                 .map_or(mode, |b| b.mode.min(mode));
                             parameter.callable = Some(std::sync::Arc::new(CallableBound {
+                                suspends,
                                 mode,
                                 noescape: noescape
                                     || parameter.callable.as_ref().is_some_and(|b| b.noescape),

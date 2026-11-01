@@ -1,0 +1,84 @@
+import joky/drop.{ type Drop }
+extern fn record(value: Int32) -> Int32
+extern fn delayed_value(value: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
+
+struct Resource { id: Int32, text: String }
+impl Drop for Resource {
+    fn drop(&mut self) { record(self.id); }
+}
+fn resource(id: Int32) -> Resource {
+    let value = Resource { id, text: "owned capture" }
+    record(-id)
+    value
+}
+fn apply<T, F: FnOnce() @suspends -> T>(operation: F) @suspends -> T { operation() }
+fn forward<T, F: FnOnce() @suspends -> T>(operation: F) @suspends -> T { apply(operation) }
+struct Holder<F> { operation: F }
+fn store<F>(operation: F) -> Holder<F> { Holder { operation } }
+fn take<F>(holder: Holder<F>) -> F { holder.operation }
+
+fn closure_direct() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = move || @suspends {
+        record(100)
+        let answer = delayed_value(40)
+        answer + owner.id
+    }
+    operation()
+}
+fn closure_transfer() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = move || @suspends {
+        delayed_value(40)
+        owner
+    }
+    let result = forward(take(store(operation)))
+    result.id + 41
+}
+fn closure_nested() @suspends -> Int32 {
+    let first = resource(1)
+    let inner = move || @suspends { delayed_value(40) + first.id }
+    let second = resource(2)
+    forward(move || @suspends { let result = apply(inner); result + second.id - 2 })
+}
+fn closure_argument() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = move | value: Int32 | @suspends {
+        delayed_value(value) + owner.id
+    }
+    operation(delayed_value(39))
+}
+fn closure_pointer() @suspends -> Int32 {
+    let operation: fn(Int32) @suspends -> Int32 = move | value | @suspends { delayed_value(value) }
+    operation(41)
+}
+fn named() @suspends -> Int32 { delayed_value(41) }
+fn closure_named() @suspends -> Int32 { forward(named) }
+fn closure_unused() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = move || @suspends { delayed_value(40) + owner.id }
+    delayed_value(41)
+}
+fn closure_failure() @suspends -> Int32 {
+    let owner = resource(1)
+    apply(move || @suspends -> Int32 { delayed_value(40); fail_now(); owner.id })
+}
+fn immediate() @suspends -> Int32 { 42 }
+fn closure_race() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = move || @suspends { delayed_value(40) + owner.id }
+    race { | apply(operation) | immediate() }
+}
+fn apply_ref<F: FnOnce(&Int32) @suspends @noescape -> Int32>(operation: F, value: &Int32) @suspends @noescape -> Int32 {
+    operation(value)
+}
+fn closure_reference_argument() @suspends -> Int32 {
+    let number = 1
+    let result = apply_ref(move | value | @suspends { delayed_value(40) + *value }, &number)
+    result
+}
+fn closure_factory() @suspends -> Int32 {
+    let factory = move | number: Int32 | { move || @suspends { delayed_value(number) } }
+    forward(factory(41))
+}

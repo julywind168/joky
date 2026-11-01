@@ -359,6 +359,8 @@ mod scheduler_tests;
 #[path = "tasks/suspending_borrow_tests.rs"]
 mod suspending_borrow_tests;
 
+#[path = "tasks/suspending_closure_tests.rs"]
+mod suspending_closure_tests;
 #[path = "tasks/suspending_function_value_tests.rs"]
 mod suspending_function_value_tests;
 

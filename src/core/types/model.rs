@@ -806,6 +806,7 @@ impl std::fmt::Display for Type {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CallableBound {
+    pub suspends: bool,
     pub mode: CallableKind,
     pub noescape: bool,
     pub signature: crate::FunctionSignature,
@@ -822,6 +823,7 @@ pub(crate) enum CallableKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClosureInfo {
+    pub suspends: bool,
     pub storable: bool,
     pub mode: CallableKind,
     pub signature: crate::FunctionSignature,

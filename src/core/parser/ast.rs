@@ -300,6 +300,7 @@ pub struct WhenPath {
 #[derive(Debug, Clone)]
 pub struct AnonymousFunction {
     pub moving: bool,
+    pub suspends: bool,
     pub params: Vec<ClosureParameter>,
     pub ret: Option<Type>,
     pub body: Expr,

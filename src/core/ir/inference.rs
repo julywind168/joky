@@ -213,7 +213,7 @@ impl FunctionPlan {
                     .clone()
                     .or_else(|| self.hint(&function.body, &local, functions, types, default))?;
                 // Hints carry signature shape only; the checked value has its own nominal identity.
-                Some(Type::function(params, ret))
+                Some(Type::function_with_effect(params, ret, function.suspends))
             }
             Expr::Return { value, .. } => value.as_ref().map_or(Some(Type::Unit), |value| {
                 self.hint(value, vars, functions, types, default)

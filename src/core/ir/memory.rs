@@ -124,7 +124,8 @@ impl FunctionPlan {
                         self.current_span,
                     ));
                 }
-                if expected.suspends || expected.signature != closure.signature {
+                if expected.suspends != closure.suspends || expected.signature != closure.signature
+                {
                     return Err(type_error(
                         &self.current_span,
                         ErrorCode::TypeMismatch,

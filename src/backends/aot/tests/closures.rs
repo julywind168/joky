@@ -67,3 +67,72 @@ fn closure_owning_cleanup_executes_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn suspending_closures_execute_relocated_entries_and_cleanup() {
+    check_arena_cps_fixture(
+        "suspending-closures",
+        include_str!("../../../../tests/fixtures/suspending_closures.jk"),
+        &[
+            ("closure_direct", "-1,100,40,1", 4),
+            ("closure_transfer", "-1,40,1", 3),
+            ("closure_nested", "-1,-2,40,1,2", 5),
+            ("closure_argument", "-1,39,40,1", 4),
+            ("closure_pointer", "41", 1),
+            ("closure_named", "41", 1),
+            ("closure_unused", "-1,41,1", 3),
+            ("closure_reference_argument", "40", 1),
+            ("closure_factory", "41", 1),
+        ],
+        |compiler| {
+            let mut extra = String::new();
+            for name in [
+                "closure_direct",
+                "closure_transfer",
+                "closure_nested",
+                "closure_argument",
+                "closure_unused",
+                "closure_failure",
+                "closure_race",
+            ] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                extra.push_str(&format!(
+                    r#"
+                    {{
+                        extern int32_t {name}(JokyCpsFrame *);
+                        ready = 0; count = 0;
+                        JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                        int status = {name}(frame);
+                        if (status != JOKY_CPS_PENDING && status != JOKY_CPS_COMPLETED) return 20;
+                        joky_cps_frame_free(frame);
+                        for (int id = 1; id <= 2; ++id) {{
+                            int made = 0, dropped = 0;
+                            for (int i = 0; i < count; ++i) {{
+                                made += events[i] == -id;
+                                dropped += events[i] == id;
+                            }}
+                            if (made != dropped || made > 1) return 21;
+                        }}
+                    }}
+                "#
+                ));
+            }
+            let slots = compiler.cps_frame_slots("closure_failure").unwrap();
+            extra.push_str(&format!(r#"
+                {{
+                    extern int32_t closure_failure(JokyCpsFrame *);
+                    ready = 0; count = 0;
+                    JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                    if (closure_failure(frame) != JOKY_CPS_PENDING) return 22;
+                    ready = 1;
+                    if (closure_failure(frame) != 7) return 23;
+                    joky_cps_frame_free(frame);
+                    if (count != 3 || events[0] != -1 || events[1] != 40 || events[2] != 1) return 24;
+                    joky_runtime_error_clear();
+                }}
+            "#));
+            extra
+        },
+    );
+}

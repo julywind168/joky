@@ -176,7 +176,7 @@ pub(super) fn capturing_function_pointer_error(span: Span) -> Error {
 
 pub(super) fn callable_signature(ty: &Type) -> Option<(CallableKind, crate::FunctionSignature)> {
     match ty {
-        Type::Function(f) if !f.suspends => Some((CallableKind::Fn, f.signature.clone())),
+        Type::Function(f) => Some((CallableKind::Fn, f.signature.clone())),
         Type::Parameter(p) => p.callable.as_ref().map(|b| (b.mode, b.signature.clone())),
         Type::Record(r) => r.closure.as_ref().map(|c| (c.mode, c.signature.clone())),
         Type::Reference(r) => {
@@ -188,9 +188,19 @@ pub(super) fn callable_signature(ty: &Type) -> Option<(CallableKind, crate::Func
     }
 }
 
+pub(super) fn callable_suspends(ty: &Type) -> bool {
+    match ty {
+        Type::Function(f) => f.suspends,
+        Type::Parameter(p) => p.callable.as_ref().is_some_and(|b| b.suspends),
+        Type::Record(r) => r.closure.as_ref().is_some_and(|c| c.suspends),
+        Type::Reference(r) => callable_suspends(&r.target),
+        _ => false,
+    }
+}
+
 pub(super) fn callable_noescape(ty: &Type) -> bool {
     match ty {
-        Type::Function(f) => !f.suspends && f.noescape,
+        Type::Function(f) => f.noescape,
         Type::Parameter(p) => p.callable.as_ref().is_some_and(|b| b.noescape),
         Type::Reference(r) => callable_noescape(&r.target),
         _ => false,
@@ -231,7 +241,7 @@ impl FunctionPlan {
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         let expected_signature = expected.and_then(|ty| match ty {
-            Type::Function(f) if !f.suspends => Some(&f.signature),
+            Type::Function(f) => Some(&f.signature),
             _ => ty.closure_info().map(|c| &c.signature),
         });
         let environment =
@@ -255,12 +265,19 @@ impl FunctionPlan {
         }
         if let Some(Type::Function(pointer)) = expected {
             let signature = &pointer.signature;
+            if pointer.suspends != function.suspends {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::TypeMismatch,
+                    "Closure suspension effect does not match its expected function type",
+                ));
+            }
             if !captures.is_empty() {
                 return Err(capturing_function_pointer_error(function.span));
             }
             let dst = self.slot(Type::Function(Arc::new(crate::core::types::FunctionType {
                 signature: signature.clone(),
-                suspends: false,
+                suspends: function.suspends,
                 noescape: pointer.noescape,
             })))?;
             self.emit(Op::FunctionRef(
@@ -535,7 +552,9 @@ impl FunctionPlan {
                     }
                 }
             })?;
-            let mut mode = if !mutations.is_empty() {
+            let mut mode = if function.suspends {
+                CallableKind::FnOnce
+            } else if !mutations.is_empty() {
                 CallableKind::FnMut
             } else {
                 CallableKind::Fn
@@ -562,6 +581,13 @@ impl FunctionPlan {
                 let ty = self.pointee(&ty, types)?;
                 storable = !ty.contains_references() && !ty.contains_unstorable_closures();
                 pending.extend(ty.buffer_elements().iter().map(|ty| (**ty).clone()));
+            }
+            if function.suspends && !storable {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::TypeMismatch,
+                    "Suspending closures require reference-free move captures",
+                ));
             }
             // A null owner lane gives even an empty movable environment a stable
             // cleanup/move identity. It never allocates or owns a buffer payload.
@@ -618,6 +644,7 @@ impl FunctionPlan {
                     map: false,
                     set: false,
                     closure: Some(Arc::new(ClosureInfo {
+                        suspends: function.suspends,
                         storable,
                         mode,
                         signature: signature.clone(),
@@ -652,10 +679,14 @@ impl FunctionPlan {
                 Param {
                     mutable: false,
                     name: "$environment".into(),
-                    ty: Type::reference(
-                        Type::Record(environment.clone()),
-                        mode == CallableKind::FnMut,
-                    ),
+                    ty: if mode == CallableKind::FnOnce {
+                        Type::Record(environment.clone())
+                    } else {
+                        Type::reference(
+                            Type::Record(environment.clone()),
+                            mode == CallableKind::FnMut,
+                        )
+                    },
                     span: function.span,
                 },
             );
@@ -672,7 +703,7 @@ impl FunctionPlan {
                 type_params: vec![],
                 params: inputs,
                 ret_ty: ret.clone(),
-                suspends: false,
+                suspends: function.suspends,
                 body: function.body.clone(),
                 span: function.span,
             };
@@ -696,7 +727,7 @@ impl FunctionPlan {
             info.internal = true;
             info.instance_entry = false;
             info.domain_entry = false;
-            info.suspends = false;
+            info.suspends = function.suspends;
             info.compiler_intrinsic = None;
             info.may_fail = false;
             info.uses_arena = false;
@@ -1016,6 +1047,14 @@ impl FunctionPlan {
                 },
             ));
         }
+        let callee_suspends = callable_suspends(&value.ty);
+        if callee_suspends && !suspends {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Caller of a suspending callable must be marked @suspends",
+            ));
+        }
         let noescape = callable_noescape(&value.ty);
         let concrete = value
             .ty
@@ -1122,7 +1161,7 @@ impl FunctionPlan {
                     .collect(),
                 signature.ret.clone(),
             );
-            let contract = (contract, noescape);
+            let contract = (contract, noescape, callee_suspends);
             let mut context = self.generics.borrow_mut();
             let index = context
                 .abstract_callables
@@ -1146,12 +1185,17 @@ impl FunctionPlan {
         if let Some(dst) = result.as_ref().filter(|s| s.ty.is_place()) {
             self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
         }
+        let state = callee_suspends.then(|| {
+            let state = self.state_count;
+            self.state_count += 1;
+            state
+        });
         self.emit(Op::Call {
             indirect: None,
             name,
             args: arguments,
             result: result.clone(),
-            state: None,
+            state,
         });
         if let Some(value) = consumed {
             self.emit(Op::EndLocal(value));

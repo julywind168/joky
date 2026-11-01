@@ -47,7 +47,7 @@ pub(super) struct GenericContext {
     pub generated_functions: HashMap<String, FunctionInfo>,
     pub closures: Vec<ClosureInstance>,
     pub callables: Vec<crate::core::types::FunctionType>,
-    pub abstract_callables: Vec<(FunctionSignature, bool)>,
+    pub abstract_callables: Vec<(FunctionSignature, bool, bool)>,
     pub noescape_closures: std::collections::HashSet<String>,
     pub dyn_tables: Vec<Arc<DynTable>>,
     pub dyn_contracts: Vec<crate::core::types::DynMethodSlot>,
@@ -469,15 +469,15 @@ impl FunctionPlan {
             members.traits.check_bounds(p, ty, *span)?;
             types.check_associated_bounds(p, ty, &substitutions, *span)?;
             if let Some(bound) = &p.callable {
-                let Some((mode, actual)) = super::closures::callable_signature(ty) else { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable bound requires a synchronous language callable")); };
+                let Some((mode, actual)) = super::closures::callable_signature(ty) else { return Err(type_error(span, ErrorCode::TypeMismatch, if bound.suspends { "Callable bound requires a suspending language callable" } else { "Callable bound requires a synchronous language callable" })); };
                 let required = FunctionSignature::new(bound.signature.params.iter().map(|t| substitute(t, &substitutions, types)).collect::<Result<_, _>>()?, substitute(&bound.signature.ret, &substitutions, types)?);
-                if mode > bound.mode || actual != required { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable capability or signature does not satisfy its bound")); }
+                if mode > bound.mode || actual != required || super::closures::callable_suspends(ty) != bound.suspends { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable capability or signature does not satisfy its bound")); }
                 if bound.noescape {
                     let target = ty.reference_type().map_or(ty, |r| &r.target);
                     if let Some(closure) = target.closure_info() {
                         self.generics.borrow_mut().noescape_closures.insert(closure.entry.clone());
                     } else if !super::closures::callable_noescape(target) {
-                        return Err(type_error(span, ErrorCode::TypeMismatch, "Callable bound requires a synchronous @noescape callback"));
+                        return Err(type_error(span, ErrorCode::TypeMismatch, if bound.suspends { "Callable bound requires a suspending @noescape callback" } else { "Callable bound requires a synchronous @noescape callback" }));
                     }
                 }
             }
@@ -590,11 +590,15 @@ impl FunctionPlan {
                     self.hint(arg, vars, functions, types, inference.default)
                 };
                 if let Some(actual) = actual {
-                    if matches!(&actual, Type::Function(f) if f.suspends) {
+                    if super::closures::callable_suspends(&actual) != bound.suspends {
                         return Err(type_error(
                             &arg.span(),
                             ErrorCode::TypeMismatch,
-                            "Callable bound requires a synchronous callback without @suspends",
+                            if bound.suspends {
+                                "Callable bound requires a suspending callback marked @suspends"
+                            } else {
+                                "Callable bound requires a synchronous callback without @suspends"
+                            },
                         ));
                     }
                     if let Some((_, signature)) = super::closures::callable_signature(&actual) {

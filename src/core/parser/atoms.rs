@@ -591,8 +591,12 @@ impl Parser {
         if !empty {
             self.expect(&TokenKind::Pipe)?;
         }
-        if self.peek() == &TokenKind::At {
-            return Err(self.error("Suspending anonymous functions are not supported".into()));
+        let (suspends, noescape, names) = self.parse_fn_attrs()?;
+        if noescape || !names.is_empty() {
+            return Err(self.error("Only @suspends is supported on anonymous functions".into()));
+        }
+        if suspends && !moving {
+            return Err(self.error("Suspending closures require move captures".into()));
         }
         let ret = if self.peek() == &TokenKind::Arrow {
             self.advance();
@@ -603,6 +607,7 @@ impl Parser {
         let body = self.parse_block()?;
         Ok(Expr::AnonymousFunction(Box::new(AnonymousFunction {
             moving,
+            suspends,
             params,
             ret,
             body,

@@ -528,6 +528,7 @@ impl FunctionPlan {
         }
         let anonymous = AnonymousFunction {
             moving: false,
+            suspends: false,
             params: params
                 .iter()
                 .map(|p| ClosureParameter {

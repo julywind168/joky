@@ -1096,10 +1096,10 @@ impl ModulePlan {
             info.noescape = signature.noescape;
             functions.insert(format!("__joky_indirect_{index}"), info);
         }
-        for (index, (signature, noescape)) in
+        for (index, (signature, noescape, suspends)) in
             generics.borrow().abstract_callables.iter().enumerate()
         {
-            let mut info = FunctionInfo::indirect(signature.clone(), false, Span::empty(0));
+            let mut info = FunctionInfo::indirect(signature.clone(), *suspends, Span::empty(0));
             info.noescape_params = vec![0];
             info.noescape = *noescape;
             info.frame_slots = info.parameter_slots();

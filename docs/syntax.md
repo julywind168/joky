@@ -35,7 +35,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
    的字段必须换行或逗号分隔，字段默认私有、显式 pub，并迁移旧源码。
 2. [记录解构](record-destructuring.md)：命名字段模式、整体消费式解构、共享借用及嵌套模式。
 3. [匿名函数与闭包](anonymous-functions-closures.md)：fn 表达式、move 捕获、同步可调用能力
-   与标准库组合方法；同步局部及无引用 move 环境的记录存储与返回已实现，挂起闭包和动态 callable 后续开放。
+   与标准库组合方法；同步局部及无引用 move 环境的记录存储与返回已实现，挂起 move FnOnce 闭包已实现，动态 callable 后续开放。
 4. [trait 默认方法与关联类型](trait-default-methods-associated-types.md)：默认体与覆盖、
    类型投影、关联类型能力及等式约束；保持静态分派。默认方法、关联类型与约束已实现；验收证据见该计划。
 5. [借用型 dyn Trait](borrowed-dyn-trait.md)：同步非逃逸的共享/独占动态视图、关联类型绑定、
@@ -80,12 +80,12 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
 | 模块常量 | 已实现模块级 `const` / `pub const`、跨模块限定与选择导入、与关联常量共用依赖图和标量求值 | String / 引用 / 聚合常量与 `const fn` 留待后续 |
 | 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派；Drop 按专门规则实现 | 默认方法、关联类型、投影及等式约束已实现；同步借用型 dyn 三后端分派、显式重借用与生命周期已验收，见第 5 项计划 |
-| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 join/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
+| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 join/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起 move FnOnce 闭包已实现 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
 | Arena、引用来源检查 | 已实现隐式 arena、同步显式 Arena.new()/arena.alloc() 与 &Arena helper、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、任务 arena 引用跨挂起及 join 分支借用、局部值/字段及容器元素/Slice 跨挂起借用与独立字段访问、异步宿主借用 v1 | 显式 Arena 跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | Struct JSON 派生 | 已实现 `#derive(ToJson, FromJson)`，可单向派生，支持泛型条件约束与跨模块私有字段 | 生成普通 trait 实现；enum、字段改名/跳过/默认值注解留待后续，语义见 language.md |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
-| 挂起闭包、借用闭包逃逸、动态挂起 dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
+| 借用闭包逃逸、动态挂起 dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
 以下除明确写出“当前实现”的内容外，均为目标规则。第一版不是对现有行为的无条件冻结；
 最后一节列出需要迁移和补齐的部分。
@@ -525,7 +525,7 @@ fn load_config() @suspends -> Result<String, FirstOkError<LoadError>> {
 多个候选同时就绪时采用所在执行模式的完成仲裁，不额外承诺多线程中的源码优先级。
 
 实现这些库策略仍需内部受控的任务组合能力；普通源码的 join/race 不足以直接拼出 first_ok。
-结果任务句柄、挂起闭包及统一取消接口需另行设计，当前已有的具名挂起函数值可作为初期输入形式。
+结果任务句柄及统一取消接口需另行设计；具名挂起函数值与挂起 move FnOnce 闭包可作为输入形式。
 空候选的错误形式、异构错误归一化和可变数量候选留到 API 阶段确定。
 继续沿用 `@suspends`；暂不引入 `spawn`、`fork`、`go`、`rush` 或 `async` / `await`。
 
@@ -941,11 +941,12 @@ Fn 同时满足 FnMut 和 FnOnce，FnMut 同时满足 FnOnce。
 上下文推导、嵌套捕获权限、私有环境 ABI 和清理责任，见该计划第 9 节。
 已实现同步局部环境及无引用 move 闭包的记录存储与返回；当前规则见[同步匿名函数与闭包](language.md#同步匿名函数与闭包)。
 捕获环境不能转换成 fn 指针；无引用 move 闭包支持泛型记录存储及挂起帧，
-并可按受检资格作为同树 worker 的拥有输入。闭包本身仍是同步 callable，借用环境仍不得逃逸；
+并可按受检资格作为同树 worker 的拥有输入。同步闭包与挂起 move FnOnce 闭包均保留效果，借用环境仍不得逃逸；
 具体边界见[语言参考](language.md#同步匿名函数与闭包)。
 
-挂起闭包仍是后续目标；若开放 `FnOnce(A) @suspends -> R` 等约束，必须保留效果信息，
-传进泛型或转换成动态接口都不能把挂起能力擦除。
+已实现 `move |参数| @suspends { ... }` 与 `FnOnce(A) @suspends -> R`；
+首版只允许无引用拥有捕获和消费式调用。挂起 Fn / FnMut、借用捕获与动态 callable 仍未开放。
+效果参与泛型匹配与隐藏入口生成，不能擦除；当前规则见[挂起 move 闭包](language.md#挂起-move-闭包)。
 同步和挂起入口不按函数指针直接互换，必要时生成符合目标约定的包装函数。
 Result 表达可处理的错误结果，`@suspends` 表达执行可能暂停，二者相互独立。
 目前只确定这一种效果，不预设通用效果行、I/O 效果推导或效果处理器语法。
@@ -1113,7 +1114,7 @@ BoundedTypeParameters = "<", TypeParameter, { ",", TypeParameter }, [ "," ], ">"
 TypeParameter = Identifier, [ ":", Bound, { "+", Bound } ] ;
 TraitBound   = Name, [ "<", AssociatedEquality, { ",", AssociatedEquality }, [ "," ], ">" ] ;
 AssociatedEquality = Identifier, "=", Type ;
-Bound        = "Copy" | TraitBound | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", [ "@", "noescape" ], "->", Type ;
+Bound        = "Copy" | TraitBound | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", [ "@", "suspends" ], [ "@", "noescape" ], "->", Type ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
 CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
 CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
@@ -1173,7 +1174,7 @@ Postfix      = Primary, { Arguments | ".", Identifier, [ TypeArguments ], [ Argu
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
-Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ Result ], Block ;
+Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ "@", "suspends" ], [ Result ], Block ;
 AnonymousParam = Identifier, [ ":", Type ] ;
 TaskForm     = TaskScope | TaskBranch | Isolate ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;
@@ -1300,7 +1301,7 @@ mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；�
    隐式任务 arena、`alloc`/`&*p` 借用契约、共享引用字段与封存图、挂起任务、普通局部借用、
    同步 C 接口、不透明 Ptr 往返及异步宿主借用；外部资源拥有包装与自动清理另行设计。
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。
-   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、挂起闭包与借用闭包逃逸和动态挂起 dyn 后续单独扩展。
+   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、挂起借用闭包与借用闭包逃逸和动态挂起 dyn 后续单独扩展。
 8. **纯 Joky 容器与所有权**：按 [容器扩展步骤](arena-borrowing-ffi.md#61-容器与所有权扩展)，
    先用 Joky 实现 `Array<Int32>` 的受检访问、push/pop 与扩容，再推广 Copy 元素泛型容器，
    资源型数组元素与嵌套容器已实现；[Map 分阶段计划](map-storage-ownership.md)首版已验收。
@@ -1320,7 +1321,7 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的 V0–V5 已验收，见第 5 项计划。
 关联类型项与后续成员须以换行或分号分隔；只有 trait impl 可定义关联类型，且不能加 `pub`。
 数组字面值及展开构造、下标访问、共享/独占/消费式序列模式和固长解构已实现，规则见[数组字面值](language.md#数组字面值)及[序列模式](language.md#序列与字面量模式)。
-后续尚待单独设计的表面语法：挂起闭包与借用闭包逃逸、其他容器字面量、重复数组构造及区间索引。
+后续尚待单独设计的表面语法：挂起借用闭包与借用闭包逃逸、其他容器字面量、重复数组构造及区间索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、
 包管理、反射。多线程调度另按[任务执行器专项计划](task-parallel-executor.md)设计，尚未实现。
 类型布局与 ABI 变更必须有独立的迁移方案。

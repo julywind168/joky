@@ -160,7 +160,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 组成 | 已实现 |
 | --- | --- |
 | 语言基础 | 八种定宽整数、Float32 / Float64、Rune、Bool、Unit、表达式与控制流、名义记录和枚举、元组、模式匹配、用户文件模块 |
-| 类型系统 | 泛型与常量参数、透明别名、固有方法、静态 trait、默认方法、关联类型与常量、拥有型 dyn 与同步动态借用、同步函数值与闭包、拥有闭包的记录存储与返回、挂起函数值 |
+| 类型系统 | 泛型与常量参数、透明别名、固有方法、静态 trait、默认方法、关联类型与常量、拥有型 dyn 与同步动态借用、同步函数值与闭包、拥有闭包的记录存储与返回、挂起函数值与 move FnOnce 闭包 |
 | 所有权与存储 | String、Array、List、Set、Map、FixedArray、拥有型聚合与 Drop、受检共享／独占借用、任务 arena 与同步显式 Arena |
 | 执行与任务 | 共享语义分析、Cranelift JIT / AOT、字节码解释器；`@suspends`、`join` / `race`、`scope` / `branch`、`isolate` 失败隔离、取消与资源清理、局部值和容器视图跨挂起借用；可选多线程分支执行 |
 | 内置模块 | Option / Result、Iterator / IntoIterator、Array 消费迭代、Array/Slice/Map 借用遍历、for 自动转换与可选编号、Map 键值解构、泛型 range 与 take/zip/map/filter 惰性组合器、数值、文本与格式化、容器、JSON、任务定时器、文件、TCP、DNS、状态域与有界准入 |
@@ -185,6 +185,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
   独占流水线仍要求同步、无捕获的 `@noescape` 回调，共享 map 结果限无引用 Copy 值；
   常见限制与替代写法见[语言参考](docs/language.md#借用流水线的常见错误)。
 - 进阶：[共享迭代协议](examples/shared_iterator_protocol.jk) 展示 `SharedIterator` 泛型入口、`step_shared` 显式推进和底层组合函数。
+- [挂起闭包与超时组合](examples/suspending_closures.jk)。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
 - [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。

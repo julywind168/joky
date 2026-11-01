@@ -1,0 +1,32 @@
+import joky/task
+
+fn complete<T, F: FnOnce() @suspends -> T>(operation: F) @suspends -> Option<T> {
+    Some(operation())
+}
+fn expired<T>(milliseconds: UInt64) @suspends -> Option<T> {
+    task.sleep_ms(milliseconds)
+    None
+}
+
+fn with_timeout<T, F: FnOnce() @suspends -> T>(
+    milliseconds: UInt64,
+    operation: F
+) @suspends -> Option<T> {
+    race {
+        | complete(operation)
+        | expired::<T>(milliseconds)
+    }
+}
+
+fn main() @suspends {
+    let message = "Hello from a suspending closure"
+    let result = with_timeout(
+        1000,
+        move || @suspends {
+            task.yield_now()
+            message
+        }
+    )
+    assert_eq(result!, "Hello from a suspending closure")
+    println("completed")
+}
