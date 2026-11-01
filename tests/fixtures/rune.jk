@@ -12,6 +12,10 @@ fn relay(value: Rune) -> Rune { value }
 fn invoke(f: fn(Rune) -> Rune, value: Rune) -> Rune { f(value) }
 fn task(value: Rune) @suspends -> Rune { relay(value) }
 fn rune_check() -> Int32 {
+    assert(classify('\n') == 1, "Rune literal arm")
+    assert(classify('中') == 2, "Unicode literal arm")
+    assert(classify('\0') == 3 && classify('\u{10ffff}') == 3, "Rune wildcard endpoints")
+    assert(match ('中', true) { ('中', false) => false, ('中', true) => true, _ => false }, "Nested Rune coverage")
     { let assertion_condition = Scalars.SAME && Scalars.DIFFERENT; let assertion_message = "Rune constant comparison"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = '\"' == '"' && '\'' == '\u{27}'; let assertion_message = "Character quote escapes"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = '\0'.to_u32() == 0 && '\u{10ffff}'.to_u32() == 0x10ffff; let assertion_message = "Scalar endpoints"; assert(assertion_condition, &assertion_message) }
@@ -28,4 +32,8 @@ fn rune_check() -> Int32 {
     let value = match choice { ScalarChoice.Empty => '\0', ScalarChoice.Value(value) => value }
     { let assertion_condition = value == '🙂'; let assertion_message = "Rune aggregate and indirect calls"; assert(assertion_condition, &assertion_message) }
     42
+}
+
+fn classify(value: Rune) -> Int32 {
+    match value { '\n' => 1, '中' => 2, _ => 3 }
 }

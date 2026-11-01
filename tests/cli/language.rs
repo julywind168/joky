@@ -440,6 +440,25 @@ fn rune_storage_conversions_and_rejections_match_all_backends() {
 }
 
 #[test]
+fn rune_patterns_reject_missing_and_redundant_arms() {
+    let work = Workspace::new();
+    for (body, message) in [
+        ("match value { '中' => 1 }", "non_exhaustive_match"),
+        (
+            "match value { '中' => 1, '中' => 2, _ => 3 }",
+            "unreachable",
+        ),
+        ("match value { _ => 1, '中' => 2 }", "unreachable"),
+    ] {
+        work.write(
+            "invalid_rune.jk",
+            &format!("fn classify(value: Rune) -> Int32 {{ {body} }}"),
+        );
+        failure(&work.cli(&["check", "invalid_rune.jk"]), message);
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn module_constant_aliases_resolve_in_their_defining_scopes() {
     let work = Workspace::new();

@@ -1046,7 +1046,7 @@ fn useful(
         }
         return Ok(false);
     }
-    if types[0].integer().is_some() || types[0] == Type::Bool {
+    if types[0].integer().is_some() || matches!(types[0], Type::Bool | Type::Rune) {
         let specialize = |value: Option<u64>, budget: &mut usize| {
             let rows: Vec<_> = matrix
                 .iter()
