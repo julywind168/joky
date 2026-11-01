@@ -2413,6 +2413,7 @@ fn run_frame(
                 table,
                 method,
                 signature,
+                suspends,
             } => {
                 let Value::DynTable(table) = &frame.slots[*table] else {
                     return Step::Failed(runtime_error(
@@ -2420,10 +2421,10 @@ fn run_frame(
                         "Invalid dyn method table",
                     ));
                 };
-                let Some((target, _)) = table
+                let Some((target, _, _)) = table
                     .entries
                     .get(*method)
-                    .filter(|(_, actual)| actual == signature)
+                    .filter(|(_, actual, effect)| actual == signature && effect == suspends)
                 else {
                     return Step::Failed(runtime_error(
                         ErrorCode::InvalidCall,

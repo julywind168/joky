@@ -18,7 +18,7 @@ fn borrowed_dyn_rejects_incompatible_unused_interfaces() {
             "requires &self or &mut self",
         ),
         ("fn value() -> Int32", "requires a borrowed receiver"),
-        ("fn value(&self) @suspends -> Int32", "must be synchronous"),
+        ("fn value(&self) @suspends -> Int32", "declared @noescape"),
         ("fn value(&self) -> Int32", "declared @noescape"),
         ("fn value(&self) -> Int32 { 42 }", "declared @noescape"),
         (

@@ -128,3 +128,19 @@ fn owned_dyn_preserves_move_borrow_and_erasure_boundaries() {
         assert!(error.message().contains(expected), "{expected}: {error}\n{body}");
     }
 }
+
+#[test]
+fn suspending_dyn_rejects_parallel_dispatch() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source("trait Read { fn read(&self) @suspends @noescape -> Int32 { 42 } } struct A { n: Int32 } impl Read for A {} fn main() @suspends -> Int32 { let v: dyn Read = A { n: 1 }; v.read() }").unwrap_or_else(|e| panic!("{e}"));
+        let error = vm
+            .prepare_parallel_task("main", vec![], vec![])
+            .err()
+            .expect("reject suspending dynamic dispatch");
+        assert!(
+            error.message().contains("suspending dyn dispatch"),
+            "{error}"
+        );
+    }
+}

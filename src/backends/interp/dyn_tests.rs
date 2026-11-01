@@ -13,7 +13,7 @@ fn borrowed_dyn_v4_interpreter_checks_table_slot_signature_and_function_id() {
         .enumerate()
         .map(|(i, n)| (n.clone(), i))
         .collect();
-    for corruption in 0..5 {
+    for corruption in 0..6 {
         let mut module = compile(&prepared, &HashMap::new(), HashMap::new(), ModuleId(1)).unwrap();
         let mut function = lower_function(
             &plan.functions["answer"],
@@ -41,9 +41,13 @@ fn borrowed_dyn_v4_interpreter_checks_table_slot_signature_and_function_id() {
                         entries: table
                             .entries
                             .iter()
-                            .map(|(_, s)| (usize::MAX, s.clone()))
+                            .map(|(_, s, effect)| (usize::MAX, s.clone(), *effect))
                             .collect(),
                     });
+                    changed = true;
+                }
+                Instruction::DynMethod { suspends, .. } if corruption == 5 => {
+                    *suspends = !*suspends;
                     changed = true;
                 }
                 Instruction::DynMethod { method, .. } if corruption == 2 => {

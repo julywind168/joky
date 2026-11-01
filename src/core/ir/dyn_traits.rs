@@ -108,7 +108,7 @@ impl ModulePlan {
                         let mut signature = slot.signature.clone();
                         signature.params[0] = Type::reference(self_type.clone(), slot.mutable);
                         let valid = self.functions.get(entry).is_some_and(|f| {
-                            !f.suspends && f.needs_arena && f.signature == signature
+                            f.suspends == slot.suspends && f.needs_arena && f.signature == signature
                         });
                         if !valid {
                             return Err(type_error(
@@ -405,6 +405,22 @@ impl FunctionPlan {
                 )
             })?;
         let slot = interface.methods[method].clone();
+        if slot.suspends {
+            if !suspends {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidCall,
+                    "A suspending dyn method requires an @suspends caller",
+                ));
+            }
+            if !matches!(ty, Type::DynTrait(_)) {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidCall,
+                    "A suspending dyn method requires an owning dyn receiver",
+                ));
+            }
+        }
         if slot.mutable && ty.reference_type().is_some_and(|r| !r.mutable) {
             return Err(type_error(
                 &span,
@@ -443,9 +459,10 @@ impl FunctionPlan {
             moving: false,
         });
         let view = borrowed;
-        let target = self.slot(Type::function(
+        let target = self.slot(Type::function_with_effect(
             slot.signature.params.clone(),
             slot.signature.ret.clone(),
+            slot.suspends,
         ))?;
         self.emit(Op::DynMethod {
             dst: target.clone(),
@@ -457,7 +474,14 @@ impl FunctionPlan {
         });
         // An explicit checked reborrow retains every origin and ancestor while
         // adapting only the data lane to the shared method ABI.
-        let data = self.slot(receiver_ty.scalar_types()[0].clone())?;
+        // Only a direct owning call may erase the receiver's dyn-view type.
+        // Reference propagation still retains its complete owner loan; no
+        // user-visible borrowed dyn view gains permission to cross suspension.
+        let data = self.slot(if slot.suspends {
+            slot.signature.params[0].clone()
+        } else {
+            receiver_ty.scalar_types()[0].clone()
+        })?;
         self.emit(Op::Reference {
             dst: data.clone(),
             src: view,
@@ -484,10 +508,20 @@ impl FunctionPlan {
         } else {
             Some(self.slot(slot.signature.ret.clone())?)
         };
+        if let Some(dst) = result.as_ref().filter(|s| s.ty.is_place()) {
+            self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
+        }
+        let state = slot.suspends.then(|| {
+            let state = self.state_count;
+            self.state_count += 1;
+            state
+        });
         let index = {
             let mut context = self.generics.borrow_mut();
             if let Some(i) = context.dyn_contracts.iter().position(|s| {
-                s.signature == slot.signature && s.noescape_params == slot.noescape_params
+                s.signature == slot.signature
+                    && s.noescape_params == slot.noescape_params
+                    && s.suspends == slot.suspends
             }) {
                 i
             } else {
@@ -501,7 +535,7 @@ impl FunctionPlan {
             name: format!("__joky_indirect_dyn_{index}"),
             args: values,
             result: result.clone(),
-            state: None,
+            state,
         });
         Ok(Some(Flow::Value(result)))
     }

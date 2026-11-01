@@ -138,6 +138,7 @@ pub struct DynInterface {
 
 #[derive(Debug, Clone)]
 pub struct DynMethodSlot {
+    pub suspends: bool,
     pub name: String,
     pub mutable: bool,
     pub signature: crate::FunctionSignature,

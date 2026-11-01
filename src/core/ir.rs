@@ -1106,7 +1106,7 @@ impl ModulePlan {
             functions.insert(format!("__joky_callable_{index}"), info);
         }
         for (index, slot) in generics.borrow().dyn_contracts.iter().enumerate() {
-            let mut info = FunctionInfo::indirect(slot.signature.clone(), false, slot.span);
+            let mut info = FunctionInfo::indirect(slot.signature.clone(), slot.suspends, slot.span);
             info.noescape_params = slot.noescape_params.clone();
             info.frame_slots = info.parameter_slots();
             functions.insert(format!("__joky_indirect_dyn_{index}"), info);

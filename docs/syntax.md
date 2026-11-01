@@ -39,7 +39,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 4. [trait 默认方法与关联类型](trait-default-methods-associated-types.md)：默认体与覆盖、
    类型投影、关联类型能力及等式约束；保持静态分派。默认方法、关联类型与约束已实现；验收证据见该计划。
 5. [借用型 dyn Trait](borrowed-dyn-trait.md)：同步非逃逸的共享/独占动态视图、关联类型绑定、
-   三后端分派、借用来源和代码保活；拥有型动态对象与动态挂起另行设计。
+   三后端分派、借用来源和代码保活；拥有型动态对象及其挂起方法见当前语言参考。
 
 ## 1. 设计取舍
 
@@ -85,7 +85,8 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | Arena、引用来源检查 | 已实现隐式 arena、同步显式 Arena.new()/arena.alloc() 与 &Arena helper、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、任务 arena 引用跨挂起及 join 分支借用、局部值/字段及容器元素/Slice 跨挂起借用与独立字段访问、异步宿主借用 v1 | 显式 Arena 跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | Struct JSON 派生 | 已实现 `#derive(ToJson, FromJson)`，可单向派生，支持泛型条件约束与跨模块私有字段 | 生成普通 trait 实现；enum、字段改名/跳过/默认值注解留待后续，语义见 language.md |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
-| 借用闭包逃逸、动态挂起 dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
+| 动态挂起 dyn Trait | 拥有对象已支持共享/独占接收者与无引用参数、结果 | 借用型 dyn 跨挂起及 Parallel 挂起分派未实现；见语言参考 |
+| 借用闭包逃逸 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
 以下除明确写出“当前实现”的内容外，均为目标规则。第一版不是对现有行为的无条件冻结；
 最后一节列出需要迁移和补齐的部分。
@@ -881,7 +882,7 @@ trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法�
 
 默认方法、`type Item`、`Self.Item` / `T.Item` / `<T as Trait>::Item`、关联能力与具名等式约束已实现。
 当前规则见[默认方法与关联类型](language.md#默认方法与关联类型)，验收记录见[第 4 项计划](trait-default-methods-associated-types.md)。
-trait 本身的泛型、方法级泛型、关联默认值、GAT、trait 关联常量、继承、特化、动态挂起 dyn 和运算符重载尚未实现。
+trait 本身的泛型、方法级泛型、关联默认值、GAT、trait 关联常量、继承、特化和运算符重载尚未实现。拥有型 dyn 的挂起方法已支持，限制见语言参考。
 Drop 已按专门所有权规则实现，不属于本次待补的普通 trait 能力。
 Eq / Hash 的代数规律由实现方和测试保证，不由编译器证明。
 
@@ -954,7 +955,7 @@ Result 表达可处理的错误结果，`@suspends` 表达执行可能暂停，�
 
 拥有型 `dyn Trait` 按 [W3 计划](startup-worker-configuration.md) 实现。裸 `dyn Trait` 表示拥有对象，现有 `&dyn Trait`／`&mut dyn Trait`
 表示借用视图；由期望接口类型触发拥有转换，与自定义 Drop 转移共用清理协议。
-首版保持动态方法同步，不因此开放挂起动态方法或跨 worker 借用。
+W3 首版保持动态方法同步；后续已支持拥有型动态对象的挂起方法，借用视图仍不能跨挂起或跨 worker。
 
 ### 10.7 所有权、借用与释放
 
@@ -1050,7 +1051,7 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 首版实施见[借用型 dyn Trait 计划](borrowed-dyn-trait.md)：仅同步非逃逸的 `&dyn Trait` /
 `&mut dyn Trait`，关联类型必须绑定，方法签名满足动态化条件。W3 在此基础上增加拥有对象及聚合/容器存储；
-动态挂起、普通源码的视图返回及宿主 ABI 仍未开放。
+拥有对象现已支持动态挂起方法；借用型动态挂起、普通源码的视图返回及宿主 ABI 仍未开放。
 `&*view` / `&mut *view` 建立受检引用的重借用，不能提高共享权限；dyn 目标仅可借用，普通 Copy 目标可通过 `*view` 读取。
 全部关联项须显式绑定；裸 dyn 是非 Copy 拥有值，支持别名和期望类型驱动的转换。
 语言挂起和并发禁止活跃 dyn 视图；挂起点之间的同步局部范围与限制见 [language.md](language.md)。
@@ -1302,7 +1303,7 @@ mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；�
    隐式任务 arena、`alloc`/`&*p` 借用契约、共享引用字段与封存图、挂起任务、普通局部借用、
    同步 C 接口、不透明 Ptr 往返及异步宿主借用；外部资源拥有包装与自动清理另行设计。
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。
-   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、挂起借用闭包与借用闭包逃逸和动态挂起 dyn 后续单独扩展。
+   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、挂起借用闭包与借用闭包逃逸及借用型 dyn 跨挂起后续单独扩展。
 8. **纯 Joky 容器与所有权**：按 [容器扩展步骤](arena-borrowing-ffi.md#61-容器与所有权扩展)，
    先用 Joky 实现 `Array<Int32>` 的受检访问、push/pop 与扩容，再推广 Copy 元素泛型容器，
    资源型数组元素与嵌套容器已实现；[Map 分阶段计划](map-storage-ownership.md)首版已验收。

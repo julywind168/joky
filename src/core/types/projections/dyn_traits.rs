@@ -124,16 +124,25 @@ impl TypeRegistry {
             {
                 return Err(incompatible("requires &self or &mut self"));
             }
-            if method.suspends {
-                return Err(incompatible("must be synchronous"));
-            }
             let mut params = Vec::new();
             let mut noescape_params = Vec::new();
             for (index, param) in method.params.iter().enumerate() {
-                let ty = substitute(&param.ty, &substitutions, &local)?;
+                // Resolve declaration-scoped names before substitution rebuilds
+                // aggregate layouts (which require fully resolved elements).
+                let ty = local.resolve_scoped(
+                    &param.ty,
+                    scope,
+                    std::slice::from_ref(&declaration.self_parameter),
+                )?;
+                let ty = substitute(&ty, &substitutions, &local)?;
                 let ty = local.resolve_scoped(&ty, scope, std::slice::from_ref(&parameter))?;
                 if index > 0 && contains_self(&ty, self_id) {
                     return Err(incompatible("uses Self outside its receiver"));
+                }
+                if method.suspends && index > 0 && ty.contains_references() {
+                    return Err(incompatible(
+                        "requires reference-free explicit parameters when suspending",
+                    ));
                 }
                 if ty.contains_references()
                     && !method
@@ -154,7 +163,12 @@ impl TypeRegistry {
                     ty
                 });
             }
-            let result = substitute(&method.ret_ty, &substitutions, &local)?;
+            let result = local.resolve_scoped(
+                &method.ret_ty,
+                scope,
+                std::slice::from_ref(&declaration.self_parameter),
+            )?;
+            let result = substitute(&result, &substitutions, &local)?;
             let result = local.resolve_scoped(&result, scope, std::slice::from_ref(&parameter))?;
             if contains_self(&result, self_id) {
                 return Err(incompatible("returns Self outside its receiver"));
@@ -172,6 +186,7 @@ impl TypeRegistry {
                 return Err(incompatible("has an unresolved result projection"));
             }
             methods.push(DynMethodSlot {
+                suspends: method.suspends,
                 name: method.name.clone(),
                 mutable: receiver.ty.reference_type().unwrap().mutable,
                 signature: crate::FunctionSignature::new(params, result),

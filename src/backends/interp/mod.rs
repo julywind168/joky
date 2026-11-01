@@ -47,7 +47,7 @@ use host::BoundHost;
 
 /// Immutable, compiler-validated IDs and slot signatures; never raw entry addresses.
 pub(crate) struct DynMethodTable {
-    entries: Vec<(usize, crate::FunctionSignature)>,
+    entries: Vec<(usize, crate::FunctionSignature, bool)>,
 }
 
 enum ConstantValue {
@@ -102,6 +102,7 @@ enum Instruction {
         table: usize,
         method: usize,
         signature: crate::FunctionSignature,
+        suspends: bool,
     },
     Text {
         dst: usize,
@@ -703,7 +704,9 @@ fn lower_unoptimized(
                                     .methods
                                     .iter()
                                     .zip(&table.interface.methods)
-                                    .map(|(name, slot)| (ids[name], slot.signature.clone()))
+                                    .map(|(name, slot)| {
+                                        (ids[name], slot.signature.clone(), slot.suspends)
+                                    })
                                     .collect(),
                             })
                         })
@@ -714,6 +717,7 @@ fn lower_unoptimized(
                 dst: dst.index,
                 table: table.index,
                 method: *method,
+                suspends: matches!(&dst.ty, crate::Type::Function(f) if f.suspends),
                 signature: match &dst.ty {
                     crate::Type::Function(f) => f.signature.clone(),
                     _ => unreachable!("typed dyn entry"),

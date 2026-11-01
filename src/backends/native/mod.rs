@@ -393,8 +393,25 @@ pub(crate) fn compile<M: Module>(
                     data.define(vec![0; width * methods.len().max(1)].into_boxed_slice());
                     data.set_align(width as u64);
                     for (slot, name) in methods.iter().enumerate() {
-                        let function = module.declare_func_in_data(ids[name], &mut data);
-                        data.write_function_addr((slot * width) as u32, function);
+                        if plan.functions[name].suspends {
+                            let descriptor = match callable_ids.get(name) {
+                                Some(id) => *id,
+                                None => {
+                                    let id = declare_callable(
+                                        module,
+                                        ids[name],
+                                        plan.functions[name].frame_slots,
+                                    )?;
+                                    callable_ids.insert(name.clone(), id);
+                                    id
+                                }
+                            };
+                            let descriptor = module.declare_data_in_data(descriptor, &mut data);
+                            data.write_data_addr((slot * width) as u32, descriptor, 0);
+                        } else {
+                            let function = module.declare_func_in_data(ids[name], &mut data);
+                            data.write_function_addr((slot * width) as u32, function);
+                        }
                     }
                     let id = module
                         .declare_anonymous_data(false, false)
@@ -409,31 +426,7 @@ pub(crate) fn compile<M: Module>(
                 if matches!(&slot.ty, crate::Type::Function(ty) if ty.suspends)
                     && !callable_ids.contains_key(name)
                 {
-                    // The value points to read-only metadata, never a compiler address.
-                    // Its entry relocation and complete slot count share module ownership.
-                    let width = module.target_config().pointer_bytes() as usize;
-                    let count = plan.functions[name].frame_slots as u64;
-                    let bytes = match module.isa().endianness() {
-                        cranelift_codegen::ir::Endianness::Little => {
-                            count.to_le_bytes()[..width].to_vec()
-                        }
-                        cranelift_codegen::ir::Endianness::Big => {
-                            count.to_be_bytes()[8 - width..].to_vec()
-                        }
-                    };
-                    let mut contents = vec![0; width];
-                    contents.extend(bytes);
-                    let mut data = DataDescription::new();
-                    data.define(contents.into_boxed_slice());
-                    data.set_align(width as u64);
-                    let function = module.declare_func_in_data(ids[name], &mut data);
-                    data.write_function_addr(0, function);
-                    let id = module
-                        .declare_anonymous_data(false, false)
-                        .map_err(|e| compile_error(format!("{e:?}")))?;
-                    module
-                        .define_data(id, &data)
-                        .map_err(|e| compile_error(format!("{e:?}")))?;
+                    let id = declare_callable(module, ids[name], plan.functions[name].frame_slots)?;
                     callable_ids.insert(name.clone(), id);
                 }
             }
@@ -744,4 +737,34 @@ pub(crate) fn compile<M: Module>(
 
 fn compile_error(message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, message)
+}
+
+/// Module-owned CPS descriptor shared by function values and dynamic methods.
+fn declare_callable<M: Module>(
+    module: &mut M,
+    entry: FuncId,
+    frame_slots: usize,
+) -> Result<DataId, Error> {
+    // The value points to read-only metadata, never a compiler address.
+    // Its entry relocation and complete slot count share module ownership.
+    let width = module.target_config().pointer_bytes() as usize;
+    let count = frame_slots as u64;
+    let bytes = match module.isa().endianness() {
+        cranelift_codegen::ir::Endianness::Little => count.to_le_bytes()[..width].to_vec(),
+        cranelift_codegen::ir::Endianness::Big => count.to_be_bytes()[8 - width..].to_vec(),
+    };
+    let mut contents = vec![0; width];
+    contents.extend(bytes);
+    let mut data = DataDescription::new();
+    data.define(contents.into_boxed_slice());
+    data.set_align(width as u64);
+    let function = module.declare_func_in_data(entry, &mut data);
+    data.write_function_addr(0, function);
+    let id = module
+        .declare_anonymous_data(false, false)
+        .map_err(|e| compile_error(format!("{e:?}")))?;
+    module
+        .define_data(id, &data)
+        .map_err(|e| compile_error(format!("{e:?}")))?;
+    Ok(id)
 }

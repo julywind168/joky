@@ -4,7 +4,7 @@ use crate::core::types::FunctionType;
 
 pub(super) struct Targets<'a> {
     functions: Vec<(&'a FunctionType, &'a str)>,
-    dynamic: Vec<(&'a crate::FunctionSignature, &'a str)>,
+    dynamic: Vec<(&'a crate::core::types::DynMethodSlot, &'a str)>,
 }
 impl<'a> Targets<'a> {
     pub(super) fn new(plan: &'a ModulePlan) -> Self {
@@ -21,7 +21,7 @@ impl<'a> Targets<'a> {
                 }
                 Op::DynTable { table, .. } => {
                     for (method, name) in table.interface.methods.iter().zip(&table.methods) {
-                        result.dynamic.push((&method.signature, name));
+                        result.dynamic.push((method, name));
                     }
                 }
                 _ => {}
@@ -49,7 +49,9 @@ impl<'a> Targets<'a> {
     ) -> impl Iterator<Item = &'a str> + 'b {
         self.dynamic
             .iter()
-            .filter(move |(signature, _)| !function.suspends && **signature == function.signature)
+            .filter(move |(method, _)| {
+                method.suspends == function.suspends && method.signature == function.signature
+            })
             .map(|(_, name)| *name)
     }
 }

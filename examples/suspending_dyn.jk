@@ -1,0 +1,56 @@
+import joky/task
+import joky/mem
+
+trait Store {
+    fn get(&self, key: Int32) @suspends @noescape -> Option<String>
+    fn put(&mut self, key: Int32, value: String) @suspends @noescape
+}
+
+struct MemoryStore { key: Int32, value: String }
+impl Store for MemoryStore {
+    fn get(&self, key: Int32) @suspends @noescape -> Option<String> {
+        if key == self.key { Some(self.value.clone()) } else { None }
+    }
+    fn put(&mut self, key: Int32, value: String) @suspends @noescape {
+        self.key = key
+        mem.replace(&mut self.value, value);
+    }
+}
+
+// Simulate a transport boundary; both implementations share one calling interface.
+struct RemoteStore { key: Int32, value: String }
+impl Store for RemoteStore {
+    fn get(&self, key: Int32) @suspends @noescape -> Option<String> {
+        task.yield_now()
+        if key == self.key { Some(self.value.clone()) } else { None }
+    }
+    fn put(&mut self, key: Int32, value: String) @suspends @noescape {
+        task.yield_now()
+        self.key = key
+        mem.replace(&mut self.value, value);
+    }
+}
+
+fn open_store(remote: Bool) -> dyn Store {
+    if remote {
+        RemoteStore { key: 0, value: "" }
+    } else {
+        MemoryStore { key: 0, value: "" }
+    }
+}
+
+fn run(remote: Bool) @suspends {
+    var store = open_store(remote)
+    store.put(42, "hello")
+    assert_eq(store.get(42)!, "hello")
+    store.put(42, "updated")
+    assert_eq(store.get(42)!, "updated")
+    let missing = store.get(7)
+    assert(missing.is_none(), "missing keys return None")
+}
+
+fn main() @suspends {
+    run(false)
+    run(true)
+    println("completed")
+}

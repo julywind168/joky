@@ -356,6 +356,11 @@ pub(crate) fn analyse(
                 }
             }
             let local = match op {
+                Op::DynMethod { dst, .. }
+                    if matches!(&dst.ty, Type::Function(f) if f.suspends) =>
+                {
+                    Some("suspending dyn dispatch is not supported in Parallel")
+                }
                 Op::Concurrent { branches, .. }
                     if branches.iter().any(|branch| {
                         let signature = match branch.indirect.as_ref().map(|slot| &slot.ty) {
