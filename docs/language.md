@@ -2435,13 +2435,52 @@ joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture
   未发现测试或筛选无匹配也返回 1，避免空测试集误报成功。
 - 省略输入时向上发现清单；`--no-prelude` 规则不变，以 `-` 开头的文件名放在 `--` 后。
   首版不接受 AOT、Parallel、worker 参数或程序参数，不读取 `JOKY_TASK_WORKERS`。
-  测试 VM 尚未注入文件服务、进程参数、环境快照或 stdin；对应能力保持嵌入默认的 Unsupported。
-  临时目录和可注入输入的测试上下文、预期失败标记及相等断言辅助 API 留待后续。
+  测试 VM 提供下述独立输入与文件服务；AOT 测试运行、预期失败标记及相等断言辅助 API 留待后续。
 
 普通 `check` / `run` / `build` 会解析测试声明并验证其签名，但在名字绑定前移除测试函数，
 不检查测试体类型、不生成测试入口，也不能从生产代码调用测试函数；导入声明仍按普通规则解析。
 检查测试体请用 `joky test` 或 `joky test --list`。测试与生产函数可以共享普通辅助函数；
 辅助函数本身不因此变成条件编译声明。`fmt` 保留 `#test`。
+
+### 测试输入上下文
+
+`import joky/testing` 提供普通挂起函数，无需修改 `#test` 签名。完整可运行示例见
+[testing_inputs.jk](../examples/testing_inputs.jk)：测试配置输入、创建配置文件、调用应用，
+再断言返回码和输出文件内容。
+
+| API（均为 `@suspends`） | 返回值与行为 |
+| --- | --- |
+| `testing.set_args(values: Array<String>)` | `Result<Unit, fs.IoError>`；消费数组，整体替换参数列表，不含程序名 |
+| `testing.set_env(name: String, value: String)` | `Result<Unit, fs.IoError>`；新增或覆盖环境变量，允许空值 |
+| `testing.remove_env(name: String)` | `Result<Unit, fs.IoError>`；删除环境变量，不存在时也成功 |
+| `testing.set_stdin(text: String)` | `Result<Unit, fs.IoError>`；整体替换 UTF-8 输入文本，允许空文本和 NUL |
+| `testing.temp_dir()` | `Result<String, fs.IoError>`；获取当前测试临时目录，不冻结输入 |
+
+每个测试开始时，参数列表与环境映射为空，stdin 为 EOF，不继承父进程参数、环境变量或终端输入。
+应用继续使用 `process.args()`、`process.env()`、`process.current_dir()`、`process.resolve_path()` 和
+`io.stdin()` / `fs.stdin()`，无需调用 testing 模块。标准输出捕获仍由测试运行器负责；
+当前没有在测试函数内查询捕获 stdout/stderr 的 API。
+
+在首次 `process` 查询（即使查询返回错误）或首次打开 stdin 时，整组输入冻结；
+之后不能再修改配置，宿主拒绝更新并返回 `fs.ErrorKind.Busy`。先完成 setup，再调用应用；可以将 setup 写成普通辅助函数。
+`testing.temp_dir()` 在冻结前后都可调用，适合配置阶段构造路径；`process.current_dir()` 返回同一目录，
+同时属于应用输入读取。每次设置单独提交；无效输入或超限不会破坏该次调用前的配置。
+
+参数不允许 NUL；环境名不允许空串、`=` 或 NUL，环境值不允许 NUL。非法值返回 `InvalidInput`。
+参数和环境沿用进程快照的总量限制：最多 65536 项、连同目录共 4 MiB；参数传输包（每项含一个分隔字节）
+也不得超过 4 MiB。stdin 独立限制为 1 MiB，超限返回 `LimitExceeded`。
+首版提供文本 stdin，不提供无效 UTF-8 字节注入。stdin 保持单读者；关闭或丢弃读者后可以重开，
+但读取位置继续前进、不重置；`io.Stdin` 的预读丢弃规则与正常 stdin 相同。
+
+每个测试都有独立真实临时目录，文件服务将相对路径解析到该目录；显式绝对路径仍按原生文件规则处理。
+源码导入仍使用原源码根，与运行时临时目录分开。测试可用 `fs.open` 创建 fixture 和读取应用输出。
+父进程持有临时目录，在正常结束、运行时失败和硬超时终止子进程后删除；普通返回路径的清理错误会报告为失败。
+`--list` 不创建测试目录；临时文件没有自动保留选项。强制终止父进程或机器崩溃不保证清理。
+
+普通 `run/build` 和默认嵌入 VM 不授予测试配置能力；这些设置函数及 `temp_dir` 返回 `Unsupported`。
+Rust 嵌入测试可显式使用 `FileService::testing(existing_directory, limits)`，由宿主管理目录生命周期；
+克隆服务共享同一上下文，不同服务独立，配置不会修改操作系统环境、argv、当前目录或实际 stdin。
+若随后调用 `with_process_context`，该服务改用不可变过程快照并关闭测试配置接口，文件与 stdin 后端保留。
 
 ## Joky 项目模式
 

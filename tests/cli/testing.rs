@@ -201,3 +201,176 @@ fn failed_test(output: &std::process::Output, message: &str) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains(message), "{stderr}");
 }
+
+#[test]
+fn test_context_injects_application_inputs_on_both_vms() {
+    let work = Workspace::new();
+    work.write(
+        "inputs.jk",
+        include_str!("../../examples/testing_inputs.jk"),
+    );
+    // Existing caller files and environment must not enter a test by accident.
+    work.write("output.txt", "caller output");
+    for backend in [vec![], vec!["--interpreter"]] {
+        let output = work
+            .command()
+            .args(["test", "inputs.jk"])
+            .args(backend)
+            .env("APP_MODE", "caller environment")
+            .output()
+            .unwrap();
+        success(&output);
+        assert!(String::from_utf8_lossy(&output.stdout).contains("2 passed; 0 failed"));
+        assert_eq!(
+            std::fs::read_to_string(work.path().join("output.txt")).unwrap(),
+            "caller output"
+        );
+        assert!(!work.path().join("prefix.txt").exists());
+    }
+}
+
+#[test]
+fn test_context_preserves_input_boundaries_and_freezes_snapshots() {
+    let work = Workspace::new();
+    work.write("boundaries.jk", r#"
+import joky/testing
+import joky/process
+import joky/io
+import joky/fs
+#test
+fn arguments() @suspends {
+    testing.set_args([])!
+    testing.set_args(["replaced"])!
+    testing.set_args(["", "two words", "中文🙂", "--task-workers"])!
+    assert(testing.set_args(["bad\0arg"]).err()!.kind == fs.ErrorKind.InvalidInput, "NUL rejected atomically")
+    let args = process.args()!
+    assert(args.len() == 4 && args[0] == "" && args[1] == "two words", "empty and spaced arguments")
+    assert(args[2] == "中文🙂" && args[3] == "--task-workers", "Unicode and option-like arguments")
+    assert(testing.set_args(["late"]).err()!.kind == fs.ErrorKind.Busy, "argument snapshot is frozen")
+}
+fn prepare_environment() @suspends {
+    testing.set_env("EMPTY", "")!
+    testing.set_env("VALUE", "first")!
+    testing.set_env("VALUE", "second")!
+    testing.set_env("REMOVED", "remove me")!
+    testing.remove_env("REMOVED")!
+    testing.remove_env("ABSENT")!
+    assert(testing.set_env("bad=name", "bad").err()!.kind == fs.ErrorKind.InvalidInput, "bad key")
+    assert(testing.set_env("VALUE", "bad\0value").err()!.kind == fs.ErrorKind.InvalidInput, "bad value")
+}
+#test
+fn environment() @suspends {
+    prepare_environment()
+    assert(process.env("EMPTY")!! == "", "present empty environment value")
+    assert(process.env("VALUE")!! == "second", "replacement survives rejected update")
+    assert(process.env("REMOVED")!.is_none(), "removed environment value")
+    assert(process.env("ABSENT")!.is_none(), "missing environment value")
+    assert(testing.set_env("VALUE", "late").err()!.kind == fs.ErrorKind.Busy, "input snapshot is frozen")
+    assert(testing.remove_env("EMPTY").err()!.kind == fs.ErrorKind.Busy, "removal is frozen")
+}
+#test
+fn directory_and_stdin() @suspends {
+    let directory = testing.temp_dir()!
+    testing.set_stdin("replaced")!
+    testing.set_stdin("\nfirst\r\n尾行")!
+    assert(process.current_dir()! == directory, "working directory matches the test directory")
+    assert(testing.temp_dir()! == directory, "setup directory remains available after freezing")
+    assert(testing.set_stdin("late").err()!.kind == fs.ErrorKind.Busy, "stdin is frozen with process inputs")
+    var input = io.stdin()!
+    assert(io.stdin().is_err(), "reader is exclusive")
+    assert(input.read_line(100)!! == "", "blank line")
+    assert(input.read_line(100)!! == "first", "CRLF")
+    assert(input.read_line(100)!! == "尾行", "unterminated Unicode tail")
+    assert(input.read_line(100)!.is_none(), "EOF")
+    input.close()!
+}
+#test
+fn stdin_freezes_inputs_and_reopening_continues_the_cursor() @suspends {
+    testing.set_stdin("ab\0c")!
+    var first = fs.stdin()!
+    assert(testing.set_env("LATE", "value").err()!.kind == fs.ErrorKind.Busy, "opening stdin freezes inputs")
+    let byte = first.read(1)!
+    assert(byte[0] == 97, "first byte")
+    first.close()!
+    var second = io.stdin()!
+    assert(second.read_text_limited(3)! == "b\0c", "reopening does not rewind stdin")
+    second.close()!
+}
+"#);
+    for backend in [vec![], vec!["--interpreter"]] {
+        success(
+            &work
+                .command()
+                .args(["test", "boundaries.jk"])
+                .args(backend)
+                .output()
+                .unwrap(),
+        );
+    }
+}
+
+#[test]
+fn test_context_cleans_directories_after_success_failure_and_timeout() {
+    let work = Workspace::new();
+    for (name, tail, expected) in [
+        ("pass", "", 0),
+        ("fail", "panic(\"intentional\")", 1),
+        ("timeout", "while true {}", 1),
+    ] {
+        work.write(
+            "cleanup.jk",
+            &format!(
+                r#"
+import joky/testing
+import joky/fs
+#test
+fn cleanup() @suspends {{
+    let path = testing.temp_dir()!
+    eprintln("TEST_DIR={{path}}")
+    var options = fs.OpenOptions.new()
+    options.write = true
+    options.create = true
+    var file = fs.open("marker.txt", options)!
+    file.write_text("owned by the test")!
+    {tail}
+}}
+"#
+            ),
+        );
+        let output = work.cli(&["test", "cleanup.jk", "--nocapture", "--timeout-ms", "5000"]);
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let directory = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("TEST_DIR="))
+            .expect(&stderr);
+        assert!(
+            !std::path::Path::new(directory).exists(),
+            "{name}: leaked {directory}"
+        );
+        assert!(!work.path().join("marker.txt").exists());
+    }
+}
+
+#[test]
+fn test_context_capability_is_absent_from_ordinary_programs() {
+    let work = Workspace::new();
+    work.write("ordinary.jk", r#"
+import joky/testing
+import joky/check.{assert}
+import joky/fs
+fn main() @suspends {
+    assert(testing.set_env("VALUE", "test").err()!.kind == fs.ErrorKind.Unsupported, "explicit test capability required")
+    assert(testing.set_args(["x"]).err()!.kind == fs.ErrorKind.Unsupported, "arguments require the capability")
+    assert(testing.set_stdin("input").err()!.kind == fs.ErrorKind.Unsupported, "stdin requires the capability")
+    assert(testing.temp_dir().err()!.kind == fs.ErrorKind.Unsupported, "directory requires the capability")
+}
+"#);
+    #[cfg(unix)]
+    work.assert_all_backends("ordinary.jk", &["--no-prelude", "--parallel"], b"", 0);
+}

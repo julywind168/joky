@@ -1,4 +1,6 @@
 //! Native Joky tests share the ordinary frontend and execute in supervised children.
+mod directory;
+
 use super::{cli_argument_error, cli_error_with_code, diagnostic, project, Command};
 use joky::{
     parser::ast::Item,
@@ -25,6 +27,7 @@ pub(super) struct Options {
     // Private worker protocol: source and source-root are separate to preserve imports.
     worker: Option<String>,
     root: Option<PathBuf>,
+    directory: Option<PathBuf>,
 }
 
 pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Error> {
@@ -38,6 +41,7 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
         timeout: Duration::from_secs(30),
         worker: None,
         root: None,
+        directory: None,
     };
     let mut source = None;
     let mut seen = BTreeSet::new();
@@ -63,10 +67,17 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
                 Some("--no-prelude") => options.prelude = false,
                 Some("--list") => options.list = true,
                 Some("--nocapture") => options.nocapture = true,
-                Some("--filter" | "--timeout-ms" | "--test-worker" | "--test-root") => {
+                Some(
+                    "--filter" | "--timeout-ms" | "--test-worker" | "--test-root"
+                    | "--test-directory",
+                ) => {
                     let value = args.next().ok_or_else(|| {
                         cli_argument_error(format!("{} requires a value", arg.to_string_lossy()))
                     })?;
+                    if arg == "--test-directory" {
+                        options.directory = Some(value.into());
+                        continue;
+                    }
                     if arg == "--test-root" {
                         options.root = Some(value.into());
                         continue;
@@ -108,6 +119,7 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
         }
     }
     if options.worker.is_some() != options.root.is_some()
+        || options.worker.is_some() != options.directory.is_some()
         || options.worker.is_some()
             && (options.list || options.filter.is_some() || options.nocapture)
     {
@@ -258,6 +270,13 @@ fn worker(options: &Options, name: &str) -> Result<(), Error> {
         VmMode::Jit
     });
     vm.set_prelude_enabled(options.prelude);
+    vm.set_file_service(joky::runtime::fs::FileService::testing(
+        options
+            .directory
+            .as_ref()
+            .expect("validated test directory"),
+        Default::default(),
+    )?)?;
     let ast = vm.type_registry().resolve_test_file_with_root(
         &options.source,
         options.root.as_ref().expect("validated worker root"),
@@ -293,13 +312,16 @@ impl Drop for ChildGuard {
 }
 
 fn supervise(options: &Options, root: &Path, test: &Test) -> Result<bool, Error> {
+    let directory = directory::Directory::new().map_err(io)?;
     let mut command = Process::new(std::env::current_exe().map_err(io)?);
     command
         .arg("test")
         .arg("--test-worker")
         .arg(&test.function)
         .arg("--test-root")
-        .arg(root);
+        .arg(root)
+        .arg("--test-directory")
+        .arg(&directory.0);
     if options.interpreter {
         command.arg("--interpreter");
     }
@@ -368,6 +390,7 @@ fn supervise(options: &Options, root: &Path, test: &Test) -> Result<bool, Error>
     } else if !passed {
         eprintln!("{}: child exited with {status}", test.name);
     }
+    directory.clean().map_err(io)?;
     Ok(passed)
 }
 

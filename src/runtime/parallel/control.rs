@@ -134,6 +134,7 @@ impl Operation {
                 match op {
                     Open => (vec![Bytes(1, false), Word], Resource),
                     Process => (vec![Word, Word, Bytes(1, false)], Resource),
+                    TestInput => (vec![Word, Bytes(1, false), Bytes(1, false)], Resource),
                     Stdin => (vec![], Resource),
                     Read => (vec![Resource, Word], Resource),
                     Write => (vec![Resource, Bytes(1, false)], Resource),

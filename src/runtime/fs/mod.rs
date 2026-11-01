@@ -1,6 +1,7 @@
 //! Optional file capability and compiler-checked asynchronous resource operations.
 pub mod abi;
 mod service;
+mod testing;
 mod worker;
 use super::{
     arena::{Arena, ExternalCharge},
@@ -88,6 +89,7 @@ pub(crate) enum Operation {
     Count,
     Process,
     Stdin,
+    TestInput,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
@@ -104,6 +106,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__fs_count" => Operation::Count,
         "__process_read" => Operation::Process,
         "__io_stdin" => Operation::Stdin,
+        "__test_input" => Operation::TestInput,
         _ => return None,
     })
 }
@@ -124,6 +127,7 @@ impl Operation {
             Self::Open => (vec![Type::String, Type::UInt64], outcome),
             Self::Stdin => (vec![], outcome),
             Self::Process => (vec![Type::UInt64, Type::UInt64, Type::String], outcome),
+            Self::TestInput => (vec![Type::UInt64, Type::String, Type::String], outcome),
             Self::Read => (vec![file, Type::UInt64], outcome),
             Self::Write => (
                 vec![file, sig.params.get(1).cloned().unwrap_or(Type::Unit)],
@@ -314,14 +318,28 @@ pub(crate) unsafe fn poll(
         return Err(failure("File operation has terminated"));
     }
     let result = (|| {
+        if op == Operation::TestInput {
+            let service = CURRENT.with(|s| s.borrow().clone());
+            let key = super::owned_text::borrow(frame.slots[1] as usize as *const Buffer)?;
+            let value = super::owned_text::borrow(frame.slots[2] as usize as *const Buffer)?;
+            let result = service
+                .as_ref()
+                .ok_or_else(|| FsError::new(1, "Host does not provide a test context"))
+                .and_then(|service| service.test_input(frame.slots[0], key, value));
+            let packet = match result {
+                Ok(Some(text)) => Packet::ok(Data::Bytes(text.into_bytes())),
+                Ok(None) => Packet::ok(Data::Unit),
+                Err(error) => Packet::error(error),
+            };
+            return outcome(arena, packet, service).map(Some);
+        }
         if op == Operation::Process {
             let service = CURRENT.with(|s| s.borrow().clone());
             let key = super::owned_text::borrow(frame.slots[2] as usize as *const Buffer)?;
             let value = service
                 .as_ref()
-                .and_then(FileService::process)
                 .ok_or_else(|| FsError::new(1, "Host does not provide process inputs"))
-                .and_then(|context| context.read(frame.slots[0], frame.slots[1], key));
+                .and_then(|service| service.process_read(frame.slots[0], frame.slots[1], key));
             let packet = match value {
                 Ok(super::process::Value::Count(n)) => Packet::ok(Data::Count(n)),
                 Ok(super::process::Value::Text(text)) => Packet::ok(Data::Bytes(text.into_bytes())),
@@ -482,6 +500,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, kind: u32) -> 
         11 => Operation::Count,
         12 => Operation::Process,
         13 => Operation::Stdin,
+        14 => Operation::TestInput,
         _ => return super::cps::INVALID_STATE,
     };
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {

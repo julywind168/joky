@@ -1,0 +1,68 @@
+// Test setup is an explicit host capability; ordinary programs receive Unsupported.
+import joky/array.{type Array}
+import joky/fs.{type IoError, type ErrorKind}
+import joky/result.{type Result, Ok, Err}
+import joky/string.{type StringBuilder}
+
+extern fn __test_input(kind: UInt64, key: String, value: String) @suspends -> fs.OutcomeOwner
+extern fn __fs_code(result: &mut fs.OutcomeOwner) @suspends -> UInt64
+extern fn __fs_message(result: &mut fs.OutcomeOwner) @suspends -> String
+extern fn __fs_bytes(result: &mut fs.OutcomeOwner) @suspends -> Array<UInt8>
+
+fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
+    let kind = if code == 1 { ErrorKind.Unsupported } else {
+        if code == 5 { ErrorKind.InvalidInput } else {
+            if code == 6 { ErrorKind.Busy } else {
+                if code == 8 { ErrorKind.LimitExceeded } else { ErrorKind.SystemFailure }
+            }
+        }
+    }
+    IoError { kind, message: __fs_message(result) }
+}
+fn configure(kind: UInt64, key: String, value: String) @suspends -> Result<Unit, IoError> {
+    var result = __test_input(kind, key, value)
+    let code = __fs_code(&mut result)
+    if code != 0 { return Err(error(&mut result, code)) }
+    Ok({})
+}
+
+// Replace the entire argument list atomically. The packet preserves empty arguments.
+pub fn set_args(values: Array<String>) @suspends -> Result<Unit, IoError> {
+    if values.len() > 65536 {
+        return Err(IoError { kind: ErrorKind.LimitExceeded, message: "Too many test arguments" })
+    }
+    var packet = StringBuilder.new()
+    for value in values {
+        let bytes = value.bytes()
+        for byte in bytes {
+            if *byte == 0 {
+                return Err(IoError { kind: ErrorKind.InvalidInput, message: "Test arguments cannot contain NUL" })
+            }
+        }
+        if value.byte_length() >= 4194304 || packet.byte_length() >= 4194304 - value.byte_length() {
+            return Err(IoError { kind: ErrorKind.LimitExceeded, message: "Test arguments exceed 4 MiB" })
+        }
+        packet.push_str(value)
+        packet.push('\0')
+    }
+    configure(0, "", packet.finish())
+}
+pub fn set_env(name: String, value: String) @suspends -> Result<Unit, IoError> {
+    configure(1, name, value)
+}
+pub fn remove_env(name: String) @suspends -> Result<Unit, IoError> {
+    configure(2, name, "")
+}
+pub fn set_stdin(text: String) @suspends -> Result<Unit, IoError> {
+    configure(3, "", text)
+}
+// Unlike process.current_dir, this setup query does not freeze inputs.
+pub fn temp_dir() @suspends -> Result<String, IoError> {
+    var result = __test_input(4, "", "")
+    let code = __fs_code(&mut result)
+    if code != 0 { return Err(error(&mut result, code)) }
+    match String.from_utf8(__fs_bytes(&mut result)) {
+        Ok(value) => Ok(value)
+        Err(_) => Err(IoError { kind: ErrorKind.InvalidInput, message: "Test directory is not valid UTF-8" })
+    }
+}

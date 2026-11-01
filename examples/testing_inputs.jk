@@ -1,0 +1,56 @@
+import joky/testing
+import joky/process
+import joky/io
+import joky/fs
+
+// The application reads its inputs through ordinary standard-library APIs.
+fn application() @suspends -> Int32 {
+    var args = process.args()!
+    if args.len() != 1 { return 2 }
+    if process.env("APP_MODE")!.unwrap_or("") != "test" { return 3 }
+
+    var config = fs.open("prefix.txt", fs.OpenOptions.new())!
+    let prefix = config.read_text()!
+    config.close()!
+    var input = io.stdin()!
+    let text = input.read_text_limited(1024)!
+    input.close()!
+
+    var options = fs.OpenOptions.new()
+    options.write = true
+    options.create = true
+    options.truncate = true
+    var output = fs.open(args.take_last(), options)!
+    output.write_text("{prefix}{text}")!
+    output.close()!
+    0
+}
+
+#test
+fn application_receives_configured_inputs() @suspends {
+    testing.set_args(["output.txt"])!
+    testing.set_env("APP_MODE", "test")!
+    testing.set_stdin("hello\nworld\n")!
+
+    var options = fs.OpenOptions.new()
+    options.write = true
+    options.create = true
+    var config = fs.open("prefix.txt", options)!
+    config.write_text("message: ")!
+    config.close()!
+
+    assert(application() == 0, "application succeeds with injected inputs")
+    var output = fs.open("output.txt", fs.OpenOptions.new())!
+    assert(output.read_text()! == "message: hello\nworld\n", "application writes the expected result")
+    output.close()!
+}
+
+#test
+fn starts_with_independent_empty_inputs() @suspends {
+    assert(process.args()!.is_empty(), "arguments do not leak from another test")
+    assert(process.env("APP_MODE")!.is_none(), "environment does not leak from another test")
+    assert(fs.open("output.txt", fs.OpenOptions.new()).is_err(), "files do not leak from another test")
+    var input = io.stdin()!
+    assert(input.read_line(1024)!.is_none(), "default stdin is EOF")
+    input.close()!
+}

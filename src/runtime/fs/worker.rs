@@ -32,7 +32,7 @@ pub trait FileSystem: Send + Sync + 'static {
         Err(FsError::new(1, "Host does not provide standard input"))
     }
 }
-struct Native(PathBuf, bool);
+pub(super) struct Native(pub(super) PathBuf, pub(super) bool);
 impl FileSystem for Native {
     fn open(&self, path: &str, flags: u64) -> Result<Box<dyn FileHandle>, FsError> {
         let file = std::fs::OpenOptions::new()

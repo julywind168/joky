@@ -2855,3 +2855,19 @@ worker 创建独立 VmEngine，直接调用同步 Unit 入口或驱动 prepare_a
 
 Joky 源码测试覆盖标准库与应用的公开行为；Rust 保留前端拒绝、ABI、内部资源计数、取消穷举和 CLI 路由责任。
 当前 CLI 只开放 JIT / 解释器测试运行；AOT 的生产排除语义由相关编译执行回归覆盖。
+
+
+### 测试输入与临时文件
+
+`joky/testing` 通过受检 FS 操作 `TestInput` 配置宿主输入，沿用 owning String / fs.OutcomeOwner 的
+CPS ABI、结果预算与 Parallel 控制桥；原有 FS 操作编号保持不变。普通 FileService 不含此能力，
+仅 `FileService::testing` 安装独立的共享 Inputs 和内存 stdin 后端。V1 文件服务描述符未扩展。
+配置参数列表先编码为以 NUL 终止各项的 UTF-8 包，空包表示零项；公共 API 拒绝参数中的 NUL，
+宿主验证项数、总大小后整体替换。环境设置也先验证候选快照后提交；stdin 有独立的 1 MiB 上限。
+
+Inputs 用互斥锁保护设置和首次读取。首次 process 查询或 stdin 获取将配置冻结为 ProcessContext，
+随后只读并拒绝新配置，保证 process.args 的多次宿主查询使用同一快照。
+内存 stdin 沿用 FileSystem / FileHandle 与原有 worker、取消及关闭协议；游标和独占读者标记属于上下文，
+不使用生产 stdin 的进程级标记。不同服务彼此隔离，服务克隆和共享它的 VM 看见同一上下文。
+父进程创建临时目录并通过内部 worker 参数显式传递；子进程仅将其作为文件服务根和逻辑过程目录，
+不改变 OS cwd 或环境。父进程在回收子进程后清理，硬超时不依赖子进程析构；目录 guard 覆盖提前返回路径。

@@ -11,6 +11,7 @@ use std::{path::Path, sync::Arc};
 pub struct FileService(
     Service,
     Option<Arc<crate::runtime::process::ProcessContext>>,
+    Option<Arc<super::testing::Inputs>>,
 );
 #[derive(Clone)]
 enum Service {
@@ -22,11 +23,13 @@ impl FileService {
         Ok(Self(
             Service::Native(NativeService::new(backend, limits)?),
             None,
+            None,
         ))
     }
     pub fn native(base: impl AsRef<Path>, limits: FileLimits) -> Result<Self, Error> {
         Ok(Self(
             Service::Native(NativeService::native(base, limits)?),
+            None,
             None,
         ))
     }
@@ -36,18 +39,64 @@ impl FileService {
         Ok(Self(
             Service::Native(NativeService::native_with_stdio(base, limits, true)?),
             None,
+            None,
         ))
     }
     /// Attach explicit startup inputs; clones and child tasks share this immutable snapshot.
+    /// Replaces test configuration capability while retaining the file/stdin backend.
     pub fn with_process_context(
         mut self,
         context: crate::runtime::process::ProcessContext,
     ) -> Self {
         self.1 = Some(Arc::new(context));
+        self.2 = None;
         self
     }
-    pub(super) fn process(&self) -> Option<&crate::runtime::process::ProcessContext> {
-        self.1.as_deref()
+    /// Grant a test its own empty inputs and a filesystem rooted at an existing directory.
+    /// The caller owns directory cleanup. Paths retain native filesystem semantics.
+    pub fn testing(base: impl AsRef<Path>, limits: FileLimits) -> Result<Self, Error> {
+        let directory = base
+            .as_ref()
+            .canonicalize()
+            .map_err(|e| super::failure(e.to_string()))?;
+        if !directory.is_dir() {
+            return Err(super::failure("Test directory must be a directory"));
+        }
+        let inputs = Arc::new(super::testing::Inputs::new(directory.clone()));
+        let backend = super::testing::Backend {
+            native: super::worker::Native(directory, false),
+            inputs: inputs.clone(),
+        };
+        Ok(Self(
+            Service::Native(NativeService::new(Arc::new(backend), limits)?),
+            None,
+            Some(inputs),
+        ))
+    }
+    pub(super) fn process_read(
+        &self,
+        kind: u64,
+        index: u64,
+        key: &str,
+    ) -> Result<crate::runtime::process::Value, FsError> {
+        if let Some(inputs) = &self.2 {
+            return inputs.read(kind, index, key);
+        }
+        self.1
+            .as_ref()
+            .ok_or_else(|| FsError::new(1, "Host does not provide process inputs"))?
+            .read(kind, index, key)
+    }
+    pub(super) fn test_input(
+        &self,
+        kind: u64,
+        key: &str,
+        value: &str,
+    ) -> Result<Option<String>, FsError> {
+        self.2
+            .as_ref()
+            .ok_or_else(|| FsError::new(1, "Host does not provide a test context"))?
+            .configure(kind, key, value)
     }
     pub(crate) fn standalone() -> Result<Self, Error> {
         let context = crate::runtime::process::standalone();
@@ -65,7 +114,11 @@ impl FileService {
     /// contract in `abi`. Its context and tokens must support arbitrary threads;
     /// descriptor validation cannot establish those guarantees.
     pub unsafe fn from_descriptor(descriptor: FileServiceV1) -> Result<Self, Error> {
-        Ok(Self(Service::External(External::new(descriptor)?), None))
+        Ok(Self(
+            Service::External(External::new(descriptor)?),
+            None,
+            None,
+        ))
     }
     pub fn shutdown(&self) {
         match &self.0 {
