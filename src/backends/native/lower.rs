@@ -458,6 +458,22 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_place_describe", vec![ptr, ptr, ptr, ptr], vec![]),
         ("__joky_place_dispose", vec![ptr, ptr, ptr, ptr], vec![]),
         (
+            "__joky_place_view_local",
+            vec![
+                ptr,
+                ptr,
+                types::I64,
+                ptr,
+                ptr,
+                types::I64,
+                types::I64,
+                types::I64,
+                ptr,
+                ptr,
+            ],
+            vec![ptr],
+        ),
+        (
             "__joky_place_view",
             vec![
                 ptr,
@@ -4152,6 +4168,7 @@ fn lower_place(
             start,
             end,
             dst,
+            scratch,
         } => {
             let base = slots.read(builder, reference);
             let element = reference.ty.fixed_shape().element.storage_layout().unwrap();
@@ -4171,24 +4188,18 @@ fn lower_place(
                 .iconst(types::I64, span.source_id().raw() as i64);
             let start = builder.ins().iconst(ptr_ty, span.start() as i64);
             let end = builder.ins().iconst(ptr_ty, span.end() as i64);
-            let pointer = helper(
-                builder,
-                refs,
-                "__joky_place_view",
-                &[
-                    mode.arena(),
-                    base,
-                    length,
-                    size,
-                    align,
-                    from,
-                    to,
-                    slice,
-                    source,
-                    start,
-                    end,
-                ],
-            );
+            let storage = scratch
+                .as_ref()
+                .map_or_else(|| mode.arena(), |s| slots.read(builder, s));
+            let mut args = vec![storage, base, length, size, align, from, to];
+            let symbol = if scratch.is_some() {
+                "__joky_place_view_local"
+            } else {
+                args.push(slice);
+                "__joky_place_view"
+            };
+            args.extend([source, start, end]);
+            let pointer = helper(builder, refs, symbol, &args);
             check_call(builder, refs, mode.frame(), mode.cleanup());
             let element = &reference.ty.fixed_shape().element;
             let pointer = if !matches!(

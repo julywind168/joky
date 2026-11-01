@@ -105,10 +105,13 @@ fn parallel_borrowed_iteration_executes_and_cancels_on_owning_workers() {
 
 #[test]
 fn local_slice_descriptors_parallel_reuse_and_refund() {
-    let source = format!(
+    for fixture in [
+        include_str!("../../../tests/fixtures/local_slice_descriptors.jk"),
+        include_str!("../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
+    ] {
+        let source = format!(
         "import joky/task\n{}",
-        include_str!("../../../tests/fixtures/local_slice_descriptors.jk")
-            .replace(
+        fixture.replace(
                 "extern fn delayed_value(value: Int32) @suspends -> Int32",
                 "fn delayed_value(value: Int32) @suspends -> Int32 { task.yield_now(); value + 1 }",
             )
@@ -118,26 +121,27 @@ fn local_slice_descriptors_parallel_reuse_and_refund() {
             )
             .replace("while i < 3", "while i < 512"),
     );
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
-        // Include interpreter registers and nested call frames as well as data.
-        let budget = TaskBudget::new(64 << 10);
-        let prepared = vm
-            .prepare_parallel_task("descriptor_suspend", vec![], vec![budget.clone()])
-            .unwrap_or_else(|e| panic!("{e}"));
-        let mut pool = ParallelExecutor::new(2, 8).unwrap();
-        let task = prepared.submit(&pool).unwrap();
-        wait_until(|| task.is_finished());
-        assert_eq!(
-            task.take_result()
-                .unwrap_or_else(|e| panic!("{mode:?}: {e}"))
-                .value(),
-            &TaskValue::Scalar(InstanceValue::Int32(42)),
-        );
-        drop(task);
-        pool.wait_closed();
-        assert_eq!(budget.used(), 0, "{mode:?}");
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+            // Include interpreter registers and nested call frames as well as data.
+            let budget = TaskBudget::new(64 << 10);
+            let prepared = vm
+                .prepare_parallel_task("descriptor_suspend", vec![], vec![budget.clone()])
+                .unwrap_or_else(|e| panic!("{e}"));
+            let mut pool = ParallelExecutor::new(2, 8).unwrap();
+            let task = prepared.submit(&pool).unwrap();
+            wait_until(|| task.is_finished());
+            assert_eq!(
+                task.take_result()
+                    .unwrap_or_else(|e| panic!("{mode:?}: {e}"))
+                    .value(),
+                &TaskValue::Scalar(InstanceValue::Int32(42)),
+            );
+            drop(task);
+            pool.wait_closed();
+            assert_eq!(budget.used(), 0, "{mode:?}");
+        }
     }
 }
 

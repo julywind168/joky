@@ -8,6 +8,8 @@ pub(crate) enum PlaceOp {
         start: Slot,
         end: Option<Slot>,
         dst: Slot,
+        /// Function-owned descriptor storage; only present for proven local slices.
+        scratch: Option<Slot>,
     },
     Swap {
         left: Slot,
@@ -246,6 +248,7 @@ impl FunctionPlan {
         let op = match info.compiler_intrinsic.as_ref().unwrap() {
             CompilerIntrinsic::FixedArrayBorrow | CompilerIntrinsic::FixedArraySlice => {
                 PlaceOp::View {
+                    scratch: None,
                     reference: values[0].clone().unwrap(),
                     start: values[1].clone().unwrap(),
                     end: values.get(2).cloned().flatten(),

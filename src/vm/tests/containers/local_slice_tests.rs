@@ -2,7 +2,16 @@
 use super::{support::*, VmMode};
 use crate::runtime::arena::{LIMIT, LIVE, LOCAL_LIMIT};
 
-const SOURCE: &str = include_str!("../../../../tests/fixtures/local_slice_descriptors.jk");
+const SOURCES: [&str; 2] = [
+    include_str!("../../../../tests/fixtures/local_slice_descriptors.jk"),
+    include_str!("../../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
+];
+
+fn engines() -> impl Iterator<Item = (&'static str, VmMode)> {
+    SOURCES
+        .into_iter()
+        .flat_map(|source| [VmMode::Jit, VmMode::Interpreter].map(|mode| (source, mode)))
+}
 
 fn clean() {
     LIVE.with(|n| assert_eq!(n.get(), 0));
@@ -19,8 +28,8 @@ impl Drop for Restore {
 #[test]
 fn local_slice_descriptors_bound_loops_and_preserve_escaping_views() {
     let _restore = Restore(LIMIT.with(|n| n.get()), LOCAL_LIMIT.with(|n| n.get()));
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(SOURCE, mode);
+    for (source, mode) in engines() {
+        let vm = parity_vm(source, mode);
         // Enough for fixed owners/locals, far below 512 descriptor allocations.
         LIMIT.with(|n| n.set(4096));
         LOCAL_LIMIT.with(|n| n.set(4096));
@@ -37,14 +46,14 @@ fn local_slice_descriptors_bound_loops_and_preserve_escaping_views() {
 
 #[test]
 fn local_slice_descriptors_survive_suspend_and_release_on_every_exit() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
+    for (source, mode) in engines() {
         for entry in [
             "descriptor_suspend",
             "descriptor_failure",
             "descriptor_bounds",
         ] {
             for cancel in [false, true] {
-                let vm = parity_vm(SOURCE, mode);
+                let vm = parity_vm(source, mode);
                 let mut task = vm.call_async(entry, &[]).unwrap();
                 let live = LIVE.with(|n| n.get());
                 assert!(live > 0);
@@ -81,28 +90,32 @@ fn local_slice_descriptors_survive_suspend_and_release_on_every_exit() {
 #[test]
 fn local_slice_descriptors_local_allocation_failure_cleans_owners() {
     let _restore = Restore(LIMIT.with(|n| n.get()), LOCAL_LIMIT.with(|n| n.get()));
-    let vm = parity_vm(SOURCE, VmMode::Interpreter);
-    LOCAL_LIMIT.with(|n| n.set(0));
-    let error = vm.call_int32_0("descriptor_loop").unwrap_err();
-    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
-    clean();
+    for source in SOURCES {
+        let vm = parity_vm(source, VmMode::Interpreter);
+        LOCAL_LIMIT.with(|n| n.set(0));
+        let error = vm.call_int32_0("descriptor_loop").unwrap_err();
+        assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+        clean();
+    }
 }
 
 fn cancellation(sweep: CancellationSweep) {
-    let source = format!(
-        "{}\nfn descriptor_cancel() @suspends -> Int32 {{ descriptor_loop() }}",
-        SOURCE.replace("512", "3"),
-    );
-    let mut vm = parity_vm(&source, VmMode::Interpreter);
-    assert_cancellation(
-        &mut vm,
-        "descriptor_cancel",
-        100_000,
-        sweep,
-        || {},
-        || LIVE.with(|n| n.get()),
-        clean,
-    );
+    for source in SOURCES {
+        let source = format!(
+            "{}\nfn descriptor_cancel() @suspends -> Int32 {{ descriptor_loop() }}",
+            source.replace("512", "3"),
+        );
+        let mut vm = parity_vm(&source, VmMode::Interpreter);
+        assert_cancellation(
+            &mut vm,
+            "descriptor_cancel",
+            100_000,
+            sweep,
+            || {},
+            || LIVE.with(|n| n.get()),
+            clean,
+        );
+    }
 }
 
 #[test]

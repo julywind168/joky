@@ -431,6 +431,9 @@ fn fixed_array_f3_failures_headers_and_payload_reuse() {
                 }
             }
             cleaned();
+            if succeeded {
+                break;
+            }
         }
         assert!(succeeded && failed_with_view);
         arena::LIMIT.with(|limit| limit.set(65536));
@@ -440,12 +443,14 @@ fn fixed_array_f3_failures_headers_and_payload_reuse() {
         assert_eq!(vm.call_int32_0("references").unwrap(), 42);
         cleaned();
         assert_eq!(
-            vm.call_int32_0("headers").unwrap_err().code(),
+            vm.call_int32_0("escaping_headers").unwrap_err().code(),
             ErrorCode::ResourceLimit
         );
         cleaned();
-        arena::LIMIT.with(|limit| limit.set(arena::MAX_BYTES));
         assert_eq!(vm.call_int32_0("headers").unwrap(), 42);
+        cleaned();
+        arena::LIMIT.with(|limit| limit.set(arena::MAX_BYTES));
+        assert_eq!(vm.call_int32_0("escaping_headers").unwrap(), 42);
         cleaned();
     }
 }

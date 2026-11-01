@@ -1,0 +1,92 @@
+import joky/fixed_array.{type FixedArray}
+import joky/slice.{type Slice}
+
+extern fn delayed_value(value: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
+
+type Row = FixedArray<Int32, 3>
+struct Packet { tag: UInt8, rows: FixedArray<Row, 2> }
+
+fn forwarded(values: &mut Row, start: UInt64, end: UInt64) -> &mut Slice<Int32> {
+    values.slice_mut(start, end)
+}
+
+fn descriptor_loop() -> Int32 {
+    var packet = Packet { tag: 7, rows: [[0, 0, 0], [0, 0, 0]] }
+    let empty: FixedArray<Int32, 0> = []
+    let units: FixedArray<Unit, 3> = [{}, {}, {}]
+    var i = 0
+    while i < 512 {
+        let row = packet.rows.borrow_mut_ref(1)
+        let view = forwarded(row, 1, 2)
+        let nested = view.slice_mut(0, 1)
+        let old = nested.get(0).unwrap_or(0)
+        nested.set(0, old + 1)
+        if empty.slice(0, 0).len() != 0 { return 0 }
+        if units.slice(0, 3).len() != 3 { return 0 }
+        if units.slice(3, 3).len() != 0 { return 0 }
+        i += 1
+    }
+    if packet.rows.borrow_ref(1).get(1).unwrap_or(0) == 512 { 42 } else { 0 }
+}
+
+fn descriptor_previous() -> Int32 {
+    let values: Row = [20, 22, 99]
+    var previous = values.slice(2, 3)
+    var i: UInt64 = 0
+    var sum = 0
+    while i < 2 {
+        let current = values.slice(i, i + 1)
+        sum += previous.get(0).unwrap_or(0)
+        previous = current
+        i += 1
+    }
+    if sum + previous.get(0).unwrap_or(0) == 141 { 42 } else { 0 }
+}
+
+fn selected(values: &Row, first: Bool) -> &Slice<Int32> {
+    if first {
+        let part = values.slice(0, 1)
+        part.slice(0, 1)
+    } else {
+        values.slice(1, 2)
+    }
+}
+
+fn descriptor_returned() -> Int32 {
+    let values: Row = [20, 22, 99]
+    let first = selected(&values, true)
+    let second = selected(&values, false)
+    first.get(0).unwrap_or(0) + second.get(0).unwrap_or(0)
+}
+
+fn descriptor_suspend() @suspends -> Int32 {
+    var values: Row = [0, 0, 0]
+    var i = 0
+    while i < 3 {
+        let view = values.slice_mut(0, 3)
+        view.set(1, 40)
+        let one = delayed_value(0)
+        let nested = view.slice_mut(1, 2)
+        let old = nested.get(0).unwrap_or(0)
+        nested.set(0, old + one + 1)
+        i += 1
+    }
+    values.get(1).unwrap_or(0)
+}
+
+fn descriptor_failure() @suspends -> Int32 {
+    let values: FixedArray<String, 2> = ["owner", "cleanup"]
+    let view = values.slice(0, 2)
+    delayed_value(0)
+    fail_now()
+    int32(view.len())
+}
+
+fn descriptor_bounds() @suspends -> Int32 {
+    let values: Row = [20, 22, 99]
+    let view = values.slice(0, 2)
+    delayed_value(0)
+    values.slice(0, 4).len()
+    view.get(0).unwrap_or(0)
+}

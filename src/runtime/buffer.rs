@@ -1365,14 +1365,58 @@ pub(crate) unsafe fn fixed_view(
     from: u64,
     to: Option<u64>,
 ) -> Result<*mut u8, Error> {
+    fixed_view_with(base, length, size, align, from, to, |data, len, layout| {
+        Buffer::view(arena, data, len, layout)
+    })
+}
+
+/// Construct a fixed-array slice in reusable function-owned storage.
+///
+/// # Safety
+/// The source layout, borrow lifetime and thread contract match `fixed_view`.
+/// `storage` is aligned and writable for a Buffer, does not overlap the source,
+/// and outlives every use of the returned view. All its previous uses have ended.
+pub(crate) unsafe fn fixed_view_local(
+    storage: NonNull<Buffer>,
+    base: *mut u8,
+    length: u64,
+    size: usize,
+    align: usize,
+    from: u64,
+    to: u64,
+) -> Result<*mut u8, Error> {
+    fixed_view_with(
+        base,
+        length,
+        size,
+        align,
+        from,
+        Some(to),
+        |data, len, layout| {
+            storage
+                .as_ptr()
+                .write(Buffer::view_value(data, len, layout));
+            Ok(storage)
+        },
+    )
+}
+
+unsafe fn fixed_view_with(
+    base: *mut u8,
+    length: u64,
+    size: usize,
+    align: usize,
+    from: u64,
+    to: Option<u64>,
+    view: impl FnOnce(*mut u8, usize, Layout) -> Result<NonNull<Buffer>, Error>,
+) -> Result<*mut u8, Error> {
     if to.map_or(from >= length, |to| from > to || to > length) {
         return Err(bounds_error("FixedArray index or slice is out of bounds"));
     }
     let data = base.add(from as usize * size);
     match to {
         None => Ok(data),
-        Some(to) => Buffer::view(
-            arena,
+        Some(to) => view(
             data,
             (to - from) as usize,
             Layout::from_size_align(size, align).unwrap(),
@@ -1407,6 +1451,37 @@ unsafe extern "C" fn place_view(
             align,
             from,
             (slice != 0).then_some(to),
+        ),
+        source,
+        start,
+        end,
+    )
+}
+
+/// # Safety
+/// The storage/source layout, lifetime and thread contract match fixed_view_local.
+#[export_name = "__joky_place_view_local"]
+unsafe extern "C" fn place_view_local(
+    storage: *mut Buffer,
+    base: *mut u8,
+    length: u64,
+    size: usize,
+    align: usize,
+    from: u64,
+    to: u64,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut u8 {
+    located(
+        fixed_view_local(
+            NonNull::new_unchecked(storage),
+            base,
+            length,
+            size,
+            align,
+            from,
+            to,
         ),
         source,
         start,
@@ -1822,7 +1897,7 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 37] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 38] {
     [
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
@@ -1837,6 +1912,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 37] {
         ("__joky_buffer_iter_advance", iter_advance as *const u8),
         ("__joky_buffer_iter_current", iter_current as *const u8),
         ("__joky_place_view", place_view as *const u8),
+        ("__joky_place_view_local", place_view_local as *const u8),
         ("__joky_buffer_transfer", transfer as *const u8),
         ("__joky_buffer_take_last", take_last as *const u8),
         ("__joky_buffer_swap_elements", swap_elements as *const u8),

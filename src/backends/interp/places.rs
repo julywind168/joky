@@ -81,6 +81,7 @@ pub(super) fn execute(
             start,
             end,
             dst,
+            scratch,
         } => {
             let Value::UInt64(from) = slots[start.index] else {
                 unreachable!("checked index")
@@ -92,15 +93,28 @@ pub(super) fn execute(
                 to
             });
             let pointer = unsafe {
-                crate::runtime::buffer::fixed_view(
-                    arena,
-                    pointer(&slots[reference.index]),
-                    op.layout.length,
-                    op.layout.stride,
-                    op.layout.align,
-                    from,
-                    to,
-                )?
+                let base = pointer(&slots[reference.index]);
+                if let Some(scratch) = scratch {
+                    crate::runtime::buffer::fixed_view_local(
+                        std::ptr::NonNull::new(pointer(&slots[scratch.index]).cast()).unwrap(),
+                        base,
+                        op.layout.length,
+                        op.layout.stride,
+                        op.layout.align,
+                        from,
+                        to.expect("local descriptor only for slices"),
+                    )?
+                } else {
+                    crate::runtime::buffer::fixed_view(
+                        arena,
+                        base,
+                        op.layout.length,
+                        op.layout.stride,
+                        op.layout.align,
+                        from,
+                        to,
+                    )?
+                }
             };
             let element = &reference.ty.fixed_shape().element;
             let pointer = if end.is_none() && element.is_owner() && !element.is_inline_owner() {

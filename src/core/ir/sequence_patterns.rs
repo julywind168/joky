@@ -284,6 +284,7 @@ impl FunctionPlan {
         if matches!(target, Type::FixedArray(_)) {
             let dst = self.slot(Type::reference(element.clone(), mutable))?;
             self.emit(Op::Place(PlaceOp::View {
+                scratch: None,
                 reference: root.clone(),
                 start: index,
                 end: None,
@@ -322,6 +323,7 @@ impl FunctionPlan {
         if matches!(target, Type::FixedArray(_)) {
             let dst = self.slot(ty)?;
             self.emit(Op::Place(PlaceOp::View {
+                scratch: None,
                 reference: root.clone(),
                 start,
                 end: Some(end),

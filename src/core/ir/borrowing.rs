@@ -140,7 +140,18 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
         Op::Place(op) => match op {
-            PlaceOp::View { reference, dst, .. } => (refs(reference), refs(dst)),
+            PlaceOp::View {
+                reference,
+                dst,
+                scratch,
+                ..
+            } => (
+                std::iter::once(reference)
+                    .chain(scratch)
+                    .flat_map(refs)
+                    .collect(),
+                refs(dst),
+            ),
             PlaceOp::Copy { dst, src } | PlaceOp::MoveInit { dst, src, .. } => {
                 (refs(src), refs(dst))
             }

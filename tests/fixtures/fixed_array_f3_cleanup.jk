@@ -59,4 +59,10 @@ fn references()->Int32 {
     while i<1000 { if *a.borrow_ref(0)!=42 {return 0}; i=i+1 }
     42
 }
+fn escaping_headers()->Int32 {
+    let a=fixed_array.repeat::<Int32,3>(42)
+    var i=0
+    while i<1000 { slice.len(tail(&a)); i=i+1 }
+    42
+}
 fn task() @suspends -> Int32 { exercise() }

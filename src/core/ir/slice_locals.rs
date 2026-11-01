@@ -7,9 +7,19 @@ use std::collections::HashSet;
 type Set = HashSet<usize>;
 
 #[derive(Clone)]
+enum Construction {
+    Buffer {
+        intrinsic: BufferIntrinsic,
+        element: Type,
+    },
+    Fixed {
+        reference: Type,
+    },
+}
+
+#[derive(Clone)]
 struct Factory {
-    intrinsic: BufferIntrinsic,
-    element: Type,
+    construction: Construction,
     arguments: Vec<usize>,
     span: Span,
 }
@@ -58,10 +68,31 @@ fn factory(
                 ..
             }) if is_slice(*intrinsic) && result.is_none() => {
                 result = Some(Factory {
-                    intrinsic: *intrinsic,
-                    element: element.clone(),
+                    construction: Construction::Buffer {
+                        intrinsic: *intrinsic,
+                        element: element.clone(),
+                    },
                     arguments: args
                         .iter()
+                        .map(|s| aliases.get(&s.index).copied())
+                        .collect::<Option<_>>()?,
+                    span: *span,
+                });
+                aliases.insert(dst.index, usize::MAX);
+            }
+            Op::Place(PlaceOp::View {
+                reference,
+                start,
+                end: Some(end),
+                dst,
+                ..
+            }) if result.is_none() => {
+                result = Some(Factory {
+                    construction: Construction::Fixed {
+                        reference: reference.ty.clone(),
+                    },
+                    arguments: [reference, start, end]
+                        .into_iter()
                         .map(|s| aliases.get(&s.index).copied())
                         .collect::<Option<_>>()?,
                     span: *span,
@@ -286,18 +317,32 @@ pub(super) fn lower(
             } = op
             {
                 if let Some(factory) = factories.get(name) {
-                    let args = factory
+                    let args: Vec<_> = factory
                         .arguments
                         .iter()
                         .map(|&i| args[i].clone().unwrap())
                         .collect();
-                    *op = Op::Buffer(BufferOp::Storage {
-                        intrinsic: factory.intrinsic,
-                        element: factory.element.clone(),
-                        args,
-                        dst: result.clone(),
-                        scratch: None,
-                    });
+                    *op = match &factory.construction {
+                        Construction::Buffer { intrinsic, element } => {
+                            Op::Buffer(BufferOp::Storage {
+                                intrinsic: *intrinsic,
+                                element: element.clone(),
+                                args,
+                                dst: result.clone(),
+                                scratch: None,
+                            })
+                        }
+                        Construction::Fixed { reference } => Op::Place(PlaceOp::View {
+                            reference: Slot {
+                                index: args[0].index,
+                                ty: reference.clone(),
+                            },
+                            start: args[1].clone(),
+                            end: Some(args[2].clone()),
+                            dst: result.clone().unwrap(),
+                            scratch: None,
+                        }),
+                    };
                     *span = factory.span;
                 }
             }
@@ -312,6 +357,9 @@ pub(super) fn lower(
                     dst: Some(dst),
                     ..
                 }) if is_slice(*intrinsic) => Some((pc, dst.clone())),
+                Op::Place(PlaceOp::View {
+                    end: Some(_), dst, ..
+                }) => Some((pc, dst.clone())),
                 _ => None,
             })
             .take(64)
@@ -378,8 +426,10 @@ pub(super) fn lower(
                         target: target.clone(),
                     });
                     spans.push(span);
-                    if let Op::Buffer(BufferOp::Storage { scratch, .. }) = &mut op {
-                        *scratch = Some(storage);
+                    match &mut op {
+                        Op::Buffer(BufferOp::Storage { scratch, .. })
+                        | Op::Place(PlaceOp::View { scratch, .. }) => *scratch = Some(storage),
+                        _ => unreachable!("proved slice construction"),
                     }
                 }
             }

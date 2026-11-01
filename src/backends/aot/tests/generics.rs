@@ -539,7 +539,7 @@ fn fixed_array_f3_aot_cleans_views_after_success_and_failure() {
         include_str!("../../../../tests/fixtures/fixed_array_f3_cleanup.jk"),
         r#"
         #include <stdint.h>
-        extern int32_t exercise(void), failure(void), payload_reuse(void), headers(void), references(void);
+        extern int32_t exercise(void), failure(void), payload_reuse(void), headers(void), references(void), escaping_headers(void);
         extern int32_t joky_runtime_error_code(void);
         extern void joky_runtime_error_clear(void);
         static int32_t events[16]; static unsigned count;
@@ -549,7 +549,7 @@ fn fixed_array_f3_aot_cleans_views_after_success_and_failure() {
             count=0; failure();
             if(!joky_runtime_error_code() || count!=2 || events[0]!=1 || events[1]!=-1) return 2;
             joky_runtime_error_clear();
-            return payload_reuse()!=42 || headers()!=42 || references()!=42 || joky_runtime_error_code();
+            return payload_reuse()!=42 || headers()!=42 || references()!=42 || escaping_headers()!=42 || joky_runtime_error_code();
         }
         "#,
     );
