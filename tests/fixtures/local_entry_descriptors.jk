@@ -1,0 +1,152 @@
+import joky/map.{type Map, type Iter, type Entry}
+
+extern fn delayed_value(value: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
+
+fn forwarded(cursor: &Iter<Int32, Int32>) -> &Entry<Int32, Int32> { map.current(cursor) }
+fn value(entry: &Entry<Int32, Int32>) -> &Int32 { map.entry_value(entry) }
+
+fn descriptor_loop() -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 42)
+    let cursor = table.iter()
+    map.advance(cursor)
+    var round = 0
+    while round < 512 {
+        let entry = forwarded(cursor)
+        let alias = entry
+        let (key, item) = alias
+        if *key != 1 || *item != 42 || *value(entry) != 42 { return 0 }
+        if *payload(cursor) != 42 { return 0 }
+        round += 1
+    }
+    if mutable_loop() != 42 || unit_loop() != 42 { return 0 }
+    42
+}
+
+fn mutable_loop() -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 0)
+    let cursor = table.iter_mut()
+    map.advance(cursor)
+    var round = 0
+    while round < 512 {
+        let entry = map.current_mut(cursor)
+        let key = *map.entry_key(entry)
+        *map.entry_value_mut(entry) += key
+        let (key, item) = entry
+        *item += *key
+        round += 1
+    }
+    if *table.borrow_ref(1) == 512 * 2 { 42 } else { 0 }
+}
+
+fn unit_loop() -> Int32 {
+    var table = Map.new::<Unit, Unit>()
+    table.insert({}, {})
+    let cursor = table.iter_mut()
+    map.advance(cursor)
+    var round = 0
+    while round < 512 {
+        let entry = map.current_mut(cursor)
+        let (key, item) = entry
+        *item = *key
+        round += 1
+    }
+    if !map.advance(cursor) { 42 } else { 0 }
+}
+
+fn payload(cursor: &Iter<Int32, Int32>) -> &Int32 {
+    let entry = map.current(cursor)
+    value(entry)
+}
+
+fn descriptor_previous() -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 10)
+    table.insert(2, 20)
+    table.insert(3, 30)
+    let cursor = table.iter()
+    map.advance(cursor)
+    var previous = map.current(cursor)
+    var expected = *value(previous)
+    var count = 1
+    while map.advance(cursor) {
+        let next = map.current(cursor)
+        if *value(previous) != expected { return 0 }
+        expected = *value(next)
+        previous = next
+        count += 1
+    }
+    if count == 3 && *value(previous) == expected { 42 } else { 0 }
+}
+
+fn selected(cursor: &Iter<Int32, Int32>, first: Bool) -> &Entry<Int32, Int32> {
+    if first { map.current(cursor) } else { forwarded(cursor) }
+}
+
+fn descriptor_returned() -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 20)
+    table.insert(2, 22)
+    let cursor = table.iter()
+    map.advance(cursor)
+    let first = selected(cursor, true)
+    let saved = payload(cursor)
+    let key = *map.entry_key(first)
+    map.advance(cursor)
+    let second = selected(cursor, false)
+    if *map.entry_key(first) != key || *map.entry_key(second) == key { return 0 }
+    if *value(first) != *saved { return 0 }
+    *saved + *value(second)
+}
+
+fn descriptor_escape_loop() -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 42)
+    let cursor = table.iter()
+    map.advance(cursor)
+    var round = 0
+    while round < 512 {
+        let entry = selected(cursor, true)
+        if *value(entry) != 42 { return 0 }
+        round += 1
+    }
+    42
+}
+
+fn descriptor_suspend() @suspends -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 0)
+    let cursor = table.iter_mut()
+    map.advance(cursor)
+    var round = 0
+    while round < 3 {
+        let entry = map.current_mut(cursor)
+        let item = map.entry_value_mut(entry)
+        let one = delayed_value(0)
+        *item = 40 + one
+        *map.entry_value_mut(entry) += 1
+        round += 1
+    }
+    *table.borrow_ref(1)
+}
+
+fn descriptor_failure() @suspends -> Int32 {
+    var table = Map.new::<String, String>()
+    table.insert("owner", "cleanup")
+    let cursor = table.iter()
+    map.advance(cursor)
+    let entry = map.current(cursor)
+    delayed_value(0)
+    fail_now()
+    if map.entry_value(entry) == "cleanup" { 42 } else { 0 }
+}
+
+fn descriptor_bounds() @suspends -> Int32 {
+    var table = Map.new::<Int32, Int32>()
+    table.insert(1, 42)
+    let cursor = table.iter()
+    delayed_value(0)
+    *value(map.current(cursor))
+}

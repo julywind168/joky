@@ -138,11 +138,14 @@ impl BufferPairIterator {
         debug_assert!(column < 2 && position > 0 && position <= cursor.len);
         cursor.data.as_ptr().add((position - 1) * cursor.stride)
     }
-    pub(crate) fn current(&self, arena: &mut Arena) -> Result<NonNull<BufferEntry>, Error> {
-        let entry = BufferEntry {
+    fn entry(&self) -> Result<BufferEntry, Error> {
+        Ok(BufferEntry {
             key: self.keys.current()?,
             value: self.values.current()?,
-        };
+        })
+    }
+    pub(crate) fn current(&self, arena: &mut Arena) -> Result<NonNull<BufferEntry>, Error> {
+        let entry = self.entry()?;
         let layout = Layout::new::<BufferEntry>();
         let result = arena
             .allocate(layout.size(), layout.align())?
@@ -152,6 +155,18 @@ impl BufferPairIterator {
             result.as_ptr().write(entry);
         }
         Ok(result)
+    }
+    /// # Safety
+    /// Storage is aligned, writable for BufferEntry, and disjoint from the cursor
+    /// and payload. Previous entry aliases are dead. Storage and source loans
+    /// remain live on the owning task thread for every subsequent entry use.
+    pub(crate) unsafe fn current_local(
+        &self,
+        storage: NonNull<BufferEntry>,
+    ) -> Result<NonNull<BufferEntry>, Error> {
+        let entry = self.entry()?;
+        storage.as_ptr().write(entry);
+        Ok(storage)
     }
 }
 
@@ -1741,6 +1756,26 @@ unsafe extern "C" fn pair_current(
     )
 }
 /// # Safety
+/// Storage, cursor and source loans obey BufferPairIterator::current_local.
+#[export_name = "__joky_buffer_pair_current_local"]
+unsafe extern "C" fn pair_current_local(
+    storage: *mut BufferEntry,
+    cursor: *const BufferPairIterator,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut BufferEntry {
+    located(
+        (*cursor)
+            .current_local(NonNull::new_unchecked(storage))
+            .map(NonNull::as_ptr),
+        source,
+        start,
+        end,
+    )
+}
+
+/// # Safety
 /// The live cursor, selected column and source loans obey BufferPairIterator::project.
 #[export_name = "__joky_buffer_pair_project"]
 unsafe extern "C" fn pair_project(cursor: *const BufferPairIterator, column: usize) -> *mut u8 {
@@ -1926,7 +1961,7 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 39] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 40] {
     [
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
@@ -1939,6 +1974,10 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 39] {
         ("__joky_buffer_entry_value", entry_value as *const u8),
         ("__joky_buffer_iter", iter as *const u8),
         ("__joky_buffer_iter_local", iter_local as *const u8),
+        (
+            "__joky_buffer_pair_current_local",
+            pair_current_local as *const u8,
+        ),
         ("__joky_buffer_iter_advance", iter_advance as *const u8),
         ("__joky_buffer_iter_current", iter_current as *const u8),
         ("__joky_place_view", place_view as *const u8),

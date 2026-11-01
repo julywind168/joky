@@ -11,7 +11,7 @@ fn map_borrow_iter_pairs_columns_and_preserves_entry_identity() {
 }
 
 #[test]
-fn map_borrow_iter_direct_patterns_do_not_allocate_per_item() {
+fn map_borrow_iter_keeps_iteration_descriptor_storage_bounded() {
     extern "C" fn live_allocations() -> u64 {
         crate::runtime::arena::LIVE.with(|live| live.get() as u64)
     }
@@ -47,12 +47,26 @@ fn map_borrow_iter_direct_patterns_do_not_allocate_per_item() {
             if live_allocations() != before { return -5 }
             count
         }
+        fn snapshots(cursor: &mut Iter<Int32, Int32>) -> Int32 {
+            var peak: UInt64 = 0
+            var count = 0
+            for entry in &mut *cursor {
+                if count == 0 { peak = live_allocations() }
+                if live_allocations() != peak { return -6 }
+                let (key, value) = entry
+                if *value != *key * 11 { return -7 }
+                *value += *key
+                count += 1
+            }
+            count
+        }
         fn check(length: Int32) -> Int32 {
             var table = Map.new::<Int32, Int32>()
             for key in range(0, length) { table.insert(key, key * 10) }
             if shared(table.iter()) != length { return 1 }
             if mutable(table.iter_mut()) != length { return 2 }
             if discarded(table.iter()) != length { return 3 }
+            if snapshots(table.iter_mut()) != length { return 4 }
             42
         }
     "#;

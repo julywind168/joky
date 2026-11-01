@@ -192,8 +192,13 @@ Slice 的两个游标构造原语使用独立受检签名，并与 Array 构造�
 类型参数保留完整 K/V 身份，并参与相同的替换、布局资格、宿主拒绝及来源检查。
 受信任构造原语在具体实例化时验证拥有记录的 keys/values Array 字段及元素类型，
 后端按已检查字段偏移提取列控制块；不公开偏移或改变 Map 布局。运行时验证两列长度一致，
-两个游标位置同步推进。每次 current 在任务 arena 分配含两个元素地址的 Entry 快照，
-避免后续共享推进改变旧 Entry 身份；该实现逐项累计描述符预算，不拥有元素或放宽引用聚合规则。
+两个游标位置同步推进。每次 current 构造含两个元素地址的 Entry 快照，
+避免后续共享推进改变旧 Entry 身份，不拥有元素或放宽引用聚合规则。
+`ir::descriptor_locals` 对 PairCurrent/PairCurrentMut 使用相同的别名、逃逸与 CFG 活跃性证明，
+按 BufferEntry 的实际布局保留局部槽；简单 current/entry_key/entry_value 转发链可展开，
+EntryProject 和显式元素访问只返回载荷地址，不传播描述符身份。
+`__joky_buffer_pair_current_local` 与分配路径共用当前位置检查，两个地址验证完成后才写入快照。
+旧 Entry 别名跨越下一次构造、真正返回 Entry 或其他无法证明安全的使用仍保留任务 arena 分配。
 EntryKey 仅返回共享引用，EntryValueMut 需要独占 Entry；显式接口保留整 Entry 借用。
 Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来源路径证明两列互不重叠；
 键始终共享，值权限继承 Entry。后端提取既有描述符的列指针，不创建引用元组或新快照。
@@ -203,7 +208,7 @@ Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来
 共享游标随后推进不会改变已绑定的地址，独占借用仍阻止冲突推进。
 该投影仅由编译器生成，运行时 helper 要求游标刚成功推进且列号为 0/1；
 显式 Entry、手动 current 与循环体内的 let 解构保留稳定快照路径。
-新增五个私有 runtime helper 由 JIT/AOT 共用，解释器调用相同的描述符操作。
+私有 runtime helper 由 JIT/AOT 共用，解释器调用相同的描述符操作。
 元素借用沿游标、切片回溯至原容器，取消时只有容器持有元素清理责任。
 未局部化的单列游标、配对游标和 Entry 描述符由任务 arena 统一释放。
 
@@ -841,7 +846,7 @@ JIT/AOT 同步函数使用栈槽，CPS 使用既有稳定局部槽，解释器�
 FixedArray 的 `PlaceOp::View` 初次切片同样参与此分析；元素投影不需要头部，也不添加局部存储。
 Array/Slice 单列游标使用相同的证明与局部存储路径，但采用较小的 BufferIterator 布局。
 创建游标只快照切片的 data/len/stride，不保留切片头部；元素和来源借用仍由原检查约束。
-此阶段不提前回收 Map 配对游标或显式 Map Entry 描述符。
+Map Entry 快照也参与局部存储证明，只保存独立的 key/value 载荷地址；Map 配对游标仍保留任务 arena 分配。
 7c.7 已开放整体移动的拥有型记录数组元素及嵌套数组；元素使用私有 storage_layout，泛型实例化重新验证所有权。
 缓冲区持有元素 Drop 描述，按当前载荷地址清理；transfer 在成功分配后原子搬迁初始化前缀，take_last 转移末元素。
 set/退出/失败逐元素回收，逆索引执行 Drop，并保留第一错误。拥有型 Option 使用相同清理描述；无引用拥有值及其元素视图可跨语言挂起。

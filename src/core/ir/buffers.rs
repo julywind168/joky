@@ -10,7 +10,7 @@ pub(crate) enum BufferOp {
         element: Type,
         args: Vec<Slot>,
         dst: Option<Slot>,
-        /// Proven nonescaping slice/cursor descriptor, in function-owned stable storage.
+        /// Proven nonescaping slice/cursor/entry descriptor, in function-owned stable storage.
         scratch: Option<Slot>,
     },
     /// Exchange borrowed storage with a registered temporary owner, without dropping either.
@@ -81,6 +81,7 @@ impl BufferIntrinsic {
             Self::Iter | Self::IterMut | Self::SliceIter | Self::SliceIterMut => {
                 Some("__joky_buffer_iter_local")
             }
+            Self::PairCurrent | Self::PairCurrentMut => Some("__joky_buffer_pair_current_local"),
             _ => None,
         }
     }

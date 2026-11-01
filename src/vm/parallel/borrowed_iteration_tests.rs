@@ -109,9 +109,10 @@ fn local_descriptors_parallel_reuse_and_refund() {
         include_str!("../../../tests/fixtures/local_slice_descriptors.jk"),
         include_str!("../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
         include_str!("../../../tests/fixtures/local_iterator_descriptors.jk"),
+        include_str!("../../../tests/fixtures/local_entry_descriptors.jk"),
     ] {
-        // Worker-local bytecode is charged too. Load only this entry so the
-        // ceiling measures repeated suspension, not unrelated fixture code.
+        // Worker-local dispatch tables are charged too. Load only this entry so the
+        // ceiling measures repeated suspension, not unrelated fixture code or prelude.
         let declarations = fixture.split_once("fn forwarded(").unwrap().0;
         let entry = &fixture[fixture.find("fn descriptor_suspend()").unwrap()
             ..fixture.find("fn descriptor_failure()").unwrap()];
@@ -126,13 +127,15 @@ fn local_descriptors_parallel_reuse_and_refund() {
                 "extern fn fail_now() @suspends",
                 "fn fail_now() @suspends { 1 / 0; }",
             )
-            .replace("while i < 3", "while i < 512").replace("while round < 3", "while round < 512"),
+            .replace("while i < 3", "while i < 2048").replace("while round < 3", "while round < 2048"),
     );
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(false);
             vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
-            // Include interpreter registers and nested call frames as well as data.
-            let budget = TaskBudget::new(64 << 10);
+            // Leave room for Map dispatch tables, registers and nested frames.
+            // Accumulating 2048 arena descriptors would exceed this ceiling.
+            let budget = TaskBudget::new(128 << 10);
             let prepared = vm
                 .prepare_parallel_task("descriptor_suspend", vec![], vec![budget.clone()])
                 .unwrap_or_else(|e| panic!("{e}"));

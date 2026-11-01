@@ -2,10 +2,11 @@
 use super::{support::*, VmMode};
 use crate::runtime::arena::{LIMIT, LIVE, LOCAL_LIMIT};
 
-const SOURCES: [&str; 3] = [
+const SOURCES: [&str; 4] = [
     include_str!("../../../../tests/fixtures/local_slice_descriptors.jk"),
     include_str!("../../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
     include_str!("../../../../tests/fixtures/local_iterator_descriptors.jk"),
+    include_str!("../../../../tests/fixtures/local_entry_descriptors.jk"),
 ];
 
 fn engines() -> impl Iterator<Item = (&'static str, VmMode)> {
@@ -120,13 +121,13 @@ fn cancellation(sweep: CancellationSweep) {
 }
 
 #[test]
-fn local_descriptors_keep_escaping_cursors_in_task_storage() {
+fn local_descriptors_keep_escaping_snapshots_in_task_storage() {
     let restore = Restore(LIMIT.with(|n| n.get()), LOCAL_LIMIT.with(|n| n.get()));
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(
-            include_str!("../../../../tests/fixtures/local_iterator_descriptors.jk"),
-            mode,
-        );
+    for (source, mode) in SOURCES[2..]
+        .iter()
+        .flat_map(|source| [VmMode::Jit, VmMode::Interpreter].map(|mode| (*source, mode)))
+    {
+        let vm = parity_vm(source, mode);
         LIMIT.with(|n| n.set(4096));
         assert_eq!(
             vm.call_int32_0("descriptor_escape_loop")

@@ -14,6 +14,10 @@ fn local_descriptors_native_lifetimes() {
             include_str!("../../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
         ),
         (
+            "local-entries",
+            include_str!("../../../../tests/fixtures/local_entry_descriptors.jk"),
+        ),
+        (
             "local-iterators",
             include_str!("../../../../tests/fixtures/local_iterator_descriptors.jk"),
         ),
@@ -29,6 +33,9 @@ fn local_descriptors_native_lifetimes() {
             );
                 if name == "local-iterators" {
                     checks.push_str("extern int32_t descriptor_escape_loop(void), descriptor_layout(void);\nif (descriptor_escape_loop() != 42 || descriptor_layout() != 42) return 15;\n");
+                }
+                if name == "local-entries" {
+                    checks.push_str("extern int32_t descriptor_escape_loop(void);\nif (descriptor_escape_loop() != 42) return 16;\n");
                 }
                 for entry in [
                     "descriptor_suspend",

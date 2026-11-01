@@ -868,12 +868,17 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             .map(AbiParam::new),
     );
     signature.returns.push(AbiParam::new(ptr));
-    let id = module
-        .declare_function("__joky_buffer_iter_local", Linkage::Import, &signature)
-        .map_err(|e| {
-            Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
-        })?;
-    ids.insert("__joky_buffer_iter_local".into(), id);
+    for symbol in [
+        "__joky_buffer_iter_local",
+        "__joky_buffer_pair_current_local",
+    ] {
+        let id = module
+            .declare_function(symbol, Linkage::Import, &signature)
+            .map_err(|e| {
+                Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
+            })?;
+        ids.insert(symbol.into(), id);
+    }
     Ok(ids)
 }
 

@@ -245,12 +245,15 @@ pub(super) fn execute(
                         Value::Bool((*pointer(arg(0))?.cast::<BufferPairIterator>()).advance())
                     }
                     BufferIntrinsic::PairCurrent | BufferIntrinsic::PairCurrentMut => {
-                        Value::Reference(
-                            (*pointer(arg(0))?.cast::<BufferPairIterator>())
-                                .current(arena)?
-                                .as_ptr()
-                                .cast(),
-                        )
+                        let cursor = &*pointer(arg(0))?.cast::<BufferPairIterator>();
+                        let entry = if let Some(scratch) = scratch {
+                            cursor.current_local(
+                                NonNull::new(pointer(&slots[scratch.index])?.cast()).unwrap(),
+                            )?
+                        } else {
+                            cursor.current(arena)?
+                        };
+                        Value::Reference(entry.as_ptr().cast())
                     }
                     BufferIntrinsic::Iter
                     | BufferIntrinsic::IterMut

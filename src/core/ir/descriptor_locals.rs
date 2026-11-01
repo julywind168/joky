@@ -1,4 +1,4 @@
-//! Reuse slice/cursor descriptors only when their identity cannot leave an activation
+//! Reuse slice/cursor/entry descriptors only when their identity cannot leave an activation
 //! or survive the next execution of their construction site.
 use super::*;
 use crate::parser::ast::BufferIntrinsic;
@@ -35,12 +35,15 @@ fn is_slice(intrinsic: BufferIntrinsic) -> bool {
     )
 }
 
-fn cursor_access(intrinsic: BufferIntrinsic) -> bool {
+fn descriptor_access(intrinsic: BufferIntrinsic) -> bool {
     matches!(
         intrinsic,
         BufferIntrinsic::IterAdvance
             | BufferIntrinsic::IterCurrent
             | BufferIntrinsic::IterCurrentMut
+            | BufferIntrinsic::EntryKey
+            | BufferIntrinsic::EntryValue
+            | BufferIntrinsic::EntryValueMut
     )
 }
 
@@ -49,6 +52,11 @@ fn descriptor_layout(op: &Op) -> Option<Layout> {
         Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.local_symbol().is_some() => {
             Some(if is_slice(*intrinsic) {
                 Layout::new::<crate::runtime::buffer::Buffer>()
+            } else if matches!(
+                intrinsic,
+                BufferIntrinsic::PairCurrent | BufferIntrinsic::PairCurrentMut
+            ) {
+                Layout::new::<crate::runtime::buffer::BufferEntry>()
             } else {
                 Layout::new::<crate::runtime::buffer::BufferIterator>()
             })
@@ -94,7 +102,7 @@ fn factory(
                 args,
                 dst: Some(dst),
                 ..
-            }) if (intrinsic.local_symbol().is_some() || cursor_access(*intrinsic))
+            }) if (intrinsic.local_symbol().is_some() || descriptor_access(*intrinsic))
                 && result.is_none() =>
             {
                 result = Some(Factory {
@@ -275,14 +283,16 @@ fn nonescaping(
             Op::Copy(..)
             | Op::Reference { .. }
             | Op::Reserve { .. }
+            | Op::EntryProject { .. }
             | Op::Buffer(BufferOp::Borrow { place: None, .. } | BufferOp::Access { .. }) => true,
             Op::Buffer(BufferOp::Storage {
                 intrinsic, args, ..
             }) => {
                 // Cursor construction snapshots data/len/stride, not the source
-                // header. Current returns a payload address, never a cursor alias.
+                // header. Entry snapshots and element projections likewise retain
+                // payload addresses, never aliases of the source descriptor.
                 (intrinsic.local_symbol().is_some()
-                    || cursor_access(*intrinsic)
+                    || descriptor_access(*intrinsic)
                     || matches!(
                         intrinsic,
                         BufferIntrinsic::SliceLen
