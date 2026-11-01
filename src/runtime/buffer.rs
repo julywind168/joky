@@ -47,7 +47,7 @@ pub(crate) struct Buffer {
     release_active: bool,
 }
 
-/// Nonowning cursor, retained by the task arena. Checked source loans keep the
+/// Nonowning cursor, stored in an activation or task arena. Checked source loans keep the
 /// payload stable. Shared copies refer to the same position; advancing changes
 /// only this header, never the elements or previously returned addresses.
 pub(crate) struct BufferIterator {
@@ -524,17 +524,30 @@ impl Buffer {
         let iterator = arena
             .allocate(layout.size(), layout.align())?
             .cast::<BufferIterator>();
-        // Arena allocations are stable and retained until task cleanup. This
-        // descriptor has no destructor and never takes payload ownership.
+        // This descriptor has no destructor and never takes payload ownership.
         unsafe {
-            iterator.as_ptr().write(BufferIterator {
-                data: self.data,
-                len: self.len,
-                stride: self.element.size(),
-                position: Cell::new(0),
-            });
+            self.iterator_local(iterator);
         }
         Ok(iterator)
+    }
+
+    /// Initialize one fresh cursor in reusable function-owned storage.
+    ///
+    /// # Safety
+    /// Storage is aligned and writable for BufferIterator and does not overlap
+    /// this buffer or its payload. All previous aliases of the cursor are dead.
+    /// Storage and payload remain live on the owning task thread for every use.
+    pub(crate) unsafe fn iterator_local(
+        &self,
+        storage: NonNull<BufferIterator>,
+    ) -> NonNull<BufferIterator> {
+        storage.as_ptr().write(BufferIterator {
+            data: self.data,
+            len: self.len,
+            stride: self.element.size(),
+            position: Cell::new(0),
+        });
+        storage
     }
 
     /// A borrowed slice snapshots an initialized range, never owns its payload.
@@ -1647,6 +1660,22 @@ unsafe extern "C" fn iter(
     )
 }
 /// # Safety
+/// Same storage, payload and task-thread contract as Buffer::iterator_local.
+/// The trailing location parameters preserve the allocating helper's ABI.
+#[export_name = "__joky_buffer_iter_local"]
+unsafe extern "C" fn iter_local(
+    storage: *mut BufferIterator,
+    buffer: *const Buffer,
+    _source: u64,
+    _start: usize,
+    _end: usize,
+) -> *mut BufferIterator {
+    (*buffer)
+        .iterator_local(NonNull::new_unchecked(storage))
+        .as_ptr()
+}
+
+/// # Safety
 /// iterator points to a live BufferIterator on its owning task thread. Its
 /// descriptor and borrowed payload remain live; concurrent access is forbidden.
 #[export_name = "__joky_buffer_iter_advance"]
@@ -1897,7 +1926,7 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 38] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 39] {
     [
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
@@ -1909,6 +1938,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 38] {
         ("__joky_buffer_entry_key", entry_key as *const u8),
         ("__joky_buffer_entry_value", entry_value as *const u8),
         ("__joky_buffer_iter", iter as *const u8),
+        ("__joky_buffer_iter_local", iter_local as *const u8),
         ("__joky_buffer_iter_advance", iter_advance as *const u8),
         ("__joky_buffer_iter_current", iter_current as *const u8),
         ("__joky_place_view", place_view as *const u8),

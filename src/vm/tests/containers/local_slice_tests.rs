@@ -2,9 +2,10 @@
 use super::{support::*, VmMode};
 use crate::runtime::arena::{LIMIT, LIVE, LOCAL_LIMIT};
 
-const SOURCES: [&str; 2] = [
+const SOURCES: [&str; 3] = [
     include_str!("../../../../tests/fixtures/local_slice_descriptors.jk"),
     include_str!("../../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
+    include_str!("../../../../tests/fixtures/local_iterator_descriptors.jk"),
 ];
 
 fn engines() -> impl Iterator<Item = (&'static str, VmMode)> {
@@ -26,7 +27,7 @@ impl Drop for Restore {
 }
 
 #[test]
-fn local_slice_descriptors_bound_loops_and_preserve_escaping_views() {
+fn local_descriptors_bound_loops_and_preserve_escaping_views() {
     let _restore = Restore(LIMIT.with(|n| n.get()), LOCAL_LIMIT.with(|n| n.get()));
     for (source, mode) in engines() {
         let vm = parity_vm(source, mode);
@@ -45,7 +46,7 @@ fn local_slice_descriptors_bound_loops_and_preserve_escaping_views() {
 }
 
 #[test]
-fn local_slice_descriptors_survive_suspend_and_release_on_every_exit() {
+fn local_descriptors_survive_suspend_and_release_on_every_exit() {
     for (source, mode) in engines() {
         for entry in [
             "descriptor_suspend",
@@ -88,7 +89,7 @@ fn local_slice_descriptors_survive_suspend_and_release_on_every_exit() {
 }
 
 #[test]
-fn local_slice_descriptors_local_allocation_failure_cleans_owners() {
+fn local_descriptors_local_allocation_failure_cleans_owners() {
     let _restore = Restore(LIMIT.with(|n| n.get()), LOCAL_LIMIT.with(|n| n.get()));
     for source in SOURCES {
         let vm = parity_vm(source, VmMode::Interpreter);
@@ -119,12 +120,53 @@ fn cancellation(sweep: CancellationSweep) {
 }
 
 #[test]
-fn local_slice_descriptors_cancel_at_storage_boundaries() {
+fn local_descriptors_keep_escaping_cursors_in_task_storage() {
+    let restore = Restore(LIMIT.with(|n| n.get()), LOCAL_LIMIT.with(|n| n.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(
+            include_str!("../../../../tests/fixtures/local_iterator_descriptors.jk"),
+            mode,
+        );
+        LIMIT.with(|n| n.set(4096));
+        assert_eq!(
+            vm.call_int32_0("descriptor_escape_loop")
+                .unwrap_err()
+                .code(),
+            crate::ErrorCode::ResourceLimit
+        );
+        clean();
+        LIMIT.with(|n| n.set(restore.0));
+        assert_eq!(vm.call_int32_0("descriptor_escape_loop").unwrap(), 42);
+        clean();
+    }
+}
+
+#[test]
+fn local_descriptors_cursor_storage_uses_the_cursor_layout() {
+    let _restore = Restore(LIMIT.with(|n| n.get()), LOCAL_LIMIT.with(|n| n.get()));
+    let vm = parity_vm(
+        include_str!("../../../../tests/fixtures/local_iterator_descriptors.jk"),
+        VmMode::Interpreter,
+    );
+    LOCAL_LIMIT.with(|n| n.set(0));
+    assert_eq!(
+        vm.call_int32_0("descriptor_layout").unwrap_err().code(),
+        crate::ErrorCode::ResourceLimit
+    );
+    clean();
+    // Fits a cursor and its allocation record, but not a Buffer header.
+    LOCAL_LIMIT.with(|n| n.set(128));
+    assert_eq!(vm.call_int32_0("descriptor_layout").unwrap(), 42);
+    clean();
+}
+
+#[test]
+fn local_descriptors_cancel_at_storage_boundaries() {
     cancellation(CancellationSweep::ResourceBoundaries);
 }
 
 #[test]
 #[ignore = "exhaustive: instruction-by-instruction descriptor cancellation"]
-fn exhaustive_local_slice_descriptors_cancellation() {
+fn exhaustive_local_descriptors_cancellation() {
     cancellation(CancellationSweep::EveryInstruction);
 }

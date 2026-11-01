@@ -1,7 +1,8 @@
-//! Reuse slice descriptors only when their identity cannot leave an activation
+//! Reuse slice/cursor descriptors only when their identity cannot leave an activation
 //! or survive the next execution of their construction site.
 use super::*;
 use crate::parser::ast::BufferIntrinsic;
+use std::alloc::Layout;
 use std::collections::HashSet;
 
 type Set = HashSet<usize>;
@@ -34,6 +35,31 @@ fn is_slice(intrinsic: BufferIntrinsic) -> bool {
     )
 }
 
+fn cursor_access(intrinsic: BufferIntrinsic) -> bool {
+    matches!(
+        intrinsic,
+        BufferIntrinsic::IterAdvance
+            | BufferIntrinsic::IterCurrent
+            | BufferIntrinsic::IterCurrentMut
+    )
+}
+
+fn descriptor_layout(op: &Op) -> Option<Layout> {
+    match op {
+        Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.local_symbol().is_some() => {
+            Some(if is_slice(*intrinsic) {
+                Layout::new::<crate::runtime::buffer::Buffer>()
+            } else {
+                Layout::new::<crate::runtime::buffer::BufferIterator>()
+            })
+        }
+        Op::Place(PlaceOp::View { end: Some(_), .. }) => {
+            Some(Layout::new::<crate::runtime::buffer::Buffer>())
+        }
+        _ => None,
+    }
+}
+
 // Recognize transparent forwarding bodies by their operations, not library
 // names. No control flow, storage, side effects or arbitrary calls are erased.
 fn factory(
@@ -41,12 +67,14 @@ fn factory(
     body: &FunctionPlan,
     known: &HashMap<String, Factory>,
 ) -> Option<Factory> {
-    if info.suspends || body.ops.len() > 32 {
+    // A one-lane record (for example an exclusive pipeline with an empty plan)
+    // still has an aggregate call ABI. Do not substitute it for a scalar cursor.
+    if info.suspends || info.signature.ret.is_call_aggregate() || body.ops.len() > 32 {
         return None;
     }
     let mut aliases = HashMap::new();
     for (index, ty) in info.signature.params.iter().enumerate() {
-        if ty.parameter_slots() != 1 || ty.is_owner() {
+        if ty.parameter_slots() != 1 || ty.is_owner() || ty.is_call_aggregate() {
             return None;
         }
         aliases.insert(index, index);
@@ -66,7 +94,9 @@ fn factory(
                 args,
                 dst: Some(dst),
                 ..
-            }) if is_slice(*intrinsic) && result.is_none() => {
+            }) if (intrinsic.local_symbol().is_some() || cursor_access(*intrinsic))
+                && result.is_none() =>
+            {
                 result = Some(Factory {
                     construction: Construction::Buffer {
                         intrinsic: *intrinsic,
@@ -249,7 +279,10 @@ fn nonescaping(
             Op::Buffer(BufferOp::Storage {
                 intrinsic, args, ..
             }) => {
-                (is_slice(*intrinsic)
+                // Cursor construction snapshots data/len/stride, not the source
+                // header. Current returns a payload address, never a cursor alias.
+                (intrinsic.local_symbol().is_some()
+                    || cursor_access(*intrinsic)
                     || matches!(
                         intrinsic,
                         BufferIntrinsic::SliceLen
@@ -356,7 +389,7 @@ pub(super) fn lower(
                     intrinsic,
                     dst: Some(dst),
                     ..
-                }) if is_slice(*intrinsic) => Some((pc, dst.clone())),
+                }) if intrinsic.local_symbol().is_some() => Some((pc, dst.clone())),
                 Op::Place(PlaceOp::View {
                     end: Some(_), dst, ..
                 }) => Some((pc, dst.clone())),
@@ -370,12 +403,12 @@ pub(super) fn lower(
         let Some(live) = liveness(body) else {
             continue;
         };
-        let safe: Set = candidates
+        let safe: HashMap<usize, Layout> = candidates
             .into_iter()
             .filter_map(|(pc, dst)| {
                 let aliases = aliases(body, &dst)?;
                 (live[pc].is_disjoint(&aliases) && nonescaping(body, functions, &aliases))
-                    .then_some(pc)
+                    .then_some((pc, descriptor_layout(&body.ops[pc])?))
             })
             .collect();
         if safe.is_empty() {
@@ -383,17 +416,9 @@ pub(super) fn lower(
         }
 
         // Share the existing local-storage paths in all backends. This private
-        // Copy tuple is raw space, never a source-visible Buffer value or owner.
-        let bytes = std::mem::size_of::<crate::runtime::buffer::Buffer>();
-        assert!(
-            std::mem::align_of::<crate::runtime::buffer::Buffer>() <= std::mem::align_of::<u64>()
-        );
-        let Ok(target) = crate::core::types::tuple_type(
-            vec![Type::UInt64; bytes.div_ceil(8)],
-            &body.type_registry,
-        ) else {
-            continue;
-        };
+        // Copy tuple is raw space, never a source-visible value or owner. Each
+        // descriptor uses its own layout; cursors do not reserve a Buffer header.
+        let mut targets = HashMap::new();
         let local_bytes = body.ops.iter().try_fold(0usize, |total, op| {
             let local = match op {
                 Op::Local { target, .. } if !target.is_place() => Some(target),
@@ -417,9 +442,25 @@ pub(super) fn lower(
             .zip(std::mem::take(&mut body.op_spans))
             .enumerate()
         {
-            if safe.contains(&pc) && remaining >= bytes.div_ceil(8) * 8 + 7 {
+            let target = safe.get(&pc).and_then(|layout| {
+                let words = layout.size().div_ceil(8);
+                if layout.align() > std::mem::align_of::<u64>() || remaining < words * 8 + 7 {
+                    return None;
+                }
+                if let std::collections::hash_map::Entry::Vacant(entry) = targets.entry(words) {
+                    entry.insert(
+                        crate::core::types::tuple_type(
+                            vec![Type::UInt64; words],
+                            &body.type_registry,
+                        )
+                        .ok()?,
+                    );
+                }
+                Some((targets[&words].clone(), words * 8 + 7))
+            });
+            if let Some((target, bytes)) = target {
                 if let Ok(storage) = body.slot(Type::reference(target.clone(), true)) {
-                    remaining -= bytes.div_ceil(8) * 8 + 7;
+                    remaining -= bytes;
                     ops.push(Op::Local {
                         dst: storage.clone(),
                         value: None,
@@ -429,7 +470,7 @@ pub(super) fn lower(
                     match &mut op {
                         Op::Buffer(BufferOp::Storage { scratch, .. })
                         | Op::Place(PlaceOp::View { scratch, .. }) => *scratch = Some(storage),
-                        _ => unreachable!("proved slice construction"),
+                        _ => unreachable!("proved descriptor construction"),
                     }
                 }
             }

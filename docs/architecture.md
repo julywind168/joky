@@ -179,9 +179,13 @@ for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条�
 借用游标的 Type::BufferIterator 沿用 Buffer 视图的类型、来源及跨挂起检查。
 共享游标不能成为聚合字段或一般泛型实参；独占游标允许与无引用 Copy 元数据组成局部记录/元组，
 按逐标量 Reference(move) 转移，不满足 Copy，不准入枚举、存储、对整个包取引用或普通语言挂起。
-不放宽 `Option<&mut T>` 或 @noescape。每个游标在任务 arena 中分配独立描述符，
+不放宽 `Option<&mut T>` 或 @noescape。每个游标构造都有独立的描述符身份，
 保存非拥有元素地址、长度、步幅和 Cell 位置；共享副本共享位置。生成的原语复用 BufferOp::Storage，
-JIT/AOT 共用三个私有 runtime helper，解释器调用相同的描述符实现，不改变 CPS 帧 ABI。
+JIT/AOT 共用私有 runtime helper，解释器调用相同的描述符实现，不改变 CPS 帧 ABI。
+`ir::descriptor_locals` 也识别构造、advance/current/current_mut 的简单转发链，展开后区分
+游标引用的复制与返回的元素地址。共享别名仍指向同一 Cell，独占重借用仍受原有检查约束；
+只有游标不逃逸且没有旧别名跨过下一次构造时，才按 BufferIterator 的实际布局使用局部槽，
+`__joky_buffer_iter_local` 完整重置位置为零。返回元素地址不等于返回游标；返回的游标仍保留任务期存储。
 Slice 的两个游标构造原语使用独立受检签名，并与 Array 构造复用同一 runtime helper；
 已有切片头保存子区间地址、长度和元素布局，游标直接读取这些元数据。Map 的 keys/values/values_mut
 通过 Slice 接入。Map.iter/iter_mut 使用独立的 BufferPairIterator 与 BufferEntry 借用目标，
@@ -200,7 +204,8 @@ Entry 二元绑定解构生成 EntryProject，以独立的 Entry(0)/Entry(1) 来
 该投影仅由编译器生成，运行时 helper 要求游标刚成功推进且列号为 0/1；
 显式 Entry、手动 current 与循环体内的 let 解构保留稳定快照路径。
 新增五个私有 runtime helper 由 JIT/AOT 共用，解释器调用相同的描述符操作。
-元素借用沿游标、切片回溯至原容器，取消时只有容器持有元素清理责任；描述符由任务 arena 统一释放。
+元素借用沿游标、切片回溯至原容器，取消时只有容器持有元素清理责任。
+未局部化的单列游标、配对游标和 Entry 描述符由任务 arena 统一释放。
 
 可选 for 编号由解析器保留 IndexedLoop 体节点，外层仍是原有 for 控制流。
 元素绑定进入局部类型环境后，共享 IR 用循环体的类型约束筛选八种整数类型，无约束默认 Int32；
@@ -822,7 +827,7 @@ initialize_next 写入后才递增长度，truncate 只能缩短。replace 消�
 元素借用复用受检 load 得到内部载荷地址，不分配。Array 的完整切片、Slice 的完整子切片复用来源 Buffer 头部，
 不额外分配；借用检查保持来源头部与载荷有效，Slice 接口不能调整长度、容量或释放头部。
 其他区间的 Buffer 头部保存偏移后的 data、区间长度及原始元素布局，不拥有或复制载荷。
-借用检查后，`ir::slice_locals` 按已检查的函数体识别简单切片转发链，在调用点展开构造操作，
+借用检查后，`ir::descriptor_locals` 按已检查的函数体识别简单描述符转发链，在调用点展开操作，
 不按标准库函数名猜测身份。描述符别名分析覆盖复制、重借用及可能复用来源头部的完整子切片；
 返回、保留、间接调用等不确定用途保守回退。只有所有用途均不逃逸、且 CFG 活跃性证明
 旧别名不会跨过构造点的下一次执行，才添加私有 `Op::Local` 存储；额外空间受函数 64 KiB
@@ -834,7 +839,9 @@ JIT/AOT 同步函数使用栈槽，CPS 使用既有稳定局部槽，解释器�
 局部空间由 activation 管理并随帧回收；终态句柄仍持有 CPS 帧时，其内联槽随帧释放，
 不逐项释放。未优化的头部仍由任务 arena 计费并在根任务结束时回收。
 FixedArray 的 `PlaceOp::View` 初次切片同样参与此分析；元素投影不需要头部，也不添加局部存储。
-此阶段不提前回收迭代器或显式 Map Entry 描述符。
+Array/Slice 单列游标使用相同的证明与局部存储路径，但采用较小的 BufferIterator 布局。
+创建游标只快照切片的 data/len/stride，不保留切片头部；元素和来源借用仍由原检查约束。
+此阶段不提前回收 Map 配对游标或显式 Map Entry 描述符。
 7c.7 已开放整体移动的拥有型记录数组元素及嵌套数组；元素使用私有 storage_layout，泛型实例化重新验证所有权。
 缓冲区持有元素 Drop 描述，按当前载荷地址清理；transfer 在成功分配后原子搬迁初始化前缀，take_last 转移末元素。
 set/退出/失败逐元素回收，逆索引执行 Drop，并保留第一错误。拥有型 Option 使用相同清理描述；无引用拥有值及其元素视图可跨语言挂起。
@@ -945,7 +952,7 @@ Array 元素的拥有偏移由同一描述生成；写入先清零完整目标�
 
 `PlaceOp::View` 从已验证的连续数组位置受检投影元素，或通过共享 `Buffer::view` 设施构造
 不拥有载荷的切片头部。数组本身仍是 Place，不包 Buffer；切片读写复用原 Array/String 视图协议。
-未优化的头部计入根任务 arena 并保留至任务结束；经 `slice_locals` 证明不逃逸的头部改用函数局部存储。
+未优化的头部计入根任务 arena 并保留至任务结束；经 `descriptor_locals` 证明不逃逸的头部改用函数局部存储。
 简单转发 helper 可展开到调用点，保留原引用参数的具体 FixedArray 布局；真正逃出函数的返回值不指向局部描述符。
 `__joky_place_view_local` 与普通路径共用范围检查，完整、空区间及零大小元素均完整初始化非拥有头部，
 不借用来源对象的内存充当头部。源载荷的作用域回收独立于头部，元素引用仍不需要头部分配。

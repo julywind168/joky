@@ -256,7 +256,15 @@ pub(super) fn execute(
                     | BufferIntrinsic::IterMut
                     | BufferIntrinsic::SliceIter
                     | BufferIntrinsic::SliceIterMut => {
-                        Value::Reference((*pointer(arg(0))?).iterator(arena)?.as_ptr().cast())
+                        let buffer = &*pointer(arg(0))?;
+                        let cursor = if let Some(scratch) = scratch {
+                            buffer.iterator_local(
+                                NonNull::new(pointer(&slots[scratch.index])?.cast()).unwrap(),
+                            )
+                        } else {
+                            buffer.iterator(arena)?
+                        };
+                        Value::Reference(cursor.as_ptr().cast())
                     }
                     BufferIntrinsic::IterAdvance => {
                         Value::Bool((*pointer(arg(0))?.cast::<BufferIterator>()).advance())

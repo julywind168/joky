@@ -104,11 +104,18 @@ fn parallel_borrowed_iteration_executes_and_cancels_on_owning_workers() {
 }
 
 #[test]
-fn local_slice_descriptors_parallel_reuse_and_refund() {
+fn local_descriptors_parallel_reuse_and_refund() {
     for fixture in [
         include_str!("../../../tests/fixtures/local_slice_descriptors.jk"),
         include_str!("../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
+        include_str!("../../../tests/fixtures/local_iterator_descriptors.jk"),
     ] {
+        // Worker-local bytecode is charged too. Load only this entry so the
+        // ceiling measures repeated suspension, not unrelated fixture code.
+        let declarations = fixture.split_once("fn forwarded(").unwrap().0;
+        let entry = &fixture[fixture.find("fn descriptor_suspend()").unwrap()
+            ..fixture.find("fn descriptor_failure()").unwrap()];
+        let fixture = format!("{declarations}{entry}");
         let source = format!(
         "import joky/task\n{}",
         fixture.replace(
@@ -119,7 +126,7 @@ fn local_slice_descriptors_parallel_reuse_and_refund() {
                 "extern fn fail_now() @suspends",
                 "fn fail_now() @suspends { 1 / 0; }",
             )
-            .replace("while i < 3", "while i < 512"),
+            .replace("while i < 3", "while i < 512").replace("while round < 3", "while round < 512"),
     );
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);

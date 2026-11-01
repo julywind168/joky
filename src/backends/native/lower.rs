@@ -861,6 +861,19 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
         })?;
     ids.insert("__joky_buffer_slice_local".into(), id);
+    let mut signature = module.make_signature();
+    signature.params.extend(
+        [ptr, ptr, types::I64, ptr, ptr]
+            .into_iter()
+            .map(AbiParam::new),
+    );
+    signature.returns.push(AbiParam::new(ptr));
+    let id = module
+        .declare_function("__joky_buffer_iter_local", Linkage::Import, &signature)
+        .map_err(|e| {
+            Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
+        })?;
+    ids.insert("__joky_buffer_iter_local".into(), id);
     Ok(ids)
 }
 
@@ -2349,7 +2362,9 @@ fn lower_ops(
                         values.push(builder.ins().iconst(ptr_ty, span.end() as i64));
                     }
                     let symbol = if scratch.is_some() {
-                        "__joky_buffer_slice_local"
+                        intrinsic
+                            .local_symbol()
+                            .expect("local descriptor intrinsic")
                     } else {
                         intrinsic.symbol()
                     };

@@ -10,7 +10,7 @@ pub(crate) enum BufferOp {
         element: Type,
         args: Vec<Slot>,
         dst: Option<Slot>,
-        /// Proven nonescaping slice descriptor, in function-owned stable storage.
+        /// Proven nonescaping slice/cursor descriptor, in function-owned stable storage.
         scratch: Option<Slot>,
     },
     /// Exchange borrowed storage with a registered temporary owner, without dropping either.
@@ -73,6 +73,17 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
+    pub(crate) fn local_symbol(self) -> Option<&'static str> {
+        match self {
+            Self::Slice | Self::SliceMut | Self::Subslice | Self::SubsliceMut => {
+                Some("__joky_buffer_slice_local")
+            }
+            Self::Iter | Self::IterMut | Self::SliceIter | Self::SliceIterMut => {
+                Some("__joky_buffer_iter_local")
+            }
+            _ => None,
+        }
+    }
     pub(crate) const ALL: [Self; 48] = [
         Self::Allocate,
         Self::Transfer,

@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
-fn local_slice_descriptors_native_lifetimes() {
+fn local_descriptors_native_lifetimes() {
     for (name, source) in [
         (
             "local-slices",
@@ -12,6 +12,10 @@ fn local_slice_descriptors_native_lifetimes() {
         (
             "local-fixed-slices",
             include_str!("../../../../tests/fixtures/local_fixed_slice_descriptors.jk"),
+        ),
+        (
+            "local-iterators",
+            include_str!("../../../../tests/fixtures/local_iterator_descriptors.jk"),
         ),
     ] {
         check_arena_cps_fixture(
@@ -23,6 +27,9 @@ fn local_slice_descriptors_native_lifetimes() {
                 "extern int32_t descriptor_loop(void), descriptor_previous(void), descriptor_returned(void);\n\
                  if (descriptor_loop() != 42 || descriptor_previous() != 42 || descriptor_returned() != 42) return 11;\n",
             );
+                if name == "local-iterators" {
+                    checks.push_str("extern int32_t descriptor_escape_loop(void), descriptor_layout(void);\nif (descriptor_escape_loop() != 42 || descriptor_layout() != 42) return 15;\n");
+                }
                 for entry in [
                     "descriptor_suspend",
                     "descriptor_failure",
