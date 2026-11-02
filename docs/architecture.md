@@ -2064,6 +2064,15 @@ JIT/AOT 经 `__joky_buffer_random_fill` 调用，解释器调用同一个 Buffer
 避免中间长度乘法溢出。格式错误通过含固定类别与字节偏移的 Result 返回，部分输出按现有所有权清理；
 分配失败和取消仍走原有任务错误与清理通道。配置是普通 Copy 记录，算法和严格性在三后端共用。
 
+## UUID 值与生成
+
+`joky/uuid.Uuid` 是含两个私有 UInt64 字段的普通 Copy 记录，不引入专用类型、隐藏句柄或逐值 arena 登记。
+两个字段分别表示网络字节序下的高低 64 位；字节转换通过移位拼接，文本解析和格式化使用普通源码。
+Eq 比较完整 128 位，Hash 混合两个半字并通过既有 blanket impl 参与借用键协议，Show 输出规范文本。
+`v4()` 复用 `random.secure_bytes(16)`，只覆盖版本和变体六个位；临时字节 Array 在返回时按拥有语义清理。
+Uuid 本身不持有随机数组或输入文本，输出 String / FixedArray 使用既有存储与清理机制。
+没有新增宿主绑定、依赖或后端 ABI。接口与错误契约见[语言参考](language.md#uuid-jokyuuid)。
+
 ## Continuation 与调度
 
 CLI 接受同步或挂起 main（无参数，Unit/Int32 结果）。JIT/解释器调用 `prepare_async` 后将

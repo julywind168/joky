@@ -408,3 +408,6 @@ mod random_tests;
 
 #[path = "language/codecs_tests.rs"]
 mod codecs_tests;
+
+#[path = "language/uuid_tests.rs"]
+mod uuid_tests;

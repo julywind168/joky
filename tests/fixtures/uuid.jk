@@ -1,0 +1,110 @@
+import joky/uuid.{ type Uuid, type ParseError }
+import joky/random.{ type RandomError }
+import joky/fixed_array.{ type FixedArray }
+import joky/option.{ type Option }
+import joky/map.{ type Map }
+import joky/eq.{ type Eq }
+import joky/hash.{ type Hash }
+import joky/show
+import joky/result.{ Ok, Err }
+import joky/check.{ assert, panic }
+import joky/task
+
+fn uuid_values() -> Int32 {
+    let bytes: FixedArray<UInt8, 16> = [0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 221, 238, 255]
+    let value = Uuid.from_bytes(&bytes)
+    assert(value.to_text() == "00112233-4455-6677-8899-aabbccddeeff", "network byte order")
+    assert(show.to_text(&value) == value.to_text(), "Show matches canonical text")
+    let copy = value
+    let decoded = Uuid.parse("00112233-4455-6677-8899-aAbBcCdDeEfF").unwrap()
+    assert(copy.eq(decoded), "case-insensitive parse and Copy")
+    assert(copy.hash() == decoded.hash(), "equal hash")
+    let output = decoded.to_bytes()
+    for i in uint64(0) .. 16 { assert(output[i] == bytes[i], "byte round trip") }
+    assert(Uuid.from_slice(bytes.slice(0, 16)).unwrap().eq(value), "slice conversion")
+    let nil = Uuid.parse("00000000-0000-0000-0000-000000000000").unwrap()
+    let max = Uuid.parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF").unwrap()
+    assert(max.to_text() == "ffffffff-ffff-ffff-ffff-ffffffffffff", "maximum value")
+    assert(!nil.eq(max) && !nil.eq(value), "unequal values")
+    assert(!nil.eq(Uuid.parse("00000000-0000-0001-0000-000000000000").unwrap()), "high half equality")
+    assert(!nil.eq(Uuid.parse("00000000-0000-0000-0000-000000000001").unwrap()), "low half equality")
+    var values = Map.new::<Uuid, Int32>()
+    values.insert(value, 10)
+    values.insert(decoded, 42)
+    values.insert(nil, 1)
+    values.insert(max, 2)
+    assert(values.len() == 3 && values.get(copy).unwrap_or(-1) == 42, "equal Map keys replace")
+    assert(values.get(nil).unwrap_or(-1) == 1 && values.get(max).unwrap_or(-1) == 2, "distinct Map keys")
+    assert(values.remove(value).unwrap_or(-1) == 42 && !values.contains_key(decoded), "Map removal")
+    42
+}
+fn bad(text: &String, offset: UInt64) {
+    match Uuid.parse(text) {
+        Err(ParseError.InvalidByte(i)) => assert(i == offset, "error byte offset")
+        _ => panic("Expected invalid UUID byte")
+    }
+}
+fn uuid_rejections() -> Int32 {
+    for text in ["", "00112233445566778899aabbccddeeff", "{{00112233-4455-6677-8899-aabbccddeeff}}", "urn:uuid:00112233-4455-6677-8899-aabbccddeeff", "00112233-4455-6677-8899-aabbccddeef", "00112233-4455-6677-8899-aabbccddeeff "] {
+        match Uuid.parse(&text) { Err(ParseError.InvalidLength) => {}, _ => panic("Expected UUID length error") }
+    }
+    bad("g0112233-4455-6677-8899-aabbccddeeff", 0)
+    bad("00112233_4455-6677-8899-aabbccddeeff", 8)
+    bad("00112233-4455_6677-8899-aabbccddeeff", 13)
+    bad("00112233-4455-6677_8899-aabbccddeeff", 18)
+    bad("00112233-4455-6677-8899_aabbccddeeff", 23)
+    bad("00112233-4455-6677-8899-aabbccddeefg", 35)
+    bad("00112233-4455-6677-8899-aabbccddeef ", 35)
+    bad("00112233-4455-6677-8899-aabbccddeef\0", 35)
+    bad("00112233-4455-6677-8899-aabbccddeeé", 34)
+    bad("-0112233-4455-6677-8899-aabbccddeeff", 0)
+    let bytes = fixed_array.repeat::<UInt8, 17>(0)
+    for length in [uint64(0), 15, 17] {
+        match Uuid.from_slice(bytes.slice(0, length)) { Err(ParseError.InvalidLength) => {}, _ => panic("Expected byte length error") }
+    }
+    42
+}
+fn uuid_secure() -> Int32 {
+    for i in 0 .. 8 {
+        let value = uuid.v4().unwrap()
+        let bytes = value.to_bytes()
+        assert(bytes[6] >> 4 == 4, "UUID v4 version")
+        assert(bytes[8] >> 6 == 2, "RFC variant")
+        let text = value.to_text()
+        assert(Uuid.parse(&text).unwrap().eq(value), "generated text round trip")
+    }
+    42
+}
+fn uuid_pattern() -> Int32 {
+    let value = uuid.v4().unwrap()
+    assert(value.to_text() == "5a5a5a5a-5a5a-4a5a-9a5a-5a5a5a5a5a5a", "preserve entropy except version and variant")
+    42
+}
+fn uuid_failure() -> Int32 {
+    match uuid.v4() { Err(RandomError.Unavailable) => 42, _ => panic("Expected entropy failure") }
+}
+fn uuid_repeated() -> Int32 {
+    for i in 0 .. 128 {
+        let value = uuid.v4().unwrap()
+        let text = value.to_text()
+        let parsed = Uuid.parse(&text).unwrap()
+        let bytes = parsed.to_bytes()
+        assert(Uuid.from_bytes(&bytes).eq(value), "bounded repeated conversion")
+    }
+    42
+}
+fn uuid_pending() @suspends -> Int32 {
+    let value = uuid.v4().unwrap()
+    let bytes = value.to_bytes()
+    let text = value.to_text()
+    var values = Map.new::<Uuid, String>()
+    values.insert(value, "retained")
+    task.yield_now()
+    assert(Uuid.from_bytes(&bytes).eq(value) && Uuid.parse(&text).unwrap().eq(value), "values survive suspension")
+    assert(values.borrow_ref(value) == "retained", "Map key survives suspension")
+    42
+}
+fn uuid_parallel() @suspends -> Int32 {
+    assert(uuid_secure() == 42, "worker entropy")
+    uuid_pending()
+}

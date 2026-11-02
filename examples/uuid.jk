@@ -1,0 +1,21 @@
+import joky/uuid.{ type Uuid }
+import joky/map.{ type Map }
+import joky/result.{ Ok, Err }
+import joky/io.{ println }
+
+fn main() {
+    let parsed = Uuid.parse("00112233-4455-4677-8899-AABBCCDDEEFF").unwrap()
+    println(parsed)
+    let bytes = parsed.to_bytes()
+    println(Uuid.from_bytes(&bytes))
+
+    match uuid.v4() {
+        Ok(id) => {
+            var requests = Map.new::<Uuid, String>()
+            requests.insert(id, "pending")
+            println(id)
+            println(requests.borrow_ref(id))
+        }
+        Err(_) => println("Secure randomness unavailable")
+    }
+}

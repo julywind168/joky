@@ -1883,3 +1883,59 @@ fn random_aot_shared_runtime_failures_and_parallel_ownership() {
     pool.wait_closed();
     assert_eq!(budget.used(), 0);
 }
+
+#[test]
+fn uuid_aot_shared_runtime_failures_and_parallel_ownership() {
+    use crate::runtime::{arena::LIVE, buffer::random::testing::Guard};
+    const SOURCE: &str = include_str!("../../../../tests/fixtures/uuid.jk");
+    let (_scratch, entries, library) =
+        linked_task_entries(SOURCE, &["uuid_parallel"], "uuid-shared");
+    let call = |name: &[u8]| {
+        let entry = unsafe { library.get::<unsafe extern "C" fn() -> i32>(name).unwrap() };
+        let value = crate::runtime::error::checked(|| unsafe { entry() }).unwrap();
+        assert_eq!(value, 42);
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+    };
+    {
+        let guard = Guard::new(0);
+        call(b"uuid_failure");
+        assert_eq!(guard.calls(), 1);
+    }
+    {
+        let guard = Guard::new(usize::MAX);
+        call(b"uuid_pattern");
+        assert_eq!(guard.calls(), 1);
+        struct RestoreLimit(usize);
+        impl Drop for RestoreLimit {
+            fn drop(&mut self) {
+                crate::runtime::arena::LIMIT.with(|n| n.set(self.0));
+            }
+        }
+        let _restore = RestoreLimit(crate::runtime::arena::LIMIT.with(|n| n.replace(8192)));
+        call(b"uuid_repeated");
+        assert_eq!(guard.calls(), 129);
+    }
+    let entry = &entries[0];
+    let budget = TaskBudget::new(128 << 10);
+    let prepared = unsafe {
+        entry.prepare(
+            *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+            library.clone(),
+            vec![],
+            vec![budget.clone()],
+        )
+    }
+    .unwrap();
+    let mut pool = crate::runtime::parallel::ParallelExecutor::new(2, 8).unwrap();
+    let task = prepared.submit(&pool).unwrap();
+    task.wait().unwrap();
+    let result = task.take_result().unwrap();
+    assert_eq!(
+        result.value(),
+        &TaskValue::Scalar(crate::vm::InstanceValue::Int32(42))
+    );
+    drop(result);
+    drop(task);
+    pool.wait_closed();
+    assert_eq!(budget.used(), 0);
+}

@@ -1,0 +1,102 @@
+import joky/array.{ type Array }
+import joky/fixed_array.{ type FixedArray }
+import joky/slice.{ type Slice }
+import joky/string.{ type StringBuilder }
+import joky/random.{ type RandomError }
+import joky/result.{ type Result, Ok, Err }
+import joky/eq.{ type Eq }
+import joky/hash.{ type Hash }
+import joky/show.{ type Show }
+
+// Logical network-order halves, independent of native integer endianness.
+pub struct Uuid { high: UInt64, low: UInt64 }
+pub enum ParseError { InvalidLength, InvalidByte(UInt64) }
+
+fn nibble(byte: UInt8) -> UInt64 {
+    if byte >= 48 && byte <= 57 { uint64(byte - 48) }
+    else if byte >= 65 && byte <= 70 { uint64(byte - 65 + 10) }
+    else if byte >= 97 && byte <= 102 { uint64(byte - 97 + 10) }
+    else { 16 }
+}
+fn digit(value: UInt8) -> UInt8 { if value < 10 { 48 + value } else { 97 + value - 10 } }
+impl Uuid {
+    pub fn from_bytes(bytes: &FixedArray<UInt8, 16>) -> Uuid {
+        var high: UInt64 = 0
+        var low: UInt64 = 0
+        for i in uint64(0) .. 8 {
+            high = (high << 8) | uint64(bytes[i])
+            low = (low << 8) | uint64(bytes[i + 8])
+        }
+        Uuid { high: high, low: low }
+    }
+    pub fn from_slice(bytes: &Slice<UInt8>) -> Result<Uuid, ParseError> {
+        if slice.len(bytes) != 16 { return Err(ParseError.InvalidLength) }
+        var high: UInt64 = 0
+        var low: UInt64 = 0
+        for i in uint64(0) .. 8 {
+            high = (high << 8) | uint64(*slice.borrow_ref(bytes, i))
+            low = (low << 8) | uint64(*slice.borrow_ref(bytes, i + 8))
+        }
+        Ok(Uuid { high: high, low: low })
+    }
+    pub fn to_bytes(self) -> FixedArray<UInt8, 16> {
+        var bytes = fixed_array.repeat::<UInt8, 16>(0)
+        for i in uint64(0) .. 16 {
+            let word = if i < 8 { self.high } else { self.low }
+            bytes[i] = uint8(word >> ((7 - i % 8) * 8))
+        }
+        bytes
+    }
+    pub fn parse(text: &String) -> Result<Uuid, ParseError> {
+        let bytes = text.bytes()
+        if slice.len(bytes) != 36 { return Err(ParseError.InvalidLength) }
+        var high: UInt64 = 0
+        var low: UInt64 = 0
+        var digits: UInt64 = 0
+        for i in uint64(0) .. 36 {
+            let byte = *slice.borrow_ref(bytes, i)
+            if i == 8 || i == 13 || i == 18 || i == 23 {
+                if byte != 45 { return Err(ParseError.InvalidByte(i)) }
+            } else {
+                let value = nibble(byte)
+                if value == 16 { return Err(ParseError.InvalidByte(i)) }
+                if digits < 16 { high = (high << 4) | value }
+                else { low = (low << 4) | value }
+                digits += 1
+            }
+        }
+        Ok(Uuid { high: high, low: low })
+    }
+    pub fn to_text(self) -> String {
+        var output = Array.with_capacity::<UInt8>(36)
+        for i in uint64(0) .. 16 {
+            if i == 4 || i == 6 || i == 8 || i == 10 { output.push(45) }
+            let word = if i < 8 { self.high } else { self.low }
+            let byte = uint8(word >> ((7 - i % 8) * 8))
+            output.push(digit(byte >> 4))
+            output.push(digit(byte & 15))
+        }
+        string.from_utf8(output).unwrap()
+    }
+}
+
+// RFC 9562 section 5.4: retain 122 random bits and set version 4 / variant 10.
+pub fn v4() -> Result<Uuid, RandomError> {
+    match random.secure_bytes(16) {
+        Err(error) => Err(error)
+        Ok(bytes) => {
+            let value = Uuid.from_slice(bytes.slice(0, 16)).unwrap()
+            Ok(Uuid {
+                    high: (value.high & 0xffffffffffff0fff) | 0x4000,
+                    low: (value.low & 0x3fffffffffffffff) | 0x8000000000000000
+                })
+        }
+    }
+}
+impl Eq for Uuid { fn eq(self, other: Uuid) -> Bool { self.high == other.high && self.low == other.low } }
+impl Hash for Uuid {
+    fn hash(self) -> UInt64 { Hash.hash(self.high ^ Hash.hash(self.low)) }
+}
+impl Show for Uuid {
+    fn show(&self, output: &mut StringBuilder) @noescape { output.push_str((*self).to_text()) }
+}

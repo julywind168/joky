@@ -6123,6 +6123,38 @@ offset 均为原输入的字节偏移。解码成功的 Base64 文本再用相�
 首版只提供完整输入的编解码，没有流式状态或 MIME 宽松解码。
 可运行示例见 [codecs.jk](../examples/codecs.jk)，包含随机字节转 URL-safe 无填充 token。
 
+## UUID `joky/uuid`
+
+显式导入 `joky/uuid.{ type Uuid }`；关闭 prelude 时同样可用。
+`Uuid` 是私有字段的 128 位 Copy 值，支持 Eq、Hash 和 Show，可作为 Map / Set 键，
+也可以存入容器、跨挂起或传给 worker。相等比较使用 `id.eq(other)`（需导入 Eq），
+没有自定义记录的 `==` 运算符；`println(id)` 和 `id.to_text()` 输出相同规范文本。
+Hash 输出只用于容器查找，不是持久化编码或密码学摘要。
+
+| 接口 | 行为 |
+|------|------|
+| `uuid.v4() -> Result<Uuid, random.RandomError>` | 从系统安全随机源取 16 字节，设置版本 4 和 RFC 变体位；保留 122 个随机位 |
+| `Uuid.parse(text: &String) -> Result<Uuid, uuid.ParseError>` | 只接受 36 字节的 `8-4-4-4-12` 十六进制连字符格式；接受大小写混合 |
+| `id.to_text() -> String` | 返回拥有型字符串，固定小写标准格式 |
+| `Uuid.from_bytes(bytes: &FixedArray<UInt8, 16>) -> Uuid` | 从固定 16 字节构造，输入仍可用 |
+| `Uuid.from_slice(bytes: &Slice<UInt8>) -> Result<Uuid, uuid.ParseError>` | 运行时检查输入长度恰好为 16 |
+| `id.to_bytes() -> FixedArray<UInt8, 16>` | 返回独立的固定 16 字节副本 |
+
+字节转换按文本从左到右的网络字节序，与宿主整数端序无关；不采用 Windows GUID 的混合端序。
+解析与字节转换保存任意 128 位值，不限制版本或变体，包含全零 Nil、全一 Max 和其他版本；
+只有 `v4()` 承诺生成 v4。当前不提供其他版本生成器。
+
+`ParseError` 有 `InvalidLength` 和 `InvalidByte(offset)`。文本先检查总字节数，再从左到右检查
+十六进制字符和四个连字符位置；offset 是原输入中从零开始的 UTF-8 字节偏移。
+不接受首尾空白、花括号、`urn:uuid:` 前缀或无连字符的紧凑写法。
+`from_slice` 长度错误只返回 InvalidLength。解析与转换不消费或借用保留输入。
+
+v4 遵循 [RFC 9562 §5.4](https://www.rfc-editor.org/rfc/rfc9562.html#section-5.4)，
+复用 `random.secure_bytes` 的失败契约：熵源不可用返回 `RandomError.Unavailable`，
+不回退到普通 Rng、不返回部分 UUID；容量和分配失败仍为终止性 ResourceLimit 错误。
+生成不维护全局状态，也不提供生成顺序或绝对无碰撞保证。
+可运行示例见 [uuid.jk](../examples/uuid.jk)。
+
 ## 内置标准库 `joky/task`
 
 `joky/task` 需要显式导入，关闭 prelude 时也可使用。等待函数返回 Unit：
