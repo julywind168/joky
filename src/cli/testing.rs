@@ -28,6 +28,7 @@ pub(super) struct Options {
     worker: Option<String>,
     root: Option<PathBuf>,
     directory: Option<PathBuf>,
+    project: Option<PathBuf>,
 }
 
 pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Error> {
@@ -42,6 +43,7 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
         worker: None,
         root: None,
         directory: None,
+        project: None,
     };
     let mut source = None;
     let mut seen = BTreeSet::new();
@@ -69,11 +71,15 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
                 Some("--nocapture") => options.nocapture = true,
                 Some(
                     "--filter" | "--timeout-ms" | "--test-worker" | "--test-root"
-                    | "--test-directory",
+                    | "--test-directory" | "--test-project",
                 ) => {
                     let value = args.next().ok_or_else(|| {
                         cli_argument_error(format!("{} requires a value", arg.to_string_lossy()))
                     })?;
+                    if arg == "--test-project" {
+                        options.project = Some(value.into());
+                        continue;
+                    }
                     if arg == "--test-directory" {
                         options.directory = Some(value.into());
                         continue;
@@ -118,7 +124,8 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
             ));
         }
     }
-    if options.worker.is_some() != options.root.is_some()
+    if options.project.is_some() && options.worker.is_none()
+        || options.worker.is_some() != options.root.is_some()
         || options.worker.is_some() != options.directory.is_some()
         || options.worker.is_some()
             && (options.list || options.filter.is_some() || options.nocapture)
@@ -169,13 +176,17 @@ fn suite(options: &Options) -> Result<u8, Error> {
     let project = project::Project::load(&options.source)?;
     let mut files = BTreeSet::new();
     let root = if let Some(project) = &project {
-        let ast = project.resolve(checker.type_registry())?;
-        checker.check_module(&ast)?;
-        for file in ast.sources().files() {
-            let path = Path::new(file.name());
-            if path.is_absolute() && path.starts_with(&project.source_root) {
-                files.insert(path.to_owned());
+        if project.entry.is_some() {
+            let ast = project.resolve(checker.type_registry())?;
+            checker.check_module(&ast)?;
+            for file in ast.sources().files() {
+                let path = Path::new(file.name());
+                if path.is_absolute() && path.starts_with(&project.source_root) {
+                    files.insert(path.to_owned());
+                }
             }
+        } else {
+            files.extend(project.source_files()?);
         }
         collect_files(&project.source_root, &mut files)?;
         project.source_root.clone()
@@ -188,9 +199,12 @@ fn suite(options: &Options) -> Result<u8, Error> {
     let mut tests = Vec::new();
     // Preflight every discovered test module before executing any test, even with a filter.
     for file in files {
-        let ast = checker
-            .type_registry()
-            .resolve_test_file_with_root(&file, &root)?;
+        let ast = match &project {
+            Some(project) => project.resolve_source(checker.type_registry(), &file, true)?,
+            None => checker
+                .type_registry()
+                .resolve_test_file_with_root(&file, &root)?,
+        };
         super::validate_module(&ast, checker.type_registry())
             .map_err(|error| error.with_sources(ast.sources()))?;
         checker.check_module(&ast)?;
@@ -235,7 +249,7 @@ fn suite(options: &Options) -> Result<u8, Error> {
     let mut failed = 0;
     for test in &tests {
         std::io::stdout().flush().map_err(io)?;
-        if !supervise(options, &root, test)? {
+        if !supervise(options, &root, project.as_ref(), test)? {
             failed += 1;
         }
     }
@@ -277,10 +291,19 @@ fn worker(options: &Options, name: &str) -> Result<(), Error> {
             .expect("validated test directory"),
         Default::default(),
     )?)?;
-    let ast = vm.type_registry().resolve_test_file_with_root(
-        &options.source,
-        options.root.as_ref().expect("validated worker root"),
-    )?;
+    let ast = if let Some(manifest) = &options.project {
+        let project = project::Project::load(manifest)?
+            .ok_or_else(|| cli_argument_error("Missing test project"))?;
+        if options.root.as_ref() != Some(&project.source_root) {
+            return Err(cli_argument_error("Test project source root changed"));
+        }
+        project.resolve_source(vm.type_registry(), &options.source, true)?
+    } else {
+        vm.type_registry().resolve_test_file_with_root(
+            &options.source,
+            options.root.as_ref().expect("validated worker root"),
+        )?
+    };
     let result = (|| {
         super::validate_module(&ast, vm.type_registry())?;
         let function = ast
@@ -311,7 +334,12 @@ impl Drop for ChildGuard {
     }
 }
 
-fn supervise(options: &Options, root: &Path, test: &Test) -> Result<bool, Error> {
+fn supervise(
+    options: &Options,
+    root: &Path,
+    project: Option<&project::Project>,
+    test: &Test,
+) -> Result<bool, Error> {
     let directory = directory::Directory::new().map_err(io)?;
     let mut command = Process::new(std::env::current_exe().map_err(io)?);
     command
@@ -322,6 +350,11 @@ fn supervise(options: &Options, root: &Path, test: &Test) -> Result<bool, Error>
         .arg(root)
         .arg("--test-directory")
         .arg(&directory.0);
+    if let Some(project) = project {
+        command
+            .arg("--test-project")
+            .arg(project.root.join("joky.toml"));
+    }
     if options.interpreter {
         command.arg("--interpreter");
     }

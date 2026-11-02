@@ -18,6 +18,17 @@ pub(super) fn execute(path: &Path, prelude: bool) -> u8 {
         checker.set_prelude_enabled(prelude);
         let project = project::Project::load(path)?;
         let types = checker.type_registry();
+        if let Some(project) = &project {
+            if project.entry.is_none() {
+                for file in project.source_files()? {
+                    let ast = project.resolve_source(types, &file, false)?;
+                    super::validate_module(&ast, types)
+                        .map_err(|e| e.with_sources(ast.sources()))?;
+                    checker.check_module(&ast)?;
+                }
+                return Ok(());
+            }
+        }
         let ast = match &project {
             Some(project) => project.resolve(types)?,
             None => types.resolve_file(path)?,

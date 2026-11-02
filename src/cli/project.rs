@@ -1,4 +1,5 @@
 //! Project manifests, explicit module roots, and relocatable native bundles.
+mod dependencies;
 use super::{build, cli_argument_error, cli_error_with_code, EntryPoint};
 use joky::{parser::ast::Module, runtime::parallel::ExecutionMode, Error, ErrorCode, TypeRegistry};
 use std::{
@@ -12,10 +13,13 @@ const MARKER: &str = ".joky-bundle";
 
 pub(super) struct Project {
     pub root: PathBuf,
-    pub entry: PathBuf,
+    pub entry: Option<PathBuf>,
     pub source_root: PathBuf,
     name: String,
     resources: BTreeSet<PathBuf>,
+    dependencies: BTreeMap<String, String>,
+    packages: Option<joky::PackageSources>,
+    dependency_roots: Vec<PathBuf>,
 }
 
 pub(super) fn discover() -> Option<PathBuf> {
@@ -35,7 +39,13 @@ impl Project {
         } else {
             input.into()
         };
-        let text = fs::read_to_string(&manifest).map_err(|e| io(&manifest, e))?;
+        let mut project = Self::read(&manifest)?;
+        dependencies::load(&mut project)?;
+        Ok(Some(project))
+    }
+
+    fn read(manifest: &Path) -> Result<Self, Error> {
+        let text = fs::read_to_string(manifest).map_err(|e| io(manifest, e))?;
         let mut table = text
             .parse::<toml::Table>()
             .map_err(|e| cli_argument_error(format!("Invalid {}: {e}", manifest.display())))?;
@@ -46,10 +56,22 @@ impl Project {
                 ));
             }
         }
-        let Some(toml::Value::Table(mut project)) = table.remove("project") else {
-            return Err(cli_argument_error("joky.toml requires a [project] table"));
+        let dependencies = dependencies::parse(table.remove("dependencies"))?;
+        let library = table.contains_key("package");
+        let field = if library { "package" } else { "project" };
+        let Some(toml::Value::Table(mut project)) = table.remove(field) else {
+            return Err(cli_argument_error(
+                "joky.toml requires a [project] or [package] table",
+            ));
         };
         unknown(&table)?;
+        if library {
+            // Informational only: path dependencies select a source directory,
+            // never resolve version ranges or trust matching version strings.
+            if project.contains_key("version") {
+                string(&mut project, "version", None)?;
+            }
+        }
         let name = string(&mut project, "name", None)?;
         if !name
             .bytes()
@@ -59,9 +81,17 @@ impl Project {
                 "Project name must contain only ASCII letters, digits, '_' or '-'",
             ));
         }
-        let entry = string(&mut project, "entry", None)?;
+        let entry = if library {
+            None
+        } else {
+            Some(string(&mut project, "entry", None)?)
+        };
         let source_root = string(&mut project, "source-root", Some("."))?;
-        let resources = match project.remove("resources") {
+        let resources = match if library {
+            None
+        } else {
+            project.remove("resources")
+        } {
             None => Vec::new(),
             Some(toml::Value::Array(values)) => values
                 .into_iter()
@@ -79,7 +109,7 @@ impl Project {
             }
         };
         unknown(&project)?;
-        let manifest = manifest.canonicalize().map_err(|e| io(&manifest, e))?;
+        let manifest = manifest.canonicalize().map_err(|e| io(manifest, e))?;
         let root = manifest.parent().expect("manifest has a parent").to_owned();
         let source_root = contained(&root, &source_root, true)?;
         if !source_root.is_dir() {
@@ -87,13 +117,18 @@ impl Project {
                 "Project source-root must be a directory",
             ));
         }
-        let entry = contained(&root, &entry, false)?;
-        if !entry.is_file() || entry.extension().is_none_or(|e| e != "jk") {
-            return Err(cli_argument_error("Project entry must be a .jk file"));
-        }
-        if !entry.starts_with(&source_root) {
-            return Err(cli_argument_error("Project entry is outside source-root"));
-        }
+        let entry = entry
+            .map(|entry| {
+                let entry = contained(&root, &entry, false)?;
+                if !entry.is_file() || entry.extension().is_none_or(|e| e != "jk") {
+                    return Err(cli_argument_error("Project entry must be a .jk file"));
+                }
+                if !entry.starts_with(&source_root) {
+                    return Err(cli_argument_error("Project entry is outside source-root"));
+                }
+                Ok(entry)
+            })
+            .transpose()?;
         let mut paths = BTreeSet::new();
         for resource in resources {
             let path = relative(&resource, false)?;
@@ -117,17 +152,64 @@ impl Project {
             }
             collect_resources(&root, &path, &mut paths)?;
         }
-        Ok(Some(Self {
+        Ok(Self {
             root,
             entry,
             source_root,
             name,
             resources: paths,
-        }))
+            dependencies,
+            packages: None,
+            dependency_roots: Vec::new(),
+        })
     }
 
     pub fn resolve(&self, types: &TypeRegistry) -> Result<Module, Error> {
-        types.resolve_file_with_root(&self.entry, &self.source_root)
+        let entry = self.entry.as_ref().ok_or_else(|| {
+            cli_argument_error(
+                "Library packages have no executable entry; use joky check or joky test",
+            )
+        })?;
+        self.resolve_source(types, entry, false)
+    }
+
+    pub fn resolve_source(
+        &self,
+        types: &TypeRegistry,
+        file: &Path,
+        tests: bool,
+    ) -> Result<Module, Error> {
+        let packages = self.packages.as_ref().expect("loaded project source graph");
+        if tests {
+            packages.resolve_test_file(file, types)
+        } else {
+            packages.resolve_file(file, types)
+        }
+    }
+
+    pub fn source_files(&self) -> Result<BTreeSet<PathBuf>, Error> {
+        fn collect(directory: &Path, files: &mut BTreeSet<PathBuf>) -> Result<(), Error> {
+            for entry in fs::read_dir(directory).map_err(|e| io(directory, e))? {
+                let entry = entry.map_err(|e| io(directory, e))?;
+                let kind = entry.file_type().map_err(|e| io(&entry.path(), e))?;
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if kind.is_dir() && !name.starts_with('.') && name != "target" && name != "dist" {
+                    collect(&entry.path(), files)?;
+                } else if kind.is_file() && entry.path().extension().is_some_and(|e| e == "jk") {
+                    files.insert(entry.path());
+                }
+            }
+            Ok(())
+        }
+        let mut files = BTreeSet::new();
+        collect(&self.source_root, &mut files)?;
+        if files.is_empty() {
+            return Err(cli_argument_error(
+                "Library package contains no .jk source files",
+            ));
+        }
+        Ok(files)
     }
 
     pub fn build(
@@ -148,9 +230,23 @@ impl Project {
         fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
         let parent = parent.canonicalize().map_err(|e| io(parent, e))?;
         let output = parent.join(name);
-        if self.root.starts_with(&output) || self.entry.starts_with(&output) {
+        if self.root.starts_with(&output)
+            || self
+                .entry
+                .as_ref()
+                .is_some_and(|entry| entry.starts_with(&output))
+        {
             return Err(cli_argument_error(
                 "Project output must not replace the project or entry directory",
+            ));
+        }
+        if self
+            .dependency_roots
+            .iter()
+            .any(|root| root.starts_with(&output) || output.starts_with(root))
+        {
+            return Err(cli_argument_error(
+                "Project output overlaps a dependency package directory",
             ));
         }
         let marker = format!("joky-project-v1\n{}\n", self.name);
@@ -205,7 +301,7 @@ impl Project {
         build::build(
             ast,
             entry,
-            &self.entry,
+            self.entry.as_ref().expect("application build entry"),
             &bundle.join(&self.name),
             mode,
             true,

@@ -8,13 +8,14 @@ pub(crate) fn expand_with(
     registry: &TypeRegistry,
     provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
 ) -> Result<Module, Error> {
-    expand_with_tests(module, registry, provider, false)
+    expand_with_tests(module, registry, provider, &|_, _| Ok(()), false)
 }
 
-fn expand_with_tests(
+pub(super) fn expand_with_tests(
     module: &Module,
     registry: &TypeRegistry,
     provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
+    rewrite: &dyn Fn(&str, &mut Module) -> Result<(), Error>,
     include_tests: bool,
 ) -> Result<Module, Error> {
     if module.scope.is_some() {
@@ -40,6 +41,7 @@ fn expand_with_tests(
                     import,
                     registry,
                     provider,
+                    rewrite,
                     &mut Vec::new(),
                     &mut sources,
                 )?;
@@ -56,6 +58,7 @@ fn load(
     import: &Import,
     registry: &TypeRegistry,
     provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
+    rewrite: &dyn Fn(&str, &mut Module) -> Result<(), Error>,
     stack: &mut Vec<String>,
     sources: &mut SourceMap,
 ) -> Result<(), Error> {
@@ -79,9 +82,12 @@ fn load(
     module
         .items
         .retain(|item| !matches!(item, Item::FnDef(f) if f.is_test()));
+    rewrite(path, &mut module)?;
     stack.push(path.clone());
     for dependency in &module.imports {
-        load(graph, dependency, registry, provider, stack, sources)?;
+        load(
+            graph, dependency, registry, provider, rewrite, stack, sources,
+        )?;
     }
     graph.prepare(
         path,
@@ -170,6 +176,7 @@ fn resolve_entry(
                 read_file(&file)
             }
         },
+        &|_, _| Ok(()),
         include_tests,
     )?;
     registry.resolve_aliases(&expanded)

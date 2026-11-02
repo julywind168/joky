@@ -11,6 +11,7 @@ use std::{
 };
 
 mod files;
+pub mod packages;
 mod sources;
 pub(crate) use files::{
     expand_with, resolve_file, resolve_file_with_root, resolve_test_file_with_root,

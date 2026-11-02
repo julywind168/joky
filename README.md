@@ -27,7 +27,7 @@ fn main() {
 
 - `run` 默认使用 JIT，无需 C 编译器；`run --interpreter` 不生成机器码。
 - `check` 静态检查文件或项目，不执行、不生成产物，也不需要 `cc`；
-  单文件允许没有 `main`，项目检查配置入口及其导入依赖。成功静默返回 0，错误返回 1。
+  单文件和库包允许没有 `main`；应用检查配置入口及其导入依赖，库包检查自身全部源码模块。成功静默返回 0，错误返回 1。
 - `test` 运行 `#test` 函数，支持 JIT / 解释器、筛选、输出捕获与逐测试超时；不要求 `main`。
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
@@ -92,7 +92,7 @@ cargo run -- check examples/chat
 安装后可直接使用 `joky check <file.jk | project-dir | joky.toml>`；省略输入时向上查找最近的项目清单。
 检查覆盖语法、类型、泛型约束、所有权、借用、`@noescape` 和挂起限制，包括未调用的生产函数及泛型模板；`#test` 函数体由 `joky test` 检查。
 错误沿用源码位置和错误码，写入 stderr。`--no-prelude` 关闭隐式导入；以 `-` 开头的文件名放在 `--` 后。
-项目检查范围是入口及导入依赖，不递归扫描未导入文件；详细边界见[静态检查](docs/language.md#静态检查)。
+应用项目检查入口及导入依赖；`[package]` 库包检查自身源码根中的全部模块；详细边界见[静态检查](docs/language.md#静态检查)。
 
 ## 用 Joky 写测试
 
@@ -184,7 +184,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 嵌入与热更新 | Rust `VmEngine`、C VM / CPS API、宿主注册与 FFI、持久实例、状态域、Script 调用与兼容发布、分步迁移 |
 | Godot 原型 | Node 挂载 `.jk`、解释器状态与属性、受检 Node API、帧回调、所属任务和引擎等待；[构建和示例](integrations/godot/README.md) |
 
-具体类型准入、API 与边界以[语言参考](docs/language.md)为准。任务执行可选固定 worker 池；尚无包管理。
+具体类型准入、API 与边界以[语言参考](docs/language.md)为准。任务执行可选固定 worker 池；支持本地 `path` 库包依赖，尚无 Git/registry 下载与锁文件。
 解释器执行限额不覆盖编译阶段或原生回调，其他执行与嵌入限制见[已知边界](docs/architecture.md#已知边界)。
 文件服务由宿主提供，CLI 启用本机实现，嵌入缺省为 Unsupported；Godot 验证适配器不提供文件服务。
 
@@ -207,6 +207,13 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
 - [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。
+
+## 本地源码依赖
+
+本地复用通过 `[dependencies]` 声明 `path`，独立库使用无入口的 `[package]` 清单。
+示例：`joky run examples/packages/app`、`joky check examples/packages/common`、
+`joky test examples/packages/common`，配置见 [应用清单](examples/packages/app/joky.toml) 和
+[库清单](examples/packages/common/joky.toml)。
 
 ## TCP 状态域聊天室
 

@@ -1,0 +1,8 @@
+import joky/check.{assert}
+
+pub fn message() -> String { "Hello from a local package" }
+
+#test
+fn greeting_matches_shared_message() {
+    assert(message() == "Hello from a local package", "shared greeting")
+}

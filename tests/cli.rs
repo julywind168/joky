@@ -61,6 +61,8 @@ mod modules;
 #[path = "cli/tasks.rs"]
 mod tasks;
 
+#[path = "cli/packages.rs"]
+mod packages;
 #[path = "cli/process.rs"]
 mod process;
 #[path = "cli/project.rs"]
