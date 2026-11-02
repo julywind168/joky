@@ -6747,6 +6747,37 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 组件没有隐含宽限期；应用在外层 race 组合截止时间，超时后取消剩余任务。
 父任务取消不执行挂起的 on_close，但仍释放队列、socket 和结构化子任务。
 
+## HTTP 服务端 joky/http
+
+`http.serve(listener, &stop, options, handler) @suspends -> Result<Unit, ServeError>` 消费已绑定的 TCP 监听器。
+处理函数的类型是 `fn(http.Request) @suspends -> http.Response`。Request 包含方法、原始请求目标（含查询串）、
+按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
+Response 提供状态枚举、媒体类型枚举和正文字节。发送方计算 Content-Length，HEAD 只发送响应头。
+
+第一版提供明文 HTTP/1.1 的有限子集。每个连接处理一次 GET、HEAD 或 POST 并发送 `Connection: close`。
+目标须以 `/` 开始，标头采用 ASCII 和 CRLF，必须有且只有一个 Host（主机名或 IPv4，可带十进制端口）。
+正文缺省为空，可用单个十进制 Content-Length 指定。重复长度（即使相同）、Transfer-Encoding、折叠行、
+无效字符或截断正文均拒绝。Expect 返回 417。该版本未实现 chunked、keep-alive、IPv6 字面量 Host 或 TLS。
+
+请求行、所有标头和最后的空行合计最多 16 KiB，最多 64 个标头，超限返回 431。
+请求体最多 1 MiB，超限返回 413。响应体也限 1 MiB，超限在写响应头前返回 500。
+`http.defaults()` 允许同时 128 个连接，满额时关闭新连接。完整请求读取和完整响应写入的默认期限分别为 10s。
+零散字节不重置读取期限，超时返回 408。发送失败或写入超时会结束连接，已经写出的前缀仍可能到达对端。
+
+完整请求读完后再次检查停机状态，通过检查的请求进入 handler。通知会停止监听并结束待准入的读取，
+已准入的 handler 和响应写入可继续到共享宽限期结束（默认 5s）。正常排空返回 Ok，
+达到宽限期会结构化取消剩余任务并返回 Deadline。单连接任务在 isolate 中运行，未处理的业务异常结束该连接。
+`Options` 还可通过 `max_connections`、`read_timeout`、`write_timeout` 和 `grace` 调整，
+其中前三项必须大于零。监听失败返回 AcceptFailed 并通知其余连接排空。
+
+运行 `joky run examples/http_server.jk`，将打印的回环端口赋给 shell 变量 PORT，
+即可调用[JSON 服务示例](../examples/http_server.jk)。按 Ctrl-C 触发排空。
+
+```sh
+curl "http://127.0.0.1:$PORT/health"
+curl -H 'Content-Type: application/json' -d '{"message":"hello"}' "http://127.0.0.1:$PORT/echo"
+```
+
 ## 内置 TCP 模块 joky/tcp
 
 显式导入 `joky/tcp.{type Address, type TcpListener, type TcpStream, type IoError, type ErrorKind, type Shutdown}`。

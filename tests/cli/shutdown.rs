@@ -1,76 +1,11 @@
 //! Signals run only in child processes, never in the test runner.
+use super::tcp_server::{connect, Running};
 use super::*;
 use std::os::unix::process::ExitStatusExt;
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{Read, Write},
     net::{TcpListener, TcpStream},
-    process::{Child, ExitStatus, Stdio},
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
 };
-
-struct Running {
-    child: Child,
-    lines: mpsc::Receiver<String>,
-}
-impl Running {
-    fn start(mut command: Command) -> Self {
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (send, lines) = mpsc::channel();
-        thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                if send.send(line.unwrap()).is_err() {
-                    break;
-                }
-            }
-        });
-        Self { child, lines }
-    }
-    fn line(&self) -> String {
-        self.lines
-            .recv_timeout(Duration::from_secs(30))
-            .expect("child output deadline")
-    }
-    fn signal(&self, signal: &str) {
-        assert!(Command::new("kill")
-            .args([signal, &self.child.id().to_string()])
-            .status()
-            .unwrap()
-            .success());
-    }
-    fn finish(&mut self) -> ExitStatus {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                return status;
-            }
-            assert!(Instant::now() < deadline, "child exit deadline");
-            thread::sleep(Duration::from_millis(5));
-        }
-    }
-}
-impl Drop for Running {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-fn connect(port: u16) -> TcpStream {
-    let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    stream
-}
 #[test]
 fn shutdown_notification_fixture_executes_in_standalone_aot() {
     let work = Workspace::new();

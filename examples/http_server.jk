@@ -1,0 +1,26 @@
+import joky/http
+import joky/json
+import joky/shutdown
+import joky/tcp
+
+fn handle(request: http.Request) @suspends -> http.Response {
+    let http.Request { method, target, headers, body } = request
+    if (method == "GET" || method == "HEAD") && target == "/health" {
+        return http.Response { status: http.Status.Success, content_type: http.ContentType.Json, body: "{{\"ok\":true}}".into_bytes() }
+    }
+    if method == "POST" && target == "/echo" {
+        if let Ok(value) = json.decode_bytes(body) {
+            return http.Response { status: http.Status.Success, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
+        }
+        return http.Response { status: http.Status.BadRequest, content_type: http.ContentType.Text, body: "invalid JSON".into_bytes() }
+    }
+    http.Response { status: http.Status.NotFound, content_type: http.ContentType.Text, body: "not found".into_bytes() }
+}
+fn main() @suspends -> Int32 {
+    let stop = shutdown.create()
+    // Keep the signal subscription until the server has finished draining.
+    let signals = stop.subscribe_unix()!
+    var listener = tcp.listen("127.0.0.1", 0)!
+    println("listening {listener.local_addr()!.port()}")
+    if http.serve(listener, &stop, http.defaults(), handle).is_ok() { 0 } else { 1 }
+}

@@ -191,6 +191,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
+        kind: SourceKind::Embedded,
+        path: "joky/http",
+        source: include_str!("../../stdlib/http.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::BufferLibrary,
         path: "joky/session",
         source: include_str!("../../stdlib/session.jk"),

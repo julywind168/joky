@@ -1,0 +1,205 @@
+// One HTTP/1.1 exchange per connection. Parse octets before decoding text.
+import joky/admission
+import joky/array.{type Array}
+import joky/option.{type Option, Some, None}
+import joky/result.{type Result, Ok, Err}
+import joky/shutdown
+import joky/task
+import joky/tcp.{type BufferedTcp, type TcpListener, type TcpStream}
+import joky/time.{type Duration}
+import joky/string
+
+pub struct Header { pub name: String, pub value: String }
+pub struct Request {
+    pub method: String,
+    pub target: String,
+    pub headers: Array<Header>,
+    pub body: Array<UInt8>
+}
+pub enum Status { Success, BadRequest, NotFound, ContentTooLarge, InternalError }
+pub enum ContentType { Text, Json, Bytes }
+pub struct Response { pub status: Status, pub content_type: ContentType, pub body: Array<UInt8> }
+pub struct Options {
+    pub max_connections: UInt64,
+    pub read_timeout: Duration,
+    pub write_timeout: Duration,
+    pub grace: Duration
+}
+pub fn defaults() -> Options { Options { max_connections: 128, read_timeout: 10s, write_timeout: 10s, grace: 5s } }
+pub enum ServeError { InvalidOptions, AcceptFailed, Deadline }
+const HEAD_LIMIT: UInt64 = 16384
+const BODY_LIMIT: UInt64 = 1048576
+enum ReadFailure { Bad, HeadLimit, BodyLimit, Timeout, Stopped, Unsupported, Expectation }
+
+// HTTP token characters: ASCII letters, digits and the permitted punctuation.
+fn token(b: UInt8) -> Bool {
+    (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) ||
+    b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 || b == 42 ||
+    b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
+}
+fn line(stream: &mut BufferedTcp, remaining: &mut UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
+    if *remaining < 2 { return Err(ReadFailure.HeadLimit) }
+    var bytes = match stream.read_until(10, *remaining) {
+        Ok(Some(bytes)) => bytes, Err(LimitExceeded) => return Err(ReadFailure.HeadLimit), _ => return Err(ReadFailure.Bad)
+    }
+    let n = bytes.len()
+    if n < 2 || bytes[n - 2] != 13 { return Err(ReadFailure.Bad) }
+    *remaining = *remaining - n
+    bytes.truncate(n - 2)
+    Ok(bytes)
+}
+fn request_line(bytes: Array<UInt8>) -> Result<(String, String), ReadFailure> {
+    for b in &bytes { if *b < 32 || *b > 126 { return Err(ReadFailure.Bad) } }
+    let text = String.from_utf8(bytes)!
+    let first = match text.find(" ") { Some(i) => i, None => return Err(ReadFailure.Bad) }
+    let method = text.substring(0, first)!
+    if method.is_empty() { return Err(ReadFailure.Bad) }
+    for b in method.bytes() { if !token(*b) { return Err(ReadFailure.Bad) } }
+    let rest = text.substring(first + 1, text.byte_length())!
+    let end = match rest.find(" ") { Some(i) => i, None => return Err(ReadFailure.Bad) }
+    if rest.substring(end + 1, rest.byte_length())! != "HTTP/1.1" { return Err(ReadFailure.Bad) }
+    let target = rest.substring(0, end)!
+    if !target.starts_with("/") || target.find("#").is_some() { return Err(ReadFailure.Bad) }
+    if method != "GET" && method != "HEAD" && method != "POST" { return Err(ReadFailure.Unsupported) }
+    Ok((method, target))
+}
+fn header(var bytes: Array<UInt8>) -> Result<Header, ReadFailure> {
+    var i: UInt64 = 0
+    while i < bytes.len() && bytes[i] != 58 {
+        let b = bytes[i]
+        if !token(b) { return Err(ReadFailure.Bad) }
+        if b >= 65 && b <= 90 { bytes[i] = b + 32 }
+        i += 1
+    }
+    if i == 0 || i == bytes.len() { return Err(ReadFailure.Bad) }
+    var start = i + 1
+    var end = bytes.len()
+    while start < end && (bytes[start] == 32 || bytes[start] == 9) { start += 1 }
+    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) { end -= 1 }
+    for j in start .. end {
+        let b = bytes[j]
+        if (b < 32 && b != 9) || b > 126 { return Err(ReadFailure.Bad) }
+    }
+    let text = String.from_utf8(bytes)!
+    Ok(Header { name: text.substring(0, i)!, value: text.substring(start, end)! })
+}
+fn content_length(value: &String) -> Result<UInt64, ReadFailure> {
+    if value.is_empty() { return Err(ReadFailure.Bad) }
+    var n: UInt64 = 0
+    for b in value.bytes() {
+        if *b < 48 || *b > 57 { return Err(ReadFailure.Bad) }
+        n = n * 10 + uint64(*b - 48)
+        if n > BODY_LIMIT { return Err(ReadFailure.BodyLimit) }
+    }
+    Ok(n)
+}
+// This subset accepts DNS-style hosts and IPv4 with an optional decimal port.
+fn valid_host(value: &String) -> Bool {
+    var host_len: UInt64 = 0
+    var port_digits: UInt64 = 0
+    var port: UInt64 = 0
+    var in_port = false
+    for b in value.bytes() {
+        if in_port {
+            if *b < 48 || *b > 57 { return false }
+            port = port * 10 + uint64(*b - 48)
+            if port > 65535 { return false }
+            port_digits += 1
+        } else if *b == 58 { in_port = true }
+        else {
+            if !((*b >= 48 && *b <= 57) || (*b >= 65 && *b <= 90) || (*b >= 97 && *b <= 122) || *b == 45 || *b == 46) { return false }
+            host_len += 1
+        }
+    }
+    host_len > 0 && (!in_port || port_digits > 0)
+}
+fn read_request(stream: &mut BufferedTcp) @suspends -> Result<Request, ReadFailure> {
+    var remaining = HEAD_LIMIT
+    let (method, target) = request_line(line(stream, &mut remaining)?)?
+    var headers: Array<Header> = []
+    var host = false
+    var length: Option<UInt64> = None
+    while true {
+        let bytes = line(stream, &mut remaining)?
+        if bytes.is_empty() { break }
+        if headers.len() >= 64 { return Err(ReadFailure.HeadLimit) }
+        let field = header(bytes)?
+        if field.name == "host" {
+            if host || !valid_host(&field.value) { return Err(ReadFailure.Bad) }
+            host = true
+        } else if field.name == "content-length" {
+            if length.is_some() { return Err(ReadFailure.Bad) }
+            length = Some(content_length(&field.value)?)
+        } else if field.name == "transfer-encoding" { return Err(ReadFailure.Bad) }
+        else if field.name == "expect" { return Err(ReadFailure.Expectation) }
+        headers.push(field)
+    }
+    if !host { return Err(ReadFailure.Bad) }
+    let body = match stream.read_exact(length.unwrap_or(0)) { Ok(Some(body)) => body, _ => return Err(ReadFailure.Bad) }
+    Ok(Request { method, target, headers, body })
+}
+fn stop_read(stop: &shutdown.Controller) @suspends -> Result<Request, ReadFailure> { stop.wait(); Err(ReadFailure.Stopped) }
+fn read_timeout(timeout: Duration) @suspends -> Result<Request, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
+fn send(stream: &mut BufferedTcp, status: String, media: String, body: Array<UInt8>, head: Bool) @suspends {
+    let size = body.len()
+    if size > BODY_LIMIT {
+        // Validate before publishing a length the transport cannot send.
+        stream.write_all("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into_bytes());
+        return
+    }
+    let prefix = "HTTP/1.1 {status}\r\nContent-Type: {media}\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n"
+    if stream.write_all(prefix.into_bytes()).is_ok() && !head && size > 0 { stream.write_all(body); }
+}
+fn connection(stream: TcpStream, stop: shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response, _permit: admission.Permit) @suspends {
+    var io = BufferedTcp.new(stream)
+    let input = race { | read_request(&mut io) | stop_read(&stop) | read_timeout(options.read_timeout) }
+    // This check admits a complete request. Shutdown lets its handler and write finish.
+    if stop.requested() { return }
+    match input {
+        Err(reason) => {
+            let status = match reason {
+                Bad => "400 Bad Request", HeadLimit => "431 Request Header Fields Too Large",
+                BodyLimit => "413 Content Too Large", Timeout => "408 Request Timeout",
+                Unsupported => "501 Not Implemented", Expectation => "417 Expectation Failed", Stopped => return
+            }
+            race { | send(&mut io, status, "text/plain", [], false) | task.sleep(options.write_timeout) }
+        }
+        Ok(request) => {
+            let head = request.method == "HEAD"
+            let Response { status, content_type, body } = handler(request)
+            let code = match status { Success => "200 OK", BadRequest => "400 Bad Request", NotFound => "404 Not Found",
+                ContentTooLarge => "413 Content Too Large", InternalError => "500 Internal Server Error" }
+            let media = match content_type { Text => "text/plain; charset=utf-8", Json => "application/json", Bytes => "application/octet-stream" }
+            race { | send(&mut io, code, media, body, head) | task.sleep(options.write_timeout) }
+        }
+    }
+}
+enum Accept { Client(TcpStream), Stop, Error }
+fn accept(listener: &mut TcpListener) @suspends -> Accept { match listener.accept() { Ok(s) => Client(s), Err(_) => Error } }
+fn stop_accept(stop: &shutdown.Controller) @suspends -> Accept { stop.wait(); Stop }
+fn listen(var listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+    let pool = admission.create(options.max_connections, 0)
+    let clients = pool.handle()
+    var failed = false
+    scope {
+        while !stop.requested() {
+            let stream = match race { | accept(&mut listener) | stop_accept(stop) } {
+                Client(stream) => stream, Stop => break, Error => { failed = true; break }
+            }
+            if stop.requested() { break }
+            let permit = match clients.try_acquire() { Ok(p) => p, Err(_) => continue }
+            let shared = stop.share()
+            branch { isolate { connection(stream, shared, options, handler, permit) }; }
+        }
+        listener.close();
+        stop.request();
+    }
+    if failed { Err(ServeError.AcceptFailed) } else { Ok({}) }
+}
+fn deadline(stop: &shutdown.Controller, grace: Duration) @suspends -> Result<Unit, ServeError> {
+    stop.wait(); task.sleep(grace); Err(ServeError.Deadline)
+}
+pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+    if options.max_connections == 0 || options.read_timeout.is_zero() || options.write_timeout.is_zero() { return Err(ServeError.InvalidOptions) }
+    race { | listen(listener, stop, options, handler) | deadline(stop, options.grace) }
+}

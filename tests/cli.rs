@@ -34,6 +34,13 @@ fn recording_cli_source(source: &str) -> String {
     )
 }
 
+#[cfg(unix)]
+#[path = "cli/http.rs"]
+mod http;
+#[cfg(unix)]
+#[path = "support/tcp_server.rs"]
+mod tcp_server;
+
 #[path = "cli/arguments.rs"]
 mod arguments;
 #[path = "cli/assertions.rs"]
