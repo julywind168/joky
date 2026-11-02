@@ -1,3 +1,4 @@
+import joky/shutdown
 import joky/outbox
 import joky/time.{type Duration}
 import joky/task
@@ -60,4 +61,44 @@ pub fn run<S, T>(connection: Connection, stream: TcpStream, shared: &S, ctx: &T,
 fn split(connection: Connection) -> (outbox.Mailbox, outbox.Mailbox, Options) {
     let Connection { outgoing, control, options } = connection
     (outgoing, control, options)
+}
+
+// Shutdown only competes with reading, never with an admitted on_line callback.
+fn shutdown_read(stop: &shutdown.Controller) @suspends -> Option<String> { stop.wait(); None }
+fn receive_draining<S, T>(shared: &S, ctx: &T, var reader: BufferedTcpReader, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options, stop: &shutdown.Controller, output: Output) @suspends @noescape {
+    while !stop.requested() {
+        let next = if options.idle_timeout.is_zero() {
+            race { | shutdown_read(stop) | read(&mut reader, options.max_line_bytes) }
+        } else {
+            race { | shutdown_read(stop) | read(&mut reader, options.max_line_bytes) | timeout(options.idle_timeout) }
+        }
+        let line = match next { Some(line) => line, None => break }
+        if stop.requested() { break }
+        if !on_line(shared, ctx, line) { break }
+    }
+    output.seal()
+}
+fn send_draining(queue: &mut outbox.Mailbox, var writer: TcpWriter, control: outbox.Handle) @suspends {
+    while true {
+        let bytes = match queue.receive() { Some(bytes) => bytes, None => return }
+        if writer.write_all(bytes).is_err() { control.close(); return }
+    }
+}
+fn drain<S, T>(shared: &S, ctx: &T, reader: BufferedTcpReader, writer: TcpWriter, queue: &mut outbox.Mailbox, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options, stop: &shutdown.Controller, output: Output, control: outbox.Handle) @suspends @noescape {
+    join {
+        | receive_draining(shared, ctx, reader, on_line, options, stop, output)
+        | send_draining(queue, writer, control)
+    }
+}
+pub fn run_draining<S, T>(connection: Connection, stream: TcpStream, shared: &S, ctx: &T, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, on_close: fn(&S, &T) @suspends @noescape -> Unit, shutdown: &shutdown.Controller) @suspends @noescape {
+    var (outgoing, control, options) = split(connection)
+    let output = outgoing.handle()
+    let abort = control.handle()
+    let (reader, writer) = BufferedTcp.new(stream).split()
+    race {
+        | drain(shared, ctx, reader, writer, &mut outgoing, on_line, options, shutdown, output, abort)
+        | stop(&mut control)
+    }
+    // The queue may be sealed: cleanup must not depend on sending more to it.
+    on_close(shared, ctx)
 }

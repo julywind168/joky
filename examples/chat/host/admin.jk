@@ -1,7 +1,8 @@
 // Admin port: `reload` republishes script/main.jk, `shutdown` stops the service.
 // Replies go straight to the admin socket, never through chat accounts or their queues.
+import joky/shutdown
 import joky/vm
-import joky/tcp.{type TcpListener, type TcpStream, type BufferedTcp}
+import joky/tcp.{type TcpListener, type TcpStream, type BufferedTcp, type IoError}
 
 pub fn report(error: vm.LoadError) {
     println(error.message())
@@ -27,9 +28,23 @@ fn connection(engine: &vm.Vm, path: &String, stream: TcpStream) @suspends -> Boo
     }
 }
 // Serialize administrative commands; disconnecting a session keeps the service running.
-pub fn serve(engine: &vm.Vm, path: String, var listener: TcpListener) @suspends -> Int32 {
-    while true {
-        let stream = match listener.accept() { Ok(stream) => stream, Err(_) => return 1 }
-        if connection(engine, &path, stream) { return 0 }
+pub fn serve(engine: &vm.Vm, path: String, var listener: TcpListener, stop: &shutdown.Controller) @suspends -> Int32 {
+    var status: Int32 = 0
+    while !stop.requested() {
+        let stream = match race { | stopped_accept(stop) | accept(&mut listener) } {
+            Ok(Some(stream)) => stream,
+            Ok(None) => break,
+            Err(_) => { status = 1; break }
+        }
+        if stop.requested() { break }
+        if race { | connection(engine, &path, stream) | stopped(stop) } { stop.request(); break }
     }
+    listener.close();
+    stop.request();
+    status
 }
+fn accept(listener: &mut TcpListener) @suspends -> Result<Option<TcpStream>, IoError> {
+    match listener.accept() { Ok(stream) => Ok(Some(stream)), Err(error) => Err(error) }
+}
+fn stopped_accept(stop: &shutdown.Controller) @suspends -> Result<Option<TcpStream>, IoError> { stop.wait(); Ok(None) }
+fn stopped(stop: &shutdown.Controller) @suspends -> Bool { stop.wait(); true }

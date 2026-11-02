@@ -2679,6 +2679,7 @@ common = { path = "../common" }
 AOT 将静态导入的依赖代码编入应用，运行产物无需依赖源码目录。
 构建输出不得覆盖或位于依赖包目录内；依赖包不自动提供运行时资源。
 应用的 `resources` 仍由应用显式声明；运行时 `Vm.module_file` 等脚本加载接口不自动继承 CLI 的包依赖图。
+未声明依赖的应用保留原有模块名，与 ModuleSources／热加载脚本的契约一致；声明依赖后进入包命名空间。
 嵌入 Rust 宿主可用 `SourcePackage` / `PackageSources` 显式提供同一套来源图，或继续使用 `ModuleSources` 快照。
 
 当前没有下载、锁文件、发布、依赖更新命令或二进制包 ABI。本地源码修改在下次编译时生效，
@@ -5128,7 +5129,8 @@ Rust 宿主使用 `VmEngine::domain_periodic_status(handle, method)` 和 `joky::
 | `Handle.identity(&self) -> UInt64` | 返回不复用的身份，用于匹配提交失败的目标 |
 | `Handle.send(&self, bytes: &Array<UInt8>)` | 在当前 `when` 内暂存消息，等价于 `outbox.emit`；普通同步写入不允许调用 |
 | `Handle.close(&self)` | 等价于 `outbox.close` |
-| `Mailbox.receive(&mut self) -> Option<Array<UInt8>>` | 取出一条消息并立即归还数量与字节容量；空队列挂起并注册唤醒；关闭返回 None，空消息返回 Some(empty) |
+| `Handle.seal(&self)` | 幂等停止入队，保留已提交的消息并唤醒接收方；排空后 receive 返回 None，不关闭关联 control |
+| `Mailbox.receive(&mut self) -> Option<Array<UInt8>>` | 取出一条消息并立即归还数量与字节容量；未封口的空队列挂起并注册唤醒；关闭或封口且排空后返回 None，空消息返回 Some(empty) |
 | `outbox.close(handle: Handle)` | 幂等关闭，丢弃队列中的消息并唤醒接收方；Mailbox 析构也会关闭 |
 | `outbox.batch(messages: UInt64, bytes: UInt64) -> Batch` | 创建暂存批次；按给定消息数预分配，无固定条数上限，允许零条空批次；字节上限独立于信箱上限 |
 | `outbox.stage(batch: &mut Batch, target: Handle, bytes: Array<UInt8>) -> Result<Unit, StageError>` | 消费输入数组，复制到批次独立存储；不发送、不等待队列容量 |
@@ -5171,13 +5173,16 @@ fn update(h: domain.WriteHandle<State>, target: outbox.Handle) @suspends -> doma
 仍打开的 Reject 信箱；连接作用域持有其所有者，输出信箱只保存弱关联，不延长它的生命周期。
 显式关闭或销毁 Disconnect 信箱也会关闭其控制信箱。多个输出可关联同一控制信箱，关闭其中
 任意一个即停止共同的接收方。
+`seal()` 只封口，不清空消息、不关闭 control。Reject 封口后拒绝提交并返回 OutboxClosed；
+Disconnect 封口后丢弃新消息，但保留原队列继续排空，不触发溢出或控制关闭。
+之后仍可用 close 或所有者析构立即丢弃剩余消息。
 
 提交先验证完整读取凭据、代码版本、截止时间和状态生命周期，再汇总同一目标的消息数和字节数：
 
-- `Reject` 保持状态与全部目标消息联合入队的保证：目标关闭返回 `OutboxClosed`，容量不足返回
+- `Reject` 保持状态与全部目标消息联合入队的保证：目标关闭或封口返回 `OutboxClosed`，容量不足返回
   `OutboxFull`；显式 Batch 曾暂存溢出也返回 `OutboxFull`。拒绝时所有根、消息和溢出处理均不发布。
 - `Disconnect` 的目标满、关闭或所有者已销毁，不拒绝提交。本次提交发往该目标的消息全部丢弃，
-  仍存活的目标标记溢出并关闭，丢弃旧排队消息，同时关闭关联的 control 信箱。其他目标照常投递。
+  未封口且仍存活的目标标记溢出并关闭，丢弃旧排队消息，同时关闭关联的 control 信箱。其他目标照常投递。
   这明确放宽为“状态已提交，部分收件人未收到本次消息”，不允许同一目标只收到本批的一部分。
 - 混合批次必须先通过全部 Reject 检查，才允许投递或断开任何目标。control 的关闭不发送通知消息，
   不占容量，也不分配资源；即使 control 已满，关闭也会丢弃其消息并唤醒等待者。
@@ -6659,7 +6664,8 @@ scope 主体直接声明的局部值保留到 join 完成；return、break、con
 ## 停机通知 joky/shutdown
 
 显式导入 `joky/shutdown`。这是独立的、一次触发后保持状态的通知对象，不会自行取消任务或退出进程。
-第一版用于 Local 执行器；Controller 和 Signals 不授予跨 worker 的 Transfer/Share 能力，`--parallel` 拒绝相关入口。
+支持 Local 与 Parallel 执行器。独立拥有的 Controller 可跨 worker 转移；用 `share()` 为各任务创建句柄。
+Controller 的普通借用及 Signals 保持 worker-local，不授予跨 worker 的共享借用能力。
 
 | 接口 | 结果与行为 |
 | --- | --- |
@@ -6698,8 +6704,8 @@ SIGKILL 不可接入，不能期待强制杀进程时执行清理。
 这是应用显式组合出的流程，不是 Controller 隐含的任务策略；后台维护任务也必须自行响应通知。
 
 超时表示开始结构化取消，父流程仍须等待资源访问停止和清理完成；不能抢占的同步代码或宿主调用可能延迟退出。
-挂起业务收尾应在排空阶段执行，取消清理不运行任意挂起回调。生产长连接协议还需定义停止读入、在途请求和出站队列边界；
-该示例每连接只处理一条请求，没有改变 session 或 chat 的即时取消语义，也没有增加 background 语法。
+挂起业务收尾应在排空阶段执行，取消清理不运行任意挂起回调。该示例每连接只处理一条请求；
+长连接可使用下文的 `session.run_draining`，[chat](../examples/chat/README.md) 展示消息队列排空与 5s 截止组合。
 
 ## 连接运行组件 joky/session
 
@@ -6724,6 +6730,18 @@ outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业�
 业务可用 `Vm.try_call` 在 on_line 中处理脚本失败。组件不会隐式捕获任意回调异常，也不保证
 断开前排空输出队列。父任务取消会结构化停止子任务、释放 socket 和邮箱，不运行挂起清理回调；
 应用应让账户等资源由外层作用域持有。chat 的成员清理与空房回收策略在业务层显式实现。
+
+`run_draining<S,T>(connection, stream, shared, ctx, on_line, on_close, shutdown: &shutdown.Controller)`
+保持相同的参数与回调约定，增加显式停机通知。通知只与下一次读取竞速：完整行读出后再检查停机状态，
+通过检查才准入 on_line。已准入回调执行完毕后封口出站队列，发送分支继续写完已取出的消息和剩余 FIFO。
+EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路径。
+发送失败、输出溢出、显式 close 或 control 停止仍立即取消会话；回调异常沿用原有传播规则。
+
+发送结束后调用一次 on_close；回调可以清理业务状态，但不能依赖向本连接继续发送消息：
+封口的 Disconnect 输出会丢弃这些新消息。保证范围是每个连接封口前已提交的出站消息，
+其他连接回调在该封口之后产生的广播不保证投递。write_all 完成仅表示写入 TCP，不等于对端业务确认。
+组件没有隐含宽限期；应用在外层 race 组合截止时间，超时后取消剩余任务。
+父任务取消不执行挂起的 on_close，但仍释放队列、socket 和结构化子任务。
 
 ## 内置 TCP 模块 joky/tcp
 

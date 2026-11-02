@@ -19,6 +19,40 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+enum Wake {
+    Local(TaskWaker),
+    Parallel(super::parallel::pool::IoWaker),
+}
+impl Wake {
+    fn current() -> Option<Self> {
+        super::parallel::pool::io_waker()
+            .map(Self::Parallel)
+            .or_else(|| current_waker().map(Self::Local))
+    }
+    fn wake(&self) {
+        match self {
+            Self::Local(w) => w.wake(),
+            Self::Parallel(w) => w.wake(),
+        }
+    }
+}
+enum Charge {
+    Local { _charge: ExternalCharge },
+    Shared { _charge: super::parallel::Lease },
+}
+impl Charge {
+    fn new(arena: &mut Arena, bytes: usize) -> Result<Self, Error> {
+        if let Some(root) = arena.parallel_root() {
+            Ok(Self::Shared {
+                _charge: root.accounts().reserve(bytes)?,
+            })
+        } else {
+            Ok(Self::Local {
+                _charge: arena.reserve_external(bytes)?,
+            })
+        }
+    }
+}
 const MAX_WAITERS: usize = 1024;
 fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
     value.lock().unwrap_or_else(|error| error.into_inner())
@@ -38,7 +72,7 @@ pub enum Reason {
 struct State {
     reason: Option<Reason>,
     next: u64,
-    waiters: BTreeMap<u64, Option<TaskWaker>>,
+    waiters: BTreeMap<u64, Option<Wake>>,
 }
 /// Thread-safe host notification. Clones share one latched state.
 /// This object never cancels tasks or exits the process by itself.
@@ -148,7 +182,7 @@ enum Value {
 }
 struct Owner {
     value: Value,
-    _charge: ExternalCharge,
+    _charge: Charge,
 }
 impl Drop for Owner {
     fn drop(&mut self) {
@@ -158,10 +192,25 @@ impl Drop for Owner {
         }
     }
 }
+pub(crate) fn transferable_type(name: &str) -> bool {
+    name == "shutdown.ControllerOwner"
+}
+/// # Safety
+/// Token is a live resource without an active lease; callback proves its layout.
+pub(crate) unsafe fn transferable(
+    token: NonNull<c_void>,
+    callback: super::resource::ResourceReleaseV1,
+) -> bool {
+    if !std::ptr::fn_addr_eq(callback, release as super::resource::ResourceReleaseV1) {
+        return false;
+    }
+    let owner = &*token.cast::<Owner>().as_ptr();
+    matches!(owner.value, Value::Controller(_)) && matches!(owner._charge, Charge::Shared { .. })
+}
 unsafe extern "C" fn release(token: *mut c_void) {
     drop(Box::from_raw(token.cast::<Owner>()));
 }
-fn owner(arena: &mut Arena, value: Value, charge: ExternalCharge) -> Result<u64, Error> {
+fn owner(arena: &mut Arena, value: Value, charge: Charge) -> Result<u64, Error> {
     let token = Box::into_raw(Box::new(Owner {
         value,
         _charge: charge,
@@ -193,7 +242,7 @@ unsafe fn controller(bits: u64) -> Result<Shutdown, Error> {
 struct Waiter {
     shutdown: Shutdown,
     id: u64,
-    _charge: ExternalCharge,
+    _charge: Charge,
 }
 impl Drop for Waiter {
     fn drop(&mut self) {
@@ -223,13 +272,13 @@ unsafe fn wait(
                 "Shutdown waiter limit reached",
             ));
         }
-        let charge = arena.reserve_external(state_bytes() + std::mem::size_of::<Waiter>() + 512)?;
+        let charge = Charge::new(arena, state_bytes() + std::mem::size_of::<Waiter>() + 512)?;
         state.next = state
             .next
             .checked_add(1)
             .ok_or_else(|| failure("Shutdown waiter identities exhausted"))?;
         let id = state.next;
-        state.waiters.insert(id, current_waker());
+        state.waiters.insert(id, Wake::current());
         frame.host_context = Box::into_raw(Box::new(Waiter {
             shutdown: shutdown.clone(),
             id,
@@ -239,7 +288,7 @@ unsafe fn wait(
         frame.host_stop = Some(stop);
     } else {
         let waiter = &*frame.host_context.cast::<Waiter>();
-        if let Some(wake) = current_waker() {
+        if let Some(wake) = Wake::current() {
             state.waiters.insert(waiter.id, Some(wake));
         }
     }
@@ -258,7 +307,8 @@ pub(crate) unsafe fn poll(
     }
     let result = (|| {
         if matches!(op, Operation::Create) {
-            let charge = arena.reserve_external(
+            let charge = Charge::new(
+                arena,
                 state_bytes() + std::mem::size_of::<Owner>() + OwnedResource::event_bytes(),
             )?;
             return owner(arena, Value::Controller(Shutdown::new()), charge).map(Some);
@@ -267,7 +317,8 @@ pub(crate) unsafe fn poll(
         Ok(Some(match op {
             Operation::Create => unreachable!(),
             Operation::Share => {
-                let charge = arena.reserve_external(
+                let charge = Charge::new(
+                    arena,
                     state_bytes() + std::mem::size_of::<Owner>() + OwnedResource::event_bytes(),
                 )?;
                 owner(arena, Value::Controller(shutdown), charge)?
@@ -277,7 +328,8 @@ pub(crate) unsafe fn poll(
             Operation::Wait => return wait(arena, frame, shutdown),
             Operation::Subscribe => {
                 // Reserve before installing process-global hooks or creating a worker.
-                let charge = arena.reserve_external(
+                let charge = Charge::new(
+                    arena,
                     state_bytes()
                         + std::mem::size_of::<Owner>()
                         + OwnedResource::event_bytes()

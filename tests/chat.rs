@@ -33,6 +33,7 @@ fn chat_startup_environment_and_shutdown_match_host_backends() {
         .unwrap();
     assert!(built.status.success(), "{built:?}");
     for backend in ["jit", "interpreter", "aot"] {
+        eprintln!("chat lifecycle backend: {backend}");
         let mut command = if backend == "aot" {
             Command::new(bundle.join("chat"))
         } else {
@@ -51,9 +52,23 @@ fn chat_startup_environment_and_shutdown_match_host_backends() {
         assert_ne!(chat, 0);
         assert_ne!(admin, 0);
         assert_ne!(chat, admin);
+        let mut client = Peer::connect(chat, 1);
+        client.send("balance\n");
+        client.expect("balance 5\n");
         let mut peer = Peer::open(admin);
-        peer.send("shutdown\n");
-        peer.expect("shutting down\n");
+        if backend == "aot" {
+            // An idle admin connection must not prevent signal-driven shutdown.
+            assert!(Command::new("kill")
+                .args(["-TERM", &server.child.id().to_string()])
+                .status()
+                .unwrap()
+                .success());
+        } else {
+            peer.send("shutdown\n");
+            peer.expect("shutting down\n");
+        }
+        client.closed();
+        peer.closed();
         server.expect_shutdown();
     }
 }

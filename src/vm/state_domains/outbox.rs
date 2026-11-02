@@ -14,6 +14,7 @@ pub(super) struct Mailbox {
     max_bytes: usize,
     bytes: usize,
     closed: bool,
+    sealed: bool,
     overflowed: bool,
     control: Weak<RefCell<Mailbox>>,
     messages: VecDeque<Message>,
@@ -21,6 +22,11 @@ pub(super) struct Mailbox {
     _charge: reads::Charge,
 }
 impl Mailbox {
+    fn seal(&mut self) {
+        self.sealed = true;
+        self.wake();
+    }
+
     fn close(&mut self) {
         self.mark_closed();
         self.wake();
@@ -113,7 +119,7 @@ fn create_with_control(
                 .get(&token)
                 .and_then(Weak::upgrade)
                 .ok_or_else(|| invalid("Disconnect control mailbox is closed or foreign"))?;
-            if disconnect_policy(token) || signal.borrow().closed {
+            if disconnect_policy(token) || (signal.borrow().closed || signal.borrow().sealed) {
                 return Err(invalid(
                     "Disconnect requires an open Reject control mailbox",
                 ));
@@ -151,6 +157,7 @@ fn create_with_control(
         max_bytes,
         bytes: 0,
         closed: false,
+        sealed: false,
         overflowed: false,
         control: signal,
         messages: queue,
@@ -216,7 +223,10 @@ impl Batch {
                         .outboxes
                         .get(&token)
                         .and_then(Weak::upgrade)
-                        .is_none_or(|q| q.borrow().closed))
+                        .is_none_or(|q| {
+                            let q = q.borrow();
+                            q.closed || q.sealed
+                        }))
             {
                 self.failure = Some(Status::OutboxClosed);
                 self.failed_target = Some(token);
@@ -288,7 +298,7 @@ impl Batch {
                 None => Some(Status::OutboxClosed),
                 Some(target) => {
                     let queue = target.borrow();
-                    if queue.closed {
+                    if queue.closed || queue.sealed {
                         Some(Status::OutboxClosed)
                     } else if count > queue.max_messages - queue.messages.len()
                         || bytes > queue.max_bytes - queue.bytes
@@ -334,6 +344,11 @@ impl Batch {
             if target.disconnect {
                 if let Some(queue) = &target.queue {
                     let mut queue = queue.borrow_mut();
+                    // Sealed queues discard late Disconnect sends without
+                    // dropping committed bytes or triggering the abort channel.
+                    if queue.sealed {
+                        continue;
+                    }
                     queue.overflowed = true;
                     queue.mark_closed();
                     if let Some(control) = queue.control.upgrade() {
@@ -349,7 +364,7 @@ impl Batch {
             if let Some(queue) = &target.queue {
                 let queue = queue.borrow();
                 queue.wake();
-                if target.disconnect {
+                if target.disconnect && !queue.sealed {
                     if let Some(control) = queue.control.upgrade() {
                         control.borrow().wake();
                     }
@@ -430,7 +445,7 @@ pub(crate) unsafe fn receive_bytes<T>(
         if queue.registry != registry.borrow().identity {
             return Err(invalid("Outbox belongs to another executor"));
         }
-        if !queue.closed && queue.messages.is_empty() {
+        if !queue.closed && !queue.sealed && queue.messages.is_empty() {
             park(frame, &owner.queue, &mut queue)?;
             return Ok(None);
         }
@@ -488,14 +503,18 @@ unsafe fn poll_inner(
             Some(batch(registry, frame.slots[0], frame.slots[1])?),
         )
         .map(Some),
-        Operation::OutboxClose => {
+        Operation::OutboxClose | Operation::OutboxSeal => {
             let queue = registry
                 .borrow()
                 .outboxes
                 .get(&frame.slots[0])
                 .and_then(Weak::upgrade);
             if let Some(queue) = queue {
-                queue.borrow_mut().close();
+                if op == Operation::OutboxSeal {
+                    queue.borrow_mut().seal();
+                } else {
+                    queue.borrow_mut().close();
+                }
             }
             Ok(Some(0))
         }
@@ -560,7 +579,7 @@ unsafe fn poll_inner(
                 return Ok(Some(owner.token));
             }
             let mut queue = owner.queue.borrow_mut();
-            if queue.closed || !queue.messages.is_empty() {
+            if queue.closed || queue.sealed || !queue.messages.is_empty() {
                 // Allocate result ownership before removing the queue's front.
                 let output = adopt(arena, None::<Message>)?;
                 let result_lease = commits::lease(output)?;

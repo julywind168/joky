@@ -777,3 +777,39 @@ fn connection_sessions_run_in_all_backends() {
     work.write("session.jk", include_str!("../fixtures/session.jk"));
     work.assert_all_backends("session.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn session_drain_and_outbox_seal_run_in_aot() {
+    let work = Workspace::new();
+    work.write_fixture_batch(
+        "drain.jk",
+        &[
+            ("sealed.jk", include_str!("../fixtures/outbox_seal.jk")),
+            ("shutdown.jk", include_str!("../fixtures/shutdown.jk")),
+            (
+                "session_drain.jk",
+                include_str!("../fixtures/session_drain.jk"),
+            ),
+        ],
+    );
+    work.assert_native("drain.jk", &[], b"", 0);
+    work.write(
+        "parallel_drain.jk",
+        r#"
+import shutdown
+import joky/outbox
+import joky/check
+import joky/task
+fn seal(output: outbox.Handle) @suspends { task.yield_now(); output.seal() }
+fn main() @suspends {
+    shutdown.run_fixture()
+    var queue = outbox.create(1, 0)
+    let output = queue.handle()
+    let (message, _) = join { | queue.receive() | seal(output) }
+    check.assert(message.is_none(), "parallel seal wakes pending receive")
+}
+"#,
+    );
+    work.assert_native("parallel_drain.jk", &["--parallel"], b"", 0);
+}

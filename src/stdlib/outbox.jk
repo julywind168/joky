@@ -5,6 +5,7 @@ import joky/result.{type Result, Ok, Err}
 extern fn __outbox_create(messages:UInt64, bytes:UInt64) @suspends -> outbox.QueueOwner
 extern fn __outbox_create_disconnect(messages:UInt64, bytes:UInt64, control:UInt64) @suspends -> outbox.QueueOwner
 extern fn __outbox_handle(queue:&outbox.QueueOwner) @suspends -> UInt64
+extern fn __outbox_seal(handle:UInt64) @suspends
 extern fn __outbox_close(handle:UInt64) @suspends
 extern fn __outbox_batch(messages:UInt64, bytes:UInt64) @suspends -> outbox.BatchOwner
 extern fn __outbox_stage(batch:&mut outbox.BatchOwner, handle:UInt64, bytes:Array<UInt8>) @suspends -> Int32
@@ -19,6 +20,8 @@ impl Handle {
     // Stage a message in the active when operation.
     pub fn send(&self, bytes:&Array<UInt8>) { __emit(self.identity, bytes) }
     pub fn close(&self) @suspends { __outbox_close(self.identity) }
+    // Stop admission; retain committed messages until receive returns None.
+    pub fn seal(&self) @suspends { __outbox_seal(self.identity) }
 }
 pub type Batch = outbox.BatchOwner
 pub enum StageError { Full, Closed }

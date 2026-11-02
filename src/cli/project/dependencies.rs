@@ -41,6 +41,12 @@ pub(super) fn parse(value: Option<toml::Value>) -> Result<BTreeMap<String, Strin
 }
 
 pub(super) fn load(root: &mut Project) -> Result<(), Error> {
+    // Existing standalone applications share module identities with runtime
+    // ModuleSources (including Script contracts). Introduce a package namespace
+    // only when the application actually opts into a dependency graph.
+    if root.entry.is_some() && root.dependencies.is_empty() {
+        return Ok(());
+    }
     struct Graph {
         packages: Vec<SourcePackage>,
         paths: BTreeMap<PathBuf, usize>,

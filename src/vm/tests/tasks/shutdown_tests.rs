@@ -19,9 +19,6 @@ fn shutdown_notifications_broadcast_latch_and_remove_cancelled_waiters() {
             assert_eq!(block_on(vm.prepare_async(entry, &[]).unwrap()).unwrap(), 42);
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
-        assert!(vm
-            .prepare_parallel_task("shutdown_once", vec![], vec![])
-            .is_err());
         let executor = HostExecutor::default();
         let group = TaskGroup::new();
         executor
@@ -128,5 +125,31 @@ fn shutdown_deadline_starts_after_notification_on_the_executor_clock() {
         assert_eq!(report.completed.len(), 1);
         assert_eq!(report.completed[0].result, Ok(42));
         LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+#[test]
+fn shutdown_parallel_owned_controllers_broadcast_and_cancel_waiters() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm_with_prelude(SOURCE, mode, false);
+        for entry in [
+            "shutdown_broadcast",
+            "shutdown_cancel_waiter",
+            "shutdown_parallel_transfer",
+            "shutdown_branch_wakes_parent",
+        ] {
+            let prepared = vm
+                .prepare_parallel_task(entry, vec![], vec![])
+                .unwrap_or_else(|e| panic!("{mode:?} {entry}: {e}"));
+            let mut pool = crate::runtime::parallel::ParallelExecutor::new(3, 8).unwrap();
+            let task = prepared.submit(&pool).unwrap();
+            task.wait().unwrap();
+            assert_eq!(
+                task.take_result().unwrap().value(),
+                &crate::vm::TaskValue::Scalar(crate::vm::InstanceValue::Int32(42))
+            );
+            drop(task);
+            pool.wait_closed();
+        }
     }
 }

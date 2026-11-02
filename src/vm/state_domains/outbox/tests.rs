@@ -465,6 +465,16 @@ fn operation(h:domain.WriteHandle<S>,target:outbox.Handle,zero:Int32) @suspends 
 
 #[test]
 fn session_overflow_cancels_a_blocked_writer_and_runs_membership_cleanup() {
+    session_blocked_writer(false);
+}
+
+#[test]
+fn session_drains_a_blocked_writer_without_losing_committed_bytes() {
+    session_blocked_writer(true);
+}
+
+fn session_blocked_writer(draining: bool) {
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::{Duration, Instant};
     thread_local! { static OUTPUT: Cell<u64> = const { Cell::new(0) }; }
@@ -485,14 +495,20 @@ fn session_overflow_cancels_a_blocked_writer_and_runs_membership_cleanup() {
             )
             .unwrap();
         }
+        let run = if draining {
+            "let stop = shutdown.create(); session.run_draining(connection,stream,&member,&context,line,closed,&stop)"
+        } else {
+            "session.run(connection,stream,&member,&context,line,closed)"
+        };
+        let keep_reading = !draining;
         vm.load_source(&format!(r#"
-import joky/session import joky/domain
+import joky/session import joky/domain import joky/shutdown
 import joky/tcp.{{type TcpStream, type Address}}
 extern fn output_ready(token:UInt64)
 #state
 struct Membership {{ live:Bool, closed:Int32 }}
 fn make(_:Unit)->Membership {{ Membership{{live:true,closed:0}} }}
-fn line(_member: &domain.WriteHandle<Membership>, _context: &Unit, _text:String) @suspends @noescape ->Bool {{ true }}
+fn line(_member: &domain.WriteHandle<Membership>, _context: &Unit, _text:String) @suspends @noescape ->Bool {{ {keep_reading} }}
 fn closed(handle: &domain.WriteHandle<Membership>, _: &Unit) @suspends @noescape {{
     let member=*handle
     when(mut member) {{ member.live=false; member.closed+=1 }}!
@@ -508,7 +524,7 @@ fn main() @suspends ->Int32 {{
     let owner=domain.create(make,{{}})
     let member=owner.handle()
     let context={{}}
-    session.run(connection,stream,&member,&context,line,closed)
+    {run}
     when(member) {{ if !member.live && member.closed==1 {{42}} else {{0}} }}!
 }}
 "#)).unwrap_or_else(|e| panic!("{mode:?}: {e}"));
@@ -538,12 +554,14 @@ fn main() @suspends ->Int32 {{
         let control = queue.borrow().control.upgrade().unwrap();
         let payload = vec![42; 65536];
         let mut blocked = false;
+        let mut submitted = 0;
         for _ in 0..128 {
             let mut send = batch(&vm.domains, 1, payload.len() as u64).unwrap();
             send.stage(&vm.domains.borrow(), token, &payload).unwrap();
             send.prepare(&vm.domains.borrow()).unwrap();
             send.publish();
             send.wake();
+            submitted += payload.len();
             let mut idle = 0;
             while idle < 3 {
                 let report = vm.poll_tasks(100).unwrap();
@@ -567,19 +585,39 @@ fn main() @suspends ->Int32 {{
             "writer is waiting on TCP, not receive"
         );
         assert!(!control.borrow().closed);
-        let mut overflow = batch(&vm.domains, 1, 1).unwrap();
-        overflow.stage(&vm.domains.borrow(), token, &[1]).unwrap();
-        overflow.prepare(&vm.domains.borrow()).unwrap();
-        overflow.publish();
-        overflow.wake();
-        assert!(queue.borrow().overflowed && control.borrow().closed);
-        drop((overflow, queue, control));
-        // Keep the peer open and unread: only the independent control signal can finish.
+        if draining {
+            let peer = peer.as_mut().unwrap();
+            peer.write_all(b"stop\n").unwrap();
+            peer.set_nonblocking(true).unwrap();
+        } else {
+            let mut overflow = batch(&vm.domains, 1, 1).unwrap();
+            overflow.stage(&vm.domains.borrow(), token, &[1]).unwrap();
+            overflow.prepare(&vm.domains.borrow()).unwrap();
+            overflow.publish();
+            overflow.wake();
+            assert!(queue.borrow().overflowed && control.borrow().closed);
+        }
+        drop((queue, control));
+        // Only the draining case reads; overflow must cancel an unread blocked socket.
+        let mut received = 0;
+        let mut eof = !draining;
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut results = Vec::new();
-        while vm.executor.task_count() != 0 {
+        while vm.executor.task_count() != 0 || !eof {
             let report = vm.poll_tasks(100).unwrap();
             results.extend(report.completed);
+            if draining && !eof {
+                let mut bytes = [0; 65536];
+                match peer.as_mut().unwrap().read(&mut bytes) {
+                    Ok(0) => eof = true,
+                    Ok(n) => {
+                        assert!(bytes[..n].iter().all(|&byte| byte == 42));
+                        received += n;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => panic!("{e}"),
+                }
+            }
             assert!(
                 Instant::now() < deadline,
                 "{mode:?}: blocked writer was not cancelled"
@@ -587,6 +625,9 @@ fn main() @suspends ->Int32 {{
             if report.polled == 0 {
                 std::thread::sleep(Duration::from_millis(1));
             }
+        }
+        if draining {
+            assert_eq!(received, submitted, "all committed bytes survive sealing");
         }
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].result, Ok(42));
@@ -693,4 +734,23 @@ fn outbox_owned_receive_preflights_budget_and_moves_bytes() {
     assert_eq!(budget.used(), 0);
     assert!(vm.domains.borrow().outboxes.is_empty());
     assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+}
+
+#[test]
+fn outbox_sealing_and_session_draining_preserve_committed_output() {
+    for source in [
+        include_str!("../../../../tests/fixtures/outbox_seal.jk"),
+        include_str!("../../../../tests/fixtures/session_drain.jk"),
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(source)
+                .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            assert_eq!(
+                crate::runtime::driver::block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(),
+                0
+            );
+            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
 }

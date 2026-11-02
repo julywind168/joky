@@ -63,6 +63,7 @@ impl Operation {
                 | OutboxCreateDisconnect
                 | OutboxHandle
                 | OutboxClose
+                | OutboxSeal
                 | OutboxReceive
                 | OutboxReceiveBytes
                 | OutboxMessageClosed

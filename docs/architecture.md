@@ -598,7 +598,9 @@ Storage 的借用 intrinsic 设置标记，重借用、投影和 CFG 合流保�
 
 `joky/shutdown` 使用受检内置 CPS 操作，JIT/AOT 与解释器共用 runtime/shutdown。
 Controller 资源持有 Rust Arc 状态，share 创建独立拥有控制块；共享借用仅在调用线程读取控制块，
-不把 Joky 地址交给外部线程。首版不授予 Parallel 调用证据或资源 Transfer/Share。
+不把 Joky 地址交给外部线程。受检调用支持 Scoped Parallel 证据；Controller 独立拥有句柄可 Transfer，
+Signals 与普通借用保持 worker-local。资源转移同时检查私有释放回调、Controller 布局与共享预算收费，
+不授予 Share。Local 使用 ExternalCharge，Parallel 使用可转移 Lease；等待分别保存 TaskWaker/IoWaker。
 每个等待调用持有独立编号和预算收费，登记/检查状态在同一锁下完成以避免丢失唤醒；
 request 在同一锁下发布首次原因并取走所有唤醒令牌，解锁后唤醒。stop 在完成、失败和取消时注销自身，
 不能消费或清除已经发布的通知。多份拥有句柄及等待者对共享状态采用保守重复计费，最后一份 Rust 持有者释放状态。
@@ -1260,7 +1262,7 @@ Parallel 不再创建控制端 Buffer 或复制出第二个 Vec，只在调用�
 受检连续字节视图和整段初始化，非单字节元素保留原转换路径。
 旧的接收／消息查询／字节提取操作保留兼容。消息纯数据化允许 Script 卸载后继续写出。
 
-私有域操作分发使用 Outbox 编号 43–53，并追加 Disconnect 创建操作 94、单次接收操作 101；
+私有域操作分发使用 Outbox 编号 43–53，并追加 Disconnect 创建操作 94、单次接收操作 101、封口操作 102；
 字节数组边界检查 Array<UInt8> 名义包装和单 Buffer 布局。单次接收原生结果使用参数之后的
 两个聚合槽（状态、拥有 Buffer），解释器解码相同的 Bool 与拥有指针；公开 CPS 帧 ABI 不变。
 API、拒绝结果与在途取消边界见[语言参考](language.md#提交式出站信箱-jokyoutbox)。
@@ -2817,6 +2819,11 @@ publish_domain_code 不受该源层完整性规则影响。
 
 `joky/session` 是源库组合：拥有邮箱，借用共享／连接上下文，复用 TCP 拆分、race、
 不逃逸挂起函数值与帧内定时器。正常断开在邮箱析构前执行成员清理；父取消沿结构化停止顺序释放资源。
+Mailbox 的 sealed 状态与 closed 独立：封口拒绝新入队但保留 FIFO，最后一次接收后返回 None。
+封口的 Disconnect 目标丢弃新批次而不触发 control，防止晚到的广播破坏正在排空的输出；
+close、Drop 和其他硬中止仍丢弃剩余消息。session.run_draining 等待当前回调后封口，并与发送分支 join；
+独立 control 竞速和应用截止仍可取消阻塞写入。
+
 Chat 输出使用 Disconnect 策略，溢出提交先发布业务状态和健康收件人的消息，再由 control
 关闭唤醒会话；会话取消阻塞写分支后执行正常断线与成员清理，不重放原业务。离开通知因此可在
 原业务消息之后出现。失败后的最终成员清理不依赖队列。空房退役同时写 Room/Catalog，再条件

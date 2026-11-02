@@ -57,8 +57,34 @@ fn shutdown_deadline_start() @suspends -> Int32 {
     race { | short_deadline(&stop) | delayed_request(&stop) }
 }
 fn main() @suspends {
+    assert(shutdown_branch_wakes_parent() == 42, "branch progresses before scope joins")
+    assert(shutdown_parallel_transfer() == 42, "transferred owners")
     assert(shutdown_broadcast() == 42, "broadcast")
     assert(shutdown_cancel_waiter() == 42, "cancel waiter")
     assert(shutdown_shared_owner() == 42, "shared owner")
     assert(shutdown_deadline_start() == 42, "deadline after notification")
+}
+
+fn transferred_wait(stop: shutdown.Controller) @suspends -> Int32 { observe(&stop) }
+fn transferred_request(stop: shutdown.Controller) @suspends -> Int32 { trigger(&stop) }
+fn shutdown_parallel_transfer() @suspends -> Int32 {
+    let stop = shutdown.create()
+    let (a, b, _) = join {
+        | transferred_wait(stop.share())
+        | transferred_wait(stop.share())
+        | transferred_request(stop.share())
+    }
+    a + b
+}
+
+fn branch_timeout() @suspends -> Int32 { task.sleep(1s); 0 }
+fn shutdown_branch_wakes_parent() @suspends -> Int32 {
+    let stop = shutdown.create()
+    let copy = stop.share()
+    scope {
+        branch { copy.request(); }
+        let value = race { | observe(&stop) | branch_timeout() }
+        assert(value == 21, "owned controller branch must run while parent is waiting")
+    }
+    42
 }

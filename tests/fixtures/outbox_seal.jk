@@ -1,0 +1,49 @@
+import joky/domain
+import joky/outbox
+import joky/task
+import joky/check
+
+#state
+struct Count { value: Int32 }
+fn make(_: Unit) -> Count { Count { value: 0 } }
+fn seal_later(handle: outbox.Handle) @suspends { task.yield_now(); handle.seal() }
+fn main() @suspends {
+    let owner = domain.create(make, {})
+    let state = owner.handle()
+    var control = outbox.create(1, 16)
+    let abort = control.handle()
+    var queue = outbox.create_with_policy(3, 16, outbox.Overflow.Disconnect(abort))
+    let output = queue.handle()
+    when (mut state) {
+        let a = "one".into_bytes()
+        let b = "two".into_bytes()
+        output.send(&a)
+        output.send(&b)
+    }!
+    output.seal()
+    output.seal()
+    when (mut state) {
+        state.value = 42
+        let late = "late".into_bytes()
+        output.send(&late)
+        abort.send(&late)
+    }!
+    check.assert(String.from_utf8(queue.receive()!)! == "one", "seal preserves first committed message")
+    check.assert(String.from_utf8(queue.receive()!)! == "two", "late Disconnect send preserves FIFO")
+    check.assert(queue.receive().is_none(), "sealed empty queue ends receive")
+    check.assert(String.from_utf8(control.receive()!)! == "late", "seal never triggers abort control")
+    var reject = outbox.create(2, 16)
+    let target = reject.handle()
+    when (mut state) { let bytes = "kept".into_bytes(); target.send(&bytes) }!
+    target.seal()
+    check.assert(match when (mut state) { state.value = 0; let bytes = "late".into_bytes(); target.send(&bytes) } {
+        Err(OutboxClosed(_)) => true, _ => false
+    }, "Reject seal rejects the entire commit")
+    check.assert(when(state) { state.value }! == 42, "rejected send does not publish state")
+    target.close()
+    check.assert(reject.receive().is_none(), "explicit close still discards sealed output")
+    var empty = outbox.create(1, 0)
+    let handle = empty.handle()
+    let (message, _) = join { | empty.receive() | seal_later(handle) }
+    check.assert(message.is_none(), "seal wakes a parked receiver")
+}

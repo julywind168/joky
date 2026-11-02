@@ -1,0 +1,65 @@
+import joky/session
+import joky/shutdown
+import joky/domain
+import joky/check
+import joky/task
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp}
+
+#state
+struct Counts { lines: UInt64, closed: UInt64 }
+fn make(_: Unit) -> Counts { Counts { lines: 0, closed: 0 } }
+struct Context { counts: domain.WriteHandle<Counts>, output: session.Output, stop: shutdown.Controller, slow: Bool }
+fn line(ctx: &Context, _: &Unit, _text: String) @suspends @noescape -> Bool {
+    let counts = ctx.counts
+    let output = ctx.output
+    when(mut counts) { counts.lines += 1; let bytes = "first\n".into_bytes(); output.send(&bytes) }!
+    ctx.stop.request();
+    task.sleep(if ctx.slow { 60s } else { 1ms })
+    when(mut counts) { let bytes = "last\n".into_bytes(); output.send(&bytes) }!
+    true
+}
+fn closed(ctx: &Context, _: &Unit) @suspends @noescape {
+    let counts = ctx.counts
+    let output = ctx.output
+    when(mut counts) {
+        counts.closed += 1
+        let bytes = "late\n".into_bytes()
+        output.send(&bytes)
+    }!
+}
+fn deadline(stop: &shutdown.Controller) @suspends { stop.wait(); task.sleep(2ms) }
+fn server(connection: session.Connection, stream: TcpStream, ctx: &Context, local: &Unit) @suspends {
+    if ctx.slow {
+        race { | session.run_draining(connection, stream, ctx, local, line, closed, &ctx.stop) | deadline(&ctx.stop) }
+    } else { session.run_draining(connection, stream, ctx, local, line, closed, &ctx.stop) }
+}
+fn peer(stream: TcpStream, scenario: Int32) @suspends {
+    var stream = BufferedTcp.new(stream)
+    if scenario != 1 { stream.write_all("first\nsecond\n".into_bytes())! }
+    if scenario == 0 {
+        check.assert(stream.read_line(16)!.unwrap() == "first", "first reply")
+        check.assert(stream.read_line(16)!.unwrap() == "last", "in-flight callback completes before sealing")
+    } else if scenario == 2 {
+        // The deadline can cancel either before or after the first write.
+        while stream.read_line(16)!.is_some() {}
+        return
+    }
+    check.assert(stream.read_line(16)!.is_none(), "drained socket closes without late output")
+}
+fn scenario(which: Int32) @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let remote = TcpStream.connect(listener.local_addr()!)!
+    let stream = listener.accept()!
+    let connection = session.create(session.defaults())
+    let owner = domain.create(make, {})
+    let stop = shutdown.create()
+    if which == 1 { stop.request(); }
+    let ctx = Context { counts: owner.handle(), output: connection.output(), stop, slow: which == 2 }
+    let local = {}
+    join { | server(connection, stream, &ctx, &local) | peer(remote, which) }
+    let counts = owner.handle()
+    let (lines, closed) = when(counts) { (counts.lines, counts.closed) }!
+    check.assert(lines == if which == 1 { 0 } else { 1 }, "no second request after shutdown")
+    check.assert(closed == if which == 2 { 0 } else { 1 }, "normal cleanup once; hard cancel skips callback")
+}
+fn main() @suspends { scenario(0); scenario(1); scenario(2) }

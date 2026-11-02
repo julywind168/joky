@@ -115,12 +115,15 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                             .map(|ty| (ty, share)),
                     );
                 }
-                Type::Resource(ref name) if worker_local && name.as_ref() == "arena.Arena" => {}
+                Type::Resource(ref name)
+                    if worker_local
+                        && matches!(name.as_ref(), "arena.Arena" | "shutdown.SignalsOwner") => {}
                 Type::Resource(ref name)
                     if !share
                         && (crate::runtime::tcp::transferable_type(name)
                             || crate::runtime::parallel::control::resource_type(name)
-                            || crate::runtime::buffer::crypto::transferable_type(name)) => {}
+                            || crate::runtime::buffer::crypto::transferable_type(name)
+                            || crate::runtime::shutdown::transferable_type(name)) => {}
                 Type::Named(ref name)
                     if matches!(name.as_str(), "domain.Handle" | "admission.Token") => {}
                 Type::String | Type::Function(_) => {}
@@ -613,6 +616,7 @@ mod tests {
         assert!(!qualify(&Type::Ptr).transfer);
         assert!(!qualify(&Type::Resource("HostResource".into())).share);
         for name in [
+            "shutdown.ControllerOwner",
             "crypto.Sha256Owner",
             "crypto.HmacSha256Owner",
             "tcp.StreamOwner",
@@ -627,12 +631,15 @@ mod tests {
         ] {
             let resource = Type::Resource(name.into());
             assert!(qualify(&resource).transfer);
+            assert!(crate::runtime::parallel::packet::Shape::of(&resource).is_ok());
             assert!(!qualify(&resource).share);
             assert!(!qualify(&Type::reference(resource, false)).transfer);
         }
-        for name in ["HostResource", "domain.StateOwner"] {
+        for name in ["HostResource", "domain.StateOwner", "shutdown.SignalsOwner"] {
             assert!(!qualify(&Type::Resource(name.into())).transfer);
         }
+        assert!(qualify(&Type::Resource("shutdown.SignalsOwner".into())).worker_local);
+        assert!(!qualify(&Type::Resource("shutdown.SignalsOwner".into())).share);
         for cursor in [
             Type::BufferIterator(std::sync::Arc::new(Type::Int32)),
             Type::BufferPairIterator(std::sync::Arc::new(Type::tuple(vec![

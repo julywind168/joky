@@ -230,7 +230,7 @@ target/debug/joky build examples/chat -o /tmp/chat-app --parallel
 ```
 
 聊天端口为 `127.0.0.1:7777`，管理端口为 `127.0.0.1:7778`。
-修改 `examples/chat/script/main.jk` 后向管理端发送 `reload`，发送 `shutdown` 停机。
+修改 `examples/chat/script/main.jk` 后向管理端发送 `reload`；`shutdown` 或 SIGINT/SIGTERM 停止准入并排空会话输出，5s 后取消剩余任务。
 目录说明、协议、配置与验证命令见[应用说明](examples/chat/README.md)。
 
 预留模式示例：`cargo run -- run examples/reservation.jk`，演示预留、外部查询、确认／释放、

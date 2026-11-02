@@ -179,7 +179,13 @@ impl Project {
         file: &Path,
         tests: bool,
     ) -> Result<Module, Error> {
-        let packages = self.packages.as_ref().expect("loaded project source graph");
+        let Some(packages) = &self.packages else {
+            return if tests {
+                types.resolve_test_file_with_root(file, &self.source_root)
+            } else {
+                types.resolve_file_with_root(file, &self.source_root)
+            };
+        };
         if tests {
             packages.resolve_test_file(file, types)
         } else {

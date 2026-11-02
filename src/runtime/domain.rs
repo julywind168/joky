@@ -104,6 +104,7 @@ pub(crate) enum Operation {
     DirectoryRemoveNamed,
     DirectoryRemoveNamedIf,
     OutboxReceiveBytes,
+    OutboxSeal,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,6 +166,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__outbox_create" => Operation::OutboxCreate,
         "__outbox_handle" => Operation::OutboxHandle,
         "__outbox_close" => Operation::OutboxClose,
+        "__outbox_seal" => Operation::OutboxSeal,
         "__outbox_batch" => Operation::OutboxBatch,
         "__outbox_stage" => Operation::OutboxStage,
         "__outbox_receive" => Operation::OutboxReceive,
@@ -401,7 +403,7 @@ impl Operation {
             Self::OutboxCreateDisconnect => (vec![i.clone(), i.clone(), i.clone()], queue),
             Self::OutboxCreate => (vec![i.clone(), i.clone()], queue),
             Self::OutboxHandle => (vec![Type::reference(queue, false)], i),
-            Self::OutboxClose => (vec![i], Type::Unit),
+            Self::OutboxClose | Self::OutboxSeal => (vec![i], Type::Unit),
             Self::OutboxBatch => (vec![i.clone(), i], batch),
             Self::OutboxStage => (vec![Type::reference(batch, true), i, bytes], Type::Int32),
             Self::OutboxReceive => (vec![Type::reference(queue, true)], message),
@@ -774,6 +776,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         99 => Operation::DirectoryRemoveNamed,
         100 => Operation::DirectoryRemoveNamedIf,
         101 => Operation::OutboxReceiveBytes,
+        102 => Operation::OutboxSeal,
 
         _ => {
             super::error::record_error(Error::new_with_code(

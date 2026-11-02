@@ -7,6 +7,8 @@ import joky/vm
 import joky/domain
 import joky/session
 import joky/admission
+import joky/shutdown
+import joky/mem
 import joky/task
 import joky/tcp.{type TcpListener, type TcpStream}
 
@@ -23,14 +25,14 @@ fn closed(script: &Script, client: &Client) @suspends @noescape {
     script.entries.forget.try_call(&script.vm, *client);
 }
 
-// One connection: open its account, run the session, then always forget the account.
-fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit: admission.Permit) @suspends {
+// Normal exit runs membership cleanup; deadline cancellation releases outer owners.
+fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit: admission.Permit, stop: shutdown.Controller) @suspends {
     let owners = domain.directory(1)
     let connection = session.create(host.config.connection)
     let client = Client { host, id }
     let account = AccountInit { host, owners: owners.handle(), id, output: connection.output() }
     if script.entries.init_account.try_call(&script.vm, account).is_ok() {
-        session.run(connection, stream, &script, &client, line, closed)
+        session.run_draining(connection, stream, &script, &client, line, closed, &stop)
     } else {
         closed(&script, &client)
     }
@@ -49,25 +51,42 @@ fn report_failure(id: UInt64, failure: &task.Failure) {
     println("connection {id}: {reason}")
 }
 // Each connection runs in its own failure boundary; one failing client never stops the rest.
-fn serve(script: &Script, host: Host, var listener: TcpListener) @suspends -> Int32 {
+fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown.Controller) @suspends -> Int32 {
     let admission = admission.create(host.config.max_clients, 0)
     let entrants = admission.handle()
     var next_id: UInt64 = 1
     scope {
-        while true {
-            let stream = match listener.accept() { Ok(stream) => stream, Err(_) => break }
+        while !stop.requested() {
+            let stream = match race { | stopped(stop) | accept(&mut listener) } { Some(stream) => stream, None => break }
+            if stop.requested() { break }
             let permit = match entrants.try_acquire() { Ok(permit) => permit, Err(_) => continue }
             let id = next_id
             next_id += 1
             let copy = Script { vm: script.vm.share(), entries: script.entries.clone() }
+            let connection_stop = stop.share()
             branch {
-                if let Err(failure) = isolate { connection(copy, host, id, stream, permit) } {
+                if let Err(failure) = isolate { connection(copy, host, id, stream, permit, connection_stop) } {
                     report_failure(id, &failure)
                 }
             }
         }
+        admission.close();
+        listener.close();
+        stop.request();
     }
     0
+}
+fn stopped(stop: &shutdown.Controller) @suspends -> Option<TcpStream> { stop.wait(); None }
+fn accept(listener: &mut TcpListener) @suspends -> Option<TcpStream> { listener.accept().ok() }
+fn services(script: &Script, host: Host, chat: TcpListener, admin_listener: TcpListener, stop: &shutdown.Controller) @suspends -> Int32 {
+    let (business, admin_status) = join {
+        | serve(script, host, chat, stop)
+        | admin.serve(&script.vm, script_path(), admin_listener, stop)
+    }
+    if business != 0 || admin_status != 0 { 1 } else { 0 }
+}
+fn deadline(stop: &shutdown.Controller) @suspends -> Int32 {
+    stop.wait(); task.sleep(5s); 1
 }
 fn main() @suspends -> Int32 {
     let chat_port = match startup.port("JOKY_CHAT_PORT", 7777) {
@@ -96,11 +115,18 @@ fn main() @suspends -> Int32 {
     var admin_listener = match tcp.listen("127.0.0.1", admin_port) {
         Ok(listener) => listener, Err(_) => { eprintln("Could not bind admin listener"); return 1 }
     }
+    let stop = shutdown.create()
+    let signals = match stop.subscribe_unix() {
+        Ok(signals) => signals,
+        Err(_) => { eprintln("Could not subscribe to Unix signals"); return 2 }
+    }
     println("chat {chat.local_addr()!.port()}")
     println("admin {admin_listener.local_addr()!.port()}")
     let script = Script { vm: engine, entries }
-    race {
-        | serve(&script, host, chat)
-        | admin.serve(&script.vm, script_path(), admin_listener)
+    let result = race {
+        | services(&script, host, chat, admin_listener, &stop)
+        | deadline(&stop)
     }
+    mem.drop(signals)
+    result
 }
