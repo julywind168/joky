@@ -193,3 +193,10 @@ fn main() @suspends -> Int32 {
     assert_eq!(server.finish().code(), Some(7));
     assert_eq!(stuck.read(&mut [0]).unwrap(), 0);
 }
+
+#[test]
+fn http_client_frames_responses_and_sends_post_once() {
+    let work = Workspace::new();
+    work.write("client.jk", include_str!("../fixtures/http_client.jk"));
+    work.assert_all_backends("client.jk", &[], b"", 0);
+}

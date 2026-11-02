@@ -6783,6 +6783,36 @@ HTTPS 使用 `http.serve_tls(listener, config, &stop, options, handler)`。它�
 `read_timeout`。握手失败、握手超时或握手期间停机均关闭连接。TLS 读取被取消时连接直接关闭。
 成功写完响应后，在同一个写入期限内发送 TLS 关闭通知。
 
+## HTTP 客户端 joky/http
+
+`http.Client.http(host, port)!` 创建明文客户端，`http.Client.https(host, port, tls_config)!` 创建 HTTPS 客户端。
+构造时传入主机名或 IPv4 地址和非零端口。每次请求使用以 `/` 开头的路径（可含查询串），向同一主机新建连接。
+HTTPS 使用该主机名或 IP 验证证书，可传入 `tls.ClientConfig.web_roots()!` 或自定义 CA 配置。
+
+| 调用 | 行为 |
+| --- | --- |
+| `client.get(target)` | 发送 GET |
+| `client.post_json(target, text)` | 以 application/json 原样发送给定文本，按字节计算 Content-Length |
+| `client.request(method, target, headers, body)` | Method.Get 或 Method.PostJson，支持附加 Authorization、Idempotency-Key 等 Header。GET 正文须为空 |
+
+三个方法均为 `@suspends`，返回 `Result<ClientResponse, ClientError>`。成功读完响应即可读取
+`status: UInt16`、按接收顺序存放的 `headers` 和原始 `body` 字节；404、409 等也作为普通响应返回。
+客户端校验出站目标和头字段，拒绝 CR/LF 注入及覆盖 Host、Content-Length、Transfer-Encoding 等保留头。
+客户端不跟随重定向，也不自动重发请求。POST 已发出而响应丢失时，由业务决定是否携原幂等键重试。
+
+`connect_timeout` 默认 10s，合计覆盖 DNS、TCP 建连和 TLS 握手。`exchange_timeout` 默认 10s，
+合计覆盖发送和读取完整响应，分段读取不重置期限。两者须为正。错误区分 Connect（携连接错误）、
+Handshake（携 TLS 错误）、ConnectTimeout、ExchangeTimeout、Transport、InvalidRequest、InvalidResponse、
+SizeLimit 和 UnsupportedFraming。超时／取消会结束当前连接。
+
+HTTP/1.1 响应支持 Content-Length、基本 chunked 以及关闭连接定界。204 和 304 没有正文；
+可跳过临时 1xx 响应，拒绝 101 升级、重复长度及同时声明长度与分块。TLS 关闭定界正文须读到 close_notify。
+`max_body` 可设为 0 至 1 MiB，默认 1 MiB。各段响应头共用 16 KiB 预算，每段至多 64 个字段；
+分块元数据另限 16 KiB。chunk 扩展、非空 trailer 及其他传输编码返回错误，正文不会自动解压。
+
+运行 `joky run examples/http_client.jk` 可在回环端口启动服务，依次完成健康检查和 JSON POST 后排空退出。
+参见[客户端示例](../examples/http_client.jk)。
+
 ## TLS 字节流 joky/tls
 
 模块使用 rustls 的 TLS 1.2／1.3 配置。配置与连接都是拥有值，构造和 I/O 方法均为 `@suspends`，

@@ -80,6 +80,21 @@ fn https_parallel_server_interoperates_and_drains_incomplete_handshakes() {
     let mut reply = String::new();
     client.read_to_string(&mut reply).unwrap();
     assert_eq!(reply, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 7\r\nConnection: close\r\n\r\n{\"n\":1}");
+    work.write("https_client.jk", &r#"
+import joky/http
+import joky/fs
+import joky/tls
+fn main() @suspends {
+    var ca = fs.open("tests/fixtures/tls/ca.pem", fs.OpenOptions.new())!
+    let trusted = tls.ClientConfig.from_ca_pem(ca.read_all_limited(131072)!)!
+    let client = http.Client.https("localhost", PORT, trusted)!
+    let reply = client.post_json("/echo", "123")!
+    assert(reply.status == 200 && String.from_utf8(reply.body)! == "123", "HTTPS exchange")
+    let untrusted = http.Client.https("localhost", PORT, tls.ClientConfig.web_roots()!)!
+    assert(match untrusted.get("/health") { Err(Handshake(Certificate)) => true, _ => false }, "preserve TLS verification failure")
+}
+"#.replace("PORT", &port.to_string()));
+    success(&work.cli(&["run", "https_client.jk"]));
     server.signal("-TERM");
     assert!(server.finish().success());
     assert_eq!(idle.read(&mut [0]).unwrap(), 0);

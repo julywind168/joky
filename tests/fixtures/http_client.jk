@@ -1,0 +1,68 @@
+import joky/http
+import joky/tcp.{type BufferedTcp, type TcpListener, type Address}
+import joky/task
+import joky/tls
+
+fn inspect(stream: &mut BufferedTcp, i: Int32, port: UInt16) @suspends {
+    let first = stream.read_line(256)!!
+    assert(first == if i == 0 || i == 4 { "POST / HTTP/1.1" } else { "GET / HTTP/1.1" }, "one request per call")
+    var key = false
+    var host = false
+    while true {
+        let h = stream.read_line(256)!!
+        if h.is_empty() { break }
+        if h == "Host: 127.0.0.1:{port}" { host = true }
+        if h == "Idempotency-Key: abc" { key = true }
+    }
+    assert(host, "correct authority")
+    if i == 0 { assert(key, "caller supplied key"); assert(String.from_utf8(stream.read_exact(3)!!)! == "123", "body") }
+}
+fn payload(i: Int32) -> String {
+    match i {
+        0 => "HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 409 Conflict\r\nTransfer-Encoding: Chunked\r\nX-Test: yes\r\n\r\n2\r\nab\r\n1\r\nc\r\n0\r\n\r\n",
+        1 => "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n",
+        2 => "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n",
+        3 => "HTTP/1.1 200 OK\r\n\r\nabc",
+        4 => "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\na",
+        5 => "HTTP/1.1 304 Not Modified\r\nContent-Length: 4294967296\r\n\r\n",
+        6 => "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n",
+        7 => "HTTP/1.1 200 OK\r\n\r\nabcd",
+        _ => "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\na"
+    }
+}
+fn peer(var listener: TcpListener, port: UInt16) @suspends {
+    for i in 0 .. 9 {
+        var stream = BufferedTcp.new(listener.accept()!)
+        inspect(&mut stream, i, port)
+        stream.write_all(payload(i).into_bytes())!
+        if i == 8 { task.sleep(250ms) }
+    }
+    var silent = listener.accept()!
+    assert(!silent.read(1024)!.is_empty(), "client started TLS handshake")
+    while !silent.read(16384)!.is_empty() {}
+}
+fn calls(port: UInt16) @suspends {
+    var client = http.Client.http("127.0.0.1", port)!
+    client.max_body = 3
+    assert(client.get("/\r\nX: bad").is_err(), "reject injected target before dialing")
+    assert(client.request(http.Method.Get, "/", [http.Header { name: "Foo", value: "x\r\ny" }], []).is_err(), "reject injected header")
+    let r = client.request(http.Method.PostJson, "/", [http.Header { name: "Idempotency-Key", value: "abc" }], "123".into_bytes())!
+    assert(r.status == 409 && String.from_utf8(r.body)! == "abc", "non-2xx and chunked body")
+    assert(match client.get("/") { Err(InvalidResponse) => true, _ => false }, "ambiguous response")
+    assert(match client.get("/") { Err(SizeLimit) => true, _ => false }, "fixed length limit")
+    assert(String.from_utf8(client.get("/")!.body)! == "abc", "close-delimited body")
+    assert(client.post_json("/", "").is_err(), "truncated POST response is returned without retry")
+    assert(client.get("/")!.body.is_empty(), "304 has no body")
+    assert(match client.get("/") { Err(SizeLimit) => true, _ => false }, "chunk size limit")
+    assert(match client.get("/") { Err(SizeLimit) => true, _ => false }, "close-delimited size limit")
+    client.exchange_timeout = 50ms
+    assert(match client.get("/") { Err(ExchangeTimeout) => true, _ => false }, "whole response deadline")
+    var secure = http.Client.https("127.0.0.1", port, tls.ClientConfig.web_roots()!)!
+    secure.connect_timeout = 40ms
+    assert(match secure.get("/") { Err(ConnectTimeout) => true, _ => false }, "connect deadline covers handshake")
+}
+fn main() @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let port = listener.local_addr()!.port()
+    join { | peer(listener, port) | calls(port) }
+}
