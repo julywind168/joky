@@ -5,7 +5,6 @@ import joky/tcp.{type TcpListener, type TcpStream, type BufferedTcp}
 import joky/result.{Ok, Err}
 import joky/option.{type Option, Some, None}
 import joky/io.{println, eprintln}
-import joky/mem
 
 fn stopped(stop: &shutdown.Controller) @suspends -> Option<TcpStream> { stop.wait(); None }
 fn accept(listener: &mut TcpListener) @suspends -> Option<TcpStream> { listener.accept().ok() }
@@ -51,6 +50,7 @@ fn deadline(stop: &shutdown.Controller) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     let stop = shutdown.create()
+    // Keep the signal subscription alive through draining; scope exit releases it automatically.
     let signals = match stop.subscribe_unix() {
         Ok(signals) => signals,
         Err(_) => { eprintln("Could not subscribe to Unix signals"); return 2 },
@@ -59,6 +59,5 @@ fn main() @suspends -> Int32 {
     println("listening {listener.local_addr().unwrap().port()}")
     let result = race { | serve(&stop, listener) | deadline(&stop) }
     println(if result == 0 { "drained" } else { "deadline reached" })
-    mem.drop(signals)
     result
 }

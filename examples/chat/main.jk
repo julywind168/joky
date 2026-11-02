@@ -115,6 +115,7 @@ fn main() @suspends -> Int32 {
         Ok(listener) => listener, Err(_) => { eprintln("Could not bind admin listener"); return 1 }
     }
     let stop = shutdown.create()
+    // Keep the signal subscription alive through draining; scope exit releases it automatically.
     let signals = match stop.subscribe_unix() {
         Ok(signals) => signals,
         Err(_) => { eprintln("Could not subscribe to Unix signals"); return 2 }
