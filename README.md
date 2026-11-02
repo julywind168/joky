@@ -54,6 +54,8 @@ fn main() {
 - `joky/uuid` 提供系统安全随机源生成的 UUID v4 / v7、严格标准文本解析、16 字节转换和 Map 键支持。
   v7 使用毫秒时间戳前缀，支持比较与时间戳读取；同毫秒内不保证生成顺序。
   示例：[uuid.jk](examples/uuid.jk)。
+- `joky/crypto` 提供 SHA-256、HMAC-SHA256 和完整 tag 的恒定时间校验，返回原始 32 字节，
+  可直接接 Hex/Base64。示例：[crypto.jk](examples/crypto.jk)。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
   支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
   VM、文件、目录、准入与邮箱通过任务树控制代理使用，业务 `when` 按完整域访问集在 worker 并行计算并统一提交，Godot 回调保持 Local；

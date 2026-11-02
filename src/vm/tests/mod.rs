@@ -411,3 +411,6 @@ mod codecs_tests;
 
 #[path = "language/uuid_tests.rs"]
 mod uuid_tests;
+
+#[path = "language/crypto_tests.rs"]
+mod crypto_tests;

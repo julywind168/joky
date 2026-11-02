@@ -1,0 +1,23 @@
+import joky/array.{ type Array }
+import joky/slice.{ type Slice }
+import joky/internal/buffer
+
+fn output() -> Array<UInt8> {
+    var bytes = Array.with_capacity::<UInt8>(32)
+    for i in 0 .. 32 { bytes.push(0) }
+    bytes
+}
+pub fn sha256(input: &Slice<UInt8>) -> Array<UInt8> {
+    var bytes = output()
+    buffer.sha256(bytes.slice_mut(0, 32), input)
+    bytes
+}
+pub fn hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>) -> Array<UInt8> {
+    var bytes = output()
+    buffer.hmac_sha256(bytes.slice_mut(0, 32), key, input)
+    bytes
+}
+// Full-length raw tags only. The runtime uses the MAC library's constant-time check.
+pub fn verify_hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>, tag: &Slice<UInt8>) -> Bool {
+    buffer.verify_hmac_sha256(key, input, tag)
+}

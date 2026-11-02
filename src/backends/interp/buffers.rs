@@ -301,6 +301,18 @@ pub(super) fn execute(
                         )?)
                     }
                     BufferIntrinsic::RandomFill => Value::Bool((*pointer(arg(0))?).fill_random()?),
+                    BufferIntrinsic::Sha256 => {
+                        (*pointer(arg(0))?).sha256(&*pointer(arg(1))?)?;
+                        Value::Unit
+                    }
+                    BufferIntrinsic::HmacSha256 => {
+                        (*pointer(arg(0))?).hmac_sha256(&*pointer(arg(1))?, &*pointer(arg(2))?)?;
+                        Value::Unit
+                    }
+                    BufferIntrinsic::VerifyHmacSha256 => Value::Bool(
+                        (*pointer(arg(0))?)
+                            .verify_hmac_sha256(&*pointer(arg(1))?, &*pointer(arg(2))?)?,
+                    ),
                     BufferIntrinsic::Utf8Prefix => {
                         Value::UInt64((*pointer(arg(0))?).utf8_prefix()?)
                     }

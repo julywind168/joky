@@ -4,6 +4,7 @@ use crate::{Error, ErrorCode, ErrorPhase, SourceId, Span};
 use std::{alloc::Layout, cell::Cell, ptr::NonNull};
 
 mod bytes;
+mod crypto;
 pub(crate) mod random;
 pub(crate) const BYTE_CHUNK: usize = 16 * 1024;
 
@@ -1962,12 +1963,21 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 41] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 44] {
     [
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
         ("__joky_buffer_utf8_prefix", bytes::utf8_prefix as *const u8),
         ("__joky_buffer_random_fill", random::fill as *const u8),
+        ("__joky_buffer_sha256", crypto::sha256 as *const u8),
+        (
+            "__joky_buffer_hmac_sha256",
+            crypto::hmac_sha256 as *const u8,
+        ),
+        (
+            "__joky_buffer_verify_hmac_sha256",
+            crypto::verify_hmac_sha256 as *const u8,
+        ),
         ("__joky_buffer_pair_iter", pair_iter as *const u8),
         ("__joky_buffer_pair_advance", pair_advance as *const u8),
         ("__joky_buffer_pair_current", pair_current as *const u8),

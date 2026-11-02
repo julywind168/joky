@@ -6127,6 +6127,33 @@ offset 均为原输入的字节偏移。解码成功的 Base64 文本再用相�
 首版只提供完整输入的编解码，没有流式状态或 MIME 宽松解码。
 可运行示例见 [codecs.jk](../examples/codecs.jk)，包含随机字节转 URL-safe 无填充 token。
 
+## 摘要与消息认证 `joky/crypto`
+
+显式导入 `joky/crypto`，关闭 prelude 时也可用。首版提供一次性字节接口：
+
+| 接口 | 行为 |
+|------|------|
+| `crypto.sha256(input: &Slice<UInt8>) -> Array<UInt8>` | 计算 SHA-256，返回拥有型 32 字节摘要 |
+| `crypto.hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>) -> Array<UInt8>` | 计算 HMAC-SHA256，返回拥有型 32 字节 tag |
+| `crypto.verify_hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>, tag: &Slice<UInt8>) -> Bool` | 使用 HMAC 库的恒定时间比较校验完整 tag；不匹配或长度不是 32 时返回 false |
+
+输入和密钥均按原始字节处理，允许空输入、空密钥、NUL 和非 UTF-8 数据；密钥长度不限于 32 字节。
+字符串使用 `.bytes()`，Array 使用 `.slice(0, bytes.len())`，也支持 FixedArray 的 Slice。
+借用不会消费或保留输入；输出拥有独立存储，输入在借用结束后可修改或释放。
+输出没有隐含 Hex/Base64 编码，需要文本时显式调用 `hex.encode(digest.slice(0, 32))` 等编码接口。
+验证接收原始 tag，若协议传输文本，先按指定编码严格解码再调用 verify；不自动接受截断 tag。
+
+摘要与 tag 生成没有普通错误分支：分配、资源限额或取消通过既有任务失败通道处理。
+verify 的 false 只表示长度或内容不匹配；运行时失败不会伪装成 false。
+恒定时间比较针对相同长度的 tag 内容，不承诺不同输入长度、密钥长度或非法 tag 长度下的整次调用耗时相同。
+验证消息时使用 `verify_hmac_sha256`，不要以普通数组或字符串相等比较代替它。
+
+底层使用 RustCrypto [sha2 0.11.1](https://docs.rs/sha2/0.11.1/sha2/) 与
+[hmac 0.13.0](https://docs.rs/hmac/0.13.0/hmac/)，三后端调用同一个实现。
+长输入及超过 SHA-256 块大小的密钥按块处理，在块边界检查任务取消；没有按输入长度增长的内部副本。
+当前没有流式状态对象、截断 MAC 配置、密码派生或加密接口，也不改变调用者密钥存储的清理策略。
+可运行示例见 [crypto.jk](../examples/crypto.jk)。
+
 ## UUID `joky/uuid`
 
 显式导入 `joky/uuid.{ type Uuid }`；关闭 prelude 时同样可用。

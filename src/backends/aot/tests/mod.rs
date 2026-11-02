@@ -77,3 +77,5 @@ mod add_operators;
 mod suspending_arena;
 
 mod uuid;
+
+mod crypto;

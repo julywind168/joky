@@ -85,13 +85,16 @@ impl BufferIntrinsic {
             _ => None,
         }
     }
-    pub(crate) const ALL: [Self; 49] = [
+    pub(crate) const ALL: [Self; 52] = [
         Self::Allocate,
         Self::Transfer,
         Self::AppendBytes,
         Self::FindByte,
         Self::Utf8Prefix,
         Self::RandomFill,
+        Self::Sha256,
+        Self::HmacSha256,
+        Self::VerifyHmacSha256,
         Self::TakeLast,
         Self::SwapElements,
         Self::Len,
@@ -234,7 +237,13 @@ impl BufferIntrinsic {
     pub(crate) fn is_bytes(self) -> bool {
         matches!(
             self,
-            Self::AppendBytes | Self::FindByte | Self::Utf8Prefix | Self::RandomFill
+            Self::AppendBytes
+                | Self::FindByte
+                | Self::Utf8Prefix
+                | Self::RandomFill
+                | Self::Sha256
+                | Self::HmacSha256
+                | Self::VerifyHmacSha256
         )
     }
     /// Validate the two initialized Array columns before reading their handles.
@@ -353,6 +362,29 @@ impl BufferIntrinsic {
             ),
             Self::Utf8Prefix => (vec![Type::reference(slice, false)], Type::UInt64),
             Self::RandomFill => (vec![Type::reference(slice, true)], Type::Bool),
+            Self::Sha256 => (
+                vec![
+                    Type::reference(slice.clone(), true),
+                    Type::reference(slice, false),
+                ],
+                Type::Unit,
+            ),
+            Self::HmacSha256 => (
+                vec![
+                    Type::reference(slice.clone(), true),
+                    Type::reference(slice.clone(), false),
+                    Type::reference(slice, false),
+                ],
+                Type::Unit,
+            ),
+            Self::VerifyHmacSha256 => (
+                vec![
+                    Type::reference(slice.clone(), false),
+                    Type::reference(slice.clone(), false),
+                    Type::reference(slice, false),
+                ],
+                Type::Bool,
+            ),
             Self::TakeLast => (vec![exclusive], element.clone()),
             Self::SwapElements => (vec![exclusive, Type::UInt64, Type::UInt64], Type::Unit),
             Self::Len | Self::Capacity => (vec![shared], Type::UInt64),
@@ -504,6 +536,9 @@ impl BufferIntrinsic {
             Self::FindByte => "__joky_buffer_find_byte",
             Self::Utf8Prefix => "__joky_buffer_utf8_prefix",
             Self::RandomFill => "__joky_buffer_random_fill",
+            Self::Sha256 => "__joky_buffer_sha256",
+            Self::HmacSha256 => "__joky_buffer_hmac_sha256",
+            Self::VerifyHmacSha256 => "__joky_buffer_verify_hmac_sha256",
             Self::TakeLast => "__joky_buffer_take_last",
             Self::SwapElements => "__joky_buffer_swap_elements",
             Self::Len => "__joky_buffer_len",

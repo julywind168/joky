@@ -1,0 +1,22 @@
+import joky/crypto
+import joky/hex
+import joky/random
+import joky/result.{ Ok, Err }
+import joky/io.{ println }
+
+fn main() {
+    let message = "hello"
+    let digest = crypto.sha256(message.bytes())
+    println(hex.encode(digest.slice(0, 32)))
+
+    match random.secure_bytes(32) {
+        Ok(key) => {
+            let tag = crypto.hmac_sha256(key.slice(0, key.len()), message.bytes())
+            println(hex.encode(tag.slice(0, 32)))
+            println(crypto.verify_hmac_sha256(key.slice(0, key.len()), message.bytes(), tag.slice(0, 32)))
+            let changed = "hello!"
+            println(crypto.verify_hmac_sha256(key.slice(0, key.len()), changed.bytes(), tag.slice(0, 32)))
+        }
+        Err(_) => println("Secure randomness unavailable")
+    }
+}

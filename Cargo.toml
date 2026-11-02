@@ -6,6 +6,8 @@ description = "The Joky programming language: compiler, runtime, and standard li
 
 [dependencies]
 getrandom = "0.4.3"
+sha2 = "0.11.1"
+hmac = "0.13.0"
 # Keep native code generation and unwinding, without compiler timing instrumentation.
 cranelift-codegen  = { version = "0.137.1", default-features = false, features = ["std", "host-arch", "unwind"] }
 cranelift-frontend = "0.137.1"

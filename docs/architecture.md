@@ -2064,6 +2064,21 @@ JIT/AOT 经 `__joky_buffer_random_fill` 调用，解释器调用同一个 Buffer
 避免中间长度乘法溢出。格式错误通过含固定类别与字节偏移的 Result 返回，部分输出按现有所有权清理；
 分配失败和取消仍走原有任务错误与清理通道。配置是普通 Copy 记录，算法和严格性在三后端共用。
 
+## SHA-256 与 HMAC 边界
+
+`joky/crypto` 用普通源码创建完整初始化的 32 字节 Array，独占借用输出 Slice 后调用私有
+`buffer.sha256` / `buffer.hmac_sha256`；校验用 `buffer.verify_hmac_sha256`，三个参数均为共享 Slice。
+编译器只接受精确的 UInt8 Slice 签名，输入与输出的冲突借用按既有规则拒绝。
+原语无 arena 参数、无逃逸或回调。JIT/AOT 调用 `__joky_buffer_*`，解释器调用同一 Buffer 实现；
+原生 ABI 依次传递 Buffer 指针和来源 span，校验返回 UInt8 布尔值。
+
+RustCrypto SHA-256/HMAC 状态只存在于同步调用栈，不引入句柄、全局状态或输入副本。
+输入布局和输出长度先验证，最终计算完成后才写入 32 字节；失败沿 located/解释器错误通道传播。
+消息以 BYTE_CHUNK 为单位更新；超过 64 字节的 HMAC 密钥先分块 SHA-256 归约，再交给 HMAC 库初始化，
+两条路径都在块边界及结束时检查 worker 取消。短密钥和最终化的工作量固定有界。
+校验只接受完整 32 字节，使用库的 `Mac::verify_slice`，不通过源码 Eq、Hex 文本或提前退出的逐字节循环比较。
+返回 false 与运行时失败保持区分。外部接口及恒定时间比较的范围见[语言参考](language.md#摘要与消息认证-jokycrypto)。
+
 ## UUID 值与生成
 
 `joky/uuid.Uuid` 是含两个私有 UInt64 字段的普通 Copy 记录，不引入专用类型、隐藏句柄或逐值 arena 登记。

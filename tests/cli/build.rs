@@ -179,6 +179,8 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         r#"import joky/task
 import joky/domain
 import joky/random
+import joky/crypto
+import joky/hex
 import joky/check.{assert}
 import joky/io.{println}
 fn value(n: Int32, waits: Int32) @suspends -> Int32 {
@@ -189,6 +191,11 @@ fn value(n: Int32, waits: Int32) @suspends -> Int32 {
 fn main() @suspends {
     let entropy = random.secure_bytes(32).unwrap()
     assert(entropy.len() == 32, "Installed entropy backend")
+    let message = "abc"
+    let digest = crypto.sha256(message.bytes())
+    assert(hex.encode(digest.slice(0, 32)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "Installed SHA-256 backend")
+    let tag = crypto.hmac_sha256(entropy.slice(0, 32), message.bytes())
+    assert(crypto.verify_hmac_sha256(entropy.slice(0, 32), message.bytes(), tag.slice(0, 32)), "Installed HMAC backend")
     task.sleep(250us)
     let deadline = domain.deadline_after(0ns)
     let (a, b) = join { | value(40, 2) | value(2, 0) }
