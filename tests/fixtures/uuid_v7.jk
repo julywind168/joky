@@ -1,0 +1,105 @@
+import joky/uuid.{ type Uuid, type V7Error }
+import joky/time.{ type Timestamp }
+import joky/random.{ type RandomError }
+import joky/option.{ type Option }
+import joky/result.{ Ok, Err }
+import joky/fixed_array.{ type FixedArray }
+import joky/eq.{ type Eq }
+import joky/check.{ assert, panic }
+import joky/task
+
+fn at(millis: Int64) -> Uuid { uuid.v7_at(Timestamp.from_unix_millis(millis).unwrap()).unwrap() }
+fn uuid_v7_values() -> Int32 {
+    // RFC 9562 appendix A.6 supplies an independent timestamp/byte-order vector.
+    let reference = Uuid.parse("017f22e2-79b0-7cc3-98c4-dc0c0c07398f").unwrap()
+    assert(reference.v7_unix_millis().unwrap() == 1645557742000, "RFC v7 timestamp")
+    let value = at(1645557742000)
+    let bytes = value.to_bytes()
+    let prefix: FixedArray<UInt8, 6> = [1, 127, 34, 226, 121, 176]
+    for i in uint64(0) .. 6 { assert(bytes[i] == prefix[i], "big-endian millisecond prefix") }
+    assert(bytes[6] >> 4 == 7 && bytes[8] >> 6 == 2, "v7 version and variant")
+    assert(value.v7_unix_millis().unwrap() == 1645557742000, "generated timestamp")
+    let text = value.to_text()
+    assert(Uuid.parse(&text).unwrap().eq(value), "v7 text round trip")
+    assert(Uuid.from_bytes(&bytes).eq(value), "v7 byte round trip")
+    assert(at(0).v7_unix_millis().unwrap() == 0, "Unix epoch")
+    let sub_millisecond = Timestamp.from_unix_parts(0, 999999).unwrap()
+    assert(uuid.v7_at(sub_millisecond).unwrap().v7_unix_millis().unwrap() == 0, "floor sub-millisecond time")
+    let last = Timestamp.from_unix_parts(253402300799, 999999999).unwrap()
+    assert(uuid.v7_at(last).unwrap().v7_unix_millis().unwrap() == 253402300799999, "Timestamp upper boundary")
+    let maximum = Uuid.parse("ffffffff-ffff-7fff-bfff-ffffffffffff").unwrap()
+    assert(maximum.v7_unix_millis().unwrap() == 281474976710655, "full 48-bit external timestamp")
+    assert(Timestamp.from_unix_millis(maximum.v7_unix_millis().unwrap()).is_none(), "Timestamp has a narrower civil range")
+    for invalid in ["017f22e2-79b0-4cc3-98c4-dc0c0c07398f", "017f22e2-79b0-7cc3-18c4-dc0c0c07398f", "017f22e2-79b0-7cc3-d8c4-dc0c0c07398f", "017f22e2-79b0-7cc3-f8c4-dc0c0c07398f"] {
+        assert(Uuid.parse(&invalid).unwrap().v7_unix_millis().is_none(), "reject wrong version or variant")
+    }
+    let earlier = at(1000)
+    let later = at(1001)
+    assert(earlier.compare(later) == -1 && later.compare(earlier) == 1, "millisecond ordering")
+    assert(earlier.compare(earlier) == 0, "equal comparison")
+    // A later call with an older timestamp keeps that timestamp: no hidden clamp.
+    let rolled_back = at(999)
+    assert(rolled_back.compare(earlier) == -1 && rolled_back.v7_unix_millis().unwrap() == 999, "clock rollback is preserved")
+    let nil = Uuid.parse("00000000-0000-0000-0000-000000000000").unwrap()
+    let low_high_bit = Uuid.parse("00000000-0000-0000-8000-000000000000").unwrap()
+    let high_high_bit = Uuid.parse("80000000-0000-0000-0000-000000000000").unwrap()
+    assert(nil.compare(low_high_bit) == -1 && low_high_bit.compare(nil) == 1, "unsigned low-half order")
+    assert(low_high_bit.compare(high_high_bit) == -1 && high_high_bit.compare(low_high_bit) == 1, "unsigned high-half order")
+    42
+}
+fn uuid_v7_invalid_time() -> Int32 {
+    for timestamp in [Timestamp.from_unix_nanos(-1).unwrap(), Timestamp.from_unix_secs(-62135596800).unwrap()] {
+        match uuid.v7_at(timestamp) {
+            Err(V7Error.InvalidTimestamp) => {}
+            _ => panic("Expected invalid v7 timestamp")
+        }
+    }
+    42
+}
+fn uuid_v7_pattern() -> Int32 {
+    // The test-only entropy source supplies 0x5a bytes.
+    let value = at(1645557742000)
+    assert(value.to_text() == "017f22e2-79b0-7a5a-9a5a-5a5a5a5a5a5a", "retain 74 entropy bits")
+    // Same time and same injected entropy produce the same value, without state.
+    assert(at(1645557742000).eq(value), "no hidden per-millisecond sequence")
+    42
+}
+fn uuid_v7_failure() -> Int32 {
+    match uuid.v7_at(Timestamp.from_unix_secs(0).unwrap()) {
+        Err(V7Error.Random(RandomError.Unavailable)) => {}
+        _ => panic("Expected v7 entropy failure")
+    }
+    match uuid.v7() {
+        Err(V7Error.Random(RandomError.Unavailable)) => 42
+        _ => panic("Expected current-time v7 entropy failure")
+    }
+}
+fn uuid_v7_secure() -> Int32 {
+    let before = Timestamp.now().as_unix_millis()
+    let value = uuid.v7().unwrap()
+    let after = Timestamp.now().as_unix_millis()
+    let millis = value.v7_unix_millis().unwrap()
+    let lower = if before < after { before } else { after }
+    let upper = if before < after { after } else { before }
+    assert(millis >= lower && millis <= upper, "current wall-clock milliseconds")
+    42
+}
+fn uuid_v7_repeated() -> Int32 {
+    for i in 0 .. 128 {
+        let value = at(int64(i))
+        let text = value.to_text()
+        assert(Uuid.parse(&text).unwrap().v7_unix_millis().unwrap() == int64(i), "bounded generation")
+    }
+    42
+}
+fn uuid_v7_pending() @suspends -> Int32 {
+    let value = at(1645557742000)
+    let text = value.to_text()
+    task.yield_now()
+    assert(Uuid.parse(&text).unwrap().eq(value), "v7 survives suspension")
+    42
+}
+fn uuid_v7_parallel() @suspends -> Int32 {
+    assert(uuid_v7_secure() == 42 && uuid_v7_values() == 42, "worker v7")
+    uuid_v7_pending()
+}

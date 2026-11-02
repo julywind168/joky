@@ -1,4 +1,4 @@
-import joky/uuid.{ type Uuid }
+import joky/uuid.{ type Uuid, type V7Error }
 import joky/map.{ type Map }
 import joky/result.{ Ok, Err }
 import joky/io.{ println }
@@ -17,5 +17,14 @@ fn main() {
             println(requests.borrow_ref(id))
         }
         Err(_) => println("Secure randomness unavailable")
+    }
+
+    match uuid.v7() {
+        Ok(id) => {
+            println(id)
+            println(id.v7_unix_millis().unwrap())
+        }
+        Err(V7Error.InvalidTimestamp) => println("Wall clock is before the Unix epoch")
+        Err(V7Error.Random(_)) => println("Secure randomness unavailable")
     }
 }

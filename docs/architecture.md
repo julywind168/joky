@@ -2070,8 +2070,11 @@ JIT/AOT 经 `__joky_buffer_random_fill` 调用，解释器调用同一个 Buffer
 两个字段分别表示网络字节序下的高低 64 位；字节转换通过移位拼接，文本解析和格式化使用普通源码。
 Eq 比较完整 128 位，Hash 混合两个半字并通过既有 blanket impl 参与借用键协议，Show 输出规范文本。
 `v4()` 复用 `random.secure_bytes(16)`，只覆盖版本和变体六个位；临时字节 Array 在返回时按拥有语义清理。
+`v7_at()` 验证 Timestamp 的毫秒值后复用 v4 的系统熵源及 RFC 变体设置，以时间戳覆盖高 48 位，
+设置版本 7 并保留 74 个随机位。`v7()` 只读取一次 Timestamp.now，再转入同一路径。
+不引入全局生成器状态或时钟回拨补偿；纯源码比较使用两个 UInt64 的无符号顺序，时间戳提取先校验版本与变体。
 Uuid 本身不持有随机数组或输入文本，输出 String / FixedArray 使用既有存储与清理机制。
-没有新增宿主绑定、依赖或后端 ABI。接口与错误契约见[语言参考](language.md#uuid-jokyuuid)。
+没有新增宿主绑定、第三方依赖或后端 ABI。接口与错误契约见[语言参考](language.md#uuid-jokyuuid)。
 
 ## Continuation 与调度
 

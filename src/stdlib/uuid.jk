@@ -3,6 +3,8 @@ import joky/fixed_array.{ type FixedArray }
 import joky/slice.{ type Slice }
 import joky/string.{ type StringBuilder }
 import joky/random.{ type RandomError }
+import joky/time.{ type Timestamp }
+import joky/option.{ type Option, Some, None }
 import joky/result.{ type Result, Ok, Err }
 import joky/eq.{ type Eq }
 import joky/hash.{ type Hash }
@@ -11,6 +13,7 @@ import joky/show.{ type Show }
 // Logical network-order halves, independent of native integer endianness.
 pub struct Uuid { high: UInt64, low: UInt64 }
 pub enum ParseError { InvalidLength, InvalidByte(UInt64) }
+pub enum V7Error { InvalidTimestamp, Random(RandomError) }
 
 fn nibble(byte: UInt8) -> UInt64 {
     if byte >= 48 && byte <= 57 { uint64(byte - 48) }
@@ -20,6 +23,15 @@ fn nibble(byte: UInt8) -> UInt64 {
 }
 fn digit(value: UInt8) -> UInt8 { if value < 10 { 48 + value } else { 97 + value - 10 } }
 impl Uuid {
+    // Unsigned network-byte ordering, also the canonical text ordering.
+    pub fn compare(self, other: Uuid) -> Int32 {
+        if self.high < other.high { -1 } else if self.high > other.high { 1 }
+        else if self.low < other.low { -1 } else if self.low > other.low { 1 } else { 0 }
+    }
+    pub fn v7_unix_millis(self) -> Option<Int64> {
+        if (self.high >> 12) & 15 != 7 || self.low >> 62 != 2 { None }
+        else { Some(int64(self.high >> 16)) }
+    }
     pub fn from_bytes(bytes: &FixedArray<UInt8, 16>) -> Uuid {
         var high: UInt64 = 0
         var low: UInt64 = 0
@@ -91,6 +103,21 @@ pub fn v4() -> Result<Uuid, RandomError> {
                     low: (value.low & 0x3fffffffffffffff) | 0x8000000000000000
                 })
         }
+    }
+}
+
+// RFC 9562 section 5.7: no shared state or within-millisecond counter.
+pub fn v7() -> Result<Uuid, V7Error> { v7_at(Timestamp.now()) }
+pub fn v7_at(timestamp: Timestamp) -> Result<Uuid, V7Error> {
+    let millis = timestamp.as_unix_millis()
+    if millis < 0 || millis > 281474976710655 { return Err(V7Error.InvalidTimestamp) }
+    // Reuse the entropy acquisition and RFC variant setting from v4.
+    match v4() {
+        Err(error) => Err(V7Error.Random(error))
+        Ok(value) => Ok(Uuid {
+                high: (uint64(millis) << 16) | 0x7000 | (value.high & 0x0fff),
+                low: value.low
+            })
     }
 }
 impl Eq for Uuid { fn eq(self, other: Uuid) -> Bool { self.high == other.high && self.low == other.low } }

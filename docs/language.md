@@ -6138,6 +6138,10 @@ Hash 输出只用于容器查找，不是持久化编码或密码学摘要。
 | 接口 | 行为 |
 |------|------|
 | `uuid.v4() -> Result<Uuid, random.RandomError>` | 从系统安全随机源取 16 字节，设置版本 4 和 RFC 变体位；保留 122 个随机位 |
+| `uuid.v7() -> Result<Uuid, uuid.V7Error>` | 使用当前 `Timestamp.now()` 生成 v7 |
+| `uuid.v7_at(timestamp: Timestamp) -> Result<Uuid, uuid.V7Error>` | 使用指定时间生成 v7，毫秒以下向下取整，仍从系统安全随机源取随机位 |
+| `id.compare(other: Uuid) -> Int32` | 按无符号网络字节序比较完整 128 位，返回 -1、0 或 1；与规范小写文本的字典序相同 |
+| `id.v7_unix_millis() -> Option<Int64>` | 版本为 7 且变体为 RFC `10` 时读取 48 位 Unix 毫秒；其他值返回 None |
 | `Uuid.parse(text: &String) -> Result<Uuid, uuid.ParseError>` | 只接受 36 字节的 `8-4-4-4-12` 十六进制连字符格式；接受大小写混合 |
 | `id.to_text() -> String` | 返回拥有型字符串，固定小写标准格式 |
 | `Uuid.from_bytes(bytes: &FixedArray<UInt8, 16>) -> Uuid` | 从固定 16 字节构造，输入仍可用 |
@@ -6146,7 +6150,7 @@ Hash 输出只用于容器查找，不是持久化编码或密码学摘要。
 
 字节转换按文本从左到右的网络字节序，与宿主整数端序无关；不采用 Windows GUID 的混合端序。
 解析与字节转换保存任意 128 位值，不限制版本或变体，包含全零 Nil、全一 Max 和其他版本；
-只有 `v4()` 承诺生成 v4。当前不提供其他版本生成器。
+`v4()` 和 `v7()` / `v7_at()` 分别保证相应版本。当前不提供其他版本生成器。
 
 `ParseError` 有 `InvalidLength` 和 `InvalidByte(offset)`。文本先检查总字节数，再从左到右检查
 十六进制字符和四个连字符位置；offset 是原输入中从零开始的 UTF-8 字节偏移。
@@ -6156,7 +6160,20 @@ Hash 输出只用于容器查找，不是持久化编码或密码学摘要。
 v4 遵循 [RFC 9562 §5.4](https://www.rfc-editor.org/rfc/rfc9562.html#section-5.4)，
 复用 `random.secure_bytes` 的失败契约：熵源不可用返回 `RandomError.Unavailable`，
 不回退到普通 Rng、不返回部分 UUID；容量和分配失败仍为终止性 ResourceLimit 错误。
-生成不维护全局状态，也不提供生成顺序或绝对无碰撞保证。
+
+v7 使用 [RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562.html#section-5.7) 的随机方案：
+前 48 位是 Unix 毫秒，除版本和变体位外的其余 74 位为安全随机位。
+时间戳不同的 v7 按毫秒排序；**同毫秒内不保证生成顺序，时钟回拨后生成值也可能小于先前值**。
+每次调用独立取随机数，不维护全局计数器，也不做跨 worker 顺序协调，不承诺严格单调或绝对无碰撞。
+`v7_at()` 可用于传入业务时间或可控时钟；相同时间不意味着确定性结果。
+
+`V7Error.InvalidTimestamp` 表示时间不能放进非负 48 位 Unix 毫秒字段；验证先于随机数请求。
+当前 Timestamp 范围为公元 0001..9999，因此实际接受 1970..9999，拒绝 epoch 之前的时间，
+包括 `1969-12-31T23:59:59.999999999Z`。`V7Error.Random(error)` 包装原始 RandomError，
+没有普通 Rng 回退或部分结果；分配、取消和 Timestamp.now 的终止性错误仍走现有任务失败通道。
+
+从外部 UUID 读取的 v7 时间戳可以达到 `281474976710655` 毫秒；
+这超过当前 Timestamp 的公历上限，转为 Timestamp 时仍须处理 `Timestamp.from_unix_millis` 返回 None。
 可运行示例见 [uuid.jk](../examples/uuid.jk)。
 
 ## 内置标准库 `joky/task`

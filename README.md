@@ -51,7 +51,8 @@ fn main() {
   同一种子与调用顺序在三个后端上可复现。示例：[random.jk](examples/random.jk)。
 - `joky/hex` 与 `joky/base64` 提供字节与文本编解码，包含 URL-safe/无填充配置、严格校验和错误字节偏移；
   可直接将安全随机字节编码为 token。示例：[codecs.jk](examples/codecs.jk)。
-- `joky/uuid` 提供系统安全随机源生成的 UUID v4、严格标准文本解析、16 字节转换和 Map 键支持。
+- `joky/uuid` 提供系统安全随机源生成的 UUID v4 / v7、严格标准文本解析、16 字节转换和 Map 键支持。
+  v7 使用毫秒时间戳前缀，支持比较与时间戳读取；同毫秒内不保证生成顺序。
   示例：[uuid.jk](examples/uuid.jk)。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
   支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
