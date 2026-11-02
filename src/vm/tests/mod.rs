@@ -414,3 +414,6 @@ mod uuid_tests;
 
 #[path = "language/crypto_tests.rs"]
 mod crypto_tests;
+
+#[path = "language/password_tests.rs"]
+mod password_tests;

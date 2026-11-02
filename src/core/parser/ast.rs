@@ -919,6 +919,7 @@ pub(crate) enum BufferIntrinsic {
     Sha256Finish,
     HmacSha256Finish,
     HmacSha256Verify,
+    PasswordNeedsRehash,
     TakeLast,
     SwapElements,
     Len,

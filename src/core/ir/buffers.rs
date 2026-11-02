@@ -85,7 +85,7 @@ impl BufferIntrinsic {
             _ => None,
         }
     }
-    pub(crate) const ALL: [Self; 59] = [
+    pub(crate) const ALL: [Self; 60] = [
         Self::Allocate,
         Self::Transfer,
         Self::AppendBytes,
@@ -102,6 +102,7 @@ impl BufferIntrinsic {
         Self::Sha256Finish,
         Self::HmacSha256Finish,
         Self::HmacSha256Verify,
+        Self::PasswordNeedsRehash,
         Self::TakeLast,
         Self::SwapElements,
         Self::Len,
@@ -260,6 +261,7 @@ impl BufferIntrinsic {
                 | Self::Sha256Finish
                 | Self::HmacSha256Finish
                 | Self::HmacSha256Verify
+                | Self::PasswordNeedsRehash
         )
     }
     /// Validate the two initialized Array columns before reading their handles.
@@ -378,6 +380,7 @@ impl BufferIntrinsic {
             ),
             Self::Utf8Prefix => (vec![Type::reference(slice, false)], Type::UInt64),
             Self::RandomFill => (vec![Type::reference(slice, true)], Type::Bool),
+            Self::PasswordNeedsRehash => (vec![Type::reference(slice, false)], Type::UInt64),
             Self::Sha256New => (vec![], Type::Resource("crypto.Sha256Owner".into())),
             Self::HmacSha256New => (
                 vec![Type::reference(slice, false)],
@@ -600,6 +603,7 @@ impl BufferIntrinsic {
             Self::RandomFill => "__joky_buffer_random_fill",
             Self::Sha256 => "__joky_buffer_sha256",
             Self::Sha256New => "__joky_buffer_sha256_new",
+            Self::PasswordNeedsRehash => "__joky_buffer_password_needs_rehash",
             Self::HmacSha256New => "__joky_buffer_hmac_sha256_new",
             Self::Sha256Update => "__joky_buffer_sha256_update",
             Self::HmacSha256Update => "__joky_buffer_hmac_sha256_update",

@@ -6169,9 +6169,56 @@ HMAC 构造完成后也可修改或释放原密钥。update 是同步操作，�
 状态和资源控制块计入任务内存预算，正常离开作用域、提前返回、失败及取消均走拥有型资源清理，
 不必等待根任务结束；finish 输出分配失败也会回收仍然存活的状态。
 
-当前没有截断 MAC 配置、密码派生或加密接口，也不改变调用者密钥存储的清理策略；
+`joky/crypto` 没有截断 MAC 配置、密码派生或加密接口，也不改变调用者密钥存储的清理策略；
 状态析构不承诺安全擦除密钥相关内存。
 可运行示例见 [crypto.jk](../examples/crypto.jk)。
+
+## 密码哈希 `joky/password`
+
+显式导入 `joky/password`，关闭 prelude 时也可用。密码存储使用专门的 Argon2id，
+不要直接用 SHA-256 或 HMAC 替代。接口返回 `Result<…, PasswordError>`：
+
+| 接口 | 行为 |
+|------|------|
+| `password.hash(password: String) @suspends -> Result<String, PasswordError>` | 使用新随机盐生成可存入数据库的完整 PHC 文本 |
+| `password.verify(password: String, encoded: String) @suspends -> Result<Bool, PasswordError>` | 读取 PHC 中的盐和参数，验证密码；内容不匹配为 `Ok(false)` |
+| `password.needs_rehash(encoded: &String) -> Result<Bool, PasswordError>` | 同步检查格式和成本限制，再判断是否低于当前生成策略；不验证密码、不执行 Argon2 |
+
+hash 和 verify 消费输入 String，可以跨挂起；需要保留时显式 clone。
+密码按 UTF-8 原始字节处理，允许空串、Unicode 与嵌入 NUL，不做规范化、截断或预哈希；
+上限是 1024 字节。是否允许空密码及其他账号策略由应用决定。
+
+生成固定使用 Argon2id v19、`m=19456` KiB（19 MiB）、`t=2`、`p=1`、
+16 字节操作系统安全随机盐和 32 字节输出。参数依据
+[OWASP 密码存储建议](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)，
+实现使用 [RustCrypto argon2 0.6.0](https://docs.rs/argon2/0.6.0/argon2/)。
+PHC 文本包含算法、版本、参数、盐和哈希，保存整串即可；每次 hash 都重新生成盐。
+
+验证仅接受显式版本 19 的 Argon2id，参数必须恰为 `m`、`t`、`p`，顺序可变。
+PHC 最长 512 字节，内存最多 65536 KiB、迭代最多 4 次、并行度最多 4；
+同时满足 Argon2 的下限约束（`t >= 1`、`p >= 1`、`m >= 8*p`），
+盐为 8–64 字节，输出为 16–64 字节。以上成本检查发生在申请工作区之前。
+默认任务预算还需容纳输入、输出、工作区及后台线程栈，达到参数上限不代表一定能在默认预算内执行。
+验证使用库提供的恒定时间哈希比较，不承诺不同参数或不同输入长度的整次调用耗时相同。
+
+`PasswordError` 包括 `InvalidHash`（格式错误或缺字段）、`UnsupportedAlgorithm`（算法或版本不支持）、
+`ParametersOutOfRange`（合法数字等参数超出支持范围）、`PasswordTooLong`、`Busy`、`RandomUnavailable`。
+分配或任务预算失败、线程启动或后台计算失败走任务运行时错误通道，不返回 `false`。
+解析存在多处错误时不保证错误优先级。
+
+needs_rehash 在内存小于 19456 KiB、迭代少于 2、盐短于 16 字节或输出短于 32 字节时返回 true；
+在上述验证范围内，更高成本不会仅因与默认值不同而被要求降级，`p` 不单独触发升级。
+登录流程先 verify，成功后再 needs_rehash；需要升级时重新 hash，并由应用更新数据库。
+该函数只检查元数据，不证明所存哈希正确，也不自动修改记录。
+
+JIT、解释器与 AOT 共用实现，支持 Local 和 Parallel 任务。每个链接的运行时最多同时运行 4 个后台作业，
+满额立即返回 Busy，不排队；服务可以在应用层限制登录并发并处理重试。
+计算期间调用任务挂起，后台只持有私有输入副本，工作区、密码副本、请求元数据和请求的 256 KiB 线程栈额度计入任务预算。
+取消会撤销结果投递，但当前 Argon2 调用不能中途打断：清理会等待该次计算及擦除结束，再回收预算。
+因此取消/超时清理可能阻塞执行线程，不承诺即时返回或严格的墙钟时限。
+私有密码副本和显式工作区退出时擦除；不承诺原始 String、调用者副本或全部第三方库临时存储的安全擦除。
+
+可运行示例见 [password.jk](../examples/password.jk)。
 
 ## UUID `joky/uuid`
 

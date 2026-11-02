@@ -64,9 +64,9 @@ pub(super) fn builtin(
         // File calls copy bytes and retain control-local proxy identities.
         // Native file tickets may outlive cancellation, never language addresses.
         Builtin::Fs(_) => Contract::Scoped,
-        // Resolver tickets own the host name and result; the error slot is
-        // written only by the polling task, never by a resolver worker.
-        Builtin::Dns => Contract::Scoped,
+        // DNS and password jobs own input copies and results; the error slot
+        // is written only by the polling task, never by a background worker.
+        Builtin::Dns | Builtin::Password => Contract::Scoped,
     })
 }
 

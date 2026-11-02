@@ -883,6 +883,7 @@ impl VmEngine {
                     Builtin::Domain(op) => HostEntry::Domain(*op),
                     Builtin::Tcp(op) => HostEntry::Tcp(*op),
                     Builtin::Fs(op) => HostEntry::Fs(*op),
+                    Builtin::Password => HostEntry::Password,
                     Builtin::Dns => {
                         crate::runtime::dns::initialize()?;
                         HostEntry::Dns
@@ -998,6 +999,7 @@ impl VmEngine {
                 | HostEntry::Tcp(_)
                 | HostEntry::Fs(_)
                 | HostEntry::Dns
+                | HostEntry::Password
                 | HostEntry::VmCall
                 | HostEntry::VmSource
                 | HostEntry::VmMigration(_) => {

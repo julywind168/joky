@@ -38,7 +38,7 @@ JIT 和 AOT 共享 `backends::native`，解释器直接消费 `core::ir`。内�
 两者的区别是数据边界，不是两套解析器。resolver 直接接收同一份声明快照；没有仅作转发的
 provider trait。标准库每线程初始化一次 registry，以 `Rc` 共享，裸指针和 owner 不要求 Send/Sync。
 
-`core::builtins` 集中识别 VM、TCP、DNS 与 domain 等受检运行时操作，统一签名与挂起约定校验入口、
+`core::builtins` 集中识别 VM、TCP、DNS、password 与 domain 等受检运行时操作，统一签名与挂起约定校验入口、
 结果槽数及借用权限所需的分类；各操作族继续维护具体签名规则。`FunctionInfo` 保存 `Builtin` 与
 `ExternAbi`，原生后端直接消费已确认的分类，不再按函数名重新识别。外部 ABI 区分标量、文本视图、
 文本 FFI、资源工厂、字节 I/O、同步 C 与挂起借用调用；它与内置操作身份独立，例如 `__vm_create`
@@ -2093,6 +2093,32 @@ update 原语独占借用资源、共享借用字节 Slice；finish/verify 的�
 finish 先检查输出布局与 32 字节长度再消费状态；verify 使用同一 Mac::verify_slice，
 无效 tag 也消费状态。输入指针不进入 token，跨挂起只保存上下文；错误与取消不暴露可继续使用的半更新状态。
 析构同步销毁状态并释放 token 与记账，不承诺密钥内存清零。JIT、解释器和 AOT 共用这些操作及资源清理路径。
+
+## Argon2id 密码作业边界
+
+`joky/password` 的 hash/verify 通过受检挂起内置 `__password_compute` 调用；签名固定为
+`(UInt64, String, String, &mut UInt64) -> Array<UInt8>`。编译器校验参数、返回类型和挂起标记，
+三个后端共用 runtime/password 的 poll/stop；Parallel 准入使用相同签名证据。
+状态槽只由调用任务写入，返回 Array 的拥有权沿既有 CPS 聚合结果路径交付。
+同步元数据原语 `buffer.password_needs_rehash` 仅借用 UInt8 Slice，不保存语言层地址。
+
+PHC 的长度、算法、版本、参数集合、盐和输出长度先检查，再取得全运行时最多 4 个作业的 Permit。
+请求在启动线程前 reserve_external：包括显式 Argon2 Block 工作区、私有密码字节、请求/计划/共享状态和
+请求的 256 KiB 栈额度；OS 的额外线程管理开销与栈取整不属于逐字节记账保证。
+工作区使用 fallible reserve，参数不进入自动分配工作区的便捷接口。
+输入复制后只把 Rust 拥有数据发送到线程；ExternalCharge 留在调用任务，不跨线程传递其 Rc 计数器。
+线程只运行一次计算，不建立无界队列；Permit 在线程退出时归还，启动失败也归还。
+
+共享 State 的互斥锁串行化结果发布、唤醒和取消。poll 读取结果并在所属任务内创建输出 Buffer；
+stop 撤销唤醒和结果投递，释放锁后 join，工作区与 Zeroizing 密码副本析构后才允许请求预算归还。
+已进入库的 Argon2 计算不能中断，因此取消路径可能等待计算结束并阻塞执行线程；
+只保证输入成本有界、线程不脱离请求寿命，不保证系统调度或墙钟截止。
+这也确保任务销毁或 AOT 卸载时没有仍运行该实现的后台线程。
+结果分配失败同样 stop/join；后台 panic 转换为 HostError，不被伪装成密码不匹配。
+
+verify 通过 PHC Output 的恒定时间比较检查完整输出。私有密码 Vec 和显式 Block 工作区使用 zeroize，
+原始语言 String、线程栈和库内部所有临时副本不在完整擦除保证内。
+生成策略、兼容范围、错误和升级判断见[语言参考](language.md#密码哈希-jokypassword)。
 
 ## UUID 值与生成
 

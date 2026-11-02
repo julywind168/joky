@@ -10,6 +10,7 @@ pub mod executor;
 pub(crate) mod float_env;
 pub(crate) mod isolate;
 pub mod parallel;
+pub(crate) mod password;
 pub mod reactor;
 pub mod scheduler;
 pub mod suspension;

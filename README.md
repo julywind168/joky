@@ -57,6 +57,8 @@ fn main() {
 - `joky/crypto` 提供 SHA-256、HMAC-SHA256 和完整 tag 的恒定时间校验，返回原始 32 字节，
   可直接接 Hex/Base64；`Sha256` / `HmacSha256` 支持跨挂起的流式更新与消费式完成。
   示例：[crypto.jk](examples/crypto.jk)。
+- `joky/password` 提供 Argon2id 密码哈希、PHC 验证与参数升级判断，使用随机盐和有界后台计算，
+  工作区计入任务内存预算。示例：[password.jk](examples/password.jk)。
 - `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
   支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
   VM、文件、目录、准入与邮箱通过任务树控制代理使用，业务 `when` 按完整域访问集在 worker 并行计算并统一提交，Godot 回调保持 Local；

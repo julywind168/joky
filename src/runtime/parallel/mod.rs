@@ -51,6 +51,7 @@ pub(crate) enum HostCode {
     Time(crate::stdlib::time::Operation),
     Tcp(super::tcp::Operation),
     Dns,
+    Password,
     Control(control::Operation),
 }
 impl Host {
@@ -74,6 +75,7 @@ impl Host {
                     control::Operation::Fs(op) => HostEntry::Fs(op),
                 },
             ),
+            HostCode::Password => (HostAbiKind::Scalar, HostEntry::Password),
             HostCode::Dns => (HostAbiKind::Scalar, HostEntry::Dns),
             HostCode::Tcp(op) => (HostAbiKind::Scalar, HostEntry::Tcp(op)),
             HostCode::Cps { entry, slots } => (
@@ -97,6 +99,19 @@ impl Host {
     }
     pub(crate) fn from_binding(binding: &super::bindings::HostBinding) -> Option<Self> {
         use super::bindings::{HostAbiKind, HostEntry};
+        if matches!(binding.entry, HostEntry::Password) {
+            if binding.abi != HostAbiKind::Scalar
+                || super::password::validate(&binding.signature, true).is_err()
+            {
+                return None;
+            }
+            return Some(Self {
+                name: "__password_compute".into(),
+                signature: binding.signature.clone(),
+                code: HostCode::Password,
+                _owner: std::sync::Arc::new(()),
+            });
+        }
         if matches!(binding.entry, HostEntry::Dns) {
             if binding.abi != HostAbiKind::Scalar
                 || super::dns::validate(&binding.signature, true).is_err()

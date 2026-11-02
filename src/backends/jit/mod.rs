@@ -235,6 +235,10 @@ pub(crate) fn compile(
             crate::runtime::tcp::poll_native as *const u8,
         )])
         .chain([(
+            "__joky_password_poll",
+            crate::runtime::password::poll_native as *const u8,
+        )])
+        .chain([(
             "__joky_dns_poll",
             crate::runtime::dns::poll_native as *const u8,
         )])

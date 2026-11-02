@@ -9,6 +9,7 @@ pub(crate) enum HostEntry {
     Direct(*const u8),
     Tcp(super::tcp::Operation),
     Dns,
+    Password,
     Fs(super::fs::Operation),
     VmCall,
     VmSource,

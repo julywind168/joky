@@ -1963,8 +1963,12 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 51] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 52] {
     [
+        (
+            "__joky_buffer_password_needs_rehash",
+            super::password::needs_rehash_native as *const u8,
+        ),
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
         ("__joky_buffer_utf8_prefix", bytes::utf8_prefix as *const u8),

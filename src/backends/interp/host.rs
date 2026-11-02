@@ -61,6 +61,7 @@ impl BoundHost {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Password
             | HostEntry::Tcp(_)
             | HostEntry::Fs(_)
             | HostEntry::Cps { .. }
@@ -85,6 +86,7 @@ impl BoundHost {
                 | HostEntry::VmMigration(_)
                 | HostEntry::Domain(_)
                 | HostEntry::Dns
+                | HostEntry::Password
                 | HostEntry::Tcp(_)
                 | HostEntry::Fs(_)
                 | HostEntry::Cps { .. }
@@ -214,6 +216,7 @@ impl HostPending {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Password
             | HostEntry::Tcp(_)
             | HostEntry::Fs(_)
             | HostEntry::BorrowingCps(_)
@@ -252,6 +255,7 @@ impl HostPending {
                     | HostEntry::VmMigration(_)
                     | HostEntry::Domain(_)
                     | HostEntry::Dns
+                    | HostEntry::Password
                     | HostEntry::Tcp(_)
                     | HostEntry::Fs(_)
                     | HostEntry::BorrowingCps(_)
@@ -319,8 +323,10 @@ impl HostPending {
         (matches!(
             self.host.binding.entry,
             HostEntry::Domain(crate::runtime::domain::Operation::OutboxMessageBytes)
-        ) || matches!(self.host.binding.entry, HostEntry::Dns)
-            || matches!(self.host.binding.entry, HostEntry::Fs(op) if op.returns_bytes())
+        ) || matches!(
+            self.host.binding.entry,
+            HostEntry::Dns | HostEntry::Password
+        ) || matches!(self.host.binding.entry, HostEntry::Fs(op) if op.returns_bytes())
             || matches!(
                 self.host.binding.entry,
                 HostEntry::Tcp(
@@ -471,8 +477,18 @@ impl HostPending {
                 },
             );
         }
-        if matches!(self.host.binding.entry, HostEntry::Dns) {
-            return unsafe { crate::runtime::dns::poll(arena, self.frame.as_mut()) }.map(|owner| {
+        if matches!(
+            self.host.binding.entry,
+            HostEntry::Dns | HostEntry::Password
+        ) {
+            return unsafe {
+                if matches!(self.host.binding.entry, HostEntry::Password) {
+                    crate::runtime::password::poll(arena, self.frame.as_mut())
+                } else {
+                    crate::runtime::dns::poll(arena, self.frame.as_mut())
+                }
+            }
+            .map(|owner| {
                 owner.map(|owner| {
                     self.frame.result = owner.as_ptr() as usize as u64;
                     Value::Reference(owner.as_ptr().cast())

@@ -551,6 +551,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_resource_poll_v1", vec![ptr, ptr], vec![types::I32]),
         ("__joky_dns_poll", vec![ptr], vec![types::I32]),
+        ("__joky_password_poll", vec![ptr], vec![types::I32]),
         ("__joky_vm_call", vec![ptr], vec![types::I32]),
         ("__joky_vm_source", vec![ptr], vec![types::I32]),
         ("__joky_vm_migration_open", vec![ptr], vec![types::I32]),
@@ -831,6 +832,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             ),
             BufferIntrinsic::Utf8Prefix => (vec![ptr], vec![types::I64]),
             BufferIntrinsic::RandomFill => (vec![ptr], vec![types::I8]),
+            BufferIntrinsic::PasswordNeedsRehash => (vec![ptr], vec![types::I64]),
             BufferIntrinsic::Sha256New => (vec![ptr], vec![ptr]),
             BufferIntrinsic::HmacSha256New => (vec![ptr, ptr], vec![ptr]),
             BufferIntrinsic::Sha256Update

@@ -301,6 +301,9 @@ pub(super) fn execute(
                         )?)
                     }
                     BufferIntrinsic::RandomFill => Value::Bool((*pointer(arg(0))?).fill_random()?),
+                    BufferIntrinsic::PasswordNeedsRehash => Value::UInt64(
+                        crate::runtime::password::needs_rehash((*pointer(arg(0))?).bytes()?),
+                    ),
                     BufferIntrinsic::Sha256New | BufferIntrinsic::HmacSha256New => {
                         let key = if *intrinsic == BufferIntrinsic::HmacSha256New {
                             Some(&*pointer(arg(0))?)

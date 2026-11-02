@@ -133,3 +133,6 @@ fn sha256_finish(state: &mut crypto.Sha256Owner, destination: &mut Slice<UInt8>)
 fn hmac_sha256_finish(state: &mut crypto.HmacSha256Owner, destination: &mut Slice<UInt8>)
 #intrinsic("buffer.hmac_sha256_verify")
 fn hmac_sha256_verify(state: &mut crypto.HmacSha256Owner, tag: &Slice<UInt8>) -> Bool
+
+#intrinsic("buffer.password_needs_rehash")
+fn password_needs_rehash(encoded: &Slice<UInt8>) -> UInt64

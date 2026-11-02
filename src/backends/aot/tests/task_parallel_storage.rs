@@ -70,6 +70,10 @@ fn linked_task_entries(
         "__joky_domain_poll_v4".into(),
         crate::runtime::domain::poll_native as *const u8,
     );
+    symbols.insert(
+        "__joky_password_poll".into(),
+        crate::runtime::password::poll_native as *const u8,
+    );
     let object = scratch.path().join("code.o");
     let bridge = scratch.path().join("bridge.o");
     let library = scratch.path().join("code.so");
@@ -2046,5 +2050,54 @@ fn crypto_aot_shared_runtime_repeated_outputs_and_parallel_cleanup() {
     drop(result);
     drop(task);
     pool.wait_closed();
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn password_aot_generated_jobs_cancel_fail_and_refund_budgets() {
+    let _serial = crate::runtime::password::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let (_scratch, entries, library) = linked_task_entries(
+        include_str!("../../../../tests/fixtures/password.jk"),
+        &["password_suite", "password_once", "password_failed"],
+        "password-shared",
+    );
+    let prepare = |index: usize, budget: TaskBudget| unsafe {
+        let entry = &entries[index];
+        entry
+            .prepare(
+                *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                library.clone(),
+                vec![],
+                vec![budget],
+            )
+            .unwrap()
+    };
+    let budget = TaskBudget::new(64 << 20);
+    let mut pool = crate::runtime::parallel::ParallelExecutor::new(2, 8).unwrap();
+    let task = prepare(0, budget.clone()).submit(&pool).unwrap();
+    task.wait().unwrap();
+    assert_eq!(
+        task.take_result().unwrap().value(),
+        &TaskValue::Scalar(crate::vm::InstanceValue::Int32(42))
+    );
+    drop(task);
+    let failed = prepare(2, budget.clone()).submit(&pool).unwrap();
+    failed.wait().unwrap();
+    assert_eq!(
+        failed.take_result().err().unwrap().code(),
+        crate::ErrorCode::RuntimeError
+    );
+    drop(failed);
+    pool.wait_closed();
+    assert_eq!(budget.used(), 0);
+    // Hold the worker so the first poll cannot race with completion.
+    let paused = crate::runtime::password::tests::pause_worker();
+    let mut pending = prepare(1, budget.clone()).start().unwrap();
+    assert!(!pending.resume().unwrap());
+    assert!(budget.used() > 256 * 1024);
+    drop(paused);
+    drop(pending);
     assert_eq!(budget.used(), 0);
 }

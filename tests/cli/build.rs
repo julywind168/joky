@@ -180,6 +180,7 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
 import joky/domain
 import joky/random
 import joky/crypto
+import joky/password
 import joky/hex
 import joky/check.{assert}
 import joky/io.{println}
@@ -205,6 +206,9 @@ fn main() @suspends {
     verifier.update(message.bytes())
     assert(verifier.verify(tag.slice(0, 32)), "Installed streaming HMAC backend")
     assert(crypto.verify_hmac_sha256(entropy.slice(0, 32), message.bytes(), tag.slice(0, 32)), "Installed HMAC backend")
+    let password_hash = password.hash("installed example password").unwrap()
+    assert(!password.needs_rehash(&password_hash).unwrap(), "Installed password policy")
+    assert(password.verify("installed example password", password_hash).unwrap(), "Installed Argon2id backend")
     task.sleep(250us)
     let deadline = domain.deadline_after(0ns)
     let (a, b) = join { | value(40, 2) | value(2, 0) }

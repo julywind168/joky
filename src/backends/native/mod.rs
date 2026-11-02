@@ -156,6 +156,7 @@ pub(crate) fn compile<M: Module>(
                 Builtin::VmCall | Builtin::VmSource | Builtin::VmMigration(_) => "vm",
                 Builtin::Domain(_) => "domain",
                 Builtin::Dns => "dns",
+                Builtin::Password => "password",
                 Builtin::Fs(_) => "fs",
                 Builtin::Tcp(_) => "tcp",
                 Builtin::Vm(_) | Builtin::Stdout | Builtin::Stderr => unreachable!(),
@@ -466,6 +467,9 @@ pub(crate) fn compile<M: Module>(
             match adapter {
                 Adapter::Builtin(builtin) => match builtin {
                     Builtin::Dns => lower::runtime_entry(&mut builder, &refs, "__joky_dns_poll"),
+                    Builtin::Password => {
+                        lower::runtime_entry(&mut builder, &refs, "__joky_password_poll")
+                    }
                     Builtin::VmCall => lower::runtime_entry(&mut builder, &refs, "__joky_vm_call"),
                     Builtin::VmMigration(op) => {
                         lower::runtime_entry(&mut builder, &refs, op.symbol())
