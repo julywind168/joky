@@ -6795,6 +6795,11 @@ HTTPS 使用 `http.serve_tls(listener, config, &stop, options, handler)`。它�
 以该数据库角色执行 SQL；嵌入多个 VM 时共享此配置。缺省要求 verify-full（验证 CA 和主机名），可在受信任连接串中指定
 `sslrootcert`。本地测试库可显式使用 `?sslmode=disable`。DSN 不传给 Joky 查询接口或错误消息。
 
+数据库角色和密码可写在连接串中，如 `postgresql://orders_app:PASSWORD@db.example.com:5432/orders?sslmode=verify-full`。
+密码中的 URI 保留字符需要百分号编码。PostgreSQL 按匹配的 pg_hba.conf 规则决定认证方式；
+要求密码时可配置 scram-sha-256。SQLx 使用提供的凭据完成认证，建池时认证失败返回 Unavailable。
+verify-full 用来验证数据库服务器证书和主机名。订单示例中的固定客户编号属于 HTTP 业务层，与数据库角色分开。
+
 | 操作（均可挂起） | 行为 |
 | --- | --- |
 | `postgres.open(max_connections)` | 建立 SQLx PgPool，返回 Result<Pool, DbError>。容量 1–32，获取连接期限 5s |

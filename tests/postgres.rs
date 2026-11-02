@@ -8,7 +8,7 @@ use std::{
     fs,
     io::{Read, Write},
     net::{Shutdown, TcpListener, TcpStream},
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -27,19 +27,40 @@ fn checked(cmd: &mut Command) {
 struct Cluster {
     data: PathBuf,
     port: u16,
+    password: String,
 }
 impl Cluster {
     fn start(root: &Path) -> Self {
         let data = root.join("pgdata");
-        checked(Command::new("initdb").arg("-D").arg(&data).args([
-            "-A",
-            "trust",
-            "-U",
-            "postgres",
-            "--no-locale",
-            "-E",
-            "UTF8",
-        ]));
+        let mut secret = [0u8; 24];
+        getrandom::fill(&mut secret).unwrap();
+        let password: String = secret.iter().map(|b| format!("{b:02x}")).collect();
+        let pwfile = root.join("initdb-password");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&pwfile)
+            .unwrap();
+        writeln!(file, "{password}").unwrap();
+        drop(file);
+        checked(
+            Command::new("initdb")
+                .arg("-D")
+                .arg(&data)
+                .args([
+                    "-A",
+                    "scram-sha-256",
+                    "-U",
+                    "postgres",
+                    "--no-locale",
+                    "-E",
+                    "UTF8",
+                    "--pwfile",
+                ])
+                .arg(&pwfile),
+        );
+        fs::remove_file(pwfile).unwrap();
         let port = TcpListener::bind(("127.0.0.1", 0))
             .unwrap()
             .local_addr()
@@ -73,7 +94,17 @@ impl Cluster {
                 .arg(root.join("server.log"))
                 .args(["-w", "start"]),
         );
-        Self { data, port }
+        Self {
+            data,
+            port,
+            password,
+        }
+    }
+    fn url(&self, port: u16) -> String {
+        format!(
+            "postgres://postgres:{}@127.0.0.1:{port}/postgres?sslmode=disable",
+            self.password
+        )
     }
 }
 impl Drop for Cluster {
@@ -84,9 +115,6 @@ impl Drop for Cluster {
             .args(["-m", "immediate", "-w", "stop"])
             .output();
     }
-}
-fn url(port: u16) -> String {
-    format!("postgres://postgres@127.0.0.1:{port}/postgres?sslmode=disable")
 }
 fn joky(root: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_joky"));
@@ -169,7 +197,24 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     let work = scratch::ScratchDir::new("pg-driver");
     let dir = work.path();
     let cluster = Cluster::start(dir);
-    let direct = url(cluster.port);
+    let direct = cluster.url(cluster.port);
+    fs::write(dir.join("denied.jk"),r#"import joky/postgres fn main() @suspends {
+        assert(match postgres.open(1) { Err(Unavailable) => true, _ => false }, "database must reject the credentials")
+    }"#).unwrap();
+    for userinfo in ["postgres:wrong", "postgres"] {
+        let bad = format!(
+            "postgres://{userinfo}@127.0.0.1:{}/postgres?sslmode=disable",
+            cluster.port
+        );
+        bounded(
+            joky(dir)
+                .args(["run", "denied.jk"])
+                .env("JOKY_POSTGRES_URL", bad)
+                .env_remove("PGPASSWORD")
+                .env("PGPASSFILE", dir.join("no-password-file")),
+            dir,
+        );
+    }
     fs::write(dir.join("driver.jk"), include_str!("fixtures/postgres.jk")).unwrap();
     for args in [
         vec!["run", "driver.jk"],
@@ -194,7 +239,8 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         joky(dir).args(["run", "verified.jk"]).env(
             "JOKY_POSTGRES_URL",
             format!(
-                "postgres://postgres@127.0.0.1:{}/postgres?sslrootcert={}",
+                "postgres://postgres:{}@127.0.0.1:{}/postgres?sslrootcert={}",
+                cluster.password,
                 cluster.port,
                 dir.join("ca.pem").display()
             ),
@@ -221,7 +267,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     bounded(
         joky(dir)
             .args(["run", "lost.jk"])
-            .env("JOKY_POSTGRES_URL", url(port)),
+            .env("JOKY_POSTGRES_URL", cluster.url(port)),
         dir,
     );
     proxy.join().unwrap();
@@ -250,7 +296,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     bounded(
         joky(dir)
             .args(["run", "auto.jk"])
-            .env("JOKY_POSTGRES_URL", url(port)),
+            .env("JOKY_POSTGRES_URL", cluster.url(port)),
         dir,
     );
     proxy.join().unwrap();
@@ -308,7 +354,7 @@ fn http_orders_replay_after_lost_response_and_concurrent_requests() {
     let work = scratch::ScratchDir::new("http-orders");
     let dir = work.path();
     let cluster = Cluster::start(dir);
-    let direct = url(cluster.port);
+    let direct = cluster.url(cluster.port);
     for (name, src) in [
         (
             "postgres_orders.jk",
@@ -423,7 +469,7 @@ fn main() @suspends {
     let (proxy_port, proxy) = lose_ack(cluster.port, b"COMMIT\0");
     let mut cmd = joky(dir);
     cmd.args(["run", "--interpreter", "lost_ack_http.jk"])
-        .env("JOKY_POSTGRES_URL", url(proxy_port));
+        .env("JOKY_POSTGRES_URL", cluster.url(proxy_port));
     let mut faulty = tcp_server::Running::start(cmd);
     let unknown = post_order(
         orders_port(&faulty),
