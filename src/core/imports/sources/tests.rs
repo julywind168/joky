@@ -427,7 +427,10 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
     assert!(!result.exports.types.contains_key("Option"));
     assert!(!result.exports.constructors.contains_key("Some"));
     assert!(!result.exports.constructors.contains_key("None"));
-    assert_eq!(cache.modules["joky/option"].dependencies, ["joky/mem"]);
+    assert_eq!(
+        cache.modules["joky/option"].dependencies,
+        ["joky/check", "joky/mem"]
+    );
     assert_ne!(
         integer.module.implementations[0].methods[0].body.span(),
         Span::empty(0)
@@ -505,6 +508,13 @@ fn dependency_graph_rejects_cycles_missing_modules_and_implicit_prelude() {
             implicit: ImplicitImports::None,
         },
         definition("joky/option", include_str!("../../../stdlib/option.jk")),
+        SourceDefinition {
+            kind: SourceKind::Check,
+            path: "joky/check",
+            source: include_str!("../../../stdlib/check.jk"),
+            reexport_imports: false,
+            implicit: ImplicitImports::None,
+        },
         definition(
             "joky/integer",
             "impl Int32 { fn checked(self) -> Option<Int32> { Some(self) } }",

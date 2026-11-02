@@ -7,7 +7,7 @@ fn increment(value: Option<Int32>) -> Option<Int32> {
 
 fn main() {
     let maybe = Some(42)
-    if maybe.is_some() { println(maybe.unwrap_or(0)) }
+    if maybe.is_some() { println(maybe.unwrap()) }
     println(None::<Int32>.or(Some(7)).unwrap_or(0))
     println(maybe.and::<Int64>(Some(4294967295)).unwrap_or(0))
 

@@ -396,3 +396,66 @@ fn postfix_unwrap_resumes_once_and_joins_scopes_before_return() {
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
+
+#[test]
+fn option_unwrap_preserves_payloads_and_cleans_up_failed_tasks() {
+    use crate::runtime::{arena::LIVE, suspension::ResumeError};
+    let source = include_str!("../../../../tests/fixtures/option_unwrap.jk");
+    let clean = || LIVE.with(|n| assert_eq!(n.get(), 0));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(vm.call_int32_0("option_unwrap_values").unwrap(), 42);
+        clean();
+        for name in ["option_unwrap_none", "option_unwrap_unit_none"] {
+            let error = vm.call_int32_0(name).unwrap_err();
+            assert_eq!(error.code(), ErrorCode::RuntimeError);
+            assert!(
+                error.to_string().contains("Called Option.unwrap on None"),
+                "{error}"
+            );
+            clean();
+        }
+        for name in ["option_unwrap_pending", "option_unwrap_pending_none"] {
+            for finish in [false, true] {
+                let mut task = vm.call_async(name, &[]).unwrap();
+                assert!(!task.is_finished());
+                if finish {
+                    if name.ends_with("_none") {
+                        let ResumeError::Failed(error) = task.resume().unwrap_err() else {
+                            panic!()
+                        };
+                        assert_eq!(error.code(), ErrorCode::RuntimeError);
+                        assert!(
+                            error.to_string().contains("Called Option.unwrap on None"),
+                            "{error}"
+                        );
+                    } else {
+                        task.resume().unwrap();
+                        assert_eq!(task.cps_result(), Some(42));
+                    }
+                }
+                drop(task);
+                clean();
+            }
+        }
+        // A failed extraction does not poison later calls through the same VM.
+        assert_eq!(vm.call_int32_0("option_unwrap_values").unwrap(), 42);
+        clean();
+    }
+    #[cfg(unix)]
+    crate::backends::aot::tests::assert_sync_results(
+        &parser::parse(source).unwrap(),
+        &[
+            ("option_unwrap_values", Some(42)),
+            ("option_unwrap_none", None),
+            ("option_unwrap_unit_none", None),
+            ("option_unwrap_values", Some(42)),
+        ],
+    );
+    super::support::frontend_error(
+        "fn bad() { let value = Some(\"owned\"); value.unwrap(); value.unwrap(); }",
+        &crate::ModuleSources::new(),
+    );
+}

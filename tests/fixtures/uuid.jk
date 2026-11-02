@@ -33,9 +33,9 @@ fn uuid_values() -> Int32 {
     values.insert(decoded, 42)
     values.insert(nil, 1)
     values.insert(max, 2)
-    assert(values.len() == 3 && values.get(copy).unwrap_or(-1) == 42, "equal Map keys replace")
-    assert(values.get(nil).unwrap_or(-1) == 1 && values.get(max).unwrap_or(-1) == 2, "distinct Map keys")
-    assert(values.remove(value).unwrap_or(-1) == 42 && !values.contains_key(decoded), "Map removal")
+    assert(values.len() == 3 && values.get(copy).unwrap() == 42, "equal Map keys replace")
+    assert(values.get(nil).unwrap() == 1 && values.get(max).unwrap() == 2, "distinct Map keys")
+    assert(values.remove(value).unwrap() == 42 && !values.contains_key(decoded), "Map removal")
     42
 }
 fn bad(text: &String, offset: UInt64) {

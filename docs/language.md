@@ -2015,6 +2015,7 @@ Copy 实例仍可再次使用。运算符只识别标准库类型的声明身份
 | 方法 | 语义 |
 | --- | --- |
 | `take(&mut self) -> Option<T>` | 用 None 替换原值并返回旧 Option，支持 Copy 与拥有型载荷 |
+| `unwrap(self) -> T` | 消费 Option 并取出 Some 载荷；None 触发任务失败，报告 `Called Option.unwrap on None` |
 | `is_some(&self) -> Bool` / `is_none(&self) -> Bool` | 共享借用，判断当前变体，不读取或比较载荷 |
 | `unwrap_or(fallback: T) -> T` | Some 返回原载荷，None 返回 fallback |
 | `unwrap_or_else<F: FnOnce() -> T>(fallback: F) -> T` | Some 返回原载荷；仅 None 调用一次 fallback |
@@ -2023,6 +2024,9 @@ Copy 实例仍可再次使用。运算符只识别标准库类型的声明身份
 | `zip<U>(other: Option<U>) -> Option<(T, U)>` | 两边均为 Some 时返回载荷元组，否则返回 None |
 | `map<U, F: FnOnce(T) -> U>(transform: F) -> Option<U>` | Some 调用一次 transform，None 不调用 |
 | `and_then<U, F: FnOnce(T) -> Option<U>>(transform: F) -> Option<U>` | Some 返回回调结果，None 不调用 |
+
+Option 的 unwrap 不复制拥有型载荷；取值后原绑定已被消费，Copy 载荷仍遵循普通值复制规则。
+需要处理预期缺失时使用 match、`unwrap_or` 或 `unwrap_or_else`；None 的 unwrap 不返回默认值。
 
 `Result<T, E>`：
 

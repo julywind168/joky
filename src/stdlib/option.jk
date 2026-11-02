@@ -1,10 +1,19 @@
 import joky/mem
+import joky/check
 
 // The standard optional value. Qualified and imported constructors
 // retain the enum's nominal identity.
 enum Option<T> { None, Some(T) }
 
 impl<T> Option<T> {
+    // An explicit assertion for callers that consider absence a task failure.
+    fn unwrap(self) -> T {
+        match self {
+            Some(value) => value
+            None => { check.panic("Called Option.unwrap on None") }
+        }
+    }
+
     fn take(&mut self) -> Option<T> { mem.replace(self, None) }
 
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Option<U> {

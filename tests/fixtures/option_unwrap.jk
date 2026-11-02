@@ -1,0 +1,46 @@
+import joky/option.{ type Option, Some, None }
+import joky/array.{ type Array }
+import joky/fixed_array.{ type FixedArray }
+import joky/string
+import joky/task
+import joky/check.{ assert }
+
+fn option_unwrap_values() -> Int32 {
+    var calls = 0
+    let value = { calls += 1; Some(42) }.unwrap()
+    assert(value == 42 && calls == 1, "receiver evaluated once")
+    Some({}).unwrap()
+    let wide: UInt64 = 0xffffffffffffffff
+    assert(Some(wide).unwrap() == wide, "wide scalar")
+    let borrowed = Some(&value).unwrap()
+    assert(*borrowed == 42, "borrowed payload")
+    let text = Some("owned text").unwrap()
+    assert(text == "owned text", "owning string")
+    let array: Array<String> = ["first", "second"]
+    let owned = Some(array).unwrap()
+    assert(owned.len() == 2 && owned.borrow_ref(1) == "second", "owning array")
+    let fixed: FixedArray<String, 2> = ["third", "fourth"]
+    let restored = Some(fixed).unwrap()
+    assert(restored.borrow_ref(0) == "third", "owning fixed array")
+    let copy = Some(42)
+    assert(Option::<Int32>.unwrap(copy) == copy.unwrap(), "Copy receiver remains usable")
+    42
+}
+fn option_unwrap_none() -> Int32 {
+    let owner: Array<String> = ["cleanup on failure"]
+    let missing = None::<String>.unwrap()
+    int32(owner.len() + missing.byte_length())
+}
+fn option_unwrap_unit_none() -> Int32 { None::<Unit>.unwrap(); 0 }
+fn option_unwrap_pending() @suspends -> Int32 {
+    let value = Some("retained")
+    task.yield_now()
+    assert(value.unwrap() == "retained", "owner across suspension")
+    42
+}
+fn option_unwrap_pending_none() @suspends -> Int32 {
+    let owner = Some("cleanup")
+    task.yield_now()
+    let missing = None::<String>.unwrap()
+    int32(owner.unwrap().byte_length() + missing.byte_length())
+}
