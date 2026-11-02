@@ -1,4 +1,4 @@
-import joky/crypto
+import joky/crypto.{ type Sha256, type HmacSha256 }
 import joky/hex
 import joky/array.{ type Array }
 import joky/slice.{ type Slice }
@@ -6,6 +6,7 @@ import joky/option.{ type Option }
 import joky/result
 import joky/check.{ assert }
 import joky/task
+import joky/mem
 
 fn filled(byte: UInt8, count: UInt64) -> Array<UInt8> {
     var values = Array.with_capacity::<UInt8>(count)
@@ -15,12 +16,37 @@ fn filled(byte: UInt8, count: UInt64) -> Array<UInt8> {
 fn sha(input: &Slice<UInt8>, expected: &String) {
     let output = crypto.sha256(input)
     assert(output.len() == 32 && hex.encode(output.slice(0, 32)) == expected, "SHA-256 known answer")
+    var state = Sha256.new()
+    state.update(slice.slice(input, 0, 0))
+    var start: UInt64 = 0
+    for boundary in [uint64(1), 55, 56, 63, 64, 65, 16383, 16384] {
+        if boundary <= slice.len(input) {
+            state.update(slice.slice(input, start, boundary))
+            start = boundary
+        }
+    }
+    state.update(slice.slice(input, start, slice.len(input)))
+    let streamed = state.finish()
+    assert(hex.encode(streamed.slice(0, 32)) == expected, "streamed SHA-256 known answer")
 }
 fn mac(key: &Slice<UInt8>, input: &Slice<UInt8>, expected: &String) {
     let output = crypto.hmac_sha256(key, input)
     assert(output.len() == 32 && hex.encode(output.slice(0, 32)) == expected, "HMAC-SHA256 known answer")
     let decoded = hex.decode(expected).unwrap()
     assert(crypto.verify_hmac_sha256(key, input, decoded.slice(0, 32)), "verify independent expected tag")
+    var state = HmacSha256.new(key)
+    let split = slice.len(input) / 2
+    state.update(slice.slice(input, 0, split))
+    state.update(slice.slice(input, split, split))
+    state.update(slice.slice(input, split, slice.len(input)))
+    let streamed = state.finish()
+    assert(hex.encode(streamed.slice(0, 32)) == expected, "streamed HMAC known answer")
+    assert(stream_verify(key, input, decoded.slice(0, 32)), "stream verifies independent expected tag")
+}
+fn stream_verify(key: &Slice<UInt8>, input: &Slice<UInt8>, tag: &Slice<UInt8>) -> Bool {
+    var state = HmacSha256.new(key)
+    state.update(input)
+    state.verify(tag)
 }
 fn crypto_vectors() -> Int32 {
     let text = ""
@@ -60,6 +86,10 @@ fn crypto_vectors() -> Int32 {
 fn crypto_boundaries() -> Int32 {
     var bytes = Array.with_capacity::<UInt8>(16385)
     for i in uint64(0) .. 16385 { bytes.push(uint8(i % 251)) }
+    var whole = Sha256.new()
+    whole.update(bytes.slice(0, bytes.len()))
+    let whole = whole.finish()
+    assert(hex.encode(whole.slice(0, 32)) == "ba4f9b37402df1e3ad948a794ab43a9ed887d63e3a389c208ca4314fdd5add58", "large streaming update crosses runtime chunks")
     sha(bytes.slice(0, 55), "463eb28e72f82e0a96c0a4cc53690c571281131f672aa229e0d45ae59b598b59")
     sha(bytes.slice(0, 56), "da2ae4d6b36748f2a318f23e7ab1dfdf45acdc9d049bd80e59de82a60895f562")
     sha(bytes.slice(0, 63), "29af2686fd53374a36b0846694cc342177e428d1647515f078784d69cdb9e488")
@@ -82,17 +112,22 @@ fn crypto_verification_and_views() -> Int32 {
         let original = tag[i]
         tag[i] = original ^ 1
         assert(!crypto.verify_hmac_sha256(key.bytes(), input.bytes(), tag.slice(0, 32)), "reject mismatch at every position")
+        assert(!stream_verify(key.bytes(), input.bytes(), tag.slice(0, 32)), "stream rejects mismatch")
         tag[i] = original
     }
     let wrong_key = "kez"
     let wrong_input = "messagf"
     assert(!crypto.verify_hmac_sha256(wrong_key.bytes(), input.bytes(), tag.slice(0, 32)), "wrong key")
     assert(!crypto.verify_hmac_sha256(key.bytes(), wrong_input.bytes(), tag.slice(0, 32)), "wrong input")
+    assert(!stream_verify(wrong_key.bytes(), input.bytes(), tag.slice(0, 32)), "stream wrong key")
+    assert(!stream_verify(key.bytes(), wrong_input.bytes(), tag.slice(0, 32)), "stream wrong input")
     for length in [uint64(0), 16, 31] {
         assert(!crypto.verify_hmac_sha256(key.bytes(), input.bytes(), tag.slice(0, length)), "reject truncated tag")
+        assert(!stream_verify(key.bytes(), input.bytes(), tag.slice(0, length)), "stream rejects truncated tag")
     }
     tag.push(0)
     assert(!crypto.verify_hmac_sha256(key.bytes(), input.bytes(), tag.slice(0, 33)), "reject oversized tag")
+    assert(!stream_verify(key.bytes(), input.bytes(), tag.slice(0, 33)), "stream rejects oversized tag")
     let decorated = "!abc?"
     sha(slice.slice(decorated.bytes(), 1, 4), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     var original = hex.decode("616263").unwrap()
@@ -104,6 +139,7 @@ fn crypto_verification_and_views() -> Int32 {
     assert(crypto.verify_hmac_sha256(slice.slice(padded_key.bytes(), 1, 4), slice.slice(padded_input.bytes(), 1, 8), tag.slice(0, 32)), "nonzero input offsets")
     let padded_tag = [uint8(0), .. tag]
     assert(crypto.verify_hmac_sha256(key.bytes(), input.bytes(), padded_tag.slice(1, 33)), "nonzero tag offset")
+    assert(stream_verify(key.bytes(), input.bytes(), padded_tag.slice(1, 33)), "stream nonzero tag offset")
     let empty = ""
     let same = crypto.hmac_sha256(empty.bytes(), empty.bytes())
     assert(crypto.verify_hmac_sha256(empty.bytes(), empty.bytes(), same.slice(0, 32)), "empty inputs")
@@ -131,4 +167,94 @@ fn crypto_pending() @suspends -> Int32 {
 fn crypto_parallel() @suspends -> Int32 {
     assert(crypto_verification_and_views() == 42, "worker verification")
     crypto_pending()
+}
+
+fn crypto_stream_empty() -> Int32 {
+    let empty = ""
+    let hash = Sha256.new().finish()
+    assert(hex.encode(hash.slice(0, 32)) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "finish without update")
+    let tag = HmacSha256.new(empty.bytes()).finish()
+    assert(HmacSha256.new(empty.bytes()).verify(tag.slice(0, 32)), "verify without update")
+    42
+}
+fn crypto_stream_repeated() -> Int32 {
+    let key = "key"
+    let input = "abc"
+    for i in 0 .. 128 {
+        var state = Sha256.new()
+        state.update(input.bytes())
+        let hash = state.finish()
+        var state = HmacSha256.new(key.bytes())
+        state.update(hash.slice(0, 32))
+        let tag = state.finish()
+        assert(stream_verify(key.bytes(), hash.slice(0, 32), tag.slice(0, 32)), "bounded streaming states")
+        var unfinished = HmacSha256.new(key.bytes())
+        unfinished.update(input.bytes())
+        mem.drop(unfinished)
+    }
+    42
+}
+fn crypto_stream_pending() @suspends -> Int32 {
+    var key = filled(0xaa, 131)
+    let input = "abc"
+    let expected = crypto.hmac_sha256(key.slice(0, key.len()), input.bytes())
+    var hash = Sha256.new()
+    var mac = HmacSha256.new(key.slice(0, key.len()))
+    var verify = HmacSha256.new(key.slice(0, key.len()))
+    key[0] = 0
+    mem.drop(key)
+    var bytes = filled(97, 1)
+    hash.update(bytes.slice(0, 1))
+    mac.update(bytes.slice(0, 1))
+    verify.update(bytes.slice(0, 1))
+    bytes[0] = 0
+    mem.drop(bytes)
+    task.yield_now()
+    let tail = "bc"
+    hash.update(tail.bytes())
+    mac.update(tail.bytes())
+    verify.update(tail.bytes())
+    let hash = hash.finish()
+    let tag = mac.finish()
+    assert(hex.encode(hash.slice(0, 32)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "hash survives suspension without input borrow")
+    assert(hex.encode(tag.slice(0, 32)) == hex.encode(expected.slice(0, 32)), "HMAC key and chunks are not retained")
+    assert(verify.verify(expected.slice(0, 32)), "verification survives suspension")
+    42
+}
+fn crypto_stream_failed() @suspends -> Int32 {
+    let key = "secret"
+    var hash = Sha256.new()
+    var mac = HmacSha256.new(key.bytes())
+    hash.update(key.bytes())
+    mac.update(key.bytes())
+    task.yield_now()
+    assert(false, "fail with live streaming states")
+    42
+}
+fn hash_child(var state: Sha256) @suspends -> Sha256 {
+    task.yield_now()
+    let tail = "bc"
+    state.update(tail.bytes())
+    state
+}
+fn mac_child(var state: HmacSha256) @suspends -> HmacSha256 {
+    task.yield_now()
+    let tail = "bc"
+    state.update(tail.bytes())
+    state
+}
+fn crypto_stream_parallel() @suspends -> Int32 {
+    let key = "key"
+    let head = "a"
+    var hash = Sha256.new()
+    var mac = HmacSha256.new(key.bytes())
+    hash.update(head.bytes())
+    mac.update(head.bytes())
+    let (hash, mac) = join { | hash_child(hash) | mac_child(mac) }
+    let digest = hash.finish()
+    assert(hex.encode(digest.slice(0, 32)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "hash owner moves to child and back")
+    let input = "abc"
+    let expected = crypto.hmac_sha256(key.bytes(), input.bytes())
+    assert(mac.verify(expected.slice(0, 32)), "HMAC owner moves to child and back")
+    crypto_stream_pending()
 }

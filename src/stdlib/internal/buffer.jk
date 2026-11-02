@@ -118,3 +118,18 @@ fn entry_key<K, V>(entry: &Entry<(K, V)>) -> &K
 fn entry_value<K, V>(entry: &Entry<(K, V)>) -> &V
 #intrinsic("buffer.entry_value_mut")
 fn entry_value_mut<K, V>(entry: &mut Entry<(K, V)>) -> &mut V
+
+#intrinsic("buffer.sha256_new")
+fn sha256_new() -> crypto.Sha256Owner
+#intrinsic("buffer.hmac_sha256_new")
+fn hmac_sha256_new(key: &Slice<UInt8>) -> crypto.HmacSha256Owner
+#intrinsic("buffer.sha256_update")
+fn sha256_update(state: &mut crypto.Sha256Owner, input: &Slice<UInt8>)
+#intrinsic("buffer.hmac_sha256_update")
+fn hmac_sha256_update(state: &mut crypto.HmacSha256Owner, input: &Slice<UInt8>)
+#intrinsic("buffer.sha256_finish")
+fn sha256_finish(state: &mut crypto.Sha256Owner, destination: &mut Slice<UInt8>)
+#intrinsic("buffer.hmac_sha256_finish")
+fn hmac_sha256_finish(state: &mut crypto.HmacSha256Owner, destination: &mut Slice<UInt8>)
+#intrinsic("buffer.hmac_sha256_verify")
+fn hmac_sha256_verify(state: &mut crypto.HmacSha256Owner, tag: &Slice<UInt8>) -> Bool

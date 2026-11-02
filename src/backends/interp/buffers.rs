@@ -301,6 +301,40 @@ pub(super) fn execute(
                         )?)
                     }
                     BufferIntrinsic::RandomFill => Value::Bool((*pointer(arg(0))?).fill_random()?),
+                    BufferIntrinsic::Sha256New | BufferIntrinsic::HmacSha256New => {
+                        let key = if *intrinsic == BufferIntrinsic::HmacSha256New {
+                            Some(&*pointer(arg(0))?)
+                        } else {
+                            None
+                        };
+                        Value::Reference(
+                            crate::runtime::buffer::crypto::stream_new(arena, key)?
+                                .as_ptr()
+                                .cast(),
+                        )
+                    }
+                    BufferIntrinsic::Sha256Update | BufferIntrinsic::HmacSha256Update => {
+                        crate::runtime::buffer::crypto::stream_update(
+                            &mut *pointer(arg(0))?,
+                            &*pointer(arg(1))?,
+                            *intrinsic == BufferIntrinsic::HmacSha256Update,
+                        )?;
+                        Value::Unit
+                    }
+                    BufferIntrinsic::Sha256Finish | BufferIntrinsic::HmacSha256Finish => {
+                        crate::runtime::buffer::crypto::stream_finish(
+                            &mut *pointer(arg(0))?,
+                            &mut *pointer(arg(1))?,
+                            *intrinsic == BufferIntrinsic::HmacSha256Finish,
+                        )?;
+                        Value::Unit
+                    }
+                    BufferIntrinsic::HmacSha256Verify => {
+                        Value::Bool(crate::runtime::buffer::crypto::stream_verify(
+                            &mut *pointer(arg(0))?,
+                            &*pointer(arg(1))?,
+                        )?)
+                    }
                     BufferIntrinsic::Sha256 => {
                         (*pointer(arg(0))?).sha256(&*pointer(arg(1))?)?;
                         Value::Unit

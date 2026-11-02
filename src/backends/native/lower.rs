@@ -831,7 +831,14 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             ),
             BufferIntrinsic::Utf8Prefix => (vec![ptr], vec![types::I64]),
             BufferIntrinsic::RandomFill => (vec![ptr], vec![types::I8]),
-            BufferIntrinsic::Sha256 => (vec![ptr, ptr], vec![]),
+            BufferIntrinsic::Sha256New => (vec![ptr], vec![ptr]),
+            BufferIntrinsic::HmacSha256New => (vec![ptr, ptr], vec![ptr]),
+            BufferIntrinsic::Sha256Update
+            | BufferIntrinsic::HmacSha256Update
+            | BufferIntrinsic::Sha256Finish
+            | BufferIntrinsic::HmacSha256Finish
+            | BufferIntrinsic::Sha256 => (vec![ptr, ptr], vec![]),
+            BufferIntrinsic::HmacSha256Verify => (vec![ptr, ptr], vec![types::I8]),
             BufferIntrinsic::HmacSha256 => (vec![ptr, ptr, ptr], vec![]),
             BufferIntrinsic::VerifyHmacSha256 => (vec![ptr, ptr, ptr], vec![types::I8]),
             BufferIntrinsic::Truncate => (vec![ptr, ptr, types::I64], vec![]),
@@ -2332,7 +2339,9 @@ fn lower_ops(
                             values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
                             values.push(builder.ins().iconst(ptr_ty, layout.align as i64));
                         }
-                        BufferIntrinsic::Replace
+                        BufferIntrinsic::Sha256New
+                        | BufferIntrinsic::HmacSha256New
+                        | BufferIntrinsic::Replace
                         | BufferIntrinsic::Release
                         | BufferIntrinsic::Truncate => {
                             values.push(mode.arena());

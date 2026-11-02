@@ -85,7 +85,7 @@ impl BufferIntrinsic {
             _ => None,
         }
     }
-    pub(crate) const ALL: [Self; 52] = [
+    pub(crate) const ALL: [Self; 59] = [
         Self::Allocate,
         Self::Transfer,
         Self::AppendBytes,
@@ -95,6 +95,13 @@ impl BufferIntrinsic {
         Self::Sha256,
         Self::HmacSha256,
         Self::VerifyHmacSha256,
+        Self::Sha256New,
+        Self::HmacSha256New,
+        Self::Sha256Update,
+        Self::HmacSha256Update,
+        Self::Sha256Finish,
+        Self::HmacSha256Finish,
+        Self::HmacSha256Verify,
         Self::TakeLast,
         Self::SwapElements,
         Self::Len,
@@ -174,6 +181,8 @@ impl BufferIntrinsic {
         matches!(
             self,
             Self::Allocate
+                | Self::Sha256New
+                | Self::HmacSha256New
                 | Self::Slice
                 | Self::SliceMut
                 | Self::Subslice
@@ -244,6 +253,13 @@ impl BufferIntrinsic {
                 | Self::Sha256
                 | Self::HmacSha256
                 | Self::VerifyHmacSha256
+                | Self::Sha256New
+                | Self::HmacSha256New
+                | Self::Sha256Update
+                | Self::HmacSha256Update
+                | Self::Sha256Finish
+                | Self::HmacSha256Finish
+                | Self::HmacSha256Verify
         )
     }
     /// Validate the two initialized Array columns before reading their handles.
@@ -362,6 +378,52 @@ impl BufferIntrinsic {
             ),
             Self::Utf8Prefix => (vec![Type::reference(slice, false)], Type::UInt64),
             Self::RandomFill => (vec![Type::reference(slice, true)], Type::Bool),
+            Self::Sha256New => (vec![], Type::Resource("crypto.Sha256Owner".into())),
+            Self::HmacSha256New => (
+                vec![Type::reference(slice, false)],
+                Type::Resource("crypto.HmacSha256Owner".into()),
+            ),
+            Self::Sha256Update | Self::HmacSha256Update => (
+                vec![
+                    Type::reference(
+                        Type::Resource(
+                            if self == Self::Sha256Update {
+                                "crypto.Sha256Owner"
+                            } else {
+                                "crypto.HmacSha256Owner"
+                            }
+                            .into(),
+                        ),
+                        true,
+                    ),
+                    Type::reference(slice, false),
+                ],
+                Type::Unit,
+            ),
+            Self::Sha256Finish | Self::HmacSha256Finish => (
+                vec![
+                    Type::reference(
+                        Type::Resource(
+                            if self == Self::Sha256Finish {
+                                "crypto.Sha256Owner"
+                            } else {
+                                "crypto.HmacSha256Owner"
+                            }
+                            .into(),
+                        ),
+                        true,
+                    ),
+                    Type::reference(slice, true),
+                ],
+                Type::Unit,
+            ),
+            Self::HmacSha256Verify => (
+                vec![
+                    Type::reference(Type::Resource("crypto.HmacSha256Owner".into()), true),
+                    Type::reference(slice, false),
+                ],
+                Type::Bool,
+            ),
             Self::Sha256 => (
                 vec![
                     Type::reference(slice.clone(), true),
@@ -537,6 +599,13 @@ impl BufferIntrinsic {
             Self::Utf8Prefix => "__joky_buffer_utf8_prefix",
             Self::RandomFill => "__joky_buffer_random_fill",
             Self::Sha256 => "__joky_buffer_sha256",
+            Self::Sha256New => "__joky_buffer_sha256_new",
+            Self::HmacSha256New => "__joky_buffer_hmac_sha256_new",
+            Self::Sha256Update => "__joky_buffer_sha256_update",
+            Self::HmacSha256Update => "__joky_buffer_hmac_sha256_update",
+            Self::Sha256Finish => "__joky_buffer_sha256_finish",
+            Self::HmacSha256Finish => "__joky_buffer_hmac_sha256_finish",
+            Self::HmacSha256Verify => "__joky_buffer_hmac_sha256_verify",
             Self::HmacSha256 => "__joky_buffer_hmac_sha256",
             Self::VerifyHmacSha256 => "__joky_buffer_verify_hmac_sha256",
             Self::TakeLast => "__joky_buffer_take_last",

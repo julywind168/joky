@@ -1,19 +1,32 @@
-import joky/crypto
+import joky/crypto.{ type Sha256, type HmacSha256 }
 import joky/hex
 import joky/random
+import joky/task
 import joky/result.{ Ok, Err }
 import joky/io.{ println }
 
-fn main() {
+fn main() @suspends {
     let message = "hello"
-    let digest = crypto.sha256(message.bytes())
+    let head = "hel"
+    let tail = "lo"
+    var hash = Sha256.new()
+    hash.update(head.bytes())
+    task.yield_now()
+    hash.update(tail.bytes())
+    let digest = hash.finish()
     println(hex.encode(digest.slice(0, 32)))
 
     match random.secure_bytes(32) {
         Ok(key) => {
-            let tag = crypto.hmac_sha256(key.slice(0, key.len()), message.bytes())
+            var mac = HmacSha256.new(key.slice(0, key.len()))
+            mac.update(head.bytes())
+            task.yield_now()
+            mac.update(tail.bytes())
+            let tag = mac.finish()
             println(hex.encode(tag.slice(0, 32)))
-            println(crypto.verify_hmac_sha256(key.slice(0, key.len()), message.bytes(), tag.slice(0, 32)))
+            var verifier = HmacSha256.new(key.slice(0, key.len()))
+            verifier.update(message.bytes())
+            println(verifier.verify(tag.slice(0, 32)))
             let changed = "hello!"
             println(crypto.verify_hmac_sha256(key.slice(0, key.len()), changed.bytes(), tag.slice(0, 32)))
         }

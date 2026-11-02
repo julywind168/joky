@@ -2069,15 +2069,30 @@ JIT/AOT 经 `__joky_buffer_random_fill` 调用，解释器调用同一个 Buffer
 `joky/crypto` 用普通源码创建完整初始化的 32 字节 Array，独占借用输出 Slice 后调用私有
 `buffer.sha256` / `buffer.hmac_sha256`；校验用 `buffer.verify_hmac_sha256`，三个参数均为共享 Slice。
 编译器只接受精确的 UInt8 Slice 签名，输入与输出的冲突借用按既有规则拒绝。
-原语无 arena 参数、无逃逸或回调。JIT/AOT 调用 `__joky_buffer_*`，解释器调用同一 Buffer 实现；
+上述一次性原语无 arena 参数、无逃逸或回调。JIT/AOT 调用 `__joky_buffer_*`，解释器调用同一 Buffer 实现；
 原生 ABI 依次传递 Buffer 指针和来源 span，校验返回 UInt8 布尔值。
 
-RustCrypto SHA-256/HMAC 状态只存在于同步调用栈，不引入句柄、全局状态或输入副本。
+一次性 RustCrypto SHA-256/HMAC 状态只存在于同步调用栈，不引入全局状态或输入副本。
 输入布局和输出长度先验证，最终计算完成后才写入 32 字节；失败沿 located/解释器错误通道传播。
 消息以 BYTE_CHUNK 为单位更新；超过 64 字节的 HMAC 密钥先分块 SHA-256 归约，再交给 HMAC 库初始化，
 两条路径都在块边界及结束时检查 worker 取消。短密钥和最终化的工作量固定有界。
 校验只接受完整 32 字节，使用库的 `Mac::verify_slice`，不通过源码 Eq、Hex 文本或提前退出的逐字节循环比较。
 返回 false 与运行时失败保持区分。外部接口及恒定时间比较的范围见[语言参考](language.md#摘要与消息认证-jokycrypto)。
+
+流式 `Sha256` / `HmacSha256` 以私有 `crypto.Sha256Owner` / `crypto.HmacSha256Owner` Resource
+字段持有 RustCrypto 状态。`buffer.*_new` 接收隐藏 arena 参数，创建带预算记账的固定大小 token，
+再交给 Buffer::external；若事件或控制块创建失败，立即销毁 token 并退还预算。
+记账包含 token 与 ResourceEvent；本地状态用 ExternalCharge，并行状态用共享 Lease，
+跨 worker 转移前同时验证私有 release 回调、无活动资源借用和共享记账，禁止传递线程本地计数器。
+两种类型有 Transfer 而无 Share，通用资源的转移权限不变。
+
+update 原语独占借用资源、共享借用字节 Slice；finish/verify 的公开源码方法按值消费 self，
+内部原语独占借用资源，源码方法保持清理登记，在成功返回或失败时析构状态。
+运行时先验证回调身份，再取得独占 ResourceLease，
+检查算法和未完成状态；finish/verify 取走上下文，重复使用即运行时错误。
+finish 先检查输出布局与 32 字节长度再消费状态；verify 使用同一 Mac::verify_slice，
+无效 tag 也消费状态。输入指针不进入 token，跨挂起只保存上下文；错误与取消不暴露可继续使用的半更新状态。
+析构同步销毁状态并释放 token 与记账，不承诺密钥内存清零。JIT、解释器和 AOT 共用这些操作及资源清理路径。
 
 ## UUID 值与生成
 

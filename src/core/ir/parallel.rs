@@ -119,7 +119,8 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 Type::Resource(ref name)
                     if !share
                         && (crate::runtime::tcp::transferable_type(name)
-                            || crate::runtime::parallel::control::resource_type(name)) => {}
+                            || crate::runtime::parallel::control::resource_type(name)
+                            || crate::runtime::buffer::crypto::transferable_type(name)) => {}
                 Type::Named(ref name)
                     if matches!(name.as_str(), "domain.Handle" | "admission.Token") => {}
                 Type::String | Type::Function(_) => {}
@@ -612,6 +613,8 @@ mod tests {
         assert!(!qualify(&Type::Ptr).transfer);
         assert!(!qualify(&Type::Resource("HostResource".into())).share);
         for name in [
+            "crypto.Sha256Owner",
+            "crypto.HmacSha256Owner",
             "tcp.StreamOwner",
             "tcp.ListenerOwner",
             "tcp.ReaderOwner",

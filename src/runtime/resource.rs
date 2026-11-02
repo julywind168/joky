@@ -299,7 +299,8 @@ impl OwnedResource {
             // The private built-in callback proves the token layout before it
             // is inspected. Generic user factories never acquire this evidence.
             && unsafe { super::tcp::transferable(self.token, self.release)
-                || super::parallel::control::transferable(self.token, self.release) }
+                || super::parallel::control::transferable(self.token, self.release)
+                || super::buffer::crypto::transferable(self.token, self.release) }
     }
     pub(crate) fn lease(&self) -> Result<ResourceLease, Error> {
         use std::sync::atomic::Ordering;

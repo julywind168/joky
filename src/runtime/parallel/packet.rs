@@ -52,7 +52,8 @@ impl Shape {
                 Type::Buffer(_) | Type::DynTrait(_) => Shape::Buffer,
                 Type::Resource(name)
                     if (crate::runtime::tcp::transferable_type(name)
-                        || crate::runtime::parallel::control::resource_type(name)) =>
+                        || crate::runtime::parallel::control::resource_type(name)
+                        || crate::runtime::buffer::crypto::transferable_type(name)) =>
                 {
                     Shape::Buffer
                 }

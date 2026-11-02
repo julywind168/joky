@@ -1964,7 +1964,11 @@ fn uuid_aot_shared_runtime_failures_and_parallel_ownership() {
 fn crypto_aot_shared_runtime_repeated_outputs_and_parallel_cleanup() {
     let (_scratch, entries, library) = linked_task_entries(
         include_str!("../../../../tests/fixtures/crypto.jk"),
-        &["crypto_parallel"],
+        &[
+            "crypto_stream_parallel",
+            "crypto_stream_pending",
+            "crypto_stream_failed",
+        ],
         "crypto-shared",
     );
     struct Restore(usize);
@@ -1977,7 +1981,7 @@ fn crypto_aot_shared_runtime_repeated_outputs_and_parallel_cleanup() {
         let _restore = Restore(crate::runtime::arena::LIMIT.with(|n| n.replace(8192)));
         let entry = unsafe {
             library
-                .get::<unsafe extern "C" fn() -> i32>(b"crypto_repeated")
+                .get::<unsafe extern "C" fn() -> i32>(b"crypto_stream_repeated")
                 .unwrap()
         };
         assert_eq!(
@@ -1985,6 +1989,40 @@ fn crypto_aot_shared_runtime_repeated_outputs_and_parallel_cleanup() {
             42
         );
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+    // Poll to an actual suspension before dropping, so cancellation exercises
+    // live hash/MAC owners rather than only an unstarted frame.
+    for (index, finish) in [(1, false), (1, true), (2, true)] {
+        let entry = &entries[index];
+        let budget = TaskBudget::new(128 << 10);
+        let prepared = unsafe {
+            entry.prepare(
+                *library.get::<CpsEntry>(entry.symbol().as_bytes()).unwrap(),
+                library.clone(),
+                vec![],
+                vec![budget.clone()],
+            )
+        }
+        .unwrap();
+        let mut task = prepared.start().unwrap();
+        assert!(!task.resume().unwrap());
+        assert!(budget.used() > 0);
+        if finish {
+            if index == 2 {
+                assert_eq!(
+                    task.resume().unwrap_err().code(),
+                    crate::ErrorCode::RuntimeError
+                );
+            } else {
+                while !task.resume().unwrap() {}
+                assert_eq!(
+                    task.take_result().unwrap().value(),
+                    &TaskValue::Scalar(crate::vm::InstanceValue::Int32(42))
+                );
+            }
+        }
+        drop(task);
+        assert_eq!(budget.used(), 0);
     }
     let entry = &entries[0];
     let budget = TaskBudget::new(128 << 10);

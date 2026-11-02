@@ -32,7 +32,8 @@ impl Kind {
             }
             Type::Resource(name)
                 if (crate::runtime::tcp::transferable_type(name)
-                    || crate::runtime::parallel::control::resource_type(name)) =>
+                    || crate::runtime::parallel::control::resource_type(name)
+                    || crate::runtime::buffer::crypto::transferable_type(name)) =>
             {
                 Self::Resource
             }
@@ -131,7 +132,8 @@ pub(crate) fn classify(
             }
             Type::Resource(name)
                 if (crate::runtime::tcp::transferable_type(name)
-                    || crate::runtime::parallel::control::resource_type(name)) =>
+                    || crate::runtime::parallel::control::resource_type(name)
+                    || crate::runtime::buffer::crypto::transferable_type(name)) =>
             {
                 Vec::new()
             }

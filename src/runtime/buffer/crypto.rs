@@ -1,8 +1,10 @@
-//! Borrowed one-shot SHA-256 and HMAC-SHA256 using RustCrypto.
+//! SHA-256 and HMAC-SHA256 using RustCrypto.
+mod streaming;
 use super::{bounds_error, located, Buffer, Error, BYTE_CHUNK};
 use crate::runtime::parallel::pool::check_cancelled;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
+pub(crate) use streaming::*;
 
 type HmacSha256 = Hmac<Sha256>;
 fn digest(input: &[u8]) -> Result<[u8; 32], Error> {

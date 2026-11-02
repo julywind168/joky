@@ -21,3 +21,26 @@ pub fn hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>) -> Array<UInt8> {
 pub fn verify_hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>, tag: &Slice<UInt8>) -> Bool {
     buffer.verify_hmac_sha256(key, input, tag)
 }
+
+// Unique streaming states. Completing a stream consumes its owner.
+pub struct Sha256 { owner: crypto.Sha256Owner }
+impl Sha256 {
+    pub fn new() -> Self { Sha256 { owner: buffer.sha256_new() } }
+    pub fn update(&mut self, input: &Slice<UInt8>) { buffer.sha256_update(&mut self.owner, input) }
+    pub fn finish(var self) -> Array<UInt8> {
+        var bytes = output()
+        buffer.sha256_finish(&mut self.owner, bytes.slice_mut(0, 32))
+        bytes
+    }
+}
+pub struct HmacSha256 { owner: crypto.HmacSha256Owner }
+impl HmacSha256 {
+    pub fn new(key: &Slice<UInt8>) -> Self { HmacSha256 { owner: buffer.hmac_sha256_new(key) } }
+    pub fn update(&mut self, input: &Slice<UInt8>) { buffer.hmac_sha256_update(&mut self.owner, input) }
+    pub fn finish(var self) -> Array<UInt8> {
+        var bytes = output()
+        buffer.hmac_sha256_finish(&mut self.owner, bytes.slice_mut(0, 32))
+        bytes
+    }
+    pub fn verify(var self, tag: &Slice<UInt8>) -> Bool { buffer.hmac_sha256_verify(&mut self.owner, tag) }
+}

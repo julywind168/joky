@@ -6129,7 +6129,7 @@ offset 均为原输入的字节偏移。解码成功的 Base64 文本再用相�
 
 ## 摘要与消息认证 `joky/crypto`
 
-显式导入 `joky/crypto`，关闭 prelude 时也可用。首版提供一次性字节接口：
+显式导入 `joky/crypto`，关闭 prelude 时也可用。一次性字节接口：
 
 | 接口 | 行为 |
 |------|------|
@@ -6151,7 +6151,26 @@ verify 的 false 只表示长度或内容不匹配；运行时失败不会伪装
 底层使用 RustCrypto [sha2 0.11.1](https://docs.rs/sha2/0.11.1/sha2/) 与
 [hmac 0.13.0](https://docs.rs/hmac/0.13.0/hmac/)，三后端调用同一个实现。
 长输入及超过 SHA-256 块大小的密钥按块处理，在块边界检查任务取消；没有按输入长度增长的内部副本。
-当前没有流式状态对象、截断 MAC 配置、密码派生或加密接口，也不改变调用者密钥存储的清理策略。
+流式接口可用 `import joky/crypto.{ type Sha256, type HmacSha256 }` 导入：
+
+| 接口 | 行为 |
+|------|------|
+| `Sha256.new() -> Sha256` | 创建空 SHA-256 状态 |
+| `HmacSha256.new(key: &Slice<UInt8>) -> HmacSha256` | 创建已初始化密钥的 HMAC 状态，不保留 key 的借用 |
+| `update(&mut self, input: &Slice<UInt8>)` | 将当前分块追加到摘要；空分块允许，不保留输入借用 |
+| `finish(self) -> Array<UInt8>` | 消费任一种状态，返回独立拥有的 32 字节摘要或 tag |
+| `HmacSha256.verify(self, tag: &Slice<UInt8>) -> Bool` | 消费状态，校验完整 tag；长度或内容不匹配返回 false |
+
+按顺序多次 update 的结果等于对拼接字节调用一次性接口；未 update 直接 finish/verify 等于空消息。
+两种状态都是私有字段的非 Copy 拥有值，可以跨挂起、移动到并行子任务并返回，但不能共享可变状态。
+finish/verify 后继续使用会静态报错；verify 返回 false 同样消费状态。
+状态只保存固定大小的摘要上下文，不缓存完整输入；每次 update 结束后可修改或释放输入分块，
+HMAC 构造完成后也可修改或释放原密钥。update 是同步操作，按运行时分块检查取消，不主动挂起。
+状态和资源控制块计入任务内存预算，正常离开作用域、提前返回、失败及取消均走拥有型资源清理，
+不必等待根任务结束；finish 输出分配失败也会回收仍然存活的状态。
+
+当前没有截断 MAC 配置、密码派生或加密接口，也不改变调用者密钥存储的清理策略；
+状态析构不承诺安全擦除密钥相关内存。
 可运行示例见 [crypto.jk](../examples/crypto.jk)。
 
 ## UUID `joky/uuid`
