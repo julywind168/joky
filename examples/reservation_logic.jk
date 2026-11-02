@@ -1,105 +1,158 @@
-// Reserve locally, perform a read-only remote eligibility check, then settle.
-// Logical time is supplied explicitly to make expiry and cancellation reproducible.
+// Logical time is injected so expiry and retry boundaries are reproducible.
 import joky/domain
 import joky/task
 import joky/check
+import joky/uuid
+import joky/array.{type Array}
 
-struct Ticket { id: UInt64, amount: Int32 }
-enum Rejection { Busy, Insufficient, InvalidAmount }
+const HOLD_TICKS: UInt64 = 10
+const REPLAY_TICKS: UInt64 = 60
+const MAX_REQUESTS: UInt64 = 4
+
+struct Request { user: UInt64, id: uuid.Uuid, amount: Int32 }
+enum Reply { Processing, Confirmed(UInt64), Declined, Failed, Expired, Conflict, Busy, InvalidAmount, Insufficient }
+enum Admission { Start(UInt64), Return(Reply) }
 enum Decision { Accept, Reject, Fail }
+struct Entry { request: Request, ticket: UInt64, reply: Reply, until: UInt64 }
 #state
 struct Stock {
-    available: Int32,
-    sold: Int32,
-    reserved: Int32,
-    next_id: UInt64,
-    active_id: UInt64,
-    expires_at: UInt64,
+    available: Int32, sold: Int32, reserved: Int32,
+    next_id: UInt64, requests: Array<Entry>,
 }
 fn make_stock(_: Unit) -> Stock {
-    Stock { available: 100, sold: 0, reserved: 0, next_id: 1, active_id: 0, expires_at: 0 }
+    Stock { available: 100, sold: 0, reserved: 0, next_id: 1, requests: [] }
 }
 impl Stock {
     fn expire(&mut self, now: UInt64) {
-        if self.active_id != 0 && now >= self.expires_at {
-            self.available += self.reserved
-            self.reserved = 0
-            self.active_id = 0
+        var i: UInt64 = 0
+        while i < self.requests.len() {
+            var entry = self.requests[i]
+            if now < entry.until { i += 1; continue }
+            if let Processing = entry.reply {
+                self.available += entry.request.amount
+                self.reserved -= entry.request.amount
+                entry.reply = Reply.Expired
+                entry.until += REPLAY_TICKS
+                self.requests[i] = entry
+                if now < entry.until { i += 1; continue }
+            }
+            self.requests.swap_remove(i);
         }
     }
-    fn reserve(&mut self, amount: Int32, now: UInt64) -> Result<Ticket, Rejection> {
-        if amount <= 0 { return Err(Rejection.InvalidAmount) }
-        if self.active_id != 0 { return Err(Rejection.Busy) }
-        if amount > self.available { return Err(Rejection.Insufficient) }
-        let id = self.next_id
-        self.next_id += 1
-        self.available -= amount
-        self.reserved = amount
-        self.active_id = id
-        self.expires_at = now + 10
-        Ok(Ticket { id: id, amount: amount })
-    }
-    fn settle(&mut self, ticket: Ticket, accept: Bool, now: UInt64) -> Bool {
+    fn begin(&mut self, request: Request, now: UInt64) -> Admission {
         self.expire(now)
-        if self.active_id != ticket.id || self.reserved != ticket.amount { return false }
-        if accept { self.sold += self.reserved } else { self.available += self.reserved }
-        self.reserved = 0
-        self.active_id = 0
-        true
+        for entry in &self.requests {
+            if entry.request.user == request.user && entry.request.id.compare(request.id) == 0 {
+                if entry.request.amount != request.amount { return Return(Reply.Conflict) }
+                return Return(entry.reply)
+            }
+        }
+        if request.amount <= 0 { return Return(Reply.InvalidAmount) }
+        // Preserve every live replay record. A new caller can retry Busy later.
+        if self.requests.len() >= MAX_REQUESTS || self.reserved != 0 { return Return(Reply.Busy) }
+        if request.amount > self.available { return Return(Reply.Insufficient) }
+        let ticket = self.next_id
+        self.next_id += 1
+        self.available -= request.amount
+        self.reserved += request.amount
+        self.requests.push(Entry { request, ticket, reply: Reply.Processing, until: now + HOLD_TICKS })
+        Start(ticket)
+    }
+    fn settle(&mut self, ticket: UInt64, decision: Decision, now: UInt64) -> Reply {
+        self.expire(now)
+        for i, item in &self.requests {
+            if item.ticket == ticket {
+                var entry = *item
+                if let Processing = entry.reply {
+                    let amount = entry.request.amount
+                    self.reserved -= amount
+                    entry.reply = match decision {
+                        Accept => { self.sold += amount; Reply.Confirmed(ticket) }
+                        Reject => { self.available += amount; Reply.Declined }
+                        Fail => { self.available += amount; Reply.Failed }
+                    }
+                    entry.until = now + REPLAY_TICKS
+                    self.requests[i] = entry
+                }
+                return entry.reply
+            }
+        }
+        Reply.Expired
     }
 }
-fn eligibility(decision: Decision) @suspends -> Bool {
+fn begin(stock: domain.WriteHandle<Stock>, request: Request, now: UInt64) @suspends -> Admission {
+    when (mut stock) { stock.begin(request, now) }!
+}
+fn finish(stock: domain.WriteHandle<Stock>, ticket: UInt64, decision: Decision, now: UInt64) @suspends -> Reply {
+    when (mut stock) { stock.settle(ticket, decision, now) }!
+}
+fn eligibility(decision: Decision) @suspends -> Decision {
     task.yield_now()
-    match decision {
-        Accept => true
-        Reject => false
-        Fail => { check.panic("remote eligibility service failed") }
-    }
+    if let Fail = decision { check.panic("remote eligibility service failed") }
+    decision
 }
-fn purchase(stock: domain.WriteHandle<Stock>, decision: Decision, now: UInt64) @suspends {
-    let ticket = when (mut stock) { stock.reserve(10, now) }.unwrap()
-    // External work runs without holding any domain access permission.
-    let accepted = match isolate { eligibility(decision) } {
-        Ok(accepted) => accepted
-        Err(_) => false
-    }
-    check.assert(when (mut stock) { stock.settle(ticket, accepted, now + 1) }.unwrap(), "settled once")
-    check.assert(!when (mut stock) { stock.settle(ticket, accepted, now + 1) }.unwrap(), "duplicate ignored")
+fn purchase(stock: domain.WriteHandle<Stock>, request: Request, decision: Decision, now: UInt64) @suspends -> Reply {
+    let ticket = match begin(stock, request, now) { Start(id) => id, Return(reply) => return reply }
+    // Only the caller that created the hold runs the external read-only check.
+    let result = match isolate { eligibility(decision) } { Ok(value) => value, Err(_) => Decision.Fail }
+    finish(stock, ticket, result, now + 1)
 }
-fn abandoned(stock: domain.WriteHandle<Stock>) @suspends {
-    let ticket = when (mut stock) { stock.reserve(20, 100) }.unwrap()
-    task.sleep_ms(100000)
-    when (mut stock) { stock.settle(ticket, true, 101) };
+fn abandoned(stock: domain.WriteHandle<Stock>, request: Request) @suspends {
+    let ticket = match begin(stock, request, 100) { Start(id) => id, _ => check.panic("expected hold") }
+    task.sleep(60s)
+    finish(stock, ticket, Decision.Accept, 101);
 }
 fn stop_after_reservation(stock: domain.ReadHandle<Stock>) @suspends {
-    while when (stock) { stock.active_id == 0 }.unwrap() { task.yield_now() }
+    while when (stock) { stock.reserved == 0 }! { task.yield_now() }
 }
 fn assert_stock(stock: domain.ReadHandle<Stock>, available: Int32, sold: Int32, reserved: Int32) @suspends {
     check.assert(when (stock) {
         stock.available == available && stock.sold == sold && stock.reserved == reserved &&
-             stock.available + stock.sold + stock.reserved == 100
-    }.unwrap(), "stock conservation")
+            stock.available + stock.sold + stock.reserved == 100
+    }!, "stock conservation")
 }
 fn demo(_: Unit) @suspends {
     let owner = domain.create(make_stock, {})
     let stock = owner.handle()
     let read = owner.read_handle()
-    purchase(stock, Decision.Accept, 0)
-    purchase(stock, Decision.Reject, 10)
-    purchase(stock, Decision.Fail, 20)
+    // The client creates the ID before sending, and keeps it across retries.
+    let key = uuid.v4()!
+    let order = Request { user: 1, id: key, amount: 10 }
+    let (a, b) = join { | begin(stock, order, 0) | begin(stock, order, 0) }
+    let ticket = match (a, b) {
+        (Start(id), Return(Processing)) => id,
+        (Return(Processing), Start(id)) => id,
+        _ => check.panic("only one caller may start the order")
+    }
+    assert_stock(read, 90, 0, 10)
+    let changed = Request { user: 1, id: key, amount: 9 }
+    check.assert(match begin(stock, changed, 0) { Return(Conflict) => true, _ => false }, "key reused with different amount")
+    // Commit, then lose the reply. A retry must return the original order ID.
+    finish(stock, ticket, Decision.Accept, 1);
+    check.assert(match purchase(stock, order, Decision.Fail, 2) { Confirmed(id) => id == ticket, _ => false }, "replay committed order")
+    check.assert(match finish(stock, ticket, Decision.Reject, 2) { Confirmed(id) => id == ticket, _ => false }, "duplicate settlement preserves confirmation")
     assert_stock(read, 90, 10, 0)
 
-    // Cancellation cannot run a recovery handler. The service owns expiry,
-    // independently of the cancelled request's task tree.
-    race { | abandoned(stock) | stop_after_reservation(read) }
-    assert_stock(read, 70, 10, 20)
-    let old = when (stock) { Ticket { id: stock.active_id, amount: stock.reserved } }.unwrap()
-    when (mut stock) { stock.expire(110) }.unwrap()
-    assert_stock(read, 90, 10, 0)
-    let fresh = when (mut stock) { stock.reserve(5, 111) }.unwrap()
-    check.assert(!when (mut stock) { stock.settle(old, true, 112) }.unwrap(), "late reply cannot settle new reservation")
+    let other = Request { user: 2, id: key, amount: 10 }
+    check.assert(match purchase(stock, other, Decision.Reject, 3) { Declined => true, _ => false }, "keys are per user")
+    let failed = Request { user: 3, id: key, amount: 10 }
+    check.assert(match purchase(stock, failed, Decision.Fail, 4) { Failed => true, _ => false }, "release on failed check")
+    let fourth = Request { user: 4, id: key, amount: 10 }
+    purchase(stock, fourth, Decision.Reject, 5);
+    let fresh = Request { user: 5, id: key, amount: 5 }
+    check.assert(match begin(stock, fresh, 60) { Return(Busy) => true, _ => false }, "full replay table")
+    check.assert(match begin(stock, order, 60) { Return(Confirmed(id)) => id == ticket, _ => false }, "retain until deadline")
+    check.assert(match purchase(stock, order, Decision.Reject, 61) { Declined => true, _ => false }, "new admission after replay window")
+
+    race { | abandoned(stock, fresh) | stop_after_reservation(read) }
     assert_stock(read, 85, 10, 5)
-    check.assert(when (mut stock) { stock.settle(fresh, true, 112) }.unwrap(), "fresh reservation")
-    assert_stock(read, 85, 15, 0)
+    let old = when (stock) { stock.next_id - 1 }!
+    when (mut stock) { stock.expire(110) }!
+    check.assert(match begin(stock, fresh, 110) { Return(Expired) => true, _ => false }, "retry after hold expiry")
+    let next = match begin(stock, other, 111) { Start(id) => id, _ => check.panic("fresh hold") }
+    check.assert(match finish(stock, old, Decision.Accept, 112) { Expired => true, _ => false }, "ignore late reply")
+    assert_stock(read, 80, 10, 10)
+    finish(stock, next, Decision.Accept, 112);
+    assert_stock(read, 80, 20, 0)
     owner.close()
 }

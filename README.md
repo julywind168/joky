@@ -233,8 +233,8 @@ target/debug/joky build examples/chat -o /tmp/chat-app --parallel
 修改 `examples/chat/script/main.jk` 后向管理端发送 `reload`；`shutdown` 或 SIGINT/SIGTERM 停止准入并排空会话输出，5s 后取消剩余任务。
 目录说明、协议、配置与验证命令见[应用说明](examples/chat/README.md)。
 
-预留模式示例：`cargo run -- run examples/reservation.jk`，演示预留、外部查询、确认／释放、
-取消后到期回收与迟到回复校验，详见[语言参考](docs/language.md#跨挂起业务的预留模式)。
+预留模式示例：`cargo run -- run examples/reservation.jk`，演示并发重复请求、回复丢失后的幂等重试、
+有界结果保留、预留到期回收与迟到回复校验，详见[语言参考](docs/language.md#跨挂起业务的预留模式)。
 
 ## 验证
 
