@@ -5,6 +5,9 @@ edition = "2021"
 description = "The Joky programming language: compiler, runtime, and standard library"
 
 [dependencies]
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring-webpki"] }
+tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 rustls = { version = "0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 webpki-roots = "1.0.9"
 getrandom = "0.4.3"

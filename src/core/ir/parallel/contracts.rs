@@ -69,6 +69,7 @@ pub(super) fn builtin(
         // is written only by the polling task, never by a background worker.
         Builtin::Dns | Builtin::Password => Contract::Scoped,
         // Calls stay on their worker; independent Controller owners may transfer.
+        Builtin::Postgres(_) => Contract::Scoped,
         Builtin::Tls(_) => Contract::Scoped,
         Builtin::Shutdown(_) => Contract::Scoped,
     })

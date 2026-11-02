@@ -6783,6 +6783,45 @@ HTTPS 使用 `http.serve_tls(listener, config, &stop, options, handler)`。它�
 `read_timeout`。握手失败、握手超时或握手期间停机均关闭连接。TLS 读取被取消时连接直接关闭。
 成功写完响应后，在同一个写入期限内发送 TLS 关闭通知。
 
+## PostgreSQL 数据库 joky/postgres
+
+宿主用进程环境变量 `JOKY_POSTGRES_URL` 提供 SQLx PostgreSQL 连接串。设置它即允许进程内可调用该模块的 Joky 程序
+以该数据库角色执行 SQL；嵌入多个 VM 时共享此配置。缺省要求 verify-full（验证 CA 和主机名），可在受信任连接串中指定
+`sslrootcert`。本地测试库可显式使用 `?sslmode=disable`。DSN 不传给 Joky 查询接口或错误消息。
+
+| 操作（均可挂起） | 行为 |
+| --- | --- |
+| `postgres.open(max_connections)` | 建立 SQLx PgPool，返回 Result<Pool, DbError>。容量 1–32，获取连接期限 5s |
+| `pool.share()` | 同一池的独立拥有句柄，可交给其他任务。最后一个持有者释放服务 |
+| `pool.execute(sql, params)` | 执行一条参数化语句，返回受影响行数 UInt64 |
+| `pool.query(sql, params)` | 返回 Array<Row>，Row 是 Array<Value>，按 SELECT 列表顺序读取 |
+| `pool.begin()` | 借出一条物理连接，返回拥有型 Transaction。该连接在整个事务内独占 |
+| `tx.execute` / `tx.query` | 与池上方法相同的参数和结果，独占借用事务 |
+| `tx.commit()` / `tx.rollback()` | 消费事务并等待数据库回执，成功返回 Unit |
+
+使用 PostgreSQL 的 `$1`、`$2` 参数，不拼接数据。绑定值支持 BoolValue、IntValue(Int64，对应 bigint)、
+TextValue、BytesValue 和 Null(Kind)。查询结果支持 bool、int2/4/8（统一为 Int64）、text/varchar/bpchar/name、
+bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查询最多返回 1024 行，每行至多 128 列，
+编码后的结果至多 1 MiB。单条 SQL 至多 64 KiB，绑定参数至多 256 个、编码后至多 1 MiB。
+结果按行接收并逐行检查；此上限约束交付给 Joky 的结果，SQLx 读取单个 PostgreSQL 协议消息的暂存可能更大。
+
+事务边界由 Transaction 管理。不要在普通语句中手动提交或回滚事务。池连接成功归还前执行 DISCARD ALL，
+不跨借用保留临时表、会话参数或锁。取消排队的获取操作不会执行 SQL；取消已在执行的操作、放弃事务、
+数据库执行错误或结果解码失败会弃用该连接，在途事务句柄失效。该后端停止执行的时刻取决于 PostgreSQL
+何时观察到断连；下一位借用者不会复用仍在执行的连接。可通过数据库角色配置 statement_timeout 来限制服务端运行时间。
+
+DbError 区分 Invalid、Unavailable、Closed、Limit、UnsupportedType、Database(SQLSTATE) 与 OutcomeUnknown。
+提交或自动提交语句已交给驱动而连接丢失时，结果可能未知；模块不重试 SQL。取消任务不返回错误回执。
+结果超限、不能解码、语言任务失败同样不能作为外部效果未发生的证据。每个进程最多 8 个独立池，
+每池最多 64 个待完成调用（还受任务预算约束）；使用 share 可以共用池。
+
+[订单示例](../examples/postgres_orders.jk) 在同一个事务中写入唯一键 (customer, request_id)、订单和库存，
+使用绑定值读取已有订单并检查数量。为专用示例数据库设置 JOKY_POSTGRES_URL 后运行
+`joky run examples/postgres_orders.jk`。重复运行会取回同一订单号。示例会在该库创建两个带 joky_demo_ 前缀的表。
+
+安装 PostgreSQL 的 initdb 与 pg_ctl 后，普通用户可运行
+`cargo test --test postgres -- --include-ignored`。集成测试自行启动临时回环数据库，并在 COMMIT 回包处断线。
+
 ## HTTP 客户端 joky/http
 
 `http.Client.http(host, port)!` 创建明文客户端，`http.Client.https(host, port, tls_config)!` 创建 HTTPS 客户端。

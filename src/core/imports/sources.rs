@@ -59,6 +59,13 @@ pub(super) struct SourceDefinition {
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
         kind: SourceKind::Embedded,
+        path: "joky/postgres",
+        source: include_str!("../../stdlib/postgres.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::Embedded,
         path: "joky/tls",
         source: include_str!("../../stdlib/tls.jk"),
         reexport_imports: false,

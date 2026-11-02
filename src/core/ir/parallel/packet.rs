@@ -34,6 +34,7 @@ impl Kind {
                 if (crate::runtime::tcp::transferable_type(name)
                     || crate::runtime::parallel::control::resource_type(name)
                     || crate::runtime::buffer::crypto::transferable_type(name)
+                    || name.as_ref() == "postgres.Owner"
                     || crate::runtime::tls::transferable_type(name)
                     || crate::runtime::shutdown::transferable_type(name)) =>
             {
@@ -136,6 +137,7 @@ pub(crate) fn classify(
                 if (crate::runtime::tcp::transferable_type(name)
                     || crate::runtime::parallel::control::resource_type(name)
                     || crate::runtime::buffer::crypto::transferable_type(name)
+                    || name.as_ref() == "postgres.Owner"
                     || crate::runtime::tls::transferable_type(name)
                     || crate::runtime::shutdown::transferable_type(name)) =>
             {

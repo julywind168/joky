@@ -11,6 +11,7 @@ pub(crate) mod float_env;
 pub(crate) mod isolate;
 pub mod parallel;
 pub(crate) mod password;
+pub(crate) mod postgres;
 pub mod reactor;
 pub mod scheduler;
 pub mod shutdown;

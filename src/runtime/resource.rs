@@ -301,6 +301,7 @@ impl OwnedResource {
             && unsafe { super::tcp::transferable(self.token, self.release)
                 || super::parallel::control::transferable(self.token, self.release)
                 || super::buffer::crypto::transferable(self.token, self.release)
+                || super::postgres::transferable(self.token, self.release)
                 || super::tls::transferable(self.token, self.release)
                 || super::shutdown::transferable(self.token, self.release) }
     }

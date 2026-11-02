@@ -61,6 +61,7 @@ impl BoundHost {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Postgres(_)
             | HostEntry::Tls(_)
             | HostEntry::Shutdown(_)
             | HostEntry::Password
@@ -88,6 +89,7 @@ impl BoundHost {
                 | HostEntry::VmMigration(_)
                 | HostEntry::Domain(_)
                 | HostEntry::Dns
+                | HostEntry::Postgres(_)
                 | HostEntry::Tls(_)
                 | HostEntry::Shutdown(_)
                 | HostEntry::Password
@@ -220,6 +222,7 @@ impl HostPending {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Postgres(_)
             | HostEntry::Tls(_)
             | HostEntry::Shutdown(_)
             | HostEntry::Password
@@ -261,6 +264,7 @@ impl HostPending {
                     | HostEntry::VmMigration(_)
                     | HostEntry::Domain(_)
                     | HostEntry::Dns
+                    | HostEntry::Postgres(_)
                     | HostEntry::Tls(_)
                     | HostEntry::Shutdown(_)
                     | HostEntry::Password
@@ -334,7 +338,8 @@ impl HostPending {
         ) || matches!(
             self.host.binding.entry,
             HostEntry::Dns | HostEntry::Password
-        ) || matches!(self.host.binding.entry, HostEntry::Tls(op) if op.returns_bytes())
+        ) || matches!(self.host.binding.entry, HostEntry::Postgres(op) if op.returns_bytes())
+            || matches!(self.host.binding.entry, HostEntry::Tls(op) if op.returns_bytes())
             || matches!(self.host.binding.entry, HostEntry::Fs(op) if op.returns_bytes())
             || matches!(
                 self.host.binding.entry,
@@ -503,6 +508,20 @@ impl HostPending {
                     Value::Reference(owner.as_ptr().cast())
                 })
             });
+        }
+        if let HostEntry::Postgres(op) = self.host.binding.entry {
+            return unsafe { crate::runtime::postgres::poll(arena, &mut self.frame, op) }.map(
+                |bits| {
+                    bits.map(|bits| {
+                        self.frame.result = bits;
+                        if op.returns_pointer() {
+                            Value::Reference(bits as usize as *mut u8)
+                        } else {
+                            Value::UInt64(bits)
+                        }
+                    })
+                },
+            );
         }
         if let HostEntry::Tls(op) = self.host.binding.entry {
             let bits = unsafe { crate::runtime::tls::call(arena, &self.frame.slots, op)? };

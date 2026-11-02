@@ -192,7 +192,8 @@ impl Operation {
 pub(crate) fn validate_external_resource(name: &str) -> Result<(), Error> {
     if matches!(
         name,
-        "tls.ClientOwner"
+        "postgres.Owner"
+            | "tls.ClientOwner"
             | "tls.ServerOwner"
             | "tls.SessionOwner"
             | "arena.Arena"

@@ -10,6 +10,7 @@ pub(crate) enum HostEntry {
     Tcp(super::tcp::Operation),
     Dns,
     Password,
+    Postgres(super::postgres::Operation),
     Tls(super::tls::Operation),
     Shutdown(super::shutdown::Operation),
     Fs(super::fs::Operation),

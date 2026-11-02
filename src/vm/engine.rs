@@ -884,6 +884,7 @@ impl VmEngine {
                     Builtin::Tcp(op) => HostEntry::Tcp(*op),
                     Builtin::Fs(op) => HostEntry::Fs(*op),
                     Builtin::Password => HostEntry::Password,
+                    Builtin::Postgres(op) => HostEntry::Postgres(*op),
                     Builtin::Tls(op) => HostEntry::Tls(*op),
                     Builtin::Shutdown(op) => HostEntry::Shutdown(*op),
                     Builtin::Dns => {
@@ -1001,6 +1002,7 @@ impl VmEngine {
                 | HostEntry::Tcp(_)
                 | HostEntry::Fs(_)
                 | HostEntry::Dns
+                | HostEntry::Postgres(_)
                 | HostEntry::Tls(_)
                 | HostEntry::Shutdown(_)
                 | HostEntry::Password

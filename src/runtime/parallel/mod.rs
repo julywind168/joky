@@ -52,6 +52,7 @@ pub(crate) enum HostCode {
     Tcp(super::tcp::Operation),
     Dns,
     Password,
+    Postgres(super::postgres::Operation),
     Tls(super::tls::Operation),
     Shutdown(super::shutdown::Operation),
     Control(control::Operation),
@@ -77,6 +78,7 @@ impl Host {
                     control::Operation::Fs(op) => HostEntry::Fs(op),
                 },
             ),
+            HostCode::Postgres(op) => (HostAbiKind::Scalar, HostEntry::Postgres(op)),
             HostCode::Tls(op) => (HostAbiKind::Scalar, HostEntry::Tls(op)),
             HostCode::Shutdown(op) => (HostAbiKind::Scalar, HostEntry::Shutdown(op)),
             HostCode::Password => (HostAbiKind::Scalar, HostEntry::Password),
@@ -103,6 +105,18 @@ impl Host {
     }
     pub(crate) fn from_binding(binding: &super::bindings::HostBinding) -> Option<Self> {
         use super::bindings::{HostAbiKind, HostEntry};
+        if let HostEntry::Postgres(op) = binding.entry {
+            if binding.abi != HostAbiKind::Scalar || op.validate(&binding.signature, true).is_err()
+            {
+                return None;
+            }
+            return Some(Self {
+                name: format!("{op:?}"),
+                signature: binding.signature.clone(),
+                code: HostCode::Postgres(op),
+                _owner: std::sync::Arc::new(()),
+            });
+        }
         if let HostEntry::Tls(op) = binding.entry {
             if binding.abi != HostAbiKind::Scalar || op.validate(&binding.signature, true).is_err()
             {

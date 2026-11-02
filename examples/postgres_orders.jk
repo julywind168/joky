@@ -1,0 +1,35 @@
+// Run against a dedicated demo database selected by the host.
+import joky/postgres
+
+pub enum Order { Confirmed(Int64), Conflict, Insufficient }
+pub fn setup(pool: &postgres.Pool) @suspends {
+    pool.execute("CREATE TABLE IF NOT EXISTS joky_demo_stock (sku integer PRIMARY KEY, available bigint NOT NULL CHECK (available >= 0))", [])!
+    pool.execute("INSERT INTO joky_demo_stock VALUES (1, 100) ON CONFLICT DO NOTHING", [])!
+    pool.execute("CREATE TABLE IF NOT EXISTS joky_demo_orders (id bigserial PRIMARY KEY, customer bigint NOT NULL, request_id text NOT NULL, qty bigint NOT NULL CHECK (qty > 0), UNIQUE(customer, request_id))", [])!;
+}
+fn number(row: &postgres.Row, i: UInt64) -> Int64 {
+    match row.borrow_ref(i) { IntValue(n) => n, _ => panic("unexpected order column") }
+}
+pub fn place(pool: &postgres.Pool, customer: Int64, key: String, qty: Int64) @suspends -> Result<Order, postgres.DbError> {
+    if qty <= 0 || key.is_empty() { return Err(postgres.DbError.Invalid) }
+    var tx = pool.begin()?
+    let inserted = tx.execute("INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES ($1,$2,$3) ON CONFLICT (customer, request_id) DO NOTHING",
+        [postgres.Value.IntValue(customer), postgres.Value.TextValue(key.clone()), postgres.Value.IntValue(qty)])?
+    let rows = tx.query("SELECT id, qty FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [postgres.Value.IntValue(customer), postgres.Value.TextValue(key)])?
+    let row = rows.borrow_ref(0)
+    let id = number(row, 0)
+    if number(row, 1) != qty { tx.rollback()?; return Ok(Order.Conflict) }
+    if inserted == 1 {
+        let updated = tx.execute("UPDATE joky_demo_stock SET available=available-$1 WHERE sku=1 AND available >= $1", [postgres.Value.IntValue(qty)])?
+        if updated == 0 { tx.rollback()?; return Ok(Order.Insufficient) }
+    }
+    tx.commit()?
+    Ok(Order.Confirmed(id))
+}
+fn main() @suspends {
+    let pool = postgres.open(2)!
+    setup(&pool)
+    match place(&pool, 1, "example-order-1", 10)! {
+        Confirmed(id) => println("order {id}"), Conflict => println("key conflict"), Insufficient => println("insufficient stock")
+    }
+}

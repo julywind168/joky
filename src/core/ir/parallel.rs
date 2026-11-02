@@ -123,6 +123,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                         && (crate::runtime::tcp::transferable_type(name)
                             || crate::runtime::parallel::control::resource_type(name)
                             || crate::runtime::buffer::crypto::transferable_type(name)
+                            || name.as_ref() == "postgres.Owner"
                             || crate::runtime::tls::transferable_type(name)
                             || crate::runtime::shutdown::transferable_type(name)) => {}
                 Type::Named(ref name)
@@ -617,6 +618,7 @@ mod tests {
         assert!(!qualify(&Type::Ptr).transfer);
         assert!(!qualify(&Type::Resource("HostResource".into())).share);
         for name in [
+            "postgres.Owner",
             "tls.ClientOwner",
             "tls.ServerOwner",
             "tls.SessionOwner",

@@ -19,17 +19,17 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-enum Wake {
+pub(super) enum Wake {
     Local(TaskWaker),
     Parallel(super::parallel::pool::IoWaker),
 }
 impl Wake {
-    fn current() -> Option<Self> {
+    pub(super) fn current() -> Option<Self> {
         super::parallel::pool::io_waker()
             .map(Self::Parallel)
             .or_else(|| current_waker().map(Self::Local))
     }
-    fn wake(&self) {
+    pub(super) fn wake(&self) {
         match self {
             Self::Local(w) => w.wake(),
             Self::Parallel(w) => w.wake(),

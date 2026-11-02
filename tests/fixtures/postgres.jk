@@ -1,0 +1,63 @@
+import joky/postgres
+import joky/task
+import joky/array.{type Array}
+fn scalar(p: &postgres.Pool, sql: String) @suspends -> Int64 {
+    let rows = p.query(sql, [])!
+    match rows.borrow_ref(0).borrow_ref(0) { IntValue(n) => n, _ => panic("expected integer column") }
+}
+fn types(pool: &postgres.Pool) @suspends {
+    let rows = pool.query("SELECT $1::bool, $2::bigint, $3::text, $4::bytea, $5::bigint, 7::int2, 8::int4", [
+        postgres.Value.BoolValue(true), postgres.Value.IntValue(-42), postgres.Value.TextValue("a';--好"),
+        postgres.Value.BytesValue([0,255]), postgres.Value.Null(postgres.Kind.Integer)])!
+    let r = rows.borrow_ref(0)
+    assert(match r.borrow_ref(0) { BoolValue(b) => b, _ => false }, "boolean")
+    assert(match r.borrow_ref(1) { IntValue(n) => n == -42, _ => false }, "negative bigint")
+    assert(match r.borrow_ref(2) { TextValue(s) => s.equals("a';--好"), _ => false }, "bound UTF-8")
+    assert(match r.borrow_ref(3) { BytesValue(b) => b.len() == 2 && b[1] == 255, _ => false }, "binary data")
+    assert(match r.borrow_ref(4) { Null(Integer) => true, _ => false }, "typed null")
+    assert(match r.borrow_ref(5) { IntValue(n) => n == 7, _ => false }, "int2")
+    assert(match r.borrow_ref(6) { IntValue(n) => n == 8, _ => false }, "int4")
+    assert(match pool.query("SELECT 1.5::numeric", []) { Err(UnsupportedType) => true, _ => false }, "unsupported column")
+    assert(match pool.query("SELECT repeat('x', 1048576)", []) { Err(Limit) => true, _ => false }, "byte bound")
+    assert(match pool.query("SELECT generate_series(0,1024)", []) { Err(Limit) => true, _ => false }, "row bound")
+}
+fn abandon(p: &postgres.Pool) @suspends {
+    var tx = p.begin()!
+    tx.execute("INSERT INTO joky_test_abandon VALUES (1)", [])!;
+}
+fn sleep_query(pool: &postgres.Pool) @suspends {
+    var tx = pool.begin()!
+    tx.execute("INSERT INTO joky_test_abandon VALUES (3)", [])!;
+    tx.execute("SELECT pg_sleep(5) /*joky_cancel_probe*/", [])!;
+}
+fn queued(pool: &postgres.Pool) @suspends {
+    pool.execute("INSERT INTO joky_test_abandon VALUES (4)", [])!;
+}
+fn await_sleep(observer: &postgres.Pool, pid: Int64) @suspends {
+    while scalar(observer, "SELECT count(*) FROM pg_stat_activity WHERE pid={pid} AND state='active' AND query LIKE 'SELECT pg_sleep(5) /*joky_cancel_probe*/%'") == 0 { task.sleep(5ms) }
+}
+fn shared_session(pool: postgres.Pool) @suspends -> Int64 { scalar(&pool, "SELECT pg_backend_pid()") }
+fn main() @suspends {
+    let pool = postgres.open(1)!
+    let observer = postgres.open(1)!
+    types(&pool)
+    pool.execute("CREATE TABLE IF NOT EXISTS joky_test_abandon (n bigint PRIMARY KEY)", [])!;
+    abandon(&pool)
+    assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "drop rolls back")
+    var tx = pool.begin()!
+    tx.execute("INSERT INTO joky_test_abandon VALUES (2)", [])!;
+    assert(match tx.execute("INSERT INTO joky_test_abandon VALUES (2)", []) { Err(Database(code)) => code == "23505", _ => false }, "SQLSTATE")
+    assert(tx.commit().is_err(), "failed transaction cannot commit")
+    assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "failure rolls back")
+    let before = scalar(&pool, "SELECT pg_backend_pid()")
+    assert(scalar(&pool, "SELECT pg_backend_pid()") == before, "healthy connection reused")
+    let (a, b) = join { | shared_session(pool.share()) | shared_session(pool.share()) }
+    assert(a == before && b == before, "independent handles share one bounded pool")
+    let held = pool.begin()!
+    race { | queued(&pool) | task.sleep(25ms) }
+    held.rollback()!
+    assert(scalar(&pool, "SELECT pg_backend_pid()") == before, "cancelling pool wait leaves active connection intact")
+    race { | sleep_query(&pool) | await_sleep(&observer, before) }
+    assert(scalar(&pool, "SELECT pg_backend_pid()") != before, "cancelled connection retired")
+    assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "cancelled writes did not commit")
+}
