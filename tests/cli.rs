@@ -74,3 +74,7 @@ mod workers;
 
 #[path = "cli/testing.rs"]
 mod testing;
+
+#[cfg(unix)]
+#[path = "cli/shutdown.rs"]
+mod shutdown;

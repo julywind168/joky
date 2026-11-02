@@ -204,6 +204,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 - 进阶：[共享迭代协议](examples/shared_iterator_protocol.jk) 展示 `SharedIterator` 泛型入口、`step_shared` 显式推进和底层组合函数。
 - [挂起闭包与超时组合](examples/suspending_closures.jk)。
 - [时长字面量与定时等待](examples/durations.jk)。
+- [停机通知](docs/language.md#停机通知-jokyshutdown)与 [TCP 排空](examples/tcp_shutdown.jk)：显式 Unix 信号订阅、停止接收、等待在途请求与超时取消。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
 - [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。

@@ -13,6 +13,7 @@ pub mod parallel;
 pub(crate) mod password;
 pub mod reactor;
 pub mod scheduler;
+pub mod shutdown;
 pub mod suspension;
 pub(crate) mod task_scope;
 

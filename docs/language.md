@@ -6656,6 +6656,51 @@ scope 主体直接声明的局部值保留到 join 完成；return、break、con
 [async_owner_views.jk](../tests/fixtures/async_owner_views.jk) 覆盖异步方法、递归和字段替换；
 [async_owner_tcp.jk](../tests/fixtures/async_owner_tcp.jk) 展示保存 stream、数组缓冲与偏移的异步接收对象。
 
+## 停机通知 joky/shutdown
+
+显式导入 `joky/shutdown`。这是独立的、一次触发后保持状态的通知对象，不会自行取消任务或退出进程。
+第一版用于 Local 执行器；Controller 和 Signals 不授予跨 worker 的 Transfer/Share 能力，`--parallel` 拒绝相关入口。
+
+| 接口 | 结果与行为 |
+| --- | --- |
+| `shutdown.create() @suspends` | 创建独立的 Controller，不注册进程信号 |
+| `controller.share() @suspends` | 返回共享同一状态的独立拥有句柄；释放一个句柄不关闭其他句柄 |
+| `controller.request() @suspends` | Bool，首次请求返回 true，后续返回 false |
+| `controller.requested() @suspends` | Bool，查询是否已经收到请求 |
+| `controller.reason() @suspends` | Option<Reason>，不消费通知 |
+| `controller.wait() @suspends` | Reason；未请求时挂起，已经请求时立即完成 |
+| `controller.subscribe_unix() @suspends` | Result<Signals, SignalError>；显式将 SIGINT/SIGTERM 接入该通知 |
+
+Reason 为 `Requested`、`Interrupt`、`Terminate`。首次发布的原因保留不变；多个等待者全部唤醒，晚订阅者不会漏掉通知。
+取消 wait 只注销该等待者，不触发停机，也不影响其他等待者。每个通知最多 1024 个 Pending 等待者，
+达到上限返回终止性 ResourceLimit；完成或取消后立即归还等待存储。普通 Controller 清理由拥有型资源机制负责，
+不会等到根任务结束才释放共享状态。
+
+Unix 信号订阅必须持有返回的 Signals owner 到服务退出；显式 Drop、取消和失败都会停止并 join 对应桥接线程。
+后台线程只访问 Rust 拥有的通知状态和唤醒令牌，不访问 Joky 帧或借用地址。
+同一进程最多 8 个活跃信号订阅；SignalError 分为 `Unsupported`（非 Unix）、`Busy`（订阅上限）、
+`Unavailable`（系统注册或线程创建失败）。重复信号不重置状态，也不隐式升级为强制退出；
+合并到同一批的不同信号不保证按 OS 到达顺序分发。
+
+信号是进程级资源，显式订阅也会影响进程内其他 VM。桥接使用 signal-hook 的处理器链；既有处理器仍可能运行、
+甚至终止进程。最后一个 Signals 释放后，后续 SIGINT/SIGTERM 恢复默认终止行为；
+实现保留两个有界的默认动作注册，不卸载 signal-hook 的分发器，也不承诺恢复第三方处理器配置。
+嵌入宿主若自行管理信号，应自行转成停机请求，不调用 subscribe_unix；创建 VM、导入模块和 create 都不会自动订阅。
+SIGKILL 不可接入，不能期待强制杀进程时执行清理。
+
+[TCP 排空示例](../examples/tcp_shutdown.jk) 可用 `joky run examples/tcp_shutdown.jk` 执行，
+支持 JIT、`--interpreter` 和 AOT。程序打印随机回环监听端口：每个连接发送一行请求，普通请求等待 250ms 后回复 `done`，
+`slow` 等待 60s；发送 `shutdown` 或向进程发送 SIGINT/SIGTERM 开始停机。管理命令仅用于回环演示。
+
+示例将完整请求后的最终状态检查作为准入点；停机后停止接受新请求、关闭监听器并取消空闲连接读取。
+已准入请求在 scope 内继续执行，主体结束后由 scope 等待。截止分支观察到通知后开始 1s 宽限期，
+宽限期结束通过外层 race 取消剩余任务；正常排空返回 0，超时取消返回 1，订阅失败返回 2。
+这是应用显式组合出的流程，不是 Controller 隐含的任务策略；后台维护任务也必须自行响应通知。
+
+超时表示开始结构化取消，父流程仍须等待资源访问停止和清理完成；不能抢占的同步代码或宿主调用可能延迟退出。
+挂起业务收尾应在排空阶段执行，取消清理不运行任意挂起回调。生产长连接协议还需定义停止读入、在途请求和出站队列边界；
+该示例每连接只处理一条请求，没有改变 session 或 chat 的即时取消语义，也没有增加 background 语法。
+
 ## 连接运行组件 joky/session
 
 显式导入 `joky/session`。`Options` 的公开字段为 `max_line_bytes`、`queue_messages`、

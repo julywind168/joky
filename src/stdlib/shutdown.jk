@@ -1,0 +1,36 @@
+import joky/option.{type Option, Some, None}
+import joky/result.{type Result, Ok, Err}
+
+extern fn __shutdown_create() @suspends -> shutdown.ControllerOwner
+extern fn __shutdown_share(owner: &shutdown.ControllerOwner) @suspends -> shutdown.ControllerOwner
+extern fn __shutdown_request(owner: &shutdown.ControllerOwner) @suspends -> UInt64
+extern fn __shutdown_reason(owner: &shutdown.ControllerOwner) @suspends -> UInt64
+extern fn __shutdown_wait(owner: &shutdown.ControllerOwner) @suspends -> UInt64
+extern fn __shutdown_subscribe(owner: &shutdown.ControllerOwner, error: &mut UInt64) @suspends -> shutdown.SignalsOwner
+
+pub enum Reason { Requested, Interrupt, Terminate }
+pub enum SignalError { Unsupported, Busy, Unavailable }
+pub struct Controller { storage: shutdown.ControllerOwner }
+pub struct Signals { storage: shutdown.SignalsOwner }
+
+pub fn create() @suspends -> Controller { Controller { storage: __shutdown_create() } }
+fn reason(code: UInt64) -> Reason {
+    if code == 2 { Reason.Interrupt } else if code == 3 { Reason.Terminate } else { Reason.Requested }
+}
+impl Controller {
+    pub fn share(&self) @suspends -> Controller { Controller { storage: __shutdown_share(&self.storage) } }
+    pub fn request(&self) @suspends -> Bool { __shutdown_request(&self.storage) != 0 }
+    pub fn requested(&self) @suspends -> Bool { __shutdown_reason(&self.storage) != 0 }
+    pub fn reason(&self) @suspends -> Option<Reason> {
+        let code = __shutdown_reason(&self.storage)
+        if code == 0 { None } else { Some(reason(code)) }
+    }
+    pub fn wait(&self) @suspends -> Reason { reason(__shutdown_wait(&self.storage)) }
+    // Keep the returned owner alive for the full service lifetime.
+    pub fn subscribe_unix(&self) @suspends -> Result<Signals, SignalError> {
+        var error: UInt64 = 0
+        let signals = Signals { storage: __shutdown_subscribe(&self.storage, &mut error) }
+        if error == 0 { return Ok(signals) }
+        Err(if error == 1 { SignalError.Unsupported } else if error == 2 { SignalError.Busy } else { SignalError.Unavailable })
+    }
+}

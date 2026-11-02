@@ -1,0 +1,64 @@
+// One request per connection. Send `shutdown` to drain, or `slow` to exercise the deadline.
+import joky/shutdown
+import joky/task
+import joky/tcp.{type TcpListener, type TcpStream, type BufferedTcp}
+import joky/result.{Ok, Err}
+import joky/option.{type Option, Some, None}
+import joky/io.{println, eprintln}
+import joky/mem
+
+fn stopped(stop: &shutdown.Controller) @suspends -> Option<TcpStream> { stop.wait(); None }
+fn accept(listener: &mut TcpListener) @suspends -> Option<TcpStream> { listener.accept().ok() }
+fn stopped_read(stop: &shutdown.Controller) @suspends -> Option<String> { stop.wait(); None }
+fn read(stream: &mut BufferedTcp) @suspends -> Option<String> { stream.read_line(128).unwrap_or(None) }
+fn connection(stream: TcpStream, stop: &shutdown.Controller) @suspends {
+    var stream = BufferedTcp.new(stream)
+    let line = match race { | stopped_read(stop) | read(&mut stream) } {
+        Some(line) => line,
+        None => return,
+    }
+    // This final state observation is the request admission point.
+    if stop.requested() { return }
+    if line == "shutdown" {
+        stream.write_all("shutting down\n".into_bytes());
+        stop.request();
+        return
+    }
+    println("accepted")
+    if line == "slow" { task.sleep(60s) } else { task.sleep(250ms) }
+    stream.write_all("done\n".into_bytes());
+}
+fn serve(stop: &shutdown.Controller, var listener: TcpListener) @suspends -> Int32 {
+    scope {
+        while !stop.requested() {
+            let stream = match race { | stopped(stop) | accept(&mut listener) } {
+                Some(stream) => stream,
+                None => break,
+            }
+            if stop.requested() { break }
+            branch { connection(stream, stop) }
+        }
+        // Close before scope waits for existing connections, not after it returns.
+        listener.close();
+        println("stopped accepting")
+    }
+    0
+}
+fn deadline(stop: &shutdown.Controller) @suspends -> Int32 {
+    stop.wait();
+    task.sleep(1s)
+    1
+}
+fn main() @suspends -> Int32 {
+    let stop = shutdown.create()
+    let signals = match stop.subscribe_unix() {
+        Ok(signals) => signals,
+        Err(_) => { eprintln("Could not subscribe to Unix signals"); return 2 },
+    }
+    var listener = tcp.listen("127.0.0.1", 0).unwrap()
+    println("listening {listener.local_addr().unwrap().port()}")
+    let result = race { | serve(&stop, listener) | deadline(&stop) }
+    println(if result == 0 { "drained" } else { "deadline reached" })
+    mem.drop(signals)
+    result
+}

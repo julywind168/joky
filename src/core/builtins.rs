@@ -19,6 +19,7 @@ pub(crate) enum Builtin {
     Tcp(tcp::Operation),
     Dns,
     Password,
+    Shutdown(crate::runtime::shutdown::Operation),
     Fs(crate::runtime::fs::Operation),
     Domain(domain::Operation),
 }
@@ -39,6 +40,8 @@ impl Builtin {
             Some(Self::Tcp(op))
         } else if let Some(op) = crate::runtime::fs::operation(name) {
             Some(Self::Fs(op))
+        } else if let Some(op) = crate::runtime::shutdown::Operation::lookup(name) {
+            Some(Self::Shutdown(op))
         } else if name == "__password_compute" {
             Some(Self::Password)
         } else if crate::runtime::dns::is_lookup(name) {
@@ -102,6 +105,7 @@ impl Builtin {
             Self::Tcp(op) => op.validate(signature, suspends),
             Self::Dns => crate::runtime::dns::validate(signature, suspends),
             Self::Password => crate::runtime::password::validate(signature, suspends),
+            Self::Shutdown(op) => op.validate(signature, suspends),
             Self::Fs(op) => op.validate(signature, suspends),
             Self::Domain(op) => op.validate(signature, suspends),
         }

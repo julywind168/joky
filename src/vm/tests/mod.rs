@@ -417,3 +417,6 @@ mod crypto_tests;
 
 #[path = "language/password_tests.rs"]
 mod password_tests;
+
+#[path = "tasks/shutdown_tests.rs"]
+mod shutdown_tests;

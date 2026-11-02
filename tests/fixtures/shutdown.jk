@@ -1,0 +1,64 @@
+import joky/shutdown
+import joky/task
+import joky/check.{assert}
+import joky/mem
+
+fn observe(stop: &shutdown.Controller) @suspends -> Int32 {
+    match stop.wait() { Requested => 21, _ => 0 }
+}
+fn trigger(stop: &shutdown.Controller) @suspends -> Int32 {
+    task.yield_now()
+    assert(stop.request(), "first request")
+    assert(!stop.request(), "repeated request")
+    0
+}
+fn shutdown_broadcast() @suspends -> Int32 {
+    let stop = shutdown.create()
+    assert(!stop.requested(), "initial state")
+    assert(stop.reason().is_none(), "initial reason")
+    let copy = stop.share()
+    let (a, b, _) = join { | observe(&stop) | observe(&copy) | trigger(&stop) }
+    assert(stop.requested(), "latched state")
+    assert(observe(&copy) == 21, "late waiter")
+    a + b
+}
+fn shutdown_cancel_waiter() @suspends -> Int32 {
+    let stop = shutdown.create()
+    race { | observe(&stop) | { task.yield_now(); 0 } };
+    assert(!stop.requested(), "wait cancellation must not request shutdown")
+    let (value, _) = join { | observe(&stop) | trigger(&stop) }
+    value + 21
+}
+fn shutdown_shared_owner() @suspends -> Int32 {
+    let stop = shutdown.create()
+    let copy = stop.share()
+    mem.drop(stop)
+    assert(copy.request(), "shared owner survives")
+    observe(&copy) + 21
+}
+fn shutdown_pending() @suspends -> Int32 {
+    let stop = shutdown.create()
+    scope { branch { stop.wait(); } }
+    42
+}
+fn shutdown_once() @suspends -> Int32 {
+    let stop = shutdown.create()
+    stop.request()
+    observe(&stop) + 21
+}
+fn short_deadline(stop: &shutdown.Controller) @suspends -> Int32 {
+    stop.wait(); task.sleep(10ms); 42
+}
+fn delayed_request(stop: &shutdown.Controller) @suspends -> Int32 {
+    task.sleep(100ms); stop.request(); task.sleep(1s); 0
+}
+fn shutdown_deadline_start() @suspends -> Int32 {
+    let stop = shutdown.create()
+    race { | short_deadline(&stop) | delayed_request(&stop) }
+}
+fn main() @suspends {
+    assert(shutdown_broadcast() == 42, "broadcast")
+    assert(shutdown_cancel_waiter() == 42, "cancel waiter")
+    assert(shutdown_shared_owner() == 42, "shared owner")
+    assert(shutdown_deadline_start() == 42, "deadline after notification")
+}

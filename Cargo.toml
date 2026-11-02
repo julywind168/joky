@@ -28,6 +28,9 @@ path = "src/main.rs"
 [lib]
 crate-type = ["rlib", "staticlib"]
 
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.4.6"
+
 [dev-dependencies]
 libloading = "0.8"
 

@@ -61,6 +61,7 @@ impl BoundHost {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Shutdown(_)
             | HostEntry::Password
             | HostEntry::Tcp(_)
             | HostEntry::Fs(_)
@@ -86,6 +87,7 @@ impl BoundHost {
                 | HostEntry::VmMigration(_)
                 | HostEntry::Domain(_)
                 | HostEntry::Dns
+                | HostEntry::Shutdown(_)
                 | HostEntry::Password
                 | HostEntry::Tcp(_)
                 | HostEntry::Fs(_)
@@ -216,6 +218,7 @@ impl HostPending {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Shutdown(_)
             | HostEntry::Password
             | HostEntry::Tcp(_)
             | HostEntry::Fs(_)
@@ -255,6 +258,7 @@ impl HostPending {
                     | HostEntry::VmMigration(_)
                     | HostEntry::Domain(_)
                     | HostEntry::Dns
+                    | HostEntry::Shutdown(_)
                     | HostEntry::Password
                     | HostEntry::Tcp(_)
                     | HostEntry::Fs(_)
@@ -494,6 +498,20 @@ impl HostPending {
                     Value::Reference(owner.as_ptr().cast())
                 })
             });
+        }
+        if let HostEntry::Shutdown(op) = self.host.binding.entry {
+            return unsafe { crate::runtime::shutdown::poll(arena, self.frame.as_mut(), op) }.map(
+                |value| {
+                    value.map(|bits| {
+                        self.frame.result = bits;
+                        if op.returns_owner() {
+                            Value::Reference(bits as usize as *mut u8)
+                        } else {
+                            Value::UInt64(bits)
+                        }
+                    })
+                },
+            );
         }
         if let HostEntry::Tcp(op) = self.host.binding.entry {
             return unsafe { crate::runtime::tcp::poll(arena, self.frame.as_mut(), op) }.map(

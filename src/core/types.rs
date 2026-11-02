@@ -1614,6 +1614,8 @@ impl Default for TypeRegistry {
             text_ffi: Default::default(),
             resources: BTreeSet::from([
                 "arena.Arena".into(),
+                "shutdown.ControllerOwner".into(),
+                "shutdown.SignalsOwner".into(),
                 "crypto.Sha256Owner".into(),
                 "crypto.HmacSha256Owner".into(),
                 VM_OWNER.into(),
@@ -1650,6 +1652,8 @@ impl Default for TypeRegistry {
             standard: Default::default(),
             named: BTreeSet::from([
                 "arena.Arena".into(),
+                "shutdown.ControllerOwner".into(),
+                "shutdown.SignalsOwner".into(),
                 "crypto.Sha256Owner".into(),
                 "crypto.HmacSha256Owner".into(),
                 VM_OWNER.into(),

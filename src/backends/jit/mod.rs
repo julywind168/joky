@@ -250,6 +250,10 @@ pub(crate) fn compile(
             "__joky_vm_source",
             crate::stdlib::source_poll_native as *const u8,
         )])
+        .chain([(
+            "__joky_shutdown_poll",
+            crate::runtime::shutdown::poll_native as *const u8,
+        )])
         .chain(crate::runtime::float_env::symbols())
         .chain([(
             "__joky_domain_poll_v4",

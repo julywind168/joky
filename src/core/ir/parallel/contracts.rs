@@ -67,6 +67,8 @@ pub(super) fn builtin(
         // DNS and password jobs own input copies and results; the error slot
         // is written only by the polling task, never by a background worker.
         Builtin::Dns | Builtin::Password => Contract::Scoped,
+        // Local resource owners have no cross-worker transfer contract.
+        Builtin::Shutdown(_) => return None,
     })
 }
 
