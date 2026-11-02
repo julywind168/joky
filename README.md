@@ -205,6 +205,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 - [挂起闭包与超时组合](examples/suspending_closures.jk)。
 - [时长字面量与定时等待](examples/durations.jk)。
 - [停机通知](docs/language.md#停机通知-jokyshutdown)与 [TCP 排空](examples/tcp_shutdown.jk)：显式 Unix 信号订阅、停止接收、等待在途请求与超时取消。
+- [HTTPS 服务](examples/https_server.jk) 复用 HTTP handler，通过 [joky/tls](docs/language.md#tls-字节流-jokytls) 配置证书、验证服务端身份并收发加密字节。
 - [HTTP JSON 服务](examples/http_server.jk) 使用 [joky/http](docs/language.md#http-服务端-jokyhttp) 处理定长 HTTP/1.1 请求，支持读取超时和停机排空。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。

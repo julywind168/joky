@@ -3,7 +3,7 @@ import joky/json
 import joky/shutdown
 import joky/tcp
 
-fn handle(request: http.Request) @suspends -> http.Response {
+pub fn handle(request: http.Request) @suspends -> http.Response {
     let http.Request { method, target, headers, body } = request
     if (method == "GET" || method == "HEAD") && target == "/health" {
         return http.Response { status: http.Status.Success, content_type: http.ContentType.Json, body: "{{\"ok\":true}}".into_bytes() }

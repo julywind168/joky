@@ -16,6 +16,7 @@ pub mod scheduler;
 pub mod shutdown;
 pub mod suspension;
 pub(crate) mod task_scope;
+pub(crate) mod tls;
 
 pub(crate) mod owned_text;
 pub mod string;

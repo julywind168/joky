@@ -123,6 +123,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                         && (crate::runtime::tcp::transferable_type(name)
                             || crate::runtime::parallel::control::resource_type(name)
                             || crate::runtime::buffer::crypto::transferable_type(name)
+                            || crate::runtime::tls::transferable_type(name)
                             || crate::runtime::shutdown::transferable_type(name)) => {}
                 Type::Named(ref name)
                     if matches!(name.as_str(), "domain.Handle" | "admission.Token") => {}
@@ -616,6 +617,9 @@ mod tests {
         assert!(!qualify(&Type::Ptr).transfer);
         assert!(!qualify(&Type::Resource("HostResource".into())).share);
         for name in [
+            "tls.ClientOwner",
+            "tls.ServerOwner",
+            "tls.SessionOwner",
             "shutdown.ControllerOwner",
             "crypto.Sha256Owner",
             "crypto.HmacSha256Owner",

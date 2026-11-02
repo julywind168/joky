@@ -157,6 +157,7 @@ pub(crate) fn compile<M: Module>(
                 Builtin::Domain(_) => "domain",
                 Builtin::Dns => "dns",
                 Builtin::Password => "password",
+                Builtin::Tls(_) => "tls",
                 Builtin::Shutdown(_) => "shutdown",
                 Builtin::Fs(_) => "fs",
                 Builtin::Tcp(_) => "tcp",
@@ -479,6 +480,7 @@ pub(crate) fn compile<M: Module>(
                         lower::runtime_entry(&mut builder, &refs, "__joky_vm_source")
                     }
                     Builtin::Domain(op) => lower::domain_entry(&mut builder, *op, &refs),
+                    Builtin::Tls(op) => lower::tls_entry(&mut builder, *op, &refs),
                     Builtin::Shutdown(op) => lower::shutdown_entry(&mut builder, *op, &refs),
                     Builtin::Tcp(op) => lower::tcp_entry(&mut builder, *op, &refs),
                     Builtin::Fs(op) => lower::fs_entry(&mut builder, *op, &refs),

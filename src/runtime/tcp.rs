@@ -192,7 +192,10 @@ impl Operation {
 pub(crate) fn validate_external_resource(name: &str) -> Result<(), Error> {
     if matches!(
         name,
-        "arena.Arena"
+        "tls.ClientOwner"
+            | "tls.ServerOwner"
+            | "tls.SessionOwner"
+            | "arena.Arena"
             | "domain.TimerOwner"
             | "domain.DirectoryOwner"
             | "outbox.QueueOwner"
@@ -284,12 +287,12 @@ pub(crate) fn encode_address(address: SocketAddr) -> (u64, u64, u64) {
 }
 // Only the shared lease follows an owning TCP packet. Local counters stay in
 // the local owner wrapper, never inside the Arc connection core.
-enum OwnerCharge {
+pub(super) enum OwnerCharge {
     Local { _charge: ExternalCharge },
     Shared { _charge: super::parallel::Lease },
 }
 impl OwnerCharge {
-    fn new(arena: &mut Arena, bytes: usize) -> Result<Self, Error> {
+    pub(super) fn new(arena: &mut Arena, bytes: usize) -> Result<Self, Error> {
         if let Some(root) = arena.parallel_root() {
             Ok(Self::Shared {
                 _charge: root.accounts().reserve(bytes)?,
@@ -300,7 +303,7 @@ impl OwnerCharge {
             })
         }
     }
-    fn shared(&self) -> bool {
+    pub(super) fn shared(&self) -> bool {
         matches!(self, Self::Shared { .. })
     }
 }

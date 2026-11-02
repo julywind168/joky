@@ -884,6 +884,7 @@ impl VmEngine {
                     Builtin::Tcp(op) => HostEntry::Tcp(*op),
                     Builtin::Fs(op) => HostEntry::Fs(*op),
                     Builtin::Password => HostEntry::Password,
+                    Builtin::Tls(op) => HostEntry::Tls(*op),
                     Builtin::Shutdown(op) => HostEntry::Shutdown(*op),
                     Builtin::Dns => {
                         crate::runtime::dns::initialize()?;
@@ -1000,6 +1001,7 @@ impl VmEngine {
                 | HostEntry::Tcp(_)
                 | HostEntry::Fs(_)
                 | HostEntry::Dns
+                | HostEntry::Tls(_)
                 | HostEntry::Shutdown(_)
                 | HostEntry::Password
                 | HostEntry::VmCall

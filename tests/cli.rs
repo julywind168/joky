@@ -40,6 +40,9 @@ mod http;
 #[cfg(unix)]
 #[path = "support/tcp_server.rs"]
 mod tcp_server;
+#[cfg(unix)]
+#[path = "cli/tls.rs"]
+mod tls;
 
 #[path = "cli/arguments.rs"]
 mod arguments;

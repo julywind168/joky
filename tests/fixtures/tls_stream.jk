@@ -1,0 +1,80 @@
+// The test harness supplies a private test CA and a localhost server identity.
+import joky/tls
+import joky/tcp.{type TcpStream, type TcpListener, type Address}
+import joky/fs
+import joky/array.{type Array}
+import joky/task
+
+fn pem(path: String) @suspends -> Array<UInt8> {
+    var file = fs.open(path, fs.OpenOptions.new())!
+    file.read_all_limited(131072)!
+}
+fn server(config: &tls.ServerConfig, socket: TcpStream, scenario: Int32) @suspends {
+    let result = config.accept(socket)
+    if scenario == 1 || scenario == 2 {
+        assert(result.is_err(), "peer rejected certificate")
+        return
+    }
+    var stream = result!
+    if scenario == 3 { return } // Deliberately omit close_notify.
+    if scenario == 4 {
+        // Wait until the client cancels a pending read and drops its socket.
+        stream.read(1);
+        return
+    }
+    let bytes = stream.read_exact(20000)!!
+    assert(bytes[0] == 255 && bytes[19999] == 42, "binary request spans records")
+    stream.write_all("first\nsecond".into_bytes())!
+    stream.close()!
+}
+fn cancelled_read(stream: &mut tls.TlsStream) @suspends {
+    stream.read_exact(8);
+}
+fn client(config: &tls.ClientConfig, socket: TcpStream, scenario: Int32) @suspends {
+    let result = config.connect(socket, if scenario == 1 { "wrong.example" } else { "localhost" })
+    if scenario == 1 || scenario == 2 {
+        assert(match result { Err(Certificate) => true, _ => false }, "reject wrong identity or untrusted issuer")
+        return
+    }
+    var stream = result!
+    if scenario == 3 {
+        assert(match stream.read(1) { Err(UnexpectedEof) => true, _ => false }, "TCP EOF is not authenticated closure")
+        return
+    }
+    if scenario == 4 {
+        race { | cancelled_read(&mut stream) | task.sleep(25ms) }
+        assert(match stream.write_all([42]) { Err(Unusable) => true, _ => false }, "cancelled stream cannot be reused")
+        return
+    }
+    var bytes: Array<UInt8> = []
+    for i in 0 .. 20000 { bytes.push(if i == 0 {255} else {42}) }
+    stream.write_all(bytes)!
+    assert(String.from_utf8(stream.read_until(10, 32)!!)! == "first\n", "delimiter retained")
+    assert(String.from_utf8(stream.read_exact(6)!!)! == "second", "buffered suffix preserved")
+    assert(stream.read(1)!.is_empty(), "close_notify is clean EOF")
+}
+fn pair() @suspends -> (TcpStream, TcpStream) {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let outgoing = TcpStream.connect(listener.local_addr()!)!
+    (outgoing, listener.accept()!)
+}
+fn exchange(c: &tls.ClientConfig, s: &tls.ServerConfig, scenario: Int32) @suspends {
+    let (outgoing, incoming) = pair()
+    join { | client(c, outgoing, scenario) | server(s, incoming, scenario) }
+}
+fn start_handshake(c: &tls.ClientConfig, socket: TcpStream) @suspends { c.connect(socket, "localhost"); }
+fn main() @suspends {
+    let c = tls.ClientConfig.from_ca_pem(pem("ca.pem"))!
+    let s = tls.ServerConfig.from_pem(pem("server.pem"), pem("test-only-key.pem"))!
+    assert(tls.ClientConfig.from_ca_pem([]).is_err(), "empty roots")
+    assert(tls.ServerConfig.from_pem(pem("server.pem"), pem("ca.pem")).is_err(), "invalid key")
+    exchange(&c, &s, 0)
+    exchange(&c, &s, 1)
+    let public = tls.ClientConfig.web_roots()!
+    exchange(&public, &s, 2)
+    exchange(&c, &s, 3)
+    exchange(&c, &s, 4)
+    var (outgoing, peer) = pair()
+    race { | start_handshake(&c, outgoing) | task.sleep(25ms) }
+    while !peer.read(16384)!.is_empty() {}
+}

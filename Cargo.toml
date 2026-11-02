@@ -5,6 +5,8 @@ edition = "2021"
 description = "The Joky programming language: compiler, runtime, and standard library"
 
 [dependencies]
+rustls = { version = "0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+webpki-roots = "1.0.9"
 getrandom = "0.4.3"
 sha2 = "0.11.1"
 hmac = "0.13.0"

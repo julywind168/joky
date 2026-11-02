@@ -6754,10 +6754,10 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
 Response 提供状态枚举、媒体类型枚举和正文字节。发送方计算 Content-Length，HEAD 只发送响应头。
 
-第一版提供明文 HTTP/1.1 的有限子集。每个连接处理一次 GET、HEAD 或 POST 并发送 `Connection: close`。
+服务端提供 HTTP/1.1 的有限子集。每个连接处理一次 GET、HEAD 或 POST 并发送 `Connection: close`。
 目标须以 `/` 开始，标头采用 ASCII 和 CRLF，必须有且只有一个 Host（主机名或 IPv4，可带十进制端口）。
 正文缺省为空，可用单个十进制 Content-Length 指定。重复长度（即使相同）、Transfer-Encoding、折叠行、
-无效字符或截断正文均拒绝。Expect 返回 417。该版本未实现 chunked、keep-alive、IPv6 字面量 Host 或 TLS。
+无效字符或截断正文均拒绝。Expect 返回 417。该版本未实现 chunked、keep-alive 或 IPv6 字面量 Host。
 
 请求行、所有标头和最后的空行合计最多 16 KiB，最多 64 个标头，超限返回 431。
 请求体最多 1 MiB，超限返回 413。响应体也限 1 MiB，超限在写响应头前返回 500。
@@ -6776,6 +6776,42 @@ Response 提供状态枚举、媒体类型枚举和正文字节。发送方计�
 ```sh
 curl "http://127.0.0.1:$PORT/health"
 curl -H 'Content-Type: application/json' -d '{"message":"hello"}' "http://127.0.0.1:$PORT/echo"
+```
+
+HTTPS 使用 `http.serve_tls(listener, config, &stop, options, handler)`。它消费 ServerConfig，
+沿用相同的请求、响应与 handler。每个已接收的连接先占用名额再握手，握手和随后完整的请求读取各有一个
+`read_timeout`。握手失败、握手超时或握手期间停机均关闭连接。TLS 读取被取消时连接直接关闭。
+成功写完响应后，在同一个写入期限内发送 TLS 关闭通知。
+
+## TLS 字节流 joky/tls
+
+模块使用 rustls 的 TLS 1.2／1.3 配置。配置与连接都是拥有值，构造和 I/O 方法均为 `@suspends`，
+返回 `Result<…, tls.TlsError>`。配置可用于多次握手，独立拥有的配置和 TlsStream 可转移到 Parallel worker。
+握手消费调用方已有的 TcpStream，域名解析和 TCP 建连仍由 `tcp.connect` 完成。
+
+| API | 行为 |
+| --- | --- |
+| `tls.ClientConfig.web_roots()` | 使用随程序编译的 webpki-roots 公共根证书。系统钥匙串的额外 CA 不会自动导入 |
+| `tls.ClientConfig.from_ca_pem(pem)` | 仅信任给定 PEM 中的 CA，空信任集报错 |
+| `config.connect(socket, server_name)` | 按 DNS 名或 IP 校验对端服务证书。名字与 TCP 拨号地址分开传入，便于连接指定地址时仍验证服务身份 |
+| `tls.ServerConfig.from_pem(chain, key)` | 加载叶证书在前的 PEM 链和匹配的未加密 PEM 私钥。每个输入最多 128 KiB |
+| `config.accept(socket)` | 完成服务端握手并返回 TlsStream。首版使用单个服务端身份，未启用客户端证书认证、ALPN 或会话恢复 |
+| `config.share()`（ServerConfig） | 返回独立拥有的配置句柄，复用已解析的证书和密钥 |
+| `stream.read(limit)` | 返回最多 16 KiB 的当前明文，收到经认证的 close_notify 且缓冲读尽时返回空数组 |
+| `stream.read_exact(n)`／`read_until(delimiter, limit)` | 返回 Option 字节数组，保留同一 TLS 记录中剩余字节。分隔符计入长度。读到半帧后关闭返回 UnexpectedEof |
+| `stream.write_all(bytes)`／`stream.close()` | 分记录写出所有字节。close 消费流，发送 close_notify 后释放 socket。普通析构直接释放资源 |
+
+单次读写参数上限 1 MiB。`read(0)` 与零长度的分隔符读取返回 Limit，`read_exact(0)` 返回空帧。
+底层 TCP 在 close_notify 前结束时返回 UnexpectedEof。错误还区分 InvalidConfig、InvalidName、
+Certificate、Protocol、Limit、Io 和 Unusable。挂起的读写若被取消，后续操作返回 Unusable，
+由作用域清理连接。发送可能已经写出前缀。应用可用 race 给独立的握手和 I/O 设置截止时间。
+
+[HTTPS 示例](../examples/https_server.jk) 从环境变量读取证书链和密钥路径，复用 HTTP 示例的 handler。
+在仓库根目录使用本地测试身份启动服务，将打印的端口赋给 PORT 后执行 curl。部署时使用服务自己的证书和私钥。
+
+```sh
+JOKY_TLS_CERT=tests/fixtures/tls/server.pem JOKY_TLS_KEY=tests/fixtures/tls/test-only-key.pem joky run examples/https_server.jk
+curl --cacert tests/fixtures/tls/ca.pem "https://localhost:$PORT/health"
 ```
 
 ## 内置 TCP 模块 joky/tcp
@@ -6862,7 +6898,7 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 该例使用 Unit 分支和真实单调时间取消操作；返回数据时可将请求与定时器包装成相同的 Result 类型，
 拥有式挂起闭包也可使用 `task.timeout(duration, operation)`；借用监听器的场景继续使用直接 race。
 [Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。
-域名解析使用下述 `joky/dns`；UDP、TLS 等另行分期。
+域名解析使用下述 `joky/dns`，TLS 由 `joky/tls` 包装已连接的流。
 
 ### 独立读写端 TcpReader / TcpWriter
 

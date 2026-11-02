@@ -6,6 +6,7 @@ import joky/result.{type Result, Ok, Err}
 import joky/shutdown
 import joky/task
 import joky/tcp.{type BufferedTcp, type TcpListener, type TcpStream}
+import joky/tls
 import joky/time.{type Duration}
 import joky/string
 
@@ -37,11 +38,34 @@ fn token(b: UInt8) -> Bool {
     b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 || b == 42 ||
     b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
 }
-fn line(stream: &mut BufferedTcp, remaining: &mut UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
-    if *remaining < 2 { return Err(ReadFailure.HeadLimit) }
-    var bytes = match stream.read_until(10, *remaining) {
-        Ok(Some(bytes)) => bytes, Err(LimitExceeded) => return Err(ReadFailure.HeadLimit), _ => return Err(ReadFailure.Bad)
+enum Wire { Plain(BufferedTcp), Secure(tls.TlsStream) }
+impl Wire {
+    fn read_line_bytes(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
+        match self {
+            Plain(io) => match io.read_until(10, limit) {
+                Ok(Some(bytes)) => Ok(bytes), Err(LimitExceeded) => Err(ReadFailure.HeadLimit), _ => Err(ReadFailure.Bad)
+            },
+            Secure(io) => match io.read_until(10, limit) {
+                Ok(Some(bytes)) => Ok(bytes), Err(Limit) => Err(ReadFailure.HeadLimit), _ => Err(ReadFailure.Bad)
+            }
+        }
     }
+    fn read_body(&mut self, n: UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
+        match self {
+            Plain(io) => match io.read_exact(n) { Ok(Some(bytes)) => Ok(bytes), _ => Err(ReadFailure.Bad) },
+            Secure(io) => match io.read_exact(n) { Ok(Some(bytes)) => Ok(bytes), _ => Err(ReadFailure.Bad) }
+        }
+    }
+    fn write(&mut self, bytes: Array<UInt8>) @suspends -> Bool {
+        match self { Plain(io) => io.write_all(bytes).is_ok(), Secure(io) => io.write_all(bytes).is_ok() }
+    }
+    fn finish(self) @suspends {
+        if let Secure(io) = self { io.close(); }
+    }
+}
+fn line(stream: &mut Wire, remaining: &mut UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
+    if *remaining < 2 { return Err(ReadFailure.HeadLimit) }
+    var bytes = stream.read_line_bytes(*remaining)?
     let n = bytes.len()
     if n < 2 || bytes[n - 2] != 13 { return Err(ReadFailure.Bad) }
     *remaining = *remaining - n
@@ -113,7 +137,7 @@ fn valid_host(value: &String) -> Bool {
     }
     host_len > 0 && (!in_port || port_digits > 0)
 }
-fn read_request(stream: &mut BufferedTcp) @suspends -> Result<Request, ReadFailure> {
+fn read_request(stream: &mut Wire) @suspends -> Result<Request, ReadFailure> {
     var remaining = HEAD_LIMIT
     let (method, target) = request_line(line(stream, &mut remaining)?)?
     var headers: Array<Header> = []
@@ -135,23 +159,35 @@ fn read_request(stream: &mut BufferedTcp) @suspends -> Result<Request, ReadFailu
         headers.push(field)
     }
     if !host { return Err(ReadFailure.Bad) }
-    let body = match stream.read_exact(length.unwrap_or(0)) { Ok(Some(body)) => body, _ => return Err(ReadFailure.Bad) }
+    let body = stream.read_body(length.unwrap_or(0))?
     Ok(Request { method, target, headers, body })
 }
 fn stop_read(stop: &shutdown.Controller) @suspends -> Result<Request, ReadFailure> { stop.wait(); Err(ReadFailure.Stopped) }
 fn read_timeout(timeout: Duration) @suspends -> Result<Request, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
-fn send(stream: &mut BufferedTcp, status: String, media: String, body: Array<UInt8>, head: Bool) @suspends {
+fn send(var stream: Wire, status: String, media: String, body: Array<UInt8>, head: Bool) @suspends {
     let size = body.len()
     if size > BODY_LIMIT {
         // Validate before publishing a length the transport cannot send.
-        stream.write_all("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into_bytes());
+        stream.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into_bytes());
+        stream.finish()
         return
     }
     let prefix = "HTTP/1.1 {status}\r\nContent-Type: {media}\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n"
-    if stream.write_all(prefix.into_bytes()).is_ok() && !head && size > 0 { stream.write_all(body); }
+    if stream.write(prefix.into_bytes()) && !head && size > 0 { stream.write(body); }
+    stream.finish()
 }
-fn connection(stream: TcpStream, stop: shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response, _permit: admission.Permit) @suspends {
-    var io = BufferedTcp.new(stream)
+fn secure(config: &tls.ServerConfig, stream: TcpStream) @suspends -> Option<Wire> {
+    match config.accept(stream) { Ok(io) => Some(Secure(io)), Err(_) => None }
+}
+fn stop_handshake(stop: &shutdown.Controller) @suspends -> Option<Wire> { stop.wait(); None }
+fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> { task.sleep(timeout); None }
+fn connection(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response, _permit: admission.Permit) @suspends {
+    var io = match config {
+        None => Plain(BufferedTcp.new(stream)),
+        Some(config) => match race { | secure(&config, stream) | stop_handshake(&stop) | handshake_timeout(options.read_timeout) } {
+            Some(wire) => wire, None => return
+        }
+    }
     let input = race { | read_request(&mut io) | stop_read(&stop) | read_timeout(options.read_timeout) }
     // This check admits a complete request. Shutdown lets its handler and write finish.
     if stop.requested() { return }
@@ -162,7 +198,7 @@ fn connection(stream: TcpStream, stop: shutdown.Controller, options: Options, ha
                 BodyLimit => "413 Content Too Large", Timeout => "408 Request Timeout",
                 Unsupported => "501 Not Implemented", Expectation => "417 Expectation Failed", Stopped => return
             }
-            race { | send(&mut io, status, "text/plain", [], false) | task.sleep(options.write_timeout) }
+            race { | send(io, status, "text/plain", [], false) | task.sleep(options.write_timeout) }
         }
         Ok(request) => {
             let head = request.method == "HEAD"
@@ -170,14 +206,14 @@ fn connection(stream: TcpStream, stop: shutdown.Controller, options: Options, ha
             let code = match status { Success => "200 OK", BadRequest => "400 Bad Request", NotFound => "404 Not Found",
                 ContentTooLarge => "413 Content Too Large", InternalError => "500 Internal Server Error" }
             let media = match content_type { Text => "text/plain; charset=utf-8", Json => "application/json", Bytes => "application/octet-stream" }
-            race { | send(&mut io, code, media, body, head) | task.sleep(options.write_timeout) }
+            race { | send(io, code, media, body, head) | task.sleep(options.write_timeout) }
         }
     }
 }
 enum Accept { Client(TcpStream), Stop, Error }
 fn accept(listener: &mut TcpListener) @suspends -> Accept { match listener.accept() { Ok(s) => Client(s), Err(_) => Error } }
 fn stop_accept(stop: &shutdown.Controller) @suspends -> Accept { stop.wait(); Stop }
-fn listen(var listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+fn listen(config: Option<tls.ServerConfig>, var listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
     let pool = admission.create(options.max_connections, 0)
     let clients = pool.handle()
     var failed = false
@@ -189,7 +225,8 @@ fn listen(var listener: TcpListener, stop: &shutdown.Controller, options: Option
             if stop.requested() { break }
             let permit = match clients.try_acquire() { Ok(p) => p, Err(_) => continue }
             let shared = stop.share()
-            branch { isolate { connection(stream, shared, options, handler, permit) }; }
+            let transport = match &config { Some(config) => Some(config.share()), None => None }
+            branch { isolate { connection(transport, stream, shared, options, handler, permit) }; }
         }
         listener.close();
         stop.request();
@@ -199,7 +236,14 @@ fn listen(var listener: TcpListener, stop: &shutdown.Controller, options: Option
 fn deadline(stop: &shutdown.Controller, grace: Duration) @suspends -> Result<Unit, ServeError> {
     stop.wait(); task.sleep(grace); Err(ServeError.Deadline)
 }
-pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+fn run(config: Option<tls.ServerConfig>, listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
     if options.max_connections == 0 || options.read_timeout.is_zero() || options.write_timeout.is_zero() { return Err(ServeError.InvalidOptions) }
-    race { | listen(listener, stop, options, handler) | deadline(stop, options.grace) }
+    race { | listen(config, listener, stop, options, handler) | deadline(stop, options.grace) }
+}
+
+pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+    run(None, listener, stop, options, handler)
+}
+pub fn serve_tls(listener: TcpListener, config: tls.ServerConfig, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+    run(Some(config), listener, stop, options, handler)
 }

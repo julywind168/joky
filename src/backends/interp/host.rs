@@ -61,6 +61,7 @@ impl BoundHost {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Tls(_)
             | HostEntry::Shutdown(_)
             | HostEntry::Password
             | HostEntry::Tcp(_)
@@ -87,6 +88,7 @@ impl BoundHost {
                 | HostEntry::VmMigration(_)
                 | HostEntry::Domain(_)
                 | HostEntry::Dns
+                | HostEntry::Tls(_)
                 | HostEntry::Shutdown(_)
                 | HostEntry::Password
                 | HostEntry::Tcp(_)
@@ -218,6 +220,7 @@ impl HostPending {
             | HostEntry::VmMigration(_)
             | HostEntry::Domain(_)
             | HostEntry::Dns
+            | HostEntry::Tls(_)
             | HostEntry::Shutdown(_)
             | HostEntry::Password
             | HostEntry::Tcp(_)
@@ -258,6 +261,7 @@ impl HostPending {
                     | HostEntry::VmMigration(_)
                     | HostEntry::Domain(_)
                     | HostEntry::Dns
+                    | HostEntry::Tls(_)
                     | HostEntry::Shutdown(_)
                     | HostEntry::Password
                     | HostEntry::Tcp(_)
@@ -330,7 +334,8 @@ impl HostPending {
         ) || matches!(
             self.host.binding.entry,
             HostEntry::Dns | HostEntry::Password
-        ) || matches!(self.host.binding.entry, HostEntry::Fs(op) if op.returns_bytes())
+        ) || matches!(self.host.binding.entry, HostEntry::Tls(op) if op.returns_bytes())
+            || matches!(self.host.binding.entry, HostEntry::Fs(op) if op.returns_bytes())
             || matches!(
                 self.host.binding.entry,
                 HostEntry::Tcp(
@@ -498,6 +503,15 @@ impl HostPending {
                     Value::Reference(owner.as_ptr().cast())
                 })
             });
+        }
+        if let HostEntry::Tls(op) = self.host.binding.entry {
+            let bits = unsafe { crate::runtime::tls::call(arena, &self.frame.slots, op)? };
+            self.frame.result = bits;
+            return Ok(Some(if op.returns_pointer() {
+                Value::Reference(bits as usize as *mut u8)
+            } else {
+                Value::UInt64(bits)
+            }));
         }
         if let HostEntry::Shutdown(op) = self.host.binding.entry {
             return unsafe { crate::runtime::shutdown::poll(arena, self.frame.as_mut(), op) }.map(

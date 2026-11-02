@@ -251,6 +251,10 @@ pub(crate) fn compile(
             crate::stdlib::source_poll_native as *const u8,
         )])
         .chain([(
+            "__joky_tls_poll",
+            crate::runtime::tls::poll_native as *const u8,
+        )])
+        .chain([(
             "__joky_shutdown_poll",
             crate::runtime::shutdown::poll_native as *const u8,
         )])

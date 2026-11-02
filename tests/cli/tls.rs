@@ -1,0 +1,86 @@
+use super::tcp_server::{connect, Running};
+use super::*;
+use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
+use std::{
+    io::{Read, Write},
+    sync::Arc,
+};
+
+fn identity(work: &Workspace, prefix: &str) {
+    for (name, pem) in [
+        ("ca.pem", include_str!("../fixtures/tls/ca.pem")),
+        ("server.pem", include_str!("../fixtures/tls/server.pem")),
+        (
+            "test-only-key.pem",
+            include_str!("../fixtures/tls/test-only-key.pem"),
+        ),
+    ] {
+        work.write(&format!("{prefix}{name}"), pem);
+    }
+}
+
+#[test]
+fn tls_stream_authentication_framing_and_cancellation() {
+    let work = Workspace::new();
+    identity(&work, "");
+    work.write("stream.jk", include_str!("../fixtures/tls_stream.jk"));
+    success(&work.cli(&["run", "stream.jk"]));
+    success(&work.cli(&["run", "--interpreter", "stream.jk"]));
+    success(&work.cli(&["build", "stream.jk"]));
+    success(
+        &Command::new(work.path().join("stream"))
+            .current_dir(work.path())
+            .output()
+            .unwrap(),
+    );
+}
+
+#[test]
+fn https_parallel_server_interoperates_and_drains_incomplete_handshakes() {
+    let work = Workspace::new();
+    identity(&work, "tests/fixtures/tls/");
+    work.write(
+        "http_server.jk",
+        include_str!("../../examples/http_server.jk"),
+    );
+    work.write(
+        "https_server.jk",
+        include_str!("../../examples/https_server.jk"),
+    );
+    success(&work.cli(&["build", "--task-workers", "2", "https_server.jk"]));
+    let mut command = Command::new(work.path().join("https_server"));
+    command
+        .current_dir(work.path())
+        .env("JOKY_TLS_CERT", "tests/fixtures/tls/server.pem")
+        .env("JOKY_TLS_KEY", "tests/fixtures/tls/test-only-key.pem");
+    let mut server = Running::start(command);
+    let port = server
+        .line()
+        .strip_prefix("listening ")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut idle = connect(port);
+    // Partial TLS record header parks in the TCP reactor.
+    idle.write_all(&[22, 3]).unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(CertificateDer::from_pem_slice(include_bytes!("../fixtures/tls/ca.pem")).unwrap())
+        .unwrap();
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let conn =
+        rustls::ClientConnection::new(Arc::new(config), ServerName::try_from("localhost").unwrap())
+            .unwrap();
+    let mut client = rustls::StreamOwned::new(conn, connect(port));
+    client
+        .write_all(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 8\r\n\r\n{\"n\": 1}")
+        .unwrap();
+    let mut reply = String::new();
+    client.read_to_string(&mut reply).unwrap();
+    assert_eq!(reply, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 7\r\nConnection: close\r\n\r\n{\"n\":1}");
+    server.signal("-TERM");
+    assert!(server.finish().success());
+    assert_eq!(idle.read(&mut [0]).unwrap(), 0);
+}

@@ -19,6 +19,7 @@ pub(crate) enum Builtin {
     Tcp(tcp::Operation),
     Dns,
     Password,
+    Tls(crate::runtime::tls::Operation),
     Shutdown(crate::runtime::shutdown::Operation),
     Fs(crate::runtime::fs::Operation),
     Domain(domain::Operation),
@@ -40,6 +41,8 @@ impl Builtin {
             Some(Self::Tcp(op))
         } else if let Some(op) = crate::runtime::fs::operation(name) {
             Some(Self::Fs(op))
+        } else if let Some(op) = crate::runtime::tls::Operation::lookup(name) {
+            Some(Self::Tls(op))
         } else if let Some(op) = crate::runtime::shutdown::Operation::lookup(name) {
             Some(Self::Shutdown(op))
         } else if name == "__password_compute" {
@@ -105,6 +108,7 @@ impl Builtin {
             Self::Tcp(op) => op.validate(signature, suspends),
             Self::Dns => crate::runtime::dns::validate(signature, suspends),
             Self::Password => crate::runtime::password::validate(signature, suspends),
+            Self::Tls(op) => op.validate(signature, suspends),
             Self::Shutdown(op) => op.validate(signature, suspends),
             Self::Fs(op) => op.validate(signature, suspends),
             Self::Domain(op) => op.validate(signature, suspends),
@@ -156,6 +160,7 @@ impl Builtin {
             Self::Domain(op) if op.status_payload() => 2,
             Self::Domain(domain::Operation::OutboxReceiveBytes) => 2,
             Self::Domain(domain::Operation::OutboxMessageBytes) | Self::Dns | Self::Password => 1,
+            Self::Tls(op) if op.returns_bytes() => 1,
             Self::Tcp(op) if op.is_read() => 1,
             Self::Fs(op) if op.returns_bytes() => 1,
             _ => 0,
