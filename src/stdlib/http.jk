@@ -17,7 +17,7 @@ pub struct Request {
     pub headers: Array<Header>,
     pub body: Array<UInt8>
 }
-pub enum Status { Success, BadRequest, NotFound, ContentTooLarge, InternalError }
+pub enum Status { Success, BadRequest, NotFound, ContentTooLarge, InternalError, Conflict, ServiceUnavailable }
 pub enum ContentType { Text, Json, Bytes }
 pub struct Response { pub status: Status, pub content_type: ContentType, pub body: Array<UInt8> }
 pub struct Options {
@@ -181,7 +181,17 @@ fn secure(config: &tls.ServerConfig, stream: TcpStream) @suspends -> Option<Wire
 }
 fn stop_handshake(stop: &shutdown.Controller) @suspends -> Option<Wire> { stop.wait(); None }
 fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> { task.sleep(timeout); None }
-fn connection(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response, _permit: admission.Permit) @suspends {
+// Each admitted connection owns its service handle until the handler and write finish.
+pub trait Service {
+    fn share(&self) @suspends -> Self
+    fn handle(&self, request: Request) @suspends -> Response
+}
+struct FunctionService { callback: fn(Request) @suspends -> Response }
+impl Service for FunctionService {
+    fn share(&self) @suspends -> Self { FunctionService { callback: self.callback } }
+    fn handle(&self, request: Request) @suspends -> Response { let call = self.callback; call(request) }
+}
+fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdown.Controller, options: Options, service: S, _permit: admission.Permit) @suspends {
     var io = match config {
         None => Plain(BufferedTcp.new(stream)),
         Some(config) => match race { | secure(&config, stream) | stop_handshake(&stop) | handshake_timeout(options.read_timeout) } {
@@ -202,8 +212,9 @@ fn connection(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdow
         }
         Ok(request) => {
             let head = request.method == "HEAD"
-            let Response { status, content_type, body } = handler(request)
+            let Response { status, content_type, body } = service.handle(request)
             let code = match status { Success => "200 OK", BadRequest => "400 Bad Request", NotFound => "404 Not Found",
+                Conflict => "409 Conflict", ServiceUnavailable => "503 Service Unavailable",
                 ContentTooLarge => "413 Content Too Large", InternalError => "500 Internal Server Error" }
             let media = match content_type { Text => "text/plain; charset=utf-8", Json => "application/json", Bytes => "application/octet-stream" }
             race { | send(io, code, media, body, head) | task.sleep(options.write_timeout) }
@@ -213,7 +224,7 @@ fn connection(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdow
 enum Accept { Client(TcpStream), Stop, Error }
 fn accept(listener: &mut TcpListener) @suspends -> Accept { match listener.accept() { Ok(s) => Client(s), Err(_) => Error } }
 fn stop_accept(stop: &shutdown.Controller) @suspends -> Accept { stop.wait(); Stop }
-fn listen(config: Option<tls.ServerConfig>, var listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+fn listen<S: Service>(config: Option<tls.ServerConfig>, var listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
     let pool = admission.create(options.max_connections, 0)
     let clients = pool.handle()
     var failed = false
@@ -226,7 +237,8 @@ fn listen(config: Option<tls.ServerConfig>, var listener: TcpListener, stop: &sh
             let permit = match clients.try_acquire() { Ok(p) => p, Err(_) => continue }
             let shared = stop.share()
             let transport = match &config { Some(config) => Some(config.share()), None => None }
-            branch { isolate { connection(transport, stream, shared, options, handler, permit) }; }
+            let worker = service.share()
+            branch { isolate { connection(transport, stream, shared, options, worker, permit) }; }
         }
         listener.close();
         stop.request();
@@ -236,16 +248,23 @@ fn listen(config: Option<tls.ServerConfig>, var listener: TcpListener, stop: &sh
 fn deadline(stop: &shutdown.Controller, grace: Duration) @suspends -> Result<Unit, ServeError> {
     stop.wait(); task.sleep(grace); Err(ServeError.Deadline)
 }
-fn run(config: Option<tls.ServerConfig>, listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+fn run<S: Service>(config: Option<tls.ServerConfig>, listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
     if options.max_connections == 0 || options.read_timeout.is_zero() || options.write_timeout.is_zero() { return Err(ServeError.InvalidOptions) }
-    race { | listen(config, listener, stop, options, handler) | deadline(stop, options.grace) }
+    race { | listen(config, listener, stop, options, service) | deadline(stop, options.grace) }
 }
 
 pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
-    run(None, listener, stop, options, handler)
+    serve_with(listener, stop, options, FunctionService { callback: handler })
 }
 pub fn serve_tls(listener: TcpListener, config: tls.ServerConfig, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
-    run(Some(config), listener, stop, options, handler)
+    serve_tls_with(listener, config, stop, options, FunctionService { callback: handler })
+}
+
+pub fn serve_with<S: Service>(listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
+    run(None, listener, stop, options, service)
+}
+pub fn serve_tls_with<S: Service>(listener: TcpListener, config: tls.ServerConfig, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
+    run(Some(config), listener, stop, options, service)
 }
 
 // One origin per client. Each call opens a fresh connection and sends once.

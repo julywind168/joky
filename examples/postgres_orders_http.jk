@@ -1,0 +1,58 @@
+// Loopback demo with a fixed customer. Use a dedicated demo database.
+import postgres_orders as orders
+import joky/postgres
+import joky/http.{type Service}
+import joky/json/typed
+import joky/shutdown
+import joky/tcp
+
+#derive(FromJson)
+struct Purchase { qty: Int64 }
+pub struct Orders { pool: postgres.Pool }
+impl Orders {
+    pub fn new(pool: postgres.Pool) -> Self { Orders { pool } }
+}
+fn reply(status: http.Status, text: String) -> http.Response {
+    http.Response { status, content_type: http.ContentType.Json, body: text.into_bytes() }
+}
+impl Service for Orders {
+    fn share(&self) @suspends -> Self { Orders { pool: self.pool.share() } }
+    fn handle(&self, request: http.Request) @suspends -> http.Response {
+        let http.Request { method, target, headers, body } = request
+        if method != "POST" || target != "/orders" { return reply(http.Status.NotFound, r#"{"error":"not found"}"#) }
+        var key = ""
+        for field in &headers {
+            if field.name == "idempotency-key" {
+                if !key.is_empty() || field.value.is_empty() || field.value.byte_length() > 128 {
+                    return reply(http.Status.BadRequest, r#"{"error":"invalid Idempotency-Key"}"#)
+                }
+                key = field.value.clone()
+            }
+        }
+        if key.is_empty() { return reply(http.Status.BadRequest, r#"{"error":"missing Idempotency-Key"}"#) }
+        let input = match typed.decode_bytes::<Purchase>(body) {
+            Ok(input) => input, Err(_) => return reply(http.Status.BadRequest, r#"{"error":"expected a positive integer qty"}"#)
+        }
+        if input.qty <= 0 { return reply(http.Status.BadRequest, r#"{"error":"expected a positive integer qty"}"#) }
+        match orders.place(&self.pool, 1, key, input.qty) {
+            Ok(Confirmed(id)) => reply(http.Status.Success, "{{\"order_id\":{id}}}"),
+            Ok(Conflict) => reply(http.Status.Conflict, r#"{"error":"key already used with another quantity"}"#),
+            Ok(Insufficient) => reply(http.Status.Conflict, r#"{"error":"insufficient stock"}"#),
+            Err(OutcomeUnknown) => reply(http.Status.ServiceUnavailable, r#"{"error":"outcome unknown; retry with the same Idempotency-Key"}"#),
+            Err(Unavailable) => reply(http.Status.ServiceUnavailable, r#"{"error":"database unavailable; retry with the same Idempotency-Key"}"#),
+            Err(_) => reply(http.Status.InternalError, r#"{"error":"order failed"}"#)
+        }
+    }
+}
+fn main() @suspends -> Int32 {
+    var options = http.defaults()
+    options.max_connections = 4
+    let pool = postgres.open(options.max_connections)!
+    orders.setup(&pool)
+    let stop = shutdown.create()
+    // Keep signal handling active until all admitted requests finish draining.
+    let signals = stop.subscribe_unix()!
+    var listener = tcp.listen("127.0.0.1", 0)!
+    println("listening {listener.local_addr()!.port()}")
+    if http.serve_with(listener, &stop, options, Orders.new(pool)).is_ok() { 0 } else { 1 }
+}

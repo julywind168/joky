@@ -1,0 +1,28 @@
+// Test-only barrier after the production handler has committed and before the
+// HTTP server receives the Response. The parent kills this process at the barrier.
+import postgres_orders_http.{type Orders}
+import postgres_orders as orders
+import joky/http.{type Service}
+import joky/postgres
+import joky/shutdown
+import joky/task
+import joky/tcp
+
+struct Paused { inner: Orders }
+impl Service for Paused {
+    fn share(&self) @suspends -> Self { Paused { inner: self.inner.share() } }
+    fn handle(&self, request: http.Request) @suspends -> http.Response {
+        let response = self.inner.handle(request)
+        println(String.from_utf8(response.body.clone())!)
+        task.sleep(60s)
+        response
+    }
+}
+fn main() @suspends {
+    let db = postgres.open(1)!
+    orders.setup(&db)
+    let stop = shutdown.create()
+    var listener = tcp.listen("127.0.0.1", 0)!
+    println("listening {listener.local_addr()!.port()}")
+    http.serve_with(listener, &stop, http.defaults(), Paused { inner: Orders.new(db) })!
+}

@@ -6754,6 +6754,12 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
 Response 提供状态枚举、媒体类型枚举和正文字节。发送方计算 Content-Length，HEAD 只发送响应头。
 
+持有业务资源的服务可实现 `http.Service`，并调用 `http.serve_with(listener, &stop, options, service)`。
+`share(&self) @suspends -> Self` 在取得连接名额后调用一次，为连接分支提供独立拥有的上下文。该方法在接收循环中执行，适合复制轻量句柄。
+`handle(&self, request: http.Request) @suspends -> http.Response` 只在完整请求准入后调用。
+例如 share 可通过 `pool.share()` 返回同一数据库池的新句柄。握手、排空及期限沿用同一套规则。
+HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, service)`。
+
 服务端提供 HTTP/1.1 的有限子集。每个连接处理一次 GET、HEAD 或 POST 并发送 `Connection: close`。
 目标须以 `/` 开始，标头采用 ASCII 和 CRLF，必须有且只有一个 Host（主机名或 IPv4，可带十进制端口）。
 正文缺省为空，可用单个十进制 Content-Length 指定。重复长度（即使相同）、Transfer-Encoding、折叠行、
@@ -6818,6 +6824,18 @@ DbError 区分 Invalid、Unavailable、Closed、Limit、UnsupportedType、Databa
 [订单示例](../examples/postgres_orders.jk) 在同一个事务中写入唯一键 (customer, request_id)、订单和库存，
 使用绑定值读取已有订单并检查数量。为专用示例数据库设置 JOKY_POSTGRES_URL 后运行
 `joky run examples/postgres_orders.jk`。重复运行会取回同一订单号。示例会在该库创建两个带 joky_demo_ 前缀的表。
+
+[HTTP 订单服务](../examples/postgres_orders_http.jk) 在启动时打开一个容量为 4 的池，绑定回环随机端口，
+为固定演示用户 1 处理 `POST /orders`。用专用示例库运行 `joky run examples/postgres_orders_http.jk`，
+将打印的端口赋给 PORT 后可重复执行：
+
+```sh
+curl -i "http://127.0.0.1:$PORT/orders" -H 'Content-Type: application/json' -H 'Idempotency-Key: order-42' -d '{"qty":10}'
+```
+
+首次确认和同键同数量重放均返回 200 和相同的 order_id。同键变更数量或库存不足返回 409。
+请求须携带一个非空、至多 128 字节的 Idempotency-Key，以及正 Int64 数量，输入无效返回 400。
+若提交回执丢失，服务返回 503 并提示沿用原键。未收到 HTTP 响应时客户端也可用同一键重试。
 
 安装 PostgreSQL 的 initdb 与 pg_ctl 后，普通用户可运行
 `cargo test --test postgres -- --include-ignored`。集成测试自行启动临时回环数据库，并在 COMMIT 回包处断线。

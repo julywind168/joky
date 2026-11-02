@@ -266,3 +266,190 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         dir,
     );
 }
+
+#[path = "support/tcp_server.rs"]
+mod tcp_server;
+
+fn orders_port(server: &tcp_server::Running) -> u16 {
+    server
+        .line()
+        .strip_prefix("listening ")
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+fn order_request(port: u16, headers: &str, body: &str) -> TcpStream {
+    let mut stream = tcp_server::connect(port);
+    write!(
+        stream,
+        "POST /orders HTTP/1.1\r\nHost: localhost\r\n{headers}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    stream
+}
+fn post_order(port: u16, headers: &str, body: &str, expected: u16) -> String {
+    let mut reply = String::new();
+    order_request(port, headers, body)
+        .read_to_string(&mut reply)
+        .unwrap();
+    let (head, payload) = reply.split_once("\r\n\r\n").unwrap();
+    assert!(
+        head.starts_with(&format!("HTTP/1.1 {expected} ")),
+        "{reply}"
+    );
+    payload.to_owned()
+}
+
+#[test]
+#[ignore = "requires local initdb and pg_ctl; starts a disposable PostgreSQL cluster"]
+fn http_orders_replay_after_lost_response_and_concurrent_requests() {
+    use sqlx::{Connection, PgConnection};
+    let work = scratch::ScratchDir::new("http-orders");
+    let dir = work.path();
+    let cluster = Cluster::start(dir);
+    let direct = url(cluster.port);
+    for (name, src) in [
+        (
+            "postgres_orders.jk",
+            include_str!("../examples/postgres_orders.jk"),
+        ),
+        (
+            "postgres_orders_http.jk",
+            include_str!("../examples/postgres_orders_http.jk"),
+        ),
+        (
+            "pause.jk",
+            include_str!("fixtures/postgres_orders_pause.jk"),
+        ),
+    ] {
+        fs::write(dir.join(name), src).unwrap();
+    }
+    checked(joky(dir).args(["build", "--task-workers", "2", "postgres_orders_http.jk"]));
+    let mut cmd = joky(dir);
+    cmd.args(["run", "pause.jk"])
+        .env("JOKY_POSTGRES_URL", &direct);
+    let mut paused = tcp_server::Running::start(cmd);
+    const KEY: &str = "Idempotency-Key: lost-response\r\n";
+    let mut client = order_request(orders_port(&paused), KEY, r#"{"qty":10}"#);
+    let original = paused.line();
+    assert!(original.starts_with("{\"order_id\":"), "{original}");
+    paused.signal("-KILL");
+    assert!(!paused.finish().success());
+    assert_eq!(
+        client.read(&mut [0]).unwrap(),
+        0,
+        "response was never written"
+    );
+
+    let mut cmd = Command::new(dir.join("postgres_orders_http"));
+    cmd.current_dir(dir).env("JOKY_POSTGRES_URL", &direct);
+    let mut server = tcp_server::Running::start(cmd);
+    let port = orders_port(&server);
+    assert_eq!(post_order(port, KEY, r#"{"qty":10}"#, 200), original);
+    post_order(port, KEY, r#"{"qty":11}"#, 409);
+    for (headers, body) in [
+        ("", r#"{"qty":2}"#),
+        (
+            "Idempotency-Key: a\r\nIdempotency-Key: b\r\n",
+            r#"{"qty":2}"#,
+        ),
+        (KEY, r#"{"qty":0}"#),
+        (KEY, r#"{"qty":"2"}"#),
+        (KEY, "{"),
+    ] {
+        post_order(port, headers, body, 400);
+    }
+    post_order(port, "Idempotency-Key: too-many\r\n", r#"{"qty":999}"#, 409);
+
+    // Hold the stock row so the winner cannot commit before the other
+    // request reaches PostgreSQL and waits on the order's unique key.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut db = rt.block_on(PgConnection::connect(&direct)).unwrap();
+    rt.block_on(sqlx::query("BEGIN").execute(&mut db)).unwrap();
+    rt.block_on(
+        sqlx::query("SELECT sku FROM joky_demo_stock WHERE sku=1 FOR UPDATE").execute(&mut db),
+    )
+    .unwrap();
+    thread::scope(|scope| {
+        let submit = || {
+            post_order(
+                port,
+                "Idempotency-Key: simultaneous\r\n",
+                r#"{"qty":7}"#,
+                200,
+            )
+        };
+        let first = scope.spawn(submit);
+        let second = scope.spawn(submit);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            let waiting:i64=rt.block_on(sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND (query LIKE 'UPDATE joky_demo_stock SET available=%' OR query LIKE 'INSERT INTO joky_demo_orders %')").fetch_one(&mut db)).unwrap();
+            if waiting == 2 {
+                break;
+            }
+            // pg_stat_activity snapshots can be cached within this observer transaction.
+            rt.block_on(sqlx::query("SELECT pg_stat_clear_snapshot()").execute(&mut db))
+                .unwrap();
+            assert!(
+                Instant::now() < deadline,
+                "both orders must reach the database concurrently"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        rt.block_on(sqlx::query("COMMIT").execute(&mut db)).unwrap();
+        assert_eq!(first.join().unwrap(), second.join().unwrap());
+    });
+    let state:(i64,i64)=rt.block_on(sqlx::query_as("SELECT count(*), (SELECT available FROM joky_demo_stock WHERE sku=1) FROM joky_demo_orders").fetch_one(&mut db)).unwrap();
+    assert_eq!(state, (2, 83));
+    // Bypass startup DDL on this single-connection fault proxy.
+    fs::write(
+        dir.join("lost_ack_http.jk"),
+        r#"import postgres_orders_http.{type Orders}
+import joky/http import joky/postgres import joky/shutdown import joky/tcp
+fn main() @suspends {
+    let pool=postgres.open(1)!
+    let stop=shutdown.create()
+    let signals=stop.subscribe_unix()!
+    var listener=tcp.listen("127.0.0.1",0)!
+    println("listening {listener.local_addr()!.port()}")
+    http.serve_with(listener,&stop,http.defaults(),Orders.new(pool))!
+}"#,
+    )
+    .unwrap();
+    let (proxy_port, proxy) = lose_ack(cluster.port, b"COMMIT\0");
+    let mut cmd = joky(dir);
+    cmd.args(["run", "--interpreter", "lost_ack_http.jk"])
+        .env("JOKY_POSTGRES_URL", url(proxy_port));
+    let mut faulty = tcp_server::Running::start(cmd);
+    let unknown = post_order(
+        orders_port(&faulty),
+        "Idempotency-Key: lost-ack\r\n",
+        r#"{"qty":1}"#,
+        503,
+    );
+    assert!(
+        unknown.contains("retry with the same Idempotency-Key"),
+        "{unknown}"
+    );
+    proxy.join().unwrap();
+    faulty.signal("-TERM");
+    assert!(faulty.finish().success());
+    let replay = post_order(port, "Idempotency-Key: lost-ack\r\n", r#"{"qty":1}"#, 200);
+    let id: i64 = rt
+        .block_on(
+            sqlx::query_scalar(
+                "SELECT id FROM joky_demo_orders WHERE customer=1 AND request_id='lost-ack'",
+            )
+            .fetch_one(&mut db),
+        )
+        .unwrap();
+    assert_eq!(replay, format!("{{\"order_id\":{id}}}"));
+    let state:(i64,i64)=rt.block_on(sqlx::query_as("SELECT count(*), (SELECT available FROM joky_demo_stock WHERE sku=1) FROM joky_demo_orders").fetch_one(&mut db)).unwrap();
+    assert_eq!(state, (3, 82));
+    server.signal("-TERM");
+    assert!(server.finish().success());
+}
