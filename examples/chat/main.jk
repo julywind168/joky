@@ -8,7 +8,6 @@ import joky/domain
 import joky/session
 import joky/admission
 import joky/shutdown
-import joky/mem
 import joky/task
 import joky/tcp.{type TcpListener, type TcpStream}
 
@@ -123,10 +122,8 @@ fn main() @suspends -> Int32 {
     println("chat {chat.local_addr()!.port()}")
     println("admin {admin_listener.local_addr()!.port()}")
     let script = Script { vm: engine, entries }
-    let result = race {
+    race {
         | services(&script, host, chat, admin_listener, &stop)
         | deadline(&stop)
     }
-    mem.drop(signals)
-    result
 }
