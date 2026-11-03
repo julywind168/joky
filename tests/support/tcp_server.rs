@@ -13,11 +13,7 @@ pub(crate) struct Running {
 }
 impl Running {
     pub(crate) fn start(mut command: Command) -> Self {
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
+        let mut child = command.stdout(Stdio::piped()).spawn().unwrap();
         let stdout = child.stdout.take().unwrap();
         let (send, lines) = mpsc::channel();
         thread::spawn(move || {
@@ -67,4 +63,22 @@ pub(crate) fn connect(port: u16) -> TcpStream {
         .set_write_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     stream
+}
+
+pub(crate) fn response_id(head: &str) -> &str {
+    let mut ids = head
+        .lines()
+        .filter_map(|line| line.strip_prefix("X-Request-Id: "));
+    let id = ids.next().expect("HTTP request id");
+    assert_eq!(id.len(), 36);
+    for (i, b) in id.bytes().enumerate() {
+        if [8, 13, 18, 23].contains(&i) {
+            assert_eq!(b, b'-');
+        } else {
+            assert!(b.is_ascii_hexdigit());
+        }
+    }
+    assert_eq!(id.as_bytes()[14], b'4');
+    assert!(ids.next().is_none());
+    id
 }

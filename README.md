@@ -209,7 +209,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 - [HTTP 订单服务](examples/postgres_orders_http.jk) 在连接间共享 PostgreSQL 池，支持用原 Idempotency-Key 在服务重启后重试订单。
 - [PostgreSQL 事务示例](examples/postgres_orders.jk) 使用 [joky/postgres](docs/language.md#postgresql-数据库-jokypostgres) 的参数绑定、连接池与事务，演示提交回执丢失后的订单去重。
 - [HTTP 客户端](examples/http_client.jk) 使用 [http.Client](docs/language.md#http-客户端-jokyhttp) 发送 GET 和 JSON POST，可配置 HTTPS 信任根、连接期限和响应体上限。
-- [HTTP JSON 服务](examples/http_server.jk) 使用 [joky/http](docs/language.md#http-服务端-jokyhttp) 处理定长 HTTP/1.1 请求，支持读取超时和停机排空。
+- [HTTP JSON 服务](examples/http_server.jk) 使用 [joky/http](docs/language.md#http-服务端-jokyhttp) 处理定长 HTTP/1.1 请求，支持读取超时和停机排空。响应的 `X-Request-Id` 可用于查找同一请求的[结构化日志](docs/language.md#结构化日志-jokylog)。
 - [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
 - [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
 - [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。

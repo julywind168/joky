@@ -813,3 +813,33 @@ fn main() @suspends {
     );
     work.assert_native("parallel_drain.jk", &["--parallel"], b"", 0);
 }
+
+#[test]
+fn structured_log_preserves_types_and_rejects_invalid_fields() {
+    let work = Workspace::new();
+    work.write("events.jk", r#"
+import joky/log
+import joky/check
+fn main() {
+    check.assert(log.emit(log.Level.Debug, "event\nname", None, [
+        log.text("detail", "quote\"\\\nline"), log.uint("count", 9),
+        log.integer("delta", -2), log.boolean("ready", true)
+    ]), "valid")
+    check.assert(!log.emit(log.Level.Info, "invalid", None, [log.uint("n", 1), log.uint("n", 2)]), "duplicate")
+    check.assert(!log.emit(log.Level.Info, "invalid", None, [log.text("request_id", "override")]), "reserved")
+}
+"#);
+    let output = work.cli(&["run", "events.jk"]);
+    success(&output);
+    assert!(output.stdout.is_empty());
+    let text = std::str::from_utf8(&output.stderr).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    let event: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(event["level"], "debug");
+    assert_eq!(event["event"], "event\nname");
+    assert_eq!(event["detail"], "quote\"\\\nline");
+    assert_eq!(event["count"], 9);
+    assert_eq!(event["delta"], -2);
+    assert_eq!(event["ready"], true);
+    assert!(event.get("request_id").is_none());
+}

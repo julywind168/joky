@@ -6747,11 +6747,28 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 组件没有隐含宽限期；应用在外层 race 组合截止时间，超时后取消剩余任务。
 父任务取消不执行挂起的 on_close，但仍释放队列、socket 和结构化子任务。
 
+## 结构化日志 joky/log
+
+`log.emit(level, event, context, fields) -> Bool` 将一个事件编码成单行 JSON，同步写入 stderr。
+每条记录包含 UTC 时间戳 `timestamp`、小写 `level` 和事件名 `event`。
+等级包括 `Debug`、`Info`、`Warn`、`Error`。传入 `Some(context)` 会增加 UUID 字段
+`request_id`，独立于请求的事件可传 `None`。上下文是普通值，可作为函数参数显式传递，跨挂起保留。
+
+字段通过 `log.text`、`log.uint`、`log.integer`、`log.boolean` 构造，分别接受 String、UInt64、
+Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原类型。例如订单提交结果未知时可记录
+`log.emit(log.Level.Warn, "order.commit_unknown", Some(context), [log.text("route", "/orders")])`。
+
+每条记录最多 32 个业务字段。事件名限 1–128 字节，字段名限 1–64 字节，文本值最多 4096 字节。
+同一条记录内的字段名须唯一，且不能使用上述四个保留名。校验或编码失败返回 false 并跳过整条事件。
+应用自行选择业务字段，应避免写入凭据、原始请求或幂等键。
+
 ## HTTP 服务端 joky/http
 
 `http.serve(listener, &stop, options, handler) @suspends -> Result<Unit, ServeError>` 消费已绑定的 TCP 监听器。
 处理函数的类型是 `fn(http.Request) @suspends -> http.Response`。Request 包含方法、原始请求目标（含查询串）、
 按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
+服务端在开始读取请求时创建 UUID v4，handler 通过 `request.context.request_id` 访问，
+同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 Response 提供状态枚举、媒体类型枚举和正文字节。发送方计算 Content-Length，HEAD 只发送响应头。
 
 持有业务资源的服务可实现 `http.Service`，并调用 `http.serve_with(listener, &stop, options, service)`。
@@ -6759,6 +6776,14 @@ Response 提供状态枚举、媒体类型枚举和正文字节。发送方计�
 `handle(&self, request: http.Request) @suspends -> http.Response` 只在完整请求准入后调用。
 例如 share 可通过 `pool.share()` 返回同一数据库池的新句柄。握手、排空及期限沿用同一套规则。
 HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, service)`。
+
+服务端在响应写入结束时记录 `http.request_finished`。其中 `status` 是服务端选定的 HTTP 状态码，
+`write_outcome` 为 `complete`、`failed` 或 `timeout`。例如状态码可以是 200，同时写入失败。
+`complete` 表示本地写入完成；对端是否收到完整响应仍由客户端判断。
+`duration_ms` 按单调时钟计算，从开始读请求计至写入结束（可计算时提供）。
+服务可覆盖 `route(&self, request: &http.Request) -> Option<String>` 返回固定模板，如 `Some("/orders")`。
+默认省略 route；空标签或超过 128 字节的标签也会省略。HTTP 层不自动记录原始 URL、标头或正文。
+握手失败、未进入写响应流程的请求，以及在产生写入结果前被强制取消的分支，都不会产生该完成事件。
 
 服务端提供 HTTP/1.1 的有限子集。每个连接处理一次 GET、HEAD 或 POST 并发送 `Connection: close`。
 目标须以 `/` 开始，标头采用 ASCII 和 CRLF，必须有且只有一个 Host（主机名或 IPv4，可带十进制端口）。

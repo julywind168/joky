@@ -37,6 +37,7 @@ crate-type = ["rlib", "staticlib"]
 signal-hook = "0.4.6"
 
 [dev-dependencies]
+serde_json = "1"
 libloading = "0.8"
 
 [[bench]]

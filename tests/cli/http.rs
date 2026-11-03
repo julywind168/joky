@@ -51,7 +51,8 @@ fn http_server_serves_json_and_validates_framing() {
             .parse()
             .unwrap();
         let health = http_reply(port, &[b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"]);
-        assert_eq!(health, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}");
+        let id = super::tcp_server::response_id(health.split_once("\r\n\r\n").unwrap().0);
+        assert_eq!(health.replacen(&format!("X-Request-Id: {id}\r\n"), "", 1), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}");
         assert!(http_reply(
             port,
             &[
@@ -147,6 +148,7 @@ fn main() @suspends -> Int32 {
     let start = || {
         let mut command = work.command();
         command.args(["run", "http_probe.jk"]);
+        command.stderr(std::fs::File::create(work.path().join("requests.jsonl")).unwrap());
         let server = Running::start(command);
         let port = server
             .line()
@@ -170,6 +172,7 @@ fn main() @suspends -> Int32 {
     let mut response = String::new();
     slow.read_to_string(&mut response).unwrap();
     assert!(response.starts_with("HTTP/1.1 408 "));
+    let timeout_id = super::tcp_server::response_id(&response).to_owned();
     let mut active = connect(port);
     active
         .write_all(b"GET / HTTP/1.1\r\nHost: a\r\n\r\n")
@@ -180,6 +183,28 @@ fn main() @suspends -> Int32 {
     active.read_to_string(&mut response).unwrap();
     assert!(response.ends_with("\r\n\r\ndone"));
     assert!(server.finish().success());
+
+    let events = std::fs::read_to_string(work.path().join("requests.jsonl")).unwrap();
+    assert!(events
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .any(|event| event["request_id"] == timeout_id && event["status"] == 408));
+
+    let (mut server, port) = start();
+    let mut reset = connect(port);
+    reset
+        .write_all(b"GET /reset HTTP/1.1\r\nHost: a\r\n\r\n")
+        .unwrap();
+    assert_eq!(server.line(), "admitted");
+    let socket = tokio::net::TcpSocket::from_std_stream(reset);
+    socket.set_zero_linger().unwrap();
+    drop(socket);
+    server.signal("-TERM");
+    assert!(server.finish().success());
+    let text = std::fs::read_to_string(work.path().join("requests.jsonl")).unwrap();
+    let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(event["status"], 200);
+    assert_eq!(event["write_outcome"], "failed");
 
     let (mut server, port) = start();
     let mut stuck = connect(port);

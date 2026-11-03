@@ -1,5 +1,6 @@
 // Loopback demo with a fixed customer. Use a dedicated demo database.
 import postgres_orders as orders
+import joky/log
 import joky/postgres
 import joky/http.{type Service}
 import joky/json/typed
@@ -17,8 +18,11 @@ fn reply(status: http.Status, text: String) -> http.Response {
 }
 impl Service for Orders {
     fn share(&self) @suspends -> Self { Orders { pool: self.pool.share() } }
+    fn route(&self, request: &http.Request) -> Option<String> {
+        if request.method == "POST" && request.target == "/orders" { Some("/orders") } else { None }
+    }
     fn handle(&self, request: http.Request) @suspends -> http.Response {
-        let http.Request { method, target, headers, body } = request
+        let http.Request { context, method, target, headers, body } = request
         if method != "POST" || target != "/orders" { return reply(http.Status.NotFound, r#"{"error":"not found"}"#) }
         var key = ""
         for field in &headers {
@@ -38,7 +42,10 @@ impl Service for Orders {
             Ok(Confirmed(id)) => reply(http.Status.Success, "{{\"order_id\":{id}}}"),
             Ok(Conflict) => reply(http.Status.Conflict, r#"{"error":"key already used with another quantity"}"#),
             Ok(Insufficient) => reply(http.Status.Conflict, r#"{"error":"insufficient stock"}"#),
-            Err(OutcomeUnknown) => reply(http.Status.ServiceUnavailable, r#"{"error":"outcome unknown; retry with the same Idempotency-Key"}"#),
+            Err(OutcomeUnknown) => {
+                log.emit(log.Level.Warn, "order.commit_unknown", Some(context), [log.text("route", "/orders")]);
+                reply(http.Status.ServiceUnavailable, r#"{"error":"outcome unknown; retry with the same Idempotency-Key"}"#)
+            },
             Err(Unavailable) => reply(http.Status.ServiceUnavailable, r#"{"error":"database unavailable; retry with the same Idempotency-Key"}"#),
             Err(_) => reply(http.Status.InternalError, r#"{"error":"order failed"}"#)
         }

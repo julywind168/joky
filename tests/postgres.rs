@@ -335,6 +335,9 @@ fn order_request(port: u16, headers: &str, body: &str) -> TcpStream {
     stream
 }
 fn post_order(port: u16, headers: &str, body: &str, expected: u16) -> String {
+    post_with_id(port, headers, body, expected).0
+}
+fn post_with_id(port: u16, headers: &str, body: &str, expected: u16) -> (String, String) {
     let mut reply = String::new();
     order_request(port, headers, body)
         .read_to_string(&mut reply)
@@ -344,7 +347,7 @@ fn post_order(port: u16, headers: &str, body: &str, expected: u16) -> String {
         head.starts_with(&format!("HTTP/1.1 {expected} ")),
         "{reply}"
     );
-    payload.to_owned()
+    (payload.to_owned(), tcp_server::response_id(head).to_owned())
 }
 
 #[test]
@@ -389,7 +392,9 @@ fn http_orders_replay_after_lost_response_and_concurrent_requests() {
     );
 
     let mut cmd = Command::new(dir.join("postgres_orders_http"));
-    cmd.current_dir(dir).env("JOKY_POSTGRES_URL", &direct);
+    cmd.current_dir(dir)
+        .env("JOKY_POSTGRES_URL", &direct)
+        .stderr(fs::File::create(dir.join("orders.jsonl")).unwrap());
     let mut server = tcp_server::Running::start(cmd);
     let port = orders_port(&server);
     assert_eq!(post_order(port, KEY, r#"{"qty":10}"#, 200), original);
@@ -420,9 +425,9 @@ fn http_orders_replay_after_lost_response_and_concurrent_requests() {
         sqlx::query("SELECT sku FROM joky_demo_stock WHERE sku=1 FOR UPDATE").execute(&mut db),
     )
     .unwrap();
-    thread::scope(|scope| {
+    let ids = thread::scope(|scope| {
         let submit = || {
-            post_order(
+            post_with_id(
                 port,
                 "Idempotency-Key: simultaneous\r\n",
                 r#"{"qty":7}"#,
@@ -447,7 +452,10 @@ fn http_orders_replay_after_lost_response_and_concurrent_requests() {
             thread::sleep(Duration::from_millis(10));
         }
         rt.block_on(sqlx::query("COMMIT").execute(&mut db)).unwrap();
-        assert_eq!(first.join().unwrap(), second.join().unwrap());
+        let (a, b) = (first.join().unwrap(), second.join().unwrap());
+        assert_eq!(a.0, b.0);
+        assert_ne!(a.1, b.1);
+        [a.1, b.1]
     });
     let state:(i64,i64)=rt.block_on(sqlx::query_as("SELECT count(*), (SELECT available FROM joky_demo_stock WHERE sku=1) FROM joky_demo_orders").fetch_one(&mut db)).unwrap();
     assert_eq!(state, (2, 83));
@@ -470,10 +478,11 @@ fn main() @suspends {
     let mut cmd = joky(dir);
     cmd.args(["run", "--interpreter", "lost_ack_http.jk"])
         .env("JOKY_POSTGRES_URL", cluster.url(proxy_port));
+    cmd.stderr(fs::File::create(dir.join("fault.jsonl")).unwrap());
     let mut faulty = tcp_server::Running::start(cmd);
-    let unknown = post_order(
+    let (unknown, unknown_id) = post_with_id(
         orders_port(&faulty),
-        "Idempotency-Key: lost-ack\r\n",
+        "Idempotency-Key: lost-ack\r\nAuthorization: Bearer test-secret\r\nX-Request-Id: caller-supplied-id\r\n",
         r#"{"qty":1}"#,
         503,
     );
@@ -498,4 +507,47 @@ fn main() @suspends {
     assert_eq!(state, (3, 82));
     server.signal("-TERM");
     assert!(server.finish().success());
+    let events = |file| {
+        let text = fs::read_to_string(dir.join(file)).unwrap();
+        for secret in [
+            "simultaneous",
+            "lost-ack",
+            "test-secret",
+            "caller-supplied-id",
+            "postgres://",
+            "\"qty\"",
+        ] {
+            assert!(!text.contains(secret));
+        }
+        text.lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let normal = events("orders.jsonl");
+    let assert_finished = |events: &[serde_json::Value], id: &str, status: u16| {
+        let matching: Vec<_> = events
+            .iter()
+            .filter(|e| e["request_id"] == id && e["event"] == "http.request_finished")
+            .collect();
+        assert_eq!(matching.len(), 1);
+        let e = matching[0];
+        assert_eq!(e["route"], "/orders");
+        assert_eq!(e["status"], status);
+        assert_eq!(e["write_outcome"], "complete");
+        assert!(e["duration_ms"].is_u64() && e["timestamp"].is_string());
+    };
+    for id in ids {
+        assert_finished(&normal, &id, 200);
+    }
+    let fault = events("fault.jsonl");
+    assert_finished(&fault, &unknown_id, 503);
+    assert_eq!(
+        fault
+            .iter()
+            .filter(|e| e["event"] == "order.commit_unknown"
+                && e["level"] == "warn"
+                && e["request_id"] == unknown_id)
+            .count(),
+        1
+    );
 }

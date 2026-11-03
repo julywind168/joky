@@ -79,7 +79,8 @@ fn https_parallel_server_interoperates_and_drains_incomplete_handshakes() {
         .unwrap();
     let mut reply = String::new();
     client.read_to_string(&mut reply).unwrap();
-    assert_eq!(reply, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 7\r\nConnection: close\r\n\r\n{\"n\":1}");
+    let id = super::tcp_server::response_id(reply.split_once("\r\n\r\n").unwrap().0);
+    assert_eq!(reply.replacen(&format!("X-Request-Id: {id}\r\n"), "", 1), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 7\r\nConnection: close\r\n\r\n{\"n\":1}");
     work.write("https_client.jk", &r#"
 import joky/http
 import joky/fs
