@@ -56,6 +56,9 @@ impl FileHandle for File {
     fn write(&mut self, bytes: &[u8]) -> Result<usize, FsError> {
         assert!(bytes.len() <= 65536);
         self.calls += 1;
+        if self.path == "write_short" && self.calls > 1 && bytes.len() > 6 {
+            return Err(FsError::new(10, "Oversized retry after a 3-byte write"));
+        }
         if self.calls == 2 {
             match self.path.as_str() {
                 "write_zero" => return Ok(0),
@@ -68,11 +71,15 @@ impl FileHandle for File {
                 _ => {}
             }
         }
-        let size = if (self.path == "write_partial" && self.calls == 1)
+        let size = if self.path == "write_large" && self.calls == 1 {
+            // A transient short write; subsequent requests can use the full cap.
+            bytes.len().min(4096)
+        } else if (self.path == "write_partial" && self.calls == 1)
             || matches!(
                 self.path.as_str(),
                 "write_short" | "write_zero" | "write_busy" | "write_error"
-            ) {
+            )
+        {
             bytes.len().min(3)
         } else {
             bytes.len()
@@ -104,7 +111,11 @@ impl FileHandle for File {
             }
             "write_large" => {
                 assert_eq!(self.bytes, large());
-                assert_eq!(self.calls, 17);
+                assert!(
+                    self.calls <= 21,
+                    "slow recovery after short write: {} calls",
+                    self.calls
+                );
             }
             "write_empty" => {
                 assert!(self.bytes.is_empty());
