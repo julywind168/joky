@@ -6879,6 +6879,7 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | `pool.share()` | 同一池的独立拥有句柄，可交给其他任务。最后一个持有者释放服务 |
 | `pool.execute(sql, params)` | 执行一条参数化语句，返回受影响行数 UInt64 |
 | `pool.query(sql, params)` | 返回 Array<Row>，Row 是 Array<Value>，按 SELECT 列表顺序读取 |
+| `pool.query_optional(sql, params)` / `pool.query_one(sql, params)` | 前者无行时返回 None，后者返回 ResultRead(NoRows)；两者遇到多行均拒绝。Transaction 也提供这两个接口 |
 | `pool.begin()` | 借出一条物理连接，返回拥有型 Transaction。该连接在整个事务内独占 |
 | `tx.execute` / `tx.query` | 与池上方法相同的参数和结果，独占借用事务 |
 | `tx.commit()` / `tx.rollback()` | 消费事务并等待数据库回执，成功返回 Unit |
@@ -6888,6 +6889,9 @@ TextValue、BytesValue 和 Null(Kind)。查询结果支持 bool、int2/4/8（统
 bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查询最多返回 1024 行，每行至多 128 列，
 编码后的结果至多 1 MiB。单条 SQL 至多 64 KiB，绑定参数至多 256 个、编码后至多 1 MiB。
 结果按行接收并逐行检查；此上限约束交付给 Joky 的结果，SQLx 读取单个 PostgreSQL 协议消息的暂存可能更大。
+
+Row 仍可按位置遍历。postgres.get_bool / get_i64 / get_text / get_bytes 接受共享行和从零开始的列号，返回 Result<Option<T>, ColumnError>。类型匹配的 NULL 返回 None，文本和字节借用行中存储；越界或类型不匹配（含错误类型的 NULL）返回带列号的 ColumnError。
+单行查询共享查询上限；在上限内的多行结果返回 ResultRead(MultipleRows)，事务仍然可用。
 
 事务边界由 Transaction 管理。不要在普通语句中手动提交或回滚事务。池连接成功归还前执行 DISCARD ALL，
 不跨借用保留临时表、会话参数或锁。取消排队的获取操作不会执行 SQL；取消已在执行的操作、放弃事务、

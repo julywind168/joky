@@ -54,6 +54,7 @@ pub(super) enum Fault {
     Connect(String),
     Acquire,
     AcquireTimeout,
+    MultipleRows,
 }
 impl Fault {
     pub(super) fn code(&self) -> u64 {
@@ -69,6 +70,7 @@ impl Fault {
             Self::Connect(_) => 9,
             Self::Acquire => 10,
             Self::AcquireTimeout => 11,
+            Self::MultipleRows => 12,
         }
     }
 }
@@ -233,17 +235,22 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow) -> Result<(), Fault> {
     }
     Ok(())
 }
+pub(super) enum Mode {
+    Execute,
+    Query,
+    Optional,
+}
 pub(super) async fn run(
     target: Target,
     sql: String,
     params: Vec<u8>,
-    query: bool,
+    mode: Mode,
 ) -> Result<Answer, Fault> {
     let tx = matches!(target, Target::Tx(_));
     let args = arguments(&params)?;
     let mut loan = target.checkout().await?;
     let request = sqlx::query_with(AssertSqlSafe(sql), args).persistent(false);
-    let value = if query {
+    let value = if !matches!(mode, Mode::Execute) {
         let mut rows = request.fetch(loan.conn());
         let mut out = Vec::new();
         let mut count = 0;
@@ -252,9 +259,17 @@ pub(super) async fn run(
             if count > 1024 {
                 return Err(Fault::ResultLimit);
             }
-            row(&mut out, r)?;
+            // Consume the reply before returning this connection to the pool
+            // or transaction; only the first row needs a snapshot in Optional mode.
+            if count == 1 || matches!(mode, Mode::Query) {
+                row(&mut out, r)?;
+            }
         }
-        Value::Bytes(out)
+        if count > 1 && matches!(mode, Mode::Optional) {
+            Value::Fault(Fault::MultipleRows)
+        } else {
+            Value::Bytes(out)
+        }
     } else {
         Value::Count(
             request

@@ -21,6 +21,24 @@ fn types(pool: &postgres.Pool) @suspends {
     assert(match pool.query("SELECT repeat('x', 1048576)", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "byte bound")
     assert(match pool.query("SELECT generate_series(0,1024)", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "row bound")
 }
+fn cells(row: &postgres.Row) {
+    assert(postgres.get_i64(row, 0)!.is_none() && postgres.get_bool(row, 1)!!, "typed cells")
+    assert(postgres.get_text(row, 2)!! == "x" && postgres.get_bytes(row, 3)!![1] == 255, "borrow owning cells")
+    assert(match postgres.get_bool(row, 0) { Err(TypeMismatch(0)) => true, _ => false }, "typed null mismatch")
+    assert(match postgres.get_text(row, 4) { Err(OutOfBounds(4)) => true, _ => false }, "absent column")
+}
+fn cardinality(pool: &postgres.Pool) @suspends {
+    assert(pool.query_optional("SELECT 1 WHERE false", [])!.is_none(), "optional empty")
+    assert(match pool.query_one("SELECT 1 WHERE false", []) { Err(ResultRead(NoRows)) => true, _ => false }, "required empty")
+    assert(match pool.query_optional("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "optional multiple")
+    var tx = pool.begin()!
+    assert(match tx.query_one("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "required multiple")
+    let row = tx.query_optional("SELECT NULL::bigint, true, 'x'::text, $1::bytea", [postgres.Value.BytesValue([0,255])])!!
+    cells(&row)
+    let single = tx.query_one("SELECT 42", [])!
+    assert(postgres.get_i64(&single, 0)!! == 42, "transaction remains usable")
+    tx.commit()!
+}
 fn abandon(p: &postgres.Pool) @suspends {
     var tx = p.begin()!
     tx.execute("INSERT INTO joky_test_abandon VALUES (1)", [])!;
@@ -41,6 +59,7 @@ fn main() @suspends {
     let pool = postgres.open(1)!
     let observer = postgres.open(1)!
     types(&pool)
+    cardinality(&pool)
     pool.execute("CREATE TABLE IF NOT EXISTS joky_result_probe (id bigint PRIMARY KEY)", [])!;
     pool.execute("DELETE FROM joky_result_probe", [])!;
     assert(match pool.query("INSERT INTO joky_result_probe VALUES (7) RETURNING id::numeric", []) {

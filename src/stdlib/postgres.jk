@@ -1,5 +1,6 @@
 // Runtime SQL uses positional PostgreSQL parameters. Values never become SQL text.
 import joky/array.{type Array}
+import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 import joky/check.{panic}
 import joky/show.{type Show}
@@ -16,8 +17,18 @@ extern fn __pg_data(owner: &postgres.Owner) @suspends -> Array<UInt8>
 
 pub enum Kind { Boolean, Integer, Text, Bytes }
 pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>) }
-pub enum ReadFailure { UnsupportedType, ResultLimit }
-pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout }
+pub enum ReadFailure { UnsupportedType, ResultLimit, NoRows, MultipleRows }
+pub enum ColumnError { OutOfBounds(UInt64), TypeMismatch(UInt64), UnexpectedNull(UInt64) }
+pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout, Column(ColumnError) }
+impl Show for ColumnError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            OutOfBounds(i) => { output.push_str("no column at index "); i.show(output) },
+            TypeMismatch(i) => { output.push_str("unexpected type at column "); i.show(output) },
+            UnexpectedNull(i) => { output.push_str("unexpected NULL at column "); i.show(output) }
+        }
+    }
+}
 impl Show for DbError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -33,9 +44,12 @@ impl Show for DbError {
             },
             AcquireFailed => output.push_str("pool checkout failed"),
             AcquireTimeout => output.push_str("pool checkout timed out"),
+            Column(reason) => reason.show(output),
             ResultRead(reason) => match reason {
                 UnsupportedType => output.push_str("query sent; unsupported result column"),
-                ResultLimit => output.push_str("query sent; result limit exceeded")
+                ResultLimit => output.push_str("query sent; result limit exceeded"),
+                NoRows => output.push_str("query returned no rows"),
+                MultipleRows => output.push_str("query returned multiple rows")
             }
         }
     }
@@ -44,11 +58,34 @@ pub struct Pool { owner: postgres.Owner }
 pub struct Transaction { owner: postgres.Owner }
 pub type Row = Array<Value>
 
+fn checked_column(row: &Row, i: UInt64) -> Result<&Value, ColumnError> {
+    match row.get_ref(i) { Some(v) => Ok(v), None => Err(OutOfBounds(i)) }
+}
+pub fn get_bool(row: &Row, i: UInt64) -> Result<Option<Bool>, ColumnError> {
+    match checked_column(row, i)? {
+        BoolValue(v) => Ok(Some(v)), Null(Boolean) => Ok(None), _ => Err(TypeMismatch(i))
+    }
+}
+pub fn get_i64(row: &Row, i: UInt64) -> Result<Option<Int64>, ColumnError> {
+    match checked_column(row, i)? {
+        IntValue(v) => Ok(Some(v)), Null(Integer) => Ok(None), _ => Err(TypeMismatch(i))
+    }
+}
+pub fn get_text(row: &Row, i: UInt64) -> Result<Option<&String>, ColumnError> {
+    match checked_column(row, i)? {
+        TextValue(v) => Ok(Some(v)), Null(Text) => Ok(None), _ => Err(TypeMismatch(i))
+    }
+}
+pub fn get_bytes(row: &Row, i: UInt64) -> Result<Option<&Array<UInt8>>, ColumnError> {
+    match checked_column(row, i)? {
+        BytesValue(v) => Ok(Some(v)), Null(Bytes) => Ok(None), _ => Err(TypeMismatch(i))
+    }
+}
 fn check_status(owner: &postgres.Owner) @suspends -> Result<Unit, DbError> {
     match __pg_status(owner) {
         0 => Ok({}), 1 => Err(Invalid), 2 => Err(Unavailable), 3 => Err(Closed), 4 => Err(Limit),
         5 => Err(OutcomeUnknown), 6 => Err(Database(String.from_utf8(__pg_data(owner))!)), 7 => Err(ResultRead(UnsupportedType)), 8 => Err(ResultRead(ResultLimit)),
-        9 => Err(Connect(String.from_utf8(__pg_data(owner))!)), 10 => Err(AcquireFailed), 11 => Err(AcquireTimeout),
+        9 => Err(Connect(String.from_utf8(__pg_data(owner))!)), 10 => Err(AcquireFailed), 11 => Err(AcquireTimeout), 12 => Err(ResultRead(MultipleRows)),
         _ => panic("invalid database status")
     }
 }
@@ -124,10 +161,20 @@ fn fetch(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends ->
     let result = run(owner, 1, sql, params)?
     Ok(rows(__pg_data(&result)))
 }
+fn optional_row(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> {
+    let result = run(owner, 2, sql, params)?
+    var found = rows(__pg_data(&result))
+    Ok(found.pop())
+}
+fn required_row(found: Option<Row>) -> Result<Row, DbError> {
+    match found { Some(row) => Ok(row), None => Err(ResultRead(NoRows)) }
+}
 impl Pool {
     pub fn share(&self) @suspends -> Self { Pool { owner: __pg_share(&self.owner) } }
     pub fn execute(&self, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
     pub fn query(&self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
+    pub fn query_optional(&self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
+    pub fn query_one(&self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
     pub fn begin(&self) @suspends -> Result<Transaction, DbError> {
         let owner = __pg_begin(&self.owner)
         check_status(&owner)?
@@ -137,6 +184,8 @@ impl Pool {
 impl Transaction {
     pub fn execute(&mut self, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
     pub fn query(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
+    pub fn query_optional(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
+    pub fn query_one(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
     pub fn commit(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 1); check_status(&result) }
     pub fn rollback(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 0); check_status(&result) }
 }

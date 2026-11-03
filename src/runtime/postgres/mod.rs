@@ -351,7 +351,13 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
                     Request::start(driver, charge, permit, db::finish(l, s[1] != 0))
                 }
                 (Operation::Run, t) => {
-                    Request::start(driver, charge, permit, db::run(t, sql, params, s[1] != 0))
+                    let mode = match s[1] {
+                        0 => db::Mode::Execute,
+                        1 => db::Mode::Query,
+                        2 => db::Mode::Optional,
+                        _ => return Err(invalid()),
+                    };
+                    Request::start(driver, charge, permit, db::run(t, sql, params, mode))
                 }
                 _ => return Err(invalid()),
             }
