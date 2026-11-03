@@ -583,6 +583,32 @@ impl FunctionPlan {
         for (branch_index, source_branch) in branches.iter().enumerate() {
             let resolved = self.member_call(source_branch, vars, functions, types)?;
             let branch = resolved.as_ref().unwrap_or(source_branch);
+            let local = if let Expr::Call {
+                callee,
+                type_args,
+                span,
+                ..
+            } = branch
+            {
+                let target = self.local_callee(callee, vars, *span).filter(|value| {
+                    self.type_hint(value, vars, functions, types)
+                        .is_some_and(|ty| super::closures::callable_signature(&ty).is_some())
+                });
+                if target.is_some() && !type_args.is_empty() {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "Function values do not accept type arguments",
+                    ));
+                }
+                target
+            } else {
+                None
+            };
+            let target = match branch {
+                Expr::Invoke { callee, .. } => Some(callee.as_ref()),
+                _ => local.as_ref(),
+            };
             let mut captures = None;
             let (name, params, ret, callee, args, branch_span, indirect) = match branch {
                 Expr::Block { span, .. } => {
@@ -598,9 +624,12 @@ impl FunctionPlan {
                     captures = Some(values);
                     (name, Vec::new(), ret, "block", &empty_args, span, None)
                 }
-                Expr::Invoke { callee, args, span } => {
-                    let Flow::Value(value) = self.expr(callee, vars, functions, suspends, types)?
-                    else {
+                Expr::Invoke { args, span, .. } | Expr::Call { args, span, .. }
+                    if target.is_some() =>
+                {
+                    let flow =
+                        self.callable_value(target.unwrap(), vars, functions, suspends, types)?;
+                    let Flow::Value(value) = flow else {
                         if let Some(next) = args.first().or_else(|| branches.get(branch_index + 1))
                         {
                             return Err(unreachable_error(next));
@@ -614,33 +643,70 @@ impl FunctionPlan {
                             "Unit is not callable",
                         ));
                     };
-                    let Type::Function(signature) = &value.ty else {
-                        return Err(type_error(
-                            span,
-                            ErrorCode::InvalidCall,
-                            "The callee is not a function value",
-                        ));
+                    let value = if value
+                        .ty
+                        .reference_type()
+                        .is_some_and(|r| matches!(r.target, Type::Function(_)))
+                    {
+                        self.read_local(value)?.unwrap()
+                    } else {
+                        value
                     };
-                    if !signature.suspends {
-                        return Err(type_error(
+                    if !matches!(value.ty, Type::Function(_))
+                        && super::closures::callable_suspends(&value.ty)
+                    {
+                        let Some(call) = self.prepare_callable(
+                            value,
+                            args,
+                            *span,
+                            vars,
+                            functions,
+                            suspends,
+                            types,
+                            branches.get(branch_index + 1),
+                        )?
+                        else {
+                            return Ok(Flow::Diverged);
+                        };
+                        captures = Some(call.arguments);
+                        (
+                            call.name,
+                            Vec::new(),
+                            call.result,
+                            "callable",
+                            &empty_args,
                             span,
-                            ErrorCode::InvalidCall,
-                            format!("{keyword} branches must be @suspends functions"),
-                        ));
+                            None,
+                        )
+                    } else {
+                        let Type::Function(signature) = &value.ty else {
+                            return Err(type_error(
+                                span,
+                                ErrorCode::InvalidCall,
+                                "The callee is not a function value",
+                            ));
+                        };
+                        if !signature.suspends {
+                            return Err(type_error(
+                                span,
+                                ErrorCode::InvalidCall,
+                                format!("{keyword} branches must be @suspends functions"),
+                            ));
+                        }
+                        let name = self.indirect_contract(signature);
+                        let params = signature.signature.params.clone();
+                        let ret = signature.signature.ret.clone();
+                        let target = self.snapshot(&Some(value))?.unwrap();
+                        (
+                            name,
+                            params,
+                            ret,
+                            "function value",
+                            args,
+                            span,
+                            Some(target),
+                        )
                     }
-                    let name = self.indirect_contract(signature);
-                    let params = signature.signature.params.clone();
-                    let ret = signature.signature.ret.clone();
-                    let target = self.snapshot(&Some(value))?.unwrap();
-                    (
-                        name,
-                        params,
-                        ret,
-                        "function value",
-                        args,
-                        span,
-                        Some(target),
-                    )
                 }
                 Expr::Call {
                     callee,

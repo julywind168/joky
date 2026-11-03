@@ -179,6 +179,25 @@ impl FunctionPlan {
         format!("__joky_indirect_{index}")
     }
 
+    pub(super) fn callable_value(
+        &mut self,
+        callee: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
+        if let Expr::Ident { name, .. } = callee {
+            if let Some(value) = vars.get(name).and_then(|b| b.slot.as_ref()).filter(|v| {
+                super::closures::callable_signature(&v.ty).is_some()
+                    && !matches!(v.ty, Type::Function(_))
+            }) {
+                return Ok(Flow::Value(Some(value.clone())));
+            }
+        }
+        self.expr(callee, vars, functions, suspends, types)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn invoke_expr(
         &mut self,
@@ -190,19 +209,8 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
-        if let Expr::Ident { name, .. } = callee {
-            if let Some(value) = vars
-                .get(name)
-                .and_then(|binding| binding.slot.clone())
-                .filter(|value| {
-                    super::closures::callable_signature(&value.ty).is_some()
-                        && !matches!(value.ty, Type::Function(_))
-                })
-            {
-                return self.invoke_callable(value, args, span, vars, functions, suspends, types);
-            }
-        }
-        let Flow::Value(value) = self.expr(callee, vars, functions, suspends, types)? else {
+        let Flow::Value(value) = self.callable_value(callee, vars, functions, suspends, types)?
+        else {
             if let Some(arg) = args.first() {
                 return Err(unreachable_error(arg));
             }

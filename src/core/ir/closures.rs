@@ -4,6 +4,14 @@ use crate::core::types::{CallableKind, ClosureInfo, RecordField, RecordType};
 use crate::parser::ast::{AnonymousFunction, Param};
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
+pub(super) struct PreparedCallable {
+    pub name: String,
+    pub arguments: Vec<Option<Slot>>,
+    pub result: Type,
+    pub suspends: bool,
+    consumed: Option<Slot>,
+}
+
 pub(crate) enum ClosureOp {
     Init(Slot),
     BorrowCapture { dst: Slot, reference: Slot },
@@ -1019,6 +1027,49 @@ impl FunctionPlan {
             return self
                 .invoke_function_value(pointer, args, span, vars, functions, suspends, types);
         }
+        let Some(call) =
+            self.prepare_callable(value, args, span, vars, functions, suspends, types, None)?
+        else {
+            return Ok(Flow::Diverged);
+        };
+        let result = if call.result == Type::Unit {
+            None
+        } else {
+            Some(self.slot(call.result.clone())?)
+        };
+        if let Some(dst) = result.as_ref().filter(|s| s.ty.is_place()) {
+            self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
+        }
+        let state = call.suspends.then(|| {
+            let state = self.state_count;
+            self.state_count += 1;
+            state
+        });
+        self.emit(Op::Call {
+            indirect: None,
+            name: call.name,
+            args: call.arguments,
+            result: result.clone(),
+            state,
+        });
+        if let Some(value) = call.consumed {
+            self.emit(Op::EndLocal(value));
+        }
+        Ok(Flow::Value(result))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_callable<'a>(
+        &mut self,
+        value: Slot,
+        args: &'a [Expr],
+        span: Span,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        later: Option<&'a Expr>,
+    ) -> Result<Option<PreparedCallable>, Error> {
         if suspends && value.ty.contains_unstorable_closures() {
             return Err(type_error(
                 &span,
@@ -1145,14 +1196,14 @@ impl FunctionPlan {
             &signature.params,
             None,
             span,
-            |i| args.get(i + 1),
+            |i| args.get(i + 1).or(later),
             vars,
             functions,
             suspends,
             types,
         )?
         else {
-            return Ok(Flow::Diverged);
+            return Ok(None);
         };
         let environment = if concrete
             .as_ref()
@@ -1197,30 +1248,13 @@ impl FunctionPlan {
         let mut arguments = Vec::new();
         extend_argument(&mut arguments, Some(environment));
         arguments.extend(args);
-        let result = if signature.ret == Type::Unit {
-            None
-        } else {
-            Some(self.slot(signature.ret.clone())?)
-        };
-        if let Some(dst) = result.as_ref().filter(|s| s.ty.is_place()) {
-            self.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
-        }
-        let state = callee_suspends.then(|| {
-            let state = self.state_count;
-            self.state_count += 1;
-            state
-        });
-        self.emit(Op::Call {
-            indirect: None,
+        Ok(Some(PreparedCallable {
             name,
-            args: arguments,
-            result: result.clone(),
-            state,
-        });
-        if let Some(value) = consumed {
-            self.emit(Op::EndLocal(value));
-        }
-        Ok(Flow::Value(result))
+            arguments,
+            result: signature.ret,
+            suspends: callee_suspends,
+            consumed,
+        }))
     }
 }
 
