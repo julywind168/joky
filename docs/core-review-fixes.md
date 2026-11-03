@@ -150,7 +150,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | --- | --- | --- | --- |
 | K2-1 | `const A: Int64 = 5` 后 `println(A)`、`id(A)`、`Some(A)` | Cannot infer type parameter `T` | `inference.rs` `hint()` 的 `Expr::Ident` 只查局部 `vars`，补查模块常量（关联常量已有独立分支） |
 | K2-2 | `let a: Int64 = id(id(1))`；`let o: Option<Int64> = Some(id(1))`；`first::<Int64, Bool>(id(1), true)`；`id(3000000000) + wide` | Int64 与 Int32 冲突 | 内层泛型调用在严格轮（`default=false`）也把字面量默认成 Int32；严格轮应保留未定型字面量，由外层期望类型定型。与 K1-2 一起改 |
-| K2-3 | `1 + 1.5`、`[1, 1.5]`、`pair(2, 1.5)` | 被拒，而 `1.5 + 1`、`[1.5, 1]`、`pair(1.5, 2)` 通过 | 统一规则须与书写顺序无关。推荐：两侧均为未定型字面量且含浮点时统一为浮点上下文；否则两种顺序都拒绝。`if c { 1 } else { 1.5 }` 随同一规则 |
+| K2-3 | `1 + 1.5`、`[1, 1.5]`、`pair(2, 1.5)` | 被拒，而 `1.5 + 1`、`[1.5, 1]`、`pair(1.5, 2)` 通过 | 统一规则须与书写顺序无关。已确认：缺少具体类型上下文时，两种顺序都拒绝。`if c { 1 } else { 1.5 }` 随同一规则 |
 | K2-4 | `fn h(p: &P) -> Int32 { let g = \|\| { p.x }; g() }`；`var g = \|\| { p.x = 5 }`（p: &mut P）；`move \|\| { p.x }` | Type &P has no fields | 闭包捕获生成的 `Binding { place: Some(..) }` 在 `records.rs` `place()`→`field_target` 路径未对引用绑定自动解引用；`(*p).x`、`p.get()` 已可用 |
 | K2-5 | `import app/n as n.{type Open}` 后 `let Open { a, b } = s`；`type O = n.Open` 后 `let O { .. } = s` | Unknown record pattern `app/n.Open` | `record_patterns.rs` `resolve_record_pattern` 用已规范化名查找 `named_type`/`scope.types` 失败；与构造表达式共用解析 |
 | K2-6 | `fn h<S: Src<Item = U>, U>(s: &S) -> U`，调用 `h(&i)` | “Type 'I' does not satisfy trait bounds…”；加 `let b: Int32 =` 才通过 | 已知 S 时应正向从关联类型等式确定 U（`types/projections.rs`），不属于文档排除的“由 Item 反推 Self”；诊断不应声称不满足约束 |
@@ -286,6 +286,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K1-2、K2-2 | 已修复 | `fix: bound nested generic inference and preserve literal context` | Debug 定向库测试 79 项、CLI 回归 2 项通过。30 层 id、or、and、unwrap 链通过 JIT、解释器及独立 AOT；比较 10 与 30 层的推导步数，另验证上下文定型、变量遮蔽、同位置 AST 和预算诊断。fmt、Clippy、diff 检查通过，未跑全量。 |
 | K1-3 | 解释器回溯已修复，原生同步直调已验证测试原型 | `fix: fold adjacent identical interpreter trace frames in CLI diagnostics`、`test: prototype native stack preflight for direct owning calls` | macOS arm64 的 JIT 和 AOT 小栈回归验证了拒绝位置、拥有实参析构一次及失败后线程可复用。常规构建的原生栈保护仍待实施。见[原生栈保护提案](architecture.md#k1-3-原生栈保护提案)。 |
 | K2-1 | 已修复 | `fix: infer generic argument types from module constants` | 模块常量及同名局部参数在 JIT、解释器和 AOT 的定向回归通过。 |
+| K2-3 | 已修复 | `fix: reject mixed numeric literal defaults consistently` | 算术、数组、同型泛型调用和条件分支的双向拒绝用例及显式浮点上下文的三后端运行通过。 |
 | K2 其余项 | 待实施 | | |
 | K3 | 待设计 | | |
 | K4 | 待实施 | | |

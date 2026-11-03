@@ -2691,8 +2691,14 @@ impl FunctionPlan {
                         ),
                     ));
                 }
+                // A defaulted floating LHS cannot supply an explicit float context.
+                let rhs_context = if operand_type.is_none() && left.ty.is_float() {
+                    None
+                } else {
+                    Some(&left.ty)
+                };
                 let Flow::Value(right) =
-                    self.expr_expected(rhs, vars, functions, suspends, types, Some(&left.ty))?
+                    self.expr_expected(rhs, vars, functions, suspends, types, rhs_context)?
                 else {
                     return Ok(Flow::Diverged);
                 };

@@ -3323,3 +3323,39 @@ fn module_constants_supply_generic_argument_types() {
         0,
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn mixed_numeric_literal_defaults_require_context_in_both_orders() {
+    let work = Workspace::new();
+    let pair = "fn pair<T: Copy>(a:T, b:T) -> T { a }";
+    for (a, b) in [("1", "1.5"), ("1.5", "1")] {
+        for expr in [
+            format!("{a} + {b}"),
+            format!("[{a}, {b}]"),
+            format!("pair({a}, {b})"),
+            format!("if true {{ {a} }} else {{ {b} }}"),
+        ] {
+            work.write(
+                "mixed.jk",
+                &format!("{pair} fn main() {{ let x = {expr} }}"),
+            );
+            failure(&work.cli(&["check", "mixed.jk"]), "type_mismatch");
+        }
+    }
+    work.write(
+        "mixed.jk",
+        &format!(
+            "{pair}
+        fn main() {{
+            let a: Float64 = 1.5 + 1
+            let b: Float64 = pair(1, 1.5)
+            let c: Float64 = if true {{ 1 }} else {{ 1.5 }}
+            assert_eq(a, 2.5)
+            assert_eq(b, c)
+            println(42)
+        }}"
+        ),
+    );
+    work.assert_all_backends("mixed.jk", &[], b"42\n", 0);
+}

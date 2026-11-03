@@ -3,7 +3,7 @@ use super::*;
 use crate::core::types::substitute;
 use crate::core::types::{GenericArgument, ParameterKind, TypeParameter};
 use crate::FunctionSignature;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(super) struct ConstructorContext<'a> {
     pub expected: Option<&'a Type>,
@@ -255,6 +255,7 @@ pub(super) struct InferenceState<'a> {
     pub params: &'a [Arc<TypeParameter>],
     pub substitutions: crate::core::types::Substitutions,
     pub default: bool,
+    strict_floats: HashSet<u64>,
 }
 
 /// Seed inference with explicitly provided type arguments, if any.
@@ -284,6 +285,7 @@ pub(super) fn seed_inference<'a>(
             .map(|(p, ty)| (p.id, ty.clone()))
             .collect(),
         default: false,
+        strict_floats: HashSet::new(),
     })
 }
 
@@ -298,6 +300,14 @@ pub(super) fn inference_passes(
     for default in [false, true] {
         if default && !defaults_allowed {
             break;
+        }
+        if default {
+            inference.strict_floats.extend(
+                inference
+                    .substitutions
+                    .iter()
+                    .filter_map(|(id, ty)| ty.is_float().then_some(*id)),
+            );
         }
         inference.default = default;
         pass(inference)?;
@@ -568,6 +578,23 @@ impl FunctionPlan {
             }
         }
         if inference.default && !unresolved(formal, inference.params, &inference.substitutions) {
+            if let Type::Parameter(p) = formal {
+                if !inference.strict_floats.contains(&p.id)
+                    && inference
+                        .substitutions
+                        .get(&p.id)
+                        .is_some_and(Type::is_float)
+                    && self
+                        .bound_hint(arg, vars, functions, types)
+                        .is_some_and(|t| t.integer().is_some())
+                {
+                    return Err(type_error(
+                        &arg.span(),
+                        ErrorCode::TypeMismatch,
+                        "Integer and floating literals require an explicit common type",
+                    ));
+                }
+            }
             return Ok(());
         }
         if let Type::Parameter(parameter) = formal {

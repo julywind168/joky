@@ -38,6 +38,7 @@ impl FunctionPlan {
     ) -> Option<Type> {
         for use_default in [false, true].into_iter().take(if default { 2 } else { 1 }) {
             let mut local = vars.clone();
+            let mut float_default = None;
             for expr in elements {
                 let hint = match expr {
                     Expr::Spread { value, .. } => {
@@ -50,10 +51,17 @@ impl FunctionPlan {
                     }
                     _ => self.hint(expr, &local, functions, types, use_default),
                 };
-                if hint.is_some() {
-                    return hint;
+                if let Some(ty) = hint {
+                    if !use_default || !ty.is_float() {
+                        return Some(ty);
+                    }
+                    // A floating default alone cannot contextualize integer elements.
+                    float_default = Some(ty);
                 }
                 self.hint_bindings(expr, &mut local, functions, types);
+            }
+            if float_default.is_some() {
+                return float_default;
             }
         }
         None
