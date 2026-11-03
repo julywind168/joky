@@ -296,6 +296,6 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K2-10 | 已修复（零捕获） | `fix: infer capture-free callbacks in suspending callers` | 三后端运行无捕获 map 回调，借用捕获仍受原限制且诊断提示 move。未放宽有捕获闭包的活跃区间。 |
 | K2-11 | 已修复 | `fix: prepare suspending closure calls for concurrent branches` | 三后端执行 race 和 join，拒绝 FnOnce 重复使用，挂起闭包取消穷举通过。 |
 | K2-12 | 已修复 | `fix: scope overlapping private members to their defining modules` | 三后端验证模块私有方法和依赖私有常量的解析，同模块重复和公开冲突仍拒绝。另跑常量测试 19 项、源模块可见性测试 6 项通过。 |
-| K3 | 待设计 | | |
+| K3 | 裁剪规则已提案，待实施 | `docs: outline bounded borrow analysis for large functions` | 当前 Debug CLI 的 check 实测：250 次短借用超流分析预算，2,000 次短借用及 1,000 次打印超活跃性预算，1,000 次纯整数自增通过。300 臂整数 match 超覆盖预算，含 1,000 个插值的单个字符串触发引用分析硬上限。见[借用分析规模化设计](architecture.md#k3-借用分析规模化设计待实施)。 |
 | K4 | 待实施 | | |
 | D1–D8 | 待决策 | | |
