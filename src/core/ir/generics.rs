@@ -40,7 +40,7 @@ pub(super) struct GenericContext {
     pub module_name: String,
     pub when_sites: Vec<(String, Span, String)>,
     pub scope: Arc<crate::core::imports::ImportScope>,
-    pub templates: HashMap<String, FnDef>,
+    pub templates: HashMap<String, std::rc::Rc<FnDef>>,
     pub instances: Vec<Instance>,
     pub checking: bool,
     pub closure_definitions: HashMap<String, super::closures::ClosureDefinition>,
@@ -83,7 +83,7 @@ impl GenericContext {
                 .iter()
                 .filter_map(|item| match item {
                     Item::FnDef(f) if !f.type_params.is_empty() => {
-                        Some((f.name.clone(), f.clone()))
+                        Some((f.name.clone(), std::rc::Rc::new(f.clone())))
                     }
                     _ => None,
                 })
@@ -190,7 +190,7 @@ impl GenericContext {
     }
 
     pub fn definition(&self, instance: &Instance, types: &TypeRegistry) -> Result<FnDef, Error> {
-        let mut definition = self.templates[&instance.template].clone();
+        let mut definition = (*self.templates[&instance.template]).clone();
         let substitutions = definition
             .type_params
             .iter()
@@ -338,98 +338,15 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<(Vec<crate::core::types::GenericArgument>, FunctionSignature), Error> {
+        let (template, substitutions) =
+            self.infer_call(expr, vars, functions, types, expected, true)?;
         let Expr::Call {
-            callee,
-            type_args,
-            args,
-            span,
+            callee, args, span, ..
         } = expr
         else {
             unreachable!()
         };
-        let context = self.generics.borrow();
-        let template_name = self.function_name(callee).unwrap_or_else(|| callee.clone());
-        let template = context.templates[&template_name].clone();
-        let members = context.members.clone();
-        if args.len() != template.params.len() {
-            return Err(type_error(
-                span,
-                ErrorCode::InvalidCall,
-                format!("Argument count mismatch for `{callee}`"),
-            ));
-        }
-        // Source member arities are checked by member_call. Its protected call
-        // may bind only the receiver's impl prefix and infer method parameters.
-        // Ordinary function calls still require all explicit arguments.
-        let impl_prefix = callee.starts_with("joky/member/")
-            && context.members.methods.iter().any(|method| {
-                method.function == template_name && method.impl_parameters == type_args.len()
-            });
-        if !type_args.is_empty()
-            && type_args.len() != template.type_params.len()
-            && !impl_prefix
-            && (type_args.len() > template.type_params.len()
-                || !template.type_params[type_args.len().min(template.type_params.len())..]
-                    .iter()
-                    .all(|p| p.callable.is_some()))
-        {
-            return Err(type_error(
-                span,
-                ErrorCode::InvalidCall,
-                format!(
-                    "Type argument count mismatch for `{callee}`: expected {}",
-                    template.type_params.len()
-                ),
-            ));
-        }
-        drop(context);
-        let mut inference = seed_inference(&template.type_params, type_args, *span)?;
-        if let Some(expected) = expected {
-            if unresolved(
-                &template.ret_ty,
-                &template.type_params,
-                &inference.substitutions,
-            ) {
-                unify(
-                    &template.ret_ty,
-                    expected,
-                    &template.type_params,
-                    &mut inference.substitutions,
-                    *span,
-                )?;
-            }
-        }
-        // First use already known argument types, then default only unresolved
-        // parameters. Hints never evaluate arguments or move source effects.
-        inference_passes(&mut inference, true, |inference| {
-            for _ in 0..=template.type_params.len() {
-                let before = inference.substitutions.clone();
-                let mut local = vars.clone();
-                for (index, (param, arg)) in template.params.iter().zip(args).enumerate() {
-                    let formal = if functions[&template_name].can_borrow_argument(index)
-                        && !self
-                            .hint(arg, &local, functions, types, inference.default)
-                            .is_some_and(|ty| ty.reference_type().is_some())
-                    {
-                        param
-                            .ty
-                            .reference_type()
-                            .filter(|r| !r.mutable)
-                            .map_or(&param.ty, |r| &r.target)
-                    } else {
-                        &param.ty
-                    };
-                    self.infer_generic_argument(formal, arg, &local, functions, types, inference)?;
-                    self.hint_bindings(arg, &mut local, functions, types);
-                }
-                if before == inference.substitutions {
-                    break;
-                }
-            }
-            Ok(())
-        })?;
-        self.materialize_inference(&mut inference, types, *span)?;
-        let substitutions = inference.substitutions;
+        let members = self.generics.borrow().members.clone();
         if template
             .type_params
             .iter()
@@ -492,6 +409,137 @@ impl FunctionPlan {
         let ret =
             substitute(&template.ret_ty, &substitutions, types).map_err(|e| e.with_span(*span))?;
         Ok((arguments, FunctionSignature::new(params, ret)))
+    }
+
+    pub(super) fn generic_result_hint(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        default: bool,
+    ) -> Option<Type> {
+        if default {
+            return self
+                .generic_signature(expr, vars, functions, types)
+                .ok()
+                .map(|(_, signature)| signature.ret);
+        }
+        // Only the result must be known for a strict hint. Unconstrained inputs
+        // can still be defaulted when the actual call is checked.
+        let (template, substitutions) = self
+            .infer_call(expr, vars, functions, types, None, false)
+            .ok()?;
+        if unresolved(&template.ret_ty, &template.type_params, &substitutions) {
+            return None;
+        }
+        substitute(&template.ret_ty, &substitutions, types).ok()
+    }
+
+    fn infer_call(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+        defaults: bool,
+    ) -> Result<(std::rc::Rc<FnDef>, crate::core::types::Substitutions), Error> {
+        self.hint_work.charge(expr.span());
+        self.hint_work.check()?;
+        let Expr::Call {
+            callee,
+            type_args,
+            args,
+            span,
+        } = expr
+        else {
+            unreachable!()
+        };
+        let context = self.generics.borrow();
+        let template_name = self.function_name(callee).unwrap_or_else(|| callee.clone());
+        let template = context.templates[&template_name].clone();
+        if args.len() != template.params.len() {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                format!("Argument count mismatch for `{callee}`"),
+            ));
+        }
+        // Source member arities are checked by member_call. Its protected call
+        // may bind only the receiver's impl prefix and infer method parameters.
+        // Ordinary function calls still require all explicit arguments.
+        let impl_prefix = callee.starts_with("joky/member/")
+            && context.members.methods.iter().any(|method| {
+                method.function == template_name && method.impl_parameters == type_args.len()
+            });
+        if !type_args.is_empty()
+            && type_args.len() != template.type_params.len()
+            && !impl_prefix
+            && (type_args.len() > template.type_params.len()
+                || !template.type_params[type_args.len().min(template.type_params.len())..]
+                    .iter()
+                    .all(|p| p.callable.is_some()))
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                format!(
+                    "Type argument count mismatch for `{callee}`: expected {}",
+                    template.type_params.len()
+                ),
+            ));
+        }
+        drop(context);
+        let mut inference = seed_inference(&template.type_params, type_args, *span)?;
+        if let Some(expected) = expected {
+            if unresolved(
+                &template.ret_ty,
+                &template.type_params,
+                &inference.substitutions,
+            ) {
+                unify(
+                    &template.ret_ty,
+                    expected,
+                    &template.type_params,
+                    &mut inference.substitutions,
+                    *span,
+                )?;
+            }
+        }
+        // First use already known argument types, then default only unresolved
+        // parameters. Hints never evaluate arguments or move source effects.
+        inference_passes(&mut inference, defaults, |inference| {
+            for _ in 0..=template.type_params.len() {
+                let before = inference.substitutions.clone();
+                let mut local = vars.clone();
+                for (index, (param, arg)) in template.params.iter().zip(args).enumerate() {
+                    let shared = param.ty.reference_type().filter(|r| {
+                        !r.mutable && functions[&template_name].can_borrow_argument(index)
+                    });
+                    let formal = match shared {
+                        Some(reference)
+                            if !self
+                                .hint(arg, &local, functions, types, inference.default)
+                                .is_some_and(|ty| ty.reference_type().is_some()) =>
+                        {
+                            &reference.target
+                        }
+                        _ => &param.ty,
+                    };
+                    self.infer_generic_argument(formal, arg, &local, functions, types, inference)?;
+                    self.hint_bindings(arg, &mut local, functions, types);
+                }
+                if before == inference.substitutions {
+                    break;
+                }
+            }
+            Ok(())
+        })?;
+        self.materialize_inference(&mut inference, types, *span)?;
+        self.hint_work.check()?;
+        let substitutions = inference.substitutions;
+        Ok((template, substitutions))
     }
 
     pub(super) fn infer_generic_argument(

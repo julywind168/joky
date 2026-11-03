@@ -201,7 +201,7 @@ impl FunctionInfo {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct Slot {
     pub(crate) index: usize,
     pub(crate) ty: Type,
@@ -258,7 +258,7 @@ pub(crate) enum TextSource {
     Float(Slot),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Binding {
     slot: Option<Slot>,
     mutable: bool,
@@ -552,6 +552,7 @@ pub(crate) struct DynErasure {
 
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
+    hint_work: inference::HintWork,
     source_function: String,
     lexical_function: String,
     callable_modes: HashMap<usize, crate::core::types::CallableKind>,
@@ -1356,6 +1357,7 @@ impl FunctionPlan {
         let mut plan = Self {
             dyn_erasures: Vec::new(),
             lexical_function,
+            hint_work: Default::default(),
             source_function: f.name.clone(),
             callable_modes: Default::default(),
             captured_owners: Default::default(),
@@ -1968,6 +1970,11 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         let previous = self.current_span;
         self.current_span = expr.span();
+        let hint_scope = if inference::has_nested_call(expr) {
+            self.hint_work.enter(vars, functions, types)
+        } else {
+            None
+        };
         // Blocks and sequences do not need the value planner's large frame on
         // every nesting level. Keep small-stack compilation independent of the
         // number of expression variants handled by expr_inner.
@@ -1980,7 +1987,9 @@ impl FunctionPlan {
             self.expr_inner(expr, vars, functions, suspends, types, expected)
         }
         .and_then(|flow| self.coerce_reference(flow, expected));
+        self.hint_work.leave(hint_scope);
         self.current_span = previous;
+        self.hint_work.check()?;
         result
     }
 

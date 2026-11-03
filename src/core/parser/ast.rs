@@ -30,7 +30,7 @@ impl ConcurrentKind {
 }
 
 /// Literals.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     /// Rigid UInt64 value, replaced by an immediate during specialization.
     ConstParameter(Arc<TypeParameter>),
@@ -58,7 +58,7 @@ pub enum Literal {
 }
 
 /// Expression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// Compiler-authored indexed loop body; integer type is inferred before lowering.
     IndexedLoop(Box<IndexedLoop>),
@@ -287,7 +287,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct When {
     /// Set only by checked handle-method lowering, never parsed.
     pub(crate) method: Option<String>,
@@ -300,7 +300,7 @@ pub struct When {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WhenPath {
     pub create: Option<Expr>,
     pub ty: Type,
@@ -309,7 +309,7 @@ pub struct WhenPath {
     pub optional: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnonymousFunction {
     pub moving: bool,
     pub suspends: bool,
@@ -319,7 +319,7 @@ pub struct AnonymousFunction {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClosureParameter {
     pub mutable: bool,
     pub name: String,
@@ -327,7 +327,7 @@ pub struct ClosureParameter {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IndexedLoop {
     pub name: String,
     pub counter: String,
@@ -562,7 +562,7 @@ impl Expr {
 }
 
 /// A method receiver is evaluated once, before its explicit arguments.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MethodCall {
     pub receiver: Expr,
     pub name: String,
@@ -1100,7 +1100,7 @@ pub struct TypeAlias {
 }
 
 /// One named field initializer, with shorthand expanded to its value expression.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldInit {
     pub name: String,
     pub value: Expr,
@@ -1215,14 +1215,14 @@ pub struct VariantDef {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Expr,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Value(Box<PayloadPattern>),
     Wildcard {
@@ -1246,7 +1246,7 @@ impl Pattern {
 
 /// One `field: pattern` entry of a record pattern; shorthand `field` is
 /// desugared at parse time to `field: field`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordFieldPattern {
     pub name: String,
     pub pattern: BindingPattern,
@@ -1254,7 +1254,7 @@ pub struct RecordFieldPattern {
 }
 
 /// Irrefutable binding patterns; enum and literal patterns are excluded.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BindingPattern {
     Sequence(Box<SequencePattern<BindingPattern>>),
     Name {
@@ -1275,7 +1275,7 @@ pub enum BindingPattern {
 }
 /// Head, type arguments, and field entries of a record pattern; boxed to keep
 /// small binding patterns cheap to store inside expressions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordPattern {
     pub name: String,
     pub type_args: Vec<GenericArgument>,
@@ -1297,7 +1297,7 @@ impl BindingPattern {
 }
 
 /// Recursive match payload syntax; bare names are resolved using the payload type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PayloadPattern {
     Sequence(Box<SequencePattern<PayloadPattern>>),
     Literal {
@@ -1397,7 +1397,7 @@ fn pattern_names(pattern: &BindingPattern, out: &mut Vec<String>) {
 }
 
 /// An explicitly instantiated name without call parentheses.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GenericName {
     pub name: String,
     pub type_args: Vec<GenericArgument>,
@@ -1405,7 +1405,7 @@ pub struct GenericName {
 }
 
 /// A single optional rest separates prefix and suffix patterns.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SequencePattern<P> {
     pub prefix: Vec<P>,
     pub suffix: Vec<P>,

@@ -1,6 +1,107 @@
 //! Contextual integer literals. Hints inspect types without evaluating expressions.
 use super::*;
 
+const MAX_HINT_STEPS: usize = 65_536;
+
+// A query can see both the source method call and a synthesized function call
+// at the same span. Verify the AST on a bucket hit, including for embedding
+// callers whose hand-built nodes have empty or repeated spans.
+struct HintEntry {
+    expr: Expr,
+    ty: Option<Type>,
+}
+
+#[derive(Default)]
+pub(super) struct HintWork {
+    steps: std::cell::Cell<usize>,
+    exhausted: std::cell::Cell<Option<Span>>,
+    session: std::cell::RefCell<Option<Box<HintSession>>>,
+}
+
+pub(super) struct SavedHintScope(Option<Box<HintSession>>);
+
+struct HintSession {
+    // Only compared while the enclosing query or checked call keeps both inputs alive.
+    types: *const TypeRegistry,
+    functions: *const HashMap<String, FunctionInfo>,
+    vars: HashMap<String, Binding>,
+    entries: HashMap<(Span, std::mem::Discriminant<Expr>, bool), HintEntry>,
+}
+
+pub(super) fn has_nested_call(expr: &Expr) -> bool {
+    let call = |arg: &Expr| matches!(arg, Expr::Call { .. } | Expr::MethodCall(_));
+    match expr {
+        Expr::Call { args, .. } => args.iter().any(call),
+        Expr::MethodCall(method) => call(&method.receiver) || method.args.iter().any(call),
+        _ => false,
+    }
+}
+
+// Bound retained syntax and leave closure preparation to the checked callable
+// path, whose speculative environment can be rolled back and replanned.
+fn cacheable_call(expr: &Expr) -> bool {
+    let mut pending = vec![expr];
+    let mut count = 0;
+    while let Some(node) = pending.pop() {
+        count += 1;
+        if count > 128 || matches!(node, Expr::AnonymousFunction(_)) {
+            return false;
+        }
+        pending.extend(node.children());
+    }
+    true
+}
+
+impl HintWork {
+    pub(super) fn enter(
+        &self,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Option<SavedHintScope> {
+        if self.session.borrow().as_ref().is_some_and(|s| {
+            std::ptr::eq(s.types, types) && std::ptr::eq(s.functions, functions) && s.vars == *vars
+        }) {
+            return None;
+        }
+        let scope = HintSession {
+            types,
+            functions,
+            vars: vars.clone(),
+            entries: HashMap::new(),
+        };
+        Some(SavedHintScope(self.session.replace(Some(Box::new(scope)))))
+    }
+
+    pub(super) fn leave(&self, saved: Option<SavedHintScope>) {
+        if let Some(saved) = saved {
+            self.session.replace(saved.0);
+        }
+    }
+
+    pub(super) fn charge(&self, span: Span) -> bool {
+        if self.steps.get() >= MAX_HINT_STEPS {
+            if self.exhausted.get().is_none() {
+                self.exhausted.set(Some(span));
+            }
+            return false;
+        }
+        self.steps.set(self.steps.get() + 1);
+        true
+    }
+
+    pub(super) fn check(&self) -> Result<(), Error> {
+        if let Some(span) = self.exhausted.get() {
+            return Err(type_error(
+                &span,
+                ErrorCode::ResourceLimit,
+                "Type inference exceeds its function work budget",
+            ));
+        }
+        Ok(())
+    }
+}
+
 pub(super) fn integer_literal(
     magnitude: u64,
     negative: bool,
@@ -79,6 +180,55 @@ impl FunctionPlan {
     /// Int32, aggregate constructors may default their parameters, and operator
     /// operands, branches, and match arms are searched for any concrete leaf.
     pub(super) fn hint(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        default: bool,
+    ) -> Option<Type> {
+        if !self.hint_work.charge(expr.span()) {
+            return None;
+        }
+        if !matches!(expr, Expr::Call { .. } | Expr::MethodCall(_))
+            || self.hint_work.session.borrow().is_none() && !has_nested_call(expr)
+        {
+            return self.hint_inner(expr, vars, functions, types, default);
+        }
+        let saved = self.hint_work.enter(vars, functions, types);
+        let site = (expr.span(), std::mem::discriminant(expr), default);
+        if saved.is_none() {
+            if let Some(entry) = self
+                .hint_work
+                .session
+                .borrow()
+                .as_ref()
+                .and_then(|s| s.entries.get(&site))
+            {
+                if entry.expr == *expr {
+                    return entry.ty.clone();
+                }
+            }
+        }
+        let ty = self.hint_inner(expr, vars, functions, types, default);
+        if saved.is_none() && cacheable_call(expr) {
+            let mut session = self.hint_work.session.borrow_mut();
+            let entries = &mut session.as_mut().expect("active hint scope").entries;
+            if entries.len() < 512 {
+                entries.insert(
+                    site,
+                    HintEntry {
+                        expr: expr.clone(),
+                        ty: ty.clone(),
+                    },
+                );
+            }
+        }
+        self.hint_work.leave(saved);
+        ty
+    }
+
+    fn hint_inner(
         &self,
         expr: &Expr,
         vars: &HashMap<String, Binding>,
@@ -234,9 +384,7 @@ impl FunctionPlan {
                         .function_name(callee)
                         .is_some_and(|name| self.generics.borrow().templates.contains_key(&name))
                     {
-                        self.generic_signature(expr, vars, functions, types)
-                            .ok()
-                            .map(|(_, signature)| signature.ret)
+                        self.generic_result_hint(expr, vars, functions, types, default)
                     } else {
                         self.function_name(callee)
                             .and_then(|name| functions.get(&name))
@@ -701,5 +849,102 @@ pub(super) fn float_literal(
             return Err(invalid());
         }
         Ok((Type::Float64, Constant::Float64(value)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+
+    #[test]
+    fn nested_generic_hint_work_scales_with_chain_length() {
+        let steps = |depth| {
+            let calls = format!("{}1{}", "id(".repeat(depth), ")".repeat(depth));
+            let methods = ".keep()".repeat(depth);
+            let source = format!("fn id<T>(x:T)->T{{x}} struct Box<T>{{ value:T }} impl<T> Box<T>{{ fn keep(self)->Self{{self}} }} fn calls()->Int32{{{calls}}} fn methods(v:Box<Int32>)->Box<Int32>{{v{methods}}}");
+            let ast = crate::parser::parse(&source).unwrap();
+            let types = TypeRegistry::new().with_prelude(false);
+            let plan = PreparedModule::new(&ast, &types, &BindingRegistry::default())
+                .unwrap()
+                .plan(&HashMap::new())
+                .unwrap();
+            ["calls", "methods"].map(|name| plan.bodies[name].hint_work.steps.get())
+        };
+        let short = steps(10);
+        let long = steps(30);
+        for (small, large) in short.into_iter().zip(long) {
+            assert!(
+                large <= 4 * small,
+                "10 levels took {small} steps, 30 took {large}"
+            );
+        }
+    }
+    #[test]
+    fn generic_hint_cache_checks_syntax_and_shadowed_bindings_at_the_same_span() {
+        let mut module = crate::parser::parse(
+            "
+            fn id<T>(x: T) -> T { x }
+            fn triple<A,B,C>(a:A, b:B, c:C) -> (A,B,C) { (a,b,c) }
+            fn probe(x: Int32) -> Int32 {
+                let (n, b, c) = triple(id(x), { let x = true; id(x) }, id(true))
+                if b && c { n } else { 0 }
+            }
+        ",
+        )
+        .unwrap();
+        let Item::FnDef(function) = &mut module.items[2] else {
+            unreachable!()
+        };
+        let Expr::Block { exprs, .. } = &mut function.body else {
+            unreachable!()
+        };
+        let Expr::Destructure { value, .. } = &mut exprs[0] else {
+            unreachable!()
+        };
+        let Expr::Call { args, .. } = value.as_mut() else {
+            unreachable!()
+        };
+        let first = args[0].clone();
+        args[2] = args[2].clone().with_span(first.span());
+        let Expr::Block { exprs, .. } = &mut args[1] else {
+            unreachable!()
+        };
+        // Identical AST, but the second x is Bool instead of Int32.
+        let Expr::Sequence { exprs, .. } = &mut exprs[0] else {
+            unreachable!()
+        };
+        *exprs.last_mut().unwrap() = first;
+        let mut vm = crate::vm::VmEngine::new_interpreter();
+        vm.set_prelude_enabled(false);
+        vm.load_module(&module).unwrap();
+        assert_eq!(vm.call_int32_1("probe", 42).unwrap(), 42);
+    }
+
+    #[test]
+    fn generic_hints_keep_concrete_types_and_report_the_exhausted_budget() {
+        let mut vm = crate::vm::VmEngine::new_interpreter();
+        vm.set_prelude_enabled(false);
+        vm.load_source("fn current() -> Int32 { 42 }").unwrap();
+        let prefix = "fn id<T>(x:T)->T{x}";
+        for body in [
+            "fn bad(n:Int32)->Int64 { id(id(n)) }",
+            "fn bad()->Int32 { id(id(3000000000)) }",
+        ] {
+            let err = vm.load_source(&format!("{prefix}{body}")).unwrap_err();
+            assert_eq!(err.code(), ErrorCode::TypeMismatch, "{err}");
+        }
+        // Repeated independent statements spend one function's shared budget.
+        let expression = format!("{}1{};\n", "id(".repeat(12), ")".repeat(12));
+        let source = format!("{prefix}fn heavy() {{ {} }}", expression.repeat(2000));
+        let err = vm.load_source(&source).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ResourceLimit, "{err}");
+        assert!(err.message().contains("Type inference"));
+        assert!(err
+            .span()
+            .unwrap()
+            .slice(&source)
+            .is_some_and(|s| !s.is_empty()));
+        assert_eq!(vm.call_int32_0("current").unwrap(), 42);
     }
 }

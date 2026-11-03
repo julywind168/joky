@@ -1,6 +1,6 @@
 # 语言核心审查修复计划
 
-状态：2026-11-03 审查结论，K0 和 K1-1 已修复，K1 其余项及 K2–K4 待实施；D 节为待决策设计项，未经确认不实施。
+状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2-2 已修复，其余 K1–K4 项待实施；D 节为待决策设计项，未经确认不实施。
 
 本文来自一次针对语言核心（前端、类型、所有权/借用、挂起与结构化并发）的实测审查：
 约 500 个探针程序，在 JIT、解释器、AOT 三后端上对比。下列问题均已用最小程序复现，
@@ -283,8 +283,9 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K0-2 | 已修复 | `fix: resolve closure metadata inside concurrent blocks` | Debug 定向测试 14 项通过；另跑 `exhaustive_concurrent_blocks_cancel_every_instruction` 通过。原始复现通过 CLI 检查，四种并发块各调用三种闭包的探针在 JIT、解释器、独立 AOT 均通过。fmt、Clippy 和 diff 检查通过，未跑全量。 |
 | K0-3 | 已修复 | `fix: clean up cancelled interpreter siblings in registration order` | Debug 定向测试 8 项通过。race、join 失败、scope 主体失败及 isolate 内失败四种场景均核对 JIT、解释器、独立 AOT 的完整析构序列。另跑结构化结果、并发块、race、scope 和 isolate 五项取消穷举，全部通过。fmt、Clippy、diff 检查通过，未跑全量。 |
 | K1-1 | 已修复 | `bda88494`、`fix: plan flat operator and conditional chains iteratively` | Debug 定向库测试 135 项、CLI 回归 2 项、加法逐指令取消穷举 1 项通过。Dev CLI 对 2000 层括号在 check 和 fmt 均返回带位置的 resource_limit；1000 项加法和 300 分支条件链在 JIT、解释器、独立 AOT 输出一致。fmt、Clippy、diff 检查通过，未跑全量。 |
+| K1-2、K2-2 | 已修复 | `fix: bound nested generic inference and preserve literal context` | Debug 定向库测试 79 项、CLI 回归 2 项通过。30 层 id、or、and、unwrap 链通过 JIT、解释器及独立 AOT；比较 10 与 30 层的推导步数，另验证上下文定型、变量遮蔽、同位置 AST 和预算诊断。fmt、Clippy、diff 检查通过，未跑全量。 |
 | K1 其余项 | 待实施 | | |
-| K2 | 待实施 | | |
+| K2 其余项 | 待实施 | | |
 | K3 | 待设计 | | |
 | K4 | 待实施 | | |
 | D1–D8 | 待决策 | | |

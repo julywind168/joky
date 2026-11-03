@@ -3254,3 +3254,44 @@ fn flat_expression_chains_keep_evaluation_order_on_all_backends() {
     success(&work.cli(&["fmt", "chains.jk"]));
     work.assert_all_backends("chains.jk", &[], b"1000\n298\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn nested_generic_calls_and_method_chains_keep_context_on_all_backends() {
+    let depth = 30;
+    let nested = format!("{}42{}", "id(".repeat(depth), ")".repeat(depth));
+    let ors = format!("Some(value){}", ".or(None)".repeat(depth));
+    let ands = format!("Some(value){}", ".and(Some(value))".repeat(depth));
+    let option_type = format!("{}Int32{}", "Option<".repeat(depth), ">".repeat(depth));
+    let options = format!("{}42{}", "Some(".repeat(depth), ")".repeat(depth));
+    let unwraps = ".unwrap()".repeat(depth);
+    let source = format!(
+        r#"
+        fn id<T>(value: T) -> T {{ value }}
+        fn nested() -> Int32 {{ {nested} }}
+        fn ors(value: Int32) -> Option<Int32> {{ {ors} }}
+        fn ands(value: Int32) -> Option<Int32> {{ {ands} }}
+        fn first<T, U>(value: T, other: U) -> T {{ value }}
+        fn options() -> {option_type} {{ {options} }}
+        fn unwraps(value: {option_type}) -> Int32 {{ value{unwraps} }}
+        fn main() {{
+            let wide: Int64 = id(id(3000000000))
+            let wrapped: Option<Int64> = Some(id(3000000000))
+            let explicit = first::<Int64, Bool>(id(3000000000), true)
+            assert_eq(wide, wrapped!)
+            assert_eq(explicit, wide)
+            let doubled: Int64 = 6000000000
+            assert_eq(id(3000000000) + wide, doubled)
+            let inferred = [1, first(wide, 0)]
+            assert_eq(inferred[1], wide)
+            assert_eq(unwraps(options()), 42)
+            assert_eq(nested(), 42)
+            assert_eq(ors(42)!, 42)
+            println(ands(42)!)
+        }}
+    "#
+    );
+    let work = Workspace::new();
+    work.write("nested.jk", &source);
+    work.assert_all_backends("nested.jk", &[], b"42\n", 0);
+}
