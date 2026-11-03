@@ -572,6 +572,17 @@ impl FunctionPlan {
         types: &TypeRegistry,
         inference: &mut InferenceState,
     ) -> Result<(), Error> {
+        // Constructors and generic calls can already know a parameter's
+        // function-pointer type from the result context or explicit arguments.
+        let pointer = match formal {
+            Type::Parameter(p) => inference
+                .substitutions
+                .get(&p.id)
+                .filter(|t| matches!(t, Type::Function(_)))
+                .cloned(),
+            _ => None,
+        };
+        let formal = pointer.as_ref().unwrap_or(formal);
         if matches!(formal, Type::Function(_)) {
             if let Expr::AnonymousFunction(function) = arg {
                 if !super::closures::free_names(function, vars)?.is_empty() {
@@ -579,13 +590,26 @@ impl FunctionPlan {
                         arg.span(),
                     ));
                 }
-            } else if self
-                .hint(arg, vars, functions, types, inference.default)
-                .is_some_and(|ty| ty.closure_info().is_some_and(|c| c.pointer_entry.is_none()))
-            {
-                return Err(super::closures::capturing_function_pointer_error(
-                    arg.span(),
-                ));
+            } else if let Some(ty) = self.hint(arg, vars, functions, types, inference.default) {
+                if let Some(closure) = ty.closure_info() {
+                    if closure.pointer_entry.is_none() {
+                        return Err(super::closures::capturing_function_pointer_error(
+                            arg.span(),
+                        ));
+                    }
+                    let signature = Type::function_with_effect(
+                        closure.signature.params.clone(),
+                        closure.signature.ret.clone(),
+                        closure.suspends,
+                    );
+                    return unify(
+                        formal,
+                        &signature,
+                        inference.params,
+                        &mut inference.substitutions,
+                        arg.span(),
+                    );
+                }
             }
         }
         if inference.default && !unresolved(formal, inference.params, &inference.substitutions) {

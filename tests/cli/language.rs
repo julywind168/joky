@@ -3402,3 +3402,30 @@ fn imported_record_pattern_heads_keep_their_nominal_identity() {
     );
     work.assert_all_backends("pattern.jk", &[], b"42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn generic_values_accept_contextual_function_pointer_literals() {
+    let work = Workspace::new();
+    work.write(
+        "pointer.jk",
+        r#"
+        struct Holder<T> { f: T }
+        fn main() {
+            let o: Option<fn(Int32) -> Int32> = Some(|x: Int32| -> Int32 { x })
+            let h: Holder<fn(Int32) -> Int32> = Holder { f: |x| { x + 1 } }
+            let f = o!
+            let g = |x: Int32| { x + 1 }
+            let stored: Option<fn(Int32) -> Int32> = Some(g)
+            let again = stored!
+            println(f(40) + (h.f)(0) + again(0))
+        }
+    "#,
+    );
+    work.assert_all_backends("pointer.jk", &[], b"42\n", 0);
+    work.write(
+        "pointer.jk",
+        "fn main() { let y = 1; let o: Option<fn(Int32) -> Int32> = Some(|x| { x + y }) }",
+    );
+    failure(&work.cli(&["check", "pointer.jk"]), "capturing closure");
+}
