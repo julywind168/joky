@@ -746,6 +746,11 @@ impl FunctionPlan {
         let Some(binding) = vars.get(name) else {
             return Ok(None);
         };
+        // A captured reference lives in an environment field. Load it through
+        // the ordinary reference projection path before accessing its pointee.
+        if slot_type(&binding.slot).reference_type().is_some() {
+            return Ok(None);
+        }
         let Some(reference) = binding.place.clone() else {
             return Ok(None);
         };

@@ -287,6 +287,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K1-3 | 解释器回溯已修复，原生同步直调已验证测试原型 | `fix: fold adjacent identical interpreter trace frames in CLI diagnostics`、`test: prototype native stack preflight for direct owning calls` | macOS arm64 的 JIT 和 AOT 小栈回归验证了拒绝位置、拥有实参析构一次及失败后线程可复用。常规构建的原生栈保护仍待实施。见[原生栈保护提案](architecture.md#k1-3-原生栈保护提案)。 |
 | K2-1 | 已修复 | `fix: infer generic argument types from module constants` | 模块常量及同名局部参数在 JIT、解释器和 AOT 的定向回归通过。 |
 | K2-3 | 已修复 | `fix: reject mixed numeric literal defaults consistently` | 算术、数组、同型泛型调用和条件分支的双向拒绝用例及显式浮点上下文的三后端运行通过。 |
+| K2-4 | 已修复 | `fix: dereference captured references for field access` | 三后端验证借用捕获、move 捕获及独占引用写入。 |
 | K2 其余项 | 待实施 | | |
 | K3 | 待设计 | | |
 | K4 | 待实施 | | |

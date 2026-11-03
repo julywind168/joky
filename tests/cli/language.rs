@@ -3359,3 +3359,25 @@ fn mixed_numeric_literal_defaults_require_context_in_both_orders() {
     );
     work.assert_all_backends("mixed.jk", &[], b"42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn closures_project_fields_through_captured_references() {
+    let work = Workspace::new();
+    work.write(
+        "capture.jk",
+        r#"
+        struct P { x: Int32 }
+        fn read(p: &P) -> Int32 { let g = || { p.x }; g() }
+        fn moved(p: &P) -> Int32 { let g = move || { p.x }; g() }
+        fn write(p: &mut P) { var g = || { p.x = 5 }; g() }
+        fn main() {
+            var p = P { x: 2 }
+            println(read(&p))
+            write(&mut p)
+            println(moved(&p))
+        }
+    "#,
+    );
+    work.assert_all_backends("capture.jk", &[], b"2\n5\n", 0);
+}
