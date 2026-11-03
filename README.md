@@ -186,7 +186,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 具体类型准入、API 与边界以[语言参考](docs/language.md)为准。任务执行可选固定 worker 池；支持本地 `path` 库包依赖，尚无 Git/registry 下载与锁文件。
 解释器执行限额不覆盖编译阶段或原生回调，其他执行与嵌入限制见[已知边界](docs/architecture.md#已知边界)。
-文件服务由宿主提供，CLI 启用本机实现，嵌入缺省为 Unsupported；Godot 验证适配器不提供文件服务。
+文件服务支持读写、重命名、删除文件和列出目录。能力由宿主提供，CLI 启用本机实现，嵌入缺省为 Unsupported；Godot 验证适配器不提供文件服务。
 
 ## 示例与文档
 

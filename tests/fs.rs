@@ -25,6 +25,77 @@ fn filesystem_default_is_unsupported() {
     }
 }
 #[test]
+fn filesystem_path_operations_require_host_capabilities() {
+    let stats = std::sync::Arc::new(descriptor_host::Stats::default());
+    // V1 has no path operations; an old descriptor must never see a new opcode.
+    let external =
+        unsafe { FileService::from_descriptor(descriptor_host::descriptor(&stats)) }.unwrap();
+    for service in [None, Some(external)] {
+        let mut vm = VmEngine::new_interpreter();
+        if let Some(service) = service {
+            vm.set_file_service(service).unwrap();
+        }
+        vm.load_source(r#"import joky/fs
+            fn run() @suspends {
+                assert(fs.rename("old", "new").err()!.kind == fs.ErrorKind.Unsupported, "rename")
+                assert(fs.remove_file("old").err()!.kind == fs.ErrorKind.Unsupported, "remove")
+                assert(fs.read_dir(".").err()!.kind == fs.ErrorKind.Unsupported, "list")
+                assert(fs.rename("", "new").err()!.kind == fs.ErrorKind.InvalidInput, "source validation")
+            }"#).unwrap();
+        block_on(vm.prepare_async("run", &[]).unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn filesystem_paths_work_in_jit_interpreter_and_native_parallel() {
+    use std::process::Command;
+    let work = scratch::ScratchDir::new("fs-paths");
+    let base = work.path();
+    std::fs::create_dir_all(base.join("paths/sub")).unwrap();
+    std::fs::write(base.join("paths.jk"), include_str!("fixtures/fs_paths.jk")).unwrap();
+    let cli = env!("CARGO_BIN_EXE_joky");
+    let built = Command::new(cli)
+        .args(["build", "--parallel", "paths.jk", "-o", "native"])
+        .current_dir(base)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{built:?}");
+    let mut jit = Command::new(cli);
+    jit.args(["run", "paths.jk"]);
+    let mut interpreter = Command::new(cli);
+    interpreter.args(["run", "--interpreter", "paths.jk"]);
+    for mut command in [jit, interpreter, Command::new(base.join("native"))] {
+        std::fs::write(base.join("paths/旧.txt"), "new contents").unwrap();
+        std::fs::write(base.join("paths/ready"), "old contents").unwrap();
+        let output = command.current_dir(base).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(!base.join("paths/旧.txt").exists() && !base.join("paths/ready").exists());
+        assert!(base.join("paths/sub").is_dir());
+    }
+}
+
+#[test]
+fn filesystem_test_context_resolves_path_operations_against_its_directory() {
+    let work = scratch::ScratchDir::new("fs-name");
+    let base = work.path();
+    std::fs::write(base.join("before"), b"text").unwrap();
+    let mut vm = VmEngine::new_interpreter();
+    vm.set_file_service(FileService::testing(base, Default::default()).unwrap())
+        .unwrap();
+    vm.load_source(
+        r#"import joky/fs
+        fn run() @suspends {
+            assert(fs.read_dir(".")!.contains("before"), "test directory")
+            fs.rename("before", "after")!
+            fs.remove_file("after")!
+        }"#,
+    )
+    .unwrap();
+    block_on(vm.prepare_async("run", &[]).unwrap()).unwrap();
+    assert!(!base.join("before").exists() && !base.join("after").exists());
+}
+
+#[test]
 fn filesystem_native_roundtrip() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let work = scratch::ScratchDir::new("fs");

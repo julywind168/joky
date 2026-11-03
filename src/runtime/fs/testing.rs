@@ -190,6 +190,15 @@ impl FileSystem for Backend {
     fn open(&self, path: &str, flags: u64) -> Result<Box<dyn FileHandle>, FsError> {
         self.native.open(path, flags)
     }
+    fn rename(&self, from: &str, to: &str) -> Result<(), FsError> {
+        self.native.rename(from, to)
+    }
+    fn remove_file(&self, path: &str) -> Result<(), FsError> {
+        self.native.remove_file(path)
+    }
+    fn read_dir(&self, path: &str) -> Result<super::DirectoryNames<'_>, FsError> {
+        self.native.read_dir(path)
+    }
     fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
         let mut state = self.inputs.lock();
         state.freeze()?;

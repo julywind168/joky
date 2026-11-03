@@ -134,6 +134,8 @@ impl Operation {
                 use crate::runtime::fs::Operation::*;
                 match op {
                     Open => (vec![Bytes(1, false), Word], Resource),
+                    Rename => (vec![Bytes(1, false), Bytes(1, false)], Resource),
+                    RemoveFile | ReadDir => (vec![Bytes(1, false)], Resource),
                     Process => (vec![Word, Word, Bytes(1, false)], Resource),
                     TestInput => (vec![Word, Bytes(1, false), Bytes(1, false)], Resource),
                     Stdin => (vec![], Resource),

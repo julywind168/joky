@@ -179,6 +179,12 @@ impl External {
             raw.file_token = lock(&f.state).token;
         }
         match input {
+            Input::Rename(..) | Input::RemoveFile(_) | Input::ReadDir(_) => {
+                return Err(FsError::new(
+                    1,
+                    "File service V1 does not provide path operations",
+                ))
+            }
             Input::Stdin => {
                 return Err(FsError::new(
                     1,

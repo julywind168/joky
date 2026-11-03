@@ -1,0 +1,19 @@
+import joky/fs
+
+fn main() @suspends {
+    let entries = fs.read_dir("paths")!
+    assert(entries.len() == 3, "immediate children only")
+    assert(entries.contains("旧.txt") && entries.contains("ready") && entries.contains("sub"), "entry names")
+    assert(fs.read_dir("paths/sub")!.is_empty(), "empty directory")
+    assert(fs.rename("paths/旧.txt", "paths/ready").is_ok(), "replace existing destination")
+    var file = fs.open("paths/ready", fs.OpenOptions.new())!
+    assert(file.read_text()! == "new contents", "renamed file contents")
+    file.close()!
+    fs.remove_file("paths/ready")!
+    assert(fs.remove_file("paths/sub").is_err(), "directory is not a file")
+    assert(fs.read_dir("paths")!.len() == 1, "removed file")
+    assert(fs.remove_file("paths/旧.txt").err()!.kind == fs.ErrorKind.NotFound, "missing file")
+    assert(fs.read_dir("paths/missing").err()!.kind == fs.ErrorKind.NotFound, "missing directory")
+    assert(fs.rename("paths/sub", "").err()!.kind == fs.ErrorKind.InvalidInput, "invalid destination")
+    assert(fs.read_dir("bad\0path").err()!.kind == fs.ErrorKind.InvalidInput, "invalid directory path")
+}

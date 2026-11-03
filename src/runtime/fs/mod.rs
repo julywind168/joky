@@ -14,6 +14,7 @@ use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 use service::{FileCell, Ticket};
 pub use service::{FileHandle, FileLimits, FileService, FileSystem};
 use std::{cell::RefCell, ffi::c_void, ptr::NonNull, sync::Arc};
+pub use worker::DirectoryNames;
 use worker::{Data, Input, Packet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,10 +103,16 @@ pub(crate) enum Operation {
     Process,
     Stdin,
     TestInput,
+    Rename,
+    RemoveFile,
+    ReadDir,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
         "__fs_open" => Operation::Open,
+        "__fs_rename" => Operation::Rename,
+        "__fs_remove_file" => Operation::RemoveFile,
+        "__fs_read_dir" => Operation::ReadDir,
         "__fs_read" => Operation::Read,
         "__fs_write" => Operation::Write,
         "__fs_seek" => Operation::Seek,
@@ -137,6 +144,8 @@ impl Operation {
         let bytes = |t: &Type| matches!(t,Type::Record(r)if r.name=="joky/array.Array"&&r.arguments==[Type::UInt8]&&r.fields.len()==1&&matches!(&r.fields[0].ty,Type::Buffer(t)if **t==Type::UInt8));
         let (params, ret) = match self {
             Self::Open => (vec![Type::String, Type::UInt64], outcome),
+            Self::Rename => (vec![Type::String, Type::String], outcome),
+            Self::RemoveFile | Self::ReadDir => (vec![Type::String], outcome),
             Self::Stdin => (vec![], outcome),
             Self::Process => (vec![Type::UInt64, Type::UInt64, Type::String], outcome),
             Self::TestInput => (vec![Type::UInt64, Type::String, Type::String], outcome),
@@ -164,6 +173,15 @@ impl Operation {
                 "File operation requires its exact compiler-owned signature",
             ));
         }
+        Ok(())
+    }
+}
+fn validate_path(path: &str) -> Result<(), FsError> {
+    if path.len() > 4096 {
+        Err(FsError::new(8, "File path exceeds 4096 bytes"))
+    } else if path.is_empty() || path.contains('\0') {
+        Err(FsError::new(5, "Invalid file path"))
+    } else {
         Ok(())
     }
 }
@@ -373,7 +391,14 @@ pub(crate) unsafe fn poll(
         }
         if frame.host_context.is_null() {
             let mut loan = None;
-            let (service, file) = if matches!(op, Operation::Open | Operation::Stdin) {
+            let (service, file) = if matches!(
+                op,
+                Operation::Open
+                    | Operation::Stdin
+                    | Operation::Rename
+                    | Operation::RemoveFile
+                    | Operation::ReadDir
+            ) {
                 (CURRENT.with(|s| s.borrow().clone()), None)
             } else {
                 let l = lease(frame.slots[0])?;
@@ -385,17 +410,30 @@ pub(crate) unsafe fn poll(
             let mut immediate = None;
             let action = match op {
                 Operation::Stdin => Input::Stdin,
-                Operation::Open => {
+                Operation::Open
+                | Operation::Rename
+                | Operation::RemoveFile
+                | Operation::ReadDir => {
                     let path = super::owned_text::borrow(frame.slots[0] as usize as *const Buffer)?;
-                    if path.len() > 4096 {
-                        immediate = Some(FsError::new(8, "File path exceeds 4096 bytes"));
-                    } else if path.is_empty()
-                        || path.contains('\0')
-                        || !valid_open_flags(frame.slots[1])
-                    {
-                        immediate = Some(FsError::new(5, "Invalid path or open options"));
+                    immediate = validate_path(path).err();
+                    match op {
+                        Operation::Open => {
+                            if immediate.is_none() && !valid_open_flags(frame.slots[1]) {
+                                immediate = Some(FsError::new(5, "Invalid open options"));
+                            }
+                            Input::Open(path, frame.slots[1])
+                        }
+                        Operation::Rename => {
+                            let to = super::owned_text::borrow(
+                                frame.slots[1] as usize as *const Buffer,
+                            )?;
+                            immediate = immediate.or_else(|| validate_path(to).err());
+                            Input::Rename(path, to)
+                        }
+                        Operation::RemoveFile => Input::RemoveFile(path),
+                        Operation::ReadDir => Input::ReadDir(path),
+                        _ => unreachable!(),
                     }
-                    Input::Open(path, frame.slots[1])
                 }
                 Operation::Read => {
                     let n = frame.slots[1];
@@ -515,6 +553,9 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, kind: u32) -> 
         12 => Operation::Process,
         13 => Operation::Stdin,
         14 => Operation::TestInput,
+        15 => Operation::Rename,
+        16 => Operation::RemoveFile,
+        17 => Operation::ReadDir,
         _ => return super::cps::INVALID_STATE,
     };
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {

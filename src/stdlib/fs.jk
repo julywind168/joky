@@ -57,6 +57,9 @@ impl OpenOptions {
 pub enum SeekFrom { Start(UInt64), Current(Int64), End(Int64) }
 pub struct File { owner: fs.FileOwner }
 extern fn __io_stdin() @suspends -> fs.OutcomeOwner
+extern fn __fs_rename(from: String, to: String) @suspends -> fs.OutcomeOwner
+extern fn __fs_remove_file(path: String) @suspends -> fs.OutcomeOwner
+extern fn __fs_read_dir(path: String) @suspends -> fs.OutcomeOwner
 extern fn __fs_open(path: String, flags: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_read(file: &mut fs.FileOwner, limit: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_write(file: &mut fs.FileOwner, bytes: &Slice<UInt8>) @suspends -> fs.OutcomeOwner
@@ -95,6 +98,23 @@ pub fn open(path: String, options: OpenOptions) @suspends -> Result<File, IoErro
     let code = __fs_code(&mut result)
     if code != 0 { return Err(error(&mut result, code)) }
     Ok(File { owner: __fs_file(&mut result) })
+}
+fn status(var result: fs.OutcomeOwner) @suspends -> Result<Unit, IoError> {
+    let code = __fs_code(&mut result)
+    if code == 0 { Ok({}) } else { Err(error(&mut result, code)) }
+}
+pub fn rename(from: String, to: String) @suspends -> Result<Unit, IoError> {
+    status(__fs_rename(from, to))
+}
+pub fn remove_file(path: String) @suspends -> Result<Unit, IoError> {
+    status(__fs_remove_file(path))
+}
+pub fn read_dir(path: String) @suspends -> Result<Array<String>, IoError> {
+    var result = __fs_read_dir(path)
+    let code = __fs_code(&mut result)
+    if code != 0 { return Err(error(&mut result, code)) }
+    let names = String.from_utf8(__fs_bytes(&mut result))!
+    if names.is_empty() { Ok(Array.new::<String>()) } else { Ok(names.split("\0")!) }
 }
 // Acquire the host's exclusive stdin stream; normal file operations retain their contracts.
 pub fn stdin() @suspends -> Result<File, IoError> {

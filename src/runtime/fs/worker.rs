@@ -5,6 +5,7 @@ use crate::runtime::executor::TaskWaker;
 use crate::Error;
 use std::{
     collections::VecDeque,
+    ffi::OsString,
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
@@ -22,11 +23,23 @@ pub trait FileHandle: Send {
     /// Runs on a service worker, including cancellation and automatic cleanup.
     fn close(self: Box<Self>) -> Result<(), FsError>;
 }
+/// Immediate entry names, consumed on the same file-service worker.
+pub type DirectoryNames<'a> = Box<dyn Iterator<Item = Result<OsString, FsError>> + 'a>;
+
 /// Blocking implementations run exclusively on service workers. Implementations
 /// must not access language storage or retain byte views. Panics are converted to
 /// SystemFailure and terminate the affected file. Engine thread rules still apply.
 pub trait FileSystem: Send + Sync + 'static {
     fn open(&self, path: &str, flags: u64) -> Result<Box<dyn FileHandle>, FsError>;
+    fn rename(&self, _from: &str, _to: &str) -> Result<(), FsError> {
+        Err(FsError::new(1, "Host does not provide rename"))
+    }
+    fn remove_file(&self, _path: &str) -> Result<(), FsError> {
+        Err(FsError::new(1, "Host does not provide remove_file"))
+    }
+    fn read_dir(&self, _path: &str) -> Result<DirectoryNames<'_>, FsError> {
+        Err(FsError::new(1, "Host does not provide read_dir"))
+    }
     /// Optional exclusive standard input capability. The default grants no access.
     fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
         Err(FsError::new(1, "Host does not provide standard input"))
@@ -45,6 +58,16 @@ impl FileSystem for Native {
             .open(self.0.join(path))
             .map_err(FsError::from)?;
         Ok(Box::new(file))
+    }
+    fn rename(&self, from: &str, to: &str) -> Result<(), FsError> {
+        std::fs::rename(self.0.join(from), self.0.join(to)).map_err(Into::into)
+    }
+    fn remove_file(&self, path: &str) -> Result<(), FsError> {
+        std::fs::remove_file(self.0.join(path)).map_err(Into::into)
+    }
+    fn read_dir(&self, path: &str) -> Result<DirectoryNames<'_>, FsError> {
+        let entries = std::fs::read_dir(self.0.join(path))?;
+        Ok(Box::new(entries.map(|entry| Ok(entry?.file_name()))))
     }
     fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
         if !self.1 {
@@ -349,7 +372,12 @@ impl NativeService {
             });
             queue.files.retain(|f| f.strong_count() > 0);
             queue.files.push(Arc::downgrade(&file));
-            file
+            Some(file)
+        } else if matches!(
+            input,
+            Input::Rename(..) | Input::RemoveFile(_) | Input::ReadDir(_)
+        ) {
+            None
         } else {
             let file = file.expect("file operation receiver");
             let mut state = lock(&file.state);
@@ -361,7 +389,7 @@ impl NativeService {
             }
             state.active = true;
             drop(state);
-            file
+            Some(file)
         };
         let action = input.snapshot();
         let ticket = Arc::new(NativeTicket {
@@ -373,6 +401,7 @@ impl NativeService {
                 waker: Some(waker),
                 delivered: false,
             }),
+            core: core.clone(),
             file,
             _permit: Arc::new(permit),
         });
@@ -432,6 +461,9 @@ impl NativeFile {
 pub(crate) enum Input<'a> {
     Stdin,
     Open(&'a str, u64),
+    Rename(&'a str, &'a str),
+    RemoveFile(&'a str),
+    ReadDir(&'a str),
     Read(u64),
     Write(&'a [u8]),
     Seek(u32, u64),
@@ -440,7 +472,9 @@ pub(crate) enum Input<'a> {
 impl Input<'_> {
     pub(crate) fn size(&self) -> usize {
         match self {
-            Self::Open(p, _) => p.len(),
+            Self::Open(p, _) | Self::RemoveFile(p) => p.len(),
+            Self::Rename(from, to) => from.len() + to.len(),
+            Self::ReadDir(p) => p.len() + DIRECTORY_BYTES,
             Self::Read(n) => (*n).min(1048576) as usize,
             Self::Write(b) => b.len().min(1048576),
             _ => 0,
@@ -449,6 +483,9 @@ impl Input<'_> {
     fn snapshot(self) -> Action {
         match self {
             Self::Open(p, f) => Action::Open(p.to_owned(), f),
+            Self::Rename(from, to) => Action::Rename(from.into(), to.into()),
+            Self::RemoveFile(p) => Action::RemoveFile(p.into()),
+            Self::ReadDir(p) => Action::ReadDir(p.into()),
             Self::Stdin => Action::Stdin,
             Self::Read(n) => Action::Read(n as usize),
             Self::Write(b) => Action::Write(b.to_vec()),
@@ -460,6 +497,9 @@ impl Input<'_> {
 pub(crate) enum Action {
     Stdin,
     Open(String, u64),
+    Rename(String, String),
+    RemoveFile(String),
+    ReadDir(String),
     Read(usize),
     Write(Vec<u8>),
     Seek(u32, u64),
@@ -509,13 +549,16 @@ struct NativeTicketState {
 }
 pub(crate) struct NativeTicket {
     state: Mutex<NativeTicketState>,
-    file: Arc<NativeFile>,
+    core: Arc<Core>,
+    file: Option<Arc<NativeFile>>,
     _permit: Arc<Permit>,
 }
 impl NativeTicket {
     pub(crate) fn fail(self: &Arc<Self>) {
         self.stop();
-        self.file.close(None);
+        if let Some(file) = &self.file {
+            file.close(None);
+        }
     }
     pub(crate) fn take(&self) -> Option<Packet> {
         let mut state = lock(&self.state);
@@ -525,15 +568,16 @@ impl NativeTicket {
     }
     pub(crate) fn stop(self: &Arc<Self>) {
         // Queue -> ticket -> file is the single admission/cancellation lock order.
-        let mut queue = lock(&self.file.core.queue);
+        let mut queue = lock(&self.core.queue);
         let mut state = lock(&self.state);
         state.waker = None;
         if state.delivered {
-            lock(&self.file.state).active = false;
+            let Some(file) = &self.file else { return };
+            lock(&file.state).active = false;
             drop(state);
             drop(queue);
-            if self.file.is_closed() {
-                self.file.enqueue_close();
+            if file.is_closed() {
+                file.enqueue_close();
             }
             return;
         }
@@ -544,8 +588,8 @@ impl NativeTicket {
         }
         let open = matches!(state.action, Some(Action::Open(..) | Action::Stdin));
         let packet = state.result.take();
-        {
-            let mut f = lock(&self.file.state);
+        if let Some(file) = &self.file {
+            let mut f = lock(&file.state);
             if !queued || open {
                 f.closing = true;
             }
@@ -556,8 +600,8 @@ impl NativeTicket {
         drop(state);
         drop(queue);
         drop(packet);
-        if self.file.is_closed() {
-            self.file.enqueue_close();
+        if let Some(file) = self.file.as_ref().filter(|file| file.is_closed()) {
+            file.enqueue_close();
         }
     }
 }
@@ -577,7 +621,9 @@ impl Core {
             s.result = Some(Packet::error(FsError::new(7, "File service is closed")));
             let w = s.waker.clone();
             drop(s);
-            lock(&ticket.file.state).active = false;
+            if let Some(file) = &ticket.file {
+                lock(&file.state).active = false;
+            }
             if let Some(w) = w {
                 w.wake();
             }
@@ -588,7 +634,57 @@ impl Core {
         self.signal.notify_all();
     }
 }
-fn execute(backend: &dyn FileSystem, file: &Arc<NativeFile>, action: Action) -> Packet {
+const DIRECTORY_BYTES: usize = 1024 * 1024;
+const DIRECTORY_ENTRIES: usize = 4096;
+
+// Pack names separated by NUL, which cannot occur in a file name.
+fn pack_directory(entries: DirectoryNames<'_>) -> Result<Data, FsError> {
+    let mut bytes = Vec::new();
+    for (index, name) in entries.enumerate() {
+        let name = name?
+            .into_string()
+            .map_err(|_| FsError::new(5, "Directory name is not valid UTF-8"))?;
+        if Path::new(&name).file_name() != Some(std::ffi::OsStr::new(&name)) || name.contains('\0')
+        {
+            return Err(FsError::new(5, "Invalid directory entry name"));
+        }
+        let additional = name.len() + usize::from(index != 0);
+        if index == DIRECTORY_ENTRIES || additional > DIRECTORY_BYTES - bytes.len() {
+            return Err(FsError::new(8, "Directory listing exceeds its limit"));
+        }
+        // Keep even spare capacity within the bytes reserved at admission.
+        if bytes.len() + additional > bytes.capacity() {
+            let capacity = (bytes.capacity() * 2).clamp(bytes.len() + additional, DIRECTORY_BYTES);
+            bytes.reserve_exact(capacity - bytes.len());
+        }
+        if index != 0 {
+            bytes.push(0);
+        }
+        bytes.extend_from_slice(name.as_bytes());
+    }
+    Ok(Data::Bytes(bytes))
+}
+
+fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Action) -> Packet {
+    let file = match action {
+        Action::Rename(from, to) => {
+            return backend
+                .rename(&from, &to)
+                .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
+        }
+        Action::RemoveFile(path) => {
+            return backend
+                .remove_file(&path)
+                .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
+        }
+        Action::ReadDir(path) => {
+            return backend
+                .read_dir(&path)
+                .and_then(pack_directory)
+                .map_or_else(Packet::error, Packet::ok)
+        }
+        _ => file.expect("file operation receiver"),
+    };
     if matches!(action, Action::Open(..) | Action::Stdin) {
         let opened = match action {
             Action::Open(path, flags) => backend.open(&path, flags),
@@ -629,7 +725,11 @@ fn execute(backend: &dyn FileSystem, file: &Arc<NativeFile>, action: Action) -> 
         }),
         Action::Seek(origin, offset) => handle.seek(origin, offset).map(Data::Count),
         Action::Sync => handle.sync_all().map(|_| Data::Unit),
-        Action::Open(..) | Action::Stdin => unreachable!(),
+        Action::Open(..)
+        | Action::Stdin
+        | Action::Rename(..)
+        | Action::RemoveFile(_)
+        | Action::ReadDir(_) => unreachable!(),
     };
     lock(&file.state).handle = Some(handle);
     match result {
@@ -669,13 +769,17 @@ fn work(core: Arc<Core>) {
                 s.running = true;
                 s.action.take().unwrap()
             };
-            lock(&ticket.file.state).executing = true;
+            if let Some(file) = &ticket.file {
+                lock(&file.state).executing = true;
+            }
             drop(q);
             let mut packet = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                execute(&*core.backend, &ticket.file, action)
+                execute(&*core.backend, ticket.file.as_ref(), action)
             }))
             .unwrap_or_else(|_| {
-                ticket.file.close(None);
+                if let Some(file) = &ticket.file {
+                    file.close(None);
+                }
                 Packet::error(FsError::new(10, "File operation panicked"))
             });
             packet._permit = Some(ticket._permit.clone());
@@ -691,10 +795,12 @@ fn work(core: Arc<Core>) {
                 s = lock(&ticket.state);
             }
             drop(s);
-            lock(&ticket.file.state).executing = false;
-            if cancelled || ticket.file.is_closed() {
-                lock(&ticket.file.state).active = false;
-                ticket.file.close(None);
+            if let Some(file) = &ticket.file {
+                lock(&file.state).executing = false;
+                if cancelled || file.is_closed() {
+                    lock(&file.state).active = false;
+                    file.close(None);
+                }
             }
             if let Some(w) = waker {
                 w.wake();

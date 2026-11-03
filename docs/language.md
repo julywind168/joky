@@ -7201,6 +7201,9 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | 接口 | 结果 |
 | --- | --- |
 | `fs.open(path: String, options: fs.OpenOptions) @suspends` | `Result<File, IoError>` |
+| `fs.rename(from: String, to: String) @suspends` | `Result<Unit, IoError>` |
+| `fs.remove_file(path: String) @suspends` | `Result<Unit, IoError>` |
+| `fs.read_dir(path: String) @suspends` | `Result<Array<String>, IoError>` |
 | `file.read(&mut self, limit: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
 | `file.write(&mut self, bytes: &Slice<UInt8>) @suspends` | `Result<UInt64, IoError>` |
 | `file.read_all(&mut self) @suspends` | `Result<Array<UInt8>, IoError>` |
@@ -7212,6 +7215,17 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `file.seek(&mut self, from: fs.SeekFrom) @suspends` | `Result<UInt64, IoError>` |
 | `file.sync_all(&mut self) @suspends` | `Result<Unit, IoError>` |
 | `file.close(self) @suspends` | `Result<Unit, IoError>` |
+
+三个路径操作与 `open` 共用服务基准目录。输入路径须为非空 UTF-8 字符串，最多 4096 字节，且不能含 NUL。
+本机 `rename` 直接请求操作系统重命名；可在同一文件系统内将写好并关闭的临时文件替换到目标文件名。
+跨文件系统移动会返回错误。`remove_file` 删除单个文件，缺失返回 `NotFound`，不会递归删除目录。
+两种操作开始执行后，即使调用被取消，文件系统也可能已经改变。
+
+`read_dir` 返回目录直接子项的名称，包含文件和子目录，空目录返回空数组；需要固定顺序时可对结果调用 `sort()`。
+名称保留空格、换行等合法字符。遇到非 UTF-8 名称返回 `InvalidInput`。单次最多 4096 项，UTF-8 名称
+连同项间分隔符合计最多 1 MiB，超限返回 `LimitExceeded`；遍历失败时整个调用返回错误。
+Rust 自定义文件服务可以分别实现这三个操作。未安装文件能力、未实现相应方法或使用 C 版
+`FileServiceV1` 时，合法请求返回 `Unsupported`。
 
 `OpenOptions.new()` 仅启用 read。六个公开 Bool 字段为 read、write、append、create、
 create_new、truncate。访问模式只能是 read、write、read+write、append、read+append；

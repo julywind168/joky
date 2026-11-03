@@ -55,6 +55,10 @@ struct TestFile {
     blocked: bool,
 }
 impl FileSystem for Backend {
+    fn remove_file(&self, _path: &str) -> Result<(), FsError> {
+        self.0.wait();
+        Ok(())
+    }
     fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
         self.open("read", 1)
     }
@@ -149,6 +153,44 @@ impl Drop for Fixture {
         self.service.shutdown();
     }
 }
+#[test]
+fn path_cancellation_withdraws_queued_work_and_refunds_running_work() {
+    let f = Fixture::new();
+    let running = f.submit(Input::RemoveFile("running"), None);
+    until(|| f.state.entered.load(Ordering::SeqCst) == 1);
+    let queued = f.submit(Input::RemoveFile("queued"), None);
+    queued.stop();
+    drop(queued);
+    running.stop();
+    drop(running);
+    assert_eq!(f.service.usage(), (0, 1, 4096 + "running".len()));
+    f.state.release();
+    f.drained();
+    assert_eq!(f.state.entered.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn directory_packet_bounds_and_invalid_names_do_not_return_partial_results() {
+    let entries = || std::iter::repeat_with(|| Ok("x".into()));
+    let data = pack_directory(Box::new(entries().take(DIRECTORY_ENTRIES))).unwrap();
+    assert!(matches!(data, Data::Bytes(bytes) if bytes.len() == 2 * DIRECTORY_ENTRIES - 1));
+    assert!(
+        matches!(pack_directory(Box::new(entries().take(DIRECTORY_ENTRIES + 1))), Err(e) if e.code() == 8)
+    );
+    let names = [Ok("a".into()), Ok("b".repeat(DIRECTORY_BYTES).into())];
+    assert!(matches!(pack_directory(Box::new(names.into_iter())), Err(e) if e.code() == 8));
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let names = [Ok("valid".into()), Ok(OsString::from_vec(vec![255]))];
+        assert!(matches!(pack_directory(Box::new(names.into_iter())), Err(e) if e.code() == 5));
+    }
+    for invalid in ["", ".", "..", "a/b", "bad\0name"] {
+        let names = [Ok("ok".into()), Ok(invalid.into())];
+        assert!(matches!(pack_directory(Box::new(names.into_iter())), Err(e) if e.code() == 5));
+    }
+}
+
 #[test]
 fn queued_cancellation_preserves_file_and_close_bypasses_full_queue() {
     let f = Fixture::new();
