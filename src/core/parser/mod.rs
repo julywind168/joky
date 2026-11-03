@@ -26,6 +26,7 @@ use crate::Span;
 /// A lexical or syntactic error at a one-based source line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
+    pub code: crate::ErrorCode,
     pub line: usize,
     pub message: String,
     pub span: Span,
@@ -34,6 +35,7 @@ pub struct Diagnostic {
 impl Diagnostic {
     fn at(line: usize, span: impl Into<Span>, message: impl Into<String>) -> Self {
         Self {
+            code: crate::ErrorCode::Generic,
             line,
             message: message.into(),
             span: span.into(),
@@ -61,6 +63,7 @@ struct Parser {
     // An ungrouped pipe ends a join or race branch.
     allow_pipe: bool,
     type_params: Vec<std::sync::Arc<TypeParameter>>,
+    expression_depth: usize,
     type_depth: usize,
     pattern_depth: usize,
     impl_target: Option<Type>,
@@ -85,6 +88,7 @@ impl Parser {
             allow_record: true,
             allow_pipe: true,
             type_params: Vec::new(),
+            expression_depth: 0,
             type_depth: 0,
             pattern_depth: 0,
             impl_target: None,
@@ -109,6 +113,22 @@ impl Parser {
 
     fn error(&self, message: String) -> Diagnostic {
         Diagnostic::at(self.peek_line(), self.peek_span(), message)
+    }
+
+    fn nested_expression<T>(
+        &mut self,
+        parse: fn(&mut Self) -> Result<T, Diagnostic>,
+    ) -> Result<T, Diagnostic> {
+        const LIMIT: usize = 32;
+        if self.expression_depth >= LIMIT {
+            let mut error = self.error(format!("Expression nesting exceeds {LIMIT} levels"));
+            error.code = crate::ErrorCode::ResourceLimit;
+            return Err(error);
+        }
+        self.expression_depth += 1;
+        let result = parse(self);
+        self.expression_depth -= 1;
+        result
     }
 
     fn peek(&self) -> &TokenKind {

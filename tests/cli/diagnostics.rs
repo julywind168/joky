@@ -740,3 +740,22 @@ fn explain_parallel_resolves_projects_and_reports_rejection_and_source_errors() 
         "more than once",
     );
 }
+
+#[test]
+fn expression_nesting_reports_a_located_limit_in_check_and_fmt() {
+    let work = Workspace::new();
+    for (open, close) in [("(", ")"), ("(", ",)"), ("{", "}"), ("!", "")] {
+        let value = if open == "!" { "true" } else { "1" };
+        let source = format!(
+            "fn main() {{ let x = {}{value}{} }}",
+            open.repeat(2000),
+            close.repeat(2000)
+        );
+        work.write("deep.jk", &source);
+        for args in [["check", "deep.jk"], ["fmt", "deep.jk"]] {
+            let output = work.cli(&args);
+            assert_eq!(output.status.code(), Some(1), "{args:?}");
+            failure(&output, "Expression nesting exceeds");
+        }
+    }
+}

@@ -479,3 +479,20 @@ fn join_is_contextual_and_old_parallel_has_a_migration_span() {
     assert_eq!(error.line, 2);
     assert_eq!(error.span.slice(source), Some("parallel"));
 }
+
+#[test]
+fn expression_depth_accepts_its_boundary_and_preserves_the_vm_after_rejection() {
+    let source = |depth| {
+        format!(
+            "fn value() -> Int32 {{ {}42{} }}",
+            "(".repeat(depth),
+            ")".repeat(depth)
+        )
+    };
+    let mut vm = crate::vm::VmEngine::new_interpreter();
+    vm.load_source(&source(31)).unwrap();
+    let error = vm.load_source(&source(2000)).unwrap_err();
+    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+    assert!(error.span().is_some());
+    assert_eq!(vm.call_int32_0("value").unwrap(), 42);
+}

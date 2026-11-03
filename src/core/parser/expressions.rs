@@ -54,6 +54,10 @@ impl Parser {
 
     /// Assignment is right-associative, binds above sequencing, and returns Unit.
     pub(super) fn parse_assignment(&mut self) -> Result<Expr, Diagnostic> {
+        self.nested_expression(Self::parse_assignment_inner)
+    }
+
+    fn parse_assignment_inner(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         match self.peek() {
             TokenKind::Return => {
@@ -334,7 +338,7 @@ impl Parser {
                 });
             }
         }
-        let operand = Box::new(self.parse_unary()?);
+        let operand = Box::new(self.nested_expression(Self::parse_unary)?);
         let span = self.span(start, operand.span().end());
         Ok(Expr::Unary { op, operand, span })
     }

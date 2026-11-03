@@ -244,7 +244,7 @@ impl std::error::Error for Error {}
 
 impl From<super::parser::Diagnostic> for Error {
     fn from(diagnostic: super::parser::Diagnostic) -> Self {
-        Self::new(ErrorPhase::Parse, diagnostic.message)
+        Self::new_with_code(ErrorPhase::Parse, diagnostic.code, diagnostic.message)
             .with_line(diagnostic.line)
             .with_span(diagnostic.span)
     }

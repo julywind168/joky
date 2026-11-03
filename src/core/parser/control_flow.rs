@@ -329,7 +329,7 @@ impl Parser {
         let else_branch = if self.peek() == &TokenKind::Else {
             self.advance();
             Some(Box::new(if self.peek() == &TokenKind::If {
-                self.parse_if()?
+                self.nested_expression(Self::parse_if)?
             } else {
                 self.parse_block()?
             }))

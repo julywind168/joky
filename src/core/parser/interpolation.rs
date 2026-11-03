@@ -41,6 +41,7 @@ impl Parser {
                         token.span = token.span.with_source(self.source);
                     }
                     let mut parser = Parser::new(tokens);
+                    parser.expression_depth = self.expression_depth;
                     parser.type_params = self.type_params.clone();
                     parser.impl_target = self.impl_target.clone();
                     parser.impl_trait = self.impl_trait.clone();
