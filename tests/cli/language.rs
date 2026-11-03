@@ -3455,3 +3455,40 @@ fn main() {
     );
     work.assert_all_backends("convert.jk", &[], b"42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn suspending_functions_reborrow_mutable_reference_fields() {
+    let work = Workspace::new();
+    let base = r#"
+        import joky/task
+        struct P { x: Int32 }
+        fn inc(x: &mut Int32) @noescape { (*x) += 1 }
+        fn bump(r: &mut P) @suspends {
+            task.yield_now()
+            inc(&mut r.x)
+        }
+    "#;
+    work.write(
+        "borrow.jk",
+        &format!(
+            "{base}
+        fn main() @suspends {{
+            var p = P {{ x: 41 }}
+            bump(&mut p)
+            println(p.x)
+        }}"
+        ),
+    );
+    work.assert_all_backends("borrow.jk", &[], b"42\n", 0);
+    work.write(
+        "borrow.jk",
+        &format!(
+            "{base}
+        fn both(a:&mut Int32,b:&mut Int32) @noescape {{ inc(a); inc(b) }}
+        fn bad(r:&mut P) @suspends {{ both(&mut r.x, &mut r.x) }}
+        fn main() {{}}"
+        ),
+    );
+    failure(&work.cli(&["check", "borrow.jk"]), "conflict");
+}

@@ -400,28 +400,6 @@ impl FunctionPlan {
         suspends: bool,
         span: Span,
     ) -> Result<Flow, Error> {
-        if suspends
-            && !local_path(operand).is_some_and(|(name, path)| {
-                vars.get(name).is_some_and(|binding| {
-                    let ty = slot_type(&binding.slot);
-                    ty.is_copy_value()
-                        || path.is_empty() && ty == Type::String
-                        || self
-                            .pointee(
-                                ty.reference_type().map(|r| &r.target).unwrap_or(&ty),
-                                &self.type_registry,
-                            )
-                            .and_then(|target| self.field_target(target, &path, span))
-                            .is_ok_and(|t| t.is_suspend_safe_owner())
-                })
-            })
-        {
-            return Err(type_error(
-                &span,
-                ErrorCode::InvalidCall,
-                "Local borrowing is only supported in synchronous functions",
-            ));
-        }
         let Some((name, path)) = local_path(operand) else {
             return Err(type_error(&span, ErrorCode::InvalidAssignment, "Borrowing requires a local binding or its inline record field; temporary borrowing is not supported"));
         };
@@ -470,6 +448,24 @@ impl FunctionPlan {
                 }
                 return Ok(Flow::Value(Some(dst)));
             }
+        }
+        let ty = slot_type(&binding.slot);
+        if suspends
+            && !(ty.is_copy_value()
+                || path.is_empty() && ty == Type::String
+                || self
+                    .pointee(
+                        ty.reference_type().map(|r| &r.target).unwrap_or(&ty),
+                        &self.type_registry,
+                    )
+                    .and_then(|target| self.field_target(target, &path, span))
+                    .is_ok_and(|t| t.is_suspend_safe_owner()))
+        {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Local borrowing is only supported in synchronous functions",
+            ));
         }
         if mutable && !binding.mutable {
             return Err(type_error(
