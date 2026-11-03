@@ -128,6 +128,8 @@ fn http_read_timeout_and_shutdown_preserve_admitted_handler() {
     let work = Workspace::new();
     work.write("http_probe.jk", r#"
 import joky/http
+import joky/log
+import joky/process
 import joky/shutdown
 import joky/task
 import joky/tcp
@@ -136,6 +138,7 @@ fn handle(request: http.Request) @suspends -> http.Response {
         return http.Response { headers: [http.Header { name: "Location", value: "/items/42" }], status: http.Status.Created, content_type: http.ContentType.Text, body: [] }
     }
     if request.target == "/empty" {
+        request.context.emit(log.Level.Warn, "app.empty", []);
         return http.Response { headers: [], status: http.Status.from_code(204)!, content_type: http.ContentType.Text, body: [] }
     }
     if request.target == "/invalid" {
@@ -157,6 +160,7 @@ fn main() @suspends -> Int32 {
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
     var options = http.defaults()
+    if process.env("JOKY_TEST_HTTP_MINIMUM_WARN")!.is_some() { options.logger = log.Logger.new(log.Level.Warn) }
     options.read_timeout = 250ms
     options.max_connections = 1
     options.grace = 1s
@@ -164,9 +168,14 @@ fn main() @suspends -> Int32 {
     match http.serve(listener, &stop, options, handle) { Ok(_) => 0, Err(Deadline) => 7, Err(_) => 1 }
 }
 "#);
-    let start = || {
+    let start = |quiet: bool| {
         let mut command = work.command();
         command.args(["run", "http_probe.jk"]);
+        if quiet {
+            command.env("JOKY_TEST_HTTP_MINIMUM_WARN", "1");
+        } else {
+            command.env_remove("JOKY_TEST_HTTP_MINIMUM_WARN");
+        }
         command.stderr(std::fs::File::create(work.path().join("requests.jsonl")).unwrap());
         let server = Running::start(command);
         let port = server
@@ -177,7 +186,7 @@ fn main() @suspends -> Int32 {
             .unwrap();
         (server, port)
     };
-    let (mut server, port) = start();
+    let (mut server, port) = start(false);
     let created = http_reply(port, &[b"POST /created HTTP/1.1\r\nHost: a\r\n\r\n"]);
     assert!(
         created.starts_with("HTTP/1.1 201 Created\r\n")
@@ -227,7 +236,7 @@ fn main() @suspends -> Int32 {
         .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
         .any(|event| event["request_id"] == timeout_id && event["status"] == 408));
 
-    let (mut server, port) = start();
+    let (mut server, port) = start(false);
     let mut reset = connect(port);
     reset
         .write_all(b"GET /reset HTTP/1.1\r\nHost: a\r\n\r\n")
@@ -243,7 +252,7 @@ fn main() @suspends -> Int32 {
     assert_eq!(event["status"], 200);
     assert_eq!(event["write_outcome"], "failed");
 
-    let (mut server, port) = start();
+    let (mut server, port) = start(false);
     let mut stuck = connect(port);
     stuck
         .write_all(b"GET /stuck HTTP/1.1\r\nHost: a\r\n\r\n")
@@ -254,6 +263,15 @@ fn main() @suspends -> Int32 {
     server.signal("-TERM");
     assert_eq!(server.finish().code(), Some(7));
     assert_eq!(stuck.read(&mut [0]).unwrap(), 0);
+    let (mut server, port) = start(true);
+    let reply = http_reply(port, &[b"DELETE /empty HTTP/1.1\r\nHost: a\r\n\r\n"]);
+    let id = super::tcp_server::response_id(&reply);
+    server.signal("-TERM");
+    assert!(server.finish().success());
+    let events = std::fs::read_to_string(work.path().join("requests.jsonl")).unwrap();
+    let event: serde_json::Value = serde_json::from_str(&events).unwrap();
+    assert_eq!(event["event"], "app.empty");
+    assert_eq!(event["request_id"], id);
 }
 
 #[test]

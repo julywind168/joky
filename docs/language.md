@@ -6792,7 +6792,9 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 
 `log.emit(level, event, fields) -> Bool` 将一个事件编码成单行 JSON，同步写入 stderr。
 每条记录包含 UTC 时间戳 `timestamp`、小写 `level` 和事件名 `event`。
-等级包括 `Debug`、`Info`、`Warn`、`Error`。
+等级包括 `Debug`、`Info`、`Warn`、`Error`。模块函数保留所有等级。
+`log.Logger.new(minimum)` 创建独立配置，`logger.enabled(level)` 可在构造昂贵字段前判断。
+`logger.try_emit` 返回 Result<Emission, LogError>，Written 表示写入成功，Filtered 表示低于阈值，直接跳过校验、编码和输出。
 
 字段通过 `log.text`、`log.uint`、`log.integer`、`log.boolean` 构造，分别接受 String、UInt64、
 Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原类型。例如后台任务完成后可记录
@@ -6810,7 +6812,7 @@ Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原�
 服务端在开始读取请求时创建 UUID v4，handler 通过 `request.context.request_id` 访问，
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 `request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
-会补上 `request_id` 后调用通用日志接口。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
+会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。context.try_emit 区分 Written、Filtered 和错误，context.emit 在过滤时返回 true。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
 Response 提供 status、content_type、headers 和 body 字段。没有附加响应头时传 `headers: []`。
 可用 Status.Created、Status.NoContent 等预设状态，也可用 Status.from_code(code) 校验 200–599 的最终状态码。
 handler 可以提供 Location 等响应头。定界字段、Content-Type 和 X-Request-Id 由服务端生成。

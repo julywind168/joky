@@ -829,6 +829,10 @@ fn main() {
     check.assert(!log.emit(log.Level.Info, "invalid", [log.uint("n", 1), log.uint("n", 2)]), "duplicate")
     check.assert(match log.try_emit(log.Level.Info, "invalid", [log.text("timestamp", "override")]) {
         Err(DuplicateField) => true, _ => false }, "reserved")
+    let logger = log.Logger.new(log.Level.Warn)
+    check.assert(!logger.enabled(log.Level.Info) && logger.enabled(log.Level.Warn), "threshold boundary")
+    check.assert(match logger.try_emit(log.Level.Info, "", []) { Ok(Filtered) => true, _ => false }, "skip before validation")
+    check.assert(match logger.try_emit(log.Level.Warn, "alert", []) { Ok(Written) => true, _ => false }, "at threshold")
     check.assert(match log.try_emit(log.Level.Info, "", []) { Err(InvalidEvent) => true, _ => false }, "empty event")
 }
 "#);
@@ -850,6 +854,7 @@ fn main() {
     let job = records.next().unwrap();
     assert_eq!(job["event"], "job.finished");
     assert_eq!(job["request_id"], "queue-42");
+    assert_eq!(records.next().unwrap()["event"], "alert");
     assert!(records.next().is_none());
 }
 
