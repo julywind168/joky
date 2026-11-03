@@ -141,6 +141,10 @@ pub(super) fn define<M: Module>(
     }
     let signature = ctx.func.signature.clone();
     module.define_function(body, ctx)?;
+    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+    if helpers.get(super::stack_probe::TARGET) == Some(&id) {
+        super::stack_probe::record_body(module, ctx)?;
+    }
     ctx.clear();
     ctx.func.signature = signature;
     wrap_body(module, &mut ctx.func, body, helpers);

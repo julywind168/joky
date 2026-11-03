@@ -2,6 +2,8 @@
 mod domain;
 mod float_env;
 mod lower;
+#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+pub(crate) mod stack_probe;
 mod task;
 
 use crate::core::builtins::{Builtin, ExternAbi};
@@ -112,6 +114,9 @@ pub(crate) fn compile<M: Module>(
             info.may_fail = true;
         }
     }
+    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+    let stack_probe_frame =
+        stack_probe::descriptor(module).map_err(|e| compile_error(e.to_string()))?;
     let mut ids = lower::declare_helpers(module)?;
     let float_effects = float_env::Effects::runtime_helpers(&ids);
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
@@ -568,6 +573,9 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
+                #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+                stack_probe_frame: stack_probe_frame
+                    .map(|id| module.declare_data_in_func(id, builder.func)),
                 checkpoints: cancellable.contains(name),
                 tasks: task_ids
                     .get(name)

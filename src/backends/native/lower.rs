@@ -19,6 +19,8 @@ use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
 pub(super) struct DataRefs {
+    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+    pub stack_probe_frame: Option<GlobalValue>,
     pub checkpoints: bool,
     pub tasks: HashMap<String, GlobalValue>,
     pub places: Vec<(Type, GlobalValue, usize)>,
@@ -3083,6 +3085,34 @@ fn lower_ops(
                 state: None,
                 indirect,
             } => {
+                #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+                if let Some(frame_size) = data
+                    .stack_probe_frame
+                    .filter(|_| indirect.is_none() && name == super::stack_probe::TARGET)
+                {
+                    let address = builder.ins().symbol_value(ptr_ty, frame_size);
+                    let bytes = builder
+                        .ins()
+                        .load(ptr_ty, MemFlagsData::trusted(), address, 0);
+                    let sp = builder.ins().get_stack_pointer(ptr_ty);
+                    let source = builder
+                        .ins()
+                        .iconst(types::I64, span.source_id().raw() as i64);
+                    let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                    let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                    let room = helper(
+                        builder,
+                        refs,
+                        "probe_stack_room",
+                        &[sp, bytes, source, start, end],
+                    );
+                    let ready = builder.create_block();
+                    let failed = builder.create_block();
+                    builder.ins().brif(room, ready, &[], failed, &[]);
+                    builder.switch_to_block(failed);
+                    failure_return(builder, refs, mode.frame(), mode.cleanup());
+                    builder.switch_to_block(ready);
+                }
                 lower_sync_call(
                     builder, slots, mode, name, indirect, args, result, functions, refs, ptr_ty,
                     span,

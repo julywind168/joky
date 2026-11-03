@@ -39,6 +39,8 @@ mod local_slices;
 mod members;
 mod narrow;
 mod ownership;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod stack_probe;
 mod string_collections;
 mod strings;
 mod support;
