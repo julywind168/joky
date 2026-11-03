@@ -3381,3 +3381,24 @@ fn closures_project_fields_through_captured_references() {
     );
     work.assert_all_backends("capture.jk", &[], b"2\n5\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn imported_record_pattern_heads_keep_their_nominal_identity() {
+    let work = Workspace::new();
+    work.write("app/n.jk", "pub struct Open { pub a: Int32, pub b: Int32 }");
+    work.write(
+        "pattern.jk",
+        r#"
+        import app/n.{type Open}
+        type O = n.Open
+        fn sum(s: Open) -> Int32 { let Open { a, b } = s; a + b }
+        fn first(s: Open) -> Int32 { let O { a, .. } = s; a }
+        fn main() {
+            let s = Open { a: 20, b: 2 }
+            println(sum(s) + first(s))
+        }
+    "#,
+    );
+    work.assert_all_backends("pattern.jk", &[], b"42\n", 0);
+}

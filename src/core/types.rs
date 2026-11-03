@@ -1093,6 +1093,9 @@ fn map_binding_types(
     use crate::parser::ast::BindingPattern;
     match pattern {
         BindingPattern::Record { inner, span } => {
+            if let Some(ty) = &mut inner.resolved {
+                map(ty, *span)?;
+            }
             for a in inner.type_args.iter_mut() {
                 map_generic_argument(a, *span, map, substitutions)?;
             }
@@ -1125,11 +1128,15 @@ fn map_payload_types(
     use crate::parser::ast::PayloadPattern;
     match pattern {
         PayloadPattern::Record {
+            resolved,
             type_args,
             fields,
             span,
             ..
         } => {
+            if let Some(ty) = resolved {
+                map(ty, *span)?;
+            }
             for a in type_args.iter_mut() {
                 map_generic_argument(a, *span, map, substitutions)?;
             }
@@ -1170,16 +1177,15 @@ fn resolve_annotations(
     resolve_pattern_heads(expr, aliases, registry)
 }
 
-/// Rewrite record pattern heads to their canonical nominal spelling so the
-/// planner's nominal lookup sees through transparent aliases. Bare generic
-/// spellings keep the template name; the right-hand side infers arguments.
+/// Preserve the identity resolved in the declaring scope across IR replanning.
 pub(crate) fn resolve_pattern_heads(
     expr: &mut Expr,
     aliases: &HashMap<&str, TypeDefinition>,
     registry: &TypeRegistry,
 ) -> Result<(), Error> {
     fn head(
-        name: &mut String,
+        name: &str,
+        resolved: &mut Option<Box<Type>>,
         type_args: &mut [GenericArgument],
         aliases: &HashMap<&str, TypeDefinition>,
         registry: &TypeRegistry,
@@ -1187,27 +1193,19 @@ pub(crate) fn resolve_pattern_heads(
         for ty in type_args.iter_mut().filter_map(|a| a.as_type_mut()) {
             resolve_type(ty, aliases, registry)?;
         }
-        // Module-qualified spellings already resolve through import scopes;
-        // only bare names can be same-module aliases needing canonicalization.
-        if name.contains('.') {
-            for ty in type_args.iter_mut().filter_map(|a| a.as_type_mut()) {
-                resolve_type(ty, aliases, registry)?;
-            }
-            return Ok(());
-        }
         let synthetic = if type_args.is_empty() {
-            Type::Named(name.clone())
+            Type::Named(name.to_owned())
         } else {
             Type::Applied(std::sync::Arc::new(TypeApplication {
-                name: name.clone(),
+                name: name.to_owned(),
                 arguments: type_args.to_vec(),
             }))
         };
         let mut synthetic = synthetic;
-        if resolve_type(&mut synthetic, aliases, registry).is_ok() {
-            if let Type::Record(record) = &synthetic {
-                name.clone_from(&record.name);
-            }
+        if resolve_type(&mut synthetic, aliases, registry).is_ok()
+            && matches!(&synthetic, Type::Record(r) if r.parameters.is_empty() || !r.arguments.is_empty())
+        {
+            *resolved = Some(Box::new(synthetic));
         }
         Ok(())
     }
@@ -1219,7 +1217,17 @@ pub(crate) fn resolve_pattern_heads(
         use crate::parser::ast::BindingPattern;
         match pattern {
             BindingPattern::Record { inner, .. } => {
-                head(&mut inner.name, &mut inner.type_args, aliases, registry)
+                head(
+                    &inner.name,
+                    &mut inner.resolved,
+                    &mut inner.type_args,
+                    aliases,
+                    registry,
+                )?;
+                for field in &mut inner.fields {
+                    walk_binding(&mut field.pattern, aliases, registry)?;
+                }
+                Ok(())
             }
             BindingPattern::Sequence(p) => {
                 for item in p.prefix.iter_mut().chain(&mut p.suffix) {
@@ -1244,8 +1252,18 @@ pub(crate) fn resolve_pattern_heads(
         use crate::parser::ast::PayloadPattern;
         match pattern {
             PayloadPattern::Record {
-                name, type_args, ..
-            } => head(name, type_args, aliases, registry),
+                name,
+                resolved,
+                type_args,
+                fields,
+                ..
+            } => {
+                head(name, resolved, type_args, aliases, registry)?;
+                for field in fields {
+                    walk_binding(&mut field.pattern, aliases, registry)?;
+                }
+                Ok(())
+            }
             PayloadPattern::Sequence(p) => {
                 for item in p.prefix.iter_mut().chain(&mut p.suffix) {
                     walk_payload(item, aliases, registry)?;

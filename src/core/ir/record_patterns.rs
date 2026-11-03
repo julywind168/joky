@@ -47,11 +47,25 @@ impl FunctionPlan {
     pub(super) fn resolve_record_pattern(
         &self,
         name: &str,
+        resolved_head: Option<&Type>,
         type_args: &[crate::core::types::GenericArgument],
         expected: &Type,
         span: Span,
         types: &TypeRegistry,
     ) -> Result<Arc<RecordType>, Error> {
+        if let Some(head) = resolved_head {
+            validate_nominal_type(head, &self.nominals, &span)?;
+            if let Type::Record(actual) = expected {
+                if head == expected {
+                    return Ok(actual.clone());
+                }
+            }
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                format!("Record pattern `{name}` requires {head}, got {expected}"),
+            ));
+        }
         let template = match self.named_type(name) {
             Some(ty) => ty.clone(),
             None => {
@@ -363,8 +377,14 @@ impl FunctionPlan {
                 BindingKind::Tuple(children)
             }
             BindingPattern::Record { inner, span } => {
-                let record =
-                    self.resolve_record_pattern(&inner.name, &inner.type_args, ty, *span, types)?;
+                let record = self.resolve_record_pattern(
+                    &inner.name,
+                    inner.resolved.as_deref(),
+                    &inner.type_args,
+                    ty,
+                    *span,
+                    types,
+                )?;
                 let indices =
                     self.check_record_pattern_fields(&record, &inner.fields, inner.rest, *span)?;
                 let mut children = Vec::with_capacity(inner.fields.len());
@@ -476,8 +496,14 @@ impl FunctionPlan {
                 )
             }
             BindingPattern::Record { inner, span } => {
-                let record =
-                    self.resolve_record_pattern(&inner.name, &inner.type_args, ty, *span, types)?;
+                let record = self.resolve_record_pattern(
+                    &inner.name,
+                    inner.resolved.as_deref(),
+                    &inner.type_args,
+                    ty,
+                    *span,
+                    types,
+                )?;
                 let indices =
                     self.check_record_pattern_fields(&record, &inner.fields, inner.rest, *span)?;
                 let mut children = Vec::with_capacity(inner.fields.len());

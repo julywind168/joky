@@ -129,6 +129,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
         let body = if let Some(fields) = fields {
             let pattern = BindingPattern::Record {
                 inner: Box::new(RecordPattern {
+                    resolved: None,
                     name: name.clone(),
                     type_args: type_params.iter().map(|p| p.argument()).collect(),
                     rest: false,

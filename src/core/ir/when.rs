@@ -692,6 +692,7 @@ impl FunctionPlan {
             body.push(Expr::Destructure {
                 pattern: BindingPattern::Record {
                     inner: Box::new(RecordPattern {
+                        resolved: None,
                         name: "$when_captures".into(),
                         type_args: vec![],
                         rest: false,

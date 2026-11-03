@@ -44,6 +44,7 @@ impl Parser {
                 let (fields, rest) = self.parse_record_pattern_fields()?;
                 return Ok(BindingPattern::Record {
                     inner: Box::new(crate::parser::ast::RecordPattern {
+                        resolved: None,
                         name,
                         type_args,
                         fields,
@@ -230,6 +231,7 @@ impl Parser {
                 self.advance();
                 let (fields, rest) = self.parse_record_pattern_fields()?;
                 PayloadPattern::Record {
+                    resolved: None,
                     name,
                     type_args,
                     fields,

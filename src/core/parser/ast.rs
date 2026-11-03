@@ -1277,6 +1277,7 @@ pub enum BindingPattern {
 /// small binding patterns cheap to store inside expressions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordPattern {
+    pub resolved: Option<Box<Type>>,
     pub name: String,
     pub type_args: Vec<GenericArgument>,
     pub fields: Vec<RecordFieldPattern>,
@@ -1328,6 +1329,7 @@ pub enum PayloadPattern {
     },
     Record {
         name: String,
+        resolved: Option<Box<Type>>,
         type_args: Vec<GenericArgument>,
         fields: Vec<RecordFieldPattern>,
         rest: bool,

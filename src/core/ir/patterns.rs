@@ -396,12 +396,20 @@ impl FunctionPlan {
             }
             PayloadPattern::Record {
                 name,
+                resolved,
                 type_args,
                 fields,
                 rest,
                 ..
             } => {
-                let record = self.resolve_record_pattern(name, type_args, ty, span, types)?;
+                let record = self.resolve_record_pattern(
+                    name,
+                    resolved.as_deref(),
+                    type_args,
+                    ty,
+                    span,
+                    types,
+                )?;
                 let indices = self.check_record_pattern_fields(&record, fields, *rest, span)?;
                 let mut children = Vec::with_capacity(fields.len());
                 for (index, field) in indices.iter().zip(fields) {
