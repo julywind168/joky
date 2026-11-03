@@ -267,6 +267,15 @@ impl FunctionPlan {
         if let Some(constant) = self.associated_constant(expr, vars, types).ok().flatten() {
             return Some(constant.declaration.ty.clone());
         }
+        if !self.scope.constants.is_empty() {
+            if let Some(key) =
+                expression_path(expr).and_then(|path| self.module_constant_key(&path, vars, types))
+            {
+                let context = self.generics.borrow();
+                let constant = context.members.constants_by_key.get(&key)?;
+                return Some(constant.declaration.ty.clone());
+            }
+        }
         if let Some(ty) = self.dyn_hint(expr, vars, functions, types) {
             return Some(ty);
         }

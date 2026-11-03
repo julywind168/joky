@@ -3295,3 +3295,31 @@ fn nested_generic_calls_and_method_chains_keep_context_on_all_backends() {
     work.write("nested.jk", &source);
     work.assert_all_backends("nested.jk", &[], b"42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn module_constants_supply_generic_argument_types() {
+    let work = Workspace::new();
+    work.write(
+        "constant.jk",
+        r#"
+        const A: Int64 = 3000000000
+        fn id<T>(x: T) -> T { x }
+        fn shadow(A: Bool) -> Bool { id(A) }
+        fn main() {
+            println(A)
+            let inferred = Some(id(A))
+            println(inferred!)
+            assert_eq(shadow(true), true)
+        }
+    "#,
+    );
+    work.assert_all_backends(
+        "constant.jk",
+        &[],
+        b"3000000000
+3000000000
+",
+        0,
+    );
+}
