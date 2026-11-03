@@ -6822,13 +6822,15 @@ HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, ser
 默认省略 route；空标签或超过 128 字节的标签也会省略。HTTP 层不自动记录原始 URL、标头或正文。
 握手失败、未进入写响应流程的请求，以及在产生写入结果前被强制取消的分支，都不会产生该完成事件。
 
-服务端提供 HTTP/1.1 的有限子集。每个连接处理一次 GET、HEAD 或 POST 并发送 `Connection: close`。
+服务端提供 HTTP/1.1 的有限子集。支持 GET、HEAD、POST、PUT、PATCH 和 DELETE，每个连接处理一次请求并发送 `Connection: close`。
 目标须以 `/` 开始，标头采用 ASCII 和 CRLF，必须有且只有一个 Host（主机名或 IPv4，可带十进制端口）。
 正文缺省为空，可用单个十进制 Content-Length 指定。重复长度（即使相同）、Transfer-Encoding、折叠行、
 无效字符或截断正文均拒绝。Expect 返回 417。该版本未实现 chunked、keep-alive 或 IPv6 字面量 Host。
 
 请求行、所有标头和最后的空行合计最多 16 KiB，最多 64 个标头，超限返回 431。
 请求体最多 1 MiB，超限返回 413。响应体也限 1 MiB，超限在写响应头前返回 500。
+响应可使用预设的 ContentType.Text、Json、Bytes，也可用 `http.ContentType.custom("image/png")`。
+该构造函数返回 Option，接受 ASCII 类型/子类型及可选的媒体参数，无效输入返回 None。
 `http.defaults()` 允许同时 128 个连接，满额时关闭新连接。完整请求读取和完整响应写入的默认期限分别为 10s。
 零散字节不重置读取期限，超时返回 408。发送失败或写入超时会结束连接，已经写出的前缀仍可能到达对端。
 
@@ -6917,10 +6919,13 @@ HTTPS 使用该主机名或 IP 验证证书，可传入 `tls.ClientConfig.web_ro
 | --- | --- |
 | `client.get(target)` | 发送 GET |
 | `client.post_json(target, text)` | 以 application/json 原样发送给定文本，按字节计算 Content-Length |
-| `client.request(method, target, headers, body)` | Method.Get 或 Method.PostJson，支持附加 Authorization、Idempotency-Key 等 Header。GET 正文须为空 |
+| `client.request(method, target, headers, body)` | Method 可选 Get、Head、Post、Put、Patch、Delete。正文按字节发送，GET 和 HEAD 须为空 |
 
 三个方法均为 `@suspends`，返回 `Result<ClientResponse, ClientError>`。成功读完响应即可读取
 `status: UInt16`、按接收顺序存放的 `headers` 和原始 `body` 字节；404、409 等也作为普通响应返回。
+通用请求可传一个 Content-Type 标头，名称忽略大小写，值须为有效媒体类型。
+POST、PUT、PATCH 总是发送按字节计算的 Content-Length，DELETE 带正文时也发送。
+旧的 Method.PostJson 调用可改用 post_json，或传 Method.Post 和显式的 application/json 标头。
 客户端校验出站目标和头字段，拒绝 CR/LF 注入及覆盖 Host、Content-Length、Transfer-Encoding 等保留头。
 客户端不跟随重定向，也不自动重发请求。POST 已发出而响应丢失时，由业务决定是否携原幂等键重试。
 
@@ -6929,7 +6934,7 @@ HTTPS 使用该主机名或 IP 验证证书，可传入 `tls.ClientConfig.web_ro
 Handshake（携 TLS 错误）、ConnectTimeout、ExchangeTimeout、Transport、InvalidRequest、InvalidResponse、
 SizeLimit 和 UnsupportedFraming。超时／取消会结束当前连接。
 
-HTTP/1.1 响应支持 Content-Length、基本 chunked 以及关闭连接定界。204 和 304 没有正文；
+HTTP/1.1 响应支持 Content-Length、基本 chunked 以及关闭连接定界。HEAD 响应、204 和 304 没有正文，即使 HEAD 声明非零 Content-Length 也不读取正文；
 可跳过临时 1xx 响应，拒绝 101 升级、重复长度及同时声明长度与分块。TLS 关闭定界正文须读到 close_notify。
 `max_body` 可设为 0 至 1 MiB，默认 1 MiB。各段响应头共用 16 KiB 预算，每段至多 64 个字段；
 分块元数据另限 16 KiB。chunk 扩展、非空 trailer 及其他传输编码返回错误，正文不会自动解压。

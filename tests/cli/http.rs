@@ -92,6 +92,12 @@ fn http_server_serves_json_and_validates_framing() {
             }
             assert!(http_reply(port, &[b"G@T / HTTP/1.1\r\nHost: a\r\n\r\n"])
                 .starts_with("HTTP/1.1 400 "));
+            for method in ["PUT", "PATCH", "DELETE"] {
+                let request = format!("{method} /unhandled HTTP/1.1\r\nHost: a\r\n\r\n");
+                assert!(http_reply(port, &[request.as_bytes()]).starts_with("HTTP/1.1 404 "));
+            }
+            assert!(http_reply(port, &[b"OTHER / HTTP/1.1\r\nHost: a\r\n\r\n"])
+                .starts_with("HTTP/1.1 501 "));
             let many = format!(
                 "GET /health HTTP/1.1\r\nHost: a\r\n{}\r\n",
                 "x: y\r\n".repeat(64)
@@ -127,13 +133,17 @@ import joky/task
 import joky/tcp
 fn handle(request: http.Request) @suspends -> http.Response {
     if request.target == "/bytes" {
-        return http.Response { status: http.Status.Success, content_type: http.ContentType.Bytes, body: request.body }
+        return http.Response { status: http.Status.Success, content_type: http.ContentType.custom("image/png")!, body: request.body }
     }
     println("admitted")
     task.sleep(if request.target == "/stuck" { 60s } else { 300ms })
     http.Response { status: http.Status.Success, content_type: http.ContentType.Text, body: "done".into_bytes() }
 }
 fn main() @suspends -> Int32 {
+    assert(http.ContentType.custom("text/html; charset=utf-8").is_some(), "valid media type parameter")
+    assert(http.ContentType.custom("multipart/form-data; boundary=\"a;b\"").is_some(), "quoted media parameter")
+    assert(http.ContentType.custom("text/plain; charset=\"utf-8").is_none(), "unterminated media parameter")
+    assert(http.ContentType.custom("text/html\r\nX: no").is_none() && http.ContentType.custom("invalid").is_none(), "invalid media type")
     let stop = shutdown.create()
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
@@ -161,10 +171,13 @@ fn main() @suspends -> Int32 {
     let (mut server, port) = start();
     let mut binary = connect(port);
     binary
-        .write_all(b"POST /bytes HTTP/1.1\r\nHost: a\r\nContent-Length: 4\r\n\r\n\xff\x00\r\n")
+        .write_all(b"PUT /bytes HTTP/1.1\r\nHost: a\r\nContent-Length: 4\r\n\r\n\xff\x00\r\n")
         .unwrap();
     let mut packet = Vec::new();
     binary.read_to_end(&mut packet).unwrap();
+    assert!(packet
+        .windows(b"Content-Type: image/png\r\n".len())
+        .any(|line| line == b"Content-Type: image/png\r\n"));
     assert!(packet.ends_with(b"Content-Length: 4\r\nConnection: close\r\n\r\n\xff\x00\r\n"));
     let mut slow = connect(port);
     slow.write_all(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\na")
