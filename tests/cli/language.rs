@@ -3328,10 +3328,13 @@ fn module_constants_supply_generic_argument_types() {
 #[cfg(unix)]
 fn mixed_numeric_literal_defaults_require_context_in_both_orders() {
     let work = Workspace::new();
-    let pair = "fn pair<T: Copy>(a:T, b:T) -> T { a }";
+    let pair = "fn pair<T: Copy>(a:T, b:T) -> T { a } fn id<T>(x:T) -> T { x }";
     for (a, b) in [("1", "1.5"), ("1.5", "1")] {
         for expr in [
             format!("{a} + {b}"),
+            format!("id({a} + {b})"),
+            format!("id(if true {{ {a} }} else {{ {b} }})"),
+            format!("{a} + {a} + {b}"),
             format!("[{a}, {b}]"),
             format!("pair({a}, {b})"),
             format!("if true {{ {a} }} else {{ {b} }}"),

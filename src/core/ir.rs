@@ -2576,7 +2576,13 @@ impl FunctionPlan {
             }
             Expr::BinaryChain { first, rest, .. } => {
                 let hint = self.type_hint(expr, vars, functions, types);
-                let expected = hint.as_ref().or(expected);
+                let default = if hint.is_none() && expected.is_none() {
+                    self.bound_hint(expr, vars, functions, types)
+                        .filter(|ty| ty.is_numeric())
+                } else {
+                    None
+                };
+                let expected = hint.as_ref().or(expected).or(default.as_ref());
                 let mut lhs = (**first).clone();
                 // An unspellable binding exposes the previous result to ordinary operator
                 // lowering, including trait dispatch, without evaluating the prefix again.
@@ -2592,6 +2598,18 @@ impl FunctionPlan {
                     };
                     let flow =
                         self.expr_expected(&operation, vars, functions, suspends, types, expected)?;
+                    if let (Some(ty), Flow::Value(Some(value))) = (&default, &flow) {
+                        if value.ty.is_numeric() && &value.ty != ty {
+                            return Err(type_error(
+                                &span,
+                                ErrorCode::TypeMismatch,
+                                format!(
+                                    "Binary operands must have the same type, got {} and {ty}",
+                                    value.ty
+                                ),
+                            ));
+                        }
+                    }
                     if index + 1 == rest.len() {
                         vars.remove(&name);
                         return Ok(flow);

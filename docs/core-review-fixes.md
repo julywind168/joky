@@ -286,7 +286,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K1-2、K2-2 | 已修复 | `fix: bound nested generic inference and preserve literal context` | Debug 定向库测试 79 项、CLI 回归 2 项通过。30 层 id、or、and、unwrap 链通过 JIT、解释器及独立 AOT；比较 10 与 30 层的推导步数，另验证上下文定型、变量遮蔽、同位置 AST 和预算诊断。fmt、Clippy、diff 检查通过，未跑全量。 |
 | K1-3 | 解释器回溯已修复，原生同步直调已验证测试原型 | `fix: fold adjacent identical interpreter trace frames in CLI diagnostics`、`test: prototype native stack preflight for direct owning calls` | macOS arm64 的 JIT 和 AOT 小栈回归验证了拒绝位置、拥有实参析构一次及失败后线程可复用。常规构建的原生栈保护仍待实施。见[原生栈保护提案](architecture.md#k1-3-原生栈保护提案)。 |
 | K2-1 | 已修复 | `fix: infer generic argument types from module constants` | 模块常量及同名局部参数在 JIT、解释器和 AOT 的定向回归通过。 |
-| K2-3 | 已修复 | `fix: reject mixed numeric literal defaults consistently` | 算术、数组、同型泛型调用和条件分支的双向拒绝用例及显式浮点上下文的三后端运行通过。 |
+| K2-3 | 已修复 | `fix: reject mixed numeric literal defaults consistently` | 算术、数组、同型泛型调用和条件分支的双向拒绝用例及显式浮点上下文的三后端运行通过。补充提交 `fix: preserve numeric literal defaults in nested expressions` 覆盖泛型实参中的表达式和连续运算。 |
 | K2-4 | 已修复 | `fix: dereference captured references for field access` | 三后端验证借用捕获、move 捕获及独占引用写入。 |
 | K2-5 | 已修复 | `fix: preserve resolved record pattern identities` | 两个 CLI 回归、九个记录模式库测试通过，覆盖三后端、别名及私有字段拒绝。 |
 | K2-6 | 已修复 | `fix: infer type arguments from known associated projections` | 10 个关联类型定向测试通过，含无结果注解调用的三后端执行。 |

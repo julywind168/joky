@@ -147,6 +147,22 @@ pub(super) fn integer_literal(
     Ok((ty, constant))
 }
 
+/// A floating default cannot supply a concrete context to integer siblings.
+/// Prefer their integer default so checking the float reports the mismatch.
+pub(super) fn sibling_hint(
+    hints: impl Iterator<Item = Option<Type>>,
+    default: bool,
+) -> Option<Type> {
+    let mut float = None;
+    for ty in hints.flatten() {
+        if !default || !ty.is_float() {
+            return Some(ty);
+        }
+        float = Some(ty);
+    }
+    float
+}
+
 impl FunctionPlan {
     pub(super) fn binary_hint(
         &self,
@@ -508,22 +524,28 @@ impl FunctionPlan {
             | Expr::Logical { .. } => Some(Type::Bool),
             Expr::BinaryChain { .. } => {
                 let mut local = vars.clone();
-                expr.children().into_iter().find_map(|operand| {
-                    let ty = self.hint(operand, &local, functions, types, default);
-                    if ty.is_none() {
-                        self.hint_bindings(operand, &mut local, functions, types);
-                    }
-                    ty
-                })
+                sibling_hint(
+                    expr.children().into_iter().map(|operand| {
+                        let ty = self.hint(operand, &local, functions, types, default);
+                        if ty.is_none() {
+                            self.hint_bindings(operand, &mut local, functions, types);
+                        }
+                        ty
+                    }),
+                    default,
+                )
             }
             Expr::IfChain { arms, fallback, .. } => {
                 if fallback.is_none() {
                     return Some(Type::Unit);
                 }
-                arms.iter()
-                    .map(|(_, body)| body)
-                    .chain(fallback.as_deref())
-                    .find_map(|body| self.hint(body, vars, functions, types, default))
+                sibling_hint(
+                    arms.iter()
+                        .map(|(_, body)| body)
+                        .chain(fallback.as_deref())
+                        .map(|body| self.hint(body, vars, functions, types, default)),
+                    default,
+                )
             }
             Expr::BinOp { op, lhs, rhs, .. } => {
                 if op.is_comparison() {
@@ -533,8 +555,12 @@ impl FunctionPlan {
                     if !default {
                         return None;
                     }
-                    self.hint(lhs, vars, functions, types, true)
-                        .or_else(|| self.hint(rhs, vars, functions, types, true))
+                    sibling_hint(
+                        [lhs, rhs]
+                            .into_iter()
+                            .map(|e| self.hint(e, vars, functions, types, true)),
+                        true,
+                    )
                 };
                 self.binary_hint(lhs, rhs, vars, functions, types)
                     .or_else(from_operands)
@@ -600,9 +626,12 @@ impl FunctionPlan {
                 then_branch,
                 else_branch: Some(other),
                 ..
-            } => self
-                .hint(then_branch, vars, functions, types, default)
-                .or_else(|| self.hint(other, vars, functions, types, default)),
+            } => sibling_hint(
+                [then_branch, other]
+                    .into_iter()
+                    .map(|e| self.hint(e, vars, functions, types, default)),
+                default,
+            ),
             Expr::Match { value, arms, .. } => {
                 // The typed walk needs the matched value's enum; without one,
                 // the default pass still scans arm bodies for a concrete leaf.
