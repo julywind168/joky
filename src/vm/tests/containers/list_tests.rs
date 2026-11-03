@@ -481,6 +481,12 @@ fn rejected(body: &str, modules: &crate::ModuleSources) {
 fn list_rejects_copy_conflicts_escapes_private_storage_and_aliases() {
     let modules = crate::ModuleSources::new();
     for body in [
+        "fn bad() { var m = List.new::<String>(); for x in &m { m.reverse(); x.byte_length(); } }",
+        "fn bad() { let m = List.new::<String>(); let it = m.iter_shared(); m.release(); for _ in it {} }",
+        "fn bad() -> list.SharedIter<String> { let m = List.new::<String>(); m.iter_shared() }",
+        "import joky/iter fn bad() { var m = List.new::<String>(); let (_, item) = iter.step_shared(m.iter_shared()); m.clear(); item.is_some(); }",
+        "import joky/task fn bad(m: &List<String>) @suspends { for value in m { task.yield_now(); value.byte_length(); } }",
+        "fn bad(m: &mut List<String>) { for _ in m {} }",
         "fn bad(m: &List<String>) { m.get(0); }",
         "fn bad(m: &List<String>) { m.front(); }",
         "fn bad(m: &List<String>) { m.back(); }",

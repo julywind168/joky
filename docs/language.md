@@ -536,6 +536,7 @@ T 沿用 Array 的存储资格：Copy 数据、普通共享引用及含共享引
 | `get(index)` / `front()` / `back()` | Copy T 的 Option<T> 读取；拥有型 T 编译拒绝 |
 | `borrow(index)` / `borrow_mut(index)` | Copy T 的共享/独占 Element 视图，可用 element.read/write；支持边界沿用 Array |
 | `borrow_ref(index)` / `borrow_mut_ref(index)` | 无引用 Copy 或拥有型 T 的 &T / &mut T，沿用 Array 的边界 |
+| `iter_shared()` | 返回 `list.SharedIter<T>`，按链的逻辑顺序借用元素，元素类型为 `&T`，适用范围同 `borrow_ref` |
 | `reverse()` | 翻转连接及首尾；不重排、复制或析构元素 |
 | `reserve(additional)` | 检查 len + additional，使三组容量满足目标；空闲槽计入可复用空间 |
 | `clear()` / `release()` | clear 清理全部元素及连接、保留容量；release 消费整个容器 |
@@ -553,7 +554,11 @@ append 的两参数不能别名同一 List。拥有型元素可通过直接引�
 为 O(min(index, n - 1 - index))。reverse、clear 和批量转移为线性节点/元素操作，
 append 的节点转移次数对源元素数量线性；扩容还可能搬迁目标中的既有载荷。
 复杂度不包含分配器、用户 Drop 和运行时清理快照成本。
-反复按位置 get 遍历可能为 O(n²)；消费式遍历可以反复 pop_front 或使用 into_array。
+同步只读遍历用 `for word in &words`。从头节点沿链接每步访问一个元素，完整遍历为 O(n)，
+游标状态为 O(1)。循环提前退出后，只要元素引用和游标都已结束使用，就能继续修改原表。
+需要显式推进或组合时，`words.iter_shared()` 和 `list.iter_shared(&words)` 都可接入
+[共享遍历组合器](#共享遍历组合器)。共享迭代状态沿用该协议的挂起限制。
+消费式遍历可以反复 pop_front 或使用 into_array。
 删除复用空闲槽，存储可能反映历史峰值，不提供 shrink 或槽位压缩。
 
 分配、移出后失败和 Drop 失败都按各数组及局部拥有值完成清理，保留首个错误，
@@ -3866,6 +3871,7 @@ Array 实现 IntoIterator，转换复用 Array.into_iter。用户容器可实现
 | `&values: &Array<T>` | 共享借用，元素为 &T |
 | `&mut values: &mut Array<T>` | 独占借用，元素为 &mut T |
 | `&Slice<T>` / `&mut Slice<T>` | 借用切片，元素为 &T / &mut T |
+| `&List<T>` | 通过 `iter_shared()` 按逻辑顺序共享遍历，元素为 &T |
 | `&Map<K, V>` / `&mut Map<K, V>` | 成对遍历，元素为 &Entry / &mut Entry，key 始终只读 |
 | 现有普通 Iterator / 借用游标 | 保留原有遍历行为 |
 

@@ -1,7 +1,6 @@
 import joky/list.{type List}
 import joky/array.{type Array}
 import joky/io.{println}
-import joky/string
 
 fn main() {
     var words = List.new::<String>()
@@ -9,16 +8,11 @@ fn main() {
     words.remove(1)
     // Logical position zero follows the links, including after a reversal.
     words.reverse()
-    println(words.borrow_ref(0))
+    for first in words.iter_shared() { println(first); break }
     var input = Array.new::<String>(); input.push("extra")
     words.extend(input)
     var other = List.new::<String>(); other.push_back("tail")
     words.append(&mut other)
     println(other.len())
-    // Export in logical order; the dense internal payload order is private.
-    let ordered = words.into_array()
-    println(ordered.borrow_ref(0))
-    println(ordered.borrow_ref(1))
-    println(ordered.borrow_ref(2))
-    println(ordered.borrow_ref(3))
+    for word in &words { println(word) }
 }

@@ -788,12 +788,13 @@ fn list_example_and_cross_module_aliases_run_in_all_backends() {
             element.write(chains.edit(&mut list,0),20)
             let sum=element.read(chains.view(&list,0))+chains.copied(&list,1).unwrap_or(0)
             list.reverse()
+            for index, value in &list { if index == 1 { println(value) } }
             let output=chains.export(list)
             println(&sum); println(output.get(0).unwrap_or(0))
         }
     "#,
     );
-    work.assert_all_backends("aliased.jk", &["--no-prelude"], b"42\n22\n", 0);
+    work.assert_all_backends("aliased.jk", &["--no-prelude"], b"20\n42\n22\n", 0);
 }
 
 #[test]

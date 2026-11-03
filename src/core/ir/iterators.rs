@@ -89,29 +89,26 @@ impl FunctionPlan {
                         span: *span,
                     })
                 }
-                target => {
-                    // Match the embedded container declaration, not a user's
-                    // spelling or an arbitrary method named iter.
-                    let standard = matches!(target, Type::Record(record) if record.array)
-                        || self.generics.borrow().members.methods.iter().any(|method| {
-                            method.function == "joky/map.Map.iter"
-                                && members::same_owner(target, &method.target)
-                        });
-                    if standard {
-                        return Some(Expr::MethodCall(Box::new(MethodCall {
-                            receiver: value.clone(),
-                            name: if reference.mutable {
-                                "iter_mut"
-                            } else {
-                                "iter"
-                            }
-                            .into(),
-                            type_args: vec![],
-                            args: vec![],
-                            span: *span,
-                        })));
-                    }
+                // These flags identify embedded declarations, including through aliases.
+                Type::Record(record)
+                    if record.array || record.map || (record.list && !reference.mutable) =>
+                {
+                    let name = if record.list {
+                        "iter_shared"
+                    } else if reference.mutable {
+                        "iter_mut"
+                    } else {
+                        "iter"
+                    };
+                    return Some(Expr::MethodCall(Box::new(MethodCall {
+                        receiver: value.clone(),
+                        name: name.into(),
+                        type_args: vec![],
+                        args: vec![],
+                        span: *span,
+                    })));
                 }
+                _ => {}
             }
         }
         if let Some(ty) = self.type_hint(value, vars, functions, types) {

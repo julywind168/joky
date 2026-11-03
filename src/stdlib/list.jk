@@ -2,6 +2,7 @@
 // are logical positions, while payloads remain dense and independently owned.
 import joky/array.{type Array}
 import joky/element.{type Element}
+import joky/iter.{type SharedIterator}
 import joky/option.{type Option, Some, None}
 import joky/check.{panic}
 
@@ -14,6 +15,7 @@ pub struct List<T> {
 impl<T> List<T> {
     pub fn new() -> Self { new::<T>() }
     pub fn with_capacity(capacity: UInt64) -> Self { with_capacity::<T>(capacity) }
+    pub fn iter_shared(&self) -> SharedIter<T> { iter_shared(self) }
     pub fn len(&self) -> UInt64 { len(self) }
     pub fn capacity(&self) -> UInt64 { capacity(self) }
     pub fn is_empty(&self) -> Bool { is_empty(self) }
@@ -34,6 +36,22 @@ impl<T> List<T> {
     pub fn extend(&mut self, values: Array<T>) { extend(self, values) }
     pub fn into_array(self) -> Array<T> { into_array(self) }
     pub fn append(&mut self, other: &mut Self) { append(self, other) }
+}
+
+// Follow logical links; payload indices may have moved since insertion.
+pub struct SharedIter<T> { source: &List<T>, next: Option<UInt64> }
+pub fn iter_shared<T>(list: &List<T>) -> SharedIter<T> {
+    SharedIter { source: list, next: list.head }
+}
+impl<T> SharedIterator for SharedIter<T> {
+    type Item = &T
+    fn step(self) -> (Self, Option<&T>) {
+        let SharedIter { source, next } = self
+        let slot = match next { Some(slot) => slot, None => return (self, None) }
+        let node = links(source, slot)
+        let item = source.values.borrow_ref(node.value_index)
+        (SharedIter { source, next: node.next }, Some(item))
+    }
 }
 
 pub fn new<T>() -> List<T> { with_capacity::<T>(0) }
