@@ -27,6 +27,7 @@
 - [线程安全与并行资格收敛路线](thread-safety-roadmap.md)（W6q 后续工作、受检宿主接口与独占资源借用）
 - [文件运行时设计与开发计划](file-runtime.md)
 - [for 与迭代器分阶段开发计划](for-iterators.md)
+- [语言核心审查修复计划](core-review-fixes.md)（K0–K4 修复项与 D1–D8 待决策设计项）
 
 ## 开发记录与专项验收
 
