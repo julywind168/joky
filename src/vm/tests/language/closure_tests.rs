@@ -300,7 +300,7 @@ fn closure_nested_captures_helpers_and_hidden_lifetimes() {
     rejects("fn identity<T>(x: T) -> T { x } fn probe() { let f = || { 1 }; identity(f) }");
     rejects("fn probe() { let f = || { 1 }; let g = || { let moved = f; moved() } }");
     rejects("fn capture<F: Fn(&Int32) -> &Int32>(f: F, x: &Int32) -> &Int32 { f(x) } fn probe() { let n = 1; let f = |x: &Int32| { &n }; capture(f, &n) }");
-    rejects("fn probe() @suspends { let f = || { 1 } }");
+    rejects("fn probe() @suspends { let n = 1; let f = || { n } }");
 }
 
 #[test]

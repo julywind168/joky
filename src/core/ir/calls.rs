@@ -39,7 +39,7 @@ impl FunctionPlan {
                 && contract.is_some_and(|(_, info)| info.can_borrow_argument(index))
                 && ty.reference_type().is_some_and(|r| !r.mutable)
                 && !self
-                    .type_hint(arg, vars, functions, types)
+                    .bound_hint(arg, vars, functions, types)
                     .is_some_and(|ty| ty.reference_type().is_some());
             let op_start = self.ops.len();
             let flow = if index == 0 && reserved_receiver {
