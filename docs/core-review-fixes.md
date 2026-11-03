@@ -291,6 +291,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K2-5 | 已修复 | `fix: preserve resolved record pattern identities` | 两个 CLI 回归、九个记录模式库测试通过，覆盖三后端、别名及私有字段拒绝。 |
 | K2-6 | 已修复 | `fix: infer type arguments from known associated projections` | 10 个关联类型定向测试通过，含无结果注解调用的三后端执行。 |
 | K2-7 | 已修复 | `fix: contextualize function pointers in generic arguments` | Option 与泛型记录的无捕获闭包在三后端执行，捕获闭包转换继续报错。 |
+| K2-8 | 已修复 | `fix: apply reference and owning dyn coercions in generic calls` | Arena.alloc、泛型可变引用返回和 Array.push 的拥有 dyn 擦除在三后端执行通过。 |
 | K2 其余项 | 待实施 | | |
 | K3 | 待设计 | | |
 | K4 | 待实施 | | |

@@ -3429,3 +3429,29 @@ fn generic_values_accept_contextual_function_pointer_literals() {
     );
     failure(&work.cli(&["check", "pointer.jk"]), "capturing closure");
 }
+
+#[test]
+#[cfg(unix)]
+fn generic_calls_narrow_mutable_results_and_erase_owning_arguments() {
+    let work = Workspace::new();
+    work.write(
+        "convert.jk",
+        r#"
+import joky/arena.{type Arena}
+import joky/array.{type Array}
+trait Get { fn get(&self) @noescape -> Int32 }
+struct S { n:Int32 }
+impl Get for S { fn get(&self) -> Int32 { self.n } }
+fn mkg<T: Copy>(t:T) -> &mut T { alloc(t) }
+fn main() {
+    let a = Arena.new()
+    let x: &Int32 = a.alloc(20)
+    let w: &Int32 = mkg(10)
+    var xs = Array.new::<dyn Get>()
+    xs.push(S { n:12 })
+    println(*x + *w + xs[0].get())
+}
+"#,
+    );
+    work.assert_all_backends("convert.jk", &[], b"42\n", 0);
+}

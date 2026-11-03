@@ -508,9 +508,19 @@ impl FunctionPlan {
                 &template.type_params,
                 &inference.substitutions,
             ) {
+                // The result flows out of the call, so a mutable result can
+                // supply its pointee type to a shared destination.
+                let (formal, contextual) = match (&template.ret_ty, expected) {
+                    (Type::Reference(result), Type::Reference(target))
+                        if result.mutable && !target.mutable =>
+                    {
+                        (&result.target, &target.target)
+                    }
+                    _ => (&template.ret_ty, expected),
+                };
                 unify(
-                    &template.ret_ty,
-                    expected,
+                    formal,
+                    contextual,
                     &template.type_params,
                     &mut inference.substitutions,
                     *span,
@@ -574,15 +584,26 @@ impl FunctionPlan {
     ) -> Result<(), Error> {
         // Constructors and generic calls can already know a parameter's
         // function-pointer type from the result context or explicit arguments.
-        let pointer = match formal {
+        let contextual = match formal {
             Type::Parameter(p) => inference
                 .substitutions
                 .get(&p.id)
-                .filter(|t| matches!(t, Type::Function(_)))
+                .filter(|t| {
+                    matches!(
+                        t,
+                        Type::Function(_) | Type::Reference(_) | Type::DynTrait(_)
+                    )
+                })
                 .cloned(),
             _ => None,
         };
-        let formal = pointer.as_ref().unwrap_or(formal);
+        let formal = contextual.as_ref().unwrap_or(formal);
+        // Argument planning performs owning erasure and verifies the implementation.
+        if matches!(formal, Type::DynTrait(_))
+            && !unresolved(formal, inference.params, &inference.substitutions)
+        {
+            return Ok(());
+        }
         if matches!(formal, Type::Function(_)) {
             if let Expr::AnonymousFunction(function) = arg {
                 if !super::closures::free_names(function, vars)?.is_empty() {
