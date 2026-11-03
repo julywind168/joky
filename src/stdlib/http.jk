@@ -13,8 +13,15 @@ import joky/time.{type Duration}
 import joky/string
 
 pub struct Header { pub name: String, pub value: String }
+pub struct RequestContext { pub request_id: uuid.Uuid }
+impl RequestContext {
+    pub fn emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Bool {
+        fields.push(log.text("request_id", self.request_id.to_text()))
+        log.emit(level, event, fields)
+    }
+}
 pub struct Request {
-    pub context: log.Context,
+    pub context: RequestContext,
     pub method: String,
     pub target: String,
     pub headers: Array<Header>,
@@ -140,7 +147,7 @@ fn valid_host(value: &String) -> Bool {
     }
     host_len > 0 && (!in_port || port_digits > 0)
 }
-fn read_request(stream: &mut Wire, context: log.Context) @suspends -> Result<Request, ReadFailure> {
+fn read_request(stream: &mut Wire, context: RequestContext) @suspends -> Result<Request, ReadFailure> {
     var remaining = HEAD_LIMIT
     let (method, target) = request_line(line(stream, &mut remaining)?)?
     var headers: Array<Header> = []
@@ -168,7 +175,7 @@ fn read_request(stream: &mut Wire, context: log.Context) @suspends -> Result<Req
 fn stop_read(stop: &shutdown.Controller) @suspends -> Result<Request, ReadFailure> { stop.wait(); Err(ReadFailure.Stopped) }
 fn read_timeout(timeout: Duration) @suspends -> Result<Request, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
 enum WriteOutcome { Complete, Failed, TimedOut }
-fn send(var stream: Wire, code: Int32, reason: String, media: String, body: Array<UInt8>, head: Bool, context: log.Context) @suspends -> WriteOutcome {
+fn send(var stream: Wire, code: Int32, reason: String, media: String, body: Array<UInt8>, head: Bool, context: RequestContext) @suspends -> WriteOutcome {
     let size = body.len()
     let id = context.request_id.to_text()
     let prefix = "HTTP/1.1 {code} {reason}\r\nX-Request-Id: {id}\r\nContent-Type: {media}\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n"
@@ -177,7 +184,7 @@ fn send(var stream: Wire, code: Int32, reason: String, media: String, body: Arra
     if stream.finish() { Complete } else { Failed }
 }
 fn write_timeout(duration: Duration) @suspends -> WriteOutcome { task.sleep(duration); TimedOut }
-fn respond(io: Wire, context: log.Context, started: time.Instant, route: Option<String>, code: Int32, reason: String, media: String, body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
+fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Option<String>, code: Int32, reason: String, media: String, body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
     let outcome = race { | send(io, code, reason, media, body, head, context) | write_timeout(timeout) }
     let label = match outcome { Complete => "complete", Failed => "failed", TimedOut => "timeout" }
     var fields = [log.uint("status", uint64(code)), log.text("write_outcome", label)]
@@ -185,7 +192,7 @@ fn respond(io: Wire, context: log.Context, started: time.Instant, route: Option<
     if let Some(name) = route {
         if !name.is_empty() && name.byte_length() <= 128 { fields.push(log.text("route", name)) }
     }
-    log.emit(log.Level.Info, "http.request_finished", Some(context), fields);
+    context.emit(log.Level.Info, "http.request_finished", fields);
 }
 fn secure(config: &tls.ServerConfig, stream: TcpStream) @suspends -> Option<Wire> {
     match config.accept(stream) { Ok(io) => Some(Secure(io)), Err(_) => None }
@@ -211,7 +218,7 @@ fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, s
             Some(wire) => wire, None => return
         }
     }
-    let context = log.Context { request_id: uuid.v4()! }
+    let context = RequestContext { request_id: uuid.v4()! }
     let started = time.Instant.now()
     let input = race { | read_request(&mut io, context) | stop_read(&stop) | read_timeout(options.read_timeout) }
     // This check admits a complete request. Shutdown lets its handler and write finish.

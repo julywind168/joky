@@ -821,20 +821,23 @@ fn structured_log_preserves_types_and_rejects_invalid_fields() {
 import joky/log
 import joky/check
 fn main() {
-    check.assert(log.emit(log.Level.Debug, "event\nname", None, [
+    check.assert(log.emit(log.Level.Debug, "event\nname", [
         log.text("detail", "quote\"\\\nline"), log.uint("count", 9),
         log.integer("delta", -2), log.boolean("ready", true)
     ]), "valid")
-    check.assert(!log.emit(log.Level.Info, "invalid", None, [log.uint("n", 1), log.uint("n", 2)]), "duplicate")
-    check.assert(!log.emit(log.Level.Info, "invalid", None, [log.text("request_id", "override")]), "reserved")
+    check.assert(log.emit(log.Level.Info, "job.finished", [log.text("request_id", "queue-42")]), "application field")
+    check.assert(!log.emit(log.Level.Info, "invalid", [log.uint("n", 1), log.uint("n", 2)]), "duplicate")
+    check.assert(!log.emit(log.Level.Info, "invalid", [log.text("timestamp", "override")]), "reserved")
 }
 "#);
     let output = work.cli(&["run", "events.jk"]);
     success(&output);
     assert!(output.stdout.is_empty());
     let text = std::str::from_utf8(&output.stderr).unwrap();
-    assert_eq!(text.lines().count(), 1);
-    let event: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut records = text
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap());
+    let event = records.next().unwrap();
     assert_eq!(event["level"], "debug");
     assert_eq!(event["event"], "event\nname");
     assert_eq!(event["detail"], "quote\"\\\nline");
@@ -842,4 +845,8 @@ fn main() {
     assert_eq!(event["delta"], -2);
     assert_eq!(event["ready"], true);
     assert!(event.get("request_id").is_none());
+    let job = records.next().unwrap();
+    assert_eq!(job["event"], "job.finished");
+    assert_eq!(job["request_id"], "queue-42");
+    assert!(records.next().is_none());
 }

@@ -6749,17 +6749,16 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 
 ## 结构化日志 joky/log
 
-`log.emit(level, event, context, fields) -> Bool` 将一个事件编码成单行 JSON，同步写入 stderr。
+`log.emit(level, event, fields) -> Bool` 将一个事件编码成单行 JSON，同步写入 stderr。
 每条记录包含 UTC 时间戳 `timestamp`、小写 `level` 和事件名 `event`。
-等级包括 `Debug`、`Info`、`Warn`、`Error`。传入 `Some(context)` 会增加 UUID 字段
-`request_id`，独立于请求的事件可传 `None`。上下文是普通值，可作为函数参数显式传递，跨挂起保留。
+等级包括 `Debug`、`Info`、`Warn`、`Error`。
 
 字段通过 `log.text`、`log.uint`、`log.integer`、`log.boolean` 构造，分别接受 String、UInt64、
-Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原类型。例如订单提交结果未知时可记录
-`log.emit(log.Level.Warn, "order.commit_unknown", Some(context), [log.text("route", "/orders")])`。
+Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原类型。例如后台任务完成后可记录
+`log.emit(log.Level.Info, "job.finished", [log.uint("rows", 12)])`。
 
 每条记录最多 32 个业务字段。事件名限 1–128 字节，字段名限 1–64 字节，文本值最多 4096 字节。
-同一条记录内的字段名须唯一，且不能使用上述四个保留名。校验或编码失败返回 false 并跳过整条事件。
+同一条记录内的字段名须唯一，且不能使用上述三个保留名。校验或编码失败返回 false 并跳过整条事件。
 应用自行选择业务字段，应避免写入凭据、原始请求或幂等键。
 
 ## HTTP 服务端 joky/http
@@ -6769,6 +6768,8 @@ Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原�
 按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
 服务端在开始读取请求时创建 UUID v4，handler 通过 `request.context.request_id` 访问，
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
+`request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
+会补上 `request_id` 后调用通用日志接口。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
 Response 提供状态枚举、媒体类型枚举和正文字节。发送方计算 Content-Length，HEAD 只发送响应头。
 
 持有业务资源的服务可实现 `http.Service`，并调用 `http.serve_with(listener, &stop, options, service)`。

@@ -4,12 +4,9 @@ import joky/map.{type Map}
 import joky/json
 import joky/io
 import joky/time
-import joky/uuid
-import joky/option.{type Option, Some, None}
 import joky/result.{Ok, Err}
 
 pub enum Level { Debug, Info, Warn, Error }
-pub struct Context { pub request_id: uuid.Uuid }
 pub struct Field { name: String, value: json.Value }
 pub fn text(name: String, value: String) -> Field { Field { name, value: json.Value.Text(value) } }
 pub fn uint(name: String, value: UInt64) -> Field { Field { name, value: json.Value.Number(json.Number.from_u64(value)) } }
@@ -18,20 +15,19 @@ pub fn boolean(name: String, value: Bool) -> Field { Field { name, value: json.V
 
 fn add(record: &mut Map<String, json.Value>, field: Field) -> Bool {
     let Field { name, value } = field
-    if name.is_empty() || name.byte_length() > 64 || name == "request_id" || record.contains_key_by_ref(&name) { return false }
+    if name.is_empty() || name.byte_length() > 64 || record.contains_key_by_ref(&name) { return false }
     if let Text(s) = &value { if s.byte_length() > 4096 { return false } }
     record.insert(name, value);
     true
 }
 
-pub fn emit(level: Level, event: String, context: Option<Context>, fields: Array<Field>) -> Bool {
+pub fn emit(level: Level, event: String, fields: Array<Field>) -> Bool {
     if event.is_empty() || event.byte_length() > 128 || fields.len() > 32 { return false }
     var record = Map.new::<String, json.Value>()
     let severity = match level { Debug => "debug", Info => "info", Warn => "warn", Error => "error" }
     record.insert("level", json.Value.Text(severity))
     record.insert("event", json.Value.Text(event))
     record.insert("timestamp", json.Value.Text(time.Timestamp.now().to_text()))
-    if let Some(ctx) = context { record.insert("request_id", json.Value.Text(ctx.request_id.to_text())); }
     for field in fields { if !add(&mut record, field) { return false } }
     let value = json.Value.Object(record)
     match json.encode(&value) { Ok(line) => { io.eprintln(line); true }, Err(_) => false }
