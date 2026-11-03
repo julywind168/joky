@@ -299,7 +299,7 @@ impl FunctionPlan {
             return Err(type_error(
                 &function.span,
                 ErrorCode::InvalidCall,
-                "Only reference-free move closure environments can enter suspending functions",
+                "Only reference-free move closure environments can enter suspending functions; use move for reference-free captures",
             ));
         }
         let dst = self.slot(Type::Record(environment.clone()))?;
@@ -1023,7 +1023,7 @@ impl FunctionPlan {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                "Only reference-free move closure environments can enter suspending functions",
+                "Only reference-free move closure environments can enter suspending functions; use move for reference-free captures",
             ));
         }
         let value = if self.captured_fields.contains_key(&value.index)

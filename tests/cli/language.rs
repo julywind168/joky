@@ -3492,3 +3492,34 @@ fn suspending_functions_reborrow_mutable_reference_fields() {
     );
     failure(&work.cli(&["check", "borrow.jk"]), "conflict");
 }
+
+#[test]
+#[cfg(unix)]
+fn suspending_callers_infer_capture_free_callbacks_as_pointers() {
+    let work = Workspace::new();
+    work.write(
+        "map.jk",
+        r#"
+        import joky/task
+        fn main() @suspends {
+            let result = Some(41).map::<Int32>(|x| { x + 1 })
+            task.yield_now()
+            println(result!)
+        }
+    "#,
+    );
+    work.assert_all_backends("map.jk", &[], b"42\n", 0);
+    work.write(
+        "map.jk",
+        r#"
+        import joky/task
+        fn main() @suspends {
+            let n = 1
+            let f = |x: Int32| { x + n }
+            task.yield_now()
+            println(f(41))
+        }
+    "#,
+    );
+    failure(&work.cli(&["check", "map.jk"]), "use move");
+}

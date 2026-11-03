@@ -293,6 +293,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K2-7 | 已修复 | `fix: contextualize function pointers in generic arguments` | Option 与泛型记录的无捕获闭包在三后端执行，捕获闭包转换继续报错。 |
 | K2-8 | 已修复 | `fix: apply reference and owning dyn coercions in generic calls` | Arena.alloc、泛型可变引用返回和 Array.push 的拥有 dyn 擦除在三后端执行通过。 |
 | K2-9 | 已修复 | `fix: reborrow referenced fields in suspending functions` | 三后端均验证挂起后独占投影写入，共享前端继续拒绝重叠的独占借用。 |
+| K2-10 | 已修复（零捕获） | `fix: infer capture-free callbacks in suspending callers` | 三后端运行无捕获 map 回调，借用捕获仍受原限制且诊断提示 move。未放宽有捕获闭包的活跃区间。 |
 | K2 其余项 | 待实施 | | |
 | K3 | 待设计 | | |
 | K4 | 待实施 | | |

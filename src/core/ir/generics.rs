@@ -721,7 +721,19 @@ impl FunctionPlan {
                 } else {
                     self.hint(arg, vars, functions, types, inference.default)
                 };
-                if let Some(actual) = actual {
+                if let Some(mut actual) = actual {
+                    // Match the pointer representation used for a capture-free
+                    // literal in a suspending caller. Explicit move keeps its owner.
+                    if self.suspends && matches!(arg, Expr::AnonymousFunction(f) if !f.moving) {
+                        if let Some(c) = actual.closure_info().filter(|c| c.pointer_entry.is_some())
+                        {
+                            actual = Type::function_with_effect(
+                                c.signature.params.clone(),
+                                c.signature.ret.clone(),
+                                c.suspends,
+                            );
+                        }
+                    }
                     if super::closures::callable_suspends(&actual) != bound.suspends {
                         return Err(type_error(
                             &arg.span(),
