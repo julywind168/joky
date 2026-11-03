@@ -586,7 +586,7 @@ fn associated_types_compose_equalities_owners_and_defaults() {
         }
         fn take<S: Source<Item = U>, U>(s: &S) @noescape -> Option<U> { s.next() }
         fn first<S: Source<Item = Int32>>(s: &S) @noescape -> Int32 { take::<S,Int32>(s).unwrap_or(0) }
-        fn test() -> Int32 { let c = C {}; first(&c) }
+        fn test() -> Int32 { let c = C {}; let inferred = take(&c); inferred.unwrap_or(0) + first(&c) - 42 }
         "#,
         r#"
         trait Value { fn value(&self) @noescape -> Int32 }

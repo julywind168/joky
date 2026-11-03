@@ -540,6 +540,17 @@ impl FunctionPlan {
                     self.infer_generic_argument(formal, arg, &local, functions, types, inference)?;
                     self.hint_bindings(arg, &mut local, functions, types);
                 }
+                if template
+                    .type_params
+                    .iter()
+                    .any(|p| inference.substitutions.argument(p).is_none())
+                {
+                    types.infer_associated_arguments(
+                        inference.params,
+                        &mut inference.substitutions,
+                        *span,
+                    )?;
+                }
                 if before == inference.substitutions {
                     break;
                 }

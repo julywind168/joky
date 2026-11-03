@@ -936,6 +936,88 @@ impl TypeRegistry {
         Ok(Some(substitutions))
     }
 
+    fn bound_projection(
+        &self,
+        actual: &Type,
+        declaration: &TraitDef,
+        equality: &AssociatedEquality,
+    ) -> Result<Type, Error> {
+        let index = declaration
+            .associated_types
+            .iter()
+            .position(|a| a.name == equality.name)
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnknownName,
+                    format!("Unknown associated type '{}'", equality.name),
+                )
+                .with_span(equality.span)
+            })?;
+        let projection = TypeProjection {
+            base: actual.clone(),
+            trait_name: Some(declaration.name.clone()),
+            name: equality.name.clone(),
+            identity: Some((declaration.self_parameter.id, index)),
+            span: equality.span,
+        };
+        // Trait checks also run from the module-wide method registry.
+        // Preserve registered caller parameters while checking a conditional
+        // implementation's associated equality on a rigid argument.
+        let mut local = self.clone();
+        for ty in TypeWalk::new(actual, TypeEdges::Arguments) {
+            if let Type::Parameter(p) = ty {
+                if self.trait_environment.parameters.contains_key(&p.id) {
+                    local.parameters.insert(p.id, p.name.clone());
+                }
+            }
+        }
+        local.normalize_projection(&projection, &HashMap::new())
+    }
+
+    /// Infer only in the forward direction, once the implementing type is known.
+    pub(crate) fn infer_associated_arguments(
+        &self,
+        parameters: &[Arc<TypeParameter>],
+        substitutions: &mut Substitutions,
+        span: Span,
+    ) -> Result<(), Error> {
+        for parameter in parameters {
+            if parameter.bounds.iter().all(|b| b.equalities.is_empty()) {
+                continue;
+            }
+            let Some(actual) = substitutions.get(&parameter.id).cloned() else {
+                continue;
+            };
+            let scope = self
+                .trait_environment
+                .parameters
+                .get(&parameter.id)
+                .map_or(self.trait_environment.root.as_ref(), |(_, s)| s.as_ref());
+            for bound in &parameter.bounds {
+                for equality in &bound.equalities {
+                    let formal = self.resolve_scoped(&equality.ty, scope, &[])?;
+                    if !TypeWalk::new(&formal, TypeEdges::Arguments).any(|ty|
+                        matches!(ty, Type::Parameter(p) if parameters.iter().any(|q| q.id == p.id) && !substitutions.contains_key(&p.id))) {
+                        continue;
+                    }
+                    let id = self.trait_id(&bound.name, scope, bound.span)?;
+                    if !self.implements(&actual, id)? {
+                        continue;
+                    }
+                    let declaration = self
+                        .trait_environment
+                        .declarations
+                        .iter()
+                        .find(|d| d.self_parameter.id == id)
+                        .unwrap();
+                    let projected = self.bound_projection(&actual, declaration, equality)?;
+                    unify(&formal, &projected, parameters, substitutions, span)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn bounds_hold(
         &self,
         bounds: &[TraitBound],
@@ -955,36 +1037,7 @@ impl TypeRegistry {
                 .find(|d| d.self_parameter.id == id)
                 .unwrap();
             for equality in &bound.equalities {
-                let index = declaration
-                    .associated_types
-                    .iter()
-                    .position(|a| a.name == equality.name)
-                    .ok_or_else(|| {
-                        error(
-                            ErrorCode::UnknownName,
-                            format!("Unknown associated type '{}'", equality.name),
-                        )
-                        .with_span(equality.span)
-                    })?;
-                let projection = TypeProjection {
-                    base: actual.clone(),
-                    trait_name: Some(declaration.name.clone()),
-                    name: equality.name.clone(),
-                    identity: Some((id, index)),
-                    span: equality.span,
-                };
-                // Trait checks also run from the module-wide method registry.
-                // Preserve registered caller parameters while checking a conditional
-                // implementation's associated equality on a rigid argument.
-                let mut local = self.clone();
-                for ty in TypeWalk::new(actual, TypeEdges::Arguments) {
-                    if let Type::Parameter(p) = ty {
-                        if self.trait_environment.parameters.contains_key(&p.id) {
-                            local.parameters.insert(p.id, p.name.clone());
-                        }
-                    }
-                }
-                let actual = local.normalize_projection(&projection, &HashMap::new())?;
+                let actual = self.bound_projection(actual, declaration, equality)?;
                 let expected = self.resolve_scoped(&equality.ty, scope, &[])?;
                 let expected = substitute(&expected, substitutions, self)?;
                 if actual != expected {
