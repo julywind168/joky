@@ -6,12 +6,8 @@ pub fn port(name: String, fallback: UInt16) @suspends -> Result<UInt16, String> 
         Ok(None) => { return Ok(fallback) }
         Err(error) => { return Err(error.message) }
     }
-    if text.is_empty() { return Err("{name} must be a decimal port in 0..65535") }
-    var port: UInt32 = 0
-    for byte in text.bytes() {
-        if *byte < 48 || *byte > 57 { return Err("{name} must be a decimal port in 0..65535") }
-        port = port * 10 + (*byte - 48).to_u32().unwrap_or(0)
-        if port > 65535 { return Err("{name} must be a decimal port in 0..65535") }
+    match UInt16.parse(&text) {
+        Ok(port) => Ok(port)
+        Err(_) => Err("{name} must be a decimal port in 0..65535")
     }
-    Ok(port.to_u16().unwrap_or(fallback))
 }

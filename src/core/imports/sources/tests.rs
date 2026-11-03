@@ -394,9 +394,13 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
         .resolve_aliases(&crate::parser::parse(other_source).unwrap())
         .unwrap();
     let again = types.resolve_aliases(&second).unwrap();
-    assert_eq!(first.enums[0].id, second.enums[0].id);
-    assert_eq!(second.enums.len(), 1);
-    assert_eq!(again.implementations.len(), 10);
+    assert!(first
+        .enums
+        .iter()
+        .map(|e| e.id)
+        .eq(second.enums.iter().map(|e| e.id)));
+    assert_eq!(second.enums.len(), 3);
+    assert_eq!(again.implementations.len(), 11);
     let first_method = &first.implementations[0].methods[0];
     let second_method = &second.implementations[0].methods[0];
     assert!(Arc::ptr_eq(
@@ -414,14 +418,27 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
     assert_eq!(file.name(), "joky/integer.jk");
     assert_eq!(file.text(), include_str!("../../../stdlib/integer.jk"));
     let option = second
-        .sources
-        .get(second.enums[0].span.source_id())
+        .enums
+        .iter()
+        .find(|e| e.name == "joky/option.Option")
         .unwrap();
-    assert_eq!(option.name(), "joky/option.jk");
+    assert_eq!(
+        second.sources.get(option.span.source_id()).unwrap().name(),
+        "joky/option.jk"
+    );
     let cache = types.standard.get().unwrap();
     assert_eq!(cache.modules.len(), SOURCES.len());
     let integer = &cache.modules["joky/integer"];
-    assert_eq!(integer.dependencies, ["joky/option"]);
+    assert_eq!(
+        integer.dependencies,
+        [
+            "joky/internal/buffer",
+            "joky/internal/text",
+            "joky/option",
+            "joky/result"
+        ]
+    );
+    assert!(!integer.exports.functions.contains_key("parse_decimal"));
     let result = &cache.modules["joky/result"];
     assert_eq!(result.dependencies, ["joky/check", "joky/option"]);
     assert!(!result.exports.types.contains_key("Option"));

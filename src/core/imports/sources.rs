@@ -565,6 +565,7 @@ impl StandardLibrary {
             SourceKind::User
                 | SourceKind::FixedArrayLibrary
                 | SourceKind::BufferLibrary
+                | SourceKind::Integer
                 | SourceKind::Text
                 | SourceKind::Json
                 | SourceKind::Domain
@@ -578,6 +579,7 @@ impl StandardLibrary {
                 kind,
                 SourceKind::FixedArrayLibrary
                     | SourceKind::BufferLibrary
+                    | SourceKind::Integer
                     | SourceKind::Text
                     | SourceKind::Json
                     | SourceKind::Domain

@@ -506,9 +506,9 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
         .unwrap();
     let twice = types.resolve_aliases(&first).unwrap();
     assert!(first.imports.is_empty());
-    assert_eq!(first.enums.len(), 1);
-    assert_eq!(twice.enums.len(), 1);
-    assert_eq!(twice.implementations.len(), 10);
+    assert_eq!(first.enums.len(), 3);
+    assert_eq!(twice.enums.len(), first.enums.len());
+    assert_eq!(twice.implementations.len(), 11);
     let ret = |m: &crate::parser::ast::Module| {
         let crate::parser::ast::Item::FnDef(f) = &m.items[0] else {
             panic!()
@@ -521,8 +521,16 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
         .unwrap();
     assert_eq!(ret(&first), ret(&reload));
     // The appended enum keeps its stdlib source identity across reloads.
-    assert_eq!(first.enums[0].span, reload.enums[0].span);
-    let file = first.sources.get(first.enums[0].span.source_id()).unwrap();
+    let option_span = |module: &crate::parser::ast::Module| {
+        module
+            .enums
+            .iter()
+            .find(|e| e.name == "joky/option.Option")
+            .unwrap()
+            .span
+    };
+    assert_eq!(option_span(&first), option_span(&reload));
+    let file = first.sources.get(option_span(&first).source_id()).unwrap();
     assert_eq!(file.name(), "joky/option.jk");
     assert!(!types.contains("Option"));
     let mut registry = crate::core::resolver::BindingRegistry::default();

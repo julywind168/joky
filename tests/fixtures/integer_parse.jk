@@ -1,0 +1,51 @@
+import joky/integer.{type ParseIntError}
+
+fn syntax<T>(result: Result<T, ParseIntError>, offset: UInt64) -> Bool {
+    match result { Err(InvalidSyntax(at)) => at == offset, _ => false }
+}
+fn overflow<T>(result: Result<T, ParseIntError>, offset: UInt64) -> Bool {
+    match result { Err(OutOfRange(at)) => at == offset, _ => false }
+}
+fn main() {
+    assert(Int8.parse("-128")! == Int8.MIN, "Int8 MIN")
+    assert(Int8.parse("127")! == Int8.MAX, "Int8 MAX")
+    assert(overflow(Int8.parse("-129"), 3), "Int8 overflow at -129")
+    assert(overflow(Int8.parse("128"), 2), "Int8 overflow at 128")
+    assert(Int16.parse("-32768")! == Int16.MIN, "Int16 MIN")
+    assert(Int16.parse("32767")! == Int16.MAX, "Int16 MAX")
+    assert(overflow(Int16.parse("-32769"), 5), "Int16 overflow at -32769")
+    assert(overflow(Int16.parse("32768"), 4), "Int16 overflow at 32768")
+    assert(Int32.parse("-2147483648")! == Int32.MIN, "Int32 MIN")
+    assert(Int32.parse("2147483647")! == Int32.MAX, "Int32 MAX")
+    assert(overflow(Int32.parse("-2147483649"), 10), "Int32 overflow at -2147483649")
+    assert(overflow(Int32.parse("2147483648"), 9), "Int32 overflow at 2147483648")
+    assert(Int64.parse("-9223372036854775808")! == Int64.MIN, "Int64 MIN")
+    assert(Int64.parse("9223372036854775807")! == Int64.MAX, "Int64 MAX")
+    assert(overflow(Int64.parse("-9223372036854775809"), 19), "Int64 overflow at -9223372036854775809")
+    assert(overflow(Int64.parse("9223372036854775808"), 18), "Int64 overflow at 9223372036854775808")
+    assert(UInt8.parse("0")! == UInt8.MIN, "UInt8 MIN")
+    assert(UInt8.parse("255")! == UInt8.MAX, "UInt8 MAX")
+    assert(overflow(UInt8.parse("256"), 2), "UInt8 overflow at 256")
+    assert(UInt16.parse("0")! == UInt16.MIN, "UInt16 MIN")
+    assert(UInt16.parse("65535")! == UInt16.MAX, "UInt16 MAX")
+    assert(overflow(UInt16.parse("65536"), 4), "UInt16 overflow at 65536")
+    assert(UInt32.parse("0")! == UInt32.MIN, "UInt32 MIN")
+    assert(UInt32.parse("4294967295")! == UInt32.MAX, "UInt32 MAX")
+    assert(overflow(UInt32.parse("4294967296"), 9), "UInt32 overflow at 4294967296")
+    assert(UInt64.parse("0")! == UInt64.MIN, "UInt64 MIN")
+    assert(UInt64.parse("18446744073709551615")! == UInt64.MAX, "UInt64 MAX")
+    assert(overflow(UInt64.parse("18446744073709551616"), 19), "UInt64 overflow at 18446744073709551616")
+
+    assert(Int64.parse("-000")! == 0, "signed zero")
+    assert(UInt16.parse("+0042")! == 42, "positive sign and leading zeros")
+    assert(syntax(UInt64.parse("-0"), 0), "unsigned negative zero")
+    assert(syntax(Int8.parse(""), 0), "empty")
+    assert(syntax(Int8.parse("-"), 1), "missing digits")
+    assert(syntax(UInt8.parse("+"), 1), "missing unsigned digits")
+    assert(syntax(Int8.parse(" 1"), 0), "leading whitespace")
+    assert(syntax(Int8.parse("1\n"), 1), "trailing whitespace")
+    assert(syntax(Int8.parse("0xff"), 1), "base prefix")
+    assert(syntax(Int8.parse("1_0"), 1), "separator")
+    assert(syntax(Int8.parse("1２"), 1), "non-ASCII digit")
+    assert(overflow(UInt8.parse("300x"), 2), "first error takes precedence")
+}

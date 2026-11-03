@@ -2079,8 +2079,8 @@ fn example() -> String {
 
 ### 受检整数方法
 
-默认 prelude 提供标准 `Option<T>`、五种整数的 `MIN` / `MAX`，
-以及 `to_i32()`、`to_i64()`、`to_u8()`、`to_u32()`、`to_u64()`：
+默认 prelude 提供标准 `Option<T>`、八种整数的 `MIN` / `MAX`，
+以及对应的八个受检转换方法（如 `to_i32()`、`to_u16()`）：
 
 ```joky
 import joky/integer
@@ -2093,14 +2093,26 @@ fn forced() -> UInt64 { uint64(-1) } // 18446744073709551615
 fn maximum() -> Int32 { Int32.MAX }  // 2147483647
 ```
 
-25 种源/目标组合一律返回 `Option<目标整数>`：数值可表示则 Some，否则 None，即使同型或保证不丢失的宽化也如此。
-`uint64()` 等五个全局函数保留原来的 wrapping 强制转换语义；没有另一套 `try_to_*()` 或 `try_int*()` 内建。
+64 种源/目标组合一律返回 `Option<目标整数>`：数值可表示则 Some，否则 None，即使同型或保证不丢失的宽化也如此。
+`uint64()` 等八个全局整数转换函数保留原来的 wrapping 强制转换语义；没有另一套 `try_to_*()` 或 `try_int*()` 内建。
 接收者的错误仍正常传播，不能把除零等运行时错误转换成 None。
 
 这些方法和边界定义在 [integer.jk](../src/stdlib/integer.jk)，Option 定义在 [option.jk](../src/stdlib/option.jk)，范围检查用普通 Joky 比较、分支和内建转换实现。
 关闭 prelude 后，`import joky/integer` 仍可显式启用这些成员及 Option 类型。
 `joky/integer` 和 `joky/option` 共用同一个 Option 声明，可以同时导入且不依赖顺序。
 重复模块路径或重复整数成员仍报错。示例见 [integer_methods.jk](../examples/integer_methods.jk)。
+
+### 十进制文本解析
+
+八种整数类型都提供 `parse(input: &String) -> Result<Self, integer.ParseIntError>`，
+可通过默认 prelude 或显式导入 `joky/integer` 使用。例如 `UInt16.parse("+0042")` 得到 `Ok(42)`。
+输入须包含至少一个 ASCII 十进制数字，允许前导零和前导 `+`。只有有符号类型接受 `-`，
+包括 `-0`。空白、进制前缀、下划线和非 ASCII 数字均不接受。
+
+解析从左向右报告第一个错误。`InvalidSyntax(offset)` 指向不合法字符的首字节；
+缺少数字时指向输入末尾（空串为 0，单独的合法符号为 1）。
+`OutOfRange(offset)` 指向使数值超出目标类型范围的第一位，如 `UInt16.parse("65536")`
+得到 `Err(OutOfRange(4))`。两种偏移均为从零开始的 UInt64 字节位置。
 
 ## 静态 trait 与泛型约束
 

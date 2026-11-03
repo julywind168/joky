@@ -1256,6 +1256,11 @@ fn integer_methods_run_build_and_report_invalid_members() {
     let work = Workspace::new();
     for (file, source, expected) in [
         (
+            "integer_parse.jk",
+            include_str!("../fixtures/integer_parse.jk").to_owned(),
+            "",
+        ),
+        (
             "integer_methods.jk",
             include_str!("../../examples/integer_methods.jk").to_owned(),
             "42\n1\n18446744073709551615\n2147483647\n-1\n",

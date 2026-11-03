@@ -1,119 +1,183 @@
 import joky/option.{type Option, Some, None}
+import joky/result
+import joky/internal/text
+import joky/internal/buffer
+
+pub enum ParseIntError { InvalidSyntax(UInt64), OutOfRange(UInt64) }
+
+// Return the checked value's bit pattern so Int64.MIN never needs a positive Int64.
+fn parse_decimal(input: &String, maximum: UInt64, signed: Bool) -> result.Result<UInt64, ParseIntError> {
+    let bytes = text.bytes(input)
+    let length = buffer.slice_len(bytes)
+    if length == 0 { return result.Err(ParseIntError.InvalidSyntax(0)) }
+    let first = buffer.slice_load(bytes, 0)
+    let negative = first == 45
+    if negative && !signed { return result.Err(ParseIntError.InvalidSyntax(0)) }
+    var offset: UInt64 = if negative || first == 43 { 1 } else { 0 }
+    if offset == length { return result.Err(ParseIntError.InvalidSyntax(offset)) }
+    let limit = if negative { maximum + 1 } else { maximum }
+    let cutoff = limit / 10
+    let last_digit = limit % 10
+    var value: UInt64 = 0
+    while offset < length {
+        let byte = buffer.slice_load(bytes, offset)
+        if byte < 48 || byte > 57 { return result.Err(ParseIntError.InvalidSyntax(offset)) }
+        let digit = uint64(byte - 48)
+        if value > cutoff || (value == cutoff && digit > last_digit) {
+            return result.Err(ParseIntError.OutOfRange(offset))
+        }
+        value = value * 10 + digit
+        offset += 1
+    }
+    result.Ok(if negative { 0 - value } else { value })
+}
 
 // Checked integer conversions are ordinary Joky methods generated as a
 // full matrix over the eight integer types; every range bound is written
 // in the source type's own context.
 
 impl Int8 {
-    const MIN: Int8 = -128
-    const MAX: Int8 = 127
+    pub const MIN: Int8 = -128
+    pub const MAX: Int8 = 127
 
-    fn to_i8(self) -> Option<Int8> { Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<Int8, ParseIntError> {
+        result.Ok(int8(parse_decimal(input, uint64(Int8.MAX), true)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
 }
 
 impl Int16 {
-    const MIN: Int16 = -32768
-    const MAX: Int16 = 32767
+    pub const MIN: Int16 = -32768
+    pub const MAX: Int16 = 32767
 
-    fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; if self > 255 { return None }; Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<Int16, ParseIntError> {
+        result.Ok(int16(parse_decimal(input, uint64(Int16.MAX), true)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; if self > 255 { return None }; Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
 }
 
 impl Int32 {
-    const MIN: Int32 = -2147483648
-    const MAX: Int32 = 2147483647
+    pub const MIN: Int32 = -2147483648
+    pub const MAX: Int32 = 2147483647
 
-    fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { if self < -32768 { return None }; if self > 32767 { return None }; Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; if self > 255 { return None }; Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; if self > 65535 { return None }; Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<Int32, ParseIntError> {
+        result.Ok(int32(parse_decimal(input, uint64(Int32.MAX), true)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { if self < -32768 { return None }; if self > 32767 { return None }; Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; if self > 255 { return None }; Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; if self > 65535 { return None }; Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
 }
 
 impl Int64 {
-    const MIN: Int64 = -9223372036854775808
-    const MAX: Int64 = 9223372036854775807
+    pub const MIN: Int64 = -9223372036854775808
+    pub const MAX: Int64 = 9223372036854775807
 
-    fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { if self < -32768 { return None }; if self > 32767 { return None }; Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { if self < -2147483648 { return None }; if self > 2147483647 { return None }; Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; if self > 255 { return None }; Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; if self > 65535 { return None }; Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; if self > 4294967295 { return None }; Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<Int64, ParseIntError> {
+        result.Ok(int64(parse_decimal(input, uint64(Int64.MAX), true)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { if self < -32768 { return None }; if self > 32767 { return None }; Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { if self < -2147483648 { return None }; if self > 2147483647 { return None }; Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { if self < 0 { return None }; if self > 255 { return None }; Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { if self < 0 { return None }; if self > 65535 { return None }; Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { if self < 0 { return None }; if self > 4294967295 { return None }; Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { if self < 0 { return None }; Some(uint64(self)) }
 }
 
 impl UInt8 {
-    const MIN: UInt8 = 0
-    const MAX: UInt8 = 255
+    pub const MIN: UInt8 = 0
+    pub const MAX: UInt8 = 255
 
-    fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<UInt8, ParseIntError> {
+        result.Ok(uint8(parse_decimal(input, uint64(UInt8.MAX), false)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
 }
 
 impl UInt16 {
-    const MIN: UInt16 = 0
-    const MAX: UInt16 = 65535
+    pub const MIN: UInt16 = 0
+    pub const MAX: UInt16 = 65535
 
-    fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { if self > 255 { return None }; Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<UInt16, ParseIntError> {
+        result.Ok(uint16(parse_decimal(input, uint64(UInt16.MAX), false)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { if self > 255 { return None }; Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
 }
 
 impl UInt32 {
-    const MIN: UInt32 = 0
-    const MAX: UInt32 = 4294967295
+    pub const MIN: UInt32 = 0
+    pub const MAX: UInt32 = 4294967295
 
-    fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { if self > 2147483647 { return None }; Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { if self > 255 { return None }; Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { if self > 65535 { return None }; Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<UInt32, ParseIntError> {
+        result.Ok(uint32(parse_decimal(input, uint64(UInt32.MAX), false)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { if self > 2147483647 { return None }; Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { if self > 255 { return None }; Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { if self > 65535 { return None }; Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
 }
 
 impl UInt64 {
-    const MIN: UInt64 = 0
-    const MAX: UInt64 = 18446744073709551615
+    pub const MIN: UInt64 = 0
+    pub const MAX: UInt64 = 18446744073709551615
 
-    fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
-    fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
-    fn to_i32(self) -> Option<Int32> { if self > 2147483647 { return None }; Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { if self > 9223372036854775807 { return None }; Some(int64(self)) }
-    fn to_u8(self) -> Option<UInt8> { if self > 255 { return None }; Some(uint8(self)) }
-    fn to_u16(self) -> Option<UInt16> { if self > 65535 { return None }; Some(uint16(self)) }
-    fn to_u32(self) -> Option<UInt32> { if self > 4294967295 { return None }; Some(uint32(self)) }
-    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
+    pub fn parse(input: &String) -> result.Result<UInt64, ParseIntError> {
+        result.Ok(uint64(parse_decimal(input, uint64(UInt64.MAX), false)?))
+    }
+
+    pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
+    pub fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
+    pub fn to_i32(self) -> Option<Int32> { if self > 2147483647 { return None }; Some(int32(self)) }
+    pub fn to_i64(self) -> Option<Int64> { if self > 9223372036854775807 { return None }; Some(int64(self)) }
+    pub fn to_u8(self) -> Option<UInt8> { if self > 255 { return None }; Some(uint8(self)) }
+    pub fn to_u16(self) -> Option<UInt16> { if self > 65535 { return None }; Some(uint16(self)) }
+    pub fn to_u32(self) -> Option<UInt32> { if self > 4294967295 { return None }; Some(uint32(self)) }
+    pub fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
 }
 
 // This private definition is bound by identity only in this embedded module.
@@ -121,10 +185,10 @@ impl UInt64 {
 fn rune_from_valid_u32(value: UInt32) -> Rune
 
 impl Rune {
-    fn from_u32(value: UInt32) -> Option<Rune> {
+    pub fn from_u32(value: UInt32) -> Option<Rune> {
         if value > 0x10ffff { return None }
         if value >= 0xd800 && value <= 0xdfff { return None }
         Some(rune_from_valid_u32(value))
     }
-    fn to_u32(self) -> UInt32 { uint32(self) }
+    pub fn to_u32(self) -> UInt32 { uint32(self) }
 }

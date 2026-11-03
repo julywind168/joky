@@ -1,10 +1,9 @@
 // Minimal text operations used below the public String/Array libraries.
-import joky/slice.{type Slice}
-import joky/internal/buffer
+import joky/internal/buffer.{type Slice}
 #intrinsic("text.clone")
 pub fn clone(value: &String) @noescape -> String
 #intrinsic("text.bytes")
-fn bytes(value: &String) -> &Slice<UInt8>
+pub fn bytes(value: &String) -> &Slice<UInt8>
 pub fn equals(left: &String, right: &String) @noescape -> Bool {
     let left = bytes(left)
     let right = bytes(right)

@@ -302,6 +302,7 @@ fn chat_port_configuration_validates_environment_values() {
         (None, Some(7777)),
         (Some("0"), Some(0)),
         (Some("65535"), Some(65535)),
+        (Some("+0042"), Some(42)),
         (Some(""), None),
         (Some("65536"), None),
         (Some("-1"), None),
