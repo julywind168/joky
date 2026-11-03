@@ -121,6 +121,8 @@ fn stdin_lines_limits_utf8_and_exclusive_readers_match_backends() {
     success(&work.cli(&["build", "stdin.jk", "--parallel"]));
     let chunk = format!("{}中\n", "a".repeat(4095));
     let chunk_output = format!("[{}中]\n", "a".repeat(4095));
+    let split_crlf = format!("{}\r\nb\n", "a".repeat(4095));
+    let split_output = format!("[{}]\n[b]\n", "a".repeat(4095));
     for backend in ["jit", "interpreter", "aot"] {
         for (mode, input, expected, status) in [
             (
@@ -138,6 +140,8 @@ fn stdin_lines_limits_utf8_and_exclusive_readers_match_backends() {
             ("lines", b"123456789012345\n", b"[123456789012345]\n", 0),
             ("lines", b"1234567890123456\n", b"", 2),
             ("chunk", chunk.as_bytes(), chunk_output.as_bytes(), 0),
+            ("chunk", split_crlf.as_bytes(), split_output.as_bytes(), 0),
+            ("lines", b"1234567890123456", b"[1234567890123456]\n", 0),
         ] {
             let mut command = if backend == "aot" {
                 Command::new(work.path().join("stdin"))

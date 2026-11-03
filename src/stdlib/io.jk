@@ -1,4 +1,5 @@
 import joky/fs
+import joky/internal/buffer
 import joky/mem
 import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
@@ -63,35 +64,39 @@ pub fn stdin() @suspends -> Result<Stdin, fs.IoError> {
     Ok(Stdin { file: fs.stdin()?, buffer: Array.new::<UInt8>(), offset: 0, eof: false, failed: false })
 }
 impl Stdin {
-    fn next_byte(&mut self) @suspends -> Result<Option<UInt8>, ReadError> {
-        if self.failed { return Err(ReadError.Closed) }
-        if self.offset == self.buffer.len() {
-            if self.eof { return Ok(None) }
-            let next = match self.file.read(4096) {
-                Ok(bytes) => bytes
-                Err(error) => { self.failed = true; return Err(ReadError.Io(error)) }
-            }
-            mem.drop(mem.replace(&mut self.buffer, next))
-            self.offset = 0
-            if self.buffer.len() == 0 { self.eof = true; return Ok(None) }
+    fn fill(&mut self) @suspends -> Result<Bool, ReadError> {
+        if self.offset < self.buffer.len() { return Ok(true) }
+        if self.eof { return Ok(false) }
+        let next = match self.file.read(4096) {
+            Ok(bytes) => bytes
+            Err(error) => { self.failed = true; return Err(ReadError.Io(error)) }
         }
-        let byte = self.buffer.get(self.offset)
-        self.offset = self.offset + 1
-        Ok(byte)
+        mem.drop(mem.replace(&mut self.buffer, next))
+        self.offset = 0
+        self.eof = self.buffer.is_empty()
+        Ok(!self.eof)
+    }
+    fn append_chunk(&mut self, output: &mut Array<UInt8>, line: Bool, limit: UInt64) -> Result<Bool, ReadError> {
+        let end = self.buffer.len()
+        let source = self.buffer.slice(0, end)
+        let at = if line { buffer.find_byte(source, 10, self.offset, end) } else { end }
+        let next = if at < end { at + 1 } else { end }
+        if next - self.offset > limit - output.len() {
+            self.failed = true
+            return Err(ReadError.LimitExceeded)
+        }
+        array.extend_bytes(output, source, self.offset, next)
+        self.offset = next
+        Ok(at < end)
     }
     fn collect(&mut self, line: Bool, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if self.failed { return Err(ReadError.Closed) }
         if limit == 0 || limit > 1048576 { return Err(ReadError.InvalidLimit) }
         var bytes = Array.new::<UInt8>()
-        while true {
-            let byte = match self.next_byte()? {
-                Some(byte) => byte
-                None => { return if bytes.len() == 0 { Ok(None) } else { Ok(Some(bytes)) } }
-            }
-            if bytes.len() == limit { self.failed = true; return Err(ReadError.LimitExceeded) }
-            bytes.push(byte)
-            if line && byte == 10 { return Ok(Some(bytes)) }
+        while self.fill()? {
+            if self.append_chunk(&mut bytes, line, limit)? { return Ok(Some(bytes)) }
         }
+        if bytes.is_empty() { Ok(None) } else { Ok(Some(bytes)) }
     }
     fn decode(&mut self, bytes: Array<UInt8>) -> Result<String, ReadError> {
         match String.from_utf8(bytes) {
