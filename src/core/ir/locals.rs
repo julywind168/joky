@@ -126,6 +126,7 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             | Expr::Destructure { value, .. }
             | Expr::Spread { value, .. } => pending.push(value),
             Expr::Return { value, .. } => pending.extend(value.iter().map(Box::as_ref)),
+            Expr::BinaryChain { .. } | Expr::IfChain { .. } => pending.extend(expr.children()),
             Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
                 pending.extend([lhs.as_ref(), rhs.as_ref()])
             }

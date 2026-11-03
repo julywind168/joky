@@ -349,6 +349,25 @@ impl FunctionPlan {
                 op: UnaryOp::Not, ..
             }
             | Expr::Logical { .. } => Some(Type::Bool),
+            Expr::BinaryChain { .. } => {
+                let mut local = vars.clone();
+                expr.children().into_iter().find_map(|operand| {
+                    let ty = self.hint(operand, &local, functions, types, default);
+                    if ty.is_none() {
+                        self.hint_bindings(operand, &mut local, functions, types);
+                    }
+                    ty
+                })
+            }
+            Expr::IfChain { arms, fallback, .. } => {
+                if fallback.is_none() {
+                    return Some(Type::Unit);
+                }
+                arms.iter()
+                    .map(|(_, body)| body)
+                    .chain(fallback.as_deref())
+                    .find_map(|body| self.hint(body, vars, functions, types, default))
+            }
             Expr::BinOp { op, lhs, rhs, .. } => {
                 if op.is_comparison() {
                     return Some(Type::Bool);
@@ -548,6 +567,11 @@ impl FunctionPlan {
             | Expr::Call { args: exprs, .. } => {
                 for expr in exprs {
                     self.hint_bindings(expr, vars, functions, types);
+                }
+            }
+            Expr::BinaryChain { .. } => {
+                for operand in expr.children() {
+                    self.hint_bindings(operand, vars, functions, types);
                 }
             }
             Expr::Index {

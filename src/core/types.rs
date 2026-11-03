@@ -1362,6 +1362,14 @@ pub(crate) fn resolve_pattern_heads(
                 | Expr::Concurrent {
                     branches: elements, ..
                 } => pending.extend(elements.iter_mut()),
+                Expr::BinaryChain { first, rest, .. } => {
+                    pending.push(first);
+                    pending.extend(rest.iter_mut().map(|(_, e)| e));
+                }
+                Expr::IfChain { arms, fallback, .. } => {
+                    pending.extend(arms.iter_mut().flat_map(|(test, body)| [test, body]));
+                    pending.extend(fallback.as_deref_mut());
+                }
                 Expr::If {
                     condition,
                     then_branch,
@@ -1531,6 +1539,21 @@ pub(crate) fn map_syntax(
         } => {
             map_syntax(condition, map, substitutions)?;
             map_syntax(body, map, substitutions)?;
+        }
+        Expr::BinaryChain { first, rest, .. } => {
+            map_syntax(first, map, substitutions)?;
+            for (_, rhs) in rest {
+                map_syntax(rhs, map, substitutions)?;
+            }
+        }
+        Expr::IfChain { arms, fallback, .. } => {
+            for (test, body) in arms {
+                map_syntax(test, map, substitutions)?;
+                map_syntax(body, map, substitutions)?;
+            }
+            if let Some(other) = fallback {
+                map_syntax(other, map, substitutions)?;
+            }
         }
         Expr::If {
             condition,

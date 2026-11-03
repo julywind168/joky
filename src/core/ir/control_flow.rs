@@ -312,11 +312,137 @@ impl FunctionPlan {
                     Ok(Flow::Value(None))
                 }
             }
-            Expr::If { .. } | Expr::Logical { .. } => {
+            Expr::If { .. } | Expr::IfChain { .. } | Expr::Logical { .. } => {
                 self.conditional_expr(expr, vars, functions, suspends, types, expected)
             }
             _ => unreachable!("expected a control-flow expression"),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn if_branches<'a>(
+        &mut self,
+        arms: impl Iterator<Item = (&'a Expr, &'a Expr)> + Clone,
+        fallback: Option<&'a Expr>,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        let values = arms.clone().map(|(_, body)| body).chain(fallback);
+        let hint = fallback.and_then(|_| {
+            values
+                .clone()
+                .find_map(|body| self.type_hint(body, vars, functions, types))
+        });
+        let aggregate = if hint.is_none() && expected.is_none() {
+            values
+                .clone()
+                .find_map(|body| self.aggregate_default_hint(body, vars, functions, types))
+        } else {
+            None
+        };
+        let expected = if expected
+            .is_some_and(|ty| ty.dyn_interface().is_some() || arrays::element_type(ty).is_some())
+        {
+            expected
+        } else {
+            hint.as_ref().or(expected).or(aggregate.as_ref())
+        };
+        let exit = self.label_count;
+        self.label_count += 1;
+        let mut result = Flow::Diverged;
+        for (condition, body) in arms {
+            self.local_scopes.push(Vec::new());
+            let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
+            self.end_local_scope();
+            let Flow::Value(test) = test else {
+                return Err(unreachable_error(body));
+            };
+            if slot_type(&test) != Type::Bool {
+                return Err(type_error(
+                    &condition.span(),
+                    ErrorCode::TypeMismatch,
+                    "if condition must be Bool",
+                ));
+            }
+            let then_label = self.label_count;
+            let next = then_label + 1;
+            self.label_count += 2;
+            self.emit(Op::Branch {
+                condition: test.unwrap(),
+                then_label,
+                else_label: next,
+            });
+            self.emit(Op::Label(then_label));
+            if let Flow::Value(value) = self.expr_expected(
+                body,
+                &mut vars.clone(),
+                functions,
+                suspends,
+                types,
+                expected,
+            )? {
+                if fallback.is_none() && value.is_some() {
+                    return Err(type_error(
+                        &body.span(),
+                        ErrorCode::TypeMismatch,
+                        "if without else must have a Unit then branch",
+                    ));
+                }
+                self.merge_if_value(&mut result, &value)?;
+                self.emit(Op::Jump(exit));
+            }
+            self.emit(Op::Label(next));
+        }
+        if let Some(other) = fallback {
+            if let Flow::Value(value) = self.expr_expected(
+                other,
+                &mut vars.clone(),
+                functions,
+                suspends,
+                types,
+                expected,
+            )? {
+                self.merge_if_value(&mut result, &value)?;
+            }
+        } else {
+            result = Flow::Value(None);
+        }
+        let Flow::Value(mut result) = result else {
+            return Ok(Flow::Diverged);
+        };
+        self.emit(Op::Label(exit));
+        if result
+            .as_ref()
+            .is_some_and(|s| s.ty.reference_type().is_some() && s.ty.dyn_interface().is_some())
+        {
+            result = self.reference_value(result, false)?;
+        }
+        Ok(Flow::Value(result))
+    }
+
+    fn merge_if_value(&mut self, result: &mut Flow, value: &Option<Slot>) -> Result<(), Error> {
+        if let Flow::Value(existing) = result {
+            if slot_type(existing) != slot_type(value) {
+                return Err(type_error(
+                    &self.current_span,
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "if branches must have the same type, got {} and {}",
+                        slot_type(existing),
+                        slot_type(value)
+                    ),
+                ));
+            }
+            if let (Some(dst), Some(src)) = (existing, value) {
+                self.emit(Op::Copy(dst.clone(), src.clone()));
+            }
+        } else {
+            *result = Flow::Value(self.snapshot(value)?);
+        }
+        Ok(())
     }
 
     fn conditional_expr(
@@ -333,118 +459,25 @@ impl FunctionPlan {
                 condition,
                 then_branch,
                 else_branch,
-                span,
-            } => {
-                self.local_scopes.push(Vec::new());
-                let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
-                self.end_local_scope();
-                let Flow::Value(test) = test else {
-                    return Err(unreachable_error(then_branch));
-                };
-                if slot_type(&test) != Type::Bool {
-                    return Err(type_error(
-                        &condition.span(),
-                        ErrorCode::TypeMismatch,
-                        "if condition must be Bool",
-                    ));
-                }
-                let then_label = self.label_count;
-                let else_label = then_label + 1;
-                let exit = then_label + 2;
-                self.label_count += 3;
-                self.emit(Op::Branch {
-                    condition: test.unwrap(),
-                    then_label,
-                    else_label,
-                });
-                self.emit(Op::Label(then_label));
-                let hint = else_branch
-                    .as_ref()
-                    .and_then(|other| self.binary_hint(then_branch, other, vars, functions, types));
-                let aggregate_hint = if hint.is_none() && expected.is_none() {
-                    self.aggregate_default_hint(then_branch, vars, functions, types)
-                        .or_else(|| {
-                            else_branch.as_ref().and_then(|other| {
-                                self.aggregate_default_hint(other, vars, functions, types)
-                            })
-                        })
-                } else {
-                    None
-                };
-                let expected = if expected.is_some_and(|ty| {
-                    ty.dyn_interface().is_some() || super::arrays::element_type(ty).is_some()
-                }) {
-                    expected
-                } else {
-                    hint.as_ref().or(expected).or(aggregate_hint.as_ref())
-                };
-                let then_flow = self.expr_expected(
-                    then_branch,
-                    &mut vars.clone(),
-                    functions,
-                    suspends,
-                    types,
-                    expected,
-                )?;
-                let mut result = None;
-                if let Flow::Value(value) = &then_flow {
-                    if else_branch.is_none() && value.is_some() {
-                        return Err(type_error(
-                            &then_branch.span(),
-                            ErrorCode::TypeMismatch,
-                            "if without else must have a Unit then branch",
-                        ));
-                    }
-                    result = self.snapshot(value)?;
-                    self.emit(Op::Jump(exit));
-                }
-                self.emit(Op::Label(else_label));
-                let else_flow = if let Some(branch) = else_branch {
-                    self.expr_expected(
-                        branch,
-                        &mut vars.clone(),
-                        functions,
-                        suspends,
-                        types,
-                        expected,
-                    )?
-                } else {
-                    Flow::Value(None)
-                };
-                if let Flow::Value(value) = &else_flow {
-                    if let Flow::Value(then_value) = &then_flow {
-                        if slot_type(then_value) != slot_type(value) {
-                            return Err(type_error(
-                                span,
-                                ErrorCode::TypeMismatch,
-                                format!(
-                                    "if branches must have the same type, got {} and {}",
-                                    slot_type(then_value),
-                                    slot_type(value),
-                                ),
-                            ));
-                        }
-                        if let (Some(dst), Some(src)) = (&result, value) {
-                            self.emit(Op::Copy(dst.clone(), src.clone()));
-                        }
-                    } else {
-                        result = self.snapshot(value)?;
-                    }
-                }
-                if matches!((&then_flow, &else_flow), (Flow::Diverged, Flow::Diverged)) {
-                    Ok(Flow::Diverged)
-                } else {
-                    self.emit(Op::Label(exit));
-                    if result.as_ref().is_some_and(|s| {
-                        s.ty.reference_type().is_some() && s.ty.dyn_interface().is_some()
-                    }) {
-                        // Give the merged view one loan identity before subsequent
-                        // reborrows; keep every incoming object origin intact.
-                        result = self.reference_value(result, false)?;
-                    }
-                    Ok(Flow::Value(result))
-                }
-            }
+                ..
+            } => self.if_branches(
+                std::iter::once((condition.as_ref(), then_branch.as_ref())),
+                else_branch.as_deref(),
+                vars,
+                functions,
+                suspends,
+                types,
+                expected,
+            ),
+            Expr::IfChain { arms, fallback, .. } => self.if_branches(
+                arms.iter().map(|(test, body)| (test, body)),
+                fallback.as_deref(),
+                vars,
+                functions,
+                suspends,
+                types,
+                expected,
+            ),
             Expr::Logical { op, lhs, rhs, .. } => {
                 let Flow::Value(left) = self.expr(lhs, vars, functions, suspends, types)? else {
                     return Err(unreachable_error(rhs));

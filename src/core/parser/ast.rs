@@ -209,6 +209,18 @@ pub enum Expr {
         else_branch: Option<Box<Expr>>,
         span: Span,
     },
+    /// Consecutive plain if arms, kept flat for parsing, planning and destruction.
+    IfChain {
+        arms: Vec<(Expr, Expr)>,
+        fallback: Option<Box<Expr>>,
+        span: Span,
+    },
+    /// Left fold of operators at one precedence level.
+    BinaryChain {
+        first: Box<Expr>,
+        rest: Vec<(BinOp, Expr)>,
+        span: Span,
+    },
     /// Short-circuit Boolean conjunction or disjunction.
     Logical {
         op: LogicalOp,
@@ -353,6 +365,8 @@ impl Expr {
             | Self::Return { span, .. }
             | Self::Break { span }
             | Self::Continue { span }
+            | Self::IfChain { span, .. }
+            | Self::BinaryChain { span, .. }
             | Self::If { span, .. }
             | Self::Logical { span, .. }
             | Self::Unary { span, .. }
@@ -474,6 +488,12 @@ impl Expr {
                 name,
                 annotation,
                 value,
+                span,
+            },
+            Self::BinaryChain { first, rest, .. } => Self::BinaryChain { first, rest, span },
+            Self::IfChain { arms, fallback, .. } => Self::IfChain {
+                arms,
+                fallback,
                 span,
             },
             Self::BinOp { op, lhs, rhs, .. } => Self::BinOp { op, lhs, rhs, span },
@@ -1033,6 +1053,34 @@ pub struct Module {
 }
 
 impl Module {
+    pub(crate) fn expression_roots(&self) -> impl Iterator<Item = &Expr> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::FnDef(f) => Some(&f.body),
+                Item::ExternFn(_) => None,
+            })
+            .chain(self.implementations.iter().flat_map(|implementation| {
+                implementation
+                    .methods
+                    .iter()
+                    .map(|method| &method.body)
+                    .chain(
+                        implementation
+                            .constants
+                            .iter()
+                            .map(|constant| &constant.value),
+                    )
+            }))
+            .chain(self.traits.iter().flat_map(|definition| {
+                definition
+                    .methods
+                    .iter()
+                    .filter_map(|method| method.body.as_ref())
+            }))
+            .chain(self.constants.iter().map(|constant| &constant.value))
+    }
+
     /// Source snapshots used by diagnostics, including dependencies.
     pub fn sources(&self) -> &crate::SourceMap {
         &self.sources
@@ -1382,6 +1430,23 @@ impl Pattern {
 }
 
 impl Expr {
+    /// Return the first over-deep node without recursing on caller-supplied syntax.
+    pub(crate) fn excessive_depth(&self, limit: usize) -> Option<Span> {
+        let mut pending = vec![(self, 1)];
+        while let Some((node, depth)) = pending.pop() {
+            if depth > limit {
+                return Some(node.span());
+            }
+            pending.extend(
+                node.children()
+                    .into_iter()
+                    .rev()
+                    .map(|child| (child, depth + 1)),
+            );
+        }
+        None
+    }
+
     /// Visit expression children in source order. Declaration scopes are handled by callers.
     pub(crate) fn children(&self) -> Vec<&Expr> {
         match self {
@@ -1400,6 +1465,14 @@ impl Expr {
                 std::iter::once(callee.as_ref()).chain(args).collect()
             }
             Expr::MethodCall(c) => std::iter::once(&c.receiver).chain(&c.args).collect(),
+            Expr::BinaryChain { first, rest, .. } => std::iter::once(first.as_ref())
+                .chain(rest.iter().map(|(_, e)| e))
+                .collect(),
+            Expr::IfChain { arms, fallback, .. } => arms
+                .iter()
+                .flat_map(|(test, body)| [test, body])
+                .chain(fallback.as_deref())
+                .collect(),
             Expr::Call { args, .. } => args.iter().collect(),
             Expr::Let { value, .. }
             | Expr::Var { value, .. }

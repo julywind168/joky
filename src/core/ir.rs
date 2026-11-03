@@ -2498,6 +2498,7 @@ impl FunctionPlan {
             Expr::IndexedLoop(loop_) => self.indexed_loop(loop_, vars, functions, suspends, types),
             Expr::While { .. }
             | Expr::If { .. }
+            | Expr::IfChain { .. }
             | Expr::Logical { .. }
             | Expr::Return { .. }
             | Expr::Break { .. }
@@ -2561,6 +2562,46 @@ impl FunctionPlan {
                 let dst = self.slot(ty)?;
                 self.emit(Op::Unary(dst.clone(), op.clone(), operand.unwrap()));
                 Ok(Flow::Value(Some(dst)))
+            }
+            Expr::BinaryChain { first, rest, .. } => {
+                let hint = self.type_hint(expr, vars, functions, types);
+                let expected = hint.as_ref().or(expected);
+                let mut lhs = (**first).clone();
+                // An unspellable binding exposes the previous result to ordinary operator
+                // lowering, including trait dispatch, without evaluating the prefix again.
+                let name = format!("$binary_{}", first.span().start());
+                for (index, (op, rhs)) in rest.iter().enumerate() {
+                    let span = Span::new(first.span().start(), rhs.span().end())
+                        .with_source(first.span().source_id());
+                    let operation = Expr::BinOp {
+                        lhs: Box::new(lhs),
+                        op: op.clone(),
+                        rhs: Box::new(rhs.clone()),
+                        span,
+                    };
+                    let flow =
+                        self.expr_expected(&operation, vars, functions, suspends, types, expected)?;
+                    if index + 1 == rest.len() {
+                        vars.remove(&name);
+                        return Ok(flow);
+                    }
+                    let Flow::Value(slot) = flow else {
+                        return Err(unreachable_error(&rest[index + 1].1));
+                    };
+                    vars.insert(
+                        name.clone(),
+                        Binding {
+                            slot,
+                            mutable: false,
+                            place: None,
+                        },
+                    );
+                    lhs = Expr::Ident {
+                        name: name.clone(),
+                        span,
+                    };
+                }
+                self.expr_expected(first, vars, functions, suspends, types, expected)
             }
             Expr::BinOp { lhs, op, rhs, span } => {
                 let kind = if op.is_comparison() {

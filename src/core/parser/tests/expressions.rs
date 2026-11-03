@@ -496,3 +496,30 @@ fn expression_depth_accepts_its_boundary_and_preserves_the_vm_after_rejection() 
     assert!(error.span().is_some());
     assert_eq!(vm.call_int32_0("value").unwrap(), 42);
 }
+
+#[test]
+fn embedded_module_depth_is_checked_before_cloning_the_ast() {
+    let mut ast = parse("fn f() {}").unwrap();
+    let Item::FnDef(f) = &mut ast.items[0] else {
+        unreachable!()
+    };
+    for _ in 0..100 {
+        let span = f.body.span();
+        let inner = std::mem::replace(
+            &mut f.body,
+            Expr::Block {
+                exprs: vec![],
+                span,
+            },
+        );
+        f.body = Expr::Block {
+            exprs: vec![inner],
+            span,
+        };
+    }
+    let error = crate::vm::VmEngine::new_interpreter()
+        .load_module(&ast)
+        .unwrap_err();
+    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+    assert!(error.span().is_some());
+}

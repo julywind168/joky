@@ -50,6 +50,8 @@ impl std::fmt::Display for Diagnostic {
 }
 impl std::error::Error for Diagnostic {}
 
+pub(crate) const MAX_EXPRESSION_DEPTH: usize = 32;
+
 struct Parser {
     source: crate::SourceId,
     tokens: Vec<Token>,
@@ -115,20 +117,41 @@ impl Parser {
         Diagnostic::at(self.peek_line(), self.peek_span(), message)
     }
 
-    fn nested_expression<T>(
-        &mut self,
-        parse: fn(&mut Self) -> Result<T, Diagnostic>,
-    ) -> Result<T, Diagnostic> {
-        const LIMIT: usize = 32;
-        if self.expression_depth >= LIMIT {
-            let mut error = self.error(format!("Expression nesting exceeds {LIMIT} levels"));
-            error.code = crate::ErrorCode::ResourceLimit;
-            return Err(error);
+    fn check_expression_depth(&self, depth: usize, span: Span) -> Result<(), Diagnostic> {
+        if depth <= MAX_EXPRESSION_DEPTH {
+            return Ok(());
         }
+        Err(self.expression_depth_error(span))
+    }
+
+    fn expression_depth_error(&self, span: Span) -> Diagnostic {
+        let index = self
+            .tokens
+            .partition_point(|t| t.span.start() < span.start());
+        let mut error = Diagnostic::at(
+            self.tokens[index.min(self.tokens.len() - 1)].line,
+            span,
+            format!("Expression nesting exceeds {MAX_EXPRESSION_DEPTH} levels"),
+        );
+        error.code = crate::ErrorCode::ResourceLimit;
+        error
+    }
+
+    fn nested_expression(
+        &mut self,
+        parse: fn(&mut Self) -> Result<Expr, Diagnostic>,
+    ) -> Result<Expr, Diagnostic> {
+        self.check_expression_depth(self.expression_depth + 1, self.peek_span())?;
         self.expression_depth += 1;
         let result = parse(self);
         self.expression_depth -= 1;
-        result
+        let expr = result?;
+        // Postfix and generated syntax can build deep trees without parser recursion.
+        // Bound them before cloning, resolving, or destroying a larger enclosing tree.
+        if let Some(span) = expr.excessive_depth(MAX_EXPRESSION_DEPTH) {
+            return Err(self.expression_depth_error(span));
+        }
+        Ok(expr)
     }
 
     fn peek(&self) -> &TokenKind {

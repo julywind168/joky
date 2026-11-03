@@ -318,43 +318,60 @@ impl Parser {
 
     pub(super) fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
-        self.expect(&TokenKind::If)?;
-        let matched = self.parse_let_condition()?;
-        let condition = if matched.is_some() {
-            None
-        } else {
-            Some(Box::new(self.parse_condition()?))
-        };
-        let then_branch = Box::new(self.parse_block()?);
-        let else_branch = if self.peek() == &TokenKind::Else {
+        let mut arms = Vec::new();
+        let fallback = loop {
+            let arm_start = self.peek_span().start();
+            self.expect(&TokenKind::If)?;
+            if let Some((pattern, value)) = self.parse_let_condition()? {
+                let body = self.parse_block()?;
+                let other = if self.peek() == &TokenKind::Else {
+                    self.advance();
+                    if self.peek() == &TokenKind::If {
+                        Some(self.nested_expression(Self::parse_if)?)
+                    } else {
+                        Some(self.parse_block()?)
+                    }
+                } else {
+                    None
+                };
+                let span = self.span(arm_start, self.last_span.end());
+                break Some(Box::new(Self::conditional_match(
+                    pattern,
+                    value,
+                    body,
+                    other.unwrap_or(Expr::Block {
+                        exprs: vec![],
+                        span,
+                    }),
+                    span,
+                )));
+            }
+            arms.push((self.parse_condition()?, self.parse_block()?));
+            if self.peek() != &TokenKind::Else {
+                break None;
+            }
             self.advance();
-            Some(Box::new(if self.peek() == &TokenKind::If {
-                self.nested_expression(Self::parse_if)?
-            } else {
-                self.parse_block()?
-            }))
-        } else {
-            None
+            if self.peek() != &TokenKind::If {
+                break Some(Box::new(self.parse_block()?));
+            }
         };
         let span = self.span(start, self.last_span.end());
-        if let Some((pattern, value)) = matched {
-            let fallback = else_branch.map(|branch| *branch).unwrap_or(Expr::Block {
-                exprs: vec![],
+        if arms.is_empty() {
+            return Ok((*fallback.unwrap()).with_span(span));
+        }
+        if arms.len() == 1 {
+            let (condition, body) = arms.pop().unwrap();
+            return Ok(Expr::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(body),
+                else_branch: fallback,
                 span,
             });
-            return Ok(Self::conditional_match(
-                pattern,
-                value,
-                *then_branch,
-                fallback,
-                span,
-            ));
         }
-        Ok(Expr::If {
-            condition: condition.unwrap(),
-            then_branch,
-            else_branch,
-            span: self.span(start, self.last_span.end()),
+        Ok(Expr::IfChain {
+            arms,
+            fallback,
+            span,
         })
     }
 

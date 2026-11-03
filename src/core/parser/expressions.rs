@@ -191,7 +191,10 @@ impl Parser {
         op: LogicalOp,
     ) -> Result<Expr, Diagnostic> {
         let mut lhs = operand(self)?;
+        let mut depth = 1;
         while !self.at_expression_break() && self.peek() == &token {
+            depth += 1;
+            self.check_expression_depth(depth, self.peek_span())?;
             self.advance();
             let rhs = operand(self)?;
             let span = self.span(lhs.span().start(), rhs.span().end());
@@ -264,7 +267,8 @@ impl Parser {
         operand: fn(&mut Self) -> Result<Expr, Diagnostic>,
         operators: &[(TokenKind, BinOp)],
     ) -> Result<Expr, Diagnostic> {
-        let mut lhs = operand(self)?;
+        let first = operand(self)?;
+        let mut rest = Vec::new();
         loop {
             if self.at_expression_break() {
                 break;
@@ -277,15 +281,26 @@ impl Parser {
             };
             self.advance();
             let rhs = operand(self)?;
-            let span = self.span(lhs.span().start(), rhs.span().end());
-            lhs = Expr::BinOp {
-                op: op.clone(),
-                lhs: Box::new(lhs),
+            rest.push((op.clone(), rhs));
+        }
+        let Some((_, last)) = rest.last() else {
+            return Ok(first);
+        };
+        let span = self.span(first.span().start(), last.span().end());
+        if rest.len() == 1 {
+            let (op, rhs) = rest.pop().unwrap();
+            return Ok(Expr::BinOp {
+                lhs: Box::new(first),
+                op,
                 rhs: Box::new(rhs),
                 span,
-            };
+            });
         }
-        Ok(lhs)
+        Ok(Expr::BinaryChain {
+            first: Box::new(first),
+            rest,
+            span,
+        })
     }
 
     fn parse_additive(&mut self) -> Result<Expr, Diagnostic> {

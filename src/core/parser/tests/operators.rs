@@ -138,15 +138,15 @@ fn logical_precedence_and_else_if_spans_are_preserved() {
     let Expr::Block { exprs, .. } = &function.body else {
         panic!("expected block")
     };
-    let Expr::If {
-        condition,
-        then_branch,
-        else_branch,
+    let Expr::IfChain {
+        arms,
+        fallback,
         span,
     } = &exprs[0]
     else {
-        panic!("expected if")
+        panic!("expected if chain")
     };
+    let (condition, then_branch) = &arms[0];
     assert_eq!(
         span.slice(source),
         Some("if 数 > 0 || false && !true { 1 } else if 数 == 0 { 2 } else { 3 }")
@@ -157,7 +157,7 @@ fn logical_precedence_and_else_if_spans_are_preserved() {
         lhs,
         rhs,
         ..
-    } = condition.as_ref()
+    } = condition
     else {
         panic!("expected disjunction")
     };
@@ -169,13 +169,8 @@ fn logical_precedence_and_else_if_spans_are_preserved() {
             ..
         }
     ));
-    let Expr::If {
-        else_branch: Some(other),
-        ..
-    } = else_branch.as_ref().unwrap().as_ref()
-    else {
-        panic!("expected else if")
-    };
+    assert_eq!(arms[1].0.span().slice(source), Some("数 == 0"));
+    let other = fallback.as_ref().unwrap();
     assert_eq!(other.span().slice(source), Some("{ 3 }"));
 }
 

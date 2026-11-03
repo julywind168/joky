@@ -102,6 +102,7 @@ pub(super) fn validate_all(
                     edges[index].push(dependency);
                 }
                 Expr::Unary { operand, .. } => pending.push(operand),
+                Expr::BinaryChain { .. } => pending.extend(expr.children()),
                 Expr::BinOp { lhs, rhs, .. } => {
                     pending.push(lhs);
                     pending.push(rhs);
@@ -280,6 +281,7 @@ fn validate_expression(expr: &Expr) -> Result<(), Error> {
             Expr::Field { base, type_args, .. } if type_args.is_empty() && expression_path(base).is_some() => {},
             Expr::Unary { operand, .. } => pending.push(operand),
             Expr::BinOp { lhs, rhs, .. } => { pending.push(lhs); pending.push(rhs); },
+            Expr::BinaryChain { rest, .. } => { count += rest.len().saturating_sub(1); pending.extend(expr.children()); },
             Expr::Call { callee, args, .. } if (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args),
             _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, module and associated constants, integer conversions and unary/binary operators")),
         }

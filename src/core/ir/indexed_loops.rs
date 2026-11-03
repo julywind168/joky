@@ -270,6 +270,35 @@ impl Inference<'_> {
                 let ty = self.hint(target, vars);
                 descend(value, vars, tracked, ty.as_ref())?;
             }
+            Expr::BinaryChain { .. } => {
+                let ty = self.hint(expr, vars).or_else(|| expected.cloned());
+                for operand in expr.children() {
+                    depends |= descend(operand, vars, tracked, ty.as_ref())?;
+                    if depends
+                        && self
+                            .hint(operand, vars)
+                            .zip(ty.as_ref())
+                            .is_some_and(|(actual, expected)| actual != *expected)
+                    {
+                        return Err(());
+                    }
+                }
+            }
+            Expr::IfChain { arms, fallback, .. } => {
+                let ty = expected.cloned().or_else(|| self.hint(expr, vars));
+                for (condition, body) in arms {
+                    descend(
+                        condition,
+                        &mut vars.clone(),
+                        &mut tracked.clone(),
+                        Some(&Type::Bool),
+                    )?;
+                    depends |= descend(body, &mut vars.clone(), &mut tracked.clone(), ty.as_ref())?;
+                }
+                if let Some(body) = fallback {
+                    depends |= descend(body, &mut vars.clone(), &mut tracked.clone(), ty.as_ref())?;
+                }
+            }
             Expr::BinOp { op, lhs, rhs, .. } => {
                 let ty = self
                     .plan

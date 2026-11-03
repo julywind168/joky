@@ -99,10 +99,29 @@ pub(crate) fn check_dependency_depth(
     Ok(())
 }
 
+// Embedders can supply a hand-built or previously normalized module. Check it
+// before the first recursive AST clone, including the function's body block.
+fn check_expression_depth(module: &Module) -> Result<(), Error> {
+    let limit = crate::parser::MAX_EXPRESSION_DEPTH + 1;
+    if let Some(span) = module
+        .expression_roots()
+        .find_map(|expr| expr.excessive_depth(limit))
+    {
+        return Err(error(
+            span,
+            ErrorCode::ResourceLimit,
+            format!("Expression tree depth exceeds {limit} levels"),
+        )
+        .with_sources(&module.sources));
+    }
+    Ok(())
+}
+
 pub(crate) fn expand<'a>(
     module: &'a Module,
     registry: &TypeRegistry,
 ) -> Result<Cow<'a, Module>, Error> {
+    check_expression_depth(module)?;
     if module.scope.is_some() {
         return Ok(Cow::Borrowed(module));
     }
@@ -139,25 +158,7 @@ pub(crate) fn finish(
 // expressions need the hidden implementation. Embedded libraries declare dependencies.
 fn uses_equality(module: &Module) -> bool {
     use crate::parser::ast::{BinOp, Expr};
-    let mut pending: Vec<_> =
-        module
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::FnDef(function) => Some(&function.body),
-                Item::ExternFn(_) => None,
-            })
-            .chain(module.implementations.iter().flat_map(|implementation| {
-                implementation.methods.iter().map(|method| &method.body)
-            }))
-            .chain(module.traits.iter().flat_map(|definition| {
-                definition
-                    .methods
-                    .iter()
-                    .filter_map(|method| method.body.as_ref())
-            }))
-            .chain(module.constants.iter().map(|constant| &constant.value))
-            .collect();
+    let mut pending: Vec<_> = module.expression_roots().collect();
     while let Some(expression) = pending.pop() {
         if matches!(
             expression,

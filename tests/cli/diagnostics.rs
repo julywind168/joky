@@ -744,7 +744,15 @@ fn explain_parallel_resolves_projects_and_reports_rejection_and_source_errors() 
 #[test]
 fn expression_nesting_reports_a_located_limit_in_check_and_fmt() {
     let work = Workspace::new();
-    for (open, close) in [("(", ")"), ("(", ",)"), ("{", "}"), ("!", "")] {
+    for (open, close) in [
+        ("(", ")"),
+        ("(", ",)"),
+        ("{", "}"),
+        ("!", ""),
+        ("", ".field"),
+        ("", "()"),
+        ("", " && true"),
+    ] {
         let value = if open == "!" { "true" } else { "1" };
         let source = format!(
             "fn main() {{ let x = {}{value}{} }}",

@@ -670,6 +670,27 @@ fn resolve_calls(
                 resolve_calls(expr, functions, member_roots, call_forms, locals)?;
             }
         }
+        Expr::BinaryChain { first, rest, .. } => {
+            resolve_calls(first, functions, member_roots, call_forms, locals)?;
+            for (_, rhs) in rest {
+                resolve_calls(rhs, functions, member_roots, call_forms, locals)?;
+            }
+        }
+        Expr::IfChain { arms, fallback, .. } => {
+            for child in arms
+                .iter_mut()
+                .flat_map(|(test, body)| [test, body])
+                .chain(fallback.as_deref_mut())
+            {
+                resolve_calls(
+                    child,
+                    functions,
+                    member_roots,
+                    call_forms,
+                    &mut locals.clone(),
+                )?;
+            }
+        }
         Expr::If {
             condition,
             then_branch,

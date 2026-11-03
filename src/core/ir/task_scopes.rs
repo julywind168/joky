@@ -430,6 +430,18 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                 visit(body, scopes, walk);
                 scopes.pop();
             }
+            Expr::BinaryChain { .. } => {
+                for child in expr.children() {
+                    visit(child, scopes, walk);
+                }
+            }
+            Expr::IfChain { .. } => {
+                for child in expr.children() {
+                    scopes.push(std::collections::HashSet::new());
+                    visit(child, scopes, walk);
+                    scopes.pop();
+                }
+            }
             Expr::If {
                 condition,
                 then_branch,

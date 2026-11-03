@@ -3209,3 +3209,48 @@ fn borrowed_pipeline_callback_failures_stop_standalone_aot() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("failed"));
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn flat_expression_chains_keep_evaluation_order_on_all_backends() {
+    let work = Workspace::new();
+    let mut sum = vec!["1"; 1000];
+    sum[0] = "mark(&mut counter, 0)";
+    sum[500] = "mark(&mut counter, 1)";
+    sum[999] = "mark(&mut counter, 2)";
+    let branches = (0..300)
+        .map(|index| match index {
+            0 => "if mark(&mut counter, 0) == needle { 0 }".to_owned(),
+            298 => "if needle == 298 && mark(&mut counter, 1) == 1 { 298 }".to_owned(),
+            299 => "if mark(&mut counter, 99) == needle { 299 }".to_owned(),
+            _ => format!("if needle == {index} {{ {index} }}"),
+        })
+        .collect::<Vec<_>>()
+        .join(" else ");
+    let sum = sum.join(" + ");
+    let source = format!(
+        r#"
+        fn mark(counter: &mut Int32, expected: Int32) -> Int32 {{
+            assert_eq(*counter, expected)
+            *counter += 1
+            expected
+        }}
+        fn choose(needle: Int32) -> Int32 {{
+            var counter = 0
+            let selected = {branches} else {{ -1 }}
+            assert_eq(counter, 2)
+            selected
+        }}
+        fn main() {{
+            var counter = 0
+            let sum: Int32 = {sum}
+            assert_eq(40 - 10 - 5 + 17, 42)
+            println(sum)
+            println(choose(298))
+        }}
+    "#
+    );
+    work.write("chains.jk", &source);
+    success(&work.cli(&["fmt", "chains.jk"]));
+    work.assert_all_backends("chains.jk", &[], b"1000\n298\n", 0);
+}

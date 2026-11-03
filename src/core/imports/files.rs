@@ -18,6 +18,7 @@ pub(super) fn expand_with_tests(
     rewrite: &dyn Fn(&str, &mut Module) -> Result<(), Error>,
     include_tests: bool,
 ) -> Result<Module, Error> {
+    check_expression_depth(module)?;
     if module.scope.is_some() {
         return Ok(module.clone());
     }

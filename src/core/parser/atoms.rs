@@ -275,7 +275,10 @@ impl Parser {
                     name,
                     span: self.span(start, self.last_span.end()),
                 };
+                let mut depth = 1;
                 while self.peek() == &TokenKind::Dot {
+                    depth += 1;
+                    self.check_expression_depth(depth, self.peek_span())?;
                     self.advance();
                     let name = self.parse_member_name()?;
                     expr = Expr::Field {
@@ -463,6 +466,7 @@ impl Parser {
         } else {
             self.parse_atom()?
         };
+        let mut depth = 1;
         // A leading dot explicitly continues a field or method chain across lines.
         while self.peek() == &TokenKind::Dot
             || !self.at_expression_break()
@@ -471,6 +475,8 @@ impl Parser {
                     TokenKind::LParen | TokenKind::LBracket | TokenKind::Bang | TokenKind::Question
                 )
         {
+            depth += 1;
+            self.check_expression_depth(depth, self.peek_span())?;
             if self.peek() == &TokenKind::LParen {
                 let args = self.parse_call_arguments()?;
                 let span = self.span(expr.span().start(), self.last_span.end());

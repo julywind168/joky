@@ -109,6 +109,11 @@ fn walk_free(
                     descend(child, &mut inner)?;
                 }
             }
+            Expr::IfChain { .. } => {
+                for child in children(expr) {
+                    descend(child, &mut bound.clone())?;
+                }
+            }
             Expr::If {
                 condition,
                 then_branch,
