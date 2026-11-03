@@ -1163,6 +1163,60 @@ fn useful(
     }
 }
 
+fn validate_integer_literals(
+    plan: &FunctionPlan,
+    ty: &Type,
+    domain: u128,
+    arms: &[MatchArm],
+    span: Span,
+    types: &TypeRegistry,
+) -> Result<Vec<CheckedPattern>, Error> {
+    let mut covered = HashSet::new();
+    let mut complete = false;
+    let mut checked = Vec::new();
+    for (index, arm) in arms.iter().enumerate() {
+        let location = arm.pattern.span();
+        if complete {
+            return Err(type_error(
+                &location,
+                ErrorCode::UnreachableCode,
+                "Unreachable match arm after complete coverage",
+            ));
+        }
+        if index >= 65_536 {
+            return Err(type_error(
+                &location,
+                ErrorCode::ResourceLimit,
+                "Match coverage analysis exceeds 65536 steps",
+            ));
+        }
+        let pattern = plan.check_match_pattern(&arm.pattern, ty, types)?;
+        complete = match &pattern.kind {
+            Kind::Literal(_, bits) => {
+                if !covered.insert(*bits) {
+                    return Err(type_error(
+                        &location,
+                        ErrorCode::UnreachableCode,
+                        "Duplicate match arm or unreachable pattern",
+                    ));
+                }
+                covered.len() as u128 == domain
+            }
+            Kind::Any(_) => true,
+            _ => unreachable!("scalar literal or binding"),
+        };
+        checked.push(pattern);
+    }
+    if !complete {
+        return Err(type_error(
+            &span,
+            ErrorCode::NonExhaustiveMatch,
+            "Non-exhaustive match; missing sequence lengths or element values",
+        ));
+    }
+    Ok(checked)
+}
+
 pub(super) fn validate(
     plan: &FunctionPlan,
     ty: &Type,
@@ -1170,6 +1224,22 @@ pub(super) fn validate(
     span: Span,
     types: &TypeRegistry,
 ) -> Result<Vec<CheckedPattern>, Error> {
+    // One integer column has no correlations with other columns. For literal
+    // arms, its covered constructors are precisely the distinct checked bits.
+    if let Some(integer) = ty.integer().filter(|_| *ty != Type::Rune) {
+        if arms.iter().all(|arm| match &arm.pattern {
+            Pattern::Wildcard { .. } => true,
+            Pattern::Value(p) => matches!(
+                p.as_ref(),
+                PayloadPattern::Literal { .. }
+                    | PayloadPattern::Discard { .. }
+                    | PayloadPattern::Name { .. }
+            ),
+            Pattern::Variant { .. } => false,
+        }) {
+            return validate_integer_literals(plan, ty, 1u128 << integer.bits(), arms, span, types);
+        }
+    }
     let mut budget = 65_536;
     let mut matrix = Vec::new();
     let mut checked = Vec::new();

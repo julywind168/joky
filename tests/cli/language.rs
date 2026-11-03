@@ -3631,3 +3631,35 @@ fn long_straight_line_borrow_analysis_on_all_backends() {
     );
     work.assert_all_backends("long.jk", &[], expected.as_bytes(), 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn integer_literal_coverage_scales_and_preserves_diagnostics() {
+    let work = Workspace::new();
+    let arms = (0..300).map(|i| format!("{i} => {i},")).collect::<String>();
+    let byte = (0..256).map(|i| format!("{i} => {i},")).collect::<String>();
+    work.write(
+        "arms.jk",
+        &format!(
+            "fn f(x:Int32)->Int32 {{ match x {{ {arms} _ => x }} }}
+        fn byte(x:UInt8)->Int32 {{ match x {{ {byte} }} }}
+        fn main() {{ println(f(299)); println(f(-1)); println(byte(255)) }}"
+        ),
+    );
+    work.assert_all_backends("arms.jk", &[], b"299\n-1\n255\n", 0);
+    for (ty, patterns, diagnostic) in [
+        (
+            "Int32",
+            format!("{arms} 0 => 4, _ => 1"),
+            "Duplicate match arm",
+        ),
+        ("Int32", arms, "Non-exhaustive match"),
+        ("UInt8", format!("{byte} _ => 1"), "after complete coverage"),
+    ] {
+        work.write(
+            "invalid.jk",
+            &format!("fn f(x:{ty})->Int32 {{ match x {{ {patterns} }} }} fn main() {{}}"),
+        );
+        failure(&work.cli(&["check", "invalid.jk"]), diagnostic);
+    }
+}
