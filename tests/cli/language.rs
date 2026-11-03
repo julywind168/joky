@@ -3602,3 +3602,32 @@ fn private_primitive_members_resolve_in_their_defining_module() {
         "Duplicate associated member",
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn long_straight_line_borrow_analysis_on_all_backends() {
+    let work = Workspace::new();
+    let source = format!(
+        r#"
+        fn get(p: &Int32) @noescape -> Int32 {{ *p }}
+        fn borrows() -> Int32 {{ let p = 1; var t = 0
+            {} t }}
+        fn integers() -> Int32 {{ var x = 0
+            {} x }}
+        fn lines() {{ {} }}
+        fn text(x: Int32) -> String {{ "{}" }}
+        fn main() {{ println(borrows()); println(integers()); lines(); println(text(1)) }}
+    "#,
+        "t = t + get(&p)\n".repeat(2000),
+        "x = x + 1\n".repeat(1000),
+        "println(\"line\")\n".repeat(1000),
+        "{x}".repeat(1000)
+    );
+    work.write("long.jk", &source);
+    let expected = format!(
+        "2000\n1000\n{}{}\n",
+        "line\n".repeat(1000),
+        "1".repeat(1000)
+    );
+    work.assert_all_backends("long.jk", &[], expected.as_bytes(), 0);
+}

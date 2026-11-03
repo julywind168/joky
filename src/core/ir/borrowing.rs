@@ -767,7 +767,77 @@ pub(super) fn check(
     functions: &HashMap<String, FunctionInfo>,
     types_registry: &TypeRegistry,
 ) -> Result<(), Error> {
-    analyze(plan, info, functions, types_registry, None)
+    analyze(plan, info, functions, types_registry, None).map(|_| ())
+}
+
+/// A def can inspect its old owner and the live-out aliases before writing.
+/// Keep every mentioned slot through its last potential read *or write*.
+/// Overlapping backward jumps form intervals: inside one, execution may
+/// revisit any earlier mention as far back as the start of the interval.
+struct SlotLifetime {
+    last: HashMap<usize, usize>,
+    floor: Vec<usize>,
+}
+
+impl SlotLifetime {
+    fn new(plan: &FunctionPlan, next: &[Vec<usize>]) -> Self {
+        let n = next.len();
+        let mut last = HashMap::new();
+        let mut back_end = vec![0; n + 1];
+        for (pc, successors) in next.iter().enumerate() {
+            for &target in successors.iter().filter(|&&s| s <= pc) {
+                back_end[target] = back_end[target].max(pc);
+            }
+            let (uses, defs) = operands(&plan.ops[pc]);
+            for slot in uses.into_iter().chain(defs) {
+                last.insert(slot.index, pc);
+            }
+            // These transfer operands are implicit in their enclosing group.
+            match &plan.ops[pc] {
+                Op::Graph(op) => {
+                    if let GraphOp::Seal { root, .. } = op.as_ref() {
+                        last.insert(root.index, pc);
+                    }
+                }
+                Op::Buffer(super::BufferOp::Extract { src, .. }) => {
+                    for slot in refs(src) {
+                        last.insert(slot.index, pc);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for slot in plan.result.iter().flat_map(refs) {
+            last.insert(slot.index, n);
+        }
+        let mut start = 0;
+        let mut end = 0;
+        let floor = back_end
+            .into_iter()
+            .enumerate()
+            .map(|(pc, back)| {
+                if pc > end {
+                    start = pc;
+                }
+                end = end.max(back);
+                start
+            })
+            .collect();
+        Self { last, floor }
+    }
+
+    fn prune(&self, state: &mut State, target: usize, live: &Set) {
+        let keep = |slot: &usize| {
+            live.contains(slot)
+                || self
+                    .last
+                    .get(slot)
+                    .is_some_and(|last| *last >= self.floor[target])
+        };
+        if state.slots.keys().any(|slot| !keep(slot)) {
+            std::rc::Rc::make_mut(&mut state.slots).retain(|slot, _| keep(slot));
+        }
+    }
 }
 
 fn analyze(
@@ -776,7 +846,7 @@ fn analyze(
     functions: &HashMap<String, FunctionInfo>,
     types_registry: &TypeRegistry,
     escaped: Option<&RefCell<Escapes>>,
-) -> Result<(), Error> {
+) -> Result<usize, Error> {
     let record_escape = |value: Option<&Reference>, returned: bool| {
         if let (Some(escaped), Some(value)) = (escaped, value) {
             let mut escaped = escaped.borrow_mut();
@@ -921,14 +991,18 @@ fn analyze(
         }
     }
     if types.is_empty() {
-        return Ok(());
+        return Ok(0);
+    }
+    // Diverging bodies can still declare a result slot without defining it.
+    for slot in plan.result.iter().flat_map(refs) {
+        types.entry(slot.index).or_insert(slot.ty);
     }
     // Explicit caps make adversarial control-flow analyses fail closed.
-    if types.len() > 4096 || n > 100_000 {
+    if types.len() > 65_536 || n > 100_000 {
         return Err(type_error(
             &plan.span,
             ErrorCode::ResourceLimit,
-            "Reference analysis exceeds its compilation budget",
+            "Reference analysis exceeds its slot or instruction limit; split the function into smaller functions",
         ));
     }
     let next = liveness::successors(plan);
@@ -966,16 +1040,31 @@ fn analyze(
             .then_some(plan.slot_count + pc)
         })
         .collect();
+    let lifetime = SlotLifetime::new(plan, &next);
+    // A straight-line function never revisits an input snapshot. Move its
+    // state along the edge instead of retaining a copy at every instruction.
+    let straight = next
+        .iter()
+        .enumerate()
+        .all(|(pc, successors)| successors.as_slice() == [pc + 1] || successors.is_empty());
     let mut states = vec![None; n + 1];
     states[0] = Some(initial);
     let mut queue = VecDeque::from([0]);
     let mut queued = vec![false; n + 1];
     queued[0] = true;
-    let mut budget = 2_000_000usize;
+    let flow_limit = 2_000_000usize + 32 * n;
+    let mut budget = flow_limit;
     while let Some(pc) = queue.pop_front() {
         queued[pc] = false;
-        let input = states[pc].as_ref().unwrap();
-        let cost = types.len()
+        let mut state = if straight {
+            states[pc].take()
+        } else {
+            states[pc].clone()
+        }
+        .expect("queued reference state");
+        let input = &state;
+        let cost = 1
+            + live[pc].len()
             + input
                 .slots
                 .values()
@@ -1006,12 +1095,11 @@ fn analyze(
                 .sum::<usize>();
         budget = budget.checked_sub(cost).ok_or_else(|| {
             type_error(
-                &plan.span,
+                plan.op_spans.get(pc).unwrap_or(&plan.span),
                 ErrorCode::ResourceLimit,
-                "Reference flow analysis exceeds its compilation budget",
+                "Reference flow analysis exceeds its compilation budget; split the function into smaller functions",
             )
         })?;
-        let mut state = input.clone();
         let span = plan.op_spans.get(pc).unwrap_or(&plan.span);
         let check_access = |slot: &Slot,
                             exclusive: bool,
@@ -2619,11 +2707,18 @@ fn analyze(
             }
             _ => {}
         }
-        for &target in &next[pc] {
+        let mut outgoing = Some(state);
+        for (i, &target) in next[pc].iter().enumerate() {
+            let mut state = if i + 1 == next[pc].len() {
+                outgoing.take().unwrap()
+            } else {
+                outgoing.as_ref().unwrap().clone()
+            };
+            lifetime.prune(&mut state, target, &live[target]);
             let changed = if let Some(existing) = &mut states[target] {
                 join(existing, &state)
             } else {
-                states[target] = Some(state.clone());
+                states[target] = Some(state);
                 true
             };
             if changed && !queued[target] {
@@ -2632,5 +2727,43 @@ fn analyze(
             }
         }
     }
-    Ok(())
+    Ok(flow_limit - budget)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+
+    #[test]
+    fn short_borrow_flow_work_scales_with_statement_count() {
+        let work = |length| {
+            let calls = "t = t + get(&p)\n".repeat(length);
+            let source = format!(
+                "fn get(p:&Int32) @noescape -> Int32 {{ *p }}
+                fn f(p:Int32)->Int32 {{ var t=0\n{calls} t }}"
+            );
+            let ast = crate::parser::parse(&source).unwrap();
+            let registry = TypeRegistry::new().with_prelude(false);
+            let module = PreparedModule::new(&ast, &registry, &BindingRegistry::default())
+                .unwrap()
+                .plan(&HashMap::new())
+                .unwrap();
+            let plan = &module.bodies["f"];
+            analyze(
+                plan,
+                &module.functions["f"],
+                &module.functions,
+                &plan.type_registry,
+                None,
+            )
+            .unwrap()
+        };
+        let small = work(100);
+        let large = work(200);
+        assert!(
+            large > small && large <= 3 * small,
+            "100 statements cost {small}, 200 cost {large}"
+        );
+    }
 }
