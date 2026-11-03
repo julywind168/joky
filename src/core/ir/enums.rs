@@ -203,6 +203,25 @@ impl FunctionPlan {
             Ok(())
         })?;
         self.materialize_inference(&mut inference, types, constructor.span)?;
+        if context.default
+            && template
+                .parameters
+                .iter()
+                .any(|p| inference.substitutions.argument(p).is_none())
+        {
+            self.diagnose_argument_hints(
+                constructor
+                    .args
+                    .unwrap_or(&[])
+                    .iter()
+                    .zip(variant.payload.iter()),
+                &template.parameters,
+                &inference.substitutions,
+                vars,
+                functions,
+                types,
+            )?;
+        }
         let arguments = template.parameters.iter().map(|p| inference.substitutions.argument(p)
             .ok_or_else(|| type_error(&constructor.span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{}.{}`; add a type annotation or explicit type arguments", p.name, template.name, constructor.name))))

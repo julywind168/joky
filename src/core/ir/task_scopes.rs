@@ -77,7 +77,12 @@ impl FunctionPlan {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
-                        "scope results must be reference-free values",
+                        format!(
+                            "{} results must be reference-free values, got {ty}",
+                            self.branch_context
+                                .filter(|_| *span == self.span)
+                                .map_or("scope", |(kind, _)| kind)
+                        ),
                     ));
                 }
                 // Snapshot before joining: a child may mutate a captured local.
@@ -141,8 +146,14 @@ impl FunctionPlan {
             ));
         };
         let scope = frame.scope;
-        let (entry, capture_slots, _) =
-            self.nested_task(body, *span, Some(Type::Unit), vars, functions, types)?;
+        let (entry, capture_slots, _) = self.nested_task(
+            body,
+            ("scope branch", *span),
+            Some(Type::Unit),
+            vars,
+            functions,
+            types,
+        )?;
         self.emit(Op::TaskBranch {
             scope,
             entry,
@@ -154,7 +165,7 @@ impl FunctionPlan {
     pub(super) fn nested_task(
         &mut self,
         body: &Expr,
-        span: Span,
+        (kind, span): (&'static str, Span),
         ret: Option<Type>,
         vars: &HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
@@ -231,7 +242,7 @@ impl FunctionPlan {
         self.generics
             .borrow_mut()
             .task_parents
-            .insert(task_def.name.clone(), self.lexical_function.clone());
+            .insert(task_def.name.clone(), (self.lexical_function.clone(), kind));
         let plan = FunctionPlan::new_with_return_inference(
             &task_def,
             functions,

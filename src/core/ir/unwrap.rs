@@ -141,6 +141,9 @@ impl FunctionPlan {
                 _ => false,
             };
             if !valid {
+                if let Some((kind, _)) = self.branch_context {
+                    return Err(type_error(span, ErrorCode::TypeMismatch, format!("Postfix `?` needs a result type for the {kind} matching the propagated {} value", enumeration.name)));
+                }
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     "Postfix `?` requires the enclosing function to return the same Option, Result or Outcome kind with the same error type"));
             }

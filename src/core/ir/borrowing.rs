@@ -1116,7 +1116,7 @@ fn analyze(
                         span,
                         ErrorCode::InvalidAssignment,
                         if slot.ty.is_owner() {
-                            "Use of a moved or uninitialized buffer owner"
+                            "Use of a moved or uninitialized owning value"
                         } else {
                             "Use of a moved, sealed or uninitialized exclusive reference"
                         },
@@ -1162,8 +1162,16 @@ fn analyze(
                         alias,
                         types[&other].reference_type().is_some_and(|r| r.mutable),
                     ) {
-                        return Err(type_error(span, ErrorCode::InvalidAssignment,
-                            "Reference access conflicts with a live borrow; finish using the borrowed view first"));
+                        let ending = matches!(
+                            plan.ops.get(pc),
+                            Some(Op::Buffer(super::BufferOp::End(_)) | Op::Place(PlaceOp::End(_)))
+                        );
+                        let message = if ending {
+                            "Borrowed value would outlive its owner at the end of this scope"
+                        } else {
+                            "Reference access conflicts with a live borrow; finish using the borrowed view first"
+                        };
+                        return Err(type_error(span, ErrorCode::InvalidAssignment, message));
                     }
                 }
             }
@@ -1213,22 +1221,21 @@ fn analyze(
                     "@noescape function cannot retain an argument borrow",
                 ));
             }
-            if slot.ty.contains_buffers() || state.get(&slot.index).is_some_and(|v| v.storage) {
-                return Err(type_error(
-                    span,
-                    ErrorCode::InvalidAssignment,
-                    "Buffer owners and views cannot be retained by the task arena",
-                ));
-            }
-            if state
-                .get(&slot.index)
-                .is_some_and(|value| value.has_root(&local_roots))
-            {
-                return Err(type_error(
-                    span,
-                    ErrorCode::InvalidAssignment,
-                    "A local borrow cannot be retained by the task arena",
-                ));
+            let source = state.get(&slot.index);
+            let reason = if slot.ty.contains_buffers() || source.is_some_and(|v| v.storage) {
+                Some("Buffer owners and views cannot be retained by the task arena")
+            } else if source.is_some_and(|v| v.has_root(&local_roots)) {
+                Some("A local borrow cannot be retained by the task arena")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                let reason = if source.is_some_and(|v| !v.arenas.is_empty()) {
+                    "A reference into an explicit arena cannot be retained beyond that arena's lifetime"
+                } else {
+                    reason
+                };
+                return Err(type_error(span, ErrorCode::InvalidAssignment, reason));
             }
             Ok(())
         };

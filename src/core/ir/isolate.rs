@@ -104,8 +104,14 @@ impl FunctionPlan {
             ));
         }
         let result_ty = self.isolate_result(&ret, types)?;
-        let (name, args, _) =
-            self.nested_task(body, *span, Some(ret.clone()), vars, functions, types)?;
+        let (name, args, _) = self.nested_task(
+            body,
+            ("isolate branch", *span),
+            Some(ret.clone()),
+            vars,
+            functions,
+            types,
+        )?;
         let result = (ret != Type::Unit)
             .then(|| self.slot(ret.clone()))
             .transpose()?;

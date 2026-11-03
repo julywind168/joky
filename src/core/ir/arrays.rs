@@ -302,7 +302,9 @@ impl FunctionPlan {
             return Err(type_error(
                 &self.current_span,
                 ErrorCode::TypeMismatch,
-                format!("Array spread expects a sequence of {element}, got {ty}"),
+                format!(
+                    "Cannot spread {ty}: expected an array or slice with element type {element}"
+                ),
             ));
         }
         let moving = matches!(&ty, Type::Record(r) if r.array);

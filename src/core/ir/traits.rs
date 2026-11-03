@@ -347,15 +347,57 @@ pub(super) fn collect(
                 .map(|p| substitute(&p.ty, &substitutions, &local))
                 .collect::<Result<Vec<_>, _>>()?;
             let ret = substitute(&requirement.ret_ty, &substitutions, &local)?;
-            if definition.public
-                || !definition.type_params.is_empty()
-                || definition.suspends != requirement.suspends
-                || receiver(definition).is_some() != receiver(&requirement.definition()).is_some()
-                || !params.iter().eq(definition.params.iter().map(|p| &p.ty))
-                || ret != definition.ret_ty
+            let mismatch = if definition.public {
+                Some("visibility is inherited from the trait; remove `pub`".to_owned())
+            } else if !definition.type_params.is_empty() {
+                Some("the implementation method cannot introduce type parameters".into())
+            } else if definition.suspends != requirement.suspends {
+                Some(
+                    if requirement.suspends {
+                        "expected a suspending method"
+                    } else {
+                        "expected a synchronous method"
+                    }
+                    .into(),
+                )
+            } else if receiver(definition).is_some()
+                != receiver(&requirement.definition()).is_some()
             {
-                return Err(type_error(&definition.span, ErrorCode::TypeMismatch,
-                    format!("Signature does not match trait method '{name}.{}' (visibility is inherited from the trait)", definition.name)));
+                Some("the self receiver differs from the declaration".into())
+            } else if params.len() != definition.params.len() {
+                Some(format!(
+                    "expected {} parameters, got {}",
+                    params.len(),
+                    definition.params.len()
+                ))
+            } else if let Some((i, (expected, actual))) = params
+                .iter()
+                .zip(&definition.params)
+                .enumerate()
+                .find(|(_, (expected, p))| **expected != p.ty)
+            {
+                Some(format!(
+                    "parameter {} expects {expected}, got {}",
+                    i + 1,
+                    actual.ty
+                ))
+            } else if ret != definition.ret_ty {
+                Some(format!(
+                    "expected return type {ret}, got {}",
+                    definition.ret_ty
+                ))
+            } else {
+                None
+            };
+            if let Some(detail) = mismatch {
+                return Err(type_error(
+                    &definition.span,
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "Signature does not match trait method '{name}.{}': {detail}",
+                        definition.name
+                    ),
+                ));
             }
             let mut function = definition.clone();
             if let Some(required) = &requirement.noescape {
@@ -462,7 +504,7 @@ impl Members {
         scope: &ImportScope,
         span: Span,
     ) -> Result<Option<&Method>, Error> {
-        let mut selected = None;
+        let mut selected: Option<&Method> = None;
         for method in &self.methods {
             let Some(id) = method.trait_id else {
                 continue;
@@ -500,7 +542,10 @@ impl Members {
             if !applicable {
                 continue;
             }
-            if selected.is_some() {
+            if let Some(previous) = selected {
+                if previous.trait_id == Some(id) {
+                    return Err(type_error(&span, ErrorCode::TypeMismatch, format!("Overlapping trait implementations for `{ty}` provide `{name}`; make their implementation bounds disjoint")));
+                }
                 return Err(type_error(
                     &span,
                     ErrorCode::InvalidCall,

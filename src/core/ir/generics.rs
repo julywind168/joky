@@ -36,7 +36,7 @@ pub(super) struct GenericContext {
     /// Declaring modules keep handle-method identity independent of the caller.
     pub when_modules: HashMap<String, String>,
     /// Synthetic task entries share the enclosing function's lexical declaration.
-    pub task_parents: HashMap<String, String>,
+    pub task_parents: HashMap<String, (String, &'static str)>,
     pub module_name: String,
     pub when_sites: Vec<(String, Span, String)>,
     pub scope: Arc<crate::core::imports::ImportScope>,
@@ -362,27 +362,19 @@ impl FunctionPlan {
             .iter()
             .any(|p| substitutions.argument(p).is_none())
         {
-            // Type hints deliberately suppress errors. Before reporting a missing
-            // outer parameter, surface an invalid member in its argument instead.
-            let mut local = vars.clone();
-            for arg in args {
-                let member = self.member_call(arg, &local, functions, types)?;
-                let call = member.as_ref().unwrap_or(arg);
-                if let Expr::Call { callee, .. } = call {
-                    if self
-                        .function_name(callee)
-                        .is_some_and(|name| self.generics.borrow().templates.contains_key(&name))
-                    {
-                        self.generic_signature(call, &local, functions, types)?;
-                    }
-                }
-                self.hint_bindings(arg, &mut local, functions, types);
-            }
+            self.diagnose_argument_hints(
+                args.iter().zip(template.params.iter().map(|p| &p.ty)),
+                &template.type_params,
+                &substitutions,
+                vars,
+                functions,
+                types,
+            )?;
         }
-        let display_callee = callee.strip_prefix("joky/member/").unwrap_or(callee);
+
         let arguments: Vec<_> = template.type_params.iter().map(|p| {
             let argument = substitutions.argument(p).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
-                format!("Cannot infer {} parameter `{}` for `{display_callee}`; use explicit generic arguments", if p.kind == crate::core::types::ParameterKind::Const { "constant" } else { "type" }, p.name)))?;
+                format!("Cannot infer {} parameter `{}` for `{}`; use explicit generic arguments", if p.kind == crate::core::types::ParameterKind::Const { "constant" } else { "type" }, p.name, self.diagnostic_function_name(callee))))?;
             types.validate_argument(p, &argument).map_err(|e| e.with_span(*span))?;
             let Some(ty) = argument.as_type() else { return Ok(argument); };
             types.validate(ty).map_err(|e| e.with_span(*span))?;
@@ -394,7 +386,9 @@ impl FunctionPlan {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
             }
-            members.traits.check_bounds(p, ty, *span)?;
+            members.traits.check_bounds(p, ty, *span).map_err(|e| if callee == "$joky_iter.into_iter" && e.code() == ErrorCode::TypeMismatch {
+                type_error(span, e.code(), format!("Cannot iterate over {ty}: for requires an IntoIterator implementation"))
+            } else { e })?;
             types.check_associated_bounds(p, ty, &substitutions, *span)?;
             if let Some(bound) = &p.callable {
                 let Some((mode, actual)) = super::closures::callable_signature(ty) else { return Err(type_error(span, ErrorCode::TypeMismatch, if bound.suspends { "Callable bound requires a suspending language callable" } else { "Callable bound requires a synchronous language callable" })); };
@@ -431,19 +425,26 @@ impl FunctionPlan {
     ) -> Option<Type> {
         if default {
             return self
-                .generic_signature(expr, vars, functions, types)
-                .ok()
+                .hint_work
+                .observe(
+                    self.generic_signature(expr, vars, functions, types),
+                    expr.span(),
+                )
                 .map(|(_, signature)| signature.ret);
         }
         // Only the result must be known for a strict hint. Unconstrained inputs
         // can still be defaulted when the actual call is checked.
-        let (template, substitutions) = self
-            .infer_call(expr, vars, functions, types, None, false)
-            .ok()?;
+        let (template, substitutions) = self.hint_work.observe(
+            self.infer_call(expr, vars, functions, types, None, false),
+            expr.span(),
+        )?;
         if unresolved(&template.ret_ty, &template.type_params, &substitutions) {
             return None;
         }
-        substitute(&template.ret_ty, &substitutions, types).ok()
+        self.hint_work.observe(
+            substitute(&template.ret_ty, &substitutions, types),
+            expr.span(),
+        )
     }
 
     fn infer_call(
@@ -473,7 +474,10 @@ impl FunctionPlan {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,
-                format!("Argument count mismatch for `{callee}`"),
+                format!(
+                    "Argument count mismatch for `{}`",
+                    self.diagnostic_function_name(callee)
+                ),
             ));
         }
         // Source member arities are checked by member_call. Its protected call
@@ -495,7 +499,8 @@ impl FunctionPlan {
                 span,
                 ErrorCode::InvalidCall,
                 format!(
-                    "Type argument count mismatch for `{callee}`: expected {}",
+                    "Type argument count mismatch for `{}`: expected {}",
+                    self.diagnostic_function_name(callee),
                     template.type_params.len()
                 ),
             ));
@@ -524,7 +529,22 @@ impl FunctionPlan {
                     &template.type_params,
                     &mut inference.substitutions,
                     *span,
-                )?;
+                )
+                .map_err(|error| {
+                    if error.code() != ErrorCode::TypeMismatch {
+                        return error;
+                    }
+                    // Only on the error path, infer the result independently of the
+                    // destination so the diagnostic reports the concrete return type.
+                    let got = self
+                        .generic_result_hint(expr, vars, functions, types, true)
+                        .unwrap_or_else(|| template.ret_ty.clone());
+                    type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        format!("Result type mismatch: expected {expected}, got {got}"),
+                    )
+                })?;
             }
         }
         // First use already known argument types, then default only unresolved
@@ -547,7 +567,26 @@ impl FunctionPlan {
                         }
                         _ => &param.ty,
                     };
-                    self.infer_generic_argument(formal, arg, &local, functions, types, inference)?;
+                    let inferred = self
+                        .infer_generic_argument(formal, arg, &local, functions, types, inference);
+                    if let Err(error) = inferred {
+                        if matches!(
+                            callee.as_str(),
+                            "$joky_iter.range" | "$joky_iter.range_inclusive"
+                        ) && error.code() == ErrorCode::TypeMismatch
+                            && index == 1
+                        {
+                            if let (Some(left), Some(right)) = (
+                                self.bound_hint(&args[0], vars, functions, types),
+                                self.bound_hint(arg, &local, functions, types),
+                            ) {
+                                if left != right {
+                                    return Err(type_error(&arg.span(), ErrorCode::TypeMismatch, format!("Range endpoints must have the same type: start is {left}, end is {right}")));
+                                }
+                            }
+                        }
+                        return Err(error);
+                    }
                     self.hint_bindings(arg, &mut local, functions, types);
                 }
                 if template
@@ -1018,7 +1057,10 @@ impl FunctionPlan {
                 return Err(type_error(
                     span,
                     ErrorCode::InvalidCall,
-                    format!("Non-generic function `{callee}` does not accept type arguments"),
+                    format!(
+                        "Non-generic function `{}` does not accept type arguments",
+                        self.diagnostic_function_name(callee)
+                    ),
                 ));
             }
             Ok((name.unwrap(), info.clone()))

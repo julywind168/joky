@@ -556,6 +556,7 @@ pub(crate) struct FunctionPlan {
     source_function: String,
     suspends: bool,
     lexical_function: String,
+    branch_context: Option<(&'static str, usize)>,
     callable_modes: HashMap<usize, crate::core::types::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
     captured_fields: HashMap<usize, (Slot, Vec<String>)>,
@@ -1238,6 +1239,43 @@ impl ModulePlan {
 }
 
 impl FunctionPlan {
+    fn immutable_binding_message(&self, name: &str, binding: &Binding) -> String {
+        if let Some((kind, slots)) = self.branch_context {
+            if binding.slot.as_ref().is_some_and(|s| s.index < slots) {
+                return format!(
+                    "Cannot assign to `{name}`: the {kind} captures a snapshot of this binding"
+                );
+            }
+        }
+        format!("Cannot assign to immutable binding `{name}`; declare it with var")
+    }
+
+    fn diagnostic_function_name(&self, name: &str) -> String {
+        let name = name.strip_prefix("joky/member/").unwrap_or(name);
+        let context = self.generics.borrow();
+        let name = context
+            .instances
+            .iter()
+            .find(|i| i.name == name)
+            .map_or(name, |i| i.template.as_str());
+        if let Some(method) = context.members.methods.iter().find(|m| m.function == name) {
+            if let Some(decl) = context
+                .members
+                .traits
+                .definitions
+                .iter()
+                .find(|d| Some(d.self_parameter.id) == method.trait_id)
+            {
+                if decl.is_add && method.name == "add" {
+                    return "+".into();
+                }
+                return format!("{}.{}", decl.name, method.name);
+            }
+            return format!("{}.{}", method.target, method.name);
+        }
+        name.to_owned()
+    }
+
     fn source_nominals(&self) -> &HashMap<String, Type> {
         self.definition_scope
             .as_ref()
@@ -1349,15 +1387,15 @@ impl FunctionPlan {
                     && f.name
                         .contains(&format!("joky/impl/{}/", d.self_parameter.id))
             });
-        let lexical_function = generics
-            .borrow()
-            .task_parents
-            .get(&f.name)
-            .cloned()
-            .unwrap_or_else(|| f.name.clone());
+        let task_parent = generics.borrow().task_parents.get(&f.name).cloned();
+        let branch_context = task_parent
+            .as_ref()
+            .map(|(_, kind)| (*kind, parameter_slots));
+        let lexical_function = task_parent.map_or_else(|| f.name.clone(), |(parent, _)| parent);
         let mut plan = Self {
             dyn_erasures: Vec::new(),
             lexical_function,
+            branch_context,
             hint_work: Default::default(),
             source_function: f.name.clone(),
             suspends: f.suspends,
@@ -1744,12 +1782,27 @@ impl FunctionPlan {
                 return Err(type_error(
                     &f.span,
                     ErrorCode::TypeMismatch,
-                    format!(
-                        "Return type mismatch for `{}`: expected {}, got {}",
-                        f.name,
-                        plan.return_type,
-                        slot_type(&value),
-                    ),
+                    if let Some((kind, _)) = plan.branch_context {
+                        format!(
+                            "Result type mismatch for {kind}: expected {}, got {}",
+                            plan.return_type,
+                            slot_type(&value)
+                        )
+                    } else if let Some((_, constant)) = f.name.split_once(".<const:") {
+                        format!(
+                            "Type mismatch for constant `{}`: expected {}, got {}",
+                            constant.trim_end_matches('>'),
+                            plan.return_type,
+                            slot_type(&value)
+                        )
+                    } else {
+                        format!(
+                            "Return type mismatch for `{}`: expected {}, got {}",
+                            plan.diagnostic_function_name(&f.name),
+                            plan.return_type,
+                            slot_type(&value)
+                        )
+                    },
                 ));
             }
             if plan.return_label.is_some() || f.ret_ty.is_call_aggregate() && !infer_return {
@@ -2420,7 +2473,7 @@ impl FunctionPlan {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidAssignment,
-                        format!("Cannot assign to immutable binding `{name}`; declare it with var"),
+                        self.immutable_binding_message(name, &binding),
                     ));
                 }
                 let is_owner = slot_type(&binding.slot).is_owner();

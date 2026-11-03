@@ -124,6 +124,59 @@ mod tests {
     };
 
     #[test]
+    fn source_diagnostics_preserve_constructs_types_and_failure_causes() {
+        use crate::ErrorCode::*;
+        let mut modules = crate::ModuleSources::new();
+        modules
+            .insert(
+                "app/lib",
+                "pub struct P { pub n:Int32 } pub fn one()->Int32{1}",
+            )
+            .unwrap();
+        modules
+            .insert("foo", "pub struct Foreign { pub n:Int32 }")
+            .unwrap();
+        for (source, code, message, location) in [
+            ("fn main(){let x:Int32=0..3}", TypeMismatch, "Result type mismatch: expected Int32, got joky/iter.Range<Int32>", "0..3"),
+            ("fn main(){let a:Int64=0; let b:Int32=2; let x=a..b}", TypeMismatch, "Range endpoints must have the same type: start is Int64, end is Int32", "b"),
+            ("fn main(){for x in 5 { println(x) }}", TypeMismatch, "Cannot iterate over Int32: for requires an IntoIterator implementation", "5"),
+            ("const A:Bool=1 fn main(){}", TypeMismatch, "Type mismatch for constant `A`: expected Bool, got Int32", ""),
+            ("const A:Int32=B\nconst B:Int32=A\nfn main(){}", InvalidState, "Cyclic module constant dependency involving `A`", ""),
+            ("import joky/array.{type Array}\nfn f(a:&Array<Int32>) { a.borrow_ref(0).unwrap() } fn main(){}", UnknownName, "Type '&Int32' has no method 'unwrap'", ""),
+            ("fn main(){let x=1s + 1}", TypeMismatch, "Argument type mismatch for `+`: expected joky/time.Duration, got Int32", "1"),
+            ("fn grow<T>(x:T,n:Int32) { if n > 0 { grow((x,x),n-1) } } fn main(){grow(1,1)}", ResourceLimit, "Tuple layout exceeds 65536 scalar slots", "(x,x)"),
+            ("fn tag<T>(x:Option<Int32>)->Int32{1} fn main(){println(tag(None))}", TypeMismatch, "Cannot infer type parameter `T` for `tag`; use explicit generic arguments", "tag(None)"),
+            ("fn id<T>(t:T)->T{t} trait Get{fn get(&self) @noescape -> Int32} fn f(s:&dyn Get){let v=id((s,s))} fn main(){}", TypeMismatch, "Dyn views cannot be stored in tuples", "(s,s)"),
+            ("fn some<T>(x:T)->Option<T>{Some(x)} fn main(){let x:Int32=some(2)}", TypeMismatch, "Result type mismatch: expected Int32, got joky/option.Option<Int32>", "some(2)"),
+            ("fn main() @suspends { let x = race { | { 1 } | { true } } }", TypeMismatch, "Result type mismatch for race branch: expected Int32, got Bool", "{ true }"),
+            ("fn f(x:&Int32) @suspends {join { | { x } | {} }} fn main(){}", InvalidCall, "join branch results must be reference-free values, got &Int32", "{ x }"),
+            ("fn main() @suspends { var n=3; join { | { n=4 } | { } } }", InvalidAssignment, "Cannot assign to `n`: the join branch captures a snapshot of this binding", ""),
+            ("fn main() @suspends { join { | { let b=Some(1)?; b } | {} } }", TypeMismatch, "Postfix `?` needs a result type for the join branch matching the propagated joky/option.Option value", "Some(1)?"),
+            ("trait Src { type I: Copy } fn main(){}", TypeMismatch, "Copy is a built-in parameter constraint; Copy bounds on associated types are not supported", ""),
+            ("fn main(){let x=[0,..5]}", TypeMismatch, "Cannot spread Int32: expected an array or slice with element type Int32", ""),
+            ("import joky/array.{type Array}\nfn main(){\n let p = { var a = Array.new::<Int32>(); a.push(2); a.borrow_ref(0) }\n println(*p)\n}", InvalidAssignment, "Borrowed value would outlive its owner at the end of this scope", ""),
+            ("import joky/array.{type Array}\nimport joky/arena.{type Arena}\nfn main(){let a=Arena.new(); let p=a.alloc(1); var xs=Array.new::<&Int32>(); xs.push(p)}", InvalidAssignment, "A reference into an explicit arena cannot be retained beyond that arena's lifetime", ""),
+            ("struct Item { s:String } fn take(v:Item){} fn main(){let v=Item{s:\"v\"};take(v);take(v)}", InvalidAssignment, "Use of a moved or uninitialized owning value", ""),
+            ("fn main(){println!(3)}", InvalidCall, "Joky has no `println!` macro; call `println(...)`", "println!"),
+            ("#tset struct S{} fn main(){}", UnknownName, "Unknown attribute #tset", "#tset"),
+            ("import app/lib.{one as f,one as f} fn main(){}", DuplicateDefinition, "Imported function 'f' is already defined", ""),
+            ("import app/lib.{type P}\nimpl P { fn v(self)->Int32 { self.n } }\nfn main(){}", TypeMismatch, "Cannot define inherent methods for `P`: the type is defined in another module", ""),
+            ("import foo
+impl foo.Foreign { fn v(self)->Int32 { self.n } } fn main(){}", TypeMismatch, "Cannot define inherent methods for `foo.Foreign`: the type is defined in another module", ""),
+            ("trait Mk { fn mk(x:Int32)->Self }\nfn f<T:Mk>() -> T { Mk.mk::<T>() }\nfn main(){}", InvalidCall, "Argument count mismatch for `Mk.mk`", ""),
+            ("trait A { fn x(self) }\ntrait B { fn y(self) }\nimpl<T:B> A for T { fn x(self) {} }\nimpl<T:A> B for T { fn y(self) {} }\nfn need<T:A>(t:T) {}\nfn main(){need(1)}", RecursiveType, "Cyclic trait or projection dependency: Int32: A -> Int32: B -> Int32: A", ""),
+            ("trait Get {fn get(&self)->Int32} struct S{} impl Get for S {fn get(&self)->Bool{true}} fn main(){}", TypeMismatch, "Signature does not match trait method 'Get.get': expected return type Int32, got Bool", ""),
+            ("trait Say {fn v(&self)->Int32} struct S{} impl<T> Say for T {fn v(&self)->Int32{1}} impl Say for S {fn v(&self)->Int32{2}} fn main(){let s=S{};println(s.v())}", TypeMismatch, "Overlapping trait implementations for `S` provide `v`; make their implementation bounds disjoint", ""),
+        ] {
+            let err = check_source(source, &modules).unwrap_err();
+            assert_eq!(err.code(), code, "{source}: {err}");
+            assert_eq!(err.message(), message, "{source}");
+            let slice = err.span().and_then(|span|span.slice(source)).expect("diagnostic in source");
+            if !location.is_empty() { assert_eq!(slice,location,"{source}"); }
+        }
+    }
+
+    #[test]
     fn preparation_snapshot_is_independent_of_later_source_edits() {
         let mut ast =
             crate::parser::parse("type Number = Int32 fn value() -> Number { 42 }").unwrap();

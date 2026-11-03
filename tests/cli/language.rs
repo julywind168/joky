@@ -830,7 +830,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
     for (source, message) in [
         (
             "fn bad<T>(n: T) -> T { n + n } fn main() {}",
-            "same supported numeric type",
+            "does not implement joky/ops.Add",
         ),
         (
             "fn bad<T>(n: T) -> Int32 { int32(n) } fn main() {}",
@@ -3272,9 +3272,12 @@ fn nested_generic_calls_and_method_chains_keep_context_on_all_backends() {
         fn ors(value: Int32) -> Option<Int32> {{ {ors} }}
         fn ands(value: Int32) -> Option<Int32> {{ {ands} }}
         fn first<T, U>(value: T, other: U) -> T {{ value }}
+        fn pair<T>(a:T, b:T) -> T {{ a }}
         fn options() -> {option_type} {{ {options} }}
         fn unwraps(value: {option_type}) -> Int32 {{ value{unwraps} }}
         fn main() {{
+            let inferred_option = pair(None, Some(1))
+            assert_eq(inferred_option.unwrap_or(42), 42)
             let wide: Int64 = id(id(3000000000))
             let wrapped: Option<Int64> = Some(id(3000000000))
             let explicit = first::<Int64, Bool>(id(3000000000), true)

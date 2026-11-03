@@ -209,6 +209,24 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
+        if let Expr::Unary {
+            op: UnaryOp::Unwrap,
+            operand,
+            ..
+        } = callee
+        {
+            if let Expr::Ident { name, .. } = operand.as_ref() {
+                if !vars.contains_key(name)
+                    && matches!(name.as_str(), "println" | "print" | "eprintln" | "eprint")
+                {
+                    return Err(type_error(
+                        &callee.span(),
+                        ErrorCode::InvalidCall,
+                        format!("Joky has no `{name}!` macro; call `{name}(...)`"),
+                    ));
+                }
+            }
+        }
         let Flow::Value(value) = self.callable_value(callee, vars, functions, suspends, types)?
         else {
             if let Some(arg) = args.first() {

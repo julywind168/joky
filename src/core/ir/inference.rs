@@ -16,6 +16,9 @@ pub(super) struct HintWork {
     steps: std::cell::Cell<usize>,
     exhausted: std::cell::Cell<Option<Span>>,
     session: std::cell::RefCell<Option<Box<HintSession>>>,
+    // A speculative hint may fail and still gain a type from its context.
+    // Collect the cause only for a checked argument whose hint stays unknown.
+    diagnostic: std::cell::RefCell<Option<Result<(), Error>>>,
 }
 
 pub(super) struct SavedHintScope(Option<Box<HintSession>>);
@@ -53,6 +56,38 @@ fn cacheable_call(expr: &Expr) -> bool {
 }
 
 impl HintWork {
+    pub(super) fn checked<T>(&self, query: impl FnOnce() -> Option<T>) -> Result<Option<T>, Error> {
+        let previous = self.diagnostic.replace(Some(Ok(())));
+        let value = query();
+        let diagnostic = self
+            .diagnostic
+            .replace(previous)
+            .expect("active hint query");
+        if value.is_none() {
+            diagnostic?;
+        }
+        Ok(value)
+    }
+
+    pub(super) fn observe<T>(&self, result: Result<T, Error>, span: Span) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                if let Some(cause) = self.diagnostic.borrow_mut().as_mut() {
+                    if cause.is_ok() || error.code() == ErrorCode::ResourceLimit {
+                        let error = if error.span().is_none_or(|s| s.start() == s.end()) {
+                            error.with_span(span)
+                        } else {
+                            error
+                        };
+                        *cause = Err(error);
+                    }
+                }
+                None
+            }
+        }
+    }
+
     pub(super) fn enter(
         &self,
         vars: &HashMap<String, Binding>,
@@ -221,7 +256,9 @@ impl FunctionPlan {
                 .as_ref()
                 .and_then(|s| s.entries.get(&site))
             {
-                if entry.expr == *expr {
+                if entry.expr == *expr
+                    && (entry.ty.is_some() || self.hint_work.diagnostic.borrow().is_none())
+                {
                     return entry.ty.clone();
                 }
             }
@@ -280,7 +317,11 @@ impl FunctionPlan {
                 reference.mutable,
             ));
         }
-        if let Some(constant) = self.associated_constant(expr, vars, types).ok().flatten() {
+        if let Some(constant) = self
+            .hint_work
+            .observe(self.associated_constant(expr, vars, types), expr.span())
+            .flatten()
+        {
             return Some(constant.declaration.ty.clone());
         }
         if !self.scope.constants.is_empty() {
@@ -299,14 +340,21 @@ impl FunctionPlan {
         // would recursively infer each subtree twice, including numeric chains.
         if !matches!(expr, Expr::BinOp { op: BinOp::Add, .. }) {
             if let Some(call) = self
-                .member_call(expr, vars, functions, types)
-                .ok()
+                .hint_work
+                .observe(self.member_call(expr, vars, functions, types), expr.span())
                 .flatten()
             {
                 return self.hint(&call, vars, functions, types, default);
             }
         }
-        if let Ok(Some((_, info))) = self.function_value_info(expr, vars, functions, types, false) {
+        if let Some((_, info)) = self
+            .hint_work
+            .observe(
+                self.function_value_info(expr, vars, functions, types, false),
+                expr.span(),
+            )
+            .flatten()
+        {
             return Some(info.function_type());
         }
         if let Expr::Invoke { callee, .. } = expr {
@@ -334,19 +382,26 @@ impl FunctionPlan {
                 }
             }
         }
-        if let Some(constructor) = self.enum_constructor(expr, vars).ok().flatten() {
+        if let Some(constructor) = self
+            .hint_work
+            .observe(self.enum_constructor(expr, vars), expr.span())
+            .flatten()
+        {
             return self
-                .constructor_type(
-                    &constructor,
-                    vars,
-                    functions,
-                    types,
-                    generics::ConstructorContext {
-                        expected: None,
-                        default,
-                    },
+                .hint_work
+                .observe(
+                    self.constructor_type(
+                        &constructor,
+                        vars,
+                        functions,
+                        types,
+                        generics::ConstructorContext {
+                            expected: None,
+                            default,
+                        },
+                    ),
+                    expr.span(),
                 )
-                .ok()
                 .map(Type::Enum);
         }
         if let Expr::Call { callee, args, .. } = expr {
@@ -424,8 +479,8 @@ impl FunctionPlan {
                         .split_once('.')
                         .and_then(|(name, _)| self.named_type(name).cloned())
                 }),
-            Expr::Record { .. } => self
-                .record_type(
+            Expr::Record { .. } => self.hint_work.observe(
+                self.record_type(
                     expr,
                     vars,
                     functions,
@@ -434,8 +489,9 @@ impl FunctionPlan {
                         expected: None,
                         default,
                     },
-                )
-                .ok(),
+                ),
+                expr.span(),
+            ),
             Expr::Index { base, index, .. } => {
                 let ty = self.hint(base, vars, functions, types, default)?;
                 let target = ty.reference_type().map_or(&ty, |r| &r.target);
@@ -457,8 +513,8 @@ impl FunctionPlan {
                         }
                     })? {
                     Type::Reference(r) => self
-                        .pointee(&r.target, types)
-                        .ok()?
+                        .hint_work
+                        .observe(self.pointee(&r.target, types), base.span())?
                         .inline_field(name)
                         .map(|(_, ty)| ty.clone()),
                     ty @ (Type::Record(_) | Type::Tuple(_)) => {
@@ -493,7 +549,10 @@ impl FunctionPlan {
                 ..
             } => {
                 let ty = self.hint(operand, vars, functions, types, default)?;
-                self.pointee(&ty.reference_type()?.target, types).ok()
+                self.hint_work.observe(
+                    self.pointee(&ty.reference_type()?.target, types),
+                    expr.span(),
+                )
             }
             Expr::Unary {
                 op: UnaryOp::Borrow | UnaryOp::BorrowMut,
@@ -574,7 +633,10 @@ impl FunctionPlan {
                 .and_then(|branch| self.hint(branch, vars, functions, types, default)),
             Expr::Isolate { body, .. } => self
                 .hint(body, vars, functions, types, default)
-                .and_then(|ty| self.isolate_result(&ty, types).ok()),
+                .and_then(|ty| {
+                    self.hint_work
+                        .observe(self.isolate_result(&ty, types), expr.span())
+                }),
             Expr::TaskScope { body, .. } => self.hint(body, vars, functions, types, default),
             Expr::Concurrent { branches, .. } => {
                 let values = branches
@@ -584,7 +646,8 @@ impl FunctionPlan {
                 if values.iter().all(|ty| *ty == Type::Unit) {
                     Some(Type::Unit)
                 } else {
-                    crate::core::types::tuple_type(values, types).ok()
+                    self.hint_work
+                        .observe(crate::core::types::tuple_type(values, types), expr.span())
                 }
             }
             Expr::Branch { .. }
@@ -613,14 +676,18 @@ impl FunctionPlan {
                     return None;
                 }
                 let element = self.array_element_hint(elements, vars, functions, types, default)?;
-                self.dynamic_array_type(element, types, expr.span()).ok()
+                self.hint_work.observe(
+                    self.dynamic_array_type(element, types, expr.span()),
+                    expr.span(),
+                )
             }
             Expr::Tuple { elements, .. } => {
                 let elements = elements
                     .iter()
                     .map(|e| self.hint(e, vars, functions, types, default))
                     .collect::<Option<Vec<_>>>()?;
-                crate::core::types::tuple_type(elements, types).ok()
+                self.hint_work
+                    .observe(crate::core::types::tuple_type(elements, types), expr.span())
             }
             Expr::If {
                 then_branch,
@@ -637,12 +704,18 @@ impl FunctionPlan {
                 // the default pass still scans arm bodies for a concrete leaf.
                 if let Some((matched_type, borrowed)) = self
                     .hint(value, vars, functions, types, false)
-                    .and_then(|ty| self.match_type(&ty, types, value.span()).ok())
+                    .and_then(|ty| {
+                        self.hint_work
+                            .observe(self.match_type(&ty, types, value.span()), value.span())
+                    })
                 {
                     let typed = arms.iter().find_map(|arm| {
                         let mut local = vars.clone();
-                        self.check_match_pattern(&arm.pattern, &matched_type, types)
-                            .ok()?
+                        self.hint_work
+                            .observe(
+                                self.check_match_pattern(&arm.pattern, &matched_type, types),
+                                arm.pattern.span(),
+                            )?
                             .hints(&mut local, borrowed);
                         self.hint(&arm.body, &local, functions, types, default)
                     });
@@ -690,6 +763,28 @@ impl FunctionPlan {
     ) -> Option<Type> {
         self.bound_hint(expr, vars, functions, types)
             .filter(Type::is_aggregate)
+    }
+
+    // Only retry after contextual inference and literal defaults have both
+    // finished. Another argument can determine an otherwise ambiguous value.
+    pub(super) fn diagnose_argument_hints<'a>(
+        &self,
+        args: impl Iterator<Item = (&'a Expr, &'a Type)>,
+        parameters: &[Arc<crate::core::types::TypeParameter>],
+        substitutions: &crate::core::types::Substitutions,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Result<(), Error> {
+        let mut local = vars.clone();
+        for (arg, formal) in args {
+            if generics::unresolved(formal, parameters, substitutions) {
+                self.hint_work
+                    .checked(|| self.bound_hint(arg, &local, functions, types))?;
+            }
+            self.hint_bindings(arg, &mut local, functions, types);
+        }
+        Ok(())
     }
 
     pub(super) fn bound_hint(

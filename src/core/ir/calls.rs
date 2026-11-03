@@ -25,7 +25,10 @@ impl FunctionPlan {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                format!("Argument count mismatch for `{callee}`"),
+                format!(
+                    "Argument count mismatch for `{}`",
+                    self.diagnostic_function_name(callee)
+                ),
             ));
         }
         let mut values = Vec::with_capacity(args.len());
@@ -122,7 +125,11 @@ impl FunctionPlan {
                 return Err(type_error(
                     &arg.span(),
                     ErrorCode::TypeMismatch,
-                    format!("Argument type mismatch for `{callee}`"),
+                    format!(
+                        "Argument type mismatch for `{}`: expected {ty}, got {}",
+                        self.diagnostic_function_name(callee),
+                        slot_type(&value)
+                    ),
                 ));
             }
             let consuming = contract.is_some_and(|(_, info)| {
@@ -444,7 +451,10 @@ impl FunctionPlan {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,
-                format!("Caller of `{callee}` must be marked @suspends"),
+                format!(
+                    "Caller of `{}` must be marked @suspends",
+                    self.diagnostic_function_name(callee)
+                ),
             ));
         }
         let Some(values) = self.checked_arguments(
@@ -619,8 +629,21 @@ impl FunctionPlan {
                     } else {
                         None
                     };
-                    let (name, values, ret) =
-                        self.nested_task(branch, *span, expected.cloned(), vars, functions, types)?;
+                    let (name, values, ret) = self.nested_task(
+                        branch,
+                        (
+                            match kind {
+                                ConcurrentKind::Join => "join branch",
+                                ConcurrentKind::Race => "race branch",
+                                ConcurrentKind::Isolate => "isolate branch",
+                            },
+                            *span,
+                        ),
+                        expected.cloned(),
+                        vars,
+                        functions,
+                        types,
+                    )?;
                     captures = Some(values);
                     (name, Vec::new(), ret, "block", &empty_args, span, None)
                 }

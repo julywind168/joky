@@ -698,7 +698,7 @@ impl FunctionPlan {
                     type_error(
                         &span,
                         ErrorCode::UnknownName,
-                        format!("Type '{ty}' has no method '{name}'"),
+                        format!("Type '{receiver_ty}' has no method '{name}'"),
                     )
                 })?,
         };

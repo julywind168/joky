@@ -136,7 +136,15 @@ pub(super) fn validate_all(
                     return Err(type_error(
                         &constant.declaration.span,
                         ErrorCode::InvalidState,
-                        "Cyclic associated constant dependency",
+                        format!(
+                            "Cyclic {} constant dependency involving `{}`",
+                            if constant.owner.target().is_some() {
+                                "associated"
+                            } else {
+                                "module"
+                            },
+                            constant.declaration.name
+                        ),
                     ));
                 }
                 state[index] = 1;

@@ -79,10 +79,12 @@ pub(crate) fn validate_attributes(record: &RecordDef) -> Result<(), Error> {
             continue;
         }
         if attribute.path != "repr" {
-            return Err(error(
-                attribute.span,
-                format!("Unknown declaration attribute #{}", attribute.path),
-            ));
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::UnknownName,
+                format!("Unknown attribute #{}", attribute.path),
+            )
+            .with_span(attribute.span));
         }
         let valid = attribute.arguments.as_deref().is_some_and(|args| matches!(args,
             [AttributeArgument { name: None, value: AttributeValue::Name(Attribute { path, arguments: None, .. }), .. }] if path == "C"));

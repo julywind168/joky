@@ -124,6 +124,9 @@ impl TypeRegistry {
                             .with_span(associated.span),
                     );
                 }
+                if let Some(bound) = associated.bounds.iter().find(|b| b.name == "Copy") {
+                    return Err(error(ErrorCode::TypeMismatch, "Copy is a built-in parameter constraint; Copy bounds on associated types are not supported").with_span(bound.span));
+                }
                 self.validate_bounds(&associated.bounds, scope)?;
             }
         }
@@ -420,14 +423,7 @@ impl TypeRegistry {
                     .active
                     .iter()
                     .chain(std::iter::once(&key))
-                    .map(|o| match o {
-                        Obligation::Normalize(p) | Obligation::Binding(p) => {
-                            Type::Projection(Arc::new(p.clone())).to_string()
-                        }
-                        Obligation::Implements(t, id) => format!("{t}: trait#{id}"),
-                        Obligation::Alias(name, _) => format!("alias {name}"),
-                        Obligation::DynQualification(ty) => format!("qualify {ty}"),
-                    })
+                    .map(|key| self.obligation_label(key))
                     .collect::<Vec<_>>()
                     .join(" -> ");
                 return Err(error(
@@ -451,6 +447,25 @@ impl TypeRegistry {
         }
         work.last_height = height;
         result
+    }
+
+    fn obligation_label(&self, obligation: &Obligation) -> String {
+        match obligation {
+            Obligation::Normalize(p) | Obligation::Binding(p) => {
+                Type::Projection(Arc::new(p.clone())).to_string()
+            }
+            Obligation::Implements(ty, id) => {
+                let name = self
+                    .trait_environment
+                    .declarations
+                    .iter()
+                    .find(|d| d.self_parameter.id == *id)
+                    .map_or("trait", |d| d.name.as_str());
+                format!("{ty}: {name}")
+            }
+            Obligation::Alias(name, _) => format!("alias {name}"),
+            Obligation::DynQualification(ty) => format!("qualify {ty}"),
+        }
     }
 
     fn trait_id(&self, name: &str, scope: &ImportScope, span: Span) -> Result<u64, Error> {
@@ -624,14 +639,7 @@ impl TypeRegistry {
                 let path = work.active[..last]
                     .iter()
                     .chain(std::iter::once(&key))
-                    .map(|key| match key {
-                        Obligation::Normalize(p) | Obligation::Binding(p) => {
-                            Type::Projection(Arc::new(p.clone())).to_string()
-                        }
-                        Obligation::Implements(ty, id) => format!("{ty}: trait#{id}"),
-                        Obligation::Alias(name, _) => format!("alias {name}"),
-                        Obligation::DynQualification(ty) => format!("qualify {ty}"),
-                    })
+                    .map(|key| self.obligation_label(key))
                     .collect::<Vec<_>>()
                     .join(" -> ");
                 return Err(error(

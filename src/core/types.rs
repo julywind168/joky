@@ -427,6 +427,17 @@ impl TypeRegistry {
                 Type::Enum(e) => Some((&e.name, &e.parameters, &e.arguments)),
                 _ => None,
             };
+            if implementation.trait_name.is_none() {
+                if let Some((name, _, _)) = arguments {
+                    if let Some((owner, _)) = name.rsplit_once('.') {
+                        if implementation.origin.as_deref() != Some(owner) {
+                            return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
+                                format!("Cannot define inherent methods for `{}`: the type is defined in another module", implementation.target_name))
+                                .with_span(implementation.span));
+                        }
+                    }
+                }
+            }
             let trusted_arena = target.is_explicit_arena()
                 && implementation.trait_name.is_none()
                 && implementation.type_params.is_empty()

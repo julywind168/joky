@@ -525,7 +525,16 @@ fn bind(
                     return Err(error(
                         member.span,
                         ErrorCode::DuplicateDefinition,
-                        format!("Imported constructor '{name}' is already defined"),
+                        format!(
+                            "Imported {} '{name}' is already defined",
+                            if exports.functions.contains_key(&member.name) {
+                                "function"
+                            } else if exports.constants.contains_key(&member.name) {
+                                "constant"
+                            } else {
+                                "constructor"
+                            }
+                        ),
                     ));
                 }
                 let constructor = exports.constructors.get(&member.name);

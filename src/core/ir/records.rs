@@ -208,6 +208,29 @@ impl FunctionPlan {
             Ok(())
         })?;
         self.materialize_inference(&mut inference, types, *span)?;
+        if context.default
+            && record
+                .parameters
+                .iter()
+                .any(|p| inference.substitutions.argument(p).is_none())
+        {
+            self.diagnose_argument_hints(
+                fields.iter().map(|field| {
+                    let formal = &record
+                        .fields
+                        .iter()
+                        .find(|f| f.name == field.name)
+                        .unwrap()
+                        .ty;
+                    (&field.value, formal)
+                }),
+                &record.parameters,
+                &inference.substitutions,
+                vars,
+                functions,
+                types,
+            )?;
+        }
         let arguments = record.parameters.iter().map(|p| inference.substitutions.argument(p)
             .ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{name}`; add a type annotation or explicit type arguments", p.name))))
@@ -383,7 +406,7 @@ impl FunctionPlan {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidAssignment,
-                        format!("Cannot assign to immutable binding `{root}`; declare it with var"),
+                        self.immutable_binding_message(root, binding),
                     ));
                 }
                 let owner = binding
