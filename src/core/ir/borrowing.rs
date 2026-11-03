@@ -1,5 +1,6 @@
 //! Control-flow reference and buffer ownership analysis. Proven nonescaping parameters
 //! are excluded from conservative call dependencies; no address inequality is assumed.
+mod liveness;
 use super::graph::GraphOp;
 use super::*;
 use std::cell::RefCell;
@@ -930,60 +931,8 @@ fn analyze(
             "Reference analysis exceeds its compilation budget",
         ));
     }
-    let mut labels = vec![n; plan.label_count];
-    for (pc, op) in plan.ops.iter().enumerate() {
-        if let Op::Label(label) = op {
-            labels[*label] = pc;
-        }
-    }
-    let next: Vec<Vec<usize>> = plan
-        .ops
-        .iter()
-        .enumerate()
-        .map(|(pc, op)| match op {
-            Op::Panic { .. } => vec![],
-            Op::Jump(label) => vec![labels[*label]],
-            Op::Branch {
-                then_label,
-                else_label,
-                ..
-            } => vec![labels[*then_label], labels[*else_label]],
-            _ => vec![pc + 1],
-        })
-        .collect();
-    let mut live = vec![Set::new(); n + 1];
-    if let Some(result) = &plan.result {
-        live[n].extend(refs(result).into_iter().map(|s| s.index));
-    }
-    let mut budget = 2_000_000usize;
-    loop {
-        let mut changed = false;
-        for pc in (0..n).rev() {
-            budget = budget.checked_sub(types.len()).ok_or_else(|| {
-                type_error(
-                    &plan.span,
-                    ErrorCode::ResourceLimit,
-                    "Reference liveness exceeds its compilation budget",
-                )
-            })?;
-            let (uses, def) = operands(&plan.ops[pc]);
-            let mut input: Set = next[pc]
-                .iter()
-                .flat_map(|&next| live[next].iter().copied())
-                .collect();
-            for dst in def {
-                input.remove(&dst.index);
-            }
-            input.extend(uses.iter().map(|s| s.index));
-            if live[pc] != input {
-                live[pc] = input;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let next = liveness::successors(plan);
+    let live = liveness::solve(plan, &next, &types)?;
     let mut construction = Set::new();
     for (&index, ty) in &types {
         if let Some(r) = ty.reference_type() {
@@ -1022,7 +971,7 @@ fn analyze(
     let mut queue = VecDeque::from([0]);
     let mut queued = vec![false; n + 1];
     queued[0] = true;
-    budget = 2_000_000;
+    let mut budget = 2_000_000usize;
     while let Some(pc) = queue.pop_front() {
         queued[pc] = false;
         let input = states[pc].as_ref().unwrap();
