@@ -767,3 +767,25 @@ fn expression_nesting_reports_a_located_limit_in_check_and_fmt() {
         }
     }
 }
+
+#[test]
+fn interpreter_trace_folds_only_adjacent_identical_frames() {
+    let work = Workspace::new();
+    work.write("rec.jk", "fn rec(n: Int32) -> Int32 {\n    if n == 5 { return rec(n - 1) }\n    rec(n - 1)\n}\nfn main() { rec(8); }");
+    let output = work.cli(&["run", "--interpreter", "rec.jk"]);
+    failure(&output, "Interpreter frame limit exceeded");
+    let text = String::from_utf8_lossy(&output.stderr);
+    let frames: Vec<_> = text
+        .lines()
+        .filter(|line| line.starts_with("  at "))
+        .collect();
+    assert_eq!(frames.len(), 4);
+    let limit = joky::vm::InterpreterLimits::default().max_frames;
+    assert!(
+        frames[0].contains("at rec")
+            && frames[0].ends_with(&format!("(repeated {} times)", limit - 5))
+    );
+    assert!(frames[1].contains("rec.jk:2,") && !frames[1].contains("repeated"));
+    assert!(frames[2].contains("rec.jk:3,") && frames[2].ends_with("(repeated 3 times)"));
+    assert!(frames[3].contains("at main") && !frames[3].contains("repeated"));
+}

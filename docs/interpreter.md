@@ -596,7 +596,9 @@ phase/code/message, with the innermost source span and `Error::runtime_trace()`
 containing function names, final bytecode PCs and call-site spans, innermost first.
 The CLI renders the source location and trace. Embedders should retain the source
 associated with the continuation's module version when interpreting spans after
-reload; spans do not embed a file identifier or a copy of the source text.
+reload; a span identifies the source file and byte range, while the source map holds the text.
+The CLI groups adjacent frames with the same function, source span and bytecode PC.
+Its repetition count includes the displayed frame. The embedding API retains every frame.
 
 ## Implementation layout
 

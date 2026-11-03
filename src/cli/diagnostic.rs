@@ -29,8 +29,9 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
         |line| format!("Line {line}: {}", error.message()),
     );
     let mut output = format!("{header}\n{rendered}");
-    for frame in error.runtime_trace() {
+    for run in error.runtime_trace().chunk_by(|left, right| left == right) {
         use std::fmt::Write;
+        let frame = &run[0];
         let (path, source) = error
             .sources()
             .get(frame.span.source_id())
@@ -48,6 +49,9 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
             path.display(),
             frame.pc
         );
+        if run.len() > 1 {
+            let _ = write!(output, " (repeated {} times)", run.len());
+        }
     }
     for span in error.native_call_sites() {
         use std::fmt::Write;
