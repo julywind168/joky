@@ -28,6 +28,7 @@ pub(super) enum ImplicitImports {
 /// Privileges belong to these compiler-owned source definitions, never paths.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum SourceKind {
+    Decimal,
     User,
     Embedded,
     FixedArrayStorage,
@@ -394,6 +395,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::Types,
     },
     SourceDefinition {
+        kind: SourceKind::Decimal,
+        path: "joky/internal/decimal",
+        source: include_str!("../../stdlib/internal/decimal.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Float,
         path: "joky/float",
         source: include_str!("../../stdlib/float.jk"),
@@ -573,6 +581,7 @@ impl StandardLibrary {
                 | SourceKind::FixedArrayLibrary
                 | SourceKind::BufferLibrary
                 | SourceKind::Integer
+                | SourceKind::Decimal
                 | SourceKind::Text
                 | SourceKind::Json
                 | SourceKind::Domain
@@ -587,6 +596,8 @@ impl StandardLibrary {
                 SourceKind::FixedArrayLibrary
                     | SourceKind::BufferLibrary
                     | SourceKind::Integer
+                    | SourceKind::Float
+                    | SourceKind::Decimal
                     | SourceKind::Text
                     | SourceKind::Json
                     | SourceKind::Domain
@@ -871,6 +882,7 @@ impl StandardLibrary {
                     SourceKind::FixedArrayStorage
                         | SourceKind::BufferStorage
                         | SourceKind::TypeCheck
+                        | SourceKind::Decimal
                 ),
                 module,
                 exports,

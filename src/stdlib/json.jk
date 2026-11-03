@@ -8,6 +8,7 @@ import joky/mem
 import joky/slice
 import joky/integer
 import joky/float
+import joky/internal/decimal
 
 pub enum Value {
     Null,
@@ -31,10 +32,6 @@ pub enum EncodeError { InvalidLimits, OutputLimit, DepthLimit, NodeLimit, String
 pub struct NumberError { pub kind: NumberErrorKind, pub offset: UInt64 }
 pub struct Number { text: String }
 
-// Compiler-bound shared conversion. Its placeholder never executes. Only
-// bounded, grammar-validated text reaches it through Number.to_f64.
-#intrinsic("json.parse_float64")
-fn parse_float64(text: &String) -> Float64
 fn error(kind: NumberErrorKind, offset: UInt64) -> NumberError {
     NumberError { kind: kind, offset: offset }
 }
@@ -151,8 +148,13 @@ impl Number {
         if byte_at(self.text.bytes(), 0) == 45 { return Err(error(NumberErrorKind.OutOfRange, 0)) }
         magnitude(&self.text, 0, 18446744073709551615)
     }
+    pub fn to_f32(&self) -> Result<Float32, NumberError> {
+        let value = decimal.read_decimal32(&self.text)
+        if !value.is_finite() { return Err(error(NumberErrorKind.OutOfRange, 0)) }
+        Ok(value)
+    }
     pub fn to_f64(&self) -> Result<Float64, NumberError> {
-        let value = parse_float64(&self.text)
+        let value = decimal.read_decimal64(&self.text)
         if !value.is_finite() { return Err(error(NumberErrorKind.OutOfRange, 0)) }
         Ok(value)
     }

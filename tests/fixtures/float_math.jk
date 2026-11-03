@@ -136,7 +136,26 @@ fn formatting() -> Int32 {
     0
 }
 
+fn parsing() -> Int32 {
+    if Float64.parse("+.125E+2")! != 12.5 || Float32.parse("42.")! != 42.0 { return 1 }
+    if Float32.parse("1.000000059604644775390626")!.to_bits() != 1065353217 { return 2 }
+    if Float32.parse("-1e-1000")!.to_bits() != 2147483648 { return 3 }
+    if Float64.parse("-0")!.to_bits() != 9223372036854775808 { return 4 }
+    if !match Float32.parse("1e50") { Err(OutOfRange) => true, _ => false } { return 5 }
+    if !match Float64.parse("1e+") { Err(InvalidSyntax(offset)) => offset == 3, _ => false } { return 6 }
+    for invalid in ["NaN", "inf", " 1", "1_0", ".", "", "1.0x"] {
+        if Float64.parse(&invalid).is_ok() { return 7 }
+    }
+    var long = string.StringBuilder.new()
+    for i in 0 .. 1100 { long.push('0') }
+    long.push('1')
+    if Float64.parse(long.finish())! != 1.0 { return 8 }
+    0
+}
+
 fn main() -> Int32 {
+    let parsed = parsing()
+    if parsed != 0 { return parsed }
     let a = math64()
     if a != 0 { return a }
     let b = math32()

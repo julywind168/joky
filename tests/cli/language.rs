@@ -322,7 +322,7 @@ fn float_math_checked_conversions_and_formatting_match_all_backends() {
         ),
         (
             "fn main() -> Int32 { let x = 1.5.trunc_to_i32() + 1; 0 }",
-            "same supported numeric type",
+            "does not implement joky/ops.Add",
         ),
     ] {
         work.write("invalid_float_math.jk", source);

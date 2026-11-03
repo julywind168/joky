@@ -232,15 +232,25 @@ pub(crate) unsafe extern "C" fn input(
     located(result, 0, 0, 0)
 }
 
-/// Bounded, correctly rounded decimal conversion shared by every backend.
-/// No allocation, ownership transfer or retained borrow. JSON grammar is checked
-/// in source; invalid/oversized input yields NaN, overflow infinity, underflow
-/// signed zero. The source wrapper maps nonfinite results to checked errors.
+// Joky validates the decimal syntax before calling these shared conversions.
+pub(crate) fn parse_float32(text: &str) -> f32 {
+    text.parse().unwrap_or(f32::NAN)
+}
 pub(crate) fn parse_float64(text: &str) -> f64 {
-    if text.len() > 1024 {
-        return f64::NAN;
+    text.parse().unwrap_or(f64::NAN)
+}
+
+/// # Safety
+/// `owner` is a live string buffer for the duration of the call.
+#[export_name = "__joky_float32_from_text_v1"]
+pub(crate) unsafe extern "C" fn float32_from_text(owner: *const Buffer) -> u32 {
+    match borrow(owner) {
+        Ok(text) => parse_float32(text).to_bits(),
+        Err(error) => {
+            super::error::record_error(error);
+            f32::NAN.to_bits()
+        }
     }
-    text.parse::<f64>().unwrap_or(f64::NAN)
 }
 
 /// # Safety
@@ -257,7 +267,7 @@ pub(crate) unsafe extern "C" fn float_from_text(owner: *const Buffer) -> u64 {
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 9] {
     [
         ("__joky_string_from_view_v2", from_view as *const u8),
         ("__joky_string_clone_v2", clone as *const u8),
@@ -269,6 +279,10 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
             joky_string_result_free_v2 as *const u8,
         ),
         ("__joky_float_to_text_v2", float_to_text as *const u8),
+        (
+            "__joky_float32_from_text_v1",
+            float32_from_text as *const u8,
+        ),
         ("__joky_float_from_text_v1", float_from_text as *const u8),
     ]
 }

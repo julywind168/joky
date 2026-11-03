@@ -1,5 +1,10 @@
 import joky/option.{type Option, Some, None}
 
+import joky/result
+import joky/internal/decimal
+
+pub enum ParseFloatError { InvalidSyntax(UInt64), OutOfRange }
+
 // Backend-shared IEEE primitives. These private definitions are bound by
 // annotation in this embedded module; the compiler supplies their implementation.
 #intrinsic("float.sqrt")
@@ -73,6 +78,12 @@ fn u64_from_valid_f32(v: Float32) -> UInt64
 // infinities fail every bound and map to None. Values in [-1, 0) round or
 // truncate to negative zero and are accepted as zero for unsigned targets.
 impl Float64 {
+    pub fn parse(input: &String) -> result.Result<Float64, ParseFloatError> {
+        if let Some(offset) = decimal.syntax_error(input) { return result.Err(InvalidSyntax(offset)) }
+        let value = decimal.read_decimal64(input)
+        if value.is_finite() { result.Ok(value) } else { result.Err(OutOfRange) }
+    }
+
     const INFINITY: Float64 = 1.0 / 0.0
     const NAN: Float64 = 0.0 / 0.0
 
@@ -177,6 +188,12 @@ impl Float64 {
 }
 
 impl Float32 {
+    pub fn parse(input: &String) -> result.Result<Float32, ParseFloatError> {
+        if let Some(offset) = decimal.syntax_error(input) { return result.Err(InvalidSyntax(offset)) }
+        let value = decimal.read_decimal32(input)
+        if value.is_finite() { result.Ok(value) } else { result.Err(OutOfRange) }
+    }
+
     const INFINITY: Float32 = 1.0 / 0.0
     const NAN: Float32 = 0.0 / 0.0
 

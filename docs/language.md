@@ -1735,6 +1735,11 @@ let low = int32(large)            // 42
 
 ## 浮点类型与运算
 
+`Float32.parse(text)` 和 `Float64.parse(text)` 直接按目标精度解析十进制文本，返回 `Result<Self, float.ParseFloatError>`。
+支持可选正负号、小数点和 e/E 指数（可带符号），小数点两侧至少一侧有数字。拒绝空白、下划线、NaN 和 inf。
+语法错误返回 InvalidSyntax（首个错误的字节偏移，缺少字符时为文本长度）；舍入到无穷返回 OutOfRange。
+下溢可得到次正规数或带符号的零。此接口没有 JSON 数字的 1024 字节限制。
+
 已实现 IEEE 754 binary32 / binary64 浮点 `Float32` / `Float64`。浮点字面量必须
 有小数点且两侧都有十进制数字，如 `1.0`、`-2.5`、`1.5e-3` 或 `2.5E+3`；
 不支持 `.5`、`1.`，也没有 `1e3` 或类型后缀。尾数与指数内可用与整数相同的
@@ -7370,7 +7375,7 @@ Number 私有保存完整且验证过的 ASCII JSON 数字文本，统一硬上�
 | Number.from_f64(value: Float64) | Result；拒绝非有限值，有限值最短往返格式，负零保留为 `-0` |
 | number.as_text() | &String，共享借用已验证拼写 |
 | number.to_i64() / to_u64() | Result；只接受无小数/指数的整数拼写，逐位检查范围 |
-| number.to_f64() | Result；正确舍入，溢出拒绝，下溢可返回保留符号的零 |
+| number.to_f32() / number.to_f64() | Result；正确舍入，溢出拒绝，下溢可返回保留符号的零 |
 
 整数转换不经过浮点、不截断小数。`1.0`、`1e0` 返回 NotInteger；这一检查先于整数范围检查。
 Int64 接受 `-0` 为 0；UInt64 拒绝带负号的整数拼写，包括 `-0`。
@@ -7494,8 +7499,7 @@ struct Envelope<T> { value: T }
 `Options` 包含 `limits: json.Limits` 和 `reject_unknown_fields: Bool`（默认 false）。
 标准实现覆盖 Unit、Bool、String、Number、八种整数、Float32/Float64、Option<T>、Array<T>
 和 Map<String, T>。数组保持顺序；Map 无对象顺序契约。整数沿用 Number 的整数拼写与范围规则，
-不经浮点转换；Number 保留拼写；非有限浮点数拒绝编码。Float32 解码先按 Float64 解析再窄化，
-窄化溢出拒绝，可下溢为带符号零；不承诺直接十进制到 Float32 的一次正确舍入。
+不经浮点转换；Number 保留拼写；非有限浮点数拒绝编码。Float32 解码按目标精度直接舍入，溢出拒绝，可下溢为带符号零。
 Float32 编码先精确拓宽到 Float64，输出可往返但不保证最短 Float32 拼写。
 
 `ToJson.to_json(&self, &mut Context) @noescape -> Result<Value, MappingError>`

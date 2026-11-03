@@ -1,6 +1,6 @@
 import joky/string.{type StringBuilder, type Utf8Error}
 import joky/integer.{type ParseIntError}
-import joky/float
+import joky/float.{type ParseFloatError}
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/slice
@@ -37,6 +37,14 @@ impl Show for ParseIntError {
         match self {
             InvalidSyntax(offset) => { output.push_str("invalid decimal integer at byte "); offset.show(output) }
             OutOfRange(offset) => { output.push_str("integer out of range at byte "); offset.show(output) }
+        }
+    }
+}
+impl Show for ParseFloatError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            InvalidSyntax(offset) => { output.push_str("invalid float syntax at byte "); offset.show(output) }
+            OutOfRange => output.push_str("float out of range")
         }
     }
 }

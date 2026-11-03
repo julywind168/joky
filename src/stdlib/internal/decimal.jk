@@ -1,0 +1,34 @@
+import joky/internal/text
+import joky/internal/buffer
+import joky/option.{type Option, Some, None}
+
+fn digit(b: UInt8) -> Bool { b >= 48 && b <= 57 }
+fn sign(b: UInt8) -> Bool { b == 43 || b == 45 }
+pub fn syntax_error(input: &String) -> Option<UInt64> {
+    let bytes = text.bytes(input)
+    let n = buffer.slice_len(bytes)
+    var i: UInt64 = 0
+    if i < n && sign(buffer.slice_load(bytes, i)) { i += 1 }
+    let start = i
+    while i < n && digit(buffer.slice_load(bytes, i)) { i += 1 }
+    let integer_digits = i - start
+    if i < n && buffer.slice_load(bytes, i) == 46 {
+        i += 1
+        let fraction = i
+        while i < n && digit(buffer.slice_load(bytes, i)) { i += 1 }
+        if integer_digits == 0 && fraction == i { return Some(i) }
+    } else if integer_digits == 0 { return Some(i) }
+    if i < n && (buffer.slice_load(bytes, i) == 69 || buffer.slice_load(bytes, i) == 101) {
+        i += 1
+        if i < n && sign(buffer.slice_load(bytes, i)) { i += 1 }
+        let exponent = i
+        while i < n && digit(buffer.slice_load(bytes, i)) { i += 1 }
+        if i == exponent { return Some(i) }
+    }
+    if i != n { return Some(i) }
+    None
+}
+#intrinsic("float.parse64")
+pub fn read_decimal64(input: &String) -> Float64
+#intrinsic("float.parse32")
+pub fn read_decimal32(input: &String) -> Float32

@@ -200,7 +200,9 @@ fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value
 
 fn lower_float(builder: &mut FunctionBuilder, kind: FloatKind, value: Value) -> Value {
     match kind {
-        FloatKind::FromText => unreachable!("text conversion requires a runtime helper"),
+        FloatKind::FromText | FloatKind::FromText32 => {
+            unreachable!("text conversion requires a runtime helper")
+        }
         FloatKind::Sqrt => builder.ins().sqrt(value),
         FloatKind::Floor => builder.ins().floor(value),
         FloatKind::Ceil => builder.ins().ceil(value),
@@ -744,6 +746,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![types::I64],
         ),
         ("__joky_string_view_v2", vec![ptr, ptr], vec![]),
+        ("__joky_float32_from_text_v1", vec![ptr], vec![types::I32]),
         ("__joky_float_from_text_v1", vec![ptr], vec![types::I64]),
         (
             "__joky_string_input_v2",
@@ -3054,10 +3057,15 @@ fn lower_ops(
             }
             Op::Float { dst, src, kind } => {
                 let value = slots.read(builder, src);
-                let value = if *kind == FloatKind::FromText {
-                    let bits = helper(builder, refs, "__joky_float_from_text_v1", &[value]);
+                let value = if matches!(kind, FloatKind::FromText | FloatKind::FromText32) {
+                    let (symbol, target) = if *kind == FloatKind::FromText32 {
+                        ("__joky_float32_from_text_v1", types::F32)
+                    } else {
+                        ("__joky_float_from_text_v1", types::F64)
+                    };
+                    let bits = helper(builder, refs, symbol, &[value]);
                     check_call(builder, refs, mode.frame(), mode.cleanup());
-                    builder.ins().bitcast(types::F64, MemFlagsData::new(), bits)
+                    builder.ins().bitcast(target, MemFlagsData::new(), bits)
                 } else {
                     lower_float(builder, *kind, value)
                 };

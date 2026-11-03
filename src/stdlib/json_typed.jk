@@ -499,10 +499,7 @@ impl ToJson for Float32 {
 impl FromJson for Float32 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
         let number = read_number(value, context)?
-        let value = match number.to_f64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
-        let result = float32(value)
-        if !result.is_finite() { return Err(context.error(MappingErrorKind.OutOfRange)) }
-        Ok(result)
+        match number.to_f32() { Ok(value) => Ok(value), Err(error) => Err(number_error(context, error)) }
     }
 }
 

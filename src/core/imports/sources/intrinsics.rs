@@ -69,7 +69,8 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::Text, "text.into_bytes") => TextIntoBytes,
             (SourceKind::Text, "text.bytes") => TextBytes,
             (SourceKind::Integer, "integer.rune_from_valid_u32") => RuneFromValidU32,
-            (SourceKind::Json, "json.parse_float64") => Float(FloatKind::FromText),
+            (SourceKind::Decimal, "float.parse32") => Float(FloatKind::FromText32),
+            (SourceKind::Decimal, "float.parse64") => Float(FloatKind::FromText),
             (SourceKind::Float, "float.sqrt") => Float(FloatKind::Sqrt),
             (SourceKind::Float, "float.floor") => Float(FloatKind::Floor),
             (SourceKind::Float, "float.ceil") => Float(FloatKind::Ceil),
@@ -362,6 +363,9 @@ pub(super) fn validate_signatures(items: &[Item]) -> Result<(), Error> {
                 )),
                 Some(Float(kind)) if params.len() == 1 => {
                     let valid = match kind {
+                        FloatKind::FromText32 => {
+                            params[0] == shared_text && f.ret_ty == Type::Float32
+                        }
                         FloatKind::FromText => {
                             params[0] == shared_text && f.ret_ty == Type::Float64
                         }

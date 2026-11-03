@@ -799,6 +799,7 @@ pub struct NoEscape {
 pub(crate) enum FloatKind {
     /// Parse a bounded decimal String borrow; invalid input yields NaN.
     FromText,
+    FromText32,
     Sqrt,
     Floor,
     Ceil,
