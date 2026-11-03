@@ -1,7 +1,7 @@
 //! Attribute syntax is structured metadata, never an ordinary function call.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn parse_every_attribute(
         &self,
         mut attributes: Vec<Attribute>,

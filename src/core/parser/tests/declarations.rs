@@ -269,12 +269,12 @@ fn type_aliases_keep_source_spans_and_allow_forward_declarations() {
 fn malformed_aliases_and_non_top_level_aliases_are_rejected() {
     for (source, marked, message) in [
         ("type = Int32", "=", "Expected an identifier"),
-        ("type Count Int32", "Int32", "Expected Eq"),
+        ("type Count Int32", "Int32", "Expected `=`"),
         ("type Count =", "", "Expected a type"),
         ("type Count = 1", "1", "Expected a type"),
         ("type Int32 = Bool", "Int32", "Expected an identifier"),
-        ("type Count.Value = Int32", ".", "Expected Eq"),
-        ("type Count<T> Int32", "Int32", "Expected Eq"),
+        ("type Count.Value = Int32", ".", "Expected `=`"),
+        ("type Count<T> Int32", "Int32", "Expected `=`"),
         (
             "fn f() { type Count = Int32 }",
             "type",

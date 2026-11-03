@@ -1,7 +1,7 @@
 //! Top-level declaration ordering and dispatch.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn parse_module(&mut self) -> Result<Module, Diagnostic> {
         let mut module = Module {
             logical_name: "main".into(),
@@ -26,9 +26,10 @@ impl Parser {
             let start = self.peek_span().start();
             let mut attributes = Vec::new();
             while self.peek() == &TokenKind::Hash {
+                let attr_start = self.peek_span();
                 self.advance();
                 let mut attribute = self.parse_attribute(0)?;
-                attribute.span = self.span(start, self.last_span.end());
+                attribute.span = self.span(attr_start.start(), self.last_span.end());
                 attributes.push(attribute);
             }
             let public = self.peek() == &TokenKind::Pub;
@@ -52,6 +53,23 @@ impl Parser {
                         .iter()
                         .all(|a| matches!(a.path.as_str(), "intrinsic" | "test")))
             {
+                if let Some(attr) = attributes.iter().find(|a| {
+                    !matches!(
+                        a.path.as_str(),
+                        "repr" | "state" | "derive" | "test" | "every" | "intrinsic"
+                    )
+                }) {
+                    let pos = self
+                        .tokens
+                        .partition_point(|t| t.span.start() < attr.span.start());
+                    let mut error = Diagnostic::at(
+                        self.tokens[pos].line,
+                        attr.span,
+                        format!("Unknown attribute #{}", attr.path),
+                    );
+                    error.code = crate::ErrorCode::UnknownName;
+                    return Err(error);
+                }
                 return Err(self.error("Declaration attributes currently require a struct".into()));
             }
             if public

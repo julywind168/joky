@@ -179,10 +179,10 @@ fn parser_diagnostics_at_eof_render_without_panicking() {
     let work = Workspace::new();
     work.write("eof.jk", "fn main() {\n");
     let output = work.cli(&["run", "eof.jk"]);
-    failure(&output, "Expected RBrace");
+    failure(&output, "Expected `}`");
     let error = String::from_utf8_lossy(&output.stderr);
-    assert!(error.contains("eof.jk:1:13"), "{error}");
-    assert!(error.contains("Line 2: Expected RBrace"), "{error}");
+    assert!(error.contains("eof.jk:1:11"), "{error}");
+    assert!(error.contains("Line 1: Expected `}`"), "{error}");
 }
 
 #[test]
@@ -343,7 +343,7 @@ fn tuples_run_and_build_with_pattern_diagnostics() {
             "extern fn report_int32(value: (Int32,)) fn main() {}",
             "host ABI",
         ),
-        ("fn main() { let (x y) = (1, 2) }", "Expected RParen"),
+        ("fn main() { let (x y) = (1, 2) }", "Expected `)`"),
     ] {
         work.write("invalid_tuple.jk", &format!("// 🙂\n{source}"));
         let output = work.cli(&["build", "invalid_tuple.jk"]);

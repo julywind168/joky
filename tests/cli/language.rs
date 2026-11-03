@@ -877,7 +877,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
             "fn id<T>(n: T) -> T { n } fn main() { id::<>() }",
             "Expected a type",
         ),
-        ("extern fn id<T>(n: T) -> T fn main() {}", "Expected LParen"),
+        ("extern fn id<T>(n: T) -> T fn main() {}", "Expected `(`"),
         (
             "fn grow<T>(n: T) { grow((n,)) } fn main() { grow({}) }",
             "Generated function expansion exceeds 32 dependency levels (requested depth 33)",
@@ -3662,4 +3662,22 @@ fn integer_literal_coverage_scales_and_preserves_diagnostics() {
         );
         failure(&work.cli(&["check", "invalid.jk"]), diagnostic);
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn negative_literals_bind_after_postfix_operations() {
+    let work = Workspace::new();
+    work.write(
+        "minus.jk",
+        r#"
+        impl Int32 { fn step(self) -> Int32 { self + 1 } }
+        fn main() {
+            println(-5.step())
+            println((-5).step())
+            println(-2147483648)
+        }
+    "#,
+    );
+    work.assert_all_backends("minus.jk", &[], b"-6\n-4\n-2147483648\n", 0);
 }

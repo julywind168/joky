@@ -1,7 +1,7 @@
 //! Types syntax.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         if self.type_depth >= 256 {
             return Err(self.error("Type syntax nesting exceeds 256 levels".into()));
@@ -201,7 +201,7 @@ impl Parser {
                     }
                 }
             }
-            other => Err(self.error(format!("Expected a type, got {:?}", other))),
+            _ => Err(self.error(format!("Expected a type, got {}", self.found_token()))),
         }?;
         while projections && self.peek() == &TokenKind::Dot {
             self.advance();

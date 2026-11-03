@@ -1,7 +1,7 @@
 //! Contextual state access syntax; ordinary calls named `when` remain valid.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn starts_when(&self) -> bool {
         if matches!(
             self.tokens.get(self.pos + 1).map(|t| &t.kind),

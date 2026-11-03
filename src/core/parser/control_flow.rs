@@ -1,7 +1,7 @@
 //! Control flow syntax.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn parse_condition(&mut self) -> Result<Expr, Diagnostic> {
         let previous = std::mem::replace(&mut self.allow_record, false);
         let result = self.parse_assignment();
@@ -21,6 +21,11 @@ impl Parser {
         while self.peek() != &TokenKind::RBrace {
             let arm_start = self.peek_span().start();
             let pattern = self.parse_match_pattern()?;
+            if self.peek() == &TokenKind::Pipe {
+                return Err(self.error(
+                    "Or-patterns (`a | b`) are not supported; use separate match arms".into(),
+                ));
+            }
             self.expect(&TokenKind::FatArrow)?;
             let body = self.parse_sequence(true)?;
             arms.push(MatchArm {

@@ -2,7 +2,7 @@
 use super::*;
 use crate::parser::ast::RecordFieldPattern;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn parse_binding_pattern(&mut self) -> Result<BindingPattern, Diagnostic> {
         if self.pattern_depth >= 256 {
             return Err(self.error("Binding pattern nesting exceeds 256 levels".into()));
@@ -270,7 +270,7 @@ impl Parser {
     }
 }
 
-impl Parser {
+impl Parser<'_> {
     fn parse_sequence_pattern<P>(
         &mut self,
         parse: fn(&mut Self) -> Result<P, Diagnostic>,

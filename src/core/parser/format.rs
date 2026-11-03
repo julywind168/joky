@@ -11,7 +11,7 @@ use super::{Diagnostic, Lexer, Parser, Token, TokenKind};
 /// interpolation bodies and multiline string indentation are not rewritten.
 pub fn format(source: &str) -> Result<String, Diagnostic> {
     let tokens = Lexer::tokenize(source)?;
-    Parser::new(tokens.clone()).parse_module()?;
+    Parser::new(tokens.clone(), source).parse_module()?;
     let pieces = pieces(source, &tokens);
     let mut output = String::with_capacity(source.len());
     let mut depth = 0usize;

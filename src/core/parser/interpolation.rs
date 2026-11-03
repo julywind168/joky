@@ -2,7 +2,7 @@
 use super::*;
 use lexer::InterpolationPart;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn parse_interpolation(
         &mut self,
         parts: Vec<InterpolationPart>,
@@ -40,7 +40,7 @@ impl Parser {
                     for token in &mut tokens {
                         token.span = token.span.with_source(self.source);
                     }
-                    let mut parser = Parser::new(tokens);
+                    let mut parser = Parser::new(tokens, self.text);
                     parser.expression_depth = self.expression_depth;
                     parser.type_params = self.type_params.clone();
                     parser.impl_target = self.impl_target.clone();

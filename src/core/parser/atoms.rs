@@ -1,7 +1,7 @@
 //! Atoms syntax.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     fn parse_concurrent(&mut self, kind: ConcurrentKind) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         self.advance();
@@ -404,7 +404,10 @@ impl Parser {
             }
             // Block
             TokenKind::LBrace => self.parse_block(),
-            other => Err(self.error(format!("Expected an expression, got {:?}", other))),
+            _ => Err(self.error(format!(
+                "Expected an expression, got {}",
+                self.found_token()
+            ))),
         }
     }
 
@@ -452,6 +455,15 @@ impl Parser {
         Some(segments.join("."))
     }
 
+    pub(super) fn starts_postfix(token: &TokenKind, newline: bool) -> bool {
+        token == &TokenKind::Dot
+            || !newline
+                && matches!(
+                    token,
+                    TokenKind::LParen | TokenKind::LBracket | TokenKind::Bang | TokenKind::Question
+                )
+    }
+
     pub(super) fn parse_postfix(&mut self) -> Result<Expr, Diagnostic> {
         // A graph body does not need the identifier/record atom planner on
         // its recursive path. Preserve ordinary condition bindings named graph.
@@ -468,13 +480,7 @@ impl Parser {
         };
         let mut depth = 1;
         // A leading dot explicitly continues a field or method chain across lines.
-        while self.peek() == &TokenKind::Dot
-            || !self.at_expression_break()
-                && matches!(
-                    self.peek(),
-                    TokenKind::LParen | TokenKind::LBracket | TokenKind::Bang | TokenKind::Question
-                )
-        {
+        while Self::starts_postfix(self.peek(), self.at_expression_break()) {
             depth += 1;
             self.check_expression_depth(depth, self.peek_span())?;
             if self.peek() == &TokenKind::LParen {
@@ -653,7 +659,7 @@ impl Parser {
     }
 }
 
-impl Parser {
+impl Parser<'_> {
     fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
         self.arrays = true;
         let start = self.peek_span().start();

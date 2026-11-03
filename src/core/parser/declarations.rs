@@ -1,7 +1,7 @@
 //! Declarations syntax.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     pub(super) fn parse_params(&mut self) -> Result<Vec<Param>, Diagnostic> {
         self.expect(&TokenKind::LParen)?;
         let mut params = Vec::new();
@@ -239,7 +239,10 @@ impl Parser {
                 self.expect(&TokenKind::Fn)?;
                 Ok(Item::ExternFn(self.parse_extern_fn(start, false)?))
             }
-            other => Err(self.error(format!("Expected fn or extern fn, got {:?}", other))),
+            _ => Err(self.error(format!(
+                "Expected fn or extern fn, got {}",
+                self.found_token()
+            ))),
         }
     }
 

@@ -308,9 +308,9 @@ fn incomplete_semicolon_expressions_report_located_errors() {
         ("fn f() { var x = ; }", "Expected an expression"),
         ("fn f() { var x = 0; x = ; }", "Expected an expression"),
         ("fn f() { (1; + 2) }", "Expected an expression"),
-        ("fn f() { (1;", "Expected RParen"),
-        ("fn f() { 1;", "Expected RBrace"),
-        ("fn f() { while true; {} }", "Expected LBrace"),
+        ("fn f() { (1;", "Expected `)`"),
+        ("fn f() { 1;", "Expected `}`"),
+        ("fn f() { while true; {} }", "Expected `{`"),
         ("fn f(x: Int32; y: Int32) {}", "Expected ',' or ')'"),
     ] {
         let error = parse(source).unwrap_err();
@@ -363,10 +363,10 @@ fn mutable_bindings_loops_and_assignments_preserve_utf8_spans() {
 #[test]
 fn malformed_mutable_bindings_and_loops_return_parse_errors() {
     for (source, message) in [
-        ("fn f() { var x }", "Expected Eq"),
-        ("fn f() { var x: Int32 }", "Expected Eq"),
+        ("fn f() { var x }", "Expected `=`"),
+        ("fn f() { var x: Int32 }", "Expected `=`"),
         ("fn f() { var x = }", "Expected an expression"),
-        ("fn f() { while true 1 }", "Expected LBrace"),
+        ("fn f() { while true 1 }", "Expected `{`"),
         ("fn f() { while }", "Expected an expression"),
         ("fn f() { 1 = 2 }", "Assignment target must be a variable"),
         ("fn f() { f() = 2 }", "Assignment target must be a variable"),
@@ -392,7 +392,7 @@ fn malformed_input_returns_located_diagnostics() {
         ("\nfn f() { \"unfinished", 2, "Unterminated string literal"),
         ("\nfn f() { \"unfinished\\", 2, "Unterminated string escape"),
         ("fn f() {\nlet x =\n}", 3, "Expected an expression"),
-        ("fn f() {\n", 2, "Expected RBrace"),
+        ("fn f() {\n", 1, "Expected `}`"),
     ] {
         let diagnostic = parse(source).unwrap_err();
         assert_eq!(diagnostic.line, line, "{source:?}");

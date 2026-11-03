@@ -178,16 +178,16 @@ fn logical_precedence_and_else_if_spans_are_preserved() {
 fn incomplete_conditionals_and_logical_operators_report_located_errors() {
     for (body, message) in [
         ("if", "Expected an expression"),
-        ("if true 1", "Expected LBrace"),
-        ("if true {} else", "Expected LBrace"),
-        ("if true {} else 1", "Expected LBrace"),
+        ("if true 1", "Expected `{`"),
+        ("if true {} else", "Expected `{`"),
+        ("if true {} else 1", "Expected `{`"),
         ("if true {}; else {}", "Expected an expression"),
         ("else {}", "Expected an expression"),
-        ("if true; {}", "Expected LBrace"),
+        ("if true; {}", "Expected `{`"),
         ("true &&", "Expected an expression"),
-        ("|| true", "Expected LBrace"),
+        ("|| true", "Expected `{`"),
         ("true ||| false", "Expected an identifier"),
-        ("join { || f() }", "Expected RBrace"),
+        ("join { || f() }", "Expected `}`"),
         ("true &", "Expected an expression"),
     ] {
         let source = format!("fn f() {{ {body} }}");
@@ -297,5 +297,37 @@ fn comparisons_require_explicit_grouping_and_unary_operators_require_operands() 
         let source = format!("fn f() {{ {expression} }}");
         let error = parse(&source).unwrap_err();
         assert!(error.message.contains("Expected an expression"), "{error}");
+    }
+}
+
+#[test]
+fn negated_index_and_or_pattern_diagnostics_keep_source_positions() {
+    let ast = parse("fn f() { -1[0] }").unwrap();
+    let Item::FnDef(f) = &ast.items[0] else {
+        panic!()
+    };
+    let Expr::Block { exprs, .. } = &f.body else {
+        panic!()
+    };
+    assert!(
+        matches!(&exprs[0],Expr::Unary {op: UnaryOp::Neg,operand,..} if matches!(operand.as_ref(), Expr::Index {..}))
+    );
+    for (source, message, token) in [
+        ("fn f() { match 1 { 1 | 2 => 0 } }", "Or-patterns", "|"),
+        ("fn f() { if true b }", "Expected `{`, got `b`", "b"),
+        (
+            "fn f() { let x = fn }",
+            "Expected an expression, got `fn`",
+            "fn",
+        ),
+        ("fn f(x: 0x2) {}", "Expected a type, got `0x2`", "0x2"),
+        ("fn f() { { 1\n", "unclosed `{`", "{"),
+    ] {
+        let error = parse(source).unwrap_err();
+        assert!(error.message.contains(message), "{error}");
+        assert_eq!(error.span.slice(source), Some(token));
+        if source.ends_with('\n') {
+            assert_eq!(error.span.start(), source.rfind('{').unwrap());
+        }
     }
 }

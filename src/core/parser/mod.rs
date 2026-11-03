@@ -52,7 +52,8 @@ impl std::error::Error for Diagnostic {}
 
 pub(crate) const MAX_EXPRESSION_DEPTH: usize = 32;
 
-struct Parser {
+struct Parser<'src> {
+    text: &'src str,
     source: crate::SourceId,
     tokens: Vec<Token>,
     pos: usize,
@@ -76,9 +77,10 @@ struct Parser {
     iterators: bool,
 }
 
-impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
+impl<'src> Parser<'src> {
+    fn new(tokens: Vec<Token>, text: &'src str) -> Self {
         Parser {
+            text,
             source: tokens
                 .first()
                 .map_or(crate::SourceId::ANONYMOUS, |token| token.span.source_id()),
@@ -103,8 +105,8 @@ impl Parser {
     }
 
     /// Create a parser from source text.
-    fn from_source(source: &str) -> Result<Self, Diagnostic> {
-        Ok(Parser::new(Lexer::tokenize(source)?))
+    fn from_source(source: &'src str) -> Result<Self, Diagnostic> {
+        Ok(Parser::new(Lexer::tokenize(source)?, source))
     }
 
     fn span(&self, start: usize, end: usize) -> Span {
@@ -114,6 +116,24 @@ impl Parser {
     // ── Parser helpers ──────────────────────────────────────────────────────────
 
     fn error(&self, message: String) -> Diagnostic {
+        if self.peek() == &TokenKind::Eof {
+            let mut closed = 0;
+            for token in self.tokens[..self.pos].iter().rev() {
+                match token.kind {
+                    TokenKind::RBrace | TokenKind::RBracket | TokenKind::RParen => closed += 1,
+                    TokenKind::LBrace if closed == 0 => {
+                        return Diagnostic::at(
+                            token.line,
+                            token.span,
+                            format!("{message} (unclosed `{{`)"),
+                        )
+                    }
+                    TokenKind::LParen | TokenKind::LBracket if closed == 0 => break,
+                    TokenKind::LBrace | TokenKind::LBracket | TokenKind::LParen => closed -= 1,
+                    _ => {}
+                }
+            }
+        }
         Diagnostic::at(self.peek_line(), self.peek_span(), message)
     }
 
@@ -180,12 +200,20 @@ impl Parser {
         &tok.kind
     }
 
+    fn found_token(&self) -> String {
+        if self.peek() == &TokenKind::Eof {
+            return "end of input".into();
+        }
+        let text = self.peek_span().slice(self.text).expect("lexer span");
+        format!("`{text}`")
+    }
+
     fn expect(&mut self, expected: &TokenKind) -> Result<(), Diagnostic> {
         if self.peek() == expected {
             self.advance();
             Ok(())
         } else {
-            Err(self.error(format!("Expected {:?}, got {:?}", expected, self.peek())))
+            Err(self.error(format!("Expected {}, got {}", expected, self.found_token())))
         }
     }
 
@@ -198,7 +226,10 @@ impl Parser {
                 self.advance();
                 Ok(s)
             }
-            other => Err(self.error(format!("Expected an identifier, got {:?}", other))),
+            _ => Err(self.error(format!(
+                "Expected an identifier, got {}",
+                self.found_token()
+            ))),
         }
     }
 
@@ -231,7 +262,7 @@ impl Parser {
                 Ok(())
             }
             TokenKind::RParen => Ok(()),
-            other => Err(self.error(format!("Expected ',' or ')', got {other:?}"))),
+            _ => Err(self.error(format!("Expected ',' or ')', got {}", self.found_token()))),
         }
     }
 
@@ -271,7 +302,7 @@ pub fn parse_with_source(source: &str, id: crate::SourceId) -> Result<Module, Di
     for token in &mut tokens {
         token.span = token.span.with_source(id);
     }
-    Parser::new(tokens).parse_module()
+    Parser::new(tokens, source).parse_module()
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Expressions syntax.
 use super::*;
 
-impl Parser {
+impl Parser<'_> {
     /// Semicolons sequence expressions at the lowest precedence. Declarations
     /// and assignment RHSs use parse_assignment so they cannot swallow the
     /// next statement; parentheses explicitly opt into a sequence there.
@@ -343,14 +343,22 @@ impl Parser {
         // outside parentheses is an operation and cannot legalize overflow.
         if op == UnaryOp::Neg {
             if let TokenKind::IntLit(magnitude) = self.peek().clone() {
-                self.advance();
-                return Ok(Expr::Literal {
-                    literal: Literal::Integer {
-                        magnitude,
-                        negative: true,
-                    },
-                    span: self.span(start, self.last_span.end()),
-                });
+                // With a suffix, parse the positive literal and its entire
+                // postfix chain as the operand, just as for a negated variable.
+                let suffix = &self.tokens[self.pos + 1];
+                if !Self::starts_postfix(
+                    &suffix.kind,
+                    self.newline_sensitive && suffix.line > self.peek_line(),
+                ) {
+                    self.advance();
+                    return Ok(Expr::Literal {
+                        literal: Literal::Integer {
+                            magnitude,
+                            negative: true,
+                        },
+                        span: self.span(start, self.last_span.end()),
+                    });
+                }
             }
         }
         let operand = Box::new(self.nested_expression(Self::parse_unary)?);
