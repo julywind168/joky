@@ -11,7 +11,7 @@ fn run() @suspends -> Int32 {
     bytes.push(0)
     bytes.push(255)
     bytes.push(42)
-    match file.write(bytes) { Ok(n) => { if n != 3 { return 2 } }, Err(error) => { return 3 } }
+    match file.write(bytes.slice(0, bytes.len())) { Ok(n) => { if n != 3 { return 2 } }, Err(error) => { return 3 } }
     match file.seek(fs.SeekFrom.Start(0)) { Ok(n) => { if n != 0 { return 4 } }, Err(error) => { return 5 } }
     let data = match file.read(10) { Ok(value) => value, Err(error) => { return 6 } }
     if data.len() != 3 { return 7 }
@@ -56,10 +56,11 @@ fn boundaries() @suspends -> Int32 {
     var file = match fs.open("limits.bin", options) { Ok(f) => f, Err(_) => { return 5 } }
     match file.read(0) { Err(e) => { if error_code(e) != 5 { return 6 } }, Ok(_) => { return 7 } }
     match file.read(1048577) { Err(e) => { if error_code(e) != 8 { return 8 } }, Ok(_) => { return 9 } }
-    match file.write(Array.new::<UInt8>()) { Ok(n) => { if n != 0 { return 10 } }, Err(_) => { return 11 } }
+    let empty = ""
+    match file.write(empty.bytes()) { Ok(n) => { if n != 0 { return 10 } }, Err(_) => { return 11 } }
     let text = "你好，Joky🙂"
     let length = text.byte_length()
-    match file.write(text.into_bytes()) { Ok(n) => { if n != length { return 12 } }, Err(_) => { return 13 } }
+    match file.write(text.bytes()) { Ok(n) => { if n != length { return 12 } }, Err(_) => { return 13 } }
     match file.seek(fs.SeekFrom.End(-4)) { Ok(n) => { if n != length - 4 { return 14 } }, Err(_) => { return 15 } }
     match file.seek(fs.SeekFrom.Current(-1)) { Ok(n) => { if n != length - 5 { return 16 } }, Err(_) => { return 17 } }
     match file.seek(fs.SeekFrom.Start(0)) { Ok(_) => {}, Err(_) => { return 18 } }
@@ -72,7 +73,8 @@ fn boundaries() @suspends -> Int32 {
     options.append = true
     var file = match fs.open("limits.bin", options) { Ok(f) => f, Err(_) => { return 23 } }
     match file.seek(fs.SeekFrom.Start(0)) { Ok(_) => {}, Err(_) => { return 24 } }
-    match file.write("!".into_bytes()) { Ok(n) => { if n != 1 { return 25 } }, Err(_) => { return 26 } }
+    let suffix = "!"
+    match file.write(suffix.bytes()) { Ok(n) => { if n != 1 { return 25 } }, Err(_) => { return 26 } }
     match file.close() { Ok(_) => {}, Err(_) => { return 27 } }
     42
 }
@@ -82,7 +84,8 @@ fn after_cancel(expected: Int32) @suspends -> Int32 {
     var file = match fs.open("cancel", fs.OpenOptions.new()) { Ok(f) => f, Err(_) => { return 1 } }
     race { | pending_read(&mut file) | task.yield_now() }
     match file.read(0) { Err(e) => { if error_code(e) != expected { return 2 } }, Ok(_) => { return 3 } }
-    match file.write(Array.new::<UInt8>()) {
+    let empty = ""
+    match file.write(empty.bytes()) {
         Err(e) => { if expected != 7 || error_code(e) != 7 { return 4 } }
         Ok(n) => { if expected == 7 || n != 0 { return 5 } }
     }

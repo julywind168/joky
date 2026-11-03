@@ -44,13 +44,18 @@ fn client(address: Address) @suspends -> Int32 {
     assert(local.port() != 0, &message)
     assert(match stream.read(0) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
     assert(match stream.read(1048577) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
-    let empty = match stream.write(Array.new::<UInt8>()) { Ok(count) => count, Err(error) => { return 8 } }
+    let bytes = payload()
+    let empty = match stream.write(bytes.slice(0, 0)) { Ok(count) => count, Err(error) => { return 8 } }
     assert(empty == 0, &message)
-    let count = match stream.write(payload()) { Ok(count) => count, Err(error) => { return 9 } }
-    assert(count == 4, &message)
+    var offset: UInt64 = 0
+    while offset < bytes.len() {
+        let count = match stream.write(bytes.slice(offset, bytes.len())) { Ok(n) => n, Err(_) => return 9 }
+        assert(count > 0 && count <= bytes.len() - offset, &message)
+        offset += count
+    }
     assert_ok(stream.shutdown(Shutdown.Write))
     // A shutdown writer must report Err, without confusing the reader's EOF.
-    let rejected = match stream.write(payload()) { Err(error) => true, Ok(count) => false }
+    let rejected = match stream.write(bytes.slice(1, 2)) { Err(error) => true, Ok(count) => false }
     assert(rejected, &message)
     assert_ok(stream.close())
     42

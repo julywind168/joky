@@ -1,5 +1,6 @@
 // File capabilities are supplied explicitly by the embedding host.
 import joky/array.{type Array}
+import joky/slice.{type Slice}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
 import joky/integer
@@ -58,7 +59,7 @@ pub struct File { owner: fs.FileOwner }
 extern fn __io_stdin() @suspends -> fs.OutcomeOwner
 extern fn __fs_open(path: String, flags: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_read(file: &mut fs.FileOwner, limit: UInt64) @suspends -> fs.OutcomeOwner
-extern fn __fs_write(file: &mut fs.FileOwner, bytes: Array<UInt8>) @suspends -> fs.OutcomeOwner
+extern fn __fs_write(file: &mut fs.FileOwner, bytes: &Slice<UInt8>) @suspends -> fs.OutcomeOwner
 extern fn __fs_seek(file: &mut fs.FileOwner, origin: UInt64, offset: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_sync(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
 extern fn __fs_close(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
@@ -115,7 +116,7 @@ impl File {
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, WriteError> {
         let length = bytes.len()
         if length == 0 {
-            return match self.write(bytes) {
+            return match self.write(bytes.slice(0, 0)) {
                 Ok(_) => Ok({})
                 Err(error) => Err(WriteError { written: 0, error: error })
             }
@@ -125,13 +126,7 @@ impl File {
         while written < length {
             let remaining = length - written
             let size = if remaining < chunk_size { remaining } else { chunk_size }
-            var chunk = Array.with_capacity::<UInt8>(size)
-            var index: UInt64 = 0
-            while index < size {
-                chunk.push(*bytes.borrow_ref(written + index))
-                index = index + 1
-            }
-            let count = match self.write(chunk) {
+            let count = match self.write(bytes.slice(written, written + size)) {
                 Ok(count) => count
                 Err(error) => { return Err(WriteError { written: written, error: error }) }
             }
@@ -160,7 +155,7 @@ impl File {
         if code != 0 { return Err(error(&mut result, code)) }
         Ok(__fs_bytes(&mut result))
     }
-    pub fn write(&mut self, bytes: Array<UInt8>) @suspends -> Result<UInt64, IoError> {
+    pub fn write(&mut self, bytes: &Slice<UInt8>) @suspends -> Result<UInt64, IoError> {
         var result = __fs_write(&mut self.owner, bytes)
         let code = __fs_code(&mut result)
         if code != 0 { return Err(error(&mut result, code)) }

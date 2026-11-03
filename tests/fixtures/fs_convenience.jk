@@ -111,6 +111,15 @@ fn read_invalid_text(bounded: Bool) @suspends {
 
 }
 fn writes() @suspends {
+    var partial = writable("write_partial")
+    var bytes: Array<UInt8> = [99, 0, 255, 42, 0, 1, 2, 88]
+    let end = bytes.len() - 1
+    let written = partial.write(bytes.slice(1, end))!
+    expect(written == 3)
+    expect(partial.write(bytes.slice(1 + written, end))! == 3)
+    bytes[1] = 7
+    expect(bytes[0] == 99 && bytes[1] == 7 && bytes[end] == 88)
+    partial.close()!
     var output = writable("write_short")
     output.write_text("你好🙂\0\r\n").unwrap()
     output.close().unwrap()
@@ -129,6 +138,8 @@ fn large_roundtrip() @suspends {
     expect(data.len() == 1048583)
     large.close().unwrap()
     var output = writable("write_large")
+    let too_large = output.write(data.slice(1, 1048578)).err()!
+    expect(too_large.kind == fs.ErrorKind.LimitExceeded)
     output.write_all(data).unwrap()
     output.close().unwrap()
 }

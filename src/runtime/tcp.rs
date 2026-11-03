@@ -137,7 +137,15 @@ impl Operation {
                 vec![reference(stream.clone()), scalar.clone(), error.clone()],
                 signature.ret.clone(),
             ),
-            Self::Write | Self::WriteHalf | Self::WriteAll | Self::WriteAllHalf => (
+            Self::Write | Self::WriteHalf => (
+                vec![
+                    reference(stream.clone()),
+                    Type::reference(Type::BufferSlice(Arc::new(Type::UInt8)), false),
+                    error.clone(),
+                ],
+                scalar.clone(),
+            ),
+            Self::WriteAll | Self::WriteAllHalf => (
                 vec![
                     reference(stream.clone()),
                     signature.params.get(1).cloned().unwrap_or(Type::Unit),
@@ -180,7 +188,7 @@ impl Operation {
             || signature.params != params
             || signature.ret != ret
             || self.is_read() && !bytes(&signature.ret)
-            || self.is_write() && !signature.params.get(1).is_some_and(bytes)
+            || self.writes_all() && !signature.params.get(1).is_some_and(bytes)
         {
             return Err(failure(
                 "TCP operation requires its exact compiler-owned signature",

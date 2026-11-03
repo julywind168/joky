@@ -129,7 +129,7 @@ fn send_pressure(writer: &mut TcpWriter) @suspends {
     var total: Int32 = 0
     let record = "record_bytes"
     while index < 512 {
-        let count = match writer.write(text.clone().into_bytes()) { Ok(count) => count, _ => { ensure(false); return } }
+        let count = match writer.write(text.bytes()) { Ok(count) => count, _ => { ensure(false); return } }
         ensure(count > 0)
         total = total + count.to_i32().unwrap_or(0)
         task.write_int32(&record, total)

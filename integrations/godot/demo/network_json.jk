@@ -100,14 +100,13 @@ fn task_session(port: Int32, deadline_ms: Int32) @suspends {
     reader.close(); writer.close();
 }
 fn flood(writer: &mut TcpWriter, wire: &String) @suspends {
+    let bytes = wire.bytes()
+    let length = wire.byte_length()
     var index: Int32 = 0
     while index < 512 {
         var offset: UInt64 = 0
-        let length = wire.byte_length()
         while offset < length {
-            // This probe's header and JSON are ASCII, so every partial-write offset is a string boundary.
-            let part = if offset == 0 { wire.clone() } else { wire.substring(offset, length).unwrap_or("") }
-            let count = match writer.write(part.into_bytes()) { Ok(count) => count, _ => { ensure(false); return } }
+            let count = match writer.write(bytes.slice(offset, length)) { Ok(count) => count, _ => { ensure(false); return } }
             ensure(count > 0 && count <= length - offset)
             offset = offset + count
             if offset < length { clock.yield_now() }

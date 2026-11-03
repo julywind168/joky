@@ -142,7 +142,10 @@ impl Operation {
             Self::TestInput => (vec![Type::UInt64, Type::String, Type::String], outcome),
             Self::Read => (vec![file, Type::UInt64], outcome),
             Self::Write => (
-                vec![file, sig.params.get(1).cloned().unwrap_or(Type::Unit)],
+                vec![
+                    file,
+                    Type::reference(Type::BufferSlice(Arc::new(Type::UInt8)), false),
+                ],
                 outcome,
             ),
             Self::Seek => (vec![file, Type::UInt64, Type::UInt64], outcome),
@@ -155,7 +158,6 @@ impl Operation {
         if !suspends
             || sig.params != params
             || sig.ret != ret
-            || self == Self::Write && !sig.params.get(1).is_some_and(bytes)
             || self == Self::TakeBytes && !bytes(&sig.ret)
         {
             return Err(failure(

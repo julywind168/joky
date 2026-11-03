@@ -27,7 +27,8 @@ fn send(writer: &mut TcpWriter, length: UInt64) @suspends {
     checked(writer.shutdown())
     checked(writer.shutdown())
     let message = "shutdown writer rejects even empty writes"
-    let failure = writer.write(Array.new::<UInt8>())
+    let empty = Array.new::<UInt8>()
+    let failure = writer.write(empty.slice(0, 0))
     let err_message = "closed write is an Err"
     assert(failure.is_err(), &err_message)
     assert(match failure { Err(error) => match error.kind() { NotConnected => true, _ => false }, Ok(_) => false }, &message)
@@ -83,13 +84,18 @@ fn eof_reply() @suspends {
     let message = "EOF leaves the writer usable"
     assert(match reader.read(1) { Ok(bytes) => bytes.len() == 0, Err(_) => false }, &message)
     discard_reader(reader)
-    checked(writer.write_all(payload(3)))
+    let reply = payload(5)
+    var offset: UInt64 = 1
+    while offset < 4 { offset += writer.write(reply.slice(offset, 4))! }
     discard_writer(writer)
     var total: UInt64 = 0
     while true {
         let bytes = match client.read(8) { Ok(bytes) => bytes, Err(_) => { assert(false, &message); return } }
         if bytes.len() == 0 { break }
-        total = total + bytes.len()
+        for byte in &bytes {
+            total += 1
+            assert(uint64(*byte) == total, &message)
+        }
     }
     assert(total == 3, &message)
 }

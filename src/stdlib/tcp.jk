@@ -1,5 +1,6 @@
 // Numeric endpoints and bounded TCP byte/text reads.
 import joky/array.{type Array}
+import joky/slice.{type Slice}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
 import joky/string.{type Utf8Error}
@@ -343,7 +344,7 @@ extern fn __tcp_connect(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut
 extern fn __tcp_accept(listener: &mut tcp.ListenerOwner, error: &mut UInt64) @suspends -> tcp.StreamOwner
 extern fn __tcp_read(stream: &mut tcp.StreamOwner, limit: UInt64, error: &mut UInt64) @suspends -> Array<UInt8>
 extern fn __tcp_write_all(stream: &mut tcp.StreamOwner, bytes: Array<UInt8>, error: &mut UInt64) @suspends -> UInt64
-extern fn __tcp_write(stream: &mut tcp.StreamOwner, bytes: Array<UInt8>, error: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_write(stream: &mut tcp.StreamOwner, bytes: &Slice<UInt8>, error: &mut UInt64) @suspends -> UInt64
 extern fn __tcp_stream_addr(stream: &mut tcp.StreamOwner, peer: UInt64, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
 extern fn __tcp_listener_addr(listener: &mut tcp.ListenerOwner, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
 extern fn __tcp_shutdown(stream: &mut tcp.StreamOwner, how: UInt64) @suspends -> UInt64
@@ -354,7 +355,7 @@ extern fn __tcp_split_reader(stream: &mut tcp.StreamOwner) @suspends -> tcp.Read
 extern fn __tcp_split_writer(stream: &mut tcp.StreamOwner) @suspends -> tcp.WriterOwner
 extern fn __tcp_read_half(reader: &mut tcp.ReaderOwner, limit: UInt64, error: &mut UInt64) @suspends -> Array<UInt8>
 extern fn __tcp_write_all_half(writer: &mut tcp.WriterOwner, bytes: Array<UInt8>, error: &mut UInt64) @suspends -> UInt64
-extern fn __tcp_write_half(writer: &mut tcp.WriterOwner, bytes: Array<UInt8>, error: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_write_half(writer: &mut tcp.WriterOwner, bytes: &Slice<UInt8>, error: &mut UInt64) @suspends -> UInt64
 extern fn __tcp_reader_addr(reader: &mut tcp.ReaderOwner, peer: UInt64, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
 extern fn __tcp_writer_addr(writer: &mut tcp.WriterOwner, peer: UInt64, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
 extern fn __tcp_shutdown_reader(reader: &mut tcp.ReaderOwner) @suspends -> UInt64
@@ -384,8 +385,8 @@ impl TcpStream {
         let bytes = __tcp_read(&mut self.owner, limit, &mut error)
         if error == 0 { Ok(bytes) } else { Err(IoError { code: error }) }
     }
-    // Consumes a bounded byte snapshot; success may report only a prefix.
-    pub fn write(&mut self, bytes: Array<UInt8>) @suspends -> Result<UInt64, IoError> {
+    // Snapshots the borrowed byte range; success may report only a prefix.
+    pub fn write(&mut self, bytes: &Slice<UInt8>) @suspends -> Result<UInt64, IoError> {
         var error: UInt64 = 0
         let count = __tcp_write(&mut self.owner, bytes, &mut error)
         if error == 0 { Ok(count) } else { Err(IoError { code: error }) }
@@ -433,7 +434,7 @@ impl TcpReader {
     }
 }
 impl TcpWriter {
-    pub fn write(&mut self, bytes: Array<UInt8>) @suspends -> Result<UInt64, IoError> {
+    pub fn write(&mut self, bytes: &Slice<UInt8>) @suspends -> Result<UInt64, IoError> {
         var error: UInt64 = 0
         let count = __tcp_write_half(&mut self.owner, bytes, &mut error)
         if error == 0 { Ok(count) } else { Err(IoError { code: error }) }

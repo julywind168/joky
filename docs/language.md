@@ -7012,18 +7012,18 @@ CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本�
 | `stream.split()` | 消费完整连接，返回 `(TcpReader, TcpWriter)` |
 | `listener.local_addr()` / `stream.local_addr()` / `stream.peer_addr()` | `Result<Address, IoError>` |
 | `stream.read(limit: UInt64)` | `Result<Array<UInt8>, IoError>` |
-| `stream.write(bytes: Array<UInt8>)` | `Result<UInt64, IoError>` |
+| `stream.write(bytes: &Slice<UInt8>)` | `Result<UInt64, IoError>` |
 | `stream.write_all(bytes: Array<UInt8>)` | `Result<Unit, IoError>`；写完全部输入或返回错误 |
 | `stream.shutdown(Shutdown.Read/Write/Both)` | `Result<Unit, IoError>`；保留拥有者和未关闭方向 |
 | `stream.close()` / `listener.close()` | 消费拥有者，返回 `Result<Unit, IoError>` |
 
 read 的 limit 必须在 1..=1048576；超过限制或零上限返回 `Err(InvalidInput)`。
 `Ok` 最多返回 limit 字节；正上限下的空 `Ok` 表示 EOF。读取任意字节，不隐式验证 UTF-8。
-write 消费数组并复制独立宿主快照，单次最多 1 MiB；过大返回 InvalidInput，空数组返回 `Ok(0)`。
-非空成功返回实际写入的正字节数，允许只写入前缀；调用方必须保留或重建未写入的后缀。
-write_all 同样消费最多 1 MiB 的数组，空输入直接 `Ok({})`，过大返回 InvalidInput。
-它在库层保留原数组与偏移，每次复制最多 16 KiB 的后缀交给 write，按实际写入量推进，
-有剩余数据时显式让出执行机会；输入、临时分块与宿主快照同时计入存储峰值。
+write 借用字节切片并为本次请求复制该范围的宿主快照，单次最多 1 MiB；过大返回 InvalidInput。
+可写连接接受空切片并返回 `Ok(0)`。非空成功返回已写入的正字节数。短写后原缓冲区仍由调用方持有，
+可用 `bytes.slice(offset, end)` 继续提交同一段的后缀，每次仅按成功返回的计数推进 offset。
+write_all 消费最多 1 MiB 的数组，空输入直接 `Ok({})`，过大返回 InvalidInput。
+它保留拥有型输入，运行时按已写偏移分块发送。
 错误或取消可能留下已发送前缀，接口不返回该前缀长度；不能盲目重发整个输入。
 取消释放独占借用，连接可继续使用，但应用协议须自行处理不完整消息，必要时关闭连接。
 读满指定长度、分隔符与行读取见下文 BufferedTcp。
@@ -7062,7 +7062,7 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 
 | 接收端 | 发送端 |
 | --- | --- |
-| `reader.read(limit)` → `Result<Array<UInt8>, IoError>` | `writer.write(bytes)` → `Result<UInt64, IoError>` |
+| `reader.read(limit)` → `Result<Array<UInt8>, IoError>` | `writer.write(bytes: &Slice<UInt8>)` → `Result<UInt64, IoError>` |
 | — | `writer.write_all(bytes)` → `Result<Unit, IoError>` |
 | — | `writer.write_message(bytes, limit)` → `Result<Unit, IoError>`；四字节大端头与有界载荷 |
 | `reader.local_addr()` / `peer_addr()` → `Result<Address, IoError>` | `writer.local_addr()` / `peer_addr()` → `Result<Address, IoError>` |
@@ -7202,7 +7202,7 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | --- | --- |
 | `fs.open(path: String, options: fs.OpenOptions) @suspends` | `Result<File, IoError>` |
 | `file.read(&mut self, limit: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
-| `file.write(&mut self, bytes: Array<UInt8>) @suspends` | `Result<UInt64, IoError>` |
+| `file.write(&mut self, bytes: &Slice<UInt8>) @suspends` | `Result<UInt64, IoError>` |
 | `file.read_all(&mut self) @suspends` | `Result<Array<UInt8>, IoError>` |
 | `file.read_all_limited(&mut self, max_bytes: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
 | `file.write_all(&mut self, bytes: Array<UInt8>) @suspends` | `Result<Unit, WriteError>` |
@@ -7221,8 +7221,10 @@ truncate 仅可用于 write，不能与 create_new 同用。create 不隐式截�
 
 `SeekFrom` 为 `Start(UInt64)`、`Current(Int64)`、`End(Int64)`。定位返回绝对字节位置。
 路径是非空 UTF-8 String，最多 4096 字节，拒绝 NUL。read 上限为 1–1048576；
-返回空数组表示 EOF，允许短读。write 消费输入数组，最多 1 MiB，允许部分写入；
-空写返回 0，非空零进度返回 WriteZero。失败也不还原输入，不保证没有部分副作用。
+返回空数组表示 EOF，允许短读。write 借用输入切片，单次快照最多 1 MiB，超限返回 LimitExceeded。
+原 `file.write(bytes)` 调用可改为 `file.write(bytes.slice(0, bytes.len()))`；文本可直接传 `text.bytes()`。
+成功短写后可从同一缓冲区按已确认偏移继续写。合法空写返回 0，非空零进度返回 WriteZero。
+错误或取消可能留下部分文件内容，缓冲区所有权不能用来判断应重试的文件位置。
 close 消费 File；自动清理仅安排后台关闭，需要观察错误时显式 close。
 
 `IoError` 拥有 `kind: ErrorKind` 和 `message: String`。ErrorKind 包括 Unsupported、

@@ -68,10 +68,11 @@ impl FileHandle for File {
                 _ => {}
             }
         }
-        let size = if matches!(
-            self.path.as_str(),
-            "write_short" | "write_zero" | "write_busy" | "write_error"
-        ) {
+        let size = if (self.path == "write_partial" && self.calls == 1)
+            || matches!(
+                self.path.as_str(),
+                "write_short" | "write_zero" | "write_busy" | "write_error"
+            ) {
             bytes.len().min(3)
         } else {
             bytes.len()
@@ -96,6 +97,10 @@ impl FileHandle for File {
             "write_short" => {
                 assert_eq!(self.bytes, "你好🙂\0\r\n".as_bytes());
                 assert_eq!(self.calls, 5);
+            }
+            "write_partial" => {
+                assert_eq!(self.bytes, [0, 255, 42, 0, 1, 2]);
+                assert_eq!(self.calls, 2);
             }
             "write_large" => {
                 assert_eq!(self.bytes, large());
@@ -134,5 +139,5 @@ pub fn suite(run: impl FnOnce(FileService) -> u64) {
         std::thread::yield_now();
     }
     assert_eq!(service.usage(), Some((0, 0, 0)));
-    assert_eq!(host.completed.lock().unwrap().len(), 25);
+    assert_eq!(host.completed.lock().unwrap().len(), 26);
 }
