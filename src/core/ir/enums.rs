@@ -90,7 +90,10 @@ impl FunctionPlan {
 
         let ty = Type::Enum(enumeration.clone());
         let context = self.generics.borrow();
-        if context.members.method(&ty, &variant).is_some()
+        if context
+            .members
+            .method(&ty, &variant, self.definition_scope.as_deref())
+            .is_some()
             || context.members.constants.iter().any(|c| {
                 c.owner
                     .target()

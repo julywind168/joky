@@ -1,6 +1,6 @@
 # 语言核心审查修复计划
 
-状态：2026-11-03 审查结论，K0、K1-1、K1-2 以及 K2-1、K2-2 已修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；其余 K2–K4 项待实施；D 节为待决策设计项，未经确认不实施。
+状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 待实施；D 节为待决策设计项，未经确认不实施。
 
 本文来自一次针对语言核心（前端、类型、所有权/借用、挂起与结构化并发）的实测审查：
 约 500 个探针程序，在 JIT、解释器、AOT 三后端上对比。下列问题均已用最小程序复现，
@@ -295,7 +295,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K2-9 | 已修复 | `fix: reborrow referenced fields in suspending functions` | 三后端均验证挂起后独占投影写入，共享前端继续拒绝重叠的独占借用。 |
 | K2-10 | 已修复（零捕获） | `fix: infer capture-free callbacks in suspending callers` | 三后端运行无捕获 map 回调，借用捕获仍受原限制且诊断提示 move。未放宽有捕获闭包的活跃区间。 |
 | K2-11 | 已修复 | `fix: prepare suspending closure calls for concurrent branches` | 三后端执行 race 和 join，拒绝 FnOnce 重复使用，挂起闭包取消穷举通过。 |
-| K2 其余项 | 待实施 | | |
+| K2-12 | 已修复 | `fix: scope overlapping private members to their defining modules` | 三后端验证模块私有方法和依赖私有常量的解析，同模块重复和公开冲突仍拒绝。另跑常量测试 19 项、源模块可见性测试 6 项通过。 |
 | K3 | 待设计 | | |
 | K4 | 待实施 | | |
 | D1–D8 | 待决策 | | |

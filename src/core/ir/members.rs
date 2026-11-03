@@ -27,6 +27,7 @@ pub(super) enum ConstantOwner {
 }
 
 pub(super) struct ConstMember {
+    pub key: String,
     pub owner: ConstantOwner,
     pub parameters: Vec<Arc<crate::core::types::TypeParameter>>,
     pub declaration: AssociatedConst,
@@ -100,6 +101,7 @@ pub(super) struct Members {
     pub constants_by_key: HashMap<String, Rc<ConstMember>>,
     pub functions: HashSet<String>,
     pub private: HashSet<String>,
+    scoped_names: HashSet<String>,
 }
 
 impl Members {
@@ -117,7 +119,46 @@ impl Members {
                 .collect(),
             ..Self::default()
         };
-        let mut names = HashSet::new();
+        // A public spelling still has one global declaration. Private spellings
+        // can overlap only when the defining modules are distinct.
+        let mut owners = HashMap::<String, HashSet<Option<&str>>>::new();
+        for implementation in module
+            .implementations
+            .iter()
+            .filter(|i| i.trait_name.is_none())
+        {
+            let module_name = implementation
+                .scope
+                .as_ref()
+                .map_or("", |s| s.module_name.as_str());
+            for (member, public, span) in implementation
+                .methods
+                .iter()
+                .map(|f| (&f.name, f.public, f.span))
+                .chain(
+                    implementation
+                        .constants
+                        .iter()
+                        .map(|c| (&c.name, c.public, c.span)),
+                )
+            {
+                let key = format!("{}.{member}", implementation.target_name);
+                let scopes = owners.entry(key.clone()).or_default();
+                if !scopes.is_empty() && (public || scopes.contains(&None))
+                    || !scopes.insert((!public).then_some(module_name))
+                    || matches!(&implementation.target, Type::Enum(e) if e.variants.iter().any(|v| v.name == *member))
+                {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::DuplicateDefinition,
+                        format!("Duplicate associated member `{key}`"),
+                    ));
+                }
+                if scopes.len() > 1 {
+                    members.scoped_names.insert(key);
+                }
+            }
+        }
         for implementation in &module.implementations {
             let target = &implementation.target;
             validate_nominal_type(target, nominals, &implementation.span)?;
@@ -125,22 +166,6 @@ impl Members {
                 continue;
             }
             let name = &implementation.target_name;
-            for (member, span) in implementation
-                .methods
-                .iter()
-                .map(|f| (&f.name, f.span))
-                .chain(implementation.constants.iter().map(|c| (&c.name, c.span)))
-            {
-                if !names.insert((name.clone(), member.clone()))
-                    || matches!(target, Type::Enum(e) if e.variants.iter().any(|v| v.name == *member))
-                {
-                    return Err(type_error(
-                        &span,
-                        ErrorCode::DuplicateDefinition,
-                        format!("Duplicate associated member `{name}.{member}`"),
-                    ));
-                }
-            }
             for definition in &implementation.methods {
                 let receiver = definition
                     .params
@@ -162,7 +187,10 @@ impl Members {
                         "Invalid self parameter",
                     ));
                 }
-                let function = format!("{name}.{}", definition.name);
+                let function = members.scoped_key(
+                    format!("{name}.{}", definition.name),
+                    definition.scope.as_deref(),
+                );
                 if definition.scope.is_some() && !definition.public {
                     members.private.insert(function.clone());
                 }
@@ -197,12 +225,15 @@ impl Members {
                         "Associated constants currently require a numeric or Bool type",
                     ));
                 }
+                let key = members.scoped_key(
+                    member_key(target, &declaration.name),
+                    declaration.scope.as_deref(),
+                );
                 if declaration.scope.is_some() && !declaration.public {
-                    members
-                        .private
-                        .insert(member_key(target, &declaration.name));
+                    members.private.insert(key.clone());
                 }
                 members.constants.push(Rc::new(ConstMember {
+                    key,
                     owner: ConstantOwner::Associated(target.clone()),
                     parameters: implementation.type_params.clone(),
                     declaration: declaration.clone(),
@@ -236,6 +267,7 @@ impl Members {
                 ));
             }
             members.constants.push(Rc::new(ConstMember {
+                key: owner.key(&declaration.name),
                 owner,
                 parameters: Vec::new(),
                 declaration: AssociatedConst {
@@ -250,19 +282,47 @@ impl Members {
             }));
         }
         for constant in &members.constants {
-            members.constants_by_key.insert(
-                constant.owner.key(&constant.declaration.name),
-                constant.clone(),
-            );
+            members
+                .constants_by_key
+                .insert(constant.key.clone(), constant.clone());
         }
         super::traits::collect(&mut members, module, types)?;
         Ok(members)
     }
 
-    pub fn method(&self, ty: &Type, name: &str) -> Option<&Method> {
-        self.methods
-            .iter()
-            .find(|m| m.trait_id.is_none() && same_owner(&m.target, ty) && m.name == name)
+    pub(super) fn scoped_key(
+        &self,
+        key: String,
+        scope: Option<&crate::core::imports::DefinitionScope>,
+    ) -> String {
+        if self.scoped_names.contains(&key) {
+            if let Some(scope) = scope {
+                return format!("joky/private/{}/{key}", scope.module_name);
+            }
+        }
+        key
+    }
+
+    pub fn method(
+        &self,
+        ty: &Type,
+        name: &str,
+        scope: Option<&crate::core::imports::DefinitionScope>,
+    ) -> Option<&Method> {
+        let scoped = if self.scoped_names.is_empty() {
+            None
+        } else {
+            let key = member_key(ty, name);
+            self.scoped_names
+                .contains(&key)
+                .then(|| self.scoped_key(key, scope))
+        };
+        self.methods.iter().find(|m| {
+            m.trait_id.is_none()
+                && same_owner(&m.target, ty)
+                && m.name == name
+                && scoped.as_ref().is_none_or(|key| key == &m.function)
+        })
     }
 }
 
@@ -339,15 +399,17 @@ impl FunctionPlan {
             return Ok(None);
         }
         let context = self.generics.borrow();
+        let key = context
+            .members
+            .scoped_key(member_key(&ty, name), self.definition_scope.as_deref());
         let constant = context
             .members
-            .constants
-            .iter()
-            .find(|c| {
+            .constants_by_key
+            .get(&key)
+            .filter(|c| {
                 c.owner
                     .target()
                     .is_some_and(|target| same_owner(target, &ty))
-                    && c.declaration.name == *name
             })
             .cloned();
         if let Some(c) = &constant {
@@ -540,7 +602,7 @@ impl FunctionPlan {
         let inherent = if selected_trait.is_none() {
             context
                 .members
-                .method(&ty, name)
+                .method(&ty, name, self.definition_scope.as_deref())
                 .filter(|_| self.member_visible(&ty, name))
         } else {
             None
@@ -562,7 +624,7 @@ impl FunctionPlan {
                     let state = handle.arguments[0].as_type().expect("domain state type");
                     if let Some(method) = context
                         .members
-                        .method(state, name)
+                        .method(state, name, self.definition_scope.as_deref())
                         .filter(|_| self.member_visible(state, name))
                     {
                         let Some(Receiver::Borrowed { mutable }) = method.receiver else {

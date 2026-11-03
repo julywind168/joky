@@ -15,7 +15,7 @@ pub(super) fn validate_all(
         .constants
         .iter()
         .enumerate()
-        .map(|(index, constant)| (constant.owner.key(&constant.declaration.name), index))
+        .map(|(index, constant)| (constant.key.clone(), index))
         .collect();
     let mut edges = vec![Vec::new(); members.constants.len()];
     for (index, constant) in members.constants.iter().enumerate() {
@@ -87,9 +87,10 @@ pub(super) fn validate_all(
                             || !members.private.contains(&key),
                             |scope| scope.members.contains(&key),
                         );
+                    let scoped = members.scoped_key(key.clone(), context.map(AsRef::as_ref));
                     let dependency =
                         names
-                            .get(&key)
+                            .get(&scoped)
                             .copied()
                             .filter(|_| visible)
                             .ok_or_else(|| {
@@ -155,11 +156,7 @@ fn evaluate(
     generics: Rc<std::cell::RefCell<generics::GenericContext>>,
 ) -> Result<Expr, Error> {
     let declaration = &constant.declaration;
-    let name = format!(
-        "{}.<const:{}>",
-        constant.owner.key(&declaration.name),
-        declaration.name
-    );
+    let name = format!("{}.<const:{}>", constant.key, declaration.name);
     let definition = FnDef {
         every: None,
         kind: crate::parser::ast::FunctionKind::Ordinary,

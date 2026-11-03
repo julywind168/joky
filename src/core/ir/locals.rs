@@ -54,7 +54,7 @@ impl BorrowedLocals {
                             let selected = context.members.trait_calls.borrow().get(span).copied();
                             let inherent = context
                                 .members
-                                .method(ty, name)
+                                .method(ty, name, plan.definition_scope.as_deref())
                                 .filter(|_| selected.is_none() && plan.member_visible(ty, name));
                             let method = inherent.or_else(|| {
                                 context

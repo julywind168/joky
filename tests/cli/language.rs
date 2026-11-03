@@ -3550,3 +3550,52 @@ fn concurrent_call_branches_accept_suspending_closures() {
     );
     failure(&work.cli(&["check", "calls.jk"]), "moved");
 }
+
+#[test]
+#[cfg(unix)]
+fn private_primitive_members_resolve_in_their_defining_module() {
+    let work = Workspace::new();
+    for (module, n) in [("a", 20), ("b", 22)] {
+        work.write(
+            &format!("lib/{module}.jk"),
+            &format!(
+                "
+            impl Int32 {{
+                const BASE: Int32 = {n}
+                const VALUE: Int32 = Int32.BASE
+                fn twice(self) -> Int32 {{ self + Int32.VALUE }}
+            }}
+            pub fn run() -> Int32 {{ let n = 0; n.twice() }}
+        "
+            ),
+        );
+    }
+    work.write(
+        "private.jk",
+        "import lib/a\nimport lib/b\nfn main() { println(a.run() + b.run()) }",
+    );
+    work.assert_all_backends("private.jk", &[], b"42\n", 0);
+    work.write(
+        "private.jk",
+        "import lib/a\nimport lib/b\nfn main() { let n = 0; println(n.twice()) }",
+    );
+    failure(&work.cli(&["check", "private.jk"]), "no method");
+    for module in ["a", "b"] {
+        work.write(
+            &format!("lib/{module}.jk"),
+            "impl Int32 { pub fn twice(self) -> Int32 { self + self } }",
+        );
+    }
+    failure(
+        &work.cli(&["check", "private.jk"]),
+        "Duplicate associated member",
+    );
+    work.write(
+        "private.jk",
+        "impl Int32 { fn twice(self) {} } impl Int32 { fn twice(self) {} } fn main() {}",
+    );
+    failure(
+        &work.cli(&["check", "private.jk"]),
+        "Duplicate associated member",
+    );
+}
