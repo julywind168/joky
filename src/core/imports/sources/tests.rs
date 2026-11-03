@@ -54,6 +54,8 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "set",
             "slice",
             "slice_mut",
+            "sort",
+            "sort_by",
             "swap",
             "swap_remove",
             "take_last",

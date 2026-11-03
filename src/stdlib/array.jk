@@ -3,6 +3,8 @@
 import joky/internal/buffer.{type Buffer}
 import joky/clone as cloning.{type Clone}
 import joky/eq.{type BorrowEq}
+import joky/ord.{type Ord}
+import joky/mem
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
@@ -56,6 +58,7 @@ impl<T> Array<T> {
     pub fn truncate(&mut self, length: UInt64) { truncate(self, length) }
     pub fn clear(&mut self) { clear(self) }
     pub fn swap(&mut self, first: UInt64, second: UInt64) -> Bool { swap(self, first, second) }
+    pub fn sort_by<F: Fn(&T, &T) @noescape -> Int32>(&mut self, compare: F) { sort_by(self, compare) }
     pub fn push(&mut self, value: T) { push(self, value) }
     pub fn pop(&mut self) -> Option<T> { pop(self) }
     pub fn swap_remove(&mut self, index: UInt64) -> Option<T> { swap_remove(self, index) }
@@ -246,4 +249,57 @@ impl<T> iteration.SharedSource for Array<T> {
 impl<T> iteration.ExclusiveSource for Array<T> {
     type Item = T
     fn exclusive_cursor(&mut self) -> &mut Iter<T> { iter_mut(self) }
+}
+
+impl<T: Ord> Array<T> {
+    pub fn sort(&mut self) { sort(self) }
+}
+pub fn sort<T: Ord>(values: &mut Array<T>) {
+    sort_by(values, |left, right| { Ord.cmp(left, right) })
+}
+
+// Each pass stably merges runs of original indices. All comparisons finish
+// before the first payload swap, including when the comparator fails.
+pub fn sort_by<T, F: Fn(&T, &T) @noescape -> Int32>(values: &mut Array<T>, compare: F) {
+    let size = values.len()
+    if size < 2 { return }
+    var order = with_capacity::<UInt64>(size)
+    var scratch = with_capacity::<UInt64>(size)
+    for index in uint64(0)..size { order.push(index) }
+    var width: UInt64 = 1
+    while width < size {
+        scratch.clear()
+        var start: UInt64 = 0
+        while start < size {
+            let middle = if size - start < width { size } else { start + width }
+            let end = if size - middle < width { size } else { middle + width }
+            var left = start
+            var right = middle
+            while left < middle || right < end {
+                if right == end || (left < middle && compare(values.borrow_ref(order[left]), values.borrow_ref(order[right])) <= 0) {
+                    scratch.push(order[left])
+                    left += 1
+                } else {
+                    scratch.push(order[right])
+                    right += 1
+                }
+            }
+            start = end
+        }
+        mem.swap(&mut order, &mut scratch)
+        width += width
+    }
+
+    // order[destination] names its original source. Walk each cycle once,
+    // marking fixed positions so that even owning elements only move by swap.
+    for start in uint64(0)..size {
+        var position = start
+        while order[position] != start {
+            let source = order[position]
+            values.swap(position, source)
+            order[position] = position
+            position = source
+        }
+        order[position] = position
+    }
 }

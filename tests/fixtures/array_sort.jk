@@ -1,0 +1,82 @@
+import joky/array.{type Array}
+import joky/ord.{type Ord}
+import joky/drop.{type Drop}
+import joky/task
+import joky/integer
+import joky/float
+import joky/check.{assert}
+import joky/io.{println}
+
+struct Row { key: Int32, label: String }
+impl Ord for Row {
+    fn cmp(&self, other: &Self) @noescape -> Int32 { Ord.cmp(&self.key, &other.key) }
+}
+impl Drop for Row {
+    fn drop(&mut self) { println(&self.label) }
+}
+
+fn extrema<T: Ord>(low: T, high: T) {
+    var pair = [high, low]
+    pair.sort()
+    assert(Ord.cmp(pair.borrow_ref(0), pair.borrow_ref(1)) < 0, "integer extrema")
+}
+
+fn nan_last(a: &Float64, b: &Float64) @noescape -> Int32 {
+    if (*a).is_nan() { if (*b).is_nan() { 0 } else { 1 } }
+    else if (*b).is_nan() || *a < *b { -1 }
+    else if *a > *b { 1 } else { 0 }
+}
+
+fn abort_after_first_run(a: &Int32, b: &Int32) @noescape -> Int32 {
+    assert(*a != 4, "comparison failed")
+    Ord.cmp(a, b)
+}
+
+fn main() @suspends {
+    extrema(Int8.MIN, Int8.MAX)
+    extrema(Int16.MIN, Int16.MAX)
+    extrema(Int32.MIN, Int32.MAX)
+    extrema(Int64.MIN, Int64.MAX)
+    extrema(UInt8.MIN, UInt8.MAX)
+    extrema(UInt16.MIN, UInt16.MAX)
+    extrema(UInt32.MIN, UInt32.MAX)
+    extrema(UInt64.MIN, UInt64.MAX)
+
+    var empty = Array.new::<String>()
+    empty.sort()
+    empty.push("only")
+    empty.sort()
+    assert(empty.len() == 1, "singleton")
+    var floats = [Float64.NAN, 1.0, -1.0]
+    floats.sort_by(nan_last)
+    assert(floats[0] == -1.0 && floats[1] == 1.0 && floats[2].is_nan(), "explicit NaN order")
+    var words = ["é", "z", "a\0", "", "a", "中", "a"]
+    array.sort(&mut words)
+    assert(words[0] == "" && words[1] == "a" && words[2] == "a" && words[3] == "a\0" &&
+        words[4] == "z" && words[5] == "é" && words[6] == "中", "UTF-8 byte order")
+
+    var rows = [
+        Row { key: 2, label: "A" }, Row { key: 1, label: "B" }, Row { key: 2, label: "C" },
+        Row { key: 1, label: "D" }, Row { key: 3, label: "E" }
+    ]
+    let capacity = rows.capacity()
+    rows.sort()
+    assert(rows[0].label == "B" && rows[1].label == "D" && rows[2].label == "A" &&
+        rows[3].label == "C" && rows[4].label == "E", "stable natural order")
+    descending(&mut rows)
+    assert(rows.capacity() == capacity, "preserve capacity")
+    println("sorted")
+    rows.clear()
+
+    var original = [2, 1, 4, 3]
+    let loan = &mut original
+    let failure = isolate { loan.sort_by(abort_after_first_run) }
+    assert(failure.is_err(), "comparator failure")
+    assert(original[0] == 2 && original[1] == 1 && original[2] == 4 && original[3] == 3,
+        "failed comparison preserves original order")
+}
+
+fn descending(rows: &mut Array<Row>) {
+    let direction = -1
+    array.sort_by(rows, |a, b| { direction * Ord.cmp(a, b) })
+}

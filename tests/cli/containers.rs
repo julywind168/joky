@@ -588,6 +588,22 @@ fn ordered_arrays_run_and_build_with_owned_elements() {
 
 #[test]
 #[cfg(unix)]
+fn array_sort_is_stable_and_preserves_owners_on_all_backends() {
+    let work = Workspace::new();
+    work.write("sort.jk", include_str!("../fixtures/array_sort.jk"));
+    work.assert_all_backends("sort.jk", &["--no-prelude"], b"sorted\nD\nB\nC\nA\nE\n", 0);
+    work.write(
+        "float.jk",
+        "fn bad() { var values = [1.0, 0.0]; values.sort() }",
+    );
+    failure(
+        &work.cli(&["check", "float.jk"]),
+        "does not satisfy trait bound 'joky/ord.Ord'",
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn array_management_runs_and_builds_with_owned_elements() {
     let work = Workspace::new();
     work.write(

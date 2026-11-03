@@ -939,6 +939,18 @@ fn answer() -> Int32 {
 | `truncate(&mut Array<T>, UInt64)` | 保留指定长度的前缀，逆序析构尾部；长度不增加，容量不变 |
 | `clear(&mut Array<T>)` | 清空所有元素，保留容量 |
 | `swap(&mut Array<T>, UInt64, UInt64) -> Bool` | 交换两个有效位置，长度/容量不变；任一索引越界返回 false，不修改数组 |
+| `sort(&mut Array<T>)` | T 实现 Ord 时，按自然顺序稳定升序排列 |
+| `sort_by(&mut Array<T>, compare)` | 按同步比较器的顺序稳定排列，比较器借用两个元素 |
+
+两种排序都修改原数组并返回 Unit，保留长度和容量。比较结果为负数、零、正数分别表示左项在前、
+两项等价、右项在前；等价项保留输入次序。比较器应给出一致的顺序。
+`sort_by` 接受 `Fn(&T, &T) @noescape -> Int32`，支持函数和只读捕获闭包，元素沿用
+`borrow_ref` 的资格。默认的 `sort()` 使用 `joky/ord.Ord` 的
+`cmp(&self, other: &Self) @noescape -> Int32`。八种整数按数值排序，String 按 UTF-8 字节字典序排序，
+公共前缀相同则较短的字符串在前。用户类型可实现 Ord；浮点数使用 `sort_by` 自行指定 NaN 的顺序。
+
+排序先对下标做稳定归并，再按排列交换元素。最坏比较次数为 O(n log n)，辅助下标空间为 O(n)，
+元素交换次数为 O(n)，无需 Clone 或 Copy。比较器报错时原数组仍保持排序前的顺序。
 
 - `extend_bytes` 要求 start <= end <= 源切片长度，非法范围终止任务并报告运行时错误；
   空区间不改变长度。源保持只读，源切片不能同时借用目标数组；借用检查器拒绝冲突。
