@@ -313,7 +313,9 @@ impl LayoutContext {
                 record
                     .fields
                     .iter()
-                    .map(|f| member(&f.ty, &mut builder))
+                    .map(|f| &f.ty)
+                    .chain(record.drop_anchor())
+                    .map(|ty| member(ty, &mut builder))
                     .collect::<Result<_, _>>()?,
             ),
             Type::Tuple(tuple) => MemoryLayoutShape::Tuple(
@@ -448,8 +450,14 @@ impl Type {
             }
             match (ty, &layout.shape) {
                 (Type::Record(record), MemoryLayoutShape::Record(fields)) => {
-                    for (field, location) in record.fields.iter().zip(fields) {
-                        visit(context, &field.ty, base + location.offset, out)?;
+                    for (ty, location) in record
+                        .fields
+                        .iter()
+                        .map(|f| &f.ty)
+                        .chain(record.drop_anchor())
+                        .zip(fields)
+                    {
+                        visit(context, ty, base + location.offset, out)?;
                     }
                 }
                 (Type::Tuple(tuple), MemoryLayoutShape::Tuple(fields)) => {

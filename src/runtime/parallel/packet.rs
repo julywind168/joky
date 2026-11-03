@@ -77,12 +77,17 @@ impl Shape {
                     );
                     Shape::Product(fields)
                 }
-                Type::Record(r) if !r.indirect && r.closure.is_none() => Shape::Product(
-                    r.fields
+                Type::Record(r) if !r.indirect && r.closure.is_none() => {
+                    let mut fields = r
+                        .fields
                         .iter()
                         .map(|f| build(&f.ty, depth + 1))
-                        .collect::<Result<_, _>>()?,
-                ),
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if r.drop_anchor().is_some() {
+                        fields.push(Shape::EmptyOwner);
+                    }
+                    Shape::Product(fields)
+                }
                 Type::Enum(e) if !e.indirect && !e.variants.is_empty() => Shape::Sum(
                     e.variants
                         .iter()

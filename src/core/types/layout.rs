@@ -80,6 +80,38 @@ pub(super) fn resolve<'a>(
         .chain(module.enums.iter().map(Declaration::Enum))
         .chain(module.type_aliases.iter().map(Declaration::Alias))
         .collect();
+    let drop_trait = module
+        .traits
+        .iter()
+        .find(|d| d.is_drop)
+        .map(|d| d.self_parameter.id);
+    let drop_targets: HashSet<_> = module
+        .implementations
+        .iter()
+        .filter_map(|implementation| {
+            let scope = implementation
+                .scope
+                .as_ref()
+                .map(|s| s.imports.as_ref())
+                .or(module.scope.as_deref())?;
+            let binding = scope.traits.get(implementation.trait_name.as_ref()?)?;
+            if Some(binding.id) != drop_trait {
+                return None;
+            }
+            implementation
+                .target
+                .nominal()
+                .map(|(_, id)| id)
+                .or_else(|| scope.types.get(&implementation.target_name)?.declaration)
+                .or_else(|| {
+                    module
+                        .records
+                        .iter()
+                        .find(|r| r.name == implementation.target_name)
+                        .map(|r| r.id)
+                })
+        })
+        .collect();
     let mut names = HashMap::new();
     for (index, &declaration) in declarations.iter().enumerate() {
         let name = declaration.name();
@@ -162,6 +194,7 @@ pub(super) fn resolve<'a>(
     for (name, &index) in &names {
         let definition = match declarations[index] {
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                custom_drop: drop_targets.contains(&d.id),
                 array: d.array,
                 list: d.list,
                 map: d.map,
@@ -531,6 +564,7 @@ pub(super) fn resolve<'a>(
                     }
                     let owners = record_owners(&fields, record.span)?;
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                        custom_drop: drop_targets.contains(&record.id),
                         array: record.array,
                         list: record.list,
                         map: record.map,

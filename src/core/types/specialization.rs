@@ -201,13 +201,38 @@ impl TypeRegistry {
                 offset,
             });
         }
+        let mut owners = layout::record_owners(&fields, crate::Span::empty(0))?;
+        if template.custom_drop
+            && !fields.iter().any(|f| f.ty.is_owner())
+            && !fields.iter().any(|f| f.ty.contains_fixed_array())
+        {
+            if fields
+                .iter()
+                .any(|f| !f.ty.is_copy_storage_value() || f.ty.contains_references())
+            {
+                return Err(error(
+                    ErrorCode::TypeMismatch,
+                    "Drop record fields must be owners or reference-free Copy data",
+                ));
+            }
+            let element = Arc::new(Type::Unit);
+            layout::extend_layout(
+                &mut scalars,
+                &mut depth,
+                &Type::Buffer(element.clone()),
+                crate::Span::empty(0),
+                "Record",
+            )?;
+            owners.push(element);
+        }
         let instance = Arc::new(RecordType {
+            custom_drop: template.custom_drop,
             array: template.array,
             list: template.list,
             map: template.map,
             set: template.set,
             closure: None,
-            owners: layout::record_owners(&fields, crate::Span::empty(0))?,
+            owners,
             repr_c: template.repr_c,
             indirect: false,
             id: template.id,

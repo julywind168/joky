@@ -287,6 +287,12 @@ impl FunctionPlan {
                         self.emit(Op::Copy(dst, src));
                     }
                 }
+                if let Type::Record(record) = &result.ty {
+                    if record.drop_anchor().is_some() {
+                        let anchor = result.scalars().last().unwrap();
+                        self.emit(Op::Literal(anchor, Constant::NullPtr));
+                    }
+                }
                 if result.ty.is_owner() {
                     self.register_owner(result.clone(), None);
                 }

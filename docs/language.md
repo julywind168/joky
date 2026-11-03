@@ -2318,6 +2318,8 @@ impl Drop for Resource {
 - 先运行自身 drop，再按字段声明顺序递归清理拥有字段；每个字段的 drop 完成后释放其缓冲区的载荷与控制块。
   未实现 Drop 的 Array 和包装记录仍自动释放存储，不需要手动调用 release。
 - Drop 仅适用于拥有记录：一个或多个拥有字段加无引用 Copy 元数据；可写无条件泛型 impl，
+  通过检查的泛型 Drop 记录在所有具体实例上都保留拥有语义。即使字段全部实例化为 Copy 数据，
+  整个记录仍按值移动，不满足 Copy 约束，也不能传给 alloc 或 Arena.alloc；在作用域和数组中都执行析构。
   枚举本身暂不能实现 Drop，但其当前变体的拥有载荷按原规则清理。
   不接受 Copy 类型或附加 trait 约束的条件 Drop。用户自定义的同名 trait 仍是普通 trait。
 - drop 必须是同步 `fn drop(&mut self)`，不能显式调用或取得其函数值。

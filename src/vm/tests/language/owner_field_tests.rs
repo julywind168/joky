@@ -36,6 +36,8 @@ fn owner_fields_preserve_values_and_cleanup_order() {
             ("fields_extract_failure", true, vec![1, 2, 3]),
             ("fields_extract_original_failure", true, vec![2, 1, 3]),
             ("fields_reinitialize_failure", true, vec![2, 3, 4, 5, 6, 1]),
+            ("fields_nested_generic_drop", false, vec![0, 5, 6]),
+            ("fields_generic_drop", false, vec![3, 0, 4, 2, 1]),
             ("fields_first", false, vec![1, 2, 3]),
             ("fields_middle", false, vec![2, 1, 3]),
             ("fields_last", false, vec![3, 1, 2]),

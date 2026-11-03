@@ -158,17 +158,7 @@ impl FunctionPlan {
     }
 
     pub(crate) fn has_custom_drop(&self, ty: &Type) -> bool {
-        let context = self.generics.borrow();
-        context.members.methods.iter().any(|method| {
-            method.trait_id.is_some_and(|id| {
-                context
-                    .members
-                    .traits
-                    .definitions
-                    .iter()
-                    .any(|definition| definition.is_drop && definition.self_parameter.id == id)
-            }) && members::same_owner(&method.target, ty)
-        })
+        matches!(ty, Type::Record(record) if record.custom_drop)
     }
 
     /// Value transport never retains or invokes user-defined destructor code.
@@ -409,6 +399,9 @@ impl FunctionPlan {
                 });
             } else {
                 drop(context);
+            }
+            if record.drop_anchor().is_some() {
+                before += 1;
             }
             for field in record.fields.iter().rev().filter(|f| f.ty.is_owner()) {
                 // Rigid templates are checked but never lowered.

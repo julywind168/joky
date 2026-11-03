@@ -153,6 +153,8 @@ fn owner_fields_execute_in_standalone_native_code() {
         extern int32_t fields_extract_failure(void);
         extern int32_t fields_extract_original_failure(void);
         extern int32_t fields_reinitialize_failure(void);
+        extern int32_t fields_nested_generic_drop(void);
+        extern int32_t fields_generic_drop(void);
         extern int32_t fields_first(void);
         extern int32_t fields_middle(void);
         extern int32_t fields_last(void);
@@ -184,6 +186,8 @@ fn owner_fields_execute_in_standalone_native_code() {
                 {fields_extract_failure, 1, 3, {1, 2, 3}},
                 {fields_extract_original_failure, 1, 3, {2, 1, 3}},
                 {fields_reinitialize_failure, 1, 6, {2, 3, 4, 5, 6, 1}},
+                {fields_nested_generic_drop, 0, 3, {0, 5, 6}},
+                {fields_generic_drop, 0, 5, {3, 0, 4, 2, 1}},
                 {fields_first, 0, 3, {1, 2, 3}},
                 {fields_middle, 0, 3, {2, 1, 3}},
                 {fields_last, 0, 3, {3, 1, 2}},

@@ -762,3 +762,39 @@ fn generic_instances_are_cached_nominally_and_keep_failure_effects_internal() {
     second_names.sort();
     assert_eq!(first_names, second_names);
 }
+
+#[test]
+fn generic_drop_copy_arguments_retain_owner_restrictions() {
+    let prefix = r#"
+        import joky/drop.{type Drop as Finalize}
+        import joky/arena.{type Arena}
+        import joky/fixed_array.{type FixedArray}
+        struct W<T> { v: T }
+        impl<T> Finalize for W<T> { fn drop(&mut self) {} }
+        struct Plain { n: Int32 }
+        fn dup<T: Copy>(x: T) -> (T, T) { (x, x) }
+    "#;
+    for (body, diagnostic) in [
+        (
+            "fn bad() { let a = W { v: {} }; let c = a; let d = a }",
+            "moved",
+        ),
+        ("fn bad(a: W<Int32>) { dup::<W<Int32>>(a); }", "Copy"),
+        ("fn bad() { alloc(W { v: Plain { n: 1 } }); }", "Copy"),
+        (
+            "fn bad() { let arena = Arena.new(); arena.alloc(W { v: Some(1) }); }",
+            "Copy",
+        ),
+        (
+            "fn bad(a: W<FixedArray<Int32, 2>>) {}",
+            "FixedArray storage does not support custom Drop",
+        ),
+    ] {
+        let error = crate::core::prepared::check_source(
+            &format!("{prefix}{body}"),
+            &crate::ModuleSources::new(),
+        )
+        .unwrap_err();
+        assert!(error.message().contains(diagnostic), "{body}: {error}");
+    }
+}

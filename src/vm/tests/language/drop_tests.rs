@@ -219,19 +219,22 @@ fn drop_hooks_preserve_private_generic_definition_scope() {
         pub struct Owned<T> { id: Int32, values: Array<T> }
         impl<T> Cleanup for Owned<T> { fn drop(&mut self) { report(self.id) } }
         pub fn make<T>(id: Int32) -> Owned<T> { Owned { id: id, values: Array.new::<T>() } }
+        pub struct Tagged<T> { value: T, id: Int32 }
+        impl<T> Cleanup for Tagged<T> { fn drop(&mut self) { report(self.id) } }
+        pub fn tagged<T>(value: T) -> Tagged<T> { Tagged { value: value, id: 8 } }
     "#,
         )
         .unwrap();
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = vm(mode);
         vm.load_source_with_modules(
-            "import resource fn check() -> Int32 { let r = resource.make::<Int32>(7); 42 }",
+            "import resource fn check() -> Int32 { let r = resource.make::<Int32>(7); let s = resource.tagged(1); 42 }",
             &modules,
         )
         .unwrap_or_else(|e| panic!("{e}"));
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), vec![7]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), vec![8, 7]));
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
