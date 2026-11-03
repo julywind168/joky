@@ -14,8 +14,8 @@ use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
 use service::{FileCell, Ticket};
 pub use service::{FileHandle, FileLimits, FileService, FileSystem};
 use std::{cell::RefCell, ffi::c_void, ptr::NonNull, sync::Arc};
-pub use worker::DirectoryNames;
 use worker::{Data, Input, Packet};
+pub use worker::{DirectoryNames, FileKind, Metadata};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FsError {
@@ -106,12 +106,20 @@ pub(crate) enum Operation {
     Rename,
     RemoveFile,
     ReadDir,
+    CreateDir,
+    RemoveDir,
+    Metadata,
+    Kind,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
         "__fs_open" => Operation::Open,
         "__fs_rename" => Operation::Rename,
         "__fs_remove_file" => Operation::RemoveFile,
+        "__fs_create_dir" => Operation::CreateDir,
+        "__fs_remove_dir" => Operation::RemoveDir,
+        "__fs_metadata" => Operation::Metadata,
+        "__fs_kind" => Operation::Kind,
         "__fs_read_dir" => Operation::ReadDir,
         "__fs_read" => Operation::Read,
         "__fs_write" => Operation::Write,
@@ -134,7 +142,7 @@ impl Operation {
         self == Self::TakeBytes
     }
     pub(crate) fn scalar(self) -> bool {
-        matches!(self, Self::Code | Self::Count)
+        matches!(self, Self::Code | Self::Kind | Self::Count)
     }
     pub(crate) fn validate(self, sig: &FunctionSignature, suspends: bool) -> Result<(), Error> {
         let owner = Type::Resource("fs.FileOwner".into());
@@ -145,7 +153,11 @@ impl Operation {
         let (params, ret) = match self {
             Self::Open => (vec![Type::String, Type::UInt64], outcome),
             Self::Rename => (vec![Type::String, Type::String], outcome),
-            Self::RemoveFile | Self::ReadDir => (vec![Type::String], outcome),
+            Self::CreateDir
+            | Self::RemoveDir
+            | Self::Metadata
+            | Self::RemoveFile
+            | Self::ReadDir => (vec![Type::String], outcome),
             Self::Stdin => (vec![], outcome),
             Self::Process => (vec![Type::UInt64, Type::UInt64, Type::String], outcome),
             Self::TestInput => (vec![Type::UInt64, Type::String, Type::String], outcome),
@@ -159,7 +171,7 @@ impl Operation {
             ),
             Self::Seek => (vec![file, Type::UInt64, Type::UInt64], outcome),
             Self::Sync | Self::Close => (vec![file], outcome),
-            Self::Code | Self::Count => (vec![result], Type::UInt64),
+            Self::Code | Self::Kind | Self::Count => (vec![result], Type::UInt64),
             Self::Message => (vec![result], Type::String),
             Self::TakeFile => (vec![result], owner),
             Self::TakeBytes => (vec![result], sig.ret.clone()),
@@ -310,7 +322,14 @@ unsafe fn extract(arena: &mut Arena, frame: &CpsFrame, op: Operation) -> Result<
     if result.packet.error.is_some() {
         return Err(failure("Cannot extract a failed file result"));
     }
+    if op == Operation::Kind {
+        return match &result.packet.data {
+            Some(Data::Metadata(m)) => Ok(m.kind as u64),
+            _ => Err(failure("Expected file metadata")),
+        };
+    }
     match (op, result.packet.data.take()) {
+        (Operation::Count, Some(Data::Metadata(m))) => Ok(m.size),
         (Operation::TakeFile, Some(Data::File(file))) => {
             let service = result
                 .service
@@ -385,6 +404,7 @@ pub(crate) unsafe fn poll(
                 | Operation::Message
                 | Operation::TakeFile
                 | Operation::TakeBytes
+                | Operation::Kind
                 | Operation::Count
         ) {
             return extract(arena, frame, op).map(Some);
@@ -398,6 +418,9 @@ pub(crate) unsafe fn poll(
                     | Operation::Rename
                     | Operation::RemoveFile
                     | Operation::ReadDir
+                    | Operation::CreateDir
+                    | Operation::RemoveDir
+                    | Operation::Metadata
             ) {
                 (CURRENT.with(|s| s.borrow().clone()), None)
             } else {
@@ -413,7 +436,10 @@ pub(crate) unsafe fn poll(
                 Operation::Open
                 | Operation::Rename
                 | Operation::RemoveFile
-                | Operation::ReadDir => {
+                | Operation::ReadDir
+                | Operation::CreateDir
+                | Operation::RemoveDir
+                | Operation::Metadata => {
                     let path = super::owned_text::borrow(frame.slots[0] as usize as *const Buffer)?;
                     immediate = validate_path(path).err();
                     match op {
@@ -431,6 +457,9 @@ pub(crate) unsafe fn poll(
                             Input::Rename(path, to)
                         }
                         Operation::RemoveFile => Input::RemoveFile(path),
+                        Operation::CreateDir => Input::CreateDir(path),
+                        Operation::RemoveDir => Input::RemoveDir(path),
+                        Operation::Metadata => Input::Metadata(path),
                         Operation::ReadDir => Input::ReadDir(path),
                         _ => unreachable!(),
                     }
@@ -556,6 +585,10 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, kind: u32) -> 
         15 => Operation::Rename,
         16 => Operation::RemoveFile,
         17 => Operation::ReadDir,
+        18 => Operation::CreateDir,
+        19 => Operation::RemoveDir,
+        20 => Operation::Metadata,
+        21 => Operation::Kind,
         _ => return super::cps::INVALID_STATE,
     };
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {

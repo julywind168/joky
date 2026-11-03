@@ -135,7 +135,9 @@ impl Operation {
                 match op {
                     Open => (vec![Bytes(1, false), Word], Resource),
                     Rename => (vec![Bytes(1, false), Bytes(1, false)], Resource),
-                    RemoveFile | ReadDir => (vec![Bytes(1, false)], Resource),
+                    RemoveFile | ReadDir | CreateDir | RemoveDir | Metadata => {
+                        (vec![Bytes(1, false)], Resource)
+                    }
                     Process => (vec![Word, Word, Bytes(1, false)], Resource),
                     TestInput => (vec![Word, Bytes(1, false), Bytes(1, false)], Resource),
                     Stdin => (vec![], Resource),
@@ -143,7 +145,7 @@ impl Operation {
                     Write => (vec![Resource, Bytes(1, false)], Resource),
                     Seek => (vec![Resource, Word, Word], Resource),
                     Sync | Close | TakeFile => (vec![Resource], Resource),
-                    Code | Count => (vec![Resource], Word),
+                    Code | Count | crate::runtime::fs::Operation::Kind => (vec![Resource], Word),
                     Message | TakeBytes => (vec![Resource], Bytes(1, false)),
                 }
             }

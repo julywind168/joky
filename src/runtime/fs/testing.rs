@@ -196,6 +196,15 @@ impl FileSystem for Backend {
     fn remove_file(&self, path: &str) -> Result<(), FsError> {
         self.native.remove_file(path)
     }
+    fn create_dir(&self, path: &str) -> Result<(), FsError> {
+        self.native.create_dir(path)
+    }
+    fn remove_dir(&self, path: &str) -> Result<(), FsError> {
+        self.native.remove_dir(path)
+    }
+    fn metadata(&self, path: &str) -> Result<super::Metadata, FsError> {
+        self.native.metadata(path)
+    }
     fn read_dir(&self, path: &str) -> Result<super::DirectoryNames<'_>, FsError> {
         self.native.read_dir(path)
     }

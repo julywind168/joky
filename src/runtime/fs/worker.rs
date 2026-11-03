@@ -26,6 +26,20 @@ pub trait FileHandle: Send {
 /// Immediate entry names, consumed on the same file-service worker.
 pub type DirectoryNames<'a> = Box<dyn Iterator<Item = Result<OsString, FsError>> + 'a>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FileKind {
+    Regular,
+    Directory,
+    Symlink,
+    Other,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Metadata {
+    pub kind: FileKind,
+    pub size: u64,
+}
+
 /// Blocking implementations run exclusively on service workers. Implementations
 /// must not access language storage or retain byte views. Panics are converted to
 /// SystemFailure and terminate the affected file. Engine thread rules still apply.
@@ -36,6 +50,16 @@ pub trait FileSystem: Send + Sync + 'static {
     }
     fn remove_file(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::new(1, "Host does not provide remove_file"))
+    }
+    fn create_dir(&self, _path: &str) -> Result<(), FsError> {
+        Err(FsError::new(1, "Host does not provide create_dir"))
+    }
+    fn remove_dir(&self, _path: &str) -> Result<(), FsError> {
+        Err(FsError::new(1, "Host does not provide remove_dir"))
+    }
+    /// Inspect the final path component without following symbolic links.
+    fn metadata(&self, _path: &str) -> Result<Metadata, FsError> {
+        Err(FsError::new(1, "Host does not provide metadata"))
     }
     fn read_dir(&self, _path: &str) -> Result<DirectoryNames<'_>, FsError> {
         Err(FsError::new(1, "Host does not provide read_dir"))
@@ -64,6 +88,28 @@ impl FileSystem for Native {
     }
     fn remove_file(&self, path: &str) -> Result<(), FsError> {
         std::fs::remove_file(self.0.join(path)).map_err(Into::into)
+    }
+    fn create_dir(&self, path: &str) -> Result<(), FsError> {
+        std::fs::create_dir(self.0.join(path)).map_err(Into::into)
+    }
+    fn remove_dir(&self, path: &str) -> Result<(), FsError> {
+        std::fs::remove_dir(self.0.join(path)).map_err(Into::into)
+    }
+    fn metadata(&self, path: &str) -> Result<Metadata, FsError> {
+        let meta = std::fs::symlink_metadata(self.0.join(path))?;
+        let kind = if meta.is_file() {
+            FileKind::Regular
+        } else if meta.is_dir() {
+            FileKind::Directory
+        } else if meta.file_type().is_symlink() {
+            FileKind::Symlink
+        } else {
+            FileKind::Other
+        };
+        Ok(Metadata {
+            kind,
+            size: meta.len(),
+        })
     }
     fn read_dir(&self, path: &str) -> Result<DirectoryNames<'_>, FsError> {
         let entries = std::fs::read_dir(self.0.join(path))?;
@@ -375,7 +421,12 @@ impl NativeService {
             Some(file)
         } else if matches!(
             input,
-            Input::Rename(..) | Input::RemoveFile(_) | Input::ReadDir(_)
+            Input::Rename(..)
+                | Input::RemoveFile(_)
+                | Input::ReadDir(_)
+                | Input::CreateDir(_)
+                | Input::RemoveDir(_)
+                | Input::Metadata(_)
         ) {
             None
         } else {
@@ -463,6 +514,9 @@ pub(crate) enum Input<'a> {
     Open(&'a str, u64),
     Rename(&'a str, &'a str),
     RemoveFile(&'a str),
+    CreateDir(&'a str),
+    RemoveDir(&'a str),
+    Metadata(&'a str),
     ReadDir(&'a str),
     Read(u64),
     Write(&'a [u8]),
@@ -472,7 +526,11 @@ pub(crate) enum Input<'a> {
 impl Input<'_> {
     pub(crate) fn size(&self) -> usize {
         match self {
-            Self::Open(p, _) | Self::RemoveFile(p) => p.len(),
+            Self::Open(p, _)
+            | Self::CreateDir(p)
+            | Self::RemoveDir(p)
+            | Self::Metadata(p)
+            | Self::RemoveFile(p) => p.len(),
             Self::Rename(from, to) => from.len() + to.len(),
             Self::ReadDir(p) => p.len() + DIRECTORY_BYTES,
             Self::Read(n) => (*n).min(1048576) as usize,
@@ -485,6 +543,9 @@ impl Input<'_> {
             Self::Open(p, f) => Action::Open(p.to_owned(), f),
             Self::Rename(from, to) => Action::Rename(from.into(), to.into()),
             Self::RemoveFile(p) => Action::RemoveFile(p.into()),
+            Self::CreateDir(p) => Action::CreateDir(p.into()),
+            Self::RemoveDir(p) => Action::RemoveDir(p.into()),
+            Self::Metadata(p) => Action::Metadata(p.into()),
             Self::ReadDir(p) => Action::ReadDir(p.into()),
             Self::Stdin => Action::Stdin,
             Self::Read(n) => Action::Read(n as usize),
@@ -499,6 +560,9 @@ pub(crate) enum Action {
     Open(String, u64),
     Rename(String, String),
     RemoveFile(String),
+    CreateDir(String),
+    RemoveDir(String),
+    Metadata(String),
     ReadDir(String),
     Read(usize),
     Write(Vec<u8>),
@@ -509,6 +573,7 @@ pub(crate) enum Data {
     File(Arc<FileCell>),
     Bytes(Vec<u8>),
     Count(u64),
+    Metadata(Metadata),
     Unit,
 }
 pub(crate) struct Packet {
@@ -677,6 +742,21 @@ fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Act
                 .remove_file(&path)
                 .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
         }
+        Action::CreateDir(path) => {
+            return backend
+                .create_dir(&path)
+                .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
+        }
+        Action::RemoveDir(path) => {
+            return backend
+                .remove_dir(&path)
+                .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
+        }
+        Action::Metadata(path) => {
+            return backend
+                .metadata(&path)
+                .map_or_else(Packet::error, |m| Packet::ok(Data::Metadata(m)))
+        }
         Action::ReadDir(path) => {
             return backend
                 .read_dir(&path)
@@ -729,6 +809,9 @@ fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Act
         | Action::Stdin
         | Action::Rename(..)
         | Action::RemoveFile(_)
+        | Action::CreateDir(_)
+        | Action::RemoveDir(_)
+        | Action::Metadata(_)
         | Action::ReadDir(_) => unreachable!(),
     };
     lock(&file.state).handle = Some(handle);

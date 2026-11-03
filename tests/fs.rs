@@ -39,6 +39,9 @@ fn filesystem_path_operations_require_host_capabilities() {
             fn run() @suspends {
                 assert(fs.rename("old", "new").err()!.kind == fs.ErrorKind.Unsupported, "rename")
                 assert(fs.remove_file("old").err()!.kind == fs.ErrorKind.Unsupported, "remove")
+                assert(fs.create_dir("dir").err()!.kind == fs.ErrorKind.Unsupported, "create directory")
+                assert(fs.remove_dir("dir").err()!.kind == fs.ErrorKind.Unsupported, "remove directory")
+                assert(fs.metadata("dir").err()!.kind == fs.ErrorKind.Unsupported, "metadata")
                 assert(fs.read_dir(".").err()!.kind == fs.ErrorKind.Unsupported, "list")
                 assert(fs.rename("", "new").err()!.kind == fs.ErrorKind.InvalidInput, "source validation")
             }"#).unwrap();
@@ -54,7 +57,10 @@ fn filesystem_paths_work_in_jit_interpreter_and_native_parallel() {
     std::fs::create_dir_all(base.join("paths/sub")).unwrap();
     std::fs::write(base.join("paths.jk"), include_str!("fixtures/fs_paths.jk")).unwrap();
     let cli = env!("CARGO_BIN_EXE_joky");
-    let built = Command::new(cli)
+    let mut build = Command::new(cli);
+    #[cfg(unix)]
+    build.env("JOKY_RUNTIME", runtime::runtime_archive());
+    let built = build
         .args(["build", "--parallel", "paths.jk", "-o", "native"])
         .current_dir(base)
         .output()
@@ -93,6 +99,18 @@ fn filesystem_test_context_resolves_path_operations_against_its_directory() {
     .unwrap();
     block_on(vm.prepare_async("run", &[]).unwrap()).unwrap();
     assert!(!base.join("before").exists() && !base.join("after").exists());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("missing-target", base.join("link")).unwrap();
+        vm.load_source(
+            r#"import joky/fs
+            fn run() @suspends {
+                assert(fs.metadata("link")!.kind == fs.FileKind.Symlink, "inspect a dangling link")
+            }"#,
+        )
+        .unwrap();
+        block_on(vm.prepare_async("run", &[]).unwrap()).unwrap();
+    }
 }
 
 #[test]
