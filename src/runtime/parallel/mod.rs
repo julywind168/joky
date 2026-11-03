@@ -262,7 +262,9 @@ impl Host {
                     && binding.signature == crate::core::builtins::stdout_signature()
                     && (!matches!(
                         host.name.as_str(),
-                        crate::core::builtins::STDOUT_NAME | crate::core::builtins::STDERR_NAME
+                        crate::core::builtins::STDOUT_NAME
+                            | crate::core::builtins::STDERR_NAME
+                            | crate::core::builtins::TRY_STDERR_NAME
                     ) || host.is_output())
             }
             _ => false,
@@ -274,6 +276,9 @@ impl Host {
         let entry = match self.name.as_str() {
             crate::core::builtins::STDOUT_NAME => crate::stdlib::output::joky_io_write_stdout_v2,
             crate::core::builtins::STDERR_NAME => crate::stdlib::output::joky_io_write_stderr_v2,
+            crate::core::builtins::TRY_STDERR_NAME => {
+                crate::stdlib::output::joky_io_try_write_stderr_v2
+            }
             _ => return false,
         };
         self.signature == crate::core::builtins::stdout_signature()

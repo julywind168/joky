@@ -138,13 +138,8 @@ fn parallel_task_binding(
 
 fn build_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::default();
-    unsafe {
-        registry.register_module(
-            "joky/internal/output",
-            [output::binding(), output::stderr_binding()],
-        )
-    }
-    .expect("Stdout binding must be valid");
+    unsafe { registry.register_module("joky/internal/output", output::bindings()) }
+        .expect("Stdout binding must be valid");
     // These static C ABI functions implement the exact signatures listed above.
     unsafe { registry.register_module("joky/internal/vm", vm_bindings()) }
         .expect("standard library bindings must be valid");

@@ -20,7 +20,7 @@ pub(super) fn builtin(
     Some(match builtin {
         // The reserved synchronous TextViewV2 binding keeps the immutable view
         // only until return; Host::from_binding checks its actual entry identity.
-        Builtin::Stdout | Builtin::Stderr => Contract::Scoped,
+        Builtin::Stdout | Builtin::Stderr | Builtin::TryStderr => Contract::Scoped,
         Builtin::VmCall | Builtin::VmSource | Builtin::VmMigration(_) => Contract::Scoped,
         Builtin::Vm(_) => {
             if !matches!(name, "__vm_create" | "__vm_share" | "__vm_close") {

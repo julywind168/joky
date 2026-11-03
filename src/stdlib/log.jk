@@ -2,10 +2,23 @@
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/json
-import joky/io
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/time
-import joky/result.{Ok, Err}
+import joky/result.{type Result, Ok, Err}
+extern fn __joky_try_write_stderr(text: &String) -> Int32
+pub enum LogError { InvalidEvent, TooManyFields, InvalidField, DuplicateField, ValueTooLong, Encoding(json.EncodeError), WriteFailed }
 
+impl Show for LogError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            InvalidEvent => "invalid log event name", TooManyFields => "too many log fields",
+            InvalidField => "invalid log field name", DuplicateField => "duplicate or reserved log field",
+            ValueTooLong => "log field value too long", Encoding(_) => "log JSON encoding failed",
+            WriteFailed => "log write to stderr failed"
+        })
+    }
+}
 pub enum Level { Debug, Info, Warn, Error }
 pub struct Field { name: String, value: json.Value }
 pub fn text(name: String, value: String) -> Field { Field { name, value: json.Value.Text(value) } }
@@ -13,22 +26,31 @@ pub fn uint(name: String, value: UInt64) -> Field { Field { name, value: json.Va
 pub fn integer(name: String, value: Int64) -> Field { Field { name, value: json.Value.Number(json.Number.from_i64(value)) } }
 pub fn boolean(name: String, value: Bool) -> Field { Field { name, value: json.Value.Boolean(value) } }
 
-fn add(record: &mut Map<String, json.Value>, field: Field) -> Bool {
+fn add(record: &mut Map<String, json.Value>, field: Field) -> Result<Unit, LogError> {
     let Field { name, value } = field
-    if name.is_empty() || name.byte_length() > 64 || record.contains_key(&name) { return false }
-    if let Text(s) = &value { if s.byte_length() > 4096 { return false } }
+    if name.is_empty() || name.byte_length() > 64 { return Err(InvalidField) }
+    if record.contains_key(&name) { return Err(DuplicateField) }
+    if let Text(s) = &value { if s.byte_length() > 4096 { return Err(ValueTooLong) } }
     record.insert(name, value);
-    true
+    Ok({})
 }
 
-pub fn emit(level: Level, event: String, fields: Array<Field>) -> Bool {
-    if event.is_empty() || event.byte_length() > 128 || fields.len() > 32 { return false }
+pub fn try_emit(level: Level, event: String, fields: Array<Field>) -> Result<Unit, LogError> {
+    if event.is_empty() || event.byte_length() > 128 { return Err(InvalidEvent) }
+    if fields.len() > 32 { return Err(TooManyFields) }
     var record = Map.new::<String, json.Value>()
     let severity = match level { Debug => "debug", Info => "info", Warn => "warn", Error => "error" }
     record.insert("level", json.Value.Text(severity))
     record.insert("event", json.Value.Text(event))
     record.insert("timestamp", json.Value.Text(time.Timestamp.now().to_text()))
-    for field in fields { if !add(&mut record, field) { return false } }
+    for field in fields { add(&mut record, field)? }
     let value = json.Value.Object(record)
-    match json.encode(&value) { Ok(line) => { io.eprintln(line); true }, Err(_) => false }
+    let line = match json.encode(&value) { Ok(text) => text, Err(e) => return Err(Encoding(e)) }
+    var output = StringBuilder.from(&line)
+    output.push('\n')
+    let message = output.finish()
+    if __joky_try_write_stderr(&message) == 0 { Ok({}) } else { Err(WriteFailed) }
+}
+pub fn emit(level: Level, event: String, fields: Array<Field>) -> Bool {
+    try_emit(level, event, fields).is_ok()
 }

@@ -12,6 +12,7 @@ use crate::{
 pub(crate) enum Builtin {
     Stdout,
     Stderr,
+    TryStderr,
     Vm(Box<BindingSpec>),
     VmCall,
     VmSource,
@@ -32,6 +33,8 @@ impl Builtin {
             Some(Self::Stdout)
         } else if name == STDERR_NAME {
             Some(Self::Stderr)
+        } else if name == TRY_STDERR_NAME {
+            Some(Self::TryStderr)
         } else if name == "__vm_call" {
             Some(Self::VmCall)
         } else if name == "__vm_source" {
@@ -60,7 +63,10 @@ impl Builtin {
     }
 
     pub(crate) fn needs_adapter(&self) -> bool {
-        !matches!(self, Self::Vm(_) | Self::Stdout | Self::Stderr)
+        !matches!(
+            self,
+            Self::Vm(_) | Self::Stdout | Self::Stderr | Self::TryStderr
+        )
     }
 
     pub(crate) fn validate(
@@ -70,7 +76,7 @@ impl Builtin {
         c_abi: bool,
     ) -> Result<(), Error> {
         match self {
-            Self::Stdout | Self::Stderr => {
+            Self::Stdout | Self::Stderr | Self::TryStderr => {
                 if c_abi || suspends || *signature != stdout_signature() {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -123,7 +129,7 @@ impl Builtin {
         let Item::ExternFn(f) = item else {
             let Item::FnDef(f) = item else { unreachable!() };
             return Err(match self {
-                Self::Stdout | Self::Stderr => Error::new_with_code(
+                Self::Stdout | Self::Stderr | Self::TryStderr => Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::ReservedName,
                     "Output runtime name requires a checked extern declaration",
@@ -174,6 +180,8 @@ impl Builtin {
 }
 
 pub(crate) const STDOUT_NAME: &str = "__joky_write_stdout";
+pub(crate) const TRY_STDERR_NAME: &str = "__joky_try_write_stderr";
+pub(crate) const TRY_STDERR_SYMBOL: &str = "joky_io_try_write_stderr_v2";
 pub(crate) const STDERR_NAME: &str = "__joky_write_stderr";
 pub(crate) const STDERR_SYMBOL: &str = "joky_io_write_stderr_v2";
 pub(crate) const STDOUT_SYMBOL: &str = "joky_io_write_stdout_v2";

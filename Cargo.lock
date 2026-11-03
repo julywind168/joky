@@ -898,6 +898,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "hmac",
+ "libc",
  "libloading",
  "mio",
  "rustls",

@@ -1,30 +1,26 @@
 //! Synchronous UTF-8 standard output boundaries shared by all execution backends.
 use crate::{Error, ErrorCode, ErrorPhase};
 use std::io::Write;
+mod log;
 
-pub(super) fn binding() -> crate::modules::NativeBinding {
-    output_binding(false)
+pub(super) fn bindings() -> [crate::modules::NativeBinding; 3] {
+    use crate::core::builtins::*;
+    [
+        output_binding(STDOUT_NAME, STDOUT_SYMBOL, joky_io_write_stdout_v2),
+        output_binding(STDERR_NAME, STDERR_SYMBOL, joky_io_write_stderr_v2),
+        output_binding(
+            TRY_STDERR_NAME,
+            TRY_STDERR_SYMBOL,
+            joky_io_try_write_stderr_v2,
+        ),
+    ]
 }
-
-pub(super) fn stderr_binding() -> crate::modules::NativeBinding {
-    output_binding(true)
-}
-
-fn output_binding(stderr: bool) -> crate::modules::NativeBinding {
+fn output_binding(
+    name: &str,
+    symbol: &str,
+    entry: unsafe extern "C" fn(*const u8) -> i32,
+) -> crate::modules::NativeBinding {
     use crate::runtime::parallel::{Host, HostCode};
-    let (name, symbol, entry) = if stderr {
-        (
-            crate::core::builtins::STDERR_NAME,
-            crate::core::builtins::STDERR_SYMBOL,
-            joky_io_write_stderr_v2 as unsafe extern "C" fn(*const u8) -> i32,
-        )
-    } else {
-        (
-            crate::core::builtins::STDOUT_NAME,
-            crate::core::builtins::STDOUT_SYMBOL,
-            joky_io_write_stdout_v2 as unsafe extern "C" fn(*const u8) -> i32,
-        )
-    };
     let host = Host {
         name: name.into(),
         signature: crate::core::builtins::stdout_signature(),
@@ -46,7 +42,7 @@ fn output_binding(stderr: bool) -> crate::modules::NativeBinding {
 /// error state. No VM, local registry, callback or input pointer is retained.
 #[no_mangle]
 pub unsafe extern "C" fn joky_io_write_stdout_v2(text: *const u8) -> i32 {
-    write(text, false)
+    write(text, false, false)
 }
 
 /// Write and flush stderr using the same borrowed TextViewV2 contract.
@@ -54,10 +50,17 @@ pub unsafe extern "C" fn joky_io_write_stdout_v2(text: *const u8) -> i32 {
 /// `text` must remain a live immutable descriptor and UTF-8 payload until return.
 #[no_mangle]
 pub unsafe extern "C" fn joky_io_write_stderr_v2(text: *const u8) -> i32 {
-    write(text, true)
+    write(text, true, false)
 }
 
-unsafe fn write(text: *const u8, stderr: bool) -> i32 {
+/// # Safety
+/// The borrowed UTF-8 descriptor must remain live until return.
+#[no_mangle]
+pub unsafe extern "C" fn joky_io_try_write_stderr_v2(text: *const u8) -> i32 {
+    write(text, true, true)
+}
+
+unsafe fn write(text: *const u8, stderr: bool, recover_io: bool) -> i32 {
     let result = std::panic::catch_unwind(|| {
         let text = crate::runtime::string::borrow(text)?;
         fn emit(mut output: impl Write, text: &str, stderr: bool) -> std::io::Result<()> {
@@ -68,14 +71,23 @@ unsafe fn write(text: *const u8, stderr: bool) -> i32 {
                 output.flush()
             })
         }
-        let result = if stderr {
+        let result = if recover_io {
+            let _lock = std::io::stderr().lock();
+            crate::runtime::fs::write_output(true, text, || log::write_log(text.as_bytes()))
+        } else if stderr {
             emit(std::io::stderr().lock(), text, true)
         } else {
             emit(std::io::stdout().lock(), text, false)
         };
-        result.map_err(|error| {
-            Error::new_with_code(ErrorPhase::Runtime, ErrorCode::IoError, error.to_string())
-        })
+        match result {
+            Ok(()) => Ok(0),
+            Err(_) if recover_io => Ok(1),
+            Err(e) => Err(Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::IoError,
+                e.to_string(),
+            )),
+        }
     })
     .unwrap_or_else(|_| {
         Err(Error::new_with_code(
@@ -85,7 +97,7 @@ unsafe fn write(text: *const u8, stderr: bool) -> i32 {
         ))
     });
     match result {
-        Ok(()) => 0,
+        Ok(status) => status,
         Err(error) => {
             crate::runtime::error::record_error(error);
             -1
@@ -102,7 +114,7 @@ mod tests {
     };
     #[test]
     fn parallel_stdout_evidence_checks_binding_identity_and_abi() {
-        let original = binding().host().unwrap();
+        let original = bindings()[0].host().unwrap();
         assert!(Host::from_binding(&original).is_some());
         let mut changed = original.clone();
         changed.owner = None;
@@ -120,31 +132,31 @@ mod tests {
         unsafe extern "C" fn impostor(_: *const u8) -> i32 {
             0
         }
-        let mut host = Host::from_binding(&binding().host().unwrap()).unwrap();
+        let mut host = Host::from_binding(&bindings()[0].host().unwrap()).unwrap();
         host.code = crate::runtime::parallel::HostCode::TextView(impostor);
         assert!(Host::from_binding(&host.binding()).is_none());
         // A valid generic host certificate cannot be renamed into the builtin.
         host.name = "user_output".into();
         let fake = host.binding();
         assert!(Host::from_binding(&fake).is_some());
-        let mut renamed = binding();
+        let mut renamed = bindings().into_iter().next().unwrap();
         renamed.entry = Some(fake.entry);
         renamed.owner = fake.owner;
         assert!(unsafe {
             crate::modules::ModuleRegistry::default().register_module("fake", [renamed])
         }
         .is_err());
-        let mut symbol = binding();
+        let mut symbol = bindings().into_iter().next().unwrap();
         symbol.spec.symbol = Some("user_output".into());
         assert!(unsafe {
             crate::modules::ModuleRegistry::default().register_module("fake", [symbol])
         }
         .is_err());
-        let mut stderr = stderr_binding().host().unwrap();
+        let mut stderr = bindings()[1].host().unwrap();
         assert!(Host::from_binding(&stderr).is_some());
         stderr.entry = HostEntry::Direct(joky_io_write_stdout_v2 as *const u8);
         assert!(Host::from_binding(&stderr).is_none());
-        let mut renamed = stderr_binding();
+        let mut renamed = bindings().into_iter().nth(1).unwrap();
         renamed.spec.symbol = Some(crate::core::builtins::STDOUT_SYMBOL.into());
         assert!(unsafe {
             crate::modules::ModuleRegistry::default().register_module("fake", [renamed])

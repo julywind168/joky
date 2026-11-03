@@ -582,7 +582,8 @@ impl TypeRegistry {
                 if let Some(
                     builtin @ (super::builtins::Builtin::Vm(_)
                     | super::builtins::Builtin::Stdout
-                    | super::builtins::Builtin::Stderr),
+                    | super::builtins::Builtin::Stderr
+                    | super::builtins::Builtin::TryStderr),
                 ) = &builtin
                 {
                     builtin.validate_extern(function)?;

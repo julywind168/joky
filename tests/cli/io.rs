@@ -827,7 +827,9 @@ fn main() {
     ]), "valid")
     check.assert(log.emit(log.Level.Info, "job.finished", [log.text("request_id", "queue-42")]), "application field")
     check.assert(!log.emit(log.Level.Info, "invalid", [log.uint("n", 1), log.uint("n", 2)]), "duplicate")
-    check.assert(!log.emit(log.Level.Info, "invalid", [log.text("timestamp", "override")]), "reserved")
+    check.assert(match log.try_emit(log.Level.Info, "invalid", [log.text("timestamp", "override")]) {
+        Err(DuplicateField) => true, _ => false }, "reserved")
+    check.assert(match log.try_emit(log.Level.Info, "", []) { Err(InvalidEvent) => true, _ => false }, "empty event")
 }
 "#);
     let output = work.cli(&["run", "events.jk"]);
@@ -849,4 +851,34 @@ fn main() {
     assert_eq!(job["event"], "job.finished");
     assert_eq!(job["request_id"], "queue-42");
     assert!(records.next().is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn structured_log_reports_closed_pipe_without_stopping_the_task() {
+    let work = Workspace::new();
+    work.write("pipe.jk", r#"import joky/log
+        fn main() @suspends {
+            assert(match log.try_emit(log.Level.Info, "event", []) { Err(WriteFailed) => true, _ => false }, "broken pipe")
+            assert(!log.emit(log.Level.Info, "event", []), "compatibility call reports failure")
+            println("continued")
+        }"#);
+    success(&work.cli(&["build", "pipe.jk", "--parallel"]));
+    for mode in ["jit", "interpreter", "aot"] {
+        let mut cmd = if mode == "aot" {
+            Command::new(work.path().join("pipe"))
+        } else {
+            let mut cmd = work.command();
+            cmd.args(["run", "pipe.jk", "--parallel"]);
+            if mode == "interpreter" {
+                cmd.arg("--interpreter");
+            }
+            cmd
+        };
+        let (read, write) = std::io::pipe().unwrap();
+        drop(read);
+        let output = cmd.stderr(write).output().unwrap();
+        success(&output);
+        assert_eq!(output.stdout, b"continued\n", "{mode}");
+    }
 }

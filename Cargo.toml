@@ -34,6 +34,7 @@ path = "src/main.rs"
 crate-type = ["rlib", "staticlib"]
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2"
 signal-hook = "0.4.6"
 
 [dev-dependencies]

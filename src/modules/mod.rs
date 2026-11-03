@@ -96,7 +96,8 @@ impl ModuleRegistry {
             if let Some(
                 builtin @ (crate::core::builtins::Builtin::Vm(_)
                 | crate::core::builtins::Builtin::Stdout
-                | crate::core::builtins::Builtin::Stderr),
+                | crate::core::builtins::Builtin::Stderr
+                | crate::core::builtins::Builtin::TryStderr),
             ) = crate::core::builtins::Builtin::lookup(&spec.name)
             {
                 builtin.validate(&spec.signature, spec.suspends, false)?;
@@ -106,6 +107,9 @@ impl ModuleRegistry {
                     }
                     crate::core::builtins::Builtin::Stderr => {
                         Some(crate::core::builtins::STDERR_SYMBOL)
+                    }
+                    crate::core::builtins::Builtin::TryStderr => {
+                        Some(crate::core::builtins::TRY_STDERR_SYMBOL)
                     }
                     _ => None,
                 };

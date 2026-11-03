@@ -6799,7 +6799,7 @@ Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原�
 `log.emit(log.Level.Info, "job.finished", [log.uint("rows", 12)])`。
 
 每条记录最多 32 个业务字段。事件名限 1–128 字节，字段名限 1–64 字节，文本值最多 4096 字节。
-同一条记录内的字段名须唯一，且不能使用上述三个保留名。校验或编码失败返回 false 并跳过整条事件。
+同一条记录内的字段名须唯一，且不能使用上述三个保留名。`try_emit(level, event, fields) -> Result<Unit, LogError>` 区分字段校验、Encoding 和 WriteFailed。断管返回 WriteFailed，调用方可以继续执行；底层写入中途失败时可能已经写出部分字节。`emit` 保留 Bool 接口，失败返回 false。
 应用自行选择业务字段，应避免写入凭据、原始请求或幂等键。
 
 ## HTTP 服务端 joky/http
