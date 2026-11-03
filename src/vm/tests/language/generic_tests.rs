@@ -201,6 +201,7 @@ fn generic_call_errors_reject_ambiguity_noncopy_values_and_mismatches() {
 fn generic_instantiation_limits_stop_type_growth_without_rejecting_cached_recursion() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
         // The rigid definition is valid, but no concrete instance is requested.
         vm.load_source("fn grow<T>(n: T) { grow((n,)) }").unwrap();
         vm.load_source("fn current() -> Int32 { 42 }").unwrap();

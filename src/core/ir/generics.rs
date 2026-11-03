@@ -927,8 +927,8 @@ mod tests {
 
     fn plan(source: &str) -> Result<ModulePlan, Error> {
         let ast = crate::parser::parse(source).unwrap();
-        PreparedModule::new(&ast, &TypeRegistry::default(), &BindingRegistry::default())?
-            .plan(&HashMap::new())
+        let types = TypeRegistry::new().with_prelude(false);
+        PreparedModule::new(&ast, &types, &BindingRegistry::default())?.plan(&HashMap::new())
     }
 
     #[test]
