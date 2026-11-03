@@ -1592,6 +1592,52 @@ fn show_print_and_interpolation_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn standard_errors_print_to_stderr_across_backends() {
+    let work = Workspace::new();
+    work.write(
+        "errors.jk",
+        r#"
+        import joky/fs
+        import joky/io
+        fn main() {
+            let error = UInt16.parse("65536").err()!
+            eprintln(error)
+            assert(match error { OutOfRange(offset) => offset == 4, _ => false }, "borrowed error")
+            eprintln(UInt16.parse("x"))
+            eprintln(io.ReadError.Io(fs.IoError { kind: fs.ErrorKind.Closed, message: "" }))
+            eprintln(io.ReadError.Utf8(String.from_utf8([uint8(255)]).err()!))
+            eprintln(io.ReadError.InvalidLimit)
+            eprintln(io.ReadError.LimitExceeded)
+            eprintln(io.ReadError.Closed)
+        }
+        "#,
+    );
+    success(&work.cli(&["build", "errors.jk"]));
+    for output in [
+        work.cli(&["run", "errors.jk"]),
+        work.cli(&["run", "--interpreter", "errors.jk"]),
+        Command::new(work.path().join("errors")).output().unwrap(),
+    ] {
+        success(&output);
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            output.stderr,
+            concat!(
+                "integer out of range at byte 4\n",
+                "Err(invalid decimal integer at byte 0)\n",
+                "Closed\n",
+                "invalid UTF-8 sequence at byte 0\n",
+                "invalid stdin read limit\n",
+                "stdin read limit exceeded\n",
+                "stdin reader is closed\n",
+            )
+            .as_bytes()
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn cps_local_borrows_print_and_resume_in_all_backends() {
     let work = Workspace::new();
     work.write(

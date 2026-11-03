@@ -6544,6 +6544,12 @@ Array 为 `[a, b]`，Option 为 `Some(a)` / `None`，Result 为 `Ok(a)` / `Err(e
 Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本，不是带引号转义的序列化格式。
 自定义记录/枚举须显式实现，当前不提供自动派生或元组实现。
 
+整数解析错误、UTF-8 错误，以及 `fs.IoError`、`fs.ReadTextError`、`fs.WriteError` 和
+`io.ReadError` 均可传给 `eprintln(error)` 或用于字符串插值。解析错误显示从零开始的字节偏移，
+如 `UInt16.parse("65536")` 的错误显示为 `integer out of range at byte 4`。
+文件 I/O 错误显示类别名及非空的宿主消息，如 `PermissionDenied: access denied`；
+包装读取错误沿用底层原因，完整写入失败另显示已确认写入的字节数。程序分支可继续匹配原错误类型与字段。
+
 `joky/show` 的 `to_text(&value) -> String` 生成拥有型文本，
 `append(&value, &mut output)` 向既有 builder 追加。
 默认 prelude 导入 `joky/io` 的 `print` / `println` 和 `eprint` / `eprintln`；关闭 prelude 时可显式

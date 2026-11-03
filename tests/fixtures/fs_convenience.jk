@@ -24,6 +24,9 @@ fn write_failure(path: String, code: Int32) @suspends {
     match file.write_text("你好🙂") {
         Ok(_) => { expect(false) }
         Err(failure) => {
+            if code == 10 {
+                expect("{failure}" == "write failed after 3 confirmed bytes: SystemFailure: Injected failure after external progress")
+            }
             expect(failure.written == 3)
             expect(match failure.error.kind {
                 fs.ErrorKind.WriteZero => code == 9
@@ -83,7 +86,9 @@ fn read_invalid_text(bounded: Bool) @suspends {
     expect(invalid.seek(fs.SeekFrom.Current(0)).unwrap() == 2)
     invalid.close().unwrap()
     var truncated = readable("truncated")
-    match text_case(&mut truncated, bounded, 3) {
+    let result = text_case(&mut truncated, bounded, 3)
+    expect("{result}" == "Err(truncated UTF-8 sequence at byte 1)")
+    match result {
         Err(fs.ReadTextError.Utf8(error)) => {
             expect(error.offset == 1)
             expect(match error.code { Utf8ErrorCode.UnexpectedEnd => true, _ => false })

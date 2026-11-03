@@ -40,6 +40,18 @@ pub fn flush_stderr() { eprint("") }
 
 
 pub enum ReadError { Io(fs.IoError), Utf8(Utf8Error), InvalidLimit, LimitExceeded, Closed }
+impl Show for ReadError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            Io(error) => error.show(output)
+            Utf8(error) => error.show(output)
+            InvalidLimit => output.push_str("invalid stdin read limit")
+            LimitExceeded => output.push_str("stdin read limit exceeded")
+            Closed => output.push_str("stdin reader is closed")
+        }
+    }
+}
+
 pub struct Stdin {
     file: fs.File,
     buffer: Array<UInt8>,

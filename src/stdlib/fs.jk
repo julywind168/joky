@@ -3,12 +3,52 @@ import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
 import joky/integer
-import joky/string.{type Utf8Error}
+import joky/string.{type StringBuilder, type Utf8Error}
+import joky/show.{type Show}
 
 pub enum ErrorKind { Unsupported, PermissionDenied, NotFound, AlreadyExists, InvalidInput, Busy, Closed, LimitExceeded, WriteZero, SystemFailure }
 pub struct IoError { pub kind: ErrorKind, pub message: String }
 pub struct WriteError { pub written: UInt64, pub error: IoError }
 pub enum ReadTextError { Io(IoError), Utf8(Utf8Error) }
+impl Show for ErrorKind {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Unsupported => "Unsupported"
+            PermissionDenied => "PermissionDenied"
+            NotFound => "NotFound"
+            AlreadyExists => "AlreadyExists"
+            InvalidInput => "InvalidInput"
+            Busy => "Busy"
+            Closed => "Closed"
+            LimitExceeded => "LimitExceeded"
+            WriteZero => "WriteZero"
+            SystemFailure => "SystemFailure"
+        })
+    }
+}
+impl Show for IoError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        self.kind.show(output)
+        if !self.message.is_empty() {
+            output.push_str(": ")
+            output.push_str(&self.message)
+        }
+    }
+}
+impl Show for WriteError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str("write failed after ")
+        self.written.show(output)
+        output.push_str(if self.written == 1 { " confirmed byte: " } else { " confirmed bytes: " })
+        self.error.show(output)
+    }
+}
+impl Show for ReadTextError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self { Io(error) => error.show(output), Utf8(error) => error.show(output) }
+    }
+}
+
 pub struct OpenOptions { pub read: Bool, pub write: Bool, pub append: Bool, pub create: Bool, pub create_new: Bool, pub truncate: Bool }
 impl OpenOptions {
     pub fn new() -> Self { OpenOptions { read: true, write: false, append: false, create: false, create_new: false, truncate: false } }

@@ -1,5 +1,5 @@
-import joky/string.{type StringBuilder}
-import joky/integer
+import joky/string.{type StringBuilder, type Utf8Error}
+import joky/integer.{type ParseIntError}
 import joky/float
 import joky/array.{type Array}
 import joky/map.{type Map}
@@ -32,6 +32,23 @@ impl Show for UInt32 { fn show(&self, output: &mut StringBuilder) @noescape { ou
 impl Show for UInt64 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(uint64((*self)).to_string()) } }
 impl Show for Float32 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str((*self).to_text()) } }
 impl Show for Float64 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str((*self).to_text()) } }
+impl Show for ParseIntError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            InvalidSyntax(offset) => { output.push_str("invalid decimal integer at byte "); offset.show(output) }
+            OutOfRange(offset) => { output.push_str("integer out of range at byte "); offset.show(output) }
+        }
+    }
+}
+impl Show for Utf8Error {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self.code {
+            InvalidSequence => "invalid UTF-8 sequence at byte "
+            UnexpectedEnd => "truncated UTF-8 sequence at byte "
+        })
+        self.offset.show(output)
+    }
+}
 impl<T: Show> Show for Array<T> {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push('[')
