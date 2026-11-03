@@ -132,12 +132,21 @@ import joky/shutdown
 import joky/task
 import joky/tcp
 fn handle(request: http.Request) @suspends -> http.Response {
+    if request.target == "/created" {
+        return http.Response { headers: [http.Header { name: "Location", value: "/items/42" }], status: http.Status.Created, content_type: http.ContentType.Text, body: [] }
+    }
+    if request.target == "/empty" {
+        return http.Response { headers: [], status: http.Status.from_code(204)!, content_type: http.ContentType.Text, body: [] }
+    }
+    if request.target == "/invalid" {
+        return http.Response { headers: [http.Header { name: "CONTENT-length", value: "99" }], status: http.Status.Success, content_type: http.ContentType.Text, body: [] }
+    }
     if request.target == "/bytes" {
-        return http.Response { status: http.Status.Success, content_type: http.ContentType.custom("image/png")!, body: request.body }
+        return http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.custom("image/png")!, body: request.body }
     }
     println("admitted")
     task.sleep(if request.target == "/stuck" { 60s } else { 300ms })
-    http.Response { status: http.Status.Success, content_type: http.ContentType.Text, body: "done".into_bytes() }
+    http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.Text, body: "done".into_bytes() }
 }
 fn main() @suspends -> Int32 {
     assert(http.ContentType.custom("text/html; charset=utf-8").is_some(), "valid media type parameter")
@@ -169,6 +178,21 @@ fn main() @suspends -> Int32 {
         (server, port)
     };
     let (mut server, port) = start();
+    let created = http_reply(port, &[b"POST /created HTTP/1.1\r\nHost: a\r\n\r\n"]);
+    assert!(
+        created.starts_with("HTTP/1.1 201 Created\r\n")
+            && created.contains("\r\nLocation: /items/42\r\n")
+    );
+    let empty = http_reply(port, &[b"DELETE /empty HTTP/1.1\r\nHost: a\r\n\r\n"]);
+    assert!(
+        empty.starts_with("HTTP/1.1 204 No Content\r\n")
+            && empty.ends_with("\r\n\r\n")
+            && !empty.contains("Content-Length")
+    );
+    assert!(
+        http_reply(port, &[b"GET /invalid HTTP/1.1\r\nHost: a\r\n\r\n"])
+            .starts_with("HTTP/1.1 500 ")
+    );
     let mut binary = connect(port);
     binary
         .write_all(b"PUT /bytes HTTP/1.1\r\nHost: a\r\nContent-Length: 4\r\n\r\n\xff\x00\r\n")

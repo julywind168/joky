@@ -14,7 +14,7 @@ impl Orders {
     pub fn new(pool: postgres.Pool) -> Self { Orders { pool } }
 }
 fn reply(status: http.Status, text: String) -> http.Response {
-    http.Response { status, content_type: http.ContentType.Json, body: text.into_bytes() }
+    http.Response { headers: [], status, content_type: http.ContentType.Json, body: text.into_bytes() }
 }
 impl Service for Orders {
     fn share(&self) @suspends -> Self { Orders { pool: self.pool.share() } }

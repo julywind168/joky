@@ -27,7 +27,27 @@ pub struct Request {
     pub headers: Array<Header>,
     pub body: Array<UInt8>
 }
-pub enum Status { Success, BadRequest, NotFound, ContentTooLarge, InternalError, Conflict, ServiceUnavailable }
+pub struct FinalCode { value: UInt16 }
+pub enum Status { Success, Created, NoContent, BadRequest, NotFound, ContentTooLarge, InternalError, Conflict, ServiceUnavailable, Other(FinalCode) }
+impl Status {
+    pub fn from_code(code: UInt16) -> Option<Status> {
+        if code < 200 || code > 599 { return None }
+        Some(match code {
+            200 => Success, 201 => Created, 204 => NoContent, 400 => BadRequest, 404 => NotFound,
+            409 => Conflict, 413 => ContentTooLarge, 500 => InternalError, 503 => ServiceUnavailable,
+            _ => Other(FinalCode { value: code })
+        })
+    }
+}
+fn status_line(status: Status) -> (Int32, String) {
+    match status {
+        Success => (200, "OK"), Created => (201, "Created"), NoContent => (204, "No Content"),
+        BadRequest => (400, "Bad Request"), NotFound => (404, "Not Found"),
+        Conflict => (409, "Conflict"), ServiceUnavailable => (503, "Service Unavailable"),
+        ContentTooLarge => (413, "Content Too Large"), InternalError => (500, "Internal Server Error"),
+        Other(code) => (int32(code.value), "")
+    }
+}
 pub struct MediaType { value: String }
 pub enum ContentType { Text, Json, Bytes, Custom(MediaType) }
 impl ContentType {
@@ -35,7 +55,7 @@ impl ContentType {
         if valid_media_type(&value) { Some(Custom(MediaType { value })) } else { None }
     }
 }
-pub struct Response { pub status: Status, pub content_type: ContentType, pub body: Array<UInt8> }
+pub struct Response { pub status: Status, pub content_type: ContentType, pub headers: Array<Header>, pub body: Array<UInt8> }
 pub struct Options {
     pub max_connections: UInt64,
     pub read_timeout: Duration,
@@ -226,17 +246,42 @@ fn read_request(stream: &mut Wire, context: RequestContext) @suspends -> Result<
 fn stop_read(stop: &shutdown.Controller) @suspends -> Result<Request, ReadFailure> { stop.wait(); Err(ReadFailure.Stopped) }
 fn read_timeout(timeout: Duration) @suspends -> Result<Request, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
 enum WriteOutcome { Complete, Failed, TimedOut }
-fn send(var stream: Wire, code: Int32, reason: String, media: String, body: Array<UInt8>, head: Bool, context: RequestContext) @suspends -> WriteOutcome {
-    let size = body.len()
+fn response_prefix(code: Int32, reason: String, media: String, fields: Array<Header>, size: UInt64, context: RequestContext) -> Option<String> {
+    let no_content = code == 204 || code == 304
+    if size > BODY_LIMIT || ((no_content || code == 205) && size != 0) { return None }
+    if media.byte_length() > HEAD_LIMIT || fields.len() > 60 { return None }
+    let framing = if no_content { "" } else { "Content-Length: {size}\r\n" }
     let id = context.request_id.to_text()
-    let prefix = "HTTP/1.1 {code} {reason}\r\nX-Request-Id: {id}\r\nContent-Type: {media}\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n"
+    var prefix = string.StringBuilder.from("HTTP/1.1 {code} {reason}\r\nX-Request-Id: {id}\r\nContent-Type: {media}\r\n{framing}Connection: close\r\n")
+    for field in &fields {
+        if prefix.byte_length() + field.name.byte_length() + field.value.byte_length() + 6 > HEAD_LIMIT { return None }
+        let raw = "{field.name}: {field.value}"
+        let parsed = match header(raw.clone().into_bytes()) { Ok(h) => h, Err(_) => return None }
+        if field.name.find(":").is_some() || reserved_field(&parsed.name) ||
+            parsed.name == "content-type" || parsed.name == "x-request-id" { return None }
+        prefix.push_str(&raw)
+        prefix.push_str("\r\n")
+    }
+    if prefix.byte_length() + 2 > HEAD_LIMIT { return None }
+    prefix.push_str("\r\n")
+    Some(prefix.finish())
+}
+fn send(var stream: Wire, prefix: String, body: Array<UInt8>, head: Bool) @suspends -> WriteOutcome {
     if !stream.write(prefix.into_bytes()) { return Failed }
-    if !head && size > 0 && !stream.write(body) { return Failed }
+    if !head && !body.is_empty() && !stream.write(body) { return Failed }
     if stream.finish() { Complete } else { Failed }
 }
 fn write_timeout(duration: Duration) @suspends -> WriteOutcome { task.sleep(duration); TimedOut }
-fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Option<String>, code: Int32, reason: String, media: String, body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
-    let outcome = race { | send(io, code, reason, media, body, head, context) | write_timeout(timeout) }
+fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Option<String>, var code: Int32, reason: String, media: String, headers: Array<Header>, var body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
+    let prefix = match response_prefix(code, reason, media, headers, body.len(), context) {
+        Some(prefix) => prefix,
+        None => {
+            code = 500
+            body = []
+            response_prefix(code, "Internal Server Error", "text/plain", [], 0, context)!
+        }
+    }
+    let outcome = race { | send(io, prefix, body, head) | write_timeout(timeout) }
     let label = match outcome { Complete => "complete", Failed => "failed", TimedOut => "timeout" }
     var fields = [log.uint("status", uint64(code)), log.text("write_outcome", label)]
     if let Some(duration) = started.elapsed() { fields.push(log.uint("duration_ms", duration.as_millis())) }
@@ -281,23 +326,15 @@ fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, s
                 BodyLimit => (413, "Content Too Large"), Timeout => (408, "Request Timeout"),
                 Unsupported => (501, "Not Implemented"), Expectation => (417, "Expectation Failed"), Stopped => return, Network => return
             }
-            respond(io, context, started, None, code, label, "text/plain", [], false, options.write_timeout)
+            respond(io, context, started, None, code, label, "text/plain", [], [], false, options.write_timeout)
         }
         Ok(request) => {
             let head = request.method == "HEAD"
             let route = service.route(&request)
-            let Response { status, content_type, body } = service.handle(request)
-            if body.len() > BODY_LIMIT {
-                respond(io, context, started, route, 500, "Internal Server Error", "text/plain", [], head, options.write_timeout)
-                return
-            }
-            let (code, label) = match status {
-                Success => (200, "OK"), BadRequest => (400, "Bad Request"), NotFound => (404, "Not Found"),
-                Conflict => (409, "Conflict"), ServiceUnavailable => (503, "Service Unavailable"),
-                ContentTooLarge => (413, "Content Too Large"), InternalError => (500, "Internal Server Error")
-            }
+            let Response { status, content_type, headers, body } = service.handle(request)
+            let (code, label) = status_line(status)
             let media = match content_type { Text => "text/plain; charset=utf-8", Json => "application/json", Bytes => "application/octet-stream", Custom(media) => media.value }
-            respond(io, context, started, route, code, label, media, body, head, options.write_timeout)
+            respond(io, context, started, route, code, label, media, headers, body, head, options.write_timeout)
         }
     }
 }
@@ -384,13 +421,15 @@ impl Client {
 }
 fn connect_deadline(timeout: Duration) @suspends -> Result<Wire, ClientError> { task.sleep(timeout); Err(ConnectTimeout) }
 fn exchange_deadline(timeout: Duration) @suspends -> Result<ClientResponse, ClientError> { task.sleep(timeout); Err(ExchangeTimeout) }
+fn reserved_field(name: &String) -> Bool {
+    name == "host" || name == "content-length" || name == "connection" || name == "transfer-encoding" ||
+        name == "expect" || name == "trailer" || name == "upgrade"
+}
 fn outgoing_field(field: &Header, seen_type: &mut Bool) -> Result<String, ClientError> {
     // Validate precisely the bytes that will be sent before opening a socket.
     let raw = "{field.name}: {field.value}"
     let checked = match header(raw.clone().into_bytes()) { Ok(h) => h, Err(_) => return Err(InvalidRequest) }
-    if field.name.find(":").is_some() || checked.name == "host" || checked.name == "content-length" ||
-        checked.name == "connection" || checked.name == "transfer-encoding" || checked.name == "expect" ||
-        checked.name == "trailer" || checked.name == "upgrade" { return Err(InvalidRequest) }
+    if field.name.find(":").is_some() || reserved_field(&checked.name) { return Err(InvalidRequest) }
     if checked.name == "content-type" {
         if *seen_type || !valid_media_type(&checked.value) { return Err(InvalidRequest) }
         *seen_type = true

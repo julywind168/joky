@@ -6806,7 +6806,11 @@ Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原�
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 `request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
 会补上 `request_id` 后调用通用日志接口。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
-Response 提供状态枚举、媒体类型枚举和正文字节。发送方计算 Content-Length，HEAD 只发送响应头。
+Response 提供 status、content_type、headers 和 body 字段。没有附加响应头时传 `headers: []`。
+可用 Status.Created、Status.NoContent 等预设状态，也可用 Status.from_code(code) 校验 200–599 的最终状态码。
+handler 可以提供 Location 等响应头。定界字段、Content-Type 和 X-Request-Id 由服务端生成。
+HEAD 只发响应头。204、205、304 的正文必须为空，204 和 304 省略 Content-Length。
+非法头字段、超限响应或禁止的正文在发送前转为 500。
 
 持有业务资源的服务可实现 `http.Service`，并调用 `http.serve_with(listener, &stop, options, service)`。
 `share(&self) @suspends -> Self` 在取得连接名额后调用一次，为连接分支提供独立拥有的上下文。该方法在接收循环中执行，适合复制轻量句柄。
