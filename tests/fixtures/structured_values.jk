@@ -213,3 +213,35 @@ fn call_shapes() @suspends -> Int32 {
     ensure(owner.id == 1 && owner.text.byte_length() == 7)
     42
 }
+
+fn ordered_child(value: Tracked, polls: Int32) @suspends -> Int32 {
+    var n = 0
+    while n < polls { task.yield_now(); n += 1 }
+    value.id
+}
+fn ordered_race() @suspends -> Int32 {
+    let winner = race {
+        | ordered_child(make(1), 1)
+        | ordered_child(make(2), 50)
+        | ordered_child(make(3), 50)
+    }
+    41 + winner
+}
+fn ordered_join_failure() @suspends -> Int32 {
+    join { | ordered_child(make(1), 50) | ordered_child(make(2), 50) | fail_branch() };
+    0
+}
+fn ordered_scope_failure() @suspends -> Int32 {
+    let first = make(1)
+    let second = make(2)
+    scope {
+        branch { ordered_child(first, 50); }
+        branch { ordered_child(second, 50); }
+        task.yield_now()
+        ensure(false)
+    }
+    0
+}
+fn ordered_isolate() @suspends -> Int32 {
+    match isolate { ordered_scope_failure() } { Ok(_) => 0, Err(_) => 42 }
+}

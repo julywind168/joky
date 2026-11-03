@@ -1414,10 +1414,11 @@ impl Execution {
         let mut error = None;
         // Reused node indices do not encode nesting. Keep parents alive until
         // child callbacks have finished using their borrowed local storage.
-        let mut pending: Vec<_> = roots.into_iter().map(|id| (id, false)).collect();
+        let mut pending: Vec<_> = roots.into_iter().rev().map(|id| (id, false)).collect();
         while let Some((id, visited)) = pending.pop() {
             if !visited {
                 pending.push((id, true));
+                let children_start = pending.len();
                 if let Activation::User(frame) = &mut self.node_mut(id).activation {
                     match &mut frame.pending {
                         Some(Pending::Call { child, .. }) => pending.push((*child, false)),
@@ -1442,6 +1443,8 @@ impl Execution {
                         let _ = scope.begin_drain();
                         pending.extend(scope.take_children().into_iter().map(|id| (id, false)));
                     }
+                    // Pop children in registration order, before revisiting their parent.
+                    pending[children_start..].reverse();
                 }
                 continue;
             }

@@ -101,6 +101,36 @@ fn structured_values_failures_clean_partial_results() {
         }
     }
 }
+#[test]
+fn structured_values_cancel_siblings_in_registration_order() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(VALUES, mode);
+        for (entry, fails, events) in [
+            ("ordered_race", false, &[-1, -2, -3, 1, 2, 3][..]),
+            ("ordered_join_failure", true, &[-1, -2, 1, 2]),
+            ("ordered_scope_failure", true, &[-1, -2, 1, 2]),
+            ("ordered_isolate", false, &[-1, -2, 1, 2]),
+        ] {
+            reset();
+            let mut task = vm.call_async(entry, &[]).unwrap();
+            for _ in 0..1000 {
+                if task.is_finished() || task.resume().is_err() {
+                    break;
+                }
+            }
+            if fails {
+                assert!(
+                    matches!(task.status(), ContinuationStatus::Failed(_)),
+                    "{mode:?} {entry}"
+                );
+            } else {
+                assert_eq!(task.cps_result(), Some(42), "{mode:?} {entry}");
+            }
+            EVENTS.with(|v| assert_eq!(v.borrow().as_slice(), events, "{mode:?} {entry}"));
+            cleaned();
+        }
+    }
+}
 fn structured_values_cancel(sweep: CancellationSweep) {
     let mut vm = parity_vm(VALUES, VmMode::Interpreter);
     for entry in [

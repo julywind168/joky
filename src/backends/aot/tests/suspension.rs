@@ -466,6 +466,10 @@ fn structured_values_execute_and_clean_up_in_standalone_native_code() {
         |compiler| {
             let mut harness = String::new();
             for (name, failure) in [
+                ("ordered_race", false),
+                ("ordered_join_failure", true),
+                ("ordered_scope_failure", true),
+                ("ordered_isolate", false),
                 ("scope_scalar", false),
                 ("scope_owned", false),
                 ("scope_return", false),
@@ -489,7 +493,19 @@ fn structured_values_execute_and_clean_up_in_standalone_native_code() {
             ] {
                 let slots = compiler.cps_frame_slots(name).unwrap();
                 let failure = i32::from(failure);
-                let check_trace = i32::from(name == "call_shapes");
+                let expected = match name {
+                    "call_shapes" => "-1, 1",
+                    "ordered_race" => "-1, -2, -3, 1, 2, 3",
+                    "ordered_join_failure" | "ordered_scope_failure" | "ordered_isolate" => {
+                        "-1, -2, 1, 2"
+                    }
+                    _ => "",
+                };
+                let check_trace = if expected.is_empty() {
+                    String::new()
+                } else {
+                    format!("int trace[] = {{{expected}}}; if (count != sizeof(trace)/sizeof(trace[0])) return 48; for (int i = 0; i < count; ++i) if (events[i] != trace[i]) return 48;")
+                };
                 harness.push_str(&format!(r#"
                     {{
                         extern int32_t {name}(JokyCpsFrame *);
@@ -500,7 +516,7 @@ fn structured_values_execute_and_clean_up_in_standalone_native_code() {
                         if ({failure} != !!joky_runtime_error_code()) return 40;
                         if (!{failure} && (status != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42)) return 41;
                         if ({failure} && status != JOKY_CPS_RUNTIME_ERROR) return 42;
-                        if ({check_trace} && (count != 2 || events[0] != -1 || events[1] != 1)) return 48;
+                        {check_trace}
                         for (int id = 1; id <= 9; ++id) {{
                             int created = 0, dropped = 0;
                             for (int i = 0; i < count; ++i) {{
