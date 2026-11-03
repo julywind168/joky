@@ -35,7 +35,8 @@ pub(super) struct GenericContext {
     pub library_call_span: Option<Span>,
     /// Declaring modules keep handle-method identity independent of the caller.
     pub when_modules: HashMap<String, String>,
-    pub when_parents: HashMap<String, String>,
+    /// Synthetic task entries share the enclosing function's lexical declaration.
+    pub task_parents: HashMap<String, String>,
     pub module_name: String,
     pub when_sites: Vec<(String, Span, String)>,
     pub scope: Arc<crate::core::imports::ImportScope>,
@@ -73,7 +74,7 @@ impl GenericContext {
                     _ => None,
                 })
                 .collect(),
-            when_parents: HashMap::new(),
+            task_parents: HashMap::new(),
             module_name: module.logical_name.clone(),
             when_sites: Vec::new(),
             scope: module.scope.clone().unwrap_or_default(),

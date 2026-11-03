@@ -500,7 +500,7 @@ impl FunctionPlan {
                 .generics
                 .borrow()
                 .definitions
-                .contains(&self.when_function)
+                .contains(&self.lexical_function)
         {
             return Err(type_error(
                 &block.span,
@@ -636,7 +636,7 @@ impl FunctionPlan {
             if let Some((_, _, entry)) = c
                 .when_sites
                 .iter()
-                .find(|(parent, site, _)| parent == &self.when_function && *site == block.span)
+                .find(|(parent, site, _)| parent == &self.lexical_function && *site == block.span)
             {
                 entry.clone()
             } else {
@@ -661,8 +661,8 @@ impl FunctionPlan {
                     format!(
                         "$when/named/{}:{module}/{}:{}/{}:{}",
                         module.len(),
-                        self.when_function.len(),
-                        self.when_function,
+                        self.lexical_function.len(),
+                        self.lexical_function,
                         label.len(),
                         label
                             .as_bytes()
@@ -681,7 +681,7 @@ impl FunctionPlan {
                     ));
                 }
                 c.when_sites
-                    .push((self.when_function.clone(), block.span, entry.clone()));
+                    .push((self.lexical_function.clone(), block.span, entry.clone()));
                 entry
             }
         };

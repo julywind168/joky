@@ -8,6 +8,7 @@ fn concurrent_blocks_execute_relocated_entries_and_owned_results() {
         "concurrent-blocks",
         include_str!("../../../../tests/fixtures/concurrent_blocks.jk"),
         &[
+            ("blocks_inner_closures", "11,41", 2),
             ("blocks_join", "20,10,20,20", 4),
             ("blocks_return", "40", 1),
             ("blocks_question", "40", 1),

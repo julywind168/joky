@@ -553,7 +553,7 @@ pub(crate) struct DynErasure {
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
     source_function: String,
-    when_function: String,
+    lexical_function: String,
     callable_modes: HashMap<usize, crate::core::types::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
     captured_fields: HashMap<usize, (Slot, Vec<String>)>,
@@ -1347,15 +1347,15 @@ impl FunctionPlan {
                     && f.name
                         .contains(&format!("joky/impl/{}/", d.self_parameter.id))
             });
-        let when_function = generics
+        let lexical_function = generics
             .borrow()
-            .when_parents
+            .task_parents
             .get(&f.name)
             .cloned()
             .unwrap_or_else(|| f.name.clone());
         let mut plan = Self {
             dyn_erasures: Vec::new(),
-            when_function,
+            lexical_function,
             source_function: f.name.clone(),
             callable_modes: Default::default(),
             captured_owners: Default::default(),

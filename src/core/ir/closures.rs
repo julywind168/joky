@@ -253,44 +253,49 @@ impl FunctionPlan {
                 (name, slot_type(&binding.slot), binding.mutable)
             })
             .collect();
-        if suspends
-            && !matches!(expected, Some(Type::Function(_)))
-            && !environment.closure.as_ref().unwrap().storable
-        {
+        let closure = environment.closure.as_ref().unwrap();
+        // A capture-free synchronous literal needs no environment across a suspension.
+        // Keep contextual callable types and the ownership of explicit move closures.
+        let pointer_type = match expected {
+            Some(Type::Function(pointer)) => {
+                if pointer.suspends != function.suspends {
+                    return Err(type_error(
+                        &function.span,
+                        ErrorCode::TypeMismatch,
+                        "Closure suspension effect does not match its expected function type",
+                    ));
+                }
+                Some(Type::Function(pointer.clone()))
+            }
+            None if suspends && !function.moving && closure.pointer_entry.is_some() => {
+                Some(Type::function(
+                    closure.signature.params.clone(),
+                    closure.signature.ret.clone(),
+                ))
+            }
+            _ => None,
+        };
+        if let Some(ty) = pointer_type {
+            if !captures.is_empty() {
+                return Err(capturing_function_pointer_error(function.span));
+            }
+            let Some(entry) = &closure.pointer_entry else {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::TypeMismatch,
+                    "A function pointer cannot return a closure environment",
+                ));
+            };
+            let dst = self.slot(ty)?;
+            self.emit(Op::FunctionRef(dst.clone(), entry.clone()));
+            return Ok(Flow::Value(Some(dst)));
+        }
+        if suspends && !closure.storable {
             return Err(type_error(
                 &function.span,
                 ErrorCode::InvalidCall,
                 "Only reference-free move closure environments can enter suspending functions",
             ));
-        }
-        if let Some(Type::Function(pointer)) = expected {
-            let signature = &pointer.signature;
-            if pointer.suspends != function.suspends {
-                return Err(type_error(
-                    &function.span,
-                    ErrorCode::TypeMismatch,
-                    "Closure suspension effect does not match its expected function type",
-                ));
-            }
-            if !captures.is_empty() {
-                return Err(capturing_function_pointer_error(function.span));
-            }
-            let dst = self.slot(Type::Function(Arc::new(crate::core::types::FunctionType {
-                signature: signature.clone(),
-                suspends: function.suspends,
-                noescape: pointer.noescape,
-            })))?;
-            self.emit(Op::FunctionRef(
-                dst.clone(),
-                environment
-                    .closure
-                    .as_ref()
-                    .unwrap()
-                    .pointer_entry
-                    .clone()
-                    .unwrap(),
-            ));
-            return Ok(Flow::Value(Some(dst)));
         }
         let dst = self.slot(Type::Record(environment.clone()))?;
         let place = self.slot(Type::reference(dst.ty.clone(), true))?;
@@ -709,16 +714,25 @@ impl FunctionPlan {
                 span: function.span,
             };
             let mut info = functions
-                .get(&self.source_function)
+                .get(&self.lexical_function)
                 .cloned()
                 .or_else(|| {
                     self.generics
                         .borrow()
                         .generated_functions
-                        .get(&self.source_function)
+                        .get(&self.lexical_function)
                         .cloned()
                 })
-                .unwrap();
+                .ok_or_else(|| {
+                    type_error(
+                        &function.span,
+                        ErrorCode::InvalidState,
+                        format!(
+                            "Missing enclosing function metadata for closure in '{}'",
+                            self.lexical_function
+                        ),
+                    )
+                })?;
             info.closure_entry = true;
             info.noescape = false;
             info.noescape_params = vec![0];

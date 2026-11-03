@@ -4,6 +4,7 @@ use crate::runtime::{arena::LIVE, suspension::ContinuationStatus};
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/concurrent_blocks.jk");
 const CASES: &[(&str, &[i32])] = &[
+    ("blocks_inner_closures", &[11, 41]),
     ("blocks_join", &[20, 10, 20, 20]),
     ("blocks_return", &[40]),
     ("blocks_question", &[40]),
@@ -60,6 +61,7 @@ fn concurrent_blocks_reject_conflicting_captures_and_escaping_control_flow() {
         "fn bad() @suspends { let text = \"owned\"; join { | { text } | { text } }; }",
         "fn bad() @suspends { var n = 0; let r = &mut n; join { | { *r = 1 } | { *r = 2 } } }",
         "fn bad() @suspends { let n = 1; join { | { &n } }; }",
+        "fn bad() @suspends { let n = 1; let view = &n; join { | { let read = move || { *view }; read() } }; }",
         "fn value() -> Int32 { 1 } fn bad() @suspends { race { | { value } }; }",
         "fn bad() @suspends { while true { join { | { break } } } }",
         "fn bad() @suspends { while true { race { | { continue } } } }",
@@ -71,6 +73,12 @@ fn concurrent_blocks_reject_conflicting_captures_and_escaping_control_flow() {
             "{source}"
         );
     }
+    let source = "fn bad() @suspends { var n = 0; let r = &mut n; join { | { let read = move || { n }; read() } | { *r = 2; 0 } }; }";
+    let error = crate::core::prepared::check_source(source, &Default::default()).unwrap_err();
+    assert!(
+        error.message().contains("conflicts with a live borrow"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -148,6 +156,7 @@ fn concurrent_blocks_cancel_and_fail_without_leaking_captures() {
 fn cancellation(sweep: CancellationSweep) {
     let mut vm = parity_vm(SOURCE, VmMode::Interpreter);
     for name in [
+        "blocks_inner_closures",
         "blocks_owned",
         "blocks_aggregate",
         "blocks_owned_result",

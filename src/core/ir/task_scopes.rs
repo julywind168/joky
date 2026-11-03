@@ -230,8 +230,8 @@ impl FunctionPlan {
         };
         self.generics
             .borrow_mut()
-            .when_parents
-            .insert(task_def.name.clone(), self.when_function.clone());
+            .task_parents
+            .insert(task_def.name.clone(), self.lexical_function.clone());
         let plan = FunctionPlan::new_with_return_inference(
             &task_def,
             functions,

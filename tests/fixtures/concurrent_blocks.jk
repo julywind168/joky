@@ -142,3 +142,22 @@ fn blocks_failure() @suspends -> Int32 {
     }
     a + b
 }
+
+fn blocks_inner_closures() @suspends -> Int32 {
+    let seed = 10
+    let (a, b) = join {
+        | { let read = || -> Int32 { 10 }; read() }
+        | { let unused = || -> Int32 { 99 }; seed - 9 }
+    }
+    let c = race {
+        | { let add = move || { a + b }; add() }
+    }
+    scope {
+        branch { let emit = move || { record(c) }; emit(); }
+    }
+    let result: Result<Int32, task.Failure> = isolate {
+        let finish = move || @suspends { delayed_value(c + 30) }
+        finish()
+    }
+    result.unwrap()
+}
