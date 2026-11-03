@@ -35,9 +35,9 @@ fn mutate(tree: &mut Tree) {
     let children_key = "children"
     match tree {
         Objects(fields) => {
-            let previous = mem.replace(fields.value_mut(&other), leaf(4))
+            let previous = mem.replace(fields.borrow_mut_ref(&other), leaf(4))
             match previous { Leaf(owner) => {}, _ => ensure(false) }
-            let children = fields.value_mut(&children_key)
+            let children = fields.borrow_mut_ref(&children_key)
             match children {
                 Groups(children) => {
                     match children.pop() { Some(value) => {}, None => ensure(false) }

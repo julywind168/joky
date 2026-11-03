@@ -151,7 +151,7 @@ fn derived_composition() {
     let bag = decoded::<Bag<String, UInt64>>("{{\"values\":{{\"items\":[null,18446744073709551615]}}}}")
     let again = decoded::<Bag<String, UInt64>>(encoded(&bag))
     let key = "items"
-    ensure(again.values.value_ref(&key).get(1).unwrap_or(Option.None).unwrap_or(0) == 18446744073709551615)
+    ensure(again.values.borrow_ref(&key).get(1).unwrap_or(Option.None).unwrap_or(0) == 18446744073709551615)
     let empty = Empty::<Unmapped> {}
     let empty_text = "{{}}"
     ensure(encoded(&empty).equals(&empty_text))
@@ -203,7 +203,7 @@ fn derived_directions_and_keys() {
     let bag = decoded::<Bag<Key, UInt8>>("{{\"values\":{{\"key\":[null,42]}}}}")
     let recovered = decoded::<Bag<Key, UInt8>>(encoded(&bag))
     let key = Key { text: "key" }
-    ensure(recovered.values.value_ref(&key).get(1).unwrap_or(Option.None).unwrap_or(0) == 42)
+    ensure(recovered.values.borrow_ref(&key).get(1).unwrap_or(Option.None).unwrap_or(0) == 42)
 }
 
 

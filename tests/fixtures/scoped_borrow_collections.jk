@@ -46,23 +46,23 @@ fn make_map() -> Map<Key, Option<String>> {
     var table = Map.with_capacity::<Key, Option<String>>(17)
     table.insert(Key { id: 1 }, Some("abc"))
     table.insert(Key { id: 2 }, None)
-    let first = Key { id: 1 }; table.remove_by_ref(&first)
+    let first = Key { id: 1 }; table.remove(&first)
     table.insert(Key { id: 3 }, Some("de"))
     table.insert(Key { id: 4 }, Some("x"))
-    let last = Key { id: 4 }; table.remove_by_ref(&last)
+    let last = Key { id: 4 }; table.remove(&last)
     table
 }
 fn read_map(table: &Map<Key, Option<String>>) @suspends -> Int32 {
     let second = Key { id: 2 }; let third = Key { id: 3 }; let fourth = Key { id: 4 }
     check.assert(table.capacity() >= 17, "lost map capacity")
-    check.assert(table.contains_key_by_ref(&second), "missing empty value")
-    check.assert(!table.contains_key_by_ref(&fourth), "deleted key found")
+    check.assert(table.contains_key(&second), "missing empty value")
+    check.assert(!table.contains_key(&fourth), "deleted key found")
     var total = 0
     for (key, value) in table {
         task.yield_now()
         total += key.id * match value { Some(s) => int32(s.byte_length()), None => 0 }
     }
-    match table.value_ref(&third) {
+    match table.borrow_ref(&third) {
         Some(s) => { let (a, b) = join { | text(s) | text(s) }; total + a + b }
         None => 0
     }

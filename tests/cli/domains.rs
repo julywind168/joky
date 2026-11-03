@@ -627,9 +627,9 @@ fn state_domains_nested_string_keys_run_in_all_backends() {
             "fn inspect(state: &State) -> Bool {",
             "fn inspect(state: &State) -> Bool { let first = \"first\"; let second = \"second\"",
         )
-        .replace("rooms.remove(2)", "rooms.remove_by_ref(&second)")
-        .replace("rooms.borrow_ref(1)", "rooms.value_ref(&first)")
-        .replace("rooms.borrow_ref(2)", "rooms.value_ref(&second)");
+        .replace("rooms.remove(2)", "rooms.remove(&second)")
+        .replace("rooms.borrow_ref(1)", "rooms.borrow_ref(&first)")
+        .replace("rooms.borrow_ref(2)", "rooms.borrow_ref(&second)");
     work.write("nested.jk", &source);
     work.assert_all_backends("nested.jk", &[], b"nested domains ok\n", 0);
 }

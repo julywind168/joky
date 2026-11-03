@@ -6,8 +6,8 @@ import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer
 import joky/check.{panic}
-import joky/eq.{type Eq, type BorrowEq}
-import joky/hash.{type Hash, type BorrowHash}
+import joky/eq.{type BorrowEq}
+import joky/hash.{type BorrowHash}
 import joky/internal/types
 
 // Single-owner, unordered Map. All table policies execute in Joky.
@@ -37,21 +37,15 @@ impl<K, V> Map<K, V> {
     pub fn pop(&mut self) -> Option<(K, V)> { pop(self) }
     pub fn into_entries(self) -> Array<(K, V)> { into_entries(self) }
 }
-impl<K: Copy + Eq + Hash, V> Map<K, V> {
-    pub fn contains_key(&self, key: K) -> Bool { contains_key(self, key) }
-    pub fn remove(&mut self, key: K) -> Option<V> { remove(self, key) }
-    pub fn borrow_ref(&self, key: K) -> &V { borrow_ref(self, key) }
-    pub fn borrow_mut_ref(&mut self, key: K) -> &mut V { borrow_mut_ref(self, key) }
-}
 impl<K: BorrowEq + BorrowHash, V> Map<K, V> {
     pub fn from_entries(entries: Array<(K, V)>) -> Self { from_entries(entries) }
     pub fn extend(&mut self, entries: Array<(K, V)>) { extend(self, entries) }
     pub fn insert(&mut self, key: K, value: V) -> Option<V> { insert(self, key, value) }
-    pub fn contains_key_by_ref(&self, key: &K) @noescape(key) -> Bool { contains_key_by_ref(self, key) }
-    pub fn remove_by_ref(&mut self, key: &K) @noescape(key) -> Option<V> { remove_by_ref(self, key) }
-    pub fn value_ref(&self, key: &K) @noescape(key) -> &V { value_ref(self, key) }
+    pub fn contains_key(&self, key: &K) @noescape(key) -> Bool { contains_key(self, key) }
+    pub fn remove(&mut self, key: &K) @noescape(key) -> Option<V> { remove(self, key) }
+    pub fn borrow_ref(&self, key: &K) @noescape(key) -> &V { borrow_ref(self, key) }
     pub fn get_ref(&self, key: &K) @noescape(key) -> Option<&V> { get_ref(self, key) }
-    pub fn value_mut(&mut self, key: &K) @noescape(key) -> &mut V { value_mut(self, key) }
+    pub fn borrow_mut_ref(&mut self, key: &K) @noescape(key) -> &mut V { borrow_mut_ref(self, key) }
 }
 pub fn new<K, V>() -> Map<K, V> {
     types.require_reference_free::<K>()
@@ -185,46 +179,34 @@ fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UI
     }
     None
 }
-pub fn contains_key<K: Copy + Eq + Hash, V>(table: &Map<K, V>, key: K) -> Bool { !find(table, &key, BorrowHash.hash_ref(&key)).is_none() }
-pub fn get<K: Copy + Eq + Hash, V: Copy>(table: &Map<K, V>, key: K) -> Option<V> {
-    match find(table, &key, BorrowHash.hash_ref(&key)) { Some(i) => table.values.get(i), None => None }
-}
 fn require_entry<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> UInt64 {
     match find(table, key, BorrowHash.hash_ref(key)) {
         Some(i) => i
         None => panic("Map key not found")
     }
 }
-pub fn borrow<K: Copy + Eq + Hash, V: Copy>(table: &Map<K, V>, key: K) -> &Element<V> {
-    let i = require_entry(table, &key)
+pub fn borrow<K: BorrowEq + BorrowHash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> &Element<V> {
+    let i = require_entry(table, key)
     table.values.borrow(i)
 }
-pub fn borrow_mut<K: Copy + Eq + Hash, V: Copy>(table: &mut Map<K, V>, key: K) -> &mut Element<V> {
-    let i = require_entry(table, &key)
+pub fn borrow_mut<K: BorrowEq + BorrowHash, V: Copy>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut Element<V> {
+    let i = require_entry(table, key)
     table.values.borrow_mut(i)
 }
-pub fn borrow_ref<K: Copy + Eq + Hash, V>(table: &Map<K, V>, key: K) -> &V {
-    let i = require_entry(table, &key)
-    table.values.borrow_ref(i)
-}
-pub fn borrow_mut_ref<K: Copy + Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> &mut V {
-    let i = require_entry(table, &key)
-    table.values.borrow_mut_ref(i)
-}
-pub fn contains_key_by_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Bool {
+pub fn contains_key<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Bool {
     !find(table, key, BorrowHash.hash_ref(key)).is_none()
 }
-pub fn get_by_ref<K: BorrowEq + BorrowHash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<V> {
+pub fn get<K: BorrowEq + BorrowHash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<V> {
     match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => table.values.get(i), None => None }
 }
-pub fn remove_by_ref<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> Option<V> {
+pub fn remove<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> Option<V> {
     match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => remove_entry(table, i), None => None }
 }
-pub fn value_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> &V {
+pub fn borrow_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> &V {
     let i = require_entry(table, key)
     table.values.borrow_ref(i)
 }
-pub fn value_mut<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut V {
+pub fn borrow_mut_ref<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut V {
     let i = require_entry(table, key)
     table.values.borrow_mut_ref(i)
 }
@@ -279,9 +261,6 @@ fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
     }
     value
 }
-pub fn remove<K: Copy + Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> Option<V> {
-    match find(table, &key, BorrowHash.hash_ref(&key)) { None => None, Some(i) => remove_entry(table, i) }
-}
 pub fn clear<K, V>(table: &mut Map<K, V>) {
     table.values.clear(); table.keys.clear(); table.hashes.clear(); table.positions.clear()
     var i: UInt64 = 0
@@ -289,14 +268,10 @@ pub fn clear<K, V>(table: &mut Map<K, V>) {
     table.deleted = 0
 }
 
-impl<K: Copy + Eq + Hash, V: Copy> Map<K, V> {
-    pub fn get(&self, key: K) -> Option<V> { get(self, key) }
-    pub fn borrow(&self, key: K) -> &Element<V> { borrow(self, key) }
-    pub fn borrow_mut(&mut self, key: K) -> &mut Element<V> { borrow_mut(self, key) }
-}
-
 impl<K: BorrowEq + BorrowHash, V: Copy> Map<K, V> {
-    pub fn get_by_ref(&self, key: &K) @noescape(key) -> Option<V> { get_by_ref(self, key) }
+    pub fn borrow(&self, key: &K) @noescape(key) -> &Element<V> { borrow(self, key) }
+    pub fn borrow_mut(&mut self, key: &K) @noescape(key) -> &mut Element<V> { borrow_mut(self, key) }
+    pub fn get(&self, key: &K) @noescape(key) -> Option<V> { get(self, key) }
 }
 
 

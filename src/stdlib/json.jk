@@ -335,7 +335,7 @@ fn read_key(input: &String, start: UInt64, limit: UInt64, frame: &mut DecodeFram
     let (name, next) = read_string(input, start, limit)?
     match frame {
         Fields((fields, key)) => {
-            if fields.contains_key_by_ref(&name) { return Err(decode_error(DecodeErrorKind.DuplicateKey, start)) }
+            if fields.contains_key(&name) { return Err(decode_error(DecodeErrorKind.DuplicateKey, start)) }
             mem.replace(key, Some(name));
         }
         Items(_) => { return Err(decode_error(DecodeErrorKind.UnexpectedToken, start)) }

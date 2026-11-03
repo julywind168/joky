@@ -2693,7 +2693,7 @@ trait 实现继承显式契约，具体实现和未实例化模板都必须通�
 桶使用既有 Empty/Deleted/Full(UInt64) tagged enum 布局，数量与字节上限始终查询目标布局。
 Joky 源码实现有界线性探测、缓存哈希重建、四个载荷同步 swap_remove 与被搬末项的桶修正。
 new 与 insert 调用通用 ReferenceFree 存储资格检查；核心查找/插入使用 BorrowEq + BorrowHash，
-旧 Copy key 入口及 Eq/Hash 通过普通源码 blanket impl 适配，
+Copy key 的 Eq/Hash 通过普通源码 blanket impl 适配，
 生命周期函数无协议约束。重建只交换索引拥有字段，不调用用户协议、不析构 value；
 各个中断点的清理由既有 Array 初始化前缀和拥有临时量登记承担，不增加 Map ABI。
 真实生产算法的双向索引检查由 cfg(test) 标准库加载附加的同模块用例执行；
@@ -2701,7 +2701,7 @@ new 与 insert 调用通用 ReferenceFree 存储资格检查；核心查找/插�
 
 
 Map 的四种元素借用是查询 entry 后调用 Array 借用的普通源码函数；返回引用沿用整个 Map
-的存储来源。新增 value_ref/value_mut 使用参数级 noescape 排除查询 key 的借用来源；
+的存储来源。查询方法使用参数级 noescape 排除查询 key 的借用来源；
 Array/Slice 的直接引用同时支持无引用 Copy 元素，其指针指向内联元素存储。
 复制出的普通共享引用仍沿用已有 contents 与 retained 分析，独立于 Map 控制块；
 任务期来源保留不会因为 remove、clear、移动或 release 而缩短。无需 Map 专用借用规则。

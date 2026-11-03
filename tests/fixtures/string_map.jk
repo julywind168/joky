@@ -18,10 +18,10 @@ fn basic<Tag>() -> Int32 {
     m.insert(empty.clone(), 9)
     let absent = "absent"
     let message = "String key content and replacement"
-    assert(m.len() == 2 && !m.contains_key_by_ref(&absent), &message)
-    assert(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
-    assert(m.get_by_ref(&empty).unwrap_or(0) == 9, &message)
-    let answer = old + m.remove_by_ref(&query).unwrap_or(0)
+    assert(m.len() == 2 && !m.contains_key(&absent), &message)
+    assert(m.get(&query).unwrap_or(0) == 22, &message)
+    assert(m.get(&empty).unwrap_or(0) == 9, &message)
+    let answer = old + m.remove(&query).unwrap_or(0)
     assert(query.byte_length() == 8 && m.len() == 1, &message)
     m.clear()
     assert(m.is_empty(), &message)
@@ -31,12 +31,12 @@ fn query_lifetime<Tag>() -> Int32 {
     var m = Map.new::<String, String>()
     m.insert("key", "answer")
     let query = "key"
-    let value = m.value_ref(&query)
+    let value = m.borrow_ref(&query)
     query.release()
     let message = "Query borrow must end at the call"
     assert(value.byte_length() == 6, &message)
     let query2 = "key"
-    let old = mem.replace(m.value_mut(&query2), "next")
+    let old = mem.replace(m.borrow_mut_ref(&query2), "next")
     old.release(); query2.release()
     let entries = m.into_entries()
     assert(entries.len() == 1, &message)
@@ -77,13 +77,13 @@ fn collision_growth<Tag>() -> Int32 {
     m.reserve(100)
     let query = key(4, "a", 0)
     let message = "Owned colliding keys"
-    assert(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
+    assert(m.get(&query).unwrap_or(0) == 22, &message)
     let keys = m.keys()
     assert(slice.borrow_ref(keys, 0).id == 1, &message)
-    let result = m.remove_by_ref(&query).unwrap_or(0)
+    let result = m.remove(&query).unwrap_or(0)
     assert(m.len() == 1, &message)
     let query2 = key(5, "b", 0)
-    assert(m.get_by_ref(&query2).unwrap_or(0) == 2, &message)
+    assert(m.get(&query2).unwrap_or(0) == 2, &message)
     m.pop()
     assert(m.is_empty(), &message)
     result + 20
@@ -96,7 +96,7 @@ fn batch<Tag>() -> Int32 {
     let m = Map.from_entries(entries)
     let query = key(13, "a", 0)
     let message = "Batch duplicate keys"
-    assert(m.value_ref(&query).byte_length() == 11, &message)
+    assert(m.borrow_ref(&query).byte_length() == 11, &message)
     let entries = m.into_entries()
     assert(entries.len() == 2, &message)
     42
@@ -124,7 +124,7 @@ fn remove_drop_failure<Tag>() -> Int32 {
     m.insert(key(50, "old", 3), "old")
     m.insert(key(51, "next", 0), "next")
     let query = key(52, "old", 0)
-    m.remove_by_ref(&query)
+    m.remove(&query)
     42
 }
 fn batch_failure<Tag>() -> Int32 {
@@ -161,9 +161,9 @@ fn copy_views<Tag>() -> Int32 {
     var m = Map.new::<String, Int32>()
     m.insert("answer", values.get(0).unwrap_or(0))
     let query = "answer"
-    let stored = m.value_mut(&query)
+    let stored = m.borrow_mut_ref(&query)
     query.release();
     (*(stored) = (*stored) + 1)
     let query2 = "answer"
-    (*(m.value_ref(&query2))) - 1
+    (*(m.borrow_ref(&query2))) - 1
 }

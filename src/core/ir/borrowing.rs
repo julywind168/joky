@@ -2567,11 +2567,20 @@ fn analyze(
                         );
                     }
                 }
-                let contents = union(inputs.iter().map(|arg| {
+                let contents = union(inputs.iter().filter_map(|arg| {
                     if !arg.ty.buffer_elements().is_empty() {
-                        buffer_contents(&state, arg)
+                        Some(buffer_contents(&state, arg))
+                    } else if noescape_inputs.contains(&arg.index)
+                        && arg
+                            .ty
+                            .reference_type()
+                            .is_some_and(|r| !r.mutable && !r.target.contains_references())
+                    {
+                        // A shared, nonescaping lookup key cannot become a stored
+                        // element loan just because another parameter is writable.
+                        None
                     } else {
-                        state[&arg.index].clone()
+                        Some(state[&arg.index].clone())
                     }
                 }));
                 for arg in inputs.iter().filter(|arg| writable_buffer(&arg.ty)) {

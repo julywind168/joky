@@ -38,7 +38,7 @@ fn container_text_count(state: &Containers) @noescape -> UInt64 { state.texts.le
 fn container_builder_length(state: &Containers) @noescape -> UInt64 { state.builder.byte_length() }
 fn container_remove(state: &mut Containers, key: Int32) @noescape -> UInt64 {
     state.values.remove(key)
-    let text = key.to_string(); state.texts.remove_by_ref(&text)
+    let text = key.to_string(); state.texts.remove(&text)
     state.values.len()
 }
 fn container_replace(state: &mut Containers, key: Int32) @noescape {

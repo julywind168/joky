@@ -149,7 +149,7 @@ impl Context {
         let invalid = match array.borrow_ref(&self.path, array.len(&self.path) - 1) {
             Field(name) => {
                 if name.byte_length() > self.options.limits.max_string_bytes { Some(MappingErrorKind.StringLimit) } else {
-                    if map.contains_key_by_ref(fields, name) { Some(MappingErrorKind.DuplicateField) } else { None }
+                    if map.contains_key(fields, name) { Some(MappingErrorKind.DuplicateField) } else { None }
                 }
             }
             Index(_) => None
@@ -175,7 +175,7 @@ impl Context {
     pub fn take_field<T: FromJson>(&mut self, fields: &mut Map<String, Value>, name: String) @noescape -> Result<T, MappingError> {
         array.push(&mut self.path, PathSegment.Field(name))
         let value = match array.borrow_ref(&self.path, array.len(&self.path) - 1) {
-            Field(name) => map.remove_by_ref(fields, name)
+            Field(name) => map.remove(fields, name)
             Index(_) => None
         }
         let result = match value {
@@ -362,7 +362,7 @@ impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
             match result {
                 Ok(value) => {
                     let key = ObjectKey.from_key::<K>(name)
-                    if map.contains_key_by_ref(&output, &key) {
+                    if map.contains_key(&output, &key) {
                         array.push(&mut context.path, PathSegment.Field(ObjectKey.to_key(&key)))
                         let error = context.error(MappingErrorKind.DuplicateField)
                         array.take_last(&mut context.path);

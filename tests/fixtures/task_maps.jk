@@ -24,11 +24,11 @@ fn make() @suspends -> Map<Key, Payload> {
     table.insert(key(3), Payload.Items(List.from_array(["removed nested"])))
     table.insert(key(1), Payload.Items(List.from_array(["replacement"])))
     let second = key(2)
-    table.remove_by_ref(&second)
+    table.remove(&second)
     task.yield_now()
     table.insert(key(4), Payload.Nested(Map.from_entries([(9, "nested")])))
     let third = key(3)
-    table.remove_by_ref(&third)
+    table.remove(&third)
     table
 }
 fn make_set() @suspends -> Set<Key> {
@@ -93,7 +93,7 @@ fn verify(value: Bundle) @suspends -> Int32 {
     let removed = key(2)
     let eleven = key(11)
     let fourteen = key(14)
-    if !table.contains_key_by_ref(&first) || !table.contains_key_by_ref(&fourth) || table.contains_key_by_ref(&removed) { return 0 }
+    if !table.contains_key(&first) || !table.contains_key(&fourth) || table.contains_key(&removed) { return 0 }
     if !values.contains(&eleven) || !values.contains(&fourteen) || values.len() != 2 { return 0 }
     var i = 0
     while i < 24 {
@@ -102,11 +102,11 @@ fn verify(value: Bundle) @suspends -> Int32 {
         i += 1
     }
     task.yield_now()
-    table.remove_by_ref(&first)
+    table.remove(&first)
     table.insert(key(1), Payload.Text("reused"))
     values.remove(&eleven)
     values.insert(key(11))
-    if table.len() == 26 && values.len() == 26 && table.contains_key_by_ref(&first) && values.contains(&eleven) { 42 } else { 0 }
+    if table.len() == 26 && values.len() == 26 && table.contains_key(&first) && values.contains(&eleven) { 42 } else { 0 }
 }
 fn topology() @suspends -> Int32 {
     let (a, b) = root()

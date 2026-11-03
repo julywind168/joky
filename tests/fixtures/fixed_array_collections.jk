@@ -91,8 +91,8 @@ fn keys() -> Int32 {
     selected.insert(key()); selected.insert(key())
     let key = key()
     check.assert(table.len() == 1 && selected.len() == 1 && selected.contains(&key), "bad owning key identity")
-    check.assert(string.equals(table.value_ref(&key), "second"), "bad key replacement")
-    table.remove_by_ref(&key); selected.remove(&key)
+    check.assert(string.equals(table.borrow_ref(&key), "second"), "bad key replacement")
+    table.remove(&key); selected.remove(&key)
     check.assert(table.is_empty() && selected.is_empty(), "bad key removal")
     42
 }
@@ -104,8 +104,8 @@ fn collisions() -> Int32 {
     var i = 0
     while i < 20 {
         let k = key_at(i)
-        check.assert(selected.contains(&k) && string.equals(table.value_ref(&k), "collision"), "lost colliding key")
-        table.remove_by_ref(&k); selected.remove(&k); i += 1
+        check.assert(selected.contains(&k) && string.equals(table.borrow_ref(&k), "collision"), "lost colliding key")
+        table.remove(&k); selected.remove(&k); i += 1
     }
     check.assert(table.is_empty() && selected.is_empty(), "lost colliding key cleanup")
     42

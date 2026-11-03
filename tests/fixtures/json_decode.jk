@@ -59,7 +59,7 @@ fn positive() {
         Ok(Value.Object(fields)) => {
             ensure(fields.len() == 3)
             let key = "a"
-            match fields.value_ref(&key) {
+            match fields.borrow_ref(&key) {
                 Array(items) => {
                     ensure(items.len() == 7)
                     match items.borrow_ref(0) { Null => {}, _ => { ensure(false) } }
@@ -184,13 +184,13 @@ fn inspect(value: &Value) {
     match value {
         Object(fields) => {
             let key = "key"
-            match fields.value_ref(&key) {
+            match fields.borrow_ref(&key) {
                 Array(items) => {
                     ensure(items.len() == 3)
                     match items.borrow_ref(1) {
                         Object(nested) => {
                             let key = "num"
-                            match nested.value_ref(&key) {
+                            match nested.borrow_ref(&key) {
                                 Number(number) => {
                                     let spelling = "18446744073709551616"
                                     ensure(number.as_text().equals(&spelling))

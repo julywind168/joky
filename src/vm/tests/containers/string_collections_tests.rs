@@ -328,7 +328,8 @@ fn string_map_queries_reuse_payloads_when_task_allocations_are_disabled() {
             )
             .unwrap();
         }
-        vm.load_source(r#"
+        vm.load_source(
+            r#"
             import joky/map.{type Map}
             extern fn deny()
             fn probe() -> Int32 {
@@ -338,12 +339,14 @@ fn string_map_queries_reuse_payloads_when_task_allocations_are_disabled() {
                 deny()
                 var i = 0
                 while i < 100 {
-                    if !m.contains_key_by_ref(&query) || m.get_by_ref(&query).unwrap_or(0) != 42 { return 0 }
+                    if !m.contains_key(&query) || m.get(&query).unwrap_or(0) != 42 { return 0 }
                     i = i + 1
                 }
-                m.remove_by_ref(&query).unwrap_or(0)
+                m.remove(&query).unwrap_or(0)
             }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let result = vm.call_int32_0("probe");
         crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
         assert_eq!(result.unwrap(), 42, "{mode:?}");

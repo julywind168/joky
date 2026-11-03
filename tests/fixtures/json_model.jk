@@ -37,7 +37,7 @@ fn fingerprint(value: &Value) -> UInt64 {
             let keys = fields.keys()
             while index < fields.len() {
                 let key = slice.borrow_ref(keys, index)
-                hash = hash + text_hash(key) * fingerprint(fields.value_ref(key))
+                hash = hash + text_hash(key) * fingerprint(fields.borrow_ref(key))
                 index = index + 1
             }
             hash

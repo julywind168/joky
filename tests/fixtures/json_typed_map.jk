@@ -18,13 +18,13 @@ fn encoded<T: ToJson>(value: &T) -> String {
 fn verify_fields(fields: &Map<String, Array<Option<UInt64>>>) {
     ensure(fields.len() == 2)
     let key = "items"
-    let values = fields.value_ref(&key)
+    let values = fields.borrow_ref(&key)
     ensure(values.len() == 3)
     ensure(values.get(0).unwrap_or(Option.Some(1)).is_none())
     ensure(values.get(1).unwrap_or(Option.None).unwrap_or(0) == 18446744073709551615)
     ensure(values.get(2).unwrap_or(Option.None).unwrap_or(1) == 0)
     let empty = ""
-    ensure(fields.value_ref(&empty).is_empty())
+    ensure(fields.borrow_ref(&empty).is_empty())
 }
 fn main() {
     let fields = decoded::<Map<String, Array<Option<UInt64>>>>("{{\"items\":[null,18446744073709551615,0],\"\":[]}}")

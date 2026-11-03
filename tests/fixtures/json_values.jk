@@ -141,11 +141,11 @@ fn mutate(value: &mut Value) {
             let present = "present"
             let absent = "absent"
             let key = "children"
-            ensure(fields.contains_key_by_ref(&present))
-            ensure(!fields.contains_key_by_ref(&absent))
-            match fields.value_ref(&present) { Null => {}, _ => { ensure(false) } }
-            match fields.remove_by_ref(&absent) { None => {}, Some(_) => { ensure(false) } }
-            match fields.value_mut(&key) {
+            ensure(fields.contains_key(&present))
+            ensure(!fields.contains_key(&absent))
+            match fields.borrow_ref(&present) { Null => {}, _ => { ensure(false) } }
+            match fields.remove(&absent) { None => {}, Some(_) => { ensure(false) } }
+            match fields.borrow_mut_ref(&key) {
                 Array(children) => {
                     ensure(children.len() == 4)
                     let old = mem.replace(children.borrow_mut_ref(0), Value.Boolean(false))
@@ -161,8 +161,8 @@ fn mutate(value: &mut Value) {
                 }
                 _ => { ensure(false) }
             }
-            match fields.remove_by_ref(&present) { Some(Value.Null) => {}, _ => { ensure(false) } }
-            match fields.remove_by_ref(&key) {
+            match fields.remove(&present) { Some(Value.Null) => {}, _ => { ensure(false) } }
+            match fields.remove(&key) {
                 Some(subtree) => { fields.insert("moved", subtree); }
                 None => { ensure(false) }
             }

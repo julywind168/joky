@@ -488,7 +488,7 @@ mod tests {
             impl BorrowHash for ValueEq { fn hash_ref(&self) -> UInt64 { 7 } }
             fn hash_value_map(value: Map<ValueHash, Int32>) @suspends -> Bool {
                 let key = ValueHash { id: 1 }
-                value.contains_key_by_ref(&key)
+                value.contains_key(&key)
             }
             fn eq_value_set(value: Set<ValueEq>) @suspends -> Bool {
                 let key = ValueEq { id: 1 }
@@ -497,14 +497,14 @@ mod tests {
             fn carry(value: Map<BadHash, Int32>) @suspends -> Map<BadHash, Int32> { value }
             fn hash_map(value: Map<BadHash, Int32>) @suspends -> Bool {
                 let key = BadHash { id: 1 }
-                value.contains_key_by_ref(&key)
+                value.contains_key(&key)
             }
             fn eq_set(value: Set<BadEq>) @suspends -> Bool {
                 let key = BadEq { id: 1 }
                 value.contains(&key)
             }
             fn query<K: BorrowHash + BorrowEq, V>(value: &Map<K, V>, key: &K) @noescape(key) -> Bool {
-                value.contains_key_by_ref(key)
+                value.contains_key(key)
             }
             fn borrowed_hash(value: &Map<BadHash, Int32>) @suspends -> Bool {
                 let key = BadHash { id: 1 }

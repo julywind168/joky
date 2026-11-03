@@ -15,7 +15,7 @@ pub fn boolean(name: String, value: Bool) -> Field { Field { name, value: json.V
 
 fn add(record: &mut Map<String, json.Value>, field: Field) -> Bool {
     let Field { name, value } = field
-    if name.is_empty() || name.byte_length() > 64 || record.contains_key_by_ref(&name) { return false }
+    if name.is_empty() || name.byte_length() > 64 || record.contains_key(&name) { return false }
     if let Text(s) = &value { if s.byte_length() > 4096 { return false } }
     record.insert(name, value);
     true

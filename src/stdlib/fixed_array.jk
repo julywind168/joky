@@ -29,6 +29,9 @@ pub fn is_empty<T, const N: UInt64>(values: &FixedArray<T, N>) -> Bool { N == 0 
 pub fn get<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<T> {
     if index < N { Some(fixed_array.load(values, index)) } else { None }
 }
+pub fn get_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<&T> {
+    if index < N { Some(fixed_array.borrow_ref(values, index)) } else { None }
+}
 pub fn set<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T) -> Bool {
     if index < N {
         fixed_array.store(values, index, value)
@@ -37,6 +40,7 @@ pub fn set<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, val
 }
 
 impl<T, const N: UInt64> FixedArray<T, N> {
+    pub fn get_ref(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
     pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
     pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
     pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }

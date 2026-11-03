@@ -38,7 +38,7 @@ fn string_map_key_loans_block_structural_changes_and_mutation() {
         "let keys = m.keys(); let old = mem.replace(&mut m, Map.new::<String, Int32>()); slice.len(keys);",
         "let keys = m.keys(); let key = slice.borrow_ref(keys, 0); m.insert(\"b\", 1); key.byte_length();",
         "let keys = m.keys(); slice.borrow_mut_ref(keys, 0);",
-        "let query = \"a\"; let value = m.value_ref(&query); m.remove_by_ref(&query) ; (*value);",
+        "let query = \"a\"; let value = m.borrow_ref(&query); m.remove(&query) ; (*value);",
     ] {
         let source = format!("import joky/mem import joky/map.{{type Map}} import joky/slice fn f() {{ var m = Map.new::<String, Int32>(); m.insert(\"a\", 1); {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

@@ -162,6 +162,8 @@ fn borrowed_queries_preserve_owners_provenance_and_missing_results() {
 fn borrowed_queries_reject_invalidation_storage_and_escape() {
     for body in [
         "fn bad() { var a = [\"a\"]; let found = a.get_ref(0); a.push(\"b\"); found.is_some(); }",
+        "import joky/list.{type List} fn bad() { var a = List.from_array([\"a\"]); let found = a.get_ref(0); a.reverse(); found.is_some(); }",
+        "import joky/fixed_array.{type FixedArray} fn bad() -> Option<&String> { let a: FixedArray<String, 1> = [\"a\"]; a.get_ref(0) }",
         "fn bad() { var a = [\"a\"]; let found = a.get_ref(0); a.release(); found.is_some(); }",
         "fn bad() { var a = [\"a\"]; let found = a.get_ref(0); a = [\"b\"]; found.is_some(); }",
         "fn bad() -> Option<&String> { let a = [\"a\"]; a.get_ref(0) }",

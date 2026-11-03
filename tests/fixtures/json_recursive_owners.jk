@@ -22,7 +22,7 @@ fn depth(value: &Value) -> Int32 {
         Nil => 0
         Text(text) => { ensure(text.byte_length() == 3); 1 }
         Items(items) => { ensure(items.len() == 1); depth(items.borrow_ref(0)) + 1 }
-        Fields(fields) => depth(fields.value_ref(&key)) + 1
+        Fields(fields) => depth(fields.borrow_ref(&key)) + 1
     }
 }
 fn exercise() {
@@ -34,7 +34,7 @@ fn exercise() {
     var value = Value.Fields(fields)
     ensure(depth(&value) == 3)
     match &mut value {
-        Fields(fields) => { let old = mem.replace(fields.value_mut(&key), Value.Nil); ensure(depth(&old) == 2) }
+        Fields(fields) => { let old = mem.replace(fields.borrow_mut_ref(&key), Value.Nil); ensure(depth(&old) == 2) }
         _ => ensure(false)
     }
     let old = mem.replace(&mut value, Value.Nil)

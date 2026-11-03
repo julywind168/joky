@@ -45,9 +45,9 @@ pub fn elements<T>(set: &Set<T>) -> &Slice<T> { set.items.keys() }
 pub fn pop<T>(set: &mut Set<T>) -> Option<T> {
     match set.items.pop() { None => None, Some((value, _)) => Some(value) }
 }
-pub fn contains<T: BorrowEq + BorrowHash>(set: &Set<T>, value: &T) @noescape(value) -> Bool { set.items.contains_key_by_ref(value) }
+pub fn contains<T: BorrowEq + BorrowHash>(set: &Set<T>, value: &T) @noescape(value) -> Bool { set.items.contains_key(value) }
 pub fn insert<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: T) -> Bool { set.items.insert(value, {}).is_none() }
-pub fn remove<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: &T) @noescape(value) -> Bool { set.items.remove_by_ref(value).is_some() }
+pub fn remove<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: &T) @noescape(value) -> Bool { set.items.remove(value).is_some() }
 pub fn from_array<T: BorrowEq + BorrowHash>(values: Array<T>) -> Set<T> { var set = new::<T>(); extend(&mut set, values); set }
 pub fn extend<T: BorrowEq + BorrowHash>(set: &mut Set<T>, values: Array<T>) {
     reserve(set, values.len())

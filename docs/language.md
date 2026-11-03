@@ -533,6 +533,7 @@ T 沿用 Array 的存储资格：Copy 数据、普通共享引用及含共享引
 | `insert(index, value) -> Bool` | 支持 index == len；越界返回 false，并消费、清理 value |
 | `remove(index) -> Option<T>` | 命中则移出；越界返回 None，原表不变 |
 | `replace(index, value) -> Option<T>` | 命中移出旧值并存入新值；越界返回 None，并清理 value |
+| `get_ref(index)` | 按逻辑位置借用元素，越界返回 None |
 | `get(index)` / `front()` / `back()` | Copy T 的 Option<T> 读取；拥有型 T 编译拒绝 |
 | `borrow(index)` / `borrow_mut(index)` | Copy T 的共享/独占 Element 视图，可用 element.read/write；支持边界沿用 Array |
 | `borrow_ref(index)` / `borrow_mut_ref(index)` | 无引用 Copy 或拥有型 T 的 &T / &mut T，沿用 Array 的边界 |
@@ -623,8 +624,7 @@ Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、�
 
 K 必须可存储且递归无引用，支持 Copy 数据、String 和无引用拥有型记录/枚举。
 构造与 insert 实例化时检查真实存储资格；协议本身不会赋予存储权限。
-insert、from_entries、extend 与借用查询需要 `K: BorrowEq + BorrowHash`；原有按值查询
-保留 `K: Eq + Hash`，通过源码 blanket impl 接入同一借用查找算法，自定义 Copy key 无需迁移。
+插入与查询使用 `K: BorrowEq + BorrowHash`。已有的 Copy key 可通过 Eq、Hash 的 blanket impl 满足约束。
 空表构造、长度、容量、reserve、clear、release、切片视图、pop 和 into_entries 不要求协议。
 直接/嵌套引用 key 被拒绝；元组 key 可先用名义记录包装。
 V 支持普通 Copy 数据、普通共享引用及含共享引用的 Copy 记录/枚举/元组，
@@ -650,14 +650,15 @@ fn example() -> Int32 {
 | `with_capacity(n: UInt64) -> Map<K, V>` | 至少容纳 n 项 |
 | `len(&Map) -> UInt64` / `is_empty(&Map) -> Bool` | entry 数与是否为空 |
 | `capacity(&Map) -> UInt64` | 桶负载和全部载荷容量共同允许的 entry 数 |
-| `contains_key(&Map, key: K) -> Bool` | 是否存在 |
-| `get(&Map, key: K) -> Option<V>` | 仅 Copy V；未命中 None，拥有型 V 拒绝复制读取 |
+| `contains_key(&Map, key: &K) -> Bool` | 是否存在 |
+| `get(&Map, key: &K) -> Option<V>` | 仅 Copy V；未命中 None，拥有型 V 拒绝复制读取 |
+| `get_ref(&Map, key: &K) -> Option<&V>` | 借用 value；未命中返回 None |
 | `insert(&mut Map, key: K, value: V) -> Option<V>` | 新增 None；替换保留原 key，返回 Some(old)，旧值归调用方 |
-| `remove(&mut Map, key: K) -> Option<V>` | 命中移出 value；未命中 None；内部顺序可改变 |
-| `borrow(&Map, key: K) -> &Element<V>` | Copy V 的只读元素视图；用 `element.read` 读取 |
-| `borrow_mut(&mut Map, key: K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
-| `borrow_ref(&Map, key: K) -> &V` | 无引用 Copy 或拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
-| `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `*p = next`，拥有者可用 `mem.replace` 返回旧值 |
+| `remove(&mut Map, key: &K) -> Option<V>` | 命中移出 value；未命中 None；内部顺序可改变 |
+| `borrow(&Map, key: &K) -> &Element<V>` | Copy V 的只读元素视图；用 `element.read` 读取 |
+| `borrow_mut(&mut Map, key: &K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
+| `borrow_ref(&Map, key: &K) -> &V` | 无引用 Copy 或拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
+| `borrow_mut_ref(&mut Map, key: &K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `*p = next`，拥有者可用 `mem.replace` 返回旧值 |
 | `iter(&Map) -> &Iter<K, V>` / `iter_mut(&mut Map) -> &mut Iter<K, V>` | 成对借用游标；for 每轮绑定 Entry 视图，键始终只读 |
 | `keys(&Map) -> &Slice<K>` | 全部 key 的只读切片，不提供 keys_mut |
 | `values(&Map) -> &Slice<V>` / `values_mut(&mut Map) -> &mut Slice<V>` | 全部 value 的只读/独占切片 |
@@ -671,18 +672,14 @@ fn example() -> Int32 {
 
 insert 消费 key；重复时保留驻留旧 key，清理新 key，并返回旧 value。remove 清理被移除 key；
 pop/into_entries 移交 key 和 value，clear/release 清理两者。
-String 与其他拥有型 key 使用下列借用入口，不消费、不 clone 查询 key；首版只支持相同 K。
+查询和删除都借用同类型的 key，参数为 `&K`。命名键可显式传 `&key`，字面量等表达式可自动借用。
+`@noescape(key)` 保证查询键不成为返回引用的来源：一次查询后可以释放 String 键，而继续使用从表取得的引用。
+`get` 复制值，`get_ref` 借用值，两者都用 None 表示缺键；`borrow_ref` 和 `borrow_mut_ref` 要求命中。
 
-| 借用 key 入口（模块函数和方法同名） | 行为 |
-| --- | --- |
-| `contains_key_by_ref(&Map, &K) -> Bool` | 是否存在 |
-| `get_by_ref(&Map, &K) -> Option<V>` | Copy V 查询，未命中 None |
-| `remove_by_ref(&mut Map, &K) -> Option<V>` | 清理驻留 key，移出 value |
-| `value_ref(&Map, &K) -> &V` | 无引用 Copy 或拥有型 V 的共享借用 |
-| `value_mut(&mut Map, &K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占借用 |
+旧调用迁移：`contains_key_by_ref`、`get_by_ref`、`remove_by_ref` 分别改为
+`contains_key`、`get`、`remove`；`value_ref`、`value_mut` 改为
+`borrow_ref`、`borrow_mut_ref`。模块函数和方法使用同一组名称。
 
-value_ref/value_mut 未命中时报错，返回借用依赖整个 Map；`@noescape(key)` 保证查询 key
-不成为返回引用的来源，因此调用结束后可释放查询 String。返回的拥有值可在 Map 释放后继续使用。
 替换已有 key 不增长、不重建，不承诺拥有值清理快照零临时分配。
 成功 reserve 后，在没有删除等中间修改时，接下来 additional 次新增无需分配容器缓冲区；
 这不包含用户协议自己的分配或后端清理快照。删除标记可能使后续新增在 len < capacity 时重建索引，
@@ -693,15 +690,16 @@ Hash/Eq 在相关查找完成、修改开始前调用；重建只用缓存哈希
 分配失败和用户 Hash/Eq/Drop 失败沿用首错保留及完整清理，不承诺错误后继续使用旧 Map。
 Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 
-四种元素借用方法需要 `K: Eq + Hash`，未命中产生 `Map key not found` 终止性错误；
+四种要求命中的元素借用方法需要 `K: BorrowEq + BorrowHash`，未命中产生 `Map key not found` 终止性错误；
 保留标准库检查位置及实际 Map 调用位置。解释器提供调用轨迹，JIT 提供源码调用点，
 独立 AOT 程序输出来源 ID 和字节范围。查询 Hash/Eq 失败同样传播并清理拥有者。
 无引用 Copy V 可使用 Element 或直接引用接口；含普通共享引用的 Copy V 使用 Element。
-拥有型 V 使用 borrow_ref/borrow_mut_ref 或 value_ref/value_mut。
+拥有型 V 使用 get_ref、borrow_ref 或 borrow_mut_ref。
 
 普通 `&Map` / `&mut Map`、元素视图及切片均依赖整个 Map；共享视图允许其他共享读取，
 独占视图阻止冲突读取与写入，活动视图阻止结构修改、移动和释放；最后一次使用后恢复权限。
-不支持不同 key 的同时独占借用，也不能把这些视图放入 Option/记录/元组或交给宿主。
+不同 key 的元素也不能同时独占借用。Element 和 Slice 视图不能放入 Option/记录/元组或交给宿主。
+`get_ref` 返回的 `Option<&V>` 在最后一次使用前同样借用 Map。
 无引用元素视图可跨语言挂起；helper、泛型函数、别名及跨模块返回视图沿用同一来源规则。
 `get`、`remove`、`insert` 返回的旧值及 `element.read` 复制出的普通共享引用依赖实际内容来源，
 不依赖 Map 的存储；Map 移动/释放后仍可读取，原来源的冲突修改直到任务结束仍被拒绝。
@@ -857,8 +855,9 @@ let item = &mut values[0]
 | --- | --- | --- | --- |
 | Array | `get(index)` 返回 Copy 元素的 Option | `get_ref(index)` 返回 `Option<&T>`； `borrow_ref` / `borrow_mut_ref`；缺失失败 | `remove` / `pop` 返回 Option |
 | Slice | `get(index)` 返回 Copy 元素的 Option | `get_ref(index)` 返回 `Option<&T>`； `borrow_ref` / `borrow_mut_ref`；缺失失败 | 不转移底层元素所有权 |
-| Map | `get` / `get_by_ref` 返回 Copy value 的 Option；`contains_key` / `contains_key_by_ref` 查询存在性 | `get_ref(&key)` 返回 `Option<&V>`；`borrow_ref` / `borrow_mut_ref` 使用 Copy key，`value_ref` / `value_mut` 借用 key；缺失失败 | `remove` / `remove_by_ref` 返回 Option |
-| List | `get` / `front` / `back` 返回 Copy 元素的 Option | `borrow_ref` / `borrow_mut_ref`；缺失失败 | `remove` / `pop_front` / `pop_back` 返回 Option |
+| Map | `get(&key)` 返回 Copy value 的 Option；`contains_key(&key)` 查询存在性 | `get_ref(&key)` 返回 `Option<&V>`；`borrow_ref` / `borrow_mut_ref` 要求命中 | `remove(&key)` 返回 Option |
+| List | `get` / `front` / `back` 返回 Copy 元素的 Option | `get_ref(index)` 返回 `Option<&T>`；`borrow_ref` / `borrow_mut_ref` 要求命中 | `remove` / `pop_front` / `pop_back` 返回 Option |
+| FixedArray | `get(index)` 返回 Copy 元素的 Option | `get_ref(index)` 返回 `Option<&T>`；`borrow_ref` / `borrow_mut_ref` 要求命中 | 长度固定 |
 | Set | `contains` 返回 Bool | 不提供元素借用查询入口 | `pop` 返回 Option；`into_array` 消费整个集合；`remove` 返回是否删除 |
 
 `borrow` / `borrow_mut` 的 Element 视图入口继续保留，按各容器的元素准入使用。
@@ -867,7 +866,7 @@ Slice 还提供 `set`、`slice` / `slice_mut` 方法；与同名模块函数具�
 
 ### 可失败的共享借用查询
 
-Array / Slice 的 `get_ref(index)` 和 Map 的 `get_ref(&key)` 命中返回 `Some(&value)`，
+Array、Slice、List、FixedArray 的 `get_ref(index)` 和 Map 的 `get_ref(&key)` 命中返回 `Some(&value)`，
 未命中返回 None；不复制、移动或克隆元素。拥有 String、拥有记录和嵌套容器均适用。
 模块函数使用同名入口，首个参数为容器的共享引用。Map key 仅在查询期间借用，
 结果依赖 Map 的存储；临时 key 可自动借用，查询后可立即释放命名 key。
@@ -879,8 +878,8 @@ Array / Slice 的 `get_ref(index)` 和 Map 的 `get_ref(&key)` 命中返回 `Som
 含拥有值及引用的混合聚合、共享游标/切片视图聚合和 `Option<&mut T>` 仍不开放。
 独占 Iter 的局部转移包是受限例外，见[独占流水线方法](#独占流水线方法)。
 
-对普通缺失使用 get_ref；已知存在且缺失应终止任务时保留 borrow_ref / value_ref。
-Copy 元素需要独立值时继续 get / get_by_ref；需要转移所有权时使用 remove / pop。
+对普通缺失使用 get_ref；已知存在且缺失应终止任务时使用 borrow_ref。
+Copy 元素需要独立值时使用 get；需要转移所有权时使用 remove / pop。
 引用元素本身仍沿用既有借用限制，不由 get_ref 开放嵌套引用。
 
 ## 动态数组
@@ -1399,6 +1398,7 @@ impl<T, const N: UInt64> Tag<T, N> {
 | `repeat::<T, N>(value)` | 要求 T: Copy，value 只求值一次，复制为 N 个元素 |
 | `from_fn::<T, N>(init)` | 接受 `FnMut(UInt64) -> T`，按 0 到 N−1 顺序调用，支持函数指针、Fn 和 FnMut 闭包 |
 | `len(&array)` / `is_empty(&array)` | 返回 UInt64 长度 / Bool；方法为 `array.len()` / `array.is_empty()` |
+| `get_ref(&array, index)` | 返回 `Option<&T>`，越界返回 None |
 | `get(&array, index)` | 要求 T: Copy，返回元素副本 `Option<T>`，越界返回 None |
 | `set(&mut array, index, value)` | 替换并清理旧元素，成功返回 true，越界返回 false 并清理传入值；value 在检查前按普通实参求值 |
 | `borrow_ref(&array, index)` / `borrow_mut_ref(&mut array, index)` | 返回 `&T` / `&mut T`；越界产生受检运行时错误 |
@@ -7341,10 +7341,10 @@ lookup 等待时执行器与 Godot 帧可以继续推进。取消只结束当前
 Value 为非 Copy 的拥有枚举：Null、Boolean(Bool)、Number(Number)、Text(String)、
 Array(Array<Value>)、Object(Map<String, Value>)。Boolean/Text 避开基础类型的保留名。
 数组保存顺序，对象无顺序契约；没有隐式深拷贝或数值意义的 Eq/Hash。
-构造、共享/独占 match、mem.replace、Array.remove/Map.remove_by_ref 使用普通拥有权规则，
+构造、共享/独占 match、mem.replace、Array.remove/Map.remove 使用普通拥有权规则，
 移出的子树独立拥有，取消或作用域退出统一清理。
 
-对象先 contains_key_by_ref 再 value_ref，数组先 len 再 borrow_ref；越界借用仍是终止性错误。
+对象按键、数组按下标均可用 get_ref 查询；越界借用仍是终止性错误。
 对象删除返回 Option<Value>，None 表示缺失，Some(Value.Null) 表示移出一个存在的空值。
 查询不会复制子树，也不新增 Option<&Value> 接口。
 

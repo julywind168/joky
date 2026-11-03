@@ -44,7 +44,7 @@ fn model_group() -> Group {
         let key = format!("key-{id}-中🙂");
         if step % 5 == 0 {
             let expected = model.remove(&key).unwrap_or(-1);
-            source.push_str(&format!("{{ let query = \"{key}\"; assert(m.remove_by_ref(&query).unwrap_or(-1) == {expected}, &message) }}\n"));
+            source.push_str(&format!("{{ let query = \"{key}\"; assert(m.remove(&query).unwrap_or(-1) == {expected}, &message) }}\n"));
         } else {
             let expected = model.insert(key.clone(), step).unwrap_or(-1);
             source.push_str(&format!(
@@ -57,7 +57,7 @@ fn model_group() -> Group {
         }
     }
     for (key, value) in model {
-        source.push_str(&format!("{{ let query = \"{key}\"; assert(m.get_by_ref(&query).unwrap_or(-1) == {value}, &message) }}\n"));
+        source.push_str(&format!("{{ let query = \"{key}\"; assert(m.get(&query).unwrap_or(-1) == {value}, &message) }}\n"));
     }
     source.push_str("42 }");
     // Bound each function's reference-analysis work while preserving one table.

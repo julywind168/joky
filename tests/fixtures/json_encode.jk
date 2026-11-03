@@ -154,9 +154,9 @@ fn inspect(value: &Value) {
         Object(fields) => {
             ensure(fields.len() == 2)
             let key = "text"
-            match fields.value_ref(&key) { Text(text) => { let expected = "你\0\n🙂"; ensure(text.equals(&expected)) }, _ => { ensure(false) } }
+            match fields.borrow_ref(&key) { Text(text) => { let expected = "你\0\n🙂"; ensure(text.equals(&expected)) }, _ => { ensure(false) } }
             let key = "items"
-            match fields.value_ref(&key) {
+            match fields.borrow_ref(&key) {
                 Array(items) => {
                     ensure(items.len() == 2)
                     match items.borrow_ref(0) { Null => {}, _ => { ensure(false) } }
@@ -219,7 +219,7 @@ fn mutable_input() {
     match &mut value {
         Object(fields) => {
             let key = "after"
-            match fields.remove_by_ref(&key) { Some(Value.Boolean(flag)) => { ensure(flag) }, _ => { ensure(false) } }
+            match fields.remove(&key) { Some(Value.Boolean(flag)) => { ensure(flag) }, _ => { ensure(false) } }
         }
         _ => { ensure(false) }
     }

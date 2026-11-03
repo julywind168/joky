@@ -1,6 +1,9 @@
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/slice.{type Slice}
+import joky/list.{type List}
+import joky/fixed_array.{type FixedArray}
+import joky/element
 
 type View = &Later
 struct Holder { value: View }
@@ -12,7 +15,23 @@ struct Item { text: String, children: Array<String> }
 fn wrapped<T>(values: &Array<T>, index: UInt64) -> Option<&T> { values.get_ref(index) }
 fn forwarded<T>(value: Option<&T>) -> Option<&T> { value }
 fn from_slice<T>(values: &Slice<T>) -> Option<&T> { values.get_ref(0) }
+fn check_container_queries() {
+    let fixed: FixedArray<String, 2> = ["left", "right"]
+    assert(fixed.get_ref(1)! == "right" && fixed_array.get_ref(&fixed, 2).is_none(), "fixed array lookup")
+    var sequence = List.from_array(["first", "removed", "last"])
+    sequence.remove(1)
+    sequence.reverse()
+    assert(list.get_ref(&sequence, 0)! == "last" && sequence.get_ref(2).is_none(), "logical list lookup")
+    var counts = Map.new::<String, Int32>()
+    counts.insert("key", 41)
+    let counter_key = "key"
+    let counter = counts.borrow_mut(&counter_key)
+    counter_key.release()
+    element.write(counter, 42)
+    assert(element.read(counts.borrow("key")) == 42 && counts.get("absent").is_none(), "element views with an owning key")
+}
 fn compute() -> Int32 {
+    check_container_queries()
     let later = Later { value: ["forward"] }
     let holder = Holder { value: &later }
     let choice = Choice.Value(holder.value)

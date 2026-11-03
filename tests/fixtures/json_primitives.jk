@@ -47,9 +47,9 @@ fn inspect(groups: &Array<Group>) {
     match groups.borrow_ref(1) {
         Fields(fields) => {
             let key = "value"
-            ensure(fields.contains_key_by_ref(&key))
+            ensure(fields.contains_key(&key))
             let expected = "1e400"
-            ensure(equals(fields.value_ref(&key), &expected))
+            ensure(equals(fields.borrow_ref(&key), &expected))
         }
         _ => ensure(false)
     }
@@ -66,9 +66,9 @@ fn mutate(groups: &mut Array<Group>) {
     match groups.borrow_mut_ref(1) {
         Fields(fields) => {
             let key = "value"
-            mem.replace(fields.value_mut(&key), Atom.Numeric("-0"));
+            mem.replace(fields.borrow_mut_ref(&key), Atom.Numeric("-0"));
             let expected = "-0"
-            ensure(equals(fields.value_ref(&key), &expected))
+            ensure(equals(fields.borrow_ref(&key), &expected))
         }
         _ => ensure(false)
     }
