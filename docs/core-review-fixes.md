@@ -1,6 +1,6 @@
 # 语言核心审查修复计划
 
-状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 待实施；D 节为待决策设计项，未经确认不实施。
+状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3 已修复，K4 待实施；D 节为待决策设计项，未经确认不实施。
 
 本文来自一次针对语言核心（前端、类型、所有权/借用、挂起与结构化并发）的实测审查：
 约 500 个探针程序，在 JIT、解释器、AOT 三后端上对比。下列问题均已用最小程序复现，
@@ -166,7 +166,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 
 ## 4. K3：借用分析的规模
 
-- 复现：同一函数内约 250 行 `t = t + get(&p)`，或约 200 行 `println("line")`，即报
+- 修复前复现：同一函数内约 250 行 `t = t + get(&p)`，或约 200 行 `println("line")`，即报
   `Reference flow analysis exceeds its compilation budget`；约 300 行时活跃性分析也超预算
   （`Reference liveness exceeds its compilation budget`）。预算按操作计数，Debug/Release 结果相同；诊断范围是整个函数，无提示。
   同类：300 个整数分支的 match 报 `Match coverage analysis exceeds 65536 steps`；1000 个插值的字符串约 9 秒后才报超预算。
@@ -296,6 +296,6 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K2-10 | 已修复（零捕获） | `fix: infer capture-free callbacks in suspending callers` | 三后端运行无捕获 map 回调，借用捕获仍受原限制且诊断提示 move。未放宽有捕获闭包的活跃区间。 |
 | K2-11 | 已修复 | `fix: prepare suspending closure calls for concurrent branches` | 三后端执行 race 和 join，拒绝 FnOnce 重复使用，挂起闭包取消穷举通过。 |
 | K2-12 | 已修复 | `fix: scope overlapping private members to their defining modules` | 三后端验证模块私有方法和依赖私有常量的解析，同模块重复和公开冲突仍拒绝。另跑常量测试 19 项、源模块可见性测试 6 项通过。 |
-| K3 | 裁剪规则已提案，待实施 | `docs: outline bounded borrow analysis for large functions` | 当前 Debug CLI 的 check 实测：250 次短借用超流分析预算，2,000 次短借用及 1,000 次打印超活跃性预算，1,000 次纯整数自增通过。300 臂整数 match 超覆盖预算，含 1,000 个插值的单个字符串触发引用分析硬上限。见[借用分析规模化设计](architecture.md#k3-借用分析规模化设计待实施)。 |
+| K3 | 已修复 | `7d4d4b60`、`b36c033d`、`3b2dc97b` | 2,000 次短借用、1,000 次打印/自增/字符串插值和 300 臂整数 match 在 JIT、解释器和独立 AOT 上输出正确。借用相关库回归 384 项、CLI 定向回归 8 项通过；另跑 27 个库穷举和 1 个 CLI 穷举通过。fmt、Clippy、diff 检查通过，未跑全量。见[借用分析的规模与边界](architecture.md#k3-借用分析的规模与边界)。 |
 | K4 | 待实施 | | |
 | D1–D8 | 待决策 | | |
