@@ -181,15 +181,10 @@ pub(super) unsafe fn visit(
     let node = f[2].ty.array_element_type().unwrap();
     let width = element.value_lanes().len();
     let node_width = node.value_lanes().len();
+    let scratch = (width + node_width) * 8 + Shape::of(element)?.bytes() + Shape::of(node)?.bytes();
     let bytes = count
         .checked_mul(usize::from(preflight) * std::mem::size_of::<TaskValue>())
-        .and_then(|n| {
-            n.checked_add(
-                (width + node_width) * 8
-                    + Shape::of(element).ok()?.bytes()
-                    + Shape::of(node).ok()?.bytes(),
-            )
-        })
+        .and_then(|n| n.checked_add(scratch))
         .ok_or_else(|| invalid("List result size overflow"))?;
     let _scratch = reserve_current(bytes)?;
     if arrays::length(words[f[1].offset])? != count {

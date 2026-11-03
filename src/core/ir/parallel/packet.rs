@@ -1,5 +1,6 @@
 //! Semantic packet kinds are independent of flattened ABI lane counts.
-use crate::{Error, Type};
+use crate::{core::types::GenericArgument, Error, Type};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -85,22 +86,57 @@ pub(crate) fn classify(
     resolve: &impl Fn(&Type) -> Result<Type, Error>,
     has_drop: &impl Fn(&Type) -> bool,
 ) -> Option<Kind> {
-    let root = resolve(root).ok()?;
-    let kind = Kind::of(&root);
-    let mut pending = vec![(root, 0)];
-    let mut visited = 0;
-    while let Some((ty, depth)) = pending.pop() {
-        visited += 1;
-        if depth > 32 || visited > 65_536 {
+    checked_type(root, resolve, has_drop).map(|ty| Kind::of(&ty))
+}
+
+/// Freeze the same concrete layouts that admission checks. Buffer elements in
+/// the language signature may still be shallow nominal identities.
+pub(super) fn checked_type(
+    root: &Type,
+    resolve: &impl Fn(&Type) -> Result<Type, Error>,
+    has_drop: &impl Fn(&Type) -> bool,
+) -> Option<Type> {
+    // Copy only the paths to resolved identities. Other fields (including
+    // shared aggregate DAGs) keep the module's original layout nodes.
+    fn visit(
+        ty: &mut Type,
+        resolve: &impl Fn(&Type) -> Result<Type, Error>,
+        has_drop: &impl Fn(&Type) -> bool,
+        depth: usize,
+        remaining: &mut usize,
+    ) -> Option<bool> {
+        *remaining = remaining.checked_sub(1)?;
+        if depth > 32 {
             return None;
         }
-        let ty = resolve(&ty).ok()?;
-        if has_drop(&ty) || ty.storage_layout().is_err() {
+        let mut changed = matches!(ty, Type::Record(r) if r.indirect)
+            || matches!(ty, Type::Enum(e) if e.indirect);
+        if changed {
+            *ty = resolve(ty).ok()?;
+        }
+        if has_drop(ty) || ty.storage_layout().is_err() {
             return None;
         }
-        let children: Vec<Type> = match &ty {
-            Type::FixedArray(a) if ty.is_fixed_array_data() => vec![a.element.clone()],
-            Type::Tuple(t) => t.elements.clone(),
+        let mut child = |source: &Type| {
+            let mut layout = source.clone();
+            let updated = visit(&mut layout, resolve, has_drop, depth + 1, remaining)?;
+            changed |= updated;
+            Some(updated.then_some(layout))
+        };
+        let kind = Kind::of(ty);
+        match ty {
+            Type::FixedArray(a) if a.element.is_fixed_array_data() => {
+                if let Some(element) = child(&a.element)? {
+                    Arc::make_mut(a).element = element;
+                }
+            }
+            Type::Tuple(t) => {
+                for i in 0..t.elements.len() {
+                    if let Some(element) = child(&t.elements[i])? {
+                        Arc::make_mut(t).elements[i] = element;
+                    }
+                }
+            }
             Type::Record(r) if r.array => {
                 let [field] = r.fields.as_slice() else {
                     return None;
@@ -108,47 +144,55 @@ pub(crate) fn classify(
                 let Type::Buffer(element) = &field.ty else {
                     return None;
                 };
-                vec![(**element).clone()]
+                if let Some(element) = child(element)? {
+                    Arc::make_mut(r).fields[0].ty = Type::Buffer(Arc::new(element));
+                }
             }
-            Type::Record(r) if r.closure.as_ref().is_some_and(|c| c.storable) => {
-                // The compiler-owned first field is a null cleanup identity, not
-                // an arbitrary Buffer capability. Captures are checked normally.
-                r.fields.iter().skip(1).map(|f| f.ty.clone()).collect()
+            Type::Record(r) if !r.indirect && r.closure.as_ref().is_none_or(|c| c.storable) => {
+                // A closure's first field is the compiler-owned null cleanup identity.
+                let start = usize::from(r.closure.is_some());
+                if r.closure.is_none() {
+                    for i in 0..r.arguments.len() {
+                        if let GenericArgument::Type(t) = &r.arguments[i] {
+                            if let Some(layout) = child(t)? {
+                                Arc::make_mut(r).arguments[i] = GenericArgument::Type(layout);
+                            }
+                        }
+                    }
+                }
+                for i in start..r.fields.len() {
+                    if let Some(layout) = child(&r.fields[i].ty)? {
+                        Arc::make_mut(r).fields[i].ty = layout;
+                    }
+                }
             }
-            Type::Record(r) if r.closure.is_none() && !r.indirect => r
-                .arguments
-                .iter()
-                .filter_map(|a| a.as_type())
-                .cloned()
-                .chain(r.fields.iter().map(|f| f.ty.clone()))
-                .collect(),
-            Type::Enum(e) if !e.indirect && !e.variants.is_empty() => e
-                .arguments
-                .iter()
-                .filter_map(|a| a.as_type())
-                .cloned()
-                .chain(e.variants.iter().filter_map(|v| v.payload.clone()))
-                .collect(),
-            Type::String | Type::Function(_) | Type::DynTrait(_) => Vec::new(),
-            Type::Named(n) if matches!(n.as_str(), "domain.Handle" | "admission.Token") => {
-                Vec::new()
+            Type::Enum(e) if !e.indirect && !e.variants.is_empty() => {
+                for i in 0..e.arguments.len() {
+                    if let GenericArgument::Type(t) = &e.arguments[i] {
+                        if let Some(layout) = child(t)? {
+                            Arc::make_mut(e).arguments[i] = GenericArgument::Type(layout);
+                        }
+                    }
+                }
+                for i in 0..e.variants.len() {
+                    if let Some(payload) = &e.variants[i].payload {
+                        if let Some(layout) = child(payload)? {
+                            Arc::make_mut(e).variants[i].payload = Some(layout);
+                        }
+                    }
+                }
             }
-            Type::Resource(name)
-                if (crate::runtime::tcp::transferable_type(name)
-                    || crate::runtime::parallel::control::resource_type(name)
-                    || crate::runtime::buffer::crypto::transferable_type(name)
-                    || name.as_ref() == "postgres.Owner"
-                    || crate::runtime::tls::transferable_type(name)
-                    || crate::runtime::shutdown::transferable_type(name)) =>
-            {
-                Vec::new()
-            }
-            _ if crate::core::instance::scalar(&ty) => Vec::new(),
+            _ if matches!(
+                kind,
+                Kind::Scalar | Kind::String | Kind::Function | Kind::Resource | Kind::Dynamic
+            ) => {}
             _ => return None,
-        };
-        pending.extend(children.into_iter().map(|ty| (ty, depth + 1)));
+        }
+        Some(changed)
     }
-    Some(kind)
+    let mut ty = root.clone();
+    visit(&mut ty, resolve, has_drop, 0, &mut 65_536)?;
+    Some(ty)
 }
 
 #[cfg(test)]
@@ -283,15 +327,16 @@ mod tests {
         ] {
             let signature = &plan.functions[name].signature;
             let ty = &signature.params[0];
-            let kind = classify(ty, &|ty| Ok(ty.clone()), &|ty| {
-                plan.bodies[name].has_custom_drop(ty)
-            });
-            assert_eq!(kind, expected, "{name}");
-            assert_eq!(
-                effects.require_packet(name).is_ok(),
-                expected.is_some(),
-                "{name} root admission"
-            );
+            let packet = effects.require_packet(name);
+            assert_eq!(packet.is_ok(), expected.is_some(), "{name} root admission");
+            if let Ok(packet) = packet {
+                // The host has only the frozen signature, without the module's
+                // nominal table. Every admitted child must already be concrete.
+                let kind = classify(&packet.params[0], &|ty| Ok(ty.clone()), &|ty| {
+                    plan.bodies[name].has_custom_drop(ty)
+                });
+                assert_eq!(kind, expected, "{name} frozen packet");
+            }
             let words = encode(signature).unwrap();
             let layout = CheckedLayout::decode(&words).unwrap();
             assert_eq!(layout.slot_counts().0, ty.parameter_slots(), "{name}");

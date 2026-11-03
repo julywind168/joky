@@ -294,13 +294,15 @@ impl BytecodeModule {
     }
 
     pub(crate) fn freeze(&self, name: &str) -> Result<FrozenEntry, Error> {
-        self.parallel.require_packet(name)?;
+        let signature = self.parallel.require_packet(name)?;
         let function = self
             .functions
             .get(name)
             .filter(|function| function.info.parallel_entry)
             .ok_or_else(|| abi_error("Unknown parallel export"))?;
-        self.freeze_function(function)
+        let mut entry = self.freeze_function(function)?;
+        entry.info.signature = signature.clone();
+        Ok(entry)
     }
     pub(crate) fn freeze_domain(&self, name: &str) -> Result<FrozenEntry, Error> {
         let function = self

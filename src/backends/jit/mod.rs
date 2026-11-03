@@ -102,7 +102,7 @@ pub(crate) struct FrozenEntry {
 }
 impl CompiledModule {
     pub(crate) fn freeze(&self, name: &str) -> Result<FrozenEntry, Error> {
-        self.parallel.require_packet(name)?;
+        let signature = self.parallel.require_packet(name)?;
         let function = self
             .parallel_entries
             .get(name)
@@ -110,7 +110,10 @@ impl CompiledModule {
         Ok(FrozenEntry {
             files: self.files.clone(),
             entry: unsafe { crate::runtime::abi::as_cps_entry(function.entry) },
-            info: function.info.clone(),
+            info: FunctionInfo {
+                signature: signature.clone(),
+                ..function.info.clone()
+            },
             sources: self.sources.clone(),
             _code: self._code.clone(),
             _hosts: self

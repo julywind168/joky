@@ -1125,6 +1125,7 @@ pub(crate) struct EnumVariant {
 }
 
 /// Tuple syntax and canonical layout. Equality compares ordered element types.
+#[derive(Clone)]
 pub struct TupleType {
     pub(crate) elements: Vec<Type>,
     pub(crate) owners: Vec<Arc<Type>>,

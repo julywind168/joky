@@ -120,9 +120,10 @@ pub(super) unsafe fn visit(
         .ok_or_else(|| invalid("Expected Array type"))?;
     let count = length(word)?;
     let width = element.value_lanes().len();
+    let scratch = width * 8 + Shape::of(element)?.bytes();
     let bytes = count
         .checked_mul(usize::from(preflight) * std::mem::size_of::<TaskValue>())
-        .and_then(|n| n.checked_add(width * 8 + Shape::of(element).ok()?.bytes()))
+        .and_then(|n| n.checked_add(scratch))
         .ok_or_else(|| invalid("Array result size overflow"))?;
     let _scratch = reserve_current(bytes)?;
     let owner = &*(word as *const Buffer);

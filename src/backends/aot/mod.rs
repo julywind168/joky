@@ -549,7 +549,7 @@ impl AotCompiler {
     /// Compiler evidence for a pure generated CPS entry. Externs require an
     /// explicit runtime binding contract; an import slot count is not evidence.
     pub fn parallel_entry(&self, name: &str) -> Result<ParallelEntry, Error> {
-        self.parallel.require_packet(name)?;
+        let signature = self.parallel.require_packet(name)?;
         let info = self
             .parallel_entries
             .get(name)
@@ -566,7 +566,10 @@ impl AotCompiler {
                 format!("{}{name}", self.symbol_prefix)
             },
             name: name.into(),
-            info: info.clone(),
+            info: FunctionInfo {
+                signature: signature.clone(),
+                ..info.clone()
+            },
             sources: self.sources.clone(),
         })
     }

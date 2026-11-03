@@ -326,9 +326,11 @@ pub(crate) fn compile<M: Module>(
             })
             .chain(body.result.iter().map(|s| &s.ty).filter(|ty| ty.is_place()))
             .flat_map(|ty| {
+                // A buffer contributes its owner handle to the inline copy;
+                // its separately allocated elements have their own layout.
                 crate::core::types::walk::TypeWalk::new(
                     ty,
-                    crate::core::types::walk::TypeEdges::Fields,
+                    crate::core::types::walk::TypeEdges::Inline,
                 )
             });
         for ty in types {
