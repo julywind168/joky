@@ -304,7 +304,9 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
                 Operation::Data => {
                     let b = match &o.value {
                         Value::Bytes(b) => b.as_slice(),
-                        Value::Fault(Fault::Database(code)) => code.as_bytes(),
+                        Value::Fault(Fault::Database(code) | Fault::Connect(code)) => {
+                            code.as_bytes()
+                        }
                         _ => return Err(invalid()),
                     };
                     return Ok(Some(Buffer::copy_bytes(arena, b)?.as_ptr() as u64));

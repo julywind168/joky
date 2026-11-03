@@ -6870,7 +6870,7 @@ HTTPS 使用 `http.serve_tls(listener, config, &stop, options, handler)`。它�
 
 数据库角色和密码可写在连接串中，如 `postgresql://orders_app:PASSWORD@db.example.com:5432/orders?sslmode=verify-full`。
 密码中的 URI 保留字符需要百分号编码。PostgreSQL 按匹配的 pg_hba.conf 规则决定认证方式；
-要求密码时可配置 scram-sha-256。SQLx 使用提供的凭据完成认证，建池时认证失败返回 Unavailable。
+要求密码时可配置 scram-sha-256。SQLx 使用提供的凭据完成认证，建池时认证失败返回 Connect，携带服务端提供的 SQLSTATE。
 verify-full 用来验证数据库服务器证书和主机名。订单示例中的固定客户编号属于 HTTP 业务层，与数据库角色分开。
 
 | 操作（均可挂起） | 行为 |
@@ -6894,7 +6894,8 @@ bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查
 数据库执行错误或结果解码失败会弃用该连接，在途事务句柄失效。该后端停止执行的时刻取决于 PostgreSQL
 何时观察到断连；下一位借用者不会复用仍在执行的连接。可通过数据库角色配置 statement_timeout 来限制服务端运行时间。
 
-DbError 区分 Invalid、Unavailable、Closed、Limit、UnsupportedType、Database(SQLSTATE) 与 OutcomeUnknown。
+DbError 可用 Show 输出。建连失败为 Connect（无 SQLSTATE 时为空串），借出连接失败为 AcquireFailed 或 AcquireTimeout。
+Limit 表示发送前的请求限制。ResultRead(UnsupportedType / ResultLimit) 表示已发送 SQL，但列无法解码或结果超限；自动提交写入可能已经生效，不能直接重试。事务中发生这种错误会弃用连接。
 提交或自动提交语句已交给驱动而连接丢失时，结果可能未知；模块不重试 SQL。取消任务不返回错误回执。
 结果超限、不能解码、语言任务失败同样不能作为外部效果未发生的证据。每个进程最多 8 个独立池，
 每池最多 64 个待完成调用（还受任务预算约束）；使用 share 可以共用池。

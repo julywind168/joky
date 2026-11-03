@@ -34,7 +34,10 @@ impl Target {
                 .acquire()
                 .await
                 .map(|c| Loan(Some(c)))
-                .map_err(|_| Fault::Unavailable),
+                .map_err(|error| match error {
+                    sqlx::Error::PoolTimedOut => Fault::AcquireTimeout,
+                    _ => Fault::Acquire,
+                }),
         }
     }
 }
@@ -46,7 +49,11 @@ pub(super) enum Fault {
     Limit,
     Unknown,
     Database(String),
-    Unsupported,
+    ResultType,
+    ResultLimit,
+    Connect(String),
+    Acquire,
+    AcquireTimeout,
 }
 impl Fault {
     pub(super) fn code(&self) -> u64 {
@@ -57,7 +64,11 @@ impl Fault {
             Self::Limit => 4,
             Self::Unknown => 5,
             Self::Database(_) => 6,
-            Self::Unsupported => 7,
+            Self::ResultType => 7,
+            Self::ResultLimit => 8,
+            Self::Connect(_) => 9,
+            Self::Acquire => 10,
+            Self::AcquireTimeout => 11,
         }
     }
 }
@@ -103,7 +114,14 @@ pub(super) async fn open(url: String, max: u32) -> Result<Answer, Fault> {
         })
         .connect_with(opts)
         .await
-        .map_err(|_| Fault::Unavailable)?;
+        .map_err(|e| {
+            Fault::Connect(
+                e.as_database_error()
+                    .and_then(|db| db.code())
+                    .unwrap_or_default()
+                    .into_owned(),
+            )
+        })?;
     Ok(Answer::new(Value::Pool(pool)))
 }
 pub(super) async fn begin(target: Target) -> Result<Answer, Fault> {
@@ -162,7 +180,7 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
 }
 fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow) -> Result<(), Fault> {
     if row.len() > 128 || out.len() + 4 > MAX {
-        return Err(Fault::Limit);
+        return Err(Fault::ResultLimit);
     }
     out.extend((row.len() as u32).to_le_bytes());
     for (i, col) in row.columns().iter().enumerate() {
@@ -171,42 +189,42 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow) -> Result<(), Fault> {
             "INT2" | "INT4" | "INT8" => 1,
             "TEXT" | "VARCHAR" | "BPCHAR" | "NAME" => 2,
             "BYTEA" => 3,
-            _ => return Err(Fault::Unsupported),
+            _ => return Err(Fault::ResultType),
         };
-        let raw = row.try_get_raw(i).map_err(|_| Fault::Unsupported)?;
+        let raw = row.try_get_raw(i).map_err(|_| Fault::ResultType)?;
         if out.len() + 1 > MAX {
-            return Err(Fault::Limit);
+            return Err(Fault::ResultLimit);
         }
         if raw.is_null() {
             out.push(tag);
             continue;
         }
         out.push(tag + 4);
-        let bytes = raw.as_bytes().map_err(|_| Fault::Unsupported)?;
+        let bytes = raw.as_bytes().map_err(|_| Fault::ResultType)?;
         let payload = match tag {
             0 => 1,
             1 => 8,
             _ => 4 + bytes.len(),
         };
         if payload > MAX - out.len() {
-            return Err(Fault::Limit);
+            return Err(Fault::ResultLimit);
         }
         match tag {
             0 => out.push(u8::from(
-                row.try_get::<bool, _>(i).map_err(|_| Fault::Unsupported)?,
+                row.try_get::<bool, _>(i).map_err(|_| Fault::ResultType)?,
             )),
             1 => {
                 let n = match bytes.len() {
                     2 => i16::from_be_bytes(bytes.try_into().unwrap()) as i64,
                     4 => i32::from_be_bytes(bytes.try_into().unwrap()) as i64,
                     8 => i64::from_be_bytes(bytes.try_into().unwrap()),
-                    _ => return Err(Fault::Unsupported),
+                    _ => return Err(Fault::ResultType),
                 };
                 out.extend(n.to_le_bytes());
             }
             _ => {
                 if tag == 2 {
-                    std::str::from_utf8(bytes).map_err(|_| Fault::Unsupported)?;
+                    std::str::from_utf8(bytes).map_err(|_| Fault::ResultType)?;
                 }
                 out.extend((bytes.len() as u32).to_le_bytes());
                 out.extend(bytes);
@@ -232,7 +250,7 @@ pub(super) async fn run(
         while let Some(r) = rows.try_next().await.map_err(|e| failure(e, !tx))? {
             count += 1;
             if count > 1024 {
-                return Err(Fault::Limit);
+                return Err(Fault::ResultLimit);
             }
             row(&mut out, r)?;
         }

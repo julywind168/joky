@@ -1,7 +1,9 @@
 // Runtime SQL uses positional PostgreSQL parameters. Values never become SQL text.
 import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
-import joky/string
+import joky/check.{panic}
+import joky/show.{type Show}
+import joky/string.{type StringBuilder}
 
 extern fn __pg_open(max_connections: UInt64) @suspends -> postgres.Owner
 extern fn __pg_share(owner: &postgres.Owner) @suspends -> postgres.Owner
@@ -14,20 +16,45 @@ extern fn __pg_data(owner: &postgres.Owner) @suspends -> Array<UInt8>
 
 pub enum Kind { Boolean, Integer, Text, Bytes }
 pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>) }
-pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), UnsupportedType }
+pub enum ReadFailure { UnsupportedType, ResultLimit }
+pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout }
+impl Show for DbError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            Invalid => output.push_str("invalid database request"),
+            Unavailable => output.push_str("database service unavailable"),
+            Closed => output.push_str("transaction closed"),
+            Limit => output.push_str("database request limit exceeded"),
+            OutcomeUnknown => output.push_str("database outcome unknown"),
+            Database(code) => { output.push_str("database error "); output.push_str(code) },
+            Connect(code) => {
+                output.push_str("database connection failed")
+                if !code.is_empty() { output.push_str(" (SQLSTATE "); output.push_str(code); output.push_str(")") }
+            },
+            AcquireFailed => output.push_str("pool checkout failed"),
+            AcquireTimeout => output.push_str("pool checkout timed out"),
+            ResultRead(reason) => match reason {
+                UnsupportedType => output.push_str("query sent; unsupported result column"),
+                ResultLimit => output.push_str("query sent; result limit exceeded")
+            }
+        }
+    }
+}
 pub struct Pool { owner: postgres.Owner }
 pub struct Transaction { owner: postgres.Owner }
 pub type Row = Array<Value>
 
-fn check(owner: &postgres.Owner) @suspends -> Result<Unit, DbError> {
+fn check_status(owner: &postgres.Owner) @suspends -> Result<Unit, DbError> {
     match __pg_status(owner) {
         0 => Ok({}), 1 => Err(Invalid), 2 => Err(Unavailable), 3 => Err(Closed), 4 => Err(Limit),
-        5 => Err(OutcomeUnknown), 6 => Err(Database(String.from_utf8(__pg_data(owner))!)), _ => Err(UnsupportedType)
+        5 => Err(OutcomeUnknown), 6 => Err(Database(String.from_utf8(__pg_data(owner))!)), 7 => Err(ResultRead(UnsupportedType)), 8 => Err(ResultRead(ResultLimit)),
+        9 => Err(Connect(String.from_utf8(__pg_data(owner))!)), 10 => Err(AcquireFailed), 11 => Err(AcquireTimeout),
+        _ => panic("invalid database status")
     }
 }
 pub fn open(max_connections: UInt64) @suspends -> Result<Pool, DbError> {
     let owner = __pg_open(max_connections)
-    check(&owner)?
+    check_status(&owner)?
     Ok(Pool { owner })
 }
 fn word(out: &mut Array<UInt8>, n: UInt64, width: UInt64) {
@@ -86,7 +113,7 @@ fn rows(data: Array<UInt8>) -> Array<Row> {
 }
 fn run(owner: &postgres.Owner, mode: UInt64, sql: String, params: Array<Value>) @suspends -> Result<postgres.Owner, DbError> {
     let result = __pg_run(owner, mode, sql, encode(params)?)
-    check(&result)?
+    check_status(&result)?
     Ok(result)
 }
 fn exec(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> {
@@ -103,13 +130,13 @@ impl Pool {
     pub fn query(&self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
     pub fn begin(&self) @suspends -> Result<Transaction, DbError> {
         let owner = __pg_begin(&self.owner)
-        check(&owner)?
+        check_status(&owner)?
         Ok(Transaction { owner })
     }
 }
 impl Transaction {
     pub fn execute(&mut self, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
     pub fn query(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
-    pub fn commit(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 1); check(&result) }
-    pub fn rollback(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 0); check(&result) }
+    pub fn commit(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 1); check_status(&result) }
+    pub fn rollback(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 0); check_status(&result) }
 }

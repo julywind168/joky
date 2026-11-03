@@ -17,9 +17,9 @@ fn types(pool: &postgres.Pool) @suspends {
     assert(match r.borrow_ref(4) { Null(Integer) => true, _ => false }, "typed null")
     assert(match r.borrow_ref(5) { IntValue(n) => n == 7, _ => false }, "int2")
     assert(match r.borrow_ref(6) { IntValue(n) => n == 8, _ => false }, "int4")
-    assert(match pool.query("SELECT 1.5::numeric", []) { Err(UnsupportedType) => true, _ => false }, "unsupported column")
-    assert(match pool.query("SELECT repeat('x', 1048576)", []) { Err(Limit) => true, _ => false }, "byte bound")
-    assert(match pool.query("SELECT generate_series(0,1024)", []) { Err(Limit) => true, _ => false }, "row bound")
+    assert(match pool.query("SELECT 1.5::numeric", []) { Err(ResultRead(UnsupportedType)) => true, _ => false }, "unsupported column")
+    assert(match pool.query("SELECT repeat('x', 1048576)", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "byte bound")
+    assert(match pool.query("SELECT generate_series(0,1024)", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "row bound")
 }
 fn abandon(p: &postgres.Pool) @suspends {
     var tx = p.begin()!
@@ -41,6 +41,12 @@ fn main() @suspends {
     let pool = postgres.open(1)!
     let observer = postgres.open(1)!
     types(&pool)
+    pool.execute("CREATE TABLE IF NOT EXISTS joky_result_probe (id bigint PRIMARY KEY)", [])!;
+    pool.execute("DELETE FROM joky_result_probe", [])!;
+    assert(match pool.query("INSERT INTO joky_result_probe VALUES (7) RETURNING id::numeric", []) {
+        Err(ResultRead(UnsupportedType)) => true, _ => false }, "DML returned an unreadable result")
+    assert(scalar(&pool, "SELECT count(*) FROM joky_result_probe") == 1, "DML already committed")
+
     pool.execute("CREATE TABLE IF NOT EXISTS joky_test_abandon (n bigint PRIMARY KEY)", [])!;
     abandon(&pool)
     assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "drop rolls back")

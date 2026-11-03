@@ -199,7 +199,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     let cluster = Cluster::start(dir);
     let direct = cluster.url(cluster.port);
     fs::write(dir.join("denied.jk"),r#"import joky/postgres fn main() @suspends {
-        assert(match postgres.open(1) { Err(Unavailable) => true, _ => false }, "database must reject the credentials")
+        assert(match postgres.open(1) { Err(Connect(_)) => true, _ => false }, "database must reject the credentials")
     }"#).unwrap();
     for userinfo in ["postgres:wrong", "postgres"] {
         let bad = format!(
