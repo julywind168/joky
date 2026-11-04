@@ -119,6 +119,7 @@ impl Session {
                 max_frames: 256,
                 instruction_budget: None,
                 poll_budget: Some(10_000),
+                ..Default::default()
             },
         )?;
         self.tasks.borrow_mut().insert(task);

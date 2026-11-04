@@ -19,7 +19,10 @@ pub const INVALID_STATE: i32 = 2;
 pub const RUNTIME_ERROR: i32 = 3;
 pub const FAILED: u32 = u32::MAX - 1;
 
-use super::task_scope::{ChildId, LocalTaskGroup, LocalTaskScope};
+use super::task_scope::{
+    check_dynamic_child_capacity, ChildId, LocalTaskGroup, LocalTaskScope,
+    MAX_DYNAMIC_TASK_CHILDREN,
+};
 type DynamicTaskScope = LocalTaskScope<Box<CpsFrame>>;
 
 struct ReturnedPlace {
@@ -391,12 +394,6 @@ pub unsafe extern "C" fn task_scope_enter(frame: *mut CpsFrame) {
     (*frame).task_scopes.push(DynamicTaskScope::default());
 }
 
-/// Upper bound on dynamically registered children of one frame. Registration
-/// beyond this returns a controlled runtime error instead of growing without
-/// bound. Completed frames are freed immediately and their registrations are
-/// compacted between rounds, so history does not consume the live quota.
-const MAX_DYNAMIC_TASK_CHILDREN: usize = 65536;
-
 /// Create (but do not yet publish) one dynamic child frame. Generated code
 /// copies captured inputs into the returned frame and then publishes it with
 /// `task_branch_commit`; no poll may happen in between. Returns null and
@@ -407,13 +404,8 @@ const MAX_DYNAMIC_TASK_CHILDREN: usize = 65536;
 #[export_name = "__joky_cps_task_child"]
 pub unsafe extern "C" fn task_child(frame: *mut CpsFrame, slot_count: usize) -> *mut CpsFrame {
     let frame = &mut *frame;
-    let live: usize = frame.task_scopes.iter().map(LocalTaskScope::live_len).sum();
-    if live >= MAX_DYNAMIC_TASK_CHILDREN {
-        super::error::record_error(crate::Error::new_with_code(
-            crate::ErrorPhase::Runtime,
-            crate::ErrorCode::ResourceLimit,
-            "Dynamic task quota exceeded",
-        ));
+    if let Err(error) = check_dynamic_child_capacity(&frame.task_scopes, 0) {
+        super::error::record_error(error);
         return std::ptr::null_mut();
     }
     let mut child = match CpsFrame::try_new(slot_count) {

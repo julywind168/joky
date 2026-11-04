@@ -242,10 +242,10 @@ impl VmEngine {
                 "Execution limits require interpreter mode",
             ));
         }
-        if limits.max_frames == 0 || limits.poll_budget == Some(0) {
+        if limits.max_frames == 0 || limits.max_call_depth == 0 || limits.poll_budget == Some(0) {
             return Err(runtime_error(
                 ErrorCode::InvalidArgument,
-                "Frame and poll limits must be positive",
+                "Frame, call depth and poll limits must be positive",
             ));
         }
         self.interpreter_limits = limits;

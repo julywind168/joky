@@ -432,6 +432,7 @@ fn int64_interpreter_yields_and_bounds_recursion_without_truncation() {
         max_frames: 8,
         instruction_budget: Some(10000),
         poll_budget: Some(3),
+        ..Default::default()
     })
     .unwrap();
     let mut task = vm.call_async_int64("looped", &[i64::MAX]).unwrap();

@@ -292,6 +292,7 @@ fn race_interpreter_cancels_deep_losers_iteratively() {
     let mut vm = parity_vm(&source, VmMode::Interpreter);
     vm.set_interpreter_limits(InterpreterLimits {
         max_frames: 5000,
+        max_call_depth: 5000,
         ..Default::default()
     })
     .unwrap();

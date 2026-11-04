@@ -9,6 +9,8 @@
 pub struct InterpreterLimits {
     /// Maximum number of simultaneously live user and native CPS frames.
     pub max_frames: usize,
+    /// Maximum activation depth along one local parent/child chain, including the root.
+    pub max_call_depth: usize,
     /// Total work allowed across the entire call, including every resume.
     /// `None` is unlimited; `Some(0)` rejects the first instruction.
     pub instruction_budget: Option<u64>,
@@ -20,7 +22,8 @@ pub struct InterpreterLimits {
 impl Default for InterpreterLimits {
     fn default() -> Self {
         Self {
-            max_frames: 1024,
+            max_frames: 131_072,
+            max_call_depth: 1024,
             instruction_budget: None,
             poll_budget: None,
         }

@@ -97,6 +97,7 @@ impl Program {
             max_frames: 256,
             instruction_budget: Some(100_000),
             poll_budget: Some(10_000),
+            ..Default::default()
         })
         .expect("valid fixed limits");
         vm.configure_tasks(std::rc::Rc::new(joky::runtime::executor::SystemClock), 256)

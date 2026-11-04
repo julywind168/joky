@@ -476,8 +476,9 @@ unfinished child once; children already attempted this round are skipped via the
 cursor, and a joining scope's top record is left to its own `TaskJoin` resume,
 which polls it in registration order until every child finished and the record
 pops. Cancellation walks the dynamic subtrees with the same iterative release as
-static branches; dynamic children count against `max_frames`, so looping
-register/join workloads recycle their frames within a constant budget.
+static branches. In Local mode all open scopes on one parent frame share a limit
+of 65,536 live dynamic children. Registration checks available capacity before
+capture transfer. Looping register/join workloads reuse the released slots.
 
 This is the same observable protocol as generated CPS code:
 
@@ -551,7 +552,8 @@ use joky::vm::{InterpreterLimits, VmEngine};
 fn main() -> Result<(), joky::Error> {
     let mut vm = VmEngine::new_interpreter();
     vm.set_interpreter_limits(InterpreterLimits {
-        max_frames: 1024,
+        max_frames: 131_072,
+        max_call_depth: 1024,
         instruction_budget: Some(1_000_000),
         poll_budget: Some(10_000),
     })?;
@@ -559,8 +561,11 @@ fn main() -> Result<(), joky::Error> {
 }
 ```
 
-- `max_frames` bounds simultaneously live user and native CPS activations,
-  including all join branches. Default: 1024. Zero is rejected.
+- `max_frames` bounds the total number of simultaneously live activations in a Local
+  execution, including the root, prepared branches and pending native CPS calls. The default is 131,072.
+- `max_call_depth` bounds the number of activations on one local parent/child chain.
+  The root has depth one and all siblings have the same depth. The default is 1,024.
+  Both frame limits must be positive. To allow deeper recursion, raise both limits to cover the workload.
 - `instruction_budget` bounds total bytecode instructions plus native CPS polls
   across the whole call and every resume. Exhaustion returns `ResourceLimit` and
   releases execution state. Default: unlimited. Zero fails before any work.

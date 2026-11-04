@@ -536,6 +536,7 @@ fn unsigned_interpreter_poll_budgets_preserve_width_and_order() {
             max_frames: 8,
             instruction_budget: Some(10000),
             poll_budget: Some(3),
+            ..Default::default()
         })
         .unwrap();
         let mut task = call_async(&vm, narrow, "looped", &[max]).unwrap();

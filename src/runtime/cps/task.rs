@@ -230,17 +230,8 @@ pub(super) fn prepared(parent: &CpsFrame, code: Rc<CheckedEntry>) -> Result<Box<
 #[export_name = "__joky_cps_task_prepare_v1"]
 pub(crate) unsafe extern "C" fn prepare(parent: *mut CpsFrame, token: u64) -> *mut CpsFrame {
     let parent = &*parent;
-    let live: usize = parent
-        .task_scopes
-        .iter()
-        .map(|scope| scope.live_len())
-        .sum();
-    if live >= super::MAX_DYNAMIC_TASK_CHILDREN {
-        crate::runtime::error::record_error(Error::new_with_code(
-            ErrorPhase::Runtime,
-            ErrorCode::ResourceLimit,
-            "Dynamic task quota exceeded",
-        ));
+    if let Err(error) = super::check_dynamic_child_capacity(&parent.task_scopes, 0) {
+        crate::runtime::error::record_error(error);
         return std::ptr::null_mut();
     }
     match lookup(parent, token) {

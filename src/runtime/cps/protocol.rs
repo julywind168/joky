@@ -186,16 +186,8 @@ pub(crate) unsafe extern "C" fn prepare(
         {
             return Err(invalid("Task scope is closed to preparation"));
         }
-        if record.kind == 2
-            && (*frame)
-                .task_scopes
-                .iter()
-                .map(|scope| scope.live_len())
-                .sum::<usize>()
-                + record.prepared.len()
-                >= super::MAX_DYNAMIC_TASK_CHILDREN
-        {
-            return Err(invalid("Dynamic task quota exceeded"));
+        if record.kind == 2 {
+            super::check_dynamic_child_capacity(&(*frame).task_scopes, record.prepared.len())?;
         }
         let code = task::lookup(&*frame, entry)
             .ok_or_else(|| invalid("Unknown or foreign task entry token"))?;

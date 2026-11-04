@@ -395,6 +395,7 @@ fn generic_recursion_uses_iterative_interpreter_frames_on_a_small_native_stack()
                 let mut vm = VmEngine::new_interpreter();
                 vm.set_interpreter_limits(super::InterpreterLimits {
                     max_frames: 3000,
+                    max_call_depth: 3000,
                     ..Default::default()
                 })
                 .unwrap();
@@ -428,6 +429,7 @@ fn generic_aggregate_recursion_preserves_poll_and_resource_limits() {
         max_frames: 64,
         instruction_budget: Some(5000),
         poll_budget: Some(1),
+        ..Default::default()
     })
     .unwrap();
     let mut task = vm.call_async("run", &[20]).unwrap();
@@ -444,11 +446,13 @@ fn generic_aggregate_recursion_preserves_poll_and_resource_limits() {
             max_frames: 4,
             instruction_budget: None,
             poll_budget: Some(1),
+            ..Default::default()
         },
         InterpreterLimits {
             max_frames: 64,
             instruction_budget: Some(20),
             poll_budget: Some(1),
+            ..Default::default()
         },
     ] {
         vm.set_interpreter_limits(limits).unwrap();

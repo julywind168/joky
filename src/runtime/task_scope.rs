@@ -39,6 +39,24 @@ pub(crate) fn fresh_identity() -> Result<u64, Error> {
     ChildId::allocate(&NEXT_CHILD, 1).map(|id| id.0)
 }
 
+/// Per parent frame, across all open Local scopes. Completed children free a slot.
+pub(crate) const MAX_DYNAMIC_TASK_CHILDREN: usize = 65_536;
+
+pub(crate) fn check_dynamic_child_capacity<T>(
+    scopes: &[LocalTaskScope<T>],
+    prepared: usize,
+) -> Result<(), Error> {
+    let live: usize = scopes.iter().map(LocalTaskScope::live_len).sum();
+    if live >= MAX_DYNAMIC_TASK_CHILDREN.saturating_sub(prepared) {
+        return Err(Error::new_with_code(
+            ErrorPhase::Runtime,
+            ErrorCode::ResourceLimit,
+            "Dynamic task quota exceeded",
+        ));
+    }
+    Ok(())
+}
+
 struct Child<T> {
     id: ChildId,
     value: Option<T>,
@@ -301,6 +319,23 @@ impl<T> LocalTaskScope<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_child_quota_counts_live_and_prepared_children_across_scopes() {
+        let mut scopes = [LocalTaskScope::default(), LocalTaskScope::default()];
+        scopes[0]
+            .publish_batch(vec![(); MAX_DYNAMIC_TASK_CHILDREN - 1])
+            .unwrap();
+        check_dynamic_child_capacity(&scopes, 0).unwrap();
+        assert_eq!(
+            check_dynamic_child_capacity(&scopes, 1).unwrap_err().code(),
+            ErrorCode::ResourceLimit
+        );
+        let last = scopes[1].publish(()).unwrap();
+        assert!(check_dynamic_child_capacity(&scopes, 0).is_err());
+        scopes[1].polled(last, true).unwrap();
+        check_dynamic_child_capacity(&scopes, 0).unwrap();
+    }
 
     #[test]
     fn task_scope_tokens_survive_compaction_and_reject_late_completion() {

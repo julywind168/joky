@@ -363,6 +363,10 @@ fn async_borrowing_interpreter_limits_stop_active_operations() {
             max_frames: 3,
             ..Default::default()
         },
+        InterpreterLimits {
+            max_call_depth: 3,
+            ..Default::default()
+        },
     ] {
         fixture.reset();
         let mut vm = fixture.register(VmMode::Interpreter, None);

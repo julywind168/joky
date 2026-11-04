@@ -2,6 +2,35 @@
 use super::*;
 
 #[test]
+fn local_task_width_is_independent_of_recursion_depth() {
+    let work = Workspace::new();
+    work.write(
+        "width.jk",
+        r#"
+        import joky/task
+        fn fib(n: Int32) @suspends -> Int32 {
+            if n < 2 { task.yield_now(); return n }
+            let (a, b) = join { | fib(n - 1) | fib(n - 2) }
+            a + b
+        }
+        fn main() @suspends {
+            scope {
+                var n = 0
+                while n < 1100 {
+                    branch { task.yield_now(); println(n) }
+                    n += 1
+                }
+            }
+            println(fib(13))
+        }
+    "#,
+    );
+    let mut expected: String = (0..1100).map(|n| format!("{n}\n")).collect();
+    expected.push_str("233\n");
+    work.assert_all_backends("width.jk", &[], expected.as_bytes(), 0);
+}
+
+#[test]
 fn task_scopes_and_branches_match_all_backends() {
     let work = Workspace::new();
     work.write(

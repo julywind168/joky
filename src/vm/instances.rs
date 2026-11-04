@@ -842,10 +842,11 @@ impl VmEngine {
     ) -> Result<crate::runtime::executor::TaskId, Error> {
         if self.mode() != super::VmMode::Interpreter
             || limits.max_frames == 0
+            || limits.max_call_depth == 0
             || limits.poll_budget == Some(0)
         {
             return Err(invalid(
-                "Task limits require interpreter mode and positive frame/poll limits",
+                "Task limits require interpreter mode and positive frame, call depth and poll limits",
             ));
         }
         self.spawn_instance_task_inner(id, name, args, limits)

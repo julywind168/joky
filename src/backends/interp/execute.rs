@@ -474,6 +474,7 @@ impl Activation {
 }
 
 struct Node {
+    depth: usize,
     parent: Option<usize>,
     activation: Activation,
 }
@@ -563,6 +564,7 @@ impl Execution {
             domain_result: None,
             cleanup_module: None,
             nodes: vec![Some(Node {
+                depth: 1,
                 parent: None,
                 activation: Activation::User(frame),
             })],
@@ -598,6 +600,7 @@ impl Execution {
 
     fn insert(&mut self, activation: Activation, parent: usize) -> usize {
         let node = Some(Node {
+            depth: self.node(parent).depth + 1,
             parent: Some(parent),
             activation,
         });
@@ -612,7 +615,13 @@ impl Execution {
         }
     }
 
-    fn frame_capacity(&self, count: usize) -> Result<(), Error> {
+    fn frame_capacity(&self, parent: usize, count: usize) -> Result<(), Error> {
+        if self.node(parent).depth >= self.limits.max_call_depth {
+            return Err(runtime_error(
+                ErrorCode::ResourceLimit,
+                "Interpreter call depth limit exceeded",
+            ));
+        }
         if count > self.limits.max_frames.saturating_sub(self.live) {
             Err(runtime_error(
                 ErrorCode::ResourceLimit,
@@ -971,7 +980,7 @@ impl Execution {
                 return Ok(());
             }
         }
-        self.frame_capacity(1)?;
+        self.frame_capacity(id, 1)?;
         let mut child = Self::activation(module, target, frame, args)?;
         if let Activation::User(child) = &mut child {
             child.call_region = if child.function.info.call_region
@@ -1264,7 +1273,7 @@ impl Execution {
             unreachable!()
         };
         let kind = *kind;
-        self.frame_capacity(branches.len())?;
+        self.frame_capacity(id, branches.len())?;
         // Construct all owned argument snapshots before polling any branch.
         let children: Vec<_> = branches
             .iter()
@@ -1618,8 +1627,9 @@ impl Execution {
         let Instruction::TaskBranch { target, args } = &frame.function.code[frame.pc] else {
             unreachable!()
         };
+        crate::runtime::task_scope::check_dynamic_child_capacity(&frame.task_scopes, 0)?;
+        self.frame_capacity(id, 1)?;
         let (target, args) = (*target, args.clone());
-        self.frame_capacity(1)?;
         // The capture snapshot happens here: child activation copies the
         // current slot contents, and owning inputs move out of the parent.
         let mut child = Self::prepare_task(module, target, frame, &args, &mut self.arena)?;

@@ -1,6 +1,6 @@
 # 语言核心审查修复计划
 
-状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 已修复；D1 已实施本地同步调用的临时区域，D2 已覆盖同步按值数组及超出扁平槽限额的非泛型 Copy 枚举，D3、D4 已修复，D5 已补受检整数算术，D6–D8 待决策。
+状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 已修复；D1 已实施本地同步调用的临时区域，D2 已覆盖同步按值数组及超出扁平槽限额的非泛型 Copy 枚举，D3、D4 已修复，D5 已补受检整数算术，D6 已拆分 Local 帧配额，D7–D8 待决策。
 
 本文来自一次针对语言核心（前端、类型、所有权/借用、挂起与结构化并发）的实测审查：
 约 500 个探针程序，在 JIT、解释器、AOT 三后端上对比。下列问题均已用最小程序复现，
@@ -134,7 +134,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 ### K1-3 原生后端深递归栈溢出崩溃
 
 - 现状：`rec(10_000_000)`（同步或 `@suspends` 递归）在 JIT abort（rc=134）、AOT SIGSEGV；
-  解释器在 `max_frames = 1024`（`src/vm/limits.rs`）给出受控错误，CLI 已折叠连续重复的回溯帧。
+  解释器在 `max_call_depth = 1024`（`src/vm/limits.rs`）给出受控错误，CLI 已折叠连续重复的回溯帧。
 - 修复方向：
   1. 解释器回溯折叠重复帧（如 `at rec (repeated 1021 times)`），立即可做。
   2. 原生后端：在生成函数入口加入栈界检查（比较栈指针与每线程记录的下限，越界经运行时错误通道返回受控错误），
@@ -255,9 +255,8 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 
 ### D6 解释器帧与并发分支上限
 
-- 现状：解释器把动态分支计入 `max_frames = 1024`，原生后端 `MAX_DYNAMIC_TASK_CHILDREN = 65536`（`src/runtime/cps.rs`）；
-  1100 个 `branch` 或 join 写的 `fib(13)` 仅在解释器 Local 失败。约 1000 并发连接的服务无法在解释器下运行。
-- 推荐：将分支计数与调用深度分开限额，默认值与原生后端对齐，或在 language.md 写明差异；与 K1-3 的原生深度限额一起决定。
+- Local 模式下解释器分别检查单链深度、总活跃帧数和每父帧动态分支数。动态分支登记上限与原生后端共用。
+  默认配置的三后端回归覆盖 1,100 个挂起分支和递归 join 计算 `fib(13)`。
 
 ### D7 词法安全与源码兼容
 
@@ -303,4 +302,5 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | D3 | 已修复 | `fix: reserve inherent impls on built-in types for the standard library` | 入口和导入模块在用户声明处报错。三后端验证同名方法的点调用和显式 trait 调用。 |
 | D4 | 已修复 | `fix: diagnose ambiguous subtraction and implicit newline discards` | 三后端验证显式丢弃、负元素与跨行减法；定向测试核对错误位置和自定义加法的副作用。 |
 | D5 | 已实施受检整数算术 | `feat: add checked arithmetic methods for integers` | 三后端核对八种整数的可表示结果和溢出边界。 |
-| D6–D8 | 待决策 | | |
+| D6 | 已修复 | `fix: separate interpreter call depth from local task width` | 保留宿主总帧预算，单独限制调用深度，回收完成或取消的子任务。 |
+| D7–D8 | 待决策 | | |

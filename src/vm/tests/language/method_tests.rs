@@ -454,6 +454,7 @@ fn methods_compile_and_recurse_on_a_small_native_stack() {
             let mut vm = VmEngine::new_interpreter();
             vm.set_interpreter_limits(super::InterpreterLimits {
                 max_frames: 6000,
+                max_call_depth: 6000,
                 ..Default::default()
             })
             .unwrap();

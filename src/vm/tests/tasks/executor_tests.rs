@@ -795,6 +795,7 @@ fn instance_task_poll_limits_do_not_relax_synchronous_state_limits() {
         max_frames: 16,
         instruction_budget: Some(128),
         poll_budget: None,
+        ..Default::default()
     })
     .unwrap();
     unsafe {
@@ -811,6 +812,7 @@ fn instance_task_poll_limits_do_not_relax_synchronous_state_limits() {
         max_frames: 16,
         instruction_budget: None,
         poll_budget: Some(32),
+        ..Default::default()
     };
     assert!(vm
         .spawn_instance_task_with_limits(

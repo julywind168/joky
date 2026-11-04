@@ -118,6 +118,7 @@ fn generic_enum_recursion_obeys_interpreter_frame_and_poll_limits() {
         max_frames: 64,
         instruction_budget: Some(5000),
         poll_budget: Some(1),
+        ..Default::default()
     })
     .unwrap();
     let mut task = vm.call_async("run", &[20]).unwrap();
@@ -134,11 +135,13 @@ fn generic_enum_recursion_obeys_interpreter_frame_and_poll_limits() {
             max_frames: 4,
             instruction_budget: None,
             poll_budget: Some(1),
+            ..Default::default()
         },
         InterpreterLimits {
             max_frames: 64,
             instruction_budget: Some(20),
             poll_budget: Some(1),
+            ..Default::default()
         },
     ] {
         vm.set_interpreter_limits(limits).unwrap();

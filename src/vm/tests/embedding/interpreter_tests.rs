@@ -233,7 +233,7 @@ fn deep_calls_return_on_a_small_native_stack() {
     std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
         for suspends in [false, true] {
             let mut vm = VmEngine::new_interpreter();
-            vm.set_interpreter_limits(InterpreterLimits { max_frames: 6000, ..Default::default() }).unwrap();
+            vm.set_interpreter_limits(InterpreterLimits { max_frames: 6000, max_call_depth: 6000, ..Default::default() }).unwrap();
             let annotation = if suspends { "@suspends" } else { "" };
             vm.load_source(&format!("fn f(n: Int32) {annotation} -> Int32 {{ var value=0; var k=n; while k>0 {{ value=f(k-1)+1; k=0; }}; value }}")).unwrap();
             if suspends { assert_eq!(vm.call_async("f", &[5000]).unwrap().cps_result(), Some(5000)); }
@@ -247,7 +247,7 @@ fn deep_nested_scopes_resume_or_cancel_without_recursive_drop() {
     std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
         for cancel in [false, true] {
             let mut vm = engine(VmMode::Interpreter);
-            vm.set_interpreter_limits(InterpreterLimits { max_frames: 6000, ..Default::default() }).unwrap();
+            vm.set_interpreter_limits(InterpreterLimits { max_frames: 6000, max_call_depth: 6000, ..Default::default() }).unwrap();
             vm.load_source("extern fn wait(n: Int32) @suspends fn f(n: Int32) @suspends { var k=n; while k>0 { join { | f(k-1) }; k=0; }; wait(n) }").unwrap();
             let mut task = vm.call_async("f", &[3000]).unwrap();
             assert!(!task.is_finished());
@@ -265,16 +265,17 @@ fn deep_nested_scopes_resume_or_cancel_without_recursive_drop() {
 }
 
 #[test]
-fn frame_limits_cover_recursion_and_scope_width_before_starting_children() {
+fn interpreter_depth_and_total_frame_limits_reject_before_starting_children() {
     let mut vm = engine(VmMode::Interpreter);
     vm.set_interpreter_limits(InterpreterLimits {
-        max_frames: 8,
+        max_call_depth: 8,
         ..Default::default()
     })
     .unwrap();
     vm.load_source("fn f() -> Int32 { f() }").unwrap();
     let error = vm.call_int32_0("f").unwrap_err();
     assert_eq!(error.code(), ErrorCode::ResourceLimit);
+    assert!(error.message().contains("call depth limit"));
     assert_eq!(error.runtime_trace().len(), 8);
     vm.set_interpreter_limits(InterpreterLimits {
         max_frames: 2,
@@ -285,10 +286,9 @@ fn frame_limits_cover_recursion_and_scope_width_before_starting_children() {
         "extern fn wait(n: Int32) @suspends fn f() @suspends { join { | wait(1) | wait(2) } }",
     )
     .unwrap();
-    assert_eq!(
-        vm.call_async("f", &[]).unwrap_err().code(),
-        ErrorCode::ResourceLimit
-    );
+    let error = vm.call_async("f", &[]).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::ResourceLimit);
+    assert!(error.message().contains("frame limit"));
     assert!(events().is_empty());
 }
 
@@ -515,6 +515,10 @@ fn interpreter_limit_configuration_is_checked() {
             ..original
         },
         InterpreterLimits {
+            max_call_depth: 0,
+            ..original
+        },
+        InterpreterLimits {
             poll_budget: Some(0),
             ..original
         },
@@ -665,6 +669,7 @@ fn record_calls_obey_cooperative_budgets_and_frame_limits() {
         max_frames: 64,
         instruction_budget: Some(5000),
         poll_budget: Some(1),
+        ..Default::default()
     })
     .unwrap();
     let mut task = vm.call_async("run", &[20]).unwrap();
@@ -681,11 +686,13 @@ fn record_calls_obey_cooperative_budgets_and_frame_limits() {
             max_frames: 4,
             instruction_budget: None,
             poll_budget: Some(1),
+            ..Default::default()
         },
         InterpreterLimits {
             max_frames: 64,
             instruction_budget: Some(20),
             poll_budget: Some(1),
+            ..Default::default()
         },
     ] {
         vm.set_interpreter_limits(limits).unwrap();
@@ -720,6 +727,7 @@ fn enum_calls_obey_cooperative_budgets_and_frame_limits() {
         max_frames: 64,
         instruction_budget: Some(5000),
         poll_budget: Some(1),
+        ..Default::default()
     })
     .unwrap();
     let mut task = vm.call_async("run", &[20]).unwrap();
@@ -736,11 +744,13 @@ fn enum_calls_obey_cooperative_budgets_and_frame_limits() {
             max_frames: 4,
             instruction_budget: None,
             poll_budget: Some(1),
+            ..Default::default()
         },
         InterpreterLimits {
             max_frames: 64,
             instruction_budget: Some(20),
             poll_budget: Some(1),
+            ..Default::default()
         },
     ] {
         vm.set_interpreter_limits(limits).unwrap();
@@ -777,6 +787,7 @@ fn tuple_calls_obey_cooperative_budgets_and_frame_limits() {
         max_frames: 64,
         instruction_budget: Some(5000),
         poll_budget: Some(1),
+        ..Default::default()
     })
     .unwrap();
     let mut task = vm.call_async("run", &[20]).unwrap();
@@ -793,11 +804,13 @@ fn tuple_calls_obey_cooperative_budgets_and_frame_limits() {
             max_frames: 4,
             instruction_budget: None,
             poll_budget: Some(1),
+            ..Default::default()
         },
         InterpreterLimits {
             max_frames: 64,
             instruction_budget: Some(20),
             poll_budget: Some(1),
+            ..Default::default()
         },
     ] {
         vm.set_interpreter_limits(limits).unwrap();
