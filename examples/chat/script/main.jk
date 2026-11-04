@@ -4,7 +4,6 @@
 import contract.{type Host, type Call, type AccountInit, type Client}
 import joky/domain
 import joky/session
-import joky/mem
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 
@@ -175,7 +174,7 @@ fn enter(account: &mut Account, room: &mut Room, name: &String) -> Result<Member
     let member = account.member
     room.add_member(member)
     room.broadcast(notice("joined", &room.name, member.id))
-    mem.replace(&mut account.room, Some(name.clone()));
+    account.room = Some(name.clone())
     Ok(member)
 }
 // Leaves the room and returns its name. A closed connection does not hear its own departure.

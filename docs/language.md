@@ -1268,7 +1268,7 @@ fn replace_scores() -> UInt64 {
 ```
 
 嵌套路径同样适用，但路径上任何祖先实现 Drop 时仍禁止移出或替换；所选字段本身可以实现 Drop。
-拥有局部字段可直接赋值；显式解引用字段 `(*record).field = next` 也可替换拥有字段。需要返回旧值时使用 `mem.replace(&mut record.field, next)`。右侧不能消费目标记录后再用字段赋值复活它。
+拥有局部字段可直接赋值；通过独占引用替换拥有字段可写 `record.field = next` 或 `(*record).field = next`，新值写入后清理旧值。需要返回旧值时使用 `mem.replace(&mut record.field, next)`。右侧不能消费目标记录后再用字段赋值复活它。
 
 ## 受检循环图构造
 
@@ -6749,7 +6749,7 @@ scope 主体直接声明的局部值保留到 join 完成；return、break、con
 
 显式 Arena、dyn、闭包、FixedArray 值/引用及含引用存储的拥有者仍遵守各自限制；
 容器/Element/Slice 的聚合存储和宿主 ABI 没有开放。解释器内部时间片仍保留调用帧与借用目标。
-通过独占包装引用替换拥有字段使用 `mem.replace`，直接字段赋值和部分移出的既有准入不变。
+通过独占包装引用可以直接给拥有字段赋值，需要取回旧值时使用 `mem.replace`。
 
 用例 [suspending_borrows.jk](../tests/fixtures/suspending_borrows.jk) 覆盖局部、字段、容器视图和并发；
 [suspending_borrow_cleanup.jk](../tests/fixtures/suspending_borrow_cleanup.jk) 覆盖退出与取消清理；

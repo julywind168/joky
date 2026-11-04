@@ -250,9 +250,11 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
-        reservation: bool,
+        operation: &Expr,
         access: IndexAccess<'_>,
     ) -> Result<Option<Flow>, Error> {
+        let assigning = matches!(operation, Expr::FieldAssign { .. });
+        let mut implicit_owner_field = false;
         let mut root = expr;
         let mut path = Vec::new();
         while let Expr::Field {
@@ -267,10 +269,26 @@ impl FunctionPlan {
             }
             path.push(name.clone());
             root = base;
+            if assigning {
+                if let Some(Type::Reference(r)) = self.type_hint(root, vars, functions, types) {
+                    // Ordinary Copy fields use the field planner below. Owning
+                    // assignments use the same projected swap as (*root).field.
+                    let pointee = self.pointee(&r.target, types)?;
+                    let mut field = pointee;
+                    for name in path.iter().rev() {
+                        field = self.field_member(&field, name, &expr.span())?.1;
+                    }
+                    if !field.is_owner() {
+                        return Ok(None);
+                    }
+                    implicit_owner_field = true;
+                    break;
+                }
+            }
         }
         // Automatic field dereferencing stops at a stored reference. Let the
         // ordinary field planner evaluate that pointer hop before projecting.
-        if matches!(root, Expr::Index { .. }) {
+        if !implicit_owner_field && matches!(root, Expr::Index { .. }) {
             if let Some(mut target) = self.type_hint(root, vars, functions, types) {
                 for name in path.iter().rev() {
                     if target.reference_type().is_some() {
@@ -282,6 +300,7 @@ impl FunctionPlan {
         }
         let span = root.span();
         let flow = match root {
+            _ if implicit_owner_field => self.expr(root, vars, functions, suspends, types)?,
             Expr::Index { .. } => {
                 self.index_access(root, access, vars, functions, suspends, types)?
             }
@@ -312,13 +331,22 @@ impl FunctionPlan {
             return Ok(Some(Flow::Value(Some(reference))));
         }
         path.reverse();
-        let target = self.field_target(target, &path, expr.span())?;
-        let dst = self.slot(Type::reference(target, mutable))?;
+        let field = self.field_target(target.clone(), &path, expr.span())?;
+        if assigning && field.is_owner() {
+            self.check_owner_projection(target, &path, expr.span())?;
+        }
+        let dst = self.slot(Type::reference(field, mutable))?;
         self.emit(Op::Project {
             dst: dst.clone(),
             src: reference,
             path,
-            reservation,
+            reservation: !matches!(
+                operation,
+                Expr::Unary {
+                    op: UnaryOp::Borrow | UnaryOp::BorrowMut,
+                    ..
+                }
+            ),
         });
         Ok(Some(Flow::Value(Some(dst))))
     }
@@ -532,7 +560,7 @@ impl FunctionPlan {
             IndexAccess::Place { mutable }
         };
         if let Some(flow) =
-            self.dereferenced_place(place, vars, functions, suspends, types, !borrow, access)?
+            self.dereferenced_place(place, vars, functions, suspends, types, expr, access)?
         {
             let Flow::Value(Some(reference)) = flow else {
                 return Ok(Some(Flow::Diverged));
@@ -672,8 +700,11 @@ impl FunctionPlan {
             ));
         }
         if target.is_owner() && !borrow {
-            return Err(type_error(&expr.span(), ErrorCode::InvalidAssignment,
-                "Cannot move or replace an owning field through a borrowed wrapper; borrow the field instead"));
+            return Err(type_error(
+                &expr.span(),
+                ErrorCode::InvalidAssignment,
+                "Cannot move an owning field through a borrowed wrapper; borrow the field instead",
+            ));
         }
         let Flow::Value(reference) = self.expr(root, vars, functions, suspends, types)? else {
             return Ok(Some(Flow::Diverged));

@@ -139,7 +139,8 @@ fn mem_fields() -> Int32 {
     let p = &mut pair
     if (*p).left.id != 1 { return 0 };
     (*p).left = resource(3)
-    42
+    p.left = resource(4)
+    p.left.id + 38
 }
 struct Failing { id: Int32, data: Array<Int32> }
 impl Drop for Failing { fn drop(&mut self) { record_drop(self.id); let fail = 1 / 0 } }

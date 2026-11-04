@@ -22,7 +22,7 @@
 
 | 探针 | 结果 |
 | --- | --- |
-| 经 `&mut A` 给拥有型字段赋值 `r.room = Some("y")` | 拒绝：`Cannot move or replace an owning field through a borrowed wrapper`；局部 `var` 直接赋值可以 |
+| 经 `&mut A` 给拥有型字段赋值 `r.room = Some("y")` | 已支持，替换后释放旧值 |
 | `Result<_, Int32>` 在返回 `Result<_, E>` 的函数里用 `?` | 拒绝：要求错误类型相同 |
 | `let x = 3` 与 `UInt64` 相加 | 拒绝：`Int32 and UInt64`；`for i in 0 .. n`（n: UInt64）可以 |
 | 同模块期望类型下的裸变体 `let c: Color = Green` | 可以 |
@@ -42,7 +42,7 @@
 主要问题：**语言核心偏向"正确但啰嗦"，标准库偏向"有协议、缺便利层"。**
 一个 70 行的 HTTP+PG 示例里，约一半代码在做 SQL 参数装箱、列读取、标头线性查找、
 手写 JSON 错误体、状态码映射和停机样板；这些在 Go/Rust(axum+sqlx)/TS 中都是一两行。
-优先处理参数装箱、路由、字符串基础方法和经 `&mut` 的字段替换。跨层传播错误时，现有的 `map_err` 可以显式转换错误类型。
+优先处理参数装箱、路由和字符串基础方法。跨层传播错误时，现有的 `map_err` 可以显式转换错误类型。
 
 ## 3. 优先级总表
 
@@ -50,7 +50,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 | 级别 | 项目 | 章节 |
 | --- | --- | --- |
-| P0 | 经 `&mut` 替换拥有型字段 | §4.2 |
+| 已完成 | 经 `&mut` 替换拥有型字段 | §4.2 |
 | P0 | String 基础方法：trim / split_once / contains / strip_prefix / replace / lines / 大小写 / parse | §6.1 |
 | P0 | `#derive(Show, Eq, Hash)`，标准库错误与枚举实现 Show | §4.4 |
 | P0 | PostgreSQL 参数与结果：`ToSql`/`FromSql` 协议、按列名读取、`#derive(FromRow)`、更多类型 | §8 |
@@ -77,20 +77,9 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 届时建议先限于 `Result`：仅在错误类型不同时查找一次显式转换。设计时还需确定拥有型错误的移动、局部资源的清理顺序，以及转换函数本身分配失败时的行为。
 
-### 4.2 经 `&mut` 替换拥有型字段【已验证】
+### 4.2 经 `&mut` 替换拥有型字段【已修复】
 
-现状：`fn enter(account: &mut Account, ...)` 里不能写 `account.room = Some(name)`，
-只能 `mem.replace(&mut account.room, Some(name.clone()));`
-（[chat/script/main.jk:178](../examples/chat/script/main.jk)）。诊断也只说"borrow the field instead"，
-没有给出 `mem.replace` 这个可行写法。
-
-这是领域模型代码中最高频的动作（`order.status = Shipped`、`user.email = new_email`），
-目前的写法会让每个新用户都怀疑自己写错了。
-
-建议：允许经独占引用对拥有型字段整体赋值，语义等价于 `mem.replace` 后立即释放旧值。
-如果存在必须禁止的情形（例如旧值被其他借用观察、跨挂起），保留拒绝但把诊断改成：
-"use `mem.replace(&mut a.room, value)` to replace an owning field through a reference"。
-后者是低成本的先行项，可单独做。
+聊天室的 `enter()` 现在直接写 `account.room = Some(name.clone())`。编译器与显式解引用赋值 `(*account).room = next` 使用同一条写入路径，安装新值后释放旧值。需要取回旧值时使用 `mem.replace`。[聊天室示例](../examples/chat/script/main.jk#L172)
 
 ### 4.3 名字可见性
 
@@ -436,14 +425,14 @@ fn main() @suspends -> Int32 {
 ## 12. 建议实施顺序
 
 1. **低成本先行**（不改语义）：标准库错误与枚举实现 Show；String 基础方法；Option/Result 补方法；
-   Array any/all/find/retain；`&mut` 字段替换的诊断提示 `mem.replace`；prelude 导出容器类型名；
+   Array any/all/find/retain；prelude 导出容器类型名；
    清理标准库内过时写法（`uint64(0) ..`）。
 2. **HTTP 便利层**：header/query/path 访问、响应助手、Status 改名、Method 枚举、Router、`http.run`、
    `shutdown.with_signals`。均为标准库源码改动，不涉及编译器。
 3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
    `pool.transaction`、Options。
 4. **语言特性**：`#derive(Show, Eq, Hash, Default)`、跨模块期望类型裸变体、字符串字面量模式与守卫、
-   `ToSql` 隐式装箱、结构更新语法、`&mut` 整体字段赋值、非 pub 函数 `@suspends` 推导。
+   `ToSql` 隐式装箱、结构更新语法、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
 5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、
    构造与缩写命名）：集中一次完成并提供迁移诊断，趁项目尚未公开时做。

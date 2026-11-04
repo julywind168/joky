@@ -201,7 +201,7 @@ fn multi_owner_contracts_reject_partial_moves_and_hidden_borrows() {
         ("fn bad() { var b = Buffers.new::<Int32>(); let a = &mut b.second; b.first.push(1); a.len(); }", "borrow"),
         ("fn bad() { let b = Buffers.new::<Int32>(); let a = &b.second; let c = b; a.len(); }", "borrow"),
         ("fn bad(b: &Buffers<Int32>) -> Array<Int32> { b.second }", "borrowed wrapper"),
-        ("fn bad(b: &mut Buffers<Int32>) { b.second = Array.new::<Int32>() }", "borrowed wrapper"),
+        ("fn bad(b: &Buffers<Int32>) { b.second = Array.new::<Int32>() }", "shared reference"),
         ("fn bad() -> &Array<Int32> { let b = Buffers.new::<Int32>(); &b.second }", "borrowed input"),
         ("fn bad() { var b = Buffers.new::<&Int32>(); let p = 42; b.add(&p) }", "local borrow"),
         ("fn bad() { var b = Buffers.new::<&Int32>(); let p = alloc(42); b.add((&*p)) ; (*(p) = 0) }", "retained"),

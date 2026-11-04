@@ -486,7 +486,7 @@ fn chat_matrix(parallel: bool) {
         let source = source.replace("vm.Vm.new()", &format!("vm.Vm.{create}()"));
         std::fs::write(&path, &source).unwrap();
         let logic = format!(
-        "import joky/outbox\nimport joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
+        "import joky/mem\nimport joky/outbox\nimport joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
         include_str!("../examples/chat/script/main.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
         assert_eq!(logic.matches("    let command = parse(line)\n").count(), 1);

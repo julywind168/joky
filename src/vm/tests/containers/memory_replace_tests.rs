@@ -266,7 +266,7 @@ fn mem_operations_preserve_values_and_cleanup_in_both_modes() {
             ("mem_references", vec![]),
             ("mem_drop_shared", vec![-1, 1]),
             ("mem_transition", vec![-1, -2, -3, 2, 1, 3]),
-            ("mem_fields", vec![1, 3, 2]),
+            ("mem_fields", vec![1, 3, 4, 2]),
             ("mem_copy_fields", vec![]),
             ("mem_drop_exclusive", vec![]),
             ("mem_assignment_drop_failure", vec![1, 2]),

@@ -16,7 +16,7 @@ int main(void) {
         {mem_text, 0, 0, {0}}, {mem_references, 0, 0, {0}},
         {mem_drop_shared, 0, 2, {-1, 1}}, {mem_assignment_failure, 1, 2, {2, 1}},
         {mem_transition, 0, 6, {-1, -2, -3, 2, 1, 3}}, {mem_function_values, 0, 0, {0}},
-        {mem_closure, 0, 2, {1, -1}}, {mem_fields, 0, 3, {1, 3, 2}}, {mem_assignment_drop_failure, 1, 2, {1, 2}},
+        {mem_closure, 0, 2, {1, -1}}, {mem_fields, 0, 4, {1, 3, 4, 2}}, {mem_assignment_drop_failure, 1, 2, {1, 2}},
     };
     for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         count = 0;
