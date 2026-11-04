@@ -68,7 +68,7 @@ fn plain_values() @suspends -> Int32 {
 }
 fn read_column(values: &Array<Plain>) @suspends -> Int32 {
     task.yield_now()
-    match values.get(1)! { Plain.Other(n) => n, _ => 0 }
+    match values[1] { Plain.Other(n) => n, _ => 0 }
 }
 fn plain_column() @suspends -> Int32 {
     let values = [Plain.Number(7), Plain.Other(21)]

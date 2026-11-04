@@ -16,12 +16,22 @@ fn roundtrip() -> Int32 {
     var words = Array.with_capacity::<ProbeWord>(1)
     words.push(ProbeWord.D(-3))
     words.push(ProbeWord.B(41))
-    if read(words.get(0)!) != 0 { return 1 }
+    var reads: UInt64 = 0
+    let saved = words[{ let i = reads; reads += 1; i }]
     if read(words.take_last()) != 42 { return 2 }
+    words.push(ProbeWord.A(3))
+    words.push(ProbeWord.A(4))
+    let tail = &mut words[1..3]
+    let last = tail.slice_mut(1, 2)
+    if !last.set(0, ProbeWord.C(40)) { return 10 }
+    if read(last[0]) != 42 || last.get(1).is_some() { return 11 }
+    if read(tail.get(0)!) != 3 || read(words.take_last()) != 42 { return 12 }
+    words.take_last()
     words.set(0, ProbeWord.C(40))
+    if reads != 1 || read(saved) != 0 { return 1 }
     var values = [ProbeMixed.Wide(4294967297), ProbeMixed.Float(-1.5)]
     values.set(0, ProbeMixed.Small(true))
-    if (match values.get(0)! { ProbeMixed.Small(x) => x, _ => false }) == false { return 3 }
+    if (match values[0] { ProbeMixed.Small(x) => x, _ => false }) == false { return 3 }
     values.set(0, ProbeMixed.Empty)
     if (match values.get(0)! { ProbeMixed.Empty => false, _ => true }) { return 4 }
     values.set(0, ProbeMixed.Wide(-4294967297))
@@ -34,4 +44,9 @@ fn reserve_words(n: UInt64) -> Int32 {
     var words = Array.with_capacity::<ProbeWord>(n)
     words.push(ProbeWord.A(42))
     read(words.take_last())
+}
+
+fn bad_index() -> Int32 {
+    let words = [ProbeWord.A(42)]
+    read(words[1])
 }

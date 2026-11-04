@@ -8,8 +8,8 @@ fn by_value(op: BI, element: &EnumType, args: &[Slot], dst: Option<&Slot>) -> bo
     let concrete =
         |slot: &Slot| matches!(&slot.ty, Type::Enum(e) if !e.indirect && e.id == element.id);
     match op {
-        BI::Store | BI::InitializeNext => args.last().is_some_and(concrete),
-        BI::Load | BI::TakeLast => dst.is_some_and(concrete),
+        BI::Store | BI::SliceStore | BI::InitializeNext => args.last().is_some_and(concrete),
+        BI::Load | BI::SliceLoad | BI::TakeLast => dst.is_some_and(concrete),
         BI::Allocate
         | BI::CapacityLimit
         | BI::Len
@@ -18,12 +18,17 @@ fn by_value(op: BI, element: &EnumType, args: &[Slot], dst: Option<&Slot>) -> bo
         | BI::Replace
         | BI::Release
         | BI::SwapElements
-        | BI::Truncate => true,
+        | BI::Truncate
+        | BI::Slice
+        | BI::SliceMut
+        | BI::Subslice
+        | BI::SubsliceMut
+        | BI::SliceLen => true,
         _ => false,
     }
 }
 
-fn candidate(e: &EnumType) -> bool {
+pub(super) fn candidate(e: &EnumType) -> bool {
     let payloads = e.variants.iter().filter_map(|v| v.payload.as_ref());
     // Bound the generated tag dispatch and only specialize concrete nominal types.
     !e.indirect
@@ -73,6 +78,8 @@ fn closed_signature(info: &FunctionInfo) -> bool {
 // No array handle or view can arrive from another compilation or be published
 // to a host, task snapshot or persistent root. Ordinary direct calls inside the
 // plan use the same decision for an enum, including across source modules.
+// FixedArray views (PlaceOp::View) and external slice inputs are excluded:
+// admitted slices inherit their stride from a buffer allocated in this plan.
 fn closed_module(
     functions: &HashMap<String, FunctionInfo>,
     bodies: &HashMap<String, FunctionPlan>,
@@ -191,13 +198,13 @@ pub(super) fn lower(
             let physical = &elements[&e.id];
             let mut unpack = None;
             match intrinsic {
-                BI::InitializeNext | BI::Store => {
+                BI::InitializeNext | BI::Store | BI::SliceStore => {
                     let value = args.last_mut().unwrap();
                     let packed = body.slot(physical.clone())?;
                     convert(body, value, &packed, Direction::Pack)?;
                     *value = packed;
                 }
-                BI::Load | BI::TakeLast => {
+                BI::Load | BI::SliceLoad | BI::TakeLast => {
                     let packed = body.slot(physical.clone())?;
                     unpack = Some((dst.replace(packed.clone()).unwrap(), packed));
                 }
@@ -299,7 +306,7 @@ fn compact_enum_array_stride_and_borrow_fallback() {
     let source = include_str!("../../../tests/fixtures/compact_enum_array.jk");
     for (packed, extra) in [
         (true, ""),
-        (false, "fn borrowed() -> Int32 { var xs = [ProbeWord.A(0)]; *xs.borrow_mut_ref(0) = ProbeWord.D(39); read(xs[0]) }"),
+        (false, "fn borrowed() -> Int32 { var xs = [ProbeWord.A(0)]; let p = &mut xs[0]; *p = ProbeWord.D(39); read(xs[0]) }"),
     ] {
         // At this capacity a one-byte change in actual stride dwarfs the
         // buffer header. Bracket the limit on both sides to distinguish every
@@ -319,6 +326,9 @@ fn compact_enum_array_stride_and_borrow_fallback() {
             if !packed {
                 assert_eq!(vm.call_int32_0("borrowed").unwrap(), 42);
             }
+            let error = vm.call_int32_0("bad_index").unwrap_err();
+            assert!(error.message().contains("outside the initialized prefix"));
+            assert_eq!(error.span().unwrap().slice(&fixture), Some("words[1]"));
             assert_eq!(vm.call_int32_0("roundtrip").unwrap(), 42);
             assert_eq!(
                 vm.call_int32_0("fits").unwrap(),
@@ -335,11 +345,44 @@ fn compact_enum_array_stride_and_borrow_fallback() {
             &ast,
             &[
                 ("roundtrip", Some(42)),
+                ("bad_index", None),
                 ("fits", Some(42)),
                 ("exceeds", None),
             ],
         );
     }
+}
+
+#[test]
+fn compact_enum_arrays_preserve_mixed_slice_origins() {
+    use crate::vm::{VmEngine, VmMode};
+    let fixture = format!(
+        "import joky/fixed_array.{{type FixedArray}}\nimport joky/slice.{{type Slice}}\n{}\n{}",
+        include_str!("../../../tests/fixtures/compact_enum_array.jk"),
+        r#"
+        fn second(xs: &Slice<ProbeWord>) -> Int32 { read(xs[1]) }
+        fn both() -> Int32 {
+            let xs = [ProbeWord.A(1), ProbeWord.C(18)]
+            let ys: FixedArray<ProbeWord, 2> = [ProbeWord.A(2), ProbeWord.D(19)]
+            second(&xs[0..2]) + second(&ys[0..2])
+        }
+        fn large() -> Int32 { reserve_words(4000000) }
+        "#
+    );
+    let ast = crate::TypeRegistry::default()
+        .resolve_aliases(&crate::parser::parse(&fixture).unwrap())
+        .unwrap();
+    for mode in [VmMode::Interpreter, VmMode::Jit] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_module(&ast).unwrap();
+        assert_eq!(vm.call_int32_0("both").unwrap(), 42);
+        assert_eq!(
+            vm.call_int32_0("large").unwrap_err().code(),
+            ErrorCode::ResourceLimit
+        );
+    }
+    #[cfg(unix)]
+    crate::backends::aot::tests::assert_sync_results(&ast, &[("both", Some(42)), ("large", None)]);
 }
 
 #[test]

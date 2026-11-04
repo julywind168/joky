@@ -229,6 +229,19 @@ impl FunctionPlan {
         Ok(())
     }
 
+    pub(super) fn read_copy_place(&mut self, reference: Slot, span: Span) -> Result<Flow, Error> {
+        let target = &reference.ty.reference_type().unwrap().target;
+        Self::check_memory_target(target, span)?;
+        if !target.is_copy_value() {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidAssignment,
+                "Cannot move a non-Copy value through a reference; use mem.replace",
+            ));
+        }
+        self.read_local(reference).map(Flow::Value)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn dereferenced_place(
         &mut self,
@@ -269,9 +282,14 @@ impl FunctionPlan {
         }
         let span = root.span();
         let flow = match root {
-            Expr::Index { .. } => {
-                self.index_reference(root, mutable, vars, functions, suspends, types)?
-            }
+            Expr::Index { .. } => self.index_access(
+                root,
+                super::indexing::IndexAccess::Place { mutable },
+                vars,
+                functions,
+                suspends,
+                types,
+            )?,
             Expr::Unary {
                 op: UnaryOp::Deref,
                 operand,
@@ -485,6 +503,19 @@ impl FunctionPlan {
                 return Ok(Some(Flow::Value(Some(dst))));
             }
         }
+        if matches!(expr, Expr::Index { index, .. } if super::indexing::slice_bounds(index).is_none())
+        {
+            return self
+                .index_access(
+                    expr,
+                    super::indexing::IndexAccess::Read,
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                )
+                .map(Some);
+        }
         let (place, borrow, mutable) = match expr {
             Expr::Unary {
                 op: UnaryOp::Borrow | UnaryOp::BorrowMut,
@@ -543,11 +574,11 @@ impl FunctionPlan {
                 });
                 return Ok(Some(Flow::Value(Some(dst))));
             }
-            Self::check_memory_target(&target, expr.span())?;
             if let Expr::FieldAssign {
                 value, op, span, ..
             } = expr
             {
+                Self::check_memory_target(&target, expr.span())?;
                 let reference = self.reserve_write(reference)?;
                 let old = self.compound_snapshot(
                     op,
@@ -581,24 +612,7 @@ impl FunctionPlan {
                 }
                 return Ok(Some(Flow::Value(None)));
             }
-            if !target.is_copy_value() {
-                return Err(type_error(
-                    &expr.span(),
-                    ErrorCode::InvalidAssignment,
-                    "Cannot move a non-Copy value through a reference; use mem.replace",
-                ));
-            }
-            let dst = if target == Type::Unit {
-                None
-            } else {
-                Some(self.slot(target)?)
-            };
-            self.emit(Op::ReadMemory {
-                dst: dst.clone(),
-                reference,
-                path: vec![],
-            });
-            return Ok(Some(Flow::Value(dst)));
+            return self.read_copy_place(reference, expr.span()).map(Some);
         }
         if let Some(flow) = self.local_field_expr(expr, vars, functions, suspends, types)? {
             return Ok(Some(flow));

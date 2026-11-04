@@ -139,6 +139,10 @@ fn indexing_rejects_invalid_types_moves_and_borrows() {
     let prefix = "import joky/array.{type Array} import joky/fixed_array.{type FixedArray}\n";
     for (source, code) in [
         (
+            "enum E { A(Int32), B(Int32) } fn bad() { var xs = [E.A(1)]; let p = &mut xs[0]; let x = xs[0]; *p = x; }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
             "fn bad() { let a = [1]; a[0] = 2 }",
             ErrorCode::InvalidAssignment,
         ),

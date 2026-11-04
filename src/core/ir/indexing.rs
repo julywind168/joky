@@ -30,11 +30,16 @@ pub(super) fn slice_bounds(expr: &Expr) -> Option<(&Expr, &Expr, bool)> {
     }
 }
 
+pub(super) enum IndexAccess {
+    Read,
+    Place { mutable: bool },
+}
+
 impl FunctionPlan {
-    pub(super) fn index_reference(
+    pub(super) fn index_access(
         &mut self,
         expr: &Expr,
-        mutable: bool,
+        access: IndexAccess,
         vars: &mut HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
@@ -43,6 +48,7 @@ impl FunctionPlan {
         let Expr::Index { base, index, span } = expr else {
             unreachable!()
         };
+        let mutable = matches!(access, IndexAccess::Place { mutable: true });
         let hint = self.type_hint(base, vars, functions, types);
         let mut base_place = base.as_ref();
         while let Expr::Field { base, .. } = base_place {
@@ -131,6 +137,11 @@ impl FunctionPlan {
                     format!("Indexing requires an array or slice, got {target}"),
                 )
             })?;
+        let load = match &target {
+            Type::Record(r) if r.array => Some(crate::parser::ast::BufferIntrinsic::Load),
+            Type::BufferSlice(_) => Some(crate::parser::ast::BufferIntrinsic::SliceLoad),
+            _ => None,
+        };
         root.ty = Type::reference(target, mutable);
         if let Some((start, end, inclusive)) = slice_bounds(index) {
             // A later bound may rebind the source reference variable.
@@ -234,11 +245,30 @@ impl FunctionPlan {
                     "Array index must have type UInt64",
                 )
             })?;
-        // Unlike sequence patterns, arbitrary indices never establish disjoint
-        // projection paths. Every element retains the original storage loan.
         self.current_span = *span;
+        let read_type = match access {
+            IndexAccess::Read => Some(self.pointee(&element, types)?),
+            IndexAccess::Place { .. } => None,
+        };
+        if let (Some(load), Some(ty @ Type::Enum(e))) = (load, &read_type) {
+            if super::enum_arrays::candidate(e) {
+                // Load checks the index and copies the value without lending an element address.
+                return Ok(Flow::Value(self.sequence_storage(
+                    load,
+                    ty,
+                    vec![root, index_value],
+                    ty.clone(),
+                )?));
+            }
+        }
+        // Arbitrary index projections retain the original storage loan.
         let raw = self.sequence_element(&root, &element, index_value, mutable)?;
-        let reference = self.pattern_reference(&raw, &element, 0, mutable, &[])?;
-        Ok(Flow::Value(Some(reference)))
+        let mut reference = self.pattern_reference(&raw, &element, 0, mutable, &[])?;
+        if let Some(ty) = read_type {
+            reference.ty = Type::reference(ty, false);
+            self.read_copy_place(reference, *span)
+        } else {
+            Ok(Flow::Value(Some(reference)))
+        }
     }
 }
