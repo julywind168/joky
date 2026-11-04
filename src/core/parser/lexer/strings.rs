@@ -82,12 +82,8 @@ impl Lexer<'_> {
 
     /// Normalize LF, CRLF and bare CR, counting each as one source line.
     fn string_newline(&mut self) {
-        if self.advance() == Some('\r') {
-            if self.peek() == Some('\n') {
-                self.advance();
-            } else {
-                self.line += 1;
-            }
+        if self.advance() == Some('\r') && self.peek() == Some('\n') {
+            self.advance();
         }
     }
 

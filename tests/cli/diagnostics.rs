@@ -790,3 +790,35 @@ fn interpreter_trace_folds_only_adjacent_identical_frames() {
     assert!(frames[2].contains("rec.jk:3,") && frames[2].ends_with("(repeated 3 times)"));
     assert!(frames[3].contains("at main") && !frames[3].contains("repeated"));
 }
+
+#[cfg(unix)]
+#[test]
+fn cr_only_modules_agree_on_newlines_in_execution_formatting_and_errors() {
+    let work = Workspace::new();
+    work.write(
+        "math.jk",
+        "\u{feff}// 注\rpub fn result() -> Int32 {\r    45 -\r        3\r}\r",
+    );
+    work.write(
+        "main.jk",
+        "\u{feff}import math\rfn main() -> Int32 { math.result() }\r",
+    );
+    work.assert_all_backends("main.jk", &[], b"", 42);
+    success(&work.cli(&["fmt", "math.jk"]));
+    success(&work.cli(&["fmt", "--check", "math.jk"]));
+    work.write(
+        "math.jk",
+        "\u{feff}// 注\rpub fn result() -> Int32 {\r    let 名 = @\r}\r",
+    );
+    for args in [["check", "main.jk"], ["fmt", "math.jk"]] {
+        let output = work.cli(&args);
+        failure(&output, "Line 3:");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("math.jk:3:13"), "{stderr}");
+    }
+    work.write(
+        "math.jk",
+        "\u{feff}pub fn result() -> Int32 {\r    let x = 45\r    -3\r    x\r}",
+    );
+    failure(&work.cli(&["check", "main.jk"]), "unused_value");
+}

@@ -33,17 +33,14 @@ impl Diagnostic {
         let file_path = file
             .filter(|f| f.name() != "<entry>")
             .map_or(path, |f| f.name());
-        let offset = error.span().map_or(0, |s| s.start()).min(text.len());
-        let prefix = &text.as_bytes()[..offset];
-        let line = prefix.iter().filter(|&&b| b == b'\n').count() + 1;
-        let start = prefix
-            .iter()
-            .rposition(|&b| b == b'\n')
-            .map_or(0, |n| n + 1);
+        let (line, column) = error
+            .span()
+            .unwrap_or(joky::Span::empty(0))
+            .line_column(text);
         Self {
             path: file_path.into(),
             line: error.line().unwrap_or(line) as i32,
-            column: String::from_utf8_lossy(&prefix[start..]).chars().count() as i32 + 1,
+            column: column as i32,
             message: error.message().into(),
         }
     }
@@ -158,11 +155,7 @@ impl Program {
                     Method {
                         signature,
                         parameters: function.params.iter().map(|p| p.name.clone()).collect(),
-                        line: source.as_bytes()[..function.span.start()]
-                            .iter()
-                            .filter(|&&b| b == b'\n')
-                            .count() as i32
-                            + 1,
+                        line: function.span.line_column(source).0 as i32,
                         task: true,
                     },
                 );
@@ -186,11 +179,7 @@ impl Program {
                 return Err(Diagnostic::contract(path, source, function.span.start(), "Frame callbacks require a nonescaping State receiver, one Float64 delta argument, and a Unit result"));
             }
             if let Some(signature) = signature {
-                let line = source.as_bytes()[..function.span.start()]
-                    .iter()
-                    .filter(|&&b| b == b'\n')
-                    .count() as i32
-                    + 1;
+                let line = function.span.line_column(source).0 as i32;
                 methods.insert(
                     function.name.clone(),
                     Method {

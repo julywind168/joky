@@ -262,3 +262,23 @@ fn leading_subtraction_in_lists_requires_an_explicit_continuation() {
         parse(&format!("fn test() {{ {body} }}")).unwrap();
     }
 }
+
+#[test]
+fn physical_newlines_and_initial_bom_preserve_original_spans() {
+    for newline in ["\n", "\r\n", "\r"] {
+        let source =
+            format!("\u{feff}// 注{newline}fn main() {{{newline}    let 名 = @{newline}}}");
+        let error = parse(&source).unwrap_err();
+        assert_eq!(error.line, 3);
+        assert_eq!(error.span.start(), source.find('@').unwrap());
+        assert_eq!(error.span.slice(&source), Some("@"));
+        assert_eq!(error.span.line_column(&source), (3, 13));
+        assert_eq!(Span::empty(3).line_column(&source), (1, 1));
+
+        let source = format!("\u{feff}fn main(){{// 注{newline}42}}");
+        let expected = format!("\u{feff}fn main() {{ // 注{newline}    42 }}{newline}");
+        assert_eq!(crate::parser::format(&source).unwrap(), expected);
+        assert_eq!(crate::parser::format(&expected).unwrap(), expected);
+    }
+    assert!(parse("\u{feff}\u{feff}fn main() {}").is_err());
+}

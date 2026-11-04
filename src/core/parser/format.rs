@@ -14,6 +14,9 @@ pub fn format(source: &str) -> Result<String, Diagnostic> {
     Parser::new(tokens.clone(), source).parse_module()?;
     let pieces = pieces(source, &tokens);
     let mut output = String::with_capacity(source.len());
+    if source.starts_with('\u{feff}') {
+        output.push('\u{feff}');
+    }
     let mut depth = 0usize;
     let mut previous_token: Option<&Token> = None;
     let mut previous_prefix = false;
@@ -28,20 +31,8 @@ pub fn format(source: &str) -> Result<String, Diagnostic> {
             )
         });
         let indent = depth.saturating_sub(usize::from(kind.is_some_and(is_close)));
-        if piece.gap.contains('\n') {
-            // Preserve each physical newline, including CRLF, but discard spaces
-            // on blank lines and trailing spaces outside comments and literals.
-            let bytes = piece.gap.as_bytes();
-            for (i, byte) in bytes.iter().enumerate() {
-                if *byte == b'\n' {
-                    if i > 0 && bytes[i - 1] == b'\r' {
-                        output.push('\r');
-                    }
-                    output.push('\n');
-                }
-            }
-        }
-        if output.is_empty() || output.ends_with('\n') {
+        copy_line_breaks(piece.gap, &mut output);
+        if index == 0 || output.ends_with(['\r', '\n']) {
             output.extend(std::iter::repeat_n(' ', indent * 4));
         } else if let Some(previous) = index.checked_sub(1).map(|i| &pieces[i]) {
             if space_between(previous, piece, previous_prefix, prefix) {
@@ -64,23 +55,35 @@ pub fn format(source: &str) -> Result<String, Diagnostic> {
     }
     // Preserve trailing blank lines without retaining their horizontal spaces.
     let trailing = pieces.last().map_or(source, |piece| &source[piece.end..]);
-    for (i, byte) in trailing.bytes().enumerate() {
-        if byte == b'\n' {
-            if i > 0 && trailing.as_bytes()[i - 1] == b'\r' {
-                output.push('\r');
-            }
-            output.push('\n');
-        }
-    }
-    if !output.is_empty() && !output.ends_with('\n') {
-        output.push_str(if source.contains("\r\n") {
-            "\r\n"
-        } else {
-            "\n"
-        });
+    copy_line_breaks(trailing, &mut output);
+    if !pieces.is_empty() && !output.ends_with(['\r', '\n']) {
+        let ending = source
+            .find(['\r', '\n'])
+            .map_or("\n", |i| line_ending(&source[i..]));
+        output.push_str(ending);
     }
     verify_tokens(source, &tokens, &output)?;
     Ok(output)
+}
+
+fn line_ending(text: &str) -> &str {
+    if text.starts_with("\r\n") {
+        "\r\n"
+    } else {
+        &text[..1]
+    }
+}
+
+fn copy_line_breaks(mut gap: &str, output: &mut String) {
+    while let Some(index) = gap.find(['\r', '\n']) {
+        let ending = line_ending(&gap[index..]);
+        // Removing all horizontal space here would merge two lines into a CRLF.
+        if ending == "\n" && output.ends_with('\r') {
+            output.push(' ');
+        }
+        output.push_str(ending);
+        gap = &gap[index + ending.len()..];
+    }
 }
 
 struct Piece<'a> {
@@ -102,7 +105,7 @@ fn pieces<'a>(source: &'a str, tokens: &'a [Token]) -> Vec<Piece<'a>> {
             let rest = &source[cursor..start];
             if rest.starts_with("//") || rest.starts_with("/*") {
                 let length = if rest.starts_with("//") {
-                    rest.find('\n').unwrap_or(rest.len())
+                    rest.find(['\r', '\n']).unwrap_or(rest.len())
                 } else {
                     let mut depth = 1;
                     let mut i = 2;

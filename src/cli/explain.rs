@@ -39,10 +39,7 @@ pub(super) fn execute(path: &std::path::Path, prelude: bool) -> u8 {
             let (file, line, column) = report.sources.get(site.span.source_id()).map_or_else(
                 || (path.display().to_string(), 1, 1),
                 |source| {
-                    let offset = site.span.start().min(source.text().len());
-                    let prefix = &source.text()[..offset];
-                    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
-                    let column = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                    let (line, column) = site.span.line_column(source.text());
                     (source.name().into(), line, column)
                 },
             );

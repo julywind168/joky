@@ -259,7 +259,11 @@ impl<'a> Lexer<'a> {
     pub(crate) fn new(source: &'a str) -> Self {
         Lexer {
             source,
-            byte_pos: 0,
+            byte_pos: if source.starts_with('\u{feff}') {
+                '\u{feff}'.len_utf8()
+            } else {
+                0
+            },
             line: 1,
             interpolation_depth: 0,
             after_dot: false,
@@ -276,10 +280,10 @@ impl<'a> Lexer<'a> {
 
     fn advance(&mut self) -> Option<char> {
         let ch = self.peek()?;
-        self.byte_pos += ch.len_utf8();
-        if ch == '\n' {
+        if crate::core::span::is_line_break(self.source.as_bytes(), self.byte_pos) {
             self.line += 1;
         }
+        self.byte_pos += ch.len_utf8();
         Some(ch)
     }
 
@@ -291,7 +295,7 @@ impl<'a> Lexer<'a> {
             }
             // Skip line comments.
             if self.peek() == Some('/') && self.peek2() == Some('/') {
-                while !matches!(self.peek(), Some('\n') | None) {
+                while !matches!(self.peek(), Some('\r' | '\n') | None) {
                     self.advance();
                 }
             } else if self.peek() == Some('/') && self.peek2() == Some('*') {

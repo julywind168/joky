@@ -36,12 +36,7 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
             .sources()
             .get(frame.span.source_id())
             .map_or((path, source), |file| (Path::new(file.name()), file.text()));
-        let offset = frame.span.start().min(source.len());
-        let line = source.as_bytes()[..offset]
-            .iter()
-            .filter(|&&b| b == b'\n')
-            .count()
-            + 1;
+        let (line, _) = frame.span.line_column(source);
         let _ = write!(
             output,
             "\n  at {} ({}:{line}, pc {})",
@@ -59,11 +54,7 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
             .sources()
             .get(span.source_id())
             .map_or((path, source), |file| (Path::new(file.name()), file.text()));
-        let line = source.as_bytes()[..span.start().min(source.len())]
-            .iter()
-            .filter(|&&b| b == b'\n')
-            .count()
-            + 1;
+        let (line, _) = span.line_column(source);
         let _ = write!(output, "\n  called at {}:{line}", path.display());
     }
     output
@@ -101,6 +92,9 @@ fn render_span(
     code: Option<&str>,
 ) -> Option<String> {
     let span = normalize_span(source, source_span);
+    let display = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let skipped = source.len() - display.len();
+    let span = span.start.saturating_sub(skipped)..span.end.saturating_sub(skipped);
     let file = path.display().to_string();
     let mut output = Vec::new();
     let mut report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
@@ -115,7 +109,7 @@ fn render_span(
         .with_config(Config::default().with_index_type(IndexType::Byte))
         .finish();
     report
-        .write(sources([(file, source)]), &mut output)
+        .write(sources([(file, display)]), &mut output)
         .ok()
         .and_then(|_| String::from_utf8(output).ok())
 }

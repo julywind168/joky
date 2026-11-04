@@ -2,6 +2,11 @@
 use super::source::SourceId;
 use std::ops::Range;
 
+/// CRLF counts once, at the CR. LF and standalone CR also begin a new line.
+pub(crate) fn is_line_break(bytes: &[u8], at: usize) -> bool {
+    bytes[at] == b'\r' || (bytes[at] == b'\n' && (at == 0 || bytes[at - 1] != b'\r'))
+}
+
 /// A half-open UTF-8 byte range with file identity.
 /// Source zero denotes caller-owned text; named files belong to a source snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -59,6 +64,19 @@ impl Span {
     /// Return the equivalent standard range for APIs such as Ariadne.
     pub const fn range(self) -> Range<usize> {
         self.start..self.end
+    }
+
+    /// One-based line and Unicode scalar column of the start, excluding a leading BOM.
+    pub fn line_column(self, source: &str) -> (usize, usize) {
+        let end = source.floor_char_boundary(self.start.min(source.len()));
+        let prefix = &source[..end];
+        let line = (0..end)
+            .filter(|&i| is_line_break(source.as_bytes(), i))
+            .count()
+            + 1;
+        let prefix = prefix.strip_prefix('\u{feff}').unwrap_or(prefix);
+        let tail = prefix.rsplit(['\r', '\n']).next().unwrap_or("");
+        (line, tail.chars().count() + 1)
     }
 
     /// Borrow the source slice covered by this span when it is valid UTF-8.
