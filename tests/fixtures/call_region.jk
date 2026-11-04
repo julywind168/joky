@@ -1,0 +1,40 @@
+struct Point { x: Int32 }
+fn make_point(x: Int32) -> &mut Point { alloc(Point { x: x }) }
+fn read_point(p: &Point) -> Int32 { p.x }
+fn work(x: Int32) -> Int32 { read_point(make_point(x)) }
+fn nested(x: Int32) -> Int32 { work(x) }
+
+fn region_loop() -> Int32 {
+    let kept = make_point(22)
+    var i = 0
+    while i < 20 {
+        i = nested(i) + 1
+    }
+    kept.x + i
+}
+
+fn region_loop_task() @suspends -> Int32 { region_loop() }
+
+fn region_indirect() -> Int32 {
+    let f: fn(Int32) -> Int32 = work
+    var i = 0
+    while i < 20 { i = f(i) + 1 }
+    i
+}
+
+fn opaque_read(x: Int32) -> Int32 {
+    let f: fn(&Point) -> Int32 = read_point
+    f(make_point(x))
+}
+fn forward_read(x: Int32) -> Int32 { opaque_read(x) }
+
+fn region_opaque_loop() -> Int32 {
+    var i = 0
+    while i < 20 { i = forward_read(i) + 1 }
+    i
+}
+
+fn fail_after_alloc(divisor: Int32) -> Int32 { make_point(42).x / divisor }
+fn region_failure(divisor: Int32) -> Int32 { fail_after_alloc(divisor) }
+
+fn region_probe(p: &Point, divisor: Int32) -> Int32 { p.x + region_failure(divisor) }

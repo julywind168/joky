@@ -184,6 +184,11 @@ impl Arena {
             external: Default::default(),
         }
     }
+    // Parallel roots retain their existing shard and publication contract.
+    pub(crate) fn call_region(&self) -> Option<Self> {
+        self.parallel.is_none().then(|| self.child())
+    }
+
     /// Release a nonescaping explicit region's parallel allocations.
     /// Local allocations are reclaimed by the ordinary Arena destructor.
     ///
@@ -685,12 +690,25 @@ fn allocation_error() -> Error {
 
 #[export_name = "__joky_arena_new"]
 extern "C" fn new() -> *mut Arena {
+    into_native(Arena::default())
+}
+#[export_name = "__joky_arena_call_region"]
+unsafe extern "C" fn call_region(parent: *const Arena) -> *mut Arena {
+    // The caller checks the error channel before taking ownership of the result.
+    if super::error::joky_runtime_error_code() != 0 {
+        return std::ptr::null_mut();
+    }
+    (*parent)
+        .call_region()
+        .map_or(std::ptr::null_mut(), into_native)
+}
+fn into_native(arena: Arena) -> *mut Arena {
     let pointer = unsafe { alloc(Layout::new::<Arena>()) }.cast::<Arena>();
     if pointer.is_null() {
         super::error::record_error(allocation_error());
     } else {
         unsafe {
-            pointer.write(Arena::default());
+            pointer.write(arena);
         }
     }
     pointer
@@ -723,9 +741,10 @@ unsafe extern "C" fn release(arena: *mut Arena) {
         dealloc(arena.cast(), Layout::new::<Arena>());
     }
 }
-pub(crate) fn symbols() -> [(&'static str, *const u8); 5] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 6] {
     [
         ("__joky_arena_new", new as *const u8),
+        ("__joky_arena_call_region", call_region as *const u8),
         ("__joky_arena_alloc", allocate as *const u8),
         ("__joky_arena_drop", release as *const u8),
         (

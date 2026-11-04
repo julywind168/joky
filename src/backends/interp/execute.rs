@@ -347,6 +347,8 @@ fn lookup(module: &BytecodeModule, name: &str) -> Result<Arc<BytecodeFunction>, 
 }
 
 pub(super) struct Frame {
+    // Synchronous descendants share this region across instruction slices.
+    call_region: Option<Rc<std::cell::RefCell<crate::runtime::arena::Arena>>>,
     _parallel_charge: Option<crate::runtime::parallel::Lease>,
     cleanups: crate::runtime::cleanup::Cleanups,
     cleanup_locals: memory::Locals,
@@ -379,6 +381,7 @@ impl Frame {
             *slot = value.clone();
         }
         Ok(Self {
+            call_region: None,
             _parallel_charge: charge,
             cleanups: Default::default(),
             cleanup_locals: Default::default(),
@@ -970,6 +973,17 @@ impl Execution {
         }
         self.frame_capacity(1)?;
         let mut child = Self::activation(module, target, frame, args)?;
+        if let Activation::User(child) = &mut child {
+            child.call_region = if child.function.info.call_region
+                && !matches!(frame.function.code[frame.pc], Instruction::IndirectCall(_))
+            {
+                self.arena
+                    .call_region()
+                    .map(|region| Rc::new(std::cell::RefCell::new(region)))
+            } else {
+                frame.call_region.clone()
+            };
+        }
         let owned = Self::owned_arguments(module, target, args);
         // Preserve the caller's hooks until the callee successfully installs
         // its own snapshot. Registration itself may fail under allocation limits.
@@ -1993,13 +2007,17 @@ impl Execution {
                 Activation::Prepared(_) => {
                     unreachable!("selected task is activated before execution")
                 }
-                Activation::User(frame) => run_frame(
-                    frame,
-                    &mut self.budget,
-                    &mut self.arena,
-                    module,
-                    &mut self.cleanup_module,
-                ),
+                Activation::User(frame) => {
+                    let region = frame.call_region.clone();
+                    let mut arena = region.as_ref().map(|r| r.borrow_mut());
+                    run_frame(
+                        frame,
+                        &mut self.budget,
+                        arena.as_deref_mut().unwrap_or(&mut self.arena),
+                        module,
+                        &mut self.cleanup_module,
+                    )
+                }
                 Activation::Host(host) => match self.budget.charge() {
                     Charge::Ready => match host.poll(&mut self.arena) {
                         Ok(Some(value)) => match host.finish(&mut self.arena) {

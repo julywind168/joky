@@ -503,6 +503,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![types::I32],
         ),
         ("__joky_arena_new", vec![], vec![ptr]),
+        ("__joky_arena_call_region", vec![ptr], vec![ptr]),
         ("__joky_arena_drop", vec![ptr], vec![]),
         ("__joky_buffer_commit_next", vec![ptr], vec![]),
         ("__joky_buffer_cleanup_new", vec![ptr, ptr], vec![]),
@@ -1991,9 +1992,18 @@ fn lower_sync_call(
         },
         None => None,
     };
-    if functions[name].needs_arena {
-        call_args.push(mode.arena());
-    }
+    let region = if indirect.is_none() && functions[name].call_region {
+        let parent = mode.arena();
+        let region = helper(builder, refs, "__joky_arena_call_region", &[parent]);
+        check_call(builder, refs, mode.frame(), mode.cleanup());
+        call_args.push(builder.ins().select(region, region, parent));
+        Some(region)
+    } else {
+        if functions[name].needs_arena {
+            call_args.push(mode.arena());
+        }
+        None
+    };
     if let Some(cleanup) = mode.cleanup() {
         for arg in args.iter().flatten().filter(|arg| arg.ty.is_owner()) {
             let index = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
@@ -2025,6 +2035,9 @@ fn lower_sync_call(
     } else {
         builder.ins().call(refs[name], &call_args)
     };
+    if let Some(region) = region {
+        builder.ins().call(refs["__joky_arena_drop"], &[region]);
+    }
     if functions[name].may_fail {
         let status = helper(builder, refs, "joky_runtime_error_code", &[]);
         let failed = builder.create_block();

@@ -194,6 +194,7 @@ fn evaluate(
             inferred_noescape: Vec::new(),
             inferred_retained: None,
             inferred_arena_retained: Vec::new(),
+            call_region: false,
             returns_interior: true,
             compiler_intrinsic: None,
             builtin: None,

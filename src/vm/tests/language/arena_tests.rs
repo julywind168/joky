@@ -1,5 +1,5 @@
 use super::{VmEngine, VmMode};
-use crate::runtime::arena::LIVE;
+use crate::runtime::arena::{LIMIT, LIVE};
 
 #[test]
 fn arena_objects_reborrow_and_release_in_both_backends() {
@@ -108,17 +108,17 @@ fn arena_moves_shares_branches_and_repeated_calls_remain_usable() {
     }
 }
 
+struct ResetLimit(usize);
+impl Drop for ResetLimit {
+    fn drop(&mut self) {
+        LIMIT.with(|limit| limit.set(self.0));
+    }
+}
+
 #[test]
 fn arena_allocation_failure_keeps_span_and_releases_the_task() {
-    use crate::runtime::arena::LIMIT;
-    struct Reset(usize);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            LIMIT.with(|limit| limit.set(self.0));
-        }
-    }
     let source = "fn f() -> Int32 { let first = alloc(42); var i = 0; while i < 100 { let next = alloc(i); i = i + 1; }; (*first) }";
-    let _reset = Reset(LIMIT.with(|limit| limit.replace(128)));
+    let _reset = ResetLimit(LIMIT.with(|limit| limit.replace(128)));
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap();
@@ -131,6 +131,48 @@ fn arena_allocation_failure_keeps_span_and_releases_the_task() {
         assert_eq!(vm.call_int32_0("f").unwrap(), 42);
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
+}
+
+#[test]
+fn call_region_reclaims_temporary_points_and_preserves_escaping_references() {
+    let _reset = ResetLimit(LIMIT.with(|limit| limit.replace(128)));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../../../tests/fixtures/call_region.jk"))
+            .unwrap();
+        assert_eq!(vm.call_int32_0("region_loop").unwrap(), 42, "{mode:?}");
+        for entry in ["region_indirect", "region_opaque_loop"] {
+            let error = vm.call_int32_0(entry).unwrap_err();
+            assert_eq!(
+                error.code(),
+                crate::ErrorCode::ResourceLimit,
+                "{mode:?}: {entry}"
+            );
+        }
+        assert!(vm.call_int32_1("region_failure", 0).is_err());
+        LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?}"));
+        assert_eq!(vm.call_int32_1("region_failure", 1).unwrap(), 42);
+    }
+}
+
+#[test]
+fn call_region_cancellation_reclaims_the_paused_interpreter_call() {
+    let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+    vm.load_source(include_str!("../../../../tests/fixtures/call_region.jk"))
+        .unwrap();
+    vm.set_interpreter_limits(super::InterpreterLimits {
+        poll_budget: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut task = vm.call_async("region_loop_task", &[]).unwrap();
+    // One point is kept by the caller; the second is inside work's active region.
+    while LIVE.with(|live| live.get() < 2) {
+        assert!(!task.is_finished());
+        task.resume().unwrap();
+    }
+    drop(task);
+    LIVE.with(|live| assert_eq!(live.get(), 0));
 }
 
 #[test]

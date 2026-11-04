@@ -856,6 +856,7 @@ pub(super) fn check_module(
         }
     }
     borrowing::infer_module(functions, bodies)?;
+    super::arenas::infer_call_regions(functions, bodies);
     let domain_targets: std::collections::HashSet<_> = bodies
         .values()
         .flat_map(|b| b.domain_calls.iter().map(|(name, _)| name.as_str()))

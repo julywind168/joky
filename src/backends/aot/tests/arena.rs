@@ -290,3 +290,40 @@ fn local_field_borrows_execute_in_standalone_native_code() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn call_region_refunds_the_shared_budget_in_native_objects() {
+    check_arena_cps_fixture(
+        "call-region",
+        include_str!("../../../../tests/fixtures/call_region.jk"),
+        &[],
+        |compiler| {
+            let slots = compiler.cps_frame_slots("region_loop_task").unwrap();
+            format!(
+                r#"
+                extern int32_t region_loop_task(JokyCpsFrame *);
+                extern void *__joky_arena_alloc(void *, size_t, size_t, uint64_t, size_t, size_t);
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                // Leave room for the live point and a few temporaries, but not twenty.
+                if (!__joky_arena_alloc(__joky_cps_arena(frame), (64 << 20) - 192, 1, 0, 0, 0)) return 1;
+                extern void __joky_instance_entry_region_probe(const uint64_t *, uint64_t *, void *);
+                int32_t point = 0;
+                uint64_t args[] = {{(uintptr_t)&point, 0}}, result = 0;
+                // Reuse the live parent after each failed child, before the root finishes.
+                for (int i = 0; i < 20; ++i) {{
+                    __joky_instance_entry_region_probe(args, &result, __joky_cps_arena(frame));
+                    if (!joky_runtime_error_code()) return 3;
+                    joky_runtime_error_clear();
+                }}
+                args[1] = 1;
+                __joky_instance_entry_region_probe(args, &result, __joky_cps_arena(frame));
+                if (result != 42 || joky_runtime_error_code()) return 4;
+                if (region_loop_task(frame) != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42) return 2;
+                joky_cps_frame_free(frame);
+                (void)check;
+            "#
+            )
+        },
+    );
+}

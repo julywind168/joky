@@ -110,6 +110,8 @@ pub(crate) struct FunctionInfo {
     pub uses_arena: bool,
     /// Needs task storage context, including deallocation without allocation.
     pub needs_arena: bool,
+    /// Direct synchronous calls may reclaim implicit allocations at return.
+    pub call_region: bool,
     pub frame_slots: usize,
     pub internal: bool,
     /// Compiler-checked persistent-root entry, independent of the public ABI.
@@ -141,6 +143,7 @@ impl FunctionInfo {
             inferred_noescape: Vec::new(),
             inferred_retained: None,
             inferred_arena_retained: Vec::new(),
+            call_region: false,
             returns_interior: true,
             compiler_intrinsic: None,
             signature,
@@ -830,6 +833,7 @@ impl ModulePlan {
                 inferred_noescape: Vec::new(),
                 inferred_retained: None,
                 inferred_arena_retained: Vec::new(),
+                call_region: false,
                 returns_interior: true,
                 compiler_intrinsic: match item {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),

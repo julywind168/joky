@@ -32,6 +32,9 @@ pub(super) fn execute(path: &std::path::Path, prelude: bool) -> u8 {
         } else {
             println!("entry: eligible");
         }
+        if !report.sites.is_empty() {
+            println!("Implicit alloc on parallel workers shares the root task budget until task completion. Use an explicit arena for per-batch reclamation.");
+        }
         for site in &report.sites {
             let (file, line, column) = report.sources.get(site.span.source_id()).map_or_else(
                 || (path.display().to_string(), 1, 1),

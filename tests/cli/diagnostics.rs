@@ -685,6 +685,7 @@ fn explain_parallel_reports_groups_captures_and_runtime_conditions_without_runni
     assert!(text.contains("branch in main: runtime-check"), "{text}");
     assert!(text.contains("join in main: eligible"), "{text}");
     assert!(text.contains("whole group stays local"), "{text}");
+    assert!(text.contains("shares the root task budget"), "{text}");
     assert!(!text.contains("PROGRAM_EXECUTED"));
     assert!(output.stderr.is_empty());
     assert_eq!(
