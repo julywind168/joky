@@ -822,3 +822,55 @@ fn cr_only_modules_agree_on_newlines_in_execution_formatting_and_errors() {
     );
     failure(&work.cli(&["check", "main.jk"]), "unused_value");
 }
+
+#[cfg(unix)]
+#[test]
+fn unicode_source_controls_have_visible_diagnostics_and_explicit_literal_values() {
+    let work = Workspace::new();
+    work.write(
+        "main.jk",
+        "import model\nfn main() -> Int32 { model.value() }",
+    );
+    for (line, code, escape) in [
+        ("// 注\u{202e}hidden\u{2069}", "U+202E", "\\u{202E}"),
+        ("// 注\u{000c}hidden", "U+000C", "\\u{C}"),
+    ] {
+        let source = format!("\u{feff}// first\r{line}\rpub fn value() -> Int32 {{ 42 }}");
+        work.write("model.jk", &source);
+        for args in [["check", "main.jk"], ["fmt", "model.jk"]] {
+            let output = work.cli(&args);
+            failure(&output, code);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("model.jk:2:5"), "{stderr}");
+            assert!(stderr.contains(&format!("// 注{escape}hidden")), "{stderr}");
+            assert!(!stderr.contains(['\u{202e}', '\u{2069}', '\u{c}']));
+        }
+        assert_eq!(
+            std::fs::read_to_string(work.path().join("model.jk")).unwrap(),
+            source
+        );
+    }
+
+    // A permitted separator inside a literal still needs a visible excerpt
+    // when the diagnostic points at a later token on the same physical line.
+    let prefix = "fn f() { let s = \"界\u{2028}文\"; ";
+    work.write("model.jk", &format!("{prefix}@ }}"));
+    let output = work.cli(&["check", "main.jk"]);
+    failure(
+        &output,
+        &format!("model.jk:1:{}", prefix.chars().count() + 1),
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("界\\u{2028}文"));
+
+    work.write(
+        "model.jk",
+        r#"
+        pub fn value() -> Int32 {
+            let שלום = "\u{202e}"
+            let نص = '\u{2066}'
+            if שלום.byte_length() == 3 && نص.to_u32() == 0x2066 { 42 } else { 1 }
+        }
+    "#,
+    );
+    work.assert_all_backends("main.jk", &[], b"", 42);
+}

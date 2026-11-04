@@ -287,16 +287,27 @@ impl<'a> Lexer<'a> {
         Some(ch)
     }
 
+    fn advance_trivia(&mut self) -> Result<(), Diagnostic> {
+        let at = self.byte_pos;
+        let ch = self.advance().expect("trivia ends before EOF");
+        if super::source_text::ambiguous_line_break(ch) {
+            return Err(Diagnostic::at(self.line, at..self.byte_pos, format!(
+                "Ambiguous line separator U+{:04X} in code or comment. Use a space or an ordinary newline.", ch as u32
+            )));
+        }
+        Ok(())
+    }
+
     fn skip_whitespace_and_comments(&mut self) -> Result<(), Diagnostic> {
         loop {
             // Skip whitespace.
             while matches!(self.peek(), Some(c) if c.is_whitespace()) {
-                self.advance();
+                self.advance_trivia()?;
             }
             // Skip line comments.
             if self.peek() == Some('/') && self.peek2() == Some('/') {
                 while !matches!(self.peek(), Some('\r' | '\n') | None) {
-                    self.advance();
+                    self.advance_trivia()?;
                 }
             } else if self.peek() == Some('/') && self.peek2() == Some('*') {
                 let start = self.byte_pos;
@@ -317,7 +328,7 @@ impl<'a> Lexer<'a> {
                             depth -= 1;
                         }
                         (Some(_), _) => {
-                            self.advance();
+                            self.advance_trivia()?;
                         }
                         (None, _) => {
                             return Err(Diagnostic::at(
@@ -832,6 +843,7 @@ impl<'a> Lexer<'a> {
 
     /// Tokenize the entire source.
     pub(crate) fn tokenize(source: &str) -> Result<Vec<Token>, Diagnostic> {
+        super::source_text::check_bidi(source)?;
         let mut lexer = Lexer::new(source);
         let mut tokens = Vec::new();
         loop {

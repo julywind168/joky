@@ -1,6 +1,7 @@
 //! Terminal rendering for source diagnostics.
 use ariadne::{sources, Config, IndexType, Label, Report, ReportKind};
-use joky::{Error, ErrorCode, Span};
+use joky::{parser::escape_diagnostic_text, Error, ErrorCode, Span};
+use std::borrow::Cow;
 use std::path::Path;
 
 /// Render a structured compiler, resolver or runtime error with its source
@@ -8,7 +9,7 @@ use std::path::Path;
 /// without a source span retain their stable text representation.
 pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
     let Some(span) = diagnostic_span(error) else {
-        return error.to_string();
+        return escape_diagnostic_text(&error.to_string()).into_owned();
     };
     let (path, source) = error
         .sources()
@@ -57,6 +58,9 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
         let (line, _) = span.line_column(source);
         let _ = write!(output, "\n  called at {}:{line}", path.display());
     }
+    if let Cow::Owned(escaped) = escape_diagnostic_text(&output) {
+        return escaped;
+    }
     output
 }
 
@@ -95,9 +99,32 @@ fn render_span(
     let display = source.strip_prefix('\u{feff}').unwrap_or(source);
     let skipped = source.len() - display.len();
     let span = span.start.saturating_sub(skipped)..span.end.saturating_sub(skipped);
+    let escaped = escape_diagnostic_text(display);
+    // Ariadne takes separate offsets for the file location and the underline.
+    // Keep the original scalar column in the header while highlighting the
+    // entire visible escape in the rendered line.
+    let (location, span) = if let Cow::Owned(_) = &escaped {
+        let prefix = escape_diagnostic_text(&display[..span.start]);
+        let start = prefix.len();
+        let end = start + escape_diagnostic_text(&display[span.clone()]).len();
+        let column = display[..span.start]
+            .rsplit(['\r', '\n'])
+            .next()?
+            .chars()
+            .count();
+        let line = prefix.rsplit(['\r', '\n']).next()?;
+        let location = start - line.len()
+            + line
+                .char_indices()
+                .nth(column)
+                .map_or(line.len(), |(i, _)| i);
+        (location, start..end)
+    } else {
+        (span.start, span)
+    };
     let file = path.display().to_string();
     let mut output = Vec::new();
-    let mut report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
+    let mut report = Report::build(ReportKind::Error, (file.clone(), location..location))
         .with_message(message.to_owned());
     if let Some(code) = code {
         report = report.with_code(code);
@@ -109,7 +136,7 @@ fn render_span(
         .with_config(Config::default().with_index_type(IndexType::Byte))
         .finish();
     report
-        .write(sources([(file, display)]), &mut output)
+        .write(sources([(file, escaped)]), &mut output)
         .ok()
         .and_then(|_| String::from_utf8(output).ok())
 }

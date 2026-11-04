@@ -13,6 +13,8 @@ mod interpolation;
 mod lexer;
 mod module;
 mod patterns;
+mod source_text;
+pub use source_text::escape_diagnostic_text;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod types;
