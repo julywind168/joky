@@ -272,6 +272,8 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
   另用 5 个新进程分段计时：关闭 prelude 后，首次 `resolve_file` 中位数 860 ms，同一 Checker 第二次为 0.18 ms。重复冷初始化的采样中，1,583 个主线程样本有 1,551 个落在标准库初始化栈内。
   改为按需准备后，同一台机器、同一输入和计时脚本下，`check --no-prelude` 中位数为 4.50 ms（3.97–4.86 ms），默认 `check` 为 432 ms（429–457 ms）。对照组 `--help` 为 4.28 ms、`fmt --check` 为 3.55 ms。
   关闭 prelude 的空模块不准备任何内嵌源码；默认检查仍准备 prelude 及其传递依赖。
+- 默认 prelude 的关联类型查找现在先按成员名筛选可见 trait，再证明候选是否适用。局部类型解析共享声明作用域、宿主绑定和已注册类型集合。
+  同一台机器以 Release 运行 `examples/hello.jk`，保留默认 prelude，每个命令预热一次，再取 7 次新进程耗时的中位数。与 `11951854` 相比，`check` 从 447.49 ms 降至 227.61 ms，`run --interpreter` 从 476.12 ms 降至 238.88 ms，默认 `run` 从 486.48 ms 降至 247.14 ms。两种运行模式每次均输出 `42`。
 - 拥有型或借用型 `dyn Read<Item = Int32>` 不满足泛型约束 `T: Read`，属于设计限制，需要时另立计划。
 
 ## 7. 实施与验证记录

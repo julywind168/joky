@@ -30,7 +30,7 @@ impl TypeRegistry {
             let original_scope = implementation
                 .scope
                 .as_ref()
-                .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                .map_or(&self.trait_environment.root, |s| &s.imports);
             let name = implementation.trait_name.as_ref().unwrap();
             let id = self.trait_id(name, original_scope, implementation.span)?;
             let local = self.with_parameters(&implementation.type_params)?;
@@ -46,7 +46,7 @@ impl TypeRegistry {
                     .infer_derive_obligation(&ty, id, &mut inference, 0, field.span)
                     .map_err(|e| e.with_span(field.span))?;
             }
-            let mut imports = original_scope.clone();
+            let mut imports = original_scope.as_ref().clone();
             for (parameter, bound) in inference.bounds {
                 let declaration = self
                     .trait_environment
@@ -177,7 +177,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                .map_or(&self.trait_environment.root, |s| &s.imports);
             let Some(name) = &implementation.trait_name else {
                 continue;
             };

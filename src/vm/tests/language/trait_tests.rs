@@ -1041,6 +1041,28 @@ fn associated_types_bound_normalization_depth_and_cache_reuse() {
 }
 
 #[test]
+fn associated_types_ignore_traits_without_the_requested_item() {
+    let mut source = String::from(
+        "trait Source { type Item }
+         struct Counter {}
+         impl Source for Counter { type Item = Int32 }
+         fn test() -> Counter.Item { 42 }",
+    );
+    // Unrelated declarations must not consume the 256-obligation proof budget.
+    for i in 0..257 {
+        source.push_str(&format!("\ntrait Unrelated{i} {{}}"));
+    }
+    let ast = crate::parser::parse(&source).unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_module(&ast).unwrap();
+        assert_eq!(vm.call_int32_0("test").unwrap(), 42);
+    }
+    #[cfg(unix)]
+    crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
+}
+
+#[test]
 fn associated_types_share_the_256_obligation_budget_with_trait_proofs() {
     let mut source = String::from("trait M {} struct P<T,U> {} impl<T:M,U:M> M for P<T,U> {} struct Q<T> {} impl<T:M> M for Q<T> {} trait S { type Item } struct C<T> {} impl<T:M> S for C<T> { type Item = Int32 }\n");
     let mut level = Vec::new();

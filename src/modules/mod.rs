@@ -57,8 +57,8 @@ impl ModuleRegistry {
         let bindings: Vec<_> = bindings.into_iter().collect();
         // `types.hosts` is the single authoritative binding registry.
         let mut types = self.types.clone();
-        let mut metadata = types.hosts.clone();
-        metadata.register_module(path.clone(), bindings.iter().map(|b| b.spec.clone()))?;
+        Rc::make_mut(&mut types.hosts)
+            .register_module(path.clone(), bindings.iter().map(|b| b.spec.clone()))?;
         for binding in &bindings {
             let spec = &binding.spec;
             if let Some(entry) = &binding.entry {
@@ -170,7 +170,6 @@ impl ModuleRegistry {
                 exports.insert(short.into(), name.clone());
             }
         }
-        types.hosts = metadata;
         self.types = types;
         for binding in bindings {
             self.native.insert(binding.spec.name.clone(), binding);

@@ -31,10 +31,7 @@ impl TypeRegistry {
                 "The built-in Drop protocol cannot be used as dyn".into()
             ));
         }
-        let scope = declaration
-            .scope
-            .as_ref()
-            .map_or(root.as_ref(), |s| s.imports.as_ref());
+        let scope = declaration.scope.as_ref().map_or(root, |s| &s.imports);
         let mut names = BTreeSet::new();
         let mut equalities = Vec::new();
         for equality in &view.equalities {
@@ -103,7 +100,7 @@ impl TypeRegistry {
         let self_id = parameter.id;
         local.parameters.insert(self_id, parameter.name.clone());
         Rc::make_mut(&mut Rc::make_mut(&mut local.trait_environment).parameters)
-            .insert(self_id, (parameter.clone(), Arc::new(scope.clone())));
+            .insert(self_id, (parameter.clone(), scope.clone()));
         let substitutions = [(id, Type::Parameter(parameter.clone()))]
             .into_iter()
             .collect::<Substitutions>();

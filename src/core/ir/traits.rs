@@ -520,7 +520,7 @@ impl Members {
                     && self
                         .traits
                         .projection_types
-                        .available_traits(ty)?
+                        .available_traits(ty, |candidate| candidate == id)?
                         .contains(&id);
             let applicable = if self.traits.requirements.contains(&method.function) {
                 rigid

@@ -107,7 +107,7 @@ impl TypeRegistry {
             let scope = declaration
                 .scope
                 .as_ref()
-                .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                .map_or(&self.trait_environment.root, |s| &s.imports);
             for associated in &declaration.associated_types {
                 if !names.insert(&associated.name) {
                     return Err(
@@ -147,7 +147,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                .map_or(&self.trait_environment.root, |s| &s.imports);
             let id = self.trait_id(name, scope, implementation.span)?;
             let declaration = self
                 .trait_environment
@@ -270,7 +270,7 @@ impl TypeRegistry {
                     let declaration_scope = declaration
                         .scope
                         .as_ref()
-                        .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                        .map_or(&self.trait_environment.root, |s| &s.imports);
                     if !self.bounds_hold(
                         &associated.bounds,
                         declaration_scope,
@@ -293,7 +293,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                .map_or(&self.trait_environment.root, |s| &s.imports);
             let id = self.trait_id(name, scope, implementation.span)?;
             let declaration = self
                 .trait_environment
@@ -319,7 +319,7 @@ impl TypeRegistry {
                 let declaration_scope = declaration
                     .scope
                     .as_ref()
-                    .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                    .map_or(&self.trait_environment.root, |s| &s.imports);
                 if !self.bounds_hold(
                     &associated.bounds,
                     declaration_scope,
@@ -498,14 +498,22 @@ impl TypeRegistry {
     fn resolve_scoped(
         &self,
         ty: &Type,
-        scope: &ImportScope,
+        scope: &Arc<ImportScope>,
         parameters: &[Arc<TypeParameter>],
     ) -> Result<Type, Error> {
+        if ty.is_numeric()
+            || matches!(
+                ty,
+                Type::Bool | Type::Rune | Type::String | Type::Unit | Type::Ptr
+            )
+        {
+            return Ok(ty.clone());
+        }
         let mut local = self.clone();
         for p in parameters {
             local.parameters.insert(p.id, p.name.clone());
         }
-        Rc::make_mut(&mut local.trait_environment).root = Arc::new(scope.clone());
+        Rc::make_mut(&mut local.trait_environment).root = scope.clone();
         let definitions = local.scope_types(scope);
         let canonical = definitions
             .iter()
@@ -570,15 +578,12 @@ impl TypeRegistry {
             let candidates: Vec<_> = if let Some(name) = &p.trait_name {
                 vec![self.trait_id(name, scope, p.span)?]
             } else {
-                self.available_traits(&p.base)?
-                    .into_iter()
-                    .filter(|id| {
-                        self.trait_environment.declarations.iter().any(|d| {
-                            d.self_parameter.id == *id
-                                && d.associated_types.iter().any(|a| a.name == p.name)
-                        })
+                self.available_traits(&p.base, |id| {
+                    self.trait_environment.declarations.iter().any(|d| {
+                        d.self_parameter.id == id
+                            && d.associated_types.iter().any(|a| a.name == p.name)
                     })
-                    .collect()
+                })?
             };
             if candidates.len() != 1 {
                 return Err(error(ErrorCode::TypeMismatch, format!("Associated type '{}.{}' requires one unambiguous trait ({} candidates); use <Type as Trait>::{}", p.base, p.name, candidates.len(), p.name)).with_span(p.span));
@@ -731,7 +736,7 @@ impl TypeRegistry {
                 let scope = implementation
                     .scope
                     .as_ref()
-                    .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                    .map_or(&self.trait_environment.root, |s| &s.imports);
                 let Some(name) = &implementation.trait_name else {
                     continue;
                 };
@@ -759,7 +764,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                .map_or(&self.trait_environment.root, |s| &s.imports);
             let declaration = self
                 .trait_environment
                 .declarations
@@ -836,7 +841,7 @@ impl TypeRegistry {
             let scope = declaration
                 .scope
                 .as_ref()
-                .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                .map_or(&self.trait_environment.root, |s| &s.imports);
             return declaration
                 .associated_types
                 .get(index)
@@ -852,10 +857,18 @@ impl TypeRegistry {
         Ok(Vec::new())
     }
 
-    pub(crate) fn available_traits(&self, ty: &Type) -> Result<Vec<u64>, Error> {
+    pub(crate) fn available_traits(
+        &self,
+        ty: &Type,
+        candidate: impl Fn(u64) -> bool,
+    ) -> Result<Vec<u64>, Error> {
         let mut result = self.direct_traits(ty)?;
+        result.retain(|id| candidate(*id));
         for binding in self.trait_environment.root.traits.values() {
-            if !result.contains(&binding.id) && self.implements(ty, binding.id)? {
+            if candidate(binding.id)
+                && !result.contains(&binding.id)
+                && self.implements(ty, binding.id)?
+            {
                 result.push(binding.id);
             }
         }
@@ -881,7 +894,7 @@ impl TypeRegistry {
                 let scope = implementation
                     .scope
                     .as_ref()
-                    .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+                    .map_or(&self.trait_environment.root, |s| &s.imports);
                 let Some(name) = &implementation.trait_name else {
                     continue;
                 };
@@ -911,7 +924,7 @@ impl TypeRegistry {
         let scope = implementation
             .scope
             .as_ref()
-            .map_or(self.trait_environment.root.as_ref(), |s| s.imports.as_ref());
+            .map_or(&self.trait_environment.root, |s| &s.imports);
         let target =
             self.resolve_scoped(&implementation.target, scope, &implementation.type_params)?;
         let same = match (&target, actual) {
@@ -1000,7 +1013,7 @@ impl TypeRegistry {
                 .trait_environment
                 .parameters
                 .get(&parameter.id)
-                .map_or(self.trait_environment.root.as_ref(), |(_, s)| s.as_ref());
+                .map_or(&self.trait_environment.root, |(_, s)| s);
             for bound in &parameter.bounds {
                 for equality in &bound.equalities {
                     let formal = self.resolve_scoped(&equality.ty, scope, &[])?;
@@ -1029,7 +1042,7 @@ impl TypeRegistry {
     fn bounds_hold(
         &self,
         bounds: &[TraitBound],
-        scope: &ImportScope,
+        scope: &Arc<ImportScope>,
         actual: &Type,
         substitutions: &Substitutions,
     ) -> Result<bool, Error> {
@@ -1066,9 +1079,7 @@ impl TypeRegistry {
             .trait_environment
             .parameters
             .get(&parameter.id)
-            .map_or(self.trait_environment.root.as_ref(), |(_, scope)| {
-                scope.as_ref()
-            });
+            .map_or(&self.trait_environment.root, |(_, scope)| scope);
         Ok((!parameter.copy || actual.is_copy_argument())
             && self.bounds_hold(&parameter.bounds, scope, actual, substitutions)?)
     }
@@ -1087,7 +1098,7 @@ impl TypeRegistry {
             .trait_environment
             .parameters
             .get(&parameter.id)
-            .map_or(self.trait_environment.root.as_ref(), |(_, s)| s.as_ref());
+            .map_or(&self.trait_environment.root, |(_, s)| s);
         if !self.bounds_hold(&parameter.bounds, scope, actual, substitutions)? {
             return Err(error(ErrorCode::TypeMismatch,format!("Type '{actual}' does not satisfy trait bounds or associated equalities for '{}'",parameter.name)).with_span(span));
         }

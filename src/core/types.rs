@@ -8,6 +8,7 @@ use crate::{
     Error, ErrorCode, ErrorPhase, Span,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::rc::Rc;
 
 #[cfg(test)]
 mod alias_tests;
@@ -129,14 +130,14 @@ const VM_FUNCTION: &str = "vm.Function";
 
 #[derive(Clone, Debug)]
 pub struct TypeRegistry {
-    named: BTreeSet<String>,
-    resources: BTreeSet<String>,
+    named: Rc<BTreeSet<String>>,
+    resources: Rc<BTreeSet<String>>,
     pub(crate) resource_io: BTreeMap<String, crate::runtime::byte_request::ByteIoKind>,
     pub(crate) resource_async: BTreeSet<String>,
     pub(crate) resource_factories: HashMap<String, crate::FunctionSignature>,
     pub(crate) module_types: BTreeMap<String, BTreeMap<String, String>>,
     pub(crate) prelude: bool,
-    pub(crate) hosts: super::resolver::BindingRegistry,
+    pub(crate) hosts: Rc<super::resolver::BindingRegistry>,
     pub(crate) text_ffi: HashMap<String, crate::FunctionSignature>,
     pub(crate) standard: std::rc::Rc<super::imports::StandardCache>,
     parameters: HashMap<u64, String>,
@@ -211,7 +212,7 @@ impl TypeRegistry {
                 format!("Invalid opaque type name `{name}`"),
             ));
         }
-        if !self.named.insert(name.clone()) {
+        if !Rc::make_mut(&mut self.named).insert(name.clone()) {
             return Err(Error::new_with_code(
                 ErrorPhase::Abi,
                 ErrorCode::AbiError,
@@ -225,7 +226,7 @@ impl TypeRegistry {
     pub fn register_resource(&mut self, name: impl Into<String>) -> Result<Type, Error> {
         let name = name.into();
         self.register_opaque(name.clone())?;
-        self.resources.insert(name.clone());
+        Rc::make_mut(&mut self.resources).insert(name.clone());
         Ok(Type::Resource(name.into()))
     }
 
@@ -1680,7 +1681,7 @@ impl Default for TypeRegistry {
             prelude: true,
             hosts: Default::default(),
             text_ffi: Default::default(),
-            resources: BTreeSet::from([
+            resources: Rc::new(BTreeSet::from([
                 "arena.Arena".into(),
                 "postgres.Owner".into(),
                 "tls.ClientOwner".into(),
@@ -1714,7 +1715,7 @@ impl Default for TypeRegistry {
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),
                 "tcp.WriterOwner".into(),
-            ]),
+            ])),
             resource_factories: HashMap::from([(
                 "__vm_create".into(),
                 super::vm::binding("__vm_create").unwrap().signature,
@@ -1722,7 +1723,7 @@ impl Default for TypeRegistry {
             resource_async: Default::default(),
             resource_io: Default::default(),
             standard: Default::default(),
-            named: BTreeSet::from([
+            named: Rc::new(BTreeSet::from([
                 "arena.Arena".into(),
                 "postgres.Owner".into(),
                 "tls.ClientOwner".into(),
@@ -1760,7 +1761,7 @@ impl Default for TypeRegistry {
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),
                 "tcp.WriterOwner".into(),
-            ]),
+            ])),
             module_types: BTreeMap::from([(
                 "joky/internal/vm".into(),
                 BTreeMap::from([
