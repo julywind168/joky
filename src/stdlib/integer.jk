@@ -44,6 +44,10 @@ impl Int8 {
         result.Ok(int8(parse_decimal(input, uint64(Int8.MAX), true)?))
     }
 
+    pub fn checked_add(self, other: Self) -> Option<Self> { (int64(self) + int64(other)).to_i8() }
+    pub fn checked_sub(self, other: Self) -> Option<Self> { (int64(self) - int64(other)).to_i8() }
+    pub fn checked_mul(self, other: Self) -> Option<Self> { (int64(self) * int64(other)).to_i8() }
+
     pub fn to_i8(self) -> Option<Int8> { Some(int8(self)) }
     pub fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
     pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
@@ -61,6 +65,10 @@ impl Int16 {
     pub fn parse(input: &String) -> result.Result<Int16, ParseIntError> {
         result.Ok(int16(parse_decimal(input, uint64(Int16.MAX), true)?))
     }
+
+    pub fn checked_add(self, other: Self) -> Option<Self> { (int64(self) + int64(other)).to_i16() }
+    pub fn checked_sub(self, other: Self) -> Option<Self> { (int64(self) - int64(other)).to_i16() }
+    pub fn checked_mul(self, other: Self) -> Option<Self> { (int64(self) * int64(other)).to_i16() }
 
     pub fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
     pub fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
@@ -80,6 +88,10 @@ impl Int32 {
         result.Ok(int32(parse_decimal(input, uint64(Int32.MAX), true)?))
     }
 
+    pub fn checked_add(self, other: Self) -> Option<Self> { (int64(self) + int64(other)).to_i32() }
+    pub fn checked_sub(self, other: Self) -> Option<Self> { (int64(self) - int64(other)).to_i32() }
+    pub fn checked_mul(self, other: Self) -> Option<Self> { (int64(self) * int64(other)).to_i32() }
+
     pub fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
     pub fn to_i16(self) -> Option<Int16> { if self < -32768 { return None }; if self > 32767 { return None }; Some(int16(self)) }
     pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
@@ -96,6 +108,25 @@ impl Int64 {
 
     pub fn parse(input: &String) -> result.Result<Int64, ParseIntError> {
         result.Ok(int64(parse_decimal(input, uint64(Int64.MAX), true)?))
+    }
+
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        if (other > 0 && self > Self.MAX - other) || (other < 0 && self < Self.MIN - other) { return None }
+        Some(self + other)
+    }
+    pub fn checked_sub(self, other: Self) -> Option<Self> {
+        if (other > 0 && self < Self.MIN + other) || (other < 0 && self > Self.MAX + other) { return None }
+        Some(self - other)
+    }
+    pub fn checked_mul(self, other: Self) -> Option<Self> {
+        // MIN / -1 wraps, so handle that divisor before checking the product by division.
+        if other == -1 {
+            if self == Self.MIN { return None }
+            return Some(-self)
+        }
+        let product = self * other
+        if other != 0 && product / other != self { return None }
+        Some(product)
     }
 
     pub fn to_i8(self) -> Option<Int8> { if self < -128 { return None }; if self > 127 { return None }; Some(int8(self)) }
@@ -116,6 +147,10 @@ impl UInt8 {
         result.Ok(uint8(parse_decimal(input, uint64(UInt8.MAX), false)?))
     }
 
+    pub fn checked_add(self, other: Self) -> Option<Self> { (int64(self) + int64(other)).to_u8() }
+    pub fn checked_sub(self, other: Self) -> Option<Self> { (int64(self) - int64(other)).to_u8() }
+    pub fn checked_mul(self, other: Self) -> Option<Self> { (uint64(self) * uint64(other)).to_u8() }
+
     pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
     pub fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
     pub fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
@@ -133,6 +168,10 @@ impl UInt16 {
     pub fn parse(input: &String) -> result.Result<UInt16, ParseIntError> {
         result.Ok(uint16(parse_decimal(input, uint64(UInt16.MAX), false)?))
     }
+
+    pub fn checked_add(self, other: Self) -> Option<Self> { (int64(self) + int64(other)).to_u16() }
+    pub fn checked_sub(self, other: Self) -> Option<Self> { (int64(self) - int64(other)).to_u16() }
+    pub fn checked_mul(self, other: Self) -> Option<Self> { (uint64(self) * uint64(other)).to_u16() }
 
     pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
     pub fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
@@ -152,6 +191,10 @@ impl UInt32 {
         result.Ok(uint32(parse_decimal(input, uint64(UInt32.MAX), false)?))
     }
 
+    pub fn checked_add(self, other: Self) -> Option<Self> { (int64(self) + int64(other)).to_u32() }
+    pub fn checked_sub(self, other: Self) -> Option<Self> { (int64(self) - int64(other)).to_u32() }
+    pub fn checked_mul(self, other: Self) -> Option<Self> { (uint64(self) * uint64(other)).to_u32() }
+
     pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }
     pub fn to_i16(self) -> Option<Int16> { if self > 32767 { return None }; Some(int16(self)) }
     pub fn to_i32(self) -> Option<Int32> { if self > 2147483647 { return None }; Some(int32(self)) }
@@ -168,6 +211,19 @@ impl UInt64 {
 
     pub fn parse(input: &String) -> result.Result<UInt64, ParseIntError> {
         result.Ok(uint64(parse_decimal(input, uint64(UInt64.MAX), false)?))
+    }
+
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        if self > Self.MAX - other { return None }
+        Some(self + other)
+    }
+    pub fn checked_sub(self, other: Self) -> Option<Self> {
+        if self < other { return None }
+        Some(self - other)
+    }
+    pub fn checked_mul(self, other: Self) -> Option<Self> {
+        if other != 0 && self > Self.MAX / other { return None }
+        Some(self * other)
     }
 
     pub fn to_i8(self) -> Option<Int8> { if self > 127 { return None }; Some(int8(self)) }

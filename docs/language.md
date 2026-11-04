@@ -1669,6 +1669,9 @@ fn example() -> Int64 {
   移位量必须落在 `0..位宽`，Int8 / UInt8 只接受 0–7，Int16 / UInt16 只接受 0–15，越界在执行时报错。
   运算和比较要求两侧类型完全一致，位宽或符号不同都不能混用；Bool 不作为数字使用。
   浮点类型与运算见下文专节，受检整数转换见 `to_*()` 方法。
+- 八种整数都提供 `checked_add(other)`、`checked_sub(other)` 和 `checked_mul(other)`，参数与接收者同型，结果为 `Option<Self>`。
+  数学结果在该类型范围内时返回 `Some(结果)`，越过上界或下界时返回 `None`。例如 `UInt8.MAX.checked_add(0)` 得 `Some(255)`，
+  `UInt8.MAX.checked_add(1)` 和 `Int64.MIN.checked_mul(-1)` 都得 `None`。默认 prelude 提供这些方法，关闭时显式 `import joky/integer`。
 - 八种整数均可用于别名、记录、枚举、元组和 Array / Map 元素，以及同步 / CPS 参数与结果。
   窄整数对象按真实字节布局：Int8 / UInt8 为 1 字节、Int16 / UInt16 为 2 字节，Array / Slice
   元素步长与之一致；`#repr(C)` 记录字段与 C 引用参数接受全部整数（含 UInt8），布局与 C

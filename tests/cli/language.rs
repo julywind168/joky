@@ -601,6 +601,68 @@ fn interpreter_runtime_error_reports_source_and_call_trace() {
 
 #[test]
 #[cfg(unix)]
+fn checked_integer_arithmetic_matches_each_width_on_all_backends() {
+    let work = Workspace::new();
+    let mut source = String::from("import joky/integer\nimport joky/check\n");
+    let mut main = String::from("fn main() {\n");
+    for bits in [8, 16, 32, 64] {
+        for signed in [true, false] {
+            let ty = format!("{}Int{bits}", if signed { "" } else { "U" });
+            let limit = 1i128 << (bits - i32::from(signed));
+            let min = if signed { -limit } else { 0 };
+            let max = limit - 1;
+            let mut pairs = vec![
+                (min, 1),
+                (max, 0),
+                (max, 1),
+                (max, 2),
+                (max, max),
+                (max / 3, 3),
+                (max / 3 + 1, 3),
+                (0, max),
+            ];
+            if signed {
+                pairs.extend([
+                    (min, -1),
+                    (-1, min),
+                    (min, 0),
+                    (min, 2),
+                    (min, min),
+                    (max, -1),
+                    (-7, -6),
+                    (min / 3, 3),
+                    (min / 3 - 1, 3),
+                    (max / 2 + 1, -2),
+                    (max / 2 + 2, -2),
+                ]);
+            }
+            source.push_str(&format!("fn check_{ty}() {{\n"));
+            for (a, b) in pairs {
+                for (method, expected) in [
+                    ("checked_add", a.checked_add(b)),
+                    ("checked_sub", a.checked_sub(b)),
+                    ("checked_mul", a.checked_mul(b)),
+                ] {
+                    let call = format!("{ty}.{method}({a}, {b})");
+                    let condition = match expected.filter(|v| (min..=max).contains(v)) {
+                        Some(value) => format!("{call}! == {value}"),
+                        None => format!("{call}.is_none()"),
+                    };
+                    source.push_str(&format!("check.assert({condition}, \"{call}\")\n"));
+                }
+            }
+            source.push_str("}\n");
+            main.push_str(&format!("check_{ty}()\n"));
+        }
+    }
+    source.push_str(&main);
+    source.push_str("}\n");
+    work.write("checked.jk", &source);
+    work.assert_all_backends("checked.jk", &["--no-prelude"], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn division_errors_and_wrapping_match_all_execution_modes() {
     let work = Workspace::new();
     for return_type in ["", "-> Int32"] {

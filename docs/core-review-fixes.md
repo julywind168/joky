@@ -1,6 +1,6 @@
 # 语言核心审查修复计划
 
-状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 已修复；D1 已实施本地同步调用的临时区域，D2 已覆盖同步按值数组及超出扁平槽限额的非泛型 Copy 枚举，D3、D4 已修复，D5–D8 待决策。
+状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 已修复；D1 已实施本地同步调用的临时区域，D2 已覆盖同步按值数组及超出扁平槽限额的非泛型 Copy 枚举，D3、D4 已修复，D5 已补受检整数算术，D6–D8 待决策。
 
 本文来自一次针对语言核心（前端、类型、所有权/借用、挂起与结构化并发）的实测审查：
 约 500 个探针程序，在 JIT、解释器、AOT 三后端上对比。下列问题均已用最小程序复现，
@@ -250,9 +250,8 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 
 ### D5 整数算术默认环绕
 
-- 现状：`+ - *` 溢出静默环绕，`Duration` 加法溢出失败；最短的 `int32()` 是 wrapping 转换，受检版本为 `to_int32()`。
-- 选项：（a）维持环绕，补充 `checked_*`/`wrapping_*` 方法与文档说明；（b）默认溢出失败（与“受检”风格一致），
-  提供显式 `wrapping_add` 等。(b) 是不兼容变更且影响性能与三后端 lowering，需单独设计。
+- 已决定普通整数加减乘按位宽环绕。需要检测溢出的调用可使用 `checked_add`、`checked_sub` 和 `checked_mul`，八种整数均返回 `Option<Self>`。
+  例如计算字节数时可用 `count.checked_mul(stride)` 检测溢出。
 
 ### D6 解释器帧与并发分支上限
 
@@ -303,4 +302,5 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | D2 | 已推广至受检同步数组及深层 Copy 枚举 | `20321413`、`ee52d2b8`、`5cfd1264`、`b7497554`、`feat: store wide copy enums in compiler-managed places` | 三后端验证紧凑与回退步长、借用和并行快照；持久实例使用普通布局。 |
 | D3 | 已修复 | `fix: reserve inherent impls on built-in types for the standard library` | 入口和导入模块在用户声明处报错。三后端验证同名方法的点调用和显式 trait 调用。 |
 | D4 | 已修复 | `fix: diagnose ambiguous subtraction and implicit newline discards` | 三后端验证显式丢弃、负元素与跨行减法；定向测试核对错误位置和自定义加法的副作用。 |
-| D5–D8 | 待决策 | | |
+| D5 | 已实施受检整数算术 | `feat: add checked arithmetic methods for integers` | 三后端核对八种整数的可表示结果和溢出边界。 |
+| D6–D8 | 待决策 | | |
