@@ -42,8 +42,7 @@
 主要问题：**语言核心偏向"正确但啰嗦"，标准库偏向"有协议、缺便利层"。**
 一个 70 行的 HTTP+PG 示例里，约一半代码在做 SQL 参数装箱、列读取、标头线性查找、
 手写 JSON 错误体、状态码映射和停机样板；这些在 Go/Rust(axum+sqlx)/TS 中都是一两行。
-用户第一次写服务时会撞上的前五个问题依次是：参数装箱、错误类型转换、没有路由、
-字符串基础方法缺失、`&mut` 里不能直接赋值。
+优先处理参数装箱、路由、字符串基础方法和经 `&mut` 的字段替换。跨层传播错误时，现有的 `map_err` 可以显式转换错误类型。
 
 ## 3. 优先级总表
 
@@ -51,7 +50,6 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 | 级别 | 项目 | 章节 |
 | --- | --- | --- |
-| P0 | `?` 的错误类型转换（From 协议） | §4.1 |
 | P0 | 经 `&mut` 替换拥有型字段 | §4.2 |
 | P0 | String 基础方法：trim / split_once / contains / strip_prefix / replace / lines / 大小写 / parse | §6.1 |
 | P0 | `#derive(Show, Eq, Hash)`，标准库错误与枚举实现 Show | §4.4 |
@@ -65,6 +63,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | P1 | 结构化日志字段的泛型入口与级别快捷方法 | §6.5 |
 | P1 | 整数默认类型与长度/下标 UInt64 的摩擦 | §5.4 |
 | P1 | 字符串字面量模式、match 守卫 | §5.5 |
+| P2 | `Result?` 的自动错误转换（推迟至泛型 trait 设计） | §4.1 |
 | P2 | 关键词：`when`/`alias`、`branch`、`var`/`mut` 双拼写、`Unit` 写作 `{}` | §5 |
 | P2 | 命名一致性：构造器、缩写、访问器族、`release` | §10 |
 
@@ -72,21 +71,11 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 ### 4.1 `?` 的错误类型转换【已验证】
 
-现状：`?` 要求错误类型完全相同。结果是每个跨层调用都要手写映射，例如
-[postgres_orders.jk:10](../examples/postgres_orders.jk) 的 `number()` 用 6 行把
-`Result<Option<Int64>, ColumnError>` 变成 `Result<Int64, DbError>`；HTTP 层再把 `DbError` 逐个 match 成响应。
+`Result?` 要求调用结果与当前函数使用相同的错误类型。订单示例的 `number()` 先用 `map_err` 把 `ColumnError` 包进 `DbError.Column`，再用 `?` 提前返回错误。读列成功后得到 `Option<Int64>`，由 `number()` 将 SQL `NULL` 解释为该列的 `UnexpectedNull(i)`。这里使用具名函数 `column_error`，以便调用它的 HTTP 服务通过双 worker 的并行资格检查；内联闭包在该入口会被判定为需要本地执行。[订单示例](../examples/postgres_orders.jk#L11)
 
-建议：
+通用 `From<T>` 降为 P2。一个应用错误类型可能需要分别接受数据库错误和文件错误，而当前 trait 自身不能带类型参数，同一 trait 与目标类型只能有一个实现。等另一个协议也需要按来源类型区分实现时，再一起设计泛型 trait 的实现查找和重叠规则。[当前 trait 规则](language.md#L2182)
 
-1. 新增 `joky/convert.From<T>` 协议（单向、显式实现），`?` 在 Err 分支调用
-   `E2.from(e1)`。不做链式隐式转换，只查一层；未实现时维持当前诊断，并在诊断中提示实现 From。
-2. 标准库为已知包含关系提供实现：`ColumnError -> DbError`、`fs.IoError -> String`
-   之类不建议提供，只提供"子错误嵌入父错误"的结构性转换。
-3. 业务层常见写法是把多种下游错误合并成应用错误枚举，配合 From 后
-   `place()` 里所有 `?` 可直接使用。
-
-这是改变 `?` 语义的跨模块改动，需要先写清：转换在清理顺序中的位置、Outcome 是否参与
-（建议首版只做 Result）、From 实现失败（分配）时的行为。
+届时建议先限于 `Result`：仅在错误类型不同时查找一次显式转换。设计时还需确定拥有型错误的移动、局部资源的清理顺序，以及转换函数本身分配失败时的行为。
 
 ### 4.2 经 `&mut` 替换拥有型字段【已验证】
 
@@ -293,7 +282,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 ### 8.1 参数绑定
 
-现状（[postgres_orders.jk:21](../examples/postgres_orders.jk)）：
+现状（[postgres_orders.jk:22](../examples/postgres_orders.jk)）：
 
 ```joky
 [postgres.Value.IntValue(customer), postgres.Value.TextValue(key.clone()), postgres.Value.IntValue(qty)]
@@ -453,7 +442,7 @@ fn main() @suspends -> Int32 {
    `shutdown.with_signals`。均为标准库源码改动，不涉及编译器。
 3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
    `pool.transaction`、Options。
-4. **语言特性**：`#derive(Show, Eq, Hash, Default)`、跨模块期望类型裸变体、字符串字面量模式与守卫、`?` 的 From 转换、
+4. **语言特性**：`#derive(Show, Eq, Hash, Default)`、跨模块期望类型裸变体、字符串字面量模式与守卫、
    `ToSql` 隐式装箱、结构更新语法、`&mut` 整体字段赋值、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
 5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、
