@@ -8,7 +8,7 @@ mod qualification_tests;
 #[cfg(test)]
 mod tests;
 
-#[derive(Clone, Debug)]
+#[derive(joky_image_derive::Image, Clone, Debug)]
 pub(crate) struct DefinitionScope {
     pub module_name: String,
     pub lazy_functions: bool,
@@ -18,7 +18,7 @@ pub(crate) struct DefinitionScope {
     pub records: BTreeSet<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ImplicitImports {
     None,
     Types,
@@ -459,7 +459,7 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
 ];
 
-#[derive(Clone, Debug)]
+#[derive(joky_image_derive::Image, Clone, Debug)]
 pub(super) struct SourceModule {
     pub private: bool,
     pub lazy_hosts: BTreeSet<String>,
@@ -513,6 +513,7 @@ impl StandardCache {
                 cache.load(
                     path,
                     SOURCES,
+                    load_prelude_module,
                     registry.get_or_insert_with(|| TypeRegistry::new().with_prelude(false)),
                     &mut Vec::new(),
                 )?;
@@ -535,7 +536,7 @@ impl StandardLibrary {
         };
         let registry = TypeRegistry::new().with_prelude(false);
         for source in sources {
-            library.load(source.path, sources, &registry, &mut Vec::new())?;
+            library.load(source.path, sources, |_| None, &registry, &mut Vec::new())?;
         }
         Ok(library)
     }
@@ -544,6 +545,7 @@ impl StandardLibrary {
         &mut self,
         path: &str,
         sources: &[SourceDefinition],
+        image: fn(&str) -> Option<SourceModule>,
         registry: &TypeRegistry,
         stack: &mut Vec<String>,
     ) -> Result<(), Error> {
@@ -551,6 +553,15 @@ impl StandardLibrary {
             return Ok(());
         }
         check_dependency_depth(Span::empty(0), path, stack)?;
+        if let Some(module) = image(path) {
+            stack.push(path.into());
+            for dependency in &module.dependencies {
+                self.load(dependency, sources, image, registry, stack)?;
+            }
+            stack.pop();
+            self.modules.insert(path.into(), Rc::new(module));
+            return Ok(());
+        }
         let source = sources
             .iter()
             .find(|source| source.path == path)
@@ -594,7 +605,7 @@ impl StandardLibrary {
         crate::core::json_derive::expand(&mut module)?;
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {
-            self.load(&import.path, sources, registry, stack)?;
+            self.load(&import.path, sources, image, registry, stack)?;
         }
         self.prepare(
             path,
@@ -1105,4 +1116,41 @@ pub(crate) fn tcp_test_library() -> StandardLibrary {
         };
     }
     LIBRARY.with(Clone::clone)
+}
+
+#[cfg(not(joky_bootstrap))]
+include!(concat!(env!("OUT_DIR"), "/stdlib-index.rs"));
+
+#[cfg(not(joky_bootstrap))]
+fn load_prelude_module(path: &str) -> Option<SourceModule> {
+    prelude_image(path).map(crate::core::image::Reader::decode)
+}
+
+#[cfg(joky_bootstrap)]
+fn load_prelude_module(_: &str) -> Option<SourceModule> {
+    None
+}
+
+#[cfg(joky_bootstrap)]
+pub fn write_prelude_image(out: &std::path::Path) {
+    use crate::core::image::{Image, Writer};
+    use std::fmt::Write;
+    let registry = TypeRegistry::new().with_prelude(false);
+    let mut library = StandardLibrary::default();
+    library
+        .load(PRELUDE, SOURCES, |_| None, &registry, &mut Vec::new())
+        .expect("valid embedded prelude");
+    let mut index =
+        String::from("fn prelude_image(path: &str) -> Option<&'static [u8]> { match path {\n");
+    for (number, (path, module)) in library.modules.iter().enumerate() {
+        let mut writer = Writer::default();
+        module.as_ref().write(&mut writer);
+        let name = format!("std-{number}.bin");
+        std::fs::write(out.join(&name), writer.bytes).unwrap();
+        writeln!(index, "{path:?} => Some(include_bytes!({name:?})),").unwrap();
+    }
+    index.push_str("_ => None, } }");
+    std::fs::write(out.join("stdlib-index.rs"), index).unwrap();
+    let base = crate::core::types::fresh_type_id().max(crate::SourceFile::new("", "").id().raw());
+    std::fs::write(out.join("stdlib-id-base.rs"), base.to_string()).unwrap();
 }

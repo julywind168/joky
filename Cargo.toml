@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "The Joky programming language: compiler, runtime, and standard library"
 
-[dependencies]
+[workspace]
+members = ["tools/image-derive", "tools/stdlib-bootstrap"]
+default-members = ["."]
+resolver = "2"
+
+[workspace.dependencies]
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring-webpki"] }
 tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
@@ -25,6 +30,34 @@ cranelift-object   = "0.137.1"
 ariadne = { version = "0.6.0", features = ["auto-color"] }
 mio = { version = "1.2.4", features = ["os-poll", "net"] }
 toml = { version = "1.1.8", default-features = false, features = ["parse", "std", "serde"] }
+libc = "0.2"
+signal-hook = "0.4.6"
+joky-image-derive = { path = "tools/image-derive" }
+
+[dependencies]
+sqlx.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+argon2.workspace = true
+zeroize.workspace = true
+cranelift-codegen.workspace = true
+cranelift-frontend.workspace = true
+cranelift-module.workspace = true
+cranelift-jit.workspace = true
+cranelift-native.workspace = true
+cranelift-object.workspace = true
+ariadne.workspace = true
+mio.workspace = true
+toml.workspace = true
+joky-image-derive.workspace = true
+
+[build-dependencies]
+joky-stdlib-bootstrap = { path = "tools/stdlib-bootstrap" }
 
 [[bin]]
 name = "joky"
@@ -34,8 +67,8 @@ path = "src/main.rs"
 crate-type = ["rlib", "staticlib"]
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
-signal-hook = "0.4.6"
+libc.workspace = true
+signal-hook.workspace = true
 
 [dev-dependencies]
 serde_json = "1"

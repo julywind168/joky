@@ -9,7 +9,7 @@ pub(crate) fn is_line_break(bytes: &[u8], at: usize) -> bool {
 
 /// A half-open UTF-8 byte range with file identity.
 /// Source zero denotes caller-owned text; named files belong to a source snapshot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(joky_image_derive::Image, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Span {
     source: SourceId,
     start: usize,

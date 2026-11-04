@@ -24,30 +24,47 @@ pub(crate) use sources::{DefinitionScope, StandardCache, StandardLibrary};
 
 const PRELUDE: &str = "joky/prelude";
 
-#[derive(Clone, Debug)]
+#[derive(joky_image_derive::Image, Clone, Copy, Debug)]
+pub(crate) enum StandardSuccess {
+    Some,
+    Ok,
+    Committed,
+}
+
+impl StandardSuccess {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Some => "Some",
+            Self::Ok => "Ok",
+            Self::Committed => "Committed",
+        }
+    }
+}
+
+#[derive(joky_image_derive::Image, Clone, Debug)]
 pub(crate) struct TypeBinding {
     pub name: String,
     pub declaration: Option<u64>,
     pub resolved: Option<super::types::TypeDefinition>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(joky_image_derive::Image, Clone, Debug)]
 pub(crate) struct ConstructorBinding {
     pub enumeration: TypeBinding,
     pub variant: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(joky_image_derive::Image, Clone, Debug)]
 pub(crate) struct TraitBinding {
     pub name: String,
     pub id: u64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(joky_image_derive::Image, Clone, Debug, Default)]
 pub(crate) struct ImportScope {
     /// Trusted declaration identities travel with normalized modules, including
     /// when another registry compiles them without loading its own stdlib cache.
-    pub standard_enums: BTreeMap<u64, &'static str>,
+    pub standard_enums: BTreeMap<u64, StandardSuccess>,
     pub types: BTreeMap<String, TypeBinding>,
     pub traits: BTreeMap<String, TraitBinding>,
     /// Bare names retain every candidate; type-qualified lookup bypasses this map.
@@ -63,6 +80,15 @@ pub(crate) struct ImportScope {
     pub explicit_values: BTreeSet<String>,
     pub modules: BTreeMap<String, String>,
     pub members: BTreeSet<String>,
+}
+
+#[cfg(not(joky_bootstrap))]
+pub(crate) fn embedded_source_text(path: &str) -> &'static str {
+    sources::SOURCES
+        .iter()
+        .find(|source| source.path == path)
+        .expect("embedded image source")
+        .source
 }
 
 pub(crate) fn is_source_library(path: &str) -> bool {
@@ -192,9 +218,9 @@ fn bind(
     }
     let mut scope = ImportScope::default();
     for (path, name, success) in [
-        ("joky/option", "Option", "Some"),
-        ("joky/result", "Result", "Ok"),
-        ("joky/domain", "Outcome", "Committed"),
+        ("joky/option", "Option", StandardSuccess::Some),
+        ("joky/result", "Result", StandardSuccess::Ok),
+        ("joky/domain", "Outcome", StandardSuccess::Committed),
     ] {
         if let Some(id) = libraries
             .get(path)
@@ -704,3 +730,6 @@ fn bind(
     scope.explicit_values = explicit_values;
     Ok((scope, required))
 }
+
+#[cfg(joky_bootstrap)]
+pub use sources::write_prelude_image;

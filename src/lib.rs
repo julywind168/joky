@@ -43,3 +43,6 @@ mod string_map_model;
 #[cfg(test)]
 #[path = "../tests/support/text_ffi.rs"]
 mod text_ffi_model;
+
+#[cfg(joky_bootstrap)]
+pub use core::imports::write_prelude_image;

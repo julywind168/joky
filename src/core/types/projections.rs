@@ -42,7 +42,11 @@ pub(super) struct Work {
 
 impl TypeRegistry {
     pub(crate) fn standard_success_variant(&self, id: u64) -> Option<&'static str> {
-        self.trait_environment.root.standard_enums.get(&id).copied()
+        self.trait_environment
+            .root
+            .standard_enums
+            .get(&id)
+            .map(|v| v.name())
     }
 
     pub(super) fn solving_traits(&self) -> bool {

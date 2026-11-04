@@ -10,7 +10,7 @@ use std::sync::{
 };
 
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     /// Compiler-owned inline shape, normalized independently of executable storage.
     FixedArray(Arc<FixedArrayType>),
@@ -73,7 +73,7 @@ pub enum Type {
 }
 
 /// Source projections become declaration identities before rigid type checking.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct TypeProjection {
     pub base: Type,
     pub trait_name: Option<String>,
@@ -94,7 +94,7 @@ impl PartialEq for TypeProjection {
 impl Eq for TypeProjection {}
 
 /// Structural callable type; host signatures keep their separate calling contract.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
@@ -102,7 +102,7 @@ pub struct FunctionType {
     pub noescape: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct ReferenceType {
     pub target: Type,
     pub mutable: bool,
@@ -119,7 +119,7 @@ impl PartialEq for ReferenceType {
 impl Eq for ReferenceType {}
 
 /// Named equalities retain their source locations for qualification diagnostics.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct DynTraitType {
     pub identity: Option<u64>,
     pub interface: Option<Arc<DynInterface>>,
@@ -129,14 +129,14 @@ pub struct DynTraitType {
 }
 
 /// Shared semantic descriptor; this is not a native layout or host ABI.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct DynInterface {
     pub trait_id: u64,
     pub bindings: Vec<(String, Type)>,
     pub methods: Vec<DynMethodSlot>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct DynMethodSlot {
     pub suspends: bool,
     pub name: String,
@@ -650,7 +650,7 @@ impl Type {
 }
 
 /// Unresolved generic type application; boxed to keep typed IR slots compact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub struct TypeApplication {
     pub name: String,
     pub arguments: Vec<GenericArgument>,
@@ -817,7 +817,7 @@ impl std::fmt::Display for Type {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub(crate) struct CallableBound {
     pub suspends: bool,
     pub mode: CallableKind,
@@ -827,14 +827,14 @@ pub(crate) struct CallableBound {
 }
 
 /// Compiler-owned callable metadata; source declarations cannot manufacture it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CallableKind {
     Fn,
     FnMut,
     FnOnce,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub(crate) struct ClosureInfo {
     pub suspends: bool,
     pub storable: bool,
@@ -845,14 +845,14 @@ pub(crate) struct ClosureInfo {
 }
 
 /// A source trait capability and its named associated-type equalities.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct TraitBound {
     pub name: String,
     pub equalities: Vec<AssociatedEquality>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct AssociatedEquality {
     pub name: String,
     pub ty: Type,
@@ -860,21 +860,21 @@ pub struct AssociatedEquality {
 }
 
 /// Compact homogeneous inline shape; no element lanes are expanded here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub struct FixedArrayType {
     pub element: Type,
     pub length: ConstArgument,
 }
 
 /// Generic parameter kinds are explicit, independent of declaration identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParameterKind {
     Type,
     Const,
 }
 
 /// A canonical UInt64 value or a declaration-scoped rigid constant.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub enum ConstArgument {
     Value(u64),
     Parameter(Arc<TypeParameter>),
@@ -889,7 +889,7 @@ impl std::fmt::Display for ConstArgument {
 }
 
 /// Ordered generic arguments retain their kind in syntax and instance keys.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub enum GenericArgument {
     Type(Type),
     Const(ConstArgument),
@@ -936,7 +936,7 @@ impl std::fmt::Display for GenericArgument {
 }
 
 /// A distinct rigid parameter owned by a generic declaration or trait Self.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct TypeParameter {
     pub kind: ParameterKind,
     pub(crate) callable: Option<Arc<CallableBound>>,
@@ -973,7 +973,7 @@ impl PartialEq for TypeParameter {
 impl Eq for TypeParameter {}
 
 /// A resolved nominal type. Only repr_c records promise a C memory layout.
-#[derive(Clone)]
+#[derive(joky_image_derive::Image, Clone)]
 pub struct RecordType {
     /// The canonical built-in Drop implementation belongs to this declaration.
     pub(crate) custom_drop: bool,
@@ -1032,7 +1032,7 @@ impl PartialEq for RecordType {
 }
 impl Eq for RecordType {}
 
-#[derive(Clone, Debug)]
+#[derive(joky_image_derive::Image, Clone, Debug)]
 pub(crate) struct RecordField {
     pub private: bool,
     pub name: String,
@@ -1108,14 +1108,14 @@ impl Type {
 }
 
 pub(crate) fn fresh_type_id() -> u64 {
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    static NEXT_ID: AtomicU64 = AtomicU64::new(crate::core::image::FIRST_DYNAMIC_ID);
     NEXT_ID
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .expect("nominal type identity space exhausted")
 }
 
 /// A resolved nominal enum. Its layout is private to the compiler.
-#[derive(Clone)]
+#[derive(joky_image_derive::Image, Clone)]
 pub struct EnumType {
     /// Compiler-private place with an overlaid, reference-free Copy payload.
     pub(crate) compact: bool,
@@ -1147,7 +1147,7 @@ impl PartialEq for EnumType {
 }
 impl Eq for EnumType {}
 
-#[derive(Clone)]
+#[derive(joky_image_derive::Image, Clone)]
 pub(crate) struct EnumVariant {
     pub name: String,
     pub payload: Option<Type>,
@@ -1156,7 +1156,7 @@ pub(crate) struct EnumVariant {
 }
 
 /// Tuple syntax and canonical layout. Equality compares ordered element types.
-#[derive(Clone)]
+#[derive(joky_image_derive::Image, Clone)]
 pub struct TupleType {
     pub(crate) elements: Vec<Type>,
     pub(crate) owners: Vec<Arc<Type>>,

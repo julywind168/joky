@@ -11,7 +11,7 @@ pub use crate::core::types::{
 };
 
 /// Completion policy for structured concurrent branches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConcurrentKind {
     Join,
     Race,
@@ -30,7 +30,7 @@ impl ConcurrentKind {
 }
 
 /// Literals.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub enum Literal {
     /// Rigid UInt64 value, replaced by an immediate during specialization.
     ConstParameter(Arc<TypeParameter>),
@@ -58,7 +58,7 @@ pub enum Literal {
 }
 
 /// Expression
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub enum Expr {
     /// Compiler-authored indexed loop body; integer type is inferred before lowering.
     IndexedLoop(Box<IndexedLoop>),
@@ -287,7 +287,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct When {
     /// Set only by checked handle-method lowering, never parsed.
     pub(crate) method: Option<String>,
@@ -300,7 +300,7 @@ pub struct When {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct WhenPath {
     pub create: Option<Expr>,
     pub ty: Type,
@@ -309,7 +309,7 @@ pub struct WhenPath {
     pub optional: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct AnonymousFunction {
     pub moving: bool,
     pub suspends: bool,
@@ -319,7 +319,7 @@ pub struct AnonymousFunction {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct ClosureParameter {
     pub mutable: bool,
     pub name: String,
@@ -327,7 +327,7 @@ pub struct ClosureParameter {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct IndexedLoop {
     pub name: String,
     pub counter: String,
@@ -562,7 +562,7 @@ impl Expr {
 }
 
 /// A method receiver is evaluated once, before its explicit arguments.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct MethodCall {
     pub receiver: Expr,
     pub name: String,
@@ -572,7 +572,7 @@ pub struct MethodCall {
 }
 
 /// An inherent or trait implementation for a concrete or full generic nominal type.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct ImplDef {
     /// Original fields/payloads for compiler-generated conditional derive bounds.
     pub(crate) derive_fields: Option<Vec<Param>>,
@@ -589,7 +589,7 @@ pub struct ImplDef {
 }
 
 /// A static capability. Self is a rigid parameter in requirement signatures.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct TraitDef {
     pub(crate) is_drop: bool,
     pub(crate) is_add: bool,
@@ -603,7 +603,7 @@ pub struct TraitDef {
 }
 
 /// A trait signature with an optional default implementation. Empty bodies are real bodies.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct TraitMethod {
     pub name: String,
     pub name_span: Span,
@@ -642,7 +642,7 @@ impl TraitMethod {
 }
 
 /// A typed scalar constant, evaluated before function planning.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct AssociatedConst {
     pub public: bool,
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
@@ -652,13 +652,13 @@ pub struct AssociatedConst {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub enum LogicalOp {
     And,
     Or,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub enum UnaryOp {
     /// Postfix extraction; lowered through enum patterns before backend selection.
     Unwrap,
@@ -674,7 +674,7 @@ pub enum UnaryOp {
     Deref,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq, Eq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -712,7 +712,7 @@ impl BinOp {
 }
 
 /// Function parameter.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct Param {
     /// Whether the callee may mutate this binding; not part of its type.
     pub mutable: bool,
@@ -723,7 +723,7 @@ pub struct Param {
 }
 
 /// An imported module path.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct Import {
     pub path: String,
     /// An optional module alias, reserved for qualified module references.
@@ -735,7 +735,7 @@ pub struct Import {
 }
 
 /// A name selected from an imported module.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct ImportMember {
     pub name: String,
     pub kind: ImportMemberKind,
@@ -743,14 +743,14 @@ pub struct ImportMember {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportMemberKind {
     Type,
     Value,
 }
 
 /// Top-level declaration.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub enum Item {
     /// `fn name(params) @suspends? -> RetType { body }`
     FnDef(FnDef),
@@ -758,7 +758,7 @@ pub enum Item {
     ExternFn(ExternFnDecl),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FunctionKind {
     Ordinary,
     Test,
@@ -766,7 +766,7 @@ pub(crate) enum FunctionKind {
     Clone,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct FnDef {
     /// Positive nanosecond period for an automatically scheduled state method.
     pub every: Option<std::num::NonZeroU64>,
@@ -799,7 +799,7 @@ impl FnDef {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub(crate) struct IntrinsicAttribute {
     pub name: String,
     pub has_body: bool,
@@ -807,7 +807,7 @@ pub(crate) struct IntrinsicAttribute {
 }
 
 /// A source-level synchronous borrowing contract, inherited by trait impls.
-#[derive(Debug, Clone, Default)]
+#[derive(joky_image_derive::Image, Debug, Clone, Default)]
 pub struct NoEscape {
     pub all: bool,
     pub params: Vec<String>,
@@ -815,7 +815,7 @@ pub struct NoEscape {
 
 /// Unary float primitives that must stay bit-identical across backends and
 /// cannot be composed from Joky arithmetic without losing IEEE exactness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FloatKind {
     /// Parse a bounded decimal String borrow; invalid input yields NaN.
     FromText,
@@ -833,7 +833,7 @@ pub(crate) enum FloatKind {
 }
 
 /// Read access may carry an input independently of its mutation capability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DomainAccessKind {
     Read,
     Query,
@@ -842,7 +842,7 @@ pub(crate) enum DomainAccessKind {
 
 /// Identities installed on trusted embedded definitions, never parsed from text.
 /// Rare type payloads are boxed to keep ordinary function declarations compact.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
     /// Compiler-owned container adapters may return a checked fat dyn borrow.
     DynBorrowAdapter,
@@ -922,7 +922,7 @@ pub(crate) enum CompilerIntrinsic {
     IntFromFloat,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BufferIntrinsic {
     Allocate,
     Transfer,
@@ -986,14 +986,14 @@ pub(crate) enum BufferIntrinsic {
     EntryValueMut,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct AssociatedTypeDecl {
     pub name: String,
     pub bounds: Vec<TraitBound>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct AssociatedTypeDef {
     pub name: String,
     pub ty: Type,
@@ -1001,7 +1001,7 @@ pub struct AssociatedTypeDef {
     pub target_span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct ExternFnDecl {
     /// A synchronous, explicitly unsafe C borrowing boundary.
     pub c_abi: bool,
@@ -1017,7 +1017,7 @@ pub struct ExternFnDecl {
 ///
 /// Module constants carry no receiver type, so they stay a separate list
 /// instead of joining `items`, whose entries all become function signatures.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct ModuleConst {
     pub public: bool,
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
@@ -1033,7 +1033,7 @@ pub struct ModuleConst {
 }
 
 /// Parsed source module.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct Module {
     /// Stable publication namespace, independent of source file locations.
     pub logical_name: String,
@@ -1088,7 +1088,7 @@ impl Module {
 }
 
 /// A transparent alias, optionally parameterized as `type Name<T> = Target`.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct TypeAlias {
     pub public: bool,
     pub name: String,
@@ -1100,7 +1100,7 @@ pub struct TypeAlias {
 }
 
 /// One named field initializer, with shorthand expanded to its value expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct FieldInit {
     pub name: String,
     pub value: Expr,
@@ -1108,21 +1108,21 @@ pub struct FieldInit {
 }
 
 /// Structured declaration metadata, including #repr(C) and JSON #derive.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct Attribute {
     pub path: String,
     pub arguments: Option<Vec<AttributeArgument>>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct AttributeArgument {
     pub name: Option<String>,
     pub value: AttributeValue,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub enum AttributeValue {
     /// Exact nanosecond count, distinct from untyped integer metadata.
     Duration(u64),
@@ -1131,7 +1131,7 @@ pub enum AttributeValue {
 }
 
 /// A parsed record declaration. Clones preserve its nominal identity.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct RecordDef {
     pub(crate) array: bool,
     pub(crate) list: bool,
@@ -1181,7 +1181,7 @@ impl RecordDef {
 }
 
 /// A module-local nominal enum declaration with optional Copy type parameters.
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct EnumDef {
     pub attributes: Vec<Attribute>,
     pub public: bool,
@@ -1208,21 +1208,21 @@ impl EnumDef {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct VariantDef {
     pub name: String,
     pub payload: Option<Type>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Expr,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub enum Pattern {
     Value(Box<PayloadPattern>),
     Wildcard {
@@ -1246,7 +1246,7 @@ impl Pattern {
 
 /// One `field: pattern` entry of a record pattern; shorthand `field` is
 /// desugared at parse time to `field: field`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct RecordFieldPattern {
     pub name: String,
     pub pattern: BindingPattern,
@@ -1254,7 +1254,7 @@ pub struct RecordFieldPattern {
 }
 
 /// Irrefutable binding patterns; enum and literal patterns are excluded.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub enum BindingPattern {
     Sequence(Box<SequencePattern<BindingPattern>>),
     Name {
@@ -1275,7 +1275,7 @@ pub enum BindingPattern {
 }
 /// Head, type arguments, and field entries of a record pattern; boxed to keep
 /// small binding patterns cheap to store inside expressions.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct RecordPattern {
     pub resolved: Option<Box<Type>>,
     pub name: String,
@@ -1298,7 +1298,7 @@ impl BindingPattern {
 }
 
 /// Recursive match payload syntax. Name binds a value and Variant tests a constructor.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub enum PayloadPattern {
     Sequence(Box<SequencePattern<PayloadPattern>>),
     Literal {
@@ -1399,7 +1399,7 @@ fn pattern_names(pattern: &BindingPattern, out: &mut Vec<String>) {
 }
 
 /// An explicitly instantiated name without call parentheses.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct GenericName {
     pub name: String,
     pub type_args: Vec<GenericArgument>,
@@ -1407,7 +1407,7 @@ pub struct GenericName {
 }
 
 /// A single optional rest separates prefix and suffix patterns.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct SequencePattern<P> {
     pub prefix: Vec<P>,
     pub suffix: Vec<P>,

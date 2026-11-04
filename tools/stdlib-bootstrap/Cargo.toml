@@ -1,0 +1,36 @@
+[package]
+name = "joky-stdlib-bootstrap"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "../../src/lib.rs"
+test = false
+doctest = false
+
+[dependencies]
+sqlx.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+argon2.workspace = true
+zeroize.workspace = true
+cranelift-codegen.workspace = true
+cranelift-frontend.workspace = true
+cranelift-module.workspace = true
+cranelift-jit.workspace = true
+cranelift-native.workspace = true
+cranelift-object.workspace = true
+ariadne.workspace = true
+mio.workspace = true
+toml.workspace = true
+joky-image-derive.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+signal-hook.workspace = true

@@ -8,7 +8,9 @@ use std::{
     },
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    joky_image_derive::Image, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct SourceId(u64);
 
 impl SourceId {
@@ -28,9 +30,28 @@ pub struct SourceFile {
     text: Arc<str>,
 }
 
+// Source text already lives in the embedded source table. The image keeps
+// only its key and the ID used by spans in the prepared declarations.
+impl crate::core::image::Image for SourceFile {
+    #[cfg(joky_bootstrap)]
+    fn write(&self, output: &mut crate::core::image::Writer) {
+        self.id.write(output);
+        self.name.write(output);
+    }
+
+    #[cfg(not(joky_bootstrap))]
+    fn read(input: &mut crate::core::image::Reader<'_>) -> Self {
+        let id = SourceId::read(input);
+        let name = String::read(input);
+        let text =
+            crate::core::imports::embedded_source_text(name.strip_suffix(".jk").unwrap()).into();
+        Self { id, name, text }
+    }
+}
+
 impl SourceFile {
     pub fn new(name: impl Into<String>, text: impl Into<Arc<str>>) -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(1);
+        static NEXT: AtomicU64 = AtomicU64::new(crate::core::image::FIRST_DYNAMIC_ID);
         Self {
             id: SourceId(
                 NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
@@ -51,7 +72,7 @@ impl SourceFile {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(joky_image_derive::Image, Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceMap {
     files: BTreeMap<SourceId, SourceFile>,
 }

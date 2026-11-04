@@ -8,7 +8,7 @@ pub enum EntryAbi {
     OwnedTextV2,
 }
 
-#[derive(Clone)]
+#[derive(joky_image_derive::Image, Clone)]
 pub struct FunctionSignature {
     pub params: Vec<Type>,
     pub ret: Type,

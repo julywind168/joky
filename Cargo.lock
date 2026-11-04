@@ -898,11 +898,49 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "hmac",
+ "joky-image-derive",
+ "joky-stdlib-bootstrap",
  "libc",
  "libloading",
  "mio",
  "rustls",
  "serde_json",
+ "sha2 0.11.1",
+ "signal-hook",
+ "sqlx",
+ "tokio",
+ "toml",
+ "webpki-roots",
+ "zeroize",
+]
+
+[[package]]
+name = "joky-image-derive"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "joky-stdlib-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "ariadne",
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "cranelift-native",
+ "cranelift-object",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hmac",
+ "joky-image-derive",
+ "libc",
+ "mio",
+ "rustls",
  "sha2 0.11.1",
  "signal-hook",
  "sqlx",

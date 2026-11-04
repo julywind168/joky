@@ -33,7 +33,7 @@ pub(crate) use specialization::{substitute, unify, unify_constant};
 use walk::{TypeEdges, TypeWalk};
 
 /// Definition-only templates never enter executable types or constructor lookup.
-#[derive(Clone, Debug)]
+#[derive(joky_image_derive::Image, Clone, Debug)]
 pub(crate) enum TypeDefinition {
     Type(Type),
     Alias(std::sync::Arc<AliasTemplate>),
@@ -51,7 +51,7 @@ impl TypeDefinition {
     }
 }
 
-#[derive(Debug)]
+#[derive(joky_image_derive::Image, Debug)]
 pub(crate) struct AliasTemplate {
     name: String,
     parameters: Vec<std::sync::Arc<TypeParameter>>,

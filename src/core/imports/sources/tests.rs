@@ -421,6 +421,40 @@ fn embedded_modules_are_prepared_only_as_needed() {
 }
 
 #[test]
+fn prelude_image_and_source_modules_share_declarations_in_any_load_order() {
+    let first_dynamic = crate::core::image::FIRST_DYNAMIC_ID;
+    let user = crate::SourceFile::new("user.jk", "struct Local {}");
+    let local = crate::parser::parse_with_source(user.text(), user.id()).unwrap();
+    assert!(user.id().raw() >= first_dynamic);
+    assert!(local.records[0].id >= first_dynamic);
+
+    let mut option_ids = Vec::new();
+    for imports in [["joky/list", PRELUDE], [PRELUDE, "joky/list"]] {
+        let cache = StandardCache::default();
+        for path in imports {
+            let entry = crate::parser::parse(&format!("import {path}")).unwrap();
+            cache.for_module(&entry, false).unwrap();
+        }
+        let graph = cache.prepared.borrow();
+        let option = &graph.modules["joky/option"].module.enums[0];
+        let list = &graph.modules["joky/list"].module;
+        assert!(option.id < first_dynamic);
+        assert!(option.span.source_id().raw() < first_dynamic);
+        assert!(list.records.iter().all(|r| r.id >= first_dynamic));
+        assert_eq!(
+            list.scope.as_ref().unwrap().types["Option"].declaration,
+            Some(option.id)
+        );
+        assert_eq!(
+            list.sources.get(option.span.source_id()).unwrap().name(),
+            "joky/option.jk"
+        );
+        option_ids.push((option.id, option.span.source_id()));
+    }
+    assert_eq!(option_ids[0], option_ids[1]);
+}
+
+#[test]
 fn cached_modules_keep_identity_scopes_and_source_ids() {
     let types = TypeRegistry::new().with_prelude(false);
     let source = "// first\nimport joky/integer fn check() -> Int32 { 42 }";
