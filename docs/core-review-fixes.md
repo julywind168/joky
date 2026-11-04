@@ -232,7 +232,8 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 ### D2 枚举布局复用载荷区
 
 - 已在能证明布局一致的同步编译单元中默认启用动态 Array 的按值存储优化。四个变体各带一个 Int32 时，每个元素由 20 字节缩为 8 字节。
-  数组和源自它的切片可按下标取值，可变切片可用 `set` 写回。同一枚举一旦有元素借用或其他依赖元素地址的访问，编译器会给所有使用点选择普通布局。挂起、并行快照和可能传递数组的宿主或持久状态边界也保守回退。
+  数组和源自它的切片可按下标取值，可变数组和切片的 `xs[i] = expr` 在求值右侧前检查边界并预留原位置。
+  同一枚举一旦借出元素引用，编译器会给所有使用点选择普通布局。挂起、并行快照和可能传递数组的宿主或持久状态边界也保守回退。
 - [共享 IR 实现](../src/core/ir/enum_arrays.rs)与[数组回归](../tests/fixtures/compact_enum_array.jk)覆盖实际容量边界、扩容、跨变体覆盖和按值取回。
   普通枚举值仍占 `1 + Σ payload` 个逻辑槽。深层嵌套的 65,536 槽上限、拥有型载荷及可借用的紧凑地址布局另行设计。
 
@@ -301,5 +302,5 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K3 | 已修复 | `7d4d4b60`、`b36c033d`、`3b2dc97b` | 2,000 次短借用、1,000 次打印/自增/字符串插值和 300 臂整数 match 在 JIT、解释器和独立 AOT 上输出正确。借用相关库回归 384 项、CLI 定向回归 8 项通过；另跑 27 个库穷举和 1 个 CLI 穷举通过。fmt、Clippy、diff 检查通过，未跑全量。见[借用分析的规模与边界](architecture.md#k3-借用分析的规模与边界)。 |
 | K4 | 已修复 | `8b716635`、`cd5e9bd1` | 29 个共享前端诊断用例核对错误码和消息，并对关键调用、类型布局和分支核对源码范围。解析、类型推导、trait、模块导入、常量及 CLI 定向回归通过；负号后缀和上下文推导在 JIT、解释器及独立 AOT 运行通过。fmt、Clippy、diff 检查通过，未跑全量。 |
 | D1 | 已实施（保守子集） | `feat: reclaim nonescaping implicit allocations at synchronous call boundaries` | 小预算循环在 JIT、解释器和独立 AOT 上完成。保留到调用方的点仍可读取，独立 AOT 在同一根 arena 中连续触发子调用失败后仍能成功分配。 |
-| D2 | 已推广至受检同步数组 | `20321413`、`feat: compact scalar enum arrays in closed synchronous modules` | 三后端验证紧凑与回退步长、借用和并行快照；持久实例使用普通布局。 |
+| D2 | 已推广至受检同步数组 | `20321413`、`ee52d2b8`、`5cfd1264`、`feat: preserve compact enum layouts for indexed assignments` | 三后端验证紧凑与回退步长、借用和并行快照；持久实例使用普通布局。 |
 | D3–D8 | 待决策 | | |

@@ -1,5 +1,5 @@
 //! Synchronous task-arena intrinsics and automatic field dereferencing.
-use super::*;
+use super::{indexing::IndexAccess, *};
 
 impl FunctionPlan {
     pub(super) fn pointee(&self, target: &Type, types: &TypeRegistry) -> Result<Type, Error> {
@@ -251,7 +251,7 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
         reservation: bool,
-        mutable: bool,
+        access: IndexAccess<'_>,
     ) -> Result<Option<Flow>, Error> {
         let mut root = expr;
         let mut path = Vec::new();
@@ -282,14 +282,9 @@ impl FunctionPlan {
         }
         let span = root.span();
         let flow = match root {
-            Expr::Index { .. } => self.index_access(
-                root,
-                super::indexing::IndexAccess::Place { mutable },
-                vars,
-                functions,
-                suspends,
-                types,
-            )?,
+            Expr::Index { .. } => {
+                self.index_access(root, access, vars, functions, suspends, types)?
+            }
             Expr::Unary {
                 op: UnaryOp::Deref,
                 operand,
@@ -506,14 +501,7 @@ impl FunctionPlan {
         if matches!(expr, Expr::Index { index, .. } if super::indexing::slice_bounds(index).is_none())
         {
             return self
-                .index_access(
-                    expr,
-                    super::indexing::IndexAccess::Read,
-                    vars,
-                    functions,
-                    suspends,
-                    types,
-                )
+                .index_access(expr, IndexAccess::Read, vars, functions, suspends, types)
                 .map(Some);
         }
         let (place, borrow, mutable) = match expr {
@@ -535,8 +523,16 @@ impl FunctionPlan {
             Expr::FieldAssign { target, .. } => (target.as_ref(), false, true),
             _ => (expr, false, false),
         };
+        let mut indexed_address = None;
+        let access = if matches!(expr, Expr::FieldAssign { op: None, .. })
+            && matches!(place, Expr::Index { .. })
+        {
+            IndexAccess::Assign(&mut indexed_address)
+        } else {
+            IndexAccess::Place { mutable }
+        };
         if let Some(flow) =
-            self.dereferenced_place(place, vars, functions, suspends, types, !borrow, mutable)?
+            self.dereferenced_place(place, vars, functions, suspends, types, !borrow, access)?
         {
             let Flow::Value(Some(reference)) = flow else {
                 return Ok(Some(Flow::Diverged));
@@ -579,6 +575,9 @@ impl FunctionPlan {
             } = expr
             {
                 Self::check_memory_target(&target, expr.span())?;
+                let indexed_address = indexed_address.filter(
+                    |_| matches!(&target, Type::Enum(e) if super::enum_arrays::candidate(e)),
+                );
                 let reference = self.reserve_write(reference)?;
                 let old = self.compound_snapshot(
                     op,
@@ -590,6 +589,8 @@ impl FunctionPlan {
                 let Flow::Value(value) =
                     self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
                 else {
+                    // The checked address is discarded when the RHS exits without writing.
+                    self.indexed_store_slots.extend(indexed_address);
                     return Ok(Some(Flow::Diverged));
                 };
                 let value = self.compound_value(op, old, value, span)?;
@@ -603,6 +604,12 @@ impl FunctionPlan {
                 if target.is_owner() {
                     self.replace_capture(reference, value.unwrap())?;
                 } else {
+                    if let Some(address) = indexed_address {
+                        if matches!(value.as_ref().map(|v| &v.ty), Some(Type::Enum(e)) if !e.indirect)
+                        {
+                            self.indexed_store_slots.extend([address, reference.index]);
+                        }
+                    }
                     self.emit(Op::WriteMemory {
                         reference,
                         path: vec![],

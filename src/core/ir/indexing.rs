@@ -30,16 +30,20 @@ pub(super) fn slice_bounds(expr: &Expr) -> Option<(&Expr, &Expr, bool)> {
     }
 }
 
-pub(super) enum IndexAccess {
+pub(super) enum IndexAccess<'a> {
     Read,
-    Place { mutable: bool },
+    Place {
+        mutable: bool,
+    },
+    /// Report the private buffer address of a whole-element assignment.
+    Assign(&'a mut Option<usize>),
 }
 
 impl FunctionPlan {
     pub(super) fn index_access(
         &mut self,
         expr: &Expr,
-        access: IndexAccess,
+        access: IndexAccess<'_>,
         vars: &mut HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
@@ -48,7 +52,10 @@ impl FunctionPlan {
         let Expr::Index { base, index, span } = expr else {
             unreachable!()
         };
-        let mutable = matches!(access, IndexAccess::Place { mutable: true });
+        let mutable = matches!(
+            access,
+            IndexAccess::Place { mutable: true } | IndexAccess::Assign(_)
+        );
         let hint = self.type_hint(base, vars, functions, types);
         let mut base_place = base.as_ref();
         while let Expr::Field { base, .. } = base_place {
@@ -248,7 +255,7 @@ impl FunctionPlan {
         self.current_span = *span;
         let read_type = match access {
             IndexAccess::Read => Some(self.pointee(&element, types)?),
-            IndexAccess::Place { .. } => None,
+            IndexAccess::Place { .. } | IndexAccess::Assign(_) => None,
         };
         if let (Some(load), Some(ty @ Type::Enum(e))) = (load, &read_type) {
             if super::enum_arrays::candidate(e) {
@@ -263,6 +270,11 @@ impl FunctionPlan {
         }
         // Arbitrary index projections retain the original storage loan.
         let raw = self.sequence_element(&root, &element, index_value, mutable)?;
+        if let IndexAccess::Assign(address) = access {
+            if load.is_some() {
+                *address = Some(raw.index);
+            }
+        }
         let mut reference = self.pattern_reference(&raw, &element, 0, mutable, &[])?;
         if let Some(ty) = read_type {
             reference.ty = Type::reference(ty, false);

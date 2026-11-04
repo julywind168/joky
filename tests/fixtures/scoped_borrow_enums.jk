@@ -71,7 +71,8 @@ fn read_column(values: &Array<Plain>) @suspends -> Int32 {
     match values[1] { Plain.Other(n) => n, _ => 0 }
 }
 fn plain_column() @suspends -> Int32 {
-    let values = [Plain.Number(7), Plain.Other(21)]
+    var values = [Plain.Number(7), Plain.Empty]
+    values[1] = Plain.Other(21)
     let (a, b) = join { | read_column(&values) | read_column(&values) }
     a + b
 }

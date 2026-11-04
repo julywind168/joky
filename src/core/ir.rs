@@ -556,6 +556,8 @@ pub(crate) struct DynErasure {
 
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
+    /// Private element addresses and their write reservations for whole indexed enum assignments.
+    indexed_store_slots: std::collections::HashSet<usize>,
     hint_work: inference::HintWork,
     source_function: String,
     suspends: bool,
@@ -1400,6 +1402,7 @@ impl FunctionPlan {
         let lexical_function = task_parent.map_or_else(|| f.name.clone(), |(parent, _)| parent);
         let mut plan = Self {
             dyn_erasures: Vec::new(),
+            indexed_store_slots: Default::default(),
             lexical_function,
             branch_context,
             hint_work: Default::default(),

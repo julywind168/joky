@@ -173,6 +173,10 @@ fn indexing_rejects_invalid_types_moves_and_borrows() {
             ErrorCode::TypeMismatch,
         ),
         (
+            "enum E { A(Int32), B(Int32) } fn bad() { var a = [E.A(1)]; a[0] = { a.push(E.B(2)); E.A(3) }; }",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
             "fn bad() { var a = [1]; a[0] = { a.push(2); 3 }; }",
             ErrorCode::InvalidAssignment,
         ),

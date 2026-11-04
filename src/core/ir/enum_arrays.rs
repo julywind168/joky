@@ -152,9 +152,13 @@ pub(super) fn lower(
             else {
                 continue;
             };
-            // A single addressable use requires the canonical stride at every
-            // allocation and access of this nominal enum in the compilation.
-            if e.indirect || !by_value(*intrinsic, e, args, dst.as_ref()) {
+            // A private store address is only dereferenced by the checked write.
+            // Exposing an element reference requires the canonical stride throughout.
+            let store_address = matches!(intrinsic, BI::BorrowMut | BI::SliceBorrowMut)
+                && dst
+                    .as_ref()
+                    .is_some_and(|slot| body.indexed_store_slots.contains(&slot.index));
+            if e.indirect || !(store_address || by_value(*intrinsic, e, args, dst.as_ref())) {
                 excluded.insert(e.id);
             } else if *intrinsic == BI::Allocate && candidate(e) {
                 if let Entry::Vacant(entry) = elements.entry(e.id) {
@@ -179,6 +183,34 @@ pub(super) fn lower(
     for body in bodies.values_mut().filter(|b| b.ops.iter().any(selected)) {
         let spans = std::mem::take(&mut body.op_spans);
         for (op, span) in std::mem::take(&mut body.ops).into_iter().zip(spans) {
+            // The original checked projection and reservation already point at
+            // the selected element. Only encode the RHS at the final write.
+            if let Op::WriteMemory {
+                reference,
+                value: Some(logical),
+                target: Type::Enum(e),
+                ..
+            } = &op
+            {
+                if let Some(physical) = elements
+                    .get(&e.id)
+                    .filter(|_| body.indexed_store_slots.contains(&reference.index))
+                {
+                    body.current_span = span;
+                    let packed = body.slot(physical.clone())?;
+                    convert(body, logical, &packed, Direction::Pack)?;
+                    body.emit(Op::WriteMemory {
+                        reference: Slot {
+                            index: reference.index,
+                            ty: Type::reference(physical.clone(), true),
+                        },
+                        path: vec![],
+                        value: Some(packed),
+                        target: physical.clone(),
+                    });
+                    continue;
+                }
+            }
             if !selected(&op) {
                 body.ops.push(op);
                 body.op_spans.push(span);
@@ -326,10 +358,13 @@ fn compact_enum_array_stride_and_borrow_fallback() {
             if !packed {
                 assert_eq!(vm.call_int32_0("borrowed").unwrap(), 42);
             }
-            let error = vm.call_int32_0("bad_index").unwrap_err();
-            assert!(error.message().contains("outside the initialized prefix"));
-            assert_eq!(error.span().unwrap().slice(&fixture), Some("words[1]"));
+            for entry in ["bad_index", "bad_store"] {
+                let error = vm.call_int32_0(entry).unwrap_err();
+                assert!(error.message().contains("outside the initialized prefix"));
+                assert_eq!(error.span().unwrap().slice(&fixture), Some("words[1]"));
+            }
             assert_eq!(vm.call_int32_0("roundtrip").unwrap(), 42);
+            assert_eq!(vm.call_int32_0("rebind_store").unwrap(), 42);
             assert_eq!(
                 vm.call_int32_0("fits").unwrap(),
                 42,
@@ -345,7 +380,9 @@ fn compact_enum_array_stride_and_borrow_fallback() {
             &ast,
             &[
                 ("roundtrip", Some(42)),
+                ("rebind_store", Some(42)),
                 ("bad_index", None),
+                ("bad_store", None),
                 ("fits", Some(42)),
                 ("exceeds", None),
             ],
@@ -360,11 +397,14 @@ fn compact_enum_arrays_preserve_mixed_slice_origins() {
         "import joky/fixed_array.{{type FixedArray}}\nimport joky/slice.{{type Slice}}\n{}\n{}",
         include_str!("../../../tests/fixtures/compact_enum_array.jk"),
         r#"
-        fn second(xs: &Slice<ProbeWord>) -> Int32 { read(xs[1]) }
+        fn second(xs: &mut Slice<ProbeWord>, value: ProbeWord) -> Int32 {
+            xs[1] = value
+            read(xs[1])
+        }
         fn both() -> Int32 {
-            let xs = [ProbeWord.A(1), ProbeWord.C(18)]
-            let ys: FixedArray<ProbeWord, 2> = [ProbeWord.A(2), ProbeWord.D(19)]
-            second(&xs[0..2]) + second(&ys[0..2])
+            var xs = [ProbeWord.A(1), ProbeWord.A(0)]
+            var ys: FixedArray<ProbeWord, 2> = [ProbeWord.A(2), ProbeWord.A(0)]
+            second(&mut xs[0..2], ProbeWord.C(18)) + second(&mut ys[0..2], ProbeWord.D(19))
         }
         fn large() -> Int32 { reserve_words(4000000) }
         "#
