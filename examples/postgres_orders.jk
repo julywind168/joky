@@ -7,9 +7,8 @@ pub fn setup(pool: &postgres.Pool) @suspends {
     pool.execute("INSERT INTO joky_demo_stock VALUES (1, 100) ON CONFLICT DO NOTHING", [])!
     pool.execute("CREATE TABLE IF NOT EXISTS joky_demo_orders (id bigserial PRIMARY KEY, customer bigint NOT NULL, request_id text NOT NULL, qty bigint NOT NULL CHECK (qty > 0), UNIQUE(customer, request_id))", [])!;
 }
-fn column_error(error: postgres.ColumnError) -> postgres.DbError { postgres.DbError.Column(error) }
 fn number(row: &postgres.Row, i: UInt64) -> Result<Int64, postgres.DbError> {
-    let value = postgres.get_i64(row, i).map_err(column_error)?
+    let value = postgres.get_i64(row, i).map_err(|error| { postgres.DbError.Column(error) })?
     match value {
         Some(n) => Ok(n),
         None => Err(postgres.DbError.Column(postgres.ColumnError.UnexpectedNull(i)))

@@ -71,7 +71,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 ### 4.1 `?` 的错误类型转换【已验证】
 
-`Result?` 要求调用结果与当前函数使用相同的错误类型。订单示例的 `number()` 先用 `map_err` 把 `ColumnError` 包进 `DbError.Column`，再用 `?` 提前返回错误。读列成功后得到 `Option<Int64>`，由 `number()` 将 SQL `NULL` 解释为该列的 `UnexpectedNull(i)`。这里使用具名函数 `column_error`，以便调用它的 HTTP 服务通过双 worker 的并行资格检查；内联闭包在该入口会被判定为需要本地执行。[订单示例](../examples/postgres_orders.jk#L11)
+`Result?` 要求调用结果与当前函数使用相同的错误类型。订单示例的 `number()` 先用 `map_err` 把 `ColumnError` 包进 `DbError.Column`，再用 `?` 提前返回错误。读列成功后得到 `Option<Int64>`，由 `number()` 将 SQL `NULL` 解释为该列的 `UnexpectedNull(i)`。错误转换使用无捕获闭包，可在 HTTP 服务的 worker 内直接调用。[订单示例](../examples/postgres_orders.jk#L10)
 
 通用 `From<T>` 降为 P2。一个应用错误类型可能需要分别接受数据库错误和文件错误，而当前 trait 自身不能带类型参数，同一 trait 与目标类型只能有一个实现。等另一个协议也需要按来源类型区分实现时，再一起设计泛型 trait 的实现查找和重叠规则。[当前 trait 规则](language.md#L2182)
 
@@ -282,7 +282,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 ### 8.1 参数绑定
 
-现状（[postgres_orders.jk:22](../examples/postgres_orders.jk)）：
+现状（[postgres_orders.jk:21](../examples/postgres_orders.jk)）：
 
 ```joky
 [postgres.Value.IntValue(customer), postgres.Value.TextValue(key.clone()), postgres.Value.IntValue(qty)]

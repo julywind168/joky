@@ -1,5 +1,6 @@
 struct Callback { call: fn(Int32) -> Int32 }
-fn plus(value: Int32) -> Int32 { value + 1 }
+fn apply_once<F: FnOnce(Int32) -> Int32>(value: Int32, f: F) -> Int32 { f(value) }
+fn plus(value: Int32) -> Int32 { apply_once(value, |x| { x + 1 }) }
 fn twice(value: Int32) -> Int32 { value * 2 }
 fn invoke(callback: Callback, value: Int32) @suspends -> Int32 { callback.call(value) }
 fn choose() -> Callback { Callback { call: twice } }

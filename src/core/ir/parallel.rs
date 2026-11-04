@@ -88,7 +88,11 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 Type::FixedArray(a) => pending.push((a.element.clone(), share)),
                 Type::Tuple(t) => pending.extend(t.elements.iter().cloned().map(|ty| (ty, share))),
                 Type::Record(r)
-                    if r.closure.as_ref().is_none_or(|c| c.storable)
+                    // A pointer entry proves this concrete closure captures nothing.
+                    // Its exact call target is still checked by analyse.
+                    if r.closure.as_ref().is_none_or(|c| {
+                        c.storable || (worker_local && c.pointer_entry.is_some())
+                    })
                         && (worker_local || !share || r.closure.is_none()) =>
                 {
                     pending.extend(
@@ -563,6 +567,28 @@ mod tests {
         ] {
             admitted.require(name).unwrap();
         }
+    }
+
+    #[test]
+    fn parallel_worker_local_calls_accept_capture_free_closures() {
+        let source = r#"
+            extern fn local(x: Int32) -> Int32
+            fn apply<F: FnOnce(Int32) -> Int32>(f: F) -> Int32 { f(41) }
+            fn safe() -> Int32 { apply(|x| { x + 1 }) }
+            fn calls_local() -> Int32 { apply(|x| { local(x) }) }
+            fn captures(n: Int32) -> Int32 { apply(|x| { x + n }) }
+        "#;
+        let types = crate::TypeRegistry::default().with_prelude(false);
+        let ast = types
+            .resolve_aliases(&crate::parser::parse(source).unwrap())
+            .unwrap();
+        let prepared =
+            crate::core::prepared::PreparedModule::new(&ast, &types, &Default::default()).unwrap();
+        let plan = prepared.plan(&Default::default()).unwrap();
+        let effects = analyse(&plan, &prepared, &HashSet::new());
+        effects.require("safe").unwrap();
+        assert!(effects.require("calls_local").is_err());
+        assert!(effects.require("captures").is_err());
     }
 
     #[test]
