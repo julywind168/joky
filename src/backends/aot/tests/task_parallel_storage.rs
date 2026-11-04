@@ -1733,6 +1733,7 @@ fn scoped_borrow_enums_on_all_backends() {
             ("arrays", 12, 2),
             ("results", 17, 2),
             ("plain_values", 42, 3),
+            ("plain_column", 42, 2),
             ("dynamic", 2, 1),
             ("fixed_borrow", 10, 2),
             ("fixed_move", 12, 0),

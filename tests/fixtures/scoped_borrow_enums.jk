@@ -9,7 +9,7 @@ import joky/check
 
 struct Detail { marker: UInt8, text: Option<String> }
 enum Choice { Empty, Text(String), Values(Array<Int32>), Detail(Detail) }
-enum Plain { Empty, Number(Int32), Zero(Unit) }
+enum Plain { Empty, Number(Int32), Other(Int32), Zero(Unit) }
 fn text(value: &String) @suspends -> Int32 { task.yield_now(); int32(value.byte_length()) }
 fn score(value: &Choice) -> Int32 {
     match value {
@@ -57,7 +57,7 @@ fn results() @suspends -> Int32 {
 }
 fn plain(value: &Plain) @suspends -> Int32 {
     task.yield_now()
-    match value { Plain.Empty => 0, Plain.Number(n) => n, Plain.Zero(_) => 1 }
+    match value { Plain.Empty => 0, Plain.Number(n) => n, Plain.Other(n) => n, Plain.Zero(_) => 1 }
 }
 fn plain_values() @suspends -> Int32 {
     let a = Plain.Empty
@@ -65,6 +65,15 @@ fn plain_values() @suspends -> Int32 {
     let c = Plain.Zero({})
     let (x, y, z) = join { | plain(&a) | plain(&b) | plain(&c) }
     x + y + z
+}
+fn read_column(values: &Array<Plain>) @suspends -> Int32 {
+    task.yield_now()
+    match values.get(1)! { Plain.Other(n) => n, _ => 0 }
+}
+fn plain_column() @suspends -> Int32 {
+    let values = [Plain.Number(7), Plain.Other(21)]
+    let (a, b) = join { | read_column(&values) | read_column(&values) }
+    a + b
 }
 fn dynamic() @suspends -> Int32 {
     var value = Choice.Detail(Detail { marker: 1, text: Some("abc") })
