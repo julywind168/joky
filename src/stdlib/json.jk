@@ -315,7 +315,7 @@ struct Decoder { stack: array.Array<DecodeFrame>, result: Value, offset: UInt64,
     nodes: UInt64, mode: UInt32, allow_end: Bool, limits: Limits }
 fn close_frame(decoder: &mut Decoder) {
     let value = finish_container(decoder.stack.take_last())
-    mem.replace(&mut decoder.result, value);
+    decoder.result = value
 }
 
 fn finish_container(frame: DecodeFrame) -> Value {
@@ -338,7 +338,7 @@ fn read_key(input: &String, start: UInt64, limit: UInt64, frame: &mut DecodeFram
     match frame {
         Fields((fields, key)) => {
             if fields.contains_key(&name) { return Err(decode_error(DecodeErrorKind.DuplicateKey, start)) }
-            mem.replace(key, Some(name));
+            *key = Some(name)
         }
         Items(_) => { return Err(decode_error(DecodeErrorKind.UnexpectedToken, start)) }
     }
@@ -447,7 +447,7 @@ fn decode_step(input: &String, decoder: &mut Decoder) -> Result<Bool, DecodeErro
         return Ok(false)
     }
     let (value, next) = read_scalar(input, decoder.offset, decoder.limits)?
-    mem.replace(&mut decoder.result, value);
+    decoder.result = value
     decoder.offset = next
     decoder.mode = 1
     Ok(false)

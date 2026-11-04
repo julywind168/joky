@@ -1,5 +1,4 @@
 import joky/task
-import joky/mem
 
 trait Store {
     fn get(&self, key: Int32) @suspends @noescape -> Option<String>
@@ -13,7 +12,7 @@ impl Store for MemoryStore {
     }
     fn put(&mut self, key: Int32, value: String) @suspends @noescape {
         self.key = key
-        mem.replace(&mut self.value, value);
+        self.value = value
     }
 }
 
@@ -27,7 +26,7 @@ impl Store for RemoteStore {
     fn put(&mut self, key: Int32, value: String) @suspends @noescape {
         task.yield_now()
         self.key = key
-        mem.replace(&mut self.value, value);
+        self.value = value
     }
 }
 

@@ -2,7 +2,6 @@ import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTc
 import joky/json.{type Value, type Number, type Limits}
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
-import joky/mem
 import joky/check.{assert, panic}
 import joky/task
 
@@ -40,7 +39,7 @@ fn send_value(writer: &mut TcpWriter, value: &Value) @suspends -> Bool {
     }
 }
 fn reply(var value: Value) -> Value {
-    match &mut value { Array(items) => { mem.replace(items.borrow_mut_ref(0), Value.Text("reply")); }, _ => panic("JSON message session") }
+    match &mut value { Array(items) => { items[0] = Value.Text("reply") }, _ => panic("JSON message session") }
     value
 }
 // Complete malformed JSON/schema frames are recoverable. A transport error ends the session.

@@ -1,5 +1,4 @@
 import joky/iter as iteration
-import joky/mem
 import joky/array.{type Array}
 import joky/element.{type Element}
 import joky/slice.{type Slice}
@@ -130,9 +129,9 @@ fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
         positions.push(position)
         i = i + 1
     }
-    // Only index owners are exchanged. Cached hashes avoid user protocol calls.
-    let old_buckets = mem.replace(&mut table.buckets, buckets)
-    let old_positions = mem.replace(&mut table.positions, positions)
+    // Only index arrays are replaced. Cached hashes avoid user protocol calls.
+    table.buckets = buckets
+    table.positions = positions
     table.deleted = 0
 }
 pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {

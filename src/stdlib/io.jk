@@ -1,6 +1,5 @@
 import joky/fs
 import joky/internal/buffer
-import joky/mem
 import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
@@ -71,7 +70,7 @@ impl Stdin {
             Ok(bytes) => bytes
             Err(error) => { self.failed = true; return Err(ReadError.Io(error)) }
         }
-        mem.drop(mem.replace(&mut self.buffer, next))
+        self.buffer = next
         self.offset = 0
         self.eof = self.buffer.is_empty()
         Ok(!self.eof)
