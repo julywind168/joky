@@ -1,6 +1,6 @@
 # 语言核心审查修复计划
 
-状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 已修复；D1 已实施本地同步调用的临时区域，D2 已覆盖同步按值数组及超出扁平槽限额的非泛型 Copy 枚举，D3、D4 已修复，D5 已补受检整数算术，D6 已拆分 Local 帧配额，D7 已修复，D8 已修复载荷模式和 Unit 显示，固定启动开销暂缓。
+状态：2026-11-03 审查结论，K0、K1-1、K1-2 和 K2 已按实施记录修复；K1-3 解释器回溯已修复，原生同步直调已验证测试原型；K3、K4 已修复；D1 已实施本地同步调用的临时区域，D2 已覆盖同步按值数组及超出扁平槽限额的非泛型 Copy 枚举，D3、D4 已修复，D5 已补受检整数算术，D6 已拆分 Local 帧配额，D7 已修复，D8 已修复载荷模式和 Unit 显示，固定启动开销已定位，优化待实施。
 
 本文来自一次针对语言核心（前端、类型、所有权/借用、挂起与结构化并发）的实测审查：
 约 500 个探针程序，在 JIT、解释器、AOT 三后端上对比。下列问题均已用最小程序复现，
@@ -267,8 +267,10 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 
 - 载荷模式的大写裸名按构造器解析，拼错时报错；其他裸名（除 `_`）始终绑定载荷。小写无载荷变体可用限定名匹配。
 - Unit 的 Show、打印及字符串插值统一输出 `{}`。
-- 固定启动开销：Release 下对空程序 `check --no-prelude` 约 0.55 秒，疑为每次重新准备标准库，原因未定位；
-  先 profile，再决定是否缓存标准库的准备结果。
+- 固定启动开销已定位到[首次导入展开](../src/core/imports/files.rs)触发的[内嵌标准库初始化](../src/core/imports/sources.rs)。`--no-prelude` 关闭隐式导入，但首次解析仍遍历全部 57 个源码模块。
+  在 Apple M1 Pro、`b55bfa6e` 的 Release 构建上，以独立文件 `fn main() {}` 预热一轮后，每次启动新进程测 7 轮。中位数为 `--help` 4.3 ms、`fmt --check` 3.9 ms、`check --no-prelude` 857 ms、默认 `check` 1,006 ms。
+  另用 5 个新进程分段计时：关闭 prelude 后，首次 `resolve_file` 中位数 860 ms，同一 Checker 第二次为 0.18 ms。重复冷初始化的采样中，1,583 个主线程样本有 1,551 个落在标准库初始化栈内。
+  后续可按实际需要准备模块及传递依赖，并保留语言隐式依赖和受信任声明身份。
 - 拥有型或借用型 `dyn Read<Item = Int32>` 不满足泛型约束 `T: Read`，属于设计限制，需要时另立计划。
 
 ## 7. 实施与验证记录
@@ -301,4 +303,4 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | D5 | 已实施受检整数算术 | `feat: add checked arithmetic methods for integers` | 三后端核对八种整数的可表示结果和溢出边界。 |
 | D6 | 已修复 | `fix: separate interpreter call depth from local task width` | 保留宿主总帧预算，单独限制调用深度，回收完成或取消的子任务。 |
 | D7 | 已修复 | `5a1862e3`、`fix: reject misleading Unicode controls in Joky source` | 入口、导入和格式化验证码点及位置，三后端验证合法文本和显式转义。 |
-| D8 | 模式和 Unit 已修复；dyn 限制已文档化，固定启动开销暂缓 | `fix: distinguish payload constructors from bindings and display unit as braces` | 三后端验证同名绑定、限定变体、导入别名和 Unit 输出。 |
+| D8 | 模式和 Unit 已修复；dyn 限制已文档化，固定启动开销已定位，优化待实施 | `fix: distinguish payload constructors from bindings and display unit as braces` | 三后端验证同名绑定、限定变体、导入别名和 Unit 输出。 |
