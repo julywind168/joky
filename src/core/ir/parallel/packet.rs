@@ -114,7 +114,10 @@ pub(super) fn checked_type(
         if changed {
             *ty = resolve(ty).ok()?;
         }
-        if has_drop(ty) || ty.storage_layout().is_err() {
+        if matches!(ty, Type::Enum(ref e) if e.compact)
+            || has_drop(ty)
+            || ty.storage_layout().is_err()
+        {
             return None;
         }
         let mut child = |source: &Type| {

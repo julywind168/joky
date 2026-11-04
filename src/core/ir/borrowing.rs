@@ -392,7 +392,7 @@ fn retained_child_arguments(info: &FunctionInfo, name: &str, args: &[Option<Slot
         .filter(|arg| {
             arg.ty.reference_type().is_some()
                 && !arg.ty.contains_buffers()
-                && !arg.ty.contains_fixed_array()
+                && !arg.ty.contains_place_storage()
         })
         .collect()
 }
@@ -2596,7 +2596,7 @@ fn analyze(
                             continue;
                         }
                         if arg.ty.contains_buffers()
-                            || arg.ty.contains_fixed_array()
+                            || arg.ty.contains_place_storage()
                             || !retained_inputs.contains(&arg.index)
                         {
                             continue;

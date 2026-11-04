@@ -103,6 +103,35 @@ fn enum_layout_has_int32_tag_and_disjoint_payloads() {
 }
 
 #[test]
+fn wide_enum_payloads_share_the_strictest_target_alignment() {
+    let mut source = String::from("enum E0 { Empty, Byte(UInt8), Wide(Int64) }");
+    for i in 1..=8 {
+        let child = i - 1;
+        source.push_str(&format!(
+            " enum E{i} {{ A(E{child}), B(E{child}), C(E{child}), D(E{child}) }}"
+        ));
+    }
+    source.push_str(" fn f(x:E0) -> E0 { x }");
+    let ty = return_type(&source);
+    for align in [4, 8] {
+        let target = MemoryLayoutTarget {
+            int64_align: align,
+            ..Default::default()
+        };
+        let layout = ty.memory_layout_for(target).unwrap();
+        assert_eq!((layout.size, layout.align), (align + 8, align));
+        let MemoryLayoutShape::Enum { tag, variants } = layout.shape else {
+            panic!()
+        };
+        assert_eq!(tag.offset, 0);
+        assert!(variants[0].payload.is_none());
+        for variant in &variants[1..] {
+            assert_eq!(variant.payload.unwrap().offset, align);
+        }
+    }
+}
+
+#[test]
 fn unit_and_unsupported_values_are_explicit() {
     let empty = return_type("struct Empty {} fn f(x: Empty) -> Empty { x }");
     assert_eq!(

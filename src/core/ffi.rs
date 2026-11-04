@@ -25,7 +25,7 @@ pub(crate) fn validate_borrowing_registration(signature: &FunctionSignature) -> 
         || signature
             .params
             .iter()
-            .any(|ty| !matches!(ty, Type::Reference(_)) || ty.contains_fixed_array())
+            .any(|ty| !matches!(ty, Type::Reference(_)) || ty.contains_place_storage())
         || !(signature.ret.integer().is_some() || signature.ret == Type::Unit)
     {
         return Err(error(Span::empty(0), "Borrowing host v1 requires one to four reference parameters and an integer or Unit result"));
@@ -45,10 +45,13 @@ pub(crate) fn validate_borrowing_signature(
     for ty in &signature.params {
         let target =
             super::types::reference_target(&ty.reference_type().unwrap().target, nominals, types)?;
-        if target.contains_fixed_array() {
+        if target.contains_place_storage() {
             return Err(error(
                 span,
-                "Borrowing host v1 does not accept fixed arrays or records containing them",
+                format!(
+                    "Borrowing host v1 does not accept {} values or records containing them",
+                    target.place_storage_name()
+                ),
             ));
         }
     }

@@ -52,6 +52,9 @@ pub(crate) fn domain_schema(ty: &Type) -> Option<String> {
     value_schema(ty, 0, &mut members_left, true)
 }
 fn value_schema(ty: &Type, depth: usize, members_left: &mut usize, text: bool) -> Option<String> {
+    if matches!(ty, Type::Enum(e) if e.compact) {
+        return None;
+    }
     if text && *ty == Type::String {
         return Some("owned:utf8:v1".into());
     }

@@ -35,6 +35,9 @@ pub(crate) enum Shape {
 }
 impl Shape {
     pub(crate) fn of(ty: &Type) -> Result<Self, Error> {
+        if ty.contains_compact_enum() {
+            return Err(invalid());
+        }
         fn build(ty: &Type, depth: usize) -> Result<Shape, Error> {
             if depth > 32 {
                 return Err(invalid());

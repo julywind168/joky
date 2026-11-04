@@ -31,7 +31,8 @@ fn by_value(op: BI, element: &EnumType, args: &[Slot], dst: Option<&Slot>) -> bo
 pub(super) fn candidate(e: &EnumType) -> bool {
     let payloads = e.variants.iter().filter_map(|v| v.payload.as_ref());
     // Bound the generated tag dispatch and only specialize concrete nominal types.
-    !e.indirect
+    !e.compact
+        && !e.indirect
         && e.parameters.is_empty()
         && e.arguments.is_empty()
         && e.template.is_none()

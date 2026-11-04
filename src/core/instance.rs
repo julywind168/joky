@@ -73,6 +73,9 @@ pub(crate) fn scalar(ty: &Type) -> bool {
 /// Compiler-owned traversal rejects references, views, pointers and callable
 /// values anywhere in the complete storage and specialization graph.
 pub(crate) fn persistent(ty: &Type) -> bool {
+    if ty.contains_compact_enum() {
+        return false;
+    }
     if ty.contains_dyn() {
         return false;
     }
@@ -110,6 +113,9 @@ pub(crate) fn persistent_graph(
     let mut seen = Vec::new();
     while let Some(ty) = pending.pop() {
         let ty = super::types::reference_target(&ty, nominals, registry)?;
+        if matches!(&ty, Type::Enum(e) if e.compact) {
+            return Ok(false);
+        }
         if seen.contains(&ty) {
             continue;
         }

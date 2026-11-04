@@ -474,7 +474,7 @@ impl FunctionPlan {
         };
         if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::ArenaAlloc)) {
             let target = info.signature.params[1].clone();
-            if target.contains_fixed_array()
+            if target.contains_place_storage()
                 || !target.is_copy_storage_value()
                 || target.reference_type().is_some()
             {

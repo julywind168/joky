@@ -171,9 +171,21 @@ impl PartialEq for DynTraitType {
 impl Eq for DynTraitType {}
 
 impl Type {
-    pub(crate) fn contains_fixed_array(&self) -> bool {
-        TypeWalk::new(self, TypeEdges::Fields)
-            .any(|t| matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_)))
+    pub(crate) fn contains_compact_enum(&self) -> bool {
+        TypeWalk::new(self, TypeEdges::Fields).any(|t| matches!(t, Self::Enum(e) if e.compact))
+    }
+    pub(crate) fn place_storage_name(&self) -> &'static str {
+        if self.contains_compact_enum() {
+            "Wide enum storage"
+        } else {
+            "FixedArray"
+        }
+    }
+    pub(crate) fn contains_place_storage(&self) -> bool {
+        TypeWalk::new(self, TypeEdges::Fields).any(|t| {
+            matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_))
+                || matches!(t, Self::Enum(e) if e.compact)
+        })
     }
     pub(crate) fn is_explicit_arena(&self) -> bool {
         matches!(self, Self::Resource(name) if name.as_ref() == "arena.Arena")
@@ -502,7 +514,7 @@ impl Type {
         if self.contains_closures() {
             return false;
         }
-        if self.contains_fixed_array() {
+        if self.contains_place_storage() {
             return self.is_fixed_array_data();
         }
         // Indirect identities carry no value layout. Their declaration bodies
@@ -1105,6 +1117,8 @@ pub(crate) fn fresh_type_id() -> u64 {
 /// A resolved nominal enum. Its layout is private to the compiler.
 #[derive(Clone)]
 pub struct EnumType {
+    /// Compiler-private place with an overlaid, reference-free Copy payload.
+    pub(crate) compact: bool,
     pub(crate) owners: Vec<Arc<Type>>,
     pub(crate) indirect: bool,
     pub(crate) id: u64,
@@ -1392,8 +1406,10 @@ impl Type {
         match self {
             Self::FixedArray(_) | Self::FixedArrayInit(_) => true,
             Self::Record(_) | Self::Tuple(_) | Self::Enum(_) => {
-                TypeWalk::new(self, TypeEdges::Inline)
-                    .any(|t| matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_)))
+                TypeWalk::new(self, TypeEdges::Inline).any(|t| {
+                    matches!(t, Self::FixedArray(_) | Self::FixedArrayInit(_))
+                        || matches!(t, Self::Enum(e) if e.compact)
+                })
             }
             _ => false,
         }

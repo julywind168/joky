@@ -99,7 +99,7 @@ pub enum MemoryLayoutShape {
     /// Members in declaration order; offsets are relative to this object.
     Record(Vec<FieldMemoryLayout>),
     Tuple(Vec<FieldMemoryLayout>),
-    /// Int32 tag and disjoint payload regions, not a C union representation.
+    /// Int32 tag and per-variant locations. Private wide enums overlay their payloads.
     Enum {
         tag: FieldMemoryLayout,
         variants: Vec<VariantMemoryLayout>,
@@ -143,7 +143,7 @@ impl Type {
     ) -> Result<MemoryLayout, MemoryLayoutError> {
         target.validate()?;
         let mut target = target;
-        if self.contains_fixed_array() {
+        if self.contains_place_storage() {
             super::fixed_array::weight(self).map_err(|_| MemoryLayoutError::ResourceLimit)?;
             target.max_size = target.max_size.min(super::fixed_array::MAX_BYTES).min(
                 if target.pointer_size == 4 {
@@ -327,18 +327,36 @@ impl LayoutContext {
             ),
             Type::Enum(enumeration) => {
                 let tag = builder.push(4, tag_align)?;
-                let variants = enumeration
+                let mut union_size = 0;
+                let mut union_align = 1;
+                let mut variants: Vec<_> = enumeration
                     .variants
                     .iter()
                     .map(|variant| {
                         let payload = variant
                             .payload
                             .as_ref()
-                            .map(|ty| member(ty, &mut builder))
+                            .map(|ty| {
+                                if enumeration.compact {
+                                    let field =
+                                        member(ty, &mut AggregateBuilder::new(builder.max_size))?;
+                                    union_size = union_size.max(field.size);
+                                    union_align = union_align.max(field.align);
+                                    Ok(field)
+                                } else {
+                                    member(ty, &mut builder)
+                                }
+                            })
                             .transpose()?;
                         Ok(VariantMemoryLayout { payload })
                     })
                     .collect::<Result<_, MemoryLayoutError>>()?;
+                if enumeration.compact {
+                    let union = builder.push(union_size, union_align)?;
+                    for field in variants.iter_mut().filter_map(|v| v.payload.as_mut()) {
+                        field.offset = union.offset;
+                    }
+                }
                 MemoryLayoutShape::Enum { tag, variants }
             }
             _ => unreachable!(),

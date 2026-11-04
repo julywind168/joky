@@ -41,6 +41,7 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<GenericArgument>) -> Type {
             depth: 1,
         })),
         Type::Enum(e) => Type::Enum(Arc::new(EnumType {
+            compact: e.compact,
             owners: if e.arguments == arguments {
                 e.owners.clone()
             } else {

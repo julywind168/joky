@@ -98,6 +98,7 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 Type::Enum(Arc::new(EnumType {
+                    compact: false,
                     owners: variants
                         .iter()
                         .filter_map(|v| v.payload.as_ref())

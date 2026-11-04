@@ -1349,12 +1349,20 @@ impl FunctionPlan {
             .map(|p| &p.ty)
             .chain(std::iter::once(&f.ret_ty))
         {
-            if ty.contains_fixed_array() && !fixed_arrays::eligible(ty) {
+            if f.suspends && ty.contains_compact_enum() {
+                return Err(type_error(
+                    &f.span,
+                    ErrorCode::TypeMismatch,
+                    "Suspending signatures cannot pass or return wide enum storage",
+                ));
+            }
+            if ty.contains_place_storage() && !fixed_arrays::eligible(ty) {
                 return Err(type_error(
                     &f.span,
                     ErrorCode::TypeMismatch,
                     format!(
-                        "FixedArray is not supported in this context: function `{}` uses {ty}",
+                        "{} is not supported in this context: function `{}` uses {ty}",
+                        ty.place_storage_name(),
                         f.name
                     ),
                 ));

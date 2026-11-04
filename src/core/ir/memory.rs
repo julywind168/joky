@@ -479,7 +479,7 @@ impl FunctionPlan {
                     return Ok(Some(Flow::Diverged));
                 };
                 let target = slot_type(&value);
-                if target.contains_fixed_array()
+                if target.contains_place_storage()
                     || !target.is_copy_storage_value()
                     || target.reference_type().is_some()
                 {
@@ -782,7 +782,7 @@ pub(super) fn check_module(
             .iter()
             .chain(std::iter::once(&info.signature.ret))
             .any(|ty| {
-                ty.contains_fixed_array()
+                ty.contains_place_storage()
                     || ty.contains_references()
                     || ty.contains_buffers() && *ty != Type::String
             });
@@ -919,7 +919,7 @@ pub(super) fn check_module(
             .iter()
             .chain(std::iter::once(&info.signature.ret))
             .any(|ty| {
-                ty.contains_fixed_array()
+                ty.contains_place_storage()
                     || ty.contains_references()
                     || ty.contains_buffers() && *ty != Type::String
             });

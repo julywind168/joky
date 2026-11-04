@@ -204,7 +204,7 @@ impl TypeRegistry {
         let mut owners = layout::record_owners(&fields, crate::Span::empty(0))?;
         if template.custom_drop
             && !fields.iter().any(|f| f.ty.is_owner())
-            && !fields.iter().any(|f| f.ty.contains_fixed_array())
+            && !fields.iter().any(|f| f.ty.contains_place_storage())
         {
             if fields
                 .iter()
@@ -338,6 +338,7 @@ impl TypeRegistry {
             });
         }
         let instance = Arc::new(EnumType {
+            compact: false,
             owners: layout::enum_owners(&variants, crate::Span::empty(0))?,
             indirect: false,
             id: template.id,

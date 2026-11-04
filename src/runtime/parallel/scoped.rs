@@ -21,6 +21,9 @@ pub(crate) struct Shape {
 }
 impl Shape {
     pub(crate) fn of(ty: &Type) -> Option<Self> {
+        if ty.contains_compact_enum() {
+            return None;
+        }
         let reference = ty.reference_type()?;
         if reference.mutable {
             // First exclusive protocol: one Mailbox owner, no aggregate state,

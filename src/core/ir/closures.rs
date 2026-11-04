@@ -624,11 +624,11 @@ impl FunctionPlan {
             let mut owners = identity.buffer_elements().to_vec();
             let mut depth = 1;
             for (index, (name, ty, _)) in captures.iter().enumerate() {
-                if ty.contains_fixed_array() {
+                if ty.contains_place_storage() {
                     return Err(type_error(
                         &function.span,
                         ErrorCode::TypeMismatch,
-                        "FixedArray captures are not supported",
+                        format!("{} captures are not supported", ty.place_storage_name()),
                     ));
                 }
                 let ty = if function.moving {

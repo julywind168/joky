@@ -213,6 +213,7 @@ pub(super) fn resolve<'a>(
                 depth: 1,
             }))),
             Declaration::Enum(d) => TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
+                compact: false,
                 owners: Vec::new(),
                 indirect: true,
                 id: d.id,
@@ -496,6 +497,7 @@ pub(super) fn resolve<'a>(
             }
         }
     }
+    let mut order = Vec::with_capacity(declarations.len());
     for root in 0..declarations.len() {
         if state[root] == 2 {
             continue;
@@ -540,120 +542,133 @@ pub(super) fn resolve<'a>(
                 }
                 continue;
             }
-            let declaration = declarations[index];
-            let ty = match declaration {
-                Declaration::Record(record) => {
-                    let local = registry.with_parameters(&record.type_params)?;
-                    let mut fields = Vec::new();
-                    let mut scalars = Vec::new();
-                    let mut depth = 1;
-                    for field in &record.fields {
-                        let ty = member_type(&local, &field.ty, &canonical, field.span)?;
-                        if record.repr_c() && !crate::core::ffi::is_c_value(&ty) {
-                            return Err(crate::core::ffi::error(field.span,
-                                "#repr(C) fields require fixed-width numerics, nested #repr(C) records, or nonempty arrays of C-compatible elements"));
-                        }
-                        let offset = scalars.len();
-                        extend_layout(&mut scalars, &mut depth, &ty, field.span, "Record")?;
-                        fields.push(RecordField {
-                            private: !record.public_fields.contains(&field.name),
-                            name: field.name.clone(),
-                            ty,
-                            offset,
-                        });
-                    }
-                    let owners = record_owners(&fields, record.span)?;
-                    TypeDefinition::Type(Type::Record(Arc::new(RecordType {
-                        custom_drop: drop_targets.contains(&record.id),
-                        array: record.array,
-                        list: record.list,
-                        map: record.map,
-                        set: record.set,
-                        closure: None,
-                        owners,
-                        indirect: false,
-                        repr_c: record.repr_c(),
-                        id: record.id,
-                        name: record.name.clone(),
-                        parameters: record.type_params.clone(),
-                        arguments: record.type_params.iter().map(|p| p.argument()).collect(),
-                        template: None,
-                        fields,
-                        scalars,
-                        depth,
-                    })))
-                }
-                Declaration::Enum(enumeration) => {
-                    let local = registry.with_parameters(&enumeration.type_params)?;
-                    // One Int32 tag followed by disjoint, typed payload regions.
-                    // Constructors initialize every lane; inactive regions contain
-                    // zero/false. No uninitialized or type-punned values can cross
-                    // a copy, call or suspension. Union packing is a future pass.
-                    let mut scalars = vec![Type::Int32];
-                    let mut variants = Vec::new();
-                    let mut depth = 1;
-                    for variant in &enumeration.variants {
-                        let offset = scalars.len();
-                        let payload = variant
-                            .payload
-                            .as_ref()
-                            .map(|ty| member_type(&local, ty, &canonical, variant.span))
-                            .transpose()?;
-                        if let Some(ty) = &payload {
-                            extend_layout(&mut scalars, &mut depth, ty, variant.span, "Enum")?;
-                        }
-                        variants.push(EnumVariant {
-                            name: variant.name.clone(),
-                            payload,
-                            offset,
-                        });
-                    }
-                    TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
-                        owners: enum_owners(&variants, enumeration.span)?,
-                        indirect: false,
-                        id: enumeration.id,
-                        parameters: enumeration.type_params.clone(),
-                        arguments: enumeration
-                            .type_params
-                            .iter()
-                            .map(|p| p.argument())
-                            .collect(),
-                        template: None,
-                        name: enumeration.name.clone(),
-                        variants,
-                        scalars,
-                        depth,
-                    })))
-                }
-                Declaration::Alias(alias) => {
-                    aliases_to_refresh.push(alias);
-                    alias_type(registry, alias, &canonical)?
-                }
-            };
-            if let TypeDefinition::Type(value) = &ty {
-                let parameters = match declaration {
-                    Declaration::Record(d) => &d.type_params,
-                    Declaration::Enum(d) => &d.type_params,
-                    Declaration::Alias(d) => &d.type_params,
-                };
-                super::fixed_array::validate(value, &registry.with_parameters(parameters)?)
-                    .map_err(|e| e.with_span(declaration.span()))?;
-            }
-            if let Some(scope) = &module.scope {
-                for (name, binding) in &scope.types {
-                    if binding.declaration == declaration.id() && binding.declaration.is_some() {
-                        canonical.insert(name.as_str(), ty.clone());
-                    }
-                }
-            }
-            registry
-                .forwards
-                .borrow_mut()
-                .insert(declaration.name().to_owned(), ty.clone());
-            canonical.insert(declaration.name(), ty);
+            order.push(index);
             state[index] = 2;
             stack.pop();
         }
+    }
+    let wide = wide_enums(&declarations, &names, &edges, &order, &drop_targets);
+    for index in order {
+        let declaration = declarations[index];
+        let ty = match declaration {
+            Declaration::Record(record) => {
+                let local = registry.with_parameters(&record.type_params)?;
+                let mut fields = Vec::new();
+                let mut scalars = Vec::new();
+                let mut depth = 1;
+                for field in &record.fields {
+                    let ty = member_type(&local, &field.ty, &canonical, field.span)?;
+                    if record.repr_c() && !crate::core::ffi::is_c_value(&ty) {
+                        return Err(crate::core::ffi::error(field.span,
+                                "#repr(C) fields require fixed-width numerics, nested #repr(C) records, or nonempty arrays of C-compatible elements"));
+                    }
+                    let offset = scalars.len();
+                    extend_layout(&mut scalars, &mut depth, &ty, field.span, "Record")?;
+                    fields.push(RecordField {
+                        private: !record.public_fields.contains(&field.name),
+                        name: field.name.clone(),
+                        ty,
+                        offset,
+                    });
+                }
+                let owners = record_owners(&fields, record.span)?;
+                TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                    custom_drop: drop_targets.contains(&record.id),
+                    array: record.array,
+                    list: record.list,
+                    map: record.map,
+                    set: record.set,
+                    closure: None,
+                    owners,
+                    indirect: false,
+                    repr_c: record.repr_c(),
+                    id: record.id,
+                    name: record.name.clone(),
+                    parameters: record.type_params.clone(),
+                    arguments: record.type_params.iter().map(|p| p.argument()).collect(),
+                    template: None,
+                    fields,
+                    scalars,
+                    depth,
+                })))
+            }
+            Declaration::Enum(enumeration) => {
+                let local = registry.with_parameters(&enumeration.type_params)?;
+                let compact = wide.contains(&index);
+                let mut scalars = vec![Type::Int32];
+                let mut variants = Vec::new();
+                let mut depth = 1;
+                for variant in &enumeration.variants {
+                    let offset = scalars.len();
+                    let payload = variant
+                        .payload
+                        .as_ref()
+                        .map(|ty| member_type(&local, ty, &canonical, variant.span))
+                        .transpose()?;
+                    if let Some(ty) = &payload {
+                        if compact {
+                            depth = depth.max(ty.layout_depth() + 1);
+                            if depth > 256 {
+                                return Err(error(
+                                    ErrorCode::ResourceLimit,
+                                    variant.span,
+                                    "Enum nesting exceeds 256 levels",
+                                ));
+                            }
+                        } else {
+                            extend_layout(&mut scalars, &mut depth, ty, variant.span, "Enum")?;
+                        }
+                    }
+                    variants.push(EnumVariant {
+                        name: variant.name.clone(),
+                        payload,
+                        offset,
+                    });
+                }
+                TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
+                    compact,
+                    owners: enum_owners(&variants, enumeration.span)?,
+                    indirect: false,
+                    id: enumeration.id,
+                    parameters: enumeration.type_params.clone(),
+                    arguments: enumeration
+                        .type_params
+                        .iter()
+                        .map(|p| p.argument())
+                        .collect(),
+                    template: None,
+                    name: enumeration.name.clone(),
+                    variants,
+                    scalars,
+                    depth,
+                })))
+            }
+            Declaration::Alias(alias) => {
+                aliases_to_refresh.push(alias);
+                alias_type(registry, alias, &canonical)?
+            }
+        };
+        if let TypeDefinition::Type(value) = &ty {
+            let parameters = match declaration {
+                Declaration::Record(d) => &d.type_params,
+                Declaration::Enum(d) => &d.type_params,
+                Declaration::Alias(d) => &d.type_params,
+            };
+            super::fixed_array::validate(value, &registry.with_parameters(parameters)?)
+                .map_err(|e| e.with_span(declaration.span()))?;
+        }
+        if let Some(scope) = &module.scope {
+            for (name, binding) in &scope.types {
+                if binding.declaration == declaration.id() && binding.declaration.is_some() {
+                    canonical.insert(name.as_str(), ty.clone());
+                }
+            }
+        }
+        registry
+            .forwards
+            .borrow_mut()
+            .insert(declaration.name().to_owned(), ty.clone());
+        canonical.insert(declaration.name(), ty);
     }
     // References deliberately break inline layout dependencies. Now that all
     // owners are known, refresh aliases in dependency order so a forward view
@@ -701,6 +716,74 @@ pub(super) fn resolve<'a>(
         }
     }
     Ok(canonical)
+}
+
+/// Compute flat widths without allocating lanes. Only plain, concrete data
+/// participates. Mark enum payload dependencies as well as the overflow root
+/// so construction and extraction agree on the representation at every level.
+fn wide_enums(
+    declarations: &[Declaration<'_>],
+    names: &HashMap<&str, usize>,
+    edges: &[Vec<(usize, Span)>],
+    order: &[usize],
+    drops: &HashSet<u64>,
+) -> HashSet<usize> {
+    const OVERFLOW: usize = MAX_SCALAR_SLOTS + 1;
+    fn width(
+        ty: &Type,
+        names: &HashMap<&str, usize>,
+        widths: &[Option<usize>],
+        tuples: &mut HashMap<*const TupleType, Option<usize>>,
+        depth: usize,
+    ) -> Option<usize> {
+        if depth > 256 {
+            return None;
+        }
+        match ty {
+            Type::Unit => Some(0),
+            ty if crate::core::instance::scalar(ty) => Some(1),
+            Type::Tuple(t) => {
+                let key = Arc::as_ptr(t);
+                if let Some(cached) = tuples.get(&key) {
+                    return *cached;
+                }
+                let result = t.elements.iter().try_fold(0, |n, t| {
+                    Some(OVERFLOW.min(n + width(t, names, widths, tuples, depth + 1)?))
+                });
+                tuples.insert(key, result);
+                result
+            }
+            Type::Named(n) => widths[*names.get(n.as_str())?],
+            ty => widths[*names.get(ty.nominal()?.0)?],
+        }
+    }
+    let mut tuples = HashMap::new();
+    let mut widths = vec![None; declarations.len()];
+    let mut wide = HashSet::new();
+    for &i in order {
+        let decl = declarations[i];
+        let eligible = match decl {
+            Declaration::Enum(e) => e.type_params.is_empty(),
+            Declaration::Record(r) => r.type_params.is_empty() && !drops.contains(&r.id),
+            Declaration::Alias(a) => a.type_params.is_empty(),
+        };
+        if eligible {
+            let tag = usize::from(matches!(decl, Declaration::Enum(_)));
+            widths[i] = decl.dependencies().into_iter().try_fold(tag, |n, (ty, _)| {
+                Some(OVERFLOW.min(n + width(ty, names, &widths, &mut tuples, 0)?))
+            });
+            if tag == 1 && widths[i] == Some(OVERFLOW) {
+                wide.insert(i);
+            }
+        }
+    }
+    for &i in order.iter().rev() {
+        if wide.contains(&i) {
+            wide.extend(edges[i].iter().map(|&(j, _)| j));
+        }
+    }
+    wide.retain(|&i| matches!(declarations[i], Declaration::Enum(e) if e.type_params.is_empty() && e.variants.iter().any(|v| v.payload.is_some())));
+    wide
 }
 
 fn alias_type(
@@ -821,6 +904,8 @@ pub(super) fn enum_owners(variants: &[EnumVariant], span: Span) -> Result<Vec<Ar
     Ok(owners)
 }
 
+const MAX_SCALAR_SLOTS: usize = 65_536;
+
 pub(super) fn extend_layout(
     scalars: &mut Vec<Type>,
     depth: &mut usize,
@@ -846,7 +931,7 @@ pub(super) fn extend_layout(
     if scalars
         .len()
         .checked_add(ty.scalar_types().len())
-        .is_none_or(|size| size > 65_536)
+        .is_none_or(|size| size > MAX_SCALAR_SLOTS)
     {
         return Err(error(
             ErrorCode::ResourceLimit,

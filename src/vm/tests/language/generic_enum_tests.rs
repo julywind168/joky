@@ -220,3 +220,125 @@ fn generic_enum_constructors_preserve_context_scope_and_evaluation_order() {
         );
     }
 }
+
+fn four_way_enum_chain(depth: usize, leaf: &str) -> String {
+    let mut source = String::new();
+    let mut child = leaf.to_owned();
+    for i in 1..=depth {
+        source.push_str(&format!(
+            "enum E{i} {{ A({child}), B({child}), C({child}), D({child}) }}\n"
+        ));
+        child = format!("E{i}");
+    }
+    source
+}
+
+#[test]
+fn wide_enum_places_enforce_payload_and_call_boundaries() {
+    for (leaf, use_site, code, message) in [
+        ("String", "", ErrorCode::ResourceLimit, "65536 scalar slots"),
+        ("&Int32", "", ErrorCode::ResourceLimit, "65536 scalar slots"),
+        (
+            "Int32",
+            "struct R { x:E8, y:String }",
+            ErrorCode::TypeMismatch,
+            "reference-free Copy",
+        ),
+        (
+            "Int32",
+            "struct R { x:E8, y:&Int32 }",
+            ErrorCode::TypeMismatch,
+            "reference-free Copy",
+        ),
+        (
+            "Int32",
+            "fn task(x:E8) @suspends {}",
+            ErrorCode::TypeMismatch,
+            "Suspending signatures",
+        ),
+        (
+            "Int32",
+            "type Large = FixedArray<E8,8192>",
+            ErrorCode::ResourceLimit,
+            "exceeds 65536",
+        ),
+    ] {
+        let source = format!(
+            "import joky/fixed_array.{{type FixedArray}}\n{}{use_site}",
+            four_way_enum_chain(8, leaf)
+        );
+        let mut vm = VmEngine::new_interpreter();
+        vm.set_prelude_enabled(false);
+        let error = vm.load_source(&source).unwrap_err();
+        assert_eq!(error.code(), code, "{error}");
+        assert!(
+            error.message().contains(message) && error.span().is_some(),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn wide_enum_places_share_payloads_and_copy_programs() {
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+    let registry = crate::TypeRegistry::default().with_prelude(false);
+    for depth in [8, 14] {
+        let mut source =
+            String::from("enum Small { A(Int32), B(Int32) }\nfn small(x: Small) -> Small { x }\n");
+        source.push_str(&four_way_enum_chain(depth, "Int32"));
+        let child = format!("E{depth}");
+        let mut value = "40".to_owned();
+        let mut pattern = "n".to_owned();
+        for i in 1..=depth {
+            let name = format!("E{i}");
+            value = format!("{name}.D({value})");
+            pattern = format!("{name}.D({pattern})");
+        }
+        source.push_str(&format!(
+            r#"
+            struct Wrapped {{ pair: ({child}, Int32) }}
+            fn make() -> {child} {{ {value} }}
+            fn forward(x: {child}) -> Wrapped {{ Wrapped {{ pair: (x, 2) }} }}
+            fn inspect(x: {child}) -> Int32 {{ match x {{ {pattern} => n, _ => 0 }} }}
+            fn check() -> Int32 {{
+                var x = make()
+                let saved = forward(x)
+                x = {child}.A({inner})
+                let (copy, extra) = saved.pair
+                inspect(copy) + extra + inspect(x)
+            }}
+        "#,
+            inner = value
+                .strip_prefix(&format!("{child}.D("))
+                .unwrap()
+                .strip_suffix(')')
+                .unwrap()
+        ));
+        let ast = crate::parser::parse(&source).unwrap();
+        let prepared = PreparedModule::new(&ast, &registry, &BindingRegistry::default()).unwrap();
+        let plan = prepared.plan(&Default::default()).unwrap();
+        let wide = &plan.functions["make"].signature.ret;
+        assert_eq!(wide.storage_layout().unwrap().size, (depth + 1) * 4);
+        assert_eq!(wide.value_lanes().len(), 1);
+        assert_eq!(wide.place_copy_program().len(), 1);
+        assert!(plan.functions["make"].internal);
+        assert!(!plan.functions["forward"].instance_entry);
+        assert_eq!(
+            plan.functions["small"].signature.ret.scalar_types().len(),
+            3
+        );
+        for mode in [VmMode::Interpreter, VmMode::Jit] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(false);
+            vm.load_module(prepared.ast())
+                .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            assert_eq!(
+                vm.call_int32_0("check").unwrap(),
+                42,
+                "{mode:?}, depth {depth}"
+            );
+        }
+        #[cfg(unix)]
+        crate::backends::aot::tests::assert_sync_int32(prepared.ast(), "check", 42);
+    }
+}

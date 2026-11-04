@@ -12,6 +12,9 @@ pub(crate) fn signature(plan: &ModulePlan, name: &str) -> crate::FunctionSignatu
             return None;
         }
         let mut ty = body.pointee(ty, &body.type_registry).ok()?;
+        if matches!(&ty, Type::Enum(e) if e.compact) {
+            return None;
+        }
         // This descriptor installs a non-owning view, never destructor hooks.
         // Source cleanup remains in its task and runs only after readers drain;
         // its call-graph eligibility is checked independently of this loan.

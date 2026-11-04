@@ -82,7 +82,7 @@ pub(super) fn eligible(ty: &Type) -> bool {
             .params
             .iter()
             .chain(std::iter::once(&f.signature.ret))
-            .all(|t| !t.contains_fixed_array() || eligible(t)),
+            .all(|t| !t.contains_place_storage() || eligible(t)),
         Type::FixedArrayInit(_) => true,
         Type::Buffer(t)
         | Type::BufferSlice(t)
@@ -133,12 +133,18 @@ impl FunctionPlan {
     }
 
     pub(super) fn check_fixed_array(&self, ty: &Type) -> Result<(), Error> {
-        if !ty.contains_fixed_array() {
+        if !ty.contains_place_storage() {
             return Ok(());
         }
         if !eligible(ty) {
-            return Err(type_error(&self.current_span, ErrorCode::TypeMismatch,
-                format!("FixedArray is not supported in this context: {ty}; requires supported array values or views")));
+            return Err(type_error(
+                &self.current_span,
+                ErrorCode::TypeMismatch,
+                format!(
+                    "{} is not supported in this context: {ty}",
+                    ty.place_storage_name()
+                ),
+            ));
         }
         // Buffer elements retain shallow nominal identities. Inspect their
         // actual declarations before admitting an inline owning value: hidden
@@ -348,6 +354,12 @@ impl Type {
                 stride: 0,
                 end: 0,
             });
+            // These regions contain only Copy bytes, no owners or references.
+            // One bounded byte copy covers the union without expanding its DAG.
+            if matches!(ty, Type::Enum(e) if e.compact) {
+                nodes[index].end = nodes.len() as u64;
+                return;
+            }
             match (&layout.shape, ty) {
                 (
                     Shape::Array { length, stride, .. },

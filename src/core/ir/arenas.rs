@@ -37,7 +37,7 @@ impl FunctionPlan {
                 {
                     return Err(invalid());
                 }
-                if value.ty.contains_fixed_array()
+                if value.ty.contains_place_storage()
                     || !value.ty.is_copy_storage_value()
                     || value.ty.reference_type().is_some()
                 {

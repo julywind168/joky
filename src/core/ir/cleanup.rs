@@ -79,7 +79,10 @@ impl FunctionPlan {
             let Ok(ty) = self.pointee(&ty, &self.type_registry) else {
                 return false;
             };
-            if self.has_custom_drop(&ty) || ty.storage_layout().is_err() {
+            if matches!(ty, Type::Enum(ref e) if e.compact)
+                || self.has_custom_drop(&ty)
+                || ty.storage_layout().is_err()
+            {
                 return false;
             }
             let children: Vec<Type> = match &ty {

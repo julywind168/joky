@@ -250,6 +250,7 @@ impl Reader<'_> {
                 return Ok(ty.clone());
             }
             let ty = Type::Enum(Arc::new(EnumType {
+                compact: false,
                 owners: variants
                     .iter()
                     .filter_map(|v| v.payload.as_ref())

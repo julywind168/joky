@@ -35,6 +35,9 @@ fn tag(ty: &Type) -> u64 {
 }
 
 fn value(out: &mut Vec<u64>, ty: &Type) -> Result<(), Error> {
+    if ty.contains_compact_enum() {
+        return Err(invalid());
+    }
     let layout = ty.storage_layout().map_err(|_| invalid())?;
     let flags = u64::from(ty.is_owner())
         | (u64::from(ty.is_place()) << 1)

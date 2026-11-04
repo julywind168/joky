@@ -72,8 +72,21 @@ impl TypeRegistry {
 }
 
 pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> {
-    if !ty.contains_fixed_array() {
+    if !ty.contains_place_storage() {
         return Ok(());
+    }
+    if ty.is_place()
+        && ty.contains_compact_enum()
+        && !TypeWalk::new(ty, TypeEdges::Inline).all(|node| match node {
+            Type::Record(r) => !r.custom_drop && r.closure.is_none(),
+            Type::Enum(_) | Type::Tuple(_) | Type::FixedArray(_) | Type::FixedArrayInit(_) => true,
+            _ => crate::core::instance::scalar(node),
+        })
+    {
+        return Err(failure(
+            ErrorCode::TypeMismatch,
+            "Wide enum storage requires reference-free Copy fields",
+        ));
     }
     for node in TypeWalk::new(ty, TypeEdges::Fields) {
         let (Type::FixedArray(array) | Type::FixedArrayInit(array)) = node else {
@@ -162,8 +175,15 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
             } else {
                 target.memory_layout()
             };
-            layout.map_err(|e| failure(ErrorCode::ResourceLimit,
-                &format!("FixedArray memory layout for {ty}: {e}; maximum object size is {MAX_BYTES} bytes")))?;
+            layout.map_err(|e| {
+                failure(
+                    ErrorCode::ResourceLimit,
+                    &format!(
+                        "{} memory layout for {ty}: {e}; maximum object size is {MAX_BYTES} bytes",
+                        ty.place_storage_name()
+                    ),
+                )
+            })?;
         }
     }
 
@@ -228,6 +248,13 @@ pub(super) fn weight(ty: &Type) -> Result<u64, Error> {
                 .iter()
                 .try_fold(0u64, |sum, t| Ok::<_, Error>(sum.saturating_add(child(t)?)))?
                 .max(1),
+            Type::Enum(e) if e.compact => {
+                1 + e
+                    .variants
+                    .iter()
+                    .filter_map(|v| v.payload.as_ref())
+                    .try_fold(0, |largest, t| Ok::<_, Error>(largest.max(child(t)?)))?
+            }
             Type::Enum(e) => e
                 .variants
                 .iter()
@@ -238,7 +265,10 @@ pub(super) fn weight(ty: &Type) -> Result<u64, Error> {
         if n > MAX_LENGTH {
             return Err(failure(
                 ErrorCode::ResourceLimit,
-                &format!("FixedArray logical expansion {n} exceeds 65536 for {ty}"),
+                &format!(
+                    "{} logical expansion {n} exceeds 65536 for {ty}",
+                    ty.place_storage_name()
+                ),
             ));
         }
         active.remove(&key);
