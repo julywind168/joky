@@ -136,3 +136,23 @@ fn semicolon_sequences_resume_without_replaying_prior_expressions() {
         );
     }
 }
+
+#[test]
+fn implicit_newline_discards_point_to_the_unused_calculation() {
+    let mut vm = super::VmEngine::new_interpreter();
+    vm.set_prelude_enabled(false);
+    for (prefix, discarded) in [
+        ("let total = a\n", "- b"),
+        ("", "a * b + 3"),
+        ("let pair = (a, b)\n", "-pair.0"),
+        ("", "true && !false"),
+        ("", "&a"),
+        ("let r = &a\n", "*r"),
+        ("let total = a; ", "123"),
+    ] {
+        let source = format!("fn f(a:Int32, b:Int32) -> Int32 {{ {prefix}{discarded}\n42 }}");
+        let error = vm.load_source(&source).unwrap_err();
+        assert_eq!(error.code(), crate::ErrorCode::UnusedValue, "{error}");
+        assert_eq!(error.span().unwrap().slice(&source), Some(discarded));
+    }
+}

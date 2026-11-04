@@ -52,6 +52,13 @@ impl std::error::Error for Diagnostic {}
 
 pub(crate) const MAX_EXPRESSION_DEPTH: usize = 32;
 
+// A parenthesized first item can be a group or a tuple. Keep the first
+// line-leading subtraction until the delimiter tells us which one it is.
+enum Newlines {
+    Separate,
+    Joined { minus: Option<usize> },
+}
+
 struct Parser<'src> {
     text: &'src str,
     source: crate::SourceId,
@@ -61,7 +68,7 @@ struct Parser<'src> {
     /// End line of the last consumed token, including multiline interpolation.
     last_line: usize,
     /// Parentheses ignore newlines; nested brace bodies restore separation.
-    newline_sensitive: bool,
+    newlines: Newlines,
     allow_record: bool,
     // An ungrouped pipe ends a join or race branch.
     allow_pipe: bool,
@@ -88,7 +95,7 @@ impl<'src> Parser<'src> {
             pos: 0,
             last_span: Span::empty(0),
             last_line: 0,
-            newline_sensitive: true,
+            newlines: Newlines::Separate,
             allow_record: true,
             allow_pipe: true,
             type_params: Vec::new(),
@@ -186,8 +193,17 @@ impl<'src> Parser<'src> {
         self.tokens[self.pos].span
     }
 
+    fn check_list_item(&self) -> Result<(), Diagnostic> {
+        if let Newlines::Joined { minus: Some(pos) } = self.newlines {
+            let token = &self.tokens[pos];
+            return Err(Diagnostic::at(token.line, token.span,
+                "Ambiguous line-leading '-'. Add a comma before a negative item, or move the subtraction operator to the preceding line."));
+        }
+        Ok(())
+    }
+
     fn at_expression_break(&self) -> bool {
-        self.newline_sensitive && self.peek_line() > self.last_line
+        matches!(self.newlines, Newlines::Separate) && self.peek_line() > self.last_line
     }
 
     fn advance(&mut self) -> &TokenKind {

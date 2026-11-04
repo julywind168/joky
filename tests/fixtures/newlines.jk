@@ -23,7 +23,7 @@ fn newline_borrow() -> Int32 {
     var value = 42
     let r = (&value)
     value
-    &*r
+    let _ = &*r
     *r
 }
 fn newline_operators() -> Int32 {
@@ -78,7 +78,7 @@ fn newline_owning_chain() -> Int32 {
     int32(size) + 36
 }
 fn newline_tail() -> Int32 {
-    1
+    let _ = 1
     42
 }
 fn newline_discard() { 42;

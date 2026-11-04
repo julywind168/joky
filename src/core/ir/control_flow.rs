@@ -36,6 +36,29 @@ pub(super) fn unreachable_error(expr: &Expr) -> Error {
     )
 }
 
+// Only diagnose calculations whose operands cannot have source-level effects.
+// Fallible operations and postfix propagation can matter even without their value.
+fn simple_calculation(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident { .. } | Expr::Literal { .. } => true,
+        Expr::Field { base, .. } => simple_calculation(base),
+        Expr::Unary { op, operand, .. } => {
+            !matches!(op, UnaryOp::Unwrap | UnaryOp::Try) && simple_calculation(operand)
+        }
+        Expr::BinOp { lhs, op, rhs, .. } => {
+            !op.can_fail() && simple_calculation(lhs) && simple_calculation(rhs)
+        }
+        Expr::Logical { lhs, rhs, .. } => simple_calculation(lhs) && simple_calculation(rhs),
+        Expr::BinaryChain { first, rest, .. } => {
+            simple_calculation(first)
+                && rest
+                    .iter()
+                    .all(|(op, rhs)| !op.can_fail() && simple_calculation(rhs))
+        }
+        _ => false,
+    }
+}
+
 impl FunctionPlan {
     pub(super) fn block_expr(
         &mut self,
@@ -48,13 +71,13 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         match expr {
             Expr::Graph { exprs, .. } => self.graph_expr(exprs, vars, functions, types),
-            Expr::Unsafe { exprs, .. } | Expr::Block { exprs, .. } => {
+            Expr::Unsafe { .. } | Expr::Block { .. } => {
                 let previous = self.unsafe_context;
                 self.unsafe_context |= matches!(expr, Expr::Unsafe { .. });
                 self.local_scopes.push(Vec::new());
                 let flow = self
                     .sequence(
-                        exprs,
+                        expr,
                         expected,
                         &mut vars.clone(),
                         functions,
@@ -77,11 +100,9 @@ impl FunctionPlan {
                 self.end_local_scope();
                 flow
             }
-            Expr::Sequence {
-                exprs, trailing, ..
-            } => {
+            Expr::Sequence { trailing, .. } => {
                 let flow = self.sequence(
-                    exprs,
+                    expr,
                     if *trailing { None } else { expected },
                     vars,
                     functions,
@@ -131,18 +152,24 @@ impl FunctionPlan {
 
     pub(super) fn sequence(
         &mut self,
-        exprs: &[Expr],
+        container: &Expr,
         expected: Option<&Type>,
         vars: &mut HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
+        let (exprs, implicit) = match container {
+            Expr::Block { exprs, .. } | Expr::Unsafe { exprs, .. } => (exprs, true),
+            Expr::Sequence { exprs, .. } => (exprs, false),
+            _ => unreachable!("expected a block or sequence"),
+        };
         let mut flow = Flow::Value(None);
         for (index, expr) in exprs.iter().enumerate() {
             if matches!(flow, Flow::Diverged) {
                 return Err(unreachable_error(expr));
             }
+            let start = self.ops.len();
             flow = self.expr_expected(
                 expr,
                 vars,
@@ -155,8 +182,52 @@ impl FunctionPlan {
                     None
                 },
             )?;
+            if implicit
+                && index + 1 < exprs.len()
+                && matches!(&flow, Flow::Value(Some(slot)) if !slot.ty.is_owner())
+            {
+                self.check_implicit_discard(expr, start)?;
+            }
         }
         Ok(flow)
+    }
+
+    fn check_implicit_discard(&self, mut tail: &Expr, start: usize) -> Result<(), Error> {
+        while let Expr::Sequence {
+            exprs,
+            trailing: false,
+            ..
+        } = tail
+        {
+            let Some(last) = exprs.last() else {
+                return Ok(());
+            };
+            tail = last;
+        }
+        if matches!(tail, Expr::Ident { .. }) || !simple_calculation(tail) {
+            return Ok(());
+        }
+        // Operator syntax can dispatch to user-defined Add. Earlier calls in
+        // the same semicolon sequence do not consume its final calculation.
+        let span = tail.span();
+        if self.ops[start..]
+            .iter()
+            .zip(&self.op_spans[start..])
+            .any(|(op, site)| {
+                matches!(op, Op::Call { .. })
+                    && span.source_id() == site.source_id()
+                    && span.contains(site.start())
+            })
+        {
+            return Ok(());
+        }
+        let message = match tail {
+            Expr::Unary { op: UnaryOp::Neg, .. }
+            | Expr::Literal { literal: Literal::Integer { negative: true, .. }, .. } =>
+                "Unused calculation after a newline. For subtraction, put '-' at the end of the preceding line. To discard the value, use 'let _ =' or ';'.",
+            _ => "Unused calculation before a newline. Use 'let _ =' or ';' to discard the value explicitly.",
+        };
+        Err(type_error(&span, ErrorCode::UnusedValue, message))
     }
 
     /// Share the function exit and scope-join path with postfix propagation.

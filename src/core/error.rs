@@ -45,6 +45,7 @@ pub enum ErrorCode {
     LinkError,
     Panic,
     Cancelled,
+    UnusedValue,
 }
 
 impl ErrorCode {
@@ -81,6 +82,7 @@ impl ErrorCode {
             Self::LinkError => "link_error",
             Self::Panic => "panic",
             Self::Cancelled => "cancelled",
+            Self::UnusedValue => "unused_value",
         }
     }
 }

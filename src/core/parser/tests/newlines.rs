@@ -236,3 +236,29 @@ fn postfix_unwrap_chains_and_respects_expression_boundaries() {
         .is_err());
     assert_eq!(block("{ value!\n.method()? }").len(), 1);
 }
+
+#[test]
+fn leading_subtraction_in_lists_requires_an_explicit_continuation() {
+    for body in [
+        "[10, 20\n-5, 30]",
+        "f(20 /*\r\n*/ -5)",
+        "(20\n-5, 30)",
+        "(10, 20\n-5)",
+        "[..x\n-y]",
+    ] {
+        let source = format!("fn test() {{ {body} }}");
+        let error = parse(&source).unwrap_err();
+        assert_eq!(error.span.slice(&source), Some("-"));
+        assert!(error.message.contains("comma"), "{error}");
+    }
+    for body in [
+        "(20\n-5)",
+        "[(20\n-5), -1]",
+        "[20 -\n5]",
+        "[20,\n-5]",
+        "f(xs[i\n-1])",
+        "(f(20),\n-5)",
+    ] {
+        parse(&format!("fn test() {{ {body} }}")).unwrap();
+    }
+}

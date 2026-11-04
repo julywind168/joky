@@ -54,9 +54,9 @@ impl FunctionPlan {
         self.local_scopes.push(Vec::new());
         // This block's lexical lifetime includes its join. Planning it as an
         // ordinary nested block would end its locals before children finish.
-        let flow = if let Expr::Block { exprs, .. } = body.as_ref() {
+        let flow = if matches!(body.as_ref(), Expr::Block { .. }) {
             self.sequence(
-                exprs,
+                body,
                 expected,
                 &mut vars.clone(),
                 functions,

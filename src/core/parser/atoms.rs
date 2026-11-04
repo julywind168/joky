@@ -6,7 +6,7 @@ impl Parser<'_> {
         let start = self.peek_span().start();
         self.advance();
         self.expect(&TokenKind::LBrace)?;
-        let previous_newlines = std::mem::replace(&mut self.newline_sensitive, true);
+        let previous_newlines = std::mem::replace(&mut self.newlines, Newlines::Separate);
         let mut branches = Vec::new();
         while self.peek() == &TokenKind::Pipe {
             self.advance(); // Consume the branch separator.
@@ -19,7 +19,7 @@ impl Parser<'_> {
             }
         }
         self.expect(&TokenKind::RBrace)?;
-        self.newline_sensitive = previous_newlines;
+        self.newlines = previous_newlines;
         Ok(Expr::Concurrent {
             kind,
             branches,
@@ -328,7 +328,8 @@ impl Parser<'_> {
                     let name = Self::name_path(&expr).expect("identifier path");
                     self.advance();
                     let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
-                    let previous_newlines = std::mem::replace(&mut self.newline_sensitive, true);
+                    let previous_newlines =
+                        std::mem::replace(&mut self.newlines, Newlines::Separate);
                     let mut fields = Vec::new();
                     while self.peek() != &TokenKind::RBrace {
                         if self.peek() == &TokenKind::Comma {
@@ -355,7 +356,7 @@ impl Parser<'_> {
                     }
                     self.expect(&TokenKind::RBrace)?;
                     self.allow_pipe = previous_pipe;
-                    self.newline_sensitive = previous_newlines;
+                    self.newlines = previous_newlines;
                     Ok(Expr::Record {
                         name,
                         type_args,
@@ -380,13 +381,16 @@ impl Parser<'_> {
                 self.advance();
                 let previous = std::mem::replace(&mut self.allow_record, true);
                 let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
-                let previous_newlines = std::mem::replace(&mut self.newline_sensitive, false);
+                let previous_newlines =
+                    std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
                 let first = self.parse_expr()?;
                 let expr = if self.peek() == &TokenKind::Comma {
                     self.advance();
+                    self.check_list_item()?;
                     let mut elements = vec![first];
                     while self.peek() != &TokenKind::RParen {
                         elements.push(self.parse_expr()?);
+                        self.check_list_item()?;
                         self.expect_list_separator()?;
                     }
                     Expr::Tuple {
@@ -399,7 +403,7 @@ impl Parser<'_> {
                 self.expect(&TokenKind::RParen)?;
                 self.allow_record = previous;
                 self.allow_pipe = previous_pipe;
-                self.newline_sensitive = previous_newlines;
+                self.newlines = previous_newlines;
                 Ok(expr.with_span(self.span(start, self.last_span.end())))
             }
             // Block
@@ -512,12 +516,13 @@ impl Parser<'_> {
                 self.advance();
                 let record = std::mem::replace(&mut self.allow_record, true);
                 let pipe = std::mem::replace(&mut self.allow_pipe, true);
-                let newlines = std::mem::replace(&mut self.newline_sensitive, false);
+                let newlines =
+                    std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
                 let index = self.parse_expr()?;
                 self.expect(&TokenKind::RBracket)?;
                 self.allow_record = record;
                 self.allow_pipe = pipe;
-                self.newline_sensitive = newlines;
+                self.newlines = newlines;
                 let span = self.span(expr.span().start(), self.last_span.end());
                 expr = Expr::Index {
                     base: Box::new(expr),
@@ -645,16 +650,18 @@ impl Parser<'_> {
         self.expect(&TokenKind::LParen)?;
         let previous = std::mem::replace(&mut self.allow_record, true);
         let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
-        let previous_newlines = std::mem::replace(&mut self.newline_sensitive, false);
+        let previous_newlines =
+            std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
         let mut args = Vec::new();
         while self.peek() != &TokenKind::RParen {
             args.push(self.parse_expr()?);
+            self.check_list_item()?;
             self.expect_list_separator()?;
         }
         self.expect(&TokenKind::RParen)?;
         self.allow_record = previous;
         self.allow_pipe = previous_pipe;
-        self.newline_sensitive = previous_newlines;
+        self.newlines = previous_newlines;
         Ok(args)
     }
 }
@@ -666,7 +673,7 @@ impl Parser<'_> {
         self.advance();
         let previous = std::mem::replace(&mut self.allow_record, true);
         let pipe = std::mem::replace(&mut self.allow_pipe, true);
-        let newlines = std::mem::replace(&mut self.newline_sensitive, false);
+        let newlines = std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
         let mut elements = Vec::new();
         while self.peek() != &TokenKind::RBracket {
             let value = if self.peek() == &TokenKind::DotDot {
@@ -680,6 +687,7 @@ impl Parser<'_> {
             } else {
                 self.parse_assignment()?
             };
+            self.check_list_item()?;
             elements.push(value);
             if self.peek() != &TokenKind::RBracket {
                 self.expect(&TokenKind::Comma)?;
@@ -688,7 +696,7 @@ impl Parser<'_> {
         self.expect(&TokenKind::RBracket)?;
         self.allow_record = previous;
         self.allow_pipe = pipe;
-        self.newline_sensitive = newlines;
+        self.newlines = newlines;
         Ok(Expr::Array {
             elements,
             span: self.span(start, self.last_span.end()),

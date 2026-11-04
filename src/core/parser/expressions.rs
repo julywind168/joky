@@ -279,6 +279,11 @@ impl Parser<'_> {
             let Some((_, op)) = operators.iter().find(|(token, _)| self.peek() == token) else {
                 break;
             };
+            if *op == BinOp::Sub && self.peek_line() > self.last_line {
+                if let Newlines::Joined { minus } = &mut self.newlines {
+                    minus.get_or_insert(self.pos);
+                }
+            }
             self.advance();
             let rhs = operand(self)?;
             rest.push((op.clone(), rhs));
@@ -348,7 +353,7 @@ impl Parser<'_> {
                 let suffix = &self.tokens[self.pos + 1];
                 if !Self::starts_postfix(
                     &suffix.kind,
-                    self.newline_sensitive && suffix.line > self.peek_line(),
+                    matches!(self.newlines, Newlines::Separate) && suffix.line > self.peek_line(),
                 ) {
                     self.advance();
                     return Ok(Expr::Literal {

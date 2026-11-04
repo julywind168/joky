@@ -3692,3 +3692,37 @@ fn negative_literals_bind_after_postfix_operations() {
     );
     work.assert_all_backends("minus.jk", &[], b"-6\n-4\n-2147483648\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn explicit_newline_discards_and_subtractions_keep_their_effects() {
+    let work = Workspace::new();
+    work.write(
+        "lines.jk",
+        r#"
+        import joky/ops.{type Add}
+        struct Item { n: Int32 }
+        impl Add for Item {
+            fn add(self, other: Self) -> Self {
+                println(self.n + other.n)
+                self
+            }
+        }
+        fn identity(n: Int32) -> Int32 { n }
+        fn main() {
+            let x = Item { n: 21 }
+            x + x
+            let values = [10, 20,
+                -5, 30]
+            let pair = (values[1] -
+                5, values[2])
+            let (first, second) = pair
+            let _ = first + second
+            first - second;
+            println(identity((first
+                - second)))
+        }
+    "#,
+    );
+    work.assert_all_backends("lines.jk", &[], b"42\n20\n", 0);
+}

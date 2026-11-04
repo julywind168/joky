@@ -117,7 +117,7 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
     work.write(
         "program.jk",
         concat!(
-            "fn main(){\nlet n=5\n-2\nprintln(n)\n",
+            "fn main(){\nlet n=5\n-2;\nprintln(n)\n",
             "let text=\"\"\"\n  n={n}\n  \"\"\"\nprintln(text)\n",
             "println(r#\"{raw} \\n\"#)\n",
             "/* nested /* } */ comment */\n",

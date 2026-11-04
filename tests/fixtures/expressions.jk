@@ -52,7 +52,7 @@ fn expression_sequences() -> Int32 {
 }
 
 fn expression_newline() -> Int32 {
-    5
+    let _ = 5
     -2
 }
 
