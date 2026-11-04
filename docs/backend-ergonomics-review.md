@@ -1,0 +1,463 @@
+# 后端开发易用性审查：语法、命名与标准库
+
+状态：审查意见与改进建议，2026-11-04。本文不是现行规范，所列目标写法均**未实现**；
+当前规则以 [language.md](language.md) 为准。上一轮容器与借用易用性工作见
+[syntax.md §13](syntax.md#13-标准库与示例易用性优化清单)，本文不重复其已完成项。
+
+## 1. 范围与方法
+
+以"用 Joky 写一个普通的 HTTP + PostgreSQL 后端服务"为基准，审查用户直接接触的部分：
+关键词与语法手感、命名一致性、标准库缺口与 API 形状。不评价运行时实现、性能或 ABI。
+
+阅读材料：
+
+- [chat](../examples/chat)：TCP 状态域聊天室（host、admin、script、contract）。
+- [postgres_orders.jk](../examples/postgres_orders.jk)、
+  [postgres_orders_http.jk](../examples/postgres_orders_http.jk)、[http_server.jk](../examples/http_server.jk)。
+- `src/stdlib/` 中 prelude、string、option、result、array、map、list、iter、json、json_typed、
+  http、postgres、log、process、fs、io、time、task、session、domain 的公开接口。
+- language.md 中 `?`/`!`、闭包、join/race/scope/isolate、HTTP、PostgreSQL、String 章节。
+
+用当前 Debug 构建 `target/debug/joky run` 运行了 7 个临时探针（未提交），确认的行为在下文标注【已验证】：
+
+| 探针 | 结果 |
+| --- | --- |
+| 经 `&mut A` 给拥有型字段赋值 `r.room = Some("y")` | 拒绝：`Cannot move or replace an owning field through a borrowed wrapper`；局部 `var` 直接赋值可以 |
+| `Result<_, Int32>` 在返回 `Result<_, E>` 的函数里用 `?` | 拒绝：要求错误类型相同 |
+| `let x = 3` 与 `UInt64` 相加 | 拒绝：`Int32 and UInt64`；`for i in 0 .. n`（n: UInt64）可以 |
+| 同模块期望类型下的裸变体 `let c: Color = Green` | 可以 |
+| 跨模块期望类型下的裸变体 `[IntValue(n)]`（`Array<postgres.Value>`） | 拒绝：`Undeclared function IntValue` |
+| `println(p)`（普通 struct）、`println(task.Failure.Io)` | 拒绝：不满足 Show |
+| 未导入时用 `Array<T>` 写类型标注 | 拒绝：`Array` 不在 prelude；数组字面量与方法照常可用 |
+
+## 2. 总体判断
+
+做得好、应当保持的：
+
+- 字符串插值 `"{id}"`、原始字符串 `r#"..."#`、后缀 `?`/`!` 让常见代码很短。
+- 结构化并发（`scope`/`branch`/`join`/`race`/`isolate`）的语义清楚，停机、排空、取消路径在示例中是一等公民。
+- 资源上限、幂等键、`OutcomeUnknown` 这类"服务端真问题"在 API 与示例中被正面处理，这一点比多数新语言成熟。
+- `#derive(ToJson, FromJson)` + `typed.decode_bytes::<T>` 已经是可用的请求体解码路径。
+
+主要问题：**语言核心偏向"正确但啰嗦"，标准库偏向"有协议、缺便利层"。**
+一个 70 行的 HTTP+PG 示例里，约一半代码在做 SQL 参数装箱、列读取、标头线性查找、
+手写 JSON 错误体、状态码映射和停机样板；这些在 Go/Rust(axum+sqlx)/TS 中都是一两行。
+用户第一次写服务时会撞上的前五个问题依次是：参数装箱、错误类型转换、没有路由、
+字符串基础方法缺失、`&mut` 里不能直接赋值。
+
+## 3. 优先级总表
+
+P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错；P2 = 一致性与打磨。
+
+| 级别 | 项目 | 章节 |
+| --- | --- | --- |
+| P0 | `?` 的错误类型转换（From 协议） | §4.1 |
+| P0 | 经 `&mut` 替换拥有型字段 | §4.2 |
+| P0 | String 基础方法：trim / split_once / contains / strip_prefix / replace / lines / 大小写 / parse | §6.1 |
+| P0 | `#derive(Show, Eq, Hash)`，标准库错误与枚举实现 Show | §4.4 |
+| P0 | PostgreSQL 参数与结果：`ToSql`/`FromSql` 协议、按列名读取、`#derive(FromRow)`、更多类型 | §8 |
+| P0 | HTTP：路由、标头/查询查询、响应构造助手、`Status` 命名 | §7 |
+| P1 | prelude 补齐 `Array`/`Map`/`Set` 类型名 | §4.3 |
+| P1 | 跨模块枚举的期望类型裸变体 | §4.3 |
+| P1 | 停机与信号样板、`race` 只为等停机而写的辅助函数 | §9 |
+| P1 | 迭代与集合常用操作：any/all/find/position/retain/collect/enumerate/fold | §6.2 |
+| P1 | Option/Result 补 `ok_or`/`expect`/`map_or`/`filter`/`inspect_err` | §6.3 |
+| P1 | 结构化日志字段的泛型入口与级别快捷方法 | §6.5 |
+| P1 | 整数默认类型与长度/下标 UInt64 的摩擦 | §5.4 |
+| P1 | 字符串字面量模式、match 守卫 | §5.5 |
+| P2 | 关键词：`when`/`alias`、`branch`、`var`/`mut` 双拼写、`Unit` 写作 `{}` | §5 |
+| P2 | 命名一致性：构造器、缩写、访问器族、`release` | §10 |
+
+## 4. 类型系统与错误处理
+
+### 4.1 `?` 的错误类型转换【已验证】
+
+现状：`?` 要求错误类型完全相同。结果是每个跨层调用都要手写映射，例如
+[postgres_orders.jk:10](../examples/postgres_orders.jk) 的 `number()` 用 6 行把
+`Result<Option<Int64>, ColumnError>` 变成 `Result<Int64, DbError>`；HTTP 层再把 `DbError` 逐个 match 成响应。
+
+建议：
+
+1. 新增 `joky/convert.From<T>` 协议（单向、显式实现），`?` 在 Err 分支调用
+   `E2.from(e1)`。不做链式隐式转换，只查一层；未实现时维持当前诊断，并在诊断中提示实现 From。
+2. 标准库为已知包含关系提供实现：`ColumnError -> DbError`、`fs.IoError -> String`
+   之类不建议提供，只提供"子错误嵌入父错误"的结构性转换。
+3. 业务层常见写法是把多种下游错误合并成应用错误枚举，配合 From 后
+   `place()` 里所有 `?` 可直接使用。
+
+这是改变 `?` 语义的跨模块改动，需要先写清：转换在清理顺序中的位置、Outcome 是否参与
+（建议首版只做 Result）、From 实现失败（分配）时的行为。
+
+### 4.2 经 `&mut` 替换拥有型字段【已验证】
+
+现状：`fn enter(account: &mut Account, ...)` 里不能写 `account.room = Some(name)`，
+只能 `mem.replace(&mut account.room, Some(name.clone()));`
+（[chat/script/main.jk:178](../examples/chat/script/main.jk)）。诊断也只说"borrow the field instead"，
+没有给出 `mem.replace` 这个可行写法。
+
+这是领域模型代码中最高频的动作（`order.status = Shipped`、`user.email = new_email`），
+目前的写法会让每个新用户都怀疑自己写错了。
+
+建议：允许经独占引用对拥有型字段整体赋值，语义等价于 `mem.replace` 后立即释放旧值。
+如果存在必须禁止的情形（例如旧值被其他借用观察、跨挂起），保留拒绝但把诊断改成：
+"use `mem.replace(&mut a.room, value)` to replace an owning field through a reference"。
+后者是低成本的先行项，可单独做。
+
+### 4.3 名字可见性
+
+- `Array<T>`、`Map<K, V>`、`Set<T>` 不在 prelude【已验证】。数组字面量和方法可用，但只要写类型标注
+  （函数签名、结构体字段）就要 `import joky/array.{type Array}`。chat 的业务脚本与
+  postgres 模块都在第一屏写这类导入。建议 prelude 导出三种容器的**类型名**（不导出模块函数，避免名字污染）。
+- 跨模块枚举在已知期望类型下不能用裸变体【已验证】。同模块 `let c: Color = Green` 已可用，
+  但 `[postgres.Value.IntValue(customer), postgres.Value.TextValue(key)]` 无法写成
+  `[IntValue(customer), TextValue(key)]`。建议把"期望类型决定变体查找"推广到导入的类型，
+  与 `match` 中已允许裸变体的行为对齐（`Ok(Confirmed(id))` 在 match 里已经可以）。
+
+### 4.4 派生与 Show【已验证】
+
+现状：可派生 `Clone`、`ToJson`、`FromJson`；没有 `Show`、`Eq`、`Hash`、`Ord`、`Default`。
+`task.Failure` 不实现 Show，于是 [chat/main.jk:40](../examples/chat/main.jk) 用 12 行把
+7 个变体映射成文字。普通 struct 不能 `println`，调试只能手写 Show 实现。
+
+建议：
+
+1. `#derive(Show)`：输出 `Name { field: value }` / `Variant(payload)` 的调试形式，字符串加引号。
+2. `#derive(Eq, Hash)`：使记录可作为 Map key、可用 `==`；与现有 `BorrowEq`/`BorrowHash` 协议对接。
+3. 标准库所有公开错误与无载荷枚举实现 Show（`task.Failure`、`fs.IoError`、`http.ServeError`、
+   `http.ClientError`、`json.DecodeError`、`typed.CodecError`、`tcp.EndpointError` 等），
+   让 `eprintln("connection {id}: {failure}")` 成为默认写法。
+4. `#derive(Default)` 与 `Options { max_connections: 4, ..http.Options.default() }` 式结构更新，
+   取代现在"`var options = http.defaults(); options.max_connections = 4`"。
+
+## 5. 关键词与语法手感
+
+### 5.1 `when` 与 `alias`
+
+`when "say" (mut account, room?: Room = host.rooms[account.room]) { ... } else { ... } alias { ... }`
+是 Joky 最有特色的构造，但关键词选择不利于理解：
+
+- `when` 在 Kotlin/Elixir/Ruby 中是模式匹配或条件分支，读者会以为"当 account 满足……时"。
+  它实际表达的是**具名原子操作 / 事务**。建议候选：`atomic "say" (...)` 或 `transact "say" (...)`，
+  更直接地传达"要么全部提交，要么都不提交"。
+- `else` 分支在可选路径缺失时执行，含义尚可推断；`alias` 分支（两个路径解析到同一实例）
+  读不出意思。建议改为 `same { ... }` 或 `aliased { ... }`，并在诊断中说明触发条件。
+- 返回值 `Outcome<T, Rejection>` 加 `is_committed()` 的组合是对的；建议 `Outcome` 提供
+  `committed_or(default)`，减少 `vacated()` 这类只为折叠 Outcome 的函数。
+
+改关键词代价高，若决定改，应在仍是非公开开发阶段时一次完成，并保留旧词的迁移诊断（同 `parallel` 的做法）。
+
+### 5.2 并发关键词
+
+- `branch` 与业务名词、Git 术语冲突（"branch"在订单、银行、代码仓库领域都是常见词），
+  且不如 `spawn` 直观。`scope { spawn { ... } }` 与 Kotlin/Trio/Swift 的心智模型一致。
+  按 [syntax.md §3](syntax.md#3-词法与名称) 它是保留字，占用了一个常用业务标识符；`join`、`isolate` 已是上下文词，`branch`/`scope`/`race` 也可照此处理。
+- `join { | a | b }`、`race { | a | b }` 的前导竖线与闭包 `|x|` 视觉冲突，
+  `race { | stopped(stop) | accept(&mut listener) }` 第一眼像闭包参数列表。
+  建议接受逗号或换行分隔的形式：`race { stopped(stop), accept(&mut listener) }`，前导 `|` 作为兼容写法保留。
+- `race` 要求各分支同型，导致示例里大量出现只为凑类型的函数（见 §9）。
+
+### 5.3 可变性拼写
+
+同一概念出现三种拼写：局部 `var x`、参数 `var listener: TcpListener`、
+`when` 访问列表 `mut account`，外加引用 `&mut T`。建议统一为：绑定可变性一律 `var`
+（含 `when` 访问列表：`when "say" (var account, ...)`），`mut` 只出现在引用类型 `&mut` 中。
+
+### 5.4 数值类型
+
+- 无约束整数字面量默认 Int32，而 `len()`、下标、`byte_length()`、容量全部是 UInt64【已验证】。
+  `let x = 3; x + items.len()` 报错，用户被迫在业务代码里写 `uint64(...)`。
+  建议之一：无约束字面量在同一表达式内跟随另一操作数定型（已对 range 生效，可推广到二元运算与比较）；
+  或者把默认整数改为 Int64。后者是全局语义改动，需单独评估。
+- 标准库自身仍有过时写法，如 `postgres.jk` 的 `for i in uint64(0) .. width`，
+  range 已能推导字面量，应顺手清理以免成为用户模仿的样板。
+- 类型名 `Int64`/`UInt64` 冗长但一致，可接受；但 API 里混用 Rust 风格缩写
+  （`get_i64`、`to_i64`、`from_u64`、`to_f64`），见 §10。
+
+### 5.5 模式匹配
+
+- 不支持字符串字面量模式与 match 守卫（language.md「枚举与模式匹配」「条件模式与模式循环」）。
+  后端代码大量按字符串分派：HTTP 方法、命令动词、标头值、配置项。chat 的 `parse()` 与 admin 的命令
+  分派只能写成 `if verb == "join" && ... else if line == "balance"` 链。建议优先支持
+  `match verb { "join" => ..., "say" => ..., _ => ... }` 与 `Some(k) if k.byte_length() <= 128 => ...`。
+- `if let` 不支持 `&&` 链；可与守卫一同设计。
+
+### 5.6 其他
+
+- `Unit` 字面量是 `{}`，于是到处出现 `Ok({})`，读起来像返回空对象。syntax.md 曾决定第一版不加 `()` 别名，
+  从后端代码的出现频率看值得重新评估：至少允许 `Ok(())`，或为 `Result<Unit, E>` 提供 `Ok()` 零参构造。
+- `@suspends` 有传染性：任何间接做 I/O 的函数都要标注，等同于 async 着色。
+  建议对**非 pub 函数**推导 `@suspends`，只要求公开签名、函数类型和 trait 方法显式标注；
+  诊断已能定位挂起调用，推导不会降低可读性。
+- 声明属性用 `#`（`#derive`、`#state`、`#every`），效果标注用 `@`（`@suspends`、`@noescape`），
+  两个符号可以接受，但应在 language.md 开头用一张表说明分工，避免用户猜测"为什么不是 `@derive`"。
+
+## 6. 基础标准库缺口
+
+### 6.1 String【P0】
+
+现有：find、starts_with、ends_with、substring、split、join、concat、rune_count、next_rune。
+[chat 的 parse()](../examples/chat/script/main.jk) 用 `find` + `substring(...)!` + 两次 `find(...).is_none()`
+才完成"按第一个空格切成动词和参数、参数不含空白"。
+
+建议补齐（均为借用输入、返回新 String 或借用切片）：
+
+| 方法 | 用途 |
+| --- | --- |
+| `trim()` / `trim_start()` / `trim_end()` | 处理输入、标头、配置 |
+| `split_once(&sep) -> Option<(String, String)>` | 协议行、`key=value`、`Bearer xxx` |
+| `strip_prefix(&p) -> Option<String>` / `strip_suffix` | 路由、前缀命令 |
+| `contains(&needle) -> Bool` | 替代 `find(x).is_some()` |
+| `replace(&from, &to)` | 模板、转义 |
+| `lines()`、`split_whitespace()` | 文本协议、CSV 粗处理 |
+| `to_lowercase()` / `to_uppercase()`（ASCII 版本 `to_ascii_lowercase` 先行） | 标头名、大小写无关比较 |
+| `eq_ignore_ascii_case(&other)` | 标头、方法名 |
+| `text.parse::<T>()` 或保留 `T.parse(&text)` 并统一 | 目前只能 `UInt16.parse(&text)` |
+| `repeat(n)`、`pad_start` | 输出格式化 |
+| `runes()` 迭代器 | 替代手写 `next_rune` 循环 |
+
+`split` 返回 `Result<Array<String>, SplitError>`（仅因空分隔符）导致每次调用都要 `!`；
+建议空分隔符改为按 Rune 切分或 panic，返回值直接为 `Array<String>`。
+
+### 6.2 集合与迭代【P1】
+
+`iter` 模块只有 take/zip/map/filter。chat 的 `Room.has_member` 和 `remove_member`
+（[script/main.jk:192](../examples/chat/script/main.jk)）都是手写循环。建议：
+
+- Array 方法：`any`、`all`、`find`、`position`、`retain`、`dedup`、`first`/`last`、`extend_from(&slice)`、`join`（对 String 元素）。
+- 迭代器：`enumerate`（for 已有 `index, item` 语法，组合器链中仍需要）、`fold`、`sum`、`count`、
+  `collect::<Array<_>>()`、`skip`、`chain`、`flat_map`。
+- 访问器族收敛：Array/Map/List 同时存在 `get`（Copy）、`get_ref`（Option<&T>）、
+  `borrow`（&Element）、`borrow_ref`（&T，未命中失败）、`borrow_mut`、`borrow_mut_ref`。
+  六个名字对用户来说只有两件事："可能没有"和"一定有"。建议文档推荐面只保留
+  `get`（Option<&T> 或 Copy 值）、`get_mut` 与下标 `xs[i]`（未命中失败），其余降为内部或兼容入口。
+
+### 6.3 Option / Result【P1】
+
+现有方法齐全度约为 Rust 的一半。后端代码中最常用而缺失的：
+
+- `Option.ok_or(err)` / `ok_or_else`：把"找不到"转成业务错误，配合 `?`。
+- `expect("message")`：`!` 失败时没有上下文，日志里只看到"unwrap None"。建议 `expect` 或 `!` 支持附带消息。
+- `map_or` / `map_or_else`、`filter`、`is_some_and`、`unwrap_or_default`（依赖 Default）。
+- Result 已有 `map_err`，补 `inspect_err`、`transpose`、`flatten`。
+
+### 6.4 配置与进程
+
+- `process.env(name)` 返回 `Result<Option<String>, IoError>`，读取一个可选端口要 12 行
+  （[chat/host/config.jk](../examples/chat/host/config.jk)）。建议补
+  `process.env_or(name, default)` 与 `process.env_parse::<T>(name) -> Result<Option<T>, ConfigError>`。
+- 参数名类型 `String` 迫使调用方 `name.clone()`；只读输入应接受 `&String`。
+- 错误消息访问方式不一致：`IoError.message` 是字段，`vm.LoadError.message()` 是方法。统一为 Show + 必要时的方法。
+
+### 6.5 日志
+
+现状：`context.emit(log.Level.Warn, "order.commit_unknown", [log.text("route", "/orders")]);`
+需要为每种值选一个构造函数（`log.text`/`uint`/`integer`/`boolean`），返回的 Bool 还要用 `;` 丢弃。
+
+建议：
+
+- `log.ToField` 协议 + 泛型 `log.field(name, value)`，常见类型（整数、Bool、String、Uuid、Duration）实现。
+- 级别快捷方法：`context.warn("order.commit_unknown", [...])`、`log.info(...)`。
+- `emit` 默认不返回值（失败计数由 logger 维护），需要结果时用 `try_emit`。
+
+### 6.6 后端常用但缺失的模块
+
+| 模块 | 用途 | 备注 |
+| --- | --- | --- |
+| URL / 查询串 / 百分号编码 | 解析 `request.target` 中的路径与查询 | HTTP 路由的前提 |
+| 时间格式化 | Timestamp 已有 RFC 3339 子集解析与文本输出，缺日期组件（年月日）、日期运算与自定义格式 | 订单、审计常用 |
+| 环境配置 | 见 §6.4 | |
+| 十进制数 | 金额（chat 用分 + UInt64 回避了这个问题） | 可先与 PG numeric 一起做 |
+| 正则或简单模式匹配 | 输入校验 | 可后置，先补 String 方法 |
+
+## 7. HTTP【P0】
+
+参照 [postgres_orders_http.jk](../examples/postgres_orders_http.jk) 与 [http_server.jk](../examples/http_server.jk)：
+
+| 问题 | 现状 | 建议 |
+| --- | --- | --- |
+| 没有路由 | handler 内手写 `if method == "POST" && target == "/orders"`，`route()` 再写一遍同样的判断 | `http.Router`：`router.post("/orders/:id", handler)`，自动提供 route 标签、405/404 |
+| 方法是字符串 | `Request.method: String`，客户端却用 `Method` 枚举 | 服务端也用 `http.Method`，与客户端统一 |
+| target 含查询串 | 需要用户自己拆 `?` | `request.path()`、`request.query("page") -> Option<String>` |
+| 标头查找 | `for field in &headers { if field.name == "idempotency-key" ... }`（示例第 28 行） | `request.header("idempotency-key") -> Option<&String>`，`header_all` 处理重复 |
+| 响应构造冗长 | 每次写 `http.Response { headers: [], status, content_type, body: text.into_bytes() }`，示例各自封装 `reply()` | `http.json(status, &value)`（ToJson）、`http.text(status, s)`、`http.empty(status)`；`Response.with_header(name, value)` |
+| JSON 错误体手写 | `r#"{"error":"not found"}"#` 遍布示例 | 配合 `http.json` 与 `#derive(ToJson)` 错误结构体 |
+| 状态码命名 | `Status.Success` 表示 200，`InternalError` 表示 500 | 用标准原因短语：`Status.Ok`、`InternalServerError`、`UnprocessableContent`、`TooManyRequests`、`Unauthorized`、`Forbidden`、`MethodNotAllowed`；补齐常用码 |
+| 请求体解码 | `typed.decode_bytes::<Purchase>(body)` 可用 | 补 `request.json::<T>()`，失败返回可直接转成 400 的错误 |
+| 函数 handler 不能带状态 | 有状态时必须实现 `Service`，含 `share`、`route`、`handle` 三个方法 | 路由器持有共享状态 `Router.with_state(state)`，handler 签名 `fn(&S, Request)` |
+| 连接模型 | 每连接一次请求、`Connection: close`、无 chunked | 记为已知限制即可，keep-alive 在压测和反向代理后会成为瓶颈，排入后续计划 |
+| 中间件 | 无 | 至少提供请求前后钩子：鉴权、请求日志已内置、CORS |
+
+服务启动样板见 §9。
+
+## 8. PostgreSQL【P0】
+
+### 8.1 参数绑定
+
+现状（[postgres_orders.jk:21](../examples/postgres_orders.jk)）：
+
+```joky
+[postgres.Value.IntValue(customer), postgres.Value.TextValue(key.clone()), postgres.Value.IntValue(qty)]
+```
+
+建议：
+
+- 新增 `postgres.ToSql` 协议，Int16/32/64、Bool、String、`&String`、Array<UInt8>、Option<T>、
+  Float64、Uuid、Timestamp 实现；`execute(sql, params)` 的参数改为 `Array<postgres.Param>`，
+  由期望类型自动装箱，目标写法 `[customer, key, qty]`。若首版做不到隐式装箱，退一步用短构造函数
+  `[pg.int(customer), pg.text(&key), pg.int(qty)]`，并配合 §4.3 允许裸变体。
+- 变体名去掉冗余后缀：`Value.IntValue` → `Value.Int`，`TextValue` → `Text`。
+- 文本参数接受借用，避免 `key.clone()`。
+
+### 8.2 结果读取
+
+现状：Row 是 `Array<Value>`，只能按列号读取；`postgres.get_i64(row, i)` 返回
+`Result<Option<Int64>, ColumnError>`，非空列需要再写一个 `number()` 包装。
+
+建议：
+
+- 方法形式与按列名读取：`row.get::<Int64>("id")?`、`row.get_opt::<String>("note")?`；
+  需要驱动返回列名元数据（Row 改为带列描述的记录，而非裸数组）。
+- `#derive(FromRow)`：`let order: Order = tx.query_one_as::<Order>(sql, params)?`，按字段名映射。
+- 标量便利：`query_scalar::<Int64>(sql, params)`。
+- 命名：`get_i64` 与语言类型名 `Int64` 不一致，见 §10。
+
+### 8.3 类型覆盖
+
+当前只支持 bool、int2/4/8、text 族、bytea。一个普通订单/用户服务至少还需要：
+`float8`、`numeric`（金额）、`timestamptz`（映射 `time.Timestamp`）、`uuid`（映射 `uuid.Uuid`）、
+`jsonb`（映射 `json.Value` 或 FromJson 类型）、`text[]`/`int8[]`。
+建议按 timestamptz → uuid → jsonb → numeric → 数组 的顺序补，前三项都有现成的 Joky 类型可映射。
+
+### 8.4 配置与生命周期
+
+- 连接串只能来自进程环境变量 `JOKY_POSTGRES_URL`，一个进程不能连两个库，也不能从配置文件读取。
+  理解这是安全边界的选择（DSN 不进入 Joky 值）；建议增加宿主命名配置
+  `postgres.open_named("orders", options)`，由宿主登记多个 DSN，Joky 只看到名字。
+- `open(max_connections)` 只接受一个位置参数；建议 `postgres.Options { max_connections, acquire_timeout, ... }`，
+  与 `http.Options` 保持同一套构造约定（§10）。
+- 事务句柄被丢弃（未 commit/rollback）时的行为需要在 API 上可见：文档已说明弃用连接，
+  建议在 language.md 表格中明确写"丢弃即回滚"，并提供 `pool.transaction(|tx| { ... })` 形式，
+  闭包返回 Ok 提交、Err 回滚，消除"提前 return 忘记 rollback"的类别错误
+  （示例中两处 `tx.rollback()?; return Ok(...)` 就是这种模式）。
+
+## 9. 服务启动与并发样板【P1】
+
+### 9.1 停机与信号
+
+两个 HTTP 示例与 chat 都重复：
+
+```joky
+let stop = shutdown.create()
+// Keep signal handling active until all admitted requests finish draining.
+let signals = stop.subscribe_unix()!
+```
+
+`signals` 必须保持绑定直到排空结束，但它看起来是未使用变量；若用户写成 `stop.subscribe_unix()!;`
+或改名为 `_`，信号处理会被提前释放。这是一个**静默失效的陷阱**。
+
+建议：
+
+- `shutdown.with_signals() -> Result<Controller, ...>`，控制器自身拥有订阅。
+- 一行启动：`http.run("127.0.0.1:8080", router)` 内部完成监听、信号、宽限期与退出码；
+  现有 `serve_with(listener, &stop, options, service)` 保留为可组合的底层入口。
+- 若保留当前形式，至少对 `subscribe_unix` 返回值加"必须保持存活"的未使用诊断。
+
+### 9.2 只为等待停机而写的 race 辅助函数
+
+[chat/main.jk:59](../examples/chat/main.jk) 与 [admin.jk:34](../examples/chat/host/admin.jk) 为了
+"accept 或停机"各写了 2–3 个同型包装函数（`stopped`、`accept`、`stopped_accept`），
+admin 还要把 `Result<TcpStream, _>` 改写成 `Result<Option<TcpStream>, _>` 以凑类型。
+
+建议：
+
+- `stop.until(|| { listener.accept() }) -> Option<T>`：停机时返回 None，与 `task.timeout` 形状一致。
+- 或让 `race` 支持带绑定的分支：
+  `race { s = listener.accept() => Some(s), _ = stop.wait() => None }`，分支各自产生结果，免去同型约束。
+- `TcpListener.accept_until(&stop)` 作为最常见组合的直接方法。
+
+### 9.3 session 与连接框架
+
+`session.run_draining(connection, stream, &script, &client, line, closed, &stop)` 有 7 个位置参数，
+两个函数指针的签名 `fn(&S, &T, String) @suspends @noescape -> Bool` 用户很难一次写对。
+建议与 `http.Service` 对齐，定义 `session.Handler` trait（`on_line`、`on_close`），
+`session.serve(listener, &stop, options, handler)` 负责准入、隔离与失败报告；
+chat 主文件中的 `serve` 循环（准入、计数 ID、复制脚本、isolate、报告失败）基本都可下沉。
+
+### 9.4 域目录类型
+
+`domain.DirectoryHandle` 不带类型参数，导致每次访问写 `domain.lookup_write::<Account>(host.accounts, id)`，
+类型错配只能在运行时发现。建议 `DirectoryHandle<T>`，访问写 `host.accounts.lookup_write(id)`。
+
+## 10. 命名一致性
+
+| 维度 | 现状 | 建议 |
+| --- | --- | --- |
+| 构造 | `Vm.new()`、`StringBuilder.new()`、`shutdown.create()`、`session.create(opts)`、`admission.create(n, 0)`、`domain.directory(n)`、`postgres.open(n)` | 值对象 `Type.new(...)`；I/O 资源用 `open`/`connect`/`listen`；模块级 `create` 改为 `Type.new` |
+| 默认配置 | `http.defaults()`、`session.defaults()`、`json.Limits.defaults()`、`typed.Options.defaults()`、chat 的 `defaults()` | 统一 `Type.default()`（配合 `#derive(Default)` 与结构更新） |
+| 数值缩写 | `get_i64`、`to_i64`、`from_u64`、`to_f64` 与类型名 `Int64`/`UInt64`/`Float64` 并存 | 跟随类型名：`to_int64()`，或用泛型 `to::<Int64>()`；列读取用 `row.get::<Int64>` |
+| 长度 | 容器 `len()`，String `byte_length()`，StringBuilder `byte_length()` | 保留 `byte_length` 明确单位是对的；补 `len()` 作为同义词会更符合直觉，二选一需写入约定 |
+| 访问器 | `get`/`get_ref`/`borrow`/`borrow_ref`/`borrow_mut`/`borrow_mut_ref` | 见 §6.2 |
+| 释放 | `release()` 提前释放 | 可接受；若引入 `Drop` 用户实现，考虑统一叫 `drop(x)` |
+| 完成构建 | `StringBuilder.finish()` | 业界常见 `to_string()`/`build()`，`finish` 可接受，但应与 http 内部 `Wire.finish()`（关闭连接）区分语义 |
+| 错误枚举变体 | `DbError.Invalid`、`Limit`、`Closed` 很笼统 | 用具体名词：`InvalidRequest`、`LimitExceeded`、`TransactionClosed` |
+| HTTP 状态 | `Success` | `Ok`（见 §7） |
+| 参数传递 | 大量只读参数类型为 `String`（`process.env(name: String)`、`tcp.listen(host: String, ...)`、SQL 文本） | 只读输入接受 `&String`；字面量自动借用已可用，调用方少写 `clone()` |
+
+建议把上表的结论写入 CONTRIBUTING.md 的 API 命名约定，新增模块按此执行，旧接口在一次集中迁移中改名。
+
+## 11. 目标写法对照
+
+以下为采纳 §4、§7、§8 建议后的 `place()` 与 HTTP handler 草图，仅用于说明方向：
+
+```joky
+pub fn place(pool: &pg.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, AppError> {
+    if qty <= 0 || key.is_empty() { return Err(AppError.Invalid) }
+    pool.transaction(|tx| {
+        let inserted = tx.execute("INSERT ... ON CONFLICT (customer, request_id) DO NOTHING", [customer, key, qty])?
+        let row = tx.query_one("SELECT id, qty FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [customer, key])?
+        if row.get::<Int64>("qty")? != qty { return Ok(Order.Conflict) }
+        if inserted == 1 && tx.execute("UPDATE ... WHERE sku=1 AND available >= $1", [qty])? == 0 {
+            return Ok(Order.Insufficient)
+        }
+        Ok(Order.Confirmed(row.get::<Int64>("id")?))
+    })
+}
+
+fn create_order(state: &Orders, request: http.Request) @suspends -> http.Response {
+    let key = match request.header("idempotency-key") {
+        Some(k) if !k.is_empty() && k.byte_length() <= 128 => k.clone(),
+        _ => return http.json(Status.BadRequest, &ApiError.new("missing Idempotency-Key"))
+    }
+    let input = match request.json::<Purchase>() { Ok(i) => i, Err(_) => return http.bad_request("expected qty") }
+    match orders.place(&state.pool, 1, &key, input.qty) {
+        Ok(Confirmed(id)) => http.json(Status.Ok, &OrderCreated { order_id: id }),
+        ...
+    }
+}
+
+fn main() @suspends -> Int32 {
+    let pool = pg.Pool.open(pg.Options { max_connections: 4, ..pg.Options.default() })!
+    let router = http.Router.with_state(Orders { pool }).post("/orders", create_order)
+    http.run("127.0.0.1:0", router)
+}
+```
+
+注：`Some(k) if ...` 依赖 §5.5 的 match 守卫，当前未支持；`transaction` 闭包内 `return` 返回闭包本身，与现有闭包规则一致。
+
+## 12. 建议实施顺序
+
+1. **低成本先行**（不改语义）：标准库错误与枚举实现 Show；String 基础方法；Option/Result 补方法；
+   Array any/all/find/retain；`&mut` 字段替换的诊断提示 `mem.replace`；prelude 导出容器类型名；
+   清理标准库内过时写法（`uint64(0) ..`）。
+2. **HTTP 便利层**：header/query/path 访问、响应助手、Status 改名、Method 枚举、Router、`http.run`、
+   `shutdown.with_signals`。均为标准库源码改动，不涉及编译器。
+3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
+   `pool.transaction`、Options。
+4. **语言特性**：`#derive(Show, Eq, Hash, Default)`、跨模块期望类型裸变体、字符串字面量模式与守卫、`?` 的 From 转换、
+   `ToSql` 隐式装箱、结构更新语法、`&mut` 整体字段赋值、非 pub 函数 `@suspends` 推导。
+   每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
+5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、
+   构造与缩写命名）：集中一次完成并提供迁移诊断，趁项目尚未公开时做。
+
+每项落地时同步更新 language.md 与相关示例，示例应作为"目标写法"的验收标准：
+postgres_orders_http.jk 在完成 1–3 后应缩短到约当前一半，且不再出现手写 JSON 字符串与标头循环。

@@ -18,6 +18,7 @@
 
 - [Joky 语法与类型系统设计（第一版草案）](syntax.md)
 - [标准库与示例易用性优化清单](syntax.md#13-标准库与示例易用性优化清单)（E0–E6：示例、API、推导、借用与迭代组合）
+- [后端开发易用性审查](backend-ergonomics-review.md)（语法、命名与标准库缺口；以 chat 与 PostgreSQL 示例为基准）
 - [Arena、隐式生命周期与 FFI 设计](arena-borrowing-ffi.md)
 - [服务端状态域与任务并发设计草案](server-concurrency.md)
 - [状态域语法糖草案](state-domain-syntax.md)
