@@ -1648,7 +1648,7 @@ fn show_print_and_interpolation_match_all_backends() {
         }
     "#,
     );
-    let expected = "-128|-32768|-2147483648|-9223372036854775808|255|65535|4294967295|18446744073709551615|1.5|-0|true|界|()|NaN|inf\n<Item(42:hé\0🙂)>|Item(42:hé\0🙂)|hé\0🙂\n[Item(1:one), Item(2:two)]|[Item(1:one), Item(2:two)]\nSome(Item(42:yes))|None|Some(Item(42:yes))\nOk(Item(42:yes))|Err(no)|Ok(Item(42:yes))\n{x}=1:2:[2]:kept:block:2:kept\ntail=\0false\n";
+    let expected = "-128|-32768|-2147483648|-9223372036854775808|255|65535|4294967295|18446744073709551615|1.5|-0|true|界|{}|NaN|inf\n<Item(42:hé\0🙂)>|Item(42:hé\0🙂)|hé\0🙂\n[Item(1:one), Item(2:two)]|[Item(1:one), Item(2:two)]\nSome(Item(42:yes))|None|Some(Item(42:yes))\nOk(Item(42:yes))|Err(no)|Ok(Item(42:yes))\n{x}=1:2:[2]:kept:block:2:kept\ntail=\0false\n";
     work.assert_all_backends("main.jk", &[], expected.as_bytes(), 0);
 }
 
@@ -1723,7 +1723,7 @@ fn cps_local_borrows_print_and_resume_in_all_backends() {
             include_str!("../fixtures/cps_local_borrows.jk")
         ),
     );
-    work.assert_all_backends("locals.jk", &[], b"42\n42\n43\n42\n1.5\ntrue\n()\n42\n", 0);
+    work.assert_all_backends("locals.jk", &[], b"42\n42\n43\n42\n1.5\ntrue\n{}\n42\n", 0);
 }
 
 #[test]
@@ -1820,7 +1820,7 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
         }
     "#,
     );
-    work.assert_all_backends("automatic.jk", &[], b"count=42, next=43\n42\n43\nagain=count=42, next=43\ncount=42, next=43\n255\n<41>\n<42>\nkept\nkept\nkept\nmake\ntemporary\n42\n42\n42\n1\n2\n8\n42\nargument binding\ntail=true\n1.5\n\xe7\x95\x8c\n()\n", 0);
+    work.assert_all_backends("automatic.jk", &[], b"count=42, next=43\n42\n43\nagain=count=42, next=43\ncount=42, next=43\n255\n<41>\n<42>\nkept\nkept\nkept\nmake\ntemporary\n42\n42\n42\n1\n2\n8\n42\nargument binding\ntail=true\n1.5\n\xe7\x95\x8c\n{}\n", 0);
     work.write(
         "async_auto.jk",
         r#"
@@ -3787,4 +3787,48 @@ fn explicit_newline_discards_and_subtractions_keep_their_effects() {
     "#,
     );
     work.assert_all_backends("lines.jk", &[], b"42\n20\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn payload_bindings_remain_bindings_when_enum_variants_share_their_names() {
+    let work = Workspace::new();
+    work.write(
+        "colors.jk",
+        r#"
+        pub enum Color { Red, x, 青 }
+    "#,
+    );
+    work.write(
+        "main.jk",
+        r#"
+        import colors.{type Color, Red as Crimson, Red as x}
+        fn bound(o: Option<Color>) -> Bool {
+            if let Some(x) = o { x == Color.青 } else { false }
+        }
+        fn uncased(o: Option<Color>) -> Bool {
+            if let Some(青) = o { 青 == Color.Red } else { false }
+        }
+        fn variant(o: Option<Color>) -> Int32 {
+            match o { Some(Crimson) => 1, Some(Color.x) => 2, Some(Color.青) => 3, None => 0 }
+        }
+        fn main() {
+            println(bound(Some(Color.青)))
+            println(uncased(Some(Color.Red)))
+            println(variant(Some(Color.Red)))
+            println(variant(Some(Color.x)))
+            println(variant(Some(Color.青)))
+            println("{let y = 1}")
+        }
+    "#,
+    );
+    work.assert_all_backends("main.jk", &[], b"true\ntrue\n1\n2\n3\n{}\n", 0);
+    work.write("main.jk", "import colors.{type Color}\nfn test(o: Option<Color>) -> Bool {\n    if let Some(Rde) = o { true } else { false }\n}\nfn main() {}");
+    let output = work.cli(&["check", "main.jk"]);
+    failure(&output, "no variant `Rde`");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("main.jk:3:17") && stderr.contains("invalid_pattern"),
+        "{stderr}"
+    );
 }

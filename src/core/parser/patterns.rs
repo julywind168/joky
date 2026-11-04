@@ -252,7 +252,7 @@ impl Parser<'_> {
                     payload: Some(Box::new(payload)),
                     span: self.span(start, self.last_span.end()),
                 }
-            } else if name.contains('.') {
+            } else if name.contains('.') || name.starts_with(char::is_uppercase) {
                 PayloadPattern::Variant {
                     name,
                     payload: None,

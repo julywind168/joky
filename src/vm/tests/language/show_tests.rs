@@ -114,7 +114,7 @@ fn show_and_interpolation_preserve_scalars_custom_owners_and_evaluation_order() 
             vm.load_source(&source)
                 .unwrap_or_else(|e| panic!("{mode:?} prelude={prelude}: {e}"));
             for (name, expected) in [
-                ("scalar_text", "-128|-32768|-2147483648|-9223372036854775808|255|65535|4294967295|18446744073709551615|1.5|-0|true|界|()|NaN|inf"),
+                ("scalar_text", "-128|-32768|-2147483648|-9223372036854775808|255|65535|4294967295|18446744073709551615|1.5|-0|true|界|{}|NaN|inf"),
                 ("custom_text", "<Item(42:hé\0🙂)>|Item(42:hé\0🙂)|hé\0🙂"),
                 ("array_text", "[Item(1:one), Item(2:two)]|[Item(1:one), Item(2:two)]"),
                 ("option_text", "Some(Item(42:yes))|None|Some(Item(42:yes))"),

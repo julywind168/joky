@@ -1297,7 +1297,7 @@ impl BindingPattern {
     }
 }
 
-/// Recursive match payload syntax; bare names are resolved using the payload type.
+/// Recursive match payload syntax. Name binds a value and Variant tests a constructor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PayloadPattern {
     Sequence(Box<SequencePattern<PayloadPattern>>),

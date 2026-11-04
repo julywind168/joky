@@ -344,17 +344,6 @@ impl FunctionPlan {
             }
             PayloadPattern::Discard { .. } => Kind::Any(None),
             PayloadPattern::Name { name, .. } => {
-                // Nullary constructors are selected by the expected enum identity,
-                // including imports. Other bare payload names introduce bindings.
-                if let Type::Enum(enumeration) = ty {
-                    let variant = self.pattern_variant(enumeration, name);
-                    if variant
-                        .is_some_and(|name| enumeration.variants.iter().any(|v| v.name == name))
-                        || self.constructor_binding(name).is_some()
-                    {
-                        return self.check_variant_pattern(name, None, ty, span, names, types);
-                    }
-                }
                 if !names.insert(name.clone()) {
                     return Err(type_error(
                         &span,

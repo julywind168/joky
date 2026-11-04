@@ -2237,6 +2237,8 @@ fn example() -> Bool {
 除接收者外不能使用 Self，不能返回引用或含引用结果。未使用的接口也检查这些条件。
 `view.method(args)` 与 `Trait.method(view, args)` 按接口声明顺序的槽调用最终默认/覆盖实例；
 默认体内部仍按具体 Self 静态分派，同名固有方法和其他 trait 不改变动态槽。
+拥有型 `dyn Read<Item = Int32>` 及其借用视图均不能作为满足 `T: Read` 的具体实现传给泛型函数。
+需要接收已擦除对象时，可将同步 helper 的参数声明为 `&dyn Read<Item = Int32>` 并通过它调用接口方法；泛型入口可在擦除前接收具体类型。
 共享视图可重复调用；独占视图调用共享/独占方法或传给同步 helper 时短期重借用。
 视图不拥有或销毁原对象，方法的拥有参数/结果沿普通清理路径处理；结果可为 String、记录、枚举或元组。
 
@@ -3097,7 +3099,9 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
   有载荷模式可递归写元组及嵌套构造，例如 `Some((left, right))`、`Some(None)`、
   `Some(Some(value))`；元组形状和元素数量必须与载荷类型一致。模式中的导入名称按声明身份检查；
-  其余无限定模式由被匹配类型确定。裸的无载荷构造器按当前载荷的枚举类型解析，其他裸名称创建绑定。
+  载荷位置的裸标识符按首字符区分。Unicode 大写字母开头的名称匹配无载荷变体，例如 `Some(Red)`；拼成 `Some(Rde)` 时，若找不到该变体会报 `invalid_pattern`。
+  其他裸名称（除 `_`）绑定当前载荷。即使枚举新增同名变体或导入同名构造器，`Some(x)` 仍绑定 `x`。
+  匹配小写或无大小写的无载荷变体可写 `Some(Color.red)` 或 `Some(Color.青)`。顶层裸变体和带参数的构造器模式沿用原规则。
   有限定模式可使用声明名或导入别名，载荷模式必须匹配声明的有无。
   例如本地 `Choice.None` 遮蔽 prelude 的裸 `None`；匹配标准 Option 时可写 `Option.None` 明确身份。
   载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；按值或共享匹配的 Copy 绑定是独立快照。
@@ -6607,7 +6611,7 @@ pub trait Show {
 
 内置实现覆盖八种整数、Float32/Float64、Bool、Rune、Unit、String，以及元素满足 Show 的
 Array、Option、Result 和 key/value 都满足 Show 的 Map。整数为十进制；浮点沿用 to_text，
-包括 `-0`、`NaN`、`inf`；Bool 为 true/false，Unit 为 `()`，Rune 和 String 原样输出。
+包括 `-0`、`NaN`、`inf`；Bool 为 true/false，Unit 为 `{}`，Rune 和 String 原样输出。
 Array 为 `[a, b]`，Option 为 `Some(a)` / `None`，Result 为 `Ok(a)` / `Err(e)`，
 Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本，不是带引号转义的序列化格式。
 自定义记录/枚举须显式实现，当前不提供自动派生或元组实现。

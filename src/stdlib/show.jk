@@ -21,7 +21,7 @@ pub fn to_text<T: Show>(value: &T) @noescape -> String { Show.to_text(value) }
 impl Show for String { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(self) } }
 impl Show for Bool { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(if (*self) { "true" } else { "false" }) } }
 impl Show for Rune { fn show(&self, output: &mut StringBuilder) @noescape { output.push((*self)) } }
-impl Show for Unit { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str("()") } }
+impl Show for Unit { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(r"{}") } }
 impl Show for Int8 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(int64((*self)).to_string()) } }
 impl Show for Int16 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(int64((*self)).to_string()) } }
 impl Show for Int32 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(int64((*self)).to_string()) } }
