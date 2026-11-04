@@ -20,7 +20,7 @@ pub(crate) use files::{
 pub(crate) use sources::{
     list_test_library, map_test_library, string_test_library, tcp_test_library,
 };
-pub(crate) use sources::{DefinitionScope, StandardLibrary};
+pub(crate) use sources::{DefinitionScope, StandardCache, StandardLibrary};
 
 const PRELUDE: &str = "joky/prelude";
 
@@ -125,18 +125,12 @@ pub(crate) fn expand<'a>(
     if module.scope.is_some() {
         return Ok(Cow::Borrowed(module));
     }
-    let standard = registry.standard.get_or_init(StandardLibrary::new);
-    Ok(Cow::Owned(finish(module, registry, standard, false)?))
+    let result = prepare_entry(module, false)?;
+    let graph = registry.standard.for_module(&result, registry.prelude)?;
+    Ok(Cow::Owned(finish(result, registry, &graph)?))
 }
 
-/// Bind `module` against `graph` and assemble the expanded result. Both
-/// expansion entries (embedded-only and file-backed) share this epilogue.
-pub(crate) fn finish(
-    module: &Module,
-    registry: &TypeRegistry,
-    graph: &StandardLibrary,
-    include_tests: bool,
-) -> Result<Module, Error> {
+fn prepare_entry(module: &Module, include_tests: bool) -> Result<Module, Error> {
     let mut result = module.clone();
     if !include_tests {
         result
@@ -144,6 +138,14 @@ pub(crate) fn finish(
             .retain(|item| !matches!(item, Item::FnDef(f) if f.is_test()));
     }
     super::json_derive::expand(&mut result)?;
+    Ok(result)
+}
+
+fn finish(
+    mut result: Module,
+    registry: &TypeRegistry,
+    graph: &StandardLibrary,
+) -> Result<Module, Error> {
     let (scope, required) = bind(&result, registry, &graph.modules, false, true)?;
     result.scope = Some(Arc::new(scope));
     graph.append(&mut result, &required);
@@ -177,7 +179,7 @@ fn uses_equality(module: &Module) -> bool {
 fn bind(
     module: &Module,
     registry: &TypeRegistry,
-    libraries: &BTreeMap<String, sources::SourceModule>,
+    libraries: &BTreeMap<String, std::rc::Rc<sources::SourceModule>>,
     buffer_access: bool,
     implicit_operators: bool,
 ) -> Result<(ImportScope, BTreeSet<String>), Error> {

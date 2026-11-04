@@ -24,32 +24,20 @@ pub(super) fn expand_with_tests(
     }
     let mut sources = module.sources.as_ref().clone();
     let result = (|| {
-        let standard = registry.standard.get_or_init(StandardLibrary::new);
-        // Only user file imports require a mutable graph; a compilation that
-        // resolves entirely against the embedded cache borrows it instead of
-        // paying for a deep clone of every stdlib module.
-        let mut graph;
-        let graph = if module.imports.iter().all(|import| {
-            standard.modules.contains_key(&import.path)
-                || registry.hosts.module(&import.path).is_some()
-        }) {
-            standard
-        } else {
-            graph = standard.clone();
-            for import in &module.imports {
-                load(
-                    &mut graph,
-                    import,
-                    registry,
-                    provider,
-                    rewrite,
-                    &mut Vec::new(),
-                    &mut sources,
-                )?;
-            }
-            &graph
-        };
-        finish(module, registry, graph, include_tests)
+        let module = prepare_entry(module, include_tests)?;
+        let mut graph = registry.standard.for_module(&module, registry.prelude)?;
+        for import in &module.imports {
+            load(
+                &mut graph,
+                import,
+                registry,
+                provider,
+                rewrite,
+                &mut Vec::new(),
+                &mut sources,
+            )?;
+        }
+        finish(module, registry, &graph)
     })();
     result.map_err(|error: Error| error.with_sources(&sources))
 }
@@ -84,6 +72,9 @@ fn load(
         .items
         .retain(|item| !matches!(item, Item::FnDef(f) if f.is_test()));
     rewrite(path, &mut module)?;
+    crate::core::json_derive::expand(&mut module)?;
+    let standard = registry.standard.for_module(&module, registry.prelude)?;
+    graph.modules.extend(standard.modules);
     stack.push(path.clone());
     for dependency in &module.imports {
         load(

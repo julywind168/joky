@@ -1,6 +1,6 @@
 //! Embedded source modules are parsed once and resolved in their own namespaces.
 use super::*;
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 mod intrinsics;
 #[cfg(test)]
@@ -469,16 +469,66 @@ pub(super) struct SourceModule {
     pub implicit: ImplicitImports,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct StandardLibrary {
-    pub(super) modules: BTreeMap<String, SourceModule>,
+    pub(super) modules: BTreeMap<String, Rc<SourceModule>>,
+}
+
+/// Only embedded declarations survive between compilations. Per-compilation
+/// graphs share prepared modules by identity, and add their own user modules.
+#[derive(Debug, Default)]
+pub(crate) struct StandardCache {
+    prepared: RefCell<StandardLibrary>,
+    #[cfg(test)]
+    fixture: std::cell::OnceCell<StandardLibrary>,
+}
+
+impl StandardCache {
+    #[cfg(test)]
+    pub(crate) fn set(&self, library: StandardLibrary) -> Result<(), StandardLibrary> {
+        self.fixture.set(library)
+    }
+
+    pub(super) fn for_module(
+        &self,
+        module: &Module,
+        prelude: bool,
+    ) -> Result<StandardLibrary, Error> {
+        #[cfg(test)]
+        if let Some(library) = self.fixture.get() {
+            return Ok(library.clone());
+        }
+        let mut cache = self.prepared.borrow_mut();
+        let mut roots = module
+            .imports
+            .iter()
+            .map(|i| i.path.as_str())
+            .chain(prelude.then_some(PRELUDE))
+            .chain(uses_equality(module).then_some("joky/internal/text"));
+        // Most calls reuse already prepared entries. The isolated registry is
+        // needed only when binding a new embedded module's own declarations.
+        let mut registry = None;
+        for path in &mut roots {
+            if !cache.modules.contains_key(path) && SOURCES.iter().any(|s| s.path == path) {
+                cache.load(
+                    path,
+                    SOURCES,
+                    registry.get_or_insert_with(|| TypeRegistry::new().with_prelude(false)),
+                    &mut Vec::new(),
+                )?;
+            }
+        }
+        Ok(cache.clone())
+    }
 }
 
 impl StandardLibrary {
+    #[cfg(test)]
     pub(super) fn new() -> Self {
         Self::from_sources(SOURCES).expect("valid embedded source modules")
     }
 
+    #[cfg(test)]
     fn from_sources(sources: &[SourceDefinition]) -> Result<Self, Error> {
         let mut library = Self {
             modules: BTreeMap::new(),
@@ -541,6 +591,7 @@ impl StandardLibrary {
             }
         }
         intrinsics::bind_functions(&mut module, source.kind)?;
+        crate::core::json_derive::expand(&mut module)?;
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {
             self.load(&import.path, sources, registry, stack)?;
@@ -574,7 +625,6 @@ impl StandardLibrary {
                 record.set = path == "joky/set" && record.name == "Set";
             }
         }
-        crate::core::json_derive::expand(&mut module)?;
         let embedded = !matches!(
             kind,
             SourceKind::User
@@ -864,7 +914,7 @@ impl StandardLibrary {
         }
         self.modules.insert(
             path.into(),
-            SourceModule {
+            Rc::new(SourceModule {
                 lazy_hosts: if kind != SourceKind::User {
                     module
                         .items
@@ -888,7 +938,7 @@ impl StandardLibrary {
                 exports,
                 dependencies: required.into_iter().collect(),
                 implicit,
-            },
+            }),
         );
         Ok(())
     }

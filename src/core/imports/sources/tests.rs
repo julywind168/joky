@@ -383,6 +383,44 @@ fn intrinsic_annotations_reject_unknown_ids_untrusted_sources_and_placeholder_bo
 }
 
 #[test]
+fn embedded_modules_are_prepared_only_as_needed() {
+    let types = TypeRegistry::new().with_prelude(false);
+    let empty = crate::parser::parse("fn main() {}").unwrap();
+    types.resolve_aliases(&empty).unwrap();
+    assert!(types.standard.prepared.borrow().modules.is_empty());
+
+    // A dependency can introduce a hidden source module that the entry never imports.
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "model",
+            "pub fn same(a: &String, b: &String) -> Bool { a == b }",
+        )
+        .unwrap();
+    let entry = crate::parser::parse(
+        "import model fn main() -> Int32 { if model.same(\"a\", \"a\") { 42 } else { 0 } }",
+    )
+    .unwrap();
+    let resolved = types.resolve_with_modules(&entry, &modules).unwrap();
+    ModulePlan::with_import_layouts_and_types(&resolved, &HashMap::new(), &types).unwrap();
+    {
+        let cache = types.standard.prepared.borrow();
+        assert!(cache.modules.contains_key("joky/internal/text"));
+        assert!(!cache.modules.contains_key("joky/prelude"));
+        assert!(!cache.modules.contains_key("model"));
+    }
+
+    types
+        .clone()
+        .with_prelude(true)
+        .resolve_aliases(&empty)
+        .unwrap();
+    let cache = types.standard.prepared.borrow();
+    assert!(cache.modules.contains_key("joky/prelude"));
+    assert!(!cache.modules.contains_key("joky/postgres"));
+}
+
+#[test]
 fn cached_modules_keep_identity_scopes_and_source_ids() {
     let types = TypeRegistry::new().with_prelude(false);
     let source = "// first\nimport joky/integer fn check() -> Int32 { 42 }";
@@ -428,8 +466,8 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
         second.sources.get(option.span.source_id()).unwrap().name(),
         "joky/option.jk"
     );
-    let cache = types.standard.get().unwrap();
-    assert_eq!(cache.modules.len(), SOURCES.len());
+    let cache = types.standard.prepared.borrow();
+    assert!(!cache.modules.contains_key("joky/postgres"));
     let integer = &cache.modules["joky/integer"];
     assert_eq!(
         integer.dependencies,

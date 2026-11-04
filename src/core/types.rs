@@ -138,7 +138,7 @@ pub struct TypeRegistry {
     pub(crate) prelude: bool,
     pub(crate) hosts: super::resolver::BindingRegistry,
     pub(crate) text_ffi: HashMap<String, crate::FunctionSignature>,
-    pub(crate) standard: std::rc::Rc<std::cell::OnceCell<super::imports::StandardLibrary>>,
+    pub(crate) standard: std::rc::Rc<super::imports::StandardCache>,
     parameters: HashMap<u64, String>,
     trait_environment: std::rc::Rc<projections::Environment>,
     trait_work: std::rc::Rc<std::cell::RefCell<projections::Work>>,
