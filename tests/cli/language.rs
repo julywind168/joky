@@ -1289,7 +1289,7 @@ fn integer_methods_run_build_and_report_invalid_members() {
     }
     for (source, message) in [
         (
-            "impl Int32 { const BAD: Int32 = 1 / 0 } fn main() {}",
+            "struct Limits {} impl Limits { const BAD: Int32 = 1 / 0 } fn main() {}",
             "constant expression",
         ),
         (
@@ -3559,51 +3559,58 @@ fn concurrent_call_branches_accept_suspending_closures() {
 
 #[test]
 #[cfg(unix)]
-fn private_primitive_members_resolve_in_their_defining_module() {
+fn primitive_extensions_use_scoped_traits_and_keep_explicit_dispatch() {
     let work = Workspace::new();
     for (module, n) in [("a", 20), ("b", 22)] {
         work.write(
             &format!("lib/{module}.jk"),
             &format!(
-                "
-            impl Int32 {{
-                const BASE: Int32 = {n}
-                const VALUE: Int32 = Int32.BASE
-                fn twice(self) -> Int32 {{ self + Int32.VALUE }}
-            }}
-            pub fn run() -> Int32 {{ let n = 0; n.twice() }}
-        "
+                "trait Local {{ fn extra(self) -> Int32 }}
+                 impl Local for Int32 {{ fn extra(self) -> Int32 {{ self + {n} }} }}
+                 pub fn run() -> Int32 {{ 0.extra() }}"
             ),
         );
     }
     work.write(
-        "private.jk",
-        "import lib/a\nimport lib/b\nfn main() { println(a.run() + b.run()) }",
+        "lib/ext.jk",
+        "pub trait Convert { fn to_u64(self) -> Int32 }
+         impl Convert for Int32 { fn to_u64(self) -> Int32 { self + 2 } }",
     );
-    work.assert_all_backends("private.jk", &[], b"42\n", 0);
     work.write(
-        "private.jk",
-        "import lib/a\nimport lib/b\nfn main() { let n = 0; println(n.twice()) }",
+        "extensions.jk",
+        r#"import lib/a
+           import lib/b
+           import lib/ext.{type Convert}
+           import joky/integer
+           fn main() {
+               println(a.run() + b.run())
+               let n: Int32 = 40
+               println(Convert.to_u64(n))
+               match n.to_u64() { Some(value) => println(value), None => println(0) }
+           }"#,
     );
-    failure(&work.cli(&["check", "private.jk"]), "no method");
-    for module in ["a", "b"] {
-        work.write(
-            &format!("lib/{module}.jk"),
+    work.assert_all_backends("extensions.jk", &[], b"42\n42\n40\n", 0);
+    work.write("extensions.jk", "import lib/a\nfn main() { 0.extra() }");
+    failure(&work.cli(&["check", "extensions.jk"]), "no method");
+    for (path, source) in [
+        (
+            "extensions.jk",
+            "import joky/integer\nimpl Int32 { fn to_u64(self) -> Int32 { self } }",
+        ),
+        (
+            "lib/a.jk",
             "impl Int32 { pub fn twice(self) -> Int32 { self + self } }",
-        );
+        ),
+    ] {
+        if path != "extensions.jk" {
+            work.write("extensions.jk", "import lib/a\nfn main() {}");
+        }
+        work.write(path, source);
+        let output = work.cli(&["check", "extensions.jk"]);
+        failure(&output, "define a trait");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(&format!("{path}:")), "{stderr}");
     }
-    failure(
-        &work.cli(&["check", "private.jk"]),
-        "Duplicate associated member",
-    );
-    work.write(
-        "private.jk",
-        "impl Int32 { fn twice(self) {} } impl Int32 { fn twice(self) {} } fn main() {}",
-    );
-    failure(
-        &work.cli(&["check", "private.jk"]),
-        "Duplicate associated member",
-    );
 }
 
 #[test]
@@ -3674,7 +3681,8 @@ fn negative_literals_bind_after_postfix_operations() {
     work.write(
         "minus.jk",
         r#"
-        impl Int32 { fn step(self) -> Int32 { self + 1 } }
+        trait Step { fn step(self) -> Int32 }
+        impl Step for Int32 { fn step(self) -> Int32 { self + 1 } }
         fn main() {
             println(-5.step())
             println((-5).step())

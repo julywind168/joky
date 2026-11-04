@@ -463,7 +463,7 @@ fn module_qualified_members_and_public_aliases_preserve_type_visibility() {
         &modules,
         42,
     );
-    check("import model as m impl Int32 { const COPIED: Int32 = m.Pair.VALUE } fn answer() -> Int32 { Int32.COPIED }", &modules, 42);
+    check("import model as m struct Local {} impl Local { const COPIED: Int32 = m.Pair.VALUE } fn answer() -> Int32 { Local.COPIED }", &modules, 42);
     for source in [
         "import model as m fn answer() -> Int32 { let p = m.Alias { a: 42 }; p.a }",
         "import model as m fn answer() -> Int32 { m.Alias.VALUE }",
@@ -516,12 +516,12 @@ fn modules_cannot_capture_caller_declarations_or_private_dependency_members() {
     assert!(VmEngine::new_interpreter()
         .load_source_with_modules("import app/consumer", &modules)
         .is_err());
-    for body in ["caller()", "(42).caller()", "Int32.CALLER"] {
+    for body in ["caller()", "(42).caller()", "Local.CALLER"] {
         let modules = sources(&[(
             "app/isolated",
             &format!("pub fn read() -> Int32 {{ {body} }}"),
         )]);
-        assert!(VmEngine::new_interpreter().load_source_with_modules("import app/isolated fn caller() -> Int32 { 42 } impl Int32 { const CALLER: Int32 = 42 fn caller(self) -> Int32 { self } }", &modules).is_err(), "{body}");
+        assert!(VmEngine::new_interpreter().load_source_with_modules("import app/isolated fn caller() -> Int32 { 42 } struct Local {} impl Local { const CALLER: Int32 = 42 } trait Caller { fn caller(self) -> Int32 } impl Caller for Int32 { fn caller(self) -> Int32 { self } }", &modules).is_err(), "{body}");
     }
 }
 

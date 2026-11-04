@@ -406,10 +406,10 @@ fn module_and_associated_constants_share_one_dependency_graph() {
         evaluate(
             concat!(
                 "const BASE: Int32 = 5\n",
-                "impl Int32 {\n",
+                "struct Limits {} impl Limits {\n",
                 "    const SHIFTED: Int32 = BASE * 3\n",
                 "}\n",
-                "const TOTAL: Int32 = Int32.SHIFTED + BASE\n",
+                "const TOTAL: Int32 = Limits.SHIFTED + BASE\n",
                 "fn main() -> Int32 { TOTAL }\n",
             ),
             &ModuleSources::new(),
@@ -418,8 +418,8 @@ fn module_and_associated_constants_share_one_dependency_graph() {
     );
     reject(
         concat!(
-            "const A: Int32 = Int32.B\n",
-            "impl Int32 {\n",
+            "const A: Int32 = Limits.B\n",
+            "struct Limits {} impl Limits {\n",
             "    const B: Int32 = A\n",
             "}\n",
             "fn main() -> Int32 { A }\n",

@@ -77,7 +77,7 @@ fn checked_integer_methods_cover_all_sixteen_pairs_and_boundaries() {
 fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
     let cases = [
         (
-            "impl Int32 { fn f(self) -> Bool { self } }",
+            "struct P {} impl P { fn f(self) -> Bool { self } }",
             ErrorCode::TypeMismatch,
         ),
         ("impl Unknown {}", ErrorCode::TypeMismatch),
@@ -86,11 +86,11 @@ fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
         ("impl vm.Function {}", ErrorCode::TypeMismatch),
         ("type Alias = Int32 impl Alias {}", ErrorCode::TypeMismatch),
         (
-            "impl Int32 { fn f(self) {} } impl Int32 { fn f() {} }",
+            "struct P {} impl P { fn f(self) {} } impl P { fn f() {} }",
             ErrorCode::DuplicateDefinition,
         ),
         (
-            "impl Int32 { fn f(self) {} const f: Int32 = 1 }",
+            "struct P {} impl P { fn f(self) {} const f: Int32 = 1 }",
             ErrorCode::DuplicateDefinition,
         ),
         (
@@ -98,63 +98,63 @@ fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
             ErrorCode::DuplicateDefinition,
         ),
         (
-            "impl Int32 { const BAD: Int32 = true }",
+            "struct P {} impl P { const BAD: Int32 = true }",
             ErrorCode::TypeMismatch,
         ),
         (
-            "impl Int32 { const BAD: Int32 = 2147483648 }",
+            "struct P {} impl P { const BAD: Int32 = 2147483648 }",
             ErrorCode::TypeMismatch,
         ),
         (
-            "impl Int32 { const BAD: String = \"text\" }",
+            "struct P {} impl P { const BAD: String = \"text\" }",
             ErrorCode::TypeMismatch,
         ),
         (
-            "impl Int32 { const A: Int32 = Int32.B const B: Int32 = Int32.A }",
+            "struct P {} impl P { const A: Int32 = P.B const B: Int32 = P.A }",
             ErrorCode::InvalidState,
         ),
         (
-            "impl Int32 { const A: Int32 = 1 / 0 }",
+            "struct P {} impl P { const A: Int32 = 1 / 0 }",
             ErrorCode::InvalidState,
         ),
         (
-            "impl Int32 { const A: Int32 = 1 << 32 }",
+            "struct P {} impl P { const A: Int32 = 1 << 32 }",
             ErrorCode::InvalidState,
         ),
         (
-            "impl Int32 { const A: Int32 = 1 << -1 }",
+            "struct P {} impl P { const A: Int32 = 1 << -1 }",
             ErrorCode::InvalidState,
         ),
         (
-            "fn f() -> Int32 { 1 } impl Int32 { const A: Int32 = f() }",
+            "struct P {} fn f() -> Int32 { 1 } impl P { const A: Int32 = f() }",
             ErrorCode::InvalidState,
         ),
         (
-            "impl Int32 { const A: Int32 = Int32.MISSING }",
+            "struct P {} impl P { const A: Int32 = P.MISSING }",
             ErrorCode::UnknownName,
         ),
         (
-            "impl Int32 { fn f() {} } fn test() { let n = 1; n.f() }",
+            "struct P {} impl P { fn f() {} } fn test() { let n = P {}; n.f() }",
             ErrorCode::InvalidCall,
         ),
         (
-            "impl Int32 { fn f(self) {} } fn test() { Int32.f() }",
+            "struct P {} impl P { fn f(self) {} } fn test() { P.f() }",
             ErrorCode::InvalidCall,
         ),
         (
-            "impl Int32 { fn f(self) {} } fn test() { true.f() }",
+            "struct P {} impl P { fn f(self) {} } fn test() { true.f() }",
             ErrorCode::UnknownName,
         ),
         (
-            "impl Int32 { fn f(self) {} } fn test() { 1.f::<Int32>() }",
+            "struct P {} impl P { fn f(self) {} } fn test() { (P {}).f::<Int32>() }",
             ErrorCode::InvalidCall,
         ),
         (
-            "impl Int32 { fn f(self) {} } fn test<T>(n: T) { n.f() }",
+            "struct P {} impl P { fn f(self) {} } fn test<T>(n: T) { n.f() }",
             ErrorCode::UnknownName,
         ),
         (
-            "impl Int32 { fn f(self) @suspends {} } fn test() { 1.f() }",
+            "struct P {} impl P { fn f(self) @suspends {} } fn test() { (P {}).f() }",
             ErrorCode::InvalidCall,
         ),
         (
@@ -204,7 +204,8 @@ fn method_receivers_preserve_snapshot_order_context_shadowing_and_recursion() {
             fn add(self, other: Int32) -> Int32 { self.x + other }
             fn recurse(self, n: Int32) -> Int32 { if n == 0 { self.x } else { self.recurse(n - 1) } }
         }
-        impl Int32 { fn add(self, other: Int32) -> Int32 { self + other } }
+        trait Increase { fn add(self, other: Int32) -> Int32 }
+        impl Increase for Int32 { fn add(self, other: Int32) -> Int32 { self + other } }
         fn check() -> Int32 {
             var pair = Pair { x: 20 }
             if pair.add({ pair.x = 1; 22 }) != 42 { return 1 }
@@ -262,7 +263,12 @@ fn methods_preserve_pending_receivers_snapshots_failures_scopes_and_owners() {
                 Pair { x: self.x + delay(other) }
             }
         }
-        impl Int32 {
+        trait PendingOps {
+            fn receive(self, other: Int32) @suspends -> Option<UInt64>
+            fn branch_task(self) @suspends
+            fn fail(self) @suspends -> Int32
+        }
+        impl PendingOps for Int32 {
             fn receive(self, other: Int32) @suspends -> Option<UInt64> {
                 delay(other)
                 self.to_u64()
@@ -350,7 +356,8 @@ fn methods_preserve_pending_receivers_snapshots_failures_scopes_and_owners() {
 fn associated_constants_fold_scalar_operators_and_bound_dependencies() {
     let source = r#"
         import joky/integer
-        impl Bool {
+        struct Constants {}
+        impl Constants {
             const YES: Bool = !false == true
             const WRAP: UInt64 = uint64(-1)
             const MIN_DIV: Int32 = Int32.MIN / -1
@@ -360,13 +367,13 @@ fn associated_constants_fold_scalar_operators_and_bound_dependencies() {
             const OVERFLOW: Int32 = Int32.MAX + 1
         }
         fn check() -> Int32 {
-            if !Bool.YES { return 1 }
-            if Bool.WRAP != UInt64.MAX { return 2 }
-            if Bool.MIN_DIV != Int32.MIN { return 3 }
-            if Bool.MIN_NEG != Int32.MIN { return 4 }
-            if Bool.SHIFT != 2147483651 { return 5 }
-            if Bool.MASK != UInt64.MAX { return 6 }
-            if Bool.OVERFLOW != Int32.MIN { return 7 }
+            if !Constants.YES { return 1 }
+            if Constants.WRAP != UInt64.MAX { return 2 }
+            if Constants.MIN_DIV != Int32.MIN { return 3 }
+            if Constants.MIN_NEG != Int32.MIN { return 4 }
+            if Constants.SHIFT != 2147483651 { return 5 }
+            if Constants.MASK != UInt64.MAX { return 6 }
+            if Constants.OVERFLOW != Int32.MIN { return 7 }
             42
         }
     "#;
@@ -374,18 +381,18 @@ fn associated_constants_fold_scalar_operators_and_bound_dependencies() {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap();
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-        let mut deep = String::from("impl Int32 { const C0: Int32 = 1 ");
+        let mut deep = String::from("struct Limits {} impl Limits { const C0: Int32 = 1 ");
         for i in 1..33 {
-            deep += &format!("const C{i}: Int32 = Int32.C{} ", i - 1);
+            deep += &format!("const C{i}: Int32 = Limits.C{} ", i - 1);
         }
         deep += "}";
         let error = vm.load_source(&deep).unwrap_err();
         assert_eq!(error.code(), ErrorCode::ResourceLimit);
-        let mut shared = String::from("impl Int32 { const C0: Int32 = 0 ");
+        let mut shared = String::from("struct Limits {} impl Limits { const C0: Int32 = 0 ");
         for i in 1..32 {
-            shared += &format!("const C{i}: Int32 = Int32.C{p} + Int32.C{p} ", p = i - 1);
+            shared += &format!("const C{i}: Int32 = Limits.C{p} + Limits.C{p} ", p = i - 1);
         }
-        shared += "} fn check() -> Int32 { Int32.C31 }";
+        shared += "} fn check() -> Int32 { Limits.C31 }";
         vm.load_source(&shared).unwrap();
         assert_eq!(vm.call_int32_0("check").unwrap(), 0);
     }

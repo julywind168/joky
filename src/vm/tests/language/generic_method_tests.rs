@@ -35,7 +35,7 @@ fn generic_methods_preserve_both_parameter_scopes_across_backends() {
                 };
                 assert_eq!(wide, u64::MAX);
                 assert_eq!(vm.function_signature("Pair.zip"), None);
-                assert_eq!(vm.function_signature("Bool.select"), None);
+                assert_eq!(vm.function_signature("Switch.select"), None);
             }
         }
     }
@@ -143,7 +143,7 @@ fn generic_method_errors_keep_the_previous_module() {
         ("fn f() { Pair.make::<Int32>(42, true) }", ErrorCode::InvalidCall),
         ("fn f() { Pair.make::<Int32, Bool, Unit>(42, true) }", ErrorCode::InvalidCall),
         ("fn f() { Pair::<Int32>.pair::<Bool>(Pair { value: false }, true) }", ErrorCode::TypeMismatch),
-        ("impl Int32 { fn suspended<U>(self, value: U) @suspends -> U { value } } fn f() { 1.suspended(42) }", ErrorCode::InvalidCall),
+        ("struct P {} impl P { fn suspended<U>(self, value: U) @suspends -> U { value } } fn f() { (P {}).suspended(42) }", ErrorCode::InvalidCall),
         ("fn free<T, U>(a: T, b: U) {} fn f() { free::<Int32>(42, true) }", ErrorCode::InvalidCall),
     ] {
         let source = format!("// 🙂\n{declarations}{methods}{body}");

@@ -617,17 +617,16 @@ fn importing_modules_cannot_supply_missing_library_functions_or_members() {
     for library in [
         "fn value() -> Int32 { caller_only() }",
         "fn value() -> Int32 { (1).caller_only() }",
-        "fn value() -> Int32 { Int32.CALLER }",
-        "impl Int32 { const LIBRARY: Int32 = Int32.CALLER } fn value() -> Int32 { Int32.LIBRARY }",
+        "fn value() -> Int32 { Limits.CALLER }",
+        "impl Int32 { const LIBRARY: Int32 = Limits.CALLER } fn value() -> Int32 { Int32.LIBRARY }",
     ] {
         let types = registry(&[definition("joky/integer", library)]);
         let source = r#"
             import joky/integer as ints
             fn caller_only() -> Int32 { 42 }
-            impl Int32 {
-                const CALLER: Int32 = 42
-                fn caller_only(self) -> Int32 { 42 }
-            }
+            struct Limits {} impl Limits { const CALLER: Int32 = 42 }
+            trait Caller { fn caller_only(self) -> Int32 }
+            impl Caller for Int32 { fn caller_only(self) -> Int32 { 42 } }
             fn check() -> Int32 { ints.value() }
         "#;
         let module = types

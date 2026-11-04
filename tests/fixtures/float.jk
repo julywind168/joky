@@ -56,12 +56,10 @@ fn f32_max() -> Float32 { 3.4028235e38 }
 
 fn identity<T>(value: T) -> T { value }
 
-impl Float64 {
+struct Constants {}
+impl Constants {
     const HALF: Float64 = 0.5
     const FOLDED: Float64 = 0.1 + 0.2
-}
-
-impl Float32 {
     const TINY: Float32 = 1.5e-3
 }
 
@@ -123,9 +121,9 @@ fn conversions() -> Int32 {
     if literal_default() != 1.5e-3 { return 10 }
     if float64(literal_context()) != 0.001500000013038516 { return 11 }
     // Associated constants fold at their declared precision.
-    if Float64.HALF != 0.5 { return 12 }
-    if Float64.FOLDED != 0.30000000000000004 { return 13 }
-    if float64(Float32.TINY) != 0.001500000013038516 { return 14 }
+    if Constants.HALF != 0.5 { return 12 }
+    if Constants.FOLDED != 0.30000000000000004 { return 13 }
+    if float64(Constants.TINY) != 0.001500000013038516 { return 14 }
     0
 }
 

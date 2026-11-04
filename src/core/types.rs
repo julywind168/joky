@@ -491,6 +491,21 @@ impl TypeRegistry {
                     "impl requires a Copy primitive or a record/enum with each impl parameter in declaration order; aliases and specialized implementations are not supported")
                     .with_span(implementation.span));
             }
+            // Only the embedded library can originate in the reserved Joky namespace.
+            if implementation.trait_name.is_none()
+                && primitive_type(&implementation.target_name).is_some()
+                && !implementation
+                    .origin
+                    .as_deref()
+                    .is_some_and(super::source::is_reserved_module_path)
+            {
+                return Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::TypeMismatch,
+                    format!("Cannot define an inherent impl for built-in type `{target}`. To add methods, define a trait. For constants, use a module constant."),
+                )
+                .with_span(implementation.span));
+            }
             if trusted_arena {
                 implementation.target_name = target.to_string();
             }

@@ -20,8 +20,9 @@ impl<T> Marker<T> {
     fn make() -> Self { Self {} }
     fn change<U>(self) -> Marker<U> { Marker {} }
 }
-impl Bool {
-    fn select<T>(self, a: T, b: T) -> T { if self { a } else { b } }
+struct Switch { enabled: Bool }
+impl Switch {
+    fn select<T>(self, a: T, b: T) -> T { if self.enabled { a } else { b } }
     fn identity<T>(value: T) -> T { value }
 }
 impl<T> Choice<T> {
@@ -53,9 +54,9 @@ fn check() -> Int32 {
     let replacement = p.replace(4294967295, int64(0))
     let marker = p.marker::<Bool>().change::<(Int32, Bool)>()
     let empty = Marker::<Bool>.make().change::<Unit>()
-    let selected = true.select((42, true), (0, false))
-    let selected_wide = Bool.select::<UInt64>(true, 0xffff_ffff_ffff_ffff, 0)
-    let concrete = Bool.identity::<Int64>(4294967295)
+    let selected = (Switch { enabled: true }).select((42, true), (0, false))
+    let selected_wide = Switch.select::<UInt64>(Switch { enabled: true }, 0xffff_ffff_ffff_ffff, 0)
+    let concrete = Switch.identity::<Int64>(4294967295)
     let unit = p.replace({}, {}).first()
     var mutable = Pair.make(5, 6)
     let saved = mutable.hold({ mutable.left = 9; true })

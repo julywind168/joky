@@ -15,8 +15,6 @@ impl Flag {
     fn code(self) -> Int32 { match self { Off => 0, On => Flag.ANSWER } }
     fn active() -> Flag { Flag.On }
 }
-impl Unit { fn answer(self) -> Int32 { 42 } }
-impl Bool { fn number(self) -> Int32 { if self { 42 } else { 0 } } }
 
 fn identity<T>(value: T) -> T { value }
 fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
@@ -28,8 +26,6 @@ fn check() -> Int32 {
     if Pair.sum(pair) != 41 { return 2 }
     if (Pair { left: 21, right: 21 }).sum() != 42 { return 3 }
     if Flag.active().code() != 42 { return 4 }
-    if {}.answer() != 42 { return 5 }
-    if true.number() != 42 { return 6 }
     let Int = -1
     if unwrap_or(Int.to_u64(), 7) != 7 { return 7 }
     if unwrap_or(identity(42).to_i64(), 0) != 42 { return 8 }

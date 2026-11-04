@@ -120,7 +120,7 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
     let work = Workspace::new();
     for (source, code, stdout) in [
         ("fn main() @suspends {}", 0, ""),
-        ("fn unused() @suspends {} impl Int32 { fn f(self) @suspends {} } fn main() {}", 0, ""),
+        ("fn unused() @suspends {} struct Unused {} impl Unused { fn f(self) @suspends {} } fn main() {}", 0, ""),
         ("fn callback() @suspends -> Int32 { 42 } fn apply(f: fn() @suspends -> Int32) @suspends -> Int32 { f() } fn main() @suspends -> Int32 { apply(callback) }", 42, ""),
         (include_str!("../../examples/async_main.jk"), 0, "42\n"),
         (r#"
@@ -136,7 +136,8 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
         (r#"
             import joky/task
             import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
-            impl Int32 {
+            trait Worker { fn worker(self) @suspends }
+            impl Worker for Int32 {
                 fn worker(self) @suspends {
                     report_int32(self)
                     task.yield_now()

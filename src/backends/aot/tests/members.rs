@@ -68,7 +68,11 @@ fn method_native_pending_arguments_keep_snapshots_and_do_not_replay_effects() {
         impl Pair {
             fn add(self, n: Int32) @suspends -> Pair { Pair { x: self.x + delay(n) } }
         }
-        impl Int32 {
+        trait PendingOps {
+            fn receive(self, other: Int32) @suspends -> Option<UInt64>
+            fn branch_task(self) @suspends
+        }
+        impl PendingOps for Int32 {
             fn receive(self, other: Int32) @suspends -> Option<UInt64> { delay(other); self.to_u64() }
             fn branch_task(self) @suspends { record(delay(self)); }
         }
