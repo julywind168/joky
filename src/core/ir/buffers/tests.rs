@@ -17,7 +17,9 @@ fn module(source: &str) -> Result<AstModule, Error> {
     let mut ast = crate::parser::parse(&format!("type Array<T> = T\n{source}")).unwrap();
     let alias = &mut ast.type_aliases[0];
     alias.target = Type::Buffer(Arc::new(Type::Parameter(alias.type_params[0].clone())));
-    TypeRegistry::default().resolve_aliases(&ast)
+    TypeRegistry::default()
+        .with_prelude(false)
+        .resolve_aliases(&ast)
 }
 
 fn plan(source: &str) -> Result<ModulePlan, Error> {
@@ -251,7 +253,6 @@ fn buffer_registration_and_identity_cannot_be_forged_by_spelling() {
     let types = TypeRegistry::default();
     for source in [
         "fn f(a: Buffer<Int32>) {}",
-        "fn f(a: Array<Int32>) {}",
         "import joky/array fn f() { array.allocate(1); }",
         "import joky/internal/buffer fn f() { buffer.allocate(1); }",
     ] {

@@ -230,10 +230,10 @@ fn static_traits_preserve_borrowing_and_conservative_template_effects() {
     let base = r#"
         struct Id { value: Int32 }
         trait Read { fn read(&self) -> Int32 }
-        trait Set { fn set(&mut self, n: Int32) }
+        trait Write { fn set(&mut self, n: Int32) }
         trait View { fn view(&self) -> &Self }
         impl Read for Id { fn read(&self) -> Int32 { self.value } }
-        impl Set for Id { fn set(&mut self, n: Int32) { self.value = n } }
+        impl Write for Id { fn set(&mut self, n: Int32) { self.value = n } }
         impl View for Id { fn view(&self) -> &Self { self } }
         fn view<T: Copy + View>(x: &T) -> &T { x.view() }
     "#;

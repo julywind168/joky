@@ -1,6 +1,9 @@
 // The default source imports. Dependencies declare their own imports.
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/set.{type Set}
 import joky/integer
 import joky/float
 import joky/string

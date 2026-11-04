@@ -32,10 +32,10 @@ fn main() {
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
-- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、借用式状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println` / `assert` / `assert_eq` / `assert_ne` / `panic`。
+- 默认 prelude 提供容器类型名 `Array` / `Map` / `Set`、`Option` / `Result`、`Some` / `None` / `Ok` / `Err`、借用式状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println` / `assert` / `assert_eq` / `assert_ne` / `panic`。
   支持后缀 `!` 强制解包与 `?` 失败提前返回（[语义](docs/language.md#optionresult-与-outcome-后缀解包)）。
   [Option / Result 示例](examples/option_result.jk)展示 `?` / `!`、`map`、默认值、`and` / `or` 和 `ok` / `err` 转换；普通默认值急切求值，`unwrap_or_else` 可按需执行同步回调。
-  也提供输出到 stderr 的 `eprint` / `eprintln`。`check` / `test` / `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
+  也提供输出到 stderr 的 `eprint` / `eprintln`。`check` / `test` / `run` / `build` 均可用 `--no-prelude` 关闭；使用 `array` 等容器模块前缀或 `joky/vm` 时仍需显式导入。
 - 程序入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
   可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。

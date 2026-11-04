@@ -226,6 +226,17 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
     let work = Workspace::new();
     for (file, source, no_prelude) in [
         ("prelude", "fn main() -> Int32 { match (42).to_u64() { Some(n) => int32(n), None => 0 } }".to_owned(), false),
+        ("containers", r#"import joky/map.{type Map}
+            fn answer(xs: Array<Int32>, m: Map<Int32, Int32>, seen: Set<Int32>) -> Int32 {
+                if seen.contains(1) { xs[0] + m.get(1).unwrap_or(0) } else { 0 }
+            }
+            fn main() -> Int32 {
+                var m = Map.new::<Int32, Int32>()
+                m.insert(1, 22)
+                var seen = Set.new::<Int32>()
+                seen.insert(1)
+                answer([20], m, seen)
+            }"#.into(), false),
         ("imports", format!("{}\nfn main() -> Int32 {{ check() }}", include_str!("../fixtures/imports.jk")), true),
         ("plain", "enum Option { Present(Int32) } fn main() -> Int32 { match Option.Present(42) { Present(n) => n } }".into(), true),
         ("explicit", "import joky/prelude fn main() -> Int32 { match Some(42) { Some(n) => n, None => 0 } }".into(), true),
@@ -258,6 +269,19 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
         );
         failure(&work.cli(&[command, "plain.jk"]), "already defined");
     }
+    for ty in ["Array<Int32>", "Map<Int32, Int32>", "Set<Int32>"] {
+        work.write("annotation.jk", &format!("fn accept(value: {ty}) {{}}"));
+        failure(
+            &work.cli(&["check", "--no-prelude", "annotation.jk"]),
+            "[unknown_type]",
+        );
+    }
+    work.write(
+        "custom_map.jk",
+        "struct Map {} fn value() -> Map { Map {} }",
+    );
+    failure(&work.cli(&["check", "custom_map.jk"]), "already defined");
+    success(&work.cli(&["check", "--no-prelude", "custom_map.jk"]));
     // Native registration remains supported by JIT/AOT; ordinary aliased VM calls
     // also run in the interpreter.
     for register in [false, true] {

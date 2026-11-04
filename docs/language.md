@@ -585,7 +585,7 @@ append 的节点转移次数对源元素数量线性；扩容还可能搬迁目�
 
 ## 无序 Set
 
-显式导入 `joky/set.{type Set}`；未加入默认 prelude。Set 是非 Copy 拥有者，
+默认 prelude 提供 `Set` 类型名；关闭 prelude 时可显式导入 `joky/set.{type Set}`。Set 是非 Copy 拥有者，
 由私有 `Map<T, Unit>` 保存元素；模块函数和方法共用 [set.jk](../src/stdlib/set.jk) 的算法。
 T 沿用 Map key 的存储准入：递归无引用的 Copy 值、String、拥有型记录或枚举；
 构造不要求相等/哈希协议，插入、查询、批量导入、关系及集合运算要求 `BorrowEq + BorrowHash`。
@@ -630,7 +630,7 @@ Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、�
 
 ## 无序 Map
 
-显式导入 `joky/map.{type Map}` 使用 `Map<K, V>`；容器是非 Copy 拥有者，
+默认 prelude 提供 `Map<K, V>`；关闭 prelude 时可显式导入 `joky/map.{type Map}`。容器是非 Copy 拥有者，
 作用域退出自动清理，也可消费式 `release`。实现全部在 [map.jk](../src/stdlib/map.jk)，
 复用 Array 的受检存储和所有权规则；字段、桶类型和算法 helper 均私有。
 满足[任务包准入](#任务执行模式)的 Map 可跨并行任务传递，宿主使用只读 TaskMap 快照。
@@ -793,8 +793,7 @@ let matrix: FixedArray<FixedArray<Int32, 2>, 2> = [[1, 2], [3, 4]]
 固长形参中的常量参数也可由字面值项数推导。`let` / `var` 只控制绑定可变性，不选择容器类型。
 已经定型的 Array 与 FixedArray 不隐式互转；也没有隐式复制拥有元素或数值类型转换。
 
-字面值通过编译器私有别名引入数组库，不需要 prelude，也不向用户作用域引入 `Array`、
-`array` 等名称；书写类型注解仍需普通 import。动态构造逐项移动拥有值，必要时扩容，
+字面值通过编译器私有别名引入数组库，关闭 prelude 后仍可使用。此时若要写 `Array<T>` 类型注解，需显式导入类型名。动态构造逐项移动拥有值，必要时扩容，
 中途返回、失败和取消清理已初始化内容；元素表达式可按普通规则挂起，恢复不重放副作用。
 固长构造复用受检初始化令牌，仅在完整初始化后发布值；支持下述普通拥有元素及跨挂起使用。
 数组项中的 `..expr` 展开一个序列，可在任意位置出现多次：
@@ -897,7 +896,7 @@ Copy 元素需要独立值时使用 get；需要转移所有权时使用 remove 
 
 ## 动态数组
 
-显式导入 `joky/array` 后可使用 `Array<T>`。元素支持八种定宽整数、Float32 / Float64、Rune、Bool、Unit、Ptr，
+默认 prelude 提供 `Array<T>`；关闭 prelude 时可显式导入 `joky/array.{type Array}`。元素支持八种定宽整数、Float32 / Float64、Rune、Bool、Unit、Ptr，
 普通共享引用，以及由这些类型组成的 Copy 记录、元组和枚举；还支持 String 与递归无引用的拥有型聚合和嵌套容器；
 长度、容量和索引为 UInt64；方法调用和下标访问均不需要 unsafe 指针操作。
 数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
@@ -2462,6 +2461,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
   `import joky/vm as engine.{type Vm as Engine, call_int32_0 as invoke}`。
   `engine.Handle` / `Engine` 保留原 opaque 身份，`engine.create()` / `new()` 绑定原宿主入口。
   `call_int32_0/1/2` / `register_int32_0/1/2` 的别名保留原有参数及 ABI 限制。
+- 默认 prelude 提供容器类型名 `Array`、`Map`、`Set`。调用其模块级函数仍需显式导入对应模块。
 - 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err` 及上述基础方法，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
   四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
   prelude 还引入 `print` / `println`，不引入数组或 VM。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
@@ -2473,7 +2473,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
 - 显式选择性导入的重复名称、重复模块路径、模块别名与同级声明冲突均报错；`_` 不能用作导入名称。
   局部值遮蔽导入的构造器、函数和模块前缀；局部字段或方法仍按原规则查找。
   同级函数可以遮蔽 prelude 的裸构造器或打印函数，限定名称仍可用。
-  本地类型声明与 prelude 的 Option / Result 同名会报错；需要自定义同名类型时关闭 prelude。
+  本地类型声明与 prelude 的 Option、Result、Array、Map 或 Set 同名会报错；需要自定义同名类型时关闭 prelude。
 - 标准声明在同一个 TypeRegistry 环境及其克隆之间共享身份，重复规范化、显式导入和重载不会复制标准枚举。
   用户枚举仍在每次解析时获得新身份。导入只更改可见名称，不复制声明，也不会让用户同名变量捕获库内部引用。
 

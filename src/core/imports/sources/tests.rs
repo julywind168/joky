@@ -546,7 +546,7 @@ fn prelude_exports_selected_names_without_leaking_dependency_aliases() {
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["Option", "Result"]
+        ["Array", "Map", "Option", "Result", "Set"]
     );
     assert_eq!(
         prelude
@@ -557,6 +557,17 @@ fn prelude_exports_selected_names_without_leaking_dependency_aliases() {
             .collect::<Vec<_>>(),
         ["Err", "None", "Ok", "Some"]
     );
+    for (name, module) in [
+        ("Array", "joky/array"),
+        ("Map", "joky/map"),
+        ("Set", "joky/set"),
+    ] {
+        assert_eq!(
+            prelude.exports.types[name].declaration,
+            library.modules[module].exports.types[name].declaration
+        );
+    }
+    assert!(!prelude.exports.functions.contains_key("new"));
     assert!(prelude.exports.modules.is_empty());
     assert!(prelude.module.implementations.is_empty());
     let integer = &library.modules["joky/integer"];

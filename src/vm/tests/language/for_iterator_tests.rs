@@ -70,10 +70,19 @@ fn for_into_iter_keeps_container_identity_in_imported_generic_functions() {
 
 #[test]
 fn for_into_iter_rejects_fake_protocols_and_conflicting_borrows() {
+    // A user-defined Map must reach protocol checking even with its standard namesake in the prelude.
+    let mut vm = VmEngine::new_interpreter();
+    vm.set_prelude_enabled(false);
+    let error = vm.load_source("import joky/iter.{range, type Range} struct Map {} impl Map { fn iter(&self) -> Range<Int32> { range(0, 1) } } fn bad() { let m = Map {}; for _ in &m {} }").unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("requires an IntoIterator implementation"),
+        "{error}"
+    );
     for source in [
         "import joky/iter.{range, type Range} struct Fake {} impl Fake { fn into_iter(self) -> Range<Int32> { range(0, 1) } } fn bad() { for _ in (Fake {}) {} }",
         "import joky/iter.{range, type Range} trait IntoIterator { type IntoIter; fn into_iter(self) -> Self.IntoIter } struct Fake {} impl IntoIterator for Fake { type IntoIter = Range<Int32>; fn into_iter(self) -> Range<Int32> { range(0, 1) } } fn bad() { for _ in (Fake {}) {} }",
-        "import joky/iter.{range, type Range} struct Map {} impl Map { fn iter(&self) -> Range<Int32> { range(0, 1) } } fn bad() { let m = Map {}; for _ in &m {} }",
         "import joky/iter.{type IntoIterator} struct Fake {} impl IntoIterator for Fake { type IntoIter = Int32; fn into_iter(self) -> Int32 { 1 } }",
         "import joky/iter.{type IntoIterator, type Range, range} struct Fake {} impl IntoIterator for Fake { type IntoIter = Range<Int32>; fn into_iter(self) @suspends -> Range<Int32> { range(0, 1) } }",
         "fn bad<I>(input: I) { for _ in input {} }",

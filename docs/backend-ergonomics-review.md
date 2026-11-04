@@ -28,7 +28,7 @@
 | 同模块期望类型下的裸变体 `let c: Color = Green` | 可以 |
 | 跨模块期望类型下的裸变体 `[IntValue(n)]`（`Array<postgres.Value>`） | 拒绝：`Undeclared function IntValue` |
 | `println(p)`（普通 struct）、`println(task.Failure.Io)` | 拒绝：不满足 Show |
-| 未导入时用 `Array<T>` 写类型标注 | 拒绝：`Array` 不在 prelude；数组字面量与方法照常可用 |
+| 未导入时用 `Array<T>` 写类型标注 | 默认 prelude 已支持 |
 
 ## 2. 总体判断
 
@@ -55,8 +55,8 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | P0 | `#derive(Show, Eq, Hash)`，标准库错误与枚举实现 Show | §4.4 |
 | P0 | PostgreSQL 参数与结果：`ToSql`/`FromSql` 协议、按列名读取、`#derive(FromRow)`、更多类型 | §8 |
 | P0 | HTTP：路由、标头/查询查询、响应构造助手、`Status` 命名 | §7 |
-| P1 | prelude 补齐 `Array`/`Map`/`Set` 类型名 | §4.3 |
-| P1 | 跨模块枚举的期望类型裸变体 | §4.3 |
+| 已完成 | prelude 补齐 `Array`/`Map`/`Set` 类型名 | §4.3 |
+| P2 | 跨模块枚举的期望类型裸变体（暂缓） | §4.3 |
 | P1 | 停机与信号样板、`race` 只为等停机而写的辅助函数 | §9 |
 | P1 | 迭代与集合常用操作：any/all/find/position/retain/collect/enumerate/fold | §6.2 |
 | P1 | Option/Result 补 `ok_or`/`expect`/`map_or`/`filter`/`inspect_err` | §6.3 |
@@ -83,13 +83,9 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 ### 4.3 名字可见性
 
-- `Array<T>`、`Map<K, V>`、`Set<T>` 不在 prelude【已验证】。数组字面量和方法可用，但只要写类型标注
-  （函数签名、结构体字段）就要 `import joky/array.{type Array}`。chat 的业务脚本与
-  postgres 模块都在第一屏写这类导入。建议 prelude 导出三种容器的**类型名**（不导出模块函数，避免名字污染）。
-- 跨模块枚举在已知期望类型下不能用裸变体【已验证】。同模块 `let c: Color = Green` 已可用，
-  但 `[postgres.Value.IntValue(customer), postgres.Value.TextValue(key)]` 无法写成
-  `[IntValue(customer), TextValue(key)]`。建议把"期望类型决定变体查找"推广到导入的类型，
-  与 `match` 中已允许裸变体的行为对齐（`Ok(Confirmed(id))` 在 match 里已经可以）。
+默认 prelude 已导出 `Array`、`Map`、`Set` 三个类型名。聊天室脚本可直接声明 `members: Array<Member>`。内嵌标准模块继续显式声明自己的依赖；用户关闭 prelude 后也需显式导入。[聊天室脚本](../examples/chat/script/main.jk)
+
+跨模块枚举的裸变体查找降为 P2。订单示例用 `import joky/postgres.{IntValue, TextValue}` 声明所需变体，SQL 参数列表即可写成 `[IntValue(customer), TextValue(key)]`。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
 
 ### 4.4 派生与 Show【已验证】
 
@@ -274,7 +270,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 现状（[postgres_orders.jk:21](../examples/postgres_orders.jk)）：
 
 ```joky
-[postgres.Value.IntValue(customer), postgres.Value.TextValue(key.clone()), postgres.Value.IntValue(qty)]
+[IntValue(customer), TextValue(key.clone()), IntValue(qty)]
 ```
 
 建议：
@@ -282,7 +278,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 - 新增 `postgres.ToSql` 协议，Int16/32/64、Bool、String、`&String`、Array<UInt8>、Option<T>、
   Float64、Uuid、Timestamp 实现；`execute(sql, params)` 的参数改为 `Array<postgres.Param>`，
   由期望类型自动装箱，目标写法 `[customer, key, qty]`。若首版做不到隐式装箱，退一步用短构造函数
-  `[pg.int(customer), pg.text(&key), pg.int(qty)]`，并配合 §4.3 允许裸变体。
+  `[pg.int(customer), pg.text(&key), pg.int(qty)]`。
 - 变体名去掉冗余后缀：`Value.IntValue` → `Value.Int`，`TextValue` → `Text`。
 - 文本参数接受借用，避免 `key.clone()`。
 
@@ -425,13 +421,13 @@ fn main() @suspends -> Int32 {
 ## 12. 建议实施顺序
 
 1. **低成本先行**（不改语义）：标准库错误与枚举实现 Show；String 基础方法；Option/Result 补方法；
-   Array any/all/find/retain；prelude 导出容器类型名；
+   Array any/all/find/retain；
    清理标准库内过时写法（`uint64(0) ..`）。
 2. **HTTP 便利层**：header/query/path 访问、响应助手、Status 改名、Method 枚举、Router、`http.run`、
    `shutdown.with_signals`。均为标准库源码改动，不涉及编译器。
 3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
    `pool.transaction`、Options。
-4. **语言特性**：`#derive(Show, Eq, Hash, Default)`、跨模块期望类型裸变体、字符串字面量模式与守卫、
+4. **语言特性**：`#derive(Show, Eq, Hash, Default)`、字符串字面量模式与守卫、
    `ToSql` 隐式装箱、结构更新语法、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
 5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、

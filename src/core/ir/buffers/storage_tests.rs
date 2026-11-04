@@ -47,7 +47,10 @@ pub(crate) fn module(source: &str) -> AstModule {
         f.ret_ty = signature.ret;
         ast.items.push(item);
     }
-    TypeRegistry::default().resolve_aliases(&ast).unwrap()
+    TypeRegistry::default()
+        .with_prelude(false)
+        .resolve_aliases(&ast)
+        .unwrap()
 }
 
 pub(crate) const STORAGE: &str = r#"
