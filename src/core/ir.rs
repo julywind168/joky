@@ -31,6 +31,8 @@ mod constants;
 mod control_flow;
 mod descriptor_locals;
 mod dyn_traits;
+#[cfg(test)]
+mod enum_array_probe;
 mod enums;
 mod float;
 mod function_values;
@@ -1230,6 +1232,8 @@ impl ModulePlan {
                 .collect();
             functions.retain(|name, _| !scope.lazy_hosts.contains(name) || used.contains(name));
         }
+        #[cfg(test)]
+        enum_array_probe::lower(&mut bodies)?;
         descriptor_locals::lower(&functions, &mut bodies);
         for (name, body) in &mut bodies {
             let info = functions.get_mut(name).unwrap();
