@@ -161,7 +161,7 @@ fn detached_owners_keep_alias_and_escape_checks() {
     for (body, message) in [
         ("fn bad() @suspends { var (a, b) = pair(); join { | append(&mut a) | append(&mut a) } }", "conflicts"),
         ("fn bad() { var (a, b) = pair(); let view = &a; let (c, d) = relay(a); view.len(); }", "conflicts"),
-        ("fn bad(input: &Array<Int32>) -> &Array<Int32> { let (a, b) = pair(); return &a }", "conflicts"),
+        ("fn bad(input: &Array<Int32>) -> &Array<Int32> { let (a, b) = pair(); return &a }", "outlive its owner"),
         ("fn bad() { let (a, b) = pair(); let moved = a; a.len(); }", "moved"),
         ("fn first(values: Array<&Int32>) -> Option<&Int32> { let (values, _) = (values, Array.new::<Int32>()); values.get(0) } fn bad() { var values = Array.new::<&Int32>(); values.push(&*(alloc(0))); let local = 42; let _ = first({ values.push(&local); values }) }", "local borrow"),
         ("fn first(value: &Int32) -> Option<&Int32> { var values = Array.new::<&Int32>(); values.push(value); let (values, _) = (values, Array.new::<Int32>()); values.get(0) } fn bad() -> Option<&Int32> { let local = 42; first(&local) }", "local"),

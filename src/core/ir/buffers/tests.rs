@@ -136,7 +136,7 @@ fn live_buffer_views_block_moves_overwrite_and_lexical_escape() {
     );
     rejects(
         "fn f(a: Array<Int32>) { let r = { let local = a; &local }; read(r); }",
-        "live borrow",
+        "outlive its owner",
     );
     rejects(
         "fn f(a: Array<Int32>) -> &Array<Int32> { &a }",
@@ -144,7 +144,7 @@ fn live_buffer_views_block_moves_overwrite_and_lexical_escape() {
     );
     rejects(
         "fn f(a: Array<Int32>, other: &Array<Int32>) -> &Array<Int32> { &a }",
-        "live borrow",
+        "outlive its owner",
     );
     rejects(
         "fn f(a: &Array<Int32>) -> Array<Int32> { (*a) }",

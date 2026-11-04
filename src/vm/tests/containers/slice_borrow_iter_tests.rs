@@ -130,7 +130,7 @@ fn slice_borrow_iter_rejects_conflicts_through_parent_views() {
         ("fn bad(m: &Map<Int32, Int32>) { for key in slice.iter(m.keys()) { *key = 2 } }", "shared reference"),
         ("fn bad(s: &Slice<&Int32>) { slice.iter(s); }", "reference-free elements"),
         ("fn bad() -> &Iter<Int32> { let a = [1]; slice.iter(a.slice(0, 1)) }", "compatible borrowed input"),
-        ("fn bad() -> &Int32 { let a = [1]; let i = slice.iter(a.slice(0, 1)); iter.advance(i); iter.current(i) }", "conflicts with a live borrow"),
+        ("fn bad() -> &Int32 { let a = [1]; let i = slice.iter(a.slice(0, 1)); iter.advance(i); iter.current(i) }", "outlive its owner"),
     ] {
         let error = frontend_error(&format!("{prefix}{function}"), &crate::ModuleSources::new());
         assert!(error.message().contains(message), "{function}: {error}");

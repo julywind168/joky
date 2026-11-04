@@ -114,7 +114,7 @@ fn local_empty() -> Int32 {
     (*(&mut unit) = {});
     (*(&mut empty) = Empty {});
     (*(&unit));
-    (*(&empty))
+    (*(&empty));
     42
 }
 fn local_failure(divisor: Int32) -> Int32 {

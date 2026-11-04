@@ -149,7 +149,7 @@ fn suspending_borrows_reject_conflicts_retention_and_short_lifetimes() {
         let error = VmEngine::new_interpreter().load_module(&ast).expect_err(body);
         assert!(error.span().is_some(), "{body}: {error}");
         assert!(
-            error.message().contains("borrow") || error.message().contains("retained"),
+            error.message().to_lowercase().contains("borrow") || error.message().contains("retained"),
             "{body}: {error}"
         );
     }

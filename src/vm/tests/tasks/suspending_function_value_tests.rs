@@ -136,7 +136,7 @@ fn suspending_function_values_reject_effect_erasure_and_invalid_boundaries() {
         ("fn a() @suspends -> Int32 { 42 } fn bad() { let f: fn() -> Int32 = a }", "mismatch"),
         ("fn a() -> Int32 { 42 } fn bad() { let f: fn() @suspends -> Int32 = a }", "mismatch"),
         ("fn a() @suspends -> Int32 { 42 } fn bad() @suspends { var f = a; f = bad; }", "mismatch"),
-        ("fn same<T>(a: T, b: T) {} fn a() @suspends {} fn b() {} fn bad() { same(a, b) }", "conflicting"),
+        ("fn same<T>(a: T, b: T) {} fn a() @suspends {} fn b() {} fn bad() { same(a, b) }", "expected fn() @suspends -> Unit, got fn() -> Unit"),
         ("fn apply<T>(f: fn(T) -> T, x: T) -> T { f(x) } fn a(x: Int32) @suspends -> Int32 { x } fn bad() { apply(a, 1); }", "mismatch"),
         ("fn bad<T>(x: T, f: fn(T) @suspends -> T) -> T { f(x) }", "@suspends"),
         ("extern fn delayed_value(x: Int32) @suspends -> Int32 fn bad() { let f = delayed_value }", "language function"),

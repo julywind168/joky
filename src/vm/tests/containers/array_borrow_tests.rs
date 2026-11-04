@@ -86,8 +86,6 @@ fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
         "let r = part(&mut a); let child = slice.slice(r, 0, 1); slice.set(r, 0, 7); slice.len(child);",
         "let r = array.borrow_mut(&mut a, 0); let shared = (&*r); element.write(r, 7); element.read(shared);",
         "var b = array.new::<Int32>(); array.push(&mut b, 9); let r = choose(&a, &b, true); array.push(&mut b, 7); element.read(r);",
-        "let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); at(&b) }; element.read(r);",
-        "let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); array.slice(&b, 0, 1) }; slice.len(r);",
     ] {
         let source = format!("{PREFIX} fn bad() {{ var a = array.new::<Int32>(); array.push(&mut a, 42); {body} }}");
         rejects(&source, "live borrow");
@@ -99,8 +97,14 @@ fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
     ] {
         rejects(&format!("{PREFIX}{source}"), "");
     }
-    rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Element<Int32> {{ at(&a) }}"), "live borrow");
-    rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Slice<Int32> {{ array.slice(&a, 0, 1) }}"), "live borrow");
+    for source in [
+        "fn bad() { let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); at(&b) }; element.read(r); }",
+        "fn bad() { let r = { var b = array.new::<Int32>(); array.push(&mut b, 7); array.slice(&b, 0, 1) }; slice.len(r); }",
+        "fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Element<Int32> { at(&a) }",
+        "fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Slice<Int32> { array.slice(&a, 0, 1) }",
+    ] {
+        rejects(&format!("{PREFIX} {source}"), "outlive its owner");
+    }
     rejects(&format!("{PREFIX} fn bad(a: &mut Array<Int32>) {{ let r = array.borrow_mut(a, 0); let moved = r; element.write(r, 0) }}"), "moved");
 }
 

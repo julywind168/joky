@@ -153,7 +153,7 @@ fn array_borrow_iter_rejects_conflicting_loans_and_escaping_views() {
     }
     for (function, message) in [
         ("fn bad() -> &Iter<Int32> { let a = [1, 2]; a.iter() }", "compatible borrowed input"),
-        ("fn bad() -> &Int32 { let a = [1, 2]; let i = a.iter(); iter.advance(i); iter.current(i) }", "conflicts with a live borrow"),
+        ("fn bad() -> &Int32 { let a = [1, 2]; let i = a.iter(); iter.advance(i); iter.current(i) }", "outlive its owner"),
         ("fn bad(i: Iter<Int32>) {}", "borrow-only targets"),
     ] {
         let error = frontend_error(&format!("{prefix}{function}"), &crate::ModuleSources::new());

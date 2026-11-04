@@ -2101,7 +2101,8 @@ mod tests {
             registry.resolve_aliases(&foreign).unwrap_err().code(),
             ErrorCode::UnknownType
         );
-        let mut wide = "enum E0 { A }".to_owned();
+        // An owning payload keeps this layout outside compact enum storage.
+        let mut wide = "enum E0 { A(String) }".to_owned();
         for n in 1..=16 {
             wide.push_str(&format!(" enum E{n} {{ A(E{}), B(E{}) }}", n - 1, n - 1));
         }

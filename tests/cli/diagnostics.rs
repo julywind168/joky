@@ -213,14 +213,14 @@ fn renamed_concurrent_constructs_report_join_migration() {
 
     work.write("reserved.jk", "fn parallel() {}\n");
     let output = work.cli(&["run", "reserved.jk"]);
-    failure(&output, "Expected an identifier, got Parallel");
+    failure(&output, "Expected an identifier, got `parallel`");
 
     work.write(
         "reserved_branch.jk",
         "extern fn record(x: Int32) -> Int32\nfn main() { let branch = record(1) }\n",
     );
     let output = work.cli(&["run", "reserved_branch.jk"]);
-    failure(&output, "Expected an identifier, got Branch");
+    failure(&output, "Expected an identifier, got `branch`");
 }
 
 #[test]
